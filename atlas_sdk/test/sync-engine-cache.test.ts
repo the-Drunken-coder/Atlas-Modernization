@@ -66,6 +66,22 @@ describe("AtlasClient sync: cache projection and reads", () => {
     expect(client.sync.status().lastVersion).toBe(core.version);
   });
 
+  it("projects an uncached Task point read without advancing the change cursor", async () => {
+    const core = new FakeCore();
+    const taskResource = core.upsertTask(task("task-point-read", "asset-point-read"));
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch });
+    const snapshots = vi.fn();
+    client.sync.watchSnapshot(snapshots);
+
+    await expect(client.tasks.get(taskResource.task_id)).resolves.toEqual(taskResource);
+
+    expect(client.sync.snapshot().tasks[taskResource.task_id]).toEqual(taskResource);
+    expect(snapshots).toHaveBeenLastCalledWith(
+      expect.objectContaining({ tasks: { [taskResource.task_id]: taskResource } })
+    );
+    expect(client.sync.status().lastVersion).toBe(0);
+  });
+
   it("replaces pre-start point-read cache state at the hydration watermark", async () => {
     const core = new FakeCore();
     const cached = core.upsertEntity(entity("asset-deleted-before-hydration"));
@@ -509,13 +525,13 @@ describe("AtlasClient sync: cache projection and reads", () => {
     }
   });
 
-  it("returns pure live cache snapshots after paginated hydration and deletes", async () => {
+  it("returns pure live cache snapshots after paginated hydration", async () => {
     const core = new FakeCore();
     core.fullLimitPerType = 1;
     const firstEntity = core.upsertEntity(entity("asset-snapshot-1"));
     const secondEntity = core.upsertEntity(entity("asset-snapshot-2"));
     const firstTask = core.upsertTask(task("task-snapshot-1", firstEntity.entity_id));
-    const deletedTask = core.upsertTask(task("task-snapshot-deleted", secondEntity.entity_id));
+    const secondTask = core.upsertTask(task("task-snapshot-2", secondEntity.entity_id));
     const cachedObject = core.upsertObject(object("object-snapshot"));
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, sync: "all", pollIntervalMs: 0 });
 
@@ -526,7 +542,7 @@ describe("AtlasClient sync: cache projection and reads", () => {
 
     expect(first).toEqual({
       entities: { [firstEntity.entity_id]: firstEntity, [secondEntity.entity_id]: secondEntity },
-      tasks: { [firstTask.task_id]: firstTask, [deletedTask.task_id]: deletedTask },
+      tasks: { [firstTask.task_id]: firstTask, [secondTask.task_id]: secondTask },
       objects: { [cachedObject.object_id]: { ...cachedObject, extra: {} } }
     });
     expect(second).toEqual(first);
@@ -542,16 +558,6 @@ describe("AtlasClient sync: cache projection and reads", () => {
     expect(second.entities[firstEntity.entity_id]).toEqual(firstEntity);
     expect(client.sync.snapshot().entities[firstEntity.entity_id]).toEqual(firstEntity);
     await expect(client.entities.get(firstEntity.entity_id)).resolves.toEqual(firstEntity);
-
-    core.deleteTask(deletedTask.task_id);
-    await client.changedSince();
-
-    const afterDelete = client.sync.snapshot();
-    expect(afterDelete).not.toBe(first);
-    expect(afterDelete.entities).toBe(first.entities);
-    expect(afterDelete.objects).toBe(first.objects);
-    expect(afterDelete.tasks).not.toBe(first.tasks);
-    expect(afterDelete.tasks).toEqual({ [firstTask.task_id]: firstTask });
   });
 
   it("uses one immutable resource value for cache reads and snapshots", () => {
@@ -632,7 +638,6 @@ describe("AtlasClient sync: cache projection and reads", () => {
 
   it("projects feed, recovery, remote-delete, and local-delete changes through snapshots", async () => {
     const core = new FakeCore();
-    const localTask = core.upsertTask(task("task-snapshot-local-delete", "asset-snapshot-feed"));
     const client = new AtlasClient({
       baseUrl: "http://atlas.test",
       fetch: core.fetch,
@@ -668,9 +673,6 @@ describe("AtlasClient sync: cache projection and reads", () => {
     core.deleteEntity(fedEntity.entity_id);
     await client.changedSince();
     expect(client.sync.snapshot().entities).not.toHaveProperty(fedEntity.entity_id);
-
-    await client.tasks.delete(localTask.task_id);
-    expect(client.sync.snapshot().tasks).not.toHaveProperty(localTask.task_id);
   });
 
   it("does not let a stale write response regress a newer cached resource", async () => {
@@ -713,7 +715,102 @@ describe("AtlasClient sync: cache projection and reads", () => {
     expect(client.sync.snapshot().entities[original.entity_id]).toEqual(newer);
   });
 
-  it("keeps cached previous values intact for tasks-for-entity routing", async () => {
+  it("does not let a delayed Task response regress a newer feed state", async () => {
+    const core = new FakeCore();
+    let releaseCreate!: (response: Response) => void;
+    let createResponse: Response | undefined;
+    const delayedCreate = new Promise<Response>((resolve) => {
+      releaseCreate = resolve;
+    });
+    const fetchImpl: typeof fetch = async (url, init) => {
+      const parsed = new URL(String(url));
+      if (parsed.pathname === "/tasks" && init?.method === "POST") {
+        createResponse = await core.fetch(String(url), init);
+        return delayedCreate;
+      }
+      return core.fetch(String(url), init);
+    };
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: fetchImpl,
+      WebSocket: core.attachWebSocketGlobal(),
+      sync: "all",
+      pollIntervalMs: 0
+    });
+    await client.sync.start();
+
+    const create = client.tasks.create(
+      { asset_id: "asset-task-response-race", command: "fixture.queued", input: {} },
+      { idempotencyKey: "task-response-race" }
+    );
+    await vi.waitFor(() => expect(core.tasks.size).toBe(1));
+    const pending = [...core.tasks.values()][0];
+    const progressed = core.updateTask(pending.task_id, { status: "in_progress", started_at: pending.updated_at });
+    core.emit(
+      {
+        event: "update",
+        resource_type: "task",
+        id: progressed.task_id,
+        version: progressed.metadata.version,
+        resource: progressed
+      },
+      { record: false }
+    );
+    await vi.waitFor(() => expect(client.sync.snapshot().tasks[progressed.task_id]).toEqual(progressed));
+
+    if (!createResponse) throw new Error("fake Core did not produce the delayed Task response");
+    releaseCreate(createResponse);
+    await expect(create).resolves.toMatchObject({ task_id: progressed.task_id, status: "pending" });
+    expect(client.sync.snapshot().tasks[progressed.task_id]).toEqual(progressed);
+  });
+
+  it("does not let a stale fresh Task read regress a newer feed state", async () => {
+    const core = new FakeCore();
+    const pending = core.upsertTask(task("task-read-response-race", "asset-task-response-race"));
+    let releaseRead!: (response: Response) => void;
+    let readResponse: Response | undefined;
+    const delayedRead = new Promise<Response>((resolve) => {
+      releaseRead = resolve;
+    });
+    const fetchImpl: typeof fetch = async (url, init) => {
+      const parsed = new URL(String(url));
+      if (parsed.pathname === `/tasks/${pending.task_id}` && init?.method === "GET") {
+        readResponse = await core.fetch(String(url), init);
+        return delayedRead;
+      }
+      return core.fetch(String(url), init);
+    };
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: fetchImpl,
+      WebSocket: core.attachWebSocketGlobal(),
+      sync: "all",
+      pollIntervalMs: 0
+    });
+    await client.sync.start();
+
+    const read = client.tasks.get(pending.task_id, { fresh: true });
+    await vi.waitFor(() => expect(readResponse).toBeDefined());
+    const progressed = core.updateTask(pending.task_id, { status: "in_progress", started_at: pending.updated_at });
+    core.emit(
+      {
+        event: "update",
+        resource_type: "task",
+        id: progressed.task_id,
+        version: progressed.metadata.version,
+        resource: progressed
+      },
+      { record: false }
+    );
+    await vi.waitFor(() => expect(client.sync.snapshot().tasks[progressed.task_id]).toEqual(progressed));
+
+    if (!readResponse) throw new Error("fake Core did not produce the delayed Task read response");
+    releaseRead(readResponse);
+    await expect(read).resolves.toMatchObject({ task_id: pending.task_id, status: "pending" });
+    expect(client.sync.snapshot().tasks[progressed.task_id]).toEqual(progressed);
+  });
+
+  it("routes immutable Task updates by asset without exposing cached mutations", async () => {
     const core = new FakeCore();
     const original = core.upsertTask(task("task-owned-previous", "asset-old"));
     const client = new AtlasClient({
@@ -725,28 +822,28 @@ describe("AtlasClient sync: cache projection and reads", () => {
     });
     await client.sync.start();
     const cached = await client.tasks.get(original.task_id);
-    Reflect.set(cached, "entity_id", "asset-caller-mutation");
+    Reflect.set(cached, "asset_id", "asset-caller-mutation");
     const watch = vi.fn();
-    client.watch({ filter: "tasks_for_entity", entity_id: "asset-old" }, watch);
+    client.watch({ filter: "tasks_for_asset", asset_id: "asset-old" }, watch);
 
-    const reassigned = core.upsertTask({ ...original, entity_id: "asset-new" });
+    const progressed = core.upsertTask({ ...original, status: "in_progress", progress: 0.5 });
     core.emit(
       {
         event: "update",
         resource_type: "task",
-        id: reassigned.task_id,
-        version: reassigned.metadata.version,
-        resource: reassigned
+        id: progressed.task_id,
+        version: progressed.metadata.version,
+        resource: progressed
       },
       { record: false }
     );
 
     await vi.waitFor(() => {
       expect(watch).toHaveBeenCalledWith(
-        reassigned,
-        expect.objectContaining({ event: "update", id: reassigned.task_id })
+        progressed,
+        expect.objectContaining({ event: "update", id: progressed.task_id })
       );
     });
-    expect(client.sync.snapshot().tasks[original.task_id].entity_id).toBe("asset-new");
+    expect(client.sync.snapshot().tasks[original.task_id].asset_id).toBe("asset-old");
   });
 });

@@ -90,7 +90,7 @@ On process startup, the Asset runtime generates a fresh `runtime_id` and begins 
 POST /entities/{asset_id}/runtime
 ```
 
-Core atomically records the new runtime, fences the previous runtime, and fails its nonterminal Tasks with `asset_restarted`. The new runtime is not ready and receives no work.
+Core first records the new runtime as unready, so the previous process is fenced without holding one transaction across its entire Task backlog. It then fails the previous runtime's nonterminal Tasks with `asset_restarted` in committed batches of 100. An exact repeated Begin continues an interrupted drain. The new runtime receives no work, and Ready rejects until no stale nonterminal Task remains.
 
 The runtime then calls `establishSafeState` on every registered execution module. After they all succeed, it submits the fixed Command Manifest:
 
@@ -99,6 +99,14 @@ POST /entities/{asset_id}/runtime/ready
 ```
 
 Core accepts the ready transition only for the current `runtime_id`. Repeating either registration call with the same data is idempotent. An old process cannot become current again after a newer runtime has registered. Registration stores the manifest and exposes it read-only in Asset details; the initial empty catalog permits only an empty manifest.
+
+Deliberate process shutdown uses:
+
+```text
+POST /entities/{asset_id}/runtime/stop
+```
+
+A matching stop clears readiness and the manifest, publishes the Asset change, and fails that runtime's nonterminal Tasks with `asset_stopped` through the same committed batch drain. Missing and stale runtime IDs are successful no-ops, so a delayed shutdown cannot deactivate a newer process.
 
 A WebSocket reconnect keeps the same runtime and uses feed recovery. It does not repeat process registration, clear the local queue, or establish safe state again.
 
@@ -150,11 +158,11 @@ Replace generic Task patching with the six explicit routes from the target-state
 
 Each operation locks the Task and current runtime state, validates the transition, writes its timestamp and data, records the feed event, and commits once. The first valid terminal operation wins. A repeated identical operation returns the current Task; a conflicting repeat is rejected.
 
-Core validates output before completion. Invalid output cannot partially complete a Task. Progress is stored from `0` to `1`, is accepted only while `in_progress`, requires manifest support, and never decreases.
+Core validates output before completion. Invalid output atomically fails the Task with `invalid_output`; it cannot partially complete or leave the runtime retrying a deterministic rejection. Progress is stored from `0` to `1`, is accepted only while `in_progress`, requires manifest support, and never decreases.
 
 ### Scheduling and delivery
 
-Preserve the general resource feed for operator clients. Add a runtime-scoped Task delivery adapter around the existing WebSocket and recovery machinery.
+Preserve the general resource feed for operator clients. Add a runtime-scoped Task delivery endpoint for Asset runtimes.
 
 The runtime-scoped adapter asks the Task module for eligible work. It does not forward every pending Task merely because a feed event exists. This lets Core enforce:
 
@@ -167,7 +175,9 @@ The runtime-scoped adapter asks the Task module for eligible work. It does not f
 
 An in-process Core timeout worker fails immediate Tasks that have not started before the 60-second deadline. It also reconciles overdue Tasks at startup before any delivery occurs. It is a small timer and database query, not a second job or message-queue system.
 
-The Asset runtime stops requesting pending Tasks through periodic Entity check-in. Check-in remains for telemetry and observed state. Task delivery is push-driven, and feed recovery reconciles missed changes from Core's authoritative records.
+The Asset runtime stops requesting pending Tasks through periodic Entity check-in. Check-in remains for telemetry and observed state. Independent five-second loops poll runtime-scoped delivery and reconcile accepted Task status with at most eight concurrent reads. A failed status read is isolated from the others, and slow reconciliation cannot delay new delivery.
+
+Delivered immediate work is processed before queued acknowledgement. Queued Tasks enter a provisional local queue in authoritative `created_at`, `task_id` order before acknowledgement, so an ambiguous acknowledgement cannot drop or reorder work. The runtime confirms Start before calling the physical handler. Exact idempotent lifecycle writes retry after transport failures, HTTP 408, 429, and server errors; permanent responses are reconciled against a fresh authoritative Task. Startup uncertainty after runtime allocation is compensated through the exact runtime-stop request.
 
 ### Empty production catalog
 
@@ -233,7 +243,7 @@ Own this phase in `atlas_core/internal/api/`, `atlas_core/internal/feed/`, and `
 3. Require and validate `Idempotency-Key` on creation.
 4. Require current runtime context on Asset lifecycle operations.
 5. Serve the generated Protocol catalog from the existing read-only catalog endpoint.
-6. Add runtime-scoped delivery and reconnect reconciliation around the feed.
+6. Add runtime-scoped delivery polling and independent accepted-Task reconciliation.
 7. Add the immediate-deadline timeout worker and startup reconciliation.
 8. Remove pending-Task delivery from Entity check-in while retaining telemetry behavior.
 9. Remove `atlas_core/command_catalog/` and its duplicate coercion rules.
@@ -242,7 +252,7 @@ Exit gate:
 
 - handler integration tests use fixture Commands to prove request validation and resulting Task resources for every route
 - a stale runtime cannot acknowledge, start, progress, or finish a Task
-- transport reconnect does not create a new runtime or reorder work
+- delivery retries do not create a new runtime or reorder work
 - Core restart fails overdue immediate work before it can be delivered
 - the production catalog endpoint returns `[]` and production Task creation rejects every Command
 
@@ -258,13 +268,13 @@ Own this phase in `atlas_sdk/` and `atlas_asset_runtime/`.
 6. Require a Protocol-valid manifest entry and handler for every advertised Command; the initial production runtime can publish only an empty manifest.
 7. Run the safety barrier before marking a runtime ready.
 8. Maintain one local queued executor plus independently abortable immediate executions.
-9. Start, progress, complete, and fail work only through the explicit lifecycle methods; abort execution locally when cancellation is delivered.
-10. Apply cancellation changes from runtime-scoped delivery immediately.
+9. Start, progress, complete, and fail work only through the explicit lifecycle methods.
+10. Apply cancellation changes from runtime-scoped delivery immediately by aborting the matching local handler signal. There is no separate runtime abort endpoint.
 11. Remove periodic Task polling and the old `setStatus` behavior.
 
 Exit gate:
 
-- SDK request conformance tests cover every new request shape and header
+- SDK wire tests cover every new request shape and header
 - runtime tests use fixture Commands to cover queue order, immediate overlap, cancellation, progress, restart fencing, and failed safe-state establishment
 - packed consumer checks prove the public SDK and runtime exports work outside the monorepo
 

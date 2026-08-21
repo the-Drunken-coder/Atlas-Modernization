@@ -27,7 +27,7 @@ console.log(ATLAS_PROTOCOL_REVISION, entity);
 
 Protocol resource, request, and response types; generated runtime predicates; `RESOURCE_TYPE_VALUES`; and `ATLAS_PROTOCOL_REVISION` are public from the package root. The client checks that revision against Atlas Core before normal API use. Generated predicates enforce inbound wire structure, while the SDK adds identity, ownership, count, pagination, version, and ordering coherence where those rules depend on request context.
 
-`client.entities.checkIn(id, { fields: "minimal" })` returns `EntityCheckInMinimalResponse`; the full/default form returns `EntityCheckInFullResponse`; and an unresolved options union returns the generated non-generic `EntityCheckInResponse` union.
+`client.entities.checkIn(id, { fields: "minimal" })` returns `EntityCheckInMinimalResponse`; the full/default form returns `EntityCheckInFullResponse`; and an unresolved options union returns the generated non-generic `EntityCheckInResponse` union. Handshake and check-in options accept an `AbortSignal` for caller-owned lifecycle cancellation.
 
 ## Admin client
 
@@ -48,7 +48,9 @@ The admin entry point covers operator sessions and managed API keys. Admin recor
 
 ```bash
 atlas --base-url http://127.0.0.1:8000 --api-key "$ATLAS_API_KEY" entities get asset-1
-atlas --base-url http://127.0.0.1:8000 tasks create '{"task_id":"task-1"}'
+atlas --base-url http://127.0.0.1:8000 tasks create \
+  '{"asset_id":"asset-1","command":"example.inspect","input":{}}' \
+  --idempotency-key tasking-attempt-1
 atlas --base-url http://127.0.0.1:8000 watch --subscribe all --follow
 ```
 

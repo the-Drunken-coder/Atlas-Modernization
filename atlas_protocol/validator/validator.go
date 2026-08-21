@@ -38,10 +38,6 @@ func ValidateEntityBlob(value any) []string {
 	return validate("EntityBlob", value)
 }
 
-func ValidateTaskBlob(value any) []string {
-	return validate("TaskBlob", value)
-}
-
 func ValidateObjectBlob(value any) []string {
 	return validate("ObjectBlob", value)
 }
@@ -72,10 +68,6 @@ func ValidateProtocolRevisionResponse(value any) []string {
 
 func ValidateEntityCheckInRequest(value any) []string {
 	return validate("EntityCheckInRequest", value)
-}
-
-func ValidateEntityCheckInMinimalTask(value any) []string {
-	return validate("EntityCheckInMinimalTask", value)
 }
 
 func ValidateEntityCheckInFullResponse(value any) []string {
@@ -110,8 +102,44 @@ func ValidateTaskCreateRequest(value any) []string {
 	return validate("TaskCreateRequest", value)
 }
 
-func ValidateTaskUpdateRequest(value any) []string {
-	return validate("TaskUpdateRequest", value)
+func ValidateTaskAcknowledgeRequest(value any) []string {
+	return validate("TaskAcknowledgeRequest", value)
+}
+
+func ValidateTaskStartRequest(value any) []string {
+	return validate("TaskStartRequest", value)
+}
+
+func ValidateTaskProgressRequest(value any) []string {
+	return validate("TaskProgressRequest", value)
+}
+
+func ValidateTaskCompleteRequest(value any) []string {
+	return validate("TaskCompleteRequest", value)
+}
+
+func ValidateTaskFailRequest(value any) []string {
+	return validate("TaskFailRequest", value)
+}
+
+func ValidateTaskCancelRequest(value any) []string {
+	return validate("TaskCancelRequest", value)
+}
+
+func ValidateRuntimeRegistrationRequest(value any) []string {
+	return validate("RuntimeRegistrationRequest", value)
+}
+
+func ValidateRuntimeStopRequest(value any) []string {
+	return validate("RuntimeStopRequest", value)
+}
+
+func ValidateRuntimeReadyRequest(value any) []string {
+	return validate("RuntimeReadyRequest", value)
+}
+
+func ValidateRuntimeTaskDeliveryResponse(value any) []string {
+	return validate("RuntimeTaskDeliveryResponse", value)
 }
 
 func ValidateObjectCreateRequest(value any) []string {
@@ -123,8 +151,7 @@ func ValidateObjectUpdateRequest(value any) []string {
 }
 
 func ValidateFeedEvent(value any) []string {
-	errors := validate("FeedEvent", value)
-	return appendFeedEventContextErrors(errors, value)
+	return validate("FeedEvent", value)
 }
 
 func ValidateFeedAuthMessage(value any) []string {
@@ -155,35 +182,8 @@ func ValidateFeedSubscriptionsReadyMessage(value any) []string {
 	return validate("FeedSubscriptionsReadyMessage", value)
 }
 
-func appendFeedEventContextErrors(errors []string, value any) []string {
-	payload, ok := valueAsMap(value)
-	if !ok || payload["resource_type"] != "task" {
-		return errors
-	}
-	if payload["event"] == "delete" {
-		rawEntityID, exists := payload["entity_id"]
-		if exists && rawEntityID != nil {
-			entityID, ok := rawEntityID.(string)
-			if !ok || strings.TrimSpace(entityID) == "" {
-				errors = append(errors, "entity_id, if present and not null, must be a non-empty string after trimming whitespace for task delete feed events")
-			}
-		}
-	}
-	if payload["event"] == "update" {
-		rawPreviousEntityID, exists := payload["previous_entity_id"]
-		if exists && rawPreviousEntityID != nil {
-			previousEntityID, ok := rawPreviousEntityID.(string)
-			if !ok || strings.TrimSpace(previousEntityID) == "" {
-				errors = append(errors, "previous_entity_id, if present and not null, must be a non-empty string after trimming whitespace for task update feed events")
-			}
-		}
-	}
-	sort.Strings(errors)
-	return errors
-}
-
-func valueAsMap(value any) (map[string]any, bool) {
-	if payload, ok := value.(map[string]any); ok {
+func valueAsSlice(value any) ([]any, bool) {
+	if payload, ok := value.([]any); ok {
 		return payload, true
 	}
 	var data []byte
@@ -203,7 +203,7 @@ func valueAsMap(value any) (map[string]any, bool) {
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		return nil, false
 	}
-	payload, ok := decoded.(map[string]any)
+	payload, ok := decoded.([]any)
 	return payload, ok
 }
 
@@ -211,65 +211,34 @@ func ValidateEntityComponents(value any) []string {
 	return validate("EntityComponents", value)
 }
 
-func ValidateTaskComponents(value any) []string {
-	return validate("TaskComponents", value)
-}
-
-func ValidateCommandComponent(value any) []string {
-	return validate("CommandComponent", value)
-}
-
 func ValidateCommandCatalog(value any) []string {
 	errors := validate("CommandCatalog", value)
-	payload, ok := valueAsMap(value)
+	payload, ok := valueAsSlice(value)
 	if !ok {
 		return errors
 	}
-	commands, ok := payload["commands"].([]any)
-	if !ok {
-		return errors
-	}
-	seen := make(map[string]struct{}, len(commands))
-	for _, raw := range commands {
+	seen := make(map[string]struct{}, len(payload))
+	for _, raw := range payload {
 		command, ok := raw.(map[string]any)
 		if !ok {
 			continue
 		}
-		id, _ := command["id"].(string)
-		if _, duplicate := seen[id]; duplicate && id != "" {
-			errors = append(errors, fmt.Sprintf("command id %q is duplicated", id))
+		name, _ := command["command"].(string)
+		if _, duplicate := seen[name]; duplicate && name != "" {
+			errors = append(errors, fmt.Sprintf("command %q is duplicated", name))
 		}
-		seen[id] = struct{}{}
-		parameters, _ := command["parameters_schema"].(map[string]any)
-		for name, rawParameter := range parameters {
-			parameter, _ := rawParameter.(map[string]any)
-			parameterType, _ := parameter["type"].(string)
-			_, hasMinimum := parameter["minimum"]
-			_, hasMaximum := parameter["maximum"]
-			if parameterType != "number" && (hasMinimum || hasMaximum) {
-				errors = append(errors, fmt.Sprintf("command %q parameter %q bounds require number type", id, name))
-			}
-			minimum, minimumOK := numberAsFloat(parameter["minimum"])
-			maximum, maximumOK := numberAsFloat(parameter["maximum"])
-			if minimumOK && maximumOK && minimum > maximum {
-				errors = append(errors, fmt.Sprintf("command %q parameter %q minimum exceeds maximum", id, name))
-			}
-		}
+		seen[name] = struct{}{}
 	}
 	sort.Strings(errors)
 	return errors
 }
 
-func ValidateTaskParametersComponent(value any, fieldPrefix string) []string {
-	return prefixErrors(validate("TaskParametersComponent", value), fieldPrefix)
+func ValidateCommandManifest(value any) []string {
+	return validate("CommandManifest", value)
 }
 
-func ValidateTaskProgressComponent(value any) []string {
-	return validate("TaskProgressComponent", value)
-}
-
-func ValidateTaskCatalogComponent(value any) []string {
-	return validate("TaskCatalogComponent", value)
+func ValidateCommandManifestEntry(value any) []string {
+	return validate("CommandManifestEntry", value)
 }
 
 func ValidateMediaRefsComponent(value any) []string {
@@ -292,10 +261,6 @@ func ValidateCommunicationsComponent(value any) []string {
 	return validate("CommunicationsComponent", value)
 }
 
-func ValidateTaskQueueComponent(value any) []string {
-	return validate("TaskQueueComponent", value)
-}
-
 func ValidateStatusComponent(value any) []string {
 	return validate("StatusComponent", value)
 }
@@ -310,6 +275,13 @@ func ValidateTelemetryComponent(value any) []string {
 
 func ValidateGeometryComponent(value any) []string {
 	return validate("GeometryComponent", value)
+}
+
+// ValidateDefinition validates a value against one named definition in the
+// canonical Protocol bundle. Command input and output schema references use
+// this entry point after the catalog has resolved the definition name.
+func ValidateDefinition(definition string, value any) []string {
+	return validate(definition, value)
 }
 
 func validate(definition string, value any) []string {
@@ -362,22 +334,8 @@ func unknownComponentErrors(schema *compiledSchema, definition string, value any
 			return nil
 		}
 		return componentUnknowns(request["components"], schema.componentFields["EntityComponents"])
-	case "TaskBlob":
-		blob, ok := value.(map[string]any)
-		if !ok {
-			return nil
-		}
-		return componentUnknowns(blob["components"], schema.componentFields["TaskComponents"])
-	case "TaskCreateRequest", "TaskUpdateRequest":
-		request, ok := value.(map[string]any)
-		if !ok {
-			return nil
-		}
-		return componentUnknowns(request["components"], schema.componentFields["TaskComponents"])
 	case "EntityComponents":
 		return componentUnknowns(value, schema.componentFields["EntityComponents"])
-	case "TaskComponents":
-		return componentUnknowns(value, schema.componentFields["TaskComponents"])
 	default:
 		return nil
 	}
@@ -454,7 +412,7 @@ func schemaDefinitionLocation(definition string) string {
 }
 
 func schemaComponentFields(bundle map[string]any) (map[string]map[string]struct{}, error) {
-	definitions := []string{"EntityComponents", "TaskComponents"}
+	definitions := []string{"EntityComponents"}
 	componentFields := make(map[string]map[string]struct{}, len(definitions))
 	for _, definition := range definitions {
 		fields, err := concreteSchemaProperties(bundle, definition)
@@ -550,8 +508,6 @@ func prefixErrors(errors []string, fieldPrefix string) []string {
 		if message == "" {
 			continue
 		}
-		message = strings.TrimPrefix(message, "TaskParametersComponent.")
-		message = strings.TrimPrefix(message, "TaskParametersComponent")
 		prefixed = append(prefixed, fieldPrefix+"."+message)
 	}
 	return prefixed

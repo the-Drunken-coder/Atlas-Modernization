@@ -1,122 +1,52 @@
-# Task JSON Structure
+# Task storage
 
-_Revision: 2026-02-13_
-
-Tasks represent work items dispatched to entities. The `tasks` table stores promoted fields as
-columns and task-specific detail in the JSON blob.
+Tasks are immutable assignments with an explicit lifecycle. Atlas Core stores their public Protocol fields in dedicated columns plus validated JSON for input, output, failure, and cancellation. The table also stores the private idempotency key and bound runtime ID used for creation deduplication and execution fencing.
 
 Implementation references:
 
 - `internal/models/models.go`
-- `internal/actions/task_actions.go`
-- `internal/actions/component_validation.go`
+- `internal/actions/task_create.go`
+- `internal/actions/task_transition.go`
+- `internal/actions/task_runtime.go`
+- `internal/database/migrations.go`
 
-## Table Columns
+## Columns
 
-- `task_id` (`VARCHAR(50)`, primary key)
-- `status` (`VARCHAR(50)`, not null, default `pending`, indexed)
-- `entity_id` (`VARCHAR(50)`, nullable, indexed, FK to `entities.entity_id` with `ON DELETE SET NULL`)
-- `json` (`JSONB`, not null, default `{}`)
-- `created_at` (`TIMESTAMPTZ`, not null)
-- `updated_at` (`TIMESTAMPTZ`, not null)
-- `version` (`BIGINT`, not null): monotonic change version used for sync ordering and `metadata.version`
+- `task_id`: Core-generated primary key
+- `asset_id`: immutable target Asset ID; retained even if the Entity is later removed
+- `command`: immutable Protocol Command name
+- `input`: immutable validated JSON input
+- `status`: `pending`, `acknowledged`, `in_progress`, `completed`, `failed`, or `cancelled`
+- `progress`: optional monotonic value from `0` to `1`
+- `output`: optional validated terminal output
+- `failure`: optional structured terminal failure
+- `cancellation`: optional structured terminal cancellation
+- `created_at`, `acknowledged_at`, `started_at`, `finished_at`, `updated_at`: lifecycle timestamps
+- `idempotency_key`: private key for one tasking attempt
+- `runtime_id`: private current process fence bound to the Task
+- `version`: global feed change value
 
-## JSON Blob Shape
+`asset_id`, `command`, `input`, and the runtime binding never change after creation. The Task resource intentionally does not expose the private idempotency key, runtime binding, or a generic metadata blob.
 
-Typical `json` payload:
+## Creation and lifecycle
 
-```json
-{
-  "description": "Move to specified location",
-  "components": {
-    "command": {
-      "type": "move_to_location"
-    },
-    "parameters": {
-      "latitude": 40.123,
-      "longitude": -74.456,
-      "altitude_m": 120
-    },
-    "progress": {
-      "percent": 65,
-      "updated_at": "2026-05-29T10:00:00Z",
-      "status_detail": "En route to destination"
-    }
-  },
-  "created_by": "controller-001"
-}
-```
+`POST /tasks` accepts only `asset_id`, `command`, and `input` and requires `Idempotency-Key`. Core validates the generated Command Catalog, the current ready runtime's Command Manifest, and the Command input before inserting anything. Repeating the same key and request returns the original Task; reusing the key with different tasking data is a conflict.
 
-Promoted fields (`task_id`, `status`, `entity_id`) are not stored in this blob.
+Generic Task patching and deletion do not exist. Lifecycle changes use the named routes:
 
-## Supported Task Components
+- `POST /tasks/{task_id}/acknowledge`
+- `POST /tasks/{task_id}/start`
+- `POST /tasks/{task_id}/progress`
+- `POST /tasks/{task_id}/complete`
+- `POST /tasks/{task_id}/fail`
+- `POST /tasks/{task_id}/cancel`
 
-Known task components:
+The current Asset runtime supplies `Atlas-Runtime-ID` for acknowledge, start, progress, complete, and fail. Operator cancellation does not use runtime context. Every accepted transition and its feed event commit together. Identical repeats are idempotent; the first accepted terminal transition wins.
 
-- `command`
-- `parameters`
-- `target` (optional location/object parameters, same lat/long rules as `parameters`)
-- `progress`
-- `status_message` (string)
-- `custom_*` keys (extension namespace)
+## Runtime state
 
-Validation highlights:
+`asset_runtimes` stores the current runtime ID, readiness, and fixed Command Manifest for each Asset. Beginning a new registration fences the previous runtime and fails its nonterminal Tasks with `asset_restarted`. Only the current ready runtime can receive work or make Asset-side lifecycle changes. Asset responses expose the current ready manifest read-only as `command_manifest`.
 
-- `command.type`: required non-empty string; `command` must be an object
-- `command.target`: optional arbitrary JSON value on command object
-- `command.parameters`: optional arbitrary JSON value on command object
-- `parameters.latitude` / `target.latitude`: finite number in `[-90, 90]` if provided
-- `parameters.longitude` / `target.longitude`: finite number in `[-180, 180]` if provided
-- `progress.percent`: finite number in `[0, 100]` if provided
-- `progress.updated_at`: RFC3339 timestamp if provided
-- `status_message`: string when present
+## Migration safety
 
-## Status Semantics
-
-The service defaults new tasks to `pending` when status is omitted. New tasks
-must start as `pending`; `POST /tasks` rejects `acknowledged`, `completed`,
-`failed`, and `cancelled` as initial statuses.
-
-Common statuses used by API helpers are:
-
-- `pending`
-- `acknowledged`
-- `completed`
-- `failed`
-- `cancelled`
-
-Task create and update trim and lowercase status values, then reject anything outside the list above.
-
-Allowed transitions:
-
-- `pending` -> `acknowledged`, `completed`, `failed`, or `cancelled`
-- `acknowledged` -> `completed`, `failed`, or `cancelled`
-- `completed`, `failed`, and `cancelled` are terminal states
-
-Sending the current status again is treated as a no-op status transition.
-
-## Task Endpoints
-
-| Endpoint | Method | Effect |
-| --- | --- | --- |
-| `/tasks` | `GET` | List tasks (paginated) |
-| `/tasks` | `POST` | Create task |
-| `/tasks/{task_id}` | `GET` | Fetch task |
-| `/tasks/{task_id}` | `PATCH` | Merge task update |
-| `/tasks/{task_id}` | `DELETE` | Delete task |
-| `/entities/{entity_id}/tasks` | `GET` | List tasks for entity (paginated) |
-
-`PATCH /tasks/{task_id}` accepts `status`, `entity_id`, `components`, `extra`,
-and `remove_extra_keys`. `extra` merges JSON keys and preserves explicit `null`
-values. Omitting `entity_id` preserves the current link, explicit `null` unlinks
-the task, and a non-empty string assigns it to that entity. `remove_extra_keys`
-removes specified top-level keys from the task's `extra` object. When the same
-key appears in both `remove_extra_keys` and
-`extra`, the `extra` value wins, so the key is atomically updated rather than
-removed. Protected task fields such as `components`, `status`, `entity_id`, and
-`version` are never removed by `remove_extra_keys`.
-
-## Limits
-
-- Task create/update handler bodies are capped at `512 KB`.
-- Pagination defaults to `limit=100`; `cursor` continues keyset pages; limit is clamped to max `500`.
+The direct-cutover migration rebuilds the legacy Task table only when it is empty. It refuses to proceed when old Task rows exist so retained data is never discarded or guessed into the new contract. Development scratch data may be reset through the documented database workflow.

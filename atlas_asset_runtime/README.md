@@ -1,31 +1,53 @@
 # Atlas Asset Runtime
 
-A small Node.js runtime for Atlas assets. It reports asset state through compact check-ins, dispatches pending commands sequentially, and records task outcomes through the Atlas SDK.
+A small Node.js runtime for Atlas Assets. It registers a fresh process with Core, establishes safe state, publishes a fixed Command Manifest, consumes runtime-scoped Task delivery, and records lifecycle changes through the Atlas SDK.
 
 ```ts
-import { AtlasClient } from "@the-drunken-coder/atlas-sdk";
 import { AtlasAssetRuntime } from "@the-drunken-coder/atlas-asset-runtime";
+import { AtlasClient, type CommandManifest } from "@the-drunken-coder/atlas-sdk";
 
-const client = new AtlasClient({ baseUrl: "http://127.0.0.1:8000" });
+const client = new AtlasClient({
+  baseUrl: "http://127.0.0.1:8000",
+  apiKey: process.env.ATLAS_API_KEY
+});
+
+const manifest: CommandManifest = [
+  {
+    command: "example.inspect",
+    description: "Inspect the current location with the onboard sensor.",
+    scheduling: "queued",
+    supports_cancel: true,
+    supports_progress: true
+  }
+];
+
 const runtime = new AtlasAssetRuntime(client, {
   entityId: "asset-1",
+  manifest,
   handlers: {
-    move: async ({ task, signal, reportProgress }) => {
-      await reportProgress(50, "moving");
-      if (signal.aborted) return;
-      return { destination: task.parameters ?? {} };
+    "example.inspect": async ({ signal, reportProgress }) => {
+      signal.throwIfAborted();
+      await reportProgress(0.5);
+      return { observations: 3 };
     }
   },
-  checkIn: () => ({ status: "ready" })
+  checkIn: ({ signal }) => {
+    signal.throwIfAborted();
+    return {
+      status: "online",
+      telemetry: { latitude: 38.8977, longitude: -77.0365 }
+    };
+  },
+  onError: console.error
 });
 
 await runtime.start();
 ```
 
-`start()` resolves after the protocol handshake and first complete check-in cycle. Later cycles run in the background. `checkIn()` can run a full cycle manually. `stop()` prevents future background cycles, signals an active background handler, and waits for all in-flight work to settle; it cannot interrupt an SDK request already in progress.
+`start()` completes the Protocol handshake, creates a new runtime ID, runs each execution module's safety barrier, and publishes the manifest as its final startup step. The running process polls only its runtime delivery endpoint and accepted Task IDs, so it does not hydrate the global Atlas dataset. If startup becomes uncertain after registration, the runtime asks Core to deactivate the allocated runtime ID before returning the startup error. `stop()` aborts local handlers, waits for in-flight work to settle, and then deactivates that runtime in Core. Local state always reaches `stopped`; the returned promise rejects when Core deactivation could not be confirmed.
 
-When no handlers are registered, the runtime is telemetry-only and does not mutate tasks returned by check-in.
+Queued Commands enter an authoritatively sorted provisional queue before acknowledgement and use one serial executor. Immediate Commands start independently and are processed before queued acknowledgements. The runtime confirms Start before invoking a physical handler. It retries exact idempotent lifecycle writes after transport failures, HTTP 408, 429, and server errors, then consults the authoritative Task after permanent responses. The five-second runtime reconciliation reads accepted Tasks eight at a time, catches new immediate work inside Core's start window, and aborts a matching handler when Core reports a terminal Task, including cancellation and runtime fencing. Handlers and check-in report callbacks must observe their signal, finish any physical cleanup, and settle; `stop()` waits for them before another runtime can start. Throw `AssetTaskFailure("precondition_failed", message)` when a physical or operational precondition prevents execution. Other handler errors become `execution_failed`. Check-in reports telemetry and observed state only. It never carries or retrieves Tasks.
 
-The runtime deliberately does not provide plugins, deployment tooling, durable offline writes, or exact-once execution. A process failure after task acknowledgement can leave that task acknowledged without completing it; callers must design physical commands with that boundary in mind.
+An Asset with an empty manifest and no handlers is telemetry-only. The runtime does not provide plugins, deployment tooling, durable offline writes, or exact-once execution. See [`docs/atlas-asset-runtime/`](../docs/atlas-asset-runtime/) for the full lifecycle and safety contract.
 
 The package is configured for public npm access but is not published automatically. Publish its pinned `@the-drunken-coder/atlas-sdk@0.1.0` dependency before publishing runtime version `0.1.0`.

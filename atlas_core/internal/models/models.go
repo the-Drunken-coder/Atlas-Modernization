@@ -171,46 +171,25 @@ func (e *Entity) GetExtra() map[string]interface{} {
 	)
 }
 
-// Task represents a task assigned to an entity.
+// Task is the immutable tasking request plus its explicit lifecycle state.
 type Task struct {
-	TaskID    string          `json:"task_id" db:"task_id"`
-	Status    string          `json:"status" db:"status"`
-	EntityID  *string         `json:"entity_id,omitempty" db:"entity_id"`
-	JSON      json.RawMessage `json:"-" db:"json"`
-	CreatedAt time.Time       `json:"created_at" db:"created_at"`
-	UpdatedAt time.Time       `json:"updated_at" db:"updated_at"`
-	Version   int64           `json:"version" db:"version"`
-
-	jsonCache jsonBlobCache
-}
-
-func (t *Task) decodedJSON() map[string]interface{} {
-	return t.jsonCache.decoded(t.JSON, "task_id", t.TaskID, "task")
-}
-
-// DecodedJSON returns a deep copy of the task JSON blob.
-func (t *Task) DecodedJSON() map[string]interface{} {
-	return t.decodedJSON()
-}
-
-// GetComponents returns the components from the JSON blob.
-func (t *Task) GetComponents() map[string]interface{} {
-	data := t.decodedJSON()
-	if data == nil {
-		return nil
-	}
-	if components, ok := data["components"].(map[string]interface{}); ok {
-		return components
-	}
-	return nil
-}
-
-// GetExtra returns extra fields from the JSON blob (excluding promoted fields).
-func (t *Task) GetExtra() map[string]interface{} {
-	return jsonFieldsExcept(t.decodedJSON(),
-		"components", "status", "entity_id", "task_id",
-		"object_id", "created_at", "updated_at", "version",
-	)
+	TaskID         string          `json:"task_id" db:"task_id"`
+	AssetID        string          `json:"asset_id" db:"asset_id"`
+	Command        string          `json:"command" db:"command"`
+	Input          json.RawMessage `json:"input" db:"input"`
+	Status         string          `json:"status" db:"status"`
+	Progress       *float64        `json:"progress,omitempty" db:"progress"`
+	Output         json.RawMessage `json:"output,omitempty" db:"output"`
+	Failure        json.RawMessage `json:"failure,omitempty" db:"failure"`
+	Cancellation   json.RawMessage `json:"cancellation,omitempty" db:"cancellation"`
+	IdempotencyKey string          `json:"-" db:"idempotency_key"`
+	RuntimeID      string          `json:"-" db:"runtime_id"`
+	CreatedAt      time.Time       `json:"created_at" db:"created_at"`
+	AcknowledgedAt *time.Time      `json:"acknowledged_at,omitempty" db:"acknowledged_at"`
+	StartedAt      *time.Time      `json:"started_at,omitempty" db:"started_at"`
+	FinishedAt     *time.Time      `json:"finished_at,omitempty" db:"finished_at"`
+	UpdatedAt      time.Time       `json:"updated_at" db:"updated_at"`
+	Version        int64           `json:"-" db:"version"`
 }
 
 // MediaObject represents a stored object/file.

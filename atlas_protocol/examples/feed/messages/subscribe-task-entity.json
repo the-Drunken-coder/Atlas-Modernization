@@ -1,5 +1,0 @@
-{
-  "action": "subscribe",
-  "filter": "tasks_for_entity",
-  "entity_id": "asset-1"
-}

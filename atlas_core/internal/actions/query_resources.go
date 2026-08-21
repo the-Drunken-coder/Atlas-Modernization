@@ -93,7 +93,7 @@ func queryTasksByEntity(
 		continuation:       continuation,
 		cursor:             cursor,
 		fetchLimit:         limit + 1,
-		eqFilter:           &cursorPageEqFilter{column: "entity_id", value: entityID},
+		eqFilter:           &cursorPageEqFilter{column: "asset_id", value: entityID},
 	})
 	if err != nil {
 		return nil, false, fmt.Errorf("failed to query tasks by entity: %w", err)

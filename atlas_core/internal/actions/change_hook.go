@@ -1,9 +1,11 @@
 package actions
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/models"
@@ -33,20 +35,16 @@ type ResourceChange struct {
 	ID           string
 	Version      int64
 
-	BeforeEntity *models.Entity
-	AfterEntity  *models.Entity
-	BeforeTask   *models.Task
-	AfterTask    *models.Task
-	BeforeObject *models.MediaObject
-	AfterObject  *models.MediaObject
+	AfterEntity *models.Entity
+	AfterTask   *models.Task
+	AfterObject *models.MediaObject
 }
 
 // ChangeRecord is the durable event plus task routing context used by feed
 // subscriptions. Event is the canonical recovery payload.
 type ChangeRecord struct {
-	Event              protocol.FeedEvent
-	BeforeTaskEntityID string
-	AfterTaskEntityID  string
+	Event       protocol.FeedEvent
+	TaskAssetID string
 }
 
 func cloneRawMessage(raw []byte) []byte {
@@ -85,14 +83,29 @@ func cloneTaskModel(task *models.Task) *models.Task {
 		return nil
 	}
 	return &models.Task{
-		TaskID:    task.TaskID,
-		Status:    task.Status,
-		EntityID:  cloneStringPointer(task.EntityID),
-		JSON:      cloneRawMessage(task.JSON),
-		CreatedAt: task.CreatedAt,
-		UpdatedAt: task.UpdatedAt,
-		Version:   task.Version,
+		TaskID: task.TaskID, AssetID: task.AssetID, Command: task.Command,
+		Input: cloneRawMessage(task.Input), Status: task.Status, Progress: cloneFloatPointer(task.Progress),
+		Output: cloneRawMessage(task.Output), Failure: cloneRawMessage(task.Failure), Cancellation: cloneRawMessage(task.Cancellation),
+		IdempotencyKey: task.IdempotencyKey, RuntimeID: task.RuntimeID,
+		CreatedAt: task.CreatedAt, AcknowledgedAt: cloneTimePointer(task.AcknowledgedAt), StartedAt: cloneTimePointer(task.StartedAt),
+		FinishedAt: cloneTimePointer(task.FinishedAt), UpdatedAt: task.UpdatedAt, Version: task.Version,
 	}
+}
+
+func cloneFloatPointer(value *float64) *float64 {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
+}
+
+func cloneTimePointer(value *time.Time) *time.Time {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
 }
 
 func cloneObjectModel(object *models.MediaObject) *models.MediaObject {
@@ -128,19 +141,14 @@ func resourceChangeRecord(change ResourceChange) (ChangeRecord, error) {
 			event.Resource = serializers.SerializeEntity(change.AfterEntity)
 		}
 	case ChangeResourceTask:
-		record.BeforeTaskEntityID = taskEntityID(change.BeforeTask)
-		record.AfterTaskEntityID = taskEntityID(change.AfterTask)
-		if change.Event == ChangeEventUpdate {
-			event.PreviousEntityID = taskEntityIDPointer(change.BeforeTask)
-		}
 		if change.Event == ChangeEventDelete {
-			event.EntityID = taskEntityIDPointer(change.BeforeTask)
-		} else {
-			if change.AfterTask == nil {
-				return ChangeRecord{}, fmt.Errorf("task %s event missing after state", change.Event)
-			}
-			event.Resource = serializers.SerializeTask(change.AfterTask)
+			return ChangeRecord{}, fmt.Errorf("task delete events are not supported")
 		}
+		if change.AfterTask == nil {
+			return ChangeRecord{}, fmt.Errorf("task %s event missing after state", change.Event)
+		}
+		record.TaskAssetID = change.AfterTask.AssetID
+		event.Resource = serializers.SerializeTask(change.AfterTask)
 	case ChangeResourceObject:
 		if change.Event != ChangeEventDelete {
 			if change.AfterObject == nil {
@@ -153,20 +161,6 @@ func resourceChangeRecord(change ResourceChange) (ChangeRecord, error) {
 	}
 	record.Event = event
 	return record, nil
-}
-
-func taskEntityID(task *models.Task) string {
-	if task == nil || task.EntityID == nil {
-		return ""
-	}
-	return *task.EntityID
-}
-
-func taskEntityIDPointer(task *models.Task) *string {
-	if task == nil {
-		return nil
-	}
-	return cloneStringPointer(task.EntityID)
 }
 
 // RecordResourceChange inserts the complete protocol event before its resource
@@ -182,9 +176,9 @@ func RecordResourceChange(ctx context.Context, tx pgx.Tx, change ResourceChange)
 		return fmt.Errorf("marshal change event: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO atlas_change_events (version, event, before_task_entity_id, after_task_entity_id)
-		VALUES ($1, $2, NULLIF($3, ''), NULLIF($4, ''))
-	`, change.Version, payload, record.BeforeTaskEntityID, record.AfterTaskEntityID); err != nil {
+		INSERT INTO atlas_change_events (version, event, task_asset_id)
+		VALUES ($1, $2, NULLIF($3, ''))
+	`, change.Version, payload, record.TaskAssetID); err != nil {
 		return fmt.Errorf("record change event: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `SELECT pg_notify('atlas_change_events', $1)`, fmt.Sprint(change.Version)); err != nil {
@@ -203,7 +197,7 @@ func ReadChangeRecords(ctx context.Context, db changeRecordQuerier, afterVersion
 		return nil, false, fmt.Errorf("change record limit must be positive")
 	}
 	rows, err := db.Query(ctx, `
-		SELECT event, COALESCE(before_task_entity_id, ''), COALESCE(after_task_entity_id, '')
+		SELECT event, COALESCE(task_asset_id, '')
 		FROM atlas_change_events
 		WHERE version > $1 AND version <= $2
 		ORDER BY version ASC
@@ -219,14 +213,16 @@ func ReadChangeRecords(ctx context.Context, db changeRecordQuerier, afterVersion
 	for rows.Next() {
 		var payload []byte
 		var record ChangeRecord
-		if err := rows.Scan(&payload, &record.BeforeTaskEntityID, &record.AfterTaskEntityID); err != nil {
+		if err := rows.Scan(&payload, &record.TaskAssetID); err != nil {
 			return nil, false, fmt.Errorf("scan change event: %w", err)
 		}
 		if len(records) >= limit || (len(records) > 0 && totalBytes+len(payload) > maxChangedSinceJSONBytes) {
 			hasMore = true
 			break
 		}
-		if err := json.Unmarshal(payload, &record.Event); err != nil {
+		decoder := json.NewDecoder(bytes.NewReader(payload))
+		decoder.UseNumber()
+		if err := decoder.Decode(&record.Event); err != nil {
 			return nil, false, fmt.Errorf("decode change event: %w", err)
 		}
 		records = append(records, record)

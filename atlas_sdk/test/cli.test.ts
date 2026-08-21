@@ -33,16 +33,19 @@ describe("Atlas CLI", () => {
     const invalidTask = captureIO();
     invalidTask.io.fetch = fetchSpy;
     await expect(
-      runCLI(
-        [
-          "tasks",
-          "create",
-          '{"task_id":"","status":"pending","entity_id":null,"components":{},"metadata":{"created_at":"2026-06-12T12:00:00Z","updated_at":"2026-06-12T12:00:00Z","version":0}}'
-        ],
-        invalidTask.io
-      )
+      runCLI(["tasks", "create", '{"asset_id":"","command":"fixture.queued","input":{}}'], invalidTask.io)
     ).resolves.toBe(2);
     expect(invalidTask.stderr()).toContain("invalid task JSON");
+
+    const missingIdempotencyKey = captureIO();
+    missingIdempotencyKey.io.fetch = fetchSpy;
+    await expect(
+      runCLI(
+        ["tasks", "create", '{"asset_id":"asset-1","command":"fixture.queued","input":{}}'],
+        missingIdempotencyKey.io
+      )
+    ).resolves.toBe(2);
+    expect(missingIdempotencyKey.stderr()).toContain("requires --idempotency-key");
 
     const badFilter = captureIO();
     badFilter.io.fetch = fetchSpy;
@@ -57,14 +60,26 @@ describe("Atlas CLI", () => {
     minimal.io.fetch = core.fetch;
 
     await expect(
-      runCLI(["--base-url", "http://atlas.test", "tasks", "create", '{"task_id":"task-minimal"}'], minimal.io)
+      runCLI(
+        [
+          "--base-url",
+          "http://atlas.test",
+          "--idempotency-key",
+          "minimal",
+          "tasks",
+          "create",
+          '{"asset_id":"asset-1","command":"fixture.queued","input":{}}'
+        ],
+        minimal.io
+      )
     ).resolves.toBe(0);
 
     expect(JSON.parse(minimal.stdout())).toMatchObject({
-      task_id: "task-minimal",
+      task_id: expect.stringMatching(/^task-/),
       status: "pending",
-      entity_id: null,
-      components: {}
+      asset_id: "asset-1",
+      command: "fixture.queued",
+      input: {}
     });
 
     const expanded = captureIO();
@@ -74,34 +89,35 @@ describe("Atlas CLI", () => {
         [
           "--base-url",
           "http://atlas.test",
+          "--idempotency-key",
+          "expanded",
           "tasks",
           "create",
-          '{"task_id":"task-expanded","status":"pending","entity_id":"asset-1","components":{"parameters":{"latitude":1}},"extra":{"priority":"high"}}'
+          '{"asset_id":"asset-1","command":"fixture.queued","input":{"latitude":1,"priority":"high"}}'
         ],
         expanded.io
       )
     ).resolves.toBe(0);
 
     expect(JSON.parse(expanded.stdout())).toMatchObject({
-      task_id: "task-expanded",
+      task_id: expect.stringMatching(/^task-/),
       status: "pending",
-      entity_id: "asset-1",
-      components: { parameters: { latitude: 1 } },
-      extra: { priority: "high" }
+      asset_id: "asset-1",
+      command: "fixture.queued",
+      input: { latitude: 1, priority: "high" }
     });
   });
 
   it.each([
-    '{"task_id":""}',
-    '{"task_id":"task-invalid","status":"acknowledged"}',
-    '{"task_id":"task-invalid","entity_id":""}',
-    '{"task_id":"task-invalid","components":[]}',
-    '{"task_id":"task-invalid","extra":[]}',
-    '{"task_id":"task-invalid","metadata":{"created_at":"2026-06-12T12:00:00Z","updated_at":"2026-06-12T12:00:00Z","version":1}}'
+    '{"asset_id":"","command":"fixture.queued","input":{}}',
+    '{"asset_id":"asset-1","command":"","input":{}}',
+    '{"asset_id":"asset-1","command":"fixture.queued"}',
+    '{"asset_id":"asset-1","command":"fixture.queued","input":{},"status":"pending"}',
+    '{"asset_id":"asset-1","command":"fixture.queued","input":[],"extra":{}}'
   ])("rejects invalid task create request %s before handshake", async (body) => {
     const io = captureIO();
 
-    await expect(runCLI(["tasks", "create", body], io.io)).resolves.toBe(2);
+    await expect(runCLI(["--idempotency-key", "invalid", "tasks", "create", body], io.io)).resolves.toBe(2);
 
     expect(io.stderr()).toContain("invalid task JSON");
   });
@@ -123,10 +139,10 @@ describe("Atlas CLI", () => {
       id: "task:with:colons"
     });
     expect(parseFilter("id:task:::id")).toEqual({ filter: "id", resource_type: "task", id: "::id" });
-    expect(parseFilter("tasks_for_entity:asset-1")).toEqual({ filter: "tasks_for_entity", entity_id: "asset-1" });
-    expect(parseFilter("tasks_for_entity:asset:with:colons")).toEqual({
-      filter: "tasks_for_entity",
-      entity_id: "asset:with:colons"
+    expect(parseFilter("tasks_for_asset:asset-1")).toEqual({ filter: "tasks_for_asset", asset_id: "asset-1" });
+    expect(parseFilter("tasks_for_asset:asset:with:colons")).toEqual({
+      filter: "tasks_for_asset",
+      asset_id: "asset:with:colons"
     });
   });
 
@@ -136,7 +152,7 @@ describe("Atlas CLI", () => {
     expect(() => parseFilter("type:invalid")).toThrow("invalid subscription filter");
     expect(() => parseFilter("id:task")).toThrow("invalid subscription filter");
     expect(() => parseFilter("id:task:")).toThrow("invalid subscription filter");
-    expect(() => parseFilter("tasks_for_entity")).toThrow("invalid subscription filter");
+    expect(() => parseFilter("tasks_for_asset")).toThrow("invalid subscription filter");
   });
 
   it("requires --follow for watch subscriptions", async () => {

@@ -34,7 +34,7 @@ You can also paste an API key into the topbar while the workbench is running. Th
 
 Keep normal simulation work pointed at a local Atlas Core (`ATLAS_LOCAL_BASE_URL=http://localhost:8000`). Deployed runs are intended only for isolated, disposable tenants. Their run identity, exact target URL, and run-owned cleanup candidates are recorded in one file per run under `.atlas-simulations/runs/` before mutation. The ledger directory is owner-only (`0700`) and each run file is owner-readable/writable only (`0600`). On restart, outstanding runs appear as `abandoned`; the workbench never resumes or cleans them automatically. Review them and use the explicit Cleanup action. Plain HTTP is accepted only for loopback Core URLs. The workbench server itself remains bound to `127.0.0.1`.
 
-Deployed scenarios must provide explicit run-owned task IDs. Core-generated `command-*` task IDs remain available to local scenarios only because their IDs are not known early enough to record safely before a remote mutation.
+Core generates every Task ID. Simulations record those Tasks in the run summary but never add them to the cleanup ledger because Task deletion is not part of Atlas. Local scratch databases may be reset as a whole; deployed runs retain terminal Tasks as execution history while guarded cleanup removes only run-owned Entities and Objects.
 
 Configured API keys, including the launcher-generated local key, are read-only server configuration that only the local Node server reads. Browser code calls same-origin simulation routes and never receives configured keys; a key pasted into the UI necessarily remains in that browser tab's memory.
 

@@ -13,15 +13,24 @@ func schemaFingerprint(ctx context.Context, tx pgx.Tx, schema string, version in
 	switch version {
 	case fingerprintVersionV1:
 		return schemaFingerprintV1(ctx, tx, schema)
+	case fingerprintVersionV2:
+		return schemaFingerprintV2(ctx, tx, schema)
 	default:
 		return "", fmt.Errorf("%w: unsupported schema fingerprint version %d", ErrMigrationHistory, version)
 	}
 }
 
-// schemaFingerprintV1 is immutable. A future catalog algorithm must be added as
-// a new version so older migration rows can still be verified before upgrading.
+// schemaFingerprintV1 is immutable so older migration rows remain verifiable.
 func schemaFingerprintV1(ctx context.Context, tx pgx.Tx, schema string) (string, error) {
-	rows, err := tx.Query(ctx, schemaFingerprintV1SQL, schema)
+	return schemaFingerprintWithQuery(ctx, tx, schema, schemaFingerprintV1SQL)
+}
+
+func schemaFingerprintV2(ctx context.Context, tx pgx.Tx, schema string) (string, error) {
+	return schemaFingerprintWithQuery(ctx, tx, schema, schemaFingerprintV2SQL)
+}
+
+func schemaFingerprintWithQuery(ctx context.Context, tx pgx.Tx, schema, query string) (string, error) {
+	rows, err := tx.Query(ctx, query, schema)
 	if err != nil {
 		return "", fmt.Errorf("failed to inspect schema fingerprint: %w", err)
 	}
@@ -49,7 +58,16 @@ func normalizeSchemaReferenceV1(value, schema string) string {
 	).Replace(value)
 }
 
-const schemaFingerprintV1SQL = `
+const schemaFingerprintV1SQL = schemaFingerprintSQLHead + `cols.ordinal_position::text` + schemaFingerprintSQLTail
+
+// PostgreSQL preserves dropped-column attribute numbers until a dump and
+// restore rebuilds the table. V2 fingerprints the dense order of live columns
+// so that storage history is not mistaken for a schema change.
+const schemaFingerprintV2SQL = schemaFingerprintSQLHead + `dense_rank() OVER (
+					PARTITION BY cols.table_name ORDER BY cols.ordinal_position
+				)::text` + schemaFingerprintSQLTail
+
+const schemaFingerprintSQLHead = `
 	SELECT kind, object_name, detail
 	FROM (
 		SELECT
@@ -76,7 +94,9 @@ const schemaFingerprintV1SQL = `
 			'column'::text,
 			cols.table_name || '.' || cols.column_name,
 			concat_ws('|',
-				cols.ordinal_position::text,
+`
+
+const schemaFingerprintSQLTail = `,
 				cols.data_type,
 				cols.udt_name,
 				cols.is_nullable,

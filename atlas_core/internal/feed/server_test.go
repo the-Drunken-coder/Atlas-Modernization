@@ -162,7 +162,7 @@ func TestWebsocketFeedAllowsMultipleSubscriptions(t *testing.T) {
 	if event.ID != "asset-specific" || event.Version != 1 {
 		t.Fatalf("unexpected specific event: %+v", event)
 	}
-	hub.Publish(taskEvent("create", "task-from-all", 2, "", "asset-specific", "pending"))
+	hub.Publish(taskEvent("create", "task-from-all", 2, "asset-specific", "pending"))
 	readFeedEvent(t, conn, &event)
 	if event.ID != "task-from-all" || event.Version != 2 {
 		t.Fatalf("unexpected all-subscription event: %+v", event)
@@ -224,7 +224,7 @@ func TestWebsocketFeedFirstMessageAuthWhenEnabled(t *testing.T) {
 		Filter:       protocol.FeedFilterType,
 		ResourceType: protocol.ResourceTypeTask,
 	})
-	hub.Publish(taskEvent("create", "task-auth", 1, "", "asset-1", "pending"))
+	hub.Publish(taskEvent("create", "task-auth", 1, "asset-1", "pending"))
 
 	var event protocol.FeedEvent
 	readFeedEvent(t, conn, &event)
@@ -263,7 +263,7 @@ func TestWebsocketFeedFirstMessageAuthUsesAPIKeyValidator(t *testing.T) {
 		Filter:       protocol.FeedFilterType,
 		ResourceType: protocol.ResourceTypeTask,
 	})
-	hub.Publish(taskEvent("create", "task-managed-auth", 1, "", "asset-1", "pending"))
+	hub.Publish(taskEvent("create", "task-managed-auth", 1, "asset-1", "pending"))
 
 	var event protocol.FeedEvent
 	readFeedEvent(t, conn, &event)

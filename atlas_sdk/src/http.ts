@@ -5,6 +5,11 @@ import { joinAtlasUrl, normalizeAtlasBaseUrl } from "./url.js";
 
 export type ResponseValidator<T> = (value: unknown) => value is T;
 
+export type VersionedResponse<T> = {
+  value: T;
+  version: number;
+};
+
 export type HttpTransportOptions = {
   baseUrl: string;
   apiKey?: string;
@@ -61,9 +66,10 @@ export class HttpTransport {
     validate: ResponseValidator<T>,
     body?: unknown,
     ifMatchVersion?: number,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    requestHeaders?: HeadersInit
   ): Promise<T> {
-    const response = await this.raw(method, path, body, ifMatchVersion, signal);
+    const response = await this.raw(method, path, body, ifMatchVersion, signal, requestHeaders);
     const value: unknown = await response.json();
     if (!validate(value)) {
       throw new TypeError(`Atlas response failed validation for ${method} ${path}`);
@@ -71,8 +77,35 @@ export class HttpTransport {
     return value;
   }
 
-  async empty(method: string, path: string, body?: unknown, ifMatchVersion?: number): Promise<void> {
-    const response = await this.raw(method, path, body, ifMatchVersion);
+  async versionedJSON<T>(
+    method: string,
+    path: string,
+    validate: ResponseValidator<T>,
+    body?: unknown,
+    signal?: AbortSignal,
+    requestHeaders?: HeadersInit
+  ): Promise<VersionedResponse<T>> {
+    const response = await this.raw(method, path, body, undefined, signal, requestHeaders);
+    const value: unknown = await response.json();
+    if (!validate(value)) {
+      throw new TypeError(`Atlas response failed validation for ${method} ${path}`);
+    }
+    const version = strongETagVersion(response.headers.get("ETag"));
+    if (version === undefined) {
+      throw new TypeError(`Atlas response did not include a valid resource ETag for ${method} ${path}`);
+    }
+    return { value, version };
+  }
+
+  async empty(
+    method: string,
+    path: string,
+    body?: unknown,
+    ifMatchVersion?: number,
+    signal?: AbortSignal,
+    requestHeaders?: HeadersInit
+  ): Promise<void> {
+    const response = await this.raw(method, path, body, ifMatchVersion, signal, requestHeaders);
     if (response.status !== 204) {
       throw new TypeError(`Atlas response failed validation for ${method} ${path}`);
     }
@@ -83,9 +116,10 @@ export class HttpTransport {
     path: string,
     body?: unknown,
     ifMatchVersion?: number,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    requestHeaders?: HeadersInit
   ): Promise<Response> {
-    const headers = new Headers();
+    const headers = new Headers(requestHeaders);
     if (body !== undefined) headers.set("Content-Type", "application/json");
     if (this.apiKey) headers.set("X-API-Key", this.apiKey);
     if (ifMatchVersion !== undefined) headers.set("If-Match", `"v${ifMatchVersion}"`);
@@ -126,6 +160,13 @@ export class HttpTransport {
       clearTimeout(timeout);
     }
   }
+}
+
+function strongETagVersion(etag: string | null): number | undefined {
+  const match = /^"v([1-9][0-9]*)"$/.exec(etag ?? "");
+  if (!match) return undefined;
+  const version = Number(match[1]);
+  return Number.isSafeInteger(version) ? version : undefined;
 }
 
 async function readErrorPayload(response: Response): Promise<unknown> {

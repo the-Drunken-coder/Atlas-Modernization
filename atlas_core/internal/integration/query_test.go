@@ -34,21 +34,6 @@ func TestQueryFullDataset(t *testing.T) {
 		t.Fatalf("close body: %v", err)
 	}
 
-	taskID := fmt.Sprintf("%s-query-full-task", prefix)
-	taskPayload := map[string]interface{}{
-		"task_id":   taskID,
-		"entity_id": entityID,
-	}
-
-	resp, err = client.Post(ctx, "/tasks", taskPayload)
-	if err != nil {
-		t.Fatalf("Failed to create task: %v", err)
-	}
-	requireHTTPStatus(t, resp, http.StatusCreated, "POST /tasks (query full setup)")
-	if err := resp.Body.Close(); err != nil {
-		t.Fatalf("close body: %v", err)
-	}
-
 	// Query full dataset
 	resp, err = client.Get(ctx, "/queries/full")
 	if err != nil {
@@ -92,13 +77,9 @@ func TestQueryFullDataset(t *testing.T) {
 	if !sliceContainsID(entities, "entity_id", entityID) {
 		t.Fatalf("expected entity_id %s in /queries/full entities", entityID)
 	}
-	if !sliceContainsID(tasks, "task_id", taskID) {
-		t.Fatalf("expected task_id %s in /queries/full tasks", taskID)
-	}
-
 	t.Logf("Full dataset query returned: %d entities, %d tasks, %d objects",
 		len(entities), len(tasks), len(objects))
-	t.Logf("Entity %s and task %s left as artifacts", entityID, taskID)
+	t.Logf("Entity %s left as an artifact", entityID)
 }
 
 // TestQueryChangedSince tests the /queries/changed-since endpoint
@@ -161,209 +142,6 @@ func TestQueryChangedSince(t *testing.T) {
 
 	t.Logf("Changed-since query returned: %d events after version %d", len(events), baseline)
 	t.Logf("Entity %s left as artifact", entityID)
-}
-
-func TestQueryChangedSinceIncludesTasksAffectedByDeletedEntity(t *testing.T) {
-	SkipIfSystemNotAvailable(t)
-
-	client := NewAPIClient()
-	ctx := context.Background()
-	prefix := TestArtifactPrefix()
-
-	entityID := fmt.Sprintf("%s-delete-entity", prefix)
-	taskID := fmt.Sprintf("%s-delete-task", prefix)
-
-	resp, err := client.Post(ctx, "/entities", map[string]interface{}{
-		"entity_id":   entityID,
-		"entity_type": "asset",
-	})
-	if err != nil {
-		t.Fatalf("Failed to create entity: %v", err)
-	}
-	requireHTTPStatus(t, resp, http.StatusCreated, "POST /entities (delete changed-since setup)")
-	drainClose(resp)
-
-	resp, err = client.Post(ctx, "/tasks", map[string]interface{}{
-		"task_id":   taskID,
-		"entity_id": entityID,
-	})
-	if err != nil {
-		t.Fatalf("Failed to create task: %v", err)
-	}
-	requireHTTPStatus(t, resp, http.StatusCreated, "POST /tasks (delete changed-since setup)")
-	var createdTask map[string]interface{}
-	if err := ParseResponse(resp, &createdTask); err != nil {
-		t.Fatalf("Failed to parse created task: %v", err)
-	}
-	metadata, ok := createdTask["metadata"].(map[string]interface{})
-	if !ok {
-		t.Fatalf("created task missing metadata: %#v", createdTask)
-	}
-	sinceVersion := mustVersionFromMetadata(t, metadata)
-
-	resp, err = client.Delete(ctx, "/entities/"+entityID)
-	if err != nil {
-		t.Fatalf("Failed to delete entity: %v", err)
-	}
-	requireHTTPStatus(t, resp, http.StatusNoContent, "DELETE /entities/{entity_id}")
-	drainClose(resp)
-
-	q := url.Values{}
-	q.Set("since_version", fmt.Sprintf("%d", sinceVersion))
-	resp, err = client.Get(ctx, "/queries/changed-since?"+q.Encode())
-	if err != nil {
-		t.Fatalf("Failed to query changed-since after entity delete: %v", err)
-	}
-	defer drainClose(resp)
-	requireHTTPStatus(t, resp, http.StatusOK, "GET /queries/changed-since after entity delete")
-
-	var result map[string]interface{}
-	if err := ParseResponse(resp, &result); err != nil {
-		t.Fatalf("Failed to parse changed-since response: %v", err)
-	}
-	events := mustInterfaceSlice(t, result["events"], "events")
-	taskEvent := findChangeEvent(events, "task", taskID, "update")
-	if taskEvent == nil {
-		t.Fatalf("expected changed-since tasks to include task %s after deleting entity %s", taskID, entityID)
-	}
-	changedTask, ok := taskEvent["resource"].(map[string]interface{})
-	if !ok {
-		t.Fatalf("changed task event missing resource: %#v", taskEvent)
-	}
-	if entity, ok := changedTask["entity_id"]; ok && entity != nil {
-		t.Fatalf("expected changed task entity_id to be null after entity delete, got %#v", entity)
-	}
-	if findChangeEvent(events, "entity", entityID, "delete") == nil {
-		t.Fatalf("expected entity delete event for %s", entityID)
-	}
-}
-
-func TestQueryChangedSinceIncludesDeletedTaskEntityID(t *testing.T) {
-	SkipIfSystemNotAvailable(t)
-
-	client := NewAPIClient()
-	ctx := context.Background()
-	prefix := TestArtifactPrefix()
-
-	entityID := fmt.Sprintf("%s-delete-task-entity", prefix)
-	taskID := fmt.Sprintf("%s-delete-task-event", prefix)
-
-	resp, err := client.Post(ctx, "/entities", map[string]interface{}{
-		"entity_id":   entityID,
-		"entity_type": "asset",
-	})
-	if err != nil {
-		t.Fatalf("Failed to create entity: %v", err)
-	}
-	requireHTTPStatus(t, resp, http.StatusCreated, "POST /entities (task delete-event setup)")
-	drainClose(resp)
-	t.Cleanup(func() {
-		cleanupResp, cleanupErr := client.Delete(context.Background(), "/entities/"+entityID)
-		if cleanupErr == nil {
-			drainClose(cleanupResp)
-		}
-	})
-
-	resp, err = client.Post(ctx, "/tasks", map[string]interface{}{
-		"task_id":   taskID,
-		"entity_id": entityID,
-	})
-	if err != nil {
-		t.Fatalf("Failed to create task: %v", err)
-	}
-	requireHTTPStatus(t, resp, http.StatusCreated, "POST /tasks (task delete-event setup)")
-	var createdTask map[string]interface{}
-	if err := ParseResponse(resp, &createdTask); err != nil {
-		t.Fatalf("Failed to parse created task: %v", err)
-	}
-	metadata, ok := createdTask["metadata"].(map[string]interface{})
-	if !ok {
-		t.Fatalf("created task missing metadata: %#v", createdTask)
-	}
-	sinceVersion := mustVersionFromMetadata(t, metadata)
-
-	resp, err = client.Delete(ctx, "/tasks/"+taskID)
-	if err != nil {
-		t.Fatalf("Failed to delete task: %v", err)
-	}
-	requireHTTPStatus(t, resp, http.StatusNoContent, "DELETE /tasks/{task_id}")
-	drainClose(resp)
-
-	q := url.Values{}
-	q.Set("since_version", fmt.Sprintf("%d", sinceVersion))
-	resp, err = client.Get(ctx, "/queries/changed-since?"+q.Encode())
-	if err != nil {
-		t.Fatalf("Failed to query changed-since after task delete: %v", err)
-	}
-	defer drainClose(resp)
-	requireHTTPStatus(t, resp, http.StatusOK, "GET /queries/changed-since after task delete")
-
-	var result map[string]interface{}
-	if err := ParseResponse(resp, &result); err != nil {
-		t.Fatalf("Failed to parse changed-since response: %v", err)
-	}
-	events := mustInterfaceSlice(t, result["events"], "events")
-	deleteEvent := findChangeEvent(events, "task", taskID, "delete")
-	if deleteEvent == nil {
-		t.Fatalf("expected task delete event for %s", taskID)
-	}
-	if deleteEvent["entity_id"] != entityID {
-		t.Fatalf("expected deleted task entity_id %q, got %#v", entityID, deleteEvent["entity_id"])
-	}
-}
-
-func TestQueryChangedSinceIncludesDeletedTaskNullEntityID(t *testing.T) {
-	SkipIfSystemNotAvailable(t)
-
-	client := NewAPIClient()
-	ctx := context.Background()
-	taskID := fmt.Sprintf("%s-delete-task-null-entity", TestArtifactPrefix())
-
-	resp, err := client.Post(ctx, "/tasks", map[string]interface{}{
-		"task_id": taskID,
-	})
-	if err != nil {
-		t.Fatalf("Failed to create task without entity: %v", err)
-	}
-	requireHTTPStatus(t, resp, http.StatusCreated, "POST /tasks (null entity task delete-event setup)")
-	var createdTask map[string]interface{}
-	if err := ParseResponse(resp, &createdTask); err != nil {
-		t.Fatalf("Failed to parse created task: %v", err)
-	}
-	metadata, ok := createdTask["metadata"].(map[string]interface{})
-	if !ok {
-		t.Fatalf("created task missing metadata: %#v", createdTask)
-	}
-	sinceVersion := mustVersionFromMetadata(t, metadata)
-
-	resp, err = client.Delete(ctx, "/tasks/"+taskID)
-	if err != nil {
-		t.Fatalf("Failed to delete task without entity: %v", err)
-	}
-	requireHTTPStatus(t, resp, http.StatusNoContent, "DELETE /tasks/{task_id} (null entity)")
-	drainClose(resp)
-
-	q := url.Values{}
-	q.Set("since_version", fmt.Sprintf("%d", sinceVersion))
-	resp, err = client.Get(ctx, "/queries/changed-since?"+q.Encode())
-	if err != nil {
-		t.Fatalf("Failed to query changed-since after task delete: %v", err)
-	}
-	defer drainClose(resp)
-	requireHTTPStatus(t, resp, http.StatusOK, "GET /queries/changed-since after null-entity task delete")
-
-	var result map[string]interface{}
-	if err := ParseResponse(resp, &result); err != nil {
-		t.Fatalf("Failed to parse changed-since response: %v", err)
-	}
-	events := mustInterfaceSlice(t, result["events"], "events")
-	deleteEvent := findChangeEvent(events, "task", taskID, "delete")
-	if deleteEvent == nil {
-		t.Fatalf("expected task delete event for %s", taskID)
-	}
-	if entityID, ok := deleteEvent["entity_id"]; ok && entityID != nil {
-		t.Fatalf("expected deleted task entity_id to be null or omitted, got %#v", entityID)
-	}
 }
 
 // TestQueryChangedSinceMissingParam tests error handling for missing since param
@@ -452,14 +230,11 @@ func TestQueryFullDatasetCursorContinuationOmitsUnrequestedStreams(t *testing.T)
 	for _, entityID := range entityIDs {
 		createQueryTestEntity(ctx, t, client, entityID)
 	}
-	for i, taskID := range taskIDs {
-		createQueryTestTask(ctx, t, client, taskID, entityIDs[i%len(entityIDs)])
-	}
 	for i, objectID := range objectIDs {
 		createQueryTestObject(ctx, t, client, objectID, entityIDs[i%len(entityIDs)], taskIDs[i%len(taskIDs)])
 	}
 
-	resp, err := client.Get(ctx, "/queries/full?entity_limit=1&task_limit=1&object_limit=1")
+	resp, err := client.Get(ctx, "/queries/full?entity_limit=1&object_limit=1")
 	if err != nil {
 		t.Fatalf("Failed to query full dataset: %v", err)
 	}
@@ -474,18 +249,17 @@ func TestQueryFullDatasetCursorContinuationOmitsUnrequestedStreams(t *testing.T)
 	firstEntities := mustInterfaceSlice(t, firstPage["entities"], "entities")
 	firstTasks := mustInterfaceSlice(t, firstPage["tasks"], "tasks")
 	firstObjects := mustInterfaceSlice(t, firstPage["objects"], "objects")
-	if len(firstEntities) != 1 || len(firstTasks) != 1 || len(firstObjects) != 1 {
-		t.Fatalf("expected one item per stream on page 1, got entities=%d tasks=%d objects=%d", len(firstEntities), len(firstTasks), len(firstObjects))
+	if len(firstEntities) != 1 || len(firstTasks) != 0 || len(firstObjects) != 1 {
+		t.Fatalf("expected entity/object pages and no requested Task stream, got entities=%d tasks=%d objects=%d", len(firstEntities), len(firstTasks), len(firstObjects))
 	}
-	if firstPage["has_more_entities"] != true || firstPage["has_more_tasks"] != true || firstPage["has_more_objects"] != true {
+	if firstPage["has_more_entities"] != true || firstPage["has_more_tasks"] != false || firstPage["has_more_objects"] != true {
 		t.Fatalf("expected has_more_* flags on page 1, got %+v", firstPage)
 	}
 
 	entityCursor, _ := firstPage["next_entity_cursor"].(string)
-	taskCursor, _ := firstPage["next_task_cursor"].(string)
 	objectCursor, _ := firstPage["next_object_cursor"].(string)
-	if entityCursor == "" || taskCursor == "" || objectCursor == "" {
-		t.Fatalf("expected continuation cursors on page 1, got entity=%q task=%q object=%q", entityCursor, taskCursor, objectCursor)
+	if entityCursor == "" || objectCursor == "" {
+		t.Fatalf("expected continuation cursors on page 1, got entity=%q object=%q", entityCursor, objectCursor)
 	}
 
 	q := url.Values{}
@@ -518,10 +292,8 @@ func TestQueryFullDatasetCursorContinuationOmitsUnrequestedStreams(t *testing.T)
 
 	q = url.Values{}
 	q.Set("entity_limit", "1")
-	q.Set("task_limit", "1")
 	q.Set("object_limit", "1")
 	q.Set("entity_cursor", entityCursor)
-	q.Set("task_cursor", taskCursor)
 	q.Set("object_cursor", objectCursor)
 	resp, err = client.Get(ctx, "/queries/full?"+q.Encode())
 	if err != nil {
@@ -537,8 +309,8 @@ func TestQueryFullDatasetCursorContinuationOmitsUnrequestedStreams(t *testing.T)
 	if len(mustInterfaceSlice(t, secondPage["entities"], "entities")) != 1 {
 		t.Fatal("expected one entity on all-stream continuation")
 	}
-	if len(mustInterfaceSlice(t, secondPage["tasks"], "tasks")) != 1 {
-		t.Fatal("expected one task on all-stream continuation")
+	if len(mustInterfaceSlice(t, secondPage["tasks"], "tasks")) != 0 {
+		t.Fatal("expected unrequested Task stream to stay empty")
 	}
 	if len(mustInterfaceSlice(t, secondPage["objects"], "objects")) != 1 {
 		t.Fatal("expected one object on all-stream continuation")
@@ -570,7 +342,6 @@ func TestQueryChangedSinceCursorContinuationUsesOneOrderedSnapshot(t *testing.T)
 		createQueryTestEntity(ctx, t, client, entityID)
 	}
 	taskID := fmt.Sprintf("%s-changed-page-task", prefix)
-	createQueryTestTask(ctx, t, client, taskID, entityIDs[0])
 	objectID := fmt.Sprintf("%s-changed-page-object", prefix)
 	createQueryTestObject(ctx, t, client, objectID, entityIDs[0], taskID)
 	lateEntityID := fmt.Sprintf("%s-changed-page-late-entity", prefix)
@@ -624,8 +395,8 @@ func TestQueryChangedSinceCursorContinuationUsesOneOrderedSnapshot(t *testing.T)
 	if findChangeEvent(events, "entity", lateEntityID, "") != nil {
 		t.Fatalf("snapshot pagination included late entity %s", lateEntityID)
 	}
-	if findChangeEvent(events, "task", taskID, "") == nil || findChangeEvent(events, "object", objectID, "") == nil {
-		t.Fatal("changed-since continuation omitted task or object event")
+	if findChangeEvent(events, "object", objectID, "") == nil {
+		t.Fatal("changed-since continuation omitted object event")
 	}
 	for index := 1; index < len(events); index++ {
 		previous := events[index-1].(map[string]interface{})["version"].(float64)
@@ -649,246 +420,6 @@ func TestQueryChangedSinceCursorContinuationUsesOneOrderedSnapshot(t *testing.T)
 	}
 }
 
-// TestComplexScenario tests a complex workflow with entities, tasks, and objects
-func TestComplexScenario(t *testing.T) {
-	SkipIfSystemNotAvailable(t)
-
-	client := NewAPIClient()
-	ctx := context.Background()
-	prefix := TestArtifactPrefix()
-
-	// Create a fleet of entities
-	entityIDs := make([]string, 3)
-	for i := 0; i < 3; i++ {
-		entityID := fmt.Sprintf("%s-fleet-drone-%d", prefix, i+1)
-		entityIDs[i] = entityID
-
-		entityPayload := map[string]interface{}{
-			"entity_id":   entityID,
-			"entity_type": "asset",
-			"subtype":     "drone",
-			"alias":       fmt.Sprintf("Fleet Drone %d", i+1),
-			"components": map[string]interface{}{
-				"telemetry": map[string]interface{}{
-					"latitude":  40.7128 + float64(i)*0.001,
-					"longitude": -74.0060 + float64(i)*0.001,
-				},
-				"status": map[string]interface{}{
-					"value": "idle",
-				},
-			},
-		}
-
-		resp, err := client.Post(ctx, "/entities", entityPayload)
-		if err != nil {
-			t.Fatalf("Failed to create entity %d: %v", i+1, err)
-		}
-		if resp.StatusCode != http.StatusCreated {
-			resp.Body.Close()
-			t.Fatalf("Expected 201 for entity %d, got %d", i+1, resp.StatusCode)
-		}
-		resp.Body.Close()
-	}
-
-	t.Logf("Created fleet of %d entities", len(entityIDs))
-
-	// Create a mission task for each entity
-	taskIDs := make([]string, len(entityIDs))
-	for i, entityID := range entityIDs {
-		taskID := fmt.Sprintf("%s-mission-%d", prefix, i+1)
-		taskIDs[i] = taskID
-
-		taskPayload := map[string]interface{}{
-			"task_id":   taskID,
-			"entity_id": entityID,
-			"status":    "pending",
-			"components": map[string]interface{}{
-				"custom_mission": map[string]interface{}{
-					"type": "move_to",
-					"target": map[string]interface{}{
-						"latitude":  40.7128 + float64(i)*0.001,
-						"longitude": -74.0060 + float64(i)*0.001,
-					},
-				},
-			},
-		}
-
-		resp, err := client.Post(ctx, "/tasks", taskPayload)
-		if err != nil {
-			t.Fatalf("Failed to create task %d: %v", i+1, err)
-		}
-		if resp.StatusCode != http.StatusCreated {
-			resp.Body.Close()
-			t.Fatalf("Expected 201 for task %d, got %d", i+1, resp.StatusCode)
-		}
-		resp.Body.Close()
-	}
-
-	t.Logf("Created %d mission tasks", len(taskIDs))
-
-	// Acknowledge all tasks
-	for _, taskID := range taskIDs {
-		resp, err := client.Patch(ctx, "/tasks/"+taskID, map[string]interface{}{"status": "acknowledged"})
-		if err != nil {
-			t.Fatalf("Failed to acknowledge task %s: %v", taskID, err)
-		}
-		if resp.StatusCode != http.StatusOK {
-			resp.Body.Close()
-			t.Fatalf("Expected 200 acknowledging task %s, got %d", taskID, resp.StatusCode)
-		}
-		resp.Body.Close()
-	}
-
-	t.Logf("Acknowledged all %d tasks", len(taskIDs))
-
-	// Complete first task, fail second, leave third acknowledged
-	completePayload := map[string]interface{}{
-		"status": "completed",
-		"extra": map[string]interface{}{
-			"result": map[string]interface{}{
-				"success":    true,
-				"waypoint":   1,
-				"photos":     5,
-				"duration_s": 120,
-			},
-		},
-	}
-
-	resp, err := client.Patch(ctx, "/tasks/"+taskIDs[0], completePayload)
-	if err != nil {
-		t.Fatalf("Failed to complete task: %v", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		resp.Body.Close()
-		t.Fatalf("Expected 200 completing task, got %d", resp.StatusCode)
-	}
-	resp.Body.Close()
-
-	failPayload := map[string]interface{}{
-		"status": "failed",
-		"extra": map[string]interface{}{
-			"error": map[string]interface{}{
-				"code":    "LOW_BATTERY",
-				"message": "Battery level critical, returning to base",
-			},
-		},
-	}
-
-	resp, err = client.Patch(ctx, "/tasks/"+taskIDs[1], failPayload)
-	if err != nil {
-		t.Fatalf("Failed to fail task: %v", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		resp.Body.Close()
-		t.Fatalf("Expected 200 failing task, got %d", resp.StatusCode)
-	}
-	resp.Body.Close()
-
-	// Create objects representing captured data
-	for i := 0; i < 3; i++ {
-		objectID := fmt.Sprintf("%s-capture-%d", prefix, i+1)
-		objectPayload := map[string]interface{}{
-			"object_id": objectID,
-			"type":      "aerial-photo",
-			"referenced_by": []map[string]interface{}{
-				{"entity_id": entityIDs[0]},
-				{"task_id": taskIDs[0]},
-			},
-		}
-
-		resp, err = client.Post(ctx, "/objects", objectPayload)
-		if err != nil {
-			t.Fatalf("Failed to create object %d: %v", i+1, err)
-		}
-		if resp.StatusCode != http.StatusCreated {
-			resp.Body.Close()
-			t.Fatalf("Expected 201 for object %d, got %d", i+1, resp.StatusCode)
-		}
-		resp.Body.Close()
-	}
-
-	t.Logf("Created 3 capture objects")
-
-	// Verify full dataset
-	resp, err = client.Get(ctx, "/queries/full")
-	if err != nil {
-		t.Fatalf("Failed to query full dataset: %v", err)
-	}
-	defer drainClose(resp)
-	requireHTTPStatus(t, resp, http.StatusOK, "GET /queries/full (complex scenario)")
-
-	var result map[string]interface{}
-	if err := ParseResponse(resp, &result); err != nil {
-		t.Fatalf("Failed to parse query response: %v", err)
-	}
-
-	entities, ok := result["entities"].([]interface{})
-	if !ok {
-		t.Fatalf("expected entities array, got %T", result["entities"])
-	}
-	tasks, ok := result["tasks"].([]interface{})
-	if !ok {
-		t.Fatalf("expected tasks array, got %T", result["tasks"])
-	}
-	objects, ok := result["objects"].([]interface{})
-	if !ok {
-		t.Fatalf("expected objects array, got %T", result["objects"])
-	}
-	if len(entities) < len(entityIDs) {
-		t.Fatalf("expected at least %d entities in full query, got %d", len(entityIDs), len(entities))
-	}
-	if len(tasks) < len(taskIDs) {
-		t.Fatalf("expected at least %d tasks in full query, got %d", len(taskIDs), len(tasks))
-	}
-	if len(objects) < 3 {
-		t.Fatalf("expected at least 3 objects in full query, got %d", len(objects))
-	}
-	for _, id := range entityIDs {
-		if !sliceContainsID(entities, "entity_id", id) {
-			t.Fatalf("full query missing entity %s", id)
-		}
-	}
-	for _, id := range taskIDs {
-		if !sliceContainsID(tasks, "task_id", id) {
-			t.Fatalf("full query missing task %s", id)
-		}
-	}
-	for i := 1; i <= 3; i++ {
-		oid := fmt.Sprintf("%s-capture-%d", prefix, i)
-		if !sliceContainsID(objects, "object_id", oid) {
-			t.Fatalf("full query missing object %s", oid)
-		}
-	}
-
-	statusByID := make(map[string]string)
-	for _, raw := range tasks {
-		m, ok := raw.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		id, _ := m["task_id"].(string)
-		st, _ := m["status"].(string)
-		if id != "" {
-			statusByID[id] = st
-		}
-	}
-	wantStatus := map[string]string{
-		taskIDs[0]: "completed",
-		taskIDs[1]: "failed",
-		taskIDs[2]: "acknowledged",
-	}
-	for id, want := range wantStatus {
-		if got := statusByID[id]; got != want {
-			t.Fatalf("task %s: want status %q, got %q", id, want, got)
-		}
-	}
-
-	t.Logf("Complex scenario complete. All artifacts left in system:")
-	t.Logf("  - %d fleet entities", len(entityIDs))
-	t.Logf("  - %d mission tasks (1 completed, 1 failed, 1 acknowledged)", len(taskIDs))
-	t.Logf("  - 3 capture objects")
-}
-
 func createQueryTestEntity(ctx context.Context, t *testing.T, client *APIClient, entityID string) {
 	t.Helper()
 	entityPayload := map[string]interface{}{
@@ -903,23 +434,6 @@ func createQueryTestEntity(ctx context.Context, t *testing.T, client *APIClient,
 	requireHTTPStatus(t, resp, http.StatusCreated, "POST /entities (query pagination)")
 	if err := resp.Body.Close(); err != nil {
 		t.Fatalf("close entity body: %v", err)
-	}
-}
-
-func createQueryTestTask(ctx context.Context, t *testing.T, client *APIClient, taskID, entityID string) {
-	t.Helper()
-	taskPayload := map[string]interface{}{
-		"task_id":   taskID,
-		"entity_id": entityID,
-		"status":    "pending",
-	}
-	resp, err := client.Post(ctx, "/tasks", taskPayload)
-	if err != nil {
-		t.Fatalf("create task %s: %v", taskID, err)
-	}
-	requireHTTPStatus(t, resp, http.StatusCreated, "POST /tasks (query pagination)")
-	if err := resp.Body.Close(); err != nil {
-		t.Fatalf("close task body: %v", err)
 	}
 }
 

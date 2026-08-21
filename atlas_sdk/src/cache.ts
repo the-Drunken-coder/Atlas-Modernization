@@ -7,11 +7,13 @@ import {
   type TaskResource
 } from "./protocol.js";
 import { resourceCacheKey, resourceID } from "./subscriptions.js";
-import type { CacheEntry, ResourceOf, ResourceValue, SyncSnapshot } from "./types.js";
+import type { CacheEntry, DeletableResourceType, ResourceOf, SyncSnapshot } from "./types.js";
 
 export type CacheResourceOptions = {
   detail?: boolean;
   advanceCursor?: boolean;
+  version?: number;
+  replaceSameVersion?: boolean;
 };
 
 type SnapshotRecords = {
@@ -155,14 +157,14 @@ export class ResourceCache {
     if (actualID !== id) {
       throw new TypeError(`Atlas ${type} resource id ${actualID} does not match cache id ${id}`);
     }
-    const version = value.metadata.version;
+    const version = options?.version ?? embeddedResourceVersion(type, value);
     const existing = this.entries[type].get(id);
     const isDetailUpgrade =
-      type === "object" && options?.detail === true && existing?.version === version && !existing.detail;
+      type === "object" && options?.detail === true && existing?.version === version && existing.detail !== true;
     if (existing && existing.version > version) {
       return false;
     }
-    if (existing && existing.version === version && !isDetailUpgrade) {
+    if (existing && existing.version === version && !isDetailUpgrade && options?.replaceSameVersion !== true) {
       return false;
     }
     const immutableValue = immutableClone(value);
@@ -195,15 +197,14 @@ export class ResourceCache {
     this.removeFromSnapshot(type, id);
   }
 
-  markLocalDelete(type: ResourceType, id: string): { previousVersion: number; previous?: ResourceValue } {
+  markLocalDelete(type: DeletableResourceType, id: string): number {
     const previousEntry = this.entries[type].get(id);
     const previousVersion = previousEntry?.version ?? 0;
-    const previous = previousEntry?.value;
     this.markRemoteDelete(type, id, previousVersion);
     const key = resourceCacheKey(type, id);
     this.pendingDeletes.add(key);
     this.locallyNotifiedDeletes.add(key);
-    return { previousVersion, previous };
+    return previousVersion;
   }
 
   private updateSnapshot<TType extends ResourceType>(type: TType, id: string, value: ResourceOf<TType>): void {
@@ -214,6 +215,11 @@ export class ResourceCache {
   private removeFromSnapshot<TType extends ResourceType>(type: TType, id: string): void {
     if (this.snapshotRecords[type].remove(id)) this.snapshotDirty = true;
   }
+}
+
+function embeddedResourceVersion<TType extends ResourceType>(type: TType, value: ResourceOf<TType>): number {
+  if (type === "task" || !("metadata" in value)) return 0;
+  return value.metadata.version;
 }
 
 function snapshotFromRecords(records: SnapshotRecords): SyncSnapshot {

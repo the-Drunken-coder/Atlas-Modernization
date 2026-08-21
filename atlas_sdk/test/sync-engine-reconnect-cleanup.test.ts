@@ -607,7 +607,7 @@ describe("AtlasClient sync: polling, reconnect timers, and cleanup", () => {
     await expect(client.entities.get(id)).resolves.toMatchObject({ alias: "server value" });
   });
 
-  it("honors explicit tasks-for-entity subscriptions across reassignment", async () => {
+  it("honors explicit tasks-for-asset subscriptions across lifecycle updates", async () => {
     const core = new FakeCore();
     const client = new AtlasClient({
       baseUrl: "http://atlas.test",
@@ -617,32 +617,32 @@ describe("AtlasClient sync: polling, reconnect timers, and cleanup", () => {
       pollIntervalMs: 0
     });
     await client.sync.start();
-    await client.subscribe({ filter: "tasks_for_entity", entity_id: "asset-old" });
+    await client.subscribe({ filter: "tasks_for_asset", asset_id: "asset-old" });
     const watch = vi.fn();
-    client.watch({ filter: "tasks_for_entity", entity_id: "asset-old" }, watch);
+    client.watch({ filter: "tasks_for_asset", asset_id: "asset-old" }, watch);
     await client.connectFeed();
 
-    const first = core.upsertTask(task("task-reassign", "asset-old"));
+    const first = core.upsertTask(task("task-lifecycle", "asset-old"));
     core.emit(
       { event: "create", resource_type: "task", id: first.task_id, version: first.metadata.version, resource: first },
       { record: false }
     );
-    const reassigned = core.upsertTask({ ...first, entity_id: "asset-new" });
+    const progressed = core.upsertTask({ ...first, status: "in_progress", progress: 0.5 });
     core.emit(
       {
         event: "update",
         resource_type: "task",
-        id: reassigned.task_id,
-        version: reassigned.metadata.version,
-        resource: reassigned
+        id: progressed.task_id,
+        version: progressed.metadata.version,
+        resource: progressed
       },
-      { beforeTaskEntityId: "asset-old", record: false }
+      { record: false }
     );
 
     await vi.waitFor(() => {
       expect(watch).toHaveBeenCalledWith(
-        reassigned,
-        expect.objectContaining({ id: "task-reassign", version: reassigned.metadata.version })
+        progressed,
+        expect.objectContaining({ id: "task-lifecycle", version: progressed.metadata.version })
       );
     });
   });
@@ -868,6 +868,6 @@ describe("AtlasClient sync: polling, reconnect timers, and cleanup", () => {
     expect(() => parseSubscriptionKey(JSON.stringify(["unknown", "entity-1"]))).toThrow("invalid subscription key");
     expect(() => parseSubscriptionKey(JSON.stringify(["type", "not-a-type"]))).toThrow("invalid subscription key");
     expect(() => parseSubscriptionKey(JSON.stringify(["id", "task"]))).toThrow("invalid subscription key");
-    expect(() => parseSubscriptionKey(JSON.stringify(["tasks_for_entity", ""]))).toThrow("invalid subscription key");
+    expect(() => parseSubscriptionKey(JSON.stringify(["tasks_for_asset", ""]))).toThrow("invalid subscription key");
   });
 });

@@ -12,10 +12,10 @@ client.watch(
   { filter: "id", resource_type: "object", id: "object-1" },
   (resource: ObjectResource | undefined) => resource
 );
-client.watch({ filter: "tasks_for_entity", entity_id: "entity-1" }, (resource: TaskResource | undefined) => resource);
+client.watch({ filter: "tasks_for_asset", asset_id: "asset-1" }, (resource: TaskResource | undefined) => resource);
 client.sync.watchSnapshot((snapshot: SyncSnapshot) => snapshot.entities);
 
 // @ts-expect-error entity subscriptions cannot produce objects
 client.watch({ filter: "type", resource_type: "entity" }, (resource: ObjectResource | undefined) => resource);
-// @ts-expect-error tasks-for-entity subscriptions cannot produce entities
-client.watch({ filter: "tasks_for_entity", entity_id: "entity-1" }, (resource: EntityResource | undefined) => resource);
+// @ts-expect-error tasks-for-asset subscriptions cannot produce entities
+client.watch({ filter: "tasks_for_asset", asset_id: "asset-1" }, (resource: EntityResource | undefined) => resource);

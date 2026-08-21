@@ -11,10 +11,7 @@ import { entity, FakeCore, metadata, object, task } from "./support/fake-core.js
 import { FakeWebSocket } from "./support/fake-websocket.js";
 
 const validEntity = (id: string, version: number) => ({ ...entity(id), metadata: metadata(version) });
-const validTask = (id: string, entityID: string | null, version: number) => ({
-  ...task(id, entityID),
-  metadata: metadata(version)
-});
+const validTask = (id: string, assetID: string) => ({ ...task(id, assetID) });
 const validObject = (id: string, version: number) => ({ ...object(id), metadata: metadata(version) });
 const fullPage = (overrides: Record<string, unknown> = {}) => ({
   entities: [],
@@ -41,16 +38,7 @@ const changedEntityEvent = (id: string, version: number) => ({
 });
 
 describe("AtlasClient inbound response validation", () => {
-  it("requires continuation cursors in generated response validators", () => {
-    expect(
-      isEntityCheckInFullResponse({
-        entity: validEntity("asset-continued", 1),
-        tasks: [],
-        task_count: 0,
-        task_limit: 10,
-        has_more_tasks: true
-      })
-    ).toBe(false);
+  it("requires continuation cursors in paginated response validators", () => {
     expect(isFullDatasetResponse(fullPage({ has_more_entities: true }))).toBe(false);
     expect(isChangedSinceResponse(changedPage({ has_more: true }))).toBe(false);
   });
@@ -68,7 +56,7 @@ describe("AtlasClient inbound response validation", () => {
     ["missing a required resource array", { entities: [], objects: [] }],
     ["missing its version watermark", fullPage({ version: undefined })],
     ["with a fractional version watermark", fullPage({ version: 1.5 })],
-    ["containing a resource in the wrong bucket", fullPage({ entities: [validTask("task-wrong-bucket", null, 1)] })],
+    ["containing a resource in the wrong bucket", fullPage({ entities: [validTask("task-wrong-bucket", "asset-1")] })],
     ["containing malformed resource metadata", fullPage({ entities: [validEntity("asset-zero-version", 0)] })],
     ["omitting a pagination flag", fullPage({ has_more_tasks: undefined })],
     ["declaring another page without a cursor", fullPage({ has_more_entities: true })],
@@ -112,7 +100,7 @@ describe("AtlasClient inbound response validation", () => {
   });
 
   it("accepts a canonical delete event", async () => {
-    const event = { event: "delete", resource_type: "task", id: "task-deleted", version: 5, entity_id: null };
+    const event = { event: "delete", resource_type: "entity", id: "entity-deleted", version: 5 };
     const client = new AtlasClient({
       baseUrl: "http://atlas.test",
       fetch: async () => Response.json(changedPage({ events: [event], version: 5 }))
@@ -123,34 +111,33 @@ describe("AtlasClient inbound response validation", () => {
 
   it.each<[string, unknown]>([
     [
-      "duplicate command IDs",
-      {
-        type: "command_catalog",
-        name: "Catalog",
-        description: "Commands",
-        commands: [
-          { id: "hold", name: "Hold", description: "Hold.", parameters_schema: {} },
-          { id: "hold", name: "Hold Again", description: "Still hold.", parameters_schema: {} }
-        ]
-      }
+      "duplicate Command identifiers",
+      [
+        {
+          command: "fixture.inspect",
+          name: "Inspect",
+          description: "Inspect the fixture.",
+          input_schema: "atlas.tasking.EmptyObject"
+        },
+        {
+          command: "fixture.inspect",
+          name: "Inspect Again",
+          description: "Inspect the fixture again.",
+          input_schema: "atlas.tasking.EmptyObject"
+        }
+      ]
     ],
     [
-      "inverted parameter bounds",
-      {
-        type: "command_catalog",
-        name: "Catalog",
-        description: "Commands",
-        commands: [
-          {
-            id: "move",
-            name: "Move",
-            description: "Move.",
-            parameters_schema: {
-              speed: { type: "number", description: "Speed.", required: true, minimum: 10, maximum: 1 }
-            }
-          }
-        ]
-      }
+      "unsupported scheduling",
+      [
+        {
+          command: "fixture.inspect",
+          name: "Inspect",
+          description: "Inspect the fixture.",
+          input_schema: "atlas.tasking.EmptyObject",
+          scheduling: "periodic"
+        }
+      ]
     ]
   ])("rejects a command catalog with %s", async (_name, payload) => {
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: async () => Response.json(payload) });
@@ -172,6 +159,72 @@ describe("AtlasClient inbound response validation", () => {
     );
     expect(client.sync.snapshot()).toBe(snapshot);
     expect(client.sync.status().lastVersion).toBe(0);
+  });
+
+  it("rejects Task lifecycle responses for a different Task id without poisoning the cache", async () => {
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: async () =>
+        Response.json(validTask("task-other", "asset-1"), {
+          headers: { ETag: '"v1"' }
+        })
+    });
+    const snapshot = client.sync.snapshot();
+
+    await expect(client.tasks.start("task-requested", { runtimeId: "runtime-1" })).rejects.toThrow(
+      "Atlas task response id task-other does not match requested id task-requested"
+    );
+    expect(client.sync.snapshot()).toBe(snapshot);
+    expect(client.sync.status().lastVersion).toBe(0);
+  });
+
+  it("rejects runtime delivery for a different Asset", async () => {
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: async () => Response.json({ tasks: [validTask("task-foreign", "asset-2")] })
+    });
+
+    await expect(client.runtime.tasks("asset-1", { runtimeId: "runtime-1" })).rejects.toThrow(
+      "Atlas response failed validation for GET /entities/asset-1/runtime/tasks"
+    );
+  });
+
+  it("keeps Task lifecycle responses isolated from watch callback mutation", async () => {
+    const response = validTask("task-watched", "asset-1");
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: async () => Response.json(response, { headers: { ETag: '"v1"' } })
+    });
+    const mutations: boolean[] = [];
+    let watchedValue: unknown;
+    let watchedEventResource: unknown;
+    client.tasks.watch(response.task_id, (value, event) => {
+      watchedValue = value;
+      if (value) mutations.push(Reflect.set(value, "status", "failed"));
+      if ("resource" in event) {
+        watchedEventResource = event.resource;
+        mutations.push(Reflect.set(event.resource, "status", "failed"));
+      }
+    });
+
+    const returned = await client.tasks.start(response.task_id, { runtimeId: "runtime-1" });
+    const cached = client.sync.snapshot().tasks[response.task_id];
+
+    expect(mutations).toEqual([false, false]);
+    expect(watchedValue).toBe(cached);
+    expect(watchedEventResource).toBe(cached);
+    expect(returned).not.toBe(cached);
+    expect(returned.status).toBe(response.status);
+  });
+
+  it("requires a strong resource ETag on Task point responses", async () => {
+    const response = validTask("task-without-etag", "asset-1");
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: async () => Response.json(response) });
+
+    await expect(client.tasks.get(response.task_id, { fresh: true })).rejects.toThrow(
+      "Atlas response did not include a valid resource ETag for GET /tasks/task-without-etag"
+    );
+    expect(client.sync.snapshot().tasks).toEqual({});
   });
 
   it("accepts the extra field on HTTP ObjectDetailResource values", async () => {
@@ -355,24 +408,13 @@ describe("AtlasClient inbound response validation", () => {
     }
   });
 
-  it("validates the whole check-in envelope before mutating entity or task cache state", async () => {
+  it("validates the whole check-in envelope before mutating cache state", async () => {
     const core = new FakeCore();
     const existingEntity = core.upsertEntity(entity("asset-checkin-atomic"));
     const existingTask = core.upsertTask(task("task-checkin-atomic", existingEntity.entity_id));
     let malformedCheckIn = false;
     const contextuallyInvalidResponse = {
-      entity: { ...existingEntity, alias: "must not leak", metadata: metadata(existingTask.metadata.version + 1) },
-      tasks: [
-        {
-          ...existingTask,
-          entity_id: "asset-other",
-          status: "acknowledged",
-          metadata: metadata(existingTask.metadata.version + 2)
-        }
-      ],
-      task_count: 1,
-      task_limit: 10,
-      has_more_tasks: false
+      entity: { ...existingEntity, entity_id: "asset-other", alias: "must not leak" }
     };
     expect(isEntityCheckInFullResponse(contextuallyInvalidResponse)).toBe(true);
     const fetchImpl: typeof fetch = async (url, init) => {
@@ -400,34 +442,6 @@ describe("AtlasClient inbound response validation", () => {
     expect(entityWatch).not.toHaveBeenCalled();
     expect(taskWatch).not.toHaveBeenCalled();
     client.sync.stop();
-  });
-
-  it.each([
-    ["omitted entity_id", undefined, true],
-    ["matching entity_id", "asset-checkin-minimal", true],
-    ["wrong entity_id", "asset-other", false]
-  ] as const)("validates a minimal check-in task with %s", async (_name, entityID, valid) => {
-    const checkedIn = validEntity("asset-checkin-minimal", 1);
-    const minimalTask = {
-      task_id: "task-minimal",
-      status: "pending",
-      ...(entityID === undefined ? {} : { entity_id: entityID })
-    };
-    const client = new AtlasClient({
-      baseUrl: "http://atlas.test",
-      fetch: async () =>
-        Response.json({
-          entity: checkedIn,
-          tasks: [minimalTask],
-          task_count: 1,
-          task_limit: 10,
-          has_more_tasks: false
-        })
-    });
-    const result = client.entities.checkIn(checkedIn.entity_id, { fields: "minimal" });
-
-    if (valid) await expect(result).resolves.toMatchObject({ tasks: [minimalTask] });
-    else await expect(result).rejects.toThrow("Atlas response failed validation");
   });
 });
 

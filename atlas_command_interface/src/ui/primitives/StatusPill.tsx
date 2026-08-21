@@ -1,6 +1,7 @@
+import type { TaskStatus } from "@the-drunken-coder/atlas-sdk";
 import type { CSSProperties } from "react";
 import type { Classification, EntityConnectionStatus, HeartbeatLevel } from "../../atlas/entities.js";
-import { isKnownTaskStatus, taskStatusLabel } from "../../atlas/tasks.js";
+import { taskStatusLabel } from "../../atlas/tasks.js";
 
 type StatusPillProps = {
   label: string;
@@ -18,9 +19,8 @@ export function StatusPill({ label, color, dot = true }: StatusPillProps) {
   );
 }
 
-export function TaskStatusPill({ status }: { status: string }) {
-  const color = isKnownTaskStatus(status) ? `var(--status-${status})` : "var(--text-3)";
-  return <StatusPill label={taskStatusLabel(status)} color={color} />;
+export function TaskStatusPill({ status }: { status: TaskStatus }) {
+  return <StatusPill label={taskStatusLabel(status)} color={`var(--status-${status})`} />;
 }
 
 export function ConnectionStatusPill({ status }: { status: EntityConnectionStatus }) {

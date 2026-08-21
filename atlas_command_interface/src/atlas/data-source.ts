@@ -1,19 +1,21 @@
-import { AtlasClient, type EntityResource, type JSONValue, type TaskResource } from "@the-drunken-coder/atlas-sdk";
-import type { AppConfig } from "../app/config.js";
 import {
-  buildCommandTaskRequest,
+  AtlasClient,
   type CommandCatalog,
   type CommandDefinition,
-  coerceParameters
-} from "./command-model.js";
+  type EntityResource,
+  type JSONValue,
+  type TaskResource
+} from "@the-drunken-coder/atlas-sdk";
+import type { AppConfig } from "../app/config.js";
 import { sanitizeConnectionError } from "./connection-error.js";
 import type { UiGeometry } from "./geometry.js";
 import type { AtlasSnapshot } from "./store.js";
 
 export type CommandSubmission = {
-  entityId: string;
+  assetId: string;
   command: CommandDefinition;
-  parameters?: Record<string, JSONValue>;
+  input: JSONValue;
+  idempotencyKey: string;
   signal?: AbortSignal;
 };
 
@@ -23,6 +25,7 @@ export type ConnectionHealth = { running: boolean; healthy: boolean; degraded: b
 export interface AtlasDataSource {
   snapshot(): AtlasSnapshot;
   loadCommandCatalog(): Promise<CommandCatalog>;
+  loadEntityDetails?(entityId: string): Promise<EntityResource>;
   watch(onSnapshot: (snapshot: AtlasSnapshot) => void): () => void;
   start(): Promise<void>;
   submitCommand(submission: CommandSubmission): Promise<TaskResource>;
@@ -51,6 +54,8 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
     snapshot,
 
     loadCommandCatalog: () => client.commandCatalog(),
+
+    loadEntityDetails: (entityId) => client.entities.get(entityId, { fresh: true }),
 
     watch(onSnapshot) {
       let previous = client.sync.snapshot();
@@ -88,10 +93,10 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
     },
 
     async submitCommand(submission) {
-      const parameters = coerceParameters(submission.command, submission.parameters);
       return client.tasks.create(
-        buildCommandTaskRequest({ entityId: submission.entityId, command: submission.command, parameters }),
+        { asset_id: submission.assetId, command: submission.command.command, input: submission.input },
         {
+          idempotencyKey: submission.idempotencyKey,
           signal: submission.signal
         }
       );

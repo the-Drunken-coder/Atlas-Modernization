@@ -12,7 +12,7 @@ import (
 	"testing"
 )
 
-func TestIfMatchPreconditionsForEntityTaskAndObject(t *testing.T) {
+func TestIfMatchPreconditionsForEntityAndObject(t *testing.T) {
 	SkipIfSystemNotAvailable(t)
 
 	client := NewAPIClient()
@@ -28,46 +28,6 @@ func TestIfMatchPreconditionsForEntityTaskAndObject(t *testing.T) {
 			"subtype":     "drone",
 		},
 		patchPath: "/entities/" + entityID,
-		matchBody: map[string]interface{}{
-			"extra": map[string]interface{}{"matched": true},
-		},
-		wildcardBody: map[string]interface{}{
-			"extra": map[string]interface{}{"wildcard": true},
-		},
-		staleBody: map[string]interface{}{
-			"extra": map[string]interface{}{"stale": true},
-		},
-		weakBody: map[string]interface{}{
-			"extra": map[string]interface{}{"weak": true},
-		},
-		malformedBody: map[string]interface{}{
-			"extra": map[string]interface{}{"malformed": true},
-		},
-		noHeaderBody: map[string]interface{}{
-			"extra": map[string]interface{}{"no_header": true},
-		},
-	})
-
-	taskEntityID := fmt.Sprintf("%s-ifmatch-task-entity", prefix)
-	resp, err := client.Post(ctx, "/entities", map[string]interface{}{
-		"entity_id":   taskEntityID,
-		"entity_type": "asset",
-	})
-	if err != nil {
-		t.Fatalf("create task entity fixture: %v", err)
-	}
-	requireHTTPStatus(t, resp, http.StatusCreated, "POST /entities (task If-Match fixture)")
-	drainClose(resp)
-
-	taskID := fmt.Sprintf("%s-ifmatch-task", prefix)
-	exerciseIfMatchResource(ctx, t, client, ifMatchResource{
-		createPath: "/tasks",
-		createBody: map[string]interface{}{
-			"task_id":   taskID,
-			"entity_id": taskEntityID,
-			"status":    "pending",
-		},
-		patchPath: "/tasks/" + taskID,
 		matchBody: map[string]interface{}{
 			"extra": map[string]interface{}{"matched": true},
 		},
@@ -123,19 +83,7 @@ func TestIfMatchConcurrentConflict(t *testing.T) {
 	ctx := context.Background()
 	prefix := TestArtifactPrefix()
 
-	taskEntityID := fmt.Sprintf("%s-ifmatch-concurrent-task-entity", prefix)
-	resp, err := client.Post(ctx, "/entities", map[string]interface{}{
-		"entity_id":   taskEntityID,
-		"entity_type": "asset",
-	})
-	if err != nil {
-		t.Fatalf("create concurrent If-Match task entity: %v", err)
-	}
-	requireHTTPStatus(t, resp, http.StatusCreated, "POST /entities (concurrent task If-Match fixture)")
-	drainClose(resp)
-
 	entityID := fmt.Sprintf("%s-ifmatch-concurrent-entity", prefix)
-	taskID := fmt.Sprintf("%s-ifmatch-concurrent-task", prefix)
 	objectID := fmt.Sprintf("%s-ifmatch-concurrent-object", prefix)
 
 	tests := []struct {
@@ -152,18 +100,6 @@ func TestIfMatchConcurrentConflict(t *testing.T) {
 					"subtype":     "drone",
 				},
 				patchPath: "/entities/" + entityID,
-			},
-		},
-		{
-			name: "task",
-			resource: ifMatchConcurrentResource{
-				createPath: "/tasks",
-				createBody: map[string]interface{}{
-					"task_id":   taskID,
-					"entity_id": taskEntityID,
-					"status":    "pending",
-				},
-				patchPath: "/tasks/" + taskID,
 			},
 		},
 		{

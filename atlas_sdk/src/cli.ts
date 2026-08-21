@@ -25,6 +25,7 @@ export type CLIIO = {
 type CLIOptions = {
   baseUrl: string;
   apiKey?: string;
+  idempotencyKey?: string;
 };
 
 type CLICommand =
@@ -34,7 +35,7 @@ type CLICommand =
   | { kind: "watch"; options: CLIOptions; filter: AtlasSubscription; follow: boolean };
 
 const usage =
-  "usage: atlas [--base-url <url>] [--api-key <key>] entities get <id> | atlas tasks create <json> | atlas watch --subscribe <filter> --follow\n";
+  "usage: atlas [--base-url <url>] [--api-key <key>] entities get <id> | atlas --idempotency-key <key> tasks create <json> | atlas watch --subscribe <filter> --follow\n";
 const CLI_REQUEST_TIMEOUT_MS = 10_000;
 const CLI_ENTRYPOINT_NAMES = buildCLIEntrypointNames();
 
@@ -52,7 +53,6 @@ export async function runCLI(argv: string[], io: CLIIO = defaultIO()): Promise<n
       io.stdout.write(usage);
       return 0;
     }
-
     const client = new AtlasClient({
       baseUrl: command.options.baseUrl,
       apiKey: command.options.apiKey,
@@ -66,8 +66,10 @@ export async function runCLI(argv: string[], io: CLIIO = defaultIO()): Promise<n
       return 0;
     }
     if (command.kind === "tasks.create") {
+      const idempotencyKey = command.options.idempotencyKey;
+      if (!idempotencyKey) throw new UsageError("usage: tasks create requires --idempotency-key <key>");
       await client.handshake();
-      io.stdout.write(JSON.stringify(await client.tasks.create(command.body)) + "\n");
+      io.stdout.write(JSON.stringify(await client.tasks.create(command.body, { idempotencyKey })) + "\n");
       return 0;
     }
 
@@ -123,6 +125,10 @@ function parseArgs(argv: string[], env: Record<string, string | undefined>): CLI
         break;
       case "--api-key":
         options.apiKey = readFlagValue(argv, index, "--api-key");
+        index++;
+        break;
+      case "--idempotency-key":
+        options.idempotencyKey = readFlagValue(argv, index, "--idempotency-key");
         index++;
         break;
       case "--subscribe":
@@ -183,9 +189,9 @@ export function parseFilter(raw: string): AtlasSubscription {
     const id = parts.slice(2).join(":");
     if (id) return { filter: "id", resource_type: secondPart, id };
   }
-  if (kind === "tasks_for_entity" && parts.length >= 2) {
-    const entityId = parts.slice(1).join(":");
-    if (entityId) return { filter: "tasks_for_entity", entity_id: entityId };
+  if (kind === "tasks_for_asset" && parts.length >= 2) {
+    const assetId = parts.slice(1).join(":");
+    if (assetId) return { filter: "tasks_for_asset", asset_id: assetId };
   }
   throw new UsageError(`invalid subscription filter: ${raw}`);
 }

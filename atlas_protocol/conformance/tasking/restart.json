@@ -1,0 +1,19 @@
+{
+  "cases": [
+    {
+      "name": "new runtime fences prior work",
+      "old_runtime_id": "runtime-old",
+      "new_runtime_id": "runtime-new",
+      "nonterminal_task_ids": ["task-pending", "task-running"],
+      "expected_status": "failed",
+      "expected_failure_code": "asset_restarted"
+    },
+    {
+      "name": "overdue immediate work never executes",
+      "runtime_id": "runtime-current",
+      "task_id": "task-expired",
+      "expected_status": "failed",
+      "expected_failure_code": "immediate_start_timeout"
+    }
+  ]
+}

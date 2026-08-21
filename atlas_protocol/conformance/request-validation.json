@@ -90,33 +90,29 @@
       }
     },
     {
-      "name": "task update accepts explicit null entity_id",
-      "definition": "TaskUpdateRequest",
-      "schema_valid": true,
-      "valid": true,
-      "value": {
-        "entity_id": null
-      }
-    },
-    {
-      "name": "task update accepts omitted entity_id with another change",
-      "definition": "TaskUpdateRequest",
-      "schema_valid": true,
-      "valid": true,
-      "value": {
-        "extra": {
-          "note": "preserve current entity"
-        }
-      }
-    },
-    {
-      "name": "task create accepts a minimal non-command task",
+      "name": "task create accepts immutable tasking data",
       "definition": "TaskCreateRequest",
       "schema_valid": true,
       "valid": true,
       "value": {
-        "task_id": "task-conformance"
+        "asset_id": "asset-conformance",
+        "command": "fixture.queued",
+        "input": { "value": "inspect-sector-7" }
       }
+    },
+    {
+      "name": "task acknowledge accepts an empty body",
+      "definition": "TaskAcknowledgeRequest",
+      "schema_valid": true,
+      "valid": true,
+      "value": {}
+    },
+    {
+      "name": "task start accepts an empty body",
+      "definition": "TaskStartRequest",
+      "schema_valid": true,
+      "valid": true,
+      "value": {}
     },
     {
       "name": "object create accepts minimal metadata",
@@ -174,39 +170,60 @@
       "value": { "entity_type": null }
     },
     {
-      "name": "task create accepts explicit pending status",
-      "definition": "TaskCreateRequest",
+      "name": "task progress accepts a bounded value",
+      "definition": "TaskProgressRequest",
       "schema_valid": true,
       "valid": true,
-      "value": { "task_id": "task-pending", "status": "pending" }
+      "value": { "progress": 0.5 }
     },
     {
-      "name": "task create rejects non-pending initial status",
-      "definition": "TaskCreateRequest",
+      "name": "task progress rejects values above one",
+      "definition": "TaskProgressRequest",
       "schema_valid": false,
       "valid": false,
-      "value": { "task_id": "task-acknowledged", "status": "acknowledged" }
+      "value": { "progress": 1.1 }
     },
     {
-      "name": "task create rejects null status",
-      "definition": "TaskCreateRequest",
-      "schema_valid": false,
-      "valid": false,
-      "value": { "task_id": "task-null-status", "status": null }
+      "name": "task complete accepts a bounded output",
+      "definition": "TaskCompleteRequest",
+      "schema_valid": true,
+      "valid": true,
+      "value": { "output": { "result": "sector-clear" } }
     },
     {
-      "name": "task update rejects an empty patch",
-      "definition": "TaskUpdateRequest",
-      "schema_valid": false,
-      "valid": false,
-      "value": {}
+      "name": "task fail accepts a closed failure reason",
+      "definition": "TaskFailRequest",
+      "schema_valid": true,
+      "valid": true,
+      "value": { "failure": { "code": "execution_failed", "message": "Fixture failed." } }
     },
     {
-      "name": "task update rejects null status",
-      "definition": "TaskUpdateRequest",
-      "schema_valid": false,
-      "valid": false,
-      "value": { "status": null }
+      "name": "task cancel accepts a closed cancellation reason",
+      "definition": "TaskCancelRequest",
+      "schema_valid": true,
+      "valid": true,
+      "value": { "cancellation": { "code": "requested", "message": "Atlas withdrew the Task." } }
+    },
+    {
+      "name": "runtime registration requires a runtime id",
+      "definition": "RuntimeRegistrationRequest",
+      "schema_valid": true,
+      "valid": true,
+      "value": { "runtime_id": "runtime-conformance" }
+    },
+    {
+      "name": "runtime stop requires a runtime id",
+      "definition": "RuntimeStopRequest",
+      "schema_valid": true,
+      "valid": true,
+      "value": { "runtime_id": "runtime-conformance" }
+    },
+    {
+      "name": "runtime ready accepts an empty initial manifest",
+      "definition": "RuntimeReadyRequest",
+      "schema_valid": true,
+      "valid": true,
+      "value": { "runtime_id": "runtime-conformance", "manifest": [] }
     },
     {
       "name": "object create rejects a client-owned storage path",

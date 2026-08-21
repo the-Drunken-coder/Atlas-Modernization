@@ -56,12 +56,8 @@ func collectByteBoundedEntities(rows pgx.Rows, limit, maxBytes int) ([]*models.E
 
 func collectByteBoundedTasks(rows pgx.Rows, limit, maxBytes int) ([]*models.Task, bool, error) {
 	return collectByteBoundedRows(rows, limit, maxBytes, "task", func() (*models.Task, int, error) {
-		var task models.Task
-		err := rows.Scan(
-			&task.TaskID, &task.Status, &task.EntityID, &task.JSON,
-			&task.CreatedAt, &task.UpdatedAt, &task.Version,
-		)
-		return &task, taskRetainedBytes(&task), err
+		task, err := scanTask(rows)
+		return task, taskRetainedBytes(task), err
 	})
 }
 
@@ -85,7 +81,8 @@ func entityRetainedBytes(entity *models.Entity) int {
 }
 
 func taskRetainedBytes(task *models.Task) int {
-	return serializedRowOverhead + jsonStringBytes(task.TaskID) + jsonStringBytes(task.Status) + jsonOptionalStringBytes(task.EntityID) + jsonValueBytes(task.JSON)
+	return serializedRowOverhead + jsonStringBytes(task.TaskID) + jsonStringBytes(task.AssetID) + jsonStringBytes(task.Command) + jsonStringBytes(task.Status) +
+		jsonValueBytes(task.Input) + jsonValueBytes(task.Output) + jsonValueBytes(task.Failure) + jsonValueBytes(task.Cancellation)
 }
 
 func objectRetainedBytes(object *models.MediaObject) int {
@@ -147,18 +144,7 @@ func collectTasks(rows pgx.Rows) ([]*models.Task, error) {
 	}
 	defer rows.Close()
 
-	var out []*models.Task
-	for rows.Next() {
-		var t models.Task
-		if err := rows.Scan(&t.TaskID, &t.Status, &t.EntityID, &t.JSON, &t.CreatedAt, &t.UpdatedAt, &t.Version); err != nil {
-			return nil, fmt.Errorf("failed to scan task: %w", err)
-		}
-		out = append(out, &t)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating task rows: %w", err)
-	}
-	return out, nil
+	return scanTaskRows(rows)
 }
 
 func collectObjects(rows pgx.Rows) ([]*models.MediaObject, error) {

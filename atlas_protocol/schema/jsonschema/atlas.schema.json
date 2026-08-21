@@ -79,115 +79,85 @@
         "civilian"
       ]
     },
-    "CommandComponent": {
-      "additionalProperties": false,
-      "properties": {
-        "id": {
-          "$ref": "#/$defs/NonEmptyString"
-        },
-        "parameters": {
-          "$ref": "#/$defs/JSONValue"
-        },
-        "target": {
-          "$ref": "#/$defs/JSONValue"
-        },
-        "type": {
-          "$ref": "#/$defs/NonEmptyString"
-        }
-      },
-      "required": [
-        "type"
-      ],
-      "type": "object"
-    },
     "CommandCatalog": {
-      "additionalProperties": false,
-      "properties": {
-        "commands": {
-          "items": {
-            "$ref": "#/$defs/CommandDefinition"
-          },
-          "minItems": 1,
-          "type": "array"
-        },
-        "description": {
-          "$ref": "#/$defs/NonEmptyString"
-        },
-        "name": {
-          "$ref": "#/$defs/NonEmptyString"
-        },
-        "type": {
-          "const": "command_catalog"
-        }
+      "items": {
+        "$ref": "#/$defs/CommandDefinition"
       },
-      "required": [
-        "commands",
-        "description",
-        "name",
-        "type"
-      ],
-      "type": "object"
+      "type": "array"
     },
     "CommandDefinition": {
       "additionalProperties": false,
       "properties": {
+        "command": {
+          "$ref": "#/$defs/CommandName"
+        },
         "description": {
           "$ref": "#/$defs/NonEmptyString"
         },
-        "id": {
-          "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$",
-          "type": "string"
+        "input_schema": {
+          "$ref": "#/$defs/ProtocolSchemaName"
         },
         "name": {
           "$ref": "#/$defs/NonEmptyString"
         },
-        "parameters_schema": {
-          "additionalProperties": {
-            "$ref": "#/$defs/CommandParameterSchema"
-          },
-          "propertyNames": {
-            "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$"
-          },
-          "type": "object"
+        "output_schema": {
+          "$ref": "#/$defs/ProtocolSchemaName"
+        },
+        "scheduling": {
+          "$ref": "#/$defs/CommandScheduling"
         }
       },
       "required": [
+        "command",
         "description",
-        "id",
-        "name",
-        "parameters_schema"
+        "input_schema",
+        "name"
       ],
       "type": "object"
     },
-    "CommandParameterSchema": {
+    "CommandManifest": {
+      "items": {
+        "$ref": "#/$defs/CommandManifestEntry"
+      },
+      "type": "array"
+    },
+    "CommandManifestEntry": {
       "additionalProperties": false,
       "properties": {
+        "command": {
+          "$ref": "#/$defs/CommandName"
+        },
         "description": {
           "$ref": "#/$defs/NonEmptyString"
         },
-        "maximum": {
-          "$ref": "#/$defs/FiniteNumber"
+        "scheduling": {
+          "$ref": "#/$defs/CommandScheduling"
         },
-        "minimum": {
-          "$ref": "#/$defs/FiniteNumber"
-        },
-        "required": {
+        "supports_cancel": {
           "type": "boolean"
         },
-        "type": {
-          "enum": [
-            "boolean",
-            "number",
-            "string"
-          ]
+        "supports_progress": {
+          "type": "boolean"
         }
       },
       "required": [
+        "command",
         "description",
-        "required",
-        "type"
+        "scheduling",
+        "supports_cancel",
+        "supports_progress"
       ],
       "type": "object"
+    },
+    "CommandName": {
+      "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*\\.[a-z][a-z0-9]*(?:_[a-z0-9]+)*(?:\\.[a-z][a-z0-9]*(?:_[a-z0-9]+)*)*$",
+      "type": "string"
+    },
+    "CommandScheduling": {
+      "enum": [
+        "immediate",
+        "queued"
+      ]
     },
     "CommunicationsComponent": {
       "additionalProperties": false,
@@ -247,12 +217,6 @@
         },
         "status": {
           "$ref": "#/$defs/StatusComponent"
-        },
-        "task_catalog": {
-          "$ref": "#/$defs/TaskCatalogComponent"
-        },
-        "task_queue": {
-          "$ref": "#/$defs/TaskQueueComponent"
         },
         "telemetry": {
           "$ref": "#/$defs/TelemetryComponent"
@@ -344,148 +308,25 @@
     },
     "EntityCheckInFullResponse": {
       "additionalProperties": false,
-      "if": {
-        "properties": {
-          "has_more_tasks": {
-            "const": true
-          }
-        },
-        "required": [
-          "has_more_tasks"
-        ],
-        "type": "object"
-      },
       "properties": {
         "entity": {
           "$ref": "#/$defs/EntityResource"
-        },
-        "has_more_tasks": {
-          "type": "boolean"
-        },
-        "next_task_cursor": {
-          "$ref": "#/$defs/NonEmptyString"
-        },
-        "task_count": {
-          "maximum": 20,
-          "minimum": 0,
-          "type": "integer"
-        },
-        "task_limit": {
-          "maximum": 20,
-          "minimum": 1,
-          "type": "integer"
-        },
-        "tasks": {
-          "items": {
-            "$ref": "#/$defs/TaskResource"
-          },
-          "maxItems": 20,
-          "type": "array"
         }
       },
       "required": [
-        "entity",
-        "has_more_tasks",
-        "task_count",
-        "task_limit",
-        "tasks"
+        "entity"
       ],
-      "then": {
-        "properties": {
-          "next_task_cursor": {
-            "$ref": "#/$defs/NonEmptyString"
-          }
-        },
-        "required": [
-          "next_task_cursor"
-        ],
-        "type": "object"
-      },
       "type": "object"
     },
     "EntityCheckInMinimalResponse": {
       "additionalProperties": false,
-      "if": {
-        "properties": {
-          "has_more_tasks": {
-            "const": true
-          }
-        },
-        "required": [
-          "has_more_tasks"
-        ],
-        "type": "object"
-      },
       "properties": {
         "entity": {
           "$ref": "#/$defs/EntityResource"
-        },
-        "has_more_tasks": {
-          "type": "boolean"
-        },
-        "next_task_cursor": {
-          "$ref": "#/$defs/NonEmptyString"
-        },
-        "task_count": {
-          "maximum": 20,
-          "minimum": 0,
-          "type": "integer"
-        },
-        "task_limit": {
-          "maximum": 20,
-          "minimum": 1,
-          "type": "integer"
-        },
-        "tasks": {
-          "items": {
-            "$ref": "#/$defs/EntityCheckInMinimalTask"
-          },
-          "maxItems": 20,
-          "type": "array"
         }
       },
       "required": [
-        "entity",
-        "has_more_tasks",
-        "task_count",
-        "task_limit",
-        "tasks"
-      ],
-      "then": {
-        "properties": {
-          "next_task_cursor": {
-            "$ref": "#/$defs/NonEmptyString"
-          }
-        },
-        "required": [
-          "next_task_cursor"
-        ],
-        "type": "object"
-      },
-      "type": "object"
-    },
-    "EntityCheckInMinimalTask": {
-      "additionalProperties": false,
-      "properties": {
-        "command_id": {
-          "$ref": "#/$defs/NonEmptyString"
-        },
-        "entity_id": {
-          "$ref": "#/$defs/NonEmptyString"
-        },
-        "parameters": {
-          "$ref": "#/$defs/JSONValue"
-        },
-        "status": {
-          "$ref": "#/$defs/NonEmptyString"
-        },
-        "task_id": {
-          "$ref": "#/$defs/NonEmptyString"
-        }
-      },
-      "required": [
-        "status",
-        "task_id"
+        "entity"
       ],
       "type": "object"
     },
@@ -571,6 +412,9 @@
               "type": "string"
             }
           ]
+        },
+        "command_manifest": {
+          "$ref": "#/$defs/CommandManifest"
         },
         "components": {
           "$ref": "#/$defs/EntityComponents"
@@ -812,9 +656,6 @@
           "$ref": "#/$defs/EntityDeleteEvent"
         },
         {
-          "$ref": "#/$defs/TaskDeleteEvent"
-        },
-        {
           "$ref": "#/$defs/ObjectDeleteEvent"
         }
       ]
@@ -869,7 +710,7 @@
           "$ref": "#/$defs/SubscribeTypeMessage"
         },
         {
-          "$ref": "#/$defs/SubscribeTasksForEntityMessage"
+          "$ref": "#/$defs/SubscribeTasksForAssetMessage"
         }
       ]
     },
@@ -885,7 +726,7 @@
           "$ref": "#/$defs/UnsubscribeTypeMessage"
         },
         {
-          "$ref": "#/$defs/UnsubscribeTasksForEntityMessage"
+          "$ref": "#/$defs/UnsubscribeTasksForAssetMessage"
         }
       ]
     },
@@ -893,8 +734,36 @@
       "exclusiveMinimum": 0,
       "type": "integer"
     },
+    "EmptyObject": {
+      "additionalProperties": false,
+      "type": "object"
+    },
     "FiniteNumber": {
       "type": "number"
+    },
+    "FixtureInput": {
+      "additionalProperties": false,
+      "properties": {
+        "value": {
+          "$ref": "#/$defs/NonEmptyString"
+        }
+      },
+      "required": [
+        "value"
+      ],
+      "type": "object"
+    },
+    "FixtureOutput": {
+      "additionalProperties": false,
+      "properties": {
+        "result": {
+          "$ref": "#/$defs/NonEmptyString"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
     },
     "FullDatasetResponse": {
       "additionalProperties": false,
@@ -1655,6 +1524,10 @@
       },
       "type": "object"
     },
+    "ProtocolSchemaName": {
+      "pattern": "^atlas(?:\\.[a-z][a-z0-9]*(?:_[a-z0-9]+)*)+\\.[A-Z][A-Za-z0-9]*$",
+      "type": "string"
+    },
     "ProtocolRevision": {
       "pattern": "^sha256:[A-Fa-f0-9]{64}$",
       "type": "string"
@@ -1761,22 +1634,22 @@
       ],
       "type": "object"
     },
-    "SubscribeTasksForEntityMessage": {
+    "SubscribeTasksForAssetMessage": {
       "additionalProperties": false,
       "properties": {
         "action": {
           "const": "subscribe"
         },
-        "entity_id": {
+        "asset_id": {
           "$ref": "#/$defs/NonEmptyString"
         },
         "filter": {
-          "const": "tasks_for_entity"
+          "const": "tasks_for_asset"
         }
       },
       "required": [
         "action",
-        "entity_id",
+        "asset_id",
         "filter"
       ],
       "type": "object"
@@ -1801,58 +1674,65 @@
       ],
       "type": "object"
     },
-    "TaskBlob": {
-      "additionalProperties": {
-        "$ref": "#/$defs/JSONValue"
-      },
-      "properties": {
-        "components": {
-          "$ref": "#/$defs/TaskComponents",
-          "additionalProperties": {
-            "$ref": "#/$defs/JSONValue"
-          },
-          "type": "object"
-        }
-      },
-      "type": "object"
-    },
-    "TaskCatalogComponent": {
+    "RuntimeRegistrationRequest": {
       "additionalProperties": false,
       "properties": {
-        "supported_tasks": {
+        "runtime_id": {
+          "$ref": "#/$defs/RuntimeID"
+        }
+      },
+      "required": [
+        "runtime_id"
+      ],
+      "type": "object"
+    },
+    "RuntimeStopRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "runtime_id": {
+          "$ref": "#/$defs/RuntimeID"
+        }
+      },
+      "required": [
+        "runtime_id"
+      ],
+      "type": "object"
+    },
+    "RuntimeReadyRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "manifest": {
+          "$ref": "#/$defs/CommandManifest"
+        },
+        "runtime_id": {
+          "$ref": "#/$defs/RuntimeID"
+        }
+      },
+      "required": [
+        "manifest",
+        "runtime_id"
+      ],
+      "type": "object"
+    },
+    "RuntimeTaskDeliveryResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "tasks": {
           "items": {
-            "$ref": "#/$defs/NonEmptyString"
+            "$ref": "#/$defs/TaskResource"
           },
           "type": "array"
         }
       },
+      "required": [
+        "tasks"
+      ],
       "type": "object"
     },
-    "TaskComponents": {
-      "additionalProperties": false,
-      "patternProperties": {
-        "^custom_": {
-          "$ref": "#/$defs/JSONValue"
-        }
-      },
-      "properties": {
-        "command": {
-          "$ref": "#/$defs/CommandComponent"
-        },
-        "parameters": {
-          "$ref": "#/$defs/TaskParametersComponent"
-        },
-        "progress": {
-          "$ref": "#/$defs/TaskProgressComponent"
-        },
-        "status_message": {
-          "type": "string"
-        },
-        "target": {
-          "$ref": "#/$defs/TaskParametersComponent"
-        }
-      },
-      "type": "object"
+    "RuntimeID": {
+      "$ref": "#/$defs/NonEmptyString",
+      "maxLength": 100,
+      "type": "string"
     },
     "TaskCreateEvent": {
       "additionalProperties": false,
@@ -1883,196 +1763,379 @@
       "type": "object"
     },
     "TaskCreateRequest": {
-      "anyOf": [
-        {
-          "additionalProperties": false,
-          "minProperties": 1,
-          "properties": {
-            "components": {
-              "$ref": "#/$defs/TaskCreateNonCommandComponents"
-            },
-            "entity_id": {
-              "anyOf": [
-                {
-                  "type": "null"
-                },
-                {
-                  "$ref": "#/$defs/NonEmptyString"
-                }
-              ]
-            },
-            "extra": {
-              "additionalProperties": {
-                "$ref": "#/$defs/JSONValue"
-              },
-              "type": "object"
-            },
-            "status": {
-              "const": "pending"
-            },
-            "task_id": {
-              "$ref": "#/$defs/NonEmptyString"
-            }
-          },
-          "required": [
-            "task_id"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "components": {
-              "$ref": "#/$defs/TaskCreateCommandComponents"
-            },
-            "entity_id": {
-              "$ref": "#/$defs/NonEmptyString"
-            },
-            "extra": {
-              "additionalProperties": {
-                "$ref": "#/$defs/JSONValue"
-              },
-              "type": "object"
-            },
-            "status": {
-              "const": "pending"
-            }
-          },
-          "required": [
-            "components",
-            "entity_id"
-          ],
-          "type": "object"
-        }
-      ]
-    },
-    "TaskDeleteEvent": {
       "additionalProperties": false,
       "properties": {
-        "entity_id": {
-          "anyOf": [
-            {
-              "type": "null"
-            },
-            {
-              "$ref": "#/$defs/NonEmptyString"
-            }
-          ],
-          "description": "Interop note: Go consumers can distinguish explicit null from absent after\ndecoding raw JSON, but Go producers using *string with omitempty cannot\nreliably emit explicit null. TypeScript and other non-Go producers may use\nall three states. Consumers SHOULD normalize null to absent for\nGo-originated events and MUST treat both states as \"no known parent entity\"."
+        "asset_id": {
+          "$ref": "#/$defs/NonEmptyString",
+          "maxLength": 50,
+          "type": "string"
         },
-        "event": {
-          "const": "delete"
+        "command": {
+          "$ref": "#/$defs/CommandName"
         },
-        "id": {
-          "$ref": "#/$defs/NonEmptyString"
-        },
-        "resource_type": {
-          "const": "task"
-        },
-        "version": {
-          "$ref": "#/$defs/FeedVersion"
+        "input": {
+          "$ref": "#/$defs/JSONValue"
         }
       },
       "required": [
-        "event",
-        "id",
-        "resource_type",
-        "version"
+        "asset_id",
+        "command",
+        "input"
       ],
       "type": "object"
     },
-    "TaskParametersComponent": {
-      "additionalProperties": {
-        "$ref": "#/$defs/JSONValue"
-      },
-      "properties": {
-        "latitude": {
-          "$ref": "#/$defs/Latitude"
-        },
-        "longitude": {
-          "$ref": "#/$defs/Longitude"
-        }
-      },
+    "TaskAcknowledgeRequest": {
+      "additionalProperties": false,
       "type": "object"
     },
-    "TaskProgressComponent": {
-      "additionalProperties": {
-        "$ref": "#/$defs/JSONValue"
-      },
+    "TaskCancelRequest": {
+      "additionalProperties": false,
       "properties": {
-        "percent": {
+        "cancellation": {
+          "$ref": "#/$defs/TaskCancellation"
+        }
+      },
+      "required": [
+        "cancellation"
+      ],
+      "type": "object"
+    },
+    "TaskCancellation": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/TaskCancellationCode"
+        },
+        "message": {
+          "$ref": "#/$defs/NonEmptyString"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "type": "object"
+    },
+    "TaskCancellationCode": {
+      "enum": [
+        "requested",
+        "superseded"
+      ]
+    },
+    "TaskResource": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "asset_id": {
+                  "$ref": "#/$defs/NonEmptyString"
+                },
+                "command": {
+                  "$ref": "#/$defs/CommandName"
+                },
+                "created_at": {
+                  "$ref": "#/$defs/RFC3339Timestamp"
+                },
+                "input": {
+                  "$ref": "#/$defs/JSONValue"
+                },
+                "status": {
+                  "const": "pending"
+                },
+                "task_id": {
+                  "$ref": "#/$defs/NonEmptyString"
+                },
+                "updated_at": {
+                  "$ref": "#/$defs/RFC3339Timestamp"
+                }
+              },
+              "required": [
+                "status"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "acknowledged_at": {
+                  "$ref": "#/$defs/RFC3339Timestamp"
+                },
+                "asset_id": {
+                  "$ref": "#/$defs/NonEmptyString"
+                },
+                "command": {
+                  "$ref": "#/$defs/CommandName"
+                },
+                "created_at": {
+                  "$ref": "#/$defs/RFC3339Timestamp"
+                },
+                "input": {
+                  "$ref": "#/$defs/JSONValue"
+                },
+                "status": {
+                  "const": "acknowledged"
+                },
+                "task_id": {
+                  "$ref": "#/$defs/NonEmptyString"
+                },
+                "updated_at": {
+                  "$ref": "#/$defs/RFC3339Timestamp"
+                }
+              },
+              "required": [
+                "acknowledged_at",
+                "status"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "acknowledged_at": {
+                  "$ref": "#/$defs/RFC3339Timestamp"
+                },
+                "asset_id": {
+                  "$ref": "#/$defs/NonEmptyString"
+                },
+                "command": {
+                  "$ref": "#/$defs/CommandName"
+                },
+                "created_at": {
+                  "$ref": "#/$defs/RFC3339Timestamp"
+                },
+                "input": {
+                  "$ref": "#/$defs/JSONValue"
+                },
+                "progress": {
+                  "$ref": "#/$defs/FiniteNumber"
+                },
+                "started_at": {
+                  "$ref": "#/$defs/RFC3339Timestamp"
+                },
+                "status": {
+                  "const": "in_progress"
+                },
+                "task_id": {
+                  "$ref": "#/$defs/NonEmptyString"
+                },
+                "updated_at": {
+                  "$ref": "#/$defs/RFC3339Timestamp"
+                }
+              },
+              "required": [
+                "acknowledged_at",
+                "started_at",
+                "status"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "acknowledged_at": {
+                  "$ref": "#/$defs/RFC3339Timestamp"
+                },
+                "asset_id": {
+                  "$ref": "#/$defs/NonEmptyString"
+                },
+                "command": {
+                  "$ref": "#/$defs/CommandName"
+                },
+                "created_at": {
+                  "$ref": "#/$defs/RFC3339Timestamp"
+                },
+                "finished_at": {
+                  "$ref": "#/$defs/RFC3339Timestamp"
+                },
+                "input": {
+                  "$ref": "#/$defs/JSONValue"
+                },
+                "output": {
+                  "$ref": "#/$defs/JSONValue"
+                },
+                "progress": {
+                  "$ref": "#/$defs/FiniteNumber"
+                },
+                "started_at": {
+                  "$ref": "#/$defs/RFC3339Timestamp"
+                },
+                "status": {
+                  "const": "completed"
+                },
+                "task_id": {
+                  "$ref": "#/$defs/NonEmptyString"
+                },
+                "updated_at": {
+                  "$ref": "#/$defs/RFC3339Timestamp"
+                }
+              },
+              "required": [
+                "acknowledged_at",
+                "finished_at",
+                "started_at",
+                "status"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "acknowledged_at": {
+                  "$ref": "#/$defs/RFC3339Timestamp"
+                },
+                "asset_id": {
+                  "$ref": "#/$defs/NonEmptyString"
+                },
+                "command": {
+                  "$ref": "#/$defs/CommandName"
+                },
+                "created_at": {
+                  "$ref": "#/$defs/RFC3339Timestamp"
+                },
+                "failure": {
+                  "$ref": "#/$defs/TaskFailure"
+                },
+                "finished_at": {
+                  "$ref": "#/$defs/RFC3339Timestamp"
+                },
+                "input": {
+                  "$ref": "#/$defs/JSONValue"
+                },
+                "progress": {
+                  "$ref": "#/$defs/FiniteNumber"
+                },
+                "started_at": {
+                  "$ref": "#/$defs/RFC3339Timestamp"
+                },
+                "status": {
+                  "const": "failed"
+                },
+                "task_id": {
+                  "$ref": "#/$defs/NonEmptyString"
+                },
+                "updated_at": {
+                  "$ref": "#/$defs/RFC3339Timestamp"
+                }
+              },
+              "required": [
+                "failure",
+                "finished_at",
+                "status"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "acknowledged_at": {
+                  "$ref": "#/$defs/RFC3339Timestamp"
+                },
+                "asset_id": {
+                  "$ref": "#/$defs/NonEmptyString"
+                },
+                "cancellation": {
+                  "$ref": "#/$defs/TaskCancellation"
+                },
+                "command": {
+                  "$ref": "#/$defs/CommandName"
+                },
+                "created_at": {
+                  "$ref": "#/$defs/RFC3339Timestamp"
+                },
+                "finished_at": {
+                  "$ref": "#/$defs/RFC3339Timestamp"
+                },
+                "input": {
+                  "$ref": "#/$defs/JSONValue"
+                },
+                "progress": {
+                  "$ref": "#/$defs/FiniteNumber"
+                },
+                "started_at": {
+                  "$ref": "#/$defs/RFC3339Timestamp"
+                },
+                "status": {
+                  "const": "cancelled"
+                },
+                "task_id": {
+                  "$ref": "#/$defs/NonEmptyString"
+                },
+                "updated_at": {
+                  "$ref": "#/$defs/RFC3339Timestamp"
+                }
+              },
+              "required": [
+                "cancellation",
+                "finished_at",
+                "status"
+              ],
+              "type": "object"
+            }
+          ]
+        }
+      ],
+      "properties": {
+        "acknowledged_at": {
+          "$ref": "#/$defs/RFC3339Timestamp"
+        },
+        "asset_id": {
+          "$ref": "#/$defs/NonEmptyString",
+          "maxLength": 50,
+          "type": "string"
+        },
+        "cancellation": {
+          "$ref": "#/$defs/TaskCancellation"
+        },
+        "command": {
+          "$ref": "#/$defs/CommandName"
+        },
+        "created_at": {
+          "$ref": "#/$defs/RFC3339Timestamp"
+        },
+        "failure": {
+          "$ref": "#/$defs/TaskFailure"
+        },
+        "finished_at": {
+          "$ref": "#/$defs/RFC3339Timestamp"
+        },
+        "input": {
+          "$ref": "#/$defs/JSONValue"
+        },
+        "output": {
+          "$ref": "#/$defs/JSONValue"
+        },
+        "progress": {
           "$ref": "#/$defs/FiniteNumber",
-          "maximum": 100,
+          "maximum": 1,
           "minimum": 0,
           "type": "number"
+        },
+        "started_at": {
+          "$ref": "#/$defs/RFC3339Timestamp"
+        },
+        "status": {
+          "$ref": "#/$defs/TaskStatus"
+        },
+        "task_id": {
+          "$ref": "#/$defs/NonEmptyString",
+          "maxLength": 50,
+          "type": "string"
         },
         "updated_at": {
           "$ref": "#/$defs/RFC3339Timestamp"
         }
       },
-      "type": "object"
-    },
-    "TaskQueueComponent": {
-      "additionalProperties": false,
-      "properties": {
-        "current_task_id": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/NonEmptyString"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "queued_task_ids": {
-          "items": {
-            "$ref": "#/$defs/NonEmptyString"
-          },
-          "type": "array"
-        }
-      },
-      "type": "object"
-    },
-    "TaskResource": {
-      "additionalProperties": false,
-      "minProperties": 1,
-      "properties": {
-        "components": {
-          "$ref": "#/$defs/TaskComponents"
-        },
-        "entity_id": {
-          "anyOf": [
-            {
-              "type": "null"
-            },
-            {
-              "$ref": "#/$defs/NonEmptyString"
-            }
-          ]
-        },
-        "extra": {
-          "additionalProperties": {
-            "$ref": "#/$defs/JSONValue"
-          },
-          "type": "object"
-        },
-        "metadata": {
-          "$ref": "#/$defs/MetadataBlock"
-        },
-        "status": {
-          "$ref": "#/$defs/NonEmptyString"
-        },
-        "task_id": {
-          "$ref": "#/$defs/NonEmptyString"
-        }
-      },
       "required": [
-        "components",
-        "entity_id",
-        "metadata",
+        "asset_id",
+        "command",
+        "created_at",
+        "input",
         "status",
-        "task_id"
+        "task_id",
+        "updated_at"
       ],
       "type": "object"
     },
@@ -2084,17 +2147,6 @@
         },
         "id": {
           "$ref": "#/$defs/NonEmptyString"
-        },
-        "previous_entity_id": {
-          "anyOf": [
-            {
-              "type": "null"
-            },
-            {
-              "$ref": "#/$defs/NonEmptyString"
-            }
-          ],
-          "description": "Interop note: Go consumers can distinguish explicit null from absent after\ndecoding raw JSON, but Go producers using *string with omitempty cannot\nreliably emit explicit null. TypeScript and other non-Go producers may use\nall three states. Consumers SHOULD normalize null to absent for\nGo-originated events and MUST treat both states as \"no previous entity\"."
         },
         "resource": {
           "$ref": "#/$defs/TaskResource"
@@ -2115,37 +2167,11 @@
       ],
       "type": "object"
     },
-    "TaskUpdateRequest": {
+    "TaskCompleteRequest": {
       "additionalProperties": false,
-      "minProperties": 1,
       "properties": {
-        "components": {
-          "$ref": "#/$defs/TaskComponents"
-        },
-        "entity_id": {
-          "anyOf": [
-            {
-              "type": "null"
-            },
-            {
-              "$ref": "#/$defs/NonEmptyString"
-            }
-          ]
-        },
-        "extra": {
-          "additionalProperties": {
-            "$ref": "#/$defs/JSONValue"
-          },
-          "type": "object"
-        },
-        "remove_extra_keys": {
-          "items": {
-            "$ref": "#/$defs/NonEmptyString"
-          },
-          "type": "array"
-        },
-        "status": {
-          "$ref": "#/$defs/NonEmptyString"
+        "output": {
+          "$ref": "#/$defs/JSONValue"
         }
       },
       "type": "object"
@@ -2209,22 +2235,22 @@
       ],
       "type": "object"
     },
-    "UnsubscribeTasksForEntityMessage": {
+    "UnsubscribeTasksForAssetMessage": {
       "additionalProperties": false,
       "properties": {
         "action": {
           "const": "unsubscribe"
         },
-        "entity_id": {
+        "asset_id": {
           "$ref": "#/$defs/NonEmptyString"
         },
         "filter": {
-          "const": "tasks_for_entity"
+          "const": "tasks_for_asset"
         }
       },
       "required": [
         "action",
-        "entity_id",
+        "asset_id",
         "filter"
       ],
       "type": "object"
@@ -2249,57 +2275,73 @@
       ],
       "type": "object"
     },
-    "TaskCreateCommandComponents": {
+    "TaskFailRequest": {
       "additionalProperties": false,
-      "patternProperties": {
-        "^custom_": {
-          "$ref": "#/$defs/JSONValue"
-        }
-      },
       "properties": {
-        "command": {
-          "$ref": "#/$defs/CommandComponent"
-        },
-        "parameters": {
-          "$ref": "#/$defs/TaskParametersComponent"
-        },
-        "progress": {
-          "$ref": "#/$defs/TaskProgressComponent"
-        },
-        "status_message": {
-          "type": "string"
-        },
-        "target": {
-          "$ref": "#/$defs/TaskParametersComponent"
+        "failure": {
+          "$ref": "#/$defs/TaskFailure"
         }
       },
       "required": [
-        "command"
+        "failure"
       ],
       "type": "object"
     },
-    "TaskCreateNonCommandComponents": {
+    "TaskFailure": {
       "additionalProperties": false,
-      "patternProperties": {
-        "^custom_": {
-          "$ref": "#/$defs/JSONValue"
-        }
-      },
       "properties": {
-        "parameters": {
-          "$ref": "#/$defs/TaskParametersComponent"
+        "code": {
+          "$ref": "#/$defs/TaskFailureCode"
         },
-        "progress": {
-          "$ref": "#/$defs/TaskProgressComponent"
-        },
-        "status_message": {
-          "type": "string"
-        },
-        "target": {
-          "$ref": "#/$defs/TaskParametersComponent"
+        "message": {
+          "$ref": "#/$defs/NonEmptyString"
         }
       },
+      "required": [
+        "code",
+        "message"
+      ],
       "type": "object"
+    },
+    "TaskFailureCode": {
+      "enum": [
+        "asset_restarted",
+        "asset_stopped",
+        "execution_failed",
+        "immediate_start_timeout",
+        "invalid_output",
+        "precondition_failed",
+        "unsupported_command"
+      ]
+    },
+    "TaskProgressRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "progress": {
+          "$ref": "#/$defs/FiniteNumber",
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        }
+      },
+      "required": [
+        "progress"
+      ],
+      "type": "object"
+    },
+    "TaskStartRequest": {
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "TaskStatus": {
+      "enum": [
+        "acknowledged",
+        "cancelled",
+        "completed",
+        "failed",
+        "in_progress",
+        "pending"
+      ]
     }
   }
 }

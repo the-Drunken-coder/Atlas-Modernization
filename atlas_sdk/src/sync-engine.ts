@@ -30,6 +30,7 @@ import { isTimerDelayInRange, MAX_TIMER_DELAY_MS } from "./timer.js";
 import type {
   AtlasSubscription,
   AtlasWatchEvent,
+  DeletableResourceType,
   FullDatasetCursors,
   ReadOptions,
   ResourceForSubscription,
@@ -65,6 +66,13 @@ type FeedRecoveryBuffer = {
   attempt: number;
   events: Array<{ event: FeedEvent; serializedBytes: number }>;
   bytes: number;
+};
+
+type TaskWriteOptions = {
+  requestHeaders?: HeadersInit;
+  signal?: AbortSignal;
+  expectedID?: string;
+  eventName?: "create" | "update";
 };
 
 const MAX_BUFFERED_FEED_EVENTS = 100;
@@ -149,8 +157,15 @@ export class SyncEngine {
     }
   }
 
-  async handshake(): Promise<void> {
-    const response = await this.transport.json("GET", "/protocol/revision", isProtocolRevisionResponse);
+  async handshake(signal?: AbortSignal): Promise<void> {
+    const response = await this.transport.json(
+      "GET",
+      "/protocol/revision",
+      isProtocolRevisionResponse,
+      undefined,
+      undefined,
+      signal
+    );
     assertRevision(response.protocol_revision);
   }
 
@@ -383,7 +398,14 @@ export class SyncEngine {
     ) {
       return cached.value;
     }
-    const entity = await this.transport.json("GET", `/entities/${encodeURIComponent(id)}`, isEntityResource);
+    const entity = await this.transport.json(
+      "GET",
+      `/entities/${encodeURIComponent(id)}`,
+      isEntityResource,
+      undefined,
+      undefined,
+      options?.signal
+    );
     assertExpectedResourceID("entity", id, entity);
     if (this.cache.cacheResource("entity", id, entity, { advanceCursor: false })) this.notifySnapshot();
     return entity;
@@ -399,9 +421,49 @@ export class SyncEngine {
     ) {
       return cached.value;
     }
-    const task = await this.transport.json("GET", `/tasks/${encodeURIComponent(id)}`, isTaskResource);
+    const { value: task, version } = await this.transport.versionedJSON(
+      "GET",
+      `/tasks/${encodeURIComponent(id)}`,
+      isTaskResource,
+      undefined,
+      options?.signal
+    );
     assertExpectedResourceID("task", id, task);
-    if (this.cache.cacheResource("task", id, task, { advanceCursor: false })) this.notifySnapshot();
+    if (
+      this.cache.cacheResource("task", id, task, {
+        advanceCursor: false,
+        version,
+        replaceSameVersion: options?.fresh === true
+      })
+    ) {
+      this.notifySnapshot();
+    }
+    return task;
+  }
+
+  async writeTask(method: "POST", path: string, body: unknown, options: TaskWriteOptions = {}): Promise<TaskResource> {
+    const { value: task, version } = await this.transport.versionedJSON(
+      method,
+      path,
+      isTaskResource,
+      body,
+      options.signal,
+      options.requestHeaders
+    );
+    if (options.expectedID !== undefined) assertExpectedResourceID("task", options.expectedID, task);
+    if (
+      this.cache.cacheResource("task", task.task_id, task, {
+        advanceCursor: false,
+        version
+      })
+    ) {
+      const cachedTask = this.cache.value("task", task.task_id)!;
+      this.notify(
+        resourceUpsertEvent("task", options.eventName ?? "update", task.task_id, version, cachedTask),
+        cachedTask
+      );
+      this.notifySnapshot();
+    }
     return task;
   }
 
@@ -410,7 +472,14 @@ export class SyncEngine {
     if (!options?.fresh && this.canServeFromCache({ filter: "id", resource_type: "object", id }) && cached) {
       return cached;
     }
-    const object = await this.transport.json("GET", `/objects/${encodeURIComponent(id)}`, isObjectDetailResource);
+    const object = await this.transport.json(
+      "GET",
+      `/objects/${encodeURIComponent(id)}`,
+      isObjectDetailResource,
+      undefined,
+      undefined,
+      options?.signal
+    );
     assertExpectedResourceID("object", id, object);
     if (this.cache.cacheResource("object", id, object, { detail: true, advanceCursor: false })) this.notifySnapshot();
     return object;
@@ -433,7 +502,7 @@ export class SyncEngine {
       throw new TypeError(`Atlas ${type} response id ${id} does not match requested id ${expectedID}`);
     }
     const event = eventName ?? (method === "POST" ? "create" : "update");
-    this.applyEvent(resourceUpsertEvent(type, event, id, resource.metadata.version, resource), {
+    this.applyEvent(resourceUpsertEvent(type, event, id, embeddedResourceVersion(type, resource), resource), {
       detail: type === "object",
       advanceCursor: false
     });
@@ -445,14 +514,16 @@ export class SyncEngine {
     path: string,
     body: EntityCheckInRequest,
     fields: "full" | "minimal",
-    ifMatchVersion?: number
+    ifMatchVersion?: number,
+    signal?: AbortSignal
   ): Promise<EntityCheckInResponse> {
     const response = await this.transport.json(
       "POST",
       path,
       entityCheckInResponseValidator(id, fields),
       body,
-      ifMatchVersion
+      ifMatchVersion,
+      signal
     );
     this.applyEvent(
       {
@@ -464,21 +535,13 @@ export class SyncEngine {
       },
       { advanceCursor: false }
     );
-    for (const task of response.tasks) {
-      if (isTaskResource(task)) {
-        this.applyEvent(
-          { event: "update", resource_type: "task", id: task.task_id, version: task.metadata.version, resource: task },
-          { advanceCursor: false }
-        );
-      }
-    }
     return response;
   }
 
-  async deleteResource(type: ResourceType, id: string, path: string): Promise<void> {
+  async deleteResource(type: DeletableResourceType, id: string, path: string): Promise<void> {
     await this.transport.empty("DELETE", path);
-    const { previousVersion, previous } = this.cache.markLocalDelete(type, id);
-    this.notify(localDeleteEvent(type, id, previousVersion), undefined, previous);
+    const previousVersion = this.cache.markLocalDelete(type, id);
+    this.notify(localDeleteEvent(type, id, previousVersion), undefined);
     this.notifySnapshot();
   }
 
@@ -763,9 +826,7 @@ export class SyncEngine {
   private applyEvent(event: FeedEvent, options?: CacheResourceOptions): void {
     const advanceCursor = options?.advanceCursor !== false;
     const key = resourceCacheKey(event.resource_type, event.id);
-    const current = this.cache.entry(event.resource_type, event.id);
     const pendingDelete = this.cache.pendingDeletes.has(key);
-    const previous = current?.value;
     if (event.version <= this.cache.versionFor(event.resource_type, event.id)) {
       this.advanceCursor(event, advanceCursor);
       return;
@@ -776,7 +837,7 @@ export class SyncEngine {
       this.advanceCursor(event, advanceCursor);
       const alreadyNotified = this.cache.locallyNotifiedDeletes.delete(key);
       if (!alreadyNotified) {
-        this.notify(event, undefined, previous);
+        this.notify(event, undefined);
         this.notifySnapshot();
       }
       return;
@@ -791,14 +852,14 @@ export class SyncEngine {
       this.advanceCursor(event, advanceCursor);
       const alreadyNotified = this.cache.locallyNotifiedDeletes.delete(key);
       if (!alreadyNotified) {
-        this.notify(event, undefined, previous);
+        this.notify(event, undefined);
         this.notifySnapshot();
       }
       return;
     }
-    this.cache.cacheResource(event.resource_type, event.id, event.resource, options);
+    this.cache.cacheResource(event.resource_type, event.id, event.resource, { ...options, version: event.version });
     this.advanceCursor(event, advanceCursor);
-    this.notify(event, this.cache.value(event.resource_type, event.id), previous);
+    this.notify(event, this.cache.value(event.resource_type, event.id));
     this.notifySnapshot();
   }
 
@@ -820,13 +881,9 @@ export class SyncEngine {
     }
   }
 
-  private notify(
-    event: AtlasWatchEvent,
-    resource: ResourceValue | undefined,
-    previous: ResourceValue | undefined
-  ): void {
+  private notify(event: AtlasWatchEvent, resource: ResourceValue | undefined): void {
     for (const [key, callbacks] of this.watchers) {
-      if (!matchesSubscription(parseSubscriptionKey(key), event, previous)) {
+      if (!matchesSubscription(parseSubscriptionKey(key), event)) {
         continue;
       }
       for (const callback of callbacks) {
@@ -850,6 +907,12 @@ export class SyncEngine {
       }
     }
   }
+}
+
+function embeddedResourceVersion<TType extends ResourceType>(type: TType, resource: ResourceOf<TType>): number {
+  if (type === "task") return 0;
+  if (!("metadata" in resource)) return 0;
+  return resource.metadata.version;
 }
 
 function fullDatasetPath(cursors: FullDatasetCursors): string {

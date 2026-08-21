@@ -287,7 +287,7 @@ func TestValidateGoContractsRejectsAuthoredSourceDrift(t *testing.T) {
 			name:        "type alias identity",
 			old:         "type ResourceType string",
 			replacement: "type ResourceType = string",
-			want:        "only JSONValue may be an alias",
+			want:        "must be a defined type or an approved collection alias",
 		},
 		{
 			name: "embedded field",

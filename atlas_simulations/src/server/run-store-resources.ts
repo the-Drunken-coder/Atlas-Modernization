@@ -4,7 +4,10 @@ import { CLEANUP_DELETE_TIMEOUT_MS } from "./run-store-limits.js";
 import type { RunRecord } from "./run-store-types.js";
 
 export function cleanupResourcesForRun(run: RunRecord): CreatedResource[] {
-  return run.overflowCleanupResource ? [...run.cleanupResources, run.overflowCleanupResource] : run.cleanupResources;
+  const resources = run.overflowCleanupResource
+    ? [...run.cleanupResources, run.overflowCleanupResource]
+    : run.cleanupResources;
+  return resources.filter((resource) => resource.type !== "task");
 }
 
 export function hasResource(resources: CreatedResource[], resource: CreatedResource): boolean {
@@ -38,7 +41,7 @@ export async function withCleanupTimeout(
 }
 
 export function cleanupOrder(resources: CreatedResource[]): CreatedResource[] {
-  const order: Record<CreatedResource["type"], number> = { task: 0, object: 1, entity: 2 };
+  const order: Record<CreatedResource["type"], number> = { object: 0, entity: 1, task: 2 };
   return resources
     .map((resource, index) => ({ resource, index }))
     .sort((a, b) => cleanupRank(a.resource, order) - cleanupRank(b.resource, order) || b.index - a.index)

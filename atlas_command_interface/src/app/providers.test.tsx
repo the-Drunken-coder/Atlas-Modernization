@@ -138,7 +138,7 @@ function fakeDataSource(calls: string[]): AtlasDataSource {
     },
     async loadCommandCatalog() {
       calls.push("loadCommandCatalog");
-      return { type: "command_catalog", name: "Catalog", description: "Test", commands: [] };
+      return [];
     },
     watch() {
       calls.push("watch");

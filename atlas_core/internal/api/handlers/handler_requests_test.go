@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -48,6 +47,89 @@ func TestDecodeProtocolRequestBodyAllowsEmptyCheckInBody(t *testing.T) {
 		protocol.ValidateEntityCheckInRequest,
 	) {
 		t.Fatalf("empty check-in body rejected: status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestTaskingHandlersRejectOversizedBodies(t *testing.T) {
+	body := `{"payload":"` + strings.Repeat("x", maxTaskingRequestBodyBytes) + `"}`
+	tests := map[string]func(*Handler, http.ResponseWriter, *http.Request){
+		"create":      (*Handler).CreateTask,
+		"acknowledge": (*Handler).AcknowledgeTask,
+		"start":       (*Handler).StartTask,
+		"progress":    (*Handler).ProgressTask,
+		"complete":    (*Handler).CompleteTask,
+		"fail":        (*Handler).FailTask,
+		"cancel":      (*Handler).CancelTask,
+		"runtime":     (*Handler).BeginAssetRuntime,
+		"ready":       (*Handler).ReadyAssetRuntime,
+	}
+	for name, handle := range tests {
+		t.Run(name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodPost, "/tasking", strings.NewReader(body))
+
+			handle(newTestHandler(), recorder, request)
+
+			if recorder.Code != http.StatusRequestEntityTooLarge {
+				t.Fatalf("status = %d, want %d; body=%s", recorder.Code, http.StatusRequestEntityTooLarge, recorder.Body.String())
+			}
+			if response := decodeBody(t, recorder); response["error_code"] != string(protocol.ErrorCodeBodyTooLarge) {
+				t.Fatalf("error_code = %v, want %s", response["error_code"], protocol.ErrorCodeBodyTooLarge)
+			}
+		})
+	}
+}
+
+func TestCompleteTaskRequestPreservesExplicitNull(t *testing.T) {
+	handler := newTestHandler()
+	for name, body := range map[string]string{"omitted": `{}`, "null": `{"output":null}`} {
+		t.Run(name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodPost, "/tasks/task-1/complete", strings.NewReader(body))
+			var decoded completeTaskRequest
+
+			if !handler.decodeProtocolRequestBody(recorder, request, &decoded, false, protocol.ValidateTaskCompleteRequest) {
+				t.Fatalf("request rejected: status=%d body=%s", recorder.Code, recorder.Body.String())
+			}
+			if name == "omitted" && decoded.Output != nil {
+				t.Fatalf("omitted output = %q, want nil", decoded.Output)
+			}
+			if name == "null" && string(decoded.Output) != "null" {
+				t.Fatalf("explicit null output = %q, want null", decoded.Output)
+			}
+		})
+	}
+}
+
+func TestTaskRequestPreservesExactJSONNumbers(t *testing.T) {
+	handler := newTestHandler()
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/tasks", strings.NewReader(
+		`{"asset_id":"asset-1","command":"fixture.queued","input":{"value":9007199254740993}}`,
+	))
+	var decoded createTaskRequest
+
+	if !handler.decodeProtocolRequestBody(recorder, request, &decoded, false, protocol.ValidateTaskCreateRequest) {
+		t.Fatalf("request rejected: status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	input, ok := decoded.Input.(map[string]any)
+	if !ok {
+		t.Fatalf("decoded input = %#v", decoded.Input)
+	}
+	value, ok := input["value"].(json.Number)
+	if !ok || value.String() != "9007199254740993" {
+		t.Fatalf("decoded exact number = %#v", input["value"])
+	}
+}
+
+func TestTaskOutputPreservesExactJSONNumbers(t *testing.T) {
+	output, err := decodeTaskOutput(json.RawMessage(`{"value":9007199254740993}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, ok := output.(map[string]any)["value"].(json.Number)
+	if !ok || value.String() != "9007199254740993" {
+		t.Fatalf("decoded exact output number = %#v", output)
 	}
 }
 
@@ -240,9 +322,7 @@ func TestCRUDRequestBodiesEnforceCanonicalProtocolBeforeActions(t *testing.T) {
 		{name: "entity create rejects explicit null", method: http.MethodPost, path: "/entities", payload: `{"entity_id":null,"entity_type":"asset"}`, handle: (*Handler).CreateEntity},
 		{name: "entity update rejects empty patch", method: http.MethodPatch, path: "/entities/entity-1", payload: `{}`, handle: (*Handler).UpdateEntity},
 		{name: "entity update rejects null type", method: http.MethodPatch, path: "/entities/entity-1", payload: `{"entity_type":null}`, handle: (*Handler).UpdateEntity},
-		{name: "task create rejects non-pending status", method: http.MethodPost, path: "/tasks", payload: `{"task_id":"task-1","status":"acknowledged"}`, handle: (*Handler).CreateTask},
-		{name: "task update rejects empty patch", method: http.MethodPatch, path: "/tasks/task-1", payload: `{}`, handle: (*Handler).UpdateTask},
-		{name: "task update rejects null status", method: http.MethodPatch, path: "/tasks/task-1", payload: `{"status":null}`, handle: (*Handler).UpdateTask},
+		{name: "task create rejects client task id", method: http.MethodPost, path: "/tasks", payload: `{"task_id":"task-1","asset_id":"asset-1","command":"fixture.immediate","input":{}}`, handle: (*Handler).CreateTask},
 		{name: "object create rejects client-owned size", method: http.MethodPost, path: "/objects", payload: `{"object_id":"object-1","size_bytes":1}`, handle: (*Handler).CreateObject},
 		{name: "object update rejects empty patch", method: http.MethodPatch, path: "/objects/object-1", payload: `{}`, handle: (*Handler).UpdateObject},
 		{name: "object update rejects client-owned content type", method: http.MethodPatch, path: "/objects/object-1", payload: `{"content_type":"image/png"}`, handle: (*Handler).UpdateObject},
@@ -287,30 +367,6 @@ func TestNullablePatchStringDistinguishesAbsentNullAndValue(t *testing.T) {
 	}
 }
 
-func TestUpdateTaskRequestEntityIDDistinguishesAbsentNullAndValue(t *testing.T) {
-	tests := []struct {
-		name    string
-		payload string
-		want    *string
-	}{
-		{name: "absent", payload: `{"status":"pending"}`},
-		{name: "null", payload: `{"entity_id":null}`, want: stringPointer("")},
-		{name: "value", payload: `{"entity_id":"asset-2"}`, want: stringPointer("asset-2")},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var request updateTaskRequest
-			if err := json.Unmarshal([]byte(tt.payload), &request); err != nil {
-				t.Fatal(err)
-			}
-			got := request.actionParams(nil).EntityID
-			if !reflect.DeepEqual(got, tt.want) {
-				t.Fatalf("EntityID = %#v, want %#v", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestCRUDHandlersRejectInvalidConformanceRequests(t *testing.T) {
 	cases, err := conformance.LoadRequestValidationCases()
 	if err != nil {
@@ -322,13 +378,21 @@ func TestCRUDHandlersRejectInvalidConformanceRequests(t *testing.T) {
 		handle func(*Handler, http.ResponseWriter, *http.Request)
 	}
 	endpoints := map[string]endpoint{
-		"EntityCreateRequest":  {method: http.MethodPost, path: "/entities", handle: (*Handler).CreateEntity},
-		"EntityCheckInRequest": {method: http.MethodPost, path: "/entities/entity-1/checkin", handle: (*Handler).EntityCheckin},
-		"EntityUpdateRequest":  {method: http.MethodPatch, path: "/entities/entity-1", handle: (*Handler).UpdateEntity},
-		"TaskCreateRequest":    {method: http.MethodPost, path: "/tasks", handle: (*Handler).CreateTask},
-		"TaskUpdateRequest":    {method: http.MethodPatch, path: "/tasks/task-1", handle: (*Handler).UpdateTask},
-		"ObjectCreateRequest":  {method: http.MethodPost, path: "/objects", handle: (*Handler).CreateObject},
-		"ObjectUpdateRequest":  {method: http.MethodPatch, path: "/objects/object-1", handle: (*Handler).UpdateObject},
+		"EntityCreateRequest":        {method: http.MethodPost, path: "/entities", handle: (*Handler).CreateEntity},
+		"EntityCheckInRequest":       {method: http.MethodPost, path: "/entities/entity-1/checkin", handle: (*Handler).EntityCheckin},
+		"EntityUpdateRequest":        {method: http.MethodPatch, path: "/entities/entity-1", handle: (*Handler).UpdateEntity},
+		"TaskCreateRequest":          {method: http.MethodPost, path: "/tasks", handle: (*Handler).CreateTask},
+		"TaskAcknowledgeRequest":     {method: http.MethodPost, path: "/tasks/task-1/acknowledge", handle: (*Handler).AcknowledgeTask},
+		"TaskStartRequest":           {method: http.MethodPost, path: "/tasks/task-1/start", handle: (*Handler).StartTask},
+		"TaskProgressRequest":        {method: http.MethodPost, path: "/tasks/task-1/progress", handle: (*Handler).ProgressTask},
+		"TaskCompleteRequest":        {method: http.MethodPost, path: "/tasks/task-1/complete", handle: (*Handler).CompleteTask},
+		"TaskFailRequest":            {method: http.MethodPost, path: "/tasks/task-1/fail", handle: (*Handler).FailTask},
+		"TaskCancelRequest":          {method: http.MethodPost, path: "/tasks/task-1/cancel", handle: (*Handler).CancelTask},
+		"RuntimeRegistrationRequest": {method: http.MethodPost, path: "/entities/asset-1/runtime", handle: (*Handler).BeginAssetRuntime},
+		"RuntimeStopRequest":         {method: http.MethodPost, path: "/entities/asset-1/runtime/stop", handle: (*Handler).StopAssetRuntime},
+		"RuntimeReadyRequest":        {method: http.MethodPost, path: "/entities/asset-1/runtime/ready", handle: (*Handler).ReadyAssetRuntime},
+		"ObjectCreateRequest":        {method: http.MethodPost, path: "/objects", handle: (*Handler).CreateObject},
+		"ObjectUpdateRequest":        {method: http.MethodPatch, path: "/objects/object-1", handle: (*Handler).UpdateObject},
 	}
 	for _, testCase := range cases {
 		if testCase.Valid {
@@ -405,19 +469,10 @@ func TestCreateEntityMapsOversizedPromotedStringTo400(t *testing.T) {
 	}
 }
 
-func stringPointer(value string) *string {
-	return &value
-}
-
-func TestCreateTaskRequestDefaultsStatusToPending(t *testing.T) {
-	params := createTaskRequest{TaskID: "task-1"}.actionParams()
-	if params.Status != "pending" {
-		t.Fatalf("default Status = %q, want pending", params.Status)
-	}
-
-	params = createTaskRequest{TaskID: "task-1", Status: "acknowledged"}.actionParams()
-	if params.Status != "acknowledged" {
-		t.Fatalf("explicit Status = %q, want acknowledged", params.Status)
+func TestCreateTaskRequestMapsImmutableFields(t *testing.T) {
+	params := createTaskRequest{AssetID: "asset-1", Command: "fixture.immediate", Input: map[string]any{"value": 1}}.actionParams()
+	if params.AssetID != "asset-1" || params.Command != "fixture.immediate" {
+		t.Fatalf("Task create params = %#v", params)
 	}
 }
 
@@ -520,60 +575,6 @@ func TestParseListPaginationReadsCursorAndSetsCursorHeaders(t *testing.T) {
 	}
 }
 
-func TestEntityCheckinRejectsOutOfRangeLimit(t *testing.T) {
-	handler := newTestHandler()
-	rec := httptest.NewRecorder()
-	req := withURLParam(routeRequest(http.MethodPost, "/entities/entity-1/checkin?limit=25", `{}`), "entity_id", "entity-1")
-
-	handler.EntityCheckin(rec, req)
-
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d", rec.Code)
-	}
-
-	body := decodeBody(t, rec)
-	if body["error_code"] != "VALIDATION_ERROR" {
-		t.Fatalf("expected VALIDATION_ERROR, got %v", body["error_code"])
-	}
-}
-
-func TestEntityCheckinRejectsOffset(t *testing.T) {
-	handler := newTestHandler()
-	rec := httptest.NewRecorder()
-	req := withURLParam(routeRequest(http.MethodPost, "/entities/entity-1/checkin?offset=0", `{}`), "entity_id", "entity-1")
-
-	handler.EntityCheckin(rec, req)
-
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d", rec.Code)
-	}
-
-	body := decodeBody(t, rec)
-	if body["error_code"] != "VALIDATION_ERROR" {
-		t.Fatalf("expected VALIDATION_ERROR, got %v", body["error_code"])
-	}
-}
-
-func TestEntityCheckinRejectsMalformedTaskCursorBeforeDatabaseAccess(t *testing.T) {
-	handler := newTestHandler()
-	handler.checkinActions = actions.NewEntityCheckinActions(actions.NewEntityActions(nil), actions.NewTaskActions(nil))
-	rec := httptest.NewRecorder()
-	req := withURLParam(routeRequest(http.MethodPost, "/entities/entity-1/checkin?task_cursor=not-base64", `{}`), "entity_id", "entity-1")
-
-	handler.EntityCheckin(rec, req)
-
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d", rec.Code)
-	}
-	body := decodeBody(t, rec)
-	if body["error_code"] != "VALIDATION_ERROR" {
-		t.Fatalf("expected VALIDATION_ERROR, got %v", body["error_code"])
-	}
-	if body["message"] != "Invalid query cursor" {
-		t.Fatalf("expected invalid cursor message, got %v", body["message"])
-	}
-}
-
 func TestGetChangedSinceRejectsMissingParam(t *testing.T) {
 	handler := newTestHandler()
 	rec := httptest.NewRecorder()
@@ -670,10 +671,9 @@ func TestFullDatasetVersionJSONPresence(t *testing.T) {
 }
 
 func TestChangedSinceSerializesOrderedFeedEvents(t *testing.T) {
-	entityID := "asset-1"
 	response := serializeChangedSinceResult(&actions.ChangedSinceResult{
 		Events: []protocol.FeedEvent{
-			{Event: protocol.FeedEventDelete, ResourceType: protocol.ResourceTypeTask, ID: "task-with-parent", Version: 2, EntityID: &entityID},
+			{Event: protocol.FeedEventUpdate, ResourceType: protocol.ResourceTypeTask, ID: "task-1", Version: 2, Resource: map[string]any{"task_id": "task-1", "asset_id": "asset-1", "command": "fixture.immediate", "input": map[string]any{}, "status": "pending", "created_at": "2026-08-19T12:00:00Z", "updated_at": "2026-08-19T12:00:00Z"}},
 			{Event: protocol.FeedEventDelete, ResourceType: protocol.ResourceTypeObject, ID: "deleted-object", Version: 3},
 		},
 		Version: 3,
@@ -689,11 +689,8 @@ func TestChangedSinceSerializesOrderedFeedEvents(t *testing.T) {
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		t.Fatalf("decode changed-since response: %v", err)
 	}
-	if got := decoded.Events[0]["entity_id"]; got != entityID {
-		t.Fatalf("deleted task entity_id = %v, want %s", got, entityID)
-	}
-	if _, exists := decoded.Events[1]["entity_id"]; exists {
-		t.Fatalf("deleted object emitted entity_id: %s", data)
+	if got := decoded.Events[0]["id"]; got != "task-1" {
+		t.Fatalf("first event id = %v, want task-1", got)
 	}
 }
 

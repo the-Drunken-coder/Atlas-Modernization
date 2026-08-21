@@ -21,7 +21,6 @@ export function recordLedgerEvent(state: FakeLedgerState, event: FeedEvent): voi
   if (event.event === "delete") {
     state.deleteEvents.push(event);
     if (event.resource_type === "entity") state.entities.delete(event.id);
-    if (event.resource_type === "task") state.tasks.delete(event.id);
     if (event.resource_type === "object") {
       state.objects.delete(event.id);
       state.objectExtras.delete(event.id);

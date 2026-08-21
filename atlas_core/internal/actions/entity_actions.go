@@ -3,6 +3,7 @@ package actions
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/models"
+	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
 )
 
 // EntityActions handles entity business logic.
@@ -22,6 +24,51 @@ type EntityActions struct {
 // NewEntityActions creates a new EntityActions instance.
 func NewEntityActions(pool *pgxpool.Pool) *EntityActions {
 	return &EntityActions{pool: pool}
+}
+
+// EntityDetail is the Entity resource plus its runtime-owned Command Manifest
+// read from one database snapshot.
+type EntityDetail struct {
+	Entity          *models.Entity
+	CommandManifest *protocol.CommandManifest
+}
+
+// GetDetail retrieves an Entity and its ready runtime manifest atomically.
+func (a *EntityActions) GetDetail(ctx context.Context, entityID string) (*EntityDetail, error) {
+	if err := ValidateEntityID(entityID); err != nil {
+		return nil, err
+	}
+	entityID = SanitizeID(entityID)
+	var entity models.Entity
+	var ready bool
+	var manifestJSON []byte
+	err := a.pool.QueryRow(ctx, `
+		SELECT e.entity_id, e.type, e.subtype, e.alias, e.json,
+			e.created_at, e.updated_at, e.version,
+			COALESCE(r.ready, FALSE), r.manifest
+		FROM entities e
+		LEFT JOIN asset_runtimes r ON r.asset_id = e.entity_id
+		WHERE e.entity_id = $1
+	`, entityID).Scan(
+		&entity.EntityID, &entity.Type, &entity.Subtype, &entity.Alias,
+		&entity.JSON, &entity.CreatedAt, &entity.UpdatedAt, &entity.Version,
+		&ready, &manifestJSON,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, NewEntityNotFoundError(entityID)
+		}
+		return nil, fmt.Errorf("get Entity detail: %w", err)
+	}
+	detail := &EntityDetail{Entity: &entity}
+	if entity.Type == "asset" && ready {
+		var manifest protocol.CommandManifest
+		if err := json.Unmarshal(manifestJSON, &manifest); err != nil {
+			return nil, fmt.Errorf("decode Asset runtime manifest: %w", err)
+		}
+		detail.CommandManifest = &manifest
+	}
+	return detail, nil
 }
 
 // CreateEntityParams holds parameters for creating an entity.
@@ -297,7 +344,18 @@ func (a *EntityActions) Update(ctx context.Context, entityID string, params Upda
 	if err := checkExpectedVersion("entity", params.ExpectedVersion, entity.Version); err != nil {
 		return nil, err
 	}
-	before := cloneEntityModel(&entity)
+	if params.EntityType != nil {
+		requestedType := strings.TrimSpace(*params.EntityType)
+		if requestedType != entity.Type {
+			var registeredRuntime bool
+			if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM asset_runtimes WHERE asset_id = $1)`, entityID).Scan(&registeredRuntime); err != nil {
+				return nil, fmt.Errorf("check Entity runtime before type change: %w", err)
+			}
+			if registeredRuntime {
+				return nil, NewValidationError("entity_type cannot change after an Asset runtime has registered")
+			}
+		}
+	}
 	if params.IsEmpty() {
 		if err := tx.Commit(ctx); err != nil {
 			return nil, fmt.Errorf("failed to commit entity precondition transaction: %w", err)
@@ -382,7 +440,6 @@ func (a *EntityActions) Update(ctx context.Context, entityID string, params Upda
 		ResourceType: ChangeResourceEntity,
 		ID:           out.EntityID,
 		Version:      out.Version,
-		BeforeEntity: before,
 		AfterEntity:  cloneEntityModel(&out),
 	}); err != nil {
 		return nil, err
@@ -425,24 +482,17 @@ func (a *EntityActions) Delete(ctx context.Context, entityID string) error {
 		return fmt.Errorf("failed to get entity for deletion: %w", err)
 	}
 
-	beforeTasks, err := queryTasksByEntityForUpdate(ctx, tx, entityID)
-	if err != nil {
-		return err
+	var hasNonterminalTasks bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM tasks
+			WHERE asset_id = $1 AND status IN ('pending', 'acknowledged', 'in_progress')
+		)
+	`, entityID).Scan(&hasNonterminalTasks); err != nil {
+		return fmt.Errorf("check Entity Tasks before deletion: %w", err)
 	}
-
-	if len(beforeTasks) > 0 {
-		lastVersion, err := reserveChangeVersions(ctx, tx, len(beforeTasks))
-		if err != nil {
-			return err
-		}
-		firstVersion := lastVersion - int64(len(beforeTasks)) + 1
-		for index, task := range beforeTasks {
-			if _, err := tx.Exec(ctx, `
-			UPDATE tasks SET updated_at = clock_timestamp(), version = $1 WHERE task_id = $2
-		`, firstVersion+int64(index), task.TaskID); err != nil {
-				return fmt.Errorf("failed to mark entity task changed before deletion: %w", err)
-			}
-		}
+	if hasNonterminalTasks {
+		return NewValidationError("Entity cannot be deleted while it has nonterminal Tasks")
 	}
 
 	result, err := tx.Exec(ctx, "DELETE FROM entities WHERE entity_id = $1", entityID)
@@ -454,27 +504,6 @@ func (a *EntityActions) Delete(ctx context.Context, entityID string) error {
 		return NewEntityNotFoundError(entityID)
 	}
 
-	afterTasks, err := queryTasksByIDs(ctx, tx, taskIDs(beforeTasks))
-	if err != nil {
-		return err
-	}
-
-	for _, beforeTask := range beforeTasks {
-		afterTask := afterTasks[beforeTask.TaskID]
-		if afterTask == nil {
-			return fmt.Errorf("task %s disappeared during entity deletion after its change version was allocated", beforeTask.TaskID)
-		}
-		if err := RecordResourceChange(ctx, tx, ResourceChange{
-			Event:        ChangeEventUpdate,
-			ResourceType: ChangeResourceTask,
-			ID:           afterTask.TaskID,
-			Version:      afterTask.Version,
-			BeforeTask:   cloneTaskModel(beforeTask),
-			AfterTask:    cloneTaskModel(afterTask),
-		}); err != nil {
-			return err
-		}
-	}
 	deleteVersion, err := nextChangeVersion(ctx, tx)
 	if err != nil {
 		return err
@@ -484,7 +513,6 @@ func (a *EntityActions) Delete(ctx context.Context, entityID string) error {
 		ResourceType: ChangeResourceEntity,
 		ID:           entity.EntityID,
 		Version:      deleteVersion,
-		BeforeEntity: cloneEntityModel(&entity),
 	}); err != nil {
 		return err
 	}

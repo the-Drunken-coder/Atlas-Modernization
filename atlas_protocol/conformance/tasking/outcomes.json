@@ -1,0 +1,17 @@
+{
+  "cases": [
+    {
+      "name": "progress never decreases",
+      "command": "fixture.queued",
+      "accepted_progress": [0.25, 0.5, 0.5],
+      "rejected_progress": [0.4]
+    },
+    {
+      "name": "first terminal operation wins",
+      "command": "fixture.queued",
+      "first_operation": "complete",
+      "rejected_operation": "cancel",
+      "expected_status": "completed"
+    }
+  ]
+}

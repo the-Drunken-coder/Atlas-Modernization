@@ -21,7 +21,7 @@ Anonymous visits load only the public login shell and check `/admin/auth/me`. Th
 - `AtlasClient` is resource-only: entities, tasks, objects, queries, sync, and feed.
 - `AtlasAdminClient` is admin-only: `auth.login`, `auth.logout`, `auth.me`, and managed API key administration.
 - Admin records never enter the SDK resource cache or full dataset/changed-since responses.
-- The command interface does not own Core auth/session routes, `/atlas/*` proxy routes, feed bridging, API-key injection, or authoritative command validation. It still performs non-authoritative UI coercion and availability checks before submitting command tasks to Core.
+- The command interface does not own Core auth/session routes, `/atlas/*` proxy routes, feed bridging, API-key injection, or authoritative Command validation. It performs non-authoritative availability and input checks before submitting a Task to Core.
 - Browser config is build/dev-time Vite config, not a runtime Worker route.
 
 The committed browser config contains only non-secret values: Core base URL defaults, protocol revision, map source IDs, labels, and provider URL templates. Any `VITE_*` provider keys are browser-visible and must be restricted in the provider dashboards.
@@ -36,9 +36,11 @@ Configuration, session-check, and initial SDK connection failures expose one-sho
 
 ## Commands
 
-Command availability fails closed. An asset can receive a command only when its `components.task_catalog.supported_tasks` array explicitly lists that command ID.
+Command availability fails closed. A Command appears only when it exists in the Protocol-owned catalog, appears in the selected Asset's read-only current `command_manifest`, and has a purpose-built input registered in the interface.
 
-Command submission posts a task directly to Core without a client-supplied `task_id`. Core validates the command catalog, target entity support, and parameters, then generates a `command-<uuid>` task ID. Non-command task creation keeps the normal Atlas Core task contract.
+Command submission posts `{ asset_id, command, input }` directly to Core with a fresh idempotency key for that tasking attempt. Core validates the generated catalog, current ready runtime manifest, and input, then generates the Task ID. The initial generated catalog and interface registry are empty, so the UI intentionally shows that no Commands are defined.
+
+Generic schema-generated forms are not part of the interface. Adding a Command includes its purpose-built operator input, tests, Protocol schema, Asset handler, and any special Core policy through the [Command authoring guide](../atlas_protocol/commands/README.md).
 
 ## Local Development
 

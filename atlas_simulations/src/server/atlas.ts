@@ -1,9 +1,13 @@
 import { AtlasAPIError, AtlasClient, type AtlasClientOptions } from "@the-drunken-coder/atlas-sdk";
 import type { AtlasTargetConfig } from "./config.js";
 
-export type AtlasClientLike = Pick<AtlasClient, "watch" | "handshake"> & {
+export type AtlasClientLike = Pick<AtlasClient, "watch" | "subscribe" | "handshake"> & {
   entities: Pick<AtlasClient["entities"], "get" | "create" | "update" | "delete" | "checkIn">;
-  tasks: Pick<AtlasClient["tasks"], "get" | "create" | "delete" | "acknowledge" | "complete" | "fail" | "setStatus">;
+  tasks: Pick<
+    AtlasClient["tasks"],
+    "get" | "create" | "acknowledge" | "start" | "progress" | "complete" | "fail" | "cancel"
+  >;
+  runtime: AtlasClient["runtime"];
   objects: Pick<AtlasClient["objects"], "get" | "create" | "delete">;
   queries: Pick<AtlasClient["queries"], "full">;
   sync: Pick<AtlasClient["sync"], "start" | "stop" | "status">;

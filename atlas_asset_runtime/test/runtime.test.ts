@@ -1,324 +1,1084 @@
-import type {
-  EntityCheckInMinimalResponse,
-  EntityCheckInMinimalTask,
-  EntityCheckInOptions,
-  TaskResource
+import {
+  AtlasAPIError,
+  type CommandManifest,
+  type EntityCheckInOptions,
+  type RuntimeContextOptions,
+  type RuntimeTaskDeliveryResponse,
+  type TaskResource
 } from "@the-drunken-coder/atlas-sdk";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { type AssetCheckInReport, type AtlasAssetClient, AtlasAssetRuntime } from "../src/index.js";
-
-type CheckIn = (id: string, options: EntityCheckInOptions<"minimal">) => Promise<EntityCheckInMinimalResponse>;
-
-afterEach(() => {
-  vi.useRealTimers();
-});
+import { describe, expect, it, vi } from "vitest";
+import {
+  AssetTaskFailure,
+  type AssetTaskHandler,
+  type AtlasAssetClient,
+  AtlasAssetRuntime,
+  type ExecutionModule,
+  SafetyBarrierError
+} from "../src/index.js";
 
 describe("AtlasAssetRuntime", () => {
-  it("validates configuration while allowing telemetry-only runtimes", () => {
-    const client = fakeClient();
-    expect(() => new AtlasAssetRuntime(client, { entityId: "", handlers: {} })).toThrow("entityId");
-    expect(() => new AtlasAssetRuntime(client, { entityId: "asset-1", handlers: { "": async () => {} } })).toThrow(
-      "handlers"
-    );
-    expect(() => new AtlasAssetRuntime(client, { entityId: "asset-1", checkInIntervalMs: 0 })).toThrow(
-      "checkInIntervalMs"
-    );
-    expect(() => new AtlasAssetRuntime(client, { entityId: "asset-1", checkInIntervalMs: 2_147_483_648 })).toThrow(
-      "no greater than 2147483647"
-    );
+  it("requires handlers to match the advertised manifest", () => {
+    const { client } = fakeClient();
+    expect(() => new AtlasAssetRuntime(client, { entityId: "", manifest: [] })).toThrow("entityId");
     expect(
-      () => new AtlasAssetRuntime(client, { entityId: "asset-1", checkInIntervalMs: 2_147_483_647 })
-    ).not.toThrow();
-    expect(() => new AtlasAssetRuntime(client, { entityId: "asset-1" })).not.toThrow();
+      () => new AtlasAssetRuntime(client, { entityId: "asset-1", manifest: [manifestEntry("queued.move")] })
+    ).toThrow("requires a handler");
+    expect(
+      () => new AtlasAssetRuntime(client, { entityId: "asset-1", manifest: [], handlers: { hidden: async () => {} } })
+    ).toThrow("not advertised");
+    const duplicate = manifestEntry("queued.move");
+    expect(
+      () =>
+        new AtlasAssetRuntime(client, {
+          entityId: "asset-1",
+          manifest: [duplicate, { ...duplicate, description: "Duplicate" }],
+          handlers: { "queued.move": async () => {} }
+        })
+    ).toThrow("unique");
   });
 
-  it("lazily handshakes and preserves the caller's check-in report", async () => {
-    const client = fakeClient();
-    const report: AssetCheckInReport = {
-      status: "ready",
-      components: { custom_mode: "survey" },
-      telemetry: { latitude: 38 }
-    };
-    const runtime = new AtlasAssetRuntime(client, { entityId: "asset-1" });
-
-    await runtime.checkIn(report);
-    await runtime.checkIn(report);
-
-    expect(client.handshake).toHaveBeenCalledTimes(1);
-    expect(client.entities.checkIn).toHaveBeenCalledTimes(2);
-    expect(client.entities.checkIn).toHaveBeenCalledWith("asset-1", {
-      ...report,
-      fields: "minimal",
-      statusFilter: ["pending"],
-      limit: 20
-    });
-  });
-
-  it("does not mutate command tasks in telemetry-only mode", async () => {
-    const client = fakeClient(vi.fn<CheckIn>().mockResolvedValue(page([command("task-1", "move")], true, "next")));
-    const runtime = new AtlasAssetRuntime(client, { entityId: "asset-1" });
-
-    await runtime.checkIn();
-
-    expect(client.entities.checkIn).toHaveBeenCalledTimes(1);
-    expect(client.tasks.acknowledge).not.toHaveBeenCalled();
-    expect(client.tasks.complete).not.toHaveBeenCalled();
-    expect(client.tasks.fail).not.toHaveBeenCalled();
-    expect(client.tasks.setStatus).not.toHaveBeenCalled();
-  });
-
-  it("acknowledges, reports progress, and completes commands sequentially", async () => {
-    const tasks = [command("task-1", "move"), command("task-2", "move")];
-    const client = fakeClient(vi.fn<CheckIn>().mockResolvedValue(page(tasks)));
+  it("establishes every safe state before publishing readiness", async () => {
     const order: string[] = [];
-    client.tasks.acknowledge.mockImplementation(async (id) => {
-      order.push(`ack:${id}`);
-      return taskResource(id);
-    });
-    client.tasks.setStatus.mockImplementation(async (id) => {
-      order.push(`progress:${id}`);
-      return taskResource(id);
-    });
-    client.tasks.complete.mockImplementation(async (id) => {
-      order.push(`complete:${id}`);
-      return taskResource(id);
-    });
-    const runtime = new AtlasAssetRuntime(client, {
-      entityId: "asset-1",
-      handlers: {
-        move: async ({ task, reportProgress }) => {
-          order.push(`run:${task.task_id}`);
-          await reportProgress(50, "moving");
-          return { ok: true };
-        }
-      }
-    });
+    const { client } = fakeClient([], order);
+    const modules: ExecutionModule[] = [
+      { id: "mobility", establishSafeState: async () => void order.push("safe:mobility") },
+      { id: "sensor", establishSafeState: async () => void order.push("safe:sensor") }
+    ];
+    const runtime = new AtlasAssetRuntime(client, { entityId: "asset-1", executionModules: modules });
 
-    await runtime.checkIn();
+    await runtime.start();
 
-    expect(order).toEqual([
-      "ack:task-1",
-      "run:task-1",
-      "progress:task-1",
-      "complete:task-1",
-      "ack:task-2",
-      "run:task-2",
-      "progress:task-2",
-      "complete:task-2"
-    ]);
-    expect(client.tasks.complete).toHaveBeenCalledWith("task-1", { result: { ok: true } });
-    expect(client.tasks.setStatus).toHaveBeenCalledWith("task-1", "acknowledged", { progress: 50, message: "moving" });
-  });
-
-  it("fails handler errors and unsupported commands but skips non-command tasks", async () => {
-    const client = fakeClient(
-      vi
-        .fn<CheckIn>()
-        .mockResolvedValue(
-          page([
-            command("throws", "move"),
-            command("unknown", "dance"),
-            command("prototype", "toString"),
-            { task_id: "plain", status: "pending" }
-          ])
-        )
+    expect(order.indexOf("begin")).toBeLessThan(order.indexOf("safe:mobility"));
+    expect(order.indexOf("safe:mobility")).toBeLessThan(order.indexOf("ready"));
+    expect(order.indexOf("safe:sensor")).toBeLessThan(order.indexOf("ready"));
+    expect(client.runtime.ready).toHaveBeenCalledWith(
+      "asset-1",
+      { runtime_id: expect.stringMatching(/^runtime-/), manifest: [] },
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
     );
-    const runtime = new AtlasAssetRuntime(client, {
-      entityId: "asset-1",
-      handlers: { move: async () => Promise.reject(new Error("motor jammed")) }
-    });
-
-    await runtime.checkIn();
-
-    expect(client.tasks.acknowledge).toHaveBeenCalledTimes(1);
-    expect(client.tasks.fail).toHaveBeenNthCalledWith(1, "throws", { error: { message: "motor jammed" } });
-    expect(client.tasks.fail).toHaveBeenNthCalledWith(2, "unknown", {
-      error: { code: "unsupported_command", command_id: "dance" }
-    });
-    expect(client.tasks.fail).toHaveBeenNthCalledWith(3, "prototype", {
-      error: { code: "unsupported_command", command_id: "toString" }
-    });
-    expect(client.tasks.fail).not.toHaveBeenCalledWith("plain", expect.anything());
-  });
-
-  it("drains advancing cursors and ignores duplicate task IDs", async () => {
-    const checkIn = vi
-      .fn<CheckIn>()
-      .mockResolvedValueOnce(page([command("task-1", "move")], true, "next"))
-      .mockResolvedValueOnce(page([command("task-1", "move"), command("task-2", "move")]));
-    const client = fakeClient(checkIn);
-    const handler = vi.fn(async () => undefined);
-    const runtime = new AtlasAssetRuntime(client, { entityId: "asset-1", handlers: { move: handler } });
-
-    await runtime.checkIn();
-
-    expect(checkIn).toHaveBeenNthCalledWith(2, "asset-1", expect.objectContaining({ taskCursor: "next" }));
-    expect(handler).toHaveBeenCalledTimes(2);
-    expect(client.tasks.acknowledge).toHaveBeenCalledTimes(2);
-  });
-
-  it("rejects pagination that cannot advance", async () => {
-    const client = fakeClient(vi.fn<CheckIn>().mockResolvedValue(page([], true)));
-    const runtime = new AtlasAssetRuntime(client, { entityId: "asset-1", handlers: { move: async () => undefined } });
-    await expect(runtime.checkIn()).rejects.toThrow("pagination did not advance");
-  });
-
-  it("serializes concurrent manual cycles", async () => {
-    const first = deferred<EntityCheckInMinimalResponse>();
-    const checkIn = vi
-      .fn<CheckIn>()
-      .mockImplementationOnce(() => first.promise)
-      .mockResolvedValue(page([]));
-    const client = fakeClient(checkIn);
-    const runtime = new AtlasAssetRuntime(client, { entityId: "asset-1" });
-
-    const one = runtime.checkIn();
-    const two = runtime.checkIn();
-    await vi.waitFor(() => expect(checkIn).toHaveBeenCalledTimes(1));
-    first.resolve(page([]));
-    await Promise.all([one, two]);
-
-    expect(checkIn).toHaveBeenCalledTimes(2);
-  });
-
-  it("waits for an active manual cycle and rejects new work while stopping", async () => {
-    const entered = deferred<void>();
-    const release = deferred<void>();
-    const client = fakeClient(vi.fn<CheckIn>().mockResolvedValue(page([command("task-1", "wait")])));
-    const runtime = new AtlasAssetRuntime(client, {
-      entityId: "asset-1",
-      handlers: {
-        wait: async () => {
-          entered.resolve();
-          await release.promise;
-        }
-      }
-    });
-
-    const checking = runtime.checkIn();
-    await entered.promise;
-    const stopping = runtime.stop();
-    await expect(runtime.checkIn()).rejects.toThrow("stopping");
-    expect(runtime.status).toBe("stopping");
-    expect(client.tasks.complete).not.toHaveBeenCalled();
-    release.resolve();
-    await Promise.all([checking, stopping]);
-
-    expect(client.tasks.complete).toHaveBeenCalledWith("task-1", undefined);
-    expect(runtime.status).toBe("stopped");
-  });
-
-  it("starts once, retries background failures, and stops idempotently", async () => {
-    vi.useFakeTimers();
-    const checkIn = vi
-      .fn<CheckIn>()
-      .mockResolvedValueOnce(page([]))
-      .mockRejectedValueOnce(new Error("offline"))
-      .mockResolvedValue(page([]));
-    const client = fakeClient(checkIn);
-    const onError = vi.fn();
-    const runtime = new AtlasAssetRuntime(client, { entityId: "asset-1", checkInIntervalMs: 1_000, onError });
-
-    await Promise.all([runtime.start(), runtime.start()]);
-    expect(runtime.status).toBe("running");
-    expect(client.handshake).toHaveBeenCalledTimes(1);
-    expect(checkIn).toHaveBeenCalledTimes(1);
-    await vi.advanceTimersByTimeAsync(1_000);
-    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: "offline" }));
-    await vi.advanceTimersByTimeAsync(250);
-    expect(checkIn).toHaveBeenCalledTimes(3);
-    await Promise.all([runtime.stop(), runtime.stop()]);
-    expect(runtime.status).toBe("stopped");
-  });
-
-  it("cancels an active handler without failing its acknowledged task", async () => {
-    const entered = deferred<void>();
-    const client = fakeClient(vi.fn<CheckIn>().mockResolvedValue(page([command("task-1", "wait")])));
-    const runtime = new AtlasAssetRuntime(client, {
-      entityId: "asset-1",
-      handlers: {
-        wait: async ({ signal }) => {
-          entered.resolve();
-          await new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }));
-          throw new Error("cancelled locally");
-        }
-      }
-    });
-
-    const starting = runtime.start();
-    await entered.promise;
     await runtime.stop();
-    await expect(starting).rejects.toMatchObject({ name: "AbortError" });
-    expect(client.tasks.acknowledge).toHaveBeenCalledWith("task-1");
-    expect(client.tasks.fail).not.toHaveBeenCalled();
-    expect(client.tasks.complete).not.toHaveBeenCalled();
+  });
+
+  it("does not become ready when the safety barrier fails", async () => {
+    const { client } = fakeClient();
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      executionModules: [{ id: "mobility", establishSafeState: async () => Promise.reject(new Error("not stopped")) }]
+    });
+
+    await expect(runtime.start()).rejects.toEqual(expect.any(SafetyBarrierError));
+    expect(client.runtime.ready).not.toHaveBeenCalled();
+    expect(client.runtime.tasks).not.toHaveBeenCalled();
     expect(runtime.status).toBe("stopped");
   });
 
-  it("stops when its external signal aborts", async () => {
-    vi.useFakeTimers();
+  it("copies caller-owned manifest and execution module arrays", async () => {
+    const { client } = fakeClient();
+    const manifest: CommandManifest = [manifestEntry("immediate.observe", "immediate")];
+    const establishSafeState = vi.fn(async () => undefined);
+    const modules: ExecutionModule[] = [{ id: "mobility", establishSafeState }];
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      manifest,
+      handlers: { "immediate.observe": async () => undefined },
+      executionModules: modules
+    });
+
+    manifest[0]!.command = "changed.after-construction";
+    modules.length = 0;
+    await runtime.start();
+
+    expect(establishSafeState).toHaveBeenCalledOnce();
+    expect(client.runtime.ready).toHaveBeenCalledWith(
+      "asset-1",
+      expect.objectContaining({ manifest: [expect.objectContaining({ command: "immediate.observe" })] }),
+      expect.anything()
+    );
+    await runtime.stop();
+  });
+
+  it("does not publish running after the lifecycle aborts during readiness", async () => {
     const controller = new AbortController();
-    const runtime = new AtlasAssetRuntime(fakeClient(), { entityId: "asset-1" });
-    await runtime.start({ signal: controller.signal });
-    controller.abort();
-    await vi.waitFor(() => expect(runtime.status).toBe("stopped"));
+    const { client } = fakeClient();
+    client.runtime.ready.mockImplementation(async () => {
+      controller.abort();
+      return undefined;
+    });
+    const runtime = new AtlasAssetRuntime(client, { entityId: "asset-1" });
+
+    await expect(runtime.start({ signal: controller.signal })).rejects.toThrow();
+
+    expect(runtime.status).toBe("stopped");
   });
 
-  it("handshakes again after a stopped runtime restarts", async () => {
-    const client = fakeClient();
+  it("stays ready and retries when delivery fails after startup", async () => {
+    vi.useFakeTimers();
+    const { client } = fakeClient();
+    const onError = vi.fn();
+    client.runtime.tasks.mockRejectedValueOnce(new Error("delivery unavailable"));
+    const runtime = new AtlasAssetRuntime(client, { entityId: "asset-1", onError });
+
+    try {
+      await runtime.start();
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(runtime.status).toBe("running");
+      expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: "delivery unavailable" }));
+
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(client.runtime.tasks).toHaveBeenCalledTimes(2);
+      await runtime.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("retries completion without rerunning the handler or releasing later queued work", async () => {
+    vi.useFakeTimers();
+    const first = task("queued-1", "queued.move");
+    const second = task("queued-2", "queued.move");
+    const { client } = fakeClient([first, second]);
+    const onError = vi.fn();
+    const handledTaskIDs: string[] = [];
+    const handler = vi.fn<AssetTaskHandler>(async ({ task }) => {
+      handledTaskIDs.push(task.task_id);
+      return { ok: true };
+    });
+    client.tasks.complete.mockRejectedValueOnce(new Error("completion unavailable"));
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      manifest: [manifestEntry("queued.move")],
+      handlers: { "queued.move": handler },
+      onError
+    });
+
+    try {
+      await runtime.start();
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(handler).toHaveBeenCalledOnce();
+      expect(client.tasks.complete).toHaveBeenCalledTimes(1);
+      expect(client.tasks.fail).not.toHaveBeenCalled();
+      expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: "completion unavailable" }));
+
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      expect(handler).toHaveBeenCalledTimes(2);
+      expect(handledTaskIDs).toEqual(["queued-1", "queued-2"]);
+      expect(client.tasks.complete).toHaveBeenCalledTimes(3);
+      expect(client.tasks.fail).not.toHaveBeenCalled();
+      await runtime.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("retries failure reporting without rerunning the handler", async () => {
+    vi.useFakeTimers();
+    const pending = task("immediate-1", "immediate.observe");
+    const { client } = fakeClient([pending]);
+    const onError = vi.fn();
+    const handler = vi.fn(async () => Promise.reject(new AssetTaskFailure("precondition_failed", "blocked")));
+    client.tasks.fail.mockRejectedValueOnce(new Error("failure reporting unavailable"));
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      manifest: [manifestEntry("immediate.observe", "immediate")],
+      handlers: { "immediate.observe": handler },
+      onError
+    });
+
+    try {
+      await runtime.start();
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(handler).toHaveBeenCalledOnce();
+      expect(client.tasks.fail).toHaveBeenCalledTimes(1);
+      expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: "failure reporting unavailable" }));
+
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      expect(handler).toHaveBeenCalledOnce();
+      expect(client.tasks.fail).toHaveBeenCalledTimes(2);
+      expect(client.tasks.complete).not.toHaveBeenCalled();
+      await runtime.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stops when its lifecycle signal is aborted after startup", async () => {
+    const pending = task("immediate-1", "immediate.observe");
+    const { client } = fakeClient([pending]);
+    const lifecycle = new AbortController();
+    const handlerAborted = deferred<void>();
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      manifest: [manifestEntry("immediate.observe", "immediate")],
+      handlers: {
+        "immediate.observe": ({ signal }) =>
+          new Promise<void>((resolve) => {
+            signal.addEventListener(
+              "abort",
+              () => {
+                handlerAborted.resolve();
+                resolve();
+              },
+              { once: true }
+            );
+          })
+      }
+    });
+
+    await runtime.start({ signal: lifecycle.signal });
+    await vi.waitFor(() => expect(client.tasks.start).toHaveBeenCalledOnce());
+    lifecycle.abort(new Error("process stopping"));
+
+    await handlerAborted.promise;
+    await vi.waitFor(() => expect(runtime.status).toBe("stopped"));
+    expect(client.tasks.complete).not.toHaveBeenCalled();
+    expect(client.tasks.fail).not.toHaveBeenCalled();
+  });
+
+  it("polls for immediate Tasks created after startup", async () => {
+    vi.useFakeTimers();
+    const pending = task("immediate-late", "immediate.observe");
+    const { client, emit } = fakeClient();
+    const handler = vi.fn(async () => undefined);
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      manifest: [manifestEntry("immediate.observe", "immediate")],
+      handlers: { "immediate.observe": handler }
+    });
+
+    try {
+      await runtime.start();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(client.tasks.start).not.toHaveBeenCalled();
+
+      emit(pending);
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      expect(client.tasks.start).toHaveBeenCalledWith("immediate-late", expect.anything());
+      expect(handler).toHaveBeenCalledOnce();
+      await runtime.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps polling for delivery while accepted Task reconciliation is stalled", async () => {
+    vi.useFakeTimers();
+    const first = task("immediate-1", "immediate.observe");
+    const second = task("immediate-2", "immediate.observe");
+    const { client, emit } = fakeClient([first]);
+    const reconciliationStarted = deferred<void>();
+    client.tasks.get.mockImplementation(async (_id: string, options?: { signal?: AbortSignal }) => {
+      reconciliationStarted.resolve();
+      return rejectOnAbort(options?.signal);
+    });
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      manifest: [manifestEntry("immediate.observe", "immediate")],
+      handlers: { "immediate.observe": async ({ signal }) => rejectOnAbort(signal) }
+    });
+
+    try {
+      await runtime.start();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(client.tasks.start).toHaveBeenCalledWith("immediate-1", expect.anything());
+
+      emit(second);
+      await vi.advanceTimersByTimeAsync(5_000);
+      await reconciliationStarted.promise;
+
+      expect(client.tasks.start).toHaveBeenCalledWith("immediate-2", expect.anything());
+      await runtime.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("rejects a delivered Task assigned to another Asset", async () => {
+    const foreign = { ...task("foreign-1", "immediate.observe"), asset_id: "asset-2" };
+    const { client } = fakeClient();
+    const onError = vi.fn();
+    client.runtime.tasks.mockResolvedValue({ tasks: [foreign] });
+    const handler = vi.fn(async () => undefined);
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      manifest: [manifestEntry("immediate.observe", "immediate")],
+      handlers: { "immediate.observe": handler },
+      onError
+    });
+
+    await runtime.start();
+    await vi.waitFor(() =>
+      expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining("asset-2") }))
+    );
+
+    expect(handler).not.toHaveBeenCalled();
+    expect(client.tasks.acknowledge).not.toHaveBeenCalled();
+    expect(client.tasks.start).not.toHaveBeenCalled();
+    expect(client.tasks.complete).not.toHaveBeenCalled();
+    expect(client.tasks.fail).not.toHaveBeenCalled();
+    await runtime.stop();
+  });
+
+  it("waits for immediate handler cleanup before stop resolves", async () => {
+    const pending = task("immediate-1", "immediate.observe");
+    const { client } = fakeClient([pending]);
+    const cleanupStarted = deferred<void>();
+    const cleanupFinished = deferred<void>();
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      manifest: [manifestEntry("immediate.observe", "immediate")],
+      handlers: {
+        "immediate.observe": ({ signal }) =>
+          new Promise<void>((resolve) => {
+            signal.addEventListener(
+              "abort",
+              () => {
+                cleanupStarted.resolve();
+                void cleanupFinished.promise.then(() => resolve());
+              },
+              { once: true }
+            );
+          })
+      }
+    });
+
+    await runtime.start();
+    await vi.waitFor(() => expect(client.tasks.start).toHaveBeenCalledOnce());
+    let stopped = false;
+    const stopping = runtime.stop().then(() => {
+      stopped = true;
+    });
+
+    await cleanupStarted.promise;
+    expect(stopped).toBe(false);
+    expect(runtime.status).toBe("stopping");
+    cleanupFinished.resolve();
+    await stopping;
+    expect(runtime.status).toBe("stopped");
+  });
+
+  it("aborts stalled check-in network work during stop", async () => {
+    const { client } = fakeClient();
+    const requestStarted = deferred<void>();
+    client.entities.checkIn.mockImplementationOnce(
+      async (_id: string, options?: EntityCheckInOptions): Promise<Record<string, never>> => {
+        requestStarted.resolve();
+        await rejectOnAbort(options?.signal);
+        return {};
+      }
+    );
+    const runtime = new AtlasAssetRuntime(client, { entityId: "asset-1" });
+
+    await runtime.start();
+    const checkIn = runtime.checkIn();
+    await requestStarted.promise;
+    const stopping = runtime.stop();
+
+    await expect(checkIn).rejects.toThrow();
+    await stopping;
+    expect(runtime.status).toBe("stopped");
+  });
+
+  it("aborts telemetry collection and waits for its cleanup during stop", async () => {
+    const { client } = fakeClient();
+    const reportStarted = deferred<AbortSignal>();
+    const reportStopped = deferred<void>();
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      checkIn: ({ signal }) =>
+        new Promise((resolve) => {
+          reportStarted.resolve(signal);
+          signal.addEventListener(
+            "abort",
+            () => {
+              reportStopped.resolve();
+              resolve({ status: "stopped" });
+            },
+            { once: true }
+          );
+        })
+    });
+
+    await runtime.start();
+    const checkIn = runtime.checkIn();
+    const signal = await reportStarted.promise;
+    const stopping = runtime.stop();
+
+    await reportStopped.promise;
+    expect(signal.aborted).toBe(true);
+    await expect(checkIn).rejects.toThrow();
+    await stopping;
+    expect(client.entities.checkIn).not.toHaveBeenCalled();
+    expect(runtime.status).toBe("stopped");
+  });
+
+  it("retries queued delivery after acknowledgement fails", async () => {
+    vi.useFakeTimers();
+    const pending = task("queued-1", "queued.move");
+    const { client } = fakeClient([pending]);
+    const onError = vi.fn();
+    const handler = vi.fn(async () => undefined);
+    client.tasks.acknowledge.mockRejectedValueOnce(new Error("acknowledgement unavailable"));
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      manifest: [manifestEntry("queued.move")],
+      handlers: { "queued.move": handler },
+      onError
+    });
+
+    try {
+      await runtime.start();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: "acknowledgement unavailable" }));
+
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(client.tasks.acknowledge).toHaveBeenCalledTimes(2);
+      expect(handler).toHaveBeenCalledOnce();
+
+      await runtime.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("runs queued work serially while immediate work overlaps", async () => {
+    const queuedOne = task("queued-1", "queued.move");
+    const queuedTwo = task("queued-2", "queued.move");
+    const immediateOne = task("immediate-1", "immediate.observe");
+    const immediateTwo = task("immediate-2", "immediate.observe");
+    const { client } = fakeClient([queuedOne, queuedTwo, immediateOne, immediateTwo]);
+    const queuedGate = deferred<void>();
+    const immediateGate = deferred<void>();
+    const order: string[] = [];
+    let queuedActive = 0;
+    let maxQueuedActive = 0;
+    let immediateActive = 0;
+    const manifest: CommandManifest = [
+      manifestEntry("queued.move", "queued", true),
+      manifestEntry("immediate.observe", "immediate")
+    ];
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      manifest,
+      handlers: {
+        "queued.move": async ({ task, reportProgress }) => {
+          queuedActive++;
+          maxQueuedActive = Math.max(maxQueuedActive, queuedActive);
+          order.push(`run:${task.task_id}`);
+          if (task.task_id === "queued-1") {
+            await reportProgress(0.5);
+            await queuedGate.promise;
+          }
+          queuedActive--;
+          return { ok: true };
+        },
+        "immediate.observe": async ({ task }) => {
+          immediateActive++;
+          order.push(`run:${task.task_id}`);
+          await immediateGate.promise;
+          immediateActive--;
+        }
+      }
+    });
+
+    await runtime.start();
+    await vi.waitFor(() => {
+      expect(order).toContain("run:queued-1");
+      expect(immediateActive).toBe(2);
+    });
+    expect(order).not.toContain("run:queued-2");
+    expect(client.tasks.progress).toHaveBeenCalledWith(
+      "queued-1",
+      { progress: 0.5 },
+      expect.objectContaining({ runtimeId: expect.stringMatching(/^runtime-/) })
+    );
+
+    immediateGate.resolve();
+    queuedGate.resolve();
+    await vi.waitFor(() => expect(order).toContain("run:queued-2"));
+    await vi.waitFor(() => expect(client.tasks.complete).toHaveBeenCalledTimes(4));
+    expect(maxQueuedActive).toBe(1);
+    expect(startOrder(client, "immediate")).toEqual(["immediate-1", "immediate-2"]);
+    await runtime.stop();
+  });
+
+  it("aborts local execution when Core delivers cancellation", async () => {
+    vi.useFakeTimers();
+    const runningTask = task("immediate-1", "immediate.observe");
+    const { client, emit } = fakeClient([runningTask]);
+    const aborted = deferred<void>();
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      manifest: [manifestEntry("immediate.observe", "immediate", false, true)],
+      handlers: {
+        "immediate.observe": ({ signal }) =>
+          new Promise<void>((resolve) => {
+            signal.addEventListener(
+              "abort",
+              () => {
+                aborted.resolve();
+                resolve();
+              },
+              { once: true }
+            );
+          })
+      }
+    });
+
+    try {
+      await runtime.start();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(client.tasks.start).toHaveBeenCalledWith("immediate-1", expect.anything());
+      emit({
+        ...runningTask,
+        status: "cancelled",
+        cancellation: { code: "requested", message: "Operator cancelled" },
+        finished_at: "2026-08-19T12:00:01Z",
+        updated_at: "2026-08-19T12:00:01Z"
+      });
+      await vi.advanceTimersByTimeAsync(5_000);
+      await aborted.promise;
+      expect(client.tasks.complete).not.toHaveBeenCalled();
+      expect(client.tasks.fail).not.toHaveBeenCalled();
+      await runtime.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("aborts local execution when Core fences the runtime", async () => {
+    vi.useFakeTimers();
+    const runningTask = task("immediate-1", "immediate.observe");
+    const { client, emit } = fakeClient([runningTask]);
+    const aborted = deferred<void>();
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      manifest: [manifestEntry("immediate.observe", "immediate")],
+      handlers: {
+        "immediate.observe": ({ signal }) =>
+          new Promise<void>((resolve) => {
+            signal.addEventListener(
+              "abort",
+              () => {
+                aborted.resolve();
+                resolve();
+              },
+              { once: true }
+            );
+          })
+      }
+    });
+
+    try {
+      await runtime.start();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(client.tasks.start).toHaveBeenCalledWith("immediate-1", expect.anything());
+      emit({
+        ...runningTask,
+        status: "failed",
+        failure: { code: "asset_restarted", message: "A new runtime replaced this one" },
+        finished_at: "2026-08-19T12:00:01Z",
+        updated_at: "2026-08-19T12:00:01Z"
+      });
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      await aborted.promise;
+      expect(client.tasks.complete).not.toHaveBeenCalled();
+      expect(client.tasks.fail).not.toHaveBeenCalled();
+      await runtime.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not execute a Task that Core fails during start", async () => {
+    const pending = task("immediate-1", "immediate.observe");
+    const { client, emit } = fakeClient([pending]);
+    const handler = vi.fn(async () => undefined);
+    const failed: TaskResource = {
+      ...pending,
+      status: "failed",
+      failure: { code: "immediate_start_timeout", message: "The start window expired" },
+      finished_at: "2026-08-19T12:01:00Z",
+      updated_at: "2026-08-19T12:01:00Z"
+    };
+    client.tasks.start.mockImplementationOnce(async () => {
+      emit(failed);
+      return failed;
+    });
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      manifest: [manifestEntry("immediate.observe", "immediate")],
+      handlers: { "immediate.observe": handler }
+    });
+
+    await runtime.start();
+    await vi.waitFor(() => expect(client.tasks.start).toHaveBeenCalledOnce());
+    expect(handler).not.toHaveBeenCalled();
+    expect(client.tasks.complete).not.toHaveBeenCalled();
+    expect(client.tasks.fail).not.toHaveBeenCalled();
+    await runtime.stop();
+  });
+
+  it("reports typed precondition failures", async () => {
+    const pending = task("immediate-1", "immediate.observe");
+    const { client } = fakeClient([pending]);
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      manifest: [manifestEntry("immediate.observe", "immediate")],
+      handlers: {
+        "immediate.observe": async () => {
+          throw new AssetTaskFailure("precondition_failed", "Camera is unavailable");
+        }
+      }
+    });
+
+    await runtime.start();
+    await vi.waitFor(() =>
+      expect(client.tasks.fail).toHaveBeenCalledWith(
+        "immediate-1",
+        expect.objectContaining({
+          failure: { code: "precondition_failed", message: "Camera is unavailable" }
+        })
+      )
+    );
+    await runtime.stop();
+  });
+
+  it("reconciles the next immediate Task when an earlier start fails", async () => {
+    const first = task("immediate-1", "immediate.observe");
+    const second = task("immediate-2", "immediate.observe");
+    const { client } = fakeClient([first, second]);
+    client.tasks.start.mockRejectedValueOnce(new AtlasAPIError("start rejected", 400, {}));
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      manifest: [manifestEntry("immediate.observe", "immediate")],
+      handlers: { "immediate.observe": async () => undefined }
+    });
+
+    await runtime.start();
+
+    await vi.waitFor(() => expect(startOrder(client, "immediate")).toEqual(["immediate-1", "immediate-2"]));
+    expect(client.tasks.fail).toHaveBeenCalledWith(
+      "immediate-1",
+      expect.objectContaining({ failure: expect.objectContaining({ code: "execution_failed" }) })
+    );
+    await runtime.stop();
+  });
+
+  it("compensates when readiness may have committed before its response was lost", async () => {
+    const { client } = fakeClient();
+    const responseLost = new Error("ready response lost");
+    client.runtime.ready.mockRejectedValueOnce(responseLost);
+    const runtime = new AtlasAssetRuntime(client, { entityId: "asset-1" });
+
+    await expect(runtime.start()).rejects.toBe(responseLost);
+
+    const runtimeId = client.runtime.begin.mock.calls[0]?.[1].runtime_id;
+    expect(runtimeId).toMatch(/^runtime-/);
+    expect(client.runtime.stop).toHaveBeenCalledWith("asset-1", { runtime_id: runtimeId });
+    expect(runtime.status).toBe("stopped");
+  });
+
+  it("retries the exact runtime registration after an ambiguous transport failure", async () => {
+    vi.useFakeTimers();
+    const { client } = fakeClient();
+    client.runtime.begin.mockRejectedValueOnce(new Error("registration response lost"));
+    const runtime = new AtlasAssetRuntime(client, { entityId: "asset-1" });
+
+    try {
+      const starting = runtime.start();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(client.runtime.begin).toHaveBeenCalledOnce();
+      expect(client.runtime.ready).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(5_000);
+      await starting;
+      expect(client.runtime.begin).toHaveBeenCalledTimes(2);
+      expect(client.runtime.begin.mock.calls[0]?.[1]).toEqual(client.runtime.begin.mock.calls[1]?.[1]);
+      expect(runtime.status).toBe("running");
+      await runtime.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("returns both startup and compensation failures", async () => {
+    const { client } = fakeClient();
+    const startupError = new Error("ready response lost");
+    const compensationError = new Error("stop unavailable");
+    client.runtime.ready.mockRejectedValueOnce(startupError);
+    client.runtime.stop.mockRejectedValueOnce(compensationError);
+    const runtime = new AtlasAssetRuntime(client, { entityId: "asset-1" });
+
+    try {
+      await runtime.start();
+      throw new Error("start unexpectedly succeeded");
+    } catch (error) {
+      expect(error).toBeInstanceOf(AggregateError);
+      expect((error as AggregateError).errors).toEqual([startupError, compensationError]);
+    }
+    expect(runtime.status).toBe("stopped");
+  });
+
+  it("reaches stopped locally before rejecting an unconfirmed Core stop", async () => {
+    const { client } = fakeClient();
+    const stopError = new Error("stop response lost");
+    const runtime = new AtlasAssetRuntime(client, { entityId: "asset-1" });
+    await runtime.start();
+    client.runtime.stop.mockRejectedValueOnce(stopError);
+
+    await expect(runtime.stop()).rejects.toBe(stopError);
+
+    expect(runtime.status).toBe("stopped");
+  });
+
+  it("keeps lost queued acknowledgements in authoritative local order", async () => {
+    vi.useFakeTimers();
+    const first = task("queued-1", "queued.move");
+    const second = task("queued-2", "queued.move");
+    const { client, transition } = fakeClient([first, second]);
+    client.runtime.tasks.mockResolvedValueOnce({ tasks: [second, first] }).mockResolvedValue({ tasks: [] });
+    let firstAttempts = 0;
+    client.tasks.acknowledge.mockImplementation(async (id: string) => {
+      const acknowledged = transition(id, "acknowledged");
+      if (id === first.task_id && firstAttempts++ === 0) throw new Error("ack response lost");
+      return acknowledged;
+    });
+    const executionOrder: string[] = [];
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      manifest: [manifestEntry("queued.move")],
+      handlers: { "queued.move": async ({ task }) => void executionOrder.push(task.task_id) }
+    });
+
+    try {
+      await runtime.start();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(client.tasks.acknowledge.mock.calls.map((call) => call[0])).toEqual(["queued-1", "queued-2"]);
+      expect(executionOrder).toEqual([]);
+
+      await vi.advanceTimersByTimeAsync(5_000);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(executionOrder).toEqual(["queued-1", "queued-2"]);
+      expect(client.tasks.acknowledge.mock.calls.filter((call) => call[0] === "queued-1")).toHaveLength(2);
+      expect(client.tasks.start.mock.calls.map((call) => call[0])).toEqual(["queued-1", "queued-2"]);
+      await runtime.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("starts immediate work without waiting for a slow queued acknowledgement", async () => {
+    const queued = task("queued-1", "queued.move");
+    const immediate = task("immediate-1", "immediate.observe");
+    const { client, transition } = fakeClient([queued, immediate]);
+    client.runtime.tasks.mockResolvedValueOnce({ tasks: [queued, immediate] }).mockResolvedValue({ tasks: [] });
+    const acknowledgement = deferred<void>();
+    client.tasks.acknowledge.mockImplementation(async (id: string) => {
+      await acknowledgement.promise;
+      return transition(id, "acknowledged");
+    });
+    const immediateHandler = vi.fn(async () => undefined);
+    const queuedHandler = vi.fn(async () => undefined);
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      manifest: [manifestEntry("queued.move"), manifestEntry("immediate.observe", "immediate")],
+      handlers: { "queued.move": queuedHandler, "immediate.observe": immediateHandler }
+    });
+
+    await runtime.start();
+    await vi.waitFor(() => expect(immediateHandler).toHaveBeenCalledOnce());
+    expect(queuedHandler).not.toHaveBeenCalled();
+
+    acknowledgement.resolve();
+    await vi.waitFor(() => expect(queuedHandler).toHaveBeenCalledOnce());
+    await runtime.stop();
+  });
+
+  it("retries committed Start and Progress writes without repeating physical execution", async () => {
+    vi.useFakeTimers();
+    const pending = task("immediate-1", "immediate.observe");
+    const { client, transition, emit } = fakeClient([pending]);
+    let loseStart = true;
+    let loseProgress = true;
+    let loseCompletion = true;
+    client.tasks.start.mockImplementation(async (id: string) => {
+      const started = transition(id, "in_progress");
+      if (loseStart) {
+        loseStart = false;
+        throw new Error("start response lost");
+      }
+      return started;
+    });
+    client.tasks.progress.mockImplementation(async (id: string, request: { progress: number }) => {
+      const progressed = { ...transition(id, "in_progress"), progress: request.progress };
+      emit(progressed);
+      if (loseProgress) {
+        loseProgress = false;
+        throw new Error("progress response lost");
+      }
+      return progressed;
+    });
+    client.tasks.complete.mockImplementation(async (id: string) => {
+      const completed = transition(id, "completed");
+      if (loseCompletion) {
+        loseCompletion = false;
+        throw new Error("completion response lost");
+      }
+      return completed;
+    });
+    const handler = vi.fn(async ({ reportProgress }: { reportProgress(progress: number): Promise<void> }) => {
+      await reportProgress(0.5);
+      return { result: "done" };
+    });
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      manifest: [manifestEntry("immediate.observe", "immediate", true)],
+      handlers: { "immediate.observe": handler }
+    });
+
+    try {
+      await runtime.start();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(handler).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(handler).toHaveBeenCalledOnce();
+      await vi.advanceTimersByTimeAsync(5_000);
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      expect(handler).toHaveBeenCalledOnce();
+      expect(client.tasks.start).toHaveBeenCalledTimes(2);
+      expect(client.tasks.progress).toHaveBeenCalledTimes(2);
+      expect(client.tasks.complete).toHaveBeenCalled();
+      expect(client.tasks.fail).not.toHaveBeenCalled();
+      await runtime.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("isolates reconciliation failures and caps reads at eight", async () => {
+    vi.useFakeTimers();
+    const delivered = Array.from({ length: 9 }, (_, index) => task(`immediate-${index + 1}`, "immediate.observe"));
+    const { client } = fakeClient(delivered);
+    client.runtime.tasks.mockResolvedValueOnce({ tasks: delivered }).mockResolvedValue({ tasks: [] });
+    const releaseReads = deferred<void>();
+    const firstBatchStarted = deferred<void>();
+    let activeReads = 0;
+    let maximumReads = 0;
+    let readCount = 0;
+    client.tasks.get.mockImplementation(async (id: string) => {
+      readCount++;
+      if (id === "immediate-1") throw new Error("isolated reconciliation failure");
+      activeReads++;
+      maximumReads = Math.max(maximumReads, activeReads);
+      if (readCount === 8) firstBatchStarted.resolve();
+      await releaseReads.promise;
+      activeReads--;
+      return taskWithStatus(task(id, "immediate.observe"), "in_progress", "2026-08-19T12:00:01Z");
+    });
+    const onError = vi.fn();
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      manifest: [manifestEntry("immediate.observe", "immediate")],
+      handlers: { "immediate.observe": async ({ signal }) => rejectOnAbort(signal) },
+      onError
+    });
+
+    try {
+      await runtime.start();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(client.tasks.start).toHaveBeenCalledTimes(9);
+
+      await vi.advanceTimersByTimeAsync(5_000);
+      await firstBatchStarted.promise;
+      expect(readCount).toBe(8);
+      expect(maximumReads).toBeLessThanOrEqual(8);
+
+      releaseReads.resolve();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(readCount).toBe(9);
+      expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: "isolated reconciliation failure" }));
+      await runtime.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("creates a fresh runtime fence on each process start", async () => {
+    const { client } = fakeClient();
     const runtime = new AtlasAssetRuntime(client, { entityId: "asset-1" });
 
     await runtime.start();
     await runtime.stop();
     await runtime.start();
-    await runtime.stop();
+    const runtimeIds = client.runtime.begin.mock.calls.map((call) => call[1].runtime_id);
 
-    expect(client.handshake).toHaveBeenCalledTimes(2);
+    expect(runtimeIds).toHaveLength(2);
+    expect(new Set(runtimeIds).size).toBe(2);
+    await runtime.stop();
   });
 });
 
-function fakeClient(checkIn: ReturnType<typeof vi.fn<CheckIn>> = vi.fn<CheckIn>().mockResolvedValue(page([]))) {
-  return {
-    handshake: vi.fn(async () => undefined),
-    entities: { checkIn },
+function fakeClient(initialTasks: TaskResource[] = [], order: string[] = []) {
+  const tasks = new Map(initialTasks.map((task) => [task.task_id, task]));
+  const response = (): RuntimeTaskDeliveryResponse => {
+    let queuedReleased = false;
+    let immediateReleased = false;
+    const deliverable = [...tasks.values()].filter((task) => {
+      if (task.status !== "pending") return false;
+      if (task.command.startsWith("immediate")) {
+        if (immediateReleased) return false;
+        immediateReleased = true;
+        return true;
+      }
+      if (queuedReleased) return false;
+      queuedReleased = true;
+      return true;
+    });
+    return { tasks: deliverable };
+  };
+  const transition = (id: string, status: TaskResource["status"]): TaskResource => {
+    const current = tasks.get(id) ?? task(id, id.startsWith("queued") ? "queued.move" : "immediate.observe");
+    const updatedAt = "2026-08-19T12:00:01Z";
+    const updated = taskWithStatus(current, status, updatedAt);
+    tasks.set(id, updated);
+    return updated;
+  };
+  const client = {
+    handshake: vi.fn(async (_options?: { signal?: AbortSignal }) => void order.push("handshake")),
+    entities: { checkIn: vi.fn(async (_id: string, _options?: EntityCheckInOptions) => ({})) },
+    runtime: {
+      begin: vi.fn(async (_assetId: string, _request: { runtime_id: string }) => void order.push("begin")),
+      stop: vi.fn(async (_assetId: string, _request: { runtime_id: string }) => void order.push("stop")),
+      ready: vi.fn(
+        async (_assetId: string, _request: { runtime_id: string; manifest: CommandManifest }) =>
+          void order.push("ready")
+      ),
+      tasks: vi.fn(async (_assetId: string, _options: RuntimeContextOptions) => response())
+    },
     tasks: {
-      acknowledge: vi.fn(async (id: string) => taskResource(id)),
-      complete: vi.fn(async (id: string) => taskResource(id)),
-      fail: vi.fn(async (id: string) => taskResource(id)),
-      setStatus: vi.fn(async (id: string) => taskResource(id))
+      get: vi.fn(async (id: string) => {
+        const current = tasks.get(id);
+        if (!current) throw new Error(`Task ${id} not found`);
+        return current;
+      }),
+      acknowledge: vi.fn(async (id: string) => transition(id, "acknowledged")),
+      start: vi.fn(async (id: string) => transition(id, "in_progress")),
+      progress: vi.fn(async (id: string, request: { progress: number }) => {
+        const progressed = { ...transition(id, "in_progress"), progress: request.progress };
+        tasks.set(id, progressed);
+        return progressed;
+      }),
+      complete: vi.fn(async (id: string) => transition(id, "completed")),
+      fail: vi.fn(async (id: string) => transition(id, "failed"))
     }
-  } satisfies AtlasAssetClient;
-}
-
-function command(taskId: string, commandId: string): EntityCheckInMinimalTask {
-  return { task_id: taskId, status: "pending", entity_id: "asset-1", command_id: commandId, parameters: { speed: 4 } };
-}
-
-function page(tasks: EntityCheckInMinimalTask[], hasMore = false, cursor?: string): EntityCheckInMinimalResponse {
+  };
   return {
-    entity: {} as EntityCheckInMinimalResponse["entity"],
-    tasks,
-    task_count: tasks.length,
-    task_limit: 20,
-    has_more_tasks: hasMore,
-    ...(cursor ? { next_task_cursor: cursor } : {})
+    client: client as unknown as AtlasAssetClient & typeof client,
+    transition,
+    emit: (value: TaskResource) => {
+      tasks.set(value.task_id, value);
+    }
   };
 }
 
-function taskResource(id: string): TaskResource {
+function taskWithStatus(task: TaskResource, status: TaskResource["status"], timestamp: string): TaskResource {
+  switch (status) {
+    case "pending":
+      return { ...task, status, updated_at: timestamp };
+    case "acknowledged":
+      return { ...task, status, acknowledged_at: task.acknowledged_at ?? timestamp, updated_at: timestamp };
+    case "in_progress":
+      return {
+        ...task,
+        status,
+        acknowledged_at: task.acknowledged_at ?? timestamp,
+        started_at: task.started_at ?? timestamp,
+        updated_at: timestamp
+      };
+    case "completed":
+      return {
+        ...task,
+        status,
+        acknowledged_at: task.acknowledged_at ?? timestamp,
+        started_at: task.started_at ?? timestamp,
+        finished_at: timestamp,
+        updated_at: timestamp
+      };
+    case "failed":
+      return {
+        ...task,
+        status,
+        failure: task.failure ?? { code: "execution_failed", message: "fixture failure" },
+        finished_at: timestamp,
+        updated_at: timestamp
+      };
+    case "cancelled":
+      return {
+        ...task,
+        status,
+        cancellation: task.cancellation ?? { code: "requested", message: "fixture cancellation" },
+        finished_at: timestamp,
+        updated_at: timestamp
+      };
+  }
+}
+
+function manifestEntry(
+  command: string,
+  scheduling: "queued" | "immediate" = "queued",
+  supportsProgress = false,
+  supportsCancel = false
+) {
   return {
-    task_id: id,
-    entity_id: "asset-1",
-    status: "acknowledged",
-    components: {},
-    metadata: { version: 1 }
-  } as TaskResource;
+    command,
+    description: `Runs ${command}`,
+    scheduling,
+    supports_cancel: supportsCancel,
+    supports_progress: supportsProgress
+  } as const;
+}
+
+function task(taskId: string, command: string): TaskResource {
+  return {
+    task_id: taskId,
+    asset_id: "asset-1",
+    command,
+    input: { value: taskId },
+    status: "pending",
+    created_at: "2026-08-19T12:00:00Z",
+    updated_at: "2026-08-19T12:00:00Z"
+  };
+}
+
+function startOrder(client: ReturnType<typeof fakeClient>["client"], prefix: string): string[] {
+  return client.tasks.start.mock.calls.map((call) => call[0]).filter((id) => id.startsWith(prefix));
 }
 
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
-  const promise = new Promise<T>((done) => {
-    resolve = done;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
   });
   return { promise, resolve };
+}
+
+function rejectOnAbort(signal?: AbortSignal): Promise<never> {
+  return new Promise((_resolve, reject) => {
+    if (!signal) return;
+    const fail = () => reject(signal.reason ?? new Error("aborted"));
+    if (signal.aborted) {
+      fail();
+      return;
+    }
+    signal.addEventListener("abort", fail, { once: true });
+  });
 }

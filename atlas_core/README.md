@@ -203,6 +203,10 @@ Key environment variables:
 - `DELETE /entities/{entity_id}`
 - `GET /entities/alias/{alias}`
 - `POST /entities/{entity_id}/checkin`
+- `POST /entities/{entity_id}/runtime`
+- `POST /entities/{entity_id}/runtime/stop`
+- `POST /entities/{entity_id}/runtime/ready`
+- `GET /entities/{entity_id}/runtime/tasks`
 - `GET /entities/{entity_id}/tasks`
 - `GET /entities/{entity_id}/objects`
 
@@ -211,12 +215,12 @@ Key environment variables:
 - `GET /tasks`
 - `POST /tasks`
 - `GET /tasks/{task_id}`
-- `PATCH /tasks/{task_id}`
-- `DELETE /tasks/{task_id}`
 - `POST /tasks/{task_id}/acknowledge`
+- `POST /tasks/{task_id}/start`
+- `POST /tasks/{task_id}/progress`
 - `POST /tasks/{task_id}/complete`
 - `POST /tasks/{task_id}/fail`
-- `POST /tasks/{task_id}/status`
+- `POST /tasks/{task_id}/cancel`
 - `GET /tasks/{task_id}/objects`
 
 ### Objects
@@ -240,11 +244,9 @@ Key environment variables:
 
 `full` accepts per-resource limits and cursors and returns one stable pre-hydration `version` across all continuation pages. After consuming them, drain `changed-since` from that baseline instead of deriving a cursor from resource metadata. `changed-since` accepts `limit` plus one opaque `cursor` and returns globally ordered feed events with a monotonic `version`; pass it back as `since_version` on the next poll. See `docs/PAGINATION.md`.
 
-### Check-in query params
+### Check-in
 
-`POST /entities/{entity_id}/checkin` supports: `status_filter` (default `pending,acknowledged`), `limit` (1–20, default 10), `task_cursor`, `fields=minimal`, `since` (RFC3339).
-
-Its optional body is the Protocol `EntityCheckInRequest`; an empty body is `{}`. Malformed JSON returns `INVALID_JSON`, while unknown fields, invalid ranges, and invalid components return `VALIDATION_ERROR` before task reads or entity writes.
+`POST /entities/{entity_id}/checkin` reports telemetry and observed state and supports `fields=minimal`. Its optional body is the Protocol `EntityCheckInRequest`; an empty body is `{}`. Malformed JSON returns `INVALID_JSON`, while unknown fields, invalid ranges, and invalid components return `VALIDATION_ERROR` before the Entity write. Task delivery is handled through the runtime registration and delivery routes.
 
 ## Pagination and Limits
 

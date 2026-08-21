@@ -22,10 +22,12 @@ import {
   isObjectDetailResource as isGeneratedObjectDetailResource,
   isObjectResource as isGeneratedObjectResource,
   isProtocolRevisionResponse as isGeneratedProtocolRevisionResponse,
+  isRuntimeTaskDeliveryResponse as isGeneratedRuntimeTaskDeliveryResponse,
   isTaskResource as isGeneratedTaskResource,
   type ObjectDetailResource,
   type ObjectResource,
   type ProtocolRevisionResponse,
+  type RuntimeTaskDeliveryResponse,
   type TaskResource
 } from "./protocol.js";
 import type { EntityCheckInFields } from "./types.js";
@@ -39,13 +41,16 @@ export const isEntityResource: ResponseValidator<EntityResource> = (value): valu
   isGeneratedEntityResource(value) && isFeedVersion(value.metadata.version);
 
 export const isTaskResource: ResponseValidator<TaskResource> = (value): value is TaskResource =>
-  isGeneratedTaskResource(value) && isFeedVersion(value.metadata.version);
+  isGeneratedTaskResource(value);
 
 export const isObjectResource: ResponseValidator<ObjectResource> = (value): value is ObjectResource =>
   isGeneratedObjectResource(value) && isFeedVersion(value.metadata.version);
 
 export const isObjectDetailResource: ResponseValidator<ObjectDetailResource> = (value): value is ObjectDetailResource =>
   isGeneratedObjectDetailResource(value) && isFeedVersion(value.metadata.version);
+
+export const isRuntimeTaskDeliveryResponse: ResponseValidator<RuntimeTaskDeliveryResponse> =
+  isGeneratedRuntimeTaskDeliveryResponse;
 
 export const isFullDatasetResponse: ResponseValidator<FullDatasetResponse> = (value): value is FullDatasetResponse =>
   isGeneratedFullDatasetResponse(value) &&
@@ -83,35 +88,18 @@ export function changedSinceResponseValidator(sinceVersion: number): ResponseVal
 
 export function entityCheckInResponseValidator(
   expectedEntityID: string,
-  fields: EntityCheckInFields
+  _fields: EntityCheckInFields
 ): ResponseValidator<EntityCheckInResponse> {
-  return (value): value is EntityCheckInResponse => {
-    if (fields === "minimal") {
-      return (
-        isGeneratedEntityCheckInMinimalResponse(value) &&
-        value.tasks.every((task) => task.entity_id === undefined || task.entity_id === expectedEntityID) &&
-        hasValidEntityCheckInContext(value, expectedEntityID)
-      );
-    }
-    return (
-      isGeneratedEntityCheckInFullResponse(value) &&
-      value.tasks.every((task) => isTaskResource(task) && task.entity_id === expectedEntityID) &&
-      hasValidEntityCheckInContext(value, expectedEntityID)
-    );
-  };
+  return (value): value is EntityCheckInResponse =>
+    (isGeneratedEntityCheckInFullResponse(value) || isGeneratedEntityCheckInMinimalResponse(value)) &&
+    hasValidEntityCheckInContext(value, expectedEntityID);
 }
 
 function hasValidEntityCheckInContext(
   value: EntityCheckInFullResponse | EntityCheckInMinimalResponse,
   expectedEntityID: string
 ): boolean {
-  return (
-    isEntityResource(value.entity) &&
-    value.entity.entity_id === expectedEntityID &&
-    value.task_count === value.tasks.length &&
-    value.tasks.length <= value.task_limit &&
-    hasValidPagination(value.has_more_tasks, value.next_task_cursor)
-  );
+  return isEntityResource(value.entity) && value.entity.entity_id === expectedEntityID;
 }
 
 export function isInboundFeedHandshake(value: unknown): value is FeedHandshakeMessage {
@@ -129,7 +117,7 @@ export function isInboundFeedEvent(value: unknown): value is FeedEvent {
     case "entity":
       return value.id === value.resource.entity_id && value.version === value.resource.metadata.version;
     case "task":
-      return value.id === value.resource.task_id && value.version === value.resource.metadata.version;
+      return value.id === value.resource.task_id;
     case "object":
       return value.id === value.resource.object_id && value.version === value.resource.metadata.version;
   }

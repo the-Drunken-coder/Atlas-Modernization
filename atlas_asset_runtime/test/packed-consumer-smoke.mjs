@@ -34,7 +34,7 @@ try {
   }
   writeFileSync(
     join(project, "smoke.ts"),
-    'import { AtlasAssetRuntime, type AtlasAssetRuntimeStatus } from "@the-drunken-coder/atlas-asset-runtime";\nconst status: AtlasAssetRuntimeStatus = "stopped";\nvoid AtlasAssetRuntime;\nvoid status;\n'
+    'import { AssetTaskFailure, AtlasAssetRuntime, type AtlasAssetRuntimeStatus } from "@the-drunken-coder/atlas-asset-runtime";\nconst status: AtlasAssetRuntimeStatus = "stopped";\nvoid AssetTaskFailure;\nvoid AtlasAssetRuntime;\nvoid status;\n'
   );
   writeFileSync(
     join(project, "tsconfig.json"),
@@ -52,7 +52,7 @@ try {
   run(process.execPath, [tsc], project);
   writeFileSync(
     join(project, "smoke.mjs"),
-    'import { AtlasAssetRuntime } from "@the-drunken-coder/atlas-asset-runtime";\nif (typeof AtlasAssetRuntime !== "function") throw new Error("missing export");\n'
+    'import { AssetTaskFailure, AtlasAssetRuntime } from "@the-drunken-coder/atlas-asset-runtime";\nif (typeof AssetTaskFailure !== "function" || typeof AtlasAssetRuntime !== "function") throw new Error("missing export");\n'
   );
   run(process.execPath, ["smoke.mjs"], project);
 } finally {

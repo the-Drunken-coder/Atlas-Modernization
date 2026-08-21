@@ -94,14 +94,6 @@ export function entityHeartbeatLastSeen(entity: EntityResource): string | undefi
   return entity.components.heartbeat?.last_seen;
 }
 
-export function entityCurrentTaskId(entity: EntityResource): string | undefined {
-  return entity.components.task_queue?.current_task_id ?? undefined;
-}
-
-export function entityQueuedTaskIds(entity: EntityResource): string[] {
-  return entity.components.task_queue?.queued_task_ids ?? [];
-}
-
 export function heartbeatLevel(lastSeen: string | undefined, now: number = Date.now()): HeartbeatStatus | undefined {
   if (!lastSeen) return undefined;
   const timestamp = Date.parse(lastSeen);

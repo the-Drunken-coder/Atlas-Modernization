@@ -1,21 +1,10 @@
 import type { EntityResource, TaskResource } from "@the-drunken-coder/atlas-sdk";
-import {
-  type EntityKind,
-  entityCurrentTaskId,
-  entityDisplayName,
-  entityKind,
-  entityQueuedTaskIds,
-  isSelectableKind
-} from "./entities.js";
+import { type EntityKind, entityDisplayName, entityKind, isSelectableKind } from "./entities.js";
 import type { AtlasSnapshot } from "./store.js";
-import { sortTasksByRecency } from "./tasks.js";
+import { sortTasksByRecency, sortTasksByTaskingOrder } from "./tasks.js";
 
 export function getEntity(snapshot: AtlasSnapshot, id: string | undefined): EntityResource | undefined {
   return id ? snapshot.entities[id] : undefined;
-}
-
-export function getTask(snapshot: AtlasSnapshot, id: string | undefined): TaskResource | undefined {
-  return id ? snapshot.tasks[id] : undefined;
 }
 
 /** Selectable entities (asset/track/geofeature) sorted by display name. */
@@ -38,17 +27,21 @@ export function countsByKind(snapshot: AtlasSnapshot): Record<EntityKind, number
   return counts;
 }
 
-/** All tasks targeting the entity, most recent first. */
-export function tasksForEntity(snapshot: AtlasSnapshot, entityId: string): TaskResource[] {
-  return sortTasksByRecency(Object.values(snapshot.tasks).filter((task) => task.entity_id === entityId));
+/** All Tasks assigned to the Asset, most recent first. */
+export function tasksForAsset(snapshot: AtlasSnapshot, assetId: string): TaskResource[] {
+  return sortTasksByRecency(Object.values(snapshot.tasks).filter((task) => task.asset_id === assetId));
 }
 
-export function currentTask(snapshot: AtlasSnapshot, entity: EntityResource): TaskResource | undefined {
-  return getTask(snapshot, entityCurrentTaskId(entity));
+export function activeTasks(snapshot: AtlasSnapshot, entity: EntityResource): TaskResource[] {
+  return sortTasksByTaskingOrder(
+    Object.values(snapshot.tasks).filter((task) => task.asset_id === entity.entity_id && task.status === "in_progress")
+  );
 }
 
 export function queuedTasks(snapshot: AtlasSnapshot, entity: EntityResource): TaskResource[] {
-  return entityQueuedTaskIds(entity)
-    .map((id) => snapshot.tasks[id])
-    .filter((task): task is TaskResource => task !== undefined);
+  return sortTasksByTaskingOrder(
+    Object.values(snapshot.tasks).filter(
+      (task) => task.asset_id === entity.entity_id && (task.status === "pending" || task.status === "acknowledged")
+    )
+  );
 }

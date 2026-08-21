@@ -24,7 +24,7 @@ The SDK is the preferred client path for UI code, asset-side services, and tools
 
 Two components, not three modes:
 
-1. **Typed HTTP client** — always present. The implemented surface covers entity/task/object CRUD, task lifecycle helpers, entity check-in, one-page query helpers, `client.commandCatalog()`, object content download, optimistic-concurrency errors, protocol handshake checks, and cache-aware reads. The command catalog type and validator are generated from Atlas Protocol; the method reads Core's direct `/command-catalog` endpoint rather than an Atlas object. Object upload remains a direct API call for now; use entity check-in for telemetry and status reporting.
+1. **Typed HTTP client** — always present. The implemented surface covers entity/object CRUD, immutable Task creation and explicit lifecycle operations, Asset runtime registration and delivery, entity check-in, one-page query helpers, `client.commandCatalog()`, object content download, optimistic-concurrency errors, protocol handshake checks, and cache-aware reads. The command catalog type and validator are generated from Atlas Protocol; the method reads Core's direct `/command-catalog` endpoint rather than an Atlas object. Object upload remains a direct API call for now; use entity check-in for telemetry and status reporting.
 2. **Sync engine** — optional. Local cache + change feed consumer + reconciliation loop.
 
 The constructor can optionally seed the all-resources subscription:
@@ -52,14 +52,14 @@ Rules that make this safe:
 - **Degraded fallthrough.** The engine tracks connection state and its last confirmed global version. If the feed is disconnected or a version gap is unreconciled, the engine marks itself degraded and reads fall through to the API until it catches up. The cache only answers when it is entitled to.
 - **Validated inbound state.** HTTP resources, full and changed-since pages, feed handshakes, and feed events pass generated Atlas Protocol predicates plus narrow envelope and ID/version-coherence checks before cache mutation. A malformed sync/feed payload leaves cached state untouched and marks a running sync degraded.
 - **An update path is required.** A runtime with neither a WebSocket implementation nor a positive polling interval remains degraded after hydration, so covered point reads continue to call Core instead of trusting a frozen cache.
-- **`{ fresh: true }`** forces an API call for data-critical reads regardless of engine state.
+- **`{ fresh: true }`** forces an API call for data-critical reads regardless of engine state. Pass `signal` in the same options object when the read belongs to a cancellable lifecycle.
 - **Plain returns + sync status.** Functions return plain data (no metadata envelope). Observability currently comes from `client.sync.status()`; read-source debug hooks are deferred until a real caller needs them.
 
 ### Watch API
 
 `client.entities.watch(id, callback)` (and equivalents per resource type) reports accepted resource events. Collection-level event watches use the generic `client.watch(filter, callback)` surface, such as `client.watch({ filter: "type", resource_type: "entity" }, callback)` or `client.watch({ filter: "all" }, callback)`.
 
-Watcher callbacks receive the same Protocol feed events whether they arrive over the websocket or through changed-since recovery. They can also receive the SDK-local `local_delete` event when a successful local DELETE removes a resource from the cache before Core's versioned delete event arrives.
+Watcher callbacks receive the same Protocol feed events whether they arrive over the websocket or through changed-since recovery. Entity and Object watchers can also receive the SDK-local `local_delete` event when a successful local DELETE removes the resource from the cache before Core's versioned delete event arrives. Tasks are retained permanently and never produce this event.
 
 Snapshot consumers such as UIs use `client.sync.watchSnapshot(callback)`. It fires with the current immutable snapshot after cache changes and after an expired-cursor recovery atomically replaces the cache through full hydration. This keeps snapshot-driven views observable even when no individual recovery event exists for the replacement.
 
@@ -73,7 +73,7 @@ The SDK surfaces the API's optimistic concurrency (ETag/`If-Match`) as a typed `
 
 The websocket change feed — event shapes, delete events, subscription primitives, task-routing rules, delivery mechanics, and its testing approach — is documented in the [change feed doc](../atlas-change-feed/README.md). The sync engine's websocket transport and recovery path consume the same Protocol events.
 
-What the SDK relies on from that contract: fat events carrying the full serialized resource and a global version, versioned delete events, object metadata (never content) on the feed, and the four subscription filters (`all`, by resource ID, by resource type, tasks-for-entity).
+What the SDK relies on from that contract: fat events carrying the full serialized resource and a global version, versioned Entity and Object delete events, object metadata (never content) on the feed, and the four subscription filters (`all`, by resource ID, by resource type, and `tasks_for_asset`).
 
 ## Reconciliation (replaces the original 20-second hard refresh)
 
@@ -118,15 +118,17 @@ Higher-level functions (multiple endpoints, or one endpoint with opinionated def
 
 ## Task lifecycle, check-in, and queries
 
-Task lifecycle helpers—`client.tasks.acknowledge`, `complete`, `fail`, `setStatus`, and `cancel`—are conveniences over `client.tasks.update` and Core's `PATCH /tasks/{task_id}` endpoint. They preserve Core's optimistic concurrency behavior through optional `ifMatchVersion` and apply successful responses to the same cache/watch path as other task writes.
+`client.tasks.create(request, { idempotencyKey })` creates an immutable Task. The request contains only `asset_id`, `command`, and `input`; Core generates `task_id`. The required key belongs to one operator tasking attempt and must be reused when that attempt is retried. Asset runtimes use the explicit `acknowledge`, `start`, `progress`, `complete`, and `fail` methods with a current `runtimeId`. Tasking clients use `cancel` without runtime context. Every successful lifecycle response enters the same cache/watch path as feed updates.
 
-`client.entities.checkIn` is the asset reporting path. It accepts telemetry, operational status, component updates, task filters, and task pagination options, refreshes the entity heartbeat through Core, and returns the updated entity plus the requested task page. Full/default calls return the generated `EntityCheckInFullResponse`; `fields: "minimal"` returns `EntityCheckInMinimalResponse`; unresolved option unions return the generated non-generic `EntityCheckInResponse` union. Full task pages are merged into the SDK cache.
+`client.runtime.begin`, `ready`, `stop`, and `tasks` expose process registration, manifest publication, explicit deactivation, and runtime-scoped delivery. `begin`, `ready`, and `stop` carry the runtime ID in their request bodies; `tasks` carries it in `Atlas-Runtime-ID`. A missing or stale stop is an idempotent Core no-op. The SDK does not infer process restarts from transport reconnects.
+
+`client.entities.checkIn` is the telemetry and observed-state reporting path. It accepts telemetry, operational status, component updates, and an optional `AbortSignal`, refreshes the entity heartbeat through Core, and returns the updated Entity only. `client.handshake` accepts the same lifecycle signal. Full/default check-in calls return the generated `EntityCheckInFullResponse`; `fields: "minimal"` returns `EntityCheckInMinimalResponse`; unresolved option unions return the generated non-generic `EntityCheckInResponse` union. Task delivery is separate and runtime-scoped.
 
 `client.queries.full` and `client.queries.changedSince` expose typed one-page wrappers over the existing query endpoints. They intentionally do not mutate sync state or fire watchers; the sync engine manages its own reconciliation cursor.
 
 ## Testing
 
-Same philosophy as the [change feed doc](../atlas-change-feed/README.md): simulation against ground truth. The test harness (`atlas_sdk/test/`) drives a fake Core/feed transport through realistic mixed traffic — entity, task, and object writes, reassignments, dropped feed events, forced version gaps — while keeping a ledger of every write. At checkpoints and at the end of the run, the SDK's view is compared to that reality: cache contents match the ledger, watch callbacks fired for every relevant change, and fault injection converges back to truth through reconciliation. The same suite runs in both Node and a real browser (Playwright) in CI, per the isomorphic goal, alongside ordinary unit tests and a CLI binary smoke test.
+The test harness in `atlas_sdk/test/` drives a fake Core and feed through Entity writes, Task lifecycle changes, Object writes, deletions, dropped events, and forced version gaps while keeping a ledger of every write. At checkpoints and at the end, the SDK cache must match the ledger, watchers must receive every relevant change, and reconciliation must recover from injected faults. The same suite runs in Node and a browser through Playwright, alongside unit tests and the CLI smoke test.
 
 ## Known gaps (explicitly deferred)
 

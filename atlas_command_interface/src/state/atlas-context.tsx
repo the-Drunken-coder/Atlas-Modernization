@@ -1,7 +1,6 @@
-import type { EntityResource, TaskResource } from "@the-drunken-coder/atlas-sdk";
+import type { CommandCatalog, EntityResource, TaskResource } from "@the-drunken-coder/atlas-sdk";
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { type AppConfig, fetchAppConfig } from "../app/config.js";
-import type { CommandCatalog } from "../atlas/command-model.js";
 import { sanitizeConnectionError } from "../atlas/connection-error.js";
 import {
   type AtlasDataSource,
@@ -24,6 +23,7 @@ export type AtlasContextValue = {
   catalog?: CommandCatalog;
   health: ConnectionHealth;
   reconnect: () => void;
+  loadEntityDetails?: (entityId: string) => Promise<EntityResource>;
   submitCommand: (submission: CommandSubmission) => Promise<TaskResource>;
   updateGeometry: (entityId: string, geometry: UiGeometry, ifMatchVersion?: number) => Promise<EntityResource>;
 };
@@ -56,6 +56,7 @@ export function AtlasProvider({
   const [catalog, setCatalog] = useState<CommandCatalog>();
   const [snapshot, setSnapshot] = useState<AtlasSnapshot>(emptySnapshot);
   const [health, setHealth] = useState<ConnectionHealth>(DEFAULT_HEALTH);
+  const [entityDetailsAvailable, setEntityDetailsAvailable] = useState(false);
   const [connectionAttempt, setConnectionAttempt] = useState(0);
   const dataSourceRef = useRef<AtlasDataSource | undefined>(undefined);
 
@@ -72,6 +73,7 @@ export function AtlasProvider({
       unsubscribe = undefined;
       dataSourceRef.current?.dispose();
       dataSourceRef.current = undefined;
+      if (!cancelled) setEntityDetailsAvailable(false);
     };
 
     setStatus((current) => (current === "ready" ? "ready" : "loading"));
@@ -80,6 +82,7 @@ export function AtlasProvider({
     setSnapshot(emptySnapshot());
     setCatalog(undefined);
     setHealth(DEFAULT_HEALTH);
+    setEntityDetailsAvailable(false);
 
     const publishHealth = (next: ConnectionHealth) => {
       if (cancelled) return;
@@ -102,6 +105,7 @@ export function AtlasProvider({
 
         const dataSource = createDataSource(resolvedConfig);
         dataSourceRef.current = dataSource;
+        setEntityDetailsAvailable(Boolean(dataSource.loadEntityDetails));
 
         unsubscribe = dataSource.watch((nextSnapshot) => {
           if (cancelled) return;
@@ -164,6 +168,12 @@ export function AtlasProvider({
     setConnectionAttempt((attempt) => attempt + 1);
   }, []);
 
+  const loadEntityDetails = useCallback(async (entityId: string) => {
+    const dataSource = dataSourceRef.current;
+    if (!dataSource?.loadEntityDetails) return Promise.reject(new Error("Atlas Entity details are unavailable"));
+    return dataSource.loadEntityDetails(entityId);
+  }, []);
+
   const value = useMemo<AtlasContextValue>(
     () => ({
       status,
@@ -174,6 +184,7 @@ export function AtlasProvider({
       catalog,
       health,
       reconnect,
+      loadEntityDetails: entityDetailsAvailable ? loadEntityDetails : undefined,
       submitCommand: async (submission) => {
         const dataSource = dataSourceRef.current;
         if (!dataSource) return Promise.reject(new Error("Atlas data source is not ready"));
@@ -185,7 +196,18 @@ export function AtlasProvider({
         return dataSource.updateGeometry(entityId, geometry, ifMatchVersion);
       }
     }),
-    [status, error, connectionError, config, snapshot, catalog, health, reconnect]
+    [
+      status,
+      error,
+      connectionError,
+      config,
+      snapshot,
+      catalog,
+      health,
+      reconnect,
+      entityDetailsAvailable,
+      loadEntityDetails
+    ]
   );
 
   return <AtlasContext.Provider value={value}>{children}</AtlasContext.Provider>;

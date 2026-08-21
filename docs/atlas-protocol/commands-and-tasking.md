@@ -245,10 +245,13 @@ Every entry explicitly declares:
 - `supports_progress`: whether the Asset reports meaningful numeric progress
 
 The manifest does not repeat the Command's input or output schema references. Those always resolve through the Protocol catalog.
+Each Command appears at most once in a manifest.
 
 The manifest also has no `produces` field. Durable effects belong to the Command's behavioral documentation and normal Atlas resource systems, while bounded Task results belong to the optional output schema. A generic output list would duplicate those contracts and would misrepresent Commands such as `sensing.scan_area`, whose Track publications may be unbounded while it runs.
 
 The manifest is fixed for the lifetime of the current Asset `runtime_id`, so the scheduling and lifecycle rules governing accepted Tasks cannot change underneath them. Publishing a different manifest requires a fresh runtime registration. A process restart creates that registration and republishes the manifest before Atlas sends it work.
+
+An Entity with a registered Asset runtime cannot change `entity_type`. This keeps the runtime, manifest, and every bound Task under one Asset identity. Reclassify an unregistered Entity before starting its runtime, or delete and create a new Entity after its Tasks are terminal.
 
 Core exposes the current ready runtime's manifest read-only in the Asset's details. It is absent while no runtime is ready, updates atomically when registration completes, and cannot be changed through generic Entity patching. This is the manifest the command interface uses for Command availability and Asset-specific descriptions.
 
@@ -415,7 +418,7 @@ A cancelled Task uses the same small shape under `cancellation`:
 
 Task outcomes use closed Protocol enums rather than arbitrary strings:
 
-- `TaskFailureCode`: `unsupported_command`, `precondition_failed`, `execution_failed`, `asset_restarted`, `immediate_start_timeout`, or `invalid_output`
+- `TaskFailureCode`: `unsupported_command`, `precondition_failed`, `execution_failed`, `asset_restarted`, `asset_stopped`, `immediate_start_timeout`, or `invalid_output`
 - `TaskCancellationCode`: `requested` or `superseded`
 
 `TaskFailure` and `TaskCancellation` each contain the applicable code and a human-readable message. Their codes use lowercase snake case. Transport and HTTP errors, such as `TASK_NOT_FOUND`, remain a separate concern and are never stored as Task outcomes. The meaning and valid use of each outcome code are documented in `docs/atlas-protocol/task-outcomes.md`.
@@ -425,6 +428,8 @@ Command-specific cancellation codes are added with the Commands that require the
 Pending and acknowledged Tasks can ordinarily be cancelled because execution has not begun. An `in_progress` Task can be ordinarily cancelled only when its manifest entry declares `supports_cancel: true`. When added, `mobility.stop` and emergency stop apply their Protocol-defined supersession rules regardless of that declaration.
 
 `safety.emergency_stop` is the exception to client cancellation. After Core accepts it, tasking clients cannot cancel that Task in any nonterminal state. The `emergency_stop` cancellation code describes the earlier Tasks cancelled by the safety transition, not cancellation of the emergency-stop Task itself. Only the reset flow described below can withdraw the persistent safety interlock.
+
+The Asset learns cancellation through runtime-scoped delivery. If it has already started the Task, its runtime aborts the matching local handler signal. Atlas does not define a second abort route or ask the Asset to cancel the Task again.
 
 When completion and cancellation race, the first terminal change accepted by Core wins. Cancellation describes Atlas intent; the Asset publishes its current observed physical state separately.
 
@@ -463,15 +468,15 @@ All Tasks share one authoritative tasking order: ascending `created_at`, then `t
 
 Core's Task records are the source of truth. The Asset keeps the local queue it needs for execution, while operator interfaces derive the queue and current work from Tasks rather than from a second Entity component.
 
-Task creation and lifecycle changes are delivered as they happen:
+Task creation and lifecycle changes reach the Asset through bounded runtime-scoped polling:
 
 1. Core persists the new Task or lifecycle change.
-2. Core pushes the Task or change toward the assigned Asset through an available transport.
-3. Bounded retry and reconciliation handle missed delivery.
+2. The current Asset runtime requests eligible work on its five-second delivery loop while running.
+3. A separate reconciliation loop refreshes accepted Task states without delaying delivery.
 4. Stable Task IDs make repeated delivery safe.
 5. The Asset acknowledges only after validating, accepting, and placing queued work in its local Task Queue.
 
-Cancellation uses the same delivery path as Task creation. Commands later added with supersession or safety behavior also use this path. A disconnected Asset receives the current authoritative state when it reconnects rather than acting on an obsolete local copy. An immediate Task that did not start inside its 60-second window is already failed and is never delivered for execution after reconnection.
+Cancellation reaches an accepted handler through status reconciliation. Commands later added with supersession or safety behavior use the same authoritative Task state. A disconnected Asset receives the current authoritative state when it reconnects rather than acting on an obsolete local copy. An immediate Task that did not start inside its 60-second window is already failed and is never delivered for execution after reconnection.
 
 Core releases queued Tasks to a runtime in authoritative tasking order. It does not release a later queued Task until every earlier queued Task has been acknowledged or has become terminal. Immediate Tasks are released in tasking order without waiting for earlier immediate Tasks to finish. These rules prevent transport delay or reordering from changing execution order.
 
@@ -561,6 +566,8 @@ No later queued Task may enter `in_progress` while the barrier is engaged. Succe
 
 Failure, cancellation, or `immediate_start_timeout` does not clear the barrier because none confirms that movement stopped. Core accepts a replacement `mobility.stop` while the barrier is engaged; successful completion of that replacement clears the barrier and releases later queued work. This prevents both unsafe automatic release and a failed stop from becoming an unrecoverable queue block.
 
+If the stop Task fails, is fenced by a restart, or reaches its start deadline, the halt remains unconfirmed and later queued work stays blocked. Recovery requires a new `mobility.stop` Task to complete; an operator cannot release the blocked queue by cancelling or dismissing the failed attempt.
+
 Movement Tasks created after the stop remain valid.
 
 ## Safety
@@ -583,6 +590,8 @@ The atomic transition:
 4. blocks new non-safety tasking before Task creation
 
 After the transition commits, Core attempts physical emergency stop by delivering the immediate Task.
+
+The emergency-stop Task cannot be cancelled by a tasking client, including while it is still pending. Once Core has accepted the Task, only a completed `safety.reset_emergency_stop` can clear the interlock. A delivery failure or operator change of mind cannot silently withdraw the safety intent.
 
 The Core interlock remains engaged if delivery fails or physical state is unknown. Repeated emergency-stop tasking safely reasserts the request. The newest safety intent governs the interlock, so a late result from an older Safety Task cannot override it.
 
@@ -634,23 +643,23 @@ atlas_core/internal/integration/
 └── tasking_acceptance_test.go
 
 atlas_sdk/test/
-└── tasking-conformance.test.ts
+└── tasking-wire.test.ts
 
 atlas_asset_runtime/test/
-└── tasking-conformance.test.ts
+└── tasking-fixtures.test.ts
 
 atlas_simulations/test/
-└── tasking-fixture-closed-loop.test.ts
+└── fake-core-tasking.test.ts
 ```
 
-The JSON corpus defines portable inputs, events, and expected outcomes. Core, the SDK, and the Asset runtime consume the cases relevant to their boundary. Because the shipped catalog starts empty, lifecycle and scheduling conformance use test-only fixture Commands that are excluded from the generated catalog.
+The JSON corpus defines portable inputs, events, and expected outcomes. Concrete Core tests are authoritative for lifecycle, ordering, runtime fencing, expiry, and transactional persistence. The SDK test verifies wire mapping, the Asset runtime test verifies fixture compatibility, and the simulation test verifies its in-memory adapter. None of those fake-backed tests claim Core lifecycle conformance. Because the shipped catalog starts empty, the focused consumers use test-only fixture Commands that are excluded from the generated catalog.
 
 The empty-catalog infrastructure is not complete until these behaviors are demonstrated:
 
 1. Task creation validates the Command, current Asset manifest, and input before persisting anything.
 2. Repeating a creation request with the same idempotency key returns one Task and causes at most one physical action.
 3. Queued Tasks are acknowledged and enter execution in authoritative `created_at` order.
-4. An immediate Task enters `in_progress` within 60 seconds of creation or fails permanently with `immediate_start_timeout`.
+4. An immediate Task enters `in_progress` less than 60 seconds after creation or fails permanently with `immediate_start_timeout`.
 5. An expired immediate Task never executes after reconnection or reconciliation.
 6. Progress is accepted only when advertised, only while in progress, and never decreases.
 7. Completion validates any required output and commits the output and terminal transition atomically.

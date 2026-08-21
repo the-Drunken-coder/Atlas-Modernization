@@ -17,20 +17,16 @@ func TestCreateDeleteAndUniqueValueRacesDoNotDeadlock(t *testing.T) {
 
 	suffix := time.Now().UTC().UnixNano()
 	entityActions := NewEntityActions(pool)
-	taskActions := NewTaskActions(pool)
 	objectActions := NewObjectActions(pool, nil)
 	entityID := fmt.Sprintf("race-entity-%d", suffix)
-	taskID := fmt.Sprintf("race-task-%d", suffix)
 	objectID := fmt.Sprintf("race-object-%d", suffix)
-	parentID := fmt.Sprintf("race-parent-%d", suffix)
 	aliasOwnerID := fmt.Sprintf("race-alias-owner-%d", suffix)
 	aliasCreateID := fmt.Sprintf("race-alias-create-%d", suffix)
-	ids := []string{entityID, taskID, objectID, parentID, aliasOwnerID, aliasCreateID}
+	ids := []string{entityID, objectID, aliasOwnerID, aliasCreateID}
 	t.Cleanup(func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cleanupCancel()
-		_, _ = pool.Exec(cleanupCtx, `DELETE FROM tasks WHERE task_id = $1`, taskID)
-		_, _ = pool.Exec(cleanupCtx, `DELETE FROM entities WHERE entity_id = ANY($1)`, []string{entityID, parentID, aliasOwnerID, aliasCreateID})
+		_, _ = pool.Exec(cleanupCtx, `DELETE FROM entities WHERE entity_id = ANY($1)`, []string{entityID, aliasOwnerID, aliasCreateID})
 		_, _ = pool.Exec(cleanupCtx, `DELETE FROM objects WHERE object_id = $1`, objectID)
 		_, _ = pool.Exec(cleanupCtx, `DELETE FROM object_deletion_fences WHERE object_id = $1`, objectID)
 		_, _ = pool.Exec(cleanupCtx, `DELETE FROM atlas_change_events WHERE event->>'id' = ANY($1)`, ids)
@@ -43,17 +39,6 @@ func TestCreateDeleteAndUniqueValueRacesDoNotDeadlock(t *testing.T) {
 		_, err := entityActions.Create(ctx, CreateEntityParams{EntityID: entityID, EntityType: "asset"})
 		return err
 	}, func() error { return entityActions.Delete(ctx, entityID) })
-
-	if _, err := entityActions.Create(ctx, CreateEntityParams{EntityID: parentID, EntityType: "asset"}); err != nil {
-		t.Fatalf("create task parent: %v", err)
-	}
-	if _, err := taskActions.Create(ctx, CreateTaskParams{TaskID: taskID, EntityID: &parentID}); err != nil {
-		t.Fatalf("create task race fixture: %v", err)
-	}
-	runMutationRace(t, "task create versus delete", func() error {
-		_, err := taskActions.Create(ctx, CreateTaskParams{TaskID: taskID, EntityID: &parentID})
-		return err
-	}, func() error { return taskActions.Delete(ctx, taskID) })
 
 	if _, err := objectActions.Create(ctx, CreateObjectParams{ObjectID: objectID}); err != nil {
 		t.Fatalf("create object race fixture: %v", err)
@@ -112,17 +97,12 @@ func TestVersionedMutationsWaitForClockBeforeResourceRows(t *testing.T) {
 
 	suffix := time.Now().UTC().UnixNano()
 	entityID := fmt.Sprintf("lock-entity-%d", suffix)
-	taskID := fmt.Sprintf("lock-task-%d", suffix)
 	objectID := fmt.Sprintf("lock-object-%d", suffix)
 	createdEntityID := fmt.Sprintf("lock-create-%d", suffix)
 	entityActions := NewEntityActions(pool)
-	taskActions := NewTaskActions(pool)
 	objectActions := NewObjectActions(pool, nil)
 	if _, err := entityActions.Create(ctx, CreateEntityParams{EntityID: entityID, EntityType: "asset"}); err != nil {
 		t.Fatalf("create entity: %v", err)
-	}
-	if _, err := taskActions.Create(ctx, CreateTaskParams{TaskID: taskID, EntityID: &entityID}); err != nil {
-		t.Fatalf("create task: %v", err)
 	}
 	if _, err := objectActions.Create(ctx, CreateObjectParams{ObjectID: objectID}); err != nil {
 		t.Fatalf("create object: %v", err)
@@ -130,15 +110,12 @@ func TestVersionedMutationsWaitForClockBeforeResourceRows(t *testing.T) {
 	t.Cleanup(func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cleanupCancel()
-		for _, id := range []string{taskID} {
-			_, _ = pool.Exec(cleanupCtx, `DELETE FROM tasks WHERE task_id = $1`, id)
-		}
 		for _, id := range []string{entityID, createdEntityID} {
 			_, _ = pool.Exec(cleanupCtx, `DELETE FROM entities WHERE entity_id = $1`, id)
 		}
 		_, _ = pool.Exec(cleanupCtx, `DELETE FROM objects WHERE object_id = $1`, objectID)
 		_, _ = pool.Exec(cleanupCtx, `DELETE FROM object_deletion_fences WHERE object_id = $1`, objectID)
-		_, _ = pool.Exec(cleanupCtx, `DELETE FROM atlas_change_events WHERE event->>'id' = ANY($1)`, []string{entityID, createdEntityID, taskID, objectID})
+		_, _ = pool.Exec(cleanupCtx, `DELETE FROM atlas_change_events WHERE event->>'id' = ANY($1)`, []string{entityID, createdEntityID, objectID})
 	})
 
 	type lockedResource struct {
@@ -163,20 +140,6 @@ func TestVersionedMutationsWaitForClockBeforeResourceRows(t *testing.T) {
 			name:      "object delete",
 			mutations: []func() error{func() error { return objectActions.Delete(ctx, objectID) }},
 			resources: []lockedResource{{query: `SELECT 1 FROM objects WHERE object_id = $1 FOR UPDATE NOWAIT`, id: objectID}},
-		},
-		{
-			name: "entity delete and concurrent task mutation",
-			mutations: []func() error{
-				func() error { return entityActions.Delete(ctx, entityID) },
-				func() error {
-					_, err := taskActions.Update(ctx, taskID, UpdateTaskParams{Extra: map[string]interface{}{"lock_order": true}})
-					return err
-				},
-			},
-			resources: []lockedResource{
-				{query: `SELECT 1 FROM entities WHERE entity_id = $1 FOR UPDATE NOWAIT`, id: entityID},
-				{query: `SELECT 1 FROM tasks WHERE task_id = $1 FOR UPDATE NOWAIT`, id: taskID},
-			},
 		},
 		{
 			name: "entity create",

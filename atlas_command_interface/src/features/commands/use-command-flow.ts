@@ -1,14 +1,15 @@
-import type { EntityResource, JSONValue } from "@the-drunken-coder/atlas-sdk";
+import type { CommandCatalog, EntityResource, JSONValue } from "@the-drunken-coder/atlas-sdk";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { CommandCatalog } from "../../atlas/command-model.js";
 import type { CommandAvailability } from "../../atlas/command-targeting.js";
 import { sanitizeConnectionError } from "../../atlas/connection-error.js";
 import { entityKind } from "../../atlas/entities.js";
 import type { AtlasContextValue } from "../../state/atlas-context.js";
 import type { MapContextMenuInfo } from "../../ui/map/view/MapView.js";
+import type { CommandMapPoint } from "./command-input-registry.js";
 
 export type MapMenuState = { x: number; y: number; lat: number; lng: number };
-export type CommandFormState = { availability: CommandAvailability; mapPoint?: { lat: number; lng: number } };
+export type CommandFormState = { availability: CommandAvailability; mapPoint?: CommandMapPoint };
+type PendingSubmission = { identity: string; idempotencyKey: string };
 
 export function useCommandFlow({
   catalog,
@@ -25,14 +26,14 @@ export function useCommandFlow({
   const [commandForm, setCommandForm] = useState<CommandFormState | null>(null);
   const nextSubmitIdRef = useRef(1);
   const activeSubmitIdRef = useRef<number | undefined>(undefined);
-  const dismissedSubmitIdRef = useRef<number | undefined>(undefined);
+  const pendingSubmissionRef = useRef<PendingSubmission | undefined>(undefined);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string>();
   const selectedEntityId = selectedEntity?.entity_id;
 
   const closeMapMenu = useCallback(() => setMapMenu(null), []);
   const dismissCommandForm = useCallback(() => {
-    dismissedSubmitIdRef.current = activeSubmitIdRef.current;
+    pendingSubmissionRef.current = undefined;
     setCommandForm(null);
     setSubmitError(undefined);
   }, []);
@@ -44,11 +45,8 @@ export function useCommandFlow({
 
   useEffect(() => {
     closeMapMenu();
-    if (activeSubmitIdRef.current === undefined) {
-      setCommandForm(null);
-      setSubmitError(undefined);
-    }
-  }, [catalog, closeMapMenu]);
+    if (activeSubmitIdRef.current === undefined) dismissCommandForm();
+  }, [catalog, closeMapMenu, dismissCommandForm]);
 
   useEffect(() => {
     if (!selectedId || selectedEntityId) return;
@@ -57,29 +55,30 @@ export function useCommandFlow({
   }, [selectedId, selectedEntityId, closeMapMenu, dismissCommandForm]);
 
   const submit = useCallback(
-    async (
-      availability: CommandAvailability,
-      parameters: Record<string, JSONValue>,
-      errorFormState?: CommandFormState
-    ) => {
+    async (availability: CommandAvailability, input: JSONValue) => {
       if (!selectedEntity) return;
+      const identity = JSON.stringify([selectedEntity.entity_id, availability.command.command, input]);
+      const existing = pendingSubmissionRef.current;
+      const pending = existing?.identity === identity ? existing : { identity, idempotencyKey: crypto.randomUUID() };
+      pendingSubmissionRef.current = pending;
       const submitId = nextSubmitIdRef.current++;
       activeSubmitIdRef.current = submitId;
-      dismissedSubmitIdRef.current = undefined;
       setSubmitting(true);
       setSubmitError(undefined);
       try {
-        await submitCommand({ entityId: selectedEntity.entity_id, command: availability.command, parameters });
+        await submitCommand({
+          assetId: selectedEntity.entity_id,
+          command: availability.command,
+          input,
+          idempotencyKey: pending.idempotencyKey
+        });
+        if (pendingSubmissionRef.current === pending) pendingSubmissionRef.current = undefined;
         setCommandForm(null);
       } catch (cause) {
-        if (dismissedSubmitIdRef.current !== submitId) {
-          setSubmitError(sanitizeConnectionError(cause));
-          setCommandForm((current) => current ?? errorFormState ?? null);
-        }
+        if (pendingSubmissionRef.current === pending) setSubmitError(sanitizeConnectionError(cause));
       } finally {
         if (activeSubmitIdRef.current === submitId) {
           activeSubmitIdRef.current = undefined;
-          dismissedSubmitIdRef.current = undefined;
           setSubmitting(false);
         }
       }
@@ -87,34 +86,22 @@ export function useCommandFlow({
     [selectedEntity, submitCommand]
   );
 
-  const pickSidebarCommand = useCallback(
-    (availability: CommandAvailability) => {
-      if (submitting || availability.disabled) return;
-      if (availability.requiresForm || availability.targeting === "map_point") {
+  const pick = useCallback(
+    (availability: CommandAvailability, mapPoint?: CommandMapPoint) => {
+      if (submitting || !selectedEntity) return;
+      closeMapMenu();
+      if (availability.input.Form) {
+        pendingSubmissionRef.current = undefined;
         setSubmitError(undefined);
-        setCommandForm({ availability });
+        setCommandForm({ availability, mapPoint });
         return;
       }
-      const formState = { availability };
-      setCommandForm(formState);
-      void submit(availability, {}, formState);
+      void submit(
+        availability,
+        availability.input.buildInput({ asset: selectedEntity, command: availability.command, mapPoint })
+      );
     },
-    [submit, submitting]
-  );
-
-  const pickMapCommand = useCallback(
-    (availability: CommandAvailability, point: { lat: number; lng: number }) => {
-      if (submitting || availability.disabled) return;
-      if (availability.requiresForm) {
-        setSubmitError(undefined);
-        setCommandForm({ availability, mapPoint: point });
-        return;
-      }
-      const formState = { availability, mapPoint: point };
-      setCommandForm(formState);
-      void submit(availability, { latitude: point.lat, longitude: point.lng }, formState);
-    },
-    [submit, submitting]
+    [closeMapMenu, selectedEntity, submit, submitting]
   );
 
   const onMapContextMenu = useCallback(
@@ -136,8 +123,8 @@ export function useCommandFlow({
     submitError,
     closeMapMenu,
     dismissCommandForm,
-    pickSidebarCommand,
-    pickMapCommand,
+    pickSidebarCommand: (availability: CommandAvailability) => pick(availability),
+    pickMapCommand: (availability: CommandAvailability, point: CommandMapPoint) => pick(availability, point),
     onMapContextMenu,
     submit
   };

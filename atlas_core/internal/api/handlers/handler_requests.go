@@ -83,43 +83,16 @@ func checkinComponentUpdate(request protocol.EntityCheckInRequest, now time.Time
 }
 
 type createTaskRequest struct {
-	TaskID     string                 `json:"task_id"`
-	Status     string                 `json:"status,omitempty"`
-	EntityID   *string                `json:"entity_id,omitempty"`
-	Components map[string]interface{} `json:"components,omitempty"`
-	Extra      map[string]interface{} `json:"extra,omitempty"`
+	AssetID string             `json:"asset_id"`
+	Command string             `json:"command"`
+	Input   protocol.JSONValue `json:"input"`
 }
 
 func (r createTaskRequest) actionParams() actions.CreateTaskParams {
-	status := r.Status
-	if status == "" {
-		status = "pending"
-	}
 	return actions.CreateTaskParams{
-		TaskID:     r.TaskID,
-		Status:     status,
-		EntityID:   r.EntityID,
-		Components: r.Components,
-		Extra:      r.Extra,
-	}
-}
-
-type updateTaskRequest struct {
-	Status          *string                `json:"status,omitempty"`
-	EntityID        nullablePatchString    `json:"entity_id,omitempty"`
-	Components      map[string]interface{} `json:"components,omitempty"`
-	Extra           map[string]interface{} `json:"extra,omitempty"`
-	RemoveExtraKeys []string               `json:"remove_extra_keys,omitempty"`
-}
-
-func (r updateTaskRequest) actionParams(expectedVersion *int64) actions.UpdateTaskParams {
-	return actions.UpdateTaskParams{
-		Status:          r.Status,
-		EntityID:        r.EntityID.actionValue(),
-		Components:      r.Components,
-		Extra:           r.Extra,
-		RemoveExtraKeys: r.RemoveExtraKeys,
-		ExpectedVersion: expectedVersion,
+		AssetID: r.AssetID,
+		Command: r.Command,
+		Input:   r.Input,
 	}
 }
 

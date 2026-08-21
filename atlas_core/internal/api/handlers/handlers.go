@@ -50,7 +50,7 @@ func NewHandlerWithFeed(db *database.DB, storageClient *storage.Client, logger z
 		entityActions:  entityActions,
 		taskActions:    taskActions,
 		objectActions:  actions.NewObjectActions(db.Pool, storageClient),
-		checkinActions: actions.NewEntityCheckinActions(entityActions, taskActions),
+		checkinActions: actions.NewEntityCheckinActions(entityActions),
 		queryActions:   actions.NewQueryActions(db.Pool),
 		feedHub:        feedHub,
 		adminAuth:      adminAuth,

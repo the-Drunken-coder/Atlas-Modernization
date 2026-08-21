@@ -74,6 +74,8 @@ func TestRecoveryFloorMigrationExpiresUnrepresentedLegacyCursor(t *testing.T) {
 	}
 
 	const legacyVersion int64 = 42
+	// Reconstruct the schema as it existed after migration 5 so EnsureTables
+	// exercises the recovery-floor correction before replaying later migrations.
 	statements := []struct {
 		query string
 		args  []any
@@ -81,8 +83,34 @@ func TestRecoveryFloorMigrationExpiresUnrepresentedLegacyCursor(t *testing.T) {
 		{`INSERT INTO entities (entity_id, type, version) VALUES ('legacy-recovery-entity', 'asset', $1)`, []any{legacyVersion}},
 		{`TRUNCATE atlas_change_events`, nil},
 		{`UPDATE atlas_change_clock SET version = $1, min_retained_version = 0 WHERE singleton`, []any{legacyVersion}},
-		{`DROP INDEX idx_atlas_change_events_retention`, nil},
-		{`DELETE FROM atlas_schema_migrations WHERE name = 'recovery_log_floor_and_retention_index'`, nil},
+		{`DROP TABLE atlas_change_events`, nil},
+		{`CREATE TABLE atlas_change_events (
+			version BIGINT PRIMARY KEY CHECK (version > 0),
+			event JSONB NOT NULL,
+			before_task_entity_id VARCHAR(50),
+			after_task_entity_id VARCHAR(50),
+			created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+		)`, nil},
+		{`DROP TABLE tasks`, nil},
+		{`DROP TABLE asset_runtimes`, nil},
+		{`CREATE TABLE tasks (
+			task_id VARCHAR(50) PRIMARY KEY,
+			status VARCHAR(50) NOT NULL DEFAULT 'pending',
+			entity_id VARCHAR(50) REFERENCES entities(entity_id) ON DELETE SET NULL,
+			json JSONB NOT NULL DEFAULT '{}',
+			created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+			version BIGINT NOT NULL,
+			CONSTRAINT tasks_version_positive CHECK (version > 0)
+		)`, nil},
+		{`CREATE INDEX idx_tasks_status ON tasks(status)`, nil},
+		{`CREATE INDEX idx_tasks_entity_id ON tasks(entity_id)`, nil},
+		{`CREATE INDEX idx_tasks_created_cursor ON tasks(created_at DESC, task_id DESC)`, nil},
+		{`CREATE INDEX idx_tasks_updated_cursor ON tasks(updated_at DESC, task_id DESC)`, nil},
+		{`CREATE INDEX idx_tasks_entity_created_cursor ON tasks(entity_id, created_at DESC, task_id DESC)`, nil},
+		{`CREATE INDEX idx_tasks_entity_updated_cursor ON tasks(entity_id, updated_at DESC, task_id DESC)`, nil},
+		{`CREATE INDEX idx_tasks_version ON tasks(version DESC, task_id DESC)`, nil},
+		{`DELETE FROM atlas_schema_migrations WHERE version >= 6`, nil},
 	}
 	for _, statement := range statements {
 		if _, err := db.Pool.Exec(ctx, statement.query, statement.args...); err != nil {

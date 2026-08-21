@@ -1,9 +1,8 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { EntityResource } from "@the-drunken-coder/atlas-sdk";
+import type { CommandCatalog, EntityResource } from "@the-drunken-coder/atlas-sdk";
 import type { StyleSpecification } from "maplibre-gl";
 import { describe, expect, it, vi } from "vitest";
 import type { AppConfig } from "../app/config.js";
-import type { CommandCatalog } from "../atlas/command-model.js";
 import type { AtlasDataSource, ConnectionHealth } from "../atlas/data-source.js";
 import type { AtlasSnapshot } from "../atlas/store.js";
 import { AtlasProvider, useAtlas } from "./atlas-context.js";
@@ -17,7 +16,8 @@ function StatusProbe() {
     <div>
       <span>{atlas.status}</span>
       <span data-testid="entity-names">{entityNames}</span>
-      <span data-testid="catalog-name">{atlas.catalog?.name}</span>
+      <span data-testid="catalog-name">{atlas.catalog?.[0]?.name}</span>
+      <span data-testid="entity-details-capability">{atlas.loadEntityDetails ? "available" : "unavailable"}</span>
       {atlas.health.error ? (
         <code data-testid="health-error">
           {atlas.health.error.source}: {atlas.health.error.message}
@@ -81,7 +81,14 @@ function entity(alias: string, version: number): EntityResource {
 }
 
 function catalog(name: string): CommandCatalog {
-  return { type: "command_catalog", name, description: "Test", commands: [] };
+  return [
+    {
+      command: "fixture.queued",
+      name,
+      description: "Test",
+      input_schema: "atlas.fixture.FixtureInput"
+    }
+  ];
 }
 
 function deferred<T>() {
@@ -113,6 +120,19 @@ function catalogDataSource(loadCommandCatalog: () => Promise<CommandCatalog>) {
 }
 
 describe("AtlasProvider", () => {
+  it("does not advertise Entity detail loading when the data source omits it", async () => {
+    const { dataSource } = catalogDataSource(async () => catalog("Commands"));
+
+    render(
+      <AtlasProvider config={config} createDataSource={() => dataSource}>
+        <StatusProbe />
+      </AtlasProvider>
+    );
+
+    expect(await screen.findByText("ready")).toBeInTheDocument();
+    expect(screen.getByTestId("entity-details-capability")).toHaveTextContent("unavailable");
+  });
+
   it("does not classify configuration loading failures as connection errors", async () => {
     render(
       <AtlasProvider
@@ -235,7 +255,7 @@ describe("AtlasProvider", () => {
         return current;
       },
       async loadCommandCatalog() {
-        return { type: "command_catalog", name: "Catalog", description: "Test", commands: [] };
+        return [];
       },
       watch(onEvent) {
         calls.push("watch");
@@ -298,7 +318,7 @@ describe("AtlasProvider", () => {
         return { entities: { "asset-1": entity("Recovered", 2) }, tasks: {} };
       },
       async loadCommandCatalog() {
-        return { type: "command_catalog", name: "Catalog", description: "Test", commands: [] };
+        return [];
       },
       watch() {
         return () => undefined;
@@ -391,7 +411,7 @@ describe("AtlasProvider", () => {
         return current;
       },
       async loadCommandCatalog() {
-        return { type: "command_catalog", name: "Catalog", description: "Test", commands: [] };
+        return [];
       },
       watch(onEvent) {
         emit = onEvent;

@@ -28,7 +28,9 @@ type exampleSet struct {
 
 var exampleSets = []exampleSet{
 	{pattern: "entities/*.json", definition: "EntityBlob", semanticValidation: protocolvalidator.ValidateEntityBlob},
-	{pattern: "tasks/*.json", definition: "TaskBlob", semanticValidation: protocolvalidator.ValidateTaskBlob},
+	{pattern: "catalogs/*.json", definition: "CommandCatalog", semanticValidation: protocolvalidator.ValidateCommandCatalog},
+	{pattern: "manifests/*.json", definition: "CommandManifest", semanticValidation: protocolvalidator.ValidateCommandManifest},
+	{pattern: "responses/tasks/*.json", definition: "TaskResource", semanticValidation: protocolvalidator.ValidateTaskResource},
 	{pattern: "objects/*.json", definition: "ObjectBlob", semanticValidation: protocolvalidator.ValidateObjectBlob},
 	{pattern: "responses/object-detail.json", definition: "ObjectDetailResource", semanticValidation: protocolvalidator.ValidateObjectDetailResource},
 	{pattern: "responses/entity-check-in-full.json", definition: "EntityCheckInFullResponse", semanticValidation: protocolvalidator.ValidateEntityCheckInFullResponse},
@@ -45,7 +47,15 @@ var exampleSets = []exampleSet{
 	{pattern: "requests/entity-check-in.json", definition: "EntityCheckInRequest", semanticValidation: protocolvalidator.ValidateEntityCheckInRequest},
 	{pattern: "requests/entity-update.json", definition: "EntityUpdateRequest", semanticValidation: protocolvalidator.ValidateEntityUpdateRequest},
 	{pattern: "requests/task-create.json", definition: "TaskCreateRequest", semanticValidation: protocolvalidator.ValidateTaskCreateRequest},
-	{pattern: "requests/task-update.json", definition: "TaskUpdateRequest", semanticValidation: protocolvalidator.ValidateTaskUpdateRequest},
+	{pattern: "requests/tasks/acknowledge.json", definition: "TaskAcknowledgeRequest", semanticValidation: protocolvalidator.ValidateTaskAcknowledgeRequest},
+	{pattern: "requests/tasks/start.json", definition: "TaskStartRequest", semanticValidation: protocolvalidator.ValidateTaskStartRequest},
+	{pattern: "requests/tasks/progress.json", definition: "TaskProgressRequest", semanticValidation: protocolvalidator.ValidateTaskProgressRequest},
+	{pattern: "requests/tasks/complete.json", definition: "TaskCompleteRequest", semanticValidation: protocolvalidator.ValidateTaskCompleteRequest},
+	{pattern: "requests/tasks/fail.json", definition: "TaskFailRequest", semanticValidation: protocolvalidator.ValidateTaskFailRequest},
+	{pattern: "requests/tasks/cancel.json", definition: "TaskCancelRequest", semanticValidation: protocolvalidator.ValidateTaskCancelRequest},
+	{pattern: "requests/runtime/register.json", definition: "RuntimeRegistrationRequest", semanticValidation: protocolvalidator.ValidateRuntimeRegistrationRequest},
+	{pattern: "requests/runtime/stop.json", definition: "RuntimeStopRequest", semanticValidation: protocolvalidator.ValidateRuntimeStopRequest},
+	{pattern: "requests/runtime/ready.json", definition: "RuntimeReadyRequest", semanticValidation: protocolvalidator.ValidateRuntimeReadyRequest},
 	{pattern: "requests/object-create.json", definition: "ObjectCreateRequest", semanticValidation: protocolvalidator.ValidateObjectCreateRequest},
 	{pattern: "requests/object-update.json", definition: "ObjectUpdateRequest", semanticValidation: protocolvalidator.ValidateObjectUpdateRequest},
 }

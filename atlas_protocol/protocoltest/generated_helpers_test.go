@@ -34,14 +34,6 @@ func TestGeneratedDeleteEventHelpers(t *testing.T) {
 	entity := protocol.EntityDeleteEvent{ID: "entity-1", Version: 2}
 	assertDeleteEvent(t, entity, entity.FeedEvent(), protocol.ResourceTypeEntity, "entity-1", 2)
 
-	entityID := "entity-1"
-	task := protocol.TaskDeleteEvent{ID: "task-1", Version: 3, EntityID: &entityID}
-	taskEvent := task.FeedEvent()
-	assertDeleteEvent(t, task, taskEvent, protocol.ResourceTypeTask, "task-1", 3)
-	if taskEvent.EntityID == nil || *taskEvent.EntityID != entityID {
-		t.Fatalf("TaskDeleteEvent.FeedEvent().EntityID = %#v, want %q", taskEvent.EntityID, entityID)
-	}
-
 	object := protocol.ObjectDeleteEvent{ID: "object-1", Version: 4}
 	assertDeleteEvent(t, object, object.FeedEvent(), protocol.ResourceTypeObject, "object-1", 4)
 

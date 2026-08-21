@@ -3,17 +3,25 @@ import {
   AtlasAPIError,
   type AtlasSubscription,
   type AtlasWatchEvent,
-  type EntityCheckInMinimalTask,
+  type CommandManifest,
+  type EntityCheckInOptions,
   type EntityCreateRequest,
   type EntityResource,
+  type JSONValue,
   type ObjectCreateRequest,
   type ObjectDetailResource,
   type ObjectResource,
   type ResourceType,
+  type TaskCancellation,
   type TaskCreateRequest,
+  type TaskFailure,
   type TaskResource
 } from "@the-drunken-coder/atlas-sdk";
 import type { AtlasClientFactory, AtlasClientLike, ClientMode } from "../../src/server/atlas.js";
+
+type Stored<T> = { value: T; version: number };
+type ResourceHistory<T> = Map<string, Stored<T>[]>;
+type WatchableResource = EntityResource | TaskResource | ObjectResource;
 
 type FakeCoreState = {
   version: number;
@@ -23,11 +31,10 @@ type FakeCoreState = {
   tombstones: Map<string, number[]>;
   deleted: string[];
   clients: FakeClientState[];
+  taskingAttempts: Map<string, { request: string; task: TaskResource }>;
+  runtimes: Map<string, { runtimeId: string; ready: boolean; manifest: CommandManifest }>;
 };
 
-type VersionedResource = { metadata: { version: number } };
-type ResourceHistory<T extends VersionedResource> = Map<string, T[]>;
-type WatchableResource = EntityResource | TaskResource | ObjectResource;
 type Watcher = {
   filter: AtlasSubscription;
   callback: (value: WatchableResource | undefined, event: AtlasWatchEvent) => void;
@@ -48,7 +55,9 @@ export function createFakeAtlasCore() {
     objects: new Map(),
     tombstones: new Map(),
     deleted: [],
-    clients: []
+    clients: [],
+    taskingAttempts: new Map(),
+    runtimes: new Map()
   };
   const factory: AtlasClientFactory = (options = {}) => createClient(state, options.sync ?? false);
   return { state, factory };
@@ -60,14 +69,15 @@ function createClient(state: FakeCoreState, sync: ClientMode): AtlasClientLike {
   return {
     entities: {
       get: async (id) => visibleValue(state, clientState, state.entities, id, "entity"),
-      create: async (entity) => {
-        assertCanCreateEntity(state, entity.entity_id, entity.alias);
-        const created = entityFromCreate(entity, commitVersion(state, clientState));
-        return saveValue(state.entities, created.entity_id, created);
+      create: async (request) => {
+        assertCanCreateEntity(state, request.entity_id, request.alias);
+        const version = commitVersion(state, clientState);
+        return saveValue(state.entities, request.entity_id, entityFromCreate(request, version), version);
       },
       update: async (id, patch) => {
-        const current = requireActiveValue(state, state.entities, id, "entity");
+        const current = requireActiveValue(state, state.entities, id, "entity").value;
         if ("alias" in patch) assertCanUseEntityAlias(state, patch.alias ?? null, id);
+        const version = commitVersion(state, clientState);
         const updated: EntityResource = {
           ...current,
           ...("entity_type" in patch && patch.entity_type !== undefined ? { entity_type: patch.entity_type } : {}),
@@ -75,73 +85,140 @@ function createClient(state: FakeCoreState, sync: ClientMode): AtlasClientLike {
           ...("alias" in patch ? { alias: normalizeAlias(patch.alias) } : {}),
           ...(patch.components ? { components: { ...current.components, ...patch.components } } : {}),
           ...("extra" in patch ? { extra: patch.extra } : {}),
-          metadata: metadata(commitVersion(state, clientState), current.metadata.created_at)
+          metadata: metadata(version, current.metadata.created_at)
         };
-        return saveValue(state.entities, id, updated);
+        return saveValue(state.entities, id, updated, version);
       },
-      delete: async (id) => {
-        deleteValue(state, clientState, state.entities, id, "entity");
-      },
-      checkIn: (async (id, options) => {
-        const current = requireActiveValue(state, state.entities, id, "entity");
-        const telemetry = options?.telemetry;
+      delete: async (id) => deleteValue(state, clientState, state.entities, id, "entity"),
+      checkIn: (async (id: string, options?: EntityCheckInOptions) => {
+        const current = requireActiveValue(state, state.entities, id, "entity").value;
+        const version = commitVersion(state, clientState);
         const updated: EntityResource = {
           ...current,
           components: {
             ...current.components,
             ...options?.components,
-            ...(options?.status ? { status: { value: options.status, last_update: new Date().toISOString() } } : {}),
-            ...(telemetry
-              ? { telemetry: { ...current.components.telemetry, ...telemetry, last_update: new Date().toISOString() } }
+            ...(options?.status ? { status: { value: options.status, last_update: timestamp() } } : {}),
+            ...(options?.telemetry
+              ? { telemetry: { ...current.components.telemetry, ...options.telemetry, last_update: timestamp() } }
               : {})
           },
-          metadata: metadata(commitVersion(state, clientState), current.metadata.created_at)
+          metadata: metadata(version, current.metadata.created_at)
         };
-        const entity = saveValue(state.entities, id, updated);
-        const taskLimit = options?.limit ?? 10;
-        const statusFilter = new Set<string>(options?.statusFilter ?? ["pending"]);
-        const matchingTasks = visibleValues(
-          state,
-          { sync: false, running: false, visibleVersion: state.version, watchers: [] },
-          state.tasks,
-          "task"
-        ).filter((task) => task.entity_id === id && statusFilter.has(task.status));
-        const tasks = matchingTasks.slice(0, taskLimit);
-        return {
-          entity,
-          tasks: options?.fields === "minimal" ? tasks.map(minimalTask) : tasks,
-          task_count: matchingTasks.length,
-          task_limit: taskLimit,
-          has_more_tasks: matchingTasks.length > taskLimit
-        };
+        return { entity: saveValue(state.entities, id, updated, version) };
       }) as AtlasClientLike["entities"]["checkIn"]
     },
     tasks: {
       get: async (id) => visibleValue(state, clientState, state.tasks, id, "task"),
-      create: async (task) => {
-        const taskID = taskIDFromCreate(task);
-        assertCanCreate(state, state.tasks, taskID, "task");
-        const created = taskFromCreate(task, commitVersion(state, clientState), taskID);
-        return saveValue(state.tasks, created.task_id, created);
+      create: async (request, options) => {
+        const encoded = JSON.stringify(request);
+        const previous = state.taskingAttempts.get(options.idempotencyKey);
+        if (previous) {
+          if (previous.request !== encoded) throw conflict("tasking attempt", options.idempotencyKey);
+          return cloneValue(previous.task);
+        }
+        const version = commitVersion(state, clientState);
+        const created = taskFromCreate(request);
+        saveValue(state.tasks, created.task_id, created, version);
+        state.taskingAttempts.set(options.idempotencyKey, { request: encoded, task: created });
+        return cloneValue(created);
       },
-      delete: async (id) => {
-        deleteValue(state, clientState, state.tasks, id, "task");
+      acknowledge: async (id) =>
+        updateTask(state, clientState, id, { status: "acknowledged", acknowledged_at: timestamp() }),
+      start: async (id) => {
+        const startedAt = timestamp();
+        const current = requireActiveValue(state, state.tasks, id, "task").value;
+        return updateTask(state, clientState, id, {
+          status: "in_progress",
+          acknowledged_at: current.acknowledged_at ?? startedAt,
+          started_at: startedAt
+        });
       },
-      acknowledge: async (id) => updateTaskStatus(state, clientState, id, "acknowledged"),
-      complete: async (id) => updateTaskStatus(state, clientState, id, "completed"),
-      fail: async (id) => updateTaskStatus(state, clientState, id, "failed"),
-      setStatus: async (id, status) => updateTaskStatus(state, clientState, id, status)
+      progress: async (id, request) => updateTask(state, clientState, id, { progress: request.progress }),
+      complete: async (id, options) =>
+        updateTask(state, clientState, id, {
+          status: "completed",
+          finished_at: timestamp(),
+          ...(options.output === undefined ? {} : { output: options.output })
+        }),
+      fail: async (id, options) =>
+        updateTask(state, clientState, id, { status: "failed", failure: options.failure, finished_at: timestamp() }),
+      cancel: async (id, options) =>
+        updateTask(state, clientState, id, {
+          status: "cancelled",
+          cancellation: options.cancellation,
+          finished_at: timestamp()
+        })
+    },
+    runtime: {
+      begin: async (assetId, request) => {
+        state.runtimes.set(assetId, { runtimeId: request.runtime_id, ready: false, manifest: [] });
+      },
+      stop: async (assetId, request) => {
+        const runtime = state.runtimes.get(assetId);
+        if (!runtime || runtime.runtimeId !== request.runtime_id) return;
+        runtime.ready = false;
+        runtime.manifest = [];
+        const currentEntity = state.entities.get(assetId)?.at(-1)?.value;
+        if (currentEntity?.command_manifest !== undefined) {
+          const { command_manifest: _manifest, ...withoutManifest } = currentEntity;
+          const version = commitVersion(state, clientState);
+          saveValue(
+            state.entities,
+            assetId,
+            { ...withoutManifest, metadata: metadata(version, currentEntity.metadata.created_at) },
+            version
+          );
+        }
+        for (const task of currentValues(state, state.tasks, "task")) {
+          if (
+            task.asset_id !== assetId ||
+            task.status === "completed" ||
+            task.status === "failed" ||
+            task.status === "cancelled"
+          ) {
+            continue;
+          }
+          updateTask(state, clientState, task.task_id, {
+            status: "failed",
+            failure: { code: "asset_stopped", message: "The Asset runtime stopped before the Task became terminal." },
+            finished_at: timestamp()
+          });
+        }
+      },
+      ready: async (assetId, request) => {
+        const runtime = state.runtimes.get(assetId);
+        if (!runtime || runtime.runtimeId !== request.runtime_id) throw conflict("runtime", request.runtime_id);
+        runtime.ready = true;
+        runtime.manifest = cloneValue(request.manifest);
+        const current = state.entities.get(assetId)?.at(-1);
+        if (current) {
+          const version = commitVersion(state, clientState);
+          const entity = {
+            ...current.value,
+            command_manifest: cloneValue(request.manifest),
+            metadata: metadata(version, current.value.metadata.created_at)
+          };
+          saveValue(state.entities, assetId, entity, version);
+        }
+      },
+      tasks: async (assetId, options) => {
+        const runtime = state.runtimes.get(assetId);
+        if (!runtime?.ready || runtime.runtimeId !== options.runtimeId) throw conflict("runtime", options.runtimeId);
+        const tasks = currentValues(state, state.tasks, "task").filter(
+          (task) => task.asset_id === assetId && task.status === "pending"
+        );
+        return { tasks };
+      }
     },
     objects: {
       get: async (id) => visibleValue(state, clientState, state.objects, id, "object"),
-      create: async (object) => {
-        assertCanCreate(state, state.objects, object.object_id, "object");
-        const created = objectFromCreate(object, commitVersion(state, clientState));
-        return saveValue(state.objects, created.object_id, created);
+      create: async (request) => {
+        assertCanCreate(state, state.objects, request.object_id, "object");
+        const version = commitVersion(state, clientState);
+        return saveValue(state.objects, request.object_id, objectFromCreate(request, version), version);
       },
-      delete: async (id) => {
-        deleteValue(state, clientState, state.objects, id, "object");
-      }
+      delete: async (id) => deleteValue(state, clientState, state.objects, id, "object")
     },
     queries: {
       full: async () => ({
@@ -173,7 +250,7 @@ function createClient(state: FakeCoreState, sync: ClientMode): AtlasClientLike {
           healthy: clientState.running,
           degraded: false,
           lastVersion: visibleVersion(state, clientState),
-          subscriptions: clientState.sync === "all" ? [{ filter: "all" }] : []
+          subscriptions: clientState.sync === "all" ? [{ filter: "all" as const }] : []
         };
       }
     },
@@ -185,6 +262,7 @@ function createClient(state: FakeCoreState, sync: ClientMode): AtlasClientLike {
         if (index !== -1) clientState.watchers.splice(index, 1);
       };
     },
+    subscribe: async () => undefined,
     handshake: async () => undefined
   };
 }
@@ -201,26 +279,16 @@ function entityFromCreate(request: EntityCreateRequest, version: number): Entity
   };
 }
 
-function taskFromCreate(request: TaskCreateRequest, version: number, taskID = taskIDFromCreate(request)): TaskResource {
+function taskFromCreate(request: TaskCreateRequest): TaskResource {
+  const now = timestamp();
   return {
-    task_id: taskID,
-    entity_id: request.entity_id ?? null,
-    status: request.status ?? "pending",
-    components: request.components ?? {},
-    ...("extra" in request ? { extra: request.extra } : {}),
-    metadata: metadata(version)
-  };
-}
-
-function taskIDFromCreate(request: TaskCreateRequest): string {
-  return "task_id" in request ? request.task_id : `command-${randomUUID()}`;
-}
-
-function minimalTask(task: TaskResource): EntityCheckInMinimalTask {
-  return {
-    task_id: task.task_id,
-    status: task.status,
-    ...(task.entity_id ? { entity_id: task.entity_id } : {})
+    task_id: `task-${randomUUID()}`,
+    asset_id: request.asset_id,
+    command: request.command,
+    input: cloneValue(request.input),
+    status: "pending",
+    created_at: now,
+    updated_at: now
   };
 }
 
@@ -239,55 +307,71 @@ function objectFromCreate(request: ObjectCreateRequest, version: number): Object
   };
 }
 
-function updateTaskStatus(
-  state: FakeCoreState,
-  clientState: FakeClientState,
-  id: string,
-  status: string
-): TaskResource {
-  const current = requireActiveValue(state, state.tasks, id, "task");
-  const updated = {
-    ...current,
-    status,
-    metadata: metadata(commitVersion(state, clientState), current.metadata.created_at)
-  };
-  return saveValue(state.tasks, id, updated);
+type TaskPatch =
+  | { status: "acknowledged"; acknowledged_at: string }
+  | { status: "in_progress"; acknowledged_at: string; started_at: string }
+  | { progress: number }
+  | { status: "completed"; finished_at: string; output?: JSONValue }
+  | { status: "failed"; failure: TaskFailure; finished_at: string }
+  | { status: "cancelled"; cancellation: TaskCancellation; finished_at: string };
+
+function updateTask(state: FakeCoreState, clientState: FakeClientState, id: string, patch: TaskPatch): TaskResource {
+  const current = requireActiveValue(state, state.tasks, id, "task").value;
+  const version = commitVersion(state, clientState);
+  const updatedAt = timestamp();
+  if ("progress" in patch) {
+    if (current.status !== "in_progress") throw new Error(`fake Core cannot progress ${current.status} Task ${id}`);
+    return saveValue(state.tasks, id, { ...current, progress: patch.progress, updated_at: updatedAt }, version);
+  }
+  switch (patch.status) {
+    case "acknowledged":
+      return saveValue(state.tasks, id, { ...current, ...patch, updated_at: updatedAt }, version);
+    case "in_progress":
+      return saveValue(state.tasks, id, { ...current, ...patch, updated_at: updatedAt }, version);
+    case "completed":
+      return saveValue(
+        state.tasks,
+        id,
+        {
+          ...current,
+          ...patch,
+          acknowledged_at: current.acknowledged_at ?? updatedAt,
+          started_at: current.started_at ?? updatedAt,
+          updated_at: updatedAt
+        },
+        version
+      );
+    case "failed":
+      return saveValue(state.tasks, id, { ...current, ...patch, updated_at: updatedAt }, version);
+    case "cancelled":
+      return saveValue(state.tasks, id, { ...current, ...patch, updated_at: updatedAt }, version);
+  }
 }
 
 function metadata(version: number, createdAt?: string) {
-  const now = new Date().toISOString();
+  const now = timestamp();
   return { created_at: createdAt ?? now, updated_at: now, version };
 }
 
-function requireHistory<T extends VersionedResource>(values: ResourceHistory<T>, id: string, type: string): T[] {
+function timestamp(): string {
+  return new Date().toISOString();
+}
+
+function requireHistory<T>(values: ResourceHistory<T>, id: string, type: string): Stored<T>[] {
   const history = values.get(id);
   if (!history?.length) throw notFound(type, id);
   return history;
 }
 
-function requireValue<T extends VersionedResource>(values: ResourceHistory<T>, id: string, type: string): T {
-  return requireHistory(values, id, type).at(-1)!;
+function requireActiveValue<T>(state: FakeCoreState, values: ResourceHistory<T>, id: string, type: string): Stored<T> {
+  const stored = requireHistory(values, id, type).at(-1)!;
+  if (isDeletedAt(state, type, id, state.version, stored.version)) throw notFound(type, id);
+  return stored;
 }
 
-function requireActiveValue<T extends VersionedResource>(
-  state: FakeCoreState,
-  values: ResourceHistory<T>,
-  id: string,
-  type: string
-): T {
-  const value = requireValue(values, id, type);
-  if (isDeletedAt(state, type, id, state.version, value.metadata.version)) throw notFound(type, id);
-  return value;
-}
-
-function assertCanCreate<T extends VersionedResource>(
-  state: FakeCoreState,
-  values: ResourceHistory<T>,
-  id: string,
-  type: string
-): void {
+function assertCanCreate<T>(state: FakeCoreState, values: ResourceHistory<T>, id: string, type: string): void {
   const current = values.get(id)?.at(-1);
-  if (current && !isDeletedAt(state, type, id, state.version, current.metadata.version)) throw conflict(type, id);
+  if (current && !isDeletedAt(state, type, id, state.version, current.version)) throw conflict(type, id);
 }
 
 function assertCanCreateEntity(state: FakeCoreState, id: string, alias: string | null | undefined): void {
@@ -301,10 +385,8 @@ function assertCanUseEntityAlias(state: FakeCoreState, alias: string | null, own
   for (const [id, history] of state.entities) {
     if (id === ownerId) continue;
     const current = history.at(-1);
-    if (!current || isDeletedAt(state, "entity", id, state.version, current.metadata.version)) continue;
-    if (normalizeAlias(current.alias) === normalized) {
-      throw conflict("entity alias", normalized);
-    }
+    if (!current || isDeletedAt(state, "entity", id, state.version, current.version)) continue;
+    if (normalizeAlias(current.value.alias) === normalized) throw conflict("entity alias", normalized);
   }
 }
 
@@ -313,47 +395,43 @@ function normalizeAlias(alias: string | null | undefined): string | null {
   return normalized ? normalized : null;
 }
 
-function visibleValue<T extends { metadata: { version: number } }>(
+function visibleValue<T>(
   state: FakeCoreState,
   clientState: FakeClientState,
   values: ResourceHistory<T>,
   id: string,
   type: string
 ): T {
-  const history = requireHistory(values, id, type);
-  const version = visibleVersion(state, clientState);
-  const value = visibleSnapshot(history, version);
-  if (!value || isDeletedAt(state, type, id, version, value.metadata.version)) throw notFound(type, id);
-  return cloneValue(value);
+  const visible = visibleSnapshot(requireHistory(values, id, type), visibleVersion(state, clientState));
+  if (!visible || isDeletedAt(state, type, id, visibleVersion(state, clientState), visible.version)) {
+    throw notFound(type, id);
+  }
+  return cloneValue(visible.value);
 }
 
-function visibleValues<T extends VersionedResource>(
+function visibleValues<T>(
   state: FakeCoreState,
   clientState: FakeClientState,
   values: ResourceHistory<T>,
-  type: string
+  type: ResourceType
 ): T[] {
   const version = visibleVersion(state, clientState);
-  return [...values.values()]
-    .map((history) => visibleSnapshot(history, version))
-    .filter((value): value is T => value !== undefined)
-    .filter(
-      (value) =>
-        !isDeletedAt(
-          state,
-          type,
-          resourceId(value as { entity_id?: string; task_id?: string; object_id?: string }, type),
-          version,
-          value.metadata.version
-        )
-    )
-    .map(cloneValue);
+  return [...values.entries()].flatMap(([id, history]) => {
+    const stored = visibleSnapshot(history, version);
+    return stored && !isDeletedAt(state, type, id, version, stored.version) ? [cloneValue(stored.value)] : [];
+  });
 }
 
-function visibleSnapshot<T extends VersionedResource>(history: T[], version: number): T | undefined {
-  for (let index = history.length - 1; index >= 0; index -= 1) {
-    const value = history[index]!;
-    if (value.metadata.version <= version) return value;
+function currentValues<T>(state: FakeCoreState, values: ResourceHistory<T>, type: ResourceType): T[] {
+  return [...values.entries()].flatMap(([id, history]) => {
+    const stored = history.at(-1);
+    return stored && !isDeletedAt(state, type, id, state.version, stored.version) ? [cloneValue(stored.value)] : [];
+  });
+}
+
+function visibleSnapshot<T>(history: Stored<T>[], version: number): Stored<T> | undefined {
+  for (let index = history.length - 1; index >= 0; index--) {
+    if (history[index]!.version <= version) return history[index];
   }
   return undefined;
 }
@@ -382,20 +460,24 @@ function emitResourceChanges<T extends WatchableResource>(
   fromVersion: number,
   toVersion: number
 ): void {
-  for (const history of values.values()) {
-    for (const [index, value] of history.entries()) {
-      if (value.metadata.version <= fromVersion || value.metadata.version > toVersion) continue;
-      const id = resourceId(value, type);
-      if (isDeletedAt(state, type, id, toVersion, value.metadata.version)) continue;
-      const resource = cloneValue(value);
-      const previousVersion = history[index - 1]?.metadata.version;
+  for (const [id, history] of values) {
+    for (const [index, stored] of history.entries()) {
+      if (stored.version <= fromVersion || stored.version > toVersion) continue;
+      if (isDeletedAt(state, type, id, toVersion, stored.version)) continue;
+      const previousVersion = history[index - 1]?.version;
       const followsDeletion =
         previousVersion !== undefined &&
         (state.tombstones.get(resourceKey(type, id)) ?? []).some(
-          (deletedVersion) => deletedVersion > previousVersion && deletedVersion < value.metadata.version
+          (deletedVersion) => deletedVersion > previousVersion && deletedVersion < stored.version
         );
-      const event = resourceChangeEvent(type, index === 0 || followsDeletion ? "create" : "update", id, resource);
-      emitWatchEvent(clientState, resource, event);
+      const event = resourceChangeEvent(
+        type,
+        index === 0 || followsDeletion ? "create" : "update",
+        id,
+        stored.version,
+        stored.value
+      );
+      emitWatchEvent(clientState, stored.value, event);
     }
   }
 }
@@ -404,27 +486,29 @@ function resourceChangeEvent(
   type: ResourceType,
   event: "create" | "update",
   id: string,
+  version: number,
   resource: WatchableResource
 ): AtlasWatchEvent {
-  const version = resource.metadata.version;
   if (type === "entity") {
     return event === "create"
-      ? { event: "create", resource_type: "entity", id, version, resource: resource as EntityResource }
-      : { event: "update", resource_type: "entity", id, version, resource: resource as EntityResource };
+      ? { event, resource_type: "entity", id, version, resource: cloneValue(resource as EntityResource) }
+      : { event, resource_type: "entity", id, version, resource: cloneValue(resource as EntityResource) };
   }
   if (type === "task") {
     return event === "create"
-      ? { event: "create", resource_type: "task", id, version, resource: resource as TaskResource }
-      : { event: "update", resource_type: "task", id, version, resource: resource as TaskResource };
+      ? { event, resource_type: "task", id, version, resource: cloneValue(resource as TaskResource) }
+      : { event, resource_type: "task", id, version, resource: cloneValue(resource as TaskResource) };
   }
   return event === "create"
-    ? { event: "create", resource_type: "object", id, version, resource: resource as ObjectResource }
-    : { event: "update", resource_type: "object", id, version, resource: resource as ObjectResource };
+    ? { event, resource_type: "object", id, version, resource: cloneValue(resource as ObjectResource) }
+    : { event, resource_type: "object", id, version, resource: cloneValue(resource as ObjectResource) };
 }
 
 function emitWatchEvent(clientState: FakeClientState, resource: WatchableResource, event: AtlasWatchEvent): void {
   for (const watcher of [...clientState.watchers]) {
-    if (matchesSubscription(watcher.filter, event, resource)) watcher.callback(cloneValue(resource), cloneValue(event));
+    if (matchesSubscription(watcher.filter, event, resource)) {
+      watcher.callback(cloneValue(resource), cloneValue(event));
+    }
   }
 }
 
@@ -432,26 +516,26 @@ function matchesSubscription(filter: AtlasSubscription, event: AtlasWatchEvent, 
   if (filter.filter === "all") return true;
   if (filter.filter === "id") return event.resource_type === filter.resource_type && event.id === filter.id;
   if (filter.filter === "type") return event.resource_type === filter.resource_type;
-  return event.resource_type === "task" && (resource as TaskResource).entity_id === filter.entity_id;
+  return event.resource_type === "task" && (resource as TaskResource).asset_id === filter.asset_id;
 }
 
-function deleteValue<T extends VersionedResource>(
+function deleteValue<T>(
   state: FakeCoreState,
   clientState: FakeClientState,
   values: ResourceHistory<T>,
   id: string,
-  type: string
+  type: "entity" | "object"
 ): void {
-  const value = requireValue(values, id, type);
-  if (isDeletedAt(state, type, id, state.version, value.metadata.version)) throw notFound(type, id);
-  commitVersion(state, clientState);
+  const stored = requireActiveValue(state, values, id, type);
+  const version = commitVersion(state, clientState);
   const key = resourceKey(type, id);
-  state.tombstones.set(key, [...(state.tombstones.get(key) ?? []), state.version]);
+  state.tombstones.set(key, [...(state.tombstones.get(key) ?? []), version]);
   state.deleted.push(`${type}:${id}`);
+  void stored;
 }
 
 function commitVersion(state: FakeCoreState, clientState: FakeClientState): number {
-  state.version += 1;
+  state.version++;
   clientState.visibleVersion = state.version;
   return state.version;
 }
@@ -466,9 +550,9 @@ function conflict(type: string, id: string): AtlasAPIError {
   return new AtlasAPIError(message, 409, { message });
 }
 
-function saveValue<T extends VersionedResource>(values: ResourceHistory<T>, id: string, value: T): T {
+function saveValue<T>(values: ResourceHistory<T>, id: string, value: T, version: number): T {
   const history = values.get(id) ?? [];
-  history.push(cloneValue(value));
+  history.push({ value: cloneValue(value), version });
   values.set(id, history);
   return cloneValue(value);
 }
@@ -491,14 +575,4 @@ function isDeletedAt(
 
 function resourceKey(type: string, id: string): string {
   return `${type}:${id}`;
-}
-
-function resourceId(
-  value: { entity_id?: string | null; task_id?: string | null; object_id?: string | null },
-  type: string
-): string {
-  if (type === "entity") return value.entity_id ?? "";
-  if (type === "task") return value.task_id ?? "";
-  if (type === "object") return value.object_id ?? "";
-  return "";
 }

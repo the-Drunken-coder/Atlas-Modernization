@@ -1,37 +1,39 @@
-import type { TaskResource } from "@the-drunken-coder/atlas-sdk";
+import type { TaskResource, TaskStatus } from "@the-drunken-coder/atlas-sdk";
 
-export const TASK_STATUSES = ["pending", "acknowledged", "completed", "failed", "cancelled"] as const;
-export type TaskStatusName = (typeof TASK_STATUSES)[number];
-
-const TASK_STATUS_LABELS: Record<TaskStatusName, string> = {
+const TASK_STATUS_LABELS: Record<TaskStatus, string> = {
   pending: "Pending",
   acknowledged: "Acknowledged",
+  in_progress: "In progress",
   completed: "Completed",
   failed: "Failed",
   cancelled: "Cancelled"
 };
 
-export function isKnownTaskStatus(status: string): status is TaskStatusName {
-  return (TASK_STATUSES as readonly string[]).includes(status);
-}
-
-export function taskStatusLabel(status: string): string {
-  return isKnownTaskStatus(status) ? TASK_STATUS_LABELS[status] : status;
-}
-
-export function taskCommandId(task: TaskResource): string | undefined {
-  return task.components.command?.id ?? task.components.command?.type;
+export function taskStatusLabel(status: TaskStatus): string {
+  return TASK_STATUS_LABELS[status];
 }
 
 export function taskStatusMessage(task: TaskResource): string | undefined {
-  return task.components.status_message;
+  if (task.failure) return task.failure.message;
+  if (task.cancellation) return task.cancellation.message;
+  if (task.output !== undefined) return "Output available";
+  if (task.progress !== undefined) return `${Math.round(task.progress * 100)}%`;
+  return undefined;
 }
 
 export function sortTasksByRecency(tasks: TaskResource[]): TaskResource[] {
   return [...tasks].sort((a, b) => {
-    const byUpdated = Date.parse(b.metadata.updated_at) - Date.parse(a.metadata.updated_at);
+    const byUpdated = Date.parse(b.updated_at) - Date.parse(a.updated_at);
     if (Number.isFinite(byUpdated) && byUpdated !== 0) return byUpdated;
-    const byCreated = Date.parse(b.metadata.created_at) - Date.parse(a.metadata.created_at);
+    const byCreated = Date.parse(b.created_at) - Date.parse(a.created_at);
+    if (Number.isFinite(byCreated) && byCreated !== 0) return byCreated;
+    return a.task_id.localeCompare(b.task_id);
+  });
+}
+
+export function sortTasksByTaskingOrder(tasks: TaskResource[]): TaskResource[] {
+  return [...tasks].sort((a, b) => {
+    const byCreated = Date.parse(a.created_at) - Date.parse(b.created_at);
     if (Number.isFinite(byCreated) && byCreated !== 0) return byCreated;
     return a.task_id.localeCompare(b.task_id);
   });

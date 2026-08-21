@@ -1,0 +1,14 @@
+{
+  "task_id": "task-123",
+  "asset_id": "asset-456",
+  "command": "fixture.queued",
+  "input": { "value": "inspect-sector-7" },
+  "status": "completed",
+  "progress": 1,
+  "output": { "result": "sector-clear" },
+  "created_at": "2026-08-17T14:30:00Z",
+  "acknowledged_at": "2026-08-17T14:30:01Z",
+  "started_at": "2026-08-17T14:30:02Z",
+  "finished_at": "2026-08-17T14:31:00Z",
+  "updated_at": "2026-08-17T14:31:00Z"
+}

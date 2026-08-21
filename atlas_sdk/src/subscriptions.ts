@@ -9,6 +9,7 @@ import type {
   AtlasLocalDeleteWatchEvent,
   AtlasSubscription,
   AtlasWatchEvent,
+  DeletableResourceType,
   ResourceForSubscription,
   ResourceOf,
   ResourceValue
@@ -29,8 +30,8 @@ export function subscriptionKey(filter: AtlasSubscription): string {
       return JSON.stringify(["id", filter.resource_type, filter.id]);
     case "type":
       return JSON.stringify(["type", filter.resource_type]);
-    case "tasks_for_entity":
-      return JSON.stringify(["tasks_for_entity", filter.entity_id]);
+    case "tasks_for_asset":
+      return JSON.stringify(["tasks_for_asset", filter.asset_id]);
   }
 }
 
@@ -52,8 +53,8 @@ export function parseSubscriptionKey(key: string): AtlasSubscription {
   if (kind === "type" && parsed.length === 2 && isResourceType(resourceType)) {
     return { filter: "type", resource_type: resourceType };
   }
-  if (kind === "tasks_for_entity" && parsed.length === 2 && isNonEmptyString(resourceType)) {
-    return { filter: "tasks_for_entity", entity_id: resourceType };
+  if (kind === "tasks_for_asset" && parsed.length === 2 && isNonEmptyString(resourceType)) {
+    return { filter: "tasks_for_asset", asset_id: resourceType };
   }
   throw new Error("invalid subscription key");
 }
@@ -64,11 +65,7 @@ export function covers(covering: AtlasSubscription, wanted: AtlasSubscription): 
   return subscriptionKey(covering) === subscriptionKey(wanted);
 }
 
-export function matchesSubscription(
-  filter: AtlasSubscription,
-  event: AtlasWatchEvent,
-  previous?: ResourceValue
-): boolean {
+export function matchesSubscription(filter: AtlasSubscription, event: AtlasWatchEvent): boolean {
   switch (filter.filter) {
     case "all":
       return true;
@@ -76,11 +73,11 @@ export function matchesSubscription(
       return event.resource_type === filter.resource_type && event.id === filter.id;
     case "type":
       return event.resource_type === filter.resource_type;
-    case "tasks_for_entity":
+    case "tasks_for_asset":
       if (event.resource_type !== "task") {
         return false;
       }
-      return taskEventEntityIDs(event, previous).some((entityID) => entityID === filter.entity_id);
+      return event.resource.asset_id === filter.asset_id;
   }
 }
 
@@ -103,16 +100,16 @@ export function resourceCacheKey(type: ResourceType, id: string): string {
   return JSON.stringify([type, id]);
 }
 
-export function localDeleteEvent(type: ResourceType, id: string, previousVersion: number): AtlasLocalDeleteWatchEvent {
+export function localDeleteEvent(
+  type: DeletableResourceType,
+  id: string,
+  previousVersion: number
+): AtlasLocalDeleteWatchEvent {
   switch (type) {
     case "entity":
       return previousVersion > 0
         ? { event: "local_delete", resource_type: "entity", id, previous_version: previousVersion }
         : { event: "local_delete", resource_type: "entity", id };
-    case "task":
-      return previousVersion > 0
-        ? { event: "local_delete", resource_type: "task", id, previous_version: previousVersion }
-        : { event: "local_delete", resource_type: "task", id };
     case "object":
       return previousVersion > 0
         ? { event: "local_delete", resource_type: "object", id, previous_version: previousVersion }
@@ -180,7 +177,7 @@ export function assertResourceMatchesSubscription<TFilter extends AtlasSubscript
   switch (filter.filter) {
     case "all":
       return;
-    case "tasks_for_entity":
+    case "tasks_for_asset":
       assertResourceMatchesType("task", resource);
       return;
     case "id":
@@ -191,24 +188,6 @@ export function assertResourceMatchesSubscription<TFilter extends AtlasSubscript
 
 function isNonEmptyString(value: string | undefined): value is string {
   return typeof value === "string" && value.length > 0;
-}
-
-function taskEventEntityIDs(
-  event: Extract<AtlasWatchEvent, { resource_type: "task" }>,
-  previous?: ResourceValue
-): Array<string | null | undefined> {
-  const ids: Array<string | null | undefined> = [];
-  if (event.event === "delete") {
-    ids.push(event.entity_id);
-  } else if (event.event === "update") {
-    ids.push(event.resource.entity_id, event.previous_entity_id);
-  } else if (event.event === "create") {
-    ids.push(event.resource.entity_id);
-  }
-  if (previous && resourceMatchesType("task", previous)) {
-    ids.push(previous.entity_id);
-  }
-  return ids;
 }
 
 function resourceTypeName(resource: ResourceValue): ResourceType {

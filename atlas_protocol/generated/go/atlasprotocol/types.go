@@ -108,10 +108,47 @@ const (
 type FeedFilter string
 
 const (
-	FeedFilterAll            FeedFilter = "all"
-	FeedFilterID             FeedFilter = "id"
-	FeedFilterType           FeedFilter = "type"
-	FeedFilterTasksForEntity FeedFilter = "tasks_for_entity"
+	FeedFilterAll           FeedFilter = "all"
+	FeedFilterID            FeedFilter = "id"
+	FeedFilterType          FeedFilter = "type"
+	FeedFilterTasksForAsset FeedFilter = "tasks_for_asset"
+)
+
+type CommandScheduling string
+
+const (
+	CommandSchedulingImmediate CommandScheduling = "immediate"
+	CommandSchedulingQueued    CommandScheduling = "queued"
+)
+
+type TaskStatus string
+
+const (
+	TaskStatusAcknowledged TaskStatus = "acknowledged"
+	TaskStatusCancelled    TaskStatus = "cancelled"
+	TaskStatusCompleted    TaskStatus = "completed"
+	TaskStatusFailed       TaskStatus = "failed"
+	TaskStatusInProgress   TaskStatus = "in_progress"
+	TaskStatusPending      TaskStatus = "pending"
+)
+
+type TaskFailureCode string
+
+const (
+	TaskFailureCodeAssetRestarted        TaskFailureCode = "asset_restarted"
+	TaskFailureCodeAssetStopped          TaskFailureCode = "asset_stopped"
+	TaskFailureCodeExecutionFailed       TaskFailureCode = "execution_failed"
+	TaskFailureCodeImmediateStartTimeout TaskFailureCode = "immediate_start_timeout"
+	TaskFailureCodeInvalidOutput         TaskFailureCode = "invalid_output"
+	TaskFailureCodePreconditionFailed    TaskFailureCode = "precondition_failed"
+	TaskFailureCodeUnsupportedCommand    TaskFailureCode = "unsupported_command"
+)
+
+type TaskCancellationCode string
+
+const (
+	TaskCancellationCodeRequested  TaskCancellationCode = "requested"
+	TaskCancellationCodeSuperseded TaskCancellationCode = "superseded"
 )
 
 type MetadataBlock struct {
@@ -120,27 +157,28 @@ type MetadataBlock struct {
 	Version   int64  `json:"version"`
 }
 
-type CommandParameterSchema struct {
-	Type        string   `json:"type"`
-	Description string   `json:"description"`
-	Required    bool     `json:"required"`
-	Minimum     *float64 `json:"minimum,omitempty"`
-	Maximum     *float64 `json:"maximum,omitempty"`
-}
-
 type CommandDefinition struct {
-	ID               string                            `json:"id"`
-	Name             string                            `json:"name"`
-	Description      string                            `json:"description"`
-	ParametersSchema map[string]CommandParameterSchema `json:"parameters_schema"`
+	Command      string            `json:"command"`
+	Name         string            `json:"name"`
+	Description  string            `json:"description"`
+	InputSchema  string            `json:"input_schema"`
+	OutputSchema string            `json:"output_schema,omitempty"`
+	Scheduling   CommandScheduling `json:"scheduling,omitempty"`
 }
 
-type CommandCatalog struct {
-	Type        string              `json:"type"`
-	Name        string              `json:"name"`
-	Description string              `json:"description"`
-	Commands    []CommandDefinition `json:"commands"`
+// CommandCatalog is the Protocol-owned aggregate served by Atlas Core.
+type CommandCatalog = []CommandDefinition
+
+type CommandManifestEntry struct {
+	Command          string            `json:"command"`
+	Description      string            `json:"description"`
+	Scheduling       CommandScheduling `json:"scheduling"`
+	SupportsCancel   bool              `json:"supports_cancel"`
+	SupportsProgress bool              `json:"supports_progress"`
 }
+
+// CommandManifest is the fixed set of Commands advertised by a ready runtime.
+type CommandManifest = []CommandManifestEntry
 
 type ProtocolRevisionResponse struct {
 	ProtocolRevision string `json:"protocol_revision"`
@@ -157,22 +195,84 @@ type EntityCheckInRequest struct {
 }
 
 type EntityResource struct {
-	EntityID   string               `json:"entity_id"`
-	EntityType string               `json:"entity_type"`
-	Subtype    *string              `json:"subtype"`
-	Alias      *string              `json:"alias"`
-	Components map[string]JSONValue `json:"components"`
-	Metadata   MetadataBlock        `json:"metadata"`
-	Extra      map[string]JSONValue `json:"extra,omitempty"`
+	EntityID        string               `json:"entity_id"`
+	EntityType      string               `json:"entity_type"`
+	Subtype         *string              `json:"subtype"`
+	Alias           *string              `json:"alias"`
+	CommandManifest *CommandManifest     `json:"command_manifest,omitempty"`
+	Components      map[string]JSONValue `json:"components"`
+	Metadata        MetadataBlock        `json:"metadata"`
+	Extra           map[string]JSONValue `json:"extra,omitempty"`
 }
 
 type TaskResource struct {
-	TaskID     string               `json:"task_id"`
-	Status     string               `json:"status"`
-	EntityID   *string              `json:"entity_id"`
-	Components map[string]JSONValue `json:"components"`
-	Metadata   MetadataBlock        `json:"metadata"`
-	Extra      map[string]JSONValue `json:"extra,omitempty"`
+	TaskID         string            `json:"task_id"`
+	AssetID        string            `json:"asset_id"`
+	Command        string            `json:"command"`
+	Input          JSONValue         `json:"input"`
+	Status         TaskStatus        `json:"status"`
+	Progress       *float64          `json:"progress,omitempty"`
+	Output         *JSONValue        `json:"output,omitempty"`
+	Failure        *TaskFailure      `json:"failure,omitempty"`
+	Cancellation   *TaskCancellation `json:"cancellation,omitempty"`
+	CreatedAt      string            `json:"created_at"`
+	AcknowledgedAt string            `json:"acknowledged_at,omitempty"`
+	StartedAt      string            `json:"started_at,omitempty"`
+	FinishedAt     string            `json:"finished_at,omitempty"`
+	UpdatedAt      string            `json:"updated_at"`
+}
+
+type TaskFailure struct {
+	Code    TaskFailureCode `json:"code"`
+	Message string          `json:"message"`
+}
+
+type TaskCancellation struct {
+	Code    TaskCancellationCode `json:"code"`
+	Message string               `json:"message"`
+}
+
+type TaskCreateRequest struct {
+	AssetID string    `json:"asset_id"`
+	Command string    `json:"command"`
+	Input   JSONValue `json:"input"`
+}
+
+type TaskAcknowledgeRequest struct{}
+
+type TaskStartRequest struct{}
+
+type TaskProgressRequest struct {
+	Progress float64 `json:"progress"`
+}
+
+type TaskCompleteRequest struct {
+	Output JSONValue `json:"output,omitempty"`
+}
+
+type TaskFailRequest struct {
+	Failure TaskFailure `json:"failure"`
+}
+
+type TaskCancelRequest struct {
+	Cancellation TaskCancellation `json:"cancellation"`
+}
+
+type RuntimeRegistrationRequest struct {
+	RuntimeID string `json:"runtime_id"`
+}
+
+type RuntimeStopRequest struct {
+	RuntimeID string `json:"runtime_id"`
+}
+
+type RuntimeReadyRequest struct {
+	RuntimeID string                 `json:"runtime_id"`
+	Manifest  []CommandManifestEntry `json:"manifest"`
+}
+
+type RuntimeTaskDeliveryResponse struct {
+	Tasks []TaskResource `json:"tasks"`
 }
 
 type ObjectReference struct {
@@ -205,30 +305,12 @@ type ObjectDetailResource struct {
 	Extra        map[string]JSONValue `json:"extra"`
 }
 
-type EntityCheckInMinimalTask struct {
-	TaskID     string     `json:"task_id"`
-	Status     string     `json:"status"`
-	EntityID   string     `json:"entity_id,omitempty"`
-	CommandID  string     `json:"command_id,omitempty"`
-	Parameters *JSONValue `json:"parameters,omitempty"`
-}
-
 type EntityCheckInFullResponse struct {
-	Entity         EntityResource `json:"entity"`
-	Tasks          []TaskResource `json:"tasks"`
-	TaskCount      int64          `json:"task_count"`
-	TaskLimit      int64          `json:"task_limit"`
-	HasMoreTasks   bool           `json:"has_more_tasks"`
-	NextTaskCursor string         `json:"next_task_cursor,omitempty"`
+	Entity EntityResource `json:"entity"`
 }
 
 type EntityCheckInMinimalResponse struct {
-	Entity         EntityResource             `json:"entity"`
-	Tasks          []EntityCheckInMinimalTask `json:"tasks"`
-	TaskCount      int64                      `json:"task_count"`
-	TaskLimit      int64                      `json:"task_limit"`
-	HasMoreTasks   bool                       `json:"has_more_tasks"`
-	NextTaskCursor string                     `json:"next_task_cursor,omitempty"`
+	Entity EntityResource `json:"entity"`
 }
 
 type FullDatasetResponse struct {
@@ -252,13 +334,11 @@ type ChangedSinceResponse struct {
 }
 
 type FeedEvent struct {
-	Event            FeedEventName `json:"event"`
-	ResourceType     ResourceType  `json:"resource_type"`
-	ID               string        `json:"id"`
-	Version          int64         `json:"version"`
-	PreviousEntityID *string       `json:"previous_entity_id,omitempty"`
-	EntityID         *string       `json:"entity_id,omitempty"`
-	Resource         JSONValue     `json:"resource,omitempty"`
+	Event        FeedEventName `json:"event"`
+	ResourceType ResourceType  `json:"resource_type"`
+	ID           string        `json:"id"`
+	Version      int64         `json:"version"`
+	Resource     JSONValue     `json:"resource,omitempty"`
 }
 
 func (e FeedEvent) MarshalJSON() ([]byte, error) {
@@ -312,45 +392,6 @@ func (e EntityDeleteEvent) FeedEvent() FeedEvent {
 		ResourceType: ResourceTypeEntity,
 		ID:           e.ID,
 		Version:      e.Version,
-	}
-}
-
-type TaskDeleteEvent struct {
-	ID       string  `json:"id"`
-	Version  int64   `json:"version"`
-	EntityID *string `json:"entity_id,omitempty"`
-}
-
-func (e TaskDeleteEvent) MarshalJSON() ([]byte, error) {
-	data, err := json.Marshal(struct {
-		Event        FeedEventName `json:"event"`
-		ResourceType ResourceType  `json:"resource_type"`
-		ID           string        `json:"id"`
-		Version      int64         `json:"version"`
-		EntityID     *string       `json:"entity_id,omitempty"`
-	}{
-		Event:        FeedEventDelete,
-		ResourceType: ResourceTypeTask,
-		ID:           e.ID,
-		Version:      e.Version,
-		EntityID:     e.EntityID,
-	})
-	if err != nil {
-		return nil, err
-	}
-	if err := validateMarshaledFeedEvent("TaskDeleteEvent", data); err != nil {
-		return nil, err
-	}
-	return data, nil
-}
-
-func (e TaskDeleteEvent) FeedEvent() FeedEvent {
-	return FeedEvent{
-		Event:        FeedEventDelete,
-		ResourceType: ResourceTypeTask,
-		ID:           e.ID,
-		Version:      e.Version,
-		EntityID:     e.EntityID,
 	}
 }
 
@@ -413,7 +454,7 @@ type FeedSubscriptionMessage struct {
 	Filter       FeedFilter   `json:"filter"`
 	ResourceType ResourceType `json:"resource_type,omitempty"`
 	ID           string       `json:"id,omitempty"`
-	EntityID     string       `json:"entity_id,omitempty"`
+	AssetID      string       `json:"asset_id,omitempty"`
 }
 
 type feedSubscriptionMessageAlias FeedSubscriptionMessage

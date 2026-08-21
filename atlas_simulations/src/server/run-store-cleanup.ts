@@ -51,9 +51,7 @@ export async function cleanupRun(
       }
       const timeoutMs = Math.min(CLEANUP_DELETE_TIMEOUT_MS, remainingCleanupMs);
       const resourceType = resource.type as string;
-      if (resourceType === "task") {
-        await withCleanupTimeout(client.tasks.delete(resource.id), cleanupController, resource, timeoutMs);
-      } else if (resourceType === "object") {
+      if (resourceType === "object") {
         await withCleanupTimeout(client.objects.delete(resource.id), cleanupController, resource, timeoutMs);
       } else if (resourceType === "entity") {
         await withCleanupTimeout(client.entities.delete(resource.id), cleanupController, resource, timeoutMs);

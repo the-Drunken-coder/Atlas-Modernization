@@ -117,63 +117,6 @@ func TestEntityGetExtraEmpty(t *testing.T) {
 	}
 }
 
-func TestTaskGetComponents(t *testing.T) {
-	jsonData := map[string]interface{}{
-		"components": map[string]interface{}{
-			"command": map[string]interface{}{
-				"type": "move_to",
-			},
-		},
-	}
-	jsonBytes, err := json.Marshal(jsonData)
-	if err != nil {
-		t.Fatalf("json.Marshal: %v", err)
-	}
-
-	task := &models.Task{
-		TaskID: "test-task",
-		Status: "pending",
-		JSON:   jsonBytes,
-	}
-
-	components := task.GetComponents()
-	if components == nil {
-		t.Error("Expected components, got nil")
-	}
-	if components["command"] == nil {
-		t.Error("Expected command component")
-	}
-}
-
-func TestTaskGetExtra(t *testing.T) {
-	jsonData := map[string]interface{}{
-		"components": map[string]interface{}{},
-		"priority":   "high",
-		"version":    999,
-	}
-	jsonBytes, err := json.Marshal(jsonData)
-	if err != nil {
-		t.Fatalf("json.Marshal: %v", err)
-	}
-
-	task := &models.Task{
-		TaskID: "test-task",
-		Status: "pending",
-		JSON:   jsonBytes,
-	}
-
-	extra := task.GetExtra()
-	if extra == nil {
-		t.Error("Expected extra, got nil")
-	}
-	if extra["priority"] != "high" {
-		t.Errorf("Expected priority 'high', got %v", extra["priority"])
-	}
-	if extra["version"] != nil {
-		t.Error("version should be excluded from extra")
-	}
-}
-
 func TestMediaObjectGetSizeBytes(t *testing.T) {
 	jsonData := map[string]interface{}{
 		"size_bytes": float64(1024),
@@ -420,37 +363,6 @@ func TestEntityDecodedJSONPreservesNumbers(t *testing.T) {
 	}
 	if got != 9007199254740993 {
 		t.Fatalf("large = %d, want exact large integer", got)
-	}
-}
-
-func TestTaskDecodedJSONInvalidatesWhenJSONChanges(t *testing.T) {
-	task := &models.Task{
-		TaskID: "task-cache",
-		Status: "pending",
-		JSON:   []byte(`{"priority":"low"}`),
-	}
-
-	first := task.GetExtra()
-	if first["priority"] != "low" {
-		t.Fatalf("expected initial priority, got %#v", first)
-	}
-
-	task.JSON = []byte(`{"priority":"high"}`)
-	second := task.GetExtra()
-	if second["priority"] != "high" {
-		t.Fatalf("expected updated priority after JSON reassignment, got %#v", second)
-	}
-}
-
-func TestTaskDecodedJSONRejectsTrailingData(t *testing.T) {
-	task := &models.Task{
-		TaskID: "task-trailing",
-		Status: "pending",
-		JSON:   json.RawMessage(`{"priority":"low"}{"unexpected":true}`),
-	}
-
-	if got := task.DecodedJSON(); got != nil {
-		t.Fatalf("expected nil for task JSON with trailing data, got %#v", got)
 	}
 }
 

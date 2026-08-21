@@ -59,6 +59,7 @@ func TestFeedReadsCommittedEventsWithoutRejectedWriteGaps(t *testing.T) {
 		hub,
 		nil,
 	)
+	handler.taskActions = actions.NewTaskActionsWithCatalog(pool, taskingHandlerFixture[protocol.CommandCatalog](t, "catalog.json"))
 
 	router := chi.NewRouter()
 	router.Get("/feed", handler.Feed)
@@ -77,15 +78,23 @@ func TestFeedReadsCommittedEventsWithoutRejectedWriteGaps(t *testing.T) {
 	firstID := prefix + "-first"
 	secondID := prefix + "-second"
 	thirdID := prefix + "-third"
-	missingEntityID := prefix + "-missing"
-	if err := conn.Write(ctx, websocket.MessageText, []byte(`{"action":"subscribe","filter":"all"}`)); err != nil {
-		t.Fatalf("subscribe to all feed events: %v", err)
+	unregisteredAssetID := prefix + "-unregistered"
+	_ = postEntityIntegration(t, server.URL, unregisteredAssetID, http.StatusCreated)
+	for _, entityID := range []string{firstID, secondID, thirdID} {
+		message := fmt.Sprintf(`{"action":"subscribe","filter":"id","resource_type":"entity","id":%q}`, entityID)
+		if err := conn.Write(ctx, websocket.MessageText, []byte(message)); err != nil {
+			t.Fatalf("subscribe to entity %s feed events: %v", entityID, err)
+		}
+		waitForFeedSubscription(t, hub, feed.Subscription{
+			Filter:       protocol.FeedFilterID,
+			ResourceType: protocol.ResourceTypeEntity,
+			ID:           entityID,
+		})
 	}
-	waitForFeedSubscription(t, hub, feed.Subscription{Filter: protocol.FeedFilterAll})
 	t.Cleanup(func() {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		if _, err := pool.Exec(cleanupCtx, `DELETE FROM entities WHERE entity_id = ANY($1)`, []string{firstID, secondID, thirdID}); err != nil {
+		if _, err := pool.Exec(cleanupCtx, `DELETE FROM entities WHERE entity_id = ANY($1)`, []string{firstID, secondID, thirdID, unregisteredAssetID}); err != nil {
 			t.Errorf("cleanup feed integration entities: %v", err)
 		}
 	})
@@ -103,19 +112,19 @@ func TestFeedReadsCommittedEventsWithoutRejectedWriteGaps(t *testing.T) {
 		t.Fatalf("duplicate create advanced version to %d, want %d", duplicateVersion, first.Metadata.Version)
 	}
 
-	postTaskIntegration(t, server.URL, prefix+"-missing-entity-task", missingEntityID, http.StatusNotFound)
-	missingTaskVersion, err := actions.CurrentChangeVersion(ctx, pool)
+	postTaskIntegration(t, server.URL, prefix+"-unregistered-asset-task", unregisteredAssetID, http.StatusBadRequest)
+	rejectedTaskVersion, err := actions.CurrentChangeVersion(ctx, pool)
 	if err != nil {
-		t.Fatalf("read version after missing-entity task: %v", err)
+		t.Fatalf("read version after rejected Task: %v", err)
 	}
-	if missingTaskVersion != duplicateVersion {
-		t.Fatalf("missing-entity task advanced version to %d, want %d", missingTaskVersion, duplicateVersion)
+	if rejectedTaskVersion != duplicateVersion {
+		t.Fatalf("rejected Task advanced version to %d, want %d", rejectedTaskVersion, duplicateVersion)
 	}
 
 	second := postEntityIntegration(t, server.URL, secondID, http.StatusCreated)
 	third := postEntityIntegration(t, server.URL, thirdID, http.StatusCreated)
-	if second.Metadata.Version != missingTaskVersion+1 || third.Metadata.Version != second.Metadata.Version+1 {
-		t.Fatalf("successful versions after rejected writes = %d, %d; want %d, %d", second.Metadata.Version, third.Metadata.Version, missingTaskVersion+1, missingTaskVersion+2)
+	if second.Metadata.Version != rejectedTaskVersion+1 || third.Metadata.Version != second.Metadata.Version+1 {
+		t.Fatalf("successful versions after rejected writes = %d, %d; want %d, %d", second.Metadata.Version, third.Metadata.Version, rejectedTaskVersion+1, rejectedTaskVersion+2)
 	}
 
 	secondEvent := readFeedEventIntegration(t, conn)
@@ -402,14 +411,20 @@ func postEntityIntegration(t *testing.T, serverURL, entityID string, wantStatus 
 func postTaskIntegration(t *testing.T, serverURL, taskID, entityID string, wantStatus int) {
 	t.Helper()
 	body, err := json.Marshal(map[string]any{
-		"task_id":    taskID,
-		"entity_id":  entityID,
-		"components": map[string]any{},
+		"asset_id": entityID,
+		"command":  "fixture.queued",
+		"input":    map[string]any{"value": "rejected"},
 	})
 	if err != nil {
 		t.Fatalf("marshal task payload: %v", err)
 	}
-	response, err := (&http.Client{Timeout: 2 * time.Second}).Post(serverURL+"/tasks", "application/json", bytes.NewReader(body))
+	request, err := http.NewRequest(http.MethodPost, serverURL+"/tasks", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("build task request %s: %v", taskID, err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Idempotency-Key", taskID)
+	response, err := (&http.Client{Timeout: 2 * time.Second}).Do(request)
 	if err != nil {
 		t.Fatalf("post task %s: %v", taskID, err)
 	}

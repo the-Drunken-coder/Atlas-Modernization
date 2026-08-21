@@ -76,8 +76,8 @@ For concurrency-sensitive writes, send the latest version back with:
 If-Match: "v12"
 ```
 
-`PATCH /entities/{entity_id}`, `PATCH /tasks/{task_id}`, `PATCH /objects/{object_id}`,
-and `POST /entities/{entity_id}/checkin` accept this header. If the header is
+`PATCH /entities/{entity_id}`, `PATCH /objects/{object_id}`, and
+`POST /entities/{entity_id}/checkin` accept this header. If the header is
 omitted, the server applies the write without a version precondition.
 
 ### Pagination
@@ -131,16 +131,13 @@ Task responses:
 
 ```json
 {
-  "task_id": "task-1",
+  "task_id": "task-7",
+  "asset_id": "asset-1",
+  "command": "example.inspect",
+  "input": {},
   "status": "pending",
-  "entity_id": "asset-1",
-  "components": {},
-  "metadata": {
-    "created_at": "2026-06-21T12:00:00.000000Z",
-    "updated_at": "2026-06-21T12:00:00.000000Z",
-    "version": 1
-  },
-  "extra": {}
+  "created_at": "2026-06-21T12:00:00.000000Z",
+  "updated_at": "2026-06-21T12:00:00.000000Z"
 }
 ```
 
@@ -187,7 +184,7 @@ Feed behavior:
 
 - Server sends a `hello` frame with `protocol_revision` after authentication.
 - Clients must subscribe before receiving events.
-- Supported filters are `all`, `type`, `id`, and `tasks_for_entity`.
+- Supported filters are `all`, `type`, `id`, and `tasks_for_asset`.
 - Events include `event`, `resource_type`, `id`, `version`, and full `resource` except for deletes.
 - On version gaps or reconnects, recover through `GET /queries/changed-since`.
 
@@ -198,7 +195,7 @@ Subscribe examples:
 ```
 
 ```json
-{ "action": "subscribe", "filter": "tasks_for_entity", "entity_id": "asset-1" }
+{ "action": "subscribe", "filter": "tasks_for_asset", "asset_id": "asset-1" }
 ```
 
 ```json
@@ -220,7 +217,10 @@ Subscribe examples:
 | `GET` | `/entities/alias/{alias}` | `200` | Fetch one entity by alias. |
 | `PATCH` | `/entities/{entity_id}` | `200` | Update type, subtype, alias, components, or extra fields. |
 | `DELETE` | `/entities/{entity_id}` | `204` | Delete an entity. |
-| `POST` | `/entities/{entity_id}/checkin` | `200` | Update heartbeat/status/telemetry and return tasks for that entity. |
+| `POST` | `/entities/{entity_id}/checkin` | `200` | Update heartbeat, status, telemetry, and other observed state. |
+| `POST` | `/entities/{entity_id}/runtime` | `204` | Begin a new Asset process registration and fence the previous runtime. |
+| `POST` | `/entities/{entity_id}/runtime/ready` | `204` | Publish the current runtime's fixed Command Manifest after safe state. |
+| `GET` | `/entities/{entity_id}/runtime/tasks` | `200` | Return work currently deliverable to the current ready runtime. |
 | `GET` | `/entities/{entity_id}/tasks` | `200` | List tasks attached to the entity. |
 | `GET` | `/entities/{entity_id}/objects` | `200` | List objects referenced by the entity. |
 
@@ -262,15 +262,7 @@ Patch body:
 
 `components` are deep-merged by key. `subtype` and `alias` can be cleared with `null` or an empty string.
 
-Check-in query parameters:
-
-| Query | Default | Notes |
-| --- | --- | --- |
-| `status_filter` | `pending,acknowledged` | Comma-separated task statuses to return. |
-| `limit` | `10` | Must be between `1` and `20`. |
-| `task_cursor` | none | Opaque cursor from `next_task_cursor`. |
-| `fields` | full task responses | `fields=minimal` returns compact task entries. |
-| `since` | none | RFC3339 timestamp filter for tasks. |
+Check-in accepts the optional `fields=minimal` query. Both generated response shapes contain the updated Entity only; Task delivery is separate.
 
 Check-in body is optional. When present, it can include:
 
@@ -287,105 +279,99 @@ Check-in body is optional. When present, it can include:
 }
 ```
 
-The body is the Protocol `EntityCheckInRequest`: unknown fields are rejected; `status` must be non-empty; latitude is `-90` through `90`; longitude is `-180` through `180`; altitude must be finite; speed cannot be negative; heading is at least `0` and less than `360`; and `components` must satisfy the canonical `EntityComponents` contract. An empty body is equivalent to `{}`. Malformed or trailing JSON returns `INVALID_JSON`; a structurally invalid body returns `VALIDATION_ERROR`. Body rejection happens before Core reads tasks or writes the entity.
+The body is the Protocol `EntityCheckInRequest`: unknown fields are rejected; `status` must be non-empty; latitude is `-90` through `90`; longitude is `-180` through `180`; altitude must be finite; speed cannot be negative; heading is at least `0` and less than `360`; and `components` must satisfy the canonical `EntityComponents` contract. An empty body is equivalent to `{}`. Malformed or trailing JSON returns `INVALID_JSON`; a structurally invalid body returns `VALIDATION_ERROR`. Body rejection happens before Core writes the Entity.
 
 Check-in response:
 
 ```json
 {
-  "entity": { "entity_id": "asset-1" },
-  "tasks": [],
-  "task_count": 0,
-  "task_limit": 10,
-  "has_more_tasks": false,
-  "next_task_cursor": "optional opaque cursor"
+  "entity": { "entity_id": "asset-1" }
 }
 ```
 
-Core validates the request body, then validates and reads the requested task page before committing the heartbeat, status, or telemetry update. A body rejection, malformed `task_cursor`, or task-read failure therefore returns an error without changing the entity components or version and without publishing a feed event. The task read and entity write use separate transactions, so the returned task page is the snapshot selected immediately before the entity update; concurrent task changes may appear on the next check-in.
+Core validates the request body before committing the heartbeat, status, telemetry, or component update. A rejected body returns an error without changing the Entity or publishing a feed event.
+
+Runtime registration begins with:
+
+```json
+{ "runtime_id": "runtime-process-1" }
+```
+
+After every execution module establishes safe state, the same process publishes its fixed manifest:
+
+```json
+{
+  "runtime_id": "runtime-process-1",
+  "manifest": []
+}
+```
+
+Beginning a new runtime fences the previous runtime and fails its nonterminal Tasks with `asset_restarted`. The ready and delivery routes reject stale runtime IDs. `GET /entities/{entity_id}/runtime/tasks` carries the current ID in `Atlas-Runtime-ID` and returns `{ "tasks": [...] }`. The current ready manifest also appears read-only as `command_manifest` on Asset responses.
 
 ## Tasks
 
 | Method | Path | Status | Purpose |
 | --- | --- | --- | --- |
 | `GET` | `/tasks` | `200` | List tasks with standard pagination. |
-| `POST` | `/tasks` | `201` | Create a task. |
+| `POST` | `/tasks` | `201` | Create an immutable Task. Requires `Idempotency-Key`. |
 | `GET` | `/tasks/{task_id}` | `200` | Fetch one task. |
-| `PATCH` | `/tasks/{task_id}` | `200` | Update status, entity assignment, components, or extra fields. |
-| `DELETE` | `/tasks/{task_id}` | `204` | Delete a task. |
+| `POST` | `/tasks/{task_id}/acknowledge` | `200` | Accept queued work. Requires current runtime context. |
+| `POST` | `/tasks/{task_id}/start` | `200` | Begin execution. Requires current runtime context. |
+| `POST` | `/tasks/{task_id}/progress` | `200` | Report monotonic progress. Requires current runtime context. |
+| `POST` | `/tasks/{task_id}/complete` | `200` | Complete with optional validated output. Requires current runtime context. |
+| `POST` | `/tasks/{task_id}/fail` | `200` | Record a structured failure. Requires current runtime context. |
+| `POST` | `/tasks/{task_id}/cancel` | `200` | Cancel from a tasking client. |
 | `GET` | `/tasks/{task_id}/objects` | `200` | List objects referenced by the task. |
 
-Create body:
+Create one operator tasking attempt by sending the same opaque idempotency key on every retry:
 
 ```json
 {
-  "task_id": "task-1",
-  "status": "pending",
-  "entity_id": "asset-1",
-  "components": {
-    "target": {
-      "latitude": 38.8977,
-      "longitude": -77.0365,
-      "altitude_m": 120.5
-    },
-    "custom_note": {
-      "text": "inspect target area"
-    }
-  },
-  "extra": {
-    "requested_by": "local-operator"
+  "asset_id": "asset-1",
+  "command": "example.inspect",
+  "input": {}
+}
+```
+
+Core generates `task_id`, resolves the Command from the generated Protocol catalog, validates the current ready runtime's manifest and the input schema, and returns the Task in `pending`. Reusing a key with identical tasking data returns the original Task. Reusing it with different data returns a conflict. The generated production catalog is currently empty, so production creation rejects every Command until one is added through the Protocol authoring process.
+
+Asset-only operations send the current process fence in `Atlas-Runtime-ID`. Acknowledge and start use `{}`. Progress uses a value from `0` to `1`:
+
+```json
+{
+  "progress": 0.5
+}
+```
+
+Completion may include Command-defined output:
+
+```json
+{
+  "output": { "observations": 3 }
+}
+```
+
+Failure and cancellation use closed Protocol codes plus a human-readable message:
+
+```json
+{
+  "failure": {
+    "code": "execution_failed",
+    "message": "Sensor did not become ready."
   }
 }
 ```
 
-If `status` is omitted during create, the server uses `pending`.
-
-Patch body:
-
 ```json
 {
-  "status": "acknowledged",
-  "components": {
-    "progress": {
-      "percent": 25
-    }
-  },
-  "extra": {
-    "operator_note": "asset has started"
-  },
-  "remove_extra_keys": ["old_note"]
-}
-```
-
-Omitting `entity_id` from a task patch preserves the current assignment, `null`
-unlinks the task, and a non-empty string assigns it to that entity.
-
-Completion patch:
-
-```json
-{
-  "status": "completed",
-  "extra": {
-    "result": {
-      "summary": "arrived at target"
-    }
+  "cancellation": {
+    "code": "requested",
+    "message": "Operator cancelled the Task."
   }
 }
 ```
 
-Failure patch:
-
-```json
-{
-  "status": "failed",
-  "extra": {
-    "error": {
-      "code": "NAVIGATION_FAILED",
-      "message": "could not reach target"
-    }
-  }
-}
-```
+Task assignment, Command, and input never change. Tasks are permanent execution records and have no patch or delete route. The first accepted terminal operation wins; an identical repeat is idempotent and a conflicting repeat is rejected.
 
 ## Objects
 
@@ -511,7 +497,7 @@ Response includes complete feed events in global version order plus one `has_mor
       "resource_type": "task",
       "id": "task-7",
       "version": 41,
-      "resource": { "task_id": "task-7", "status": "pending", "components": {}, "metadata": { "created_at": "2026-06-21T12:00:00Z", "updated_at": "2026-06-21T12:00:00Z", "version": 41 } }
+      "resource": { "task_id": "task-7", "asset_id": "asset-1", "command": "example.inspect", "input": {}, "status": "pending", "created_at": "2026-06-21T12:00:00Z", "updated_at": "2026-06-21T12:00:00Z" }
     }
   ],
   "has_more": false,
@@ -550,26 +536,9 @@ Managed API keys are full-access machine credentials for the current auth model.
 
 The Cloudflare Pages command interface is a static Vite app. It does not own `/api/config`, `/auth/*`, `/me/settings`, `/atlas/*`, feed bridging, Core API-key injection, or command validation. The browser Atlas SDK calls Core directly with `credentials: "include"` and receives only non-secret build-time browser config from Vite/public assets.
 
-Command task validation happens in Core `POST /tasks`. Command submissions omit `task_id`; Core generates `command-<uuid>`, loads the command catalog, loads the target entity, checks `components.task_catalog.supported_tasks`, and validates/coerces command parameters. Non-command task creation keeps the existing client-supplied `task_id` contract.
+Command validation happens in Core `POST /tasks`. Core generates the Task ID and validates the Protocol catalog, the current ready runtime's read-only `command_manifest`, and the Command input. The generated production catalog is currently `[]`, so the command interface shows an intentional no-Commands state and Core rejects every production Task creation attempt. Adding a real Command includes its Protocol definition, purpose-built operator input, Asset handler, and any special Core policy.
 
-```json
-{
-  "entity_id": "asset-1",
-  "components": {
-    "command": {
-      "type": "move_to_location",
-      "id": "move_to_location"
-    },
-    "parameters": {
-      "latitude": 38.8977,
-      "longitude": -77.0365,
-      "altitude_m": 120.5
-    }
-  }
-}
-```
-
-Smoke browser auth and command task creation against Core:
+Smoke browser auth and the empty production catalog against Core:
 
 ```bash
 CORE_URL=http://localhost:8000
@@ -594,36 +563,13 @@ curl -sS -c "$COOKIE_JAR" -X POST "$CORE_URL/admin/auth/login" \
 
 curl -sS -b "$COOKIE_JAR" "$CORE_URL/admin/auth/me"
 
-curl -sS -b "$COOKIE_JAR" -X POST "$CORE_URL/entities" \
-  -H 'Origin: http://localhost:5173' \
-  -H 'Content-Type: application/json' \
-  -d '{"entity_id":"asset-1","entity_type":"asset","components":{"task_catalog":{"supported_tasks":["move_to_location"]}}}'
-
-curl -sS -b "$COOKIE_JAR" -X POST "$CORE_URL/tasks" \
-  -H 'Origin: http://localhost:5173' \
-  -H 'Content-Type: application/json' \
-  -d '{"entity_id":"asset-1","components":{"command":{"type":"move_to_location","id":"move_to_location"},"parameters":{"latitude":38.8977,"longitude":-77.0365,"altitude_m":120.5}}}'
+curl -sS -b "$COOKIE_JAR" "$CORE_URL/command-catalog"
 ```
 
 Response:
 
 ```json
-{
-  "task_id": "command-...",
-  "status": "pending",
-  "entity_id": "asset-1",
-  "components": {
-    "command": {
-      "type": "move_to_location",
-      "id": "move_to_location"
-    },
-    "parameters": {
-      "latitude": 38.8977,
-      "longitude": -77.0365,
-      "altitude_m": 120.5
-    }
-  }
-}
+[]
 ```
 
 Log out; the `EXIT` trap removes the cookie jar even if logout fails:
@@ -665,31 +611,37 @@ curl -sS -b "$COOKIE_JAR" -X POST "$CORE_URL/entities" \
   -d '{"entity_id":"asset-1","entity_type":"asset","subtype":"drone","alias":"alpha","components":{}}'
 ```
 
-Create a task:
+Register the telemetry-only runtime with the empty production manifest:
 
 ```bash
-curl -sS -b "$COOKIE_JAR" -X POST "$CORE_URL/tasks" \
+RUNTIME_ID=runtime-local-1
+
+curl -sS -b "$COOKIE_JAR" -X POST "$CORE_URL/entities/asset-1/runtime" \
   -H "Origin: $UI_ORIGIN" \
   -H 'Content-Type: application/json' \
-  -d '{"task_id":"task-1","entity_id":"asset-1","components":{"target":{"latitude":38.8977,"longitude":-77.0365,"altitude_m":120.5}}}'
+  -d "{\"runtime_id\":\"$RUNTIME_ID\"}"
+
+curl -sS -b "$COOKIE_JAR" -X POST "$CORE_URL/entities/asset-1/runtime/ready" \
+  -H "Origin: $UI_ORIGIN" \
+  -H 'Content-Type: application/json' \
+  -d "{\"runtime_id\":\"$RUNTIME_ID\",\"manifest\":[]}"
 ```
 
-Check in and fetch pending work:
+Report telemetry:
 
 ```bash
-curl -sS -b "$COOKIE_JAR" -X POST "$CORE_URL/entities/asset-1/checkin?fields=minimal" \
+curl -sS -b "$COOKIE_JAR" -X POST "$CORE_URL/entities/asset-1/checkin" \
   -H "Origin: $UI_ORIGIN" \
   -H 'Content-Type: application/json' \
   -d '{"status":"online","latitude":38.8977,"longitude":-77.0365}'
 ```
 
-Complete the task:
+Confirm that no production Command is currently defined or deliverable:
 
 ```bash
-curl -sS -b "$COOKIE_JAR" -X PATCH "$CORE_URL/tasks/task-1" \
-  -H "Origin: $UI_ORIGIN" \
-  -H 'Content-Type: application/json' \
-  -d '{"status":"completed","extra":{"result":{"summary":"done"}}}'
+curl -sS -b "$COOKIE_JAR" "$CORE_URL/command-catalog"
+curl -sS -b "$COOKIE_JAR" "$CORE_URL/entities/asset-1/runtime/tasks" \
+  -H "Atlas-Runtime-ID: $RUNTIME_ID"
 ```
 
 Poll changes since version zero:

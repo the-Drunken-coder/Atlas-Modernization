@@ -9,6 +9,8 @@ import type {
   JSONValue,
   ObjectResource,
   ResourceType,
+  TaskCancellation,
+  TaskFailure,
   TaskResource
 } from "./protocol.js";
 
@@ -35,25 +37,30 @@ export type AtlasSubscription = WithoutAction<FeedSubscribeMessage>;
 
 export type ReadOptions = {
   fresh?: boolean;
+  signal?: AbortSignal;
 };
 
-export type TaskStatus = "pending" | "acknowledged" | "completed" | "failed" | "cancelled";
-
-export type TaskLifecycleOptions = {
-  ifMatchVersion?: number;
+export type TaskCreateOptions = {
+  idempotencyKey: string;
+  signal?: AbortSignal;
 };
 
-export type TaskCompleteOptions = TaskLifecycleOptions & {
-  result?: Record<string, JSONValue>;
+export type RuntimeContextOptions = {
+  runtimeId: string;
+  signal?: AbortSignal;
 };
 
-export type TaskFailOptions = TaskLifecycleOptions & {
-  error?: Record<string, JSONValue>;
+export type TaskCompleteOptions = RuntimeContextOptions & {
+  output?: JSONValue;
 };
 
-export type TaskStatusOptions = TaskLifecycleOptions & {
-  progress?: number;
-  message?: string;
+export type TaskFailOptions = RuntimeContextOptions & {
+  failure: TaskFailure;
+};
+
+export type TaskCancelOptions = {
+  cancellation: TaskCancellation;
+  signal?: AbortSignal;
 };
 
 export type EntityCheckInFields = "full" | "minimal";
@@ -70,11 +77,8 @@ type EntityCheckInBaseOptions = {
   status?: string;
   telemetry?: EntityCheckInTelemetry;
   components?: EntityComponents;
-  statusFilter?: readonly TaskStatus[];
-  limit?: number;
-  taskCursor?: string;
-  since?: string | Date;
   ifMatchVersion?: number;
+  signal?: AbortSignal;
 };
 
 export type EntityCheckInOptions<TFields extends EntityCheckInFields = EntityCheckInFields> = EntityCheckInBaseOptions &
@@ -125,22 +129,23 @@ export type ResourceByType = {
 
 export type ResourceValue = ResourceByType[ResourceType];
 export type ResourceOf<TType extends ResourceType> = ResourceByType[TType];
+export type DeletableResourceType = Exclude<ResourceType, "task">;
 export type ResourceForSubscription<TFilter extends AtlasSubscription> = TFilter extends { filter: "all" }
   ? ResourceValue
-  : TFilter extends { filter: "tasks_for_entity" }
+  : TFilter extends { filter: "tasks_for_asset" }
     ? TaskResource
     : TFilter extends { resource_type: infer TType extends ResourceType }
       ? ResourceOf<TType>
       : never;
 
 export type AtlasLocalDeleteWatchEvent = {
-  [TType in ResourceType]: {
+  [TType in DeletableResourceType]: {
     event: "local_delete";
     resource_type: TType;
     id: string;
     previous_version?: number;
   };
-}[ResourceType];
+}[DeletableResourceType];
 
 export type AtlasWatchEvent = FeedEvent | AtlasLocalDeleteWatchEvent;
 

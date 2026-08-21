@@ -24,7 +24,10 @@ const (
 	recoveryLogMigrationChecksum    = "7ae3a729125b872f1dc3a4265196dde2473ccc61ca3b5b820120d81278f917d8"
 	recoveryFloorMigrationName      = "recovery_log_floor_and_retention_index"
 	recoveryFloorMigrationChecksum  = "ac7ed32b7d9f4331bd0f8db417ea69e52148f1f5bbdb74f1b82a8b8ba3e62ead"
+	taskingRuntimeMigrationName     = "immutable_tasks_and_asset_runtimes"
+	taskingRuntimeMigrationChecksum = "cf7f05cff26ca1f39611175faa71dd6825f39efd0ddf7256af6cf0aea660b584"
 	fingerprintVersionV1            = 1
+	fingerprintVersionV2            = 2
 )
 
 var (
@@ -160,6 +163,72 @@ func coreSchemaMigrations() []schemaMigration {
 				 )
 				 WHERE clock.singleton`,
 				`CREATE INDEX idx_atlas_change_events_retention ON atlas_change_events(created_at, version)`,
+			},
+		},
+		{
+			version:            7,
+			name:               taskingRuntimeMigrationName,
+			checksum:           taskingRuntimeMigrationChecksum,
+			fingerprintVersion: fingerprintVersionV2,
+			statements: []string{
+				`DO $$ BEGIN
+					IF EXISTS (SELECT 1 FROM tasks LIMIT 1) THEN
+						RAISE EXCEPTION 'Atlas Task cutover requires an empty tasks table';
+					END IF;
+				END $$`,
+				`DO $$ BEGIN
+					IF EXISTS (
+						SELECT 1 FROM atlas_change_events
+						WHERE event->>'resource_type' = 'task'
+						LIMIT 1
+					) THEN
+						RAISE EXCEPTION 'Atlas Task cutover requires an empty Task change history';
+					END IF;
+				END $$`,
+				`ALTER TABLE atlas_change_events
+					DROP COLUMN before_task_entity_id,
+					DROP COLUMN after_task_entity_id,
+					ADD COLUMN task_asset_id VARCHAR(50)`,
+				`DROP TABLE tasks`,
+				`CREATE TABLE asset_runtimes (
+					asset_id VARCHAR(50) PRIMARY KEY REFERENCES entities(entity_id) ON DELETE CASCADE,
+					runtime_id VARCHAR(255) NOT NULL,
+					ready BOOLEAN NOT NULL DEFAULT FALSE,
+					manifest JSONB NOT NULL DEFAULT '[]',
+					registered_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+					ready_at TIMESTAMPTZ
+				)`,
+				`CREATE UNIQUE INDEX idx_asset_runtimes_runtime ON asset_runtimes(runtime_id)`,
+				`CREATE TABLE tasks (
+					task_id VARCHAR(50) PRIMARY KEY,
+					asset_id VARCHAR(50) NOT NULL,
+					command VARCHAR(255) NOT NULL,
+					input JSONB NOT NULL,
+					status TEXT NOT NULL DEFAULT 'pending',
+					progress DOUBLE PRECISION,
+					output JSONB,
+					failure JSONB,
+					cancellation JSONB,
+					idempotency_key TEXT NOT NULL UNIQUE,
+					runtime_id VARCHAR(255) NOT NULL,
+					created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+					acknowledged_at TIMESTAMPTZ,
+					started_at TIMESTAMPTZ,
+					finished_at TIMESTAMPTZ,
+					updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+					version BIGINT NOT NULL,
+					CONSTRAINT tasks_status_valid CHECK (status IN ('pending', 'acknowledged', 'in_progress', 'completed', 'failed', 'cancelled')),
+					CONSTRAINT tasks_progress_valid CHECK (progress IS NULL OR (progress >= 0 AND progress <= 1)),
+					CONSTRAINT tasks_version_positive CHECK (version > 0)
+				)`,
+				`CREATE INDEX idx_tasks_status ON tasks(status)`,
+				`CREATE INDEX idx_tasks_asset_id ON tasks(asset_id)`,
+				`CREATE INDEX idx_tasks_runtime_status ON tasks(runtime_id, status)`,
+				`CREATE INDEX idx_tasks_created_cursor ON tasks(created_at DESC, task_id DESC)`,
+				`CREATE INDEX idx_tasks_updated_cursor ON tasks(updated_at DESC, task_id DESC)`,
+				`CREATE INDEX idx_tasks_asset_created_cursor ON tasks(asset_id, created_at DESC, task_id DESC)`,
+				`CREATE INDEX idx_tasks_asset_updated_cursor ON tasks(asset_id, updated_at DESC, task_id DESC)`,
+				`CREATE INDEX idx_tasks_version ON tasks(version DESC, task_id DESC)`,
 			},
 		},
 	}

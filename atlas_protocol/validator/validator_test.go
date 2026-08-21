@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"math"
 	"os"
-	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -25,80 +24,33 @@ func TestSchemaLoadsFromEmbeddedFiles(t *testing.T) {
 }
 
 func TestValidateCommandCatalogIncludesSemanticRules(t *testing.T) {
-	valid := map[string]any{
-		"type":        "command_catalog",
-		"name":        "Commands",
-		"description": "Test catalog",
-		"commands": []any{
-			map[string]any{
-				"id":          "set_speed",
-				"name":        "Set Speed",
-				"description": "Set speed.",
-				"parameters_schema": map[string]any{
-					"speed": map[string]any{"type": "number", "description": "Speed", "required": true, "minimum": 0.0, "maximum": 10.0},
-				},
-			},
-		},
-	}
+	valid := []any{map[string]any{
+		"command": "fixture.immediate", "name": "Immediate", "description": "Run now.",
+		"input_schema": "atlas.tasking.FixtureInput", "scheduling": "immediate",
+	}}
 	if errors := ValidateCommandCatalog(valid); len(errors) != 0 {
 		t.Fatalf("ValidateCommandCatalog(valid) errors = %v", errors)
 	}
 
-	invalid := map[string]any{
-		"type":        "command_catalog",
-		"name":        "Commands",
-		"description": "Test catalog",
-		"commands": []any{
-			map[string]any{
-				"id": "duplicate", "name": "First", "description": "First.",
-				"parameters_schema": map[string]any{
-					"count": map[string]any{"type": "number", "description": "Count", "required": false, "minimum": 2, "maximum": 1},
-					"label": map[string]any{"type": "string", "description": "Label", "required": false, "minimum": 1},
-				},
-			},
-			map[string]any{"id": "duplicate", "name": "Second", "description": "Second.", "parameters_schema": map[string]any{}},
-		},
+	invalid := []any{
+		map[string]any{"command": "fixture.duplicate", "name": "First", "description": "First.", "input_schema": "atlas.tasking.FixtureInput"},
+		map[string]any{"command": "fixture.duplicate", "name": "Second", "description": "Second.", "input_schema": "atlas.tasking.FixtureInput"},
 	}
 	errors := ValidateCommandCatalog(invalid)
 	joined := strings.Join(errors, "\n")
-	for _, want := range []string{"duplicate", "minimum exceeds maximum", "bounds require number type"} {
+	for _, want := range []string{"duplicated", "fixture.duplicate"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("ValidateCommandCatalog(invalid) errors = %v, want %q", errors, want)
 		}
 	}
 }
 
-func TestValidateCommandCatalogRejectsNonNumericBounds(t *testing.T) {
-	invalid := map[string]any{
-		"type": "command_catalog", "name": "Commands", "description": "Test catalog",
-		"commands": []any{map[string]any{
-			"id": "set_speed", "name": "Set Speed", "description": "Set speed.",
-			"parameters_schema": map[string]any{
-				"speed": map[string]any{"type": "number", "description": "Speed", "required": true, "minimum": "fast"},
-			},
-		}},
+func TestValidateDefinitionUsesNamedCommandSchema(t *testing.T) {
+	if errors := ValidateDefinition("FixtureInput", map[string]any{"value": "inspect"}); len(errors) > 0 {
+		t.Fatalf("ValidateDefinition(valid) errors = %v", errors)
 	}
-	if errors := ValidateCommandCatalog(invalid); len(errors) == 0 {
-		t.Fatal("expected a non-numeric minimum to be rejected")
-	}
-}
-
-func TestValidateCommandCatalogComparesJSONNumberBounds(t *testing.T) {
-	invalid := map[string]any{
-		"type": "command_catalog", "name": "Commands", "description": "Test catalog",
-		"commands": []any{map[string]any{
-			"id": "set_speed", "name": "Set Speed", "description": "Set speed.",
-			"parameters_schema": map[string]any{
-				"speed": map[string]any{
-					"type": "number", "description": "Speed", "required": true,
-					"minimum": json.Number("10"), "maximum": json.Number("1"),
-				},
-			},
-		}},
-	}
-	if errors := ValidateCommandCatalog(invalid); !strings.Contains(strings.Join(errors, "\n"), "minimum exceeds maximum") {
-		t.Fatalf("ValidateCommandCatalog errors = %v, want reversed-bound error", errors)
-	}
+	assertAnyContains(t, ValidateDefinition("FixtureInput", map[string]any{}), "value")
+	assertAnyContains(t, ValidateDefinition("MissingDefinition", map[string]any{}), "not found")
 }
 
 func TestConcurrentValidationIsSafe(t *testing.T) {
@@ -142,15 +94,6 @@ func TestUnknownComponentValidationUsesSchemaFields(t *testing.T) {
 		t.Fatalf("ValidateEntityComponents(valid schema/custom fields) errors = %v", errors)
 	}
 
-	errors := ValidateTaskComponents(map[string]any{
-		"z_unknown": true,
-		"a_unknown": true,
-		"command":   map[string]any{"type": "move_to_location"},
-	})
-	want := []string{`Unknown component "a_unknown"`, `Unknown component "z_unknown"`}
-	if !reflect.DeepEqual(errors, want) {
-		t.Fatalf("ValidateTaskComponents unknown errors = %v, want %v", errors, want)
-	}
 }
 
 func TestNonFinitePaths(t *testing.T) {
@@ -216,41 +159,6 @@ func TestNonFinitePaths(t *testing.T) {
 			}
 			if errors[0] != tt.want {
 				t.Fatalf("errors[0] = %q, want %q", errors[0], tt.want)
-			}
-		})
-	}
-}
-
-func TestValidateTaskParametersComponentPrefixing(t *testing.T) {
-	invalid := map[string]any{"latitude": 91.0}
-
-	tests := []struct {
-		name       string
-		prefix     string
-		wantPrefix string
-	}{
-		{name: "plain prefix", prefix: "parameters", wantPrefix: "parameters."},
-		{name: "trailing dot trimmed", prefix: "parameters.", wantPrefix: "parameters."},
-		{name: "whitespace-only prefix passthrough", prefix: "   ", wantPrefix: ""},
-		{name: "empty prefix passthrough", prefix: "", wantPrefix: ""},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			errors := ValidateTaskParametersComponent(invalid, tt.prefix)
-			if len(errors) == 0 {
-				t.Fatal("expected errors for invalid latitude")
-			}
-			for _, message := range errors {
-				if tt.wantPrefix != "" && !strings.HasPrefix(message, tt.wantPrefix) {
-					t.Fatalf("error %q does not start with %q", message, tt.wantPrefix)
-				}
-				if tt.wantPrefix == "" && strings.HasPrefix(message, ".") {
-					t.Fatalf("error %q has stray leading dot", message)
-				}
-				if !strings.Contains(message, "latitude") {
-					t.Fatalf("error %q does not mention latitude", message)
-				}
 			}
 		})
 	}
@@ -373,7 +281,15 @@ func TestRequestExamplesValidate(t *testing.T) {
 		{"entity_create", "../examples/requests/entity-create.json", ValidateEntityCreateRequest},
 		{"entity_update", "../examples/requests/entity-update.json", ValidateEntityUpdateRequest},
 		{"task_create", "../examples/requests/task-create.json", ValidateTaskCreateRequest},
-		{"task_update", "../examples/requests/task-update.json", ValidateTaskUpdateRequest},
+		{"task_acknowledge", "../examples/requests/tasks/acknowledge.json", ValidateTaskAcknowledgeRequest},
+		{"task_start", "../examples/requests/tasks/start.json", ValidateTaskStartRequest},
+		{"task_progress", "../examples/requests/tasks/progress.json", ValidateTaskProgressRequest},
+		{"task_complete", "../examples/requests/tasks/complete.json", ValidateTaskCompleteRequest},
+		{"task_fail", "../examples/requests/tasks/fail.json", ValidateTaskFailRequest},
+		{"task_cancel", "../examples/requests/tasks/cancel.json", ValidateTaskCancelRequest},
+		{"runtime_register", "../examples/requests/runtime/register.json", ValidateRuntimeRegistrationRequest},
+		{"runtime_stop", "../examples/requests/runtime/stop.json", ValidateRuntimeStopRequest},
+		{"runtime_ready", "../examples/requests/runtime/ready.json", ValidateRuntimeReadyRequest},
 		{"object_create", "../examples/requests/object-create.json", ValidateObjectCreateRequest},
 		{"object_update", "../examples/requests/object-update.json", ValidateObjectUpdateRequest},
 	}
@@ -464,13 +380,21 @@ func TestRequestValidationConformance(t *testing.T) {
 		t.Fatal(err)
 	}
 	validators := map[string]func(any) []string{
-		"EntityCreateRequest":  ValidateEntityCreateRequest,
-		"EntityCheckInRequest": ValidateEntityCheckInRequest,
-		"EntityUpdateRequest":  ValidateEntityUpdateRequest,
-		"TaskCreateRequest":    ValidateTaskCreateRequest,
-		"TaskUpdateRequest":    ValidateTaskUpdateRequest,
-		"ObjectCreateRequest":  ValidateObjectCreateRequest,
-		"ObjectUpdateRequest":  ValidateObjectUpdateRequest,
+		"EntityCreateRequest":        ValidateEntityCreateRequest,
+		"EntityCheckInRequest":       ValidateEntityCheckInRequest,
+		"EntityUpdateRequest":        ValidateEntityUpdateRequest,
+		"TaskCreateRequest":          ValidateTaskCreateRequest,
+		"TaskAcknowledgeRequest":     ValidateTaskAcknowledgeRequest,
+		"TaskStartRequest":           ValidateTaskStartRequest,
+		"TaskProgressRequest":        ValidateTaskProgressRequest,
+		"TaskCompleteRequest":        ValidateTaskCompleteRequest,
+		"TaskFailRequest":            ValidateTaskFailRequest,
+		"TaskCancelRequest":          ValidateTaskCancelRequest,
+		"RuntimeRegistrationRequest": ValidateRuntimeRegistrationRequest,
+		"RuntimeStopRequest":         ValidateRuntimeStopRequest,
+		"RuntimeReadyRequest":        ValidateRuntimeReadyRequest,
+		"ObjectCreateRequest":        ValidateObjectCreateRequest,
+		"ObjectUpdateRequest":        ValidateObjectUpdateRequest,
 	}
 
 	for _, testCase := range cases {
@@ -548,7 +472,6 @@ func TestRequestValidationRejectsEmptyUpdatesAndUnknownFields(t *testing.T) {
 		validate func(any) []string
 	}{
 		{"entity_update_empty", "../examples/requests/invalid-entity-update-empty.json", ValidateEntityUpdateRequest},
-		{"task_update_empty", "../examples/requests/invalid-task-update-empty.json", ValidateTaskUpdateRequest},
 		{"object_update_empty", "../examples/requests/invalid-object-update-empty.json", ValidateObjectUpdateRequest},
 	}
 	for _, tt := range tests {
@@ -558,7 +481,7 @@ func TestRequestValidationRejectsEmptyUpdatesAndUnknownFields(t *testing.T) {
 		})
 	}
 
-	errors := ValidateTaskCreateRequest(json.RawMessage(`{"task_id":"task-unknown","unknown":true}`))
+	errors := ValidateTaskCreateRequest(json.RawMessage(`{"asset_id":"asset-unknown","command":"fixture.immediate","input":{},"unknown":true}`))
 	assertAnyContains(t, errors, "unknown")
 }
 
@@ -570,8 +493,6 @@ func TestRequestValidationRejectsUnknownComponents(t *testing.T) {
 	}{
 		{"entity_create", `{"entity_id":"asset-unknown","entity_type":"asset","components":{"typo":true}}`, ValidateEntityCreateRequest},
 		{"entity_update", `{"components":{"typo":true}}`, ValidateEntityUpdateRequest},
-		{"task_create", `{"task_id":"task-unknown","components":{"typo":true}}`, ValidateTaskCreateRequest},
-		{"task_update", `{"components":{"typo":true}}`, ValidateTaskUpdateRequest},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -581,20 +502,17 @@ func TestRequestValidationRejectsUnknownComponents(t *testing.T) {
 	}
 }
 
-func TestTaskCreateRequestCommandTaskIDRules(t *testing.T) {
-	validCommand := json.RawMessage(`{"entity_id":"asset-command","components":{"command":{"type":"goto"},"parameters":{"latitude":38,"longitude":-77}}}`)
-	if errors := ValidateTaskCreateRequest(validCommand); len(errors) > 0 {
-		t.Fatalf("ValidateTaskCreateRequest(command without task_id) errors = %v", errors)
+func TestTaskCreateRequestRequiresImmutableTaskingInput(t *testing.T) {
+	valid := json.RawMessage(`{"asset_id":"asset-command","command":"fixture.immediate","input":{"value":1}}`)
+	if errors := ValidateTaskCreateRequest(valid); len(errors) > 0 {
+		t.Fatalf("ValidateTaskCreateRequest(valid) errors = %v", errors)
 	}
 
-	tests := []struct {
-		name    string
-		payload string
-		want    string
-	}{
-		{"normal_task_requires_task_id", `{"status":"pending"}`, "task_id"},
-		{"command_task_rejects_task_id", `{"task_id":"task-command","entity_id":"asset-command","components":{"command":{"type":"goto"}}}`, "task_id"},
-		{"command_task_requires_entity_id", `{"components":{"command":{"type":"goto"}}}`, "entity_id"},
+	tests := []struct{ name, payload, want string }{
+		{"missing_asset", `{"command":"fixture.immediate","input":{}}`, "asset_id"},
+		{"missing_command", `{"asset_id":"asset-command","input":{}}`, "command"},
+		{"missing_input", `{"asset_id":"asset-command","command":"fixture.immediate"}`, "input"},
+		{"client_task_id", `{"task_id":"task-command","asset_id":"asset-command","command":"fixture.immediate","input":{}}`, "task_id"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

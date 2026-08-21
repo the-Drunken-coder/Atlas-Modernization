@@ -24,7 +24,7 @@ PostgreSQL and the configured MinIO bucket form one logical durable store in pro
 
 The managed schema contains:
 
-- `entities`, `tasks`, and `objects`
+- `entities`, `asset_runtimes`, `tasks`, and `objects`
 - `atlas_change_clock` and `atlas_change_events`, the transactional ordered change stream
 - `storage_deletion_outbox` durable blob-deletion retries
 - `storage_upload_intents` leased upload ownership and crash recovery
@@ -73,6 +73,8 @@ Migration v5 bounds that recovery log without coupling retention to object-stora
 
 Migration v6 corrects upgraded databases whose pre-change-stream resource versions have no corresponding recovery events. It advances `min_retained_version` to the earliest complete recovery cursor, so those clients receive `CURSOR_EXPIRED` instead of an empty response that falsely advances them across missing history. It also adds the `(created_at, version)` retention index. Pruning deletes bounded batches and commits each batch separately so resource mutations can acquire the change-clock lock between batches.
 
+Migration v7 replaces the empty legacy Task table with immutable Tasks and adds runtime registration for assets. It records catalog fingerprint v2, which treats the dense order of live columns as schema identity so PostgreSQL dump and restore can compact dropped-column storage gaps without causing false schema-drift failures.
+
 Inspect the current production version with:
 
 ```bash
@@ -100,7 +102,7 @@ Example shape:
     version: 5,
     name: "add_entity_priority",
     checksum: "<frozen sha256>",
-    fingerprintVersion: fingerprintVersionV1,
+    fingerprintVersion: fingerprintVersionV2,
     statements: []string{
         `ALTER TABLE entities ADD COLUMN priority INTEGER`,
         `CREATE INDEX idx_entities_priority ON entities(priority)`,

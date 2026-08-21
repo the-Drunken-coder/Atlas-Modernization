@@ -8,10 +8,6 @@ func ValidateEntityBlob(value any) []string {
 	return validator.ValidateEntityBlob(value)
 }
 
-func ValidateTaskBlob(value any) []string {
-	return validator.ValidateTaskBlob(value)
-}
-
 func ValidateObjectBlob(value any) []string {
 	return validator.ValidateObjectBlob(value)
 }
@@ -42,10 +38,6 @@ func ValidateProtocolRevisionResponse(value any) []string {
 
 func ValidateEntityCheckInRequest(value any) []string {
 	return validator.ValidateEntityCheckInRequest(value)
-}
-
-func ValidateEntityCheckInMinimalTask(value any) []string {
-	return validator.ValidateEntityCheckInMinimalTask(value)
 }
 
 func ValidateEntityCheckInFullResponse(value any) []string {
@@ -80,8 +72,44 @@ func ValidateTaskCreateRequest(value any) []string {
 	return validator.ValidateTaskCreateRequest(value)
 }
 
-func ValidateTaskUpdateRequest(value any) []string {
-	return validator.ValidateTaskUpdateRequest(value)
+func ValidateTaskAcknowledgeRequest(value any) []string {
+	return validator.ValidateTaskAcknowledgeRequest(value)
+}
+
+func ValidateTaskStartRequest(value any) []string {
+	return validator.ValidateTaskStartRequest(value)
+}
+
+func ValidateTaskProgressRequest(value any) []string {
+	return validator.ValidateTaskProgressRequest(value)
+}
+
+func ValidateTaskCompleteRequest(value any) []string {
+	return validator.ValidateTaskCompleteRequest(value)
+}
+
+func ValidateTaskFailRequest(value any) []string {
+	return validator.ValidateTaskFailRequest(value)
+}
+
+func ValidateTaskCancelRequest(value any) []string {
+	return validator.ValidateTaskCancelRequest(value)
+}
+
+func ValidateRuntimeRegistrationRequest(value any) []string {
+	return validator.ValidateRuntimeRegistrationRequest(value)
+}
+
+func ValidateRuntimeStopRequest(value any) []string {
+	return validator.ValidateRuntimeStopRequest(value)
+}
+
+func ValidateRuntimeReadyRequest(value any) []string {
+	return validator.ValidateRuntimeReadyRequest(value)
+}
+
+func ValidateRuntimeTaskDeliveryResponse(value any) []string {
+	return validator.ValidateRuntimeTaskDeliveryResponse(value)
 }
 
 func ValidateObjectCreateRequest(value any) []string {
@@ -128,28 +156,16 @@ func ValidateEntityComponents(value any) []string {
 	return validator.ValidateEntityComponents(value)
 }
 
-func ValidateTaskComponents(value any) []string {
-	return validator.ValidateTaskComponents(value)
-}
-
-func ValidateCommandComponent(value any) []string {
-	return validator.ValidateCommandComponent(value)
-}
-
 func ValidateCommandCatalog(value any) []string {
 	return validator.ValidateCommandCatalog(value)
 }
 
-func ValidateTaskParametersComponent(value any, fieldPrefix string) []string {
-	return validator.ValidateTaskParametersComponent(value, fieldPrefix)
+func ValidateCommandManifest(value any) []string {
+	return validator.ValidateCommandManifest(value)
 }
 
-func ValidateTaskProgressComponent(value any) []string {
-	return validator.ValidateTaskProgressComponent(value)
-}
-
-func ValidateTaskCatalogComponent(value any) []string {
-	return validator.ValidateTaskCatalogComponent(value)
+func ValidateCommandManifestEntry(value any) []string {
+	return validator.ValidateCommandManifestEntry(value)
 }
 
 func ValidateMediaRefsComponent(value any) []string {
@@ -170,10 +186,6 @@ func ValidateSensorRefsComponent(value any) []string {
 
 func ValidateCommunicationsComponent(value any) []string {
 	return validator.ValidateCommunicationsComponent(value)
-}
-
-func ValidateTaskQueueComponent(value any) []string {
-	return validator.ValidateTaskQueueComponent(value)
 }
 
 func ValidateStatusComponent(value any) []string {

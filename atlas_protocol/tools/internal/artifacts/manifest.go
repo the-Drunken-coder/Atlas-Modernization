@@ -50,10 +50,23 @@ func BuildArtifacts(root string) ([]Artifact, error) {
 	if err != nil {
 		return nil, err
 	}
+	commandCatalog, err := buildCommandCatalog(root, bundle)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateTaskingFixtureCatalog(root, bundle); err != nil {
+		return nil, err
+	}
+	goCommandCatalog, err := goCommandCatalogSource(commandCatalog)
+	if err != nil {
+		return nil, err
+	}
 
 	artifacts := []Artifact{
+		{Path: "generated/command_catalog.json", Content: commandCatalog},
 		{Path: "generated/revision.txt", Content: revisionTextSource(revision)},
 		{Path: "generated/go/atlasprotocol/revision.go", Content: goRevision},
+		{Path: "generated/go/atlasprotocol/command_catalog.go", Content: goCommandCatalog},
 		{Path: "generated/go/atlasprotocol/validators.go", Content: goValidators},
 		{Path: "generated/typescript/index.ts", Content: typescriptSource},
 	}

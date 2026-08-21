@@ -1,16 +1,7 @@
 {
-  "entity_id": "asset-001",
-  "components": {
-    "command": {
-      "type": "goto",
-      "id": "goto"
-    },
-    "parameters": {
-      "latitude": 38.8977,
-      "longitude": -77.0365
-    }
-  },
-  "extra": {
-    "priority": "normal"
+  "asset_id": "asset-001",
+  "command": "fixture.queued",
+  "input": {
+    "value": "inspect-sector-7"
   }
 }
