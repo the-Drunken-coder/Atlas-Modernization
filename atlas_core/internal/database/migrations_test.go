@@ -141,6 +141,27 @@ func TestTaskingRuntimeMigrationDefinitionIsFrozen(t *testing.T) {
 	}
 }
 
+func TestRuntimeGenerationsMigrationDefinitionIsFrozen(t *testing.T) {
+	migration := coreSchemaMigrations()[7]
+	if actual := migrationChecksum(migration); actual != runtimeGenerationsMigrationChecksum {
+		t.Fatalf("runtime-generations migration checksum = %s, want %s", actual, runtimeGenerationsMigrationChecksum)
+	}
+	if migration.fingerprintVersion != fingerprintVersionV2 {
+		t.Fatalf("runtime-generations fingerprint version = %d, want %d", migration.fingerprintVersion, fingerprintVersionV2)
+	}
+	ddl := strings.Join(migration.statements, "\n")
+	for _, required := range []string{
+		"CREATE TABLE asset_runtime_generations",
+		"INSERT INTO asset_runtime_generations",
+		"ADD COLUMN stopped BOOLEAN NOT NULL",
+		"asset_runtimes_generation_fk",
+	} {
+		if !strings.Contains(ddl, required) {
+			t.Fatalf("runtime-generations migration is missing %q", required)
+		}
+	}
+}
+
 func TestMigrationDefinitionsAreValid(t *testing.T) {
 	if err := validateMigrationDefinitions(coreSchemaMigrations()); err != nil {
 		t.Fatalf("migration definitions: %v", err)
@@ -439,6 +460,45 @@ func TestTaskingRuntimeMigrationReplacesEmptyTaskTable(t *testing.T) {
 		if present != wantPresent {
 			t.Fatalf("change-event column %s present = %t, want %t", column, present, wantPresent)
 		}
+	}
+	assertCurrentMigration(ctx, t, db)
+}
+
+func TestRuntimeGenerationsMigrationPreservesCurrentRuntime(t *testing.T) {
+	dbURL := migrationTestSchema(t)
+	db := openMigrationTestDB(t, dbURL, false)
+	defer db.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	migrations := coreSchemaMigrations()
+	if err := db.ensureTables(ctx, migrations[:7]); err != nil {
+		t.Fatalf("install schema through version seven: %v", err)
+	}
+	if _, err := db.Pool.Exec(ctx, `
+		UPDATE atlas_change_clock SET version = 1 WHERE singleton;
+		INSERT INTO entities (entity_id, type, json, version) VALUES ('migration-runtime-asset', 'asset', '{}', 1);
+		INSERT INTO asset_runtimes (asset_id, runtime_id, ready, manifest)
+		VALUES ('migration-runtime-asset', 'migration-runtime-1', TRUE, '[]');
+	`); err != nil {
+		t.Fatalf("seed version-seven runtime: %v", err)
+	}
+
+	if err := db.EnsureTables(ctx); err != nil {
+		t.Fatalf("upgrade runtime generation schema: %v", err)
+	}
+	var generation int64
+	var stopped bool
+	if err := db.Pool.QueryRow(ctx, `
+		SELECT generation, stopped
+		FROM asset_runtime_generations
+		JOIN asset_runtimes USING (asset_id, runtime_id)
+		WHERE asset_id = 'migration-runtime-asset' AND runtime_id = 'migration-runtime-1'
+	`).Scan(&generation, &stopped); err != nil {
+		t.Fatalf("read migrated runtime generation: %v", err)
+	}
+	if generation != 1 || stopped {
+		t.Fatalf("migrated runtime generation = %d, stopped:%t", generation, stopped)
 	}
 	assertCurrentMigration(ctx, t, db)
 }

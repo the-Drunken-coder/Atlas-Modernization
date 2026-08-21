@@ -92,6 +92,7 @@ func TestRecoveryFloorMigrationExpiresUnrepresentedLegacyCursor(t *testing.T) {
 		)`, nil},
 		{`DROP TABLE tasks`, nil},
 		{`DROP TABLE asset_runtimes`, nil},
+		{`DROP TABLE asset_runtime_generations`, nil},
 		{`CREATE TABLE tasks (
 			task_id VARCHAR(50) PRIMARY KEY,
 			status VARCHAR(50) NOT NULL DEFAULT 'pending',
