@@ -823,7 +823,11 @@ function assignJSONMember(member: PendingJSONMember, value: JSONValue): void {
 
 function hasJSONRecordPrototype(value: object): boolean {
   const prototype = Object.getPrototypeOf(value);
-  return prototype === null || Object.getPrototypeOf(prototype) === null;
+  if (prototype === null) return true;
+  return (
+    Object.getPrototypeOf(prototype) === null &&
+    Reflect.ownKeys(prototype).every((key) => !Reflect.getOwnPropertyDescriptor(prototype, key)?.enumerable)
+  );
 }
 
 function delay(milliseconds: number, signal: AbortSignal): Promise<void> {

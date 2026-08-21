@@ -1045,6 +1045,10 @@ describe("AtlasAssetRuntime", () => {
     ["boxed primitive", () => Object(1)],
     ["non-record object", () => new Map([["value", 1]])],
     [
+      "enumerable inherited property",
+      () => Object.create(Object.assign(Object.create(null) as Record<string, unknown>, { inherited: 1 }))
+    ],
+    [
       "cyclic proxy prototype",
       () => {
         let output!: object;
