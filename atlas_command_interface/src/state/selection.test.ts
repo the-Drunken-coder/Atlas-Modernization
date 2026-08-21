@@ -10,10 +10,11 @@ describe("sidebar reducer", () => {
   });
 
   it("opens a list mode and expands the rail", () => {
-    const collapsed: SidebarState = { ...initialSidebarState, collapsed: true };
+    const collapsed: SidebarState = { ...initialSidebarState, collapsed: true, restoreFocusId: "asset-1" };
     const next = sidebarReducer(collapsed, { type: "openList", list: "geofeatures" });
     expect(next.collapsed).toBe(false);
     expect(next.view).toEqual({ mode: "list", list: "geofeatures" });
+    expect(next.restoreFocusId).toBeNull();
   });
 
   it("switches to inspector mode when an entity is selected and remembers the list", () => {
@@ -98,10 +99,12 @@ describe("sidebar reducer", () => {
     const back = sidebarReducer(selected, { type: "back" });
     expect(back.view).toEqual({ mode: "list", list: "geofeatures" });
     expect(back.selection).toEqual({ kind: "geofeature", id: "geo-1" });
+    expect(back.restoreFocusId).toBe("geo-1");
 
     const cleared = sidebarReducer(selected, { type: "clearSelection" });
     expect(cleared.view).toEqual({ mode: "list", list: "geofeatures" });
     expect(cleared.selection).toBeNull();
+    expect(cleared.restoreFocusId).toBeNull();
   });
 
   it("maps entity kinds to list kinds", () => {

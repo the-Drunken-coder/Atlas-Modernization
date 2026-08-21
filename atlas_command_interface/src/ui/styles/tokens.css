@@ -16,7 +16,7 @@
 
   --text-1: #f6f7f9;
   --text-2: #abb3bf;
-  --text-3: #738091;
+  --text-3: #99a3b0;
   --text-on-accent: #ffffff;
 
   --accent: #2d72d2;
@@ -176,6 +176,7 @@ select {
   right: 8px;
   transform: translateY(-50%);
   color: var(--text-3);
+  pointer-events: none;
 }
 
 .bp6-icon {

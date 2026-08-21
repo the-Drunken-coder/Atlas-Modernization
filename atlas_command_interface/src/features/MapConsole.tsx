@@ -512,7 +512,7 @@ function ListBody({
     <EntityList
       entities={entitiesByKind(snapshot, kind)}
       selectedId={selectedEntity?.entity_id}
-      restoreFocusId={sidebar.focusRequest?.id}
+      restoreFocusId={sidebar.restoreFocusId ?? undefined}
       query={entityQueries[kind]}
       emptyLabel={`No ${LIST_TITLES[list].toLowerCase()} yet`}
       onSelect={onSelectEntity}

@@ -53,7 +53,7 @@ function Harness({
             <EntityList
               entities={entities}
               selectedId={state.selection?.id}
-              restoreFocusId={state.focusRequest?.id}
+              restoreFocusId={state.restoreFocusId ?? undefined}
               query={query}
               emptyLabel="none"
               onSelect={(entity) =>
@@ -124,6 +124,18 @@ describe("sidebar rail + panel", () => {
     expect(selectedRow).toHaveFocus();
     expect(selectedRow).toHaveAttribute("aria-current", "true");
     expect(screen.getByRole("button", { name: /Rover Two/ })).not.toHaveAttribute("aria-current");
+  });
+
+  it("keeps focus on the rail when navigating directly from an inspector", async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+
+    await user.click(screen.getByRole("button", { name: /Rover One/ }));
+    const assetsButton = screen.getByRole("button", { name: "Assets" });
+    await user.click(assetsButton);
+
+    expect(assetsButton).toHaveFocus();
+    expect(screen.getByRole("button", { name: /Rover One/ })).not.toHaveFocus();
   });
 
   it("filters entity rows without changing the source list", async () => {
