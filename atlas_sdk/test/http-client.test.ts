@@ -311,6 +311,10 @@ describe("AtlasClient HTTP", () => {
     expect(isJSONValue(createPrototype())).toBe(false);
   });
 
+  it("rejects sparse JSON arrays", () => {
+    expect(isJSONValue(Array(1))).toBe(false);
+  });
+
   it("rejects malformed generated entity create validator geometry and timestamps", () => {
     expect(
       isEntityCreateRequest({ entity_id: "asset-valid", entity_type: "asset", published_at: "2026-06-18T12:00:00Z" })

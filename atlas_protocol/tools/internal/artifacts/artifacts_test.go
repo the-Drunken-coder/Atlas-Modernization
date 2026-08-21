@@ -234,6 +234,7 @@ func TestTypeScriptSourceGeneratesTaskCreateValidatorFromSchema(t *testing.T) {
 		"const active = new WeakSet<object>()",
 		"while (work.length > 0)",
 		"return Object.getPrototypeOf(prototype) === null",
+		"Array.from({ length: current.length }, (_, index) => current[index])",
 		"active.delete(item.leave)",
 		"if (active.has(current)) return false",
 		"export function isJSONValue(value: unknown): value is JSONValue",

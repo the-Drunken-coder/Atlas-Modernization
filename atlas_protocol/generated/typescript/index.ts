@@ -863,7 +863,9 @@ function atlasProtocolIsJSONValue(value: unknown): value is JSONValue {
     if (active.has(current)) return false;
     active.add(current);
     work.push({ leave: current });
-    const children = Object.values(current);
+    const children = Array.isArray(current)
+      ? Array.from({ length: current.length }, (_, index) => current[index])
+      : Object.values(current);
     for (let index = children.length - 1; index >= 0; index--) {
       work.push({ value: children[index] });
     }
