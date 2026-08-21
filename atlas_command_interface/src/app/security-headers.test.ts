@@ -25,7 +25,7 @@ describe("Cloudflare Pages security headers", () => {
     expect(cspDirective("child-src")).toEqual(["blob:"]);
   });
 
-  it("allows the production Core transports and every configured raster provider origin", () => {
+  it("matches every configured raster origin even when provider credentials are absent", () => {
     const config = appConfigFromEnv({
       DEV: false,
       MODE: "production",
@@ -41,11 +41,11 @@ describe("Cloudflare Pages security headers", () => {
     const connectSources = cspDirective("connect-src");
     const imageSources = cspDirective("img-src");
 
-    expect(connectSources).toEqual(expect.arrayContaining(["'self'", coreOrigin, websocketOrigin, ...providerOrigins]));
+    expect(connectSources).toEqual(["'self'", coreOrigin, websocketOrigin, ...providerOrigins]);
     expect(connectSources).not.toContain("*");
     expect(connectSources).not.toContain("https:");
     expect(connectSources).not.toContain("wss:");
-    expect(imageSources).toEqual(expect.arrayContaining(["'self'", "data:", "blob:", ...providerOrigins]));
+    expect(imageSources).toEqual(["'self'", "data:", "blob:", ...providerOrigins]);
   });
 
   it("allows the Core origin selected for a custom Pages build", () => {
@@ -95,5 +95,5 @@ function rasterTileOrigins(config: AppConfig): string[] {
         return rasterSource?.tiles?.map((tile) => new URL(tile).origin) ?? [];
       })
     )
-  ].sort();
+  ];
 }

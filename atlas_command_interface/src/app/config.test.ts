@@ -19,22 +19,38 @@ describe("appConfigFromEnv", () => {
       defaultMapSourceId: "maptiler-osm-dark"
     });
     expect(
-      config.mapSources.map(({ id, style, unavailableReason }) => ({
+      config.mapSources.map(({ id, label, style, unavailableReason }) => ({
         id,
+        label,
         available: Boolean(style),
         unavailableReason
       }))
     ).toEqual([
-      { id: "google-satellite", available: false, unavailableReason: "missing key" },
-      { id: "openstreetmap-default", available: true, unavailableReason: undefined },
-      { id: "usgs-topo", available: true, unavailableReason: undefined },
-      { id: "mapbox-satellite", available: false, unavailableReason: "missing key" },
-      { id: "mapbox-outdoors", available: false, unavailableReason: "missing key" },
-      { id: "mapbox-dark", available: false, unavailableReason: "missing key" },
-      { id: "thunderforest-outdoors", available: false, unavailableReason: "missing key" },
-      { id: "maptiler-satellite", available: false, unavailableReason: "missing key" },
-      { id: "maptiler-osm-dark", available: false, unavailableReason: "missing key" },
-      { id: "openmaptiles-dark-matter", available: true, unavailableReason: undefined }
+      { id: "google-satellite", label: "Google Satellite", available: false, unavailableReason: "missing key" },
+      {
+        id: "openstreetmap-default",
+        label: "OpenStreetMap Default",
+        available: true,
+        unavailableReason: undefined
+      },
+      { id: "usgs-topo", label: "USGS Topo", available: true, unavailableReason: undefined },
+      { id: "mapbox-satellite", label: "Mapbox Satellite", available: false, unavailableReason: "missing key" },
+      { id: "mapbox-outdoors", label: "Mapbox Outdoors", available: false, unavailableReason: "missing key" },
+      { id: "mapbox-dark", label: "Mapbox Dark", available: false, unavailableReason: "missing key" },
+      {
+        id: "thunderforest-outdoors",
+        label: "Thunderforest Outdoors",
+        available: false,
+        unavailableReason: "missing key"
+      },
+      { id: "maptiler-satellite", label: "MapTiler Satellite", available: false, unavailableReason: "missing key" },
+      { id: "maptiler-osm-dark", label: "MapTiler OSM Dark", available: false, unavailableReason: "missing key" },
+      {
+        id: "openmaptiles-dark-matter",
+        label: "OpenMapTiles Dark Matter",
+        available: true,
+        unavailableReason: undefined
+      }
     ]);
   });
 
@@ -79,70 +95,148 @@ describe("appConfigFromEnv", () => {
     ).toBe("maptiler-osm-dark");
   });
 
-  it("adds credentialed map sources when their provider env vars are present", () => {
+  it("builds the exact MapLibre styles and encoded URLs for every provider", () => {
     const config = appConfigFromEnv({
       DEV: true,
-      VITE_GOOGLE_MAPS_API_KEY: " google-key ",
-      googleMapsTileSession: " google-session ",
-      VITE_MAPBOX_ACCESS_TOKEN: " mapbox-token ",
-      VITE_MAPTILER_API_KEY: " maptiler-key ",
-      VITE_THUNDERFOREST_API_KEY: " thunderforest-key "
+      VITE_GOOGLE_MAPS_API_KEY: " google key/& ",
+      googleMapsTileSession: " session /?& ",
+      VITE_MAPBOX_ACCESS_TOKEN: " mapbox /?& ",
+      VITE_MAPTILER_API_KEY: " maptiler /?& ",
+      VITE_THUNDERFOREST_API_KEY: " thunderforest /?& "
     });
+    const expected = [
+      {
+        id: "google-satellite",
+        label: "Google Satellite",
+        tiles: [
+          "https://tile.googleapis.com/v1/2dtiles/{z}/{x}/{y}?session=session%20%2F%3F%26&key=google%20key%2F%26"
+        ],
+        maxzoom: 22,
+        attribution: "Google",
+        rasterContrast: 0
+      },
+      {
+        id: "openstreetmap-default",
+        label: "OpenStreetMap Default",
+        tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
+        maxzoom: 19,
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+        rasterContrast: 0
+      },
+      {
+        id: "usgs-topo",
+        label: "USGS Topo",
+        tiles: ["https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}"],
+        maxzoom: 23,
+        attribution: "USGS The National Map",
+        rasterContrast: 0.08
+      },
+      {
+        id: "mapbox-satellite",
+        label: "Mapbox Satellite",
+        tiles: ["https://api.mapbox.com/v4/mapbox.satellite/{z}/{x}/{y}.jpg90?access_token=mapbox%20%2F%3F%26"],
+        maxzoom: 22,
+        attribution: '&copy; <a href="https://www.mapbox.com/about/maps/">Mapbox</a>',
+        rasterContrast: 0
+      },
+      {
+        id: "mapbox-outdoors",
+        label: "Mapbox Outdoors",
+        tiles: [
+          "https://api.mapbox.com/styles/v1/mapbox/outdoors-v12/tiles/256/{z}/{x}/{y}?access_token=mapbox%20%2F%3F%26"
+        ],
+        maxzoom: 22,
+        attribution: '&copy; <a href="https://www.mapbox.com/about/maps/">Mapbox</a>',
+        rasterContrast: 0
+      },
+      {
+        id: "mapbox-dark",
+        label: "Mapbox Dark",
+        tiles: [
+          "https://api.mapbox.com/styles/v1/mapbox/dark-v11/tiles/256/{z}/{x}/{y}?access_token=mapbox%20%2F%3F%26"
+        ],
+        maxzoom: 22,
+        attribution: '&copy; <a href="https://www.mapbox.com/about/maps/">Mapbox</a>',
+        rasterContrast: 0
+      },
+      {
+        id: "thunderforest-outdoors",
+        label: "Thunderforest Outdoors",
+        tiles: ["https://api.thunderforest.com/outdoors/{z}/{x}/{y}.png?apikey=thunderforest%20%2F%3F%26"],
+        maxzoom: 22,
+        attribution:
+          '&copy; <a href="https://www.thunderforest.com/">Thunderforest</a>, &copy; OpenStreetMap contributors',
+        rasterContrast: 0
+      },
+      {
+        id: "maptiler-satellite",
+        label: "MapTiler Satellite",
+        tiles: ["https://api.maptiler.com/maps/satellite/256/{z}/{x}/{y}.jpg?key=maptiler%20%2F%3F%26"],
+        maxzoom: 22,
+        attribution: '&copy; <a href="https://www.maptiler.com/copyright/">MapTiler</a>',
+        rasterContrast: 0
+      },
+      {
+        id: "maptiler-osm-dark",
+        label: "MapTiler OSM Dark",
+        tiles: ["https://api.maptiler.com/maps/openstreetmap-dark/256/{z}/{x}/{y}.png?key=maptiler%20%2F%3F%26"],
+        maxzoom: 22,
+        attribution:
+          '&copy; <a href="https://www.maptiler.com/copyright/">MapTiler</a>, &copy; OpenStreetMap contributors',
+        rasterContrast: 0
+      },
+      {
+        id: "openmaptiles-dark-matter",
+        label: "OpenMapTiles Dark Matter",
+        tiles: [
+          "https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
+          "https://b.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
+          "https://c.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
+          "https://d.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png"
+        ],
+        maxzoom: 20,
+        attribution: '&copy; OpenStreetMap contributors, &copy; <a href="https://carto.com/attributions">CARTO</a>',
+        rasterContrast: 0
+      }
+    ];
 
     expect(config.defaultMapSourceId).toBe("maptiler-osm-dark");
-    expect(config.mapSources.map((source) => source.id)).toEqual([
-      "google-satellite",
-      "openstreetmap-default",
-      "usgs-topo",
-      "mapbox-satellite",
-      "mapbox-outdoors",
-      "mapbox-dark",
-      "thunderforest-outdoors",
-      "maptiler-satellite",
-      "maptiler-osm-dark",
-      "openmaptiles-dark-matter"
-    ]);
-    expect(config.mapSources.every((source) => source.style)).toBe(true);
-    expect(JSON.stringify(config.mapSources.find((source) => source.id === "google-satellite")?.style)).toContain(
-      "session=google-session&key=google-key"
-    );
-  });
-
-  it("generates valid MapLibre raster styles for every available map source", () => {
-    const config = appConfigFromEnv({
-      DEV: true,
-      VITE_GOOGLE_MAPS_API_KEY: "google-key",
-      googleMapsTileSession: "google-session",
-      VITE_MAPBOX_ACCESS_TOKEN: "mapbox-token",
-      VITE_MAPTILER_API_KEY: "maptiler-key",
-      VITE_THUNDERFOREST_API_KEY: "thunderforest-key"
-    });
-    const expectedUrlFragments: Record<string, string> = {
-      "google-satellite": "session=google-session&key=google-key",
-      "openstreetmap-default": "tile.openstreetmap.org",
-      "usgs-topo": "basemap.nationalmap.gov",
-      "mapbox-satellite": "access_token=mapbox-token",
-      "mapbox-outdoors": "access_token=mapbox-token",
-      "mapbox-dark": "access_token=mapbox-token",
-      "thunderforest-outdoors": "apikey=thunderforest-key",
-      "maptiler-satellite": "key=maptiler-key",
-      "maptiler-osm-dark": "key=maptiler-key",
-      "openmaptiles-dark-matter": "basemaps.cartocdn.com"
-    };
-
-    for (const source of config.mapSources) {
-      expect(source.style, source.id).toBeDefined();
-      const style = source.style!;
-      const rasterSource = style.sources[source.id] as { type?: string; tiles?: string[] } | undefined;
-      expect(style.version).toBe(8);
-      expect(Object.keys(style.sources).length).toBeGreaterThan(0);
-      expect(style.layers.length).toBeGreaterThan(0);
-      expect(rasterSource?.type).toBe("raster");
-      expect(rasterSource?.tiles?.length).toBeGreaterThan(0);
-      expect(style.layers).toEqual(
-        expect.arrayContaining([expect.objectContaining({ type: "raster", source: source.id })])
-      );
-      expect(JSON.stringify(rasterSource?.tiles)).toContain(expectedUrlFragments[source.id]);
+    expect(config.mapSources).toHaveLength(expected.length);
+    for (const [index, provider] of expected.entries()) {
+      expect(config.mapSources[index]).toEqual({
+        id: provider.id,
+        label: provider.label,
+        style: {
+          version: 8,
+          sources: {
+            [provider.id]: {
+              type: "raster",
+              tiles: provider.tiles,
+              tileSize: 256,
+              minzoom: undefined,
+              maxzoom: provider.maxzoom,
+              attribution: provider.attribution
+            }
+          },
+          layers: [
+            {
+              id: "background",
+              type: "background",
+              paint: { "background-color": "#070a0f" }
+            },
+            {
+              id: `${provider.id}-raster`,
+              type: "raster",
+              source: provider.id,
+              paint: {
+                "raster-opacity": 0.84,
+                "raster-saturation": 0,
+                "raster-contrast": provider.rasterContrast
+              }
+            }
+          ]
+        }
+      });
     }
   });
 
