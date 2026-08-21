@@ -18,7 +18,10 @@ export type HttpTransportOptions = {
   requestTimeoutMs: number;
 };
 
+const ATLAS_API_ERROR_CODE = "ATLAS_API_ERROR";
+
 export class AtlasAPIError extends Error {
+  readonly code = ATLAS_API_ERROR_CODE;
   readonly status: number;
   readonly response: unknown;
   readonly errorCode?: string;
@@ -59,6 +62,21 @@ export function isAtlasTransportError(error: unknown): boolean {
     typeof error.message === "string" &&
     "code" in error &&
     error.code === ATLAS_TRANSPORT_ERROR_CODE
+  );
+}
+
+export function isAtlasAPIError(
+  error: unknown
+): error is { readonly code: "ATLAS_API_ERROR"; readonly message: string; readonly status: number } {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "message" in error &&
+    typeof error.message === "string" &&
+    "status" in error &&
+    typeof error.status === "number" &&
+    "code" in error &&
+    error.code === ATLAS_API_ERROR_CODE
   );
 }
 
@@ -133,6 +151,15 @@ export class HttpTransport {
     }
   }
 
+  async arrayBuffer(method: string, path: string, signal?: AbortSignal): Promise<ArrayBuffer> {
+    const response = await this.raw(method, path, undefined, undefined, signal);
+    try {
+      return await response.arrayBuffer();
+    } catch (error) {
+      throwTransportBodyError(error, signal);
+    }
+  }
+
   async raw(
     method: string,
     path: string,
@@ -153,7 +180,7 @@ export class HttpTransport {
       signal
     });
     if (!response.ok) {
-      const payload = safeErrorPayload(await readErrorPayload(response));
+      const payload = safeErrorPayload(await readErrorPayload(response, signal));
       const message = errorMessage(response.status, payload);
       if (response.status === 409 || response.status === 412) {
         throw new ConflictError(message, response.status, payload);
@@ -196,9 +223,14 @@ async function readSuccessfulJSON(response: Response, signal?: AbortSignal): Pro
     if (typeof error === "object" && error !== null && "name" in error && error.name === "SyntaxError") {
       throw error;
     }
-    if (isAtlasTransportError(error)) throw error;
-    throw new AtlasTransportError(sanitizeErrorMessage(error));
+    throwTransportBodyError(error, signal);
   }
+}
+
+function throwTransportBodyError(error: unknown, signal?: AbortSignal): never {
+  if (signal?.aborted) throw signal.reason;
+  if (isAtlasTransportError(error)) throw error;
+  throw new AtlasTransportError(sanitizeErrorMessage(error));
 }
 
 function strongETagVersion(etag: string | null): number | undefined {
@@ -208,10 +240,11 @@ function strongETagVersion(etag: string | null): number | undefined {
   return Number.isSafeInteger(version) ? version : undefined;
 }
 
-async function readErrorPayload(response: Response): Promise<unknown> {
+async function readErrorPayload(response: Response, signal?: AbortSignal): Promise<unknown> {
   try {
     return await response.json();
   } catch {
+    if (signal?.aborted) throw signal.reason;
     return undefined;
   }
 }

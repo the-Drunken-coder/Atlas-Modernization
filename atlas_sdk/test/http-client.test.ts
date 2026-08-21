@@ -4,6 +4,7 @@ import {
   AtlasClient,
   AtlasTransportError,
   ConflictError,
+  isAtlasAPIError,
   isAtlasTransportError,
   isEntityCreateRequest,
   isEntityUpdateRequest,
@@ -183,6 +184,19 @@ describe("AtlasClient HTTP", () => {
       message: "response body terminated",
       code: "ATLAS_TRANSPORT_ERROR"
     });
+  });
+
+  it("preserves caller abort reasons while reading an HTTP error body", async () => {
+    const controller = new AbortController();
+    const reason = new Error("caller aborted error response read");
+    const response = Response.json({ message: "unavailable" }, { status: 503 });
+    vi.spyOn(response, "json").mockImplementationOnce(async () => {
+      controller.abort(reason);
+      throw new TypeError("response body terminated");
+    });
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: async () => response });
+
+    await expect(client.handshake({ signal: controller.signal })).rejects.toBe(reason);
   });
 
   it("rejects request timeouts outside the supported timer range", () => {
@@ -990,7 +1004,10 @@ describe("AtlasClient HTTP", () => {
       errorCode: "ENTITY_NOT_FOUND",
       response: expect.objectContaining({ success: false, error_code: "ENTITY_NOT_FOUND" })
     });
-    await expect(client.entities.get("missing-entity")).rejects.toBeInstanceOf(AtlasAPIError);
+    const failure = await client.entities.get("missing-entity").catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(AtlasAPIError);
+    expect(failure).toMatchObject({ code: "ATLAS_API_ERROR" });
+    expect(isAtlasAPIError(failure)).toBe(true);
   });
 
   it("surfaces successful invalid JSON responses as JSON parse failures", async () => {
