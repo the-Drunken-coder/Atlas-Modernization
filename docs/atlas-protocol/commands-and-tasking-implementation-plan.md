@@ -108,6 +108,8 @@ Asset-only Task lifecycle calls and runtime-scoped delivery carry the current ru
 
 Task creation and operator cancellation do not require that header. Existing Atlas authentication remains unchanged.
 
+Atlas currently has one coarse API trust boundary: a valid API credential may mutate any Asset. Runtime registration uses that same boundary and is not Asset-scoped. Adding a credential only to registration would not create an effective Asset boundary while the same client can update or delete that Asset. Per-Asset authorization requires a system-wide authentication design and remains explicitly deferred.
+
 ### Persistence
 
 Append a Core database migration rather than editing the immutable baseline migration. The migration must refuse to continue when the old `tasks` table contains rows. Developers may reset a scratch database; the migration must never silently delete or guess how to convert retained Task records.
@@ -127,7 +129,7 @@ Core persists current Asset runtime state in a dedicated table so registration a
 
 ### Task creation
 
-`POST /tasks` accepts only `asset_id`, `command`, and `input`. Core generates `task_id` and requires an `Idempotency-Key` header.
+`POST /tasks` accepts only `asset_id`, `command`, and `input`. Core generates `task_id` and requires an `Idempotency-Key` header. The key is globally unique within one Core deployment, not per Asset or client.
 
 In one transaction, creation:
 
@@ -140,7 +142,7 @@ In one transaction, creation:
 7. records the resource-feed event
 8. exposes newly eligible work to the delivery adapter
 
-Repeating the key returns the original Task. Reusing it with different tasking data is a conflict.
+Repeating the key returns the original Task. Reusing it with different tasking data, including a different Asset, is a conflict.
 
 ### Lifecycle operations
 

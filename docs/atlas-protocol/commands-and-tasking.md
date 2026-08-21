@@ -294,7 +294,7 @@ Core generates `task_id`. `asset_id`, `command`, and `input` are immutable. Fiel
 
 Tasks do not have generic `components`, `extra`, `parameters`, `target`, `related_resources`, or source identity fields. A Command's schema defines the contents of `input` and, when present, `output`.
 
-Every Task creation request includes an opaque idempotency key outside the Task resource. Repeating creation with the same key returns the original Task rather than creating another physical action. The key identifies a tasking attempt, not an operator or client, and is not exposed as Task provenance.
+Every Task creation request includes an opaque idempotency key outside the Task resource. The key is globally unique within one Atlas Core deployment rather than scoped to an Asset or client. Repeating creation with the same key returns the original Task rather than creating another physical action; reusing it with different tasking data, including a different Asset, is a conflict. The key identifies a tasking attempt, not an operator or client, and is not exposed as Task provenance.
 
 ### Lifecycle
 
@@ -715,6 +715,7 @@ The design does not add:
 - exhaustive Task-to-resource lineage
 - individual Task deletion
 - fine-grained tasking identity or provenance
+- per-Asset authorization or runtime credentials
 - special credentials for safety reset
 - catalog generations, per-Command generations, or compatibility negotiation
 
