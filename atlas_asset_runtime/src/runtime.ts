@@ -689,7 +689,7 @@ function isRetryableLifecycleError(error: unknown): boolean {
 
 function snapshotTaskOutput(output: JSONValue): JSONValue {
   try {
-    const snapshot = copyJSONValue(output, new WeakSet());
+    const snapshot = copyJSONValue(output);
     if (!isJSONValue(snapshot)) throw new TypeError();
     return snapshot;
   } catch {
@@ -697,52 +697,117 @@ function snapshotTaskOutput(output: JSONValue): JSONValue {
   }
 }
 
-function copyJSONValue(value: unknown, ancestors: WeakSet<object>): JSONValue {
-  if (value === null || typeof value === "boolean" || typeof value === "string") return value;
-  if (typeof value === "number") {
-    if (!Number.isFinite(value) || Object.is(value, -0)) throw new TypeError();
-    return value;
+type JSONContainer = JSONValue[] | Record<string, JSONValue>;
+
+type JSONCopyFrame = {
+  source: object;
+  target: JSONContainer;
+  keys: string[];
+  index: number;
+  ownToJSON?: { value: unknown };
+};
+
+type PendingJSONMember = {
+  source: unknown;
+  target?: JSONContainer;
+  key?: string;
+};
+
+function copyJSONValue(value: unknown): JSONValue {
+  const ancestors = new WeakSet<object>();
+  const frames: JSONCopyFrame[] = [];
+  let pending: PendingJSONMember | undefined = { source: value };
+  let snapshot: JSONValue | undefined;
+
+  while (pending !== undefined || frames.length > 0) {
+    if (pending !== undefined) {
+      const member = pending;
+      pending = undefined;
+      const primitive = copyJSONPrimitive(member.source);
+      if (primitive !== undefined) {
+        assignJSONMember(member, primitive);
+        if (member.target === undefined) snapshot = primitive;
+        continue;
+      }
+      if (typeof member.source !== "object" || member.source === null || ancestors.has(member.source)) {
+        throw new TypeError();
+      }
+
+      const frame = createJSONCopyFrame(member.source);
+      assignJSONMember(member, frame.target);
+      if (member.target === undefined) snapshot = frame.target;
+      ancestors.add(member.source);
+      frames.push(frame);
+      continue;
+    }
+
+    const frame = frames.at(-1)!;
+    if (frame.index === frame.keys.length) {
+      ancestors.delete(frame.source);
+      frames.pop();
+      continue;
+    }
+
+    const key = frame.keys[frame.index++]!;
+    const source =
+      key === "toJSON" && frame.ownToJSON !== undefined ? frame.ownToJSON.value : Reflect.get(frame.source, key);
+    pending = { key, source, target: frame.target };
   }
-  if (typeof value !== "object" || ancestors.has(value)) throw new TypeError();
-  if (!Array.isArray(value) && !hasJSONRecordPrototype(value)) throw new TypeError();
 
-  if (Object.getOwnPropertySymbols(value).length > 0) throw new TypeError();
+  if (snapshot === undefined) throw new TypeError();
+  return snapshot;
+}
 
-  const keys = Object.keys(value);
-  const ownNames = Object.getOwnPropertyNames(value);
-  if (Array.isArray(value)) {
-    if (
-      keys.length !== value.length ||
-      !keys.every((key, index) => key === String(index)) ||
-      ownNames.length !== keys.length + 1
-    ) {
+function copyJSONPrimitive(value: unknown): JSONValue | undefined {
+  if (value === null || typeof value === "boolean" || typeof value === "string") return value;
+  if (typeof value !== "number") return undefined;
+  if (!Number.isFinite(value) || Object.is(value, -0)) throw new TypeError();
+  return value;
+}
+
+function createJSONCopyFrame(source: object): JSONCopyFrame {
+  const ownKeys = Reflect.ownKeys(source);
+  if (ownKeys.some((key) => typeof key === "symbol")) throw new TypeError();
+  const keys = ownKeys as string[];
+  const toJSON = Reflect.get(source, "toJSON");
+  if (typeof toJSON === "function") throw new TypeError();
+
+  if (Array.isArray(source)) {
+    const length = source.length;
+    const entries = Array.from({ length }, (_, index) => String(index));
+    const keySet = new Set(keys);
+    if (keys.length !== entries.length + 1 || !keySet.has("length") || entries.some((key) => !keySet.has(key))) {
       throw new TypeError();
     }
-  } else if (ownNames.length !== keys.length) {
-    throw new TypeError();
+    return {
+      index: 0,
+      keys: entries,
+      source,
+      target: Object.setPrototypeOf(new Array<JSONValue>(length), null)
+    };
   }
 
-  ancestors.add(value);
-  try {
-    if (!keys.includes("toJSON") && typeof Reflect.get(value, "toJSON") === "function") throw new TypeError();
-
-    if (Array.isArray(value)) return keys.map((key) => copyJSONValue(Reflect.get(value, key), ancestors));
-
-    const snapshot: Record<string, JSONValue> = {};
-    for (const key of keys) {
-      const member = Reflect.get(value, key);
-      if (key === "toJSON" && typeof member === "function") throw new TypeError();
-      Object.defineProperty(snapshot, key, {
-        configurable: true,
-        enumerable: true,
-        value: copyJSONValue(member, ancestors),
-        writable: true
-      });
-    }
-    return snapshot;
-  } finally {
-    ancestors.delete(value);
+  if (!hasJSONRecordPrototype(source)) throw new TypeError();
+  for (const key of keys) {
+    if (!Reflect.getOwnPropertyDescriptor(source, key)?.enumerable) throw new TypeError();
   }
+  return {
+    index: 0,
+    keys,
+    ownToJSON: keys.includes("toJSON") ? { value: toJSON } : undefined,
+    source,
+    target: Object.create(null) as Record<string, JSONValue>
+  };
+}
+
+function assignJSONMember(member: PendingJSONMember, value: JSONValue): void {
+  if (member.target === undefined || member.key === undefined) return;
+  Object.defineProperty(member.target, member.key, {
+    configurable: true,
+    enumerable: true,
+    value,
+    writable: true
+  });
 }
 
 function hasJSONRecordPrototype(value: object): boolean {

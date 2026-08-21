@@ -3,8 +3,10 @@ import {
   AtlasTransportError,
   type CommandManifest,
   type EntityCheckInOptions,
+  type JSONValue,
   type RuntimeContextOptions,
   type RuntimeTaskDeliveryResponse,
+  type TaskCompleteOptions,
   type TaskResource
 } from "@the-drunken-coder/atlas-sdk";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -1088,6 +1090,63 @@ describe("AtlasAssetRuntime", () => {
     await runtime.stop();
   });
 
+  it("copies dense array indices into a prototype-free snapshot", async () => {
+    const pending = task("immediate-1", "immediate.observe");
+    const { client } = fakeClient([pending]);
+    const originalToJSON = Object.getOwnPropertyDescriptor(Array.prototype, "toJSON");
+    const output = Object.defineProperty([], "0", {
+      get() {
+        Object.defineProperty(Array.prototype, "toJSON", {
+          configurable: true,
+          value: () => ["changed"]
+        });
+        return 1;
+      }
+    });
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      manifest: [manifestEntry("immediate.observe", "immediate")],
+      handlers: { "immediate.observe": async () => output }
+    });
+
+    try {
+      await runtime.start();
+      await vi.waitFor(() => expect(client.tasks.complete).toHaveBeenCalledOnce());
+      const completed = client.tasks.complete.mock.calls[0]![1].output;
+      expect(Array.isArray(completed)).toBe(true);
+      expect(Object.getPrototypeOf(completed)).toBeNull();
+      expect(JSON.stringify(completed)).toBe("[1]");
+      expect(client.tasks.fail).not.toHaveBeenCalled();
+    } finally {
+      if (originalToJSON === undefined) Reflect.deleteProperty(Array.prototype, "toJSON");
+      else Object.defineProperty(Array.prototype, "toJSON", originalToJSON);
+      await runtime.stop();
+    }
+  });
+
+  it("copies deeply nested JSON output without using the call stack", async () => {
+    const pending = task("immediate-1", "immediate.observe");
+    const { client } = fakeClient([pending]);
+    let output: JSONValue = 1;
+    for (let depth = 0; depth < 2_500; depth++) output = [output];
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      manifest: [manifestEntry("immediate.observe", "immediate")],
+      handlers: { "immediate.observe": async () => output }
+    });
+
+    await runtime.start();
+    await vi.waitFor(() => expect(client.tasks.complete).toHaveBeenCalledOnce());
+    let completed = client.tasks.complete.mock.calls[0]![1].output;
+    for (let depth = 0; depth < 2_500; depth++) {
+      if (!Array.isArray(completed)) throw new Error("Task output lost its nested array shape");
+      completed = completed[0];
+    }
+    expect(completed).toBe(1);
+    expect(client.tasks.fail).not.toHaveBeenCalled();
+    await runtime.stop();
+  });
+
   it("snapshots stateful handler output before reporting completion", async () => {
     const pending = task("immediate-1", "immediate.observe");
     const { client } = fakeClient([pending]);
@@ -1117,17 +1176,29 @@ describe("AtlasAssetRuntime", () => {
     await runtime.stop();
   });
 
-  it("snapshots transparent proxy output through JSON serialization", async () => {
+  it("enumerates proxy output once while creating its snapshot", async () => {
     const pending = task("immediate-1", "immediate.observe");
     const { client } = fakeClient([pending]);
+    let enumerations = 0;
+    const output = new Proxy(
+      { value: 1 },
+      {
+        ownKeys(target) {
+          enumerations++;
+          if (enumerations > 1) throw new Error("output was enumerated twice");
+          return Reflect.ownKeys(target);
+        }
+      }
+    );
     const runtime = new AtlasAssetRuntime(client, {
       entityId: "asset-1",
       manifest: [manifestEntry("immediate.observe", "immediate")],
-      handlers: { "immediate.observe": async () => new Proxy({ value: 1 }, {}) }
+      handlers: { "immediate.observe": async () => output }
     });
 
     await runtime.start();
     await vi.waitFor(() => expect(client.tasks.complete).toHaveBeenCalledOnce());
+    expect(enumerations).toBe(1);
     expect(client.tasks.complete).toHaveBeenCalledWith(
       pending.task_id,
       expect.objectContaining({ output: { value: 1 } })
@@ -1363,7 +1434,7 @@ function fakeClient(initialTasks: TaskResource[] = [], order: string[] = []) {
         tasks.set(id, progressed);
         return progressed;
       }),
-      complete: vi.fn(async (id: string) => transition(id, "completed")),
+      complete: vi.fn(async (id: string, _options: TaskCompleteOptions) => transition(id, "completed")),
       fail: vi.fn(async (id: string) => transition(id, "failed"))
     }
   };
