@@ -1,6 +1,7 @@
 import {
   AtlasAPIError,
   type AtlasClient,
+  AtlasTransportError,
   type CommandManifest,
   type CommandManifestEntry,
   type EntityCheckInOptions,
@@ -665,8 +666,8 @@ function isTerminalTask(task: TaskResource): boolean {
 }
 
 function isRetryableLifecycleError(error: unknown): boolean {
-  if (error instanceof TypeError && error.message.startsWith("Atlas response failed validation")) return false;
-  if (!(error instanceof AtlasAPIError)) return true;
+  if (error instanceof AtlasTransportError) return true;
+  if (!(error instanceof AtlasAPIError)) return false;
   return error.status === 408 || error.status === 429 || error.status >= 500;
 }
 

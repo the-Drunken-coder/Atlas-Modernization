@@ -53,7 +53,7 @@ import {
 } from "./validation.js";
 
 export { ProtocolMismatchError } from "./feed-connection.js";
-export { AtlasAPIError, ConflictError } from "./http.js";
+export { AtlasAPIError, AtlasTransportError, ConflictError } from "./http.js";
 export type {
   ChangedSinceResponse,
   EntityCheckInFullResponse,

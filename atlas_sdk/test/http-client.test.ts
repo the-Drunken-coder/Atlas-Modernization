@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   AtlasAPIError,
   AtlasClient,
+  AtlasTransportError,
   ConflictError,
   isEntityCreateRequest,
   isEntityUpdateRequest,
@@ -127,6 +128,19 @@ describe("AtlasClient HTTP", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("labels fetch failures as transport errors", async () => {
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: async () => Promise.reject(new Error("network unavailable"))
+    });
+
+    await expect(client.handshake()).rejects.toMatchObject({
+      name: "AtlasTransportError",
+      message: "network unavailable"
+    });
+    await expect(client.handshake()).rejects.toBeInstanceOf(AtlasTransportError);
   });
 
   it("honors caller abort signals for handshake, check-in, and fresh reads", async () => {

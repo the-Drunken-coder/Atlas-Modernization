@@ -4,6 +4,7 @@ export {
   type AtlasClientOptions,
   type AtlasLocalDeleteWatchEvent,
   type AtlasSubscription,
+  AtlasTransportError,
   type AtlasWatchEvent,
   type ChangedSinceQueryOptions,
   ConflictError,

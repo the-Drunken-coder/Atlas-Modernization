@@ -40,6 +40,13 @@ export class ConflictError extends AtlasAPIError {
   }
 }
 
+export class AtlasTransportError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AtlasTransportError";
+  }
+}
+
 export class HttpTransport {
   readonly baseUrl: string;
   private readonly apiKey?: string;
@@ -151,11 +158,11 @@ export class HttpTransport {
       });
     } catch (error) {
       if (controller.signal.aborted) {
-        throw new Error(`Atlas request timed out after ${this.requestTimeoutMs}ms`);
+        throw new AtlasTransportError(`Atlas request timed out after ${this.requestTimeoutMs}ms`);
       }
       const message = sanitizeErrorMessage(error);
-      if (error instanceof Error && error.message === message) throw error;
-      throw new Error(message);
+      if (error instanceof AtlasTransportError) throw error;
+      throw new AtlasTransportError(message);
     } finally {
       clearTimeout(timeout);
     }

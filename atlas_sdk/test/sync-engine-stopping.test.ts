@@ -289,7 +289,10 @@ describe("AtlasClient sync: stopping and lifecycle generations", () => {
     const originalError = new Error("stale recovery failure");
     rejectRecovery(originalError);
 
-    await expect(stale).rejects.toBe(originalError);
+    await expect(stale).rejects.toMatchObject({
+      name: "AtlasTransportError",
+      message: originalError.message
+    });
     await client.connectAndRecoverFeed();
     expect(connect).toHaveBeenCalledTimes(2);
 
