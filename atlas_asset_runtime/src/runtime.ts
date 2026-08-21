@@ -691,7 +691,7 @@ function snapshotTaskOutput(output: JSONValue): JSONValue {
   try {
     const snapshot = copyJSONValue(output);
     if (!isJSONValue(snapshot)) throw new TypeError();
-    JSON.stringify(snapshot);
+    JSON.stringify({ output: snapshot });
     return snapshot;
   } catch {
     throw new TypeError("Task handler returned output that JSON cannot preserve");
