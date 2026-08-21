@@ -2075,6 +2075,60 @@
               "type": "object"
             }
           ]
+        },
+        {
+          "if": {
+            "properties": {
+              "started_at": {
+                "$ref": "#/$defs/RFC3339Timestamp"
+              }
+            },
+            "required": [
+              "started_at"
+            ],
+            "type": "object"
+          },
+          "then": {
+            "properties": {
+              "acknowledged_at": {
+                "$ref": "#/$defs/RFC3339Timestamp"
+              }
+            },
+            "required": [
+              "acknowledged_at"
+            ],
+            "type": "object"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "progress": {
+                "maximum": 1,
+                "minimum": 0,
+                "type": "number"
+              }
+            },
+            "required": [
+              "progress"
+            ],
+            "type": "object"
+          },
+          "then": {
+            "properties": {
+              "acknowledged_at": {
+                "$ref": "#/$defs/RFC3339Timestamp"
+              },
+              "started_at": {
+                "$ref": "#/$defs/RFC3339Timestamp"
+              }
+            },
+            "required": [
+              "acknowledged_at",
+              "started_at"
+            ],
+            "type": "object"
+          }
         }
       ],
       "properties": {
