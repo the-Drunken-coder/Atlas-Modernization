@@ -1138,6 +1138,28 @@ describe("AtlasClient HTTP", () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
+  it("rejects boxed non-finite numbers before they serialize to null", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl });
+
+    for (const [name, value] of [
+      ["nan", Number.NaN],
+      ["infinity", Number.POSITIVE_INFINITY]
+    ] as const) {
+      await expect(
+        client.tasks.create(
+          {
+            asset_id: "asset-1",
+            command: "fixture.queued",
+            input: { nested: { value: new Number(value) } } as never
+          },
+          { idempotencyKey: `boxed-${name}` }
+        )
+      ).rejects.toThrow("number outside the JavaScript range");
+    }
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it("returns protocol errors for malformed fake Core request JSON", async () => {
     const core = new FakeCore();
 

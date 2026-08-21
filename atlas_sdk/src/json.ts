@@ -7,12 +7,19 @@ export function parseAtlasJSON(serialized: string): unknown {
 
 export function stringifyAtlasJSON(value: unknown): string {
   const serialized = JSON.stringify(value, (_key, item: unknown) => {
-    if (typeof item === "number") assertSafeJSONNumber(item);
+    const number = typeof item === "number" ? item : boxedNumberValue(item);
+    if (number !== undefined) assertSafeJSONNumber(number);
     return item;
   });
   if (serialized === undefined) throw new TypeError("Atlas request body is not JSON serializable");
   rejectUnsafeJSONNumbers(serialized);
   return serialized;
+}
+
+function boxedNumberValue(value: unknown): number | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  if (!(value instanceof Number) && Object.prototype.toString.call(value) !== "[object Number]") return undefined;
+  return Number.prototype.valueOf.call(value);
 }
 
 function rejectUnsafeJSONNumbers(serialized: string): void {
