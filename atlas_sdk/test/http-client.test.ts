@@ -1094,6 +1094,39 @@ describe("AtlasClient HTTP", () => {
     expect(isTaskCreateRequest({ asset_id: "asset-cycle", command: "fixture.queued", input })).toBe(false);
   });
 
+  it("rejects JSON integers that JavaScript cannot represent exactly", async () => {
+    const unsafeTask = `{
+      "task_id":"task-unsafe-number",
+      "asset_id":"asset-1",
+      "command":"fixture.queued",
+      "input":{"value":9007199254740993},
+      "status":"pending",
+      "created_at":"2026-08-20T12:00:00Z",
+      "updated_at":"2026-08-20T12:00:00Z"
+    }`;
+    const inboundClient = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: async () =>
+        new Response(unsafeTask, {
+          headers: { "Content-Type": "application/json", ETag: '"v1"' }
+        })
+    });
+
+    await expect(inboundClient.tasks.get("task-unsafe-number", { fresh: true })).rejects.toThrow(
+      "integer that JavaScript cannot represent exactly"
+    );
+
+    const fetchImpl = vi.fn<typeof fetch>();
+    const outboundClient = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl });
+    await expect(
+      outboundClient.tasks.create(
+        { asset_id: "asset-1", command: "fixture.queued", input: { value: Number.MAX_SAFE_INTEGER + 1 } },
+        { idempotencyKey: "unsafe-number" }
+      )
+    ).rejects.toThrow("integer that JavaScript cannot represent exactly");
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it("returns protocol errors for malformed fake Core request JSON", async () => {
     const core = new FakeCore();
 

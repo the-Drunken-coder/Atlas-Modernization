@@ -243,7 +243,7 @@ describe("AtlasClient inbound response validation", () => {
     const response = { ...validObject("object-http-deep-extra", 1), extra: nested };
     const client = new AtlasClient({
       baseUrl: "http://atlas.test",
-      fetch: async () => ({ ok: true, status: 200, json: async () => response }) as Response
+      fetch: async () => ({ ok: true, status: 200, text: async () => JSON.stringify(response) }) as Response
     });
 
     await expect(client.objects.get(response.object_id, { fresh: true })).resolves.toEqual(response);
@@ -253,7 +253,9 @@ describe("AtlasClient inbound response validation", () => {
     const response = { ...validObject("object-http-unsafe-size", 1), size_bytes: 9_007_199_254_740_992, extra: {} };
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: async () => Response.json(response) });
 
-    await expect(client.objects.get(response.object_id, { fresh: true })).rejects.toThrow("response failed validation");
+    await expect(client.objects.get(response.object_id, { fresh: true })).rejects.toThrow(
+      "integer that JavaScript cannot represent exactly"
+    );
   });
 
   it("rejects the old payload field on HTTP object detail values", async () => {
