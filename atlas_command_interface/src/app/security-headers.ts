@@ -1,16 +1,7 @@
-import { appConfigFromEnv } from "./config.js";
+import { appConfigFromEnv, MAP_PROVIDER_MANIFEST } from "./config.js";
 
 const tileOrigins = [
-  "https://tile.googleapis.com",
-  "https://tile.openstreetmap.org",
-  "https://basemap.nationalmap.gov",
-  "https://api.mapbox.com",
-  "https://api.thunderforest.com",
-  "https://api.maptiler.com",
-  "https://a.basemaps.cartocdn.com",
-  "https://b.basemaps.cartocdn.com",
-  "https://c.basemaps.cartocdn.com",
-  "https://d.basemaps.cartocdn.com"
+  ...new Set(MAP_PROVIDER_MANIFEST.flatMap((provider) => provider.tiles.map((template) => new URL(template).origin)))
 ];
 
 export function renderSecurityHeaders(env: Record<string, string | boolean | undefined>): string {
