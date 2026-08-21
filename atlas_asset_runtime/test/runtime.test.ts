@@ -704,12 +704,70 @@ describe("AtlasAssetRuntime", () => {
     expect(runtime.status).toBe("stopped");
   });
 
+  it("wakes acknowledged queued work after a provisional head becomes terminal", async () => {
+    vi.useFakeTimers();
+    const first = task("queued-1", "queued.move");
+    const second = task("queued-2", "queued.move");
+    const { client, transition, emit } = fakeClient([first, second]);
+    client.runtime.tasks
+      .mockResolvedValueOnce({ tasks: [first] })
+      .mockResolvedValueOnce({ tasks: [second] })
+      .mockResolvedValue({ tasks: [] });
+    client.tasks.acknowledge.mockImplementation(async (id: string, options?: { signal?: AbortSignal }) => {
+      const acknowledged = transition(id, "acknowledged");
+      if (id === first.task_id) return rejectOnAbort(options?.signal);
+      return acknowledged;
+    });
+    const handler = vi.fn(async () => undefined);
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      manifest: [manifestEntry("queued.move")],
+      handlers: { "queued.move": handler }
+    });
+
+    try {
+      await runtime.start();
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(handler).not.toHaveBeenCalled();
+      emit({
+        ...transition(first.task_id, "cancelled"),
+        cancellation: { code: "requested", message: "stop" }
+      });
+      await vi.advanceTimersByTimeAsync(5_000);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(handler).toHaveBeenCalledOnce();
+      expect(client.tasks.start).toHaveBeenCalledWith(second.task_id, expect.anything());
+      await runtime.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("preserves Core queue order below JavaScript millisecond resolution", async () => {
+    const earlier = { ...task("queued-z", "queued.move"), created_at: "2026-08-19T12:00:00.000001Z" };
+    const later = { ...task("queued-a", "queued.move"), created_at: "2026-08-19T12:00:00.000002Z" };
+    const { client } = fakeClient([earlier, later]);
+    client.runtime.tasks.mockResolvedValueOnce({ tasks: [earlier, later] }).mockResolvedValue({ tasks: [] });
+    const executionOrder: string[] = [];
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      manifest: [manifestEntry("queued.move")],
+      handlers: { "queued.move": async ({ task }) => void executionOrder.push(task.task_id) }
+    });
+
+    await runtime.start();
+    await vi.waitFor(() => expect(executionOrder).toHaveLength(2));
+    expect(client.tasks.acknowledge.mock.calls.map((call) => call[0])).toEqual([earlier.task_id, later.task_id]);
+    expect(executionOrder).toEqual([earlier.task_id, later.task_id]);
+    await runtime.stop();
+  });
+
   it("keeps lost queued acknowledgements in authoritative local order", async () => {
     vi.useFakeTimers();
     const first = task("queued-1", "queued.move");
     const second = task("queued-2", "queued.move");
     const { client, transition } = fakeClient([first, second]);
-    client.runtime.tasks.mockResolvedValueOnce({ tasks: [second, first] }).mockResolvedValue({ tasks: [] });
+    client.runtime.tasks.mockResolvedValueOnce({ tasks: [first, second] }).mockResolvedValue({ tasks: [] });
     let firstAttempts = 0;
     client.tasks.acknowledge.mockImplementation(async (id: string) => {
       const acknowledged = transition(id, "acknowledged");

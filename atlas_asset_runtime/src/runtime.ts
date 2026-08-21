@@ -374,7 +374,6 @@ export class AtlasAssetRuntime {
       );
     }
     const pending = response.tasks.filter((task) => !this.accepted.has(task.task_id) && task.status === "pending");
-    pending.sort(compareTaskOrder);
     const immediate = pending.filter((task) => this.commands.get(task.command)?.scheduling === "immediate");
     const queued = pending.filter((task) => this.commands.get(task.command)?.scheduling !== "immediate");
     for (const task of [...immediate, ...queued]) {
@@ -403,7 +402,6 @@ export class AtlasAssetRuntime {
         continue;
       }
       this.queued.push(accepted);
-      this.queued.sort((left, right) => compareTaskOrder(left.task, right.task));
       const acknowledgement = this.acknowledgeQueued(accepted, runtimeId, signal);
       this.acceptances.add(acknowledgement);
       void acknowledgement.then(
@@ -613,6 +611,7 @@ export class AtlasAssetRuntime {
     accepted.controller.abort(new Error(reason));
     this.queued = this.queued.filter((item) => item.task.task_id !== taskId);
     this.accepted.delete(taskId);
+    this.scheduleQueuedWork();
   }
 
   private clearAcceptedWork(): void {
@@ -669,11 +668,6 @@ function isRetryableLifecycleError(error: unknown): boolean {
   if (error instanceof TypeError && error.message.startsWith("Atlas response failed validation")) return false;
   if (!(error instanceof AtlasAPIError)) return true;
   return error.status === 408 || error.status === 429 || error.status >= 500;
-}
-
-function compareTaskOrder(left: TaskResource, right: TaskResource): number {
-  const createdDifference = Date.parse(left.created_at) - Date.parse(right.created_at);
-  return createdDifference || left.task_id.localeCompare(right.task_id);
 }
 
 function delay(milliseconds: number, signal: AbortSignal): Promise<void> {
