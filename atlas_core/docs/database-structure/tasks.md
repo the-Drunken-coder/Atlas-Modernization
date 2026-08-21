@@ -45,7 +45,7 @@ The current Asset runtime supplies `Atlas-Runtime-ID` for acknowledge, start, pr
 
 ## Runtime state
 
-`asset_runtimes` stores the current runtime ID, readiness, stopped state, and fixed Command Manifest for each Asset. `asset_runtime_generations` records every runtime ID used by an Asset so a stopped process cannot reuse an old fence. Beginning a new registration fences the previous runtime and fails its nonterminal Tasks with `asset_restarted`; stopping the current runtime finishes any interrupted stale-runtime drain before failing its own Tasks with `asset_stopped`.
+`asset_runtimes` stores the current runtime ID, readiness, stopped state, and fixed Command Manifest for each Asset. `asset_runtime_generations` records every runtime ID used by an Asset and whether Core explicitly stopped it. This history survives Entity deletion so recreating an Asset ID cannot reuse an old fence. Beginning a new registration fences the previous runtime and fails its nonterminal Tasks with `asset_restarted`. Tasks from an explicitly stopped generation keep `asset_stopped` semantics even if a replacement races the bounded drain.
 
 Only the current ready runtime can receive work or make new Asset-side lifecycle changes. An exact terminal retry remains valid for the runtime already bound to that Task, even after a replacement registers, but a replacement runtime cannot replay the old runtime's response. Asset responses expose the current ready manifest read-only as `command_manifest`.
 

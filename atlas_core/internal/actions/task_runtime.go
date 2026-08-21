@@ -23,6 +23,21 @@ var assetStoppedFailure = protocol.TaskFailure{
 	Message: "The Asset runtime stopped before the Task became terminal.",
 }
 
+func taskRuntimeIDs(tasks []*models.Task) []string {
+	runtimeIDs := make([]string, 0, len(tasks))
+	for _, task := range tasks {
+		runtimeIDs = append(runtimeIDs, task.RuntimeID)
+	}
+	return runtimeIDs
+}
+
+func runtimeDrainFailure(task *models.Task, fallback protocol.TaskFailure, stoppedRuntimeIDs map[string]struct{}) protocol.TaskFailure {
+	if _, stopped := stoppedRuntimeIDs[task.RuntimeID]; stopped {
+		return assetStoppedFailure
+	}
+	return fallback
+}
+
 // BeginRuntimeRegistration first installs the new process as not ready, then
 // drains stale work in committed batches. An interrupted exact retry continues
 // the same drain without restoring readiness or replacing the runtime.
@@ -157,6 +172,12 @@ func (a *TaskActions) StopRuntime(ctx context.Context, assetID, runtimeID string
 	`, assetID, runtimeID); err != nil {
 		return fmt.Errorf("deactivate Asset runtime: %w", err)
 	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE asset_runtime_generations SET stopped = TRUE
+		WHERE asset_id = $1 AND runtime_id = $2
+	`, assetID, runtimeID); err != nil {
+		return fmt.Errorf("retire Asset runtime generation: %w", err)
+	}
 	if stateChanged {
 		if err := recordRuntimeManifestEntityChange(ctx, tx, entity); err != nil {
 			return err
@@ -165,26 +186,24 @@ func (a *TaskActions) StopRuntime(ctx context.Context, assetID, runtimeID string
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit Asset runtime stop: %w", err)
 	}
-	for _, drain := range []struct {
-		stale   bool
-		failure protocol.TaskFailure
-	}{
-		{stale: true, failure: protocol.TaskFailure{
+	for {
+		count, stillCurrent, err := a.failRuntimeTaskBatch(ctx, assetID, runtimeID, true, protocol.TaskFailure{
 			Code: protocol.TaskFailureCodeAssetRestarted, Message: "The Asset runtime restarted before the Task became terminal.",
-		}},
-		{stale: false, failure: assetStoppedFailure},
-	} {
-		for {
-			count, stillCurrent, err := a.failRuntimeTaskBatch(ctx, assetID, runtimeID, drain.stale, drain.failure)
-			if err != nil {
-				return err
-			}
-			if !stillCurrent {
-				return nil
-			}
-			if count == 0 {
-				break
-			}
+		})
+		if err != nil {
+			return err
+		}
+		if !stillCurrent || count == 0 {
+			break
+		}
+	}
+	for {
+		count, _, err := a.failRuntimeTaskBatch(ctx, assetID, runtimeID, false, assetStoppedFailure)
+		if err != nil {
+			return err
+		}
+		if count == 0 {
+			break
 		}
 	}
 	return nil
@@ -402,7 +421,8 @@ func (a *TaskActions) failRuntimeTaskBatch(ctx context.Context, assetID, runtime
 	} else if err != nil {
 		return 0, false, fmt.Errorf("lock Asset runtime for Task drain: %w", err)
 	}
-	if currentRuntimeID != runtimeID {
+	stillCurrent := currentRuntimeID == runtimeID
+	if stale && !stillCurrent {
 		if err := tx.Commit(ctx); err != nil {
 			return 0, false, fmt.Errorf("commit superseded runtime Task drain: %w", err)
 		}
@@ -421,13 +441,34 @@ func (a *TaskActions) failRuntimeTaskBatch(ctx context.Context, assetID, runtime
 	if err != nil {
 		return 0, true, err
 	}
+	stoppedRuntimeIDs := make(map[string]struct{})
+	if stale && len(tasks) > 0 {
+		rows, err := tx.Query(ctx, `
+			SELECT runtime_id FROM asset_runtime_generations
+			WHERE asset_id = $1 AND runtime_id = ANY($2) AND stopped
+		`, assetID, taskRuntimeIDs(tasks))
+		if err != nil {
+			return 0, true, fmt.Errorf("read stopped Asset runtime generations: %w", err)
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var stoppedRuntimeID string
+			if err := rows.Scan(&stoppedRuntimeID); err != nil {
+				return 0, true, fmt.Errorf("scan stopped Asset runtime generation: %w", err)
+			}
+			stoppedRuntimeIDs[stoppedRuntimeID] = struct{}{}
+		}
+		if err := rows.Err(); err != nil {
+			return 0, true, fmt.Errorf("iterate stopped Asset runtime generations: %w", err)
+		}
+	}
 	var now time.Time
 	if err := tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&now); err != nil {
 		return 0, true, fmt.Errorf("read database time for runtime Task failure: %w", err)
 	}
 	now = now.UTC()
 	for _, task := range tasks {
-		if _, err := failTask(task, protocol.CommandDefinition{}, protocol.CommandManifestEntry{}, now, failure); err != nil {
+		if _, err := failTask(task, protocol.CommandDefinition{}, protocol.CommandManifestEntry{}, now, runtimeDrainFailure(task, failure, stoppedRuntimeIDs)); err != nil {
 			return 0, true, err
 		}
 		_, err := persistTaskState(ctx, tx, task)
@@ -438,7 +479,7 @@ func (a *TaskActions) failRuntimeTaskBatch(ctx context.Context, assetID, runtime
 	if err := tx.Commit(ctx); err != nil {
 		return 0, true, fmt.Errorf("commit runtime Task drain: %w", err)
 	}
-	return len(tasks), true, nil
+	return len(tasks), stillCurrent, nil
 }
 
 // ReconcileImmediateTimeouts permanently fails one bounded batch of immediate

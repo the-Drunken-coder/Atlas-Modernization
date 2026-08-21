@@ -91,6 +91,9 @@ func cleanupFinalBlobValidationRows(ctx context.Context, t testing.TB, pool *pgx
 		if _, err := pool.Exec(ctx, `DELETE FROM entities WHERE entity_id = $1`, entityID); err != nil {
 			t.Errorf("cleanup entity row %q: %v", entityID, err)
 		}
+		if _, err := pool.Exec(ctx, `DELETE FROM asset_runtime_generations WHERE asset_id = $1`, entityID); err != nil {
+			t.Errorf("cleanup runtime generations for entity %q: %v", entityID, err)
+		}
 		if _, err := pool.Exec(ctx, `
 			DELETE FROM atlas_change_events
 			WHERE (event->>'resource_type' = 'entity' AND event->>'id' = $1)

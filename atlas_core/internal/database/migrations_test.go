@@ -488,17 +488,32 @@ func TestRuntimeGenerationsMigrationPreservesCurrentRuntime(t *testing.T) {
 		t.Fatalf("upgrade runtime generation schema: %v", err)
 	}
 	var generation int64
-	var stopped bool
+	var generationStopped, runtimeStopped bool
 	if err := db.Pool.QueryRow(ctx, `
-		SELECT generation, stopped
-		FROM asset_runtime_generations
-		JOIN asset_runtimes USING (asset_id, runtime_id)
+		SELECT generations.generation, generations.stopped, runtimes.stopped
+		FROM asset_runtime_generations AS generations
+		JOIN asset_runtimes AS runtimes USING (asset_id, runtime_id)
 		WHERE asset_id = 'migration-runtime-asset' AND runtime_id = 'migration-runtime-1'
-	`).Scan(&generation, &stopped); err != nil {
+	`).Scan(&generation, &generationStopped, &runtimeStopped); err != nil {
 		t.Fatalf("read migrated runtime generation: %v", err)
 	}
-	if generation != 1 || stopped {
-		t.Fatalf("migrated runtime generation = %d, stopped:%t", generation, stopped)
+	if generation != 1 || generationStopped || runtimeStopped {
+		t.Fatalf("migrated runtime generation = %d, generation-stopped:%t runtime-stopped:%t", generation, generationStopped, runtimeStopped)
+	}
+	if _, err := db.Pool.Exec(ctx, `DELETE FROM entities WHERE entity_id = 'migration-runtime-asset'`); err != nil {
+		t.Fatalf("delete migrated Asset: %v", err)
+	}
+	var generationRetained bool
+	if err := db.Pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM asset_runtime_generations
+			WHERE asset_id = 'migration-runtime-asset' AND runtime_id = 'migration-runtime-1'
+		)
+	`).Scan(&generationRetained); err != nil {
+		t.Fatalf("check retained runtime generation: %v", err)
+	}
+	if !generationRetained {
+		t.Fatal("Entity deletion removed its runtime generation history")
 	}
 	assertCurrentMigration(ctx, t, db)
 }

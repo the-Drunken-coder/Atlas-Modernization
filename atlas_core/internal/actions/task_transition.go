@@ -115,18 +115,23 @@ func (a *TaskActions) Complete(ctx context.Context, taskID, runtimeID string, ou
 }
 
 func completeTask(task *models.Task, command protocol.CommandDefinition, _ protocol.CommandManifestEntry, now time.Time, output *TaskOutput) (bool, error) {
-	encoded, err := encodeTaskOutput(command, output)
-	if task.Status == string(protocol.TaskStatusFailed) && err != nil && jsonEqual(task.Failure, mustMarshalTaskFailure(invalidOutputFailure(err))) {
-		return false, nil
-	}
 	if task.Status == string(protocol.TaskStatusCompleted) {
-		if err != nil {
-			return false, err
+		var encoded []byte
+		if output != nil {
+			var err error
+			encoded, err = json.Marshal(output.Value)
+			if err != nil {
+				return false, NewValidationError("output must be JSON encodable")
+			}
 		}
 		if jsonEqual(task.Output, encoded) {
 			return false, nil
 		}
 		return false, NewValidationError("Task was already completed with different output")
+	}
+	encoded, err := encodeTaskOutput(command, output)
+	if task.Status == string(protocol.TaskStatusFailed) && err != nil && jsonEqual(task.Failure, mustMarshalTaskFailure(invalidOutputFailure(err))) {
+		return false, nil
 	}
 	if task.Status != string(protocol.TaskStatusInProgress) {
 		return false, invalidTaskTransition(task, "complete")
@@ -257,10 +262,7 @@ func (a *TaskActions) withTaskTransition(ctx context.Context, taskID, runtimeID 
 			if runtimeID != "" && strings.TrimSpace(runtimeID) != boundRuntimeID {
 				return nil, NewValidationError("Atlas-Runtime-ID does not identify the Task runtime")
 			}
-			command, err := a.storedCommandDefinition(task.TaskID, task.Command)
-			if err != nil {
-				return nil, err
-			}
+			command := a.catalog[task.Command]
 			changed, err := mutate(task, command, protocol.CommandManifestEntry{}, time.Time{})
 			if err != nil {
 				return nil, err

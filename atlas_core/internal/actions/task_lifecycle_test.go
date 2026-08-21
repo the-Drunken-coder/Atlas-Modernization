@@ -448,6 +448,22 @@ func TestRuntimeRegistrationCannotReactivateRetiredRuntimeIDs(t *testing.T) {
 	if currentRuntimeID != "runtime-2" {
 		t.Fatalf("current runtime = %q, want runtime-2", currentRuntimeID)
 	}
+	if err := tasks.StopRuntime(ctx, assetID, "runtime-2"); err != nil {
+		t.Fatalf("stop runtime 2: %v", err)
+	}
+	entities := NewEntityActions(pool)
+	if err := entities.Delete(ctx, assetID); err != nil {
+		t.Fatalf("delete Asset with retired runtimes: %v", err)
+	}
+	if _, err := entities.Create(ctx, CreateEntityParams{EntityID: assetID, EntityType: "asset"}); err != nil {
+		t.Fatalf("recreate Asset: %v", err)
+	}
+	if err := tasks.BeginRuntimeRegistration(ctx, assetID, "runtime-1"); err == nil {
+		t.Fatal("recreated Asset reused a retired runtime ID")
+	}
+	if err := tasks.BeginRuntimeRegistration(ctx, assetID, "runtime-3"); err != nil {
+		t.Fatalf("recreated Asset rejected a new runtime ID: %v", err)
+	}
 }
 
 func TestRuntimeTaskDrainsUseCommittedBatches(t *testing.T) {
@@ -579,6 +595,61 @@ func TestRuntimeTaskDrainsUseCommittedBatches(t *testing.T) {
 			t.Fatalf("replacement stop left nonterminal:%d restarted:%d", nonterminal, restarted)
 		}
 	})
+
+	t.Run("explicit stop wins a replacement drain race", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		assetID := fmt.Sprintf("stop-race-batch-%d", time.Now().UnixNano())
+		defer cleanupFinalBlobValidationRowsWithTimeout(t, pool, assetID, "")
+		if _, err := NewEntityActions(pool).Create(ctx, CreateEntityParams{EntityID: assetID, EntityType: "asset"}); err != nil {
+			t.Fatalf("create stop race Asset: %v", err)
+		}
+		tasks := NewTaskActionsWithCatalog(pool, fixtureTaskCatalog(t))
+		if err := tasks.BeginRuntimeRegistration(ctx, assetID, "runtime-stop-race"); err != nil {
+			t.Fatalf("begin stopped runtime: %v", err)
+		}
+		if err := tasks.CompleteRuntimeRegistration(ctx, assetID, "runtime-stop-race", fixtureTaskManifest(t)); err != nil {
+			t.Fatalf("ready stopped runtime: %v", err)
+		}
+		insertRuntimeTaskBacklog(ctx, t, pool, assetID, "runtime-stop-race", "stop-race", runtimeTaskBatchSize+1)
+		if _, err := pool.Exec(ctx, `
+			UPDATE asset_runtimes SET ready = FALSE, stopped = TRUE, manifest = '[]', ready_at = NULL
+			WHERE asset_id = $1 AND runtime_id = 'runtime-stop-race'
+		`, assetID); err != nil {
+			t.Fatalf("commit stopped runtime state before replacement: %v", err)
+		}
+		if _, err := pool.Exec(ctx, `
+			UPDATE asset_runtime_generations SET stopped = TRUE
+			WHERE asset_id = $1 AND runtime_id = 'runtime-stop-race'
+		`, assetID); err != nil {
+			t.Fatalf("commit stopped runtime generation before replacement: %v", err)
+		}
+		current, err := tasks.installRuntimeRegistration(ctx, assetID, "runtime-replacement")
+		if err != nil || !current {
+			t.Fatalf("install replacement runtime = %t, %v", current, err)
+		}
+		count, current, err := tasks.failRuntimeTaskBatch(ctx, assetID, "runtime-replacement", true, protocol.TaskFailure{
+			Code: protocol.TaskFailureCodeAssetRestarted, Message: "The Asset runtime restarted before the Task became terminal.",
+		})
+		if err != nil || !current || count != runtimeTaskBatchSize {
+			t.Fatalf("replacement drain = count:%d current:%t error:%v", count, current, err)
+		}
+		count, current, err = tasks.failRuntimeTaskBatch(ctx, assetID, "runtime-stop-race", false, assetStoppedFailure)
+		if err != nil || current || count != 1 {
+			t.Fatalf("superseded stop drain = count:%d current:%t error:%v", count, current, err)
+		}
+		var stopped, restarted int
+		if err := pool.QueryRow(ctx, `
+			SELECT COUNT(*) FILTER (WHERE failure->>'code' = 'asset_stopped'),
+				COUNT(*) FILTER (WHERE failure->>'code' = 'asset_restarted')
+			FROM tasks WHERE asset_id = $1
+		`, assetID).Scan(&stopped, &restarted); err != nil {
+			t.Fatalf("count stop race outcomes: %v", err)
+		}
+		if stopped != runtimeTaskBatchSize+1 || restarted != 0 {
+			t.Fatalf("stop race outcomes = stopped:%d restarted:%d", stopped, restarted)
+		}
+	})
 }
 
 func TestTerminalLifecycleOperationsReplayExactlyAfterRuntimeReplacement(t *testing.T) {
@@ -660,26 +731,43 @@ func TestTerminalLifecycleOperationsReplayExactlyAfterRuntimeReplacement(t *test
 		t.Fatalf("fail replay Task: %v", err)
 	}
 
+	cancelled, _, err := tasks.Create(ctx, CreateTaskParams{AssetID: assetID, Command: "fixture.queued", Input: map[string]any{"value": "cancel"}}, "cancelled-replay")
+	if err != nil {
+		t.Fatalf("create cancellation replay Task: %v", err)
+	}
+	cancellation := protocol.TaskCancellation{Code: protocol.TaskCancellationCodeRequested, Message: "cancelled once"}
+	cancelled, err = tasks.Cancel(ctx, cancelled.TaskID, cancellation)
+	if err != nil {
+		t.Fatalf("cancel replay Task: %v", err)
+	}
+
 	if err := tasks.BeginRuntimeRegistration(ctx, assetID, "runtime-2"); err != nil {
 		t.Fatalf("replace runtime: %v", err)
 	}
 	if err := tasks.CompleteRuntimeRegistration(ctx, assetID, "runtime-2", fixtureTaskManifest(t)); err != nil {
 		t.Fatalf("ready replacement runtime: %v", err)
 	}
-	if replayed, err := tasks.Start(ctx, expired.TaskID, "runtime-1"); err != nil || replayed.Version != expired.Version {
+	cataloglessTasks := NewTaskActionsWithCatalog(pool, nil)
+	if replayed, err := cataloglessTasks.Start(ctx, expired.TaskID, "runtime-1"); err != nil || replayed.Version != expired.Version {
 		t.Fatalf("expired Start replay after replacement = %#v, want version %d, %v", replayed, expired.Version, err)
 	}
 	if replayed, err := tasks.Complete(ctx, invalid.TaskID, "runtime-1", nil); err != nil || replayed.Version != invalid.Version {
 		t.Fatalf("invalid completion replay after replacement = %#v, want version %d, %v", replayed, invalid.Version, err)
 	}
-	if replayed, err := tasks.Complete(ctx, completed.TaskID, "runtime-1", output); err != nil || replayed.Version != completed.Version {
+	if replayed, err := cataloglessTasks.Complete(ctx, completed.TaskID, "runtime-1", output); err != nil || replayed.Version != completed.Version {
 		t.Fatalf("completion replay after replacement = %#v, want version %d, %v", replayed, completed.Version, err)
 	}
-	if _, err := tasks.Complete(ctx, completed.TaskID, "runtime-2", output); err == nil {
+	if _, err := cataloglessTasks.Complete(ctx, completed.TaskID, "runtime-1", &TaskOutput{Value: map[string]any{"result": "different"}}); err == nil {
+		t.Fatal("completion replay accepted different output without the current Command catalog")
+	}
+	if _, err := cataloglessTasks.Complete(ctx, completed.TaskID, "runtime-2", output); err == nil {
 		t.Fatal("replacement runtime replayed a Task bound to the retired runtime")
 	}
-	if replayed, err := tasks.Fail(ctx, failed.TaskID, "runtime-1", failure); err != nil || replayed.Version != failed.Version {
+	if replayed, err := cataloglessTasks.Fail(ctx, failed.TaskID, "runtime-1", failure); err != nil || replayed.Version != failed.Version {
 		t.Fatalf("failure replay after replacement = %#v, want version %d, %v", replayed, failed.Version, err)
+	}
+	if replayed, err := cataloglessTasks.Cancel(ctx, cancelled.TaskID, cancellation); err != nil || replayed.Version != cancelled.Version {
+		t.Fatalf("cancellation replay after catalog removal = %#v, want version %d, %v", replayed, cancelled.Version, err)
 	}
 }
 

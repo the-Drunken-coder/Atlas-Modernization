@@ -27,7 +27,7 @@ const (
 	taskingRuntimeMigrationName         = "immutable_tasks_and_asset_runtimes"
 	taskingRuntimeMigrationChecksum     = "cf7f05cff26ca1f39611175faa71dd6825f39efd0ddf7256af6cf0aea660b584"
 	runtimeGenerationsMigrationName     = "retired_asset_runtime_generations"
-	runtimeGenerationsMigrationChecksum = "81a4a65258771953115d815bc452f495d6058abe69aa94057e503b812d87d488"
+	runtimeGenerationsMigrationChecksum = "4e29a28e953733eb34f5f996757d227e5799d333e0656213d14326d29a2f591b"
 	fingerprintVersionV1                = 1
 	fingerprintVersionV2                = 2
 )
@@ -240,9 +240,10 @@ func coreSchemaMigrations() []schemaMigration {
 			fingerprintVersion: fingerprintVersionV2,
 			statements: []string{
 				`CREATE TABLE asset_runtime_generations (
-					asset_id VARCHAR(50) NOT NULL REFERENCES entities(entity_id) ON DELETE CASCADE,
+					asset_id VARCHAR(50) NOT NULL,
 					runtime_id VARCHAR(255) NOT NULL,
 					generation BIGINT GENERATED ALWAYS AS IDENTITY,
+					stopped BOOLEAN NOT NULL DEFAULT FALSE,
 					PRIMARY KEY (asset_id, runtime_id),
 					UNIQUE (runtime_id),
 					UNIQUE (asset_id, generation)
