@@ -21,7 +21,7 @@
   },
   "dependencies": {
     "@the-drunken-coder/atlas-sdk": "0.1.0",
-    "maplibre-gl": "^6.3.0",
+    "maplibre-gl": "^6.4.0",
     "milsymbol": "3.0.4",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
@@ -29,7 +29,7 @@
     "sidc-kit": "^0.3.1"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.8",
+    "@biomejs/biome": "2.5.9",
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.0",
     "@testing-library/user-event": "^14.6.4",
