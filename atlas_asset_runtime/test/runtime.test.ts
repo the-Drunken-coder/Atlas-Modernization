@@ -803,6 +803,32 @@ describe("AtlasAssetRuntime", () => {
     await runtime.stop();
   });
 
+  it("retries branded transport errors from AtlasClient-compatible implementations", async () => {
+    vi.useFakeTimers();
+    class CompatibleTransportError extends Error {
+      readonly code = "ATLAS_TRANSPORT_ERROR";
+    }
+    const pending = task("immediate-1", "immediate.observe");
+    const { client } = fakeClient([pending]);
+    client.tasks.start.mockRejectedValueOnce(new CompatibleTransportError("start response lost"));
+    const handler = vi.fn(async () => undefined);
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      manifest: [manifestEntry("immediate.observe", "immediate")],
+      handlers: { "immediate.observe": handler }
+    });
+
+    await runtime.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(client.tasks.start).toHaveBeenCalledOnce();
+    expect(handler).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(client.tasks.start).toHaveBeenCalledTimes(2);
+    expect(handler).toHaveBeenCalledOnce();
+    await runtime.stop();
+  });
+
   it("keeps lost queued acknowledgements in authoritative local order", async () => {
     vi.useFakeTimers();
     const first = task("queued-1", "queued.move");

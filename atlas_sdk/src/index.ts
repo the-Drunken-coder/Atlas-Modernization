@@ -13,6 +13,7 @@ export {
   type EntityCheckInOptions,
   type EntityCheckInTelemetry,
   type FullDatasetQueryOptions,
+  isAtlasTransportError,
   ProtocolMismatchError,
   type ReadOptions,
   type ResourceForSubscription,

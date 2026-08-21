@@ -27,7 +27,7 @@ console.log(ATLAS_PROTOCOL_REVISION, entity);
 
 Protocol resource, request, and response types; generated runtime predicates; `RESOURCE_TYPE_VALUES`; and `ATLAS_PROTOCOL_REVISION` are public from the package root. The client checks that revision against Atlas Core before normal API use. Generated predicates enforce inbound wire structure, while the SDK adds identity, ownership, count, pagination, version, and ordering coherence where those rules depend on request context.
 
-`client.entities.checkIn(id, { fields: "minimal" })` returns `EntityCheckInMinimalResponse`; the full/default form returns `EntityCheckInFullResponse`; and an unresolved options union returns the generated non-generic `EntityCheckInResponse` union. Handshake and check-in options accept an `AbortSignal` for caller-owned lifecycle cancellation.
+`client.entities.checkIn(id, { fields: "minimal" })` returns `EntityCheckInMinimalResponse`; the full/default form returns `EntityCheckInFullResponse`; and an unresolved options union returns the generated non-generic `EntityCheckInResponse` union. Handshake and check-in options accept an `AbortSignal` for caller-owned lifecycle cancellation. The SDK preserves the caller's abort reason. Network failures and request timeouts reject with `AtlasTransportError`; `isAtlasTransportError` recognizes its stable `code` across package copies.
 
 ## Admin client
 

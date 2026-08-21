@@ -1,10 +1,10 @@
 import {
   AtlasAPIError,
   type AtlasClient,
-  AtlasTransportError,
   type CommandManifest,
   type CommandManifestEntry,
   type EntityCheckInOptions,
+  isAtlasTransportError,
   isCommandManifest,
   type JSONValue,
   type TaskResource
@@ -666,7 +666,7 @@ function isTerminalTask(task: TaskResource): boolean {
 }
 
 function isRetryableLifecycleError(error: unknown): boolean {
-  if (error instanceof AtlasTransportError) return true;
+  if (isAtlasTransportError(error)) return true;
   if (!(error instanceof AtlasAPIError)) return false;
   return error.status === 408 || error.status === 429 || error.status >= 500;
 }

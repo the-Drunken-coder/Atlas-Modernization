@@ -4,6 +4,7 @@ import {
   AtlasClient,
   AtlasTransportError,
   ConflictError,
+  isAtlasTransportError,
   isEntityCreateRequest,
   isEntityUpdateRequest,
   isObjectCreateRequest,
@@ -136,33 +137,52 @@ describe("AtlasClient HTTP", () => {
       fetch: async () => Promise.reject(new Error("network unavailable"))
     });
 
-    await expect(client.handshake()).rejects.toMatchObject({
+    const failure = await client.handshake().catch((error: unknown) => error);
+
+    expect(failure).toMatchObject({
       name: "AtlasTransportError",
-      message: "network unavailable"
+      message: "network unavailable",
+      code: "ATLAS_TRANSPORT_ERROR"
     });
-    await expect(client.handshake()).rejects.toBeInstanceOf(AtlasTransportError);
+    expect(failure).toBeInstanceOf(AtlasTransportError);
+    expect(isAtlasTransportError(failure)).toBe(true);
   });
 
-  it("honors caller abort signals for handshake, check-in, and fresh reads", async () => {
+  it("preserves caller abort reasons for handshake, check-in, and fresh reads", async () => {
     const fetchImpl: typeof fetch = (_url, init) =>
       new Promise((_resolve, reject) => {
-        init?.signal?.addEventListener("abort", () => reject(new Error("caller aborted")), { once: true });
+        init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
       });
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl });
     const handshakeController = new AbortController();
     const checkInController = new AbortController();
     const taskReadController = new AbortController();
+    const handshakeReason = new Error("handshake caller aborted");
+    const checkInReason = new Error("check-in caller aborted");
+    const taskReadReason = new Error("task read caller aborted");
 
     const handshake = client.handshake({ signal: handshakeController.signal });
     const checkIn = client.entities.checkIn("asset-1", { signal: checkInController.signal });
     const taskRead = client.tasks.get("task-1", { fresh: true, signal: taskReadController.signal });
-    handshakeController.abort();
-    checkInController.abort();
-    taskReadController.abort();
+    handshakeController.abort(handshakeReason);
+    checkInController.abort(checkInReason);
+    taskReadController.abort(taskReadReason);
 
-    await expect(handshake).rejects.toThrow("caller aborted");
-    await expect(checkIn).rejects.toThrow("caller aborted");
-    await expect(taskRead).rejects.toThrow("caller aborted");
+    await expect(handshake).rejects.toBe(handshakeReason);
+    await expect(checkIn).rejects.toBe(checkInReason);
+    await expect(taskRead).rejects.toBe(taskReadReason);
+  });
+
+  it("labels successful response body failures as transport errors", async () => {
+    const response = Response.json({ protocol_revision: "unused" });
+    vi.spyOn(response, "json").mockRejectedValueOnce(new TypeError("response body terminated"));
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: async () => response });
+
+    await expect(client.handshake()).rejects.toMatchObject({
+      name: "AtlasTransportError",
+      message: "response body terminated",
+      code: "ATLAS_TRANSPORT_ERROR"
+    });
   });
 
   it("rejects request timeouts outside the supported timer range", () => {
