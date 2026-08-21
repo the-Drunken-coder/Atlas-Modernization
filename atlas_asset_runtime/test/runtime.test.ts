@@ -1040,6 +1040,9 @@ describe("AtlasAssetRuntime", () => {
     ["nested symbol", () => ({ value: Symbol("ignored") })],
     ["toJSON transformation", () => ({ reading: 1, toJSON: () => ({ reading: 2 }) })],
     ["nested toJSON transformation", () => ({ value: { reading: 1, toJSON: () => ({ reading: 2 }) } })],
+    ["boxed primitive", () => Object(1)],
+    ["non-record object", () => new Map([["value", 1]])],
+    ["non-enumerable property", () => Object.defineProperty({ value: 1 }, "secret", { value: 2 })],
     [
       "symbol-keyed property",
       () => Object.defineProperty({ value: 1 }, Symbol("ignored"), { value: 2, enumerable: true })

@@ -704,12 +704,21 @@ function copyJSONValue(value: unknown, ancestors: WeakSet<object>): JSONValue {
     return value;
   }
   if (typeof value !== "object" || ancestors.has(value)) throw new TypeError();
+  if (!Array.isArray(value) && !hasJSONRecordPrototype(value)) throw new TypeError();
 
-  const symbols = Object.getOwnPropertySymbols(value);
-  if (symbols.some((key) => Object.prototype.propertyIsEnumerable.call(value, key))) throw new TypeError();
+  if (Object.getOwnPropertySymbols(value).length > 0) throw new TypeError();
 
   const keys = Object.keys(value);
-  if (Array.isArray(value) && (keys.length !== value.length || !keys.every((key, index) => key === String(index)))) {
+  const ownNames = Object.getOwnPropertyNames(value);
+  if (Array.isArray(value)) {
+    if (
+      keys.length !== value.length ||
+      !keys.every((key, index) => key === String(index)) ||
+      ownNames.length !== keys.length + 1
+    ) {
+      throw new TypeError();
+    }
+  } else if (ownNames.length !== keys.length) {
     throw new TypeError();
   }
 
@@ -734,6 +743,14 @@ function copyJSONValue(value: unknown, ancestors: WeakSet<object>): JSONValue {
   } finally {
     ancestors.delete(value);
   }
+}
+
+function hasJSONRecordPrototype(value: object): boolean {
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype === null) return true;
+  let basePrototype = prototype;
+  while (Object.getPrototypeOf(basePrototype) !== null) basePrototype = Object.getPrototypeOf(basePrototype);
+  return prototype === basePrototype;
 }
 
 function delay(milliseconds: number, signal: AbortSignal): Promise<void> {
