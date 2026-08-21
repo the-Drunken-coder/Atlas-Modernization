@@ -3,7 +3,19 @@ import { type Position, representativePoint, toUiGeometry, type UiGeometry } fro
 
 export type { Classification, LinkState } from "@the-drunken-coder/atlas-sdk";
 
-export type EntityKind = "asset" | "track" | "geofeature";
+export const ENTITY_DESCRIPTORS = {
+  asset: { list: "assets", label: "Assets", title: "Asset" },
+  track: { list: "tracks", label: "Tracks", title: "Track" },
+  geofeature: { list: "geofeatures", label: "Geo Features", title: "Geo Feature" }
+} as const;
+
+export type EntityKind = keyof typeof ENTITY_DESCRIPTORS;
+export type EntityListKind = (typeof ENTITY_DESCRIPTORS)[EntityKind]["list"];
+
+export const ENTITY_KINDS = Object.keys(ENTITY_DESCRIPTORS) as EntityKind[];
+export const ENTITY_KIND_BY_LIST = Object.fromEntries(
+  ENTITY_KINDS.map((kind) => [ENTITY_DESCRIPTORS[kind].list, kind])
+) as Record<EntityListKind, EntityKind>;
 
 export type HeartbeatLevel = "fresh" | "stale" | "offline";
 export type HeartbeatStatus = HeartbeatLevel | "clock-error";
@@ -15,10 +27,8 @@ export type EntityConnectionStatus = { reported: LinkState; freshness: Connectio
 export const HEARTBEAT_STALE_SECONDS = 30;
 export const HEARTBEAT_OFFLINE_SECONDS = 120;
 
-const ENTITY_KINDS: EntityKind[] = ["asset", "track", "geofeature"];
-
 export function entityKind(entity: EntityResource): EntityKind | "other" {
-  return (ENTITY_KINDS as string[]).includes(entity.entity_type) ? (entity.entity_type as EntityKind) : "other";
+  return Object.hasOwn(ENTITY_DESCRIPTORS, entity.entity_type) ? (entity.entity_type as EntityKind) : "other";
 }
 
 export function isSelectableKind(entity: EntityResource): entity is EntityResource & { entity_type: EntityKind } {
