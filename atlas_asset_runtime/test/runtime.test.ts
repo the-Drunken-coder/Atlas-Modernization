@@ -721,6 +721,73 @@ describe("AtlasAssetRuntime", () => {
     expect(runtime.status).toBe("stopped");
   });
 
+  it("blocks a replacement generation until overlapping stop cleanup settles", async () => {
+    const startupError = new Error("ready response lost");
+    const readinessStarted = deferred<void>();
+    const failReadiness = deferred<void>();
+    const reportStarted = deferred<void>();
+    const cleanupStarted = deferred<void>();
+    const finishCleanup = deferred<void>();
+    const compensationStarted = deferred<void>();
+    const finishCompensation = deferred<void>();
+    const { client } = fakeClient();
+    client.runtime.ready.mockImplementationOnce(async () => {
+      readinessStarted.resolve();
+      await failReadiness.promise;
+      throw startupError;
+    });
+    client.runtime.stop.mockImplementationOnce(async () => {
+      compensationStarted.resolve();
+      await finishCompensation.promise;
+    });
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      checkIn: ({ signal }) =>
+        new Promise((resolve) => {
+          reportStarted.resolve();
+          signal.addEventListener(
+            "abort",
+            () => {
+              cleanupStarted.resolve();
+              void finishCleanup.promise.then(() => resolve({}));
+            },
+            { once: true }
+          );
+        })
+    });
+
+    const starting = runtime.start();
+    await readinessStarted.promise;
+    const checkIn = runtime.checkIn().then(
+      () => undefined,
+      (error: unknown) => error
+    );
+    await reportStarted.promise;
+    failReadiness.resolve();
+    await compensationStarted.promise;
+    const stopping = runtime.stop();
+    await cleanupStarted.promise;
+    finishCompensation.resolve();
+    await expect(starting).rejects.toBe(startupError);
+
+    const replacement = runtime.start();
+    try {
+      await expect(replacement).rejects.toThrow("Atlas asset runtime is stopping");
+      expect(client.runtime.begin).toHaveBeenCalledOnce();
+    } finally {
+      finishCleanup.resolve();
+      await Promise.allSettled([checkIn, stopping, replacement]);
+    }
+
+    expect(client.runtime.stop).toHaveBeenCalledOnce();
+    expect(runtime.status).toBe("stopped");
+    await runtime.start();
+    const runtimeIds = client.runtime.begin.mock.calls.map((call) => call[1].runtime_id);
+    expect(runtimeIds).toHaveLength(2);
+    expect(new Set(runtimeIds).size).toBe(2);
+    await runtime.stop();
+  });
+
   it("retries the exact runtime registration after an ambiguous transport failure", async () => {
     vi.useFakeTimers();
     const { client } = fakeClient();

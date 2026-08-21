@@ -247,7 +247,8 @@ export class AtlasAssetRuntime {
         );
       }
       this.runtimeId = undefined;
-      this.state = "stopped";
+      // An overlapping stop owns the transition back to stopped after cleanup.
+      if (this.state === "starting") this.state = "stopped";
       throw error;
     }
   }
