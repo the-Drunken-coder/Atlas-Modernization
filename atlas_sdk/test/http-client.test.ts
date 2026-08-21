@@ -149,6 +149,14 @@ describe("AtlasClient HTTP", () => {
     expect(isAtlasTransportError(failure)).toBe(true);
   });
 
+  it("sanitizes transport errors constructed by consumers", () => {
+    const secret = "transport-canary-secret";
+    const failure = new AtlasTransportError(`failed https://user:${secret}@core.test?api_key=${secret}`);
+
+    expect(failure.message).not.toContain(secret);
+    expect(isAtlasTransportError(failure)).toBe(true);
+  });
+
   it("preserves caller abort reasons for handshake, check-in, and fresh reads", async () => {
     const fetchImpl: typeof fetch = (_url, init) =>
       new Promise((_resolve, reject) => {

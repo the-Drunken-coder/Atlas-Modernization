@@ -49,12 +49,14 @@ export class AtlasTransportError extends Error {
   readonly code = ATLAS_TRANSPORT_ERROR_CODE;
 
   constructor(message: string) {
-    super(message);
+    super(sanitizeErrorMessage(message));
     this.name = "AtlasTransportError";
   }
 }
 
-export function isAtlasTransportError(error: unknown): boolean {
+export function isAtlasTransportError(
+  error: unknown
+): error is { readonly code: "ATLAS_TRANSPORT_ERROR"; readonly message: string } {
   return (
     typeof error === "object" &&
     error !== null &&
