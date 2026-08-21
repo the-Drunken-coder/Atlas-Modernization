@@ -90,7 +90,7 @@ func queryObjectsByJSONReference(ctx context.Context, tx pgx.Tx, refJSON string,
 	if err != nil {
 		return nil, false, fmt.Errorf("failed to query objects: %w", err)
 	}
-	objects, err := collectObjects(rows)
+	objects, err := collectRows(rows, objectResourceQuery)
 	if err != nil {
 		return nil, false, err
 	}

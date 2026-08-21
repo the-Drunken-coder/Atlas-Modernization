@@ -44,7 +44,7 @@ func NewTaskActionsWithCatalog(pool *pgxpool.Pool, catalog protocol.CommandCatal
 	return &TaskActions{pool: pool, catalog: byName}
 }
 
-func scanTask(row pgx.Row) (*models.Task, error) {
+func scanTask(row rowScanner) (*models.Task, error) {
 	var task models.Task
 	err := row.Scan(
 		&task.TaskID, &task.AssetID, &task.Command, &task.Input, &task.Status,
@@ -54,22 +54,6 @@ func scanTask(row pgx.Row) (*models.Task, error) {
 		&task.UpdatedAt, &task.Version,
 	)
 	return &task, err
-}
-
-func scanTaskRows(rows pgx.Rows) ([]*models.Task, error) {
-	defer rows.Close()
-	var tasks []*models.Task
-	for rows.Next() {
-		task, err := scanTask(rows)
-		if err != nil {
-			return nil, fmt.Errorf("scan task: %w", err)
-		}
-		tasks = append(tasks, task)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate tasks: %w", err)
-	}
-	return tasks, nil
 }
 
 // Get retrieves a Task by ID.
@@ -94,7 +78,7 @@ func (a *TaskActions) List(ctx context.Context, limit int, cursor string) (*List
 	return readCursorListPage(ctx, a.pool, cursorListPageOptions[*models.Task]{
 		limit: limit, cursor: cursor, cursorLabel: "cursor", operation: "task list", cursorName: "task",
 		query: func(ctx context.Context, tx pgx.Tx, upper time.Time, continuation bool, parsed *parsedQueryCursor, limit int) ([]*models.Task, bool, error) {
-			return queryTasks(ctx, tx, "created_at", time.Time{}, upper, continuation, parsed, limit, 0)
+			return taskResourceQuery.query(ctx, tx, "created_at", time.Time{}, upper, continuation, parsed, limit, 0)
 		},
 		rowCursor: func(task *models.Task) (time.Time, string) { return task.CreatedAt, task.TaskID },
 	})
@@ -110,7 +94,10 @@ func (a *TaskActions) GetByEntity(ctx context.Context, assetID string, limit int
 	return readCursorListPage(ctx, a.pool, cursorListPageOptions[*models.Task]{
 		limit: limit, cursor: cursor, cursorLabel: "cursor", operation: "asset task list", cursorName: "asset task",
 		query: func(ctx context.Context, tx pgx.Tx, upper time.Time, continuation bool, parsed *parsedQueryCursor, limit int) ([]*models.Task, bool, error) {
-			return queryTasksByEntity(ctx, tx, assetID, "created_at", time.Time{}, upper, continuation, parsed, limit)
+			return taskResourceQuery.queryFiltered(
+				ctx, tx, "created_at", time.Time{}, upper, continuation, parsed, limit, 0,
+				&cursorPageEqFilter{column: "asset_id", value: assetID}, "tasks by entity",
+			)
 		},
 		rowCursor: func(task *models.Task) (time.Time, string) { return task.CreatedAt, task.TaskID },
 	})

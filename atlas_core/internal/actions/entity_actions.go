@@ -154,15 +154,11 @@ func (a *EntityActions) Create(ctx context.Context, params CreateEntityParams) (
 	if err != nil {
 		return nil, err
 	}
-	var entity models.Entity
-	err = tx.QueryRow(ctx, `
+	entity, err := scanEntity(tx.QueryRow(ctx, `
 		INSERT INTO entities (entity_id, type, subtype, alias, json, version)
 		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING entity_id, type, subtype, alias, json, created_at, updated_at, version
-	`, entityID, entityType, subtype, alias, jsonBytes, version).Scan(
-		&entity.EntityID, &entity.Type, &entity.Subtype, &entity.Alias,
-		&entity.JSON, &entity.CreatedAt, &entity.UpdatedAt, &entity.Version,
-	)
+	`, entityID, entityType, subtype, alias, jsonBytes, version))
 	if err != nil {
 		if isUniqueViolation(err) {
 			var pgErr *pgconn.PgError
@@ -178,7 +174,7 @@ func (a *EntityActions) Create(ctx context.Context, params CreateEntityParams) (
 		ResourceType: ChangeResourceEntity,
 		ID:           entity.EntityID,
 		Version:      entity.Version,
-		AfterEntity:  cloneEntityModel(&entity),
+		AfterEntity:  cloneEntityModel(entity),
 	}); err != nil {
 		return nil, err
 	}
@@ -186,7 +182,7 @@ func (a *EntityActions) Create(ctx context.Context, params CreateEntityParams) (
 		return nil, fmt.Errorf("failed to commit entity create transaction: %w", err)
 	}
 
-	return &entity, nil
+	return entity, nil
 }
 
 // Get retrieves an entity by ID.
@@ -196,14 +192,10 @@ func (a *EntityActions) Get(ctx context.Context, entityID string) (*models.Entit
 	}
 	entityID = SanitizeID(entityID)
 
-	var entity models.Entity
-	err := a.pool.QueryRow(ctx, `
+	entity, err := scanEntity(a.pool.QueryRow(ctx, `
 		SELECT entity_id, type, subtype, alias, json, created_at, updated_at, version
 		FROM entities WHERE entity_id = $1
-	`, entityID).Scan(
-		&entity.EntityID, &entity.Type, &entity.Subtype, &entity.Alias,
-		&entity.JSON, &entity.CreatedAt, &entity.UpdatedAt, &entity.Version,
-	)
+	`, entityID))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, NewEntityNotFoundError(entityID)
@@ -211,7 +203,7 @@ func (a *EntityActions) Get(ctx context.Context, entityID string) (*models.Entit
 		return nil, fmt.Errorf("failed to get entity: %w", err)
 	}
 
-	return &entity, nil
+	return entity, nil
 }
 
 func (a *EntityActions) checkExpectedVersion(ctx context.Context, entityID string, expectedVersion *int64) error {
@@ -240,14 +232,10 @@ func (a *EntityActions) GetByAlias(ctx context.Context, alias string) (*models.E
 		return nil, NewValidationError("alias is required")
 	}
 
-	var entity models.Entity
-	err = a.pool.QueryRow(ctx, `
+	entity, err := scanEntity(a.pool.QueryRow(ctx, `
 		SELECT entity_id, type, subtype, alias, json, created_at, updated_at, version
 		FROM entities WHERE alias = $1
-	`, normalized).Scan(
-		&entity.EntityID, &entity.Type, &entity.Subtype, &entity.Alias,
-		&entity.JSON, &entity.CreatedAt, &entity.UpdatedAt, &entity.Version,
-	)
+	`, normalized))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, NewAliasNotFoundError(alias)
@@ -255,7 +243,7 @@ func (a *EntityActions) GetByAlias(ctx context.Context, alias string) (*models.E
 		return nil, fmt.Errorf("failed to get entity by alias: %w", err)
 	}
 
-	return &entity, nil
+	return entity, nil
 }
 
 // List retrieves entities with pagination.
@@ -268,7 +256,7 @@ func (a *EntityActions) List(ctx context.Context, limit int, cursor string) (*Li
 		operation:   "entity list",
 		cursorName:  "entity",
 		query: func(ctx context.Context, tx pgx.Tx, snapshotUpperBound time.Time, continuation bool, parsedCursor *parsedQueryCursor, limit int) ([]*models.Entity, bool, error) {
-			return queryEntities(ctx, tx, "created_at", time.Time{}, snapshotUpperBound, continuation, parsedCursor, limit, 0)
+			return entityResourceQuery.query(ctx, tx, "created_at", time.Time{}, snapshotUpperBound, continuation, parsedCursor, limit, 0)
 		},
 		rowCursor: func(entity *models.Entity) (time.Time, string) {
 			return entity.CreatedAt, entity.EntityID
@@ -326,15 +314,11 @@ func (a *EntityActions) Update(ctx context.Context, entityID string, params Upda
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Fetch existing entity with row lock
-	var entity models.Entity
-	err = tx.QueryRow(ctx, `
+	entity, err := scanEntity(tx.QueryRow(ctx, `
 		SELECT entity_id, type, subtype, alias, json, created_at, updated_at, version
 		FROM entities WHERE entity_id = $1
 		FOR UPDATE
-	`, entityID).Scan(
-		&entity.EntityID, &entity.Type, &entity.Subtype, &entity.Alias,
-		&entity.JSON, &entity.CreatedAt, &entity.UpdatedAt, &entity.Version,
-	)
+	`, entityID))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, NewEntityNotFoundError(entityID)
@@ -360,7 +344,7 @@ func (a *EntityActions) Update(ctx context.Context, entityID string, params Upda
 		if err := tx.Commit(ctx); err != nil {
 			return nil, fmt.Errorf("failed to commit entity precondition transaction: %w", err)
 		}
-		return &entity, nil
+		return entity, nil
 	}
 
 	// Update type if provided
@@ -416,18 +400,14 @@ func (a *EntityActions) Update(ctx context.Context, entityID string, params Upda
 	if err != nil {
 		return nil, err
 	}
-	var out models.Entity
-	err = tx.QueryRow(ctx, `
+	out, err := scanEntity(tx.QueryRow(ctx, `
 		UPDATE entities
 		SET type = $1, subtype = $2, alias = $3, json = $4,
 			updated_at = clock_timestamp(),
 			version = $5
 		WHERE entity_id = $6
 		RETURNING entity_id, type, subtype, alias, json, created_at, updated_at, version
-	`, newType, newSubtype, newAlias, jsonBytes, version, entityID).Scan(
-		&out.EntityID, &out.Type, &out.Subtype, &out.Alias,
-		&out.JSON, &out.CreatedAt, &out.UpdatedAt, &out.Version,
-	)
+	`, newType, newSubtype, newAlias, jsonBytes, version, entityID))
 	if err != nil {
 		if isUniqueViolation(err) {
 			return nil, NewEntityUniqueConstraintError()
@@ -440,7 +420,7 @@ func (a *EntityActions) Update(ctx context.Context, entityID string, params Upda
 		ResourceType: ChangeResourceEntity,
 		ID:           out.EntityID,
 		Version:      out.Version,
-		AfterEntity:  cloneEntityModel(&out),
+		AfterEntity:  cloneEntityModel(out),
 	}); err != nil {
 		return nil, err
 	}
@@ -448,7 +428,7 @@ func (a *EntityActions) Update(ctx context.Context, entityID string, params Upda
 		return nil, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
-	return &out, nil
+	return out, nil
 }
 
 // Delete removes an entity.
@@ -466,15 +446,11 @@ func (a *EntityActions) Delete(ctx context.Context, entityID string) error {
 		_ = tx.Rollback(ctx)
 	}()
 
-	var entity models.Entity
-	err = tx.QueryRow(ctx, `
+	entity, err := scanEntity(tx.QueryRow(ctx, `
 		SELECT entity_id, type, subtype, alias, json, created_at, updated_at, version
 		FROM entities WHERE entity_id = $1
 		FOR UPDATE
-	`, entityID).Scan(
-		&entity.EntityID, &entity.Type, &entity.Subtype, &entity.Alias,
-		&entity.JSON, &entity.CreatedAt, &entity.UpdatedAt, &entity.Version,
-	)
+	`, entityID))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return NewEntityNotFoundError(entityID)
