@@ -1044,6 +1044,14 @@ describe("AtlasAssetRuntime", () => {
     ["nested toJSON transformation", () => ({ value: { reading: 1, toJSON: () => ({ reading: 2 }) } })],
     ["boxed primitive", () => Object(1)],
     ["non-record object", () => new Map([["value", 1]])],
+    [
+      "cyclic proxy prototype",
+      () => {
+        let output!: object;
+        output = new Proxy({}, { getPrototypeOf: () => output });
+        return output;
+      }
+    ],
     ["non-enumerable property", () => Object.defineProperty({ value: 1 }, "secret", { value: 2 })],
     [
       "symbol-keyed property",

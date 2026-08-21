@@ -813,9 +813,16 @@ function assignJSONMember(member: PendingJSONMember, value: JSONValue): void {
 function hasJSONRecordPrototype(value: object): boolean {
   const prototype = Object.getPrototypeOf(value);
   if (prototype === null) return true;
+  const visited = new WeakSet<object>();
+  visited.add(value);
   let basePrototype = prototype;
-  while (Object.getPrototypeOf(basePrototype) !== null) basePrototype = Object.getPrototypeOf(basePrototype);
-  return prototype === basePrototype;
+  while (!visited.has(basePrototype)) {
+    visited.add(basePrototype);
+    const parent = Object.getPrototypeOf(basePrototype);
+    if (parent === null) return prototype === basePrototype;
+    basePrototype = parent;
+  }
+  return false;
 }
 
 function delay(milliseconds: number, signal: AbortSignal): Promise<void> {
