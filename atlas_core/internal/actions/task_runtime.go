@@ -62,11 +62,8 @@ func (a *TaskActions) installRuntimeRegistration(ctx context.Context, assetID, r
 		return false, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	var entity models.Entity
-	if err := tx.QueryRow(ctx, entitySelectSQL+` WHERE entity_id = $1 FOR UPDATE`, assetID).Scan(
-		&entity.EntityID, &entity.Type, &entity.Subtype, &entity.Alias,
-		&entity.JSON, &entity.CreatedAt, &entity.UpdatedAt, &entity.Version,
-	); err != nil {
+	entity, err := scanEntity(tx.QueryRow(ctx, entitySelectSQL+` WHERE entity_id = $1 FOR UPDATE`, assetID))
+	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return false, NewEntityNotFoundError(assetID)
 		}
@@ -94,7 +91,7 @@ func (a *TaskActions) installRuntimeRegistration(ctx context.Context, assetID, r
 	`, assetID, runtimeID); err != nil {
 		return false, fmt.Errorf("record Asset runtime: %w", err)
 	}
-	if err := recordRuntimeManifestEntityChange(ctx, tx, &entity); err != nil {
+	if err := recordRuntimeManifestEntityChange(ctx, tx, entity); err != nil {
 		return false, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -121,11 +118,8 @@ func (a *TaskActions) StopRuntime(ctx context.Context, assetID, runtimeID string
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var entity models.Entity
-	if err := tx.QueryRow(ctx, entitySelectSQL+` WHERE entity_id = $1 FOR UPDATE`, assetID).Scan(
-		&entity.EntityID, &entity.Type, &entity.Subtype, &entity.Alias,
-		&entity.JSON, &entity.CreatedAt, &entity.UpdatedAt, &entity.Version,
-	); errors.Is(err, pgx.ErrNoRows) {
+	entity, err := scanEntity(tx.QueryRow(ctx, entitySelectSQL+` WHERE entity_id = $1 FOR UPDATE`, assetID))
+	if errors.Is(err, pgx.ErrNoRows) {
 		return tx.Commit(ctx)
 	} else if err != nil {
 		return fmt.Errorf("lock stopping Asset Entity: %w", err)
@@ -153,7 +147,7 @@ func (a *TaskActions) StopRuntime(ctx context.Context, assetID, runtimeID string
 		return fmt.Errorf("deactivate Asset runtime: %w", err)
 	}
 	if stateChanged {
-		if err := recordRuntimeManifestEntityChange(ctx, tx, &entity); err != nil {
+		if err := recordRuntimeManifestEntityChange(ctx, tx, entity); err != nil {
 			return err
 		}
 	}
@@ -189,11 +183,8 @@ func (a *TaskActions) CompleteRuntimeRegistration(ctx context.Context, assetID, 
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	var entity models.Entity
-	if err := tx.QueryRow(ctx, entitySelectSQL+` WHERE entity_id = $1 FOR UPDATE`, assetID).Scan(
-		&entity.EntityID, &entity.Type, &entity.Subtype, &entity.Alias,
-		&entity.JSON, &entity.CreatedAt, &entity.UpdatedAt, &entity.Version,
-	); err != nil {
+	entity, err := scanEntity(tx.QueryRow(ctx, entitySelectSQL+` WHERE entity_id = $1 FOR UPDATE`, assetID))
+	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return NewEntityNotFoundError(assetID)
 		}
@@ -239,7 +230,7 @@ func (a *TaskActions) CompleteRuntimeRegistration(ctx context.Context, assetID, 
 	if _, err := tx.Exec(ctx, `UPDATE asset_runtimes SET ready = TRUE, manifest = $3, ready_at = clock_timestamp() WHERE asset_id = $1 AND runtime_id = $2`, assetID, runtimeID, encoded); err != nil {
 		return fmt.Errorf("mark Asset runtime ready: %w", err)
 	}
-	if err := recordRuntimeManifestEntityChange(ctx, tx, &entity); err != nil {
+	if err := recordRuntimeManifestEntityChange(ctx, tx, entity); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -271,15 +262,12 @@ func recordRuntimeManifestEntityChange(ctx context.Context, tx pgx.Tx, before *m
 	if err != nil {
 		return err
 	}
-	var updated models.Entity
-	if err := tx.QueryRow(ctx, `
+	updated, err := scanEntity(tx.QueryRow(ctx, `
 		UPDATE entities SET updated_at = clock_timestamp(), version = $2
 		WHERE entity_id = $1
 		RETURNING entity_id, type, subtype, alias, json, created_at, updated_at, version
-	`, before.EntityID, version).Scan(
-		&updated.EntityID, &updated.Type, &updated.Subtype, &updated.Alias,
-		&updated.JSON, &updated.CreatedAt, &updated.UpdatedAt, &updated.Version,
-	); err != nil {
+	`, before.EntityID, version))
+	if err != nil {
 		return fmt.Errorf("advance Asset detail after runtime change: %w", err)
 	}
 	if err := RecordResourceChange(ctx, tx, ResourceChange{
@@ -287,7 +275,7 @@ func recordRuntimeManifestEntityChange(ctx context.Context, tx pgx.Tx, before *m
 		ResourceType: ChangeResourceEntity,
 		ID:           updated.EntityID,
 		Version:      updated.Version,
-		AfterEntity:  cloneEntityModel(&updated),
+		AfterEntity:  cloneEntityModel(updated),
 	}); err != nil {
 		return err
 	}
@@ -349,7 +337,7 @@ func (a *TaskActions) Deliverable(ctx context.Context, assetID, runtimeID string
 	if err != nil {
 		return nil, fmt.Errorf("query deliverable Tasks: %w", err)
 	}
-	deliverable, err := scanTaskRows(rows)
+	deliverable, err := collectRows(rows, taskResourceQuery)
 	if err != nil {
 		return nil, err
 	}
@@ -401,7 +389,7 @@ func (a *TaskActions) failRuntimeTaskBatch(ctx context.Context, assetID, runtime
 	if err != nil {
 		return 0, true, fmt.Errorf("lock nonterminal runtime Task batch: %w", err)
 	}
-	tasks, err := scanTaskRows(rows)
+	tasks, err := collectRows(rows, taskResourceQuery)
 	if err != nil {
 		return 0, true, err
 	}
@@ -452,7 +440,7 @@ func (a *TaskActions) ReconcileImmediateTimeouts(ctx context.Context) (int, erro
 	if err != nil {
 		return 0, fmt.Errorf("lock expired immediate Tasks: %w", err)
 	}
-	tasks, err := scanTaskRows(rows)
+	tasks, err := collectRows(rows, taskResourceQuery)
 	if err != nil {
 		return 0, err
 	}

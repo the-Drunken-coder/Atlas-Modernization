@@ -13,6 +13,52 @@ type rowIterator interface {
 	Next() bool
 }
 
+type rowScanner interface {
+	Scan(dest ...any) error
+}
+
+type resourceQuerySpec[T any] struct {
+	name          string
+	queryName     string
+	selectFrom    string
+	idColumn      string
+	scan          func(rowScanner) (T, error)
+	retainedBytes func(T) int
+}
+
+var (
+	entityResourceQuery = resourceQuerySpec[*models.Entity]{
+		name: "entity", queryName: "entities", selectFrom: entitySelectSQL, idColumn: "entity_id",
+		scan: scanEntity, retainedBytes: entityRetainedBytes,
+	}
+	taskResourceQuery = resourceQuerySpec[*models.Task]{
+		name: "task", queryName: "tasks", selectFrom: taskSelectSQL, idColumn: "task_id",
+		scan: scanTask, retainedBytes: taskRetainedBytes,
+	}
+	objectResourceQuery = resourceQuerySpec[*models.MediaObject]{
+		name: "object", queryName: "objects", selectFrom: objectSelectSQL, idColumn: "object_id",
+		scan: scanObject, retainedBytes: objectRetainedBytes,
+	}
+)
+
+func scanEntity(row rowScanner) (*models.Entity, error) {
+	var entity models.Entity
+	err := row.Scan(
+		&entity.EntityID, &entity.Type, &entity.Subtype, &entity.Alias,
+		&entity.JSON, &entity.CreatedAt, &entity.UpdatedAt, &entity.Version,
+	)
+	return &entity, err
+}
+
+func scanObject(row rowScanner) (*models.MediaObject, error) {
+	var object models.MediaObject
+	err := row.Scan(
+		&object.ObjectID, &object.Path, &object.ContentType, &object.Type,
+		&object.JSON, &object.CreatedAt, &object.UpdatedAt, &object.Version,
+	)
+	return &object, err
+}
+
 func collectByteBoundedRows[T any](
 	rows rowIterator,
 	limit, maxBytes int,
@@ -41,35 +87,6 @@ func collectByteBoundedRows[T any](
 		return nil, false, fmt.Errorf("error iterating %s rows: %w", resource, err)
 	}
 	return items, false, nil
-}
-
-func collectByteBoundedEntities(rows pgx.Rows, limit, maxBytes int) ([]*models.Entity, bool, error) {
-	return collectByteBoundedRows(rows, limit, maxBytes, "entity", func() (*models.Entity, int, error) {
-		var entity models.Entity
-		err := rows.Scan(
-			&entity.EntityID, &entity.Type, &entity.Subtype, &entity.Alias,
-			&entity.JSON, &entity.CreatedAt, &entity.UpdatedAt, &entity.Version,
-		)
-		return &entity, entityRetainedBytes(&entity), err
-	})
-}
-
-func collectByteBoundedTasks(rows pgx.Rows, limit, maxBytes int) ([]*models.Task, bool, error) {
-	return collectByteBoundedRows(rows, limit, maxBytes, "task", func() (*models.Task, int, error) {
-		task, err := scanTask(rows)
-		return task, taskRetainedBytes(task), err
-	})
-}
-
-func collectByteBoundedObjects(rows pgx.Rows, limit, maxBytes int) ([]*models.MediaObject, bool, error) {
-	return collectByteBoundedRows(rows, limit, maxBytes, "object", func() (*models.MediaObject, int, error) {
-		var object models.MediaObject
-		err := rows.Scan(
-			&object.ObjectID, &object.Path, &object.ContentType, &object.Type,
-			&object.JSON, &object.CreatedAt, &object.UpdatedAt, &object.Version,
-		)
-		return &object, objectRetainedBytes(&object), err
-	})
 }
 
 // The fixed allowance conservatively covers field names, quotes, separators,
@@ -118,51 +135,22 @@ func jsonValueBytes(value []byte) int {
 	return size
 }
 
-func collectEntities(rows pgx.Rows) ([]*models.Entity, error) {
+func collectRows[T any](rows pgx.Rows, spec resourceQuerySpec[T]) ([]T, error) {
 	if rows == nil {
 		return nil, nil
 	}
 	defer rows.Close()
 
-	var out []*models.Entity
+	var out []T
 	for rows.Next() {
-		var e models.Entity
-		if err := rows.Scan(&e.EntityID, &e.Type, &e.Subtype, &e.Alias, &e.JSON, &e.CreatedAt, &e.UpdatedAt, &e.Version); err != nil {
-			return nil, fmt.Errorf("failed to scan entity: %w", err)
+		item, err := spec.scan(rows)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan %s: %w", spec.name, err)
 		}
-		out = append(out, &e)
+		out = append(out, item)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating entity rows: %w", err)
-	}
-	return out, nil
-}
-
-func collectTasks(rows pgx.Rows) ([]*models.Task, error) {
-	if rows == nil {
-		return nil, nil
-	}
-	defer rows.Close()
-
-	return scanTaskRows(rows)
-}
-
-func collectObjects(rows pgx.Rows) ([]*models.MediaObject, error) {
-	if rows == nil {
-		return nil, nil
-	}
-	defer rows.Close()
-
-	var out []*models.MediaObject
-	for rows.Next() {
-		var o models.MediaObject
-		if err := rows.Scan(&o.ObjectID, &o.Path, &o.ContentType, &o.Type, &o.JSON, &o.CreatedAt, &o.UpdatedAt, &o.Version); err != nil {
-			return nil, fmt.Errorf("failed to scan object: %w", err)
-		}
-		out = append(out, &o)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating object rows: %w", err)
+		return nil, fmt.Errorf("error iterating %s rows: %w", spec.name, err)
 	}
 	return out, nil
 }

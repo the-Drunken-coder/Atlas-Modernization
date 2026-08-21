@@ -47,22 +47,18 @@ func currentObjectStateForUpload(ctx context.Context, tx pgx.Tx, objectID string
 		json: make(map[string]interface{}),
 	}
 
-	var object models.MediaObject
-	err := tx.QueryRow(ctx, `
+	object, err := scanObject(tx.QueryRow(ctx, `
 		SELECT object_id, path, content_type, type, json, created_at, updated_at, version
 		FROM objects WHERE object_id = $1
 		FOR UPDATE
-	`, objectID).Scan(
-		&object.ObjectID, &object.Path, &object.ContentType, &object.Type,
-		&object.JSON, &object.CreatedAt, &object.UpdatedAt, &object.Version,
-	)
+	`, objectID))
 	if err != nil {
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("failed to lock existing object metadata: %w", err)
 		}
 	} else {
 		state.path = object.Path
-		state.resource = cloneObjectModel(&object)
+		state.resource = cloneObjectModel(object)
 		state.rowExists = true
 
 		decoded, err := decodeObjectJSONForPatch(object.JSON)
@@ -146,8 +142,7 @@ func upsertUploadedObjectMetadata(
 	jsonBytes []byte,
 	version int64,
 ) (*models.MediaObject, error) {
-	var out models.MediaObject
-	err := tx.QueryRow(ctx, `
+	out, err := scanObject(tx.QueryRow(ctx, `
 		INSERT INTO objects (object_id, path, content_type, type, json, version)
 		VALUES ($1, $2, $3, $4, $5, $6)
 		ON CONFLICT (object_id) DO UPDATE SET
@@ -158,17 +153,14 @@ func upsertUploadedObjectMetadata(
 			updated_at = clock_timestamp(),
 			version = EXCLUDED.version
 		RETURNING object_id, path, content_type, type, json, created_at, updated_at, version
-	`, objectID, objectPath, contentType, objType, jsonBytes, version).Scan(
-		&out.ObjectID, &out.Path, &out.ContentType, &out.Type,
-		&out.JSON, &out.CreatedAt, &out.UpdatedAt, &out.Version,
-	)
+	`, objectID, objectPath, contentType, objType, jsonBytes, version))
 	if err != nil {
 		if isUniqueViolation(err) {
 			return nil, NewObjectPathConflictError()
 		}
 		return nil, fmt.Errorf("failed to persist uploaded object metadata: %w", err)
 	}
-	return &out, nil
+	return out, nil
 }
 
 func (a *ObjectActions) cleanupUploadedPathAfterFailure(ctx context.Context, objectID, objectPath string, cause error) error {

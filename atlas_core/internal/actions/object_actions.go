@@ -76,15 +76,11 @@ func (a *ObjectActions) Create(ctx context.Context, params CreateObjectParams) (
 	if err != nil {
 		return nil, err
 	}
-	var obj models.MediaObject
-	err = tx.QueryRow(ctx, `
+	obj, err := scanObject(tx.QueryRow(ctx, `
 		INSERT INTO objects (object_id, type, json, version)
 		VALUES ($1, $2, $3, $4)
 		RETURNING object_id, path, content_type, type, json, created_at, updated_at, version
-	`, objectID, normalizedType, jsonBytes, version).Scan(
-		&obj.ObjectID, &obj.Path, &obj.ContentType, &obj.Type,
-		&obj.JSON, &obj.CreatedAt, &obj.UpdatedAt, &obj.Version,
-	)
+	`, objectID, normalizedType, jsonBytes, version))
 	if err != nil {
 		if isUniqueViolation(err) {
 			return nil, NewObjectConflictError(objectID)
@@ -96,7 +92,7 @@ func (a *ObjectActions) Create(ctx context.Context, params CreateObjectParams) (
 		ResourceType: ChangeResourceObject,
 		ID:           obj.ObjectID,
 		Version:      obj.Version,
-		AfterObject:  cloneObjectModel(&obj),
+		AfterObject:  cloneObjectModel(obj),
 	}); err != nil {
 		return nil, err
 	}
@@ -104,7 +100,7 @@ func (a *ObjectActions) Create(ctx context.Context, params CreateObjectParams) (
 		return nil, fmt.Errorf("failed to commit object create transaction: %w", err)
 	}
 
-	return &obj, nil
+	return obj, nil
 }
 
 func normalizeOptionalObjectString(value *string) *string {
@@ -125,14 +121,10 @@ func (a *ObjectActions) Get(ctx context.Context, objectID string) (*models.Media
 	}
 	objectID = SanitizeID(objectID)
 
-	var obj models.MediaObject
-	err := a.pool.QueryRow(ctx, `
+	obj, err := scanObject(a.pool.QueryRow(ctx, `
 		SELECT object_id, path, content_type, type, json, created_at, updated_at, version
 		FROM objects WHERE object_id = $1
-	`, objectID).Scan(
-		&obj.ObjectID, &obj.Path, &obj.ContentType, &obj.Type,
-		&obj.JSON, &obj.CreatedAt, &obj.UpdatedAt, &obj.Version,
-	)
+	`, objectID))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, NewObjectNotFoundError(objectID)
@@ -140,7 +132,7 @@ func (a *ObjectActions) Get(ctx context.Context, objectID string) (*models.Media
 		return nil, fmt.Errorf("failed to get object: %w", err)
 	}
 
-	return &obj, nil
+	return obj, nil
 }
 
 // List retrieves objects with pagination.
@@ -153,7 +145,7 @@ func (a *ObjectActions) List(ctx context.Context, limit int, cursor string) (*Li
 		operation:   "object list",
 		cursorName:  "object",
 		query: func(ctx context.Context, tx pgx.Tx, snapshotUpperBound time.Time, continuation bool, parsedCursor *parsedQueryCursor, limit int) ([]*models.MediaObject, bool, error) {
-			return queryObjects(ctx, tx, "created_at", time.Time{}, snapshotUpperBound, continuation, parsedCursor, limit, 0)
+			return objectResourceQuery.query(ctx, tx, "created_at", time.Time{}, snapshotUpperBound, continuation, parsedCursor, limit, 0)
 		},
 		rowCursor: func(object *models.MediaObject) (time.Time, string) {
 			return object.CreatedAt, object.ObjectID
@@ -202,15 +194,11 @@ func (a *ObjectActions) Update(ctx context.Context, objectID string, params Upda
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Fetch existing object with row lock
-	var obj models.MediaObject
-	err = tx.QueryRow(ctx, `
+	obj, err := scanObject(tx.QueryRow(ctx, `
 		SELECT object_id, path, content_type, type, json, created_at, updated_at, version
 		FROM objects WHERE object_id = $1
 		FOR UPDATE
-	`, objectID).Scan(
-		&obj.ObjectID, &obj.Path, &obj.ContentType, &obj.Type,
-		&obj.JSON, &obj.CreatedAt, &obj.UpdatedAt, &obj.Version,
-	)
+	`, objectID))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, NewObjectNotFoundError(objectID)
@@ -235,18 +223,14 @@ func (a *ObjectActions) Update(ctx context.Context, objectID string, params Upda
 	if err != nil {
 		return nil, err
 	}
-	var out models.MediaObject
-	err = tx.QueryRow(ctx, `
+	out, err := scanObject(tx.QueryRow(ctx, `
 		UPDATE objects
 		SET type = $1, json = $2,
 			updated_at = clock_timestamp(),
 			version = $3
 		WHERE object_id = $4
 		RETURNING object_id, path, content_type, type, json, created_at, updated_at, version
-	`, newType, jsonBytes, version, objectID).Scan(
-		&out.ObjectID, &out.Path, &out.ContentType, &out.Type,
-		&out.JSON, &out.CreatedAt, &out.UpdatedAt, &out.Version,
-	)
+	`, newType, jsonBytes, version, objectID))
 	if err != nil {
 		return nil, fmt.Errorf("failed to update object: %w", err)
 	}
@@ -256,7 +240,7 @@ func (a *ObjectActions) Update(ctx context.Context, objectID string, params Upda
 		ResourceType: ChangeResourceObject,
 		ID:           out.ObjectID,
 		Version:      out.Version,
-		AfterObject:  cloneObjectModel(&out),
+		AfterObject:  cloneObjectModel(out),
 	}); err != nil {
 		return nil, err
 	}
@@ -264,7 +248,7 @@ func (a *ObjectActions) Update(ctx context.Context, objectID string, params Upda
 		return nil, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
-	return &out, nil
+	return out, nil
 }
 
 func beginObjectPreconditionTx(ctx context.Context, pool *pgxpool.Pool) (pgx.Tx, error) {
@@ -284,15 +268,11 @@ func (a *ObjectActions) lockObjectAndCheckExpectedVersion(ctx context.Context, o
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var obj models.MediaObject
-	err = tx.QueryRow(ctx, `
+	obj, err := scanObject(tx.QueryRow(ctx, `
 		SELECT object_id, path, content_type, type, json, created_at, updated_at, version
 		FROM objects WHERE object_id = $1
 		FOR UPDATE
-	`, objectID).Scan(
-		&obj.ObjectID, &obj.Path, &obj.ContentType, &obj.Type,
-		&obj.JSON, &obj.CreatedAt, &obj.UpdatedAt, &obj.Version,
-	)
+	`, objectID))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, NewObjectNotFoundError(objectID)
@@ -305,7 +285,7 @@ func (a *ObjectActions) lockObjectAndCheckExpectedVersion(ctx context.Context, o
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("failed to commit object precondition transaction: %w", err)
 	}
-	return &obj, nil
+	return obj, nil
 }
 
 // Delete removes an object and its storage.
@@ -323,14 +303,10 @@ func (a *ObjectActions) Delete(ctx context.Context, objectID string) error {
 		_ = tx.Rollback(ctx)
 	}()
 
-	var object models.MediaObject
-	err = tx.QueryRow(ctx, `
+	object, err := scanObject(tx.QueryRow(ctx, `
 		DELETE FROM objects WHERE object_id = $1
 		RETURNING object_id, path, content_type, type, json, created_at, updated_at, version
-	`, objectID).Scan(
-		&object.ObjectID, &object.Path, &object.ContentType, &object.Type,
-		&object.JSON, &object.CreatedAt, &object.UpdatedAt, &object.Version,
-	)
+	`, objectID))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return NewObjectNotFoundError(objectID)
