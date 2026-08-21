@@ -691,7 +691,9 @@ function snapshotTaskOutput(output: JSONValue): JSONValue {
   try {
     const snapshot = copyJSONValue(output);
     if (!isJSONValue(snapshot)) throw new TypeError();
-    JSON.stringify({ output: snapshot });
+    const envelope = { output: snapshot };
+    Object.setPrototypeOf(envelope, null);
+    JSON.stringify(envelope);
     return snapshot;
   } catch {
     throw new TypeError("Task handler returned output that JSON cannot preserve");
@@ -802,13 +804,26 @@ function validateJSONCopyFrame(frame: JSONCopyFrame): void {
     const keys = Reflect.ownKeys(frame.source);
     if (
       !keys.includes("length") ||
-      keys.some((key) => typeof key === "symbol" || (key !== "length" && !entries.has(key)))
+      keys.some((key) => typeof key === "symbol" || (key !== "length" && !entries.has(key))) ||
+      !hasOnlyJSONArrayPrototypeEntries(frame.source, entries)
     ) {
       throw new TypeError();
     }
     return;
   }
   if (!hasJSONRecordPrototype(frame.source)) throw new TypeError();
+}
+
+function hasOnlyJSONArrayPrototypeEntries(value: object, entries: ReadonlySet<string>): boolean {
+  let prototype = Object.getPrototypeOf(value);
+  for (let depth = 0; prototype !== null && depth < 3; depth++) {
+    for (const key of Reflect.ownKeys(prototype)) {
+      const descriptor = Reflect.getOwnPropertyDescriptor(prototype, key);
+      if (descriptor?.enumerable && (typeof key === "symbol" || !entries.has(key))) return false;
+    }
+    prototype = Object.getPrototypeOf(prototype);
+  }
+  return prototype === null;
 }
 
 function assignJSONMember(member: PendingJSONMember, value: JSONValue): void {

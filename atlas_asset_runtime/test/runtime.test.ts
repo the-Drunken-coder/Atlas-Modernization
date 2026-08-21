@@ -1049,6 +1049,14 @@ describe("AtlasAssetRuntime", () => {
       () => Object.create(Object.assign(Object.create(null) as Record<string, unknown>, { inherited: 1 }))
     ],
     [
+      "enumerable inherited array property",
+      () => {
+        const prototype = Object.create(Array.prototype) as unknown[];
+        Object.defineProperty(prototype, "metadata", { enumerable: true, value: 1 });
+        return Object.setPrototypeOf([], prototype);
+      }
+    ],
+    [
       "cyclic proxy prototype",
       () => {
         let output!: object;
@@ -1147,6 +1155,40 @@ describe("AtlasAssetRuntime", () => {
     } finally {
       if (originalToJSON === undefined) Reflect.deleteProperty(Array.prototype, "toJSON");
       else Object.defineProperty(Array.prototype, "toJSON", originalToJSON);
+      await runtime.stop();
+    }
+  });
+
+  it("uses an inert envelope after output installs an Object prototype hook", async () => {
+    const pending = task("immediate-1", "immediate.observe");
+    const { client } = fakeClient([pending]);
+    const originalToJSON = Object.getOwnPropertyDescriptor(Object.prototype, "toJSON");
+    const output = Object.defineProperty([], "0", {
+      get() {
+        Object.defineProperty(Object.prototype, "toJSON", {
+          configurable: true,
+          value: () => {
+            throw new Error("inherited completion hook ran");
+          }
+        });
+        return 1;
+      }
+    });
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      manifest: [manifestEntry("immediate.observe", "immediate")],
+      handlers: { "immediate.observe": async () => output }
+    });
+
+    try {
+      await runtime.start();
+      await vi.waitFor(() => expect(client.tasks.complete).toHaveBeenCalledOnce());
+      const completed = client.tasks.complete.mock.calls[0]![1].output;
+      expect(Array.isArray(completed) && completed[0] === 1).toBe(true);
+      expect(client.tasks.fail).not.toHaveBeenCalled();
+    } finally {
+      if (originalToJSON === undefined) Reflect.deleteProperty(Object.prototype, "toJSON");
+      else Object.defineProperty(Object.prototype, "toJSON", originalToJSON);
       await runtime.stop();
     }
   });

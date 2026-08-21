@@ -322,6 +322,14 @@ describe("AtlasClient HTTP", () => {
     expect(isJSONValue(value)).toBe(false);
   });
 
+  it("rejects hidden properties on JSON records", () => {
+    const value = Object.defineProperty({}, "secret", { value: 1n });
+    const inherited = Object.create(Object.assign(Object.create(null) as Record<string, unknown>, { secret: 1n }));
+
+    expect(isJSONValue(value)).toBe(false);
+    expect(isJSONValue(inherited)).toBe(false);
+  });
+
   it("rejects malformed generated entity create validator geometry and timestamps", () => {
     expect(
       isEntityCreateRequest({ entity_id: "asset-valid", entity_type: "asset", published_at: "2026-06-18T12:00:00Z" })
@@ -643,6 +651,40 @@ describe("AtlasClient HTTP", () => {
       expect.objectContaining({ event: "update", id: "task-ack" })
     );
     await expect(client.tasks.acknowledge("missing-task", runtime)).rejects.toBeInstanceOf(AtlasAPIError);
+  });
+
+  it("serializes Task completion without inherited toJSON hooks", async () => {
+    const core = new FakeCore();
+    core.upsertTask(task("task-inert-completion", "asset-1"));
+    const originalToJSON = Object.getOwnPropertyDescriptor(Object.prototype, "toJSON");
+    const restoreToJSON = () => {
+      if (originalToJSON === undefined) Reflect.deleteProperty(Object.prototype, "toJSON");
+      else Object.defineProperty(Object.prototype, "toJSON", originalToJSON);
+    };
+    let requestBody: BodyInit | null | undefined;
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: async (url, init) => {
+        requestBody = init?.body;
+        restoreToJSON();
+        return core.fetch(String(url), init);
+      }
+    });
+    Object.defineProperty(Object.prototype, "toJSON", {
+      configurable: true,
+      value: () => null
+    });
+
+    try {
+      await client.tasks.complete("task-inert-completion", {
+        runtimeId: "runtime-1",
+        output: Object.setPrototypeOf([1], null)
+      });
+    } finally {
+      restoreToJSON();
+    }
+
+    expect(requestBody).toBe('{"output":[1]}');
   });
 
   it("canonicalizes tasking identifiers before body and header use", async () => {

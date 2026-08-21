@@ -235,6 +235,8 @@ func TestTypeScriptSourceGeneratesTaskCreateValidatorFromSchema(t *testing.T) {
 		"while (work.length > 0)",
 		"return Object.getPrototypeOf(prototype) === null",
 		"atlasProtocolHasOnlyArrayEntries(current)",
+		"atlasProtocolIsJSONRecord(current)",
+		"Reflect.getOwnPropertyDescriptor(value, key)?.enumerable === true",
 		"Reflect.ownKeys(value).every",
 		"Array.from({ length: current.length }, (_, index) => current[index])",
 		"active.delete(item.leave)",
