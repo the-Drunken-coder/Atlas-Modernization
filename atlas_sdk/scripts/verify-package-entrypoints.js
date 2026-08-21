@@ -1,10 +1,37 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const packageRoot = join(scriptDir, "..");
 const packageJSON = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8"));
+
+const expectedOutputFiles = [
+  "dist/atlas_sdk/src/index.js",
+  "dist/atlas_sdk/src/index.d.ts",
+  "dist/atlas_sdk/src/cli.js",
+  "dist/atlas_sdk/src/cli.d.ts",
+  "dist/atlas_sdk/src/admin.js",
+  "dist/atlas_sdk/src/admin.d.ts",
+  "dist/atlas_protocol/generated/typescript/index.js",
+  "dist/atlas_protocol/generated/typescript/index.d.ts"
+];
+
+let failed = false;
+for (const relativePath of expectedOutputFiles) {
+  let isFile = false;
+  try {
+    isFile = statSync(join(packageRoot, relativePath)).isFile();
+  } catch {}
+  if (!isFile) {
+    console.error(`::error::missing ${relativePath}`);
+    failed = true;
+  }
+}
+if (failed) {
+  process.exit(1);
+}
+
 if (typeof packageJSON.bin?.atlas !== "string" || packageJSON.bin.atlas.trim() === "") {
   console.error("::error::package.json is missing bin.atlas");
   process.exit(1);
@@ -57,7 +84,6 @@ const actual = new Map([
   ["cli PACKAGE_BIN.atlas", cliModule.PACKAGE_BIN?.atlas]
 ]);
 
-let failed = false;
 for (const [field, want] of expected) {
   const got = actual.get(field);
   if (got !== want) {

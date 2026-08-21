@@ -189,22 +189,7 @@ jobs:
         run: npm run build:sdk
 
       - name: Verify Atlas SDK package output
-        run: |
-          missing=0
-          test -d atlas_sdk/dist/atlas_sdk/src || { echo "::error::missing atlas_sdk/dist/atlas_sdk/src"; missing=1; }
-          test -f atlas_sdk/dist/atlas_sdk/src/index.js || { echo "::error::missing atlas_sdk/dist/atlas_sdk/src/index.js"; missing=1; }
-          test -f atlas_sdk/dist/atlas_sdk/src/index.d.ts || { echo "::error::missing atlas_sdk/dist/atlas_sdk/src/index.d.ts"; missing=1; }
-          test -f atlas_sdk/dist/atlas_sdk/src/cli.js || { echo "::error::missing atlas_sdk/dist/atlas_sdk/src/cli.js"; missing=1; }
-          test -f atlas_sdk/dist/atlas_sdk/src/cli.d.ts || { echo "::error::missing atlas_sdk/dist/atlas_sdk/src/cli.d.ts"; missing=1; }
-          test -f atlas_sdk/dist/atlas_sdk/src/admin.js || { echo "::error::missing atlas_sdk/dist/atlas_sdk/src/admin.js"; missing=1; }
-          test -f atlas_sdk/dist/atlas_sdk/src/admin.d.ts || { echo "::error::missing atlas_sdk/dist/atlas_sdk/src/admin.d.ts"; missing=1; }
-          test -d atlas_sdk/dist/atlas_protocol/generated/typescript || { echo "::error::missing atlas_sdk/dist/atlas_protocol/generated/typescript"; missing=1; }
-          test -f atlas_sdk/dist/atlas_protocol/generated/typescript/index.js || { echo "::error::missing atlas_sdk/dist/atlas_protocol/generated/typescript/index.js"; missing=1; }
-          test -f atlas_sdk/dist/atlas_protocol/generated/typescript/index.d.ts || { echo "::error::missing atlas_sdk/dist/atlas_protocol/generated/typescript/index.d.ts"; missing=1; }
-          if [ "$missing" -ne 0 ]; then
-            exit 1
-          fi
-          node atlas_sdk/scripts/verify-package-entrypoints.js
+        run: node atlas_sdk/scripts/verify-package-entrypoints.js
 
       - name: Smoke test packed Atlas SDK consumer
         run: npm run test:package --workspace @the-drunken-coder/atlas-sdk
