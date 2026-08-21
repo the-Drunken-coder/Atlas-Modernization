@@ -239,14 +239,15 @@ export class AtlasAssetRuntime {
         }
       }
       this.controller = undefined;
-      this.runtimeId = undefined;
-      this.state = "stopped";
       if (compensationError !== undefined) {
+        this.state = "stopping";
         throw new AggregateError(
           [error, compensationError],
           "Atlas asset runtime startup failed and Core deactivation could not be confirmed"
         );
       }
+      this.runtimeId = undefined;
+      this.state = "stopped";
       throw error;
     }
   }
@@ -254,11 +255,11 @@ export class AtlasAssetRuntime {
   private async stopRuntime(): Promise<void> {
     this.state = "stopping";
     const controller = this.controller;
-    const runtimeId = this.runtimeId;
     this.detachExternalAbort(controller);
     controller?.abort();
     for (const checkInController of this.standaloneCheckIns) checkInController.abort();
     this.clearAcceptedWork();
+    let deactivation = this.runtimeId ? this.deactivate(this.runtimeId) : undefined;
     await Promise.allSettled([
       this.startPromise,
       this.checkInLoop,
@@ -270,21 +271,25 @@ export class AtlasAssetRuntime {
       ...this.acceptances,
       ...this.executions
     ]);
-    let deactivationError: unknown;
-    if (runtimeId) {
-      try {
-        await this.client.runtime.stop(this.entityId, { runtime_id: runtimeId });
-      } catch (error) {
-        deactivationError = error;
-      }
-    }
+    if (!deactivation && this.runtimeId) deactivation = this.deactivate(this.runtimeId);
+    const deactivationResult = await deactivation;
     this.checkInLoop = undefined;
     this.deliveryLoop = undefined;
     this.reconciliationLoop = undefined;
     this.controller = undefined;
+    if (deactivationResult && !deactivationResult.ok) {
+      this.state = "stopping";
+      throw deactivationResult.error;
+    }
     this.runtimeId = undefined;
     this.state = "stopped";
-    if (deactivationError !== undefined) throw deactivationError;
+  }
+
+  private deactivate(runtimeId: string): Promise<{ ok: true } | { ok: false; error: unknown }> {
+    return this.client.runtime.stop(this.entityId, { runtime_id: runtimeId }).then(
+      () => ({ ok: true }),
+      (error: unknown) => ({ ok: false, error })
+    );
   }
 
   private async beginRuntimeRegistration(runtimeId: string, signal: AbortSignal): Promise<void> {
