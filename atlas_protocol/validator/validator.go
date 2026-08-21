@@ -34,257 +34,9 @@ var compiled struct {
 	err    error
 }
 
-func ValidateEntityBlob(value any) []string {
-	return validate("EntityBlob", value)
-}
-
-func ValidateObjectBlob(value any) []string {
-	return validate("ObjectBlob", value)
-}
-
-func ValidateEntityResource(value any) []string {
-	return validate("EntityResource", value)
-}
-
-func ValidateTaskResource(value any) []string {
-	return validate("TaskResource", value)
-}
-
-func ValidateObjectResource(value any) []string {
-	return validate("ObjectResource", value)
-}
-
-func ValidateObjectDetailResource(value any) []string {
-	return validate("ObjectDetailResource", value)
-}
-
-func ValidateErrorResponse(value any) []string {
-	return validate("ErrorResponse", value)
-}
-
-func ValidateProtocolRevisionResponse(value any) []string {
-	return validate("ProtocolRevisionResponse", value)
-}
-
-func ValidateEntityCheckInRequest(value any) []string {
-	return validate("EntityCheckInRequest", value)
-}
-
-func ValidateEntityCheckInFullResponse(value any) []string {
-	return validate("EntityCheckInFullResponse", value)
-}
-
-func ValidateEntityCheckInMinimalResponse(value any) []string {
-	return validate("EntityCheckInMinimalResponse", value)
-}
-
-func ValidateEntityCheckInResponse(value any) []string {
-	return validate("EntityCheckInResponse", value)
-}
-
-func ValidateFullDatasetResponse(value any) []string {
-	return validate("FullDatasetResponse", value)
-}
-
-func ValidateChangedSinceResponse(value any) []string {
-	return validate("ChangedSinceResponse", value)
-}
-
-func ValidateEntityCreateRequest(value any) []string {
-	return validate("EntityCreateRequest", value)
-}
-
-func ValidateEntityUpdateRequest(value any) []string {
-	return validate("EntityUpdateRequest", value)
-}
-
-func ValidateTaskCreateRequest(value any) []string {
-	return validate("TaskCreateRequest", value)
-}
-
-func ValidateTaskAcknowledgeRequest(value any) []string {
-	return validate("TaskAcknowledgeRequest", value)
-}
-
-func ValidateTaskStartRequest(value any) []string {
-	return validate("TaskStartRequest", value)
-}
-
-func ValidateTaskProgressRequest(value any) []string {
-	return validate("TaskProgressRequest", value)
-}
-
-func ValidateTaskCompleteRequest(value any) []string {
-	return validate("TaskCompleteRequest", value)
-}
-
-func ValidateTaskFailRequest(value any) []string {
-	return validate("TaskFailRequest", value)
-}
-
-func ValidateTaskCancelRequest(value any) []string {
-	return validate("TaskCancelRequest", value)
-}
-
-func ValidateRuntimeRegistrationRequest(value any) []string {
-	return validate("RuntimeRegistrationRequest", value)
-}
-
-func ValidateRuntimeStopRequest(value any) []string {
-	return validate("RuntimeStopRequest", value)
-}
-
-func ValidateRuntimeReadyRequest(value any) []string {
-	return validate("RuntimeReadyRequest", value)
-}
-
-func ValidateRuntimeTaskDeliveryResponse(value any) []string {
-	return validate("RuntimeTaskDeliveryResponse", value)
-}
-
-func ValidateObjectCreateRequest(value any) []string {
-	return validate("ObjectCreateRequest", value)
-}
-
-func ValidateObjectUpdateRequest(value any) []string {
-	return validate("ObjectUpdateRequest", value)
-}
-
-func ValidateFeedEvent(value any) []string {
-	return validate("FeedEvent", value)
-}
-
-func ValidateFeedAuthMessage(value any) []string {
-	return validate("FeedAuthMessage", value)
-}
-
-func ValidateFeedSubscribeMessage(value any) []string {
-	return validate("FeedSubscribeMessage", value)
-}
-
-func ValidateFeedUnsubscribeMessage(value any) []string {
-	return validate("FeedUnsubscribeMessage", value)
-}
-
-func ValidateFeedClientMessage(value any) []string {
-	return validate("FeedClientMessage", value)
-}
-
-func ValidateFeedHandshakeMessage(value any) []string {
-	return validate("FeedHandshakeMessage", value)
-}
-
-func ValidateFeedSubscriptionBarrierMessage(value any) []string {
-	return validate("FeedSubscriptionBarrierMessage", value)
-}
-
-func ValidateFeedSubscriptionsReadyMessage(value any) []string {
-	return validate("FeedSubscriptionsReadyMessage", value)
-}
-
-func valueAsSlice(value any) ([]any, bool) {
-	if payload, ok := value.([]any); ok {
-		return payload, true
-	}
-	var data []byte
-	switch typed := value.(type) {
-	case json.RawMessage:
-		data = typed
-	case []byte:
-		data = typed
-	default:
-		encoded, err := json.Marshal(value)
-		if err != nil {
-			return nil, false
-		}
-		data = encoded
-	}
-	var decoded any
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		return nil, false
-	}
-	payload, ok := decoded.([]any)
-	return payload, ok
-}
-
-func ValidateEntityComponents(value any) []string {
-	return validate("EntityComponents", value)
-}
-
-func ValidateCommandCatalog(value any) []string {
-	errors := validate("CommandCatalog", value)
-	payload, ok := valueAsSlice(value)
-	if !ok {
-		return errors
-	}
-	seen := make(map[string]struct{}, len(payload))
-	for _, raw := range payload {
-		command, ok := raw.(map[string]any)
-		if !ok {
-			continue
-		}
-		name, _ := command["command"].(string)
-		if _, duplicate := seen[name]; duplicate && name != "" {
-			errors = append(errors, fmt.Sprintf("command %q is duplicated", name))
-		}
-		seen[name] = struct{}{}
-	}
-	sort.Strings(errors)
-	return errors
-}
-
-func ValidateCommandManifest(value any) []string {
-	return validate("CommandManifest", value)
-}
-
-func ValidateCommandManifestEntry(value any) []string {
-	return validate("CommandManifestEntry", value)
-}
-
-func ValidateMediaRefsComponent(value any) []string {
-	return validate("MediaRefsComponent", value)
-}
-
-func ValidateMilViewComponent(value any) []string {
-	return validate("MilViewComponent", value)
-}
-
-func ValidateHealthComponent(value any) []string {
-	return validate("HealthComponent", value)
-}
-
-func ValidateSensorRefsComponent(value any) []string {
-	return validate("SensorRefsComponent", value)
-}
-
-func ValidateCommunicationsComponent(value any) []string {
-	return validate("CommunicationsComponent", value)
-}
-
-func ValidateStatusComponent(value any) []string {
-	return validate("StatusComponent", value)
-}
-
-func ValidateHeartbeatComponent(value any) []string {
-	return validate("HeartbeatComponent", value)
-}
-
-func ValidateTelemetryComponent(value any) []string {
-	return validate("TelemetryComponent", value)
-}
-
-func ValidateGeometryComponent(value any) []string {
-	return validate("GeometryComponent", value)
-}
-
 // ValidateDefinition validates a value against one named definition in the
-// canonical Protocol bundle. Command input and output schema references use
-// this entry point after the catalog has resolved the definition name.
+// canonical Protocol bundle and applies its semantic rules.
 func ValidateDefinition(definition string, value any) []string {
-	return validate(definition, value)
-}
-
-func validate(definition string, value any) []string {
 	normalized, err := normalizeForJSONSchema(value)
 	if err != nil {
 		return []string{fmt.Sprintf("input cannot be decoded as JSON: %v", err)}
@@ -703,6 +455,8 @@ func firstNonFinitePath(value any, path string) (string, bool) {
 
 func semanticErrors(definition string, value any) []string {
 	switch definition {
+	case "CommandCatalog":
+		return commandCatalogSemanticErrors(value)
 	case "GeometryComponent":
 		return geometrySemanticErrors(value, "")
 	case "EntityComponents":
@@ -720,6 +474,27 @@ func semanticErrors(definition string, value any) []string {
 	default:
 		return nil
 	}
+}
+
+func commandCatalogSemanticErrors(value any) []string {
+	payload, ok := value.([]any)
+	if !ok {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(payload))
+	var errors []string
+	for _, raw := range payload {
+		command, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		name, _ := command["command"].(string)
+		if _, duplicate := seen[name]; duplicate && name != "" {
+			errors = append(errors, fmt.Sprintf("command %q is duplicated", name))
+		}
+		seen[name] = struct{}{}
+	}
+	return errors
 }
 
 func resourceGeometrySemanticErrors(value any) []string {

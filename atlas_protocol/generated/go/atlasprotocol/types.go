@@ -90,7 +90,7 @@ func (e ErrorResponse) MarshalJSON() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if errors := validator.ValidateErrorResponse(json.RawMessage(data)); len(errors) > 0 {
+	if errors := validator.ValidateDefinition("ErrorResponse", json.RawMessage(data)); len(errors) > 0 {
 		return nil, fmt.Errorf("invalid ErrorResponse: %s", strings.Join(errors, "; "))
 	}
 	return data, nil
@@ -354,7 +354,7 @@ func (e FeedEvent) MarshalJSON() ([]byte, error) {
 }
 
 func validateMarshaledFeedEvent(name string, data []byte) error {
-	if errors := validator.ValidateFeedEvent(json.RawMessage(data)); len(errors) > 0 {
+	if errors := validator.ValidateDefinition("FeedEvent", json.RawMessage(data)); len(errors) > 0 {
 		return fmt.Errorf("invalid %s: %s", name, strings.Join(errors, "; "))
 	}
 	return nil
@@ -443,7 +443,7 @@ func (m FeedAuthMessage) MarshalJSON() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if errors := validator.ValidateFeedAuthMessage(json.RawMessage(data)); len(errors) > 0 {
+	if errors := validator.ValidateDefinition("FeedAuthMessage", json.RawMessage(data)); len(errors) > 0 {
 		return nil, fmt.Errorf("invalid FeedAuthMessage: %s", strings.Join(errors, "; "))
 	}
 	return data, nil
@@ -479,11 +479,11 @@ func validateFeedSubscriptionMessagePayload(data []byte) []string {
 	}
 	switch envelope.Action {
 	case FeedActionSubscribe:
-		return validator.ValidateFeedSubscribeMessage(json.RawMessage(data))
+		return validator.ValidateDefinition("FeedSubscribeMessage", json.RawMessage(data))
 	case FeedActionUnsubscribe:
-		return validator.ValidateFeedUnsubscribeMessage(json.RawMessage(data))
+		return validator.ValidateDefinition("FeedUnsubscribeMessage", json.RawMessage(data))
 	default:
-		if errors := validator.ValidateFeedClientMessage(json.RawMessage(data)); len(errors) > 0 {
+		if errors := validator.ValidateDefinition("FeedClientMessage", json.RawMessage(data)); len(errors) > 0 {
 			return errors
 		}
 		return []string{fmt.Sprintf("unsupported feed subscription action %q", envelope.Action)}
@@ -507,7 +507,7 @@ func (m FeedSubscriptionBarrierMessage) MarshalJSON() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if errors := validator.ValidateFeedSubscriptionBarrierMessage(json.RawMessage(data)); len(errors) > 0 {
+	if errors := validator.ValidateDefinition("FeedSubscriptionBarrierMessage", json.RawMessage(data)); len(errors) > 0 {
 		return nil, fmt.Errorf("invalid FeedSubscriptionBarrierMessage: %s", strings.Join(errors, "; "))
 	}
 	return data, nil
@@ -526,7 +526,7 @@ func (m FeedSubscriptionsReadyMessage) MarshalJSON() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if errors := validator.ValidateFeedSubscriptionsReadyMessage(json.RawMessage(data)); len(errors) > 0 {
+	if errors := validator.ValidateDefinition("FeedSubscriptionsReadyMessage", json.RawMessage(data)); len(errors) > 0 {
 		return nil, fmt.Errorf("invalid FeedSubscriptionsReadyMessage: %s", strings.Join(errors, "; "))
 	}
 	return data, nil
@@ -540,7 +540,7 @@ func (m FeedHandshakeMessage) MarshalJSON() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if errors := validator.ValidateFeedHandshakeMessage(json.RawMessage(data)); len(errors) > 0 {
+	if errors := validator.ValidateDefinition("FeedHandshakeMessage", json.RawMessage(data)); len(errors) > 0 {
 		return nil, fmt.Errorf("invalid FeedHandshakeMessage: %s", strings.Join(errors, "; "))
 	}
 	return data, nil

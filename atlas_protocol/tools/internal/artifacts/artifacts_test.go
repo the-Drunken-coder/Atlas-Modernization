@@ -7,8 +7,6 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-
-	protocolvalidator "github.com/the-drunken-coder/atlas/atlas_protocol/validator"
 )
 
 func TestValidateExampleSetRunsSemanticValidators(t *testing.T) {
@@ -41,9 +39,8 @@ func TestValidateExampleSetRunsSemanticValidators(t *testing.T) {
 	}
 
 	err = validateExampleSet(root, compiler, exampleSet{
-		pattern:            "entities",
-		definition:         "EntityBlob",
-		semanticValidation: protocolvalidator.ValidateEntityBlob,
+		pattern:    "entities",
+		definition: "EntityBlob",
 	})
 	if err == nil {
 		t.Fatal("validateExampleSet accepted semantically invalid polygon example")

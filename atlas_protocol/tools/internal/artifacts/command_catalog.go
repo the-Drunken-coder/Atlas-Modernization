@@ -22,7 +22,7 @@ func buildCommandCatalog(root string, bundle schemaBundle) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if errors := protocolvalidator.ValidateCommandCatalog(commands); len(errors) > 0 {
+	if errors := protocolvalidator.ValidateDefinition("CommandCatalog", commands); len(errors) > 0 {
 		return nil, fmt.Errorf("validate command catalog: %s", strings.Join(errors, "; "))
 	}
 	if err := validateCommandSchemaReferences(bundle, commands); err != nil {
@@ -66,7 +66,7 @@ func validateTaskingFixtureCatalog(root string, bundle schemaBundle) error {
 	if len(commands) == 0 {
 		return fmt.Errorf("%s must contain fixture Commands", taskingFixtureCatalogPath)
 	}
-	if errors := protocolvalidator.ValidateCommandCatalog(commands); len(errors) > 0 {
+	if errors := protocolvalidator.ValidateDefinition("CommandCatalog", commands); len(errors) > 0 {
 		return fmt.Errorf("validate %s: %s", taskingFixtureCatalogPath, strings.Join(errors, "; "))
 	}
 	return validateCommandSchemaReferences(bundle, commands)
