@@ -1,5 +1,9 @@
 import type { EntityResource } from "@the-drunken-coder/atlas-sdk";
 import {
+  ENTITY_DESCRIPTORS,
+  ENTITY_KINDS,
+  type EntityKind,
+  type EntityListKind,
   entityClassification,
   entityDisplayName,
   entityGeometry,
@@ -13,7 +17,7 @@ import { displayGeometry, type UiRawGeometry } from "../../../atlas/geometry.js"
 export type MapFeatureProperties = {
   entityId: string;
   entityType: string;
-  kind: "asset" | "track" | "geofeature";
+  kind: EntityKind;
   name: string;
   selected: boolean;
   classification?: string;
@@ -37,11 +41,7 @@ export type MapFeatureCollection = {
   features: MapFeature[];
 };
 
-export type MapSources = {
-  assets: MapFeatureCollection;
-  tracks: MapFeatureCollection;
-  geofeatures: MapFeatureCollection;
-};
+export type MapSources = Record<EntityListKind, MapFeatureCollection>;
 
 export function emptyFeatureCollection(): MapFeatureCollection {
   return { type: "FeatureCollection", features: [] };
@@ -52,11 +52,9 @@ export function emptyFeatureCollection(): MapFeatureCollection {
  * render as points (telemetry preferred); geofeatures render their geometry.
  */
 export function buildMapSources(entities: EntityResource[], selectedId: string | undefined): MapSources {
-  const sources: MapSources = {
-    assets: emptyFeatureCollection(),
-    tracks: emptyFeatureCollection(),
-    geofeatures: emptyFeatureCollection()
-  };
+  const sources = Object.fromEntries(
+    ENTITY_KINDS.map((kind) => [ENTITY_DESCRIPTORS[kind].list, emptyFeatureCollection()])
+  ) as MapSources;
 
   for (const entity of entities) {
     const kind = entityKind(entity);
@@ -84,7 +82,7 @@ export function buildMapSources(entities: EntityResource[], selectedId: string |
       }
     };
 
-    sources[kindToSource(kind)].features.push(feature);
+    sources[ENTITY_DESCRIPTORS[kind].list].features.push(feature);
   }
 
   return sources;
@@ -93,10 +91,6 @@ export function buildMapSources(entities: EntityResource[], selectedId: string |
 function pointGeometry(entity: EntityResource): UiRawGeometry | undefined {
   const position = entityPosition(entity);
   return position ? { type: "Point", coordinates: position } : undefined;
-}
-
-function kindToSource(kind: "asset" | "track" | "geofeature"): keyof MapSources {
-  return kind === "asset" ? "assets" : kind === "track" ? "tracks" : "geofeatures";
 }
 
 function entitySymbolHints(entity: EntityResource): Pick<MapFeatureProperties, "modelId" | "assetType" | "symbolType"> {

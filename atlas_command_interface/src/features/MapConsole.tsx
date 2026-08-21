@@ -2,7 +2,13 @@ import type { CommandCatalog, EntityResource, JSONValue } from "@the-drunken-cod
 import { lazy, Suspense, useCallback, useEffect, useMemo, useReducer, useState } from "react";
 import type { MapSourceConfig } from "../app/config.js";
 import { type CommandAvailability, commandsForTargeting } from "../atlas/command-targeting.js";
-import { type EntityKind, entityKind } from "../atlas/entities.js";
+import {
+  ENTITY_DESCRIPTORS,
+  ENTITY_KIND_BY_LIST,
+  ENTITY_KINDS,
+  type EntityKind,
+  entityKind
+} from "../atlas/entities.js";
 import type { UiGeometry } from "../atlas/geometry.js";
 import { countsByKind, entitiesByKind, getEntity } from "../atlas/selectors.js";
 import type { AtlasSnapshot } from "../atlas/store.js";
@@ -32,19 +38,16 @@ import { GeofeatureInspector } from "./geofeatures/GeofeatureInspector.js";
 import { type GeometryEditState, useGeometryEdit } from "./geofeatures/use-geometry-edit.js";
 import { TrackInspector } from "./tracks/TrackInspector.js";
 
-const LIST_TITLES: Record<ListKind, string> = {
-  assets: "Assets",
-  tracks: "Tracks",
-  geofeatures: "Geo Features",
-  commands: "Commands",
-  apiKeys: "API Keys"
-};
+const LIST_TITLES = Object.fromEntries([
+  ...ENTITY_KINDS.map((kind) => [ENTITY_DESCRIPTORS[kind].list, ENTITY_DESCRIPTORS[kind].label]),
+  ["commands", "Commands"],
+  ["apiKeys", "API Keys"]
+]) as Record<ListKind, string>;
 
 const MapView = lazy(() => import("../ui/map/view/MapView.js").then((module) => ({ default: module.MapView })));
 
-const KIND_TITLES: Record<EntityKind, string> = { asset: "Asset", track: "Track", geofeature: "Geo Feature" };
 type CommandManifestStatus = "ready" | "loading" | "unavailable";
-const EMPTY_ENTITY_QUERIES: Record<EntityKind, string> = { asset: "", track: "", geofeature: "" };
+const EMPTY_ENTITY_QUERIES = Object.fromEntries(ENTITY_KINDS.map((kind) => [kind, ""])) as Record<EntityKind, string>;
 
 export function MapConsole() {
   const atlas = useAtlas();
@@ -507,7 +510,7 @@ function ListBody({
     return <APIKeysPanel />;
   }
 
-  const kind: EntityKind = list === "assets" ? "asset" : list === "tracks" ? "track" : "geofeature";
+  const kind = ENTITY_KIND_BY_LIST[list];
   return (
     <EntityList
       entities={entitiesByKind(snapshot, kind)}
@@ -527,5 +530,5 @@ function entityReticleTarget(entity: EntityResource | undefined): MapReticleTarg
 
 function panelTitle(sidebar: SidebarState, selectionKind?: EntityKind): string {
   if (sidebar.view.mode === "list") return LIST_TITLES[sidebar.view.list];
-  return selectionKind ? KIND_TITLES[selectionKind] : "Inspector";
+  return selectionKind ? ENTITY_DESCRIPTORS[selectionKind].title : "Inspector";
 }

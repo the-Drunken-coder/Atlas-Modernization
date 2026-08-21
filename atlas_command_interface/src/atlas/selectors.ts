@@ -1,5 +1,5 @@
 import type { EntityResource, TaskResource } from "@the-drunken-coder/atlas-sdk";
-import { type EntityKind, entityDisplayName, entityKind, isSelectableKind } from "./entities.js";
+import { ENTITY_KINDS, type EntityKind, entityDisplayName, entityKind, isSelectableKind } from "./entities.js";
 import type { AtlasSnapshot } from "./store.js";
 import { sortTasksByRecency, sortTasksByTaskingOrder } from "./tasks.js";
 
@@ -19,7 +19,7 @@ export function entitiesByKind(snapshot: AtlasSnapshot, kind: EntityKind): Entit
 }
 
 export function countsByKind(snapshot: AtlasSnapshot): Record<EntityKind, number> {
-  const counts: Record<EntityKind, number> = { asset: 0, track: 0, geofeature: 0 };
+  const counts = Object.fromEntries(ENTITY_KINDS.map((kind) => [kind, 0])) as Record<EntityKind, number>;
   for (const entity of Object.values(snapshot.entities)) {
     const kind = entityKind(entity);
     if (kind !== "other") counts[kind] += 1;

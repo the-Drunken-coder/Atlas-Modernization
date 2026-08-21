@@ -1,5 +1,5 @@
 import type { ReactElement } from "react";
-import type { EntityKind } from "../../atlas/entities.js";
+import { ENTITY_DESCRIPTORS, type EntityKind } from "../../atlas/entities.js";
 import type { ListKind } from "../../state/selection.js";
 import { AssetsIcon, CollapseIcon, CommandsIcon, GeofeaturesIcon, KeyIcon, TracksIcon } from "../primitives/icons.js";
 import { Tooltip } from "../primitives/Tooltip.js";
@@ -12,9 +12,9 @@ type RailItem = {
 };
 
 const PRIMARY_RAIL_ITEMS: RailItem[] = [
-  { list: "assets", label: "Assets", Icon: AssetsIcon, kind: "asset" },
-  { list: "tracks", label: "Tracks", Icon: TracksIcon, kind: "track" },
-  { list: "geofeatures", label: "Geo Features", Icon: GeofeaturesIcon, kind: "geofeature" },
+  { ...ENTITY_DESCRIPTORS.asset, Icon: AssetsIcon, kind: "asset" },
+  { ...ENTITY_DESCRIPTORS.track, Icon: TracksIcon, kind: "track" },
+  { ...ENTITY_DESCRIPTORS.geofeature, Icon: GeofeaturesIcon, kind: "geofeature" },
   { list: "commands", label: "Commands", Icon: CommandsIcon }
 ];
 

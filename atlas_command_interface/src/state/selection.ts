@@ -1,6 +1,6 @@
-import type { EntityKind } from "../atlas/entities.js";
+import { ENTITY_DESCRIPTORS, type EntityKind, type EntityListKind } from "../atlas/entities.js";
 
-export type ListKind = "assets" | "tracks" | "geofeatures" | "commands" | "apiKeys";
+export type ListKind = EntityListKind | "commands" | "apiKeys";
 
 export type SidebarView = { mode: "list"; list: ListKind } | { mode: "inspector"; previousList: ListKind };
 
@@ -43,8 +43,8 @@ export const initialSidebarState: SidebarState = {
   focusSeq: 0
 };
 
-export function listForKind(kind: EntityKind): ListKind {
-  return kind === "asset" ? "assets" : kind === "track" ? "tracks" : "geofeatures";
+export function listForKind(kind: EntityKind): EntityListKind {
+  return ENTITY_DESCRIPTORS[kind].list;
 }
 
 function currentList(view: SidebarView): ListKind {
