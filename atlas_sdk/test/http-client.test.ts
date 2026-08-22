@@ -316,6 +316,33 @@ describe("AtlasClient HTTP", () => {
     expect(isJSONValue(Array(100_000_000))).toBe(false);
   });
 
+  it("accepts proxy-supplied dense JSON array indices", () => {
+    const value = new Proxy(Array(1), {
+      get(target, key, receiver) {
+        return key === "0" ? 1 : Reflect.get(target, key, receiver);
+      }
+    });
+
+    expect(isJSONValue(value)).toBe(true);
+  });
+
+  it("bounds JSON values supplied by array proxies", () => {
+    let reads = 0;
+    const value = new Proxy([], {
+      get(target, key, receiver) {
+        if (key === "length") return 1_000_000;
+        if (typeof key === "string" && Number.isInteger(Number(key))) {
+          reads++;
+          return 1;
+        }
+        return Reflect.get(target, key, receiver);
+      }
+    });
+
+    expect(isJSONValue(value)).toBe(false);
+    expect(reads).toBe(1_000_000);
+  });
+
   it("accepts dense JSON arrays within the Entity request limit", () => {
     const values = new Array<number>(300_000).fill(0);
 
@@ -338,6 +365,16 @@ describe("AtlasClient HTTP", () => {
 
     expect(isJSONValue(value)).toBe(false);
     expect(isJSONValue(inherited)).toBe(false);
+  });
+
+  it("accepts inherited array data shadowed by a nearer descriptor", () => {
+    const deeperPrototype = Object.create(Array.prototype) as unknown[];
+    Object.defineProperty(deeperPrototype, "metadata", { enumerable: true, value: 1n });
+    const nearerPrototype = Object.create(deeperPrototype) as unknown[];
+    Object.defineProperty(nearerPrototype, "metadata", { value: undefined });
+    const value = Object.setPrototypeOf([1], nearerPrototype);
+
+    expect(isJSONValue(value)).toBe(true);
   });
 
   it("accepts nested Array subclasses and rejects negative zero", () => {

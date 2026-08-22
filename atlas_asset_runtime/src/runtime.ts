@@ -842,11 +842,15 @@ function validateJSONCopyFrame(frame: JSONCopyFrame): void {
 }
 
 function hasOnlyJSONArrayPrototypeEntries(value: object, length: number): boolean {
+  const prototypeKeys = new Set<PropertyKey>();
   let prototype = Object.getPrototypeOf(value);
   for (let depth = 0; prototype !== null && depth < MAX_JSON_PROTOTYPE_DEPTH; depth++) {
     for (const key of Reflect.ownKeys(prototype)) {
+      if (prototypeKeys.has(key)) continue;
       const descriptor = Reflect.getOwnPropertyDescriptor(prototype, key);
-      if (descriptor?.enumerable && !isJSONArrayEntryKey(key, length)) return false;
+      if (descriptor === undefined) continue;
+      prototypeKeys.add(key);
+      if (descriptor.enumerable && !isJSONArrayEntryKey(key, length)) return false;
     }
     prototype = Object.getPrototypeOf(prototype);
   }

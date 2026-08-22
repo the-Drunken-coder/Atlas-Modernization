@@ -841,6 +841,8 @@ function atlasProtocolDaysInMonth(year: number, month: number): number {
 
 function atlasProtocolIsJSONValue(value: unknown): value is JSONValue {
   const maxPrototypeDepth = 64;
+  // One million JSON values already exceed Atlas's largest request body.
+  let remainingValues = 1_000_000;
   type WorkItem =
     | { value: unknown }
     | { leave: object }
@@ -862,6 +864,7 @@ function atlasProtocolIsJSONValue(value: unknown): value is JSONValue {
       continue;
     }
     const current = item.value;
+    if (remainingValues-- === 0) return false;
     if (current === null || typeof current === "boolean" || typeof current === "string") {
       continue;
     }
@@ -917,21 +920,24 @@ function atlasProtocolHasJSONCompatibleArrayShape(
   length: number,
   maxPrototypeDepth: number
 ): boolean {
-  const entries = new Set<string>();
   const ownKeys = Reflect.ownKeys(value);
   if (!ownKeys.includes("length")) return false;
   for (const key of ownKeys) {
-    if (key !== "length" && !atlasProtocolAddArrayEntry(entries, key, length)) return false;
+    if (key !== "length" && !atlasProtocolIsArrayEntryKey(key, length)) return false;
   }
+  const prototypeKeys = new Set<PropertyKey>();
   let prototype = Object.getPrototypeOf(value);
   for (let depth = 0; prototype !== null && depth < maxPrototypeDepth; depth++) {
     for (const key of Reflect.ownKeys(prototype)) {
+      if (prototypeKeys.has(key)) continue;
       const descriptor = Reflect.getOwnPropertyDescriptor(prototype, key);
-      if (!atlasProtocolAddArrayEntry(entries, key, length) && descriptor?.enumerable) return false;
+      if (descriptor === undefined) continue;
+      prototypeKeys.add(key);
+      if (descriptor.enumerable && !atlasProtocolIsArrayEntryKey(key, length)) return false;
     }
     prototype = Object.getPrototypeOf(prototype);
   }
-  return prototype === null && entries.size === length;
+  return prototype === null;
 }
 
 function atlasProtocolNormalizeArrayLength(value: unknown): number | undefined {
@@ -942,10 +948,8 @@ function atlasProtocolNormalizeArrayLength(value: unknown): number | undefined {
   return Math.floor(length);
 }
 
-function atlasProtocolAddArrayEntry(entries: Set<string>, key: PropertyKey, length: number): boolean {
+function atlasProtocolIsArrayEntryKey(key: PropertyKey, length: number): boolean {
   if (typeof key !== "string") return false;
   const index = Number(key);
-  if (!Number.isInteger(index) || index < 0 || index >= length || String(index) !== key) return false;
-  entries.add(key);
-  return true;
+  return Number.isInteger(index) && index >= 0 && index < length && String(index) === key;
 }

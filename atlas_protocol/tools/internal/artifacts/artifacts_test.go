@@ -230,6 +230,8 @@ func TestTypeScriptSourceGeneratesTaskCreateValidatorFromSchema(t *testing.T) {
 		`"task_id": NonEmptyString;`,
 		"export function isTaskCreateRequest(value: unknown): value is TaskCreateRequest",
 		"atlasProtocolIsJSONValue",
+		"One million JSON values already exceed Atlas's largest request body",
+		"let remainingValues = 1_000_000",
 		"| { array: unknown[]; index: number; length: number }",
 		"const active = new WeakSet<object>()",
 		"while (work.length > 0)",
@@ -238,11 +240,13 @@ func TestTypeScriptSourceGeneratesTaskCreateValidatorFromSchema(t *testing.T) {
 		`typeof value === "bigint"`,
 		`Reflect.get(current, "toJSON")`,
 		"depth < maxPrototypeDepth",
-		"entries.size === length",
+		"const prototypeKeys = new Set<PropertyKey>()",
+		"if (prototypeKeys.has(key)) continue",
 		"atlasProtocolIsJSONRecord(current)",
 		"Reflect.getOwnPropertyDescriptor(value, key)?.enumerable === true",
 		"Reflect.ownKeys(value).every",
 		"work.push({ value: Reflect.get(item.array, item.index) })",
+		"if (remainingValues-- === 0) return false",
 		"active.delete(item.leave)",
 		"if (active.has(current)) return false",
 		"export function isJSONValue(value: unknown): value is JSONValue",
@@ -258,6 +262,9 @@ func TestTypeScriptSourceGeneratesTaskCreateValidatorFromSchema(t *testing.T) {
 	}
 	if strings.Contains(text, "maxArrayEntries") {
 		t.Fatal("generated JSON value validator must not impose endpoint-specific array limits")
+	}
+	if strings.Contains(text, "entries.size === length") {
+		t.Fatal("generated JSON value validator must determine array density from indexed reads")
 	}
 }
 
