@@ -185,7 +185,7 @@ describe("AtlasClient HTTP", () => {
 
   it("labels successful response body failures as transport errors", async () => {
     const response = Response.json({ protocol_revision: "unused" });
-    vi.spyOn(response, "json").mockRejectedValueOnce(new TypeError("response body terminated"));
+    vi.spyOn(response, "text").mockRejectedValueOnce(new TypeError("response body terminated"));
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: async () => response });
 
     await expect(client.handshake()).rejects.toMatchObject({
@@ -199,7 +199,7 @@ describe("AtlasClient HTTP", () => {
     const controller = new AbortController();
     const reason = new Error("caller aborted error response read");
     const response = Response.json({ message: "unavailable" }, { status: 503 });
-    vi.spyOn(response, "json").mockImplementationOnce(async () => {
+    vi.spyOn(response, "text").mockImplementationOnce(async () => {
       controller.abort(reason);
       throw new TypeError("response body terminated");
     });
