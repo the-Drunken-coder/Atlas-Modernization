@@ -307,9 +307,13 @@ describe("AtlasAssetRuntime", () => {
     await runtime.stop();
   });
 
-  it("waits for immediate handler cleanup before stop resolves", async () => {
+  it("holds the Core runtime fence until immediate handler cleanup settles", async () => {
     const pending = task("immediate-1", "immediate.observe");
     const { client } = fakeClient([pending]);
+    let replacementAuthorized = false;
+    client.runtime.stop.mockImplementationOnce(async () => {
+      replacementAuthorized = true;
+    });
     const cleanupStarted = deferred<void>();
     const cleanupFinished = deferred<void>();
     const runtime = new AtlasAssetRuntime(client, {
@@ -340,8 +344,12 @@ describe("AtlasAssetRuntime", () => {
     await cleanupStarted.promise;
     expect(stopped).toBe(false);
     expect(runtime.status).toBe("stopping");
+    expect(client.runtime.stop).not.toHaveBeenCalled();
+    expect(replacementAuthorized).toBe(false);
     cleanupFinished.resolve();
     await stopping;
+    expect(client.runtime.stop).toHaveBeenCalledOnce();
+    expect(replacementAuthorized).toBe(true);
     expect(runtime.status).toBe("stopped");
   });
 
@@ -656,6 +664,130 @@ describe("AtlasAssetRuntime", () => {
     expect(runtime.status).toBe("stopped");
   });
 
+  it("orders Core deactivation after an in-flight readiness request settles", async () => {
+    const order: string[] = [];
+    const readinessStarted = deferred<void>();
+    const finishReadiness = deferred<void>();
+    const { client } = fakeClient();
+    client.runtime.ready.mockImplementationOnce(async () => {
+      order.push("ready:start");
+      readinessStarted.resolve();
+      await finishReadiness.promise;
+      order.push("ready:end");
+    });
+    client.runtime.stop.mockImplementationOnce(async () => void order.push("stop"));
+    const runtime = new AtlasAssetRuntime(client, { entityId: "asset-1" });
+
+    const startResult = runtime.start().then(
+      () => undefined,
+      (error: unknown) => error
+    );
+    await readinessStarted.promise;
+    const stopping = runtime.stop();
+
+    expect(client.runtime.stop).not.toHaveBeenCalled();
+    finishReadiness.resolve();
+    expect(await startResult).toBeInstanceOf(Error);
+    await stopping;
+    expect(order).toEqual(["ready:start", "ready:end", "stop"]);
+    expect(runtime.status).toBe("stopped");
+  });
+
+  it("shares failed-start compensation with an overlapping stop", async () => {
+    const startupError = new Error("ready response lost");
+    const duplicateError = new Error("duplicate stop failed");
+    const compensationStarted = deferred<void>();
+    const finishCompensation = deferred<void>();
+    const { client } = fakeClient();
+    client.runtime.ready.mockRejectedValueOnce(startupError);
+    client.runtime.stop
+      .mockImplementationOnce(async () => {
+        compensationStarted.resolve();
+        await finishCompensation.promise;
+      })
+      .mockRejectedValueOnce(duplicateError);
+    const runtime = new AtlasAssetRuntime(client, { entityId: "asset-1" });
+
+    const starting = runtime.start();
+    await compensationStarted.promise;
+    const stopping = runtime.stop();
+
+    expect(client.runtime.stop).toHaveBeenCalledOnce();
+    const startResult = expect(starting).rejects.toBe(startupError);
+    finishCompensation.resolve();
+    await startResult;
+    await expect(stopping).resolves.toBeUndefined();
+    expect(client.runtime.stop).toHaveBeenCalledOnce();
+    expect(runtime.status).toBe("stopped");
+  });
+
+  it("blocks a replacement generation until overlapping stop cleanup settles", async () => {
+    const startupError = new Error("ready response lost");
+    const readinessStarted = deferred<void>();
+    const failReadiness = deferred<void>();
+    const reportStarted = deferred<void>();
+    const cleanupStarted = deferred<void>();
+    const finishCleanup = deferred<void>();
+    const compensationStarted = deferred<void>();
+    const finishCompensation = deferred<void>();
+    const { client } = fakeClient();
+    client.runtime.ready.mockImplementationOnce(async () => {
+      readinessStarted.resolve();
+      await failReadiness.promise;
+      throw startupError;
+    });
+    client.runtime.stop.mockImplementationOnce(async () => {
+      compensationStarted.resolve();
+      await finishCompensation.promise;
+    });
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      checkIn: ({ signal }) =>
+        new Promise((resolve) => {
+          reportStarted.resolve();
+          signal.addEventListener(
+            "abort",
+            () => {
+              cleanupStarted.resolve();
+              void finishCleanup.promise.then(() => resolve({}));
+            },
+            { once: true }
+          );
+        })
+    });
+
+    const starting = runtime.start();
+    await readinessStarted.promise;
+    const checkIn = runtime.checkIn().then(
+      () => undefined,
+      (error: unknown) => error
+    );
+    await reportStarted.promise;
+    failReadiness.resolve();
+    await compensationStarted.promise;
+    const stopping = runtime.stop();
+    await cleanupStarted.promise;
+    finishCompensation.resolve();
+    await expect(starting).rejects.toBe(startupError);
+
+    const replacement = runtime.start();
+    try {
+      await expect(replacement).rejects.toThrow("Atlas asset runtime is stopping");
+      expect(client.runtime.begin).toHaveBeenCalledOnce();
+    } finally {
+      finishCleanup.resolve();
+      await Promise.allSettled([checkIn, stopping, replacement]);
+    }
+
+    expect(client.runtime.stop).toHaveBeenCalledOnce();
+    expect(runtime.status).toBe("stopped");
+    await runtime.start();
+    const runtimeIds = client.runtime.begin.mock.calls.map((call) => call[1].runtime_id);
+    expect(runtimeIds).toHaveLength(2);
+    expect(new Set(runtimeIds).size).toBe(2);
+    await runtime.stop();
+  });
+
   it("retries the exact runtime registration after an ambiguous transport failure", async () => {
     vi.useFakeTimers();
     const { client } = fakeClient();
@@ -690,18 +822,25 @@ describe("AtlasAssetRuntime", () => {
       expect(error).toBeInstanceOf(AggregateError);
       expect((error as AggregateError).errors).toEqual([startupError, compensationError]);
     }
+    expect(runtime.status).toBe("stopping");
+    const runtimeId = client.runtime.begin.mock.calls[0]?.[1].runtime_id;
+    await runtime.stop();
+    expect(client.runtime.stop.mock.calls.map((call) => call[1].runtime_id)).toEqual([runtimeId, runtimeId]);
     expect(runtime.status).toBe("stopped");
   });
 
-  it("reaches stopped locally before rejecting an unconfirmed Core stop", async () => {
+  it("retains the runtime fence until Core confirms stop", async () => {
     const { client } = fakeClient();
     const stopError = new Error("stop response lost");
     const runtime = new AtlasAssetRuntime(client, { entityId: "asset-1" });
     await runtime.start();
     client.runtime.stop.mockRejectedValueOnce(stopError);
+    const runtimeId = client.runtime.begin.mock.calls[0]?.[1].runtime_id;
 
     await expect(runtime.stop()).rejects.toBe(stopError);
-
+    expect(runtime.status).toBe("stopping");
+    await runtime.stop();
+    expect(client.runtime.stop.mock.calls.map((call) => call[1].runtime_id)).toEqual([runtimeId, runtimeId]);
     expect(runtime.status).toBe("stopped");
   });
 
