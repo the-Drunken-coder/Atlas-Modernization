@@ -158,13 +158,17 @@ export class AtlasClient {
         expectedID: id
       });
     },
-    fail: (id: string, options: TaskFailOptions) =>
-      this.engine.writeTask(
-        "POST",
-        `/tasks/${encodeURIComponent(id)}/fail`,
-        { failure: options.failure },
-        { requestHeaders: runtimeHeaders(options.runtimeId), signal: options.signal, expectedID: id }
-      ),
+    fail: (id: string, options: TaskFailOptions) => {
+      const failure = { code: options.failure.code, message: options.failure.message };
+      Object.setPrototypeOf(failure, null);
+      const request = { failure };
+      Object.setPrototypeOf(request, null);
+      return this.engine.writeTask("POST", `/tasks/${encodeURIComponent(id)}/fail`, request, {
+        requestHeaders: runtimeHeaders(options.runtimeId),
+        signal: options.signal,
+        expectedID: id
+      });
+    },
     cancel: (id: string, options: TaskCancelOptions) =>
       this.engine.writeTask(
         "POST",

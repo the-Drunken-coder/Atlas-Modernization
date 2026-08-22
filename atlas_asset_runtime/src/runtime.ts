@@ -727,6 +727,8 @@ type PendingJSONMember = {
 };
 
 const MAX_JSON_PROTOTYPE_DEPTH = 64;
+// Even one-character entries exceed Core's 512 KiB request limit beyond this bound.
+const MAX_JSON_ARRAY_ENTRIES = 262_144;
 
 function copyJSONValue(value: unknown): JSONValue {
   const ancestors = new WeakSet<object>();
@@ -810,10 +812,11 @@ function createJSONCopyFrame(source: object): JSONCopyFrame {
 }
 
 function normalizeJSONArrayLength(value: unknown): number {
+  if (typeof value === "bigint") throw new TypeError();
   const length = Number(value);
   if (Number.isNaN(length) || length <= 0) return 0;
-  if (!Number.isFinite(length)) throw new TypeError();
-  return Math.min(Math.floor(length), Number.MAX_SAFE_INTEGER);
+  if (!Number.isFinite(length) || length > MAX_JSON_ARRAY_ENTRIES) throw new TypeError();
+  return Math.floor(length);
 }
 
 function validateJSONCopyFrame(frame: JSONCopyFrame): void {

@@ -841,6 +841,8 @@ function atlasProtocolDaysInMonth(year: number, month: number): number {
 
 function atlasProtocolIsJSONValue(value: unknown): value is JSONValue {
   const maxPrototypeDepth = 64;
+  // Even one-character entries exceed Core's 512 KiB JSON limit beyond this bound.
+  const maxArrayEntries = 262_144;
   type WorkItem =
     | { value: unknown }
     | { leave: object }
@@ -867,7 +869,7 @@ function atlasProtocolIsJSONValue(value: unknown): value is JSONValue {
       continue;
     }
     if (typeof current === "number") {
-      if (!Number.isFinite(current) || Object.is(current, -0)) return false;
+      if (!Number.isFinite(current)) return false;
       continue;
     }
     if (typeof current !== "object") {
@@ -877,7 +879,7 @@ function atlasProtocolIsJSONValue(value: unknown): value is JSONValue {
     const currentArray = Array.isArray(current) ? current : undefined;
     if (currentArray === undefined && !atlasProtocolIsJSONRecord(current)) return false;
     const arrayLength = currentArray !== undefined
-      ? atlasProtocolNormalizeArrayLength(Reflect.get(currentArray, "length"))
+      ? atlasProtocolNormalizeArrayLength(Reflect.get(currentArray, "length"), maxArrayEntries)
       : null;
     if (arrayLength === undefined) return false;
     if (active.has(current)) return false;
@@ -931,11 +933,12 @@ function atlasProtocolHasJSONCompatibleArrayShape(
   return prototype === null && entries.size === length;
 }
 
-function atlasProtocolNormalizeArrayLength(value: unknown): number | undefined {
+function atlasProtocolNormalizeArrayLength(value: unknown, maxArrayEntries: number): number | undefined {
+  if (typeof value === "bigint") return undefined;
   const length = Number(value);
   if (Number.isNaN(length) || length <= 0) return 0;
-  if (!Number.isFinite(length)) return undefined;
-  return Math.min(Math.floor(length), Number.MAX_SAFE_INTEGER);
+  if (!Number.isFinite(length) || length > maxArrayEntries) return undefined;
+  return Math.floor(length);
 }
 
 function atlasProtocolAddArrayEntry(entries: Set<string>, key: PropertyKey, length: number): boolean {

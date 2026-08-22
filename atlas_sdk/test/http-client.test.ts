@@ -337,11 +337,17 @@ describe("AtlasClient HTTP", () => {
         return key === "length" ? "0" : Reflect.get(target, key, receiver);
       }
     });
+    const bigintLength = new Proxy([1], {
+      get(target, key, receiver) {
+        return key === "length" ? 1n : Reflect.get(target, key, receiver);
+      }
+    });
 
     expect(isJSONValue(value)).toBe(true);
     expect(isJSONValue(coercibleLength)).toBe(true);
+    expect(isJSONValue(bigintLength)).toBe(false);
     expect(isJSONValue(0)).toBe(true);
-    expect(isJSONValue(-0)).toBe(false);
+    expect(isJSONValue(-0)).toBe(true);
   });
 
   it("rejects hidden properties on JSON records", () => {
@@ -724,6 +730,37 @@ describe("AtlasClient HTTP", () => {
     }
 
     expect(requestBody).toBe('{"output":[1]}');
+  });
+
+  it("serializes Task failure without inherited toJSON hooks", async () => {
+    const core = new FakeCore();
+    core.upsertTask(task("task-inert-failure", "asset-1"));
+    const originalToJSON = Object.getOwnPropertyDescriptor(Object.prototype, "toJSON");
+    const restoreToJSON = () => {
+      if (originalToJSON === undefined) Reflect.deleteProperty(Object.prototype, "toJSON");
+      else Object.defineProperty(Object.prototype, "toJSON", originalToJSON);
+    };
+    let requestBody: BodyInit | null | undefined;
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: async (url, init) => {
+        requestBody = init?.body;
+        restoreToJSON();
+        return core.fetch(String(url), init);
+      }
+    });
+    Object.defineProperty(Object.prototype, "toJSON", { configurable: true, value: () => null });
+
+    try {
+      await client.tasks.fail("task-inert-failure", {
+        runtimeId: "runtime-1",
+        failure: { code: "execution_failed", message: "invalid output" }
+      });
+    } finally {
+      restoreToJSON();
+    }
+
+    expect(requestBody).toBe('{"failure":{"code":"execution_failed","message":"invalid output"}}');
   });
 
   it("canonicalizes tasking identifiers before body and header use", async () => {

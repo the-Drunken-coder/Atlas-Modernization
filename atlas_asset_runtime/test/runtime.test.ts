@@ -1085,7 +1085,16 @@ describe("AtlasAssetRuntime", () => {
       () => Object.defineProperty({ value: 1 }, Symbol("ignored"), { value: 2, enumerable: true })
     ],
     ["sparse array", () => Array(1)],
-    ["large sparse array", () => Array(100_000_000)]
+    ["large sparse array", () => Array(100_000_000)],
+    [
+      "BigInt proxy array length",
+      () =>
+        new Proxy([1], {
+          get(target, key, receiver) {
+            return key === "length" ? 1n : Reflect.get(target, key, receiver);
+          }
+        })
+    ]
   ])("fails %s handler output without attempting completion", async (_label, output) => {
     const pending = task("immediate-1", "immediate.observe");
     const { client } = fakeClient([pending]);
