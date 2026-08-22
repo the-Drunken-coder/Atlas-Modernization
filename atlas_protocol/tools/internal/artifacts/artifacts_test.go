@@ -234,8 +234,7 @@ func TestTypeScriptSourceGeneratesTaskCreateValidatorFromSchema(t *testing.T) {
 		"const active = new WeakSet<object>()",
 		"while (work.length > 0)",
 		"return Object.getPrototypeOf(prototype) === null",
-		"atlasProtocolHasJSONCompatibleArrayShape(item.array, item.length, maxPrototypeDepth)",
-		"const maxArrayEntries = 262_144",
+		"atlasProtocolHasJSONCompatibleArrayShape(currentArray!, arrayLength, maxPrototypeDepth)",
 		`typeof value === "bigint"`,
 		`Reflect.get(current, "toJSON")`,
 		"depth < maxPrototypeDepth",
@@ -256,6 +255,9 @@ func TestTypeScriptSourceGeneratesTaskCreateValidatorFromSchema(t *testing.T) {
 	}
 	if strings.Contains(text, "atlasProtocolIsJSONValueInternal") {
 		t.Fatal("generated JSON value validator must not recurse")
+	}
+	if strings.Contains(text, "maxArrayEntries") {
+		t.Fatal("generated JSON value validator must not impose endpoint-specific array limits")
 	}
 }
 

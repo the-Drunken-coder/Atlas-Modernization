@@ -316,6 +316,19 @@ describe("AtlasClient HTTP", () => {
     expect(isJSONValue(Array(100_000_000))).toBe(false);
   });
 
+  it("accepts dense JSON arrays within the Entity request limit", () => {
+    const values = new Array<number>(300_000).fill(0);
+
+    expect(isJSONValue(values)).toBe(true);
+    expect(
+      isEntityCreateRequest({
+        components: { custom_dense: values },
+        entity_id: "dense-array",
+        entity_type: "asset"
+      })
+    ).toBe(true);
+  });
+
   it("rejects named properties on JSON arrays", () => {
     const value: unknown[] & { metadata?: unknown } = [];
     value.metadata = undefined;

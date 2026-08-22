@@ -841,8 +841,6 @@ function atlasProtocolDaysInMonth(year: number, month: number): number {
 
 function atlasProtocolIsJSONValue(value: unknown): value is JSONValue {
   const maxPrototypeDepth = 64;
-  // Even one-character entries exceed Core's 512 KiB JSON limit beyond this bound.
-  const maxArrayEntries = 262_144;
   type WorkItem =
     | { value: unknown }
     | { leave: object }
@@ -857,7 +855,6 @@ function atlasProtocolIsJSONValue(value: unknown): value is JSONValue {
     }
     if ("array" in item) {
       if (item.index === item.length) {
-        if (!atlasProtocolHasJSONCompatibleArrayShape(item.array, item.length, maxPrototypeDepth)) return false;
         continue;
       }
       work.push({ array: item.array, index: item.index + 1, length: item.length });
@@ -879,9 +876,13 @@ function atlasProtocolIsJSONValue(value: unknown): value is JSONValue {
     const currentArray = Array.isArray(current) ? current : undefined;
     if (currentArray === undefined && !atlasProtocolIsJSONRecord(current)) return false;
     const arrayLength = currentArray !== undefined
-      ? atlasProtocolNormalizeArrayLength(Reflect.get(currentArray, "length"), maxArrayEntries)
+      ? atlasProtocolNormalizeArrayLength(Reflect.get(currentArray, "length"))
       : null;
     if (arrayLength === undefined) return false;
+    if (
+      arrayLength !== null &&
+      !atlasProtocolHasJSONCompatibleArrayShape(currentArray!, arrayLength, maxPrototypeDepth)
+    ) return false;
     if (active.has(current)) return false;
     active.add(current);
     work.push({ leave: current });
@@ -933,11 +934,11 @@ function atlasProtocolHasJSONCompatibleArrayShape(
   return prototype === null && entries.size === length;
 }
 
-function atlasProtocolNormalizeArrayLength(value: unknown, maxArrayEntries: number): number | undefined {
+function atlasProtocolNormalizeArrayLength(value: unknown): number | undefined {
   if (typeof value === "bigint") return undefined;
   const length = Number(value);
   if (Number.isNaN(length) || length <= 0) return 0;
-  if (!Number.isFinite(length) || length > maxArrayEntries) return undefined;
+  if (!Number.isFinite(length)) return undefined;
   return Math.floor(length);
 }
 
