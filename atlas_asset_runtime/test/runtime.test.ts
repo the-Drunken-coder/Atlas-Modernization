@@ -1296,6 +1296,26 @@ describe("AtlasAssetRuntime", () => {
     await runtime.stop();
   });
 
+  it("accepts ordinary nested Array subclasses", async () => {
+    class IntermediateArray extends Array<JSONValue> {}
+    class HandlerArray extends IntermediateArray {}
+    const output = new HandlerArray();
+    output.push(1);
+    const pending = task("immediate-1", "immediate.observe");
+    const { client } = fakeClient([pending]);
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      manifest: [manifestEntry("immediate.observe", "immediate")],
+      handlers: { "immediate.observe": async () => output }
+    });
+
+    await runtime.start();
+    await vi.waitFor(() => expect(client.tasks.complete).toHaveBeenCalledOnce());
+    expect(client.tasks.complete).toHaveBeenCalledWith(pending.task_id, expect.objectContaining({ output: [1] }));
+    expect(client.tasks.fail).not.toHaveBeenCalled();
+    await runtime.stop();
+  });
+
   it("snapshots stateful handler output before reporting completion", async () => {
     const pending = task("immediate-1", "immediate.observe");
     const { client } = fakeClient([pending]);

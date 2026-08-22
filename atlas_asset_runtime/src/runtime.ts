@@ -716,6 +716,8 @@ type PendingJSONMember = {
   key?: string;
 };
 
+const MAX_JSON_PROTOTYPE_DEPTH = 64;
+
 function copyJSONValue(value: unknown): JSONValue {
   const ancestors = new WeakSet<object>();
   const frames: JSONCopyFrame[] = [];
@@ -816,7 +818,7 @@ function validateJSONCopyFrame(frame: JSONCopyFrame): void {
 
 function hasOnlyJSONArrayPrototypeEntries(value: object, entries: ReadonlySet<string>): boolean {
   let prototype = Object.getPrototypeOf(value);
-  for (let depth = 0; prototype !== null && depth < 3; depth++) {
+  for (let depth = 0; prototype !== null && depth < MAX_JSON_PROTOTYPE_DEPTH; depth++) {
     for (const key of Reflect.ownKeys(prototype)) {
       const descriptor = Reflect.getOwnPropertyDescriptor(prototype, key);
       if (descriptor?.enumerable && (typeof key === "symbol" || !entries.has(key))) return false;

@@ -318,8 +318,23 @@ describe("AtlasClient HTTP", () => {
   it("rejects named properties on JSON arrays", () => {
     const value: unknown[] & { metadata?: unknown } = [];
     value.metadata = undefined;
+    const prototype = Object.create(Array.prototype) as unknown[];
+    Object.defineProperty(prototype, "metadata", { enumerable: true, value: 1n });
+    const inherited = Object.setPrototypeOf([], prototype);
 
     expect(isJSONValue(value)).toBe(false);
+    expect(isJSONValue(inherited)).toBe(false);
+  });
+
+  it("accepts nested Array subclasses and rejects negative zero", () => {
+    class IntermediateArray extends Array<unknown> {}
+    class HandlerArray extends IntermediateArray {}
+    const value = new HandlerArray();
+    value.push(1);
+
+    expect(isJSONValue(value)).toBe(true);
+    expect(isJSONValue(0)).toBe(true);
+    expect(isJSONValue(-0)).toBe(false);
   });
 
   it("rejects hidden properties on JSON records", () => {

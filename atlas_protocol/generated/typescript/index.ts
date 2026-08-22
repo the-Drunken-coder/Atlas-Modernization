@@ -840,6 +840,7 @@ function atlasProtocolDaysInMonth(year: number, month: number): number {
 }
 
 function atlasProtocolIsJSONValue(value: unknown): value is JSONValue {
+  const maxPrototypeDepth = 64;
   type WorkItem = { value: unknown } | { leave: object };
   const active = new WeakSet<object>();
   const work: WorkItem[] = [{ value }];
@@ -854,13 +855,13 @@ function atlasProtocolIsJSONValue(value: unknown): value is JSONValue {
       continue;
     }
     if (typeof current === "number") {
-      if (!Number.isFinite(current)) return false;
+      if (!Number.isFinite(current) || Object.is(current, -0)) return false;
       continue;
     }
     if (typeof current !== "object" || (!Array.isArray(current) && !atlasProtocolIsJSONRecord(current))) {
       return false;
     }
-    if (Array.isArray(current) && !atlasProtocolHasOnlyArrayEntries(current)) return false;
+    if (Array.isArray(current) && !atlasProtocolHasOnlyArrayEntries(current, maxPrototypeDepth)) return false;
     if (active.has(current)) return false;
     active.add(current);
     work.push({ leave: current });
@@ -888,11 +889,19 @@ function atlasProtocolIsJSONRecord(value: object): value is Record<string, unkno
   );
 }
 
-function atlasProtocolHasOnlyArrayEntries(value: unknown[]): boolean {
-  return Reflect.ownKeys(value).every((key) => {
+function atlasProtocolHasOnlyArrayEntries(value: unknown[], maxPrototypeDepth: number): boolean {
+  const entries = new Set(Array.from({ length: value.length }, (_, index) => String(index)));
+  if (!Reflect.ownKeys(value).every((key) => {
     if (key === "length") return true;
-    if (typeof key !== "string") return false;
-    const index = Number(key);
-    return Number.isInteger(index) && index >= 0 && index < value.length && String(index) === key;
-  });
+    return typeof key === "string" && entries.has(key);
+  })) return false;
+  let prototype = Object.getPrototypeOf(value);
+  for (let depth = 0; prototype !== null && depth < maxPrototypeDepth; depth++) {
+    for (const key of Reflect.ownKeys(prototype)) {
+      const descriptor = Reflect.getOwnPropertyDescriptor(prototype, key);
+      if (descriptor?.enumerable && (typeof key !== "string" || !entries.has(key))) return false;
+    }
+    prototype = Object.getPrototypeOf(prototype);
+  }
+  return prototype === null;
 }
