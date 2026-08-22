@@ -17,6 +17,8 @@ const DEFAULT_CHECK_IN_INTERVAL_MS = 5_000;
 const TASK_RECONCILIATION_INTERVAL_MS = 5_000;
 const TASK_RECONCILIATION_CONCURRENCY = 8;
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
+const MAX_TASKING_REQUEST_BODY_BYTES = 512 * 1024;
+const JSON_TEXT_ENCODER = new TextEncoder();
 
 export type AssetTaskFailureCode = "precondition_failed" | "execution_failed";
 
@@ -688,16 +690,21 @@ function isRetryableLifecycleError(error: unknown): boolean {
 }
 
 function snapshotTaskOutput(output: JSONValue): JSONValue {
+  let snapshot: JSONValue;
+  let serialized: string;
   try {
-    const snapshot = copyJSONValue(output);
+    snapshot = copyJSONValue(output);
     if (!isJSONValue(snapshot)) throw new TypeError();
     const envelope = { output: snapshot };
     Object.setPrototypeOf(envelope, null);
-    JSON.stringify(envelope);
-    return snapshot;
+    serialized = JSON.stringify(envelope);
   } catch {
     throw new TypeError("Task handler returned output that JSON cannot preserve");
   }
+  if (JSON_TEXT_ENCODER.encode(serialized).byteLength > MAX_TASKING_REQUEST_BODY_BYTES) {
+    throw new TypeError("Task handler returned output that exceeds Core's 512 KiB request limit");
+  }
+  return snapshot;
 }
 
 type JSONContainer = JSONValue[] | Record<string, JSONValue>;
@@ -728,7 +735,7 @@ type PendingJSONMember = {
 
 const MAX_JSON_PROTOTYPE_DEPTH = 64;
 // Even one-character entries exceed Core's 512 KiB request limit beyond this bound.
-const MAX_JSON_ARRAY_ENTRIES = 262_144;
+const MAX_JSON_ARRAY_ENTRIES = MAX_TASKING_REQUEST_BODY_BYTES / 2;
 
 function copyJSONValue(value: unknown): JSONValue {
   const ancestors = new WeakSet<object>();

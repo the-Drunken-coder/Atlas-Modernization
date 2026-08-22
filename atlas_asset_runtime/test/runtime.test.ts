@@ -1119,6 +1119,51 @@ describe("AtlasAssetRuntime", () => {
     await runtime.stop();
   });
 
+  it("completes output whose UTF-8 envelope exactly fits Core's request limit", async () => {
+    const pending = task("immediate-1", "immediate.observe");
+    const { client } = fakeClient([pending]);
+    const envelopeOverhead = new TextEncoder().encode(JSON.stringify({ output: "" })).byteLength;
+    const output = "a".repeat(512 * 1024 - envelopeOverhead);
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      manifest: [manifestEntry("immediate.observe", "immediate")],
+      handlers: { "immediate.observe": async () => output }
+    });
+
+    await runtime.start();
+    await vi.waitFor(() => expect(client.tasks.complete).toHaveBeenCalledOnce());
+    expect(client.tasks.complete).toHaveBeenCalledWith(pending.task_id, expect.objectContaining({ output }));
+    expect(client.tasks.fail).not.toHaveBeenCalled();
+    await runtime.stop();
+  });
+
+  it.each([
+    ["ASCII", "a".repeat(512 * 1024)],
+    ["multi-byte UTF-8", "é".repeat(256 * 1024)]
+  ])("fails %s output whose envelope exceeds Core's request limit", async (_label, output) => {
+    const pending = task("immediate-1", "immediate.observe");
+    const { client } = fakeClient([pending]);
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      manifest: [manifestEntry("immediate.observe", "immediate")],
+      handlers: { "immediate.observe": async () => output }
+    });
+
+    await runtime.start();
+    await vi.waitFor(() => expect(client.tasks.fail).toHaveBeenCalledOnce());
+    expect(client.tasks.complete).not.toHaveBeenCalled();
+    expect(client.tasks.fail).toHaveBeenCalledWith(
+      pending.task_id,
+      expect.objectContaining({
+        failure: {
+          code: "execution_failed",
+          message: "Task handler returned output that exceeds Core's 512 KiB request limit"
+        }
+      })
+    );
+    await runtime.stop();
+  });
+
   it.each([2 ** 53, 2 ** 54, 1e20])("completes exactly representable integer output %s", async (value) => {
     const pending = task("immediate-1", "immediate.observe");
     const { client } = fakeClient([pending]);
