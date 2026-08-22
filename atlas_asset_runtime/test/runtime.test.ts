@@ -1351,6 +1351,27 @@ describe("AtlasAssetRuntime", () => {
     await runtime.stop();
   });
 
+  it("ignores inherited array data shadowed by a nearer descriptor", async () => {
+    const pending = task("immediate-1", "immediate.observe");
+    const { client } = fakeClient([pending]);
+    const deeperPrototype = Object.create(Array.prototype) as unknown[];
+    Object.defineProperty(deeperPrototype, "metadata", { enumerable: true, value: 1n });
+    const nearerPrototype = Object.create(deeperPrototype) as unknown[];
+    Object.defineProperty(nearerPrototype, "metadata", { value: undefined });
+    const output = Object.setPrototypeOf([1], nearerPrototype);
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      manifest: [manifestEntry("immediate.observe", "immediate")],
+      handlers: { "immediate.observe": async () => output }
+    });
+
+    await runtime.start();
+    await vi.waitFor(() => expect(client.tasks.complete).toHaveBeenCalledOnce());
+    expect(client.tasks.complete).toHaveBeenCalledWith(pending.task_id, expect.objectContaining({ output: [1] }));
+    expect(client.tasks.fail).not.toHaveBeenCalled();
+    await runtime.stop();
+  });
+
   it("accepts ordinary nested Array subclasses", async () => {
     class IntermediateArray extends Array<JSONValue> {}
     class HandlerArray extends IntermediateArray {}

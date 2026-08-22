@@ -238,7 +238,8 @@ func TestTypeScriptSourceGeneratesTaskCreateValidatorFromSchema(t *testing.T) {
 		`typeof value === "bigint"`,
 		`Reflect.get(current, "toJSON")`,
 		"depth < maxPrototypeDepth",
-		"entries.size === length",
+		"const prototypeKeys = new Set<PropertyKey>()",
+		"if (prototypeKeys.has(key)) continue",
 		"atlasProtocolIsJSONRecord(current)",
 		"Reflect.getOwnPropertyDescriptor(value, key)?.enumerable === true",
 		"Reflect.ownKeys(value).every",
@@ -258,6 +259,9 @@ func TestTypeScriptSourceGeneratesTaskCreateValidatorFromSchema(t *testing.T) {
 	}
 	if strings.Contains(text, "maxArrayEntries") {
 		t.Fatal("generated JSON value validator must not impose endpoint-specific array limits")
+	}
+	if strings.Contains(text, "entries.size === length") {
+		t.Fatal("generated JSON value validator must determine array density from indexed reads")
 	}
 }
 
