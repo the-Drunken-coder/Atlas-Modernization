@@ -1,5 +1,31 @@
 import { describe, expect, it } from "vitest";
-import { stringifyAtlasJSON } from "../src/json.js";
+import { parseAtlasJSON, stringifyAtlasJSON } from "../src/json.js";
+
+describe("parseAtlasJSON", () => {
+  it.each([
+    "9007199254740992",
+    "9007199254740992.0",
+    "18014398509481984",
+    "100000000000000000000",
+    "9.007199254740992e15"
+  ])("accepts the exactly representable integer %s", (serialized) => {
+    expect(parseAtlasJSON(serialized)).toBe(Number(serialized));
+  });
+
+  it.each([
+    "9007199254740993",
+    "9007199254740993.0",
+    "18014398509481985",
+    "99999999999999999999",
+    "9.007199254740993e15"
+  ])("rejects the lossy integer %s", (serialized) => {
+    expect(() => parseAtlasJSON(serialized)).toThrow("integer that JavaScript cannot represent exactly");
+  });
+
+  it.each(["0.1", "1e-400"])("preserves the standard fractional-number policy for %s", (serialized) => {
+    expect(parseAtlasJSON(serialized)).toBe(JSON.parse(serialized));
+  });
+});
 
 describe("stringifyAtlasJSON", () => {
   it("serializes ordinary objects that spoof a Number tag", () => {
@@ -36,5 +62,11 @@ describe("stringifyAtlasJSON", () => {
 
     expect(stringifyAtlasJSON({ nested: value })).toBe('{"nested":7}');
     expect(coercions).toBe(1);
+  });
+
+  it.each([2 ** 53, 2 ** 54, 1e20])("serializes exactly representable large integer %s", (value) => {
+    expect(stringifyAtlasJSON({ primitive: value, boxed: new Number(value) })).toBe(
+      `{"primitive":${value},"boxed":${value}}`
+    );
   });
 });

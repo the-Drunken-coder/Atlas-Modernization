@@ -1,4 +1,4 @@
-const JSON_NUMBER = /-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/y;
+const JSON_NUMBER = /(-?)(0|[1-9]\d*)(?:\.(\d+))?(?:[eE]([+-]?\d+))?/y;
 
 export function parseAtlasJSON(serialized: string): unknown {
   rejectUnsafeJSONNumbers(serialized);
@@ -9,7 +9,7 @@ export function stringifyAtlasJSON(value: unknown): string {
   const serialized = JSON.stringify(value, (_key, item: unknown) => {
     const number = numberValueForSerialization(item);
     if (number === undefined) return item;
-    assertSafeJSONNumber(number);
+    assertAtlasJSONNumber(number);
     return number;
   });
   if (serialized === undefined) throw new TypeError("Atlas request body is not JSON serializable");
@@ -48,7 +48,7 @@ function rejectUnsafeJSONNumbers(serialized: string): void {
       JSON_NUMBER.lastIndex = index;
       const match = JSON_NUMBER.exec(serialized);
       if (match) {
-        assertSafeJSONNumber(Number(match[0]));
+        assertAtlasJSONNumber(Number(match[0]), match);
         index = JSON_NUMBER.lastIndex;
         continue;
       }
@@ -57,9 +57,25 @@ function rejectUnsafeJSONNumbers(serialized: string): void {
   }
 }
 
-function assertSafeJSONNumber(value: number): void {
+function assertAtlasJSONNumber(value: number, match?: RegExpExecArray): void {
   if (!Number.isFinite(value)) throw new TypeError("Atlas JSON contains a number outside the JavaScript range");
-  if (Number.isInteger(value) && !Number.isSafeInteger(value)) {
+  const exactInteger = match === undefined ? undefined : exactIntegerValue(match);
+  if (exactInteger !== undefined && exactInteger !== BigInt(value)) {
     throw new TypeError("Atlas JSON contains an integer that JavaScript cannot represent exactly");
   }
+}
+
+// Fractional lexemes keep JSON's standard Number semantics. Only mathematically integral
+// wire values participate in the integer-preservation contract.
+function exactIntegerValue(match: RegExpExecArray): bigint | undefined {
+  const [, sign = "", whole = "", fraction = "", exponent = "0"] = match;
+  const digits = `${whole}${fraction}`;
+  if (!/[1-9]/.test(digits)) return 0n;
+
+  const decimalPlaces = fraction.length - Number(exponent);
+  if (decimalPlaces > 0) {
+    if (decimalPlaces > digits.length || /[1-9]/.test(digits.slice(-decimalPlaces))) return undefined;
+    return BigInt(`${sign}${digits.slice(0, -decimalPlaces)}`);
+  }
+  return BigInt(`${sign}${digits}${"0".repeat(-decimalPlaces)}`);
 }

@@ -745,6 +745,17 @@ describe("AtlasClient HTTP", () => {
     expect(requestBody).toBe('{"output":[1]}');
   });
 
+  it("preserves exactly representable large integer Task output", async () => {
+    const core = new FakeCore();
+    core.upsertTask(task("task-large-output", "asset-1"));
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch });
+    const values = [2 ** 53, 2 ** 54, 1e20];
+
+    await expect(
+      client.tasks.complete("task-large-output", { runtimeId: "runtime-1", output: { values } })
+    ).resolves.toMatchObject({ status: "completed", output: { values } });
+  });
+
   it("serializes Task failure without inherited toJSON hooks", async () => {
     const core = new FakeCore();
     core.upsertTask(task("task-inert-failure", "asset-1"));
@@ -1094,7 +1105,7 @@ describe("AtlasClient HTTP", () => {
     expect(isTaskCreateRequest({ asset_id: "asset-cycle", command: "fixture.queued", input })).toBe(false);
   });
 
-  it("rejects JSON integers that JavaScript cannot represent exactly", async () => {
+  it("rejects inbound JSON integers that JavaScript cannot represent exactly", async () => {
     const unsafeTask = `{
       "task_id":"task-unsafe-number",
       "asset_id":"asset-1",
@@ -1115,27 +1126,6 @@ describe("AtlasClient HTTP", () => {
     await expect(inboundClient.tasks.get("task-unsafe-number", { fresh: true })).rejects.toThrow(
       "integer that JavaScript cannot represent exactly"
     );
-
-    const fetchImpl = vi.fn<typeof fetch>();
-    const outboundClient = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl });
-    await expect(
-      outboundClient.tasks.create(
-        { asset_id: "asset-1", command: "fixture.queued", input: { value: Number.MAX_SAFE_INTEGER + 1 } },
-        { idempotencyKey: "unsafe-number" }
-      )
-    ).rejects.toThrow("integer that JavaScript cannot represent exactly");
-
-    await expect(
-      outboundClient.tasks.create(
-        {
-          asset_id: "asset-1",
-          command: "fixture.queued",
-          input: { value: new Number(Number.MAX_SAFE_INTEGER + 1) } as never
-        },
-        { idempotencyKey: "boxed-unsafe-number" }
-      )
-    ).rejects.toThrow("integer that JavaScript cannot represent exactly");
-    expect(fetchImpl).not.toHaveBeenCalled();
   });
 
   it("rejects boxed non-finite numbers before they serialize to null", async () => {

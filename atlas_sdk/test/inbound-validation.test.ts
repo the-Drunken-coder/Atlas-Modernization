@@ -253,9 +253,7 @@ describe("AtlasClient inbound response validation", () => {
     const response = { ...validObject("object-http-unsafe-size", 1), size_bytes: 9_007_199_254_740_992, extra: {} };
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: async () => Response.json(response) });
 
-    await expect(client.objects.get(response.object_id, { fresh: true })).rejects.toThrow(
-      "integer that JavaScript cannot represent exactly"
-    );
+    await expect(client.objects.get(response.object_id, { fresh: true })).rejects.toThrow("response failed validation");
   });
 
   it("rejects the old payload field on HTTP object detail values", async () => {

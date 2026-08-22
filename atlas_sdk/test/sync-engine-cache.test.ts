@@ -351,11 +351,7 @@ describe("AtlasClient sync: cache projection and reads", () => {
         pollIntervalMs: 0
       });
 
-      await expect(client.sync.start()).rejects.toThrow(
-        version === 9_007_199_254_740_992
-          ? "integer that JavaScript cannot represent exactly"
-          : "Atlas response failed validation for GET /queries/full"
-      );
+      await expect(client.sync.start()).rejects.toThrow("Atlas response failed validation for GET /queries/full");
     }
   );
 
