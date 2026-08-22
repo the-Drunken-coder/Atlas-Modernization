@@ -7,19 +7,27 @@ export function parseAtlasJSON(serialized: string): unknown {
 
 export function stringifyAtlasJSON(value: unknown): string {
   const serialized = JSON.stringify(value, (_key, item: unknown) => {
-    const number = typeof item === "number" ? item : boxedNumberValue(item);
-    if (number !== undefined) assertSafeJSONNumber(number);
-    return item;
+    const number = numberValueForSerialization(item);
+    if (number === undefined) return item;
+    assertSafeJSONNumber(number);
+    return number;
   });
   if (serialized === undefined) throw new TypeError("Atlas request body is not JSON serializable");
   rejectUnsafeJSONNumbers(serialized);
   return serialized;
 }
 
-function boxedNumberValue(value: unknown): number | undefined {
+function numberValueForSerialization(value: unknown): number | undefined {
+  if (typeof value === "number") return value;
   if (typeof value !== "object" || value === null) return undefined;
-  if (!(value instanceof Number) && Object.prototype.toString.call(value) !== "[object Number]") return undefined;
-  return Number.prototype.valueOf.call(value);
+  // This intrinsic brand check works across realms and ignores Symbol.toStringTag.
+  try {
+    Number.prototype.valueOf.call(value);
+  } catch {
+    return undefined;
+  }
+  // Return the checked coercion so JSON.stringify cannot invoke custom coercion again.
+  return +(value as unknown as number);
 }
 
 function rejectUnsafeJSONNumbers(serialized: string): void {
