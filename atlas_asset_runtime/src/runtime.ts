@@ -1,9 +1,10 @@
 import {
-  AtlasAPIError,
   type AtlasClient,
   type CommandManifest,
   type CommandManifestEntry,
   type EntityCheckInOptions,
+  isAtlasAPIError,
+  isAtlasTransportError,
   isCommandManifest,
   type JSONValue,
   type TaskResource
@@ -591,13 +592,21 @@ export class AtlasAssetRuntime {
           continue;
         }
         let authoritative: TaskResource;
-        try {
-          authoritative = await this.client.tasks.get(taskId, { fresh: true, signal });
-        } catch (readError) {
-          throw new AggregateError(
-            [error, readError],
-            `Task ${taskId} lifecycle write was rejected and its authoritative state could not be read`
-          );
+        for (;;) {
+          signal.throwIfAborted();
+          try {
+            authoritative = await this.client.tasks.get(taskId, { fresh: true, signal });
+            break;
+          } catch (readError) {
+            if (!isRetryableLifecycleError(readError)) {
+              throw new AggregateError(
+                [error, readError],
+                `Task ${taskId} lifecycle write was rejected and its authoritative state could not be read`
+              );
+            }
+            this.reportError(readError);
+            await delay(TASK_RECONCILIATION_INTERVAL_MS, signal);
+          }
         }
         if (authoritativeApplied(authoritative) || isTerminalTaskStatus(authoritative.status)) return authoritative;
         throw error;
@@ -665,8 +674,8 @@ function isTerminalTask(task: TaskResource): boolean {
 }
 
 function isRetryableLifecycleError(error: unknown): boolean {
-  if (error instanceof TypeError && error.message.startsWith("Atlas response failed validation")) return false;
-  if (!(error instanceof AtlasAPIError)) return true;
+  if (isAtlasTransportError(error)) return true;
+  if (!isAtlasAPIError(error)) return false;
   return error.status === 408 || error.status === 429 || error.status >= 500;
 }
 

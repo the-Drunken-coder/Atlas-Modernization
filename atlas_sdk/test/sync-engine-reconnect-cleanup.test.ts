@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { AtlasClient, type ResourceType } from "../src";
+import { AtlasClient, AtlasTransportError, type ResourceType } from "../src";
 import { ResourceCache } from "../src/cache.js";
 import { parseSubscriptionKey } from "../src/subscriptions.js";
 import { type ResourceValue } from "../src/types.js";
@@ -722,6 +722,32 @@ describe("AtlasClient sync: polling, reconnect timers, and cleanup", () => {
 
     await expect(client.objects.content("object-1")).resolves.toBeInstanceOf(ArrayBuffer);
     expect(core.objectDownloadCount).toBe(2);
+  });
+
+  it("labels object content body failures as transport errors", async () => {
+    const core = new FakeCore();
+    core.upsertObject(object("object-1"));
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: async (url, init) => {
+        const response = await core.fetch(url, init);
+        if (String(url).includes("/download")) {
+          vi.spyOn(response, "arrayBuffer").mockRejectedValueOnce(new TypeError("download body terminated"));
+        }
+        return response;
+      },
+      sync: "all",
+      pollIntervalMs: 0
+    });
+    await client.sync.start();
+
+    const failure = await client.objects.content("object-1").catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(AtlasTransportError);
+    expect(failure).toMatchObject({
+      code: "ATLAS_TRANSPORT_ERROR",
+      message: "download body terminated"
+    });
   });
 
   it("exposes typed watch helpers for all resource surfaces", () => {

@@ -53,7 +53,7 @@ import {
 } from "./validation.js";
 
 export { ProtocolMismatchError } from "./feed-connection.js";
-export { AtlasAPIError, ConflictError } from "./http.js";
+export { AtlasAPIError, AtlasTransportError, ConflictError, isAtlasAPIError, isAtlasTransportError } from "./http.js";
 export type {
   ChangedSinceResponse,
   EntityCheckInFullResponse,
@@ -327,8 +327,7 @@ export class AtlasClient {
       if (cached) {
         return cached;
       }
-      const response = await this.transport.raw("GET", `/objects/${encodeURIComponent(id)}/download`);
-      const data = await response.arrayBuffer();
+      const data = await this.transport.arrayBuffer("GET", `/objects/${encodeURIComponent(id)}/download`);
       const after = await this.objects.get(id, { fresh: true });
       if (after.metadata.version === object.metadata.version) {
         this.objectContents.set(key, data);

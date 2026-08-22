@@ -886,7 +886,10 @@ describe("AtlasClient sync: feed connections and recovery handoff", () => {
     await engine.changedSinceForGeneration(engine.lifecycleGeneration, 1);
     const originalError = new Error("stale recovery failed");
     releaseOlder(originalError);
-    await expect(older).rejects.toBe(originalError);
+    await expect(older).rejects.toMatchObject({
+      name: "AtlasTransportError",
+      message: originalError.message
+    });
 
     expect(client.sync.status()).not.toHaveProperty("error");
   });

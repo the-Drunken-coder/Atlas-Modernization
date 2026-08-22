@@ -18,7 +18,10 @@ export type HttpTransportOptions = {
   requestTimeoutMs: number;
 };
 
+const ATLAS_API_ERROR_CODE = "ATLAS_API_ERROR";
+
 export class AtlasAPIError extends Error {
+  readonly code = ATLAS_API_ERROR_CODE;
   readonly status: number;
   readonly response: unknown;
   readonly errorCode?: string;
@@ -38,6 +41,45 @@ export class ConflictError extends AtlasAPIError {
     super(message, status, response);
     this.name = "ConflictError";
   }
+}
+
+const ATLAS_TRANSPORT_ERROR_CODE = "ATLAS_TRANSPORT_ERROR";
+
+export class AtlasTransportError extends Error {
+  readonly code = ATLAS_TRANSPORT_ERROR_CODE;
+
+  constructor(message: string) {
+    super(sanitizeErrorMessage(message));
+    this.name = "AtlasTransportError";
+  }
+}
+
+export function isAtlasTransportError(
+  error: unknown
+): error is { readonly code: "ATLAS_TRANSPORT_ERROR"; readonly message: string } {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "message" in error &&
+    typeof error.message === "string" &&
+    "code" in error &&
+    error.code === ATLAS_TRANSPORT_ERROR_CODE
+  );
+}
+
+export function isAtlasAPIError(
+  error: unknown
+): error is { readonly code: "ATLAS_API_ERROR"; readonly message: string; readonly status: number } {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "message" in error &&
+    typeof error.message === "string" &&
+    "status" in error &&
+    typeof error.status === "number" &&
+    "code" in error &&
+    error.code === ATLAS_API_ERROR_CODE
+  );
 }
 
 export class HttpTransport {
@@ -70,7 +112,7 @@ export class HttpTransport {
     requestHeaders?: HeadersInit
   ): Promise<T> {
     const response = await this.raw(method, path, body, ifMatchVersion, signal, requestHeaders);
-    const value: unknown = await response.json();
+    const value = await readSuccessfulJSON(response, signal);
     if (!validate(value)) {
       throw new TypeError(`Atlas response failed validation for ${method} ${path}`);
     }
@@ -86,7 +128,7 @@ export class HttpTransport {
     requestHeaders?: HeadersInit
   ): Promise<VersionedResponse<T>> {
     const response = await this.raw(method, path, body, undefined, signal, requestHeaders);
-    const value: unknown = await response.json();
+    const value = await readSuccessfulJSON(response, signal);
     if (!validate(value)) {
       throw new TypeError(`Atlas response failed validation for ${method} ${path}`);
     }
@@ -111,6 +153,15 @@ export class HttpTransport {
     }
   }
 
+  async arrayBuffer(method: string, path: string, signal?: AbortSignal): Promise<ArrayBuffer> {
+    const response = await this.raw(method, path, undefined, undefined, signal);
+    try {
+      return await response.arrayBuffer();
+    } catch (error) {
+      throwTransportBodyError(error, signal);
+    }
+  }
+
   async raw(
     method: string,
     path: string,
@@ -131,7 +182,7 @@ export class HttpTransport {
       signal
     });
     if (!response.ok) {
-      const payload = safeErrorPayload(await readErrorPayload(response));
+      const payload = safeErrorPayload(await readErrorPayload(response, signal));
       const message = errorMessage(response.status, payload);
       if (response.status === 409 || response.status === 412) {
         throw new ConflictError(message, response.status, payload);
@@ -144,22 +195,44 @@ export class HttpTransport {
   private async fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.requestTimeoutMs);
+    const requestSignal = init.signal ? AbortSignal.any([controller.signal, init.signal]) : controller.signal;
     try {
       return await this.fetchImpl(url, {
         ...init,
-        signal: init.signal ? AbortSignal.any([controller.signal, init.signal]) : controller.signal
+        signal: requestSignal
       });
     } catch (error) {
+      if (init.signal?.aborted && requestSignal.reason === init.signal.reason) {
+        throw init.signal.reason;
+      }
       if (controller.signal.aborted) {
-        throw new Error(`Atlas request timed out after ${this.requestTimeoutMs}ms`);
+        throw new AtlasTransportError(`Atlas request timed out after ${this.requestTimeoutMs}ms`);
       }
       const message = sanitizeErrorMessage(error);
-      if (error instanceof Error && error.message === message) throw error;
-      throw new Error(message);
+      if (isAtlasTransportError(error)) throw error;
+      throw new AtlasTransportError(message);
     } finally {
       clearTimeout(timeout);
     }
   }
+}
+
+async function readSuccessfulJSON(response: Response, signal?: AbortSignal): Promise<unknown> {
+  try {
+    return await response.json();
+  } catch (error) {
+    if (signal?.aborted) throw signal.reason;
+    if (typeof error === "object" && error !== null && "name" in error && error.name === "SyntaxError") {
+      throw error;
+    }
+    throwTransportBodyError(error, signal);
+  }
+}
+
+function throwTransportBodyError(error: unknown, signal?: AbortSignal): never {
+  if (signal?.aborted) throw signal.reason;
+  if (isAtlasTransportError(error)) throw error;
+  throw new AtlasTransportError(sanitizeErrorMessage(error));
 }
 
 function strongETagVersion(etag: string | null): number | undefined {
@@ -169,10 +242,11 @@ function strongETagVersion(etag: string | null): number | undefined {
   return Number.isSafeInteger(version) ? version : undefined;
 }
 
-async function readErrorPayload(response: Response): Promise<unknown> {
+async function readErrorPayload(response: Response, signal?: AbortSignal): Promise<unknown> {
   try {
     return await response.json();
   } catch {
+    if (signal?.aborted) throw signal.reason;
     return undefined;
   }
 }

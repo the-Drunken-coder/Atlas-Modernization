@@ -2,7 +2,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   AtlasAPIError,
   AtlasClient,
+  AtlasTransportError,
   ConflictError,
+  isAtlasAPIError,
+  isAtlasTransportError,
   isEntityCreateRequest,
   isEntityUpdateRequest,
   isObjectCreateRequest,
@@ -129,26 +132,79 @@ describe("AtlasClient HTTP", () => {
     }
   });
 
-  it("honors caller abort signals for handshake, check-in, and fresh reads", async () => {
+  it("labels fetch failures as transport errors", async () => {
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: async () => Promise.reject(new Error("network unavailable"))
+    });
+
+    const failure = await client.handshake().catch((error: unknown) => error);
+
+    expect(failure).toMatchObject({
+      name: "AtlasTransportError",
+      message: "network unavailable",
+      code: "ATLAS_TRANSPORT_ERROR"
+    });
+    expect(failure).toBeInstanceOf(AtlasTransportError);
+    expect(isAtlasTransportError(failure)).toBe(true);
+  });
+
+  it("sanitizes transport errors constructed by consumers", () => {
+    const secret = "transport-canary-secret";
+    const failure = new AtlasTransportError(`failed https://user:${secret}@core.test?api_key=${secret}`);
+
+    expect(failure.message).not.toContain(secret);
+    expect(isAtlasTransportError(failure)).toBe(true);
+  });
+
+  it("preserves caller abort reasons for handshake, check-in, and fresh reads", async () => {
     const fetchImpl: typeof fetch = (_url, init) =>
       new Promise((_resolve, reject) => {
-        init?.signal?.addEventListener("abort", () => reject(new Error("caller aborted")), { once: true });
+        init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
       });
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl });
     const handshakeController = new AbortController();
     const checkInController = new AbortController();
     const taskReadController = new AbortController();
+    const handshakeReason = new Error("handshake caller aborted");
+    const checkInReason = new Error("check-in caller aborted");
+    const taskReadReason = new Error("task read caller aborted");
 
     const handshake = client.handshake({ signal: handshakeController.signal });
     const checkIn = client.entities.checkIn("asset-1", { signal: checkInController.signal });
     const taskRead = client.tasks.get("task-1", { fresh: true, signal: taskReadController.signal });
-    handshakeController.abort();
-    checkInController.abort();
-    taskReadController.abort();
+    handshakeController.abort(handshakeReason);
+    checkInController.abort(checkInReason);
+    taskReadController.abort(taskReadReason);
 
-    await expect(handshake).rejects.toThrow("caller aborted");
-    await expect(checkIn).rejects.toThrow("caller aborted");
-    await expect(taskRead).rejects.toThrow("caller aborted");
+    await expect(handshake).rejects.toBe(handshakeReason);
+    await expect(checkIn).rejects.toBe(checkInReason);
+    await expect(taskRead).rejects.toBe(taskReadReason);
+  });
+
+  it("labels successful response body failures as transport errors", async () => {
+    const response = Response.json({ protocol_revision: "unused" });
+    vi.spyOn(response, "json").mockRejectedValueOnce(new TypeError("response body terminated"));
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: async () => response });
+
+    await expect(client.handshake()).rejects.toMatchObject({
+      name: "AtlasTransportError",
+      message: "response body terminated",
+      code: "ATLAS_TRANSPORT_ERROR"
+    });
+  });
+
+  it("preserves caller abort reasons while reading an HTTP error body", async () => {
+    const controller = new AbortController();
+    const reason = new Error("caller aborted error response read");
+    const response = Response.json({ message: "unavailable" }, { status: 503 });
+    vi.spyOn(response, "json").mockImplementationOnce(async () => {
+      controller.abort(reason);
+      throw new TypeError("response body terminated");
+    });
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: async () => response });
+
+    await expect(client.handshake({ signal: controller.signal })).rejects.toBe(reason);
   });
 
   it("rejects request timeouts outside the supported timer range", () => {
@@ -956,7 +1012,10 @@ describe("AtlasClient HTTP", () => {
       errorCode: "ENTITY_NOT_FOUND",
       response: expect.objectContaining({ success: false, error_code: "ENTITY_NOT_FOUND" })
     });
-    await expect(client.entities.get("missing-entity")).rejects.toBeInstanceOf(AtlasAPIError);
+    const failure = await client.entities.get("missing-entity").catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(AtlasAPIError);
+    expect(failure).toMatchObject({ code: "ATLAS_API_ERROR" });
+    expect(isAtlasAPIError(failure)).toBe(true);
   });
 
   it("surfaces successful invalid JSON responses as JSON parse failures", async () => {

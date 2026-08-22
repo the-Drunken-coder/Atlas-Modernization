@@ -1,5 +1,6 @@
 import {
   AtlasAPIError,
+  AtlasTransportError,
   type CommandManifest,
   type EntityCheckInOptions,
   type RuntimeContextOptions,
@@ -142,7 +143,7 @@ describe("AtlasAssetRuntime", () => {
       handledTaskIDs.push(task.task_id);
       return { ok: true };
     });
-    client.tasks.complete.mockRejectedValueOnce(new Error("completion unavailable"));
+    client.tasks.complete.mockRejectedValueOnce(new AtlasTransportError("completion unavailable"));
     const runtime = new AtlasAssetRuntime(client, {
       entityId: "asset-1",
       manifest: [manifestEntry("queued.move")],
@@ -173,7 +174,7 @@ describe("AtlasAssetRuntime", () => {
     const { client } = fakeClient([pending]);
     const onError = vi.fn();
     const handler = vi.fn(async () => Promise.reject(new AssetTaskFailure("precondition_failed", "blocked")));
-    client.tasks.fail.mockRejectedValueOnce(new Error("failure reporting unavailable"));
+    client.tasks.fail.mockRejectedValueOnce(new AtlasTransportError("failure reporting unavailable"));
     const runtime = new AtlasAssetRuntime(client, {
       entityId: "asset-1",
       manifest: [manifestEntry("immediate.observe", "immediate")],
@@ -405,7 +406,7 @@ describe("AtlasAssetRuntime", () => {
     const { client } = fakeClient([pending]);
     const onError = vi.fn();
     const handler = vi.fn(async () => undefined);
-    client.tasks.acknowledge.mockRejectedValueOnce(new Error("acknowledgement unavailable"));
+    client.tasks.acknowledge.mockRejectedValueOnce(new AtlasTransportError("acknowledgement unavailable"));
     const runtime = new AtlasAssetRuntime(client, {
       entityId: "asset-1",
       manifest: [manifestEntry("queued.move")],
@@ -658,7 +659,7 @@ describe("AtlasAssetRuntime", () => {
   it("retries the exact runtime registration after an ambiguous transport failure", async () => {
     vi.useFakeTimers();
     const { client } = fakeClient();
-    client.runtime.begin.mockRejectedValueOnce(new Error("registration response lost"));
+    client.runtime.begin.mockRejectedValueOnce(new AtlasTransportError("registration response lost"));
     const runtime = new AtlasAssetRuntime(client, { entityId: "asset-1" });
 
     const starting = runtime.start();
@@ -762,6 +763,128 @@ describe("AtlasAssetRuntime", () => {
     await runtime.stop();
   });
 
+  it("reconciles deterministic Start response failures without delaying physical execution", async () => {
+    const pending = task("immediate-1", "immediate.observe");
+    const { client, transition } = fakeClient([pending]);
+    client.tasks.start.mockImplementationOnce(async (id: string) => {
+      transition(id, "in_progress");
+      throw new TypeError("Atlas response did not include a valid resource ETag");
+    });
+    const handler = vi.fn(async () => undefined);
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      manifest: [manifestEntry("immediate.observe", "immediate")],
+      handlers: { "immediate.observe": handler }
+    });
+
+    await runtime.start();
+    await vi.waitFor(() => expect(handler).toHaveBeenCalledOnce());
+    expect(client.tasks.start).toHaveBeenCalledOnce();
+    await runtime.stop();
+  });
+
+  it("reconciles a committed Start response with the wrong Task ID", async () => {
+    const pending = task("immediate-1", "immediate.observe");
+    const { client, transition } = fakeClient([pending]);
+    client.tasks.start.mockImplementationOnce(async (id: string) => {
+      transition(id, "in_progress");
+      throw new TypeError("Atlas task response ID did not match the requested Task");
+    });
+    const handler = vi.fn(async () => undefined);
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      manifest: [manifestEntry("immediate.observe", "immediate")],
+      handlers: { "immediate.observe": handler }
+    });
+
+    await runtime.start();
+    await vi.waitFor(() => expect(handler).toHaveBeenCalledOnce());
+    expect(client.tasks.start).toHaveBeenCalledOnce();
+    await runtime.stop();
+  });
+
+  it("retries branded transport errors from AtlasClient-compatible implementations", async () => {
+    vi.useFakeTimers();
+    class CompatibleTransportError extends Error {
+      readonly code = "ATLAS_TRANSPORT_ERROR";
+    }
+    const pending = task("immediate-1", "immediate.observe");
+    const { client } = fakeClient([pending]);
+    client.tasks.start.mockRejectedValueOnce(new CompatibleTransportError("start response lost"));
+    const handler = vi.fn(async () => undefined);
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      manifest: [manifestEntry("immediate.observe", "immediate")],
+      handlers: { "immediate.observe": handler }
+    });
+
+    await runtime.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(client.tasks.start).toHaveBeenCalledOnce();
+    expect(handler).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(client.tasks.start).toHaveBeenCalledTimes(2);
+    expect(handler).toHaveBeenCalledOnce();
+    await runtime.stop();
+  });
+
+  it("retries branded API errors from AtlasClient-compatible implementations", async () => {
+    vi.useFakeTimers();
+    class CompatibleAPIError extends Error {
+      readonly code = "ATLAS_API_ERROR";
+      readonly status = 503;
+    }
+    const pending = task("immediate-1", "immediate.observe");
+    const { client } = fakeClient([pending]);
+    client.tasks.start.mockRejectedValueOnce(new CompatibleAPIError("Core unavailable"));
+    const handler = vi.fn(async () => undefined);
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      manifest: [manifestEntry("immediate.observe", "immediate")],
+      handlers: { "immediate.observe": handler }
+    });
+
+    await runtime.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(client.tasks.start).toHaveBeenCalledOnce();
+    expect(handler).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(client.tasks.start).toHaveBeenCalledTimes(2);
+    expect(handler).toHaveBeenCalledOnce();
+    await runtime.stop();
+  });
+
+  it("retries transient authoritative reads after deterministic lifecycle failures", async () => {
+    vi.useFakeTimers();
+    const pending = task("immediate-1", "immediate.observe");
+    const { client, transition } = fakeClient([pending]);
+    client.tasks.start.mockImplementationOnce(async (id: string) => {
+      transition(id, "in_progress");
+      throw new TypeError("Atlas response failed validation");
+    });
+    client.tasks.get.mockRejectedValueOnce(new AtlasTransportError("authoritative read unavailable"));
+    const handler = vi.fn(async () => undefined);
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      manifest: [manifestEntry("immediate.observe", "immediate")],
+      handlers: { "immediate.observe": handler }
+    });
+
+    await runtime.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(client.tasks.start).toHaveBeenCalledOnce();
+    expect(handler).not.toHaveBeenCalled();
+    expect(client.tasks.fail).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(client.tasks.start).toHaveBeenCalledOnce();
+    expect(handler).toHaveBeenCalledOnce();
+    expect(client.tasks.fail).not.toHaveBeenCalled();
+    await runtime.stop();
+  });
+
   it("keeps lost queued acknowledgements in authoritative local order", async () => {
     vi.useFakeTimers();
     const first = task("queued-1", "queued.move");
@@ -771,7 +894,7 @@ describe("AtlasAssetRuntime", () => {
     let firstAttempts = 0;
     client.tasks.acknowledge.mockImplementation(async (id: string) => {
       const acknowledged = transition(id, "acknowledged");
-      if (id === first.task_id && firstAttempts++ === 0) throw new Error("ack response lost");
+      if (id === first.task_id && firstAttempts++ === 0) throw new AtlasTransportError("ack response lost");
       return acknowledged;
     });
     const executionOrder: string[] = [];
@@ -832,7 +955,7 @@ describe("AtlasAssetRuntime", () => {
       const started = transition(id, "in_progress");
       if (loseStart) {
         loseStart = false;
-        throw new Error("start response lost");
+        throw new AtlasTransportError("start response lost");
       }
       return started;
     });
@@ -841,7 +964,7 @@ describe("AtlasAssetRuntime", () => {
       emit(progressed);
       if (loseProgress) {
         loseProgress = false;
-        throw new Error("progress response lost");
+        throw new AtlasTransportError("progress response lost");
       }
       return progressed;
     });
@@ -849,7 +972,7 @@ describe("AtlasAssetRuntime", () => {
       const completed = transition(id, "completed");
       if (loseCompletion) {
         loseCompletion = false;
-        throw new Error("completion response lost");
+        throw new AtlasTransportError("completion response lost");
       }
       return completed;
     });
