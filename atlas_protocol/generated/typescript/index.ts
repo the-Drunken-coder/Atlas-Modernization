@@ -841,6 +841,8 @@ function atlasProtocolDaysInMonth(year: number, month: number): number {
 
 function atlasProtocolIsJSONValue(value: unknown): value is JSONValue {
   const maxPrototypeDepth = 64;
+  // One million JSON values already exceed Atlas's largest request body.
+  let remainingValues = 1_000_000;
   type WorkItem =
     | { value: unknown }
     | { leave: object }
@@ -862,6 +864,7 @@ function atlasProtocolIsJSONValue(value: unknown): value is JSONValue {
       continue;
     }
     const current = item.value;
+    if (remainingValues-- === 0) return false;
     if (current === null || typeof current === "boolean" || typeof current === "string") {
       continue;
     }

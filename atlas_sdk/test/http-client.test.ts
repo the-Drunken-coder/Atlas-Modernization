@@ -326,6 +326,23 @@ describe("AtlasClient HTTP", () => {
     expect(isJSONValue(value)).toBe(true);
   });
 
+  it("bounds JSON values supplied by array proxies", () => {
+    let reads = 0;
+    const value = new Proxy([], {
+      get(target, key, receiver) {
+        if (key === "length") return 1_000_000;
+        if (typeof key === "string" && Number.isInteger(Number(key))) {
+          reads++;
+          return 1;
+        }
+        return Reflect.get(target, key, receiver);
+      }
+    });
+
+    expect(isJSONValue(value)).toBe(false);
+    expect(reads).toBe(1_000_000);
+  });
+
   it("accepts dense JSON arrays within the Entity request limit", () => {
     const values = new Array<number>(300_000).fill(0);
 
