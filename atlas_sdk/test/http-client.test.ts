@@ -8,6 +8,7 @@ import {
   isAtlasTransportError,
   isEntityCreateRequest,
   isEntityUpdateRequest,
+  isJSONValue,
   isObjectCreateRequest,
   isObjectUpdateRequest,
   isRuntimeStopRequest,
@@ -299,6 +300,92 @@ describe("AtlasClient HTTP", () => {
     expect(
       isTaskCreateRequest({ asset_id: "asset-map", command: "fixture.queued", input: new Map([["priority", "high"]]) })
     ).toBe(false);
+  });
+
+  it("rejects proxies with non-terminating prototype chains", () => {
+    let cyclicPrototype!: object;
+    cyclicPrototype = new Proxy({}, { getPrototypeOf: () => cyclicPrototype });
+    const createPrototype = (): object => new Proxy({}, { getPrototypeOf: createPrototype });
+
+    expect(isJSONValue(cyclicPrototype)).toBe(false);
+    expect(isJSONValue(createPrototype())).toBe(false);
+  });
+
+  it("rejects sparse JSON arrays", () => {
+    expect(isJSONValue(Array(1))).toBe(false);
+    expect(isJSONValue(Array(100_000_000))).toBe(false);
+  });
+
+  it("accepts dense JSON arrays within the Entity request limit", () => {
+    const values = new Array<number>(300_000).fill(0);
+
+    expect(isJSONValue(values)).toBe(true);
+    expect(
+      isEntityCreateRequest({
+        components: { custom_dense: values },
+        entity_id: "dense-array",
+        entity_type: "asset"
+      })
+    ).toBe(true);
+  });
+
+  it("rejects named properties on JSON arrays", () => {
+    const value: unknown[] & { metadata?: unknown } = [];
+    value.metadata = undefined;
+    const prototype = Object.create(Array.prototype) as unknown[];
+    Object.defineProperty(prototype, "metadata", { enumerable: true, value: 1n });
+    const inherited = Object.setPrototypeOf([], prototype);
+
+    expect(isJSONValue(value)).toBe(false);
+    expect(isJSONValue(inherited)).toBe(false);
+  });
+
+  it("accepts nested Array subclasses and rejects negative zero", () => {
+    class IntermediateArray extends Array<unknown> {}
+    class HandlerArray extends IntermediateArray {}
+    const value = new HandlerArray();
+    value.push(1);
+    const coercibleLength = new Proxy([], {
+      get(target, key, receiver) {
+        return key === "length" ? "0" : Reflect.get(target, key, receiver);
+      }
+    });
+    const bigintLength = new Proxy([1], {
+      get(target, key, receiver) {
+        return key === "length" ? 1n : Reflect.get(target, key, receiver);
+      }
+    });
+
+    expect(isJSONValue(value)).toBe(true);
+    expect(isJSONValue(coercibleLength)).toBe(true);
+    expect(isJSONValue(bigintLength)).toBe(false);
+    expect(isJSONValue(0)).toBe(true);
+    expect(isJSONValue(-0)).toBe(true);
+  });
+
+  it("rejects hidden properties on JSON records", () => {
+    const value = Object.defineProperty({}, "secret", { value: 1n });
+    const inherited = Object.create(Object.assign(Object.create(null) as Record<string, unknown>, { secret: 1n }));
+
+    expect(isJSONValue(value)).toBe(false);
+    expect(isJSONValue(inherited)).toBe(false);
+  });
+
+  it("rejects inherited and proxy-supplied JSON transforms", () => {
+    const prototype = Object.create(null) as Record<string, unknown>;
+    Object.defineProperty(prototype, "toJSON", { value: () => ({ changed: true }) });
+    const inherited = Object.assign(Object.create(prototype) as Record<string, unknown>, { value: 1 });
+    const proxied = new Proxy(
+      { value: 1 },
+      {
+        get(target, key, receiver) {
+          return key === "toJSON" ? () => ({ changed: true }) : Reflect.get(target, key, receiver);
+        }
+      }
+    );
+
+    expect(isJSONValue(inherited)).toBe(false);
+    expect(isJSONValue(proxied)).toBe(false);
   });
 
   it("rejects malformed generated entity create validator geometry and timestamps", () => {
@@ -622,6 +709,71 @@ describe("AtlasClient HTTP", () => {
       expect.objectContaining({ event: "update", id: "task-ack" })
     );
     await expect(client.tasks.acknowledge("missing-task", runtime)).rejects.toBeInstanceOf(AtlasAPIError);
+  });
+
+  it("serializes Task completion without inherited toJSON hooks", async () => {
+    const core = new FakeCore();
+    core.upsertTask(task("task-inert-completion", "asset-1"));
+    const originalToJSON = Object.getOwnPropertyDescriptor(Object.prototype, "toJSON");
+    const restoreToJSON = () => {
+      if (originalToJSON === undefined) Reflect.deleteProperty(Object.prototype, "toJSON");
+      else Object.defineProperty(Object.prototype, "toJSON", originalToJSON);
+    };
+    let requestBody: BodyInit | null | undefined;
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: async (url, init) => {
+        requestBody = init?.body;
+        restoreToJSON();
+        return core.fetch(String(url), init);
+      }
+    });
+    Object.defineProperty(Object.prototype, "toJSON", {
+      configurable: true,
+      value: () => null
+    });
+
+    try {
+      await client.tasks.complete("task-inert-completion", {
+        runtimeId: "runtime-1",
+        output: Object.setPrototypeOf([1], null)
+      });
+    } finally {
+      restoreToJSON();
+    }
+
+    expect(requestBody).toBe('{"output":[1]}');
+  });
+
+  it("serializes Task failure without inherited toJSON hooks", async () => {
+    const core = new FakeCore();
+    core.upsertTask(task("task-inert-failure", "asset-1"));
+    const originalToJSON = Object.getOwnPropertyDescriptor(Object.prototype, "toJSON");
+    const restoreToJSON = () => {
+      if (originalToJSON === undefined) Reflect.deleteProperty(Object.prototype, "toJSON");
+      else Object.defineProperty(Object.prototype, "toJSON", originalToJSON);
+    };
+    let requestBody: BodyInit | null | undefined;
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: async (url, init) => {
+        requestBody = init?.body;
+        restoreToJSON();
+        return core.fetch(String(url), init);
+      }
+    });
+    Object.defineProperty(Object.prototype, "toJSON", { configurable: true, value: () => null });
+
+    try {
+      await client.tasks.fail("task-inert-failure", {
+        runtimeId: "runtime-1",
+        failure: { code: "execution_failed", message: "invalid output" }
+      });
+    } finally {
+      restoreToJSON();
+    }
+
+    expect(requestBody).toBe('{"failure":{"code":"execution_failed","message":"invalid output"}}');
   });
 
   it("canonicalizes tasking identifiers before body and header use", async () => {

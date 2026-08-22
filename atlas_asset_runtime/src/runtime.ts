@@ -6,6 +6,7 @@ import {
   isAtlasAPIError,
   isAtlasTransportError,
   isCommandManifest,
+  isJSONValue,
   type JSONValue,
   type TaskResource
 } from "@the-drunken-coder/atlas-sdk";
@@ -16,6 +17,8 @@ const DEFAULT_CHECK_IN_INTERVAL_MS = 5_000;
 const TASK_RECONCILIATION_INTERVAL_MS = 5_000;
 const TASK_RECONCILIATION_CONCURRENCY = 8;
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
+const MAX_TASKING_REQUEST_BODY_BYTES = 512 * 1024;
+const JSON_TEXT_ENCODER = new TextEncoder();
 
 export type AssetTaskFailureCode = "precondition_failed" | "execution_failed";
 
@@ -534,7 +537,8 @@ export class AtlasAssetRuntime {
         }
       });
       signal.throwIfAborted();
-      terminalUpdate = { kind: "complete", ...(output === undefined ? {} : { output }) };
+      const snapshot = output === undefined ? undefined : snapshotTaskOutput(output);
+      terminalUpdate = { kind: "complete", ...(snapshot === undefined ? {} : { output: snapshot }) };
     } catch (error) {
       if (signal.aborted) return;
       terminalUpdate = {
@@ -683,6 +687,195 @@ function isRetryableLifecycleError(error: unknown): boolean {
   if (isAtlasTransportError(error)) return true;
   if (!isAtlasAPIError(error)) return false;
   return error.status === 408 || error.status === 429 || error.status >= 500;
+}
+
+function snapshotTaskOutput(output: JSONValue): JSONValue {
+  let snapshot: JSONValue;
+  let serialized: string;
+  try {
+    snapshot = copyJSONValue(output);
+    if (!isJSONValue(snapshot)) throw new TypeError();
+    const envelope = { output: snapshot };
+    Object.setPrototypeOf(envelope, null);
+    serialized = JSON.stringify(envelope);
+  } catch {
+    throw new TypeError("Task handler returned output that JSON cannot preserve");
+  }
+  if (JSON_TEXT_ENCODER.encode(serialized).byteLength > MAX_TASKING_REQUEST_BODY_BYTES) {
+    throw new TypeError("Task handler returned output that exceeds Core's 512 KiB request limit");
+  }
+  return snapshot;
+}
+
+type JSONContainer = JSONValue[] | Record<string, JSONValue>;
+
+type JSONArrayCopyFrame = {
+  kind: "array";
+  source: object;
+  target: JSONValue[];
+  index: number;
+  length: number;
+};
+
+type JSONRecordCopyFrame = {
+  kind: "record";
+  source: object;
+  target: Record<string, JSONValue>;
+  keys: string[];
+  index: number;
+};
+
+type JSONCopyFrame = JSONArrayCopyFrame | JSONRecordCopyFrame;
+
+type PendingJSONMember = {
+  source: unknown;
+  target?: JSONContainer;
+  key?: string;
+};
+
+const MAX_JSON_PROTOTYPE_DEPTH = 64;
+// Even one-character entries exceed Core's 512 KiB request limit beyond this bound.
+const MAX_JSON_ARRAY_ENTRIES = MAX_TASKING_REQUEST_BODY_BYTES / 2;
+
+function copyJSONValue(value: unknown): JSONValue {
+  const ancestors = new WeakSet<object>();
+  const frames: JSONCopyFrame[] = [];
+  let pending: PendingJSONMember | undefined = { source: value };
+  let snapshot: JSONValue | undefined;
+
+  while (pending !== undefined || frames.length > 0) {
+    if (pending !== undefined) {
+      const member = pending;
+      pending = undefined;
+      const primitive = copyJSONPrimitive(member.source);
+      if (primitive !== undefined) {
+        assignJSONMember(member, primitive);
+        if (member.target === undefined) snapshot = primitive;
+        continue;
+      }
+      if (typeof member.source !== "object" || member.source === null || ancestors.has(member.source)) {
+        throw new TypeError();
+      }
+
+      const frame = createJSONCopyFrame(member.source);
+      assignJSONMember(member, frame.target);
+      if (member.target === undefined) snapshot = frame.target;
+      ancestors.add(member.source);
+      frames.push(frame);
+      continue;
+    }
+
+    const frame = frames.at(-1)!;
+    if (frame.index === (frame.kind === "array" ? frame.length : frame.keys.length)) {
+      validateJSONCopyFrame(frame);
+      ancestors.delete(frame.source);
+      frames.pop();
+      continue;
+    }
+
+    const key = frame.kind === "array" ? String(frame.index++) : frame.keys[frame.index++]!;
+    pending = { key, source: Reflect.get(frame.source, key), target: frame.target };
+  }
+
+  if (snapshot === undefined) throw new TypeError();
+  return snapshot;
+}
+
+function copyJSONPrimitive(value: unknown): JSONValue | undefined {
+  if (value === null || typeof value === "boolean" || typeof value === "string") return value;
+  if (typeof value !== "number") return undefined;
+  if (!Number.isFinite(value) || Object.is(value, -0)) throw new TypeError();
+  return value;
+}
+
+function createJSONCopyFrame(source: object): JSONCopyFrame {
+  const toJSON = Reflect.get(source, "toJSON");
+  if (typeof toJSON === "function") throw new TypeError();
+
+  if (Array.isArray(source)) {
+    const length = normalizeJSONArrayLength(Reflect.get(source, "length"));
+    return {
+      index: 0,
+      kind: "array",
+      length,
+      source,
+      target: Object.setPrototypeOf(new Array<JSONValue>(length), null)
+    };
+  }
+
+  const ownKeys = Reflect.ownKeys(source);
+  if (ownKeys.some((key) => typeof key === "symbol")) throw new TypeError();
+  const keys = ownKeys as string[];
+  for (const key of keys) {
+    if (!Reflect.getOwnPropertyDescriptor(source, key)?.enumerable) throw new TypeError();
+  }
+  return {
+    index: 0,
+    kind: "record",
+    keys,
+    source,
+    target: Object.create(null) as Record<string, JSONValue>
+  };
+}
+
+function normalizeJSONArrayLength(value: unknown): number {
+  if (typeof value === "bigint") throw new TypeError();
+  const length = Number(value);
+  if (Number.isNaN(length) || length <= 0) return 0;
+  if (!Number.isFinite(length) || length > MAX_JSON_ARRAY_ENTRIES) throw new TypeError();
+  return Math.floor(length);
+}
+
+function validateJSONCopyFrame(frame: JSONCopyFrame): void {
+  if (frame.kind === "array") {
+    const keys = Reflect.ownKeys(frame.source);
+    if (
+      !keys.includes("length") ||
+      keys.some((key) => key !== "length" && !isJSONArrayEntryKey(key, frame.length)) ||
+      !hasOnlyJSONArrayPrototypeEntries(frame.source, frame.length)
+    ) {
+      throw new TypeError();
+    }
+    return;
+  }
+  if (!hasJSONRecordPrototype(frame.source)) throw new TypeError();
+}
+
+function hasOnlyJSONArrayPrototypeEntries(value: object, length: number): boolean {
+  let prototype = Object.getPrototypeOf(value);
+  for (let depth = 0; prototype !== null && depth < MAX_JSON_PROTOTYPE_DEPTH; depth++) {
+    for (const key of Reflect.ownKeys(prototype)) {
+      const descriptor = Reflect.getOwnPropertyDescriptor(prototype, key);
+      if (descriptor?.enumerable && !isJSONArrayEntryKey(key, length)) return false;
+    }
+    prototype = Object.getPrototypeOf(prototype);
+  }
+  return prototype === null;
+}
+
+function isJSONArrayEntryKey(key: PropertyKey, length: number): key is string {
+  if (typeof key !== "string") return false;
+  const index = Number(key);
+  return Number.isInteger(index) && index >= 0 && index < length && String(index) === key;
+}
+
+function assignJSONMember(member: PendingJSONMember, value: JSONValue): void {
+  if (member.target === undefined || member.key === undefined) return;
+  Object.defineProperty(member.target, member.key, {
+    configurable: true,
+    enumerable: true,
+    value,
+    writable: true
+  });
+}
+
+function hasJSONRecordPrototype(value: object): boolean {
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype === null) return true;
+  return (
+    Object.getPrototypeOf(prototype) === null &&
+    Reflect.ownKeys(prototype).every((key) => !Reflect.getOwnPropertyDescriptor(prototype, key)?.enumerable)
+  );
 }
 
 function delay(milliseconds: number, signal: AbortSignal): Promise<void> {

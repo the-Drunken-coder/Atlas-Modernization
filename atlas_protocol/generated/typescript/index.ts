@@ -760,11 +760,7 @@ function atlasProtocolIsRecord(value: unknown): value is Record<string, unknown>
   if (prototype === null) {
     return true;
   }
-  let basePrototype = prototype;
-  while (Object.getPrototypeOf(basePrototype) !== null) {
-    basePrototype = Object.getPrototypeOf(basePrototype);
-  }
-  return prototype === basePrototype;
+  return Object.getPrototypeOf(prototype) === null;
 }
 
 const atlasProtocolMaxGeometryPositions = 10000;
@@ -844,13 +840,25 @@ function atlasProtocolDaysInMonth(year: number, month: number): number {
 }
 
 function atlasProtocolIsJSONValue(value: unknown): value is JSONValue {
-  type WorkItem = { value: unknown } | { leave: object };
+  const maxPrototypeDepth = 64;
+  type WorkItem =
+    | { value: unknown }
+    | { leave: object }
+    | { array: unknown[]; index: number; length: number };
   const active = new WeakSet<object>();
   const work: WorkItem[] = [{ value }];
   while (work.length > 0) {
     const item = work.pop()!;
     if ("leave" in item) {
       active.delete(item.leave);
+      continue;
+    }
+    if ("array" in item) {
+      if (item.index === item.length) {
+        continue;
+      }
+      work.push({ array: item.array, index: item.index + 1, length: item.length });
+      work.push({ value: Reflect.get(item.array, item.index) });
       continue;
     }
     const current = item.value;
@@ -861,16 +869,83 @@ function atlasProtocolIsJSONValue(value: unknown): value is JSONValue {
       if (!Number.isFinite(current)) return false;
       continue;
     }
-    if (typeof current !== "object" || (!Array.isArray(current) && !atlasProtocolIsRecord(current))) {
+    if (typeof current !== "object") {
       return false;
     }
+    if (typeof Reflect.get(current, "toJSON") === "function") return false;
+    const currentArray = Array.isArray(current) ? current : undefined;
+    if (currentArray === undefined && !atlasProtocolIsJSONRecord(current)) return false;
+    const arrayLength = currentArray !== undefined
+      ? atlasProtocolNormalizeArrayLength(Reflect.get(currentArray, "length"))
+      : null;
+    if (arrayLength === undefined) return false;
+    if (
+      arrayLength !== null &&
+      !atlasProtocolHasJSONCompatibleArrayShape(currentArray!, arrayLength, maxPrototypeDepth)
+    ) return false;
     if (active.has(current)) return false;
     active.add(current);
     work.push({ leave: current });
+    if (arrayLength !== null) {
+      work.push({ array: currentArray!, index: 0, length: arrayLength });
+      continue;
+    }
     const children = Object.values(current);
     for (let index = children.length - 1; index >= 0; index--) {
       work.push({ value: children[index] });
     }
   }
+  return true;
+}
+
+function atlasProtocolIsJSONRecord(value: object): value is Record<string, unknown> {
+  const prototype = Object.getPrototypeOf(value);
+  if (
+    prototype !== null &&
+    (Object.getPrototypeOf(prototype) !== null ||
+      Reflect.ownKeys(prototype).some((key) => Reflect.getOwnPropertyDescriptor(prototype, key)?.enumerable))
+  ) {
+    return false;
+  }
+  return Reflect.ownKeys(value).every(
+    (key) => typeof key === "string" && Reflect.getOwnPropertyDescriptor(value, key)?.enumerable === true
+  );
+}
+
+function atlasProtocolHasJSONCompatibleArrayShape(
+  value: unknown[],
+  length: number,
+  maxPrototypeDepth: number
+): boolean {
+  const entries = new Set<string>();
+  const ownKeys = Reflect.ownKeys(value);
+  if (!ownKeys.includes("length")) return false;
+  for (const key of ownKeys) {
+    if (key !== "length" && !atlasProtocolAddArrayEntry(entries, key, length)) return false;
+  }
+  let prototype = Object.getPrototypeOf(value);
+  for (let depth = 0; prototype !== null && depth < maxPrototypeDepth; depth++) {
+    for (const key of Reflect.ownKeys(prototype)) {
+      const descriptor = Reflect.getOwnPropertyDescriptor(prototype, key);
+      if (!atlasProtocolAddArrayEntry(entries, key, length) && descriptor?.enumerable) return false;
+    }
+    prototype = Object.getPrototypeOf(prototype);
+  }
+  return prototype === null && entries.size === length;
+}
+
+function atlasProtocolNormalizeArrayLength(value: unknown): number | undefined {
+  if (typeof value === "bigint") return undefined;
+  const length = Number(value);
+  if (Number.isNaN(length) || length <= 0) return 0;
+  if (!Number.isFinite(length)) return undefined;
+  return Math.floor(length);
+}
+
+function atlasProtocolAddArrayEntry(entries: Set<string>, key: PropertyKey, length: number): boolean {
+  if (typeof key !== "string") return false;
+  const index = Number(key);
+  if (!Number.isInteger(index) || index < 0 || index >= length || String(index) !== key) return false;
+  entries.add(key);
   return true;
 }

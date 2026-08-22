@@ -83,7 +83,7 @@ Core remains authoritative for Task eligibility and ordering. The runtime asks o
 - Queued Tasks enter the local queue in authoritative `created_at`, `task_id` order before acknowledgement, then execute through one serial executor. A lost acknowledgement response cannot drop or reorder them.
 - Immediate Commands start independently and may overlap queued or other immediate work. Delivered immediate work is processed before queued acknowledgements.
 - Progress is available only when the manifest declares `supports_progress` and is reported from `0` to `1`.
-- A handler return value becomes Task output. Returning nothing completes without output. A thrown error fails the Task with `execution_failed`.
+- A handler return value becomes Task output. Returning nothing completes without output. Output that JSON cannot preserve exactly fails the Task with `execution_failed`, as does a thrown error.
 - A handler throws `AssetTaskFailure("precondition_failed", message)` when a physical or operational precondition prevents execution.
 - A pending unsupported Command is failed with `unsupported_command` instead of remaining silently pending.
 - The runtime confirms Start before invoking a handler. Exact lifecycle writes retry after transport failures, HTTP 408, 429, and server errors. Permanent responses are reconciled against a fresh authoritative Task instead of retried forever.

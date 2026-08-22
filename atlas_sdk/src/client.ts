@@ -149,20 +149,26 @@ export class AtlasClient {
         signal: options.signal,
         expectedID: id
       }),
-    complete: (id: string, options: TaskCompleteOptions) =>
-      this.engine.writeTask(
-        "POST",
-        `/tasks/${encodeURIComponent(id)}/complete`,
-        options.output === undefined ? {} : { output: options.output },
-        { requestHeaders: runtimeHeaders(options.runtimeId), signal: options.signal, expectedID: id }
-      ),
-    fail: (id: string, options: TaskFailOptions) =>
-      this.engine.writeTask(
-        "POST",
-        `/tasks/${encodeURIComponent(id)}/fail`,
-        { failure: options.failure },
-        { requestHeaders: runtimeHeaders(options.runtimeId), signal: options.signal, expectedID: id }
-      ),
+    complete: (id: string, options: TaskCompleteOptions) => {
+      const request = options.output === undefined ? {} : { output: options.output };
+      Object.setPrototypeOf(request, null);
+      return this.engine.writeTask("POST", `/tasks/${encodeURIComponent(id)}/complete`, request, {
+        requestHeaders: runtimeHeaders(options.runtimeId),
+        signal: options.signal,
+        expectedID: id
+      });
+    },
+    fail: (id: string, options: TaskFailOptions) => {
+      const failure = { code: options.failure.code, message: options.failure.message };
+      Object.setPrototypeOf(failure, null);
+      const request = { failure };
+      Object.setPrototypeOf(request, null);
+      return this.engine.writeTask("POST", `/tasks/${encodeURIComponent(id)}/fail`, request, {
+        requestHeaders: runtimeHeaders(options.runtimeId),
+        signal: options.signal,
+        expectedID: id
+      });
+    },
     cancel: (id: string, options: TaskCancelOptions) =>
       this.engine.writeTask(
         "POST",

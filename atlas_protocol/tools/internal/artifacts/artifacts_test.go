@@ -230,9 +230,19 @@ func TestTypeScriptSourceGeneratesTaskCreateValidatorFromSchema(t *testing.T) {
 		`"task_id": NonEmptyString;`,
 		"export function isTaskCreateRequest(value: unknown): value is TaskCreateRequest",
 		"atlasProtocolIsJSONValue",
-		"type WorkItem = { value: unknown } | { leave: object }",
+		"| { array: unknown[]; index: number; length: number }",
 		"const active = new WeakSet<object>()",
 		"while (work.length > 0)",
+		"return Object.getPrototypeOf(prototype) === null",
+		"atlasProtocolHasJSONCompatibleArrayShape(currentArray!, arrayLength, maxPrototypeDepth)",
+		`typeof value === "bigint"`,
+		`Reflect.get(current, "toJSON")`,
+		"depth < maxPrototypeDepth",
+		"entries.size === length",
+		"atlasProtocolIsJSONRecord(current)",
+		"Reflect.getOwnPropertyDescriptor(value, key)?.enumerable === true",
+		"Reflect.ownKeys(value).every",
+		"work.push({ value: Reflect.get(item.array, item.index) })",
 		"active.delete(item.leave)",
 		"if (active.has(current)) return false",
 		"export function isJSONValue(value: unknown): value is JSONValue",
@@ -245,6 +255,9 @@ func TestTypeScriptSourceGeneratesTaskCreateValidatorFromSchema(t *testing.T) {
 	}
 	if strings.Contains(text, "atlasProtocolIsJSONValueInternal") {
 		t.Fatal("generated JSON value validator must not recurse")
+	}
+	if strings.Contains(text, "maxArrayEntries") {
+		t.Fatal("generated JSON value validator must not impose endpoint-specific array limits")
 	}
 }
 

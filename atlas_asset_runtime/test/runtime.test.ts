@@ -3,8 +3,10 @@ import {
   AtlasTransportError,
   type CommandManifest,
   type EntityCheckInOptions,
+  type JSONValue,
   type RuntimeContextOptions,
   type RuntimeTaskDeliveryResponse,
+  type TaskCompleteOptions,
   type TaskResource
 } from "@the-drunken-coder/atlas-sdk";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -1024,6 +1026,419 @@ describe("AtlasAssetRuntime", () => {
     await runtime.stop();
   });
 
+  it.each([
+    [
+      "cyclic",
+      () => {
+        const output: Record<string, unknown> = {};
+        output["cycle".repeat(150_000)] = output;
+        return output;
+      }
+    ],
+    ["non-finite number", () => ({ value: Number.POSITIVE_INFINITY })],
+    ["negative zero", () => ({ value: -0 })],
+    ["nested undefined", () => ({ value: undefined })],
+    ["nested function", () => ({ value: () => "ignored" })],
+    ["nested symbol", () => ({ value: Symbol("ignored") })],
+    ["toJSON transformation", () => ({ reading: 1, toJSON: () => ({ reading: 2 }) })],
+    ["nested toJSON transformation", () => ({ value: { reading: 1, toJSON: () => ({ reading: 2 }) } })],
+    ["boxed primitive", () => Object(1)],
+    ["non-record object", () => new Map([["value", 1]])],
+    [
+      "enumerable inherited property",
+      () => Object.create(Object.assign(Object.create(null) as Record<string, unknown>, { inherited: 1 }))
+    ],
+    [
+      "enumerable inherited array property",
+      () => {
+        const prototype = Object.create(Array.prototype) as unknown[];
+        Object.defineProperty(prototype, "metadata", { enumerable: true, value: 1 });
+        return Object.setPrototypeOf([], prototype);
+      }
+    ],
+    [
+      "cyclic proxy prototype",
+      () => {
+        let output!: object;
+        output = new Proxy({}, { getPrototypeOf: () => output });
+        return output;
+      }
+    ],
+    [
+      "unbounded proxy prototype",
+      () => {
+        const createPrototype = (): object => new Proxy({}, { getPrototypeOf: createPrototype });
+        return createPrototype();
+      }
+    ],
+    [
+      "transport-depth overflow",
+      () => {
+        let output: unknown = 1;
+        for (let depth = 0; depth < 10_000; depth++) output = [output];
+        return output;
+      }
+    ],
+    ["non-enumerable property", () => Object.defineProperty({ value: 1 }, "secret", { value: 2 })],
+    [
+      "symbol-keyed property",
+      () => Object.defineProperty({ value: 1 }, Symbol("ignored"), { value: 2, enumerable: true })
+    ],
+    ["sparse array", () => Array(1)],
+    ["large sparse array", () => Array(100_000_000)],
+    [
+      "BigInt proxy array length",
+      () =>
+        new Proxy([1], {
+          get(target, key, receiver) {
+            return key === "length" ? 1n : Reflect.get(target, key, receiver);
+          }
+        })
+    ]
+  ])("fails %s handler output without attempting completion", async (_label, output) => {
+    const pending = task("immediate-1", "immediate.observe");
+    const { client } = fakeClient([pending]);
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      manifest: [manifestEntry("immediate.observe", "immediate")],
+      handlers: { "immediate.observe": async () => output() as never }
+    });
+
+    await runtime.start();
+    await vi.waitFor(() => expect(client.tasks.fail).toHaveBeenCalledOnce());
+    expect(client.tasks.complete).not.toHaveBeenCalled();
+    expect(client.tasks.fail).toHaveBeenCalledWith(
+      pending.task_id,
+      expect.objectContaining({
+        failure: {
+          code: "execution_failed",
+          message: "Task handler returned output that JSON cannot preserve"
+        }
+      })
+    );
+    await runtime.stop();
+  });
+
+  it("completes output whose UTF-8 envelope exactly fits Core's request limit", async () => {
+    const pending = task("immediate-1", "immediate.observe");
+    const { client } = fakeClient([pending]);
+    const envelopeOverhead = new TextEncoder().encode(JSON.stringify({ output: "" })).byteLength;
+    const output = "a".repeat(512 * 1024 - envelopeOverhead);
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      manifest: [manifestEntry("immediate.observe", "immediate")],
+      handlers: { "immediate.observe": async () => output }
+    });
+
+    await runtime.start();
+    await vi.waitFor(() => expect(client.tasks.complete).toHaveBeenCalledOnce());
+    expect(client.tasks.complete).toHaveBeenCalledWith(pending.task_id, expect.objectContaining({ output }));
+    expect(client.tasks.fail).not.toHaveBeenCalled();
+    await runtime.stop();
+  });
+
+  it.each([
+    ["ASCII", "a".repeat(512 * 1024)],
+    ["multi-byte UTF-8", "é".repeat(256 * 1024)]
+  ])("fails %s output whose envelope exceeds Core's request limit", async (_label, output) => {
+    const pending = task("immediate-1", "immediate.observe");
+    const { client } = fakeClient([pending]);
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      manifest: [manifestEntry("immediate.observe", "immediate")],
+      handlers: { "immediate.observe": async () => output }
+    });
+
+    await runtime.start();
+    await vi.waitFor(() => expect(client.tasks.fail).toHaveBeenCalledOnce());
+    expect(client.tasks.complete).not.toHaveBeenCalled();
+    expect(client.tasks.fail).toHaveBeenCalledWith(
+      pending.task_id,
+      expect.objectContaining({
+        failure: {
+          code: "execution_failed",
+          message: "Task handler returned output that exceeds Core's 512 KiB request limit"
+        }
+      })
+    );
+    await runtime.stop();
+  });
+
+  it.each([2 ** 53, 2 ** 54, 1e20])("completes exactly representable integer output %s", async (value) => {
+    const pending = task("immediate-1", "immediate.observe");
+    const { client } = fakeClient([pending]);
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      manifest: [manifestEntry("immediate.observe", "immediate")],
+      handlers: { "immediate.observe": async () => ({ value }) }
+    });
+
+    await runtime.start();
+    await vi.waitFor(() => expect(client.tasks.complete).toHaveBeenCalledOnce());
+    expect(client.tasks.complete).toHaveBeenCalledWith(pending.task_id, expect.objectContaining({ output: { value } }));
+    expect(client.tasks.fail).not.toHaveBeenCalled();
+    await runtime.stop();
+  });
+
+  it("copies dense array indices into a prototype-free snapshot", async () => {
+    const pending = task("immediate-1", "immediate.observe");
+    const { client } = fakeClient([pending]);
+    const originalToJSON = Object.getOwnPropertyDescriptor(Array.prototype, "toJSON");
+    const output = Object.defineProperty([], "0", {
+      get() {
+        Object.defineProperty(Array.prototype, "toJSON", {
+          configurable: true,
+          value: () => ["changed"]
+        });
+        return 1;
+      }
+    });
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      manifest: [manifestEntry("immediate.observe", "immediate")],
+      handlers: { "immediate.observe": async () => output }
+    });
+
+    try {
+      await runtime.start();
+      await vi.waitFor(() => expect(client.tasks.complete).toHaveBeenCalledOnce());
+      const completed = client.tasks.complete.mock.calls[0]![1].output;
+      expect(Array.isArray(completed)).toBe(true);
+      expect(Object.getPrototypeOf(completed)).toBeNull();
+      expect(JSON.stringify(completed)).toBe("[1]");
+      expect(client.tasks.fail).not.toHaveBeenCalled();
+    } finally {
+      if (originalToJSON === undefined) Reflect.deleteProperty(Array.prototype, "toJSON");
+      else Object.defineProperty(Array.prototype, "toJSON", originalToJSON);
+      await runtime.stop();
+    }
+  });
+
+  it("uses an inert envelope after output installs an Object prototype hook", async () => {
+    const pending = task("immediate-1", "immediate.observe");
+    const { client } = fakeClient([pending]);
+    const originalToJSON = Object.getOwnPropertyDescriptor(Object.prototype, "toJSON");
+    const output = Object.defineProperty([], "0", {
+      get() {
+        Object.defineProperty(Object.prototype, "toJSON", {
+          configurable: true,
+          value: () => {
+            throw new Error("inherited completion hook ran");
+          }
+        });
+        return 1;
+      }
+    });
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      manifest: [manifestEntry("immediate.observe", "immediate")],
+      handlers: { "immediate.observe": async () => output }
+    });
+
+    try {
+      await runtime.start();
+      await vi.waitFor(() => expect(client.tasks.complete).toHaveBeenCalledOnce());
+      const completed = client.tasks.complete.mock.calls[0]![1].output;
+      expect(Array.isArray(completed) && completed[0] === 1).toBe(true);
+      expect(client.tasks.fail).not.toHaveBeenCalled();
+    } finally {
+      if (originalToJSON === undefined) Reflect.deleteProperty(Object.prototype, "toJSON");
+      else Object.defineProperty(Object.prototype, "toJSON", originalToJSON);
+      await runtime.stop();
+    }
+  });
+
+  it.each<[string, () => unknown, string]>([
+    [
+      "an array whose ownKeys trap mutates an element",
+      () => {
+        const output = [1];
+        return new Proxy(output, {
+          ownKeys(target) {
+            target[0] = 2;
+            return Reflect.ownKeys(target);
+          }
+        });
+      },
+      "[1]"
+    ],
+    [
+      "a record whose prototype trap mutates a value",
+      () => {
+        const output = { value: 1 };
+        return new Proxy(output, {
+          getPrototypeOf(target) {
+            target.value = 2;
+            return Object.prototype;
+          }
+        });
+      },
+      '{"value":1}'
+    ],
+    [
+      "an enumerable toJSON getter",
+      () => {
+        let reads = 0;
+        return Object.defineProperty({}, "toJSON", { enumerable: true, get: () => ++reads });
+      },
+      '{"toJSON":2}'
+    ],
+    [
+      "an array proxy with a coercible length",
+      () =>
+        new Proxy([], {
+          get(target, key, receiver) {
+            return key === "length" ? "0" : Reflect.get(target, key, receiver);
+          }
+        }),
+      "[]"
+    ]
+  ])("preserves JSON serialization order for %s", async (_label, output, expected) => {
+    const pending = task("immediate-1", "immediate.observe");
+    const { client } = fakeClient([pending]);
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      manifest: [manifestEntry("immediate.observe", "immediate")],
+      handlers: { "immediate.observe": async () => output() as never }
+    });
+
+    await runtime.start();
+    await vi.waitFor(() => expect(client.tasks.complete).toHaveBeenCalledOnce());
+    expect(JSON.stringify(client.tasks.complete.mock.calls[0]![1].output)).toBe(expected);
+    expect(client.tasks.fail).not.toHaveBeenCalled();
+    await runtime.stop();
+  });
+
+  it("copies deeply nested JSON output without using the call stack", async () => {
+    const pending = task("immediate-1", "immediate.observe");
+    const { client } = fakeClient([pending]);
+    let output: JSONValue = 1;
+    for (let depth = 0; depth < 2_500; depth++) output = [output];
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      manifest: [manifestEntry("immediate.observe", "immediate")],
+      handlers: { "immediate.observe": async () => output }
+    });
+
+    await runtime.start();
+    await vi.waitFor(() => expect(client.tasks.complete).toHaveBeenCalledOnce());
+    let completed = client.tasks.complete.mock.calls[0]![1].output;
+    for (let depth = 0; depth < 2_500; depth++) {
+      if (!Array.isArray(completed)) throw new Error("Task output lost its nested array shape");
+      completed = completed[0];
+    }
+    expect(completed).toBe(1);
+    expect(client.tasks.fail).not.toHaveBeenCalled();
+    await runtime.stop();
+  });
+
+  it("copies array values supplied by the prototype chain", async () => {
+    const pending = task("immediate-1", "immediate.observe");
+    const { client } = fakeClient([pending]);
+    const prototype = Object.create(Array.prototype) as unknown[];
+    Object.defineProperty(prototype, "0", { get: () => 1 });
+    const output = Object.setPrototypeOf(new Array<JSONValue>(1), prototype);
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      manifest: [manifestEntry("immediate.observe", "immediate")],
+      handlers: { "immediate.observe": async () => output }
+    });
+
+    await runtime.start();
+    await vi.waitFor(() => expect(client.tasks.complete).toHaveBeenCalledOnce());
+    expect(client.tasks.complete).toHaveBeenCalledWith(pending.task_id, expect.objectContaining({ output: [1] }));
+    expect(client.tasks.fail).not.toHaveBeenCalled();
+    await runtime.stop();
+  });
+
+  it("accepts ordinary nested Array subclasses", async () => {
+    class IntermediateArray extends Array<JSONValue> {}
+    class HandlerArray extends IntermediateArray {}
+    const output = new HandlerArray();
+    output.push(1);
+    const pending = task("immediate-1", "immediate.observe");
+    const { client } = fakeClient([pending]);
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      manifest: [manifestEntry("immediate.observe", "immediate")],
+      handlers: { "immediate.observe": async () => output }
+    });
+
+    await runtime.start();
+    await vi.waitFor(() => expect(client.tasks.complete).toHaveBeenCalledOnce());
+    expect(client.tasks.complete).toHaveBeenCalledWith(pending.task_id, expect.objectContaining({ output: [1] }));
+    expect(client.tasks.fail).not.toHaveBeenCalled();
+    await runtime.stop();
+  });
+
+  it("snapshots stateful handler output before reporting completion", async () => {
+    const pending = task("immediate-1", "immediate.observe");
+    const { client } = fakeClient([pending]);
+    let reads = 0;
+    const output = Object.defineProperty({}, "value", {
+      enumerable: true,
+      get() {
+        reads++;
+        if (reads > 1) throw new Error("output was read twice");
+        return 1;
+      }
+    });
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      manifest: [manifestEntry("immediate.observe", "immediate")],
+      handlers: { "immediate.observe": async () => output as never }
+    });
+
+    await runtime.start();
+    await vi.waitFor(() => expect(client.tasks.complete).toHaveBeenCalledOnce());
+    expect(reads).toBe(1);
+    expect(client.tasks.complete).toHaveBeenCalledWith(
+      pending.task_id,
+      expect.objectContaining({ output: { value: 1 } })
+    );
+    expect(client.tasks.fail).not.toHaveBeenCalled();
+    await runtime.stop();
+  });
+
+  it("reads toJSON before enumerating proxy output once", async () => {
+    const pending = task("immediate-1", "immediate.observe");
+    const { client } = fakeClient([pending]);
+    let enumerations = 0;
+    let toJSONRead = false;
+    const output = new Proxy(
+      { before: 1, after: 2 },
+      {
+        get(target, key, receiver) {
+          if (key === "toJSON") {
+            toJSONRead = true;
+            return undefined;
+          }
+          return Reflect.get(target, key, receiver);
+        },
+        ownKeys() {
+          enumerations++;
+          if (enumerations > 1) throw new Error("output was enumerated twice");
+          return [toJSONRead ? "after" : "before"];
+        }
+      }
+    );
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      manifest: [manifestEntry("immediate.observe", "immediate")],
+      handlers: { "immediate.observe": async () => output }
+    });
+
+    await runtime.start();
+    await vi.waitFor(() => expect(client.tasks.complete).toHaveBeenCalledOnce());
+    expect(enumerations).toBe(1);
+    expect(client.tasks.complete).toHaveBeenCalledWith(
+      pending.task_id,
+      expect.objectContaining({ output: { after: 2 } })
+    );
+    expect(client.tasks.fail).not.toHaveBeenCalled();
+    await runtime.stop();
+  });
+
   it("keeps lost queued acknowledgements in authoritative local order", async () => {
     vi.useFakeTimers();
     const first = task("queued-1", "queued.move");
@@ -1251,7 +1666,7 @@ function fakeClient(initialTasks: TaskResource[] = [], order: string[] = []) {
         tasks.set(id, progressed);
         return progressed;
       }),
-      complete: vi.fn(async (id: string) => transition(id, "completed")),
+      complete: vi.fn(async (id: string, _options: TaskCompleteOptions) => transition(id, "completed")),
       fail: vi.fn(async (id: string) => transition(id, "failed"))
     }
   };
