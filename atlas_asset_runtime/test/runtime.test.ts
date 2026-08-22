@@ -1084,7 +1084,8 @@ describe("AtlasAssetRuntime", () => {
       "symbol-keyed property",
       () => Object.defineProperty({ value: 1 }, Symbol("ignored"), { value: 2, enumerable: true })
     ],
-    ["sparse array", () => Array(1)]
+    ["sparse array", () => Array(1)],
+    ["large sparse array", () => Array(100_000_000)]
   ])("fails %s handler output without attempting completion", async (_label, output) => {
     const pending = task("immediate-1", "immediate.observe");
     const { client } = fakeClient([pending]);

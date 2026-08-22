@@ -702,13 +702,23 @@ function snapshotTaskOutput(output: JSONValue): JSONValue {
 
 type JSONContainer = JSONValue[] | Record<string, JSONValue>;
 
-type JSONCopyFrame = {
-  kind: "array" | "record";
+type JSONArrayCopyFrame = {
+  kind: "array";
   source: object;
-  target: JSONContainer;
+  target: JSONValue[];
+  index: number;
+  length: number;
+};
+
+type JSONRecordCopyFrame = {
+  kind: "record";
+  source: object;
+  target: Record<string, JSONValue>;
   keys: string[];
   index: number;
 };
+
+type JSONCopyFrame = JSONArrayCopyFrame | JSONRecordCopyFrame;
 
 type PendingJSONMember = {
   source: unknown;
@@ -747,14 +757,14 @@ function copyJSONValue(value: unknown): JSONValue {
     }
 
     const frame = frames.at(-1)!;
-    if (frame.index === frame.keys.length) {
+    if (frame.index === (frame.kind === "array" ? frame.length : frame.keys.length)) {
       validateJSONCopyFrame(frame);
       ancestors.delete(frame.source);
       frames.pop();
       continue;
     }
 
-    const key = frame.keys[frame.index++]!;
+    const key = frame.kind === "array" ? String(frame.index++) : frame.keys[frame.index++]!;
     pending = { key, source: Reflect.get(frame.source, key), target: frame.target };
   }
 
@@ -774,14 +784,13 @@ function createJSONCopyFrame(source: object): JSONCopyFrame {
   if (typeof toJSON === "function") throw new TypeError();
 
   if (Array.isArray(source)) {
-    const length = Reflect.get(source, "length");
-    const entries = Array.from({ length }, (_, index) => String(index));
+    const length = normalizeJSONArrayLength(Reflect.get(source, "length"));
     return {
       index: 0,
       kind: "array",
-      keys: entries,
+      length,
       source,
-      target: Object.setPrototypeOf(new Array<JSONValue>(entries.length), null)
+      target: Object.setPrototypeOf(new Array<JSONValue>(length), null)
     };
   }
 
@@ -800,14 +809,20 @@ function createJSONCopyFrame(source: object): JSONCopyFrame {
   };
 }
 
+function normalizeJSONArrayLength(value: unknown): number {
+  const length = Number(value);
+  if (Number.isNaN(length) || length <= 0) return 0;
+  if (!Number.isFinite(length)) throw new TypeError();
+  return Math.min(Math.floor(length), Number.MAX_SAFE_INTEGER);
+}
+
 function validateJSONCopyFrame(frame: JSONCopyFrame): void {
   if (frame.kind === "array") {
-    const entries = new Set(frame.keys);
     const keys = Reflect.ownKeys(frame.source);
     if (
       !keys.includes("length") ||
-      keys.some((key) => typeof key === "symbol" || (key !== "length" && !entries.has(key))) ||
-      !hasOnlyJSONArrayPrototypeEntries(frame.source, entries)
+      keys.some((key) => key !== "length" && !isJSONArrayEntryKey(key, frame.length)) ||
+      !hasOnlyJSONArrayPrototypeEntries(frame.source, frame.length)
     ) {
       throw new TypeError();
     }
@@ -816,16 +831,22 @@ function validateJSONCopyFrame(frame: JSONCopyFrame): void {
   if (!hasJSONRecordPrototype(frame.source)) throw new TypeError();
 }
 
-function hasOnlyJSONArrayPrototypeEntries(value: object, entries: ReadonlySet<string>): boolean {
+function hasOnlyJSONArrayPrototypeEntries(value: object, length: number): boolean {
   let prototype = Object.getPrototypeOf(value);
   for (let depth = 0; prototype !== null && depth < MAX_JSON_PROTOTYPE_DEPTH; depth++) {
     for (const key of Reflect.ownKeys(prototype)) {
       const descriptor = Reflect.getOwnPropertyDescriptor(prototype, key);
-      if (descriptor?.enumerable && (typeof key === "symbol" || !entries.has(key))) return false;
+      if (descriptor?.enumerable && !isJSONArrayEntryKey(key, length)) return false;
     }
     prototype = Object.getPrototypeOf(prototype);
   }
   return prototype === null;
+}
+
+function isJSONArrayEntryKey(key: PropertyKey, length: number): key is string {
+  if (typeof key !== "string") return false;
+  const index = Number(key);
+  return Number.isInteger(index) && index >= 0 && index < length && String(index) === key;
 }
 
 function assignJSONMember(member: PendingJSONMember, value: JSONValue): void {

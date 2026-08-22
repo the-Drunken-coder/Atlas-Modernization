@@ -313,6 +313,7 @@ describe("AtlasClient HTTP", () => {
 
   it("rejects sparse JSON arrays", () => {
     expect(isJSONValue(Array(1))).toBe(false);
+    expect(isJSONValue(Array(100_000_000))).toBe(false);
   });
 
   it("rejects named properties on JSON arrays", () => {
@@ -331,8 +332,14 @@ describe("AtlasClient HTTP", () => {
     class HandlerArray extends IntermediateArray {}
     const value = new HandlerArray();
     value.push(1);
+    const coercibleLength = new Proxy([], {
+      get(target, key, receiver) {
+        return key === "length" ? "0" : Reflect.get(target, key, receiver);
+      }
+    });
 
     expect(isJSONValue(value)).toBe(true);
+    expect(isJSONValue(coercibleLength)).toBe(true);
     expect(isJSONValue(0)).toBe(true);
     expect(isJSONValue(-0)).toBe(false);
   });
@@ -343,6 +350,23 @@ describe("AtlasClient HTTP", () => {
 
     expect(isJSONValue(value)).toBe(false);
     expect(isJSONValue(inherited)).toBe(false);
+  });
+
+  it("rejects inherited and proxy-supplied JSON transforms", () => {
+    const prototype = Object.create(null) as Record<string, unknown>;
+    Object.defineProperty(prototype, "toJSON", { value: () => ({ changed: true }) });
+    const inherited = Object.assign(Object.create(prototype) as Record<string, unknown>, { value: 1 });
+    const proxied = new Proxy(
+      { value: 1 },
+      {
+        get(target, key, receiver) {
+          return key === "toJSON" ? () => ({ changed: true }) : Reflect.get(target, key, receiver);
+        }
+      }
+    );
+
+    expect(isJSONValue(inherited)).toBe(false);
+    expect(isJSONValue(proxied)).toBe(false);
   });
 
   it("rejects malformed generated entity create validator geometry and timestamps", () => {
