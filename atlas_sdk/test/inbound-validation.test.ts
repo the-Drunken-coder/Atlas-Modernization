@@ -243,7 +243,7 @@ describe("AtlasClient inbound response validation", () => {
     const response = { ...validObject("object-http-deep-extra", 1), extra: nested };
     const client = new AtlasClient({
       baseUrl: "http://atlas.test",
-      fetch: async () => ({ ok: true, status: 200, json: async () => response }) as Response
+      fetch: async () => ({ ok: true, status: 200, text: async () => JSON.stringify(response) }) as Response
     });
 
     await expect(client.objects.get(response.object_id, { fresh: true })).resolves.toEqual(response);

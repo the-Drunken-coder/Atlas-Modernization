@@ -1,3 +1,4 @@
+import { parseAtlasJSON } from "./json.js";
 import {
   ATLAS_PROTOCOL_REVISION,
   type FeedAuthMessage,
@@ -134,7 +135,7 @@ export class FeedConnectionManager {
           return;
         }
         try {
-          const data: unknown = JSON.parse(String(message.data));
+          const data = parseAtlasJSON(String(message.data));
           if (!isInboundFeedHandshake(data)) {
             finish(() => reject(new TypeError("feed did not send a valid protocol hello")));
             return;
@@ -251,7 +252,7 @@ export class FeedConnectionManager {
     };
     const handleMessage = (message: WebSocketEvent) => {
       const serialized = String(message.data);
-      const data: unknown = JSON.parse(serialized);
+      const data = parseAtlasJSON(serialized);
       if (isInboundFeedHandshake(data)) {
         assertRevision(data.protocol_revision);
         return;

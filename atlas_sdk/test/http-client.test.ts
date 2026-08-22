@@ -185,7 +185,7 @@ describe("AtlasClient HTTP", () => {
 
   it("labels successful response body failures as transport errors", async () => {
     const response = Response.json({ protocol_revision: "unused" });
-    vi.spyOn(response, "json").mockRejectedValueOnce(new TypeError("response body terminated"));
+    vi.spyOn(response, "text").mockRejectedValueOnce(new TypeError("response body terminated"));
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: async () => response });
 
     await expect(client.handshake()).rejects.toMatchObject({
@@ -199,7 +199,7 @@ describe("AtlasClient HTTP", () => {
     const controller = new AbortController();
     const reason = new Error("caller aborted error response read");
     const response = Response.json({ message: "unavailable" }, { status: 503 });
-    vi.spyOn(response, "json").mockImplementationOnce(async () => {
+    vi.spyOn(response, "text").mockImplementationOnce(async () => {
       controller.abort(reason);
       throw new TypeError("response body terminated");
     });
@@ -745,6 +745,17 @@ describe("AtlasClient HTTP", () => {
     expect(requestBody).toBe('{"output":[1]}');
   });
 
+  it("preserves exactly representable large integer Task output", async () => {
+    const core = new FakeCore();
+    core.upsertTask(task("task-large-output", "asset-1"));
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch });
+    const values = [2 ** 53, 2 ** 54, 1e20];
+
+    await expect(
+      client.tasks.complete("task-large-output", { runtimeId: "runtime-1", output: { values } })
+    ).resolves.toMatchObject({ status: "completed", output: { values } });
+  });
+
   it("serializes Task failure without inherited toJSON hooks", async () => {
     const core = new FakeCore();
     core.upsertTask(task("task-inert-failure", "asset-1"));
@@ -1092,6 +1103,51 @@ describe("AtlasClient HTTP", () => {
     input.self = input;
 
     expect(isTaskCreateRequest({ asset_id: "asset-cycle", command: "fixture.queued", input })).toBe(false);
+  });
+
+  it("rejects inbound JSON integers that JavaScript cannot represent exactly", async () => {
+    const unsafeTask = `{
+      "task_id":"task-unsafe-number",
+      "asset_id":"asset-1",
+      "command":"fixture.queued",
+      "input":{"value":9007199254740993},
+      "status":"pending",
+      "created_at":"2026-08-20T12:00:00Z",
+      "updated_at":"2026-08-20T12:00:00Z"
+    }`;
+    const inboundClient = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: async () =>
+        new Response(unsafeTask, {
+          headers: { "Content-Type": "application/json", ETag: '"v1"' }
+        })
+    });
+
+    await expect(inboundClient.tasks.get("task-unsafe-number", { fresh: true })).rejects.toThrow(
+      "integer that JavaScript cannot represent exactly"
+    );
+  });
+
+  it("rejects boxed non-finite numbers before they serialize to null", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl });
+
+    for (const [name, value] of [
+      ["nan", Number.NaN],
+      ["infinity", Number.POSITIVE_INFINITY]
+    ] as const) {
+      await expect(
+        client.tasks.create(
+          {
+            asset_id: "asset-1",
+            command: "fixture.queued",
+            input: { nested: { value: new Number(value) } } as never
+          },
+          { idempotencyKey: `boxed-${name}` }
+        )
+      ).rejects.toThrow("number outside the JavaScript range");
+    }
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 
   it("returns protocol errors for malformed fake Core request JSON", async () => {

@@ -1,4 +1,5 @@
 import { sanitizeErrorMessage } from "./error-sanitizer.js";
+import { parseAtlasJSON, stringifyAtlasJSON } from "./json.js";
 import { isTimerDelayInRange, MAX_TIMER_DELAY_MS } from "./timer.js";
 import type { FetchLike } from "./types.js";
 import { joinAtlasUrl, normalizeAtlasBaseUrl } from "./url.js";
@@ -178,7 +179,7 @@ export class HttpTransport {
       method,
       headers,
       credentials: this.credentials,
-      body: body === undefined ? undefined : JSON.stringify(body),
+      body: body === undefined ? undefined : stringifyAtlasJSON(body),
       signal
     });
     if (!response.ok) {
@@ -218,15 +219,13 @@ export class HttpTransport {
 }
 
 async function readSuccessfulJSON(response: Response, signal?: AbortSignal): Promise<unknown> {
+  let serialized: string;
   try {
-    return await response.json();
+    serialized = await response.text();
   } catch (error) {
-    if (signal?.aborted) throw signal.reason;
-    if (typeof error === "object" && error !== null && "name" in error && error.name === "SyntaxError") {
-      throw error;
-    }
     throwTransportBodyError(error, signal);
   }
+  return parseAtlasJSON(serialized);
 }
 
 function throwTransportBodyError(error: unknown, signal?: AbortSignal): never {
@@ -244,7 +243,7 @@ function strongETagVersion(etag: string | null): number | undefined {
 
 async function readErrorPayload(response: Response, signal?: AbortSignal): Promise<unknown> {
   try {
-    return await response.json();
+    return parseAtlasJSON(await response.text());
   } catch {
     if (signal?.aborted) throw signal.reason;
     return undefined;
