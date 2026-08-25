@@ -25,9 +25,10 @@ import { AppShell } from "../ui/layout/AppShell.js";
 import { SidebarPanel } from "../ui/layout/SidebarPanel.js";
 import { SidebarRail } from "../ui/layout/SidebarRail.js";
 import type { MapCameraCommand } from "../ui/map/interaction/map-camera.js";
+import { MapSourcePicker } from "../ui/map/MapSourcePicker.js";
 import { buildMapSources } from "../ui/map/rendering/map-sources.js";
 import type { MapReticleTarget } from "../ui/map/view/MapView.js";
-import { Button, SelectField } from "../ui/primitives/controls.js";
+import { Button } from "../ui/primitives/controls.js";
 import { ContextMenu, type MenuItemDef } from "../ui/primitives/Menu.js";
 import { APIKeysPanel } from "./admin/APIKeysPanel.js";
 import { AssetInspector } from "./assets/AssetInspector.js";
@@ -370,41 +371,6 @@ function PurposeBuiltCommandForm({
       onCancel={onCancel}
       onSubmit={onSubmit}
     />
-  );
-}
-
-function MapSourcePicker({
-  sources,
-  defaultSourceId,
-  value,
-  onChange
-}: {
-  sources: MapSourceConfig[];
-  defaultSourceId: string;
-  value: string;
-  onChange: (value: string) => void;
-}) {
-  const orderedSources = [
-    ...sources.filter((source) => source.id === defaultSourceId),
-    ...sources.filter((source) => source.id !== defaultSourceId)
-  ];
-
-  return (
-    <div className="map-overlay-tr map-source-control">
-      <SelectField
-        label="Map"
-        value={value}
-        options={orderedSources.map((source) => ({
-          label: source.unavailableReason ? `${source.label} (${source.unavailableReason})` : source.label,
-          value: source.id,
-          disabled: !source.style
-        }))}
-        onChange={(event) => {
-          const source = sources.find((entry) => entry.id === event.currentTarget.value);
-          if (source?.style) onChange(source.id);
-        }}
-      />
-    </div>
   );
 }
 

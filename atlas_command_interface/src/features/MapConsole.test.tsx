@@ -697,21 +697,59 @@ describe("MapConsole", () => {
     renderConsole(fake);
 
     await screen.findByText("Rover");
-    expect(screen.getByTestId("map")).toHaveAttribute("data-style-id", "openstreetmap-default");
+    expect(await screen.findByTestId("map")).toHaveAttribute("data-style-id", "openstreetmap-default");
 
-    const mapSelect = screen.getByLabelText("Map");
-    const options = Array.from(mapSelect.querySelectorAll("option"));
-    expect(options.map((option) => option.textContent)).toEqual([
+    const mapPicker = screen.getByLabelText("Map");
+    expect(mapPicker).toHaveTextContent("OpenStreetMap Default");
+    await user.click(mapPicker);
+
+    const options = screen.getAllByRole("option");
+    expect(options.map((option) => option.querySelector(".map-source-option__label")?.textContent)).toEqual([
       "OpenStreetMap Default",
-      "Google Satellite (missing key)",
+      "Google Satellite",
       "USGS Topo"
     ]);
     expect(options[0]).not.toBeDisabled();
+    expect(options[0]).toHaveAttribute("data-selected", "true");
     expect(options[1]).toBeDisabled();
+    expect(options[1]).toHaveTextContent("missing key");
 
-    await user.selectOptions(mapSelect, "usgs-topo");
+    await user.click(options[2]);
 
     expect(screen.getByTestId("map")).toHaveAttribute("data-style-id", "usgs-topo");
+    expect(mapPicker).toHaveTextContent("USGS Topo");
+    expect(screen.queryByRole("listbox", { name: "Map" })).not.toBeInTheDocument();
+  });
+
+  it("supports keyboard navigation in the map source menu", async () => {
+    const user = userEvent.setup();
+    const { fake } = makeFakeDataSource();
+    renderConsole(fake);
+
+    await screen.findByText("Rover");
+    const mapPicker = screen.getByLabelText("Map");
+    mapPicker.focus();
+
+    await user.keyboard("{ArrowDown}");
+    expect(screen.getByRole("option", { name: "OpenStreetMap Default" })).toHaveFocus();
+
+    await user.keyboard("{ArrowDown}");
+    expect(screen.getByRole("option", { name: "USGS Topo" })).toHaveFocus();
+
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("listbox", { name: "Map" })).not.toBeInTheDocument();
+    expect(mapPicker).toHaveFocus();
+
+    await user.click(mapPicker);
+    await user.click(screen.getByText("Rover"));
+    expect(screen.queryByRole("listbox", { name: "Map" })).not.toBeInTheDocument();
+    mapPicker.focus();
+
+    await user.keyboard("{ArrowDown}");
+    await user.keyboard("{ArrowDown}");
+    await user.keyboard("{Enter}");
+    expect(screen.getByTestId("map")).toHaveAttribute("data-style-id", "usgs-topo");
+    expect(mapPicker).toHaveFocus();
   });
 
   it("starts with the configured MapTiler OSM Dark default", async () => {
@@ -728,7 +766,7 @@ describe("MapConsole", () => {
     );
 
     await screen.findByText("Rover");
-    expect(screen.getByLabelText("Map")).toHaveValue("maptiler-osm-dark");
+    expect(screen.getByLabelText("Map")).toHaveTextContent("MapTiler OSM Dark");
     expect(screen.getByTestId("map")).toHaveAttribute("data-style-id", "maptiler-osm-dark");
   });
 
@@ -751,7 +789,7 @@ describe("MapConsole", () => {
     );
 
     expect(await screen.findByText("The configured default map source is unavailable.")).toBeInTheDocument();
-    expect(screen.getByLabelText("Map")).toHaveValue("maptiler-osm-dark");
+    expect(screen.getByLabelText("Map")).toHaveTextContent("MapTiler OSM Dark");
     expect(screen.queryByTestId("map")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Atlas connection error" })).toBeInTheDocument();
   });
@@ -762,9 +800,10 @@ describe("MapConsole", () => {
     renderConsole(fake);
 
     await screen.findByText("Rover");
-    const mapSelect = screen.getByLabelText("Map");
+    const mapPicker = screen.getByLabelText("Map");
 
-    await user.selectOptions(mapSelect, "usgs-topo");
+    await user.click(mapPicker);
+    await user.click(screen.getByRole("option", { name: "USGS Topo" }));
     expect(screen.getByTestId("map")).toHaveAttribute("data-style-id", "usgs-topo");
 
     act(() => {
@@ -774,7 +813,7 @@ describe("MapConsole", () => {
       });
     });
 
-    await waitFor(() => expect(mapSelect).toHaveValue("openstreetmap-default"));
+    await waitFor(() => expect(mapPicker).toHaveTextContent("OpenStreetMap Default"));
     expect(screen.getByTestId("map")).toHaveAttribute("data-style-id", "openstreetmap-default");
   });
 
@@ -789,7 +828,7 @@ describe("MapConsole", () => {
     );
 
     await screen.findByText("Rover");
-    expect(screen.getByLabelText("Map")).toHaveValue("usgs-topo");
+    expect(screen.getByLabelText("Map")).toHaveTextContent("USGS Topo");
     expect(screen.getByTestId("map")).toHaveAttribute("data-style-id", "usgs-topo");
   });
 
