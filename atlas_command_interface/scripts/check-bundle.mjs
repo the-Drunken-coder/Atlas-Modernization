@@ -11,8 +11,10 @@ const outputArgIndex = process.argv.indexOf("--output-dir");
 const outputDir = resolve(packageRoot, outputArgIndex === -1 ? defaultOutputDir : process.argv[outputArgIndex + 1]);
 
 const budgets = {
-  initialJavaScript: { raw: 350_000, gzip: 105_000 },
-  initialCss: { raw: 30_000, gzip: 6_500 },
+  // Blueprint Core is intentionally part of the initial operational shell so
+  // login, menus, popovers, and map controls share one behavior system.
+  initialJavaScript: { raw: 500_000, gzip: 155_000 },
+  initialCss: { raw: 520_000, gzip: 55_000 },
   shellJavaScript: { raw: 50_000, gzip: 16_000 },
   mapViewJavaScript: { raw: 50_000, gzip: 16_000 },
   mapLibreJavaScript: { raw: 1_100_000, gzip: 300_000 },
@@ -20,8 +22,8 @@ const budgets = {
   milsymbolJavaScript: { raw: 900_000, gzip: 240_000 },
   mapLibreCss: { raw: 85_000, gzip: 11_000 },
   mapRoute: { raw: 2_100_000, gzip: 550_000 },
-  allJavaScript: { raw: 2_900_000, gzip: 800_000 },
-  allCss: { raw: 110_000, gzip: 18_000 }
+  allJavaScript: { raw: 3_600_000, gzip: 1_000_000 },
+  allCss: { raw: 600_000, gzip: 65_000 }
 };
 
 if (!args.has("--skip-build")) {

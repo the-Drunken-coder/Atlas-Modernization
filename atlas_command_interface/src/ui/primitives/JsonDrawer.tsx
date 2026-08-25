@@ -1,4 +1,6 @@
+import { Collapse } from "@blueprintjs/core";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Button } from "./controls.js";
 import { CopyIcon } from "./icons.js";
 
 type JsonDrawerProps = {
@@ -39,18 +41,23 @@ export function JsonDrawer({ value, title = "Raw JSON", defaultOpen = false }: J
   return (
     <div className="json-drawer">
       <div className="json-drawer__summary">
-        <button
+        <Button
           type="button"
+          variant="ghost"
+          size="small"
+          alignText="left"
           className="json-drawer__toggle"
           aria-expanded={open}
           onClick={() => setOpen((value) => !value)}
         >
           <span>{open ? "▾" : "▸"}</span>
           <span>{title}</span>
-        </button>
+        </Button>
         {open ? (
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="small"
             className="json-drawer__copy"
             aria-label="Copy JSON"
             title="Copy JSON"
@@ -58,14 +65,14 @@ export function JsonDrawer({ value, title = "Raw JSON", defaultOpen = false }: J
           >
             <CopyIcon size={14} />
             {copied ? "Copied" : "Copy"}
-          </button>
+          </Button>
         ) : null}
       </div>
-      {open ? (
+      <Collapse isOpen={open}>
         <div className="json-drawer__body">
           <pre className="json-drawer__pre">{text}</pre>
         </div>
-      ) : null}
+      </Collapse>
     </div>
   );
 }

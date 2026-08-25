@@ -1,8 +1,6 @@
 import { ENTITY_DESCRIPTORS, type EntityKind, type EntityListKind } from "../atlas/entities.js";
 
-export type ListKind = EntityListKind | "commands" | "apiKeys";
-
-export type SidebarView = { mode: "list"; list: ListKind } | { mode: "inspector"; previousList: ListKind };
+export type ListKind = EntityListKind | "apiKeys";
 
 export type Selection = { kind: EntityKind; id: string } | null;
 
@@ -17,7 +15,7 @@ export type FocusRequest = { id: string; seq: number };
 
 export type SidebarState = {
   collapsed: boolean;
-  view: SidebarView;
+  list: ListKind;
   selection: Selection;
   focusRequest: FocusRequest | null;
   restoreFocusId: string | null;
@@ -31,12 +29,11 @@ export type SidebarAction =
   | { type: "setCollapsed"; collapsed: boolean }
   | { type: "openList"; list: ListKind }
   | { type: "selectEntity"; kind: EntityKind; id: string; origin: SelectionOrigin }
-  | { type: "clearSelection" }
-  | { type: "back" };
+  | { type: "clearSelection" };
 
 export const initialSidebarState: SidebarState = {
   collapsed: false,
-  view: { mode: "list", list: "assets" },
+  list: "assets",
   selection: null,
   focusRequest: null,
   restoreFocusId: null,
@@ -47,10 +44,6 @@ export function listForKind(kind: EntityKind): EntityListKind {
   return ENTITY_DESCRIPTORS[kind].list;
 }
 
-function currentList(view: SidebarView): ListKind {
-  return view.mode === "list" ? view.list : view.previousList;
-}
-
 export function sidebarReducer(state: SidebarState, action: SidebarAction): SidebarState {
   switch (action.type) {
     case "toggleCollapsed":
@@ -58,19 +51,17 @@ export function sidebarReducer(state: SidebarState, action: SidebarAction): Side
     case "setCollapsed":
       return { ...state, collapsed: action.collapsed };
     case "openList":
-      return { ...state, collapsed: false, restoreFocusId: null, view: { mode: "list", list: action.list } };
+      return { ...state, collapsed: false, restoreFocusId: null, list: action.list };
     case "selectEntity": {
       // Sidebar selections drive the camera; map selections leave it alone
       // (and release any earlier claim so follow stops).
       const fromSidebar = action.origin === "sidebar";
       return {
         ...state,
-        collapsed: false,
         selection: { kind: action.kind, id: action.id },
         focusRequest: fromSidebar ? { id: action.id, seq: state.focusSeq + 1 } : null,
         restoreFocusId: null,
-        focusSeq: fromSidebar ? state.focusSeq + 1 : state.focusSeq,
-        view: { mode: "inspector", previousList: currentList(state.view) }
+        focusSeq: fromSidebar ? state.focusSeq + 1 : state.focusSeq
       };
     }
     case "clearSelection":
@@ -78,17 +69,8 @@ export function sidebarReducer(state: SidebarState, action: SidebarAction): Side
         ...state,
         selection: null,
         focusRequest: null,
-        restoreFocusId: null,
-        view: state.view.mode === "inspector" ? { mode: "list", list: state.view.previousList } : state.view
+        restoreFocusId: state.focusRequest?.id === state.selection?.id ? (state.selection?.id ?? null) : null
       };
-    case "back":
-      return state.view.mode === "inspector"
-        ? {
-            ...state,
-            restoreFocusId: state.focusRequest?.id ?? null,
-            view: { mode: "list", list: state.view.previousList }
-          }
-        : state;
     default:
       return state;
   }

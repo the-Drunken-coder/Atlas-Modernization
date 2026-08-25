@@ -1,23 +1,29 @@
 import { describe, expect, it } from "vitest";
 import { initialSidebarState, listForKind, type SidebarState, sidebarReducer } from "./selection.js";
 
-describe("sidebar reducer", () => {
-  it("toggles and sets the collapsed rail", () => {
+describe("workspace selection reducer", () => {
+  it("opens and closes the floating browser", () => {
     expect(sidebarReducer(initialSidebarState, { type: "toggleCollapsed" }).collapsed).toBe(true);
     expect(
       sidebarReducer({ ...initialSidebarState, collapsed: true }, { type: "setCollapsed", collapsed: false }).collapsed
     ).toBe(false);
   });
 
-  it("opens a list mode and expands the rail", () => {
-    const collapsed: SidebarState = { ...initialSidebarState, collapsed: true, restoreFocusId: "asset-1" };
+  it("opens a list without changing the selected entity", () => {
+    const collapsed: SidebarState = {
+      ...initialSidebarState,
+      collapsed: true,
+      selection: { kind: "asset", id: "asset-1" },
+      restoreFocusId: "asset-1"
+    };
     const next = sidebarReducer(collapsed, { type: "openList", list: "geofeatures" });
     expect(next.collapsed).toBe(false);
-    expect(next.view).toEqual({ mode: "list", list: "geofeatures" });
+    expect(next.list).toBe("geofeatures");
+    expect(next.selection).toEqual({ kind: "asset", id: "asset-1" });
     expect(next.restoreFocusId).toBeNull();
   });
 
-  it("switches to inspector mode when an entity is selected and remembers the list", () => {
+  it("keeps selection separate from the active browser list", () => {
     const onTracks = sidebarReducer(initialSidebarState, { type: "openList", list: "tracks" });
     const selected = sidebarReducer(onTracks, {
       type: "selectEntity",
@@ -26,7 +32,7 @@ describe("sidebar reducer", () => {
       origin: "sidebar"
     });
     expect(selected.selection).toEqual({ kind: "track", id: "track-1" });
-    expect(selected.view).toEqual({ mode: "inspector", previousList: "tracks" });
+    expect(selected.list).toBe("tracks");
   });
 
   it("keeps selection single-select", () => {
@@ -40,7 +46,7 @@ describe("sidebar reducer", () => {
     expect(state.selection).toEqual({ kind: "asset", id: "asset-2" });
   });
 
-  it("claims the camera for sidebar selections and bumps the sequence on re-select", () => {
+  it("claims the camera for browser selections and bumps the sequence on re-select", () => {
     const first = sidebarReducer(initialSidebarState, {
       type: "selectEntity",
       kind: "asset",
@@ -65,7 +71,7 @@ describe("sidebar reducer", () => {
     expect(fromMap.focusRequest).toBeNull();
   });
 
-  it("keeps the claim sequence monotonic across map selections and clears", () => {
+  it("keeps the camera claim sequence monotonic across map selections", () => {
     let state = sidebarReducer(initialSidebarState, {
       type: "selectEntity",
       kind: "asset",
@@ -77,37 +83,31 @@ describe("sidebar reducer", () => {
     expect(state.focusRequest).toEqual({ id: "asset-1", seq: 2 });
   });
 
-  it("releases the camera claim when the selection clears", () => {
+  it("clears selection, releases the camera, and restores browser focus", () => {
     const selected = sidebarReducer(initialSidebarState, {
       type: "selectEntity",
       kind: "asset",
       id: "asset-1",
       origin: "sidebar"
     });
-    expect(sidebarReducer(selected, { type: "clearSelection" }).focusRequest).toBeNull();
+    const cleared = sidebarReducer(selected, { type: "clearSelection" });
+    expect(cleared.selection).toBeNull();
+    expect(cleared.focusRequest).toBeNull();
+    expect(cleared.restoreFocusId).toBe("asset-1");
   });
 
-  it("returns to the previous list with back and clearSelection", () => {
-    const onGeo = sidebarReducer(initialSidebarState, { type: "openList", list: "geofeatures" });
-    const selected = sidebarReducer(onGeo, {
+  it("does not move browser focus after clearing a map selection", () => {
+    const selected = sidebarReducer(initialSidebarState, {
       type: "selectEntity",
-      kind: "geofeature",
-      id: "geo-1",
-      origin: "sidebar"
+      kind: "asset",
+      id: "asset-1",
+      origin: "map"
     });
-
-    const back = sidebarReducer(selected, { type: "back" });
-    expect(back.view).toEqual({ mode: "list", list: "geofeatures" });
-    expect(back.selection).toEqual({ kind: "geofeature", id: "geo-1" });
-    expect(back.restoreFocusId).toBe("geo-1");
-
     const cleared = sidebarReducer(selected, { type: "clearSelection" });
-    expect(cleared.view).toEqual({ mode: "list", list: "geofeatures" });
-    expect(cleared.selection).toBeNull();
     expect(cleared.restoreFocusId).toBeNull();
   });
 
-  it("maps entity kinds to list kinds", () => {
+  it("maps entity kinds to browser lists", () => {
     expect(listForKind("asset")).toBe("assets");
     expect(listForKind("track")).toBe("tracks");
     expect(listForKind("geofeature")).toBe("geofeatures");

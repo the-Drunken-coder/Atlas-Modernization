@@ -5,7 +5,7 @@ import { type ComponentProps, useReducer, useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { entityFixture } from "../../../test/fixtures.js";
 import { EntityList } from "../../features/EntityList.js";
-import { initialSidebarState, listForKind, sidebarReducer } from "../../state/selection.js";
+import { initialSidebarState, sidebarReducer } from "../../state/selection.js";
 import { SidebarPanel } from "./SidebarPanel.js";
 import { SidebarRail } from "./SidebarRail.js";
 
@@ -14,17 +14,9 @@ const ASSETS: EntityResource[] = [
   entityFixture({ entity_id: "asset-2", alias: "Rover Two" })
 ];
 
-function Harness({
-  entities = ASSETS,
-  initialQuery = ""
-}: {
-  entities?: EntityResource[];
-  initialQuery?: string;
-} = {}) {
+function Harness({ entities = ASSETS }: { entities?: EntityResource[] } = {}) {
   const [state, dispatch] = useReducer(sidebarReducer, initialSidebarState);
-  const [query, setQuery] = useState(initialQuery);
-  const activeList =
-    state.view.mode === "list" ? state.view.list : state.selection ? listForKind(state.selection.kind) : null;
+  const [query, setQuery] = useState("");
 
   return (
     <>
@@ -34,21 +26,24 @@ function Harness({
       >
         Map
       </button>
-      <div className="sidebar" data-collapsed={state.collapsed} data-testid="sidebar">
-        <SidebarRail
-          collapsed={state.collapsed}
-          activeList={activeList}
-          counts={{ asset: entities.length, track: 0, geofeature: 0 }}
-          onSelectList={(list) => dispatch({ type: "openList", list })}
-          onToggleCollapsed={() => dispatch({ type: "toggleCollapsed" })}
-        />
+      {state.selection ? (
+        <button type="button" onClick={() => dispatch({ type: "clearSelection" })}>
+          Close inspector
+        </button>
+      ) : null}
+      <SidebarRail
+        collapsed={state.collapsed}
+        activeList={state.list}
+        counts={{ asset: entities.length, track: 0, geofeature: 0 }}
+        onSelectList={(list) => dispatch({ type: "openList", list })}
+        onToggleCollapsed={() => dispatch({ type: "toggleCollapsed" })}
+      />
+      {state.collapsed ? null : (
         <SidebarPanel
-          title={state.view.mode === "list" ? `LIST:${state.view.list}` : `INSPECTOR:${state.selection?.id}`}
-          onBack={state.view.mode === "inspector" ? () => dispatch({ type: "back" }) : undefined}
-          autoFocusBack={state.focusRequest?.id === state.selection?.id}
+          title={`LIST:${state.list}`}
           onCollapse={() => dispatch({ type: "setCollapsed", collapsed: true })}
         >
-          {state.view.mode === "list" && state.view.list === "assets" ? (
+          {state.list === "assets" ? (
             <EntityList
               entities={entities}
               selectedId={state.selection?.id}
@@ -61,12 +56,10 @@ function Harness({
               onQueryChange={setQuery}
             />
           ) : (
-            <div>
-              {state.view.mode === "inspector" ? `inspector ${state.selection?.id}` : `list ${state.view.list}`}
-            </div>
+            <div>list {state.list}</div>
           )}
         </SidebarPanel>
-      </div>
+      )}
     </>
   );
 }
@@ -76,73 +69,45 @@ function StatefulEntityList(props: Omit<ComponentProps<typeof EntityList>, "quer
   return <EntityList {...props} query={query} onQueryChange={setQuery} />;
 }
 
-describe("sidebar rail + panel", () => {
-  it("keeps the icon rail rendered when collapsed", async () => {
+describe("workspace rail and browser", () => {
+  it("keeps the icon rail rendered when the browser closes", async () => {
     const user = userEvent.setup();
     render(<Harness />);
-    await user.click(screen.getByRole("button", { name: "Collapse panel" }));
-    expect(screen.getByTestId("sidebar")).toHaveAttribute("data-collapsed", "true");
-    // The rail icon buttons remain in the DOM.
+    await user.click(screen.getByRole("button", { name: "Close browser" }));
+    expect(screen.queryByText("LIST:assets")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Assets" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Geo Features" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "API Keys" })).toBeInTheDocument();
   });
 
-  it("shows a tooltip when an icon is focused", async () => {
+  it("wraps rail actions in Blueprint tooltip targets", () => {
     render(<Harness />);
-    screen.getByRole("button", { name: "Tracks" }).focus();
-    expect(await screen.findByRole("tooltip")).toHaveTextContent("Tracks");
+    expect(screen.getByRole("button", { name: "Tracks" }).parentElement).toHaveClass("bp6-popover-target");
   });
 
-  it("opens a list mode when a rail icon is clicked", async () => {
+  it("switches the browser without disturbing selection", async () => {
     const user = userEvent.setup();
     render(<Harness />);
-    expect(screen.getByRole("button", { name: "Assets" })).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByRole("button", { name: "Geo Features" })).toHaveAttribute("aria-pressed", "false");
+    await user.click(screen.getByRole("button", { name: /Rover One/ }));
+    expect(screen.getByRole("button", { name: /Rover One/ })).toHaveAttribute("aria-current", "true");
 
     await user.click(screen.getByRole("button", { name: "Geo Features" }));
     expect(screen.getByText("list geofeatures")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Assets" })).toHaveAttribute("aria-pressed", "false");
     expect(screen.getByRole("button", { name: "Geo Features" })).toHaveAttribute("aria-pressed", "true");
-
-    await user.click(screen.getByRole("button", { name: "API Keys" }));
-    expect(screen.getByText("list apiKeys")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "API Keys" })).toHaveAttribute("aria-pressed", "true");
   });
 
-  it("switches to inspector mode when a list item is selected", async () => {
+  it("restores row focus when the floating inspector closes", async () => {
     const user = userEvent.setup();
     render(<Harness />);
-    await user.click(screen.getByText("Rover One"));
-    expect(screen.getByText("inspector asset-1")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Back" })).toHaveFocus();
-
-    // Back returns to the previous list.
-    await user.click(screen.getByRole("button", { name: "Back" }));
-    const selectedRow = screen.getByRole("button", { name: /Rover One/ });
-    expect(selectedRow).toHaveFocus();
-    expect(selectedRow).toHaveAttribute("aria-current", "true");
-    expect(screen.getByRole("button", { name: /Rover Two/ })).not.toHaveAttribute("aria-current");
-  });
-
-  it("keeps focus on the rail when navigating directly from an inspector", async () => {
-    const user = userEvent.setup();
-    render(<Harness />);
-
     await user.click(screen.getByRole("button", { name: /Rover One/ }));
-    const assetsButton = screen.getByRole("button", { name: "Assets" });
-    await user.click(assetsButton);
-
-    expect(assetsButton).toHaveFocus();
-    expect(screen.getByRole("button", { name: /Rover One/ })).not.toHaveFocus();
+    await user.click(screen.getByRole("button", { name: "Close inspector" }));
+    expect(screen.getByRole("button", { name: /Rover One/ })).toHaveFocus();
   });
 
   it("filters entity rows without changing the source list", async () => {
     const user = userEvent.setup();
     render(<StatefulEntityList entities={ASSETS} emptyLabel="none" onSelect={() => {}} />);
-
     await user.type(screen.getByRole("searchbox", { name: "Filter entities" }), "Two");
-
     expect(screen.queryByRole("button", { name: /Rover One/ })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Rover Two/ })).toBeInTheDocument();
     expect(screen.getByText("1 of 2")).toBeInTheDocument();
@@ -151,11 +116,9 @@ describe("sidebar rail + panel", () => {
   it("normalizes the filter query and shows the no-match state", async () => {
     const user = userEvent.setup();
     render(<StatefulEntityList entities={ASSETS} emptyLabel="none" onSelect={() => {}} />);
-
     const filter = screen.getByRole("searchbox", { name: "Filter entities" });
     await user.type(filter, "   ");
     expect(screen.getByText("2 total")).toBeInTheDocument();
-
     await user.clear(filter);
     await user.type(filter, "missing");
     expect(screen.getByText("0 of 2")).toBeInTheDocument();
@@ -175,7 +138,6 @@ describe("sidebar rail + panel", () => {
     const { unmount } = render(
       <EntityList entities={[entity]} query="just now" emptyLabel="none" onSelect={() => {}} onQueryChange={() => {}} />
     );
-
     try {
       expect(screen.queryByRole("button", { name: /Rover One/ })).not.toBeInTheDocument();
       expect(screen.getByText("No matching entities.")).toBeInTheDocument();
@@ -185,36 +147,15 @@ describe("sidebar rail + panel", () => {
     }
   });
 
-  it("focuses the filter when the selected row no longer matches on Back", async () => {
-    const user = userEvent.setup();
-    const { rerender } = render(<Harness initialQuery="Rover One" />);
-
-    await user.click(screen.getByRole("button", { name: /Rover One/ }));
-    const renamed = ASSETS.map((entity) =>
-      entity.entity_id === "asset-1" ? { ...entity, alias: "Renamed Rover" } : entity
-    );
-    rerender(<Harness entities={renamed} initialQuery="Rover One" />);
-    await user.click(screen.getByRole("button", { name: "Back" }));
-
-    expect(screen.getByRole("searchbox", { name: "Filter entities" })).toHaveFocus();
-  });
-
   it("focuses the filter when a focused row stops matching", async () => {
     const user = userEvent.setup();
-    const props = {
-      query: "Rover One",
-      emptyLabel: "none",
-      onSelect: () => {},
-      onQueryChange: () => {}
-    };
+    const props = { query: "Rover One", emptyLabel: "none", onSelect: () => {}, onQueryChange: () => {} };
     const { rerender } = render(<EntityList {...props} entities={ASSETS} />);
-
     await user.click(screen.getByRole("button", { name: /Rover One/ }));
     const renamed = ASSETS.map((entity) =>
       entity.entity_id === "asset-1" ? { ...entity, alias: "Renamed Rover" } : entity
     );
     rerender(<EntityList {...props} entities={renamed} />);
-
     expect(screen.getByRole("searchbox", { name: "Filter entities" })).toHaveFocus();
   });
 
@@ -229,23 +170,23 @@ describe("sidebar rail + panel", () => {
         onSelect={() => {}}
       />
     );
-
     const filter = screen.getByRole("searchbox", { name: "Filter entities" });
     await user.click(filter);
     fireEvent.change(filter, { target: { value: "Two" } });
     fireEvent.change(filter, { target: { value: "" } });
-
     expect(filter).toHaveFocus();
   });
 
   it("does not move focus for a map-origin selection", async () => {
     const user = userEvent.setup();
     render(<Harness />);
-
     const map = screen.getByRole("button", { name: "Map" });
     await user.click(map);
-
     expect(map).toHaveFocus();
-    expect(screen.getByRole("button", { name: "Back" })).not.toHaveFocus();
+  });
+
+  it("uses the Blueprint input group in the entity browser", () => {
+    render(<StatefulEntityList entities={ASSETS} emptyLabel="none" onSelect={() => {}} />);
+    expect(screen.getByRole("searchbox")).toHaveClass("bp6-input");
   });
 });

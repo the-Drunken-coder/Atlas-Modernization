@@ -70,7 +70,7 @@ describe("asset connection status", () => {
       expect(document.querySelector<HTMLElement>(".entity-row__dot")).toHaveStyle({ background: color });
       unmount();
 
-      render(<AssetInspector entity={entity} snapshot={emptySnapshot()} onPickCommand={() => {}} />);
+      render(<AssetInspector entity={entity} snapshot={emptySnapshot()} />);
       expect(screen.getByText(label)).toBeInTheDocument();
       const heartbeat = fieldValue("Heartbeat");
       if (heartbeatLabel && heartbeatColor) {
@@ -101,9 +101,7 @@ describe("asset connection status", () => {
   });
 
   it("updates the inspector through stale and offline thresholds without a snapshot change", () => {
-    render(
-      <AssetInspector entity={asset("2026-06-20T00:09:50Z")} snapshot={emptySnapshot()} onPickCommand={() => {}} />
-    );
+    render(<AssetInspector entity={asset("2026-06-20T00:09:50Z")} snapshot={emptySnapshot()} />);
     expect(screen.getByText("Connected")).toBeInTheDocument();
 
     act(() => vi.advanceTimersByTime(21_000));

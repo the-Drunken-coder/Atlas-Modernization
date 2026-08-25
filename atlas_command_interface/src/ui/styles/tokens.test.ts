@@ -56,9 +56,4 @@ describe("command interface tokens", () => {
       expect(contrast(mutedText, background)).toBeGreaterThanOrEqual(4.5);
     }
   });
-
-  it("keeps the decorative select chevron out of pointer hit testing", () => {
-    const declarations = css.match(/\.bp6-html-select > \.bp6-icon\s*{([^}]*)}/)?.[1];
-    expect(declarations).toMatch(/pointer-events:\s*none/);
-  });
 });

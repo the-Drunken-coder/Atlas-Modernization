@@ -1,8 +1,8 @@
+import { Button, Tag, Tooltip } from "@blueprintjs/core";
 import type { ReactElement } from "react";
 import { ENTITY_DESCRIPTORS, type EntityKind } from "../../atlas/entities.js";
 import type { ListKind } from "../../state/selection.js";
-import { AssetsIcon, CollapseIcon, CommandsIcon, GeofeaturesIcon, KeyIcon, TracksIcon } from "../primitives/icons.js";
-import { Tooltip } from "../primitives/Tooltip.js";
+import { AssetsIcon, CollapseIcon, GeofeaturesIcon, KeyIcon, TracksIcon } from "../primitives/icons.js";
 
 type RailItem = {
   list: ListKind;
@@ -14,8 +14,7 @@ type RailItem = {
 const PRIMARY_RAIL_ITEMS: RailItem[] = [
   { ...ENTITY_DESCRIPTORS.asset, Icon: AssetsIcon, kind: "asset" },
   { ...ENTITY_DESCRIPTORS.track, Icon: TracksIcon, kind: "track" },
-  { ...ENTITY_DESCRIPTORS.geofeature, Icon: GeofeaturesIcon, kind: "geofeature" },
-  { list: "commands", label: "Commands", Icon: CommandsIcon }
+  { ...ENTITY_DESCRIPTORS.geofeature, Icon: GeofeaturesIcon, kind: "geofeature" }
 ];
 
 const ADMIN_RAIL_ITEMS: RailItem[] = [{ list: "apiKeys", label: "API Keys", Icon: KeyIcon }];
@@ -45,16 +44,17 @@ export function SidebarRail({ collapsed, activeList, counts, onSelectList, onTog
       {ADMIN_RAIL_ITEMS.map((item) => (
         <RailButton key={item.list} item={item} active={activeList === item.list} count={0} onSelect={onSelectList} />
       ))}
-      <Tooltip label={collapsed ? "Expand sidebar" : "Collapse sidebar"}>
-        <button
+      <Tooltip content={collapsed ? "Open browser" : "Hide browser"} placement="right">
+        <Button
           type="button"
-          className="bp6-button bp6-minimal rail-button"
-          aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          variant="minimal"
+          className="rail-button"
+          aria-label="Toggle browser"
           aria-pressed={collapsed}
           onClick={onToggleCollapsed}
         >
           <CollapseIcon size={20} style={collapsed ? { transform: "scaleX(-1)" } : undefined} />
-        </button>
+        </Button>
       </Tooltip>
     </div>
   );
@@ -72,18 +72,23 @@ function RailButton({
   onSelect: (list: ListKind) => void;
 }) {
   return (
-    <Tooltip label={item.label}>
-      <button
+    <Tooltip content={item.label} placement="right">
+      <Button
         type="button"
-        className="bp6-button bp6-minimal rail-button"
+        variant="minimal"
+        className="rail-button"
         aria-label={item.label}
         aria-pressed={active}
         data-active={active}
         onClick={() => onSelect(item.list)}
       >
         <item.Icon size={20} />
-        {count > 0 ? <span className="rail-button__badge">{count}</span> : null}
-      </button>
+        {count > 0 ? (
+          <Tag className="rail-button__badge" minimal>
+            {count}
+          </Tag>
+        ) : null}
+      </Button>
     </Tooltip>
   );
 }

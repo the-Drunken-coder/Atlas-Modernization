@@ -1,5 +1,4 @@
-import type { CommandCatalog, EntityResource } from "@the-drunken-coder/atlas-sdk";
-import { type CommandAvailability, commandsForTargeting } from "../../atlas/command-targeting.js";
+import type { EntityResource } from "@the-drunken-coder/atlas-sdk";
 import {
   entityAltitude,
   entityBattery,
@@ -17,7 +16,6 @@ import { activeTasks, queuedTasks, tasksForAsset } from "../../atlas/selectors.j
 import type { AtlasSnapshot } from "../../atlas/store.js";
 import { JsonDrawer } from "../../ui/primitives/JsonDrawer.js";
 import { ConnectionStatusPill, heartbeatColor, StatusPill } from "../../ui/primitives/StatusPill.js";
-import { CommandList } from "../commands/CommandList.js";
 import { FieldGrid, InspectorHeading, Section } from "../shared/panels.js";
 import { TaskHistoryItem, TaskRow } from "../shared/TaskRow.js";
 import { useHeartbeatClock } from "../useHeartbeatClock.js";
@@ -27,11 +25,9 @@ const MAX_HISTORY = 25;
 type AssetInspectorProps = {
   entity: EntityResource;
   snapshot: AtlasSnapshot;
-  catalog?: CommandCatalog;
-  onPickCommand: (availability: CommandAvailability) => void;
 };
 
-export function AssetInspector({ entity, snapshot, catalog, onPickCommand }: AssetInspectorProps) {
+export function AssetInspector({ entity, snapshot }: AssetInspectorProps) {
   const now = useHeartbeatClock();
   const position = entityPosition(entity);
   const connection = entityConnectionStatus(entity, now);
@@ -41,17 +37,6 @@ export function AssetInspector({ entity, snapshot, catalog, onPickCommand }: Ass
   const active = activeTasks(snapshot, entity);
   const queued = queuedTasks(snapshot, entity);
   const history = tasksForAsset(snapshot, entity.entity_id).slice(0, MAX_HISTORY);
-  const sidebarCommands = catalog
-    ? [...commandsForTargeting(catalog, entity, "none"), ...commandsForTargeting(catalog, entity, "map_point")]
-    : [];
-  const commandEmptyLabel = !catalog
-    ? "Command Catalog unavailable"
-    : catalog.length === 0
-      ? "No Commands are defined in Atlas Protocol"
-      : !entity.command_manifest?.length
-        ? "This Asset has no Commands"
-        : "No operator inputs are available for this Asset's Commands";
-
   return (
     <div className="inspector">
       <InspectorHeading name={entityDisplayName(entity)} id={entity.entity_id} />
@@ -97,10 +82,6 @@ export function AssetInspector({ entity, snapshot, catalog, onPickCommand }: Ass
           <div style={{ color: "var(--text-3)" }}>No active task</div>
         )}
         {queued.length > 0 ? queued.map((task) => <TaskRow key={task.task_id} task={task} />) : null}
-      </Section>
-
-      <Section title="Commands">
-        <CommandList availabilities={sidebarCommands} onPick={onPickCommand} emptyLabel={commandEmptyLabel} />
       </Section>
 
       <Section title="Task History">

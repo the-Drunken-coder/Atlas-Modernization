@@ -274,7 +274,6 @@ describe("MapConsole", () => {
     );
 
     await user.click(await screen.findByText("Rover"));
-    await user.click(screen.getByRole("button", { name: /Commands/ }));
     expect(screen.getByText("Loading Asset Commands")).toBeInTheDocument();
     expect(loadEntityDetails).toHaveBeenCalledOnce();
 
@@ -312,7 +311,6 @@ describe("MapConsole", () => {
     });
 
     await user.click(await screen.findByText("Rover"));
-    await user.click(screen.getByRole("button", { name: /Commands/ }));
     pending.reject(new Error("details unavailable"));
 
     expect(await screen.findByText("Asset Commands unavailable")).toBeInTheDocument();
@@ -354,7 +352,6 @@ describe("MapConsole", () => {
     expect(map).toHaveAttribute("data-camera-target", "asset-1");
     expect(map).toHaveAttribute("data-camera-seq", "1");
 
-    await user.click(screen.getByRole("button", { name: "Back" }));
     await user.click(await screen.findByRole("button", { name: /Rover/ }));
 
     expect(map).toHaveAttribute("data-camera-target", "asset-1");
@@ -369,7 +366,6 @@ describe("MapConsole", () => {
     const assetFilter = await screen.findByRole("searchbox", { name: "Filter entities" });
     await user.type(assetFilter, "Rov");
     await user.click(screen.getByRole("button", { name: /Rover/ }));
-    await user.click(screen.getByRole("button", { name: "Back" }));
     expect(screen.getByRole("searchbox", { name: "Filter entities" })).toHaveValue("Rov");
 
     await user.click(screen.getByRole("button", { name: "Geo Features" }));
@@ -561,7 +557,9 @@ describe("MapConsole", () => {
     expect(dialog).not.toHaveTextContent("Bearer token");
 
     await user.keyboard("{Escape}");
-    expect(screen.queryByRole("dialog", { name: "Atlas Core connection error" })).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Atlas Core connection error" })).not.toBeInTheDocument()
+    );
     expect(document.activeElement).toBe(badge);
     expect(mapEscape).not.toHaveBeenCalled();
     window.removeEventListener("keydown", mapKeyListener);
@@ -699,7 +697,7 @@ describe("MapConsole", () => {
     await screen.findByText("Rover");
     expect(screen.getByTestId("map")).toHaveAttribute("data-style-id", "openstreetmap-default");
 
-    const mapSelect = screen.getByLabelText("Map");
+    const mapSelect = screen.getByLabelText("Map source");
     const options = Array.from(mapSelect.querySelectorAll("option"));
     expect(options.map((option) => option.textContent)).toEqual([
       "Google Satellite (missing key)",
@@ -728,7 +726,7 @@ describe("MapConsole", () => {
     );
 
     await screen.findByText("Rover");
-    expect(screen.getByLabelText("Map")).toHaveValue("maptiler-osm-dark");
+    expect(screen.getByLabelText("Map source")).toHaveValue("maptiler-osm-dark");
     expect(screen.getByTestId("map")).toHaveAttribute("data-style-id", "maptiler-osm-dark");
   });
 
@@ -751,7 +749,7 @@ describe("MapConsole", () => {
     );
 
     expect(await screen.findByText("The configured default map source is unavailable.")).toBeInTheDocument();
-    expect(screen.getByLabelText("Map")).toHaveValue("maptiler-osm-dark");
+    expect(screen.getByLabelText("Map source")).toHaveValue("maptiler-osm-dark");
     expect(screen.queryByTestId("map")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Atlas connection error" })).toBeInTheDocument();
   });
@@ -762,7 +760,7 @@ describe("MapConsole", () => {
     renderConsole(fake);
 
     await screen.findByText("Rover");
-    const mapSelect = screen.getByLabelText("Map");
+    const mapSelect = screen.getByLabelText("Map source");
 
     await user.selectOptions(mapSelect, "usgs-topo");
     expect(screen.getByTestId("map")).toHaveAttribute("data-style-id", "usgs-topo");
@@ -789,7 +787,7 @@ describe("MapConsole", () => {
     );
 
     await screen.findByText("Rover");
-    expect(screen.getByLabelText("Map")).toHaveValue("usgs-topo");
+    expect(screen.getByLabelText("Map source")).toHaveValue("usgs-topo");
     expect(screen.getByTestId("map")).toHaveAttribute("data-style-id", "usgs-topo");
   });
 
@@ -822,7 +820,9 @@ describe("MapConsole", () => {
 
     emit({ entities: { [rover.entity_id]: rover }, tasks: {} });
 
-    expect(await screen.findByText("This item is no longer available.")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.queryByRole("region", { name: "Geo Feature inspector" })).not.toBeInTheDocument()
+    );
     await waitFor(() => expect(screen.getByTestId("map")).toHaveAttribute("data-editing", "false"));
     expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
   });

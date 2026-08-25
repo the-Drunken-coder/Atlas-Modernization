@@ -1,4 +1,5 @@
 import type { CommandAvailability } from "../../atlas/command-targeting.js";
+import { Button } from "../../ui/primitives/controls.js";
 
 type CommandListProps = {
   availabilities: CommandAvailability[];
@@ -16,9 +17,12 @@ export function CommandList({ availabilities, onPick, emptyLabel }: CommandListP
       {availabilities.map((availability) => {
         const { command, manifest } = availability;
         return (
-          <button
+          <Button
             key={command.command}
             type="button"
+            variant="ghost"
+            alignText="left"
+            fill
             className="command-row"
             title={command.description}
             onClick={() => onPick(availability)}
@@ -27,7 +31,7 @@ export function CommandList({ availabilities, onPick, emptyLabel }: CommandListP
               <span className="command-row__title">{command.name}</span>
               <span className="command-row__sub">{manifest.description}</span>
             </span>
-          </button>
+          </Button>
         );
       })}
     </div>

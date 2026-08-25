@@ -1,30 +1,22 @@
 import type { ReactNode } from "react";
 import { IconButton } from "../primitives/controls.js";
-import { BackIcon, CollapseIcon } from "../primitives/icons.js";
+import { CollapseIcon } from "../primitives/icons.js";
 
 type SidebarPanelProps = {
   title: string;
-  onBack?: () => void;
-  autoFocusBack?: boolean;
   onCollapse: () => void;
   children: ReactNode;
 };
 
-export function SidebarPanel({ title, onBack, autoFocusBack, onCollapse, children }: SidebarPanelProps) {
+export function SidebarPanel({ title, onCollapse, children }: SidebarPanelProps) {
   return (
     <div className="panel">
       <div className="panel__header">
-        {onBack ? (
-          <IconButton label="Back" autoFocus={autoFocusBack} onClick={onBack}>
-            <BackIcon size={18} />
-          </IconButton>
-        ) : null}
         <div className="panel__heading">
-          <span className="panel__kicker">Atlas / Command Interface</span>
           <span className="panel__title">{title}</span>
         </div>
         <span style={{ flex: 1 }} />
-        <IconButton label="Collapse panel" onClick={onCollapse}>
+        <IconButton label="Close browser" onClick={onCollapse}>
           <CollapseIcon size={18} />
         </IconButton>
       </div>

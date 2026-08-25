@@ -88,6 +88,34 @@
   color: var(--text-2);
 }
 
+.atlas-portal .bp6-popover-content,
+.map-command-menu.bp6-menu {
+  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
+  box-shadow: var(--shadow-menu);
+}
+
+.map-command-menu {
+  width: 250px;
+}
+
+.map-command-menu__item {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.map-command-menu__item strong {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.map-command-menu__item small {
+  color: var(--text-3);
+  font-size: 10px;
+}
+
 .stack {
   display: flex;
   flex-direction: column;

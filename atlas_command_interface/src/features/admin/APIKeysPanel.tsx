@@ -1,3 +1,4 @@
+import { Alert, Intent } from "@blueprintjs/core";
 import { AtlasAPIError } from "@the-drunken-coder/atlas-sdk";
 import { type AdminAPIKey, type AdminCreatedAPIKey, AtlasAdminClient } from "@the-drunken-coder/atlas-sdk/admin";
 import { type FormEvent, useEffect, useMemo, useState } from "react";
@@ -18,6 +19,7 @@ export function APIKeysPanel() {
   const [error, setError] = useState<string>();
   const [submitting, setSubmitting] = useState(false);
   const [revoking, setRevoking] = useState<string>();
+  const [pendingRevoke, setPendingRevoke] = useState<AdminAPIKey>();
 
   const admin = useMemo(
     () => (config ? new AtlasAdminClient({ baseUrl: config.atlasBaseUrl, credentials: "include" }) : undefined),
@@ -84,7 +86,8 @@ export function APIKeysPanel() {
   };
 
   const revokeKey = async (key: AdminAPIKey) => {
-    if (!admin || revoking || !window.confirm(`Revoke ${key.name}?`)) return;
+    if (!admin || revoking) return;
+    setPendingRevoke(undefined);
     setRevoking(key.id);
     setError(undefined);
     try {
@@ -145,7 +148,7 @@ export function APIKeysPanel() {
               <IconButton
                 label={`Revoke ${key.name}`}
                 disabled={revoking === key.id}
-                onClick={() => void revokeKey(key)}
+                onClick={() => setPendingRevoke(key)}
               >
                 <TrashIcon size={16} />
               </IconButton>
@@ -153,6 +156,23 @@ export function APIKeysPanel() {
           ))}
         </ul>
       )}
+      <Alert
+        isOpen={pendingRevoke !== undefined}
+        intent={Intent.DANGER}
+        icon="warning-sign"
+        confirmButtonText="Revoke key"
+        cancelButtonText="Cancel"
+        canEscapeKeyCancel
+        canOutsideClickCancel
+        onCancel={() => setPendingRevoke(undefined)}
+        onConfirm={() => {
+          if (pendingRevoke) void revokeKey(pendingRevoke);
+        }}
+      >
+        <p>
+          Revoke <strong>{pendingRevoke?.name}</strong>? Clients using it will lose access immediately.
+        </p>
+      </Alert>
     </div>
   );
 }

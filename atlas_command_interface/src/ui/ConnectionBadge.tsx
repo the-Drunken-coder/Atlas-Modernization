@@ -1,3 +1,4 @@
+import { PopoverNext } from "@blueprintjs/core";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { sanitizeConnectionError } from "../atlas/connection-error.js";
 import type { ConnectionError, ConnectionHealth } from "../atlas/data-source.js";
@@ -30,36 +31,18 @@ export function ConnectionBadge({
   const statusRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const focusAnchorRef = useRef<HTMLDivElement>(null);
-  const detailRef = useRef<HTMLDivElement>(null);
   const retryFocusPendingRef = useRef(false);
   const ownsFocusRef = useRef(false);
   const detailId = `connection-error-${useId()}`;
-
-  useEffect(() => {
-    if (!open) return;
-    closeRef.current?.focus();
-  }, [open]);
 
   useEffect(() => {
     if (focusOnMount && connectionError) triggerRef.current?.focus();
   }, [connectionError, focusOnMount]);
 
   useEffect(() => {
-    if (
-      connectionError ||
-      (retryFocusPendingRef.current && !(health.healthy && !health.degraded)) ||
-      (!open && !ownsFocusRef.current)
-    )
-      return;
+    if (connectionError || (!open && !ownsFocusRef.current)) return;
     setOpen(false);
-    const activeElement = document.activeElement;
-    if (
-      activeElement === document.body ||
-      detailRef.current?.contains(activeElement) ||
-      focusAnchorRef.current?.contains(activeElement)
-    ) {
-      statusRef.current?.focus();
-    }
+    if (health.healthy && !health.degraded) statusRef.current?.focus();
   }, [connectionError, health.degraded, health.healthy, open]);
 
   useEffect(() => {
@@ -94,7 +77,9 @@ export function ConnectionBadge({
         ownsFocusRef.current = true;
       }}
       onBlurCapture={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) ownsFocusRef.current = false;
+        if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget as Node)) {
+          ownsFocusRef.current = false;
+        }
       }}
     >
       <span
@@ -110,33 +95,28 @@ export function ConnectionBadge({
           {badgeContent}
         </div>
       ) : (
-        <>
-          <Button
-            ref={triggerRef}
-            variant="ghost"
-            className="connection-badge"
-            data-state={state.state}
-            aria-label="Atlas connection error"
-            aria-expanded={open}
-            aria-controls={detailId}
-            onClick={() => setOpen((current) => !current)}
-          >
-            {badgeContent}
-          </Button>
-          {open ? (
+        <PopoverNext
+          isOpen={open}
+          placement="bottom-start"
+          popoverClassName="connection-detail-popover"
+          autoFocus={false}
+          enforceFocus={false}
+          shouldReturnFocusOnClose
+          onInteraction={setOpen}
+          onOpening={() => closeRef.current?.focus()}
+          content={
             <div
-              ref={detailRef}
               className="connection-detail"
               id={detailId}
               role="dialog"
               aria-labelledby={`${detailId}-title`}
               aria-describedby={`${detailId}-description`}
               onKeyDown={(event) => {
-                if (event.key !== "Escape") return;
-                event.preventDefault();
-                event.stopPropagation();
-                setOpen(false);
-                triggerRef.current?.focus();
+                if (event.key === "Escape") {
+                  event.stopPropagation();
+                  setOpen(false);
+                  triggerRef.current?.focus();
+                }
               }}
             >
               <div className="connection-detail__header">
@@ -146,10 +126,7 @@ export function ConnectionBadge({
                   variant="ghost"
                   className="connection-detail__close"
                   aria-label="Close connection details"
-                  onClick={() => {
-                    setOpen(false);
-                    (triggerRef.current ?? focusAnchorRef.current)?.focus();
-                  }}
+                  onClick={() => setOpen(false)}
                 >
                   ×
                 </Button>
@@ -169,7 +146,6 @@ export function ConnectionBadge({
                   onClick={() => {
                     retryFocusPendingRef.current = true;
                     setOpen(false);
-                    focusAnchorRef.current?.focus();
                     onRetry();
                   }}
                 >
@@ -177,8 +153,18 @@ export function ConnectionBadge({
                 </Button>
               </div>
             </div>
-          ) : null}
-        </>
+          }
+        >
+          <Button
+            ref={triggerRef}
+            variant="ghost"
+            className="connection-badge"
+            data-state={state.state}
+            aria-label="Atlas connection error"
+          >
+            {badgeContent}
+          </Button>
+        </PopoverNext>
       )}
     </div>
   );

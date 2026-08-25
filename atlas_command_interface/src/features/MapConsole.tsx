@@ -1,5 +1,15 @@
+import {
+  ContextMenuPopover,
+  Menu,
+  MenuDivider,
+  MenuItem,
+  Navbar,
+  NavbarGroup,
+  NavbarHeading,
+  Tag
+} from "@blueprintjs/core";
 import type { CommandCatalog, EntityResource, JSONValue } from "@the-drunken-coder/atlas-sdk";
-import { lazy, Suspense, useCallback, useEffect, useMemo, useReducer, useState } from "react";
+import { lazy, type ReactNode, Suspense, useCallback, useEffect, useMemo, useReducer, useState } from "react";
 import type { MapSourceConfig } from "../app/config.js";
 import { type CommandAvailability, commandsForTargeting } from "../atlas/command-targeting.js";
 import {
@@ -13,13 +23,7 @@ import type { UiGeometry } from "../atlas/geometry.js";
 import { countsByKind, entitiesByKind, getEntity } from "../atlas/selectors.js";
 import type { AtlasSnapshot } from "../atlas/store.js";
 import { useAtlas } from "../state/atlas-context.js";
-import {
-  initialSidebarState,
-  type ListKind,
-  listForKind,
-  type SidebarState,
-  sidebarReducer
-} from "../state/selection.js";
+import { initialSidebarState, type ListKind, type SidebarState, sidebarReducer } from "../state/selection.js";
 import { ConnectionBadge } from "../ui/ConnectionBadge.js";
 import { AppShell } from "../ui/layout/AppShell.js";
 import { SidebarPanel } from "../ui/layout/SidebarPanel.js";
@@ -28,7 +32,7 @@ import type { MapCameraCommand } from "../ui/map/interaction/map-camera.js";
 import { buildMapSources } from "../ui/map/rendering/map-sources.js";
 import type { MapReticleTarget } from "../ui/map/view/MapView.js";
 import { Button, SelectField } from "../ui/primitives/controls.js";
-import { ContextMenu, type MenuItemDef } from "../ui/primitives/Menu.js";
+import { CloseIcon } from "../ui/primitives/icons.js";
 import { APIKeysPanel } from "./admin/APIKeysPanel.js";
 import { AssetInspector } from "./assets/AssetInspector.js";
 import { CommandList } from "./commands/CommandList.js";
@@ -40,7 +44,6 @@ import { TrackInspector } from "./tracks/TrackInspector.js";
 
 const LIST_TITLES = Object.fromEntries([
   ...ENTITY_KINDS.map((kind) => [ENTITY_DESCRIPTORS[kind].list, ENTITY_DESCRIPTORS[kind].label]),
-  ["commands", "Commands"],
   ["apiKeys", "API Keys"]
 ]) as Record<ListKind, string>;
 
@@ -193,22 +196,14 @@ export function MapConsole() {
     );
   }
 
-  const activeList: ListKind | null =
-    sidebar.view.mode === "list" ? sidebar.view.list : selection ? listForKind(selection.kind) : null;
+  const activeList = sidebar.list;
   const selectedMapSource =
     availableMapSource(atlas.config.mapSources.find((source) => source.id === selectedMapSourceId)) ??
     availableMapSource(atlas.config.mapSources.find((source) => source.id === atlas.config?.defaultMapSourceId));
   const mapSourcePickerValue = selectedMapSource?.id ?? selectedMapSourceId ?? atlas.config.defaultMapSourceId;
 
-  const mapCommands: MenuItemDef[] =
-    mapMenu && selectedEntity && catalog
-      ? commandsForTargeting(catalog, selectedEntity, "map_point").map((availability) => ({
-          key: availability.command.command,
-          title: availability.command.name,
-          sub: availability.manifest.description,
-          onSelect: () => commandFlow.pickMapCommand(availability, { lat: mapMenu.lat, lng: mapMenu.lng })
-        }))
-      : [];
+  const mapCommands =
+    mapMenu && selectedEntity && catalog ? commandsForTargeting(catalog, selectedEntity, "map_point") : [];
 
   return (
     <>
@@ -225,32 +220,21 @@ export function MapConsole() {
         }
         panel={
           <SidebarPanel
-            title={panelTitle(sidebar, selection?.kind)}
-            onBack={sidebar.view.mode === "inspector" ? () => dispatch({ type: "back" }) : undefined}
-            autoFocusBack={sidebar.focusRequest?.id === selection?.id}
+            title={LIST_TITLES[sidebar.list]}
             onCollapse={() => dispatch({ type: "setCollapsed", collapsed: true })}
           >
-            <PanelBody
+            <ListBody
+              list={sidebar.list}
               snapshot={snapshot}
               sidebar={sidebar}
               entityQueries={entityQueries}
               selectedEntity={selectedEntity}
-              catalog={catalog}
-              commandManifestStatus={resolvedCommandManifestStatus}
-              edit={edit}
-              saving={saving}
-              saveError={saveError}
               onSelectEntity={(entity) => {
                 const kind = entityKind(entity);
                 if (kind === "other") return;
                 dispatch({ type: "selectEntity", kind, id: entity.entity_id, origin: "sidebar" });
               }}
               onEntityQueryChange={setEntityQuery}
-              onPickCommand={commandFlow.pickSidebarCommand}
-              onStartEdit={geometryEdit.startEdit}
-              onChangeDraft={geometryEdit.changeDraft}
-              onSaveEdit={() => void geometryEdit.saveEdit()}
-              onCancelEdit={geometryEdit.cancelEdit}
             />
           </SidebarPanel>
         }
@@ -301,22 +285,74 @@ export function MapConsole() {
                   value={mapSourcePickerValue}
                   onChange={setSelectedMapSourceId}
                 />
+                {selectedEntity ? (
+                  <div className="workspace-right-stack">
+                    <FloatingInspector
+                      title={selectedEntityTitle(selectedEntity)}
+                      onClose={() => dispatch({ type: "clearSelection" })}
+                    >
+                      <InspectorBody
+                        snapshot={snapshot}
+                        selectedEntity={selectedEntity}
+                        edit={edit}
+                        saving={saving}
+                        saveError={saveError}
+                        onStartEdit={geometryEdit.startEdit}
+                        onChangeDraft={geometryEdit.changeDraft}
+                        onSaveEdit={() => void geometryEdit.saveEdit()}
+                        onCancelEdit={geometryEdit.cancelEdit}
+                      />
+                    </FloatingInspector>
+                    {entityKind(selectedEntity) === "asset" ? (
+                      <CommandDock
+                        entity={selectedEntity}
+                        catalog={catalog}
+                        commandManifestStatus={resolvedCommandManifestStatus}
+                        submitting={submitting}
+                        onPick={commandFlow.pickSidebarCommand}
+                      />
+                    ) : null}
+                  </div>
+                ) : null}
               </div>
             </div>
           </>
         }
       />
 
-      {mapMenu ? (
-        <ContextMenu
-          x={mapMenu.x}
-          y={mapMenu.y}
-          header={`Commands · ${mapMenu.lat.toFixed(4)}, ${mapMenu.lng.toFixed(4)}`}
-          items={mapCommands}
-          emptyLabel="No position commands"
-          onClose={commandFlow.closeMapMenu}
-        />
-      ) : null}
+      <ContextMenuPopover
+        isOpen={mapMenu !== null}
+        isDarkTheme
+        targetOffset={mapMenu ? { left: mapMenu.x, top: mapMenu.y } : undefined}
+        onClose={commandFlow.closeMapMenu}
+        content={
+          <Menu size="small" className="map-command-menu">
+            <MenuDivider
+              title={mapMenu ? `${mapMenu.lat.toFixed(4)}, ${mapMenu.lng.toFixed(4)}` : "Position commands"}
+            />
+            {mapCommands.length > 0 ? (
+              mapCommands.map((availability) => (
+                <MenuItem
+                  key={availability.command.command}
+                  multiline
+                  text={
+                    <span className="map-command-menu__item">
+                      <strong>{availability.command.name}</strong>
+                      <small>{availability.manifest.description}</small>
+                    </span>
+                  }
+                  onClick={() => {
+                    if (!mapMenu) return;
+                    commandFlow.pickMapCommand(availability, { lat: mapMenu.lat, lng: mapMenu.lng });
+                  }}
+                />
+              ))
+            ) : (
+              <MenuItem disabled text="No position commands" />
+            )}
+          </Menu>
+        }
+      />
 
       {submitting && !commandForm ? (
         <div className="banner banner--info" role="status">
@@ -382,21 +418,28 @@ function MapSourcePicker({
   onChange: (value: string) => void;
 }) {
   return (
-    <div className="map-overlay-tr map-source-control">
-      <SelectField
-        label="Map"
-        value={value}
-        options={sources.map((source) => ({
-          label: source.unavailableReason ? `${source.label} (${source.unavailableReason})` : source.label,
-          value: source.id,
-          disabled: !source.style
-        }))}
-        onChange={(event) => {
-          const source = sources.find((entry) => entry.id === event.currentTarget.value);
-          if (source?.style) onChange(source.id);
-        }}
-      />
-    </div>
+    <Navbar className="map-toolbar" fixedToTop={false}>
+      <NavbarGroup align="left">
+        <NavbarHeading>ATLAS COMMAND</NavbarHeading>
+      </NavbarGroup>
+      <NavbarGroup align="right">
+        <div className="map-source-control">
+          <SelectField
+            aria-label="Map source"
+            value={value}
+            options={sources.map((source) => ({
+              label: source.unavailableReason ? `${source.label} (${source.unavailableReason})` : source.label,
+              value: source.id,
+              disabled: !source.style
+            }))}
+            onChange={(event) => {
+              const source = sources.find((entry) => entry.id === event.currentTarget.value);
+              if (source?.style) onChange(source.id);
+            }}
+          />
+        </div>
+      </NavbarGroup>
+    </Navbar>
   );
 }
 
@@ -411,41 +454,27 @@ type PanelBodyProps = {
   sidebar: SidebarState;
   entityQueries: Record<EntityKind, string>;
   selectedEntity?: EntityResource;
-  catalog?: CommandCatalog;
-  commandManifestStatus: CommandManifestStatus;
+  onSelectEntity: (entity: EntityResource) => void;
+  onEntityQueryChange: (kind: EntityKind, query: string) => void;
+};
+
+type InspectorBodyProps = {
+  snapshot: AtlasSnapshot;
+  selectedEntity: EntityResource;
   edit: GeometryEditState | null;
   saving: boolean;
   saveError?: string;
-  onSelectEntity: (entity: EntityResource) => void;
-  onEntityQueryChange: (kind: EntityKind, query: string) => void;
-  onPickCommand: (availability: CommandAvailability) => void;
   onStartEdit: () => void;
   onChangeDraft: (geometry: UiGeometry) => void;
   onSaveEdit: () => void;
   onCancelEdit: () => void;
 };
 
-function PanelBody(props: PanelBodyProps) {
-  const { snapshot, sidebar, selectedEntity, catalog } = props;
-
-  if (sidebar.view.mode === "list") {
-    return <ListBody list={sidebar.view.list} {...props} />;
-  }
-
-  if (!selectedEntity) {
-    return <div className="panel__empty">This item is no longer available.</div>;
-  }
-
+function InspectorBody(props: InspectorBodyProps) {
+  const { snapshot, selectedEntity } = props;
   const kind = entityKind(selectedEntity);
   if (kind === "asset") {
-    return (
-      <AssetInspector
-        entity={selectedEntity}
-        snapshot={snapshot}
-        catalog={catalog}
-        onPickCommand={props.onPickCommand}
-      />
-    );
+    return <AssetInspector entity={selectedEntity} snapshot={snapshot} />;
   }
   if (kind === "track") {
     return <TrackInspector entity={selectedEntity} />;
@@ -468,44 +497,63 @@ function PanelBody(props: PanelBodyProps) {
   return <div className="panel__empty">Unsupported entity type.</div>;
 }
 
+function FloatingInspector({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
+  return (
+    <section className="workspace-inspector" aria-label={`${title} inspector`}>
+      <header className="workspace-surface-header">
+        <strong>{title}</strong>
+        <Button variant="ghost" className="workspace-surface-close" aria-label="Close inspector" onClick={onClose}>
+          <CloseIcon size={14} />
+        </Button>
+      </header>
+      <div className="workspace-inspector__body">{children}</div>
+    </section>
+  );
+}
+
+function CommandDock({
+  entity,
+  catalog,
+  commandManifestStatus,
+  submitting,
+  onPick
+}: {
+  entity: EntityResource;
+  catalog?: CommandCatalog;
+  commandManifestStatus: CommandManifestStatus;
+  submitting: boolean;
+  onPick: (availability: CommandAvailability) => void;
+}) {
+  const availabilities = catalog
+    ? [...commandsForTargeting(catalog, entity, "none"), ...commandsForTargeting(catalog, entity, "map_point")]
+    : [];
+  return (
+    <section className="workspace-command-dock" aria-label="Asset commands">
+      <header className="workspace-surface-header">
+        <strong>Commands</strong>
+        <Tag minimal>{availabilities.length}</Tag>
+      </header>
+      <div className="workspace-command-dock__body">
+        <CommandList
+          availabilities={availabilities}
+          onPick={onPick}
+          emptyLabel={commandEmptyLabel(catalog, entity, commandManifestStatus)}
+        />
+        {submitting ? <div className="command-dock__status">Tasking pending...</div> : null}
+      </div>
+    </section>
+  );
+}
+
 function ListBody({
   list,
   snapshot,
   sidebar,
   entityQueries,
   selectedEntity,
-  catalog,
-  commandManifestStatus,
   onSelectEntity,
-  onEntityQueryChange,
-  onPickCommand
+  onEntityQueryChange
 }: { list: ListKind } & PanelBodyProps) {
-  if (list === "commands") {
-    if (selectedEntity && entityKind(selectedEntity) === "asset") {
-      return (
-        <div style={{ padding: 12 }}>
-          <CommandList
-            availabilities={catalog ? commandsForTargeting(catalog, selectedEntity, "none") : []}
-            onPick={onPickCommand}
-            emptyLabel={
-              !catalog
-                ? "Command Catalog unavailable"
-                : catalog.length === 0
-                  ? "No Commands are defined in Atlas Protocol"
-                  : commandManifestStatus === "loading"
-                    ? "Loading Asset Commands"
-                    : commandManifestStatus === "unavailable"
-                      ? "Asset Commands unavailable"
-                      : !selectedEntity.command_manifest?.length
-                        ? "This Asset has no Commands"
-                        : "No operator inputs are available for this Asset's Commands"
-            }
-          />
-        </div>
-      );
-    }
-    return <div className="panel__empty">Select an asset to issue commands.</div>;
-  }
   if (list === "apiKeys") {
     return <APIKeysPanel />;
   }
@@ -524,11 +572,24 @@ function ListBody({
   );
 }
 
+function commandEmptyLabel(
+  catalog: CommandCatalog | undefined,
+  entity: EntityResource,
+  commandManifestStatus: CommandManifestStatus
+): string {
+  if (!catalog) return "Command Catalog unavailable";
+  if (catalog.length === 0) return "No Commands are defined in Atlas Protocol";
+  if (commandManifestStatus === "loading") return "Loading Asset Commands";
+  if (commandManifestStatus === "unavailable") return "Asset Commands unavailable";
+  if (!entity.command_manifest?.length) return "This Asset has no Commands";
+  return "No operator inputs are available for this Asset's Commands";
+}
+
 function entityReticleTarget(entity: EntityResource | undefined): MapReticleTarget | null {
   return entity && entityKind(entity) !== "other" ? { type: "entity", id: entity.entity_id } : null;
 }
 
-function panelTitle(sidebar: SidebarState, selectionKind?: EntityKind): string {
-  if (sidebar.view.mode === "list") return LIST_TITLES[sidebar.view.list];
-  return selectionKind ? ENTITY_DESCRIPTORS[selectionKind].title : "Inspector";
+function selectedEntityTitle(entity: EntityResource): string {
+  const kind = entityKind(entity);
+  return kind === "other" ? "Entity" : ENTITY_DESCRIPTORS[kind].title;
 }

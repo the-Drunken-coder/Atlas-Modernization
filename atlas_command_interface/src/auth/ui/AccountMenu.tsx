@@ -1,3 +1,4 @@
+import { Button, Menu, MenuItem, PopoverNext } from "@blueprintjs/core";
 import { useEffect, useRef, useState } from "react";
 import { BrandIcon } from "../../ui/primitives/icons.js";
 
@@ -10,77 +11,72 @@ type AccountMenuProps = {
 
 export function AccountMenu({ username, loggingOut, error, onLogout }: AccountMenuProps) {
   const [open, setOpen] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const logoutItemRef = useRef<HTMLLIElement>(null);
 
   useEffect(() => {
     if (error) setOpen(true);
   }, [error]);
 
-  useEffect(() => {
-    if (!open) return;
-    const closeOnOutsideClick = (event: PointerEvent) => {
-      if (!loggingOut && !containerRef.current?.contains(event.target as Node)) setOpen(false);
-    };
-    document.addEventListener("pointerdown", closeOnOutsideClick);
-    return () => {
-      document.removeEventListener("pointerdown", closeOnOutsideClick);
-    };
-  }, [loggingOut, open]);
-
   return (
-    <div
-      className="account-menu"
-      ref={containerRef}
-      onKeyDown={(event) => {
-        if (!open || event.key !== "Escape" || loggingOut) return;
-        event.preventDefault();
-        event.stopPropagation();
-        setOpen(false);
-        triggerRef.current?.focus();
-      }}
-    >
-      <button
-        ref={triggerRef}
-        type="button"
-        className="bp6-button bp6-minimal rail__brand rail__brand-button"
-        aria-label="Account"
-        aria-expanded={open}
-        aria-controls="account-menu-popover"
-        title="Account"
-        onClick={() => {
-          if (!loggingOut) setOpen((current) => !current);
+    <div className="account-menu">
+      <PopoverNext
+        isOpen={open}
+        placement="right-start"
+        popoverClassName="account-menu-popover"
+        autoFocus={false}
+        canEscapeKeyClose={!loggingOut}
+        shouldReturnFocusOnClose
+        onInteraction={(nextOpen) => {
+          if (!loggingOut) setOpen(nextOpen);
         }}
+        onOpening={() => logoutItemRef.current?.querySelector<HTMLElement>("[role='menuitem']")?.focus()}
+        content={
+          <div
+            role="group"
+            aria-label="Account menu"
+            onKeyDown={(event) => {
+              if (event.key === "Escape" && !loggingOut) {
+                event.stopPropagation();
+                setOpen(false);
+                triggerRef.current?.focus();
+              }
+            }}
+          >
+            <div className="account-menu__identity">
+              <span>Your account</span>
+              <strong>{username}</strong>
+            </div>
+            <Menu size="small">
+              <MenuItem disabled text="Settings" label="Coming soon" />
+              <MenuItem
+                ref={logoutItemRef}
+                intent="danger"
+                disabled={loggingOut}
+                shouldDismissPopover={false}
+                text={loggingOut ? "Logging out..." : "Log out"}
+                onClick={onLogout}
+              />
+            </Menu>
+            {error ? (
+              <span className="account-menu__error" role="alert">
+                {error}
+              </span>
+            ) : null}
+          </div>
+        }
       >
-        <BrandIcon size={22} />
-      </button>
-      {open ? (
-        <div id="account-menu-popover" className="account-menu__popover" role="group" aria-label="Account menu">
-          <div className="account-menu__identity">
-            <span>Your account</span>
-            <strong>{username}</strong>
-          </div>
-          <div className="account-menu__items">
-            <button type="button" className="account-menu__item" disabled>
-              <span>Settings</span>
-              <small>Coming soon</small>
-            </button>
-            <button
-              type="button"
-              className="account-menu__item account-menu__item--danger"
-              disabled={loggingOut}
-              onClick={onLogout}
-            >
-              {loggingOut ? "Logging out..." : "Log out"}
-            </button>
-          </div>
-          {error ? (
-            <span className="account-menu__error" role="alert">
-              {error}
-            </span>
-          ) : null}
-        </div>
-      ) : null}
+        <Button
+          ref={triggerRef}
+          type="button"
+          variant="minimal"
+          className="rail__brand rail__brand-button"
+          aria-label="Account"
+          title="Account"
+        >
+          <BrandIcon size={22} />
+        </Button>
+      </PopoverNext>
     </div>
   );
 }

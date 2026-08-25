@@ -39,11 +39,14 @@
   border: 0;
 }
 
-.connection-badge {
+.map-stage > .connection-badge__anchor {
   position: absolute;
-  top: 10px;
-  left: 10px;
-  z-index: 30;
+  top: 7px;
+  left: 146px;
+  z-index: 32;
+}
+
+.connection-badge {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -102,12 +105,9 @@ button.connection-badge:hover:not([disabled]) {
 }
 
 .connection-detail {
-  position: absolute;
-  top: 47px;
-  left: 10px;
-  max-height: calc(100% - var(--space-3) - var(--space-3) - 29px);
+  position: static;
+  max-height: min(560px, calc(100vh - 80px));
   overflow-y: auto;
-  z-index: 31;
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
@@ -116,9 +116,14 @@ button.connection-badge:hover:not([disabled]) {
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   background: var(--surface-1);
-  box-shadow: var(--shadow-panel);
   color: var(--text-2);
   font-size: 12px;
+}
+
+.connection-detail-popover .bp6-popover-content {
+  padding: 0;
+  background: transparent;
+  box-shadow: var(--shadow-panel);
 }
 
 .connection-detail p {
@@ -152,28 +157,48 @@ button.connection-badge:hover:not([disabled]) {
   color: var(--warning);
 }
 
-.map-overlay-tr {
+.map-toolbar.bp6-navbar {
   position: absolute;
-  top: 10px;
-  right: 10px;
+  top: 0;
+  right: 0;
+  left: 0;
   z-index: 30;
-  min-width: 190px;
-  padding: 6px 8px;
-  background: color-mix(in srgb, var(--surface-1) 94%, transparent);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  box-shadow: var(--shadow-panel);
+  height: 42px;
+  min-height: 42px;
+  padding: 0 8px;
+  border: 0;
+  border-bottom: 1px solid var(--border-strong);
+  border-radius: 0;
+  background: color-mix(in srgb, var(--bg-base) 94%, transparent);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 22%);
+  pointer-events: auto;
+}
+
+.map-toolbar .bp6-navbar-heading {
+  color: var(--text-1);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.map-toolbar .bp6-navbar-group {
+  height: 42px;
 }
 
 .map-source-control .field {
   margin-bottom: 0;
 }
 
-.map-source-control .field__label {
+.map-source-control {
+  width: 188px;
+}
+
+.map-source-control .bp6-html-select select {
+  height: 28px;
+  min-height: 28px;
   font-family: var(--font-mono);
-  font-size: 9px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-size: 10px;
 }
 
 .map-canvas {

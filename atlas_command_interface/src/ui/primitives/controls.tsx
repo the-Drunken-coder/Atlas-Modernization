@@ -1,53 +1,57 @@
 import {
-  type ButtonHTMLAttributes,
-  forwardRef,
-  type InputHTMLAttributes,
-  type ReactNode,
-  type SelectHTMLAttributes,
-  useId
-} from "react";
-import { DoubleCaretVerticalIcon } from "./icons.js";
+  Button as BlueprintButton,
+  type ButtonProps as BlueprintButtonProps,
+  FormGroup,
+  HTMLSelect,
+  type HTMLSelectProps,
+  InputGroup,
+  type InputGroupProps,
+  Intent
+} from "@blueprintjs/core";
+import { forwardRef, useId } from "react";
 
-type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
-  variant?: "default" | "primary" | "ghost";
-};
+type ButtonVariant = "default" | "primary" | "ghost";
+type ButtonProps = Omit<BlueprintButtonProps, "intent" | "variant"> & { variant?: ButtonVariant };
 
+/** Atlas button vocabulary backed by Blueprint's focus, loading, and disabled behavior. */
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
   { variant = "default", className, ...props },
   ref
 ) {
-  const variantClass =
-    variant === "primary" ? " bp6-intent-primary btn--primary" : variant === "ghost" ? " bp6-minimal btn--ghost" : "";
   return (
-    <button
+    <BlueprintButton
       ref={ref}
-      type="button"
-      className={`bp6-button btn${variantClass}${className ? ` ${className}` : ""}`}
+      intent={variant === "primary" ? Intent.PRIMARY : Intent.NONE}
+      variant={variant === "ghost" ? "minimal" : "solid"}
+      className={`btn${variant === "primary" ? " btn--primary" : variant === "ghost" ? " btn--ghost" : ""}${className ? ` ${className}` : ""}`}
       {...props}
     />
   );
 });
 
-type IconButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
-  label: string;
-  children: ReactNode;
-};
+type IconButtonProps = Omit<ButtonProps, "variant"> & { label: string };
 
-export function IconButton({ label, children, className, ...props }: IconButtonProps) {
+export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(function IconButton(
+  { label, children, className, ...props },
+  ref
+) {
   return (
-    <button
+    <BlueprintButton
+      ref={ref}
       type="button"
-      className={`bp6-button bp6-minimal bp6-small icon-button${className ? ` ${className}` : ""}`}
+      variant="minimal"
+      size="small"
+      className={`icon-button${className ? ` ${className}` : ""}`}
       aria-label={label}
       title={label}
       {...props}
     >
       {children}
-    </button>
+    </BlueprintButton>
   );
-}
+});
 
-type TextFieldProps = InputHTMLAttributes<HTMLInputElement> & {
+type TextFieldProps = InputGroupProps & {
   label?: string;
   hint?: string;
   mono?: boolean;
@@ -57,39 +61,32 @@ export function TextField({ label, hint, mono, id: providedId, className, ...pro
   const generatedId = useId();
   const id = providedId ?? generatedId;
   return (
-    <label className="bp6-label field" htmlFor={id}>
-      {label ? <span className="field__label">{label}</span> : null}
-      <input
+    <FormGroup
+      className="field"
+      helperText={hint}
+      intent={props["aria-invalid"] ? Intent.DANGER : Intent.NONE}
+      label={label}
+      labelFor={id}
+    >
+      <InputGroup
         id={id}
-        className={`bp6-input bp6-fill input${mono ? " input--mono" : ""}${className ? ` ${className}` : ""}`}
+        fill
+        size="small"
+        className={`input${mono ? " input--mono" : ""}${className ? ` ${className}` : ""}`}
         {...props}
       />
-      {hint ? <span className="field__hint">{hint}</span> : null}
-    </label>
+    </FormGroup>
   );
 }
 
-type SelectFieldProps = SelectHTMLAttributes<HTMLSelectElement> & {
-  label?: string;
-  options: Array<{ value: string; label: string; disabled?: boolean }>;
-};
+type SelectFieldProps = HTMLSelectProps & { label?: string };
 
-export function SelectField({ label, options, id: providedId, className, ...props }: SelectFieldProps) {
+export function SelectField({ label, id: providedId, className, ...props }: SelectFieldProps) {
   const generatedId = useId();
   const id = providedId ?? generatedId;
   return (
-    <label className="bp6-label field" htmlFor={id}>
-      {label ? <span className="field__label">{label}</span> : null}
-      <span className="bp6-html-select bp6-fill select-shell">
-        <select id={id} className={`select${className ? ` ${className}` : ""}`} {...props}>
-          {options.map((option) => (
-            <option key={option.value} value={option.value} disabled={option.disabled}>
-              {option.label}
-            </option>
-          ))}
-        </select>
-        <DoubleCaretVerticalIcon size={12} />
-      </span>
-    </label>
+    <FormGroup className="field" label={label} labelFor={id}>
+      <HTMLSelect id={id} fill className={`select-shell${className ? ` ${className}` : ""}`} {...props} />
+    </FormGroup>
   );
 }

@@ -3,7 +3,7 @@ import { AtlasAdminClient } from "@the-drunken-coder/atlas-sdk/admin";
 import { Component, type FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import { sanitizeConnectionError } from "../../atlas/connection-error.js";
 import { ConnectionBadge } from "../../ui/ConnectionBadge.js";
-import { Button } from "../../ui/primitives/controls.js";
+import { Button, TextField } from "../../ui/primitives/controls.js";
 import { AccountMenu } from "./AccountMenu.js";
 
 type AuthState =
@@ -220,26 +220,20 @@ function LoginPanel({
           <span className="login-panel__eyebrow">Atlas</span>
           <h1>Sign in</h1>
         </div>
-        <label className="field">
-          <span className="field__label">Username</span>
-          <input
-            className="input"
-            autoComplete="username"
-            autoFocus
-            value={username}
-            onChange={(event) => setUsername(event.target.value)}
-          />
-        </label>
-        <label className="field">
-          <span className="field__label">Password</span>
-          <input
-            className="input"
-            type="password"
-            autoComplete="current-password"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-          />
-        </label>
+        <TextField
+          label="Username"
+          autoComplete="username"
+          autoFocus
+          value={username}
+          onChange={(event) => setUsername(event.target.value)}
+        />
+        <TextField
+          label="Password"
+          type="password"
+          autoComplete="current-password"
+          value={password}
+          onChange={(event) => setPassword(event.target.value)}
+        />
         {error ? <div className="banner banner--error">{error}</div> : null}
         <Button type="submit" variant="primary" disabled={submitting || username.trim() === "" || password === ""}>
           {submitting ? "Signing in..." : "Sign in"}

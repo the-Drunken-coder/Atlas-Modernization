@@ -230,13 +230,13 @@ describe("AuthGate", () => {
 
     expect(await screen.findByText("map console")).toBeInTheDocument();
     expect(screen.queryByText("Signed in as")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Log out" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Log out" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Account" }));
     expect(screen.getByRole("group", { name: "Account menu" })).toBeInTheDocument();
     expect(screen.getByText("Your account")).toBeInTheDocument();
     expect(screen.getByText("operator")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Settings/ })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Log out" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: /Settings/ })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("menuitem", { name: "Log out" })).toBeInTheDocument();
     expect(fetchStub.calls[1]).toMatchObject([
       "https://core.test/admin/auth/login",
       {
@@ -310,13 +310,13 @@ describe("AuthGate", () => {
     const account = await screen.findByRole("button", { name: "Account" });
     await user.click(account);
     await user.keyboard("{Escape}");
-    expect(screen.queryByRole("group", { name: "Account menu" })).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("group", { name: "Account menu" })).not.toBeInTheDocument());
     expect(account).toHaveFocus();
     expect(mapEscape).not.toHaveBeenCalled();
 
     await user.click(account);
     await user.click(screen.getByText("map console"));
-    expect(screen.queryByRole("group", { name: "Account menu" })).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("group", { name: "Account menu" })).not.toBeInTheDocument());
     window.removeEventListener("keydown", mapKeyListener);
   });
 
@@ -335,9 +335,9 @@ describe("AuthGate", () => {
     );
 
     await user.click(await screen.findByRole("button", { name: "Account" }));
-    await user.click(screen.getByRole("button", { name: "Log out" }));
+    await user.click(screen.getByRole("menuitem", { name: "Log out" }));
 
-    expect(await screen.findByRole("button", { name: "Logging out..." })).toBeDisabled();
+    expect(await screen.findByRole("menuitem", { name: "Logging out..." })).toHaveAttribute("aria-disabled", "true");
     await user.keyboard("{Escape}");
     expect(screen.getByRole("group", { name: "Account menu" })).toBeInTheDocument();
   });
@@ -353,7 +353,7 @@ describe("AuthGate", () => {
     );
 
     await user.click(await screen.findByRole("button", { name: "Account" }));
-    await user.click(screen.getByRole("button", { name: "Log out" }));
+    await user.click(screen.getByRole("menuitem", { name: "Log out" }));
 
     expect(await screen.findByLabelText("Username")).toHaveFocus();
     expect(screen.queryByText("map console")).not.toBeInTheDocument();
@@ -380,11 +380,11 @@ describe("AuthGate", () => {
     );
 
     await user.click(await screen.findByRole("button", { name: "Account" }));
-    await user.click(screen.getByRole("button", { name: "Log out" }));
+    await user.click(screen.getByRole("menuitem", { name: "Log out" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("logout unavailable");
     expect(screen.getByText("map console")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Log out" })).toBeEnabled();
+    expect(screen.getByRole("menuitem", { name: "Log out" })).not.toHaveAttribute("aria-disabled", "true");
   });
 
   it("returns to logged-out state when Atlas auth expires", async () => {
