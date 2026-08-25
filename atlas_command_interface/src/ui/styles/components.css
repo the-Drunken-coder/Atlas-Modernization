@@ -479,6 +479,16 @@
   border-color: var(--border-strong);
   background: var(--bg-base);
   color: var(--text-1);
+  color-scheme: dark;
+}
+
+.select-shell > select > option {
+  background: var(--surface-1);
+  color: var(--text-1);
+}
+
+.select-shell > select > option:disabled {
+  color: var(--text-3);
 }
 
 .input--mono {

@@ -298,6 +298,7 @@ export function MapConsole() {
                 <ConnectionBadge health={atlas.health} error={atlas.connectionError} onRetry={atlas.reconnect} />
                 <MapSourcePicker
                   sources={atlas.config.mapSources}
+                  defaultSourceId={atlas.config.defaultMapSourceId}
                   value={mapSourcePickerValue}
                   onChange={setSelectedMapSourceId}
                 />
@@ -374,19 +375,26 @@ function PurposeBuiltCommandForm({
 
 function MapSourcePicker({
   sources,
+  defaultSourceId,
   value,
   onChange
 }: {
   sources: MapSourceConfig[];
+  defaultSourceId: string;
   value: string;
   onChange: (value: string) => void;
 }) {
+  const orderedSources = [
+    ...sources.filter((source) => source.id === defaultSourceId),
+    ...sources.filter((source) => source.id !== defaultSourceId)
+  ];
+
   return (
     <div className="map-overlay-tr map-source-control">
       <SelectField
         label="Map"
         value={value}
-        options={sources.map((source) => ({
+        options={orderedSources.map((source) => ({
           label: source.unavailableReason ? `${source.label} (${source.unavailableReason})` : source.label,
           value: source.id,
           disabled: !source.style

@@ -702,12 +702,12 @@ describe("MapConsole", () => {
     const mapSelect = screen.getByLabelText("Map");
     const options = Array.from(mapSelect.querySelectorAll("option"));
     expect(options.map((option) => option.textContent)).toEqual([
-      "Google Satellite (missing key)",
       "OpenStreetMap Default",
+      "Google Satellite (missing key)",
       "USGS Topo"
     ]);
-    expect(options[0]).toBeDisabled();
-    expect(options[1]).not.toBeDisabled();
+    expect(options[0]).not.toBeDisabled();
+    expect(options[1]).toBeDisabled();
 
     await user.selectOptions(mapSelect, "usgs-topo");
 
