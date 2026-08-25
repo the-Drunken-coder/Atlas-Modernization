@@ -33,6 +33,7 @@ type MapViewProps = {
   sources: MapSources;
   styleId: string;
   style: StyleSpecification;
+  maptilerApiKey?: string;
   selectedId?: string;
   editing?: MapEditing;
   initialCenter?: [number, number];
@@ -50,10 +51,14 @@ type SymbolMarkerEntry = {
   feature: SymbolMarkerFeature;
 };
 
+const MAPTILER_GEOCODING_ATTRIBUTION =
+  '&copy; <a href="https://www.maptiler.com/copyright/">MapTiler</a>, &copy; OpenStreetMap contributors';
+
 export function MapView({
   sources,
   styleId,
   style,
+  maptilerApiKey,
   selectedId,
   editing,
   initialCenter,
@@ -70,7 +75,7 @@ export function MapView({
   const mapLibreRef = useRef<MapLibreRuntime | undefined>(undefined);
   const sourcesRef = useRef(sources);
   const editingRef = useRef(editing);
-  const initialMapRef = useRef({ initialCenter, style, styleId });
+  const initialMapRef = useRef({ initialCenter, maptilerApiKey, style, styleId });
   const currentStyleIdRef = useRef<string | undefined>(undefined);
   const pendingStyleIdRef = useRef<string | undefined>(undefined);
   const readyRef = useRef(false);
@@ -86,13 +91,14 @@ export function MapView({
   styleSwitchErrorRef.current = onStyleSwitchError;
   sourcesRef.current = sources;
   editingRef.current = editing;
-  initialMapRef.current = { initialCenter, style, styleId };
+  initialMapRef.current = { initialCenter, maptilerApiKey, style, styleId };
   const { notifyUserGesture } = useMapCamera({ mapRef, mapReady, sources, command: cameraCommand });
   const reticleInteraction = useMapReticleInteraction({
     mapCanvasRef,
     mapRef,
     mapReady,
     sources,
+    maptilerApiKey,
     selectedEntityId: selectedId,
     focusTarget,
     notifyUserGesture,
@@ -132,7 +138,8 @@ export function MapView({
           attributionControl: false,
           boxZoom: {
             boxZoomEnd: (zoomMap, start, end) => mapActionsRef.current.completeBoxZoom(zoomMap, start, end)
-          }
+          },
+          doubleClickZoom: false
         });
       } catch (error) {
         setMapError(sanitizeConnectionError(error));
@@ -143,7 +150,13 @@ export function MapView({
       mapRef.current = mapInstance;
       currentStyleIdRef.current = initialMap.styleId;
       mapInstance.addControl(new maplibre.NavigationControl({ showCompass: false }), "top-right");
-      mapInstance.addControl(new maplibre.AttributionControl({ compact: true }), "bottom-left");
+      mapInstance.addControl(
+        new maplibre.AttributionControl({
+          compact: true,
+          customAttribution: initialMap.maptilerApiKey ? MAPTILER_GEOCODING_ATTRIBUTION : undefined
+        }),
+        "bottom-left"
+      );
 
       resizeObserver = new ResizeObserver(() => mapInstance.resize({ [CAMERA_EVENT_TAG]: true }));
       resizeObserver.observe(containerRef.current);

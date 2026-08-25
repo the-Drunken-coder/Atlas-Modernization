@@ -12,6 +12,7 @@ export type AppConfig = {
   atlasBaseUrl: string;
   protocolRevision: string;
   defaultMapSourceId: string;
+  maptilerApiKey?: string;
   mapSources: MapSourceConfig[];
 };
 
@@ -168,6 +169,7 @@ export function appConfigFromEnv(env: RuntimeEnv): AppConfig {
   return {
     ...coreConfig,
     defaultMapSourceId: DEFAULT_MAP_SOURCE_ID,
+    maptilerApiKey: envValue(env.VITE_MAPTILER_API_KEY),
     mapSources: buildMapSourceConfig(env)
   };
 }

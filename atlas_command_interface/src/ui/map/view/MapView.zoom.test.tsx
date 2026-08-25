@@ -1,9 +1,102 @@
 import { fireEvent, waitFor } from "@testing-library/react";
 import { act } from "react";
 import { describe, expect, it, vi } from "vitest";
+import { CAMERA_EVENT_TAG, FIT_BOUNDS_PADDING, FIT_DURATION_MS } from "../interaction/map-camera.js";
+import { GEOGRAPHIC_FIT_MAX_ZOOM } from "../interaction/map-geography.js";
 import { appendMarker, firePointerMove, type PointLike, rect, renderMapView } from "./MapView.test-harness.js";
 
 describe("MapView zoom overlay", () => {
+  it("disables MapLibre's fixed double-click zoom", () => {
+    const { map } = renderMapView();
+    expect(map.options.doubleClickZoom).toBe(false);
+  });
+
+  it("falls back to one-level point zoom when geographic lookup is not configured", () => {
+    const { canvas, map } = renderMapView();
+
+    fireEvent.doubleClick(canvas, { clientX: 80, clientY: 100 });
+
+    expect(map.zoomTo).toHaveBeenCalledWith(
+      5,
+      { around: [70, 80], duration: FIT_DURATION_MS },
+      { [CAMERA_EVENT_TAG]: true }
+    );
+  });
+
+  it("fits the geographic feature under a double-click", async () => {
+    const fetch = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      Response.json({
+        features: [{ text: "Test Region", place_type: ["region"], bbox: [60, 70, 80, 85] }]
+      })
+    );
+    vi.stubGlobal("fetch", fetch);
+    const { canvas, map } = renderMapView({ maptilerApiKey: "map-key" });
+    map.fitBounds.mockClear();
+
+    fireEvent.doubleClick(canvas, { clientX: 80, clientY: 100 });
+
+    await waitFor(() =>
+      expect(map.fitBounds).toHaveBeenCalledWith(
+        [
+          [60, 70],
+          [80, 85]
+        ],
+        { duration: FIT_DURATION_MS, maxZoom: GEOGRAPHIC_FIT_MAX_ZOOM, padding: FIT_BOUNDS_PADDING },
+        { [CAMERA_EVENT_TAG]: true }
+      )
+    );
+    expect(String(fetch.mock.calls[0][0])).toContain("types=major_landform%2Cregion%2Ccountry");
+    expect(map.zoomTo).not.toHaveBeenCalled();
+  });
+
+  it("keeps point zoom when the geographic lookup fails", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(null, { status: 503 }))
+    );
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { canvas, map } = renderMapView({ maptilerApiKey: "map-key" });
+
+    fireEvent.doubleClick(canvas, { clientX: 80, clientY: 100 });
+
+    await waitFor(() =>
+      expect(map.zoomTo).toHaveBeenCalledWith(
+        5,
+        { around: [70, 80], duration: FIT_DURATION_MS },
+        { [CAMERA_EVENT_TAG]: true }
+      )
+    );
+    expect(map.fitBounds).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not apply a geographic lookup after another map gesture", async () => {
+    let resolve!: (response: Response) => void;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        () =>
+          new Promise<Response>((nextResolve) => {
+            resolve = nextResolve;
+          })
+      )
+    );
+    const { canvas, map } = renderMapView({ maptilerApiKey: "map-key" });
+    map.fitBounds.mockClear();
+
+    fireEvent.doubleClick(canvas, { clientX: 80, clientY: 100 });
+    fireEvent.mouseDown(canvas, { button: 0, clientX: 90, clientY: 110 });
+    resolve(
+      Response.json({
+        features: [{ text: "Test Region", place_type: ["region"], bbox: [60, 70, 80, 85] }]
+      })
+    );
+
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(map.fitBounds).not.toHaveBeenCalled();
+    expect(map.zoomTo).not.toHaveBeenCalled();
+  });
+
   it("delegates completed MapLibre box zooms to fitScreenCoordinates", () => {
     const { map } = renderMapView();
     const boxZoom = map.options.boxZoom as {

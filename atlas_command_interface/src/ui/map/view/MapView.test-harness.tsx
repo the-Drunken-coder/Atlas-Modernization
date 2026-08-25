@@ -51,6 +51,7 @@ const maplibreMock = vi.hoisted(() => {
     readonly queryRenderedFeatures = vi.fn((_point?: unknown, _options?: unknown): RenderedFeature[] => []);
     readonly getBearing = vi.fn(() => 0);
     readonly getZoom = vi.fn(() => this.zoom);
+    readonly getMaxZoom = vi.fn(() => 22);
     readonly getLayer = vi.fn((id: string) => this.layers.get(id));
     readonly getSource = vi.fn((id: string) => this.sources.get(id));
     readonly cameraForBounds = vi.fn(
@@ -244,6 +245,7 @@ type RenderMapViewProps = {
   cameraCommand?: MapCameraCommand | null;
   editing?: MapEditing;
   focusTarget?: MapReticleTarget | null;
+  maptilerApiKey?: string;
   onStyleSwitchError?: (error: { failedStyleId: string; activeStyleId: string }) => void;
   selectedId?: string;
   sources?: MapSources;
@@ -266,6 +268,7 @@ export function renderMapView(props: RenderMapViewProps = {}) {
       sources={renderProps.sources}
       styleId={renderProps.styleId}
       style={renderProps.style}
+      maptilerApiKey={renderProps.maptilerApiKey}
       selectedId={renderProps.selectedId}
       editing={renderProps.editing}
       focusTarget={renderProps.focusTarget}
@@ -286,6 +289,7 @@ export function renderMapView(props: RenderMapViewProps = {}) {
         sources={renderProps.sources}
         styleId={renderProps.styleId}
         style={renderProps.style}
+        maptilerApiKey={renderProps.maptilerApiKey}
         selectedId={renderProps.selectedId}
         editing={renderProps.editing}
         focusTarget={renderProps.focusTarget}

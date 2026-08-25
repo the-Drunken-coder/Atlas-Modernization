@@ -31,6 +31,7 @@ export function useMapReticleInteraction(options: MapReticleInteractionOptions) 
     customCursorVisible: Boolean(stateStore.state.zoomOverlay || (stateStore.state.pointerPoint && visibleReticle)),
     canvasHandlers: {
       onClick: pointer.onClick,
+      onDoubleClick: pointer.onDoubleClick,
       onMouseDown: pointer.onMouseDown,
       onPointerLeave: pointer.onPointerLeave,
       onPointerMove: pointer.onPointerMove,

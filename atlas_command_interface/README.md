@@ -100,6 +100,8 @@ Microsoft imagery via Bing or Azure Maps is intentionally deferred for the stati
 
 The configured `maptiler-osm-dark` source remains the default whether or not its key is available. A valid explicit operator selection takes precedence; `openstreetmap-default` remains selectable but is not an automatic fallback when the configured default is unavailable.
 
+When `VITE_MAPTILER_API_KEY` is configured, double-clicking the map reverse-resolves the clicked geography and fits a country, landform, region, province, or local place appropriate to the current zoom. If MapTiler geocoding is unavailable, double-click keeps the one-level point zoom fallback.
+
 ## Cloudflare Pages
 
 Use these settings for the Pages project:

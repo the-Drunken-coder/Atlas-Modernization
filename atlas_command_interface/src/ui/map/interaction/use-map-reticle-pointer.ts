@@ -7,6 +7,12 @@ import {
   reticlesEqual,
   zoomDeltaFromWheel
 } from "../view/map-view-utils.js";
+import { CAMERA_EVENT_TAG, FIT_BOUNDS_PADDING, FIT_DURATION_MS } from "./map-camera.js";
+import {
+  chooseGeographicZoomTarget,
+  fetchMapTilerGeographicTargets,
+  GEOGRAPHIC_FIT_MAX_ZOOM
+} from "./map-geography.js";
 import {
   pointFromClient,
   RETICLE_TARGET_SIZE,
@@ -57,7 +63,15 @@ export function useMapReticlePointer({ options, stateStore }: PointerHookOptions
   const scrollLockedExternalReticleRef = useRef(false);
   const zoomPointerInsideMapRef = useRef(true);
   const suppressNextClickRef = useRef(false);
+  const geographicZoomAbortRef = useRef<AbortController | undefined>(undefined);
+  const geographicZoomRequestRef = useRef(0);
   optionsRef.current = options;
+
+  const cancelGeographicZoom = useCallback(() => {
+    geographicZoomRequestRef.current += 1;
+    geographicZoomAbortRef.current?.abort();
+    geographicZoomAbortRef.current = undefined;
+  }, []);
 
   const cancelPendingPointer = useCallback(() => {
     pendingPointerRef.current = null;
@@ -224,6 +238,7 @@ export function useMapReticlePointer({ options, stateStore }: PointerHookOptions
 
   const onMouseDown = useCallback(
     (event: MouseEvent<HTMLDivElement>) => {
+      cancelGeographicZoom();
       if (!event.shiftKey || event.button !== 0) return;
       if (event.target instanceof HTMLElement && event.target.closest(".maplibregl-control-container")) return;
       const point = pointFromClient(event, event.currentTarget.getBoundingClientRect(), true);
@@ -234,11 +249,12 @@ export function useMapReticlePointer({ options, stateStore }: PointerHookOptions
       setReticle(null);
       optionsRef.current.notifyUserGesture();
     },
-    [setPointerPoint, setReticle, setZoomOverlay]
+    [cancelGeographicZoom, setPointerPoint, setReticle, setZoomOverlay]
   );
 
   const onWheelCapture = useCallback(
     (event: WheelEvent<HTMLDivElement>) => {
+      cancelGeographicZoom();
       const current = stateRef.current;
       if (current.zoomOverlay) return;
       if (event.target instanceof HTMLElement && event.target.closest(".maplibregl-control-container")) return;
@@ -270,7 +286,15 @@ export function useMapReticlePointer({ options, stateStore }: PointerHookOptions
         }
       }, SCROLL_LOCK_SETTLE_MS);
     },
-    [setPointerPoint, setReticle, setScrollLocked, stateRef, syncTargetReticle, zoomAroundReticleTarget]
+    [
+      cancelGeographicZoom,
+      setPointerPoint,
+      setReticle,
+      setScrollLocked,
+      stateRef,
+      syncTargetReticle,
+      zoomAroundReticleTarget
+    ]
   );
 
   const onClick = useCallback(
@@ -303,12 +327,68 @@ export function useMapReticlePointer({ options, stateStore }: PointerHookOptions
     [consumeSuppressedClick, stateRef]
   );
 
+  const onDoubleClick = useCallback(
+    (event: MouseEvent<HTMLDivElement>) => {
+      if (event.target instanceof HTMLElement && event.target.closest(".maplibregl-control-container")) return;
+      event.preventDefault();
+      event.stopPropagation();
+      cancelGeographicZoom();
+
+      const { mapRef, maptilerApiKey, notifyUserGesture } = optionsRef.current;
+      const map = mapRef.current;
+      if (!map) return;
+      notifyUserGesture();
+
+      const point = pointFromClient(event, event.currentTarget.getBoundingClientRect());
+      const clicked = map.unproject([point.x, point.y]);
+      const coordinates: [number, number] = [clicked.lng, clicked.lat];
+      const requestView = cameraView(map);
+      if (!maptilerApiKey) {
+        zoomOneLevel(map, coordinates);
+        return;
+      }
+
+      const requestId = geographicZoomRequestRef.current;
+      const controller = new AbortController();
+      geographicZoomAbortRef.current = controller;
+      void fetchMapTilerGeographicTargets({
+        apiKey: maptilerApiKey,
+        coordinates,
+        zoom: requestView.zoom,
+        signal: controller.signal
+      })
+        .then((targets) => {
+          if (controller.signal.aborted || geographicZoomRequestRef.current !== requestId) return;
+          geographicZoomAbortRef.current = undefined;
+          if (!cameraViewMatches(map, requestView)) return;
+          const target = chooseGeographicZoomTarget(map, targets);
+          if (!target) {
+            zoomOneLevel(map, coordinates);
+            return;
+          }
+          map.fitBounds(
+            target.bounds,
+            { duration: FIT_DURATION_MS, maxZoom: GEOGRAPHIC_FIT_MAX_ZOOM, padding: FIT_BOUNDS_PADDING },
+            { [CAMERA_EVENT_TAG]: true }
+          );
+        })
+        .catch((error: unknown) => {
+          if (controller.signal.aborted || geographicZoomRequestRef.current !== requestId) return;
+          geographicZoomAbortRef.current = undefined;
+          console.warn("Map geographic lookup failed", error instanceof Error ? error.message : "unknown error");
+          if (cameraViewMatches(map, requestView)) zoomOneLevel(map, coordinates);
+        });
+    },
+    [cancelGeographicZoom]
+  );
+
   const navigateWithArrow = useCallback(
     (event: globalThis.KeyboardEvent) => {
       const direction = directionFromKey(event.key);
       if (!direction || isEditableKeyboardTarget(event.target)) return;
       event.preventDefault();
       event.stopPropagation();
+      cancelGeographicZoom();
       if (stateRef.current.zoomOverlay) return;
       const { mapCanvasRef, mapRef, sources, selectedEntityId, onSelectEntity } = optionsRef.current;
       const mapCanvas = mapCanvasRef.current;
@@ -319,7 +399,7 @@ export function useMapReticlePointer({ options, stateStore }: PointerHookOptions
       setReticle(null);
       onSelectEntity(nextEntityId);
     },
-    [setReticle, stateRef]
+    [cancelGeographicZoom, setReticle, stateRef]
   );
 
   const completeBoxZoom = useCallback(
@@ -345,6 +425,7 @@ export function useMapReticlePointer({ options, stateStore }: PointerHookOptions
     scrollLockTimeoutRef,
     suppressClickTimeoutRef,
     scrollZoomRestoreRef,
+    cancelGeographicZoom,
     zoomPointerInsideMapRef,
     cancelPendingPointer,
     clearPointer,
@@ -354,6 +435,7 @@ export function useMapReticlePointer({ options, stateStore }: PointerHookOptions
     syncTargetReticle,
     navigateWithArrow,
     onClick,
+    onDoubleClick,
     onMouseDown,
     onPointerLeave,
     onPointerMove,
@@ -379,5 +461,31 @@ function isEditableKeyboardTarget(target: EventTarget | null): boolean {
   return (
     target instanceof HTMLElement &&
     (target.matches("input, textarea, select, [role='separator']") || target.isContentEditable)
+  );
+}
+
+type CameraView = { center: [number, number]; zoom: number };
+
+function cameraView(map: Pick<MlMap, "getCenter" | "getZoom">): CameraView {
+  const center = map.getCenter();
+  return { center: [center.lng, center.lat], zoom: map.getZoom() };
+}
+
+function cameraViewMatches(map: Pick<MlMap, "getCenter" | "getZoom">, expected: CameraView): boolean {
+  const current = cameraView(map);
+  return (
+    current.zoom === expected.zoom &&
+    current.center[0] === expected.center[0] &&
+    current.center[1] === expected.center[1]
+  );
+}
+
+function zoomOneLevel(map: Pick<MlMap, "getMaxZoom" | "getZoom" | "zoomTo">, around: [number, number]): void {
+  map.zoomTo(
+    Math.min(map.getZoom() + 1, map.getMaxZoom()),
+    { around, duration: FIT_DURATION_MS },
+    {
+      [CAMERA_EVENT_TAG]: true
+    }
   );
 }

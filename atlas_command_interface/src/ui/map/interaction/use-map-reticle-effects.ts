@@ -23,6 +23,7 @@ export function useMapReticleEffects({ options, stateStore, pointer, zooming, re
   const {
     optionsRef,
     markerBoxCacheRef,
+    cancelGeographicZoom,
     cancelPendingPointer,
     clearPointer,
     restoreReticleAtCurrentZoomPoint,
@@ -208,12 +209,13 @@ export function useMapReticleEffects({ options, stateStore, pointer, zooming, re
 
   useEffect(
     () => () => {
+      cancelGeographicZoom();
       cancelPendingPointer();
       if (scrollLockTimeoutRef.current !== undefined) window.clearTimeout(scrollLockTimeoutRef.current);
       if (suppressClickTimeoutRef.current !== undefined) window.clearTimeout(suppressClickTimeoutRef.current);
       if (scrollZoomRestoreRef.current) window.clearTimeout(scrollZoomRestoreRef.current.timeout);
       scrollZoomRestoreRef.current = undefined;
     },
-    [cancelPendingPointer, scrollLockTimeoutRef, scrollZoomRestoreRef, suppressClickTimeoutRef]
+    [cancelGeographicZoom, cancelPendingPointer, scrollLockTimeoutRef, scrollZoomRestoreRef, suppressClickTimeoutRef]
   );
 }

@@ -8,6 +8,7 @@ export type MapReticleInteractionOptions = {
   mapRef: RefObject<MlMap | undefined>;
   mapReady: boolean;
   sources: MapSources;
+  maptilerApiKey?: string;
   selectedEntityId?: string;
   focusTarget?: MapReticleTarget | null;
   notifyUserGesture: () => void;

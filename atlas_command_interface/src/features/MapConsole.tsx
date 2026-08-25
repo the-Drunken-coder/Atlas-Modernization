@@ -270,6 +270,7 @@ export function MapConsole() {
                       sources={sources}
                       styleId={selectedMapSource.id}
                       style={selectedMapSource.style}
+                      maptilerApiKey={atlas.config.maptilerApiKey}
                       selectedId={selectedId}
                       editing={
                         edit
