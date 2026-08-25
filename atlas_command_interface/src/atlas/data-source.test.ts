@@ -14,6 +14,7 @@ const config = {
   atlasBaseUrl: "https://core.test",
   protocolRevision: "rev",
   defaultMapSourceId: "openstreetmap-default",
+  placeSearch: { provider: "maptiler" as const, unavailableReason: "missing key" },
   mapSources: [
     { id: "openstreetmap-default", label: "OpenStreetMap Default", style: styleFixture("openstreetmap-default") }
   ]

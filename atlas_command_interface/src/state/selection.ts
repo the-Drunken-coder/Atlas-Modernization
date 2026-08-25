@@ -1,6 +1,6 @@
 import { ENTITY_DESCRIPTORS, type EntityKind, type EntityListKind } from "../atlas/entities.js";
 
-export type ListKind = EntityListKind | "commands" | "apiKeys";
+export type ListKind = EntityListKind | "places" | "commands" | "apiKeys";
 
 export type SidebarView = { mode: "list"; list: ListKind } | { mode: "inspector"; previousList: ListKind };
 

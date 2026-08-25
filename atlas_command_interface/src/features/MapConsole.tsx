@@ -1,6 +1,6 @@
 import { Callout } from "@blueprintjs/core";
 import type { CommandCatalog, EntityResource, JSONValue } from "@the-drunken-coder/atlas-sdk";
-import { lazy, Suspense, useCallback, useEffect, useMemo, useReducer, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { MapSourceConfig } from "../app/config.js";
 import { type CommandAvailability, commandsForTargeting } from "../atlas/command-targeting.js";
 import {
@@ -25,7 +25,7 @@ import { ConnectionBadge } from "../ui/ConnectionBadge.js";
 import { AppShell } from "../ui/layout/AppShell.js";
 import { SidebarPanel } from "../ui/layout/SidebarPanel.js";
 import { SidebarRail } from "../ui/layout/SidebarRail.js";
-import type { MapCameraCommand } from "../ui/map/interaction/map-camera.js";
+import type { MapCameraCommand, MapTarget } from "../ui/map/interaction/map-camera.js";
 import { MapSourcePicker } from "../ui/map/MapSourcePicker.js";
 import { buildMapSources } from "../ui/map/rendering/map-sources.js";
 import type { MapReticleTarget } from "../ui/map/view/MapView.js";
@@ -38,10 +38,13 @@ import { type CommandFormState, useCommandFlow } from "./commands/use-command-fl
 import { EntityList } from "./EntityList.js";
 import { GeofeatureInspector } from "./geofeatures/GeofeatureInspector.js";
 import { type GeometryEditState, useGeometryEdit } from "./geofeatures/use-geometry-edit.js";
+import { PlacesPanel } from "./places/PlacesPanel.js";
+import { createMapTilerPlaceSearch, type PlaceSearch } from "./places/place-search.js";
 import { TrackInspector } from "./tracks/TrackInspector.js";
 
 const LIST_TITLES = Object.fromEntries([
   ...ENTITY_KINDS.map((kind) => [ENTITY_DESCRIPTORS[kind].list, ENTITY_DESCRIPTORS[kind].label]),
+  ["places", "Places"],
   ["commands", "Commands"],
   ["apiKeys", "API Keys"]
 ]) as Record<ListKind, string>;
@@ -56,8 +59,22 @@ export function MapConsole() {
   const { snapshot, catalog } = atlas;
   const [sidebar, dispatch] = useReducer(sidebarReducer, initialSidebarState);
   const [entityQueries, setEntityQueries] = useState(EMPTY_ENTITY_QUERIES);
+  const [placeQuery, setPlaceQuery] = useState("");
+  const [placePreviewTarget, setPlacePreviewTarget] = useState<MapTarget | null>(null);
+  const [cameraCommand, setCameraCommand] = useState<MapCameraCommand | null>(null);
+  const cameraSequenceRef = useRef(0);
 
   const [selectedMapSourceId, setSelectedMapSourceId] = useState<string>();
+
+  const placeSearch = useMemo<PlaceSearch | undefined>(() => {
+    const apiKey = atlas.config?.placeSearch?.apiKey;
+    return apiKey ? createMapTilerPlaceSearch(apiKey) : undefined;
+  }, [atlas.config?.placeSearch?.apiKey]);
+
+  const issueCameraCommand = useCallback((target: MapTarget) => {
+    cameraSequenceRef.current += 1;
+    setCameraCommand({ seq: cameraSequenceRef.current, target });
+  }, []);
 
   const selection = sidebar.selection;
   const selectedSnapshotEntity = getEntity(snapshot, selection?.id);
@@ -137,16 +154,17 @@ export function MapConsole() {
     },
     [atlas.config]
   );
-  const focusTarget = useMemo(() => entityReticleTarget(selectedEntity), [selectedEntity]);
-  // Camera intent is derived from the sidebar's claim, not the snapshot, so
-  // its identity only changes when the user asks to go somewhere.
-  const cameraCommand = useMemo<MapCameraCommand | null>(
-    () =>
-      sidebar.focusRequest
-        ? { seq: sidebar.focusRequest.seq, target: { type: "entity", id: sidebar.focusRequest.id } }
-        : null,
-    [sidebar.focusRequest]
-  );
+  const focusTarget = placePreviewTarget ?? entityReticleTarget(selectedEntity);
+
+  // Entity rows and place results share one camera sequence. MapView ignores
+  // repeated sequence numbers, even when the targets differ.
+  useEffect(() => {
+    if (sidebar.focusRequest) {
+      issueCameraCommand({ type: "entity", id: sidebar.focusRequest.id });
+    } else {
+      setCameraCommand(null);
+    }
+  }, [issueCameraCommand, sidebar.focusRequest]);
 
   const selectEntityById = useCallback(
     (id: string) => {
@@ -154,6 +172,8 @@ export function MapConsole() {
       if (!entity) return;
       const kind = entityKind(entity);
       if (kind === "other") return;
+      setPlacePreviewTarget(null);
+      setCameraCommand(null);
       dispatch({ type: "selectEntity", kind, id, origin: "map" });
     },
     [snapshot.entities]
@@ -236,6 +256,9 @@ export function MapConsole() {
               snapshot={snapshot}
               sidebar={sidebar}
               entityQueries={entityQueries}
+              placeQuery={placeQuery}
+              placeSearch={placeSearch}
+              placeSearchUnavailableReason={atlas.config.placeSearch.unavailableReason}
               selectedEntity={selectedEntity}
               catalog={catalog}
               commandManifestStatus={resolvedCommandManifestStatus}
@@ -248,6 +271,9 @@ export function MapConsole() {
                 dispatch({ type: "selectEntity", kind, id: entity.entity_id, origin: "sidebar" });
               }}
               onEntityQueryChange={setEntityQuery}
+              onPlaceQueryChange={setPlaceQuery}
+              onPreviewPlace={setPlacePreviewTarget}
+              onFocusPlace={issueCameraCommand}
               onPickCommand={commandFlow.pickSidebarCommand}
               onStartEdit={geometryEdit.startEdit}
               onChangeDraft={geometryEdit.changeDraft}
@@ -288,6 +314,8 @@ export function MapConsole() {
                       onMapContextMenu={commandFlow.onMapContextMenu}
                       onBackgroundClick={() => {
                         commandFlow.closeMapMenu();
+                        setPlacePreviewTarget(null);
+                        setCameraCommand(null);
                         dispatch({ type: "clearSelection" });
                       }}
                       onStyleSwitchError={handleMapStyleSwitchError}
@@ -386,6 +414,9 @@ type PanelBodyProps = {
   snapshot: AtlasSnapshot;
   sidebar: SidebarState;
   entityQueries: Record<EntityKind, string>;
+  placeQuery: string;
+  placeSearch?: PlaceSearch;
+  placeSearchUnavailableReason?: string;
   selectedEntity?: EntityResource;
   catalog?: CommandCatalog;
   commandManifestStatus: CommandManifestStatus;
@@ -394,6 +425,9 @@ type PanelBodyProps = {
   saveError?: string;
   onSelectEntity: (entity: EntityResource) => void;
   onEntityQueryChange: (kind: EntityKind, query: string) => void;
+  onPlaceQueryChange: (query: string) => void;
+  onPreviewPlace: (target: MapTarget | null) => void;
+  onFocusPlace: (target: MapTarget) => void;
   onPickCommand: (availability: CommandAvailability) => void;
   onStartEdit: () => void;
   onChangeDraft: (geometry: UiGeometry) => void;
@@ -452,8 +486,14 @@ function ListBody({
   selectedEntity,
   catalog,
   commandManifestStatus,
+  placeQuery,
+  placeSearch,
+  placeSearchUnavailableReason,
   onSelectEntity,
   onEntityQueryChange,
+  onPlaceQueryChange,
+  onPreviewPlace,
+  onFocusPlace,
   onPickCommand
 }: { list: ListKind } & PanelBodyProps) {
   if (list === "commands") {
@@ -481,6 +521,18 @@ function ListBody({
       );
     }
     return <div className="panel__empty">Select an asset to issue commands.</div>;
+  }
+  if (list === "places") {
+    return (
+      <PlacesPanel
+        query={placeQuery}
+        search={placeSearch}
+        unavailableReason={placeSearchUnavailableReason}
+        onQueryChange={onPlaceQueryChange}
+        onPreview={onPreviewPlace}
+        onFocus={onFocusPlace}
+      />
+    );
   }
   if (list === "apiKeys") {
     return <APIKeysPanel />;

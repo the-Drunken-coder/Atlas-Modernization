@@ -85,6 +85,7 @@ describe("sidebar rail + panel", () => {
     // The rail icon buttons remain in the DOM.
     expect(screen.getByRole("button", { name: "Assets" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Geo Features" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Places" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "API Keys" })).toBeInTheDocument();
   });
 

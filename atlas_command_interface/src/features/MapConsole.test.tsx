@@ -188,6 +188,7 @@ function appConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     atlasBaseUrl: "/atlas",
     protocolRevision: "rev",
     defaultMapSourceId: "openstreetmap-default",
+    placeSearch: { provider: "maptiler", unavailableReason: "missing key" },
     mapSources: [
       { id: "google-satellite", label: "Google Satellite", unavailableReason: "missing key" },
       { id: "openstreetmap-default", label: "OpenStreetMap Default", style: style("openstreetmap-default") },
@@ -343,6 +344,57 @@ describe("MapConsole", () => {
     await user.click(await screen.findByRole("button", { name: /Rover/ }));
 
     expect(screen.getByTestId("map")).toHaveAttribute("data-focus-target", "asset-1");
+  });
+
+  it("previews place results without moving the camera and focuses them on activation", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json({
+          type: "FeatureCollection",
+          attribution: "© MapTiler © OpenStreetMap contributors",
+          features: [
+            {
+              id: "poi.1",
+              text: "Worcester Polytechnic Institute",
+              place_name: "Worcester Polytechnic Institute, Worcester, Massachusetts, United States",
+              center: [-71.8063, 42.2746],
+              place_type: ["poi"]
+            }
+          ]
+        })
+      )
+    );
+    try {
+      renderStaticConsole({
+        config: appConfig({ placeSearch: { provider: "maptiler", apiKey: "maptiler-key" } })
+      });
+
+      fireEvent.click(screen.getByRole("button", { name: /Rover/ }));
+      await act(async () => Promise.resolve());
+      expect(screen.getByTestId("map")).toHaveAttribute("data-camera-seq", "1");
+
+      fireEvent.click(screen.getByRole("button", { name: "Places" }));
+      const input = screen.getByRole("searchbox", { name: "Search places" });
+      expect(input).toHaveFocus();
+      fireEvent.change(input, { target: { value: "Worcester" } });
+      await act(async () => vi.advanceTimersByTimeAsync(250));
+
+      const result = screen.getByRole("button", {
+        name: "Worcester Polytechnic Institute, Worcester, Massachusetts, United States"
+      });
+      fireEvent.mouseEnter(result);
+      expect(screen.getByTestId("map")).toHaveAttribute("data-focus-target", "place:poi.1");
+      expect(screen.getByTestId("map")).toHaveAttribute("data-camera-target", "asset-1");
+
+      fireEvent.click(result);
+      expect(screen.getByTestId("map")).toHaveAttribute("data-camera-target", "place:poi.1");
+      expect(screen.getByTestId("map")).toHaveAttribute("data-camera-seq", "2");
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
   });
 
   it("issues a camera command for sidebar selections and bumps the sequence on re-select", async () => {

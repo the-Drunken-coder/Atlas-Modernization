@@ -100,6 +100,12 @@ Microsoft imagery via Bing or Azure Maps is intentionally deferred for the stati
 
 The configured `maptiler-osm-dark` source remains the default whether or not its key is available. A valid explicit operator selection takes precedence; `openstreetmap-default` remains selectable but is not an automatic fallback when the configured default is unavailable.
 
+## Place Search
+
+The Places rail workspace uses MapTiler's browser geocoding API. `VITE_MAPTILER_API_KEY` enables both MapTiler basemaps and place search; without it, the workspace stays visible and explains why search is unavailable. Restrict the browser-visible key to the deployed Atlas origins in MapTiler.
+
+Search starts after two characters and returns at most five results. Hovering or focusing a result previews it with the map reticle. Clicking the result or pressing Enter moves the camera. Atlas aborts stale autocomplete requests and does not persist search results.
+
 ## Cloudflare Pages
 
 Use these settings for the Pages project:

@@ -2,7 +2,15 @@ import { Button } from "@blueprintjs/core";
 import type { ReactElement } from "react";
 import { ENTITY_DESCRIPTORS, type EntityKind } from "../../atlas/entities.js";
 import type { ListKind } from "../../state/selection.js";
-import { AssetsIcon, CollapseIcon, CommandsIcon, GeofeaturesIcon, KeyIcon, TracksIcon } from "../primitives/icons.js";
+import {
+  AssetsIcon,
+  CollapseIcon,
+  CommandsIcon,
+  GeofeaturesIcon,
+  KeyIcon,
+  SearchIcon,
+  TracksIcon
+} from "../primitives/icons.js";
 import { Tooltip } from "../primitives/Tooltip.js";
 
 type RailItem = {
@@ -16,6 +24,7 @@ const PRIMARY_RAIL_ITEMS: RailItem[] = [
   { ...ENTITY_DESCRIPTORS.asset, Icon: AssetsIcon, kind: "asset" },
   { ...ENTITY_DESCRIPTORS.track, Icon: TracksIcon, kind: "track" },
   { ...ENTITY_DESCRIPTORS.geofeature, Icon: GeofeaturesIcon, kind: "geofeature" },
+  { list: "places", label: "Places", Icon: SearchIcon },
   { list: "commands", label: "Commands", Icon: CommandsIcon }
 ];
 

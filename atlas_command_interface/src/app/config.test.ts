@@ -52,6 +52,7 @@ describe("appConfigFromEnv", () => {
         unavailableReason: undefined
       }
     ]);
+    expect(config.placeSearch).toEqual({ provider: "maptiler", unavailableReason: "missing key" });
   });
 
   it("uses the same-site production Core alias outside development", () => {
@@ -72,6 +73,7 @@ describe("appConfigFromEnv", () => {
     expect(source).toMatchObject({ label: "MapTiler OSM Dark" });
     expect(source?.style).toBeDefined();
     expect(source?.unavailableReason).toBeUndefined();
+    expect(config.placeSearch).toEqual({ provider: "maptiler", apiKey: "maptiler-key" });
   });
 
   it("keeps MapTiler OSM Dark as the configured default when it is unavailable", () => {
