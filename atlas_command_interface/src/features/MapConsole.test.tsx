@@ -12,6 +12,7 @@ import { MapConsole } from "./MapConsole.js";
 
 type MockMapViewProps = {
   styleId: string;
+  mapSourceOptions: AppConfig["mapSources"];
   editing?: unknown;
   focusTarget?: { id: string } | null;
   cameraCommand?: { seq: number; target: { id: string } } | null;
@@ -754,20 +755,19 @@ describe("MapConsole", () => {
 
   it("starts with the configured MapTiler OSM Dark default", async () => {
     const { fake } = makeFakeDataSource();
-    renderConsole(
-      fake,
-      appConfig({
-        defaultMapSourceId: "maptiler-osm-dark",
-        mapSources: [
-          { id: "maptiler-osm-dark", label: "MapTiler OSM Dark", style: style("maptiler-osm-dark") },
-          { id: "openstreetmap-default", label: "OpenStreetMap Default", style: style("openstreetmap-default") }
-        ]
-      })
-    );
+    const config = appConfig({
+      defaultMapSourceId: "maptiler-osm-dark",
+      mapSources: [
+        { id: "maptiler-osm-dark", label: "MapTiler OSM Dark", style: style("maptiler-osm-dark") },
+        { id: "openstreetmap-default", label: "OpenStreetMap Default", style: style("openstreetmap-default") }
+      ]
+    });
+    renderConsole(fake, config);
 
     await screen.findByText("Rover");
     expect(screen.getByLabelText("Map")).toHaveTextContent("MapTiler OSM Dark");
     expect(screen.getByTestId("map")).toHaveAttribute("data-style-id", "maptiler-osm-dark");
+    expect(mapViewMock.lastProps?.mapSourceOptions).toBe(config.mapSources);
   });
 
   it("does not silently fall back when the configured default map source is unavailable", async () => {

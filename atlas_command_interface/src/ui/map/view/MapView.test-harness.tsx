@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import type { EntityResource } from "@the-drunken-coder/atlas-sdk";
 import type { StyleSpecification } from "maplibre-gl";
 import { afterEach, beforeEach, vi } from "vitest";
+import type { MapSourceConfig } from "../../../app/config.js";
 import type { MapCameraCommand } from "../interaction/map-camera.js";
 import type { MapReticleTarget } from "../interaction/map-targets.js";
 import type { MapEditing } from "../rendering/map-editing.js";
@@ -34,6 +35,7 @@ const maplibreMock = vi.hoisted(() => {
     readonly fitScreenCoordinates = vi.fn();
     readonly fitBounds = vi.fn();
     readonly zoomTo = vi.fn();
+    readonly jumpTo = vi.fn();
     readonly getCenter = vi.fn(() => this.center);
     readonly resize = vi.fn((eventData?: unknown) => {
       this.fire("movestart", eventData);
@@ -50,6 +52,7 @@ const maplibreMock = vi.hoisted(() => {
     });
     readonly queryRenderedFeatures = vi.fn((_point?: unknown, _options?: unknown): RenderedFeature[] => []);
     readonly getBearing = vi.fn(() => 0);
+    readonly getPitch = vi.fn(() => 0);
     readonly getZoom = vi.fn(() => this.zoom);
     readonly getLayer = vi.fn((id: string) => this.layers.get(id));
     readonly getSource = vi.fn((id: string) => this.sources.get(id));
@@ -244,6 +247,7 @@ type RenderMapViewProps = {
   cameraCommand?: MapCameraCommand | null;
   editing?: MapEditing;
   focusTarget?: MapReticleTarget | null;
+  mapSourceOptions?: MapSourceConfig[];
   onStyleSwitchError?: (error: { failedStyleId: string; activeStyleId: string }) => void;
   selectedId?: string;
   sources?: MapSources;
@@ -259,6 +263,7 @@ export function renderMapView(props: RenderMapViewProps = {}) {
     sources: buildMapSources([], undefined),
     styleId: "test-style",
     style: style("test-style"),
+    mapSourceOptions: [] as MapSourceConfig[],
     ...props
   };
   const result = render(
@@ -266,6 +271,7 @@ export function renderMapView(props: RenderMapViewProps = {}) {
       sources={renderProps.sources}
       styleId={renderProps.styleId}
       style={renderProps.style}
+      mapSourceOptions={renderProps.mapSourceOptions}
       selectedId={renderProps.selectedId}
       editing={renderProps.editing}
       focusTarget={renderProps.focusTarget}
@@ -286,6 +292,7 @@ export function renderMapView(props: RenderMapViewProps = {}) {
         sources={renderProps.sources}
         styleId={renderProps.styleId}
         style={renderProps.style}
+        mapSourceOptions={renderProps.mapSourceOptions}
         selectedId={renderProps.selectedId}
         editing={renderProps.editing}
         focusTarget={renderProps.focusTarget}
@@ -307,6 +314,12 @@ export function renderMapView(props: RenderMapViewProps = {}) {
     unmount: result.unmount
   };
 }
+
+export function mapInstances(): FakeMapInstance[] {
+  return maplibreMock.FakeMap.instances;
+}
+
+export type FakeMapInstance = InstanceType<typeof maplibreMock.FakeMap>;
 
 export function style(id: string, metadata: Record<string, unknown> = {}): StyleSpecification {
   return { version: 8, sources: {}, layers: [], metadata: { id, ...metadata } };

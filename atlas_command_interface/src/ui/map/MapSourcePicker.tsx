@@ -10,12 +10,6 @@ type MapSourcePickerProps = {
 };
 
 export function MapSourcePicker({ sources, defaultSourceId, value, onChange }: MapSourcePickerProps) {
-  const [open, setOpen] = useState(false);
-  const [activeSourceId, setActiveSourceId] = useState(value);
-  const pickerRef = useRef<HTMLDivElement>(null);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const labelId = useId();
-  const listboxId = useId();
   const orderedSources = useMemo(
     () => [
       ...sources.filter((source) => source.id === defaultSourceId),
@@ -23,6 +17,33 @@ export function MapSourcePicker({ sources, defaultSourceId, value, onChange }: M
     ],
     [defaultSourceId, sources]
   );
+
+  return <MapSourceSelect sources={orderedSources} value={value} label="Map" onChange={onChange} overlay />;
+}
+
+type MapSourceSelectProps = {
+  sources: MapSourceConfig[];
+  value: string;
+  label: string;
+  placeholder?: string;
+  overlay?: boolean;
+  onChange: (value: string) => void;
+};
+
+export function MapSourceSelect({
+  sources,
+  value,
+  label,
+  placeholder = "No source available",
+  overlay = false,
+  onChange
+}: MapSourceSelectProps) {
+  const [open, setOpen] = useState(false);
+  const [activeSourceId, setActiveSourceId] = useState(value);
+  const pickerRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const labelId = useId();
+  const listboxId = useId();
   const selectedSource = sources.find((source) => source.id === value);
 
   useEffect(() => {
@@ -40,7 +61,7 @@ export function MapSourcePicker({ sources, defaultSourceId, value, onChange }: M
   }, [activeSourceId, open]);
 
   const openMenu = (edge?: "first" | "last") => {
-    const availableSources = orderedSources.filter((source) => source.style);
+    const availableSources = sources.filter((source) => source.style);
     const selectedAvailableSource = availableSources.find((source) => source.id === value);
     const nextActiveSource =
       edge === "first"
@@ -58,9 +79,13 @@ export function MapSourcePicker({ sources, defaultSourceId, value, onChange }: M
   };
 
   return (
-    <div ref={pickerRef} className="map-overlay-tr map-source-control">
+    <div
+      ref={pickerRef}
+      className={`${overlay ? "map-overlay-tr " : ""}map-source-control`}
+      data-map-interaction-control
+    >
       <label id={labelId} className="map-source-control__label" htmlFor={`${listboxId}-trigger`}>
-        Map
+        {label}
       </label>
       <button
         ref={triggerRef}
@@ -70,6 +95,7 @@ export function MapSourcePicker({ sources, defaultSourceId, value, onChange }: M
         aria-controls={open ? listboxId : undefined}
         aria-expanded={open}
         aria-haspopup="listbox"
+        data-map-source-trigger
         onClick={() => {
           if (open) closeMenu(false);
           else openMenu();
@@ -81,7 +107,7 @@ export function MapSourcePicker({ sources, defaultSourceId, value, onChange }: M
           }
         }}
       >
-        <span>{selectedSource?.label ?? value}</span>
+        <span>{selectedSource?.label ?? placeholder}</span>
         <DoubleCaretVerticalIcon size={12} />
       </button>
       {open ? (
@@ -93,6 +119,7 @@ export function MapSourcePicker({ sources, defaultSourceId, value, onChange }: M
           onKeyDown={(event) => {
             if (event.key === "Escape") {
               event.preventDefault();
+              event.stopPropagation();
               closeMenu(true);
               return;
             }
@@ -120,7 +147,7 @@ export function MapSourcePicker({ sources, defaultSourceId, value, onChange }: M
             nextOption.focus();
           }}
         >
-          {orderedSources.map((source) => {
+          {sources.map((source) => {
             const selected = source.id === value;
             return (
               <button

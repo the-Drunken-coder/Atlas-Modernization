@@ -111,6 +111,7 @@ describe("MapView runtime boundary", () => {
         sources={buildMapSources([], undefined)}
         styleId="latest"
         style={latestStyle}
+        mapSourceOptions={[]}
         onSelectEntity={vi.fn()}
         onMapContextMenu={vi.fn()}
       />
@@ -135,6 +136,7 @@ function renderMapView({
       sources={buildMapSources([], undefined)}
       styleId={styleId}
       style={style}
+      mapSourceOptions={[]}
       onSelectEntity={vi.fn()}
       onMapContextMenu={vi.fn()}
     />

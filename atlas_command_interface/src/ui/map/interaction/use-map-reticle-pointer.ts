@@ -201,7 +201,7 @@ export function useMapReticlePointer({ options, stateStore }: PointerHookOptions
     (event: PointerEvent<HTMLDivElement>) => {
       const current = stateRef.current;
       if (current.scrollLocked || current.zoomOverlay) return;
-      if (event.target instanceof HTMLElement && event.target.closest(".maplibregl-control-container")) {
+      if (isMapInteractionControlTarget(event.target)) {
         clearPointer();
         return;
       }
@@ -225,7 +225,7 @@ export function useMapReticlePointer({ options, stateStore }: PointerHookOptions
   const onMouseDown = useCallback(
     (event: MouseEvent<HTMLDivElement>) => {
       if (!event.shiftKey || event.button !== 0) return;
-      if (event.target instanceof HTMLElement && event.target.closest(".maplibregl-control-container")) return;
+      if (isMapInteractionControlTarget(event.target)) return;
       const point = pointFromClient(event, event.currentTarget.getBoundingClientRect(), true);
       setPointerPoint(point);
       setZoomOverlay({ start: point, current: point });
@@ -241,7 +241,7 @@ export function useMapReticlePointer({ options, stateStore }: PointerHookOptions
     (event: WheelEvent<HTMLDivElement>) => {
       const current = stateRef.current;
       if (current.zoomOverlay) return;
-      if (event.target instanceof HTMLElement && event.target.closest(".maplibregl-control-container")) return;
+      if (isMapInteractionControlTarget(event.target)) return;
       const map = optionsRef.current.mapRef.current;
       const rect = event.currentTarget.getBoundingClientRect();
       setPointerPoint(pointFromClient(event, rect));
@@ -275,7 +275,7 @@ export function useMapReticlePointer({ options, stateStore }: PointerHookOptions
 
   const onClick = useCallback(
     (event: MouseEvent<HTMLDivElement>) => {
-      if (event.target instanceof HTMLElement && event.target.closest(".maplibregl-control-container")) return;
+      if (isMapInteractionControlTarget(event.target)) return;
       if (consumeSuppressedClick() || stateRef.current.zoomOverlay) {
         event.preventDefault();
         event.stopPropagation();
@@ -378,6 +378,15 @@ function directionFromKey(key: string): MapNavigationDirection | null {
 function isEditableKeyboardTarget(target: EventTarget | null): boolean {
   return (
     target instanceof HTMLElement &&
-    (target.matches("input, textarea, select, [role='separator']") || target.isContentEditable)
+    (target.matches("input, textarea, select, [role='separator']") ||
+      Boolean(target.closest("[data-map-interaction-control]")) ||
+      target.isContentEditable)
+  );
+}
+
+function isMapInteractionControlTarget(target: EventTarget | null): boolean {
+  return (
+    target instanceof HTMLElement &&
+    Boolean(target.closest(".maplibregl-control-container, [data-map-interaction-control]"))
   );
 }
