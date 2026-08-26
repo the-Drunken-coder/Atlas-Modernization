@@ -28,7 +28,7 @@ describe("MapView region comparison", () => {
 
     const region = await screen.findByTestId("map-comparison-region");
     expect(region).toHaveStyle({ left: "70px", top: "60px", width: "180px", height: "80px" });
-    expect(screen.getByRole("dialog", { name: "Region comparison" })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Region comparison" })).toHaveStyle({ top: "88px", maxHeight: "102px" });
     expect(mapInstances()).toHaveLength(2);
     expect(mapInstances()[1].options).toMatchObject({ interactive: false, attributionControl: false });
     expect(mapInstances()[1].getContainer()).toHaveClass("map-compare__map");
@@ -83,6 +83,8 @@ describe("MapView region comparison", () => {
         height: "200px"
       })
     );
+    expect(screen.getByTestId("map-comparison-region")).toHaveAttribute("data-resize-right-inside", "true");
+    expect(screen.getByTestId("map-comparison-region")).toHaveAttribute("data-resize-bottom-inside", "true");
     comparisonMap.jumpTo.mockClear();
     map.getZoom.mockReturnValue(12);
 
@@ -119,6 +121,58 @@ describe("MapView region comparison", () => {
 
     await waitFor(() => expect(screen.getByTestId("map-comparison-region")).toHaveStyle({ left: "80px" }));
     expect(onSelectEntity).not.toHaveBeenCalled();
+  });
+
+  it("resizes width by pointer and height by keyboard without navigating entities", async () => {
+    const { onSelectEntity } = renderMapView({ styleId: "base", style: style("base"), mapSourceOptions });
+    await drawComparison();
+
+    fireEvent.mouseDown(screen.getByRole("button", { name: "Resize comparison region width" }), {
+      button: 0,
+      clientX: 260,
+      clientY: 120
+    });
+    fireEvent.mouseMove(window, { clientX: 300, clientY: 120 });
+    fireEvent.mouseUp(screen.getByTestId("map-canvas"), { clientX: 300, clientY: 120 });
+
+    await waitFor(() => expect(screen.getByTestId("map-comparison-region")).toHaveStyle({ width: "220px" }));
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+    fireEvent.click(screen.getByRole("button", { name: /Alternate map/ }));
+    expect(screen.getByRole("dialog", { name: "Region comparison" })).toBeInTheDocument();
+    fireEvent.keyDown(screen.getByRole("button", { name: "Resize comparison region height" }), {
+      key: "ArrowDown"
+    });
+    await waitFor(() => expect(screen.getByTestId("map-comparison-region")).toHaveStyle({ height: "90px" }));
+    expect(onSelectEntity).not.toHaveBeenCalled();
+  });
+
+  it("resizes both axes from the corner keyboard handle", async () => {
+    renderMapView({ styleId: "base", style: style("base"), mapSourceOptions });
+    await drawComparison();
+    const corner = screen.getByRole("button", { name: "Resize comparison region width and height" });
+
+    fireEvent.keyDown(corner, { key: "ArrowRight" });
+    await waitFor(() => expect(screen.getByTestId("map-comparison-region")).toHaveStyle({ width: "190px" }));
+    fireEvent.keyDown(corner, { key: "ArrowDown" });
+    await waitFor(() => expect(screen.getByTestId("map-comparison-region")).toHaveStyle({ height: "90px" }));
+  });
+
+  it("adjusts comparison opacity and resets it after clear", async () => {
+    renderMapView({ styleId: "base", style: style("base"), mapSourceOptions });
+    await drawComparison();
+    const slider = screen.getByRole("slider", { name: "Comparison map opacity" });
+    expect(slider).toHaveValue("100");
+
+    fireEvent.change(slider, { target: { value: "45" } });
+
+    expect(mapInstances()[1].getContainer()).toHaveStyle({ opacity: "0.45" });
+    fireEvent.click(screen.getByRole("button", { name: "Close comparison controls" }));
+    expect(screen.getByRole("button", { name: /Alternate map · 45%/ })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /Alternate map · 45%/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+    await drawComparison();
+    expect(screen.getByRole("slider", { name: "Comparison map opacity" })).toHaveValue("100");
   });
 
   it("restores the previous region when redraw is canceled and clears it explicitly", async () => {

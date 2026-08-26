@@ -14,14 +14,14 @@ const budgets = {
   initialJavaScript: { raw: 350_000, gzip: 105_000 },
   initialCss: { raw: 30_000, gzip: 6_500 },
   shellJavaScript: { raw: 50_000, gzip: 16_000 },
-  mapViewJavaScript: { raw: 52_000, gzip: 16_500 },
+  mapViewJavaScript: { raw: 55_000, gzip: 17_500 },
   mapLibreJavaScript: { raw: 1_100_000, gzip: 300_000 },
   mapLibreWorkerJavaScript: { raw: 500_000, gzip: 140_000 },
   milsymbolJavaScript: { raw: 900_000, gzip: 240_000 },
   mapLibreCss: { raw: 85_000, gzip: 11_000 },
   mapRoute: { raw: 2_100_000, gzip: 550_000 },
   allJavaScript: { raw: 2_900_000, gzip: 800_000 },
-  allCss: { raw: 117_000, gzip: 18_000 }
+  allCss: { raw: 120_000, gzip: 19_000 }
 };
 
 if (!args.has("--skip-build")) {

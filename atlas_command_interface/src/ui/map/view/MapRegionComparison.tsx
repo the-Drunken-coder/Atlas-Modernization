@@ -1,5 +1,14 @@
 import type { Map as MlMap, StyleSpecification } from "maplibre-gl";
-import { type CSSProperties, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState
+} from "react";
 import "../../styles/map-comparison.css";
 import type { MapSourceConfig } from "../../../app/config.js";
 import { sanitizeConnectionError } from "../../../atlas/connection-error.js";
@@ -33,9 +42,17 @@ type DragState =
       current: ScreenPoint | null;
       previousRegion: GeographicRegion | null;
     }
-  | { kind: "move"; start: ScreenPoint; initialRect: ScreenRect; initialRegion: GeographicRegion };
+  | {
+      kind: "transform";
+      transform: RegionTransform;
+      start: ScreenPoint;
+      initialRect: ScreenRect;
+      initialRegion: GeographicRegion;
+    };
 
 type ScreenPoint = { x: number; y: number };
+type ResizeAxes = "width" | "height" | "both";
+type RegionTransform = "move" | ResizeAxes;
 
 type ComparisonStatus = { kind: "idle" } | { kind: "loading" } | { kind: "ready" } | { kind: "error"; message: string };
 
@@ -54,7 +71,7 @@ type MapRegionComparisonProps = {
 
 const MIN_REGION_SIZE = 32;
 const PANEL_WIDTH = 258;
-const PANEL_HEIGHT = 160;
+const PANEL_HEIGHT = 210;
 
 export function MapRegionComparison({
   mapCanvas,
@@ -84,6 +101,7 @@ export function MapRegionComparison({
   const [regionRect, setRegionRect] = useState<ScreenRect | null>(null);
   const [drag, setDrag] = useState<DragState | null>(null);
   const [panelOpen, setPanelOpen] = useState(false);
+  const [opacity, setOpacity] = useState(100);
   const [status, setStatus] = useState<ComparisonStatus>({ kind: "idle" });
   const [retryGeneration, setRetryGeneration] = useState(0);
   const toolRef = useRef<HTMLButtonElement>(null);
@@ -165,8 +183,11 @@ export function MapRegionComparison({
         return;
       }
       const delta = { x: point.x - drag.start.x, y: point.y - drag.start.y };
-      const movedRect = clampMovedRect(drag.initialRect, delta, mapCanvas.getBoundingClientRect());
-      setRegion(regionFromScreenRect(primaryMap, movedRect));
+      const nextRect =
+        drag.transform === "move"
+          ? clampMovedRect(drag.initialRect, delta, mapCanvas.getBoundingClientRect())
+          : clampResizedRect(drag.initialRect, delta, drag.transform, mapCanvas.getBoundingClientRect());
+      setRegion(regionFromScreenRect(primaryMap, nextRect));
     };
     const finishDrag = (event: globalThis.MouseEvent) => {
       if (drag.kind === "draw") {
@@ -182,14 +203,12 @@ export function MapRegionComparison({
         }
       }
       if (event.target instanceof Node && mapCanvas.contains(event.target)) {
-        mapCanvas.addEventListener(
-          "click",
-          (clickEvent) => {
-            clickEvent.preventDefault();
-            clickEvent.stopPropagation();
-          },
-          { capture: true, once: true }
-        );
+        const suppressClick = (clickEvent: globalThis.MouseEvent) => {
+          clickEvent.preventDefault();
+          clickEvent.stopPropagation();
+        };
+        mapCanvas.addEventListener("click", suppressClick, { capture: true, once: true });
+        window.setTimeout(() => mapCanvas.removeEventListener("click", suppressClick, { capture: true }), 0);
       }
       setDrag(null);
       notifyUserGesture();
@@ -225,7 +244,10 @@ export function MapRegionComparison({
       event.preventDefault();
       event.stopPropagation();
       if (panelOpen) setPanelOpen(false);
-      else setRegion(null);
+      else {
+        setRegion(null);
+        setOpacity(100);
+      }
       toolRef.current?.focus();
     };
     window.addEventListener("keydown", handleEscape, { capture: true });
@@ -312,6 +334,7 @@ export function MapRegionComparison({
   const clear = () => {
     setRegion(null);
     setPanelOpen(false);
+    setOpacity(100);
     setStatus({ kind: "idle" });
     toolRef.current?.focus();
   };
@@ -322,12 +345,49 @@ export function MapRegionComparison({
     setDrag({ kind: "draw", start: null, current: null, previousRegion });
   };
 
+  const beginTransform = (transform: RegionTransform, event: ReactMouseEvent<HTMLButtonElement>) => {
+    if (event.button !== 0 || !mapCanvas || !region || !regionRect) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setPanelOpen(false);
+    setDrag({
+      kind: "transform",
+      transform,
+      start: pointInCanvas(event, mapCanvas, true),
+      initialRect: regionRect,
+      initialRegion: region
+    });
+  };
+
+  const transformWithKeyboard = (transform: RegionTransform, event: ReactKeyboardEvent<HTMLButtonElement>) => {
+    if (!map || !mapCanvas || !regionRect) return;
+    const delta = keyboardDelta(event.key, event.shiftKey ? 40 : 10, transform === "move" ? "both" : transform);
+    if (!delta) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setPanelOpen(false);
+    const viewport = mapCanvas.getBoundingClientRect();
+    const nextRect =
+      transform === "move"
+        ? clampMovedRect(regionRect, delta, viewport)
+        : clampResizedRect(regionRect, delta, transform, viewport);
+    setRegion(regionFromScreenRect(map, nextRect));
+    notifyUserGesture();
+  };
+
   const drawingRect =
     drag?.kind === "draw" && drag.start && drag.current ? rectFromPoints(drag.start, drag.current) : null;
   const drawing = drag?.kind === "draw";
-  const panelAnchor = panelPosition(regionRect, mapCanvas?.getBoundingClientRect());
-  const captionStyle = captionPosition(regionRect, mapCanvas?.getBoundingClientRect());
-  const comparisonStyle = regionRect ? rectStyle(regionRect) : undefined;
+  const canvasBounds = mapCanvas?.getBoundingClientRect();
+  const panelAnchor = panelPosition(regionRect, canvasBounds);
+  const captionStyle = captionPosition(regionRect, canvasBounds);
+  const comparisonStyle = regionRect ? { ...rectStyle(regionRect), opacity: opacity / 100 } : undefined;
+  const resizeRightInside = Boolean(
+    regionRect && canvasBounds && regionRect.left + regionRect.width >= canvasBounds.width - 14
+  );
+  const resizeBottomInside = Boolean(
+    regionRect && canvasBounds && regionRect.top + regionRect.height >= canvasBounds.height - 14
+  );
   const attribution = source?.style ? attributionHtml(source.style.sources) : "";
 
   return (
@@ -369,49 +429,51 @@ export function MapRegionComparison({
       ) : null}
 
       {regionRect ? (
-        <div className="map-compare__region" style={comparisonStyle} data-testid="map-comparison-region">
+        <div
+          className="map-compare__region"
+          style={rectStyle(regionRect)}
+          data-resize-right-inside={resizeRightInside || undefined}
+          data-resize-bottom-inside={resizeBottomInside || undefined}
+          data-testid="map-comparison-region"
+        >
           <button
             type="button"
             className="map-compare__move-handle"
             data-map-interaction-control
             aria-label="Move comparison region"
             title="Drag or use arrow keys to move region"
-            onMouseDown={(event) => {
-              if (event.button !== 0 || !mapCanvas || !region) return;
-              event.preventDefault();
-              event.stopPropagation();
-              setPanelOpen(false);
-              setDrag({
-                kind: "move",
-                start: pointInCanvas(event, mapCanvas, true),
-                initialRect: regionRect,
-                initialRegion: region
-              });
-            }}
-            onKeyDown={(event) => {
-              if (!map || !mapCanvas || !regionRect) return;
-              const step = event.shiftKey ? 40 : 10;
-              const delta =
-                event.key === "ArrowLeft"
-                  ? { x: -step, y: 0 }
-                  : event.key === "ArrowRight"
-                    ? { x: step, y: 0 }
-                    : event.key === "ArrowUp"
-                      ? { x: 0, y: -step }
-                      : event.key === "ArrowDown"
-                        ? { x: 0, y: step }
-                        : null;
-              if (!delta) return;
-              event.preventDefault();
-              event.stopPropagation();
-              setRegion(
-                regionFromScreenRect(map, clampMovedRect(regionRect, delta, mapCanvas.getBoundingClientRect()))
-              );
-              notifyUserGesture();
-            }}
+            onMouseDown={(event) => beginTransform("move", event)}
+            onKeyDown={(event) => transformWithKeyboard("move", event)}
           >
             <DoubleCaretVerticalIcon size={12} />
           </button>
+          <button
+            type="button"
+            className="map-compare__resize-handle map-compare__resize-handle--right"
+            data-map-interaction-control
+            aria-label="Resize comparison region width"
+            title="Drag horizontally or use Left and Right arrow keys"
+            onMouseDown={(event) => beginTransform("width", event)}
+            onKeyDown={(event) => transformWithKeyboard("width", event)}
+          />
+          <button
+            type="button"
+            className="map-compare__resize-handle map-compare__resize-handle--bottom"
+            data-map-interaction-control
+            aria-label="Resize comparison region height"
+            title="Drag vertically or use Up and Down arrow keys"
+            onMouseDown={(event) => beginTransform("height", event)}
+            onKeyDown={(event) => transformWithKeyboard("height", event)}
+          />
+          <button
+            type="button"
+            className="map-compare__resize-handle map-compare__resize-handle--corner"
+            data-map-interaction-control
+            aria-label="Resize comparison region width and height"
+            title="Drag diagonally or use arrow keys"
+            onMouseDown={(event) => beginTransform("both", event)}
+            onKeyDown={(event) => transformWithKeyboard("both", event)}
+          />
         </div>
       ) : null}
 
@@ -434,7 +496,10 @@ export function MapRegionComparison({
           data-map-interaction-control
           onClick={() => setPanelOpen(true)}
         >
-          <span>{source?.label ?? "Source unavailable"}</span>
+          <span>
+            {source?.label ?? "Source unavailable"}
+            {source?.style ? ` · ${opacity}%` : ""}
+          </span>
           <StatusLabel status={status} />
         </button>
       ) : null}
@@ -482,6 +547,22 @@ export function MapRegionComparison({
               setRetryGeneration((generation) => generation + 1);
             }}
           />
+          {region && source?.style ? (
+            <label className="map-compare__opacity">
+              <span>
+                <span>Opacity</span>
+                <output>{opacity}%</output>
+              </span>
+              <input
+                type="range"
+                min="0"
+                max="100"
+                aria-label="Comparison map opacity"
+                value={opacity}
+                onChange={(event) => setOpacity(event.currentTarget.valueAsNumber)}
+              />
+            </label>
+          ) : null}
           {availableAlternatives.length === 0 ? (
             <p className="map-compare__message" role="status">
               No alternate source is available. Configure a provider key to compare maps.
@@ -595,6 +676,26 @@ function clampMovedRect(rect: ScreenRect, delta: ScreenPoint, viewport: DOMRect)
   };
 }
 
+function clampResizedRect(rect: ScreenRect, delta: ScreenPoint, axes: ResizeAxes, viewport: DOMRect): ScreenRect {
+  const maxWidth = Math.max(0, viewport.width - rect.left);
+  const maxHeight = Math.max(0, viewport.height - rect.top);
+  const minWidth = Math.min(MIN_REGION_SIZE, maxWidth);
+  const minHeight = Math.min(MIN_REGION_SIZE, maxHeight);
+  return {
+    ...rect,
+    width: axes === "height" ? rect.width : Math.max(minWidth, Math.min(maxWidth, rect.width + delta.x)),
+    height: axes === "width" ? rect.height : Math.max(minHeight, Math.min(maxHeight, rect.height + delta.y))
+  };
+}
+
+function keyboardDelta(key: string, step: number, axes: ResizeAxes): ScreenPoint | null {
+  if (axes !== "height" && key === "ArrowLeft") return { x: -step, y: 0 };
+  if (axes !== "height" && key === "ArrowRight") return { x: step, y: 0 };
+  if (axes !== "width" && key === "ArrowUp") return { x: 0, y: -step };
+  if (axes !== "width" && key === "ArrowDown") return { x: 0, y: step };
+  return null;
+}
+
 function rectStyle(rect: ScreenRect): CSSProperties {
   return { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
 }
@@ -605,13 +706,17 @@ function panelPosition(
 ): { style: CSSProperties; placement: "above" | "below" | "floating" } | undefined {
   if (!rect || !viewport) return undefined;
   const left = Math.max(10, Math.min(viewport.width - PANEL_WIDTH - 10, rect.left));
-  if (rect.top >= PANEL_HEIGHT + 10) {
+  const safeTop = viewport.width <= 520 ? 88 : 10;
+  if (rect.top >= PANEL_HEIGHT + safeTop) {
     return { style: { left, top: rect.top - 10, transform: "translateY(-100%)" }, placement: "above" };
   }
   if (viewport.height - rect.top - rect.height >= PANEL_HEIGHT + 10) {
     return { style: { left, top: rect.top + rect.height + 10 }, placement: "below" };
   }
-  return { style: { left, top: 10, maxHeight: Math.max(0, viewport.height - 20) }, placement: "floating" };
+  return {
+    style: { left, top: safeTop, maxHeight: Math.max(0, viewport.height - safeTop - 10) },
+    placement: "floating"
+  };
 }
 
 function captionPosition(rect: ScreenRect | null, viewport: DOMRect | undefined): CSSProperties | undefined {

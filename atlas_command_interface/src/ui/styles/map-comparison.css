@@ -30,7 +30,8 @@
 
 .map-compare__tool-button:focus-visible,
 .map-compare__caption:focus-visible,
-.map-compare__move-handle:focus-visible {
+.map-compare__move-handle:focus-visible,
+.map-compare__resize-handle:focus-visible {
   outline: 2px solid var(--selected-ring);
   outline-offset: 2px;
 }
@@ -90,6 +91,82 @@
 
 .map-compare__move-handle .bp6-icon {
   transform: rotate(45deg);
+}
+
+.map-compare__resize-handle {
+  position: absolute;
+  z-index: 2;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  pointer-events: auto;
+}
+
+.map-compare__resize-handle::before {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: var(--grip-width);
+  height: var(--grip-height);
+  border: 1px solid var(--accent-strong);
+  border-radius: 1px;
+  background: var(--surface-1);
+  content: "";
+  transform: translate(-50%, -50%);
+}
+
+.map-compare__resize-handle:hover::before,
+.map-compare__resize-handle:focus-visible::before {
+  background: var(--surface-hover);
+}
+
+.map-compare__resize-handle--right {
+  --grip-width: 8px;
+  --grip-height: 30px;
+
+  top: 50%;
+  right: -12px;
+  width: 24px;
+  height: 44px;
+  cursor: ew-resize;
+  transform: translateY(-50%);
+}
+
+.map-compare__resize-handle--bottom {
+  --grip-width: 30px;
+  --grip-height: 8px;
+
+  bottom: -12px;
+  left: 50%;
+  width: 44px;
+  height: 24px;
+  cursor: ns-resize;
+  transform: translateX(-50%);
+}
+
+.map-compare__resize-handle--corner {
+  --grip-width: 14px;
+  --grip-height: 14px;
+
+  right: -14px;
+  bottom: -14px;
+  width: 28px;
+  height: 28px;
+  cursor: nwse-resize;
+}
+
+.map-compare__region[data-resize-right-inside="true"] .map-compare__move-handle {
+  right: 4px;
+}
+
+.map-compare__region[data-resize-right-inside="true"] .map-compare__resize-handle--right,
+.map-compare__region[data-resize-right-inside="true"] .map-compare__resize-handle--corner {
+  right: 0;
+}
+
+.map-compare__region[data-resize-bottom-inside="true"] .map-compare__resize-handle--bottom,
+.map-compare__region[data-resize-bottom-inside="true"] .map-compare__resize-handle--corner {
+  bottom: 0;
 }
 
 .map-canvas > .maplibre-host .maplibregl-marker {
@@ -234,6 +311,10 @@
   display: none;
 }
 
+.map-compare__panel[data-placement="floating"] {
+  overflow-y: auto;
+}
+
 .map-compare__panel-header,
 .map-compare__actions {
   display: flex;
@@ -261,6 +342,27 @@
 .map-compare__panel .map-source-menu {
   right: auto;
   left: -1px;
+}
+
+.map-compare__opacity {
+  display: grid;
+  gap: 4px;
+  font-size: 11px;
+}
+
+.map-compare__opacity > span {
+  display: flex;
+  justify-content: space-between;
+}
+
+.map-compare__opacity output {
+  color: var(--text-1);
+  font-family: var(--font-mono);
+}
+
+.map-compare__opacity input {
+  margin: 0;
+  accent-color: var(--accent-strong);
 }
 
 .map-compare__message,
