@@ -5,15 +5,25 @@ const tokens = readFileSync(new URL("./tokens.css", import.meta.url), "utf8");
 const layout = readFileSync(new URL("./layout.css", import.meta.url), "utf8");
 
 describe("command interface scrolling", () => {
-  it("locks the document viewport", () => {
-    const declarations = tokens.match(/html,\s*body,\s*#root\s*{([^}]*)}/)?.[1];
+  it("locks the authenticated workspace without clipping the login page", () => {
+    const rootDeclarations = tokens.match(/html,\s*body,\s*#root\s*{([^}]*)}/)?.[1];
+    const shellDeclarations = layout.match(/\.authenticated-shell\s*{([^}]*)}/)?.[1];
 
-    expect(declarations).toMatch(/overflow:\s*hidden/);
-    expect(declarations).toMatch(/overscroll-behavior:\s*none/);
+    expect(rootDeclarations).not.toMatch(/overflow:\s*hidden/);
+    expect(rootDeclarations).toMatch(/overscroll-behavior:\s*none/);
+    expect(shellDeclarations).toMatch(/overflow:\s*hidden/);
+    expect(shellDeclarations).toMatch(/overscroll-behavior:\s*none/);
   });
 
   it("keeps vertical overflow inside the sidebar panel", () => {
     const declarations = layout.match(/\.panel__body\s*{([^}]*)}/)?.[1];
+
+    expect(declarations).toMatch(/overflow-y:\s*auto/);
+    expect(declarations).toMatch(/overscroll-behavior-y:\s*none/);
+  });
+
+  it("keeps rail controls reachable at short viewport heights", () => {
+    const declarations = layout.match(/\.rail\s*{([^}]*)}/)?.[1];
 
     expect(declarations).toMatch(/overflow-y:\s*auto/);
     expect(declarations).toMatch(/overscroll-behavior-y:\s*none/);
