@@ -7,6 +7,7 @@ import {
   DetectionIcon as BlueprintDetectionIcon,
   DoubleCaretVerticalIcon as BlueprintDoubleCaretVerticalIcon,
   DuplicateIcon as BlueprintDuplicateIcon,
+  GlobeIcon as BlueprintGlobeIcon,
   GlobeNetworkIcon as BlueprintGlobeNetworkIcon,
   KeyIcon as BlueprintKeyIcon,
   MapMarkerIcon as BlueprintMapMarkerIcon,
@@ -48,6 +49,10 @@ export function KeyIcon(props: IconProps) {
 
 export function BrandIcon(props: IconProps) {
   return <BlueprintGlobeNetworkIcon {...props} />;
+}
+
+export function WorldViewIcon(props: IconProps) {
+  return <BlueprintGlobeIcon {...props} />;
 }
 
 export function BackIcon(props: IconProps) {

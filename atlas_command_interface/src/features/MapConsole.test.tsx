@@ -405,7 +405,11 @@ describe("MapConsole", () => {
       expect(screen.getByTestId("map")).toHaveAttribute("data-camera-target", "place:poi.1");
       expect(screen.getByTestId("map")).toHaveAttribute("data-camera-intent", "commit");
 
-      fireEvent.click(screen.getByRole("button", { name: "World view" }));
+      const worldView = screen.getByRole("button", { name: "World view" });
+      expect(worldView).toHaveAttribute("title", "World view");
+      expect(worldView).not.toHaveTextContent("World view");
+      expect(worldView.querySelector("svg")).not.toBeNull();
+      fireEvent.click(worldView);
       expect(screen.getByTestId("map")).toHaveAttribute("data-camera-target", "");
       expect(screen.getByTestId("map")).toHaveAttribute("data-camera-intent", "world");
       expect(screen.getByTestId("map")).toHaveAttribute("data-camera-seq", "4");

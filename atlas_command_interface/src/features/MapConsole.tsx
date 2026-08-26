@@ -29,7 +29,8 @@ import type { MapCameraCommand, MapTarget } from "../ui/map/interaction/map-came
 import { MapSourcePicker } from "../ui/map/MapSourcePicker.js";
 import { buildMapSources } from "../ui/map/rendering/map-sources.js";
 import type { MapReticleTarget } from "../ui/map/view/MapView.js";
-import { Button } from "../ui/primitives/controls.js";
+import { Button, IconButton } from "../ui/primitives/controls.js";
+import { WorldViewIcon } from "../ui/primitives/icons.js";
 import { ContextMenu, type MenuItemDef } from "../ui/primitives/Menu.js";
 import { APIKeysPanel } from "./admin/APIKeysPanel.js";
 import { AssetInspector } from "./assets/AssetInspector.js";
@@ -281,9 +282,9 @@ export function MapConsole() {
             autoFocusBack={sidebar.focusRequest?.id === selection?.id}
             headerAction={
               activeList === "places" ? (
-                <Button variant="ghost" className="bp6-small" style={{ whiteSpace: "nowrap" }} onClick={showWorld}>
-                  World view
-                </Button>
+                <IconButton label="World view" onClick={showWorld}>
+                  <WorldViewIcon size={18} />
+                </IconButton>
               ) : undefined
             }
             onCollapse={() => dispatch({ type: "setCollapsed", collapsed: true })}
