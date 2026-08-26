@@ -4,6 +4,9 @@ import { defineConfig } from "vitest/config";
 // Two test projects: pure logic runs under Node, React component/DOM tests run
 // under jsdom with the React plugin so JSX and hooks behave like the browser.
 export default defineConfig({
+  resolve: {
+    dedupe: ["react", "react-dom"]
+  },
   test: {
     projects: [
       {

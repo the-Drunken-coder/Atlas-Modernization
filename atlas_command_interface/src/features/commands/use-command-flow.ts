@@ -23,6 +23,7 @@ export function useCommandFlow({
   submitCommand: AtlasContextValue["submitCommand"];
 }) {
   const [mapMenu, setMapMenu] = useState<MapMenuState | null>(null);
+  const [mapTargeting, setMapTargeting] = useState<CommandAvailability | null>(null);
   const [commandForm, setCommandForm] = useState<CommandFormState | null>(null);
   const nextSubmitIdRef = useRef(1);
   const activeSubmitIdRef = useRef<number | undefined>(undefined);
@@ -32,6 +33,7 @@ export function useCommandFlow({
   const selectedEntityId = selectedEntity?.entity_id;
 
   const closeMapMenu = useCallback(() => setMapMenu(null), []);
+  const cancelMapTargeting = useCallback(() => setMapTargeting(null), []);
   const dismissCommandForm = useCallback(() => {
     pendingSubmissionRef.current = undefined;
     setCommandForm(null);
@@ -40,19 +42,39 @@ export function useCommandFlow({
 
   useEffect(() => {
     closeMapMenu();
+    cancelMapTargeting();
     dismissCommandForm();
-  }, [selectedId, closeMapMenu, dismissCommandForm]);
+  }, [selectedId, closeMapMenu, cancelMapTargeting, dismissCommandForm]);
 
   useEffect(() => {
     closeMapMenu();
+    cancelMapTargeting();
     if (activeSubmitIdRef.current === undefined) dismissCommandForm();
-  }, [catalog, closeMapMenu, dismissCommandForm]);
+  }, [catalog, closeMapMenu, cancelMapTargeting, dismissCommandForm]);
 
   useEffect(() => {
     if (!selectedId || selectedEntityId) return;
     closeMapMenu();
+    cancelMapTargeting();
     dismissCommandForm();
-  }, [selectedId, selectedEntityId, closeMapMenu, dismissCommandForm]);
+  }, [selectedId, selectedEntityId, closeMapMenu, cancelMapTargeting, dismissCommandForm]);
+
+  useEffect(() => {
+    if (!mapTargeting) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setMapTargeting(null);
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [mapTargeting]);
+
+  useEffect(() => {
+    if (mapTargeting && !commandIsStillAvailable(mapTargeting, catalog, selectedEntity)) {
+      cancelMapTargeting();
+    }
+  }, [mapTargeting, catalog, selectedEntity, cancelMapTargeting]);
 
   const submit = useCallback(
     async (availability: CommandAvailability, input: JSONValue) => {
@@ -104,6 +126,16 @@ export function useCommandFlow({
     [closeMapMenu, selectedEntity, submit, submitting]
   );
 
+  const startMapTargeting = useCallback(
+    (availability: CommandAvailability) => {
+      if (availability.input.targeting !== "map_point" || submitting || !selectedEntity) return;
+      closeMapMenu();
+      dismissCommandForm();
+      setMapTargeting(availability);
+    },
+    [closeMapMenu, dismissCommandForm, selectedEntity, submitting]
+  );
+
   const onMapContextMenu = useCallback(
     (info: MapContextMenuInfo) => {
       if (!selectedEntity || entityKind(selectedEntity) !== "asset") {
@@ -111,21 +143,45 @@ export function useCommandFlow({
         return;
       }
       dismissCommandForm();
+      if (mapTargeting) {
+        if (!commandIsStillAvailable(mapTargeting, catalog, selectedEntity)) {
+          cancelMapTargeting();
+          return;
+        }
+        setMapTargeting(null);
+        pick(mapTargeting, { lat: info.lat, lng: info.lng });
+        return;
+      }
       setMapMenu({ x: info.x, y: info.y, lat: info.lat, lng: info.lng });
     },
-    [selectedEntity, closeMapMenu, dismissCommandForm]
+    [selectedEntity, catalog, closeMapMenu, cancelMapTargeting, dismissCommandForm, mapTargeting, pick]
   );
 
   return {
     mapMenu,
+    mapTargeting,
     commandForm,
     submitting,
     submitError,
     closeMapMenu,
+    cancelMapTargeting,
     dismissCommandForm,
     pickSidebarCommand: (availability: CommandAvailability) => pick(availability),
     pickMapCommand: (availability: CommandAvailability, point: CommandMapPoint) => pick(availability, point),
+    startMapTargeting,
     onMapContextMenu,
     submit
   };
+}
+
+function commandIsStillAvailable(
+  availability: CommandAvailability,
+  catalog: CommandCatalog | undefined,
+  entity: EntityResource | undefined
+): boolean {
+  return Boolean(
+    entity?.entity_type === "asset" &&
+      catalog?.some((command) => command.command === availability.command.command) &&
+      entity.command_manifest?.some((entry) => entry.command === availability.command.command)
+  );
 }

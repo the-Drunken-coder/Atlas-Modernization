@@ -8,6 +8,7 @@ import type { AtlasDataSource, CommandSubmission, ConnectionHealth } from "../at
 import type { UiGeometry } from "../atlas/geometry.js";
 import type { AtlasSnapshot } from "../atlas/store.js";
 import { type AtlasContextValue, AtlasProvider, AtlasStaticProvider } from "../state/atlas-context.js";
+import type { CommandInputFormProps, CommandInputRegistry } from "./commands/command-input-registry.js";
 import { MapConsole } from "./MapConsole.js";
 
 type MockMapViewProps = {
@@ -69,6 +70,14 @@ const taskingCatalog: CommandCatalog = [
     input_schema: "atlas.protocol.JSONValue"
   }
 ];
+const positionCatalog: CommandCatalog = [
+  {
+    command: "fixture.position",
+    name: "Fixture position",
+    description: "Exercise map targeting.",
+    input_schema: "atlas.protocol.JSONValue"
+  }
+];
 
 const rover: EntityResource = {
   entity_id: "asset-1",
@@ -79,6 +88,56 @@ const rover: EntityResource = {
     telemetry: { latitude: 40, longitude: -74 }
   },
   metadata
+};
+
+const taskingRover: EntityResource = {
+  ...rover,
+  command_manifest: [
+    {
+      command: "fixture.queued",
+      description: "Runs the fixture handler.",
+      scheduling: "queued",
+      supports_cancel: true,
+      supports_progress: true
+    }
+  ]
+};
+
+const positionRover: EntityResource = {
+  ...rover,
+  command_manifest: [
+    {
+      command: "fixture.position",
+      description: "Runs after a map target is chosen.",
+      scheduling: "immediate",
+      supports_cancel: false,
+      supports_progress: false
+    }
+  ]
+};
+
+function FixtureCommandForm({ onCancel, onSubmit }: CommandInputFormProps) {
+  return (
+    <div role="dialog" aria-label="Fixture command input">
+      <button type="button" onClick={onCancel}>
+        Cancel fixture
+      </button>
+      <button type="button" onClick={() => onSubmit({ confirmed: true })}>
+        Confirm fixture
+      </button>
+    </div>
+  );
+}
+
+const taskingRegistry: CommandInputRegistry = {
+  "fixture.queued": { targeting: "none", Form: FixtureCommandForm }
+};
+
+const positionRegistry: CommandInputRegistry = {
+  "fixture.position": {
+    targeting: "map_point",
+    buildInput: ({ mapPoint }) => ({ latitude: mapPoint?.lat ?? null, longitude: mapPoint?.lng ?? null })
+  }
 };
 
 const area: EntityResource = {
@@ -214,7 +273,7 @@ function renderConsole(fake: AtlasDataSource, config: AppConfig = appConfig()) {
   );
 }
 
-function renderStaticConsole(overrides: Partial<AtlasContextValue> = {}) {
+function renderStaticConsole(overrides: Partial<AtlasContextValue> = {}, commandRegistry?: CommandInputRegistry) {
   const snapshot = makeFakeDataSource().fake.snapshot();
   const value: AtlasContextValue = {
     status: "ready",
@@ -233,9 +292,27 @@ function renderStaticConsole(overrides: Partial<AtlasContextValue> = {}) {
   };
   return render(
     <AtlasStaticProvider value={value}>
-      <MapConsole />
+      <MapConsole commandRegistry={commandRegistry} />
     </AtlasStaticProvider>
   );
+}
+
+function openOperatorSearch() {
+  const modifier = /Mac|iPhone|iPad|iPod/.test(navigator.platform) ? { metaKey: true } : { ctrlKey: true };
+  fireEvent.keyDown(document, { key: "k", ...modifier });
+  return screen.findByRole("combobox", { name: "Search Atlas" });
+}
+
+function taskFor(command: string): TaskResource {
+  return {
+    task_id: `task-${command}`,
+    status: "pending",
+    asset_id: rover.entity_id,
+    command,
+    input: {},
+    created_at: "2026-06-20T00:00:00Z",
+    updated_at: "2026-06-20T00:00:00Z"
+  };
 }
 
 describe("MapConsole", () => {
@@ -825,5 +902,156 @@ describe("MapConsole", () => {
     expect(await screen.findByText("This item is no longer available.")).toBeInTheDocument();
     await waitFor(() => expect(screen.getByTestId("map")).toHaveAttribute("data-editing", "false"));
     expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
+  });
+
+  it("opens with the platform shortcut, filters, moves the active row, and restores focus on Escape", async () => {
+    const user = userEvent.setup();
+    renderStaticConsole();
+    const assetsButton = screen.getByRole("button", { name: "Assets" });
+    assetsButton.focus();
+
+    const search = await openOperatorSearch();
+    expect(search).toHaveFocus();
+    expect(screen.queryByRole("menuitem", { name: /Rover/ })).not.toBeInTheDocument();
+
+    const assetsResult = screen.getByRole("menuitem", { name: /Assets/ });
+    const tracksResult = screen.getByRole("menuitem", { name: /Tracks/ });
+    expect(assetsResult).toHaveAttribute("data-active", "true");
+    await user.keyboard("{ArrowDown}");
+    expect(tracksResult).toHaveAttribute("data-active", "true");
+
+    await user.type(search, "Area");
+    expect(screen.getByRole("menuitem", { name: /Area Alpha/ })).toHaveAttribute("data-active", "true");
+    expect(screen.queryByRole("menuitem", { name: /Rover/ })).not.toBeInTheDocument();
+
+    await user.clear(search);
+    await user.type(search, "zx-99");
+    expect(screen.getByText('No results for "zx-99"')).toBeInTheDocument();
+
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("combobox", { name: "Search Atlas" })).not.toBeInTheDocument());
+    expect(assetsButton).toHaveFocus();
+  });
+
+  it("selects an entity through the palette with sidebar camera semantics", async () => {
+    const user = userEvent.setup();
+    renderStaticConsole();
+
+    const search = await openOperatorSearch();
+    await user.type(search, "Rover");
+    await user.keyboard("{Enter}");
+
+    const map = screen.getByTestId("map");
+    await waitFor(() => expect(map).toHaveAttribute("data-camera-target", "asset-1"));
+    expect(map).toHaveAttribute("data-camera-seq", "1");
+    expect(screen.getByText("No Commands are defined in Atlas Protocol")).toBeInTheDocument();
+  });
+
+  it("opens the existing admin destination through the palette", async () => {
+    const user = userEvent.setup();
+    renderStaticConsole();
+
+    const search = await openOperatorSearch();
+    await user.type(search, "API Keys");
+    await user.keyboard("{Enter}");
+
+    await waitFor(() => expect(document.querySelector(".panel__title")).toHaveTextContent("API Keys"));
+  });
+
+  it("keeps command input and confirmation in the existing flow and disables commands while tasking is pending", async () => {
+    const user = userEvent.setup();
+    const pending = deferred<TaskResource>();
+    const submitCommand = vi.fn(() => pending.promise);
+    renderStaticConsole(
+      {
+        snapshot: { entities: { [taskingRover.entity_id]: taskingRover }, tasks: {} },
+        catalog: taskingCatalog,
+        submitCommand
+      },
+      taskingRegistry
+    );
+
+    await user.click(screen.getByRole("button", { name: /Rover/ }));
+    const search = await openOperatorSearch();
+    await user.type(search, "Fixture queued");
+    await user.keyboard("{Enter}");
+
+    expect(submitCommand).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Confirm fixture" }));
+    expect(submitCommand).toHaveBeenCalledOnce();
+
+    const reopenedSearch = await openOperatorSearch();
+    await user.type(reopenedSearch, "Fixture queued");
+    const disabledCommand = screen.getByRole("menuitem", { name: /Fixture queued/ });
+    expect(disabledCommand).toBeDisabled();
+    expect(disabledCommand).toHaveTextContent("Tasking pending");
+
+    await act(async () => pending.resolve(taskFor("fixture.queued")));
+  });
+
+  it("hands map-point commands to map targeting before submission", async () => {
+    const user = userEvent.setup();
+    const submitCommand = vi.fn(async (_submission: CommandSubmission) => taskFor("fixture.position"));
+    renderStaticConsole(
+      {
+        snapshot: { entities: { [positionRover.entity_id]: positionRover }, tasks: {} },
+        catalog: positionCatalog,
+        submitCommand
+      },
+      positionRegistry
+    );
+
+    await user.click(screen.getByRole("button", { name: /Rover/ }));
+    const search = await openOperatorSearch();
+    await user.type(search, "Fixture position");
+    await user.keyboard("{Enter}");
+
+    expect(submitCommand).not.toHaveBeenCalled();
+    expect(screen.getByText("Right-click the map to target Fixture position.")).toBeInTheDocument();
+
+    fireEvent.contextMenu(screen.getByTestId("map"));
+    await waitFor(() => expect(submitCommand).toHaveBeenCalledOnce());
+    expect(submitCommand.mock.calls[0]?.[0].input).toEqual({ latitude: 47.61, longitude: -122.33 });
+  });
+
+  it("reports loading and unavailable command data without hiding entity search", async () => {
+    const user = userEvent.setup();
+    const pending = deferred<EntityResource>();
+    renderStaticConsole({
+      catalog: taskingCatalog,
+      loadEntityDetails: () => pending.promise
+    });
+
+    await user.click(screen.getByRole("button", { name: /Rover/ }));
+    const search = await openOperatorSearch();
+    expect(screen.getByRole("menu")).toHaveTextContent("Loading Asset Commands");
+
+    pending.reject(new Error("details unavailable"));
+    await waitFor(() => expect(screen.getByRole("menu")).toHaveTextContent("Asset Commands unavailable"));
+    await user.type(search, "Rover");
+    const menu = screen.getByRole("menu");
+    expect(menu).toHaveTextContent("Entities");
+    expect(menu).toHaveTextContent("Go to");
+    expect(menu).toHaveTextContent("Commands for Rover");
+    expect(
+      screen.getByText("Rover", { selector: ".operator-search__main > strong" }).closest("button")
+    ).toHaveAttribute("role", "menuitem");
+  });
+
+  it("keeps the palette available at the narrow and wide sidebar limits", async () => {
+    const user = userEvent.setup();
+    renderStaticConsole();
+    const separator = screen.getByRole("separator", { name: "Resize assets panel" });
+    separator.focus();
+
+    await user.keyboard("{End}");
+    expect(separator).toHaveAttribute("aria-valuenow", "520");
+    expect(await openOperatorSearch()).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(separator).toHaveFocus());
+
+    await user.keyboard("{Home}");
+    expect(separator).toHaveAttribute("aria-valuenow", "180");
+    expect(await openOperatorSearch()).toBeInTheDocument();
   });
 });

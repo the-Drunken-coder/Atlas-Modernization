@@ -16,6 +16,11 @@ export function appendMilsymbolSourceMapReference(source: string, fileName: stri
 }
 
 export default defineConfig(({ mode }) => ({
+  resolve: {
+    // Blueprint is hoisted at the workspace root; keep every component on the
+    // command interface's React 19 instance.
+    dedupe: ["react", "react-dom"]
+  },
   plugins: [
     react(),
     {

@@ -115,7 +115,7 @@ export function EntityList({
   );
 }
 
-function entitySearchText(entity: EntityResource): string {
+export function entitySearchText(entity: EntityResource): string {
   const common = [entityDisplayName(entity), entity.entity_id, entity.entity_type, entity.subtype];
   const kind = entityKind(entity);
   if (kind === "asset") {
@@ -147,7 +147,7 @@ export function entityDotColor(entity: EntityResource, now: number = Date.now())
   return "var(--map-geofeature)";
 }
 
-function entityMeta(entity: EntityResource, now: number): string {
+export function entityMeta(entity: EntityResource, now: number): string {
   const kind = entityKind(entity);
   if (kind === "asset") {
     const connection = entityConnectionStatus(entity, now);

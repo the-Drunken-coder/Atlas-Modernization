@@ -1,0 +1,293 @@
+/* Blueprint Omnibar and Overlay2 contract. The full Blueprint stylesheet is
+   intentionally excluded because it exceeds this package's CSS budget. */
+body.bp6-overlay-open {
+  overflow: hidden;
+}
+
+.operator-search__portal .bp6-overlay {
+  position: fixed;
+  z-index: 80;
+  inset: 0;
+}
+
+.operator-search__portal .bp6-overlay-backdrop {
+  position: fixed;
+  z-index: 80;
+  inset: 0;
+  background: rgb(8 10 12 / 44%);
+  user-select: none;
+}
+
+.operator-search__portal .bp6-overlay-content {
+  position: relative;
+  z-index: 81;
+}
+
+.operator-search__portal .bp6-overlay-start-focus-trap,
+.operator-search__portal .bp6-overlay-end-focus-trap {
+  position: fixed;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+}
+
+.operator-search__portal .bp6-omnibar {
+  display: flex;
+  flex-direction: column;
+  width: min(780px, calc(100vw - 40px));
+  max-height: min(532px, calc(100vh - 104px));
+  margin: 72px auto 0;
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+  box-shadow: 0 16px 44px rgb(0 0 0 / 50%);
+}
+
+.operator-search__query {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 0 0 54px;
+  border-bottom: 1px solid var(--border-strong);
+  background: var(--surface-2);
+}
+
+.operator-search__context {
+  position: absolute;
+  top: 0;
+  right: 14px;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.operator-search__input {
+  min-height: 53px;
+  padding: 0 210px 0 14px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text-1);
+  font-size: 16px;
+}
+
+.operator-search__input::placeholder {
+  color: var(--text-3);
+}
+
+.operator-search__context kbd {
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.operator-search__asset {
+  display: flex;
+  flex-direction: column;
+  padding-left: var(--space-3);
+  border-left: 1px solid var(--border-strong);
+  text-align: right;
+}
+
+.operator-search__asset strong {
+  max-width: 120px;
+  overflow: hidden;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.operator-search__asset small {
+  color: var(--text-3);
+  font-size: 8px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.operator-search__results {
+  display: flex;
+  min-height: 190px;
+  flex: 1;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.operator-search__columns,
+.operator-search__row {
+  display: grid;
+  grid-template-columns: 90px minmax(0, 1fr) minmax(170px, 0.72fr);
+  gap: var(--space-3);
+}
+
+.operator-search__columns {
+  min-height: 28px;
+  align-items: center;
+  padding: 0 var(--space-3);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-base);
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.operator-search__list {
+  min-height: 0;
+  flex: 1;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.operator-search__section {
+  display: flex;
+  min-height: 25px;
+  align-items: center;
+  padding: 0 var(--space-3);
+  border-bottom: 1px solid var(--border);
+  color: var(--text-2);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.operator-search__row {
+  width: 100%;
+  min-height: 46px;
+  align-items: center;
+  padding: 5px var(--space-3);
+  border: 0;
+  border-bottom: 1px solid #30363e;
+  background: transparent;
+  color: var(--text-1);
+  text-align: left;
+  cursor: pointer;
+}
+
+.operator-search__row:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+
+.operator-search__row[data-active="true"] {
+  padding-left: 10px;
+  border-left: 2px solid var(--accent-strong);
+  background: var(--accent-muted);
+}
+
+.operator-search__row:disabled {
+  color: var(--text-3);
+  cursor: default;
+}
+
+.operator-search__kind {
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.operator-search__kind.is-asset {
+  color: var(--map-asset);
+}
+
+.operator-search__kind.is-track {
+  color: var(--map-track);
+}
+
+.operator-search__kind.is-geofeature {
+  color: var(--map-geofeature);
+}
+
+.operator-search__main,
+.operator-search__meta {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.operator-search__main strong,
+.operator-search__main small,
+.operator-search__meta code,
+.operator-search__meta small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.operator-search__main strong {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.operator-search__main small,
+.operator-search__meta small {
+  color: var(--text-3);
+  font-size: 9px;
+}
+
+.operator-search__meta code {
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.operator-search__meta [data-disabled-reason] {
+  color: var(--warning);
+}
+
+.operator-search__status,
+.operator-search__empty {
+  display: flex;
+  min-height: 64px;
+  align-items: center;
+  padding: 10px 14px;
+  border-bottom: 1px solid #30363e;
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.operator-search__empty {
+  min-height: 190px;
+  justify-content: center;
+}
+
+.operator-search__footer {
+  display: flex;
+  min-height: 30px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--space-3);
+  border-top: 1px solid var(--border-strong);
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: 9px;
+}
+
+@media (max-width: 650px) {
+  .operator-search__portal .bp6-omnibar {
+    width: calc(100vw - 20px);
+    max-height: calc(100vh - 62px);
+    margin-top: 42px;
+  }
+
+  .operator-search__asset,
+  .operator-search__columns,
+  .operator-search__footer span:last-child {
+    display: none;
+  }
+
+  .operator-search__input {
+    padding-right: 82px;
+  }
+
+  .operator-search__row {
+    grid-template-columns: 62px minmax(0, 1fr);
+  }
+
+  .operator-search__meta {
+    grid-column: 2;
+  }
+}

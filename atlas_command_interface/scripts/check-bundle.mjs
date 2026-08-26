@@ -21,7 +21,7 @@ const budgets = {
   mapLibreCss: { raw: 85_000, gzip: 11_000 },
   mapRoute: { raw: 2_100_000, gzip: 550_000 },
   allJavaScript: { raw: 2_900_000, gzip: 800_000 },
-  allCss: { raw: 110_000, gzip: 18_000 }
+  allCss: { raw: 115_000, gzip: 18_000 }
 };
 
 if (!args.has("--skip-build")) {
@@ -58,7 +58,7 @@ const shell = manifest["src/features/MapConsole.tsx"];
 const mapView = manifest["src/ui/map/view/MapView.tsx"];
 if (!entry || !shell || !mapView) fail("Manifest is missing the index, MapConsole, or MapView entry");
 
-const initialFiles = new Set([entry.file, ...(entry.css ?? [])]);
+const initialFiles = uniqueFiles(entry, manifest);
 const shellFiles = uniqueFiles(shell, manifest).difference(initialFiles);
 const mapRouteFiles = uniqueFiles(mapView, manifest)
   .union(mapLibreWorkerFiles)

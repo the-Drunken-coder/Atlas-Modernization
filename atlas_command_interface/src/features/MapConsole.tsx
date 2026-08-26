@@ -32,10 +32,12 @@ import { ContextMenu, type MenuItemDef } from "../ui/primitives/Menu.js";
 import { APIKeysPanel } from "./admin/APIKeysPanel.js";
 import { AssetInspector } from "./assets/AssetInspector.js";
 import { CommandList } from "./commands/CommandList.js";
+import { COMMAND_INPUT_REGISTRY, type CommandInputRegistry } from "./commands/command-input-registry.js";
 import { type CommandFormState, useCommandFlow } from "./commands/use-command-flow.js";
 import { EntityList } from "./EntityList.js";
 import { GeofeatureInspector } from "./geofeatures/GeofeatureInspector.js";
 import { type GeometryEditState, useGeometryEdit } from "./geofeatures/use-geometry-edit.js";
+import { isOperatorSearchShortcut } from "./operator-search/operator-search-shortcut.js";
 import { TrackInspector } from "./tracks/TrackInspector.js";
 
 const LIST_TITLES = Object.fromEntries([
@@ -45,15 +47,24 @@ const LIST_TITLES = Object.fromEntries([
 ]) as Record<ListKind, string>;
 
 const MapView = lazy(() => import("../ui/map/view/MapView.js").then((module) => ({ default: module.MapView })));
+const OperatorSearch = lazy(() =>
+  import("./operator-search/OperatorSearch.js").then((module) => ({ default: module.OperatorSearch }))
+);
 
 type CommandManifestStatus = "ready" | "loading" | "unavailable";
 const EMPTY_ENTITY_QUERIES = Object.fromEntries(ENTITY_KINDS.map((kind) => [kind, ""])) as Record<EntityKind, string>;
 
-export function MapConsole() {
+export function MapConsole({
+  commandRegistry = COMMAND_INPUT_REGISTRY
+}: {
+  commandRegistry?: CommandInputRegistry;
+} = {}) {
   const atlas = useAtlas();
   const { snapshot, catalog } = atlas;
   const [sidebar, dispatch] = useReducer(sidebarReducer, initialSidebarState);
   const [entityQueries, setEntityQueries] = useState(EMPTY_ENTITY_QUERIES);
+  const [operatorSearchOpen, setOperatorSearchOpen] = useState(false);
+  const [operatorSearchMounted, setOperatorSearchMounted] = useState(false);
 
   const [selectedMapSourceId, setSelectedMapSourceId] = useState<string>();
 
@@ -111,7 +122,18 @@ export function MapConsole() {
   const commandFlow = useCommandFlow({ catalog, selectedEntity, selectedId, submitCommand: atlas.submitCommand });
   const geometryEdit = useGeometryEdit({ selectedEntity, selectedId, updateGeometry: atlas.updateGeometry });
   const { edit, saving, saveError } = geometryEdit;
-  const { mapMenu, commandForm, submitting, submitError } = commandFlow;
+  const { mapMenu, mapTargeting, commandForm, submitting, submitError } = commandFlow;
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (atlas.status !== "ready" || !atlas.config || !isOperatorSearchShortcut(event, navigator.platform)) return;
+      event.preventDefault();
+      setOperatorSearchMounted(true);
+      setOperatorSearchOpen(true);
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [atlas.status, atlas.config]);
 
   useEffect(() => {
     const config = atlas.config;
@@ -156,6 +178,11 @@ export function MapConsole() {
     },
     [snapshot.entities]
   );
+  const selectSidebarEntity = useCallback((entity: EntityResource) => {
+    const kind = entityKind(entity);
+    if (kind === "other") return;
+    dispatch({ type: "selectEntity", kind, id: entity.entity_id, origin: "sidebar" });
+  }, []);
   const setEntityQuery = useCallback((kind: EntityKind, query: string) => {
     setEntityQueries((current) => (current[kind] === query ? current : { ...current, [kind]: query }));
   }, []);
@@ -202,7 +229,7 @@ export function MapConsole() {
 
   const mapCommands: MenuItemDef[] =
     mapMenu && selectedEntity && catalog
-      ? commandsForTargeting(catalog, selectedEntity, "map_point").map((availability) => ({
+      ? commandsForTargeting(catalog, selectedEntity, "map_point", commandRegistry).map((availability) => ({
           key: availability.command.command,
           title: availability.command.name,
           sub: availability.manifest.description,
@@ -240,11 +267,8 @@ export function MapConsole() {
               edit={edit}
               saving={saving}
               saveError={saveError}
-              onSelectEntity={(entity) => {
-                const kind = entityKind(entity);
-                if (kind === "other") return;
-                dispatch({ type: "selectEntity", kind, id: entity.entity_id, origin: "sidebar" });
-              }}
+              commandRegistry={commandRegistry}
+              onSelectEntity={selectSidebarEntity}
               onEntityQueryChange={setEntityQuery}
               onPickCommand={commandFlow.pickSidebarCommand}
               onStartEdit={geometryEdit.startEdit}
@@ -324,6 +348,15 @@ export function MapConsole() {
         </div>
       ) : null}
 
+      {mapTargeting ? (
+        <div className="banner banner--info map-targeting-banner" role="status">
+          <span>Right-click the map to target {mapTargeting.command.name}.</span>
+          <Button variant="ghost" onClick={commandFlow.cancelMapTargeting}>
+            Cancel
+          </Button>
+        </div>
+      ) : null}
+
       {commandForm && selectedEntity ? (
         <PurposeBuiltCommandForm
           state={commandForm}
@@ -337,6 +370,28 @@ export function MapConsole() {
         <div className="banner banner--error" role="alert">
           {submitError}
         </div>
+      ) : null}
+
+      {operatorSearchMounted ? (
+        <Suspense fallback={null}>
+          <OperatorSearch
+            isOpen={operatorSearchOpen}
+            snapshot={snapshot}
+            selectedEntity={selectedEntity}
+            catalog={catalog}
+            commandDataStatus={resolvedCommandManifestStatus}
+            commandRegistry={commandRegistry}
+            submitting={submitting}
+            onClose={() => setOperatorSearchOpen(false)}
+            onAfterClose={() => setOperatorSearchMounted(false)}
+            onSelectEntity={selectSidebarEntity}
+            onSelectDestination={(destination) => dispatch({ type: "openList", list: destination })}
+            onSelectCommand={(availability) => {
+              if (availability.input.targeting === "map_point") commandFlow.startMapTargeting(availability);
+              else commandFlow.pickSidebarCommand(availability);
+            }}
+          />
+        </Suspense>
       ) : null}
     </>
   );
@@ -413,6 +468,7 @@ type PanelBodyProps = {
   selectedEntity?: EntityResource;
   catalog?: CommandCatalog;
   commandManifestStatus: CommandManifestStatus;
+  commandRegistry: CommandInputRegistry;
   edit: GeometryEditState | null;
   saving: boolean;
   saveError?: string;
@@ -476,6 +532,7 @@ function ListBody({
   selectedEntity,
   catalog,
   commandManifestStatus,
+  commandRegistry,
   onSelectEntity,
   onEntityQueryChange,
   onPickCommand
@@ -485,7 +542,7 @@ function ListBody({
       return (
         <div style={{ padding: 12 }}>
           <CommandList
-            availabilities={catalog ? commandsForTargeting(catalog, selectedEntity, "none") : []}
+            availabilities={catalog ? commandsForTargeting(catalog, selectedEntity, "none", commandRegistry) : []}
             onPick={onPickCommand}
             emptyLabel={
               !catalog

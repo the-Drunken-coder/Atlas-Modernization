@@ -8,7 +8,7 @@ export function getEntity(snapshot: AtlasSnapshot, id: string | undefined): Enti
 }
 
 /** Selectable entities (asset/track/geofeature) sorted by display name. */
-export function listEntities(snapshot: AtlasSnapshot): EntityResource[] {
+export function listEntities(snapshot: AtlasSnapshot): Array<EntityResource & { entity_type: EntityKind }> {
   return Object.values(snapshot.entities)
     .filter(isSelectableKind)
     .sort((a, b) => entityDisplayName(a).localeCompare(entityDisplayName(b)));
