@@ -30,6 +30,17 @@ describe("MapView external reticle targets", () => {
     expect(map.fitBounds).not.toHaveBeenCalled();
   });
 
+  it("uses the requested target window for point-only place results", async () => {
+    const { rerenderMap } = renderMapView();
+    rerenderMap({ focusTarget: { type: "point", id: "search-1", coordinates: [70, 80], reticleSize: 48 } });
+
+    await waitFor(() => {
+      const overlay = document.querySelector<HTMLElement>(".map-reticle");
+      expect(overlay?.style.getPropertyValue("--map-reticle-target-width")).toBe("62px");
+      expect(overlay?.style.getPropertyValue("--map-reticle-target-height")).toBe("62px");
+    });
+  });
+
   it("keeps the native cursor for external reticles until the pointer drives the reticle", async () => {
     const { canvas, rerenderMap } = renderMapView();
     rerenderMap({ focusTarget: { type: "point", id: "search-1", coordinates: [70, 80] } });

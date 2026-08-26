@@ -5,7 +5,7 @@ import type { MapSourceConfig } from "../../../app/config.js";
 import { sanitizeConnectionError } from "../../../atlas/connection-error.js";
 import { Button } from "../../primitives/controls.js";
 import { getSidcRuntime, loadSidcRuntime } from "../../symbols/sidc-runtime.js";
-import { CAMERA_EVENT_TAG, type MapCameraCommand } from "../interaction/map-camera.js";
+import { CAMERA_EVENT_TAG, type MapCameraCommand, RETICLE_FLASH_MS } from "../interaction/map-camera.js";
 import type { MapReticleTarget } from "../interaction/map-targets.js";
 import { useMapCamera } from "../interaction/use-map-camera.js";
 import { useMapReticleInteraction } from "../interaction/use-map-reticle-interaction.js";
@@ -87,12 +87,16 @@ export function MapView({
   const styleSwitchErrorRef = useRef(onStyleSwitchError);
   const [mapError, setMapError] = useState<string>();
   const [mapReady, setMapReady] = useState(false);
+  const [appliedCameraCommand, setAppliedCameraCommand] = useState<MapCameraCommand | null | undefined>(() =>
+    cameraCommand?.intent === "commit" ? null : cameraCommand
+  );
+  const [reticleFlashing, setReticleFlashing] = useState(false);
   handlersRef.current = { onSelectEntity, onMapContextMenu };
   styleSwitchErrorRef.current = onStyleSwitchError;
   sourcesRef.current = sources;
   editingRef.current = editing;
   initialMapRef.current = { initialCenter, style, styleId };
-  const { notifyUserGesture } = useMapCamera({ mapRef, mapReady, sources, command: cameraCommand });
+  const { notifyUserGesture } = useMapCamera({ mapRef, mapReady, sources, command: appliedCameraCommand });
   const reticleInteraction = useMapReticleInteraction({
     mapCanvasRef,
     mapRef,
@@ -106,6 +110,20 @@ export function MapView({
   });
   const mapActionsRef = useRef(reticleInteraction.mapActions);
   mapActionsRef.current = reticleInteraction.mapActions;
+
+  useEffect(() => {
+    if (cameraCommand?.intent !== "commit") {
+      setReticleFlashing(false);
+      setAppliedCameraCommand(cameraCommand);
+      return;
+    }
+    setReticleFlashing(true);
+    const timeout = window.setTimeout(() => {
+      setReticleFlashing(false);
+      setAppliedCameraCommand(cameraCommand);
+    }, RETICLE_FLASH_MS);
+    return () => window.clearTimeout(timeout);
+  }, [cameraCommand]);
 
   // Create the map once.
   useEffect(() => {
@@ -358,6 +376,7 @@ export function MapView({
       {reticleInteraction.visibleReticle ? (
         <MapReticle
           reticle={reticleInteraction.visibleReticle}
+          flashing={reticleFlashing}
           scrolling={reticleInteraction.scrolling}
           zooming={reticleInteraction.zooming}
         />

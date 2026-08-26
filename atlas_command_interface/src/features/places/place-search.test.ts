@@ -50,7 +50,8 @@ describe("MapTiler place search", () => {
             type: "point",
             id: "place:poi.1",
             coordinates: [-71.8063, 42.2746],
-            label: "Worcester Polytechnic Institute"
+            label: "Worcester Polytechnic Institute",
+            reticleSize: 48
           }
         },
         {
@@ -99,7 +100,50 @@ describe("MapTiler place search", () => {
     );
 
     await expect(search("100 Institute Road", new AbortController().signal)).resolves.toMatchObject({
-      results: [{ coordinates: [-71.8063, 42.2746], target: { type: "point" } }]
+      results: [{ coordinates: [-71.8063, 42.2746], target: { type: "point", reticleSize: 48 } }]
+    });
+  });
+
+  it("uses provider bounds for address-sized targets", async () => {
+    const search = createMapTilerPlaceSearch(
+      "key",
+      vi.fn(async () =>
+        Response.json({
+          type: "FeatureCollection",
+          attribution: "© MapTiler",
+          features: [
+            {
+              id: "address.1",
+              text: "100 Institute Road",
+              center: [-71.8063, 42.2746],
+              bbox: [-71.8065, 42.2744, -71.8061, 42.2748],
+              place_type: ["address"]
+            }
+          ]
+        })
+      )
+    );
+
+    await expect(search("100 Institute Road", new AbortController().signal)).resolves.toMatchObject({
+      results: [
+        {
+          target: {
+            type: "geometry",
+            geometry: {
+              type: "Polygon",
+              coordinates: [
+                [
+                  [-71.8065, 42.2744],
+                  [-71.8061, 42.2744],
+                  [-71.8061, 42.2748],
+                  [-71.8065, 42.2748],
+                  [-71.8065, 42.2744]
+                ]
+              ]
+            }
+          }
+        }
+      ]
     });
   });
 

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
+import type { UiRawGeometry } from "../../../atlas/geometry.js";
 import {
   type CameraView,
+  COMMIT_FIT_MAX_ZOOM,
   coordsChanged,
   FIT_BOUNDS_PADDING,
   FIT_DURATION_MS,
@@ -11,6 +13,9 @@ import {
   flyDurationMs,
   followIdle,
   followReducer,
+  PREVIEW_FIT_BOUNDS_PADDING,
+  PREVIEW_FIT_MAX_ZOOM,
+  PREVIEW_POINT_ZOOM,
   planFocusMove
 } from "./map-camera.js";
 
@@ -25,6 +30,11 @@ describe("planFocusMove", () => {
   it("flies points down to the asset view zoom when zoomed in past it", () => {
     const move = planFocusMove({ type: "Point", coordinates: [70, 80] }, view([70, 80], 15));
     expect(move).toMatchObject({ kind: "fly-to", zoom: 15 });
+  });
+
+  it("uses a wider point view for previews", () => {
+    const move = planFocusMove({ type: "Point", coordinates: [70, 80] }, view([0, 0], 4), "preview");
+    expect(move).toMatchObject({ kind: "fly-to", center: [70, 80], zoom: PREVIEW_POINT_ZOOM });
   });
 
   it("fits line geometry bounds with the standard padding and cap", () => {
@@ -52,6 +62,27 @@ describe("planFocusMove", () => {
 
   it("returns null for empty geometry", () => {
     expect(planFocusMove({ type: "LineString", coordinates: [] }, view([0, 0], 4))).toBeNull();
+  });
+
+  it("fits preview geometry loosely and committed geometry tightly", () => {
+    const geometry: UiRawGeometry = {
+      type: "LineString",
+      coordinates: [
+        [10, 20],
+        [30, 5]
+      ]
+    };
+
+    expect(planFocusMove(geometry, view([0, 0], 4), "preview")).toMatchObject({
+      kind: "fit-bounds",
+      maxZoom: PREVIEW_FIT_MAX_ZOOM,
+      padding: PREVIEW_FIT_BOUNDS_PADDING
+    });
+    expect(planFocusMove(geometry, view([0, 0], 4), "commit")).toMatchObject({
+      kind: "fit-bounds",
+      maxZoom: COMMIT_FIT_MAX_ZOOM,
+      padding: FIT_BOUNDS_PADDING
+    });
   });
 });
 

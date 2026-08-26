@@ -179,7 +179,7 @@ function boxForMapReticleTarget(
   if (target.type === "entity") return targetBoxForEntityId(mapCanvas, map, sources, target.id);
   if (target.type === "point") {
     const point = map.project(target.coordinates);
-    return squareAround({ x: point.x, y: point.y }, 1);
+    return squareAround({ x: point.x, y: point.y }, target.reticleSize ?? 1);
   }
   return boxFromGeometry(map, target.geometry);
 }

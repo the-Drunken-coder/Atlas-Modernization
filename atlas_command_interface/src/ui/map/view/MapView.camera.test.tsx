@@ -1,12 +1,15 @@
 import { waitFor } from "@testing-library/react";
 import { act } from "react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   ASSET_VIEW_ZOOM,
   FOLLOW_EASE_MS,
   flyDurationMs,
   INITIAL_WORLD_BOUNDS,
-  type MapCameraCommand
+  type MapCameraCommand,
+  PREVIEW_POINT_ZOOM,
+  PREVIEW_RESTORE_MS,
+  RETICLE_FLASH_MS
 } from "../interaction/map-camera.js";
 import { buildMapSources } from "../rendering/map-sources.js";
 import { entity, markerSources, notifyResizeObservers, type PointLike, renderMapView } from "./MapView.test-harness.js";
@@ -154,6 +157,119 @@ describe("MapView camera commands", () => {
     act(() => map.fire("moveend", { atlasCamera: true }));
     rerenderMap({ sources: movedSources() });
     expect(map.easeTo).not.toHaveBeenCalled();
+  });
+
+  it("previews a point from the current view and restores that view when the preview clears", async () => {
+    const { map, rerenderMap } = renderMapView();
+    map.flyTo.mockClear();
+    map.easeTo.mockClear();
+
+    rerenderMap({
+      cameraCommand: {
+        seq: 1,
+        intent: "preview",
+        target: { type: "point", id: "place-1", coordinates: [70, 80] }
+      }
+    });
+    await waitFor(() =>
+      expect(map.flyTo).toHaveBeenCalledWith(expect.objectContaining({ center: [70, 80], zoom: PREVIEW_POINT_ZOOM }), {
+        atlasCamera: true
+      })
+    );
+
+    rerenderMap({ cameraCommand: null });
+
+    expect(map.easeTo).toHaveBeenCalledWith(
+      { center: [0, 0], zoom: 4, duration: PREVIEW_RESTORE_MS, easing: expect.any(Function) },
+      { atlasCamera: true }
+    );
+  });
+
+  it("keeps the previewed view when a place focus is committed", async () => {
+    const { map, rerenderMap } = renderMapView();
+    map.easeTo.mockClear();
+
+    rerenderMap({
+      cameraCommand: {
+        seq: 1,
+        intent: "preview",
+        target: { type: "point", id: "place-1", coordinates: [70, 80] }
+      }
+    });
+    await waitFor(() => expect(map.flyTo).toHaveBeenCalledTimes(1));
+    rerenderMap({
+      cameraCommand: {
+        seq: 2,
+        intent: "commit",
+        target: { type: "point", id: "place-1", coordinates: [70, 80] }
+      }
+    });
+    await waitFor(() => expect(map.flyTo).toHaveBeenCalledTimes(2));
+    rerenderMap({ cameraCommand: null });
+
+    expect(map.easeTo).not.toHaveBeenCalled();
+  });
+
+  it("flashes the reticle before applying a committed place move and cancels stale commits", async () => {
+    const { map, rerenderMap } = renderMapView();
+    rerenderMap({
+      focusTarget: { type: "point", id: "place-1", coordinates: [70, 80] },
+      cameraCommand: {
+        seq: 1,
+        intent: "preview",
+        target: { type: "point", id: "place-1", coordinates: [70, 80] }
+      }
+    });
+    await waitFor(() => expect(map.flyTo).toHaveBeenCalledTimes(1));
+
+    vi.useFakeTimers();
+    try {
+      rerenderMap({
+        cameraCommand: {
+          seq: 2,
+          intent: "commit",
+          target: { type: "point", id: "place-1", coordinates: [70, 80] }
+        }
+      });
+      const reticle = document.querySelector<HTMLElement>(".map-reticle");
+      expect(reticle).toHaveAttribute("data-flashing", "true");
+      expect(reticle?.style.getPropertyValue("--map-reticle-line-color")).toBe("var(--text-1)");
+      expect(map.flyTo).toHaveBeenCalledTimes(1);
+
+      await act(async () => vi.advanceTimersByTimeAsync(RETICLE_FLASH_MS));
+      expect(document.querySelector(".map-reticle")).not.toHaveAttribute("data-flashing");
+      expect(map.flyTo).toHaveBeenCalledTimes(2);
+
+      rerenderMap({
+        cameraCommand: {
+          seq: 3,
+          intent: "commit",
+          target: { type: "point", id: "place-1", coordinates: [70, 80] }
+        }
+      });
+      expect(document.querySelector(".map-reticle")).toHaveAttribute("data-flashing", "true");
+      rerenderMap({ cameraCommand: { seq: 4, intent: "world" } });
+      expect(document.querySelector(".map-reticle")).not.toHaveAttribute("data-flashing");
+      await act(async () => vi.advanceTimersByTimeAsync(RETICLE_FLASH_MS));
+      expect(map.flyTo).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("returns to the world view on explicit overview commands", async () => {
+    const { map, rerenderMap } = renderMapView();
+    map.fitBounds.mockClear();
+
+    rerenderMap({ cameraCommand: { seq: 1, intent: "world" } });
+
+    await waitFor(() =>
+      expect(map.fitBounds).toHaveBeenCalledWith(
+        INITIAL_WORLD_BOUNDS,
+        { padding: 0, duration: 450 },
+        { atlasCamera: true }
+      )
+    );
   });
 
   it("follows the selected entity with short tagged eases as telemetry moves it", async () => {

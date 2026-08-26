@@ -54,7 +54,7 @@ function Harness({
 }
 
 describe("PlacesPanel", () => {
-  it("debounces search, renders attribution, previews on hover and focus, and activates on click", async () => {
+  it("debounces search, delays preview, preserves focus preview, and activates on click", async () => {
     vi.useFakeTimers();
     const search = vi.fn(async () => response);
     const onPreview = vi.fn<(target: MapTarget | null) => void>();
@@ -81,13 +81,40 @@ describe("PlacesPanel", () => {
 
     onPreview.mockClear();
     fireEvent.mouseEnter(result);
+    expect(onPreview).not.toHaveBeenCalled();
+    await act(async () => vi.advanceTimersByTimeAsync(SEARCH_DELAY - 1));
+    expect(onPreview).not.toHaveBeenCalled();
+    await act(async () => vi.advanceTimersByTimeAsync(1));
     expect(onPreview).toHaveBeenLastCalledWith(pointTarget);
+    onPreview.mockClear();
     fireEvent.focus(result);
-    expect(onPreview).toHaveBeenLastCalledWith(pointTarget);
+    fireEvent.mouseLeave(result);
+    expect(onPreview).not.toHaveBeenCalled();
     fireEvent.click(result);
+    expect(onPreview).toHaveBeenLastCalledWith(pointTarget);
     expect(onFocus).toHaveBeenCalledWith(pointTarget);
     fireEvent.blur(result);
     expect(onPreview).toHaveBeenLastCalledWith(null);
+  });
+
+  it("cancels a pending hover preview when the pointer leaves", async () => {
+    vi.useFakeTimers();
+    const onPreview = vi.fn<(target: MapTarget | null) => void>();
+    render(<Harness search={async () => response} onPreview={onPreview} />);
+
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search places" }), {
+      target: { value: "Worcester" }
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(SEARCH_DELAY));
+    const result = screen.getByRole("button", { name: /Worcester Polytechnic Institute/ });
+    onPreview.mockClear();
+
+    fireEvent.mouseEnter(result);
+    await act(async () => vi.advanceTimersByTimeAsync(SEARCH_DELAY - 1));
+    fireEvent.mouseLeave(result);
+    await act(async () => vi.advanceTimersByTimeAsync(1));
+
+    expect(onPreview).not.toHaveBeenCalled();
   });
 
   it("aborts stale searches when the query changes", async () => {

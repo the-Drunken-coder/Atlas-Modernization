@@ -19,19 +19,7 @@ export type PlaceSearch = (query: string, signal: AbortSignal) => Promise<PlaceS
 type Fetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
 const MAPTILER_GEOCODING_URL = "https://api.maptiler.com/geocoding";
-const BROAD_PLACE_TYPES = new Set([
-  "continental_marine",
-  "country",
-  "major_landform",
-  "region",
-  "subregion",
-  "county",
-  "municipality",
-  "municipal_district",
-  "locality",
-  "neighbourhood",
-  "place"
-]);
+const POINT_RETICLE_SIZE = 48;
 
 export function createMapTilerPlaceSearch(apiKey: string, fetchImpl: Fetch = fetch): PlaceSearch {
   const normalizedApiKey = apiKey.trim();
@@ -78,8 +66,7 @@ function parseFeature(value: unknown): PlaceSearchResult | undefined {
   const context = placeName && placeName !== name ? removeNamePrefix(placeName, name) : undefined;
   const targetId = `place:${id}`;
   const bbox = boundingBox(value.bbox);
-  const placeTypes = Array.isArray(value.place_type) ? value.place_type.filter(isString) : [];
-  const geometry = bbox && placeTypes.some((type) => BROAD_PLACE_TYPES.has(type)) ? polygonForBounds(bbox) : undefined;
+  const geometry = bbox ? polygonForBounds(bbox) : undefined;
 
   return {
     id,
@@ -88,7 +75,7 @@ function parseFeature(value: unknown): PlaceSearchResult | undefined {
     coordinates,
     target: geometry
       ? { type: "geometry", id: targetId, geometry, label: name }
-      : { type: "point", id: targetId, coordinates, label: name }
+      : { type: "point", id: targetId, coordinates, label: name, reticleSize: POINT_RETICLE_SIZE }
   };
 }
 
@@ -127,10 +114,6 @@ function stringValue(value: unknown): string | undefined {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isString(value: unknown): value is string {
-  return typeof value === "string";
 }
 
 function isFiniteNumber(value: unknown): value is number {

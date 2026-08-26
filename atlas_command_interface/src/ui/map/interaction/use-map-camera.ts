@@ -4,6 +4,7 @@ import type { MapSources } from "../rendering/map-sources.js";
 import {
   CAMERA_EVENT_TAG,
   coordsChanged,
+  FIT_DURATION_MS,
   FOLLOW_EASE_MS,
   type FollowEvent,
   type FollowState,
@@ -11,8 +12,10 @@ import {
   followIdle,
   followReducer,
   geometryForTarget,
+  INITIAL_WORLD_BOUNDS,
   isLngLatPosition,
   type MapCameraCommand,
+  PREVIEW_RESTORE_MS,
   planFocusMove
 } from "./map-camera.js";
 
@@ -35,6 +38,7 @@ export function useMapCamera(args: {
   const followRef = useRef<FollowState>(followIdle);
   const lastAppliedSeqRef = useRef(0);
   const lastFollowedCoordsRef = useRef<[number, number] | null>(null);
+  const previewOriginRef = useRef<{ center: [number, number]; zoom: number } | null>(null);
   const sourcesRef = useRef(sources);
   sourcesRef.current = sources;
 
@@ -58,6 +62,7 @@ export function useMapCamera(args: {
   }, [mapRef]);
 
   const notifyUserGesture = useCallback(() => {
+    previewOriginRef.current = null;
     dispatch({ type: "user-gesture" });
   }, [dispatch]);
 
@@ -69,7 +74,7 @@ export function useMapCamera(args: {
     if (!map || !mapReady) return;
 
     const onMoveStart = (event?: unknown) => {
-      if (!(event as TaggedEvent)?.[CAMERA_EVENT_TAG]) dispatch({ type: "user-gesture" });
+      if (!(event as TaggedEvent)?.[CAMERA_EVENT_TAG]) notifyUserGesture();
     };
     const onMoveEnd = (event?: unknown) => {
       const tagged = event as TaggedEvent;
@@ -79,7 +84,7 @@ export function useMapCamera(args: {
       // Telemetry may have moved the entity during the flight.
       chaseFollowedEntity();
     };
-    const onGesture = () => dispatch({ type: "user-gesture" });
+    const onGesture = notifyUserGesture;
 
     map.on("movestart", onMoveStart);
     map.on("moveend", onMoveEnd);
@@ -93,7 +98,7 @@ export function useMapCamera(args: {
       map.off("boxzoomstart", onGesture);
       map.off("wheel", onGesture);
     };
-  }, [mapRef, mapReady, dispatch, chaseFollowedEntity]);
+  }, [mapRef, mapReady, dispatch, chaseFollowedEntity, notifyUserGesture]);
 
   // Apply camera commands. Unresolvable targets stay pending and retry on
   // every sources change; the seq is committed only once a move is issued.
@@ -103,9 +108,25 @@ export function useMapCamera(args: {
 
     if (!command) {
       dispatch({ type: "command-cleared" });
+      const origin = previewOriginRef.current;
+      if (origin) {
+        previewOriginRef.current = null;
+        map.easeTo(
+          { center: origin.center, zoom: origin.zoom, duration: PREVIEW_RESTORE_MS, easing: (t) => t },
+          { [CAMERA_EVENT_TAG]: true }
+        );
+      }
       return;
     }
     if (command.seq <= lastAppliedSeqRef.current) return;
+
+    if (command.intent === "world") {
+      previewOriginRef.current = null;
+      lastAppliedSeqRef.current = command.seq;
+      dispatch({ type: "command-geometry", seq: command.seq });
+      map.fitBounds(INITIAL_WORLD_BOUNDS, { padding: 0, duration: FIT_DURATION_MS }, { [CAMERA_EVENT_TAG]: true });
+      return;
+    }
 
     const geometry = geometryForTarget(sources, command.target);
     const view = geometry
@@ -114,7 +135,9 @@ export function useMapCamera(args: {
           return { center: [center.lng, center.lat] as [number, number], zoom: map.getZoom() };
         })()
       : undefined;
-    const move = geometry && view ? planFocusMove(geometry, view) : null;
+    if (command.intent === "preview" && view && !previewOriginRef.current) previewOriginRef.current = view;
+    if (command.intent !== "preview") previewOriginRef.current = null;
+    const move = geometry && view ? planFocusMove(geometry, view, command.intent) : null;
     if (!move) {
       if (command.target.type === "entity")
         dispatch({ type: "command-pending", seq: command.seq, entityId: command.target.id });

@@ -6,11 +6,12 @@ type SidebarPanelProps = {
   title: string;
   onBack?: () => void;
   autoFocusBack?: boolean;
+  headerAction?: ReactNode;
   onCollapse: () => void;
   children: ReactNode;
 };
 
-export function SidebarPanel({ title, onBack, autoFocusBack, onCollapse, children }: SidebarPanelProps) {
+export function SidebarPanel({ title, onBack, autoFocusBack, headerAction, onCollapse, children }: SidebarPanelProps) {
   return (
     <div className="panel">
       <div className="panel__header">
@@ -24,6 +25,7 @@ export function SidebarPanel({ title, onBack, autoFocusBack, onCollapse, childre
           <span className="panel__title">{title}</span>
         </div>
         <span style={{ flex: 1 }} />
+        {headerAction}
         <IconButton label="Collapse panel" onClick={onCollapse}>
           <CollapseIcon size={18} />
         </IconButton>

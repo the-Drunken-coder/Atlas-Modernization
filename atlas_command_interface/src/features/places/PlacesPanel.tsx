@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { MapTarget } from "../../ui/map/interaction/map-camera.js";
 import { Button } from "../../ui/primitives/controls.js";
 import { PlaceIcon, SearchIcon } from "../../ui/primitives/icons.js";
@@ -20,6 +20,7 @@ type PlacesPanelProps = {
 };
 
 const SEARCH_DEBOUNCE_MS = 250;
+const PREVIEW_DELAY_MS = 250;
 const MIN_QUERY_LENGTH = 2;
 
 export function PlacesPanel({ query, search, unavailableReason, onQueryChange, onPreview, onFocus }: PlacesPanelProps) {
@@ -121,18 +122,59 @@ function PlaceResultRow({
   onPreview: (target: MapTarget | null) => void;
   onFocus: (target: MapTarget) => void;
 }) {
+  const hoveredRef = useRef(false);
+  const focusedRef = useRef(false);
+  const previewedRef = useRef(false);
+  const previewTimerRef = useRef<number | undefined>(undefined);
+
+  const cancelPendingPreview = useCallback(() => {
+    if (previewTimerRef.current !== undefined) window.clearTimeout(previewTimerRef.current);
+    previewTimerRef.current = undefined;
+  }, []);
+  const schedulePreview = useCallback(() => {
+    if (previewedRef.current || previewTimerRef.current !== undefined) return;
+    previewTimerRef.current = window.setTimeout(() => {
+      previewTimerRef.current = undefined;
+      previewedRef.current = true;
+      onPreview(result.target);
+    }, PREVIEW_DELAY_MS);
+  }, [onPreview, result.target]);
+  const clearInactivePreview = useCallback(() => {
+    if (hoveredRef.current || focusedRef.current) return;
+    cancelPendingPreview();
+    if (previewedRef.current) onPreview(null);
+    previewedRef.current = false;
+  }, [cancelPendingPreview, onPreview]);
+
+  useEffect(() => cancelPendingPreview, [cancelPendingPreview]);
+
   return (
     <li>
       <button
         type="button"
         className="entity-row place-row"
         aria-label={result.context ? `${result.name}, ${result.context}` : result.name}
-        onBlur={() => onPreview(null)}
-        onClick={() => onFocus(result.target)}
-        onFocus={() => onPreview(result.target)}
-        onMouseEnter={() => onPreview(result.target)}
-        onMouseLeave={(event) => {
-          if (document.activeElement !== event.currentTarget) onPreview(null);
+        onBlur={() => {
+          focusedRef.current = false;
+          clearInactivePreview();
+        }}
+        onClick={() => {
+          cancelPendingPreview();
+          previewedRef.current = true;
+          onPreview(result.target);
+          onFocus(result.target);
+        }}
+        onFocus={() => {
+          focusedRef.current = true;
+          schedulePreview();
+        }}
+        onMouseEnter={() => {
+          hoveredRef.current = true;
+          schedulePreview();
+        }}
+        onMouseLeave={() => {
+          hoveredRef.current = false;
+          clearInactivePreview();
         }}
       >
         <PlaceIcon size={14} />

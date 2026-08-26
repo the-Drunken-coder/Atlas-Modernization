@@ -63,6 +63,7 @@ export function MapConsole() {
   const [placePreviewTarget, setPlacePreviewTarget] = useState<MapTarget | null>(null);
   const [cameraCommand, setCameraCommand] = useState<MapCameraCommand | null>(null);
   const cameraSequenceRef = useRef(0);
+  const placePreviewTargetRef = useRef<MapTarget | null>(null);
 
   const [selectedMapSourceId, setSelectedMapSourceId] = useState<string>();
 
@@ -71,9 +72,36 @@ export function MapConsole() {
     return apiKey ? createMapTilerPlaceSearch(apiKey) : undefined;
   }, [atlas.config?.placeSearch?.apiKey]);
 
-  const issueCameraCommand = useCallback((target: MapTarget) => {
+  const issueCameraCommand = useCallback((target: MapTarget, intent: "focus" | "preview" | "commit" = "focus") => {
     cameraSequenceRef.current += 1;
-    setCameraCommand({ seq: cameraSequenceRef.current, target });
+    setCameraCommand({ seq: cameraSequenceRef.current, target, intent });
+  }, []);
+  const previewPlace = useCallback(
+    (target: MapTarget | null) => {
+      const current = placePreviewTargetRef.current;
+      placePreviewTargetRef.current = target;
+      setPlacePreviewTarget(target);
+      if (target) {
+        if (current?.id !== target.id) issueCameraCommand(target, "preview");
+      } else if (current) {
+        setCameraCommand(null);
+      }
+    },
+    [issueCameraCommand]
+  );
+  const focusPlace = useCallback(
+    (target: MapTarget) => {
+      placePreviewTargetRef.current = target;
+      setPlacePreviewTarget(target);
+      issueCameraCommand(target, "commit");
+    },
+    [issueCameraCommand]
+  );
+  const showWorld = useCallback(() => {
+    placePreviewTargetRef.current = null;
+    setPlacePreviewTarget(null);
+    cameraSequenceRef.current += 1;
+    setCameraCommand({ seq: cameraSequenceRef.current, intent: "world" });
   }, []);
 
   const selection = sidebar.selection;
@@ -172,6 +200,7 @@ export function MapConsole() {
       if (!entity) return;
       const kind = entityKind(entity);
       if (kind === "other") return;
+      placePreviewTargetRef.current = null;
       setPlacePreviewTarget(null);
       setCameraCommand(null);
       dispatch({ type: "selectEntity", kind, id, origin: "map" });
@@ -250,6 +279,13 @@ export function MapConsole() {
             title={panelTitle(sidebar, selection?.kind)}
             onBack={sidebar.view.mode === "inspector" ? () => dispatch({ type: "back" }) : undefined}
             autoFocusBack={sidebar.focusRequest?.id === selection?.id}
+            headerAction={
+              activeList === "places" ? (
+                <Button variant="ghost" className="bp6-small" style={{ whiteSpace: "nowrap" }} onClick={showWorld}>
+                  World view
+                </Button>
+              ) : undefined
+            }
             onCollapse={() => dispatch({ type: "setCollapsed", collapsed: true })}
           >
             <PanelBody
@@ -268,12 +304,14 @@ export function MapConsole() {
               onSelectEntity={(entity) => {
                 const kind = entityKind(entity);
                 if (kind === "other") return;
+                placePreviewTargetRef.current = null;
+                setPlacePreviewTarget(null);
                 dispatch({ type: "selectEntity", kind, id: entity.entity_id, origin: "sidebar" });
               }}
               onEntityQueryChange={setEntityQuery}
               onPlaceQueryChange={setPlaceQuery}
-              onPreviewPlace={setPlacePreviewTarget}
-              onFocusPlace={issueCameraCommand}
+              onPreviewPlace={previewPlace}
+              onFocusPlace={focusPlace}
               onPickCommand={commandFlow.pickSidebarCommand}
               onStartEdit={geometryEdit.startEdit}
               onChangeDraft={geometryEdit.changeDraft}
@@ -314,6 +352,7 @@ export function MapConsole() {
                       onMapContextMenu={commandFlow.onMapContextMenu}
                       onBackgroundClick={() => {
                         commandFlow.closeMapMenu();
+                        placePreviewTargetRef.current = null;
                         setPlacePreviewTarget(null);
                         setCameraCommand(null);
                         dispatch({ type: "clearSelection" });
