@@ -325,6 +325,7 @@ export function MapConsole() {
                         key={previewMapSource.id}
                         source={previewMapSource}
                         viewport={mapViewport}
+                        canCommitWithoutPreview={!selectedMapSource}
                         onDismiss={dismissMapSourcePreview}
                         onCommit={() => {
                           setSelectedMapSourceId(previewMapSource.id);

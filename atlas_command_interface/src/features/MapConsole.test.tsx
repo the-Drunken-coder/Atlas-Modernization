@@ -24,6 +24,7 @@ type MockMapViewProps = {
 
 type MockMapSourcePreviewProps = {
   source: { id: string; label: string };
+  canCommitWithoutPreview?: boolean;
   onCommit: () => void;
   onDismiss: () => void;
 };
@@ -31,8 +32,11 @@ type MockMapSourcePreviewProps = {
 const mapViewMock = vi.hoisted(() => ({ lastProps: undefined as MockMapViewProps | undefined }));
 
 vi.mock("../ui/map/MapSourcePreview.js", () => ({
-  MapSourcePreview: ({ source, onCommit, onDismiss }: MockMapSourcePreviewProps) => (
-    <section aria-label={`${source.label} map preview`}>
+  MapSourcePreview: ({ source, canCommitWithoutPreview, onCommit, onDismiss }: MockMapSourcePreviewProps) => (
+    <section
+      aria-label={`${source.label} map preview`}
+      data-can-commit-without-preview={canCommitWithoutPreview || undefined}
+    >
       <button type="button" aria-label={`Use ${source.label}`} onClick={onCommit}>
         Use
       </button>
@@ -809,7 +813,8 @@ describe("MapConsole", () => {
     expect(screen.getByTestId("map")).toHaveAttribute("data-style-id", "maptiler-osm-dark");
   });
 
-  it("does not silently fall back when the configured default map source is unavailable", async () => {
+  it("keeps an unavailable default visible until the operator chooses a replacement", async () => {
+    const user = userEvent.setup();
     const { fake } = makeFakeDataSource(area, {
       running: false,
       healthy: false,
@@ -831,6 +836,16 @@ describe("MapConsole", () => {
     expect(screen.getByLabelText("Map")).toHaveTextContent("MapTiler OSM Dark");
     expect(screen.queryByTestId("map")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Atlas connection error" })).toBeInTheDocument();
+
+    await user.click(screen.getByLabelText("Map"));
+    await user.click(screen.getByRole("option", { name: "OpenStreetMap Default" }));
+    const preview = await screen.findByRole("region", { name: "OpenStreetMap Default map preview" });
+    expect(preview).toHaveAttribute("data-can-commit-without-preview", "true");
+    expect(screen.queryByTestId("map")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Use OpenStreetMap Default" }));
+    expect(await screen.findByTestId("map")).toHaveAttribute("data-style-id", "openstreetmap-default");
+    expect(screen.getByLabelText("Map")).toHaveTextContent("OpenStreetMap Default");
   });
 
   it("reverts the map selector when a style switch fails", async () => {

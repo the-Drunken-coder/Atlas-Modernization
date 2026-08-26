@@ -17,13 +17,20 @@ type PreviewSource = {
 type MapSourcePreviewProps = {
   source: PreviewSource;
   viewport?: MapViewport;
+  canCommitWithoutPreview?: boolean;
   onCommit: () => void;
   onDismiss: () => void;
 };
 
 type PreviewStatus = "loading" | "slow" | "ready" | "error";
 
-export function MapSourcePreview({ source, viewport, onCommit, onDismiss }: MapSourcePreviewProps) {
+export function MapSourcePreview({
+  source,
+  viewport,
+  canCommitWithoutPreview = false,
+  onCommit,
+  onDismiss
+}: MapSourcePreviewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MlMap | undefined>(undefined);
   const viewportRef = useRef(viewport);
@@ -32,16 +39,18 @@ export function MapSourcePreview({ source, viewport, onCommit, onDismiss }: MapS
   const [error, setError] = useState<string>();
   viewportRef.current = viewport;
   const canCreateMap = viewport !== undefined;
+  const canCommit = status === "ready" || (!viewport && canCommitWithoutPreview);
   const previewLabel = viewport ? `Preview · Z${viewport.zoom.toFixed(1)}` : "Preview";
 
   useEffect(() => {
     const dismissOnEscape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || event.defaultPrevented) return;
+      if (event.key !== "Escape") return;
       event.preventDefault();
+      event.stopImmediatePropagation();
       onDismiss();
     };
-    window.addEventListener("keydown", dismissOnEscape);
-    return () => window.removeEventListener("keydown", dismissOnEscape);
+    window.addEventListener("keydown", dismissOnEscape, { capture: true });
+    return () => window.removeEventListener("keydown", dismissOnEscape, { capture: true });
   }, [onDismiss]);
 
   useEffect(() => {
@@ -56,6 +65,7 @@ export function MapSourcePreview({ source, viewport, onCommit, onDismiss }: MapS
     let resizeObserver: ResizeObserver | undefined;
     let cancelled = false;
     let loaded = false;
+    let failed = false;
     const slowTimer = window.setTimeout(() => {
       if (!cancelled && !loaded) setStatus("slow");
     }, 2_000);
@@ -90,13 +100,14 @@ export function MapSourcePreview({ source, viewport, onCommit, onDismiss }: MapS
       resizeObserver = new ResizeObserver(() => mapInstance.resize());
       resizeObserver.observe(containerRef.current);
       mapInstance.on("load", () => {
-        if (cancelled) return;
+        if (cancelled || failed) return;
         loaded = true;
         window.clearTimeout(slowTimer);
         setStatus("ready");
       });
       mapInstance.on("error", (event) => {
         if (cancelled || loaded) return;
+        failed = true;
         window.clearTimeout(slowTimer);
         setStatus("error");
         setError(sanitizeConnectionError(event.error));
@@ -144,7 +155,7 @@ export function MapSourcePreview({ source, viewport, onCommit, onDismiss }: MapS
             className="map-source-preview__use"
             variant="primary"
             aria-label={`Use ${source.label}`}
-            disabled={status !== "ready"}
+            disabled={!canCommit}
             onClick={onCommit}
           >
             Use
@@ -158,7 +169,7 @@ export function MapSourcePreview({ source, viewport, onCommit, onDismiss }: MapS
         <div className="map-source-preview__host" ref={containerRef} />
         {!viewport ? (
           <div className="map-source-preview__state" role="status">
-            Reading current view…
+            {canCommitWithoutPreview ? "No current view. Use this source to open the map." : "Reading current view…"}
           </div>
         ) : status === "loading" ? (
           <div className="map-source-preview__state" role="status">

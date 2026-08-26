@@ -134,6 +134,10 @@ describe("MapSourcePreview", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("Preview unavailable");
     expect(screen.getByRole("alert")).toHaveTextContent("Provider denied the request");
 
+    act(() => firstMap.fire("load"));
+    expect(screen.getByRole("alert")).toHaveTextContent("Preview unavailable");
+    expect(screen.getByRole("button", { name: "Use USGS Topo" })).toBeDisabled();
+
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     await vi.waitFor(() => expect(maplibreMock.FakeMap.instances).toHaveLength(2));
     expect(firstMap.remove).toHaveBeenCalledOnce();
@@ -151,5 +155,32 @@ describe("MapSourcePreview", () => {
 
     expect(onDismiss).toHaveBeenCalledOnce();
     expect(onCommit).not.toHaveBeenCalled();
+  });
+
+  it("commits an available source when no active map can provide a viewport", () => {
+    const onCommit = vi.fn();
+    render(<MapSourcePreview source={source} canCommitWithoutPreview onCommit={onCommit} onDismiss={vi.fn()} />);
+
+    expect(screen.getByRole("status")).toHaveTextContent("No current view");
+    const useButton = screen.getByRole("button", { name: "Use USGS Topo" });
+    expect(useButton).toBeEnabled();
+    fireEvent.click(useButton);
+    expect(onCommit).toHaveBeenCalledOnce();
+  });
+
+  it("dismisses before underlying map Escape handlers", () => {
+    const onDismiss = vi.fn();
+    const mapEscape = vi.fn((event: KeyboardEvent) => event.preventDefault());
+    window.addEventListener("keydown", mapEscape);
+    try {
+      render(<MapSourcePreview source={source} onCommit={vi.fn()} onDismiss={onDismiss} />);
+
+      fireEvent.keyDown(window, { key: "Escape" });
+
+      expect(onDismiss).toHaveBeenCalledOnce();
+      expect(mapEscape).not.toHaveBeenCalled();
+    } finally {
+      window.removeEventListener("keydown", mapEscape);
+    }
   });
 });
