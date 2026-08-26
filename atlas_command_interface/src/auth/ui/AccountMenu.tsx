@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { BrandIcon } from "../../ui/primitives/icons.js";
 
 type AccountMenuProps = {
@@ -8,10 +9,34 @@ type AccountMenuProps = {
   onLogout: () => void;
 };
 
+type PopoverPosition = { left: number; top: number };
+
+const POPOVER_GAP = 8;
+const VIEWPORT_PADDING = 8;
+
 export function AccountMenu({ username, loggingOut, error, onLogout }: AccountMenuProps) {
   const [open, setOpen] = useState(false);
+  const [position, setPosition] = useState<PopoverPosition>();
   const containerRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
+
+  const updatePosition = useCallback(() => {
+    const triggerBounds = triggerRef.current?.getBoundingClientRect();
+    const popoverBounds = popoverRef.current?.getBoundingClientRect();
+    if (!triggerBounds || !popoverBounds) return;
+
+    setPosition({
+      left: Math.max(
+        VIEWPORT_PADDING,
+        Math.min(triggerBounds.right + POPOVER_GAP, window.innerWidth - popoverBounds.width - VIEWPORT_PADDING)
+      ),
+      top: Math.max(
+        VIEWPORT_PADDING,
+        Math.min(triggerBounds.top, window.innerHeight - popoverBounds.height - VIEWPORT_PADDING)
+      )
+    });
+  }, []);
 
   useEffect(() => {
     if (error) setOpen(true);
@@ -20,13 +45,33 @@ export function AccountMenu({ username, loggingOut, error, onLogout }: AccountMe
   useEffect(() => {
     if (!open) return;
     const closeOnOutsideClick = (event: PointerEvent) => {
-      if (!loggingOut && !containerRef.current?.contains(event.target as Node)) setOpen(false);
+      const target = event.target as Node;
+      if (!loggingOut && !containerRef.current?.contains(target) && !popoverRef.current?.contains(target)) {
+        setOpen(false);
+        setPosition(undefined);
+      }
     };
     document.addEventListener("pointerdown", closeOnOutsideClick);
     return () => {
       document.removeEventListener("pointerdown", closeOnOutsideClick);
     };
   }, [loggingOut, open]);
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    updatePosition();
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
+    return () => {
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+    };
+  }, [error, loggingOut, open, updatePosition]);
+
+  const close = () => {
+    setOpen(false);
+    setPosition(undefined);
+  };
 
   return (
     <div
@@ -36,7 +81,7 @@ export function AccountMenu({ username, loggingOut, error, onLogout }: AccountMe
         if (!open || event.key !== "Escape" || loggingOut) return;
         event.preventDefault();
         event.stopPropagation();
-        setOpen(false);
+        close();
         triggerRef.current?.focus();
       }}
     >
@@ -49,38 +94,50 @@ export function AccountMenu({ username, loggingOut, error, onLogout }: AccountMe
         aria-controls="account-menu-popover"
         title="Account"
         onClick={() => {
-          if (!loggingOut) setOpen((current) => !current);
+          if (loggingOut) return;
+          if (open) close();
+          else setOpen(true);
         }}
       >
         <BrandIcon size={22} />
       </button>
-      {open ? (
-        <div id="account-menu-popover" className="account-menu__popover" role="group" aria-label="Account menu">
-          <div className="account-menu__identity">
-            <span>Your account</span>
-            <strong>{username}</strong>
-          </div>
-          <div className="account-menu__items">
-            <button type="button" className="account-menu__item" disabled>
-              <span>Settings</span>
-              <small>Coming soon</small>
-            </button>
-            <button
-              type="button"
-              className="account-menu__item account-menu__item--danger"
-              disabled={loggingOut}
-              onClick={onLogout}
+      {open
+        ? createPortal(
+            <div
+              id="account-menu-popover"
+              ref={popoverRef}
+              className="account-menu__popover"
+              role="group"
+              aria-label="Account menu"
+              style={position ?? { visibility: "hidden" }}
             >
-              {loggingOut ? "Logging out..." : "Log out"}
-            </button>
-          </div>
-          {error ? (
-            <span className="account-menu__error" role="alert">
-              {error}
-            </span>
-          ) : null}
-        </div>
-      ) : null}
+              <div className="account-menu__identity">
+                <span>Your account</span>
+                <strong>{username}</strong>
+              </div>
+              <div className="account-menu__items">
+                <button type="button" className="account-menu__item" disabled>
+                  <span>Settings</span>
+                  <small>Coming soon</small>
+                </button>
+                <button
+                  type="button"
+                  className="account-menu__item account-menu__item--danger"
+                  disabled={loggingOut}
+                  onClick={onLogout}
+                >
+                  {loggingOut ? "Logging out..." : "Log out"}
+                </button>
+              </div>
+              {error ? (
+                <span className="account-menu__error" role="alert">
+                  {error}
+                </span>
+              ) : null}
+            </div>,
+            document.body
+          )
+        : null}
     </div>
   );
 }

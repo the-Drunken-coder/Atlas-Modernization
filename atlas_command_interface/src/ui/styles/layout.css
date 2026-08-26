@@ -158,9 +158,8 @@
 }
 
 .account-menu__popover {
-  position: absolute;
-  top: 0;
-  left: calc(100% + var(--space-2));
+  position: fixed;
+  z-index: 60;
   display: flex;
   flex-direction: column;
   width: 220px;

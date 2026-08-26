@@ -35,4 +35,10 @@ describe("command interface scrolling", () => {
 
     expect(declarations).toMatch(/position:\s*fixed/);
   });
+
+  it("positions the portaled account menu against the viewport", () => {
+    const declarations = layout.match(/\.account-menu__popover\s*{([^}]*)}/)?.[1];
+
+    expect(declarations).toMatch(/position:\s*fixed/);
+  });
 });
