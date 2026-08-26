@@ -13,10 +13,12 @@ import {
   flyDurationMs,
   followIdle,
   followReducer,
+  PREVIEW_DURATION_MS,
   PREVIEW_FIT_BOUNDS_PADDING,
   PREVIEW_FIT_MAX_ZOOM,
   PREVIEW_POINT_ZOOM,
-  planFocusMove
+  planFocusMove,
+  previewEasing
 } from "./map-camera.js";
 
 const view = (center: [number, number], zoom: number): CameraView => ({ center, zoom });
@@ -33,8 +35,13 @@ describe("planFocusMove", () => {
   });
 
   it("uses a wider point view for previews", () => {
-    const move = planFocusMove({ type: "Point", coordinates: [70, 80] }, view([0, 0], 4), "preview");
-    expect(move).toMatchObject({ kind: "fly-to", center: [70, 80], zoom: PREVIEW_POINT_ZOOM });
+    const move = planFocusMove({ type: "Point", coordinates: [0.01, 0.01] }, view([0, 0], 13), "preview");
+    expect(move).toMatchObject({
+      kind: "fly-to",
+      center: [0.01, 0.01],
+      zoom: PREVIEW_POINT_ZOOM,
+      durationMs: PREVIEW_DURATION_MS
+    });
   });
 
   it("fits line geometry bounds with the standard padding and cap", () => {
@@ -76,13 +83,24 @@ describe("planFocusMove", () => {
     expect(planFocusMove(geometry, view([0, 0], 4), "preview")).toMatchObject({
       kind: "fit-bounds",
       maxZoom: PREVIEW_FIT_MAX_ZOOM,
-      padding: PREVIEW_FIT_BOUNDS_PADDING
+      padding: PREVIEW_FIT_BOUNDS_PADDING,
+      durationMs: PREVIEW_DURATION_MS
     });
     expect(planFocusMove(geometry, view([0, 0], 4), "commit")).toMatchObject({
       kind: "fit-bounds",
       maxZoom: COMMIT_FIT_MAX_ZOOM,
       padding: FIT_BOUNDS_PADDING
     });
+  });
+});
+
+describe("previewEasing", () => {
+  it("starts and ends slowly while preserving the endpoints", () => {
+    expect(previewEasing(0)).toBe(0);
+    expect(previewEasing(0.25)).toBeLessThan(0.25);
+    expect(previewEasing(0.5)).toBe(0.5);
+    expect(previewEasing(0.75)).toBeGreaterThan(0.75);
+    expect(previewEasing(1)).toBe(1);
   });
 });
 

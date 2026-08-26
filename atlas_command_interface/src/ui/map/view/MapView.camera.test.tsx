@@ -7,6 +7,7 @@ import {
   flyDurationMs,
   INITIAL_WORLD_BOUNDS,
   type MapCameraCommand,
+  PREVIEW_DURATION_MS,
   PREVIEW_POINT_ZOOM,
   PREVIEW_RESTORE_MS,
   RETICLE_FLASH_MS
@@ -172,9 +173,15 @@ describe("MapView camera commands", () => {
       }
     });
     await waitFor(() =>
-      expect(map.flyTo).toHaveBeenCalledWith(expect.objectContaining({ center: [70, 80], zoom: PREVIEW_POINT_ZOOM }), {
-        atlasCamera: true
-      })
+      expect(map.flyTo).toHaveBeenCalledWith(
+        expect.objectContaining({
+          center: [70, 80],
+          zoom: PREVIEW_POINT_ZOOM,
+          duration: expect.any(Number),
+          easing: expect.any(Function)
+        }),
+        { atlasCamera: true }
+      )
     );
 
     rerenderMap({ cameraCommand: null });
@@ -182,6 +189,40 @@ describe("MapView camera commands", () => {
     expect(map.easeTo).toHaveBeenCalledWith(
       { center: [0, 0], zoom: 4, duration: PREVIEW_RESTORE_MS, easing: expect.any(Function) },
       { atlasCamera: true }
+    );
+  });
+
+  it("uses the slower eased timing for area previews", async () => {
+    const { map, rerenderMap } = renderMapView();
+    map.fitBounds.mockClear();
+
+    rerenderMap({
+      cameraCommand: {
+        seq: 1,
+        intent: "preview",
+        target: {
+          type: "geometry",
+          id: "place-area-1",
+          geometry: {
+            type: "LineString",
+            coordinates: [
+              [-75, 40],
+              [-73, 42]
+            ]
+          }
+        }
+      }
+    });
+
+    await waitFor(() =>
+      expect(map.fitBounds).toHaveBeenCalledWith(
+        [
+          [-75, 40],
+          [-73, 42]
+        ],
+        expect.objectContaining({ duration: PREVIEW_DURATION_MS, easing: expect.any(Function) }),
+        { atlasCamera: true }
+      )
     );
   });
 

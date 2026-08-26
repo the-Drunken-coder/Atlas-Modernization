@@ -16,7 +16,8 @@ import {
   isLngLatPosition,
   type MapCameraCommand,
   PREVIEW_RESTORE_MS,
-  planFocusMove
+  planFocusMove,
+  previewEasing
 } from "./map-camera.js";
 
 const FLY_SEQ_TAG = "atlasFlySeq";
@@ -112,7 +113,7 @@ export function useMapCamera(args: {
       if (origin) {
         previewOriginRef.current = null;
         map.easeTo(
-          { center: origin.center, zoom: origin.zoom, duration: PREVIEW_RESTORE_MS, easing: (t) => t },
+          { center: origin.center, zoom: origin.zoom, duration: PREVIEW_RESTORE_MS, easing: previewEasing },
           { [CAMERA_EVENT_TAG]: true }
         );
       }
@@ -157,13 +158,26 @@ export function useMapCamera(args: {
       } else {
         dispatch({ type: "command-geometry", seq: command.seq });
       }
-      map.flyTo({ center: move.center, zoom: move.zoom, duration: move.durationMs }, eventData);
+      map.flyTo(
+        {
+          center: move.center,
+          zoom: move.zoom,
+          duration: move.durationMs,
+          ...(command.intent === "preview" ? { easing: previewEasing } : {})
+        },
+        eventData
+      );
       return;
     }
     dispatch({ type: "command-geometry", seq: command.seq });
     map.fitBounds(
       move.bounds,
-      { duration: move.durationMs, maxZoom: move.maxZoom, padding: move.padding },
+      {
+        duration: move.durationMs,
+        maxZoom: move.maxZoom,
+        padding: move.padding,
+        ...(command.intent === "preview" ? { easing: previewEasing } : {})
+      },
       { [CAMERA_EVENT_TAG]: true }
     );
   }, [command, sources, mapReady, mapRef, dispatch]);
