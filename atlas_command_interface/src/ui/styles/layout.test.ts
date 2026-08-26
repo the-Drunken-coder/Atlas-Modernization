@@ -3,13 +3,14 @@ import { describe, expect, it } from "vitest";
 
 const tokens = readFileSync(new URL("./tokens.css", import.meta.url), "utf8");
 const layout = readFileSync(new URL("./layout.css", import.meta.url), "utf8");
+const components = readFileSync(new URL("./components.css", import.meta.url), "utf8");
 
 describe("command interface scrolling", () => {
   it("locks the authenticated workspace without clipping the login page", () => {
     const rootDeclarations = tokens.match(/html,\s*body,\s*#root\s*{([^}]*)}/)?.[1];
     const shellDeclarations = layout.match(/\.authenticated-shell\s*{([^}]*)}/)?.[1];
 
-    expect(rootDeclarations).not.toMatch(/overflow:\s*hidden/);
+    expect(rootDeclarations).not.toMatch(/overflow(?:-[xy])?\s*:\s*(?:hidden|clip)/);
     expect(rootDeclarations).toMatch(/overscroll-behavior:\s*none/);
     expect(shellDeclarations).toMatch(/overflow:\s*hidden/);
     expect(shellDeclarations).toMatch(/overscroll-behavior:\s*none/);
@@ -27,5 +28,11 @@ describe("command interface scrolling", () => {
 
     expect(declarations).toMatch(/overflow-y:\s*auto/);
     expect(declarations).toMatch(/overscroll-behavior-y:\s*none/);
+  });
+
+  it("renders tooltips outside scroll containers", () => {
+    const declarations = components.match(/\.tooltip\s*{([^}]*)}/)?.[1];
+
+    expect(declarations).toMatch(/position:\s*fixed/);
   });
 });
