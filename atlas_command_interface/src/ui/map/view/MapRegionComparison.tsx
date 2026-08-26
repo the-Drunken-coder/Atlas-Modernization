@@ -124,7 +124,12 @@ export function MapRegionComparison({
         syncFrameRef.current = undefined;
         const bounds = mapCanvas.getBoundingClientRect();
         const next = visibleScreenRect(map, region, bounds.width, bounds.height);
-        setRegionRect((current) => (screenRectsEqual(current, next) ? current : next));
+        if (screenRectsEqual(regionRectRef.current, next)) {
+          if (next) syncComparisonCamera(map, comparisonMapRef.current, next, false);
+          return;
+        }
+        regionRectRef.current = next;
+        setRegionRect(next);
       });
     };
     syncRect();
@@ -300,15 +305,8 @@ export function MapRegionComparison({
   }, [editing]);
 
   useLayoutEffect(() => {
-    const comparisonMap = comparisonMapRef.current;
-    if (!comparisonMap || !map || !regionRect) return;
-    comparisonMap.resize();
-    comparisonMap.jumpTo({
-      center: map.unproject([regionRect.left + regionRect.width / 2, regionRect.top + regionRect.height / 2]),
-      zoom: map.getZoom(),
-      bearing: map.getBearing(),
-      pitch: map.getPitch()
-    });
+    if (!map || !regionRect) return;
+    syncComparisonCamera(map, comparisonMapRef.current, regionRect, true);
   }, [map, regionRect]);
 
   const clear = () => {
@@ -571,6 +569,22 @@ function visibleScreenRect(
   const bottom = Math.min(viewportHeight, Math.max(...points.map((point) => point.y)));
   if (right - left < 2 || bottom - top < 2) return null;
   return { left, top, width: right - left, height: bottom - top };
+}
+
+function syncComparisonCamera(
+  primaryMap: MlMap,
+  comparisonMap: MlMap | undefined,
+  rect: ScreenRect,
+  resize: boolean
+): void {
+  if (!comparisonMap) return;
+  if (resize) comparisonMap.resize();
+  comparisonMap.jumpTo({
+    center: primaryMap.unproject([rect.left + rect.width / 2, rect.top + rect.height / 2]),
+    zoom: primaryMap.getZoom(),
+    bearing: primaryMap.getBearing(),
+    pitch: primaryMap.getPitch()
+  });
 }
 
 function clampMovedRect(rect: ScreenRect, delta: ScreenPoint, viewport: DOMRect): ScreenRect {

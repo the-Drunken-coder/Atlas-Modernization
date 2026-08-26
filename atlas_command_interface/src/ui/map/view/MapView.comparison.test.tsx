@@ -64,6 +64,33 @@ describe("MapView region comparison", () => {
     expect(screen.getByTestId("map-comparison-region")).toHaveStyle({ left: "90px", top: "70px" });
   });
 
+  it("syncs zoom when the clipped region bounds do not change", async () => {
+    const { map } = renderMapView({ styleId: "base", style: style("base"), mapSourceOptions });
+    await drawComparison();
+    const comparisonMap = mapInstances()[1];
+    map.project.mockImplementation((position: [number, number]) => ({
+      x: position[0] < 160 ? -100 : 500,
+      y: position[1] > 100 ? -100 : 300
+    }));
+
+    map.fire("zoom");
+
+    await waitFor(() =>
+      expect(screen.getByTestId("map-comparison-region")).toHaveStyle({
+        left: "0px",
+        top: "0px",
+        width: "400px",
+        height: "200px"
+      })
+    );
+    comparisonMap.jumpTo.mockClear();
+    map.getZoom.mockReturnValue(12);
+
+    map.fire("zoom");
+
+    await waitFor(() => expect(comparisonMap.jumpTo).toHaveBeenCalledWith(expect.objectContaining({ zoom: 12 })));
+  });
+
   it("gives Escape to the source list, then the panel, then the active region", async () => {
     renderMapView({ styleId: "base", style: style("base"), mapSourceOptions });
     await drawComparison();
