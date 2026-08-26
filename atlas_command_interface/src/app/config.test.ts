@@ -80,7 +80,8 @@ describe("appConfigFromEnv", () => {
     expect(config.defaultMapSourceId).toBe("maptiler-osm-dark");
     expect(config.mapSources.find((source) => source.id === "maptiler-osm-dark")).toMatchObject({
       label: "MapTiler OSM Dark",
-      unavailableReason: "missing key"
+      unavailableReason: "missing key",
+      coverage: { bounds: [[-180, -85.051129, 180, 85.051129]], minZoom: 0, maxZoom: 22 }
     });
   });
 
@@ -206,6 +207,11 @@ describe("appConfigFromEnv", () => {
       expect(config.mapSources[index]).toEqual({
         id: provider.id,
         label: provider.label,
+        coverage: {
+          bounds: provider.id === "google-satellite" ? undefined : [[-180, -85.051129, 180, 85.051129]],
+          minZoom: 0,
+          maxZoom: provider.maxzoom
+        },
         style: {
           version: 8,
           sources: {

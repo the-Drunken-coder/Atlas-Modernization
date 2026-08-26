@@ -1,5 +1,6 @@
 import { type MapMouseEvent, type Map as MlMap, type StyleSpecification } from "maplibre-gl";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import type { MapViewport } from "../../../app/map-source-coverage.js";
 import { sanitizeConnectionError } from "../../../atlas/connection-error.js";
 import { Button } from "../../primitives/controls.js";
 import { getSidcRuntime, loadSidcRuntime } from "../../symbols/sidc-runtime.js";
@@ -42,6 +43,7 @@ type MapViewProps = {
   onMapContextMenu: (info: MapContextMenuInfo) => void;
   onBackgroundClick?: () => void;
   onStyleSwitchError?: (error: { failedStyleId: string; activeStyleId: string }) => void;
+  onViewportChange?: (viewport: MapViewport) => void;
 };
 
 type SymbolMarkerEntry = {
@@ -62,7 +64,8 @@ export function MapView({
   onSelectEntity,
   onMapContextMenu,
   onBackgroundClick,
-  onStyleSwitchError
+  onStyleSwitchError,
+  onViewportChange
 }: MapViewProps) {
   const mapCanvasRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -80,10 +83,12 @@ export function MapView({
   const symbolMarkersRef = useRef<Map<string, SymbolMarkerEntry>>(new Map());
   const handlersRef = useRef({ onSelectEntity, onMapContextMenu });
   const styleSwitchErrorRef = useRef(onStyleSwitchError);
+  const viewportChangeRef = useRef(onViewportChange);
   const [mapError, setMapError] = useState<string>();
   const [mapReady, setMapReady] = useState(false);
   handlersRef.current = { onSelectEntity, onMapContextMenu };
   styleSwitchErrorRef.current = onStyleSwitchError;
+  viewportChangeRef.current = onViewportChange;
   sourcesRef.current = sources;
   editingRef.current = editing;
   initialMapRef.current = { initialCenter, style, styleId };
@@ -140,6 +145,15 @@ export function MapView({
       }
 
       const mapInstance = map;
+      const emitViewport = () => {
+        const onViewport = viewportChangeRef.current;
+        if (!onViewport) return;
+        const bounds = mapInstance.getBounds();
+        onViewport({
+          bounds: [bounds.getWest(), bounds.getSouth(), bounds.getEast(), bounds.getNorth()],
+          zoom: mapInstance.getZoom()
+        });
+      };
       mapRef.current = mapInstance;
       currentStyleIdRef.current = initialMap.styleId;
       mapInstance.addControl(new maplibre.NavigationControl({ showCompass: false }), "top-right");
@@ -156,9 +170,11 @@ export function MapView({
         pushSources(mapInstance, sourcesRef.current);
         pushEditingOverlay(mapInstance, editingRef.current);
         fitWorldOnce(mapInstance, fitWorldOnceRef);
+        emitViewport();
 
         if (!eventsRegisteredRef.current) {
           eventsRegisteredRef.current = true;
+          mapInstance.on("moveend", emitViewport);
           mapInstance.on("contextmenu", (event: MapMouseEvent) => {
             event.preventDefault();
             handlersRef.current.onMapContextMenu({

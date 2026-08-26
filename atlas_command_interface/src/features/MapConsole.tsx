@@ -1,6 +1,7 @@
 import type { CommandCatalog, EntityResource, JSONValue } from "@the-drunken-coder/atlas-sdk";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useReducer, useState } from "react";
 import type { MapSourceConfig } from "../app/config.js";
+import type { MapViewport } from "../app/map-source-coverage.js";
 import { type CommandAvailability, commandsForTargeting } from "../atlas/command-targeting.js";
 import {
   ENTITY_DESCRIPTORS,
@@ -57,6 +58,7 @@ export function MapConsole() {
   const [entityQueries, setEntityQueries] = useState(EMPTY_ENTITY_QUERIES);
 
   const [selectedMapSourceId, setSelectedMapSourceId] = useState<string>();
+  const [mapViewport, setMapViewport] = useState<MapViewport>();
 
   const selection = sidebar.selection;
   const selectedSnapshotEntity = getEntity(snapshot, selection?.id);
@@ -289,6 +291,7 @@ export function MapConsole() {
                         dispatch({ type: "clearSelection" });
                       }}
                       onStyleSwitchError={handleMapStyleSwitchError}
+                      onViewportChange={setMapViewport}
                     />
                   </Suspense>
                 ) : (
@@ -301,6 +304,7 @@ export function MapConsole() {
                   sources={atlas.config.mapSources}
                   defaultSourceId={atlas.config.defaultMapSourceId}
                   value={mapSourcePickerValue}
+                  viewport={mapViewport}
                   onChange={setSelectedMapSourceId}
                 />
               </div>

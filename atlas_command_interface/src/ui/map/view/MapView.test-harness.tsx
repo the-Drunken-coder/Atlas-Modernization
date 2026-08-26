@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import type { EntityResource } from "@the-drunken-coder/atlas-sdk";
 import type { StyleSpecification } from "maplibre-gl";
 import { afterEach, beforeEach, vi } from "vitest";
+import type { MapViewport } from "../../../app/map-source-coverage.js";
 import type { MapCameraCommand } from "../interaction/map-camera.js";
 import type { MapReticleTarget } from "../interaction/map-targets.js";
 import type { MapEditing } from "../rendering/map-editing.js";
@@ -51,6 +52,12 @@ const maplibreMock = vi.hoisted(() => {
     readonly queryRenderedFeatures = vi.fn((_point?: unknown, _options?: unknown): RenderedFeature[] => []);
     readonly getBearing = vi.fn(() => 0);
     readonly getZoom = vi.fn(() => this.zoom);
+    readonly getBounds = vi.fn(() => ({
+      getWest: () => this.bounds[0],
+      getSouth: () => this.bounds[1],
+      getEast: () => this.bounds[2],
+      getNorth: () => this.bounds[3]
+    }));
     readonly getLayer = vi.fn((id: string) => this.layers.get(id));
     readonly getSource = vi.fn((id: string) => this.sources.get(id));
     readonly cameraForBounds = vi.fn(
@@ -82,6 +89,7 @@ const maplibreMock = vi.hoisted(() => {
     style: unknown;
     center = { lng: 0, lat: 0 };
     zoom = 4;
+    bounds: [number, number, number, number] = [-20, -10, 20, 10];
 
     constructor(options: Record<string, unknown>) {
       this.options = options;
@@ -245,6 +253,7 @@ type RenderMapViewProps = {
   editing?: MapEditing;
   focusTarget?: MapReticleTarget | null;
   onStyleSwitchError?: (error: { failedStyleId: string; activeStyleId: string }) => void;
+  onViewportChange?: (viewport: MapViewport) => void;
   selectedId?: string;
   sources?: MapSources;
   styleId?: string;
@@ -274,6 +283,7 @@ export function renderMapView(props: RenderMapViewProps = {}) {
       onMapContextMenu={onMapContextMenu}
       onSelectEntity={onSelectEntity}
       onStyleSwitchError={renderProps.onStyleSwitchError}
+      onViewportChange={renderProps.onViewportChange}
     />
   );
 
@@ -294,6 +304,7 @@ export function renderMapView(props: RenderMapViewProps = {}) {
         onMapContextMenu={onMapContextMenu}
         onSelectEntity={onSelectEntity}
         onStyleSwitchError={renderProps.onStyleSwitchError}
+        onViewportChange={renderProps.onViewportChange}
       />
     );
   };

@@ -166,7 +166,8 @@ button.connection-badge:hover:not([disabled]) {
 }
 
 .map-source-control {
-  min-width: 220px;
+  width: min(320px, calc(100% - 20px));
+  min-width: 0;
 }
 
 .map-source-control__label {
@@ -197,6 +198,37 @@ button.connection-badge:hover:not([disabled]) {
   cursor: pointer;
 }
 
+.map-source-trigger__copy,
+.map-source-option__copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.map-source-trigger__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.map-source-trigger__reason,
+.map-source-option__reason {
+  color: var(--text-3);
+  font-size: 10px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.map-source-trigger[data-coverage="partial"] .map-source-trigger__reason,
+.map-source-trigger[data-coverage="none"] .map-source-trigger__reason,
+.map-source-trigger[data-coverage="zoom"] .map-source-trigger__reason,
+.map-source-option[data-coverage="partial"] .map-source-option__reason,
+.map-source-option[data-coverage="none"] .map-source-option__reason,
+.map-source-option[data-coverage="zoom"] .map-source-option__reason {
+  color: var(--warning);
+}
+
 .map-source-trigger:hover,
 .map-source-trigger[aria-expanded="true"] {
   border-color: var(--accent-strong);
@@ -217,9 +249,9 @@ button.connection-badge:hover:not([disabled]) {
   z-index: 31;
   top: calc(100% + 4px);
   right: -1px;
-  width: max-content;
-  min-width: calc(100% + 2px);
-  max-width: min(300px, calc(100vw - 20px));
+  width: calc(100% + 2px);
+  min-width: 0;
+  max-width: none;
   max-height: min(360px, calc(100vh - 80px));
   padding: var(--space-1);
   overflow-y: auto;
@@ -231,7 +263,7 @@ button.connection-badge:hover:not([disabled]) {
 
 .map-source-option {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto 16px;
+  grid-template-columns: minmax(0, 1fr) 16px;
   width: 100%;
   min-height: 32px;
   align-items: center;
@@ -271,11 +303,6 @@ button.connection-badge:hover:not([disabled]) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.map-source-option__reason {
-  color: var(--text-3);
-  font-size: 10px;
 }
 
 .map-source-option__check {

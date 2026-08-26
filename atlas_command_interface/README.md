@@ -83,6 +83,8 @@ The generated local admin password is development-only. Set `ATLAS_ADMIN_PASSWOR
 
 The authenticated workspace builds MapLibre raster styles from provider tile URL templates. `maptiler-osm-dark` (`MapTiler OSM Dark`) is the initial default when no explicit operator selection exists. Credentialed sources stay visible in the map selector and are disabled until their matching `VITE_*` env var is available at build/dev time. Google Satellite also requires a successful tile-session request; with a key but no session it remains visible as unavailable. If the configured default is unavailable, the interface uses its existing map-source error state instead of silently selecting another deployed source.
 
+The selector compares the live viewport with provider-declared geographic bounds and inclusive zoom limits. Full coverage means the entire viewport is inside the union of declared bounds. Partial coverage means there is positive-area overlap with some viewport area outside that union. No coverage means there is no positive-area overlap, including an edge-only intersection. Bounds with west greater than east cross the antimeridian. Missing geographic metadata is reported as unknown and remains selectable; it is not treated as an availability or provider-health signal. Partial and unknown sources remain selectable, while sources with no coverage or an out-of-range zoom are disabled for a new selection. The active source is never replaced automatically when the camera moves, even if its coverage becomes insufficient.
+
 Always available:
 
 - `openstreetmap-default` - OpenStreetMap Standard raster tiles.

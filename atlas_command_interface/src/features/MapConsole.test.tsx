@@ -4,6 +4,7 @@ import type { CommandCatalog, EntityResource, TaskResource } from "@the-drunken-
 import { describe, expect, it, vi } from "vitest";
 import { styleFixture as style } from "../../test/fixtures.js";
 import type { AppConfig } from "../app/config.js";
+import type { MapViewport } from "../app/map-source-coverage.js";
 import type { AtlasDataSource, CommandSubmission, ConnectionHealth } from "../atlas/data-source.js";
 import type { UiGeometry } from "../atlas/geometry.js";
 import type { AtlasSnapshot } from "../atlas/store.js";
@@ -19,6 +20,7 @@ type MockMapViewProps = {
   onBackgroundClick?: () => void;
   onSelectEntity?: (id: string) => void;
   onStyleSwitchError?: (error: { failedStyleId: string; activeStyleId: string }) => void;
+  onViewportChange?: (viewport: MapViewport) => void;
 };
 
 const mapViewMock = vi.hoisted(() => ({ lastProps: undefined as MockMapViewProps | undefined }));
@@ -750,6 +752,123 @@ describe("MapConsole", () => {
     await user.keyboard("{Enter}");
     expect(screen.getByTestId("map")).toHaveAttribute("data-style-id", "usgs-topo");
     expect(mapPicker).toHaveFocus();
+  });
+
+  it("shows viewport coverage reasons and keeps the mixed selection rule", async () => {
+    const user = userEvent.setup();
+    const { fake } = makeFakeDataSource();
+    renderConsole(
+      fake,
+      appConfig({
+        defaultMapSourceId: "full",
+        mapSources: [
+          {
+            id: "full",
+            label: "Full source",
+            style: style("full"),
+            coverage: { bounds: [[-180, -85, 180, 85]], minZoom: 0, maxZoom: 20 }
+          },
+          {
+            id: "partial",
+            label: "Partial source",
+            style: style("partial"),
+            coverage: { bounds: [[0, -20, 20, 20]], minZoom: 0, maxZoom: 20 }
+          },
+          {
+            id: "none",
+            label: "Outside source",
+            style: style("none"),
+            coverage: { bounds: [[30, -20, 40, 20]], minZoom: 0, maxZoom: 20 }
+          },
+          {
+            id: "zoom",
+            label: "Low-resolution source",
+            style: style("zoom"),
+            coverage: { bounds: [[-180, -85, 180, 85]], minZoom: 0, maxZoom: 9 }
+          },
+          { id: "unknown", label: "Unknown source", style: style("unknown") },
+          { id: "unavailable", label: "Unavailable source", unavailableReason: "missing key" }
+        ]
+      })
+    );
+
+    await screen.findByText("Rover");
+    act(() => mapViewMock.lastProps?.onViewportChange?.({ bounds: [-10, -10, 10, 10], zoom: 10 }));
+
+    const mapPicker = screen.getByLabelText("Map");
+    await user.click(mapPicker);
+    const full = screen.getByRole("option", { name: "Full source" });
+    const partial = screen.getByRole("option", { name: "Partial source" });
+    const none = screen.getByRole("option", { name: "Outside source" });
+    const zoom = screen.getByRole("option", { name: "Low-resolution source" });
+    const unknown = screen.getByRole("option", { name: "Unknown source" });
+    const unavailable = screen.getByRole("option", { name: "Unavailable source" });
+
+    expect(full).toHaveTextContent("Full viewport covered");
+    expect(partial).toHaveTextContent("Part of viewport is outside source bounds");
+    expect(none).toHaveTextContent("Viewport is outside source bounds");
+    expect(zoom).toHaveTextContent("Zoom 10 exceeds supported max 9");
+    expect(unknown).toHaveTextContent("Coverage metadata not published");
+    expect(unavailable).toHaveTextContent("missing key");
+    expect(full).not.toBeDisabled();
+    expect(partial).not.toBeDisabled();
+    expect(unknown).not.toBeDisabled();
+    expect(none).toBeDisabled();
+    expect(zoom).toBeDisabled();
+    expect(unavailable).toBeDisabled();
+
+    await user.click(partial);
+    expect(screen.getByTestId("map")).toHaveAttribute("data-style-id", "partial");
+
+    act(() => mapViewMock.lastProps?.onViewportChange?.({ bounds: [-60, -10, -50, 10], zoom: 10 }));
+    expect(screen.getByTestId("map")).toHaveAttribute("data-style-id", "partial");
+    expect(mapPicker).toHaveTextContent("Viewport is outside source bounds");
+  });
+
+  it("skips blocked coverage states and rehomes focus when coverage changes", async () => {
+    const user = userEvent.setup();
+    const { fake } = makeFakeDataSource();
+    renderConsole(
+      fake,
+      appConfig({
+        defaultMapSourceId: "full",
+        mapSources: [
+          {
+            id: "full",
+            label: "Full source",
+            style: style("full"),
+            coverage: { bounds: [[-180, -85, 180, 85]], minZoom: 0, maxZoom: 20 }
+          },
+          {
+            id: "partial",
+            label: "Partial source",
+            style: style("partial"),
+            coverage: { bounds: [[0, -20, 20, 20]], minZoom: 0, maxZoom: 20 }
+          },
+          {
+            id: "none",
+            label: "Outside source",
+            style: style("none"),
+            coverage: { bounds: [[30, -20, 40, 20]], minZoom: 0, maxZoom: 20 }
+          },
+          { id: "unknown", label: "Unknown source", style: style("unknown") }
+        ]
+      })
+    );
+
+    await screen.findByText("Rover");
+    act(() => mapViewMock.lastProps?.onViewportChange?.({ bounds: [-10, -10, 10, 10], zoom: 10 }));
+
+    const mapPicker = screen.getByLabelText("Map");
+    mapPicker.focus();
+    await user.keyboard("{ArrowDown}{ArrowDown}");
+    expect(screen.getByRole("option", { name: "Partial source" })).toHaveFocus();
+
+    act(() => mapViewMock.lastProps?.onViewportChange?.({ bounds: [-60, -10, -50, 10], zoom: 10 }));
+    await waitFor(() => expect(screen.getByRole("option", { name: "Full source" })).toHaveFocus());
+
+    await user.keyboard("{ArrowDown}");
+    expect(screen.getByRole("option", { name: "Unknown source" })).toHaveFocus();
   });
 
   it("starts with the configured MapTiler OSM Dark default", async () => {

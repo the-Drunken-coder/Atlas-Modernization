@@ -1,11 +1,13 @@
 import { ATLAS_PROTOCOL_REVISION, normalizeAtlasBaseUrl, sanitizeErrorMessage } from "@the-drunken-coder/atlas-sdk";
 import type { StyleSpecification } from "maplibre-gl";
+import type { MapCoverageBounds, MapSourceCoverage } from "./map-source-coverage.js";
 
 export type MapSourceConfig = {
   id: string;
   label: string;
   style?: StyleSpecification;
   unavailableReason?: string;
+  coverage?: MapSourceCoverage;
 };
 
 export type AppConfig = {
@@ -44,6 +46,7 @@ type MapProviderManifestEntry = {
   readonly label: string;
   readonly tiles: readonly string[];
   readonly maxzoom: number;
+  readonly coverageBounds?: readonly MapCoverageBounds[];
   readonly attribution: string;
   readonly credentials?: readonly {
     readonly env: MapProviderEnvKey;
@@ -51,6 +54,8 @@ type MapProviderManifestEntry = {
   }[];
   readonly rasterContrast?: number;
 };
+
+const WEB_MERCATOR_BOUNDS: MapCoverageBounds = [-180, -85.051129, 180, 85.051129];
 
 export const MAP_PROVIDER_MANIFEST: readonly MapProviderManifestEntry[] = [
   {
@@ -71,6 +76,7 @@ export const MAP_PROVIDER_MANIFEST: readonly MapProviderManifestEntry[] = [
     label: "OpenStreetMap Default",
     tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
     maxzoom: 19,
+    coverageBounds: [WEB_MERCATOR_BOUNDS],
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
   },
   {
@@ -78,6 +84,7 @@ export const MAP_PROVIDER_MANIFEST: readonly MapProviderManifestEntry[] = [
     label: "USGS Topo",
     tiles: ["https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}"],
     maxzoom: 23,
+    coverageBounds: [WEB_MERCATOR_BOUNDS],
     attribution: "USGS The National Map",
     rasterContrast: 0.08
   },
@@ -86,6 +93,7 @@ export const MAP_PROVIDER_MANIFEST: readonly MapProviderManifestEntry[] = [
     label: "Mapbox Satellite",
     tiles: ["https://api.mapbox.com/v4/mapbox.satellite/{z}/{x}/{y}.jpg90?access_token={VITE_MAPBOX_ACCESS_TOKEN}"],
     maxzoom: 22,
+    coverageBounds: [WEB_MERCATOR_BOUNDS],
     attribution: '&copy; <a href="https://www.mapbox.com/about/maps/">Mapbox</a>',
     credentials: [{ env: "VITE_MAPBOX_ACCESS_TOKEN", unavailableReason: "missing key" }]
   },
@@ -96,6 +104,7 @@ export const MAP_PROVIDER_MANIFEST: readonly MapProviderManifestEntry[] = [
       "https://api.mapbox.com/styles/v1/mapbox/outdoors-v12/tiles/256/{z}/{x}/{y}?access_token={VITE_MAPBOX_ACCESS_TOKEN}"
     ],
     maxzoom: 22,
+    coverageBounds: [WEB_MERCATOR_BOUNDS],
     attribution: '&copy; <a href="https://www.mapbox.com/about/maps/">Mapbox</a>',
     credentials: [{ env: "VITE_MAPBOX_ACCESS_TOKEN", unavailableReason: "missing key" }]
   },
@@ -106,6 +115,7 @@ export const MAP_PROVIDER_MANIFEST: readonly MapProviderManifestEntry[] = [
       "https://api.mapbox.com/styles/v1/mapbox/dark-v11/tiles/256/{z}/{x}/{y}?access_token={VITE_MAPBOX_ACCESS_TOKEN}"
     ],
     maxzoom: 22,
+    coverageBounds: [WEB_MERCATOR_BOUNDS],
     attribution: '&copy; <a href="https://www.mapbox.com/about/maps/">Mapbox</a>',
     credentials: [{ env: "VITE_MAPBOX_ACCESS_TOKEN", unavailableReason: "missing key" }]
   },
@@ -114,6 +124,7 @@ export const MAP_PROVIDER_MANIFEST: readonly MapProviderManifestEntry[] = [
     label: "Thunderforest Outdoors",
     tiles: ["https://api.thunderforest.com/outdoors/{z}/{x}/{y}.png?apikey={VITE_THUNDERFOREST_API_KEY}"],
     maxzoom: 22,
+    coverageBounds: [WEB_MERCATOR_BOUNDS],
     attribution: '&copy; <a href="https://www.thunderforest.com/">Thunderforest</a>, &copy; OpenStreetMap contributors',
     credentials: [{ env: "VITE_THUNDERFOREST_API_KEY", unavailableReason: "missing key" }]
   },
@@ -122,6 +133,7 @@ export const MAP_PROVIDER_MANIFEST: readonly MapProviderManifestEntry[] = [
     label: "MapTiler Satellite",
     tiles: ["https://api.maptiler.com/maps/satellite/256/{z}/{x}/{y}.jpg?key={VITE_MAPTILER_API_KEY}"],
     maxzoom: 22,
+    coverageBounds: [WEB_MERCATOR_BOUNDS],
     attribution: '&copy; <a href="https://www.maptiler.com/copyright/">MapTiler</a>',
     credentials: [{ env: "VITE_MAPTILER_API_KEY", unavailableReason: "missing key" }]
   },
@@ -130,6 +142,7 @@ export const MAP_PROVIDER_MANIFEST: readonly MapProviderManifestEntry[] = [
     label: "MapTiler OSM Dark",
     tiles: ["https://api.maptiler.com/maps/openstreetmap-dark/256/{z}/{x}/{y}.png?key={VITE_MAPTILER_API_KEY}"],
     maxzoom: 22,
+    coverageBounds: [WEB_MERCATOR_BOUNDS],
     attribution: '&copy; <a href="https://www.maptiler.com/copyright/">MapTiler</a>, &copy; OpenStreetMap contributors',
     credentials: [{ env: "VITE_MAPTILER_API_KEY", unavailableReason: "missing key" }]
   },
@@ -143,6 +156,7 @@ export const MAP_PROVIDER_MANIFEST: readonly MapProviderManifestEntry[] = [
       "https://d.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png"
     ],
     maxzoom: 20,
+    coverageBounds: [WEB_MERCATOR_BOUNDS],
     attribution: '&copy; OpenStreetMap contributors, &copy; <a href="https://carto.com/attributions">CARTO</a>'
   }
 ];
@@ -206,13 +220,19 @@ function isLoopbackHost(hostname: string): boolean {
 
 function buildMapSourceConfig(env: RuntimeEnv): MapSourceConfig[] {
   return MAP_PROVIDER_MANIFEST.map((provider) => {
+    const coverage = { bounds: provider.coverageBounds, minZoom: 0, maxZoom: provider.maxzoom };
     const credentials = (provider.credentials ?? []).map((credential) => ({
       ...credential,
       value: envValue(env[credential.env])
     }));
     const missingCredential = credentials.find((credential) => !credential.value);
     if (missingCredential) {
-      return { id: provider.id, label: provider.label, unavailableReason: missingCredential.unavailableReason };
+      return {
+        id: provider.id,
+        label: provider.label,
+        unavailableReason: missingCredential.unavailableReason,
+        coverage
+      };
     }
 
     const tiles = provider.tiles.map((template) => {
@@ -226,6 +246,7 @@ function buildMapSourceConfig(env: RuntimeEnv): MapSourceConfig[] {
     return {
       id: provider.id,
       label: provider.label,
+      coverage,
       style: {
         version: 8,
         sources: {
