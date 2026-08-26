@@ -251,6 +251,39 @@ describe("MapView camera commands", () => {
     expect(map.easeTo).not.toHaveBeenCalled();
   });
 
+  it("stops a restoring preview as soon as place focus is committed", async () => {
+    const { map, rerenderMap } = renderMapView();
+    map.easeTo.mockClear();
+
+    rerenderMap({
+      cameraCommand: {
+        seq: 1,
+        intent: "preview",
+        target: { type: "point", id: "place-1", coordinates: [70, 80] }
+      }
+    });
+    await waitFor(() => expect(map.flyTo).toHaveBeenCalledTimes(1));
+    rerenderMap({ cameraCommand: null });
+    expect(map.easeTo).toHaveBeenCalledTimes(1);
+    map.stop.mockClear();
+
+    vi.useFakeTimers();
+    try {
+      rerenderMap({
+        cameraCommand: {
+          seq: 2,
+          intent: "commit",
+          target: { type: "point", id: "place-1", coordinates: [70, 80] }
+        }
+      });
+
+      expect(map.stop).toHaveBeenCalledTimes(1);
+      expect(map.flyTo).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("flashes the reticle before applying a committed place move and cancels stale commits", async () => {
     const { map, rerenderMap } = renderMapView();
     rerenderMap({

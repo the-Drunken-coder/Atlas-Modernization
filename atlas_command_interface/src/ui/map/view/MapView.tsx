@@ -117,6 +117,9 @@ export function MapView({
       setAppliedCameraCommand(cameraCommand);
       return;
     }
+    // A preview return may still be moving. Freeze it during the flash so the
+    // committed zoom starts from the camera position the operator clicked.
+    mapRef.current?.stop();
     setReticleFlashing(true);
     const timeout = window.setTimeout(() => {
       setReticleFlashing(false);
