@@ -12,6 +12,7 @@ Keep this file limited to durable, repository-wide constraints that are easy to 
 - Good code is the simplest thing that delivers the required functionality and performance. Trade away neither, and bolt on nothing unnecessary.
 - Prefer a direct expression, guard clause, or call when it is clearer than a helper. Split code only when it improves readability, error handling, or reuse that already exists.
 - Keep changes scoped. Greenfield status is not permission for unrelated refactors.
+- Treat current documentation as an explicit constraint. When a request conflicts with it, cite the exact conflict and ask whether to preserve or supersede the documented direction. When the user chooses a new direction, update or supersede every affected document and design decision in the same change.
 - For UI work, ask targeted questions when selection, focus, hover, keyboard, or pointer behavior is ambiguous; confirm the user-visible precedence instead of guessing.
 - Treat ignored build outputs and local configuration as disposable. Update source, examples, templates, or generators rather than `node_modules/`, `dist/`, `storybook-static/`, `.wrangler/`, `worker-configuration.d.ts`, or `atlas_core/docker/.env`.
 

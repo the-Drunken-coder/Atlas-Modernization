@@ -11,6 +11,7 @@ This is the single entry point for project documentation. Docs are split into **
 | --- | --- | --- |
 | [`docs/atlas-asset-runtime/`](atlas-asset-runtime/) | Asset runtime design: registration, safety barriers, runtime-scoped Task delivery polling, telemetry, and failure behavior. | "How does asset-side code participate in Atlas?" |
 | [`docs/atlas-change-feed/`](atlas-change-feed/) | Change feed design: websocket push contract, subscription filters, consumption rules, simulation-testing approach. | "How do clients learn about writes without polling?" |
+| [`docs/atlas-plugins/`](atlas-plugins/) | Plugin architecture: operations, datastreams, external sources, isolation, and Core ownership. | "How does Atlas add external-data and extension capabilities?" |
 | [`docs/atlas-protocol/`](atlas-protocol/) | Atlas Protocol design decisions and reference docs. | "Why is the protocol shaped this way?" |
 | [`docs/atlas-sdk/`](atlas-sdk/) | Atlas SDK design: client architecture, sync engine/cache, unified reads, testing, known gaps. | "How do services talk to Atlas Core?" |
 | [`docs/design-decisions/`](design-decisions/) | Durable architectural/implementation choices across the whole project (Atlas Core, Atlas Protocol, Atlas SDK, …). | "What did we decide, and why?" |
@@ -35,4 +36,5 @@ Use **`atlas_core/docs/`** when the question is "how does this API behave?"
 ## Other root files
 
 - **`AGENTS.md`** — hard constraints and recurring agent gotchas for the whole repo.
+- **`CONTEXT.md`** — canonical Atlas domain terms and distinctions.
 - **`README.md`** — project overview and map.
