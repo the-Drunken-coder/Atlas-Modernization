@@ -1,5 +1,5 @@
 import type { CommandCatalog, EntityResource, JSONValue } from "@the-drunken-coder/atlas-sdk";
-import { lazy, Suspense, useCallback, useEffect, useMemo, useReducer, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { MapSourceConfig } from "../app/config.js";
 import { type CommandAvailability, commandsForTargeting } from "../atlas/command-targeting.js";
 import {
@@ -27,7 +27,7 @@ import { SidebarRail } from "../ui/layout/SidebarRail.js";
 import type { MapCameraCommand } from "../ui/map/interaction/map-camera.js";
 import { MapSourcePicker } from "../ui/map/MapSourcePicker.js";
 import { buildMapSources } from "../ui/map/rendering/map-sources.js";
-import type { MapReticleTarget } from "../ui/map/view/MapView.js";
+import type { MapReticleTarget, MapViewport } from "../ui/map/view/MapView.js";
 import { Button } from "../ui/primitives/controls.js";
 import { ContextMenu, type MenuItemDef } from "../ui/primitives/Menu.js";
 import { APIKeysPanel } from "./admin/APIKeysPanel.js";
@@ -46,6 +46,9 @@ const LIST_TITLES = Object.fromEntries([
 ]) as Record<ListKind, string>;
 
 const MapView = lazy(() => import("../ui/map/view/MapView.js").then((module) => ({ default: module.MapView })));
+const MapSourcePreview = lazy(() =>
+  import("../ui/map/MapSourcePreview.js").then((module) => ({ default: module.MapSourcePreview }))
+);
 
 type CommandManifestStatus = "ready" | "loading" | "unavailable";
 const EMPTY_ENTITY_QUERIES = Object.fromEntries(ENTITY_KINDS.map((kind) => [kind, ""])) as Record<EntityKind, string>;
@@ -57,6 +60,13 @@ export function MapConsole() {
   const [entityQueries, setEntityQueries] = useState(EMPTY_ENTITY_QUERIES);
 
   const [selectedMapSourceId, setSelectedMapSourceId] = useState<string>();
+  const [previewMapSourceId, setPreviewMapSourceId] = useState<string>();
+  const [mapViewport, setMapViewport] = useState<MapViewport>();
+  const mapSourceTriggerRef = useRef<HTMLButtonElement>(null);
+  const dismissMapSourcePreview = useCallback(() => {
+    setPreviewMapSourceId(undefined);
+    mapSourceTriggerRef.current?.focus();
+  }, []);
 
   const selection = sidebar.selection;
   const selectedSnapshotEntity = getEntity(snapshot, selection?.id);
@@ -200,7 +210,9 @@ export function MapConsole() {
     availableMapSource(atlas.config.mapSources.find((source) => source.id === selectedMapSourceId)) ??
     availableMapSource(atlas.config.mapSources.find((source) => source.id === atlas.config?.defaultMapSourceId));
   const mapSourcePickerValue = selectedMapSource?.id ?? selectedMapSourceId ?? atlas.config.defaultMapSourceId;
-
+  const previewMapSource = availableMapSource(
+    atlas.config.mapSources.find((source) => source.id === previewMapSourceId && source.id !== selectedMapSource?.id)
+  );
   const mapCommands: MenuItemDef[] =
     mapMenu && selectedEntity && catalog
       ? commandsForTargeting(catalog, selectedEntity, "map_point").map((availability) => ({
@@ -289,6 +301,7 @@ export function MapConsole() {
                         dispatch({ type: "clearSelection" });
                       }}
                       onStyleSwitchError={handleMapStyleSwitchError}
+                      onViewportChange={setMapViewport}
                     />
                   </Suspense>
                 ) : (
@@ -301,8 +314,24 @@ export function MapConsole() {
                   sources={atlas.config.mapSources}
                   defaultSourceId={atlas.config.defaultMapSourceId}
                   value={mapSourcePickerValue}
-                  onChange={setSelectedMapSourceId}
+                  previewSourceId={previewMapSource?.id}
+                  triggerRef={mapSourceTriggerRef}
+                  onPreview={setPreviewMapSourceId}
                 />
+                {previewMapSource ? (
+                  <Suspense fallback={null}>
+                    <MapSourcePreview
+                      key={previewMapSource.id}
+                      source={previewMapSource}
+                      viewport={mapViewport}
+                      onDismiss={dismissMapSourcePreview}
+                      onCommit={() => {
+                        setSelectedMapSourceId(previewMapSource.id);
+                        dismissMapSourcePreview();
+                      }}
+                    />
+                  </Suspense>
+                ) : null}
               </div>
             </div>
           </>

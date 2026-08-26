@@ -50,6 +50,7 @@ const maplibreMock = vi.hoisted(() => {
     });
     readonly queryRenderedFeatures = vi.fn((_point?: unknown, _options?: unknown): RenderedFeature[] => []);
     readonly getBearing = vi.fn(() => 0);
+    readonly getPitch = vi.fn(() => 0);
     readonly getZoom = vi.fn(() => this.zoom);
     readonly getLayer = vi.fn((id: string) => this.layers.get(id));
     readonly getSource = vi.fn((id: string) => this.sources.get(id));
@@ -245,6 +246,7 @@ type RenderMapViewProps = {
   editing?: MapEditing;
   focusTarget?: MapReticleTarget | null;
   onStyleSwitchError?: (error: { failedStyleId: string; activeStyleId: string }) => void;
+  onViewportChange?: (viewport: { center: [number, number]; zoom: number; bearing: number; pitch: number }) => void;
   selectedId?: string;
   sources?: MapSources;
   styleId?: string;
@@ -274,6 +276,7 @@ export function renderMapView(props: RenderMapViewProps = {}) {
       onMapContextMenu={onMapContextMenu}
       onSelectEntity={onSelectEntity}
       onStyleSwitchError={renderProps.onStyleSwitchError}
+      onViewportChange={renderProps.onViewportChange}
     />
   );
 
@@ -294,6 +297,7 @@ export function renderMapView(props: RenderMapViewProps = {}) {
         onMapContextMenu={onMapContextMenu}
         onSelectEntity={onSelectEntity}
         onStyleSwitchError={renderProps.onStyleSwitchError}
+        onViewportChange={renderProps.onViewportChange}
       />
     );
   };

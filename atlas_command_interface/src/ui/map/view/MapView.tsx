@@ -25,6 +25,12 @@ import { MapReticle } from "./MapReticle.js";
 import { cloneStyle, fitWorldOnce, webglAvailable } from "./map-view-utils.js";
 
 export type MapContextMenuInfo = { lng: number; lat: number; x: number; y: number };
+export type MapViewport = {
+  center: [number, number];
+  zoom: number;
+  bearing: number;
+  pitch: number;
+};
 export type { MapReticleTarget } from "../interaction/map-targets.js";
 export type { MapEditing } from "../rendering/map-editing.js";
 export { buildMapSources } from "../rendering/map-sources.js";
@@ -42,6 +48,7 @@ type MapViewProps = {
   onMapContextMenu: (info: MapContextMenuInfo) => void;
   onBackgroundClick?: () => void;
   onStyleSwitchError?: (error: { failedStyleId: string; activeStyleId: string }) => void;
+  onViewportChange?: (viewport: MapViewport) => void;
 };
 
 type SymbolMarkerEntry = {
@@ -62,7 +69,8 @@ export function MapView({
   onSelectEntity,
   onMapContextMenu,
   onBackgroundClick,
-  onStyleSwitchError
+  onStyleSwitchError,
+  onViewportChange
 }: MapViewProps) {
   const mapCanvasRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -80,10 +88,12 @@ export function MapView({
   const symbolMarkersRef = useRef<Map<string, SymbolMarkerEntry>>(new Map());
   const handlersRef = useRef({ onSelectEntity, onMapContextMenu });
   const styleSwitchErrorRef = useRef(onStyleSwitchError);
+  const viewportChangeRef = useRef(onViewportChange);
   const [mapError, setMapError] = useState<string>();
   const [mapReady, setMapReady] = useState(false);
   handlersRef.current = { onSelectEntity, onMapContextMenu };
   styleSwitchErrorRef.current = onStyleSwitchError;
+  viewportChangeRef.current = onViewportChange;
   sourcesRef.current = sources;
   editingRef.current = editing;
   initialMapRef.current = { initialCenter, style, styleId };
@@ -144,6 +154,7 @@ export function MapView({
       currentStyleIdRef.current = initialMap.styleId;
       mapInstance.addControl(new maplibre.NavigationControl({ showCompass: false }), "top-right");
       mapInstance.addControl(new maplibre.AttributionControl({ compact: true }), "bottom-left");
+      mapInstance.on("moveend", () => viewportChangeRef.current?.(readViewport(mapInstance)));
 
       resizeObserver = new ResizeObserver(() => mapInstance.resize({ [CAMERA_EVENT_TAG]: true }));
       resizeObserver.observe(containerRef.current);
@@ -156,6 +167,7 @@ export function MapView({
         pushSources(mapInstance, sourcesRef.current);
         pushEditingOverlay(mapInstance, editingRef.current);
         fitWorldOnce(mapInstance, fitWorldOnceRef);
+        viewportChangeRef.current?.(readViewport(mapInstance));
 
         if (!eventsRegisteredRef.current) {
           eventsRegisteredRef.current = true;
@@ -358,4 +370,14 @@ export function MapView({
 function clearSymbolMarkers(markers: Map<string, SymbolMarkerEntry>): void {
   for (const entry of markers.values()) entry.marker.remove();
   markers.clear();
+}
+
+function readViewport(map: MlMap): MapViewport {
+  const center = map.getCenter();
+  return {
+    center: [center.lng, center.lat],
+    zoom: map.getZoom(),
+    bearing: map.getBearing(),
+    pitch: map.getPitch()
+  };
 }

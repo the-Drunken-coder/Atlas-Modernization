@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { type RefObject, useEffect, useId, useMemo, useRef, useState } from "react";
 import type { MapSourceConfig } from "../../app/config.js";
 import { DoubleCaretVerticalIcon, TickIcon } from "../primitives/icons.js";
 
@@ -6,14 +6,24 @@ type MapSourcePickerProps = {
   sources: MapSourceConfig[];
   defaultSourceId: string;
   value: string;
-  onChange: (value: string) => void;
+  previewSourceId?: string;
+  triggerRef?: RefObject<HTMLButtonElement | null>;
+  onPreview: (value: string) => void;
 };
 
-export function MapSourcePicker({ sources, defaultSourceId, value, onChange }: MapSourcePickerProps) {
+export function MapSourcePicker({
+  sources,
+  defaultSourceId,
+  value,
+  previewSourceId,
+  triggerRef: providedTriggerRef,
+  onPreview
+}: MapSourcePickerProps) {
   const [open, setOpen] = useState(false);
   const [activeSourceId, setActiveSourceId] = useState(value);
   const pickerRef = useRef<HTMLDivElement>(null);
-  const triggerRef = useRef<HTMLButtonElement>(null);
+  const internalTriggerRef = useRef<HTMLButtonElement>(null);
+  const triggerRef = providedTriggerRef ?? internalTriggerRef;
   const labelId = useId();
   const listboxId = useId();
   const orderedSources = useMemo(
@@ -122,6 +132,7 @@ export function MapSourcePicker({ sources, defaultSourceId, value, onChange }: M
         >
           {orderedSources.map((source) => {
             const selected = source.id === value;
+            const previewing = source.id === previewSourceId;
             return (
               <button
                 key={source.id}
@@ -136,13 +147,13 @@ export function MapSourcePicker({ sources, defaultSourceId, value, onChange }: M
                 onFocus={() => setActiveSourceId(source.id)}
                 onClick={() => {
                   if (!source.style) return;
-                  onChange(source.id);
+                  if (!selected) onPreview(source.id);
                   closeMenu(true);
                 }}
               >
                 <span className="map-source-option__label">{source.label}</span>
-                {source.unavailableReason ? (
-                  <span className="map-source-option__reason">{source.unavailableReason}</span>
+                {source.unavailableReason || previewing ? (
+                  <span className="map-source-option__reason">{source.unavailableReason ?? "Previewing"}</span>
                 ) : null}
                 <span className="map-source-option__check" aria-hidden>
                   {selected ? <TickIcon size={12} /> : null}

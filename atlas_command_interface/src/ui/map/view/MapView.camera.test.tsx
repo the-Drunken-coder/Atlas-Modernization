@@ -1,6 +1,6 @@
 import { waitFor } from "@testing-library/react";
 import { act } from "react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   ASSET_VIEW_ZOOM,
   FOLLOW_EASE_MS,
@@ -38,6 +38,20 @@ describe("MapView camera commands", () => {
         { atlasCamera: true }
       )
     );
+  });
+
+  it("reports the settled viewport for source previews", () => {
+    const onViewportChange = vi.fn();
+    const { map } = renderMapView({ onViewportChange });
+    expect(onViewportChange).toHaveBeenCalledWith({ center: [0, 0], zoom: 4, bearing: 0, pitch: 0 });
+
+    map.getCenter.mockReturnValue({ lng: -74, lat: 40 });
+    map.getZoom.mockReturnValue(9);
+    map.getBearing.mockReturnValue(6);
+    map.getPitch.mockReturnValue(3);
+    act(() => map.fire("moveend"));
+
+    expect(onViewportChange).toHaveBeenLastCalledWith({ center: [-74, 40], zoom: 9, bearing: 6, pitch: 3 });
   });
 
   it("flies point commands to the standard asset view with a tagged arc flight", async () => {

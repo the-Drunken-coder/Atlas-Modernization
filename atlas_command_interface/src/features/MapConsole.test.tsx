@@ -19,9 +19,29 @@ type MockMapViewProps = {
   onBackgroundClick?: () => void;
   onSelectEntity?: (id: string) => void;
   onStyleSwitchError?: (error: { failedStyleId: string; activeStyleId: string }) => void;
+  onViewportChange?: (viewport: { center: [number, number]; zoom: number; bearing: number; pitch: number }) => void;
+};
+
+type MockMapSourcePreviewProps = {
+  source: { id: string; label: string };
+  onCommit: () => void;
+  onDismiss: () => void;
 };
 
 const mapViewMock = vi.hoisted(() => ({ lastProps: undefined as MockMapViewProps | undefined }));
+
+vi.mock("../ui/map/MapSourcePreview.js", () => ({
+  MapSourcePreview: ({ source, onCommit, onDismiss }: MockMapSourcePreviewProps) => (
+    <section aria-label={`${source.label} map preview`}>
+      <button type="button" onClick={onDismiss}>
+        Dismiss
+      </button>
+      <button type="button" onClick={onCommit}>
+        Use {source.label}
+      </button>
+    </section>
+  )
+}));
 
 // MapLibre never runs in jsdom; stub the map but keep the real source builder.
 vi.mock("../ui/map/view/MapView.js", async () => {
@@ -691,7 +711,7 @@ describe("MapConsole", () => {
     expect(geometryUpdates[0].geometry).toEqual(circleArea.components.geometry);
   });
 
-  it("switches between configured map sources", async () => {
+  it("previews a source without changing the map until the operator commits", async () => {
     const user = userEvent.setup();
     const { fake } = makeFakeDataSource();
     renderConsole(fake);
@@ -716,9 +736,17 @@ describe("MapConsole", () => {
 
     await user.click(options[2]);
 
+    expect(screen.getByTestId("map")).toHaveAttribute("data-style-id", "openstreetmap-default");
+    expect(mapPicker).toHaveTextContent("OpenStreetMap Default");
+    expect(await screen.findByRole("region", { name: "USGS Topo map preview" })).toBeInTheDocument();
+    expect(screen.queryByRole("listbox", { name: "Map" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Use USGS Topo" }));
+
     expect(screen.getByTestId("map")).toHaveAttribute("data-style-id", "usgs-topo");
     expect(mapPicker).toHaveTextContent("USGS Topo");
-    expect(screen.queryByRole("listbox", { name: "Map" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "USGS Topo map preview" })).not.toBeInTheDocument();
+    expect(mapPicker).toHaveFocus();
   });
 
   it("supports keyboard navigation in the map source menu", async () => {
@@ -748,7 +776,13 @@ describe("MapConsole", () => {
     await user.keyboard("{ArrowDown}");
     await user.keyboard("{ArrowDown}");
     await user.keyboard("{Enter}");
-    expect(screen.getByTestId("map")).toHaveAttribute("data-style-id", "usgs-topo");
+    expect(screen.getByTestId("map")).toHaveAttribute("data-style-id", "openstreetmap-default");
+    expect(screen.getByRole("region", { name: "USGS Topo map preview" })).toBeInTheDocument();
+    expect(mapPicker).toHaveFocus();
+
+    await user.click(screen.getByRole("button", { name: "Dismiss" }));
+    expect(screen.queryByRole("region", { name: "USGS Topo map preview" })).not.toBeInTheDocument();
+    expect(screen.getByTestId("map")).toHaveAttribute("data-style-id", "openstreetmap-default");
     expect(mapPicker).toHaveFocus();
   });
 
@@ -804,6 +838,7 @@ describe("MapConsole", () => {
 
     await user.click(mapPicker);
     await user.click(screen.getByRole("option", { name: "USGS Topo" }));
+    await user.click(screen.getByRole("button", { name: "Use USGS Topo" }));
     expect(screen.getByTestId("map")).toHaveAttribute("data-style-id", "usgs-topo");
 
     act(() => {
