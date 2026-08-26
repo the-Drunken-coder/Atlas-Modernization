@@ -352,8 +352,10 @@
 
 .panel__body {
   flex: 1;
-  overflow-y: auto;
   min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior-y: none;
 }
 
 .panel__empty {
