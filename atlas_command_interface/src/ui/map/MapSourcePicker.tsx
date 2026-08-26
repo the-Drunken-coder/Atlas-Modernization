@@ -68,7 +68,7 @@ export function MapSourcePicker({
   };
 
   return (
-    <div ref={pickerRef} className="map-overlay-tr map-source-control">
+    <div ref={pickerRef} className="map-source-control">
       <label id={labelId} className="map-source-control__label" htmlFor={`${listboxId}-trigger`}>
         Map
       </label>

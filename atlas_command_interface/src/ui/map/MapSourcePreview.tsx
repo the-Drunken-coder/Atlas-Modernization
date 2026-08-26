@@ -6,6 +6,7 @@ import { CloseIcon } from "../primitives/icons.js";
 import type { MapLibreRuntime } from "./runtime/maplibre-runtime.js";
 import type { MapViewport } from "./view/MapView.js";
 import { cloneStyle, webglAvailable } from "./view/map-view-utils.js";
+import "./MapSourcePreview.css";
 
 type PreviewSource = {
   id: string;
@@ -31,6 +32,7 @@ export function MapSourcePreview({ source, viewport, onCommit, onDismiss }: MapS
   const [error, setError] = useState<string>();
   viewportRef.current = viewport;
   const canCreateMap = viewport !== undefined;
+  const previewLabel = viewport ? `Preview · Z${viewport.zoom.toFixed(1)}` : "Preview";
 
   useEffect(() => {
     const dismissOnEscape = (event: KeyboardEvent) => {
@@ -133,10 +135,24 @@ export function MapSourcePreview({ source, viewport, onCommit, onDismiss }: MapS
   return (
     <section className="map-source-preview" aria-label={`${source.label} map preview`}>
       <header className="map-source-preview__header">
-        <h2>{source.label}</h2>
-        <IconButton label="Dismiss map preview" onClick={onDismiss}>
-          <CloseIcon size={12} />
-        </IconButton>
+        <div className="map-source-preview__identity">
+          <h2>{source.label}</h2>
+          <span className="map-source-preview__meta">{previewLabel}</span>
+        </div>
+        <div className="map-source-preview__header-actions">
+          <Button
+            className="map-source-preview__use"
+            variant="primary"
+            aria-label={`Use ${source.label}`}
+            disabled={status !== "ready"}
+            onClick={onCommit}
+          >
+            Use
+          </Button>
+          <IconButton className="map-source-preview__dismiss" label="Dismiss map preview" onClick={onDismiss}>
+            <CloseIcon size={12} />
+          </IconButton>
+        </div>
       </header>
       <div className="map-source-preview__map">
         <div className="map-source-preview__host" ref={containerRef} />
@@ -146,26 +162,23 @@ export function MapSourcePreview({ source, viewport, onCommit, onDismiss }: MapS
           </div>
         ) : status === "loading" ? (
           <div className="map-source-preview__state" role="status">
-            Loading preview…
+            Loading tiles…
           </div>
         ) : status === "slow" ? (
           <div className="map-source-preview__state" role="status">
-            Preview is taking longer than usual.
+            <strong>Still loading</strong>
+            <span>Waiting for {source.label} tiles.</span>
           </div>
         ) : status === "error" ? (
           <div className="map-source-preview__state map-source-preview__state--error" role="alert">
             <strong>Preview unavailable</strong>
             <code>{error}</code>
-            <Button onClick={() => setAttempt((current) => current + 1)}>Retry</Button>
+            <Button className="map-source-preview__retry" onClick={() => setAttempt((current) => current + 1)}>
+              Retry
+            </Button>
           </div>
         ) : null}
       </div>
-      <footer className="map-source-preview__actions">
-        <Button onClick={onDismiss}>Dismiss</Button>
-        <Button variant="primary" disabled={status !== "ready"} onClick={onCommit}>
-          Use {source.label}
-        </Button>
-      </footer>
     </section>
   );
 }

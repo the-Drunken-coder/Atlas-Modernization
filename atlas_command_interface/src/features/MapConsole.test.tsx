@@ -33,11 +33,11 @@ const mapViewMock = vi.hoisted(() => ({ lastProps: undefined as MockMapViewProps
 vi.mock("../ui/map/MapSourcePreview.js", () => ({
   MapSourcePreview: ({ source, onCommit, onDismiss }: MockMapSourcePreviewProps) => (
     <section aria-label={`${source.label} map preview`}>
-      <button type="button" onClick={onDismiss}>
-        Dismiss
+      <button type="button" aria-label={`Use ${source.label}`} onClick={onCommit}>
+        Use
       </button>
-      <button type="button" onClick={onCommit}>
-        Use {source.label}
+      <button type="button" aria-label="Dismiss map preview" onClick={onDismiss}>
+        Close
       </button>
     </section>
   )
@@ -738,7 +738,9 @@ describe("MapConsole", () => {
 
     expect(screen.getByTestId("map")).toHaveAttribute("data-style-id", "openstreetmap-default");
     expect(mapPicker).toHaveTextContent("OpenStreetMap Default");
-    expect(await screen.findByRole("region", { name: "USGS Topo map preview" })).toBeInTheDocument();
+    const preview = await screen.findByRole("region", { name: "USGS Topo map preview" });
+    expect(preview).toBeInTheDocument();
+    expect(preview.parentElement).toHaveClass("map-source-stack");
     expect(screen.queryByRole("listbox", { name: "Map" })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Use USGS Topo" }));
@@ -780,7 +782,10 @@ describe("MapConsole", () => {
     expect(screen.getByRole("region", { name: "USGS Topo map preview" })).toBeInTheDocument();
     expect(mapPicker).toHaveFocus();
 
-    await user.click(screen.getByRole("button", { name: "Dismiss" }));
+    await user.keyboard("{Tab}");
+    expect(screen.getByRole("button", { name: "Use USGS Topo" })).toHaveFocus();
+
+    await user.click(screen.getByRole("button", { name: "Dismiss map preview" }));
     expect(screen.queryByRole("region", { name: "USGS Topo map preview" })).not.toBeInTheDocument();
     expect(screen.getByTestId("map")).toHaveAttribute("data-style-id", "openstreetmap-default");
     expect(mapPicker).toHaveFocus();

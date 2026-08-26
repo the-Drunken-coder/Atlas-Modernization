@@ -310,28 +310,30 @@ export function MapConsole() {
                   </div>
                 )}
                 <ConnectionBadge health={atlas.health} error={atlas.connectionError} onRetry={atlas.reconnect} />
-                <MapSourcePicker
-                  sources={atlas.config.mapSources}
-                  defaultSourceId={atlas.config.defaultMapSourceId}
-                  value={mapSourcePickerValue}
-                  previewSourceId={previewMapSource?.id}
-                  triggerRef={mapSourceTriggerRef}
-                  onPreview={setPreviewMapSourceId}
-                />
-                {previewMapSource ? (
-                  <Suspense fallback={null}>
-                    <MapSourcePreview
-                      key={previewMapSource.id}
-                      source={previewMapSource}
-                      viewport={mapViewport}
-                      onDismiss={dismissMapSourcePreview}
-                      onCommit={() => {
-                        setSelectedMapSourceId(previewMapSource.id);
-                        dismissMapSourcePreview();
-                      }}
-                    />
-                  </Suspense>
-                ) : null}
+                <div className="map-source-stack">
+                  <MapSourcePicker
+                    sources={atlas.config.mapSources}
+                    defaultSourceId={atlas.config.defaultMapSourceId}
+                    value={mapSourcePickerValue}
+                    previewSourceId={previewMapSource?.id}
+                    triggerRef={mapSourceTriggerRef}
+                    onPreview={setPreviewMapSourceId}
+                  />
+                  {previewMapSource ? (
+                    <Suspense fallback={null}>
+                      <MapSourcePreview
+                        key={previewMapSource.id}
+                        source={previewMapSource}
+                        viewport={mapViewport}
+                        onDismiss={dismissMapSourcePreview}
+                        onCommit={() => {
+                          setSelectedMapSourceId(previewMapSource.id);
+                          dismissMapSourcePreview();
+                        }}
+                      />
+                    </Suspense>
+                  ) : null}
+                </div>
               </div>
             </div>
           </>

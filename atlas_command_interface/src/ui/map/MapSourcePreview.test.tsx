@@ -97,6 +97,8 @@ describe("MapSourcePreview", () => {
       expect.objectContaining({ options: { compact: false } }),
       "bottom-right"
     );
+    expect(screen.getByRole("heading", { name: "USGS Topo" })).toBeInTheDocument();
+    expect(screen.getByText("Preview · Z9.0")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Use USGS Topo" })).toBeDisabled();
 
     act(() => map.fire("load"));
@@ -125,7 +127,8 @@ describe("MapSourcePreview", () => {
     const firstMap = maplibreMock.FakeMap.instances[0];
 
     act(() => vi.advanceTimersByTime(2_000));
-    expect(screen.getByRole("status")).toHaveTextContent("taking longer");
+    expect(screen.getByRole("status")).toHaveTextContent("Still loading");
+    expect(screen.getByRole("status")).toHaveTextContent("Waiting for USGS Topo tiles");
 
     act(() => firstMap.fire("error", { error: new Error("Provider denied the request") }));
     expect(screen.getByRole("alert")).toHaveTextContent("Preview unavailable");
@@ -137,5 +140,16 @@ describe("MapSourcePreview", () => {
 
     fireEvent.keyDown(window, { key: "Escape" });
     expect(onDismiss).toHaveBeenCalledOnce();
+  });
+
+  it("offers pointer dismissal without changing the source", () => {
+    const onCommit = vi.fn();
+    const onDismiss = vi.fn();
+    render(<MapSourcePreview source={source} onCommit={onCommit} onDismiss={onDismiss} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss map preview" }));
+
+    expect(onDismiss).toHaveBeenCalledOnce();
+    expect(onCommit).not.toHaveBeenCalled();
   });
 });
