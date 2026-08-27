@@ -12,6 +12,7 @@ import {
   followIdle,
   followReducer,
   geometryForTarget,
+  geometryUsesUnwrappedLongitudes,
   INITIAL_WORLD_BOUNDS,
   isLngLatPosition,
   type MapCameraCommand,
@@ -125,11 +126,13 @@ export function useMapCamera(args: {
       previewOriginRef.current = null;
       lastAppliedSeqRef.current = command.seq;
       dispatch({ type: "command-geometry", seq: command.seq });
+      map.setRenderWorldCopies(false);
       map.fitBounds(INITIAL_WORLD_BOUNDS, { padding: 0, duration: FIT_DURATION_MS }, { [CAMERA_EVENT_TAG]: true });
       return;
     }
 
     const geometry = geometryForTarget(sources, command.target);
+    if (geometry) map.setRenderWorldCopies(geometryUsesUnwrappedLongitudes(geometry));
     const view = geometry
       ? (() => {
           const center = map.getCenter();

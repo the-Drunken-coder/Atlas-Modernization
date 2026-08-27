@@ -4,6 +4,7 @@ import { sanitizeConnectionError } from "../../../atlas/connection-error.js";
 import {
   boundsForGeometry,
   CAMERA_EVENT_TAG,
+  geometryUsesUnwrappedLongitudes,
   type MapTarget,
   PREVIEW_FIT_MAX_ZOOM,
   PREVIEW_POINT_ZOOM
@@ -150,12 +151,14 @@ export function PlaceDetailLens({ target, style }: PlaceDetailLensProps) {
     const map = mapRef.current;
     if (!map || !ready) return;
     if (target.type === "point") {
+      map.setRenderWorldCopies(false);
       map.jumpTo({ center: target.coordinates, zoom: PREVIEW_POINT_ZOOM }, { [CAMERA_EVENT_TAG]: true });
       return;
     }
     if (target.type !== "geometry") return;
     const bounds = boundsForGeometry(target.geometry);
     if (!bounds) return;
+    map.setRenderWorldCopies(geometryUsesUnwrappedLongitudes(target.geometry));
     map.fitBounds(
       bounds,
       { padding: DETAIL_PADDING, maxZoom: PREVIEW_FIT_MAX_ZOOM, duration: 0 },

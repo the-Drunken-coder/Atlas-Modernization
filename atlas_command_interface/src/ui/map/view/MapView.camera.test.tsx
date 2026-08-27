@@ -161,6 +161,47 @@ describe("MapView camera commands", () => {
     expect(map.easeTo).not.toHaveBeenCalled();
   });
 
+  it("renders a wrapped world while fitting date-line geometry and restores the single world overview", async () => {
+    const { map, rerenderMap } = renderMapView();
+    map.fitBounds.mockClear();
+
+    rerenderMap({
+      cameraCommand: {
+        seq: 1,
+        target: {
+          type: "geometry",
+          id: "place:russia",
+          geometry: {
+            type: "Polygon",
+            coordinates: [
+              [
+                [19.4041722, 41.1850968],
+                [191.023056, 41.1850968],
+                [191.023056, 82.0586232],
+                [19.4041722, 82.0586232],
+                [19.4041722, 41.1850968]
+              ]
+            ]
+          }
+        }
+      }
+    });
+
+    await waitFor(() => expect(map.setRenderWorldCopies).toHaveBeenCalledWith(true));
+    expect(map.fitBounds).toHaveBeenCalledWith(
+      [
+        [19.4041722, 41.1850968],
+        [191.023056, 82.0586232]
+      ],
+      { duration: 450, maxZoom: 10, padding: 48 },
+      { atlasCamera: true }
+    );
+
+    rerenderMap({ cameraCommand: { seq: 2, intent: "world" } });
+
+    expect(map.setRenderWorldCopies).toHaveBeenLastCalledWith(false);
+  });
+
   it("previews a point from the current view and restores that view when the preview clears", async () => {
     const { map, rerenderMap } = renderMapView();
     map.flyTo.mockClear();

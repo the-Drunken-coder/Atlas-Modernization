@@ -62,7 +62,6 @@ export function MapConsole() {
   const [entityQueries, setEntityQueries] = useState(EMPTY_ENTITY_QUERIES);
   const [placeQuery, setPlaceQuery] = useState("");
   const [placePreviewTarget, setPlacePreviewTarget] = useState<MapTarget | null>(null);
-  const [placeFocusTarget, setPlaceFocusTarget] = useState<MapTarget | null>(null);
   const [cameraCommand, setCameraCommand] = useState<MapCameraCommand | null>(null);
   const cameraSequenceRef = useRef(0);
 
@@ -83,14 +82,12 @@ export function MapConsole() {
   const focusPlace = useCallback(
     (target: MapTarget) => {
       setPlacePreviewTarget(null);
-      setPlaceFocusTarget(target);
       issueCameraCommand(target, "commit");
     },
     [issueCameraCommand]
   );
   const showWorld = useCallback(() => {
     setPlacePreviewTarget(null);
-    setPlaceFocusTarget(null);
     cameraSequenceRef.current += 1;
     setCameraCommand({ seq: cameraSequenceRef.current, intent: "world" });
   }, []);
@@ -174,6 +171,7 @@ export function MapConsole() {
     [atlas.config]
   );
   const placesActive = sidebar.view.mode === "list" && sidebar.view.list === "places";
+  const placeFocusTarget = placesActive && cameraCommand?.intent === "commit" ? cameraCommand.target : null;
   const focusTarget =
     placePreviewTarget ?? placeFocusTarget ?? (placesActive ? null : entityReticleTarget(selectedEntity));
 
@@ -194,7 +192,6 @@ export function MapConsole() {
       const kind = entityKind(entity);
       if (kind === "other") return;
       setPlacePreviewTarget(null);
-      setPlaceFocusTarget(null);
       setCameraCommand(null);
       dispatch({ type: "selectEntity", kind, id, origin: "map" });
     },
@@ -298,7 +295,6 @@ export function MapConsole() {
                 const kind = entityKind(entity);
                 if (kind === "other") return;
                 setPlacePreviewTarget(null);
-                setPlaceFocusTarget(null);
                 dispatch({ type: "selectEntity", kind, id: entity.entity_id, origin: "sidebar" });
               }}
               onEntityQueryChange={setEntityQuery}
@@ -347,7 +343,6 @@ export function MapConsole() {
                       onBackgroundClick={() => {
                         commandFlow.closeMapMenu();
                         setPlacePreviewTarget(null);
-                        setPlaceFocusTarget(null);
                         setCameraCommand(null);
                         dispatch({ type: "clearSelection" });
                       }}

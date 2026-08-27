@@ -296,8 +296,7 @@ button.connection-badge:hover:not([disabled]) {
   user-select: none;
 }
 
-.map-canvas > .maplibre-host,
-.map-canvas > .maplibre-host.maplibregl-map {
+.map-canvas > .maplibre-host {
   position: absolute;
   inset: 0;
   width: 100%;
@@ -308,7 +307,6 @@ button.connection-badge:hover:not([disabled]) {
 .map-canvas--custom-cursor .maplibregl-canvas,
 .map-canvas--custom-cursor .maplibregl-canvas-container,
 .map-canvas--custom-cursor .maplibregl-marker,
-.map-canvas--custom-cursor .map-symbol-marker,
 .map-canvas--custom-cursor .vertex-handle {
   cursor: none !important;
 }
@@ -478,8 +476,6 @@ button.connection-badge:hover:not([disabled]) {
   }
 }
 
-.map-canvas--scrolling .map-reticle__line,
-.map-canvas--scrolling .map-reticle__target,
 .map-reticle--scrolling .map-reticle__line,
 .map-reticle--scrolling .map-reticle__target {
   transition: none;

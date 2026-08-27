@@ -130,6 +130,11 @@ export function boundsForGeometry(geometry: UiRawGeometry): [[number, number], [
   ];
 }
 
+/** True when a geometry continues past the canonical world to cross the date line. */
+export function geometryUsesUnwrappedLongitudes(geometry: UiRawGeometry): boolean {
+  return collectLngLatPositions(geometry.coordinates).some(([longitude]) => longitude < -180 || longitude > 180);
+}
+
 export function collectLngLatPositions(value: unknown): Position[] {
   if (isLngLatPosition(value)) return [value];
   if (!Array.isArray(value)) return [];

@@ -85,9 +85,10 @@ function removeNamePrefix(placeName: string, name: string): string {
 }
 
 function polygonForBounds([west, south, east, north]: [number, number, number, number]): UiPolygon {
+  const unwrappedEast = east < west ? east + 360 : east;
   const southwest: Position = [west, south];
-  const southeast: Position = [east, south];
-  const northeast: Position = [east, north];
+  const southeast: Position = [unwrappedEast, south];
+  const northeast: Position = [unwrappedEast, north];
   const northwest: Position = [west, north];
   return { type: "Polygon", coordinates: [[southwest, southeast, northeast, northwest, southwest]] };
 }
@@ -96,7 +97,19 @@ function boundingBox(value: unknown): [number, number, number, number] | undefin
   if (!Array.isArray(value) || value.length < 4) return undefined;
   const [west, south, east, north] = value;
   if (![west, south, east, north].every(isFiniteNumber)) return undefined;
-  if (west < -180 || east > 180 || south < -90 || north > 90 || west >= east || south >= north) return undefined;
+  const longitudeSpan = east >= west ? east - west : east + 360 - west;
+  if (
+    west < -180 ||
+    west > 180 ||
+    east < -180 ||
+    east > 180 ||
+    south < -90 ||
+    north > 90 ||
+    longitudeSpan <= 0 ||
+    longitudeSpan >= 360 ||
+    south >= north
+  )
+    return undefined;
   return [west, south, east, north];
 }
 

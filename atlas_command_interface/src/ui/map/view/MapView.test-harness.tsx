@@ -35,6 +35,7 @@ const maplibreMock = vi.hoisted(() => {
     readonly flyTo = vi.fn();
     readonly jumpTo = vi.fn();
     readonly stop = vi.fn();
+    readonly setRenderWorldCopies = vi.fn();
     readonly fitScreenCoordinates = vi.fn();
     readonly fitBounds = vi.fn();
     readonly zoomTo = vi.fn();

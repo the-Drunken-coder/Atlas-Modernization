@@ -147,6 +147,49 @@ describe("MapTiler place search", () => {
     });
   });
 
+  it("unwraps provider bounds that cross the international date line", async () => {
+    const search = createMapTilerPlaceSearch(
+      "key",
+      vi.fn(async () =>
+        Response.json({
+          type: "FeatureCollection",
+          attribution: "© MapTiler",
+          features: [
+            {
+              id: "country.145",
+              text: "Russia",
+              center: [97.745306, 64.686314],
+              bbox: [19.4041722, 41.1850968, -168.976944, 82.0586232],
+              place_type: ["country"]
+            }
+          ]
+        })
+      )
+    );
+
+    await expect(search("Russia", new AbortController().signal)).resolves.toMatchObject({
+      results: [
+        {
+          target: {
+            type: "geometry",
+            geometry: {
+              type: "Polygon",
+              coordinates: [
+                [
+                  [19.4041722, 41.1850968],
+                  [191.023056, 41.1850968],
+                  [191.023056, 82.0586232],
+                  [19.4041722, 82.0586232],
+                  [19.4041722, 41.1850968]
+                ]
+              ]
+            }
+          }
+        }
+      ]
+    });
+  });
+
   it.each([
     [403, "Place search is not authorized."],
     [503, "Place search failed."]

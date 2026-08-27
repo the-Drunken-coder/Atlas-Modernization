@@ -29,6 +29,24 @@ const massachusetts: MapTarget = {
   }
 };
 
+const russia: MapTarget = {
+  type: "geometry",
+  id: "place:russia",
+  label: "Russia",
+  geometry: {
+    type: "Polygon",
+    coordinates: [
+      [
+        [19.4041722, 41.1850968],
+        [191.023056, 41.1850968],
+        [191.023056, 82.0586232],
+        [19.4041722, 82.0586232],
+        [19.4041722, 41.1850968]
+      ]
+    ]
+  }
+};
+
 describe("MapView place detail lens", () => {
   it("frames changing place targets without moving the main map", async () => {
     const rendered = renderMapView({ placeDetailTarget: worcester });
@@ -73,6 +91,19 @@ describe("MapView place detail lens", () => {
     expect(Number.parseFloat(areaReticle?.style.getPropertyValue("--map-reticle-target-width") ?? "")).toBeCloseTo(194);
     expect(Number.parseFloat(areaReticle?.style.getPropertyValue("--map-reticle-target-height") ?? "")).toBeCloseTo(99);
     expect(rendered.map.fitBounds).not.toHaveBeenCalled();
+
+    rendered.rerenderMap({ placeDetailTarget: russia });
+
+    await screen.findByRole("region", { name: "Local detail for Russia" });
+    expect(detailMap.setRenderWorldCopies).toHaveBeenLastCalledWith(true);
+    expect(detailMap.fitBounds).toHaveBeenLastCalledWith(
+      [
+        [19.4041722, 41.1850968],
+        [191.023056, 82.0586232]
+      ],
+      expect.objectContaining({ duration: 0, maxZoom: 14, padding: 28 }),
+      expect.any(Object)
+    );
 
     rendered.rerenderMap({ placeDetailTarget: null });
 
