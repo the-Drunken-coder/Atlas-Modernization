@@ -248,7 +248,7 @@ export function MapRegionComparison({
       cancelActiveDrag();
     };
     const cancelDrag = (event: globalThis.KeyboardEvent) => {
-      if (event.key !== "Escape" || boxZoomActive) return;
+      if (event.key !== "Escape" || boxZoomActive || foregroundEscapeOwner(event.target)) return;
       event.preventDefault();
       event.stopPropagation();
       cancelActiveDrag();
@@ -273,12 +273,7 @@ export function MapRegionComparison({
     if (!region && !panelOpen) return;
     const handleEscape = (event: globalThis.KeyboardEvent) => {
       if (event.key !== "Escape" || drag) return;
-      const escapeOwner =
-        event.target instanceof Element
-          ? event.target.closest(
-              '[role="listbox"], [role="menu"], [role="dialog"], #account-menu-popover, [aria-controls="account-menu-popover"][aria-expanded="true"], [data-map-source-trigger][aria-expanded="true"]'
-            )
-          : null;
+      const escapeOwner = foregroundEscapeOwner(event.target);
       if (escapeOwner && !escapeOwner.matches(".map-compare__panel")) return;
       event.preventDefault();
       event.stopPropagation();
@@ -390,6 +385,7 @@ export function MapRegionComparison({
     if (viewport.width < MIN_REGION_SIZE || viewport.height < MIN_REGION_SIZE) return;
     const width = Math.min(240, Math.max(MIN_REGION_SIZE, viewport.width / 2));
     const height = Math.min(180, Math.max(MIN_REGION_SIZE, viewport.height / 2));
+    map.stop();
     setRegion(
       regionFromScreenRect(map, {
         left: (viewport.width - width) / 2,
@@ -795,6 +791,14 @@ function keyboardDelta(key: string, step: number, axes: ResizeAxes): ScreenPoint
 
 function rectStyle(rect: ScreenRect): CSSProperties {
   return { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
+}
+
+function foregroundEscapeOwner(target: EventTarget | null): Element | null {
+  return target instanceof Element
+    ? target.closest(
+        '[role="listbox"], [role="menu"], [role="dialog"], #account-menu-popover, [aria-controls="account-menu-popover"][aria-expanded="true"], [data-map-source-trigger][aria-expanded="true"]'
+      )
+    : null;
 }
 
 function panelPosition(

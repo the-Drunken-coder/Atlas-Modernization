@@ -86,10 +86,12 @@ describe("MapView region comparison", () => {
   });
 
   it("creates a keyboard-adjustable default region when the Compare tool is activated from the keyboard", async () => {
-    renderMapView({ styleId: "base", style: style("base"), mapSourceOptions });
+    const { map } = renderMapView({ styleId: "base", style: style("base"), mapSourceOptions });
     const compare = screen.getByRole("button", { name: "Compare map source inside a region" });
 
+    map.stop.mockClear();
     fireEvent.keyDown(compare, { key: "Enter" });
+    expect(map.stop).toHaveBeenCalledOnce();
 
     const region = await screen.findByTestId("map-comparison-region");
     expect(region).toHaveStyle({ left: "100px", top: "50px", width: "200px", height: "100px" });
@@ -131,6 +133,22 @@ describe("MapView region comparison", () => {
 
     expect(screen.queryByTestId("map-comparison-region")).not.toBeInTheDocument();
     expect(screen.getByText("Drag a region. Shift-drag still zooms.")).toBeInTheDocument();
+  });
+
+  it("gives Escape to foreground controls while drawing is armed", () => {
+    const { canvas } = renderMapView({ styleId: "base", style: style("base"), mapSourceOptions });
+    fireEvent.click(screen.getByRole("button", { name: "Compare map source inside a region" }));
+    const menu = document.createElement("div");
+    menu.setAttribute("role", "menu");
+    const menuControl = document.createElement("button");
+    menu.append(menuControl);
+    canvas.append(menu);
+
+    fireEvent.keyDown(menuControl, { key: "Escape" });
+    expect(screen.getByText("Drag a region. Shift-drag still zooms.")).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByText("Drag a region. Shift-drag still zooms.")).not.toBeInTheDocument();
   });
 
   it("keeps the secondary camera aligned as the primary map moves", async () => {
