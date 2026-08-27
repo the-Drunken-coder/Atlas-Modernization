@@ -1,4 +1,4 @@
-import { Button, Callout, Menu } from "@blueprintjs/core";
+import { Button, Callout } from "@blueprintjs/core";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { BrandIcon } from "../../ui/primitives/icons.js";
@@ -128,28 +128,24 @@ export function AccountMenu({ username, loggingOut, error, onLogout }: AccountMe
                 <span>Your account</span>
                 <strong>{username}</strong>
               </div>
-              <Menu className="account-menu__items">
-                <li role="none">
-                  <Button className="account-menu__item" minimal fill alignText="start" disabled>
-                    <span>Settings</span>
-                    <small>Coming soon</small>
-                  </Button>
-                </li>
-                <li role="none">
-                  <Button
-                    type="button"
-                    className="account-menu__item account-menu__item--danger"
-                    minimal
-                    fill
-                    alignText="start"
-                    data-account-action="logout"
-                    disabled={loggingOut}
-                    onClick={onLogout}
-                  >
-                    {loggingOut ? "Logging out..." : "Log out"}
-                  </Button>
-                </li>
-              </Menu>
+              <div className="account-menu__items">
+                <Button className="account-menu__item" minimal fill alignText="start" disabled>
+                  <span>Settings</span>
+                  <small>Coming soon</small>
+                </Button>
+                <Button
+                  type="button"
+                  className="account-menu__item account-menu__item--danger"
+                  minimal
+                  fill
+                  alignText="start"
+                  data-account-action="logout"
+                  disabled={loggingOut}
+                  onClick={onLogout}
+                >
+                  {loggingOut ? "Logging out..." : "Log out"}
+                </Button>
+              </div>
               {error ? (
                 <Callout className="account-menu__error" intent="danger" icon={null} compact role="alert">
                   {error}

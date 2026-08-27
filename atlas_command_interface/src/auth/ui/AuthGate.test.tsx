@@ -312,6 +312,8 @@ describe("AuthGate", () => {
     const account = await screen.findByRole("button", { name: "Account" });
     await user.click(account);
     expect(screen.getByRole("button", { name: "Log out" })).toHaveFocus();
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    expect(screen.queryByRole("menuitem")).not.toBeInTheDocument();
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("group", { name: "Account menu" })).not.toBeInTheDocument();
     expect(account).toHaveFocus();
