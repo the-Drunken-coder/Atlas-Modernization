@@ -229,6 +229,9 @@ describe("MapView region comparison", () => {
     const panel = screen.getByRole("dialog", { name: "Region comparison" });
     panel.style.left = "180px";
     await waitFor(() => expect(menu).toHaveStyle({ left: "169px" }));
+    controlBounds = rect(180, 240, 240, 50);
+    fireEvent.scroll(panel);
+    await waitFor(() => expect(menu).toHaveStyle({ bottom: "144px" }));
 
     fireEvent.keyDown(screen.getByRole("option", { name: /Alternate map/ }), { key: "Tab" });
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
@@ -275,9 +278,11 @@ describe("MapView region comparison", () => {
     await new Promise((resolve) => window.setTimeout(resolve, 0));
     fireEvent.click(screen.getByRole("button", { name: /Alternate map/ }));
     expect(screen.getByRole("dialog", { name: "Region comparison" })).toBeInTheDocument();
+    map.stop.mockClear();
     fireEvent.keyDown(screen.getByRole("button", { name: "Resize comparison region height" }), {
       key: "ArrowDown"
     });
+    expect(map.stop).toHaveBeenCalledOnce();
     await waitFor(() => expect(screen.getByTestId("map-comparison-region")).toHaveStyle({ height: "90px" }));
     expect(onSelectEntity).not.toHaveBeenCalled();
   });

@@ -120,10 +120,14 @@ export function MapSourceSelect({
     observer.observe(picker);
     const panel = picker.closest(".map-compare__panel");
     const mutationObserver = panel ? new MutationObserver(positionMenu) : undefined;
-    if (panel) mutationObserver?.observe(panel, { attributes: true, attributeFilter: ["style"] });
+    if (panel) {
+      mutationObserver?.observe(panel, { attributes: true, attributeFilter: ["style"] });
+      panel.addEventListener("scroll", positionMenu);
+    }
     return () => {
       observer.disconnect();
       mutationObserver?.disconnect();
+      panel?.removeEventListener("scroll", positionMenu);
     };
   }, [open, sources]);
 

@@ -426,6 +426,7 @@ export function MapRegionComparison({
     if (!delta) return;
     event.preventDefault();
     event.stopPropagation();
+    map.stop();
     setPanelOpen(false);
     const viewport = mapCanvas.getBoundingClientRect();
     const projectedRect = projectedScreenRect(map, region);
