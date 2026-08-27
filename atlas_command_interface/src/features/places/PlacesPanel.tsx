@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { MapTarget } from "../../ui/map/interaction/map-camera.js";
 import { Button } from "../../ui/primitives/controls.js";
 import { PlaceIcon, SearchIcon } from "../../ui/primitives/icons.js";
@@ -26,19 +26,26 @@ const MIN_QUERY_LENGTH = 2;
 export function PlacesPanel({ query, search, unavailableReason, onQueryChange, onPreview, onFocus }: PlacesPanelProps) {
   const [state, setState] = useState<SearchState>({ phase: "idle" });
   const [retry, setRetry] = useState(0);
+  const [hoveredResultId, setHoveredResultId] = useState<string | null>(null);
+  const [focusedResultId, setFocusedResultId] = useState<string | null>(null);
+  const [suppressedResultId, setSuppressedResultId] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const normalizedQuery = query.trim();
   const available = Boolean(search);
 
   useEffect(() => {
     onPreview(null);
+    setHoveredResultId(null);
+    setFocusedResultId(null);
+    setSuppressedResultId(null);
     if (!search || normalizedQuery.length < MIN_QUERY_LENGTH) {
       setState({ phase: "idle" });
       return;
     }
 
+    setState({ phase: "loading" });
     const controller = new AbortController();
     const timeout = window.setTimeout(() => {
-      setState({ phase: "loading" });
       void search(normalizedQuery, controller.signal)
         .then((response) => {
           if (!controller.signal.aborted) setState({ phase: "ready", response });
@@ -58,12 +65,25 @@ export function PlacesPanel({ query, search, unavailableReason, onQueryChange, o
   useEffect(() => () => onPreview(null), [onPreview]);
 
   const results = state.phase === "ready" ? state.response.results : [];
+  const activeResultId = hoveredResultId ?? focusedResultId;
+  const activeResult = results.find((result) => result.id === activeResultId);
+
+  useEffect(() => {
+    if (!activeResult || activeResult.id === suppressedResultId) {
+      onPreview(null);
+      return;
+    }
+
+    const timeout = window.setTimeout(() => onPreview(activeResult.target), PREVIEW_DELAY_MS);
+    return () => window.clearTimeout(timeout);
+  }, [activeResult, onPreview, suppressedResultId]);
 
   return (
     <div className="entity-browser">
       <label className="bp6-input-group bp6-small entity-filter">
         <SearchIcon size={14} />
         <input
+          ref={inputRef}
           autoFocus
           className="bp6-input"
           type="search"
@@ -95,16 +115,41 @@ export function PlacesPanel({ query, search, unavailableReason, onQueryChange, o
           <span>{state.message}</span>
           <Button onClick={() => setRetry((current) => current + 1)}>Retry search</Button>
         </div>
-      ) : state.phase === "ready" && results.length === 0 ? (
-        <div className="panel__empty place-search__empty">No matching places.</div>
-      ) : results.length > 0 ? (
+      ) : state.phase === "ready" ? (
         <>
-          <ul className="entity-list">
-            {results.map((result) => (
-              <PlaceResultRow key={result.id} result={result} onPreview={onPreview} onFocus={onFocus} />
-            ))}
-          </ul>
-          <div className="place-search__attribution">{state.phase === "ready" ? state.response.attribution : null}</div>
+          {results.length > 0 ? (
+            <ul className="entity-list" onMouseLeave={() => setHoveredResultId(null)}>
+              {results.map((result) => (
+                <PlaceResultRow
+                  key={result.id}
+                  result={result}
+                  onBlur={() => setFocusedResultId((current) => (current === result.id ? null : current))}
+                  onCommit={() => {
+                    setSuppressedResultId(result.id);
+                    onFocus(result.target);
+                  }}
+                  onDismiss={() => {
+                    setHoveredResultId(null);
+                    setFocusedResultId(null);
+                    setSuppressedResultId(result.id);
+                    onPreview(null);
+                    inputRef.current?.focus();
+                  }}
+                  onFocus={() => {
+                    if (suppressedResultId === result.id) setSuppressedResultId(null);
+                    setFocusedResultId(result.id);
+                  }}
+                  onMouseEnter={() => {
+                    if (suppressedResultId === result.id) setSuppressedResultId(null);
+                    setHoveredResultId(result.id);
+                  }}
+                />
+              ))}
+            </ul>
+          ) : (
+            <div className="panel__empty place-search__empty">No matching places.</div>
+          )}
+          <div className="place-search__attribution">{state.response.attribution}</div>
         </>
       ) : (
         <div className="panel__empty place-search__empty">Search by place name or address.</div>
@@ -115,67 +160,35 @@ export function PlacesPanel({ query, search, unavailableReason, onQueryChange, o
 
 function PlaceResultRow({
   result,
-  onPreview,
-  onFocus
+  onBlur,
+  onCommit,
+  onDismiss,
+  onFocus,
+  onMouseEnter
 }: {
   result: PlaceSearchResult;
-  onPreview: (target: MapTarget | null) => void;
-  onFocus: (target: MapTarget) => void;
+  onBlur: () => void;
+  onCommit: () => void;
+  onDismiss: () => void;
+  onFocus: () => void;
+  onMouseEnter: () => void;
 }) {
-  const hoveredRef = useRef(false);
-  const focusedRef = useRef(false);
-  const previewedRef = useRef(false);
-  const previewTimerRef = useRef<number | undefined>(undefined);
-
-  const cancelPendingPreview = useCallback(() => {
-    if (previewTimerRef.current !== undefined) window.clearTimeout(previewTimerRef.current);
-    previewTimerRef.current = undefined;
-  }, []);
-  const schedulePreview = useCallback(() => {
-    if (previewedRef.current || previewTimerRef.current !== undefined) return;
-    previewTimerRef.current = window.setTimeout(() => {
-      previewTimerRef.current = undefined;
-      previewedRef.current = true;
-      onPreview(result.target);
-    }, PREVIEW_DELAY_MS);
-  }, [onPreview, result.target]);
-  const clearInactivePreview = useCallback(() => {
-    if (hoveredRef.current || focusedRef.current) return;
-    cancelPendingPreview();
-    if (previewedRef.current) onPreview(null);
-    previewedRef.current = false;
-  }, [cancelPendingPreview, onPreview]);
-
-  useEffect(() => cancelPendingPreview, [cancelPendingPreview]);
-
   return (
     <li>
       <button
         type="button"
         className="entity-row place-row"
         aria-label={result.context ? `${result.name}, ${result.context}` : result.name}
-        onBlur={() => {
-          focusedRef.current = false;
-          clearInactivePreview();
+        onBlur={onBlur}
+        onClick={onCommit}
+        onFocus={onFocus}
+        onKeyDown={(event) => {
+          if (event.key !== "Escape") return;
+          event.preventDefault();
+          event.stopPropagation();
+          onDismiss();
         }}
-        onClick={() => {
-          cancelPendingPreview();
-          previewedRef.current = true;
-          onPreview(result.target);
-          onFocus(result.target);
-        }}
-        onFocus={() => {
-          focusedRef.current = true;
-          schedulePreview();
-        }}
-        onMouseEnter={() => {
-          hoveredRef.current = true;
-          schedulePreview();
-        }}
-        onMouseLeave={() => {
-          hoveredRef.current = false;
-          clearInactivePreview();
-        }}
+        onMouseEnter={onMouseEnter}
       >
         <PlaceIcon size={14} />
         <span className="entity-row__main">

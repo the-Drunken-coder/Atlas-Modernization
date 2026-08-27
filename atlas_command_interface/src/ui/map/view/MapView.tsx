@@ -5,7 +5,12 @@ import type { MapSourceConfig } from "../../../app/config.js";
 import { sanitizeConnectionError } from "../../../atlas/connection-error.js";
 import { Button } from "../../primitives/controls.js";
 import { getSidcRuntime, loadSidcRuntime } from "../../symbols/sidc-runtime.js";
-import { CAMERA_EVENT_TAG, type MapCameraCommand, RETICLE_FLASH_MS } from "../interaction/map-camera.js";
+import {
+  CAMERA_EVENT_TAG,
+  type MapCameraCommand,
+  type MapTarget,
+  RETICLE_FLASH_MS
+} from "../interaction/map-camera.js";
 import type { MapReticleTarget } from "../interaction/map-targets.js";
 import { useMapCamera } from "../interaction/use-map-camera.js";
 import { useMapReticleInteraction } from "../interaction/use-map-reticle-interaction.js";
@@ -26,6 +31,7 @@ import { MapCursorOverlay } from "./MapCursorOverlay.js";
 import { MapRegionComparison } from "./MapRegionComparison.js";
 import { MapReticle } from "./MapReticle.js";
 import { cloneStyle, fitWorldOnce, webglAvailable } from "./map-view-utils.js";
+import { PlaceDetailLens } from "./PlaceDetailLens.js";
 
 export type MapContextMenuInfo = { lng: number; lat: number; x: number; y: number };
 export type { MapReticleTarget } from "../interaction/map-targets.js";
@@ -41,6 +47,7 @@ type MapViewProps = {
   editing?: MapEditing;
   initialCenter?: [number, number];
   focusTarget?: MapReticleTarget | null;
+  placeDetailTarget?: MapTarget | null;
   cameraCommand?: MapCameraCommand | null;
   onSelectEntity: (id: string) => void;
   onMapContextMenu: (info: MapContextMenuInfo) => void;
@@ -63,6 +70,7 @@ export function MapView({
   editing,
   initialCenter,
   focusTarget,
+  placeDetailTarget,
   cameraCommand,
   onSelectEntity,
   onMapContextMenu,
@@ -354,45 +362,48 @@ export function MapView({
   }, [editing, mapReady]);
 
   return (
-    <div
-      className={`map-canvas${reticleInteraction.customCursorVisible ? " map-canvas--custom-cursor" : ""}${reticleInteraction.scrolling ? " map-canvas--scrolling" : ""}`}
-      ref={mapCanvasRef}
-      style={{ position: "absolute", inset: 0 }}
-      data-testid="map-canvas"
-      {...reticleInteraction.canvasHandlers}
-    >
-      <div className="maplibre-host" ref={containerRef} />
-      <MapRegionComparison
-        mapCanvas={mapCanvasRef.current}
-        map={mapRef.current}
-        maplibre={mapLibreRef.current}
-        mapReady={mapReady}
-        boxZoomActive={reticleInteraction.zooming}
-        baseSourceId={styleId}
-        sourceOptions={mapSourceOptions}
-        sources={sources}
-        editing={editing}
-        notifyUserGesture={notifyUserGesture}
-        suppressNextClick={reticleInteraction.mapActions.suppressNextClick}
-      />
-      {reticleInteraction.cursorOverlay ? <MapCursorOverlay {...reticleInteraction.cursorOverlay} /> : null}
-      {reticleInteraction.visibleReticle ? (
-        <MapReticle
-          reticle={reticleInteraction.visibleReticle}
-          flashing={reticleFlashing}
-          scrolling={reticleInteraction.scrolling}
-          zooming={reticleInteraction.zooming}
+    <div className="map-view" style={{ position: "absolute", inset: 0 }}>
+      <div
+        className={`map-canvas${reticleInteraction.customCursorVisible ? " map-canvas--custom-cursor" : ""}${reticleInteraction.scrolling ? " map-canvas--scrolling" : ""}`}
+        ref={mapCanvasRef}
+        style={{ position: "absolute", inset: 0 }}
+        data-testid="map-canvas"
+        {...reticleInteraction.canvasHandlers}
+      >
+        <div className="maplibre-host" ref={containerRef} />
+        <MapRegionComparison
+          mapCanvas={mapCanvasRef.current}
+          map={mapRef.current}
+          maplibre={mapLibreRef.current}
+          mapReady={mapReady}
+          boxZoomActive={reticleInteraction.zooming}
+          baseSourceId={styleId}
+          sourceOptions={mapSourceOptions}
+          sources={sources}
+          editing={editing}
+          notifyUserGesture={notifyUserGesture}
+          suppressNextClick={reticleInteraction.mapActions.suppressNextClick}
         />
-      ) : null}
-      {mapError ? (
-        <Callout className="map-unavailable" icon={null} intent="danger" role="status" aria-live="polite">
-          <span>Map unavailable</span>
-          <code>{mapError}</code>
-          <Button variant="primary" onClick={() => setMapError(undefined)}>
-            Retry
-          </Button>
-        </Callout>
-      ) : null}
+        {reticleInteraction.cursorOverlay ? <MapCursorOverlay {...reticleInteraction.cursorOverlay} /> : null}
+        {reticleInteraction.visibleReticle ? (
+          <MapReticle
+            reticle={reticleInteraction.visibleReticle}
+            flashing={reticleFlashing}
+            scrolling={reticleInteraction.scrolling}
+            zooming={reticleInteraction.zooming}
+          />
+        ) : null}
+        {mapError ? (
+          <Callout className="map-unavailable" icon={null} intent="danger" role="status" aria-live="polite">
+            <span>Map unavailable</span>
+            <code>{mapError}</code>
+            <Button variant="primary" onClick={() => setMapError(undefined)}>
+              Retry
+            </Button>
+          </Callout>
+        ) : null}
+      </div>
+      {placeDetailTarget ? <PlaceDetailLens key={styleId} target={placeDetailTarget} style={style} /> : null}
     </div>
   );
 }

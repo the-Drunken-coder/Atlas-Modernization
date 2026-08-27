@@ -54,7 +54,7 @@ function Harness({
 }
 
 describe("PlacesPanel", () => {
-  it("debounces search, delays preview, preserves focus preview, and activates on click", async () => {
+  it("debounces search, delays detail preview, preserves focus, and commits on click", async () => {
     vi.useFakeTimers();
     const search = vi.fn(async () => response);
     const onPreview = vi.fn<(target: MapTarget | null) => void>();
@@ -88,12 +88,105 @@ describe("PlacesPanel", () => {
     expect(onPreview).toHaveBeenLastCalledWith(pointTarget);
     onPreview.mockClear();
     fireEvent.focus(result);
-    fireEvent.mouseLeave(result);
+    fireEvent.mouseLeave(result.closest("ul")!);
     expect(onPreview).not.toHaveBeenCalled();
     fireEvent.click(result);
-    expect(onPreview).toHaveBeenLastCalledWith(pointTarget);
     expect(onFocus).toHaveBeenCalledWith(pointTarget);
+    expect(onPreview).toHaveBeenLastCalledWith(null);
     fireEvent.blur(result);
+    expect(onPreview).toHaveBeenLastCalledWith(null);
+  });
+
+  it("owns one preview session across focused and hovered results", async () => {
+    vi.useFakeTimers();
+    const bostonTarget: MapTarget = {
+      type: "point",
+      id: "place:poi.2",
+      coordinates: [-71.0589, 42.3601],
+      label: "Boston"
+    };
+    const onPreview = vi.fn<(target: MapTarget | null) => void>();
+    render(
+      <Harness
+        search={async () => ({
+          ...response,
+          results: [
+            ...response.results,
+            {
+              id: "poi.2",
+              name: "Boston",
+              context: "Massachusetts, United States",
+              coordinates: [-71.0589, 42.3601],
+              target: bostonTarget
+            }
+          ]
+        })}
+        onPreview={onPreview}
+      />
+    );
+
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search places" }), {
+      target: { value: "Massachusetts" }
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(SEARCH_DELAY));
+    const worcester = screen.getByRole("button", { name: /Worcester Polytechnic Institute/ });
+    const boston = screen.getByRole("button", { name: /Boston, Massachusetts/ });
+    onPreview.mockClear();
+
+    fireEvent.focus(worcester);
+    await act(async () => vi.advanceTimersByTimeAsync(SEARCH_DELAY));
+    expect(onPreview).toHaveBeenLastCalledWith(pointTarget);
+
+    fireEvent.mouseEnter(boston);
+    await act(async () => vi.advanceTimersByTimeAsync(SEARCH_DELAY));
+    expect(onPreview).toHaveBeenLastCalledWith(bostonTarget);
+
+    fireEvent.mouseLeave(boston.closest("ul")!);
+    await act(async () => vi.advanceTimersByTimeAsync(SEARCH_DELAY));
+    expect(onPreview).toHaveBeenLastCalledWith(pointTarget);
+
+    fireEvent.blur(worcester);
+    expect(onPreview).toHaveBeenLastCalledWith(null);
+  });
+
+  it("removes stale rows as soon as a new query starts", async () => {
+    vi.useFakeTimers();
+    const search = vi.fn(async () => response);
+    const onPreview = vi.fn<(target: MapTarget | null) => void>();
+    render(<Harness search={search} onPreview={onPreview} />);
+    const input = screen.getByRole("searchbox", { name: "Search places" });
+
+    fireEvent.change(input, { target: { value: "Worcester" } });
+    await act(async () => vi.advanceTimersByTimeAsync(SEARCH_DELAY));
+    const staleResult = screen.getByRole("button", { name: /Worcester Polytechnic Institute/ });
+    fireEvent.mouseEnter(staleResult);
+    onPreview.mockClear();
+
+    fireEvent.change(input, { target: { value: "Boston" } });
+
+    expect(screen.queryByRole("button", { name: /Worcester Polytechnic Institute/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Searching places");
+    expect(search).toHaveBeenCalledTimes(1);
+
+    await act(async () => vi.advanceTimersByTimeAsync(SEARCH_DELAY));
+    expect(onPreview).not.toHaveBeenCalledWith(pointTarget);
+  });
+
+  it("returns focus to search and dismisses detail on Escape", async () => {
+    vi.useFakeTimers();
+    const onPreview = vi.fn<(target: MapTarget | null) => void>();
+    render(<Harness search={async () => response} onPreview={onPreview} />);
+    const input = screen.getByRole("searchbox", { name: "Search places" });
+    fireEvent.change(input, { target: { value: "Worcester" } });
+    await act(async () => vi.advanceTimersByTimeAsync(SEARCH_DELAY));
+    const result = screen.getByRole("button", { name: /Worcester Polytechnic Institute/ });
+    fireEvent.focus(result);
+    await act(async () => vi.advanceTimersByTimeAsync(SEARCH_DELAY));
+    expect(onPreview).toHaveBeenLastCalledWith(pointTarget);
+
+    fireEvent.keyDown(result, { key: "Escape" });
+
+    expect(input).toHaveFocus();
     expect(onPreview).toHaveBeenLastCalledWith(null);
   });
 
@@ -111,10 +204,11 @@ describe("PlacesPanel", () => {
 
     fireEvent.mouseEnter(result);
     await act(async () => vi.advanceTimersByTimeAsync(SEARCH_DELAY - 1));
-    fireEvent.mouseLeave(result);
+    fireEvent.mouseLeave(result.closest("ul")!);
     await act(async () => vi.advanceTimersByTimeAsync(1));
 
-    expect(onPreview).not.toHaveBeenCalled();
+    expect(onPreview).not.toHaveBeenCalledWith(pointTarget);
+    expect(onPreview).toHaveBeenLastCalledWith(null);
   });
 
   it("aborts stale searches when the query changes", async () => {
@@ -154,6 +248,7 @@ describe("PlacesPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Retry search" }));
     await act(async () => vi.advanceTimersByTimeAsync(SEARCH_DELAY));
     expect(screen.getByText("No matching places.")).toBeInTheDocument();
+    expect(screen.getByText("© MapTiler © OpenStreetMap contributors")).toBeInTheDocument();
     expect(search).toHaveBeenCalledTimes(2);
   });
 

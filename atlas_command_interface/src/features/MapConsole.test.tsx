@@ -15,6 +15,7 @@ type MockMapViewProps = {
   mapSourceOptions: AppConfig["mapSources"];
   editing?: unknown;
   focusTarget?: { id: string } | null;
+  placeDetailTarget?: { id: string } | null;
   cameraCommand?:
     | { seq: number; intent: "world" }
     | { seq: number; target: { id: string }; intent?: "focus" | "preview" | "commit" }
@@ -40,6 +41,7 @@ vi.mock("../ui/map/view/MapView.js", async () => {
           data-style-id={props.styleId}
           data-editing={props.editing ? "true" : "false"}
           data-focus-target={props.focusTarget?.id ?? ""}
+          data-place-detail-target={props.placeDetailTarget?.id ?? ""}
           data-camera-seq={props.cameraCommand?.seq ?? ""}
           data-camera-target={cameraTarget}
           data-camera-intent={props.cameraCommand?.intent ?? ""}
@@ -351,7 +353,7 @@ describe("MapConsole", () => {
     expect(screen.getByTestId("map")).toHaveAttribute("data-focus-target", "asset-1");
   });
 
-  it("previews place bounds, commits focus, and returns to the world view", async () => {
+  it("previews places in the detail lens, commits focus, and returns to the world view", async () => {
     vi.useFakeTimers();
     vi.stubGlobal(
       "fetch",
@@ -390,20 +392,20 @@ describe("MapConsole", () => {
         name: "Worcester Polytechnic Institute, Worcester, Massachusetts, United States"
       });
       fireEvent.mouseEnter(result);
-      expect(screen.getByTestId("map")).toHaveAttribute("data-focus-target", "asset-1");
+      expect(screen.getByTestId("map")).toHaveAttribute("data-focus-target", "");
       expect(screen.getByTestId("map")).toHaveAttribute("data-camera-target", "asset-1");
       await act(async () => vi.advanceTimersByTimeAsync(249));
-      expect(screen.getByTestId("map")).toHaveAttribute("data-focus-target", "asset-1");
+      expect(screen.getByTestId("map")).toHaveAttribute("data-place-detail-target", "");
       await act(async () => vi.advanceTimersByTimeAsync(1));
       expect(screen.getByTestId("map")).toHaveAttribute("data-focus-target", "place:poi.1");
-      expect(screen.getByTestId("map")).toHaveAttribute("data-camera-target", "place:poi.1");
-      expect(screen.getByTestId("map")).toHaveAttribute("data-camera-intent", "preview");
+      expect(screen.getByTestId("map")).toHaveAttribute("data-place-detail-target", "place:poi.1");
+      expect(screen.getByTestId("map")).toHaveAttribute("data-camera-target", "asset-1");
 
       fireEvent.click(result);
       expect(screen.getByTestId("map")).toHaveAttribute("data-camera-target", "place:poi.1");
-      expect(screen.getByTestId("map")).toHaveAttribute("data-camera-seq", "3");
-      expect(screen.getByTestId("map")).toHaveAttribute("data-camera-target", "place:poi.1");
+      expect(screen.getByTestId("map")).toHaveAttribute("data-camera-seq", "2");
       expect(screen.getByTestId("map")).toHaveAttribute("data-camera-intent", "commit");
+      expect(screen.getByTestId("map")).toHaveAttribute("data-place-detail-target", "");
 
       const worldView = screen.getByRole("button", { name: "World view" });
       expect(worldView).toHaveAttribute("title", "World view");
@@ -412,7 +414,7 @@ describe("MapConsole", () => {
       fireEvent.click(worldView);
       expect(screen.getByTestId("map")).toHaveAttribute("data-camera-target", "");
       expect(screen.getByTestId("map")).toHaveAttribute("data-camera-intent", "world");
-      expect(screen.getByTestId("map")).toHaveAttribute("data-camera-seq", "4");
+      expect(screen.getByTestId("map")).toHaveAttribute("data-camera-seq", "3");
     } finally {
       vi.useRealTimers();
       vi.unstubAllGlobals();

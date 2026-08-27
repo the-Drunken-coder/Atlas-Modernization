@@ -33,6 +33,7 @@ const maplibreMock = vi.hoisted(() => {
     readonly layers = new Map<string, unknown>();
     readonly easeTo = vi.fn();
     readonly flyTo = vi.fn();
+    readonly jumpTo = vi.fn();
     readonly stop = vi.fn();
     readonly fitScreenCoordinates = vi.fn();
     readonly fitBounds = vi.fn();
@@ -263,6 +264,7 @@ type RenderMapViewProps = {
   editing?: MapEditing;
   focusTarget?: MapReticleTarget | null;
   mapSourceOptions?: MapSourceConfig[];
+  placeDetailTarget?: MapReticleTarget | null;
   onStyleSwitchError?: (error: { failedStyleId: string; activeStyleId: string }) => void;
   selectedId?: string;
   sources?: MapSources;
@@ -291,6 +293,7 @@ export function renderMapView(props: RenderMapViewProps = {}) {
         selectedId={renderProps.selectedId}
         editing={renderProps.editing}
         focusTarget={renderProps.focusTarget}
+        placeDetailTarget={renderProps.placeDetailTarget}
         cameraCommand={renderProps.cameraCommand}
         onBackgroundClick={onBackgroundClick}
         onMapContextMenu={onMapContextMenu}
@@ -312,7 +315,8 @@ export function renderMapView(props: RenderMapViewProps = {}) {
   return {
     canvas,
     stage,
-    map: maplibreMock.FakeMap.instances[0],
+    map: maplibreMock.FakeMap.instances.find((instance) => instance.options.interactive !== false)!,
+    maps: () => [...maplibreMock.FakeMap.instances],
     onBackgroundClick,
     onMapContextMenu,
     onSelectEntity,

@@ -58,7 +58,7 @@ describe("MapView keyboard selection", () => {
     expect(onSelectEntity).toHaveBeenCalledWith("aligned-down");
   });
 
-  it("does not intercept arrow keys from editable controls", () => {
+  it("does not intercept arrow keys from form controls", () => {
     const { canvas, onSelectEntity } = renderDirectionalMap("center");
     const input = document.createElement("input");
     canvas.appendChild(input);
@@ -70,7 +70,7 @@ describe("MapView keyboard selection", () => {
     expect(onSelectEntity).not.toHaveBeenCalled();
   });
 
-  it("routes arrow keys from sidebar controls to map selection", () => {
+  it("routes arrow keys from ordinary sidebar buttons to map selection", () => {
     const { onSelectEntity } = renderDirectionalMap("center");
     const sidebarButton = document.createElement("button");
     document.body.appendChild(sidebarButton);
@@ -81,6 +81,20 @@ describe("MapView keyboard selection", () => {
     expect(event.defaultPrevented).toBe(true);
     expect(onSelectEntity).toHaveBeenCalledWith("down");
     sidebarButton.remove();
+  });
+
+  it("does not intercept arrow keys from place result rows", () => {
+    const { onSelectEntity } = renderDirectionalMap("center");
+    const placeResult = document.createElement("button");
+    placeResult.className = "place-row";
+    document.body.appendChild(placeResult);
+
+    const event = new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true });
+    fireEvent(placeResult, event);
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(onSelectEntity).not.toHaveBeenCalled();
+    placeResult.remove();
   });
 
   it("does not intercept arrow keys from the sidebar resize handle", () => {

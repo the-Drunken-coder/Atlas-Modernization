@@ -62,9 +62,9 @@ export function MapConsole() {
   const [entityQueries, setEntityQueries] = useState(EMPTY_ENTITY_QUERIES);
   const [placeQuery, setPlaceQuery] = useState("");
   const [placePreviewTarget, setPlacePreviewTarget] = useState<MapTarget | null>(null);
+  const [placeDetailTarget, setPlaceDetailTarget] = useState<MapTarget | null>(null);
   const [cameraCommand, setCameraCommand] = useState<MapCameraCommand | null>(null);
   const cameraSequenceRef = useRef(0);
-  const placePreviewTargetRef = useRef<MapTarget | null>(null);
 
   const [selectedMapSourceId, setSelectedMapSourceId] = useState<string>();
 
@@ -77,30 +77,21 @@ export function MapConsole() {
     cameraSequenceRef.current += 1;
     setCameraCommand({ seq: cameraSequenceRef.current, target, intent });
   }, []);
-  const previewPlace = useCallback(
-    (target: MapTarget | null) => {
-      const current = placePreviewTargetRef.current;
-      placePreviewTargetRef.current = target;
-      setPlacePreviewTarget(target);
-      if (target) {
-        if (current?.id !== target.id) issueCameraCommand(target, "preview");
-      } else if (current) {
-        setCameraCommand(null);
-      }
-    },
-    [issueCameraCommand]
-  );
+  const previewPlace = useCallback((target: MapTarget | null) => {
+    setPlacePreviewTarget(target);
+    setPlaceDetailTarget(target);
+  }, []);
   const focusPlace = useCallback(
     (target: MapTarget) => {
-      placePreviewTargetRef.current = target;
       setPlacePreviewTarget(target);
+      setPlaceDetailTarget(null);
       issueCameraCommand(target, "commit");
     },
     [issueCameraCommand]
   );
   const showWorld = useCallback(() => {
-    placePreviewTargetRef.current = null;
     setPlacePreviewTarget(null);
+    setPlaceDetailTarget(null);
     cameraSequenceRef.current += 1;
     setCameraCommand({ seq: cameraSequenceRef.current, intent: "world" });
   }, []);
@@ -183,10 +174,11 @@ export function MapConsole() {
     },
     [atlas.config]
   );
-  const focusTarget = placePreviewTarget ?? entityReticleTarget(selectedEntity);
+  const placesActive = sidebar.view.mode === "list" && sidebar.view.list === "places";
+  const focusTarget = placePreviewTarget ?? (placesActive ? null : entityReticleTarget(selectedEntity));
 
-  // Entity rows and place results share one camera sequence. MapView ignores
-  // repeated sequence numbers, even when the targets differ.
+  // Explicit entity and place commits share one camera sequence. MapView
+  // ignores repeated sequence numbers, even when the targets differ.
   useEffect(() => {
     if (sidebar.focusRequest) {
       issueCameraCommand({ type: "entity", id: sidebar.focusRequest.id });
@@ -201,8 +193,8 @@ export function MapConsole() {
       if (!entity) return;
       const kind = entityKind(entity);
       if (kind === "other") return;
-      placePreviewTargetRef.current = null;
       setPlacePreviewTarget(null);
+      setPlaceDetailTarget(null);
       setCameraCommand(null);
       dispatch({ type: "selectEntity", kind, id, origin: "map" });
     },
@@ -305,8 +297,8 @@ export function MapConsole() {
               onSelectEntity={(entity) => {
                 const kind = entityKind(entity);
                 if (kind === "other") return;
-                placePreviewTargetRef.current = null;
                 setPlacePreviewTarget(null);
+                setPlaceDetailTarget(null);
                 dispatch({ type: "selectEntity", kind, id: entity.entity_id, origin: "sidebar" });
               }}
               onEntityQueryChange={setEntityQuery}
@@ -348,13 +340,14 @@ export function MapConsole() {
                           : undefined
                       }
                       focusTarget={focusTarget}
+                      placeDetailTarget={placeDetailTarget}
                       cameraCommand={cameraCommand}
                       onSelectEntity={selectEntityById}
                       onMapContextMenu={commandFlow.onMapContextMenu}
                       onBackgroundClick={() => {
                         commandFlow.closeMapMenu();
-                        placePreviewTargetRef.current = null;
                         setPlacePreviewTarget(null);
+                        setPlaceDetailTarget(null);
                         setCameraCommand(null);
                         dispatch({ type: "clearSelection" });
                       }}
