@@ -58,6 +58,8 @@ POST /plugins/{plugin_id}/operations/{operation_id}
 
 An Operation is always a bounded synchronous JSON request and response. Core applies hard size limits to the public request body and the private Plugin response body. It rejects an oversized request before dispatch and maps an oversized Plugin response to Plugin failure. Core treats input and output as opaque JSON. The Plugin validates input and owns the result shape. Each descriptor declares a timeout, and Core rejects the whole manifest if any timeout exceeds its hard maximum. Core cancels the private request when the public caller disconnects or that timeout expires. The Plugin handler must stop promptly and propagate cancellation to its Source Gateway and Atlas SDK calls. A caller disconnect or Operation timeout applies only to that invocation and does not change Plugin availability. Core returns the Operation result in the same request. Work that must outlive that request uses a Tool Task instead; the Plugin system does not add asynchronous Operation jobs or polling.
 
+Core enforces one hard in-flight Operation limit per configured Plugin. The limit counts requests from private dispatch until the Plugin response, timeout, or caller cancellation completes. Core does not queue requests above the limit. It rejects them immediately with the unavailable Plugin error category and stable reason `capacity_exhausted`, without changing Plugin status. Implementation chooses and tests the numeric limit.
+
 Operations are semantically read-only and side-effect free. They may query Atlas or an External source, including sources whose query API uses HTTP `POST`, but they do not mutate Atlas, change an External source, or start ongoing behavior. Durable changes use normal Core writes, and ongoing actions use Tool Tasks. Core cannot infer side effects from opaque JSON, so Plugin code owns compliance with this contract. The live delivery transport for Datastreams remains open until a real stream establishes its ordering, replay, and latency needs.
 
 ## External-source access
@@ -104,6 +106,49 @@ The deployment orchestrator starts one trusted container per configured Plugin. 
 
 Deployment configuration gives Core each Plugin's stable ID and private base URL. Core uses a fixed HTTP/JSON protocol to fetch its manifest and health, dispatch Operations, and report status. Plugins do not self-register, and Core does not scan Docker or the network for them. Either side may start first; Core keeps retryable Plugin failures out of base liveness and readiness.
 
+### Private HTTP protocol
+
+A configured Plugin base URL is an `http` or `https` origin with no path, query, fragment, or credentials. Core makes only these private calls relative to that origin:
+
+| Request | Purpose |
+| --- | --- |
+| `GET /manifest` | Fetch immutable discovery data for this Core process. |
+| `GET /health` | Read Plugin application health. |
+| `POST /operations/{operation_id}` | Invoke one advertised Operation. |
+
+Core sends `Accept: application/json` on every call and `Content-Type: application/json` for an Operation. A private response is valid only when it uses `application/json` and contains one complete JSON value within Core's response-size limit.
+
+`GET /manifest` succeeds only with HTTP `200` and this JSON shape:
+
+```json
+{
+  "plugin_id": "adsb",
+  "display_name": "ADS-B",
+  "operations": [
+    {
+      "operation_id": "inspect_aircraft",
+      "display_name": "Inspect aircraft",
+      "timeout_ms": 5000
+    }
+  ],
+  "tool_asset_id": "plugin_rfSey5Te4YU6Prz-hpGcwRnuSBuF9z1COTHZJt_s0G4"
+}
+```
+
+`plugin_id`, `display_name`, and `operations` are required, and each display name is a nonempty string. `tool_asset_id` is optional and omitted for a query-only Plugin. Each Operation requires `operation_id`, `display_name`, and a positive integer `timeout_ms`, measured in milliseconds and no greater than Core's hard maximum. The operations array may be empty. Core rejects unknown fields in the manifest or an Operation descriptor, invalid identifiers, duplicate Operation IDs, invalid timeouts, identity mismatches, and any status other than `200`.
+
+`GET /health` has two valid responses. HTTP `200` with `{"status":"ok"}` is healthy. HTTP `503` with `{"status":"unhealthy"}` is an application-level health failure. Any other status or body is an invalid private response and a transport failure. Health has no detail field; Plugin logs own private diagnostics.
+
+The private Operation request body is the public request's validated JSON value with no wrapper. Core interprets private Operation responses as follows:
+
+| Status | Body | Public result |
+| --- | --- | --- |
+| `200` | Any JSON value | Return that value as the Operation result. |
+| `400` | Plugin error object | Map to rejected input. |
+| `500` | Plugin error object | Map to Plugin failure. |
+
+A Plugin error object contains a required `code` matching `^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$`, an optional JSON `details` value, and no other fields. Any other status, invalid error object, invalid JSON, or oversized body maps to Plugin failure and makes transport unavailable. A valid `400` or `500` response proves transport is reachable and does not change application health. Core never proxies the private status or raw body. Connection failure maps to an unavailable Plugin, and the descriptor deadline maps to timeout. Core cancels the private HTTP request on caller cancellation or timeout.
+
 Core applies a hard response-size limit to every private Plugin call, including manifest, health, and Operation responses. An oversized response is invalid and makes the Plugin unavailable without Core buffering beyond the limit.
 
 Core fetches each configured Plugin manifest during startup. If the Plugin is unavailable, Core continues starting and retries until the first successful manifest response. Before caching it, Core requires the manifest's Plugin ID to match the configured Plugin ID exactly and any advertised Tool Asset ID to match the value derived from that Plugin ID. A mismatch is an invalid manifest and keeps the configured Plugin unavailable. Core caches a valid matching manifest in memory until Core restarts. A valid cached manifest is an independent availability prerequisite that health or Operation responses cannot replace. After caching the first valid manifest, Core immediately checks Plugin health. Core does not refresh manifests periodically or fetch one for every request. Plugin upgrades restart the whole deployment, so manifest changes do not need hot reload.
@@ -124,7 +169,7 @@ Installing or upgrading a Plugin means editing deployment configuration or its i
 
 `GET /plugins` includes authenticated status for every configured Plugin with `starting`, `available`, or `unavailable` status. `starting` means Core has not completed its first manifest attempt, or it has cached the first valid manifest and is waiting for the immediately triggered initial health result. `available` means Core has cached a valid matching manifest, Plugin transport is reachable, and its latest health response is OK. `unavailable` means the manifest prerequisite failed, transport failed, or the latest health response reported an application-level failure. Status includes the time of the latest check and a stable Core-owned reason code. It never includes private URLs, raw health responses, credentials, or upstream response bodies.
 
-After the initial health result, Core checks Plugin health on one fixed internal cadence. A connection failure, a manifest or health timeout, or an invalid private response makes the Plugin transport unavailable immediately. Any subsequent valid manifest, health, or Operation response restores transport availability immediately, even when the Operation rejects its input or health remains non-OK. Transport recovery cannot replace a valid cached manifest. A descriptor deadline or caller-initiated cancellation affects only that Operation invocation. Transport recovery does not clear an application-level health failure; only a later OK health response does. Core maps a non-OK health response to a stable `application_unhealthy` public reason without exposing its private detail. After Core caches a manifest, discovery continues to show its Operations while the Plugin is unavailable, but invocation fails. An optional Plugin failure does not make Core unhealthy or unready.
+After the initial health result, Core checks Plugin health on one fixed internal cadence. A connection failure, a manifest or health timeout, or an invalid private response makes the Plugin transport unavailable immediately. Any subsequent valid manifest, health, or Operation response restores transport availability immediately, even when the Operation rejects its input, reports a handled failure, or health remains non-OK. Transport recovery cannot replace a valid cached manifest. A descriptor deadline, caller-initiated cancellation, or capacity rejection affects only that Operation invocation. Transport recovery does not clear an application-level health failure; only a later OK health response does. Core maps a non-OK health response to a stable `application_unhealthy` public reason without exposing its private detail. After Core caches a manifest, discovery continues to show its Operations while the Plugin is unavailable, but invocation fails. An optional Plugin failure does not make Core unhealthy or unready.
 
 Core owns the public Operation error envelope and maps failures into stable categories for rejected input, an unavailable Plugin, timeout, and Plugin failure. It does not proxy the Plugin's HTTP status or raw error body. A Plugin may include a Plugin-specific error code and safe diagnostic data inside the authenticated error details without expanding Atlas's top-level error categories.
 
@@ -140,7 +185,7 @@ The Plugin derives its Tool Asset ID with the manifest derivation above and perf
 
 Plugin commands remain dedicated, Protocol-authored Atlas Commands, such as `sensing.scan_area`. A Plugin runtime manifest may advertise the subset it implements, but it cannot extend the production Command Catalog. Adding taskable Plugin behavior therefore remains a coordinated Atlas change with a Command schema, semantics, execution handler, and purpose-built Command Interface input. Plugin installation does not inject commands or generic forms into the browser.
 
-Long-running Plugin commands use `immediate` scheduling when several Tasks must execute at once. The existing Protocol contract lets an Asset manifest choose `queued` or `immediate` when the Command definition omits scheduling. The Plugin platform implementation must make Core enforce manifest scheduling only when the Command Catalog explicitly declares a requirement. Multiple immediate Tasks begin in tasking order without waiting for one another to finish. A monitoring Task remains `in_progress` for the monitoring session and declares `supports_cancel: true`. Cancelling the Task is the operator's stop action. Core marks it `cancelled` and aborts that Task's Plugin handler. The Plugin must stop work promptly after observing the abort, but Atlas does not wait for a second shutdown confirmation. Atlas has no separate "queueing off" setting.
+Long-running Plugin commands use `immediate` scheduling when several Tasks must execute at once. The existing Protocol contract lets an Asset manifest choose `queued` or `immediate` when the Command definition omits scheduling. Core resolves scheduling from the Command Catalog when the Command declares it and otherwise from the stored runtime manifest entry. Core must use that same resolved value for manifest validation, Task creation, deliverable selection, acknowledgement and start transitions, ordering, and immediate-start timeout reconciliation. It must not default an omitted catalog value back to `queued` after accepting the manifest choice. Multiple immediate Tasks begin in tasking order without waiting for one another to finish. A monitoring Task remains `in_progress` for the monitoring session and declares `supports_cancel: true`. Cancelling the Task is the operator's stop action. Core marks it `cancelled` and aborts that Task's Plugin handler. The Plugin must stop work promptly after observing the abort, but Atlas does not wait for a second shutdown confirmation. Atlas has no separate "queueing off" setting.
 
 ## Plugin state
 
@@ -175,9 +220,10 @@ The building is not an Asset or Track. Source-provided height is advisory data a
 ## Decisions already settled
 
 - Core owns fixed public Plugin routes and reserves the Datastream namespace until its contract exists.
+- Core caps in-flight Operations per Plugin, rejects excess requests without queueing, and leaves Plugin status unchanged.
 - Docker Compose or the deployment orchestrator starts one trusted container per configured Plugin.
 - Deployment configuration explicitly maps one path-safe Plugin ID to one private Plugin base URL, and each manifest uses unique path-safe Operation IDs.
-- Core communicates with Plugins through a fixed private HTTP/JSON protocol; Plugins do not self-register.
+- Core communicates with Plugins through fixed private manifest, health, and Operation HTTP/JSON routes; Plugins do not self-register.
 - Atlas does not model multiple active instances of one Plugin.
 - Plugin code uses the ordinary Atlas SDK with full access; Core does not enforce Plugin-specific capabilities.
 - All Plugins share one full-access Plugin API key.
@@ -187,7 +233,7 @@ The building is not an Asset or Track. Source-provided height is advisory data a
 - An advertised Tool Asset ID must match the value derived from the manifest's Plugin ID.
 - Core rejects deletion of a Plugin-owned Tool Asset while its Plugin remains configured.
 - Tool Assets implement dedicated Protocol-owned Commands rather than Plugin-defined Commands.
-- Long-running Plugin Tasks may use `immediate` scheduling so several Tasks can overlap; cancellation is their stop action.
+- When catalog scheduling is omitted, every Core lifecycle decision uses the scheduling declared by the stored runtime manifest; long-running Plugin Tasks may therefore use `immediate` scheduling so several Tasks can overlap.
 - Plugin Task cancellation uses the existing terminal cancellation and handler abort without a second confirmation.
 - A graceful Plugin runtime stop fails active Tasks with `asset_stopped`; replacement fencing uses `asset_restarted`. Plugins do not resume them automatically.
 - A private Source Gateway container hosts Source connectors for all Plugins.
@@ -199,6 +245,7 @@ The building is not an Asset or Track. Source-provided height is advisory data a
 - The existing Atlas Protocol revision check between the SDK and Core remains unchanged.
 - Installing or upgrading a Plugin edits deployment configuration and restarts the Compose deployment.
 - A Plugin manifest contains Plugin and Operation discovery fields only; Datastreams, Commands, configuration, credentials, and compatibility metadata stay elsewhere.
+- The private protocol fixes endpoint paths, JSON shapes, timeout units, health semantics, and Operation status mapping.
 - Core fetches a Plugin manifest once, retrying until success, and caches it until Core restarts.
 - Core bounds every private Plugin response and rejects a manifest whose Plugin ID differs from deployment configuration or whose Tool Asset ID differs from the value derived from that Plugin ID.
 - Operations are side-effect-free synchronous JSON calls with Plugin-owned validation, bounded request and response bodies, bounded per-Operation timeouts, and propagated cancellation; longer work uses Tool Tasks.
@@ -210,7 +257,7 @@ The building is not an Asset or Track. Source-provided height is advisory data a
 - Source Gateway caching is disabled by default; a connector may enable a disposable in-memory time-to-live cache only for explicitly safe endpoint and method combinations. Mutating requests are never cached, and hard Gateway-wide byte and entry caps bound the cache.
 - Source Gateway retries are bounded by connector-declared endpoint and method rules. A request that may mutate upstream state also requires a provider-supported idempotency key.
 - The Source Gateway returns fixed failure categories; valid upstream HTTP responses remain responses for the Plugin to interpret.
-- The architecture specifies bounds and behavior, not numeric defaults. Implementation chooses and tests the initial values.
+- The architecture specifies bounds and behavior, not numeric defaults. Implementation chooses and tests the initial response limits, timeout ceilings, health cadence, and per-Plugin in-flight Operation limit.
 - Plugins do not expose external APIs directly as Datastreams.
 - Source connectors unify access mechanics, not external data models.
 - Source-backed Plugin results carry enough provenance and freshness information for callers to judge them.
@@ -221,6 +268,6 @@ The building is not an Asset or Track. Source-provided height is advisory data a
 
 ## Design status
 
-The Plugin platform architecture design tree is closed. The documents specify behavioral bounds but leave health cadence, timeout ceilings, response limits, retry counts, cache durations, and circuit-breaker thresholds to implementation.
+The Plugin platform architecture design tree is closed. The documents specify behavioral bounds but leave health cadence, timeout ceilings, response limits, the per-Plugin in-flight Operation limit, retry counts, cache durations, and circuit-breaker thresholds to implementation.
 
 Datastream delivery, executable browser plugins, declarative UI contributions, and ADS-B Track identity remain deliberately deferred. Each needs a concrete use case or Plugin design before Atlas should decide it.
