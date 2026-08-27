@@ -51,10 +51,9 @@ Plugins do not add arbitrary routes. Core exposes fixed, namespaced routes and d
 GET  /plugins
 POST /plugins/{plugin_id}/operations/{operation_id}
 GET  /datastreams
-GET  /datastreams/{plugin_id}/{stream_id}
 ```
 
-The lists are authenticated discovery endpoints. A Plugin manifest contains only its Plugin ID, display name, Operation descriptors, Datastream descriptors, and optional Tool Asset ID. Each Operation descriptor declares the timeout Core enforces for that Operation. Commands remain in the Tool Asset's existing runtime manifest. Plugin manifests do not contain configuration schemas, connector requests, permissions, protocol versions, or upgrade metadata.
+Both list routes are authenticated discovery endpoints. Core reserves `/datastreams/{plugin_id}/{stream_id}` for future delivery but does not expose it until the Datastream contract defines transport, ordering, replay, latency, and persistence. A Plugin manifest contains only its Plugin ID, display name, Operation descriptors, Datastream descriptors, and optional Tool Asset ID. Each Operation descriptor declares the timeout Core enforces for that Operation. Commands remain in the Tool Asset's existing runtime manifest. Plugin manifests do not contain configuration schemas, connector requests, permissions, protocol versions, or upgrade metadata.
 
 An Operation is always a bounded synchronous JSON request and response. Core applies hard size limits to the public request body and the private Plugin response body. It rejects an oversized request before dispatch and maps an oversized Plugin response to Plugin failure. Core treats input and output as opaque JSON. The Plugin validates input and owns the result shape. Each descriptor declares a timeout, and Core rejects the whole manifest if any timeout exceeds its hard maximum. Core returns the Operation result in the same request. Work that must outlive that request uses a Tool Task instead; the Plugin system does not add asynchronous Operation jobs or polling.
 
@@ -78,9 +77,11 @@ Each Source connector pins its external origin and credentials. A Plugin identif
 
 The Gateway buffers the complete upstream response up to the connector's configured response-size limit, which cannot exceed a hard Gateway maximum. It then returns the upstream status, allowed response headers, and raw response bytes to the Plugin. It rejects an oversized response without returning a partial body. It does not require JSON, stream partial data, or wrap data in a normalized external-data envelope.
 
+Every source-backed Plugin result must carry enough source provenance and freshness information for callers to judge it. This requirement applies when the Plugin returns the result from an Operation or future Datastream and when it writes the result through the Atlas SDK. The Plugin owns the result-specific fields; the Source Gateway does not add a common metadata envelope.
+
 Caching is disabled unless connector configuration enables an in-memory time-to-live cache. The cache key covers the complete outbound request, including the connector, method, relative path, query, allowed headers, and body. Cached data is disposable and is lost when the Gateway restarts.
 
-Connector configuration declares which request methods and upstream statuses are safe to retry. The Gateway applies only bounded retries under those rules and maintains one circuit breaker per connector. It never retries a request that the connector has not marked safe.
+Connector configuration declares retry safety for specific upstream endpoint and method combinations, plus the failure or response statuses that allow another attempt. The Gateway applies only bounded retries under those rules. A request that may mutate upstream state is retryable only when the connector rule requires a provider-supported idempotency key and the request supplies it. The Gateway never treats a method alone as proof that a request is safe to retry. It maintains one circuit breaker per connector.
 
 The Gateway owns fixed failure categories for an unknown connector, rejected request policy, timeout, oversized response, open circuit, and unreachable upstream. It does not return raw network or connector errors. A valid upstream HTTP response is not a Gateway failure, even when its status represents a vendor error. The Gateway returns that status, the allowed headers, and the bounded response body for the Plugin to interpret.
 
@@ -106,7 +107,7 @@ Core fetches each configured Plugin manifest during startup. If the Plugin is un
 
 The private Plugin protocol has no revision field, version negotiation, or compatibility layer. Core and Plugin changes update the contract directly, and Plugin tests catch mismatches. Plugins still use the Atlas SDK's existing generated Atlas Protocol revision check when calling Core; the Plugin system does not add another version mechanism. A future Core-wide versioning rework may replace that existing check, but it stays outside the Plugin architecture.
 
-The first architecture has no separate Plugin Definition and Plugin Instance concepts. One configured Plugin ID maps to one running container. A Plugin may handle multiple concurrent requests or monitored areas internally, but Atlas does not schedule multiple active instances of the same Plugin.
+The first architecture has no separate Plugin Definition and Plugin Instance concepts. One configured Plugin ID maps to one deployment-managed container, whose Plugin may be `starting`, `available`, or `unavailable`. A Plugin may handle multiple concurrent requests or monitored areas internally, but Atlas does not schedule multiple active instances of the same Plugin.
 
 ## Configuration and upgrades
 
@@ -118,7 +119,7 @@ Installing or upgrading a Plugin means editing deployment configuration or its i
 
 `GET /health` remains Atlas Core liveness only. `GET /readiness` remains limited to dependencies required for Core to serve its base contract.
 
-Plugin, Source Gateway, Source connector, and Datastream status belongs in an authenticated status endpoint. Every configured Plugin remains visible with `starting`, `available`, or `unavailable` status. `starting` means Core has not completed its first manifest check. `available` means Plugin transport is reachable and its latest health response is OK. `unavailable` means transport failed or the latest health response reported an application-level failure. Status includes the time of the latest check and a stable Core-owned reason code. It never includes private URLs, raw health responses, credentials, or upstream response bodies.
+Plugin status belongs in an authenticated status endpoint. Every configured Plugin remains visible with `starting`, `available`, or `unavailable` status. `starting` means Core has not completed its first manifest check. `available` means Plugin transport is reachable and its latest health response is OK. `unavailable` means transport failed or the latest health response reported an application-level failure. Status includes the time of the latest check and a stable Core-owned reason code. It never includes private URLs, raw health responses, credentials, or upstream response bodies.
 
 Core checks Plugin health on one fixed internal cadence. Manifest fetches and Operation transport outcomes update transport availability immediately instead of waiting for the next health check. A valid Plugin response proves transport reachability even when it rejects the Operation input, but it does not clear an application-level health failure. A connection failure, timeout, invalid private response, or valid non-OK health response makes the Plugin unavailable. A later OK health response clears the application-level failure. Core maps a non-OK health response to a stable `application_unhealthy` public reason without exposing its private detail. After Core caches a manifest, discovery continues to show its Operations and Datastreams while the Plugin is unavailable, but invocation fails. An optional Plugin failure does not make Core unhealthy or unready.
 
@@ -199,15 +200,16 @@ The building is not an Asset or Track. Source-provided height is advisory data a
 - Core checks Plugin health on a fixed internal cadence, while manifest fetches and Operation transport outcomes update transport availability immediately. A non-OK health response keeps the Plugin unavailable until a later OK health response.
 - The Source Gateway buffers complete responses and returns upstream status, allowed headers, and raw bytes under a per-connector limit and hard Gateway maximum.
 - Source Gateway caching is disabled by default; a connector may enable a disposable in-memory time-to-live cache keyed by the complete outbound request.
-- Source Gateway retries are bounded by connector-declared safe methods and statuses, with one circuit breaker per connector.
+- Source Gateway retries are bounded by connector-declared endpoint and method rules. A request that may mutate upstream state also requires a provider-supported idempotency key.
 - The Source Gateway returns fixed failure categories; valid upstream HTTP responses remain responses for the Plugin to interpret.
 - The architecture specifies bounds and behavior, not numeric defaults. Implementation chooses and tests the initial values.
 - Plugins do not expose external APIs directly as Datastreams.
 - Source connectors unify access mechanics, not external data models.
+- Source-backed Plugin results carry enough provenance and freshness information for callers to judge them.
 - Durable results use normal Atlas Entity and Object systems.
 - Plugin status does not change Core liveness.
 - Executable UI plugins are deferred.
-- The Datastream contract is deferred until a concrete use case needs it.
+- The Datastream delivery contract and reserved delivery route are deferred until a concrete use case needs them.
 
 ## Design status
 

@@ -35,7 +35,7 @@ The Atlas component through which Plugins use Source connectors without receivin
 _Avoid_: External source, data normalizer
 
 **Plugin**:
-An Atlas-managed extension that consumes External sources or Atlas data and may expose Operations, publish Datastreams, or request Atlas actions. A configured Plugin has one running container and may optionally register one Tool Asset.
+An Atlas-managed extension that consumes External sources or Atlas data and may expose Operations, publish Datastreams, or request Atlas actions. A configured Plugin maps to one deployment-managed container and may optionally register one Tool Asset. Its availability may be `starting`, `available`, or `unavailable`.
 _Avoid_: Asset, External source, standalone API
 
 **Operation**:
