@@ -35,7 +35,7 @@ describe("MapTiler place search", () => {
     expect(fetch).toHaveBeenCalledOnce();
     const [url, init] = fetch.mock.calls[0];
     expect(String(url)).toBe(
-      "https://api.maptiler.com/geocoding/Worcester%20Polytechnic.json?key=key+%2F%3F%26&limit=5&autocomplete=true"
+      "https://api.maptiler.com/geocoding/Worcester%20Polytechnic.json?key=key+%2F%3F%26&limit=5&autocomplete=true&language=en"
     );
     expect(init).toEqual({ signal: controller.signal });
     expect(response).toEqual({

@@ -28,6 +28,7 @@ export function createMapTilerPlaceSearch(apiKey: string, fetchImpl: Fetch = fet
     url.searchParams.set("key", normalizedApiKey);
     url.searchParams.set("limit", "5");
     url.searchParams.set("autocomplete", "true");
+    url.searchParams.set("language", "en");
 
     const response = await fetchImpl(url, { signal }).catch((error: unknown) => {
       if (signal.aborted) throw error;
