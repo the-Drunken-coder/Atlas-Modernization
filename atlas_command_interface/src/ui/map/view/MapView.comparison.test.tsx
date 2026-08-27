@@ -66,6 +66,18 @@ describe("MapView region comparison", () => {
     expect(screen.queryByTestId("map-comparison-region")).not.toBeInTheDocument();
     expect(screen.getByText("Drag a region. Shift-drag still zooms.")).toBeInTheDocument();
     expect(canvas).toHaveClass("map-canvas--compare-drawing");
+
+    const nativeControls = document.createElement("div");
+    nativeControls.className = "maplibregl-control-container";
+    const zoomButton = document.createElement("button");
+    nativeControls.append(zoomButton);
+    canvas.append(nativeControls);
+    fireEvent.mouseDown(zoomButton, { button: 0, clientX: 380, clientY: 30 });
+    fireEvent.mouseMove(window, { clientX: 200, clientY: 140 });
+    fireEvent.mouseUp(window, { clientX: 200, clientY: 140 });
+
+    expect(screen.queryByTestId("map-comparison-region")).not.toBeInTheDocument();
+    expect(screen.getByText("Drag a region. Shift-drag still zooms.")).toBeInTheDocument();
   });
 
   it("keeps the secondary camera aligned as the primary map moves", async () => {
@@ -146,6 +158,7 @@ describe("MapView region comparison", () => {
 
     await waitFor(() => expect(menu).toHaveAttribute("data-placement", "above"));
     expect(menu).toHaveStyle({ maxHeight: "256px" });
+    expect(menu.parentElement).toBe(rendered.canvas);
   });
 
   it("moves the active region from its explicit keyboard handle without navigating entities", async () => {

@@ -176,7 +176,11 @@ export function MapRegionComparison({
     const primaryMap = map;
     const startDrawing = (event: globalThis.MouseEvent) => {
       if (drag.kind !== "draw" || drag.start || event.button !== 0 || event.shiftKey) return;
-      if (event.target instanceof Element && event.target.closest("[data-map-interaction-control]")) return;
+      if (
+        event.target instanceof Element &&
+        event.target.closest(".maplibregl-control-container, [data-map-interaction-control]")
+      )
+        return;
       event.preventDefault();
       event.stopPropagation();
       const point = pointInCanvas(event, mapCanvas, true);

@@ -1,4 +1,5 @@
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { MapSourceConfig } from "../../app/config.js";
 import { DoubleCaretVerticalIcon, TickIcon } from "../primitives/icons.js";
 
@@ -32,7 +33,7 @@ type MapSourceSelectProps = {
 
 type MenuLayout = {
   placement: "above" | "below";
-  maxHeight: number;
+  style: CSSProperties;
 };
 
 export function MapSourceSelect({
@@ -48,6 +49,7 @@ export function MapSourceSelect({
   const [menuLayout, setMenuLayout] = useState<MenuLayout | null>(null);
   const pickerRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const labelId = useId();
   const listboxId = useId();
   const selectedSource = sources.find((source) => source.id === value);
@@ -55,12 +57,17 @@ export function MapSourceSelect({
   useEffect(() => {
     if (!open) return;
     const activeOption = Array.from(
-      pickerRef.current?.querySelectorAll<HTMLButtonElement>("[data-source-id]") ?? []
+      menuRef.current?.querySelectorAll<HTMLButtonElement>("[data-source-id]") ?? []
     ).find((option) => option.dataset.sourceId === activeSourceId);
     activeOption?.focus();
 
     const closeOnOutsidePointer = (event: PointerEvent) => {
-      if (event.target instanceof Node && !pickerRef.current?.contains(event.target)) setOpen(false);
+      if (
+        event.target instanceof Node &&
+        !pickerRef.current?.contains(event.target) &&
+        !menuRef.current?.contains(event.target)
+      )
+        setOpen(false);
     };
     document.addEventListener("pointerdown", closeOnOutsidePointer);
     return () => document.removeEventListener("pointerdown", closeOnOutsidePointer);
@@ -72,7 +79,7 @@ export function MapSourceSelect({
       return;
     }
     const picker = pickerRef.current;
-    const menu = picker?.querySelector<HTMLElement>('[role="listbox"]');
+    const menu = menuRef.current;
     const boundary = picker?.closest<HTMLElement>(".map-canvas");
     if (!picker || !menu || !boundary) return;
 
@@ -84,9 +91,25 @@ export function MapSourceSelect({
       const idealHeight = Math.min(360, menu.scrollHeight || 360);
       const placement = below >= idealHeight || below >= above ? "below" : "above";
       const maxHeight = Math.floor(Math.min(360, placement === "below" ? below : above));
-      setMenuLayout((current) =>
-        current?.placement === placement && current.maxHeight === maxHeight ? current : { placement, maxHeight }
+      const maxWidth = Math.max(0, boundaryBounds.width - 20);
+      const minWidth = Math.min(maxWidth, pickerBounds.width + 2);
+      const menuWidth = Math.min(maxWidth, Math.max(minWidth, menu.scrollWidth || minWidth));
+      const left = Math.max(
+        10,
+        Math.min(boundaryBounds.width - menuWidth - 10, pickerBounds.left - boundaryBounds.left - 1)
       );
+      setMenuLayout({
+        placement,
+        style: {
+          right: "auto",
+          left,
+          top: placement === "below" ? pickerBounds.bottom - boundaryBounds.top + 4 : "auto",
+          bottom: placement === "above" ? boundaryBounds.bottom - pickerBounds.top + 4 : "auto",
+          minWidth,
+          maxWidth,
+          maxHeight
+        }
+      });
     };
 
     positionMenu();
@@ -112,6 +135,81 @@ export function MapSourceSelect({
     setOpen(false);
     if (restoreFocus) triggerRef.current?.focus();
   };
+
+  const menuBoundary = open ? pickerRef.current?.closest<HTMLElement>(".map-canvas") : null;
+  const menu = open ? (
+    <div
+      ref={menuRef}
+      id={listboxId}
+      className="map-source-menu"
+      style={menuLayout?.style}
+      data-placement={menuLayout?.placement}
+      data-map-interaction-control
+      role="listbox"
+      aria-labelledby={labelId}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          event.stopPropagation();
+          closeMenu(true);
+          return;
+        }
+        if (event.key === "Tab") {
+          setOpen(false);
+          return;
+        }
+        if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+        event.preventDefault();
+        const availableOptions = Array.from(
+          event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="option"]:not([disabled])')
+        );
+        if (availableOptions.length === 0) return;
+        const currentIndex = availableOptions.indexOf(document.activeElement as HTMLButtonElement);
+        const nextIndex =
+          event.key === "Home"
+            ? 0
+            : event.key === "End"
+              ? availableOptions.length - 1
+              : event.key === "ArrowDown"
+                ? (Math.max(currentIndex, -1) + 1) % availableOptions.length
+                : (currentIndex <= 0 ? availableOptions.length : currentIndex) - 1;
+        const nextOption = availableOptions[nextIndex];
+        setActiveSourceId(nextOption.dataset.sourceId ?? "");
+        nextOption.focus();
+      }}
+    >
+      {sources.map((source) => {
+        const selected = source.id === value;
+        return (
+          <button
+            key={source.id}
+            type="button"
+            role="option"
+            className="map-source-option"
+            aria-selected={selected}
+            disabled={!source.style}
+            data-selected={selected || undefined}
+            data-source-id={source.id}
+            tabIndex={source.style && source.id === activeSourceId ? 0 : -1}
+            onFocus={() => setActiveSourceId(source.id)}
+            onClick={() => {
+              if (!source.style) return;
+              onChange(source.id);
+              closeMenu(true);
+            }}
+          >
+            <span className="map-source-option__label">{source.label}</span>
+            {source.unavailableReason ? (
+              <span className="map-source-option__reason">{source.unavailableReason}</span>
+            ) : null}
+            <span className="map-source-option__check" aria-hidden>
+              {selected ? <TickIcon size={12} /> : null}
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  ) : null;
 
   return (
     <div
@@ -151,77 +249,7 @@ export function MapSourceSelect({
         <span>{selectedSource?.label ?? placeholder}</span>
         <DoubleCaretVerticalIcon size={12} />
       </button>
-      {open ? (
-        <div
-          id={listboxId}
-          className="map-source-menu"
-          style={menuLayout ? { maxHeight: menuLayout.maxHeight } : undefined}
-          data-placement={menuLayout?.placement}
-          role="listbox"
-          aria-labelledby={labelId}
-          onKeyDown={(event) => {
-            if (event.key === "Escape") {
-              event.preventDefault();
-              event.stopPropagation();
-              closeMenu(true);
-              return;
-            }
-            if (event.key === "Tab") {
-              setOpen(false);
-              return;
-            }
-            if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
-            event.preventDefault();
-            const availableOptions = Array.from(
-              event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="option"]:not([disabled])')
-            );
-            if (availableOptions.length === 0) return;
-            const currentIndex = availableOptions.indexOf(document.activeElement as HTMLButtonElement);
-            const nextIndex =
-              event.key === "Home"
-                ? 0
-                : event.key === "End"
-                  ? availableOptions.length - 1
-                  : event.key === "ArrowDown"
-                    ? (Math.max(currentIndex, -1) + 1) % availableOptions.length
-                    : (currentIndex <= 0 ? availableOptions.length : currentIndex) - 1;
-            const nextOption = availableOptions[nextIndex];
-            setActiveSourceId(nextOption.dataset.sourceId ?? "");
-            nextOption.focus();
-          }}
-        >
-          {sources.map((source) => {
-            const selected = source.id === value;
-            return (
-              <button
-                key={source.id}
-                type="button"
-                role="option"
-                className="map-source-option"
-                aria-selected={selected}
-                disabled={!source.style}
-                data-selected={selected || undefined}
-                data-source-id={source.id}
-                tabIndex={source.style && source.id === activeSourceId ? 0 : -1}
-                onFocus={() => setActiveSourceId(source.id)}
-                onClick={() => {
-                  if (!source.style) return;
-                  onChange(source.id);
-                  closeMenu(true);
-                }}
-              >
-                <span className="map-source-option__label">{source.label}</span>
-                {source.unavailableReason ? (
-                  <span className="map-source-option__reason">{source.unavailableReason}</span>
-                ) : null}
-                <span className="map-source-option__check" aria-hidden>
-                  {selected ? <TickIcon size={12} /> : null}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      ) : null}
+      {menuBoundary && menu ? createPortal(menu, menuBoundary) : menu}
     </div>
   );
 }
