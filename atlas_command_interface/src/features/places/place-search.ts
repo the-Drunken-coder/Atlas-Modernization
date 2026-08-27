@@ -41,7 +41,7 @@ export function createMapTilerPlaceSearch(apiKey: string, fetchImpl: Fetch = fet
     }
 
     const payload: unknown = await response.json().catch(() => undefined);
-    if (!isRecord(payload) || !Array.isArray(payload.features)) {
+    if (!isRecord(payload) || payload.type !== "FeatureCollection" || !Array.isArray(payload.features)) {
       throw new Error("Place search returned an invalid response.");
     }
 

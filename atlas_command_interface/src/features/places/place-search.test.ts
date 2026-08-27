@@ -280,7 +280,7 @@ describe("MapTiler place search", () => {
   it("rejects malformed successful responses", async () => {
     const search = createMapTilerPlaceSearch(
       "key",
-      vi.fn(async () => Response.json({ features: "invalid" }))
+      vi.fn(async () => Response.json({ features: [] }))
     );
 
     await expect(search("Worcester", new AbortController().signal)).rejects.toThrow(
