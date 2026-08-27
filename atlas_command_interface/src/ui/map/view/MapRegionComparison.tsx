@@ -117,6 +117,7 @@ export function MapRegionComparison({
   const editingRef = useRef(editing);
   const source = alternatives.find((candidate) => candidate.id === alternateSourceId);
   const regionVisible = regionRect !== null;
+  const drawing = drag?.kind === "draw";
   sourcesRef.current = sources;
   editingRef.current = editing;
   regionRectRef.current = regionRect;
@@ -273,6 +274,17 @@ export function MapRegionComparison({
     if (!region && !panelOpen) return;
     const handleEscape = (event: globalThis.KeyboardEvent) => {
       if (event.key !== "Escape" || drag) return;
+      const attributionDisclosure =
+        event.target instanceof Element
+          ? event.target.closest<HTMLDetailsElement>(".map-compare__attribution[open]")
+          : null;
+      if (attributionDisclosure) {
+        event.preventDefault();
+        event.stopPropagation();
+        attributionDisclosure.open = false;
+        attributionDisclosure.querySelector<HTMLElement>("summary")?.focus();
+        return;
+      }
       const escapeOwner = foregroundEscapeOwner(event.target);
       if (escapeOwner && !escapeOwner.matches(".map-compare__panel")) return;
       event.preventDefault();
@@ -347,7 +359,7 @@ export function MapRegionComparison({
       if (comparisonMapRef.current === comparisonMap) comparisonMapRef.current = undefined;
     };
     // The map persists while the region moves. Camera changes are synchronized below.
-  }, [map, maplibre, regionVisible, retryGeneration, source?.id, source?.style]);
+  }, [drawing, map, maplibre, regionVisible, retryGeneration, source?.id, source?.style]);
 
   useEffect(() => {
     const comparisonMap = comparisonMapRef.current;
@@ -437,7 +449,6 @@ export function MapRegionComparison({
 
   const drawingRect =
     drag?.kind === "draw" && drag.start && drag.current ? rectFromPoints(drag.start, drag.current) : null;
-  const drawing = drag?.kind === "draw";
   const canvasBounds = mapCanvas?.getBoundingClientRect();
   const panelAnchor = panelPosition(regionRect, canvasBounds, panelHeight);
   const captionStyle = captionPosition(regionRect, canvasBounds);
@@ -490,7 +501,7 @@ export function MapRegionComparison({
         </button>
       </div>
 
-      {regionRect && source?.style ? (
+      {regionRect && source?.style && !drawing ? (
         <div ref={comparisonHostRef} className="map-compare__map" style={comparisonStyle} aria-hidden="true" />
       ) : null}
 

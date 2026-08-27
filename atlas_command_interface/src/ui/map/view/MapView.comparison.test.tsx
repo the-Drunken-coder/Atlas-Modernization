@@ -43,6 +43,11 @@ describe("MapView region comparison", () => {
     if (!attributionToggle) throw new Error("Comparison attribution toggle is missing");
     fireEvent.click(attributionToggle);
     expect(attribution).toHaveAttribute("open");
+    attributionToggle.focus();
+    fireEvent.keyDown(attributionToggle, { key: "Escape" });
+    expect(attribution).not.toHaveAttribute("open");
+    expect(attributionToggle).toHaveFocus();
+    expect(region).toBeInTheDocument();
   });
 
   it("draws and resizes a region with touch pointers", async () => {
@@ -431,6 +436,7 @@ describe("MapView region comparison", () => {
     fireEvent.click(screen.getByRole("button", { name: "Redraw" }));
     expect(screen.getByText("Drag a region. Shift-drag still zooms.")).toBeInTheDocument();
     expect(screen.queryByTestId("map-comparison-region")).not.toBeInTheDocument();
+    expect(screen.getByTestId("map-canvas").querySelector(".map-compare__map")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Comparison map attribution")).not.toBeInTheDocument();
     fireEvent.keyDown(window, { key: "Escape" });
 
