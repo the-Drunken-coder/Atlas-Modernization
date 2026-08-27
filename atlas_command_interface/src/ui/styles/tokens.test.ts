@@ -57,8 +57,17 @@ describe("command interface tokens", () => {
     }
   });
 
+  it("keeps primary button text readable against the amber accent", () => {
+    expect(contrast(token("text-on-accent"), token("accent"))).toBeGreaterThanOrEqual(4.5);
+  });
+
   it("keeps the decorative select chevron out of pointer hit testing", () => {
     const declarations = css.match(/\.bp6-html-select > \.bp6-icon\s*{([^}]*)}/)?.[1];
     expect(declarations).toMatch(/pointer-events:\s*none/);
+  });
+
+  it("uses the product selection color for Blueprint button focus", () => {
+    const declarations = css.match(/\.bp6-button:focus-visible\s*{([^}]*)}/)?.[1];
+    expect(declarations).toMatch(/outline:\s*2px solid var\(--selected-ring\)/);
   });
 });

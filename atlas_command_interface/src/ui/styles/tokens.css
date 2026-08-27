@@ -1,66 +1,67 @@
-/* Atlas maps Blueprint's dark palette onto product-specific operational states.
+/* Atlas applies a carbon-and-amber palette to Blueprint's control structure.
    Feature styles consume semantic tokens; Blueprint owns control primitives. */
 :root,
 .bp6-dark {
   color-scheme: dark;
 
-  --bg-base: #111418;
-  --bg-app: #111418;
-  --surface-1: #1c2127;
-  --surface-2: #252a31;
-  --surface-3: #2f343c;
-  --surface-hover: #2f343c;
+  --bg-base: #0d0e0f;
+  --bg-app: #0d0e0f;
+  --surface-1: #151719;
+  --surface-2: #1d2023;
+  --surface-3: #272a2e;
+  --surface-hover: #272a2e;
 
-  --border: #383e47;
-  --border-strong: #59636f;
+  --border: #303438;
+  --border-strong: #4b5158;
 
-  --text-1: #f6f7f9;
-  --text-2: #abb3bf;
-  --text-3: #99a3b0;
-  --text-on-accent: #ffffff;
+  --text-1: #f5f2e9;
+  --text-2: #bbb5aa;
+  --text-3: #aaa398;
+  --text-on-accent: #17120a;
 
-  --accent: #2d72d2;
-  --accent-strong: #669eff;
-  --accent-muted: rgb(45 114 210 / 20%);
+  --accent: #d9942f;
+  --accent-strong: #ffc058;
+  --accent-muted: rgb(217 148 47 / 20%);
 
-  --success: #32a467;
-  --warning: #d9822b;
-  --error: #db3737;
-  --error-text: #ff7373;
-  --info: #2d72d2;
+  --success: #54b77b;
+  --warning: #d9942f;
+  --error: #dc5a55;
+  --error-text: #ff8580;
+  --info: #69a8d8;
 
-  --selected: #ffffff;
-  --selected-ring: rgb(102 158 255 / 55%);
+  --selected: #f5f2e9;
+  --selected-ring: rgb(255 192 88 / 58%);
 
   /* Task status */
-  --status-pending: #d9822b;
-  --status-acknowledged: #4c90f0;
-  --status-in_progress: #4fc3f7;
-  --status-completed: #32a467;
-  --status-failed: #db3737;
-  --status-cancelled: #8f99a8;
+  --status-pending: #d9942f;
+  --status-acknowledged: #69a8d8;
+  --status-in_progress: #5bbec5;
+  --status-completed: #54b77b;
+  --status-failed: #dc5a55;
+  --status-cancelled: #969087;
 
-  --link-connected: #32a467;
-  --link-degraded: #d9822b;
-  --link-disconnected: #db3737;
-  --link-unknown: #8f99a8;
+  --link-connected: #54b77b;
+  --link-degraded: #d9942f;
+  --link-disconnected: #dc5a55;
+  --link-unknown: #969087;
 
-  --heartbeat-fresh: #32a467;
-  --heartbeat-stale: #d9822b;
-  --heartbeat-offline: #db3737;
+  --heartbeat-fresh: #54b77b;
+  --heartbeat-stale: #d9942f;
+  --heartbeat-offline: #dc5a55;
 
-  --class-friendly: #4c90f0;
-  --class-hostile: #db3737;
-  --class-neutral: #32a467;
-  --class-civilian: #a854a8;
-  --class-unknown: #abb3bf;
+  --class-friendly: #69a8d8;
+  --class-hostile: #dc5a55;
+  --class-neutral: #54b77b;
+  --class-civilian: #ab7fc4;
+  --class-unknown: #bbb5aa;
 
-  --map-asset: #4c90f0;
-  --map-track: #d9822b;
-  --map-geofeature: #32a467;
-  --map-geofeature-fill: rgb(50 164 103 / 14%);
-  --map-selected: #ffffff;
-  --map-vertex: #ffffff;
+  --map-background: #101315;
+  --map-asset: #ffc058;
+  --map-track: #69a8d8;
+  --map-geofeature: #54b77b;
+  --map-geofeature-fill: rgb(84 183 123 / 14%);
+  --map-selected: #f5f2e9;
+  --map-vertex: #f5f2e9;
   --map-vertex-mid: rgb(255 255 255 / 45%);
 
   --radius-sm: 2px;
@@ -127,6 +128,11 @@ select {
 
 .bp6-button:disabled {
   opacity: 0.55;
+}
+
+.bp6-button:focus-visible {
+  outline: 2px solid var(--selected-ring);
+  outline-offset: 2px;
 }
 
 .bp6-button.bp6-minimal {

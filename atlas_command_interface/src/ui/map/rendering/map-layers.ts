@@ -4,10 +4,13 @@ import { displayGeometry } from "../../../atlas/geometry.js";
 import type { MapEditing } from "./map-editing.js";
 import { emptyFeatureCollection, type MapSources } from "./map-sources.js";
 
+// MapLibre paint values cannot resolve CSS variables. Keep these paired with
+// the corresponding semantic colors in tokens.css.
 const COLORS = {
-  geofeature: "#3fd27a",
-  geofeatureFill: "rgba(63,210,122,0.16)",
-  selected: "#ffffff"
+  editingFill: "rgba(217,148,47,0.18)",
+  geofeature: "#54b77b",
+  geofeatureFill: "rgba(84,183,123,0.14)",
+  selected: "#f5f2e9"
 };
 
 export const INTERACTIVE_LAYERS = ["geofeatures-point", "geofeatures-line", "geofeatures-fill"];
@@ -72,7 +75,7 @@ export function registerSourcesAndLayers(map: MlMap): void {
       type: "fill",
       source: "editing",
       filter: ["==", ["geometry-type"], "Polygon"],
-      paint: { "fill-color": "rgba(63,182,255,0.18)" }
+      paint: { "fill-color": COLORS.editingFill }
     });
   }
   if (!map.getLayer("editing-line")) {
