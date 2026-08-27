@@ -90,6 +90,7 @@
   color: var(--text-1);
   cursor: move;
   pointer-events: auto;
+  touch-action: none;
   transform: rotate(45deg);
 }
 
@@ -104,6 +105,7 @@
   border: 0;
   background: transparent;
   pointer-events: auto;
+  touch-action: none;
 }
 
 .map-compare__resize-handle::before {
@@ -174,7 +176,7 @@
 }
 
 .map-canvas > .maplibre-host .maplibregl-marker {
-  z-index: 18;
+  z-index: 15;
 }
 
 .map-canvas > .maplibre-host .maplibregl-ctrl-top-left,
@@ -195,6 +197,10 @@
 .map-canvas--compare-drawing .maplibregl-canvas,
 .map-canvas--compare-drawing .maplibregl-canvas-container {
   cursor: crosshair !important;
+}
+
+.map-canvas--compare-drawing {
+  touch-action: none;
 }
 
 .map-compare__drawing-region {

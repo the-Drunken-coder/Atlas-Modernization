@@ -2,7 +2,7 @@ import type { Map as MlMap, StyleSpecification } from "maplibre-gl";
 import {
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
-  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -40,12 +40,14 @@ type DragState =
       kind: "draw";
       start: ScreenPoint | null;
       current: ScreenPoint | null;
+      pointerId: number | null;
       previousRegion: GeographicRegion | null;
     }
   | {
       kind: "transform";
       transform: RegionTransform;
       start: ScreenPoint;
+      pointerId: number;
       initialRect: ScreenRect;
       initialRegion: GeographicRegion;
     };
@@ -180,7 +182,7 @@ export function MapRegionComparison({
   useEffect(() => {
     if (!map || !mapCanvas || !drag) return;
     const primaryMap = map;
-    const startDrawing = (event: globalThis.MouseEvent) => {
+    const startDrawing = (event: globalThis.PointerEvent) => {
       if (drag.kind !== "draw" || drag.start || event.button !== 0 || event.shiftKey) return;
       if (
         event.target instanceof Element &&
@@ -189,11 +191,14 @@ export function MapRegionComparison({
         return;
       event.preventDefault();
       event.stopPropagation();
+      primaryMap.stop();
+      mapCanvas.setPointerCapture?.(event.pointerId);
       const point = pointInCanvas(event, mapCanvas, true);
-      setDrag({ ...drag, start: point, current: point });
+      setDrag({ ...drag, start: point, current: point, pointerId: event.pointerId });
       notifyUserGesture();
     };
-    const updateDrag = (event: globalThis.MouseEvent) => {
+    const updateDrag = (event: globalThis.PointerEvent) => {
+      if (drag.pointerId === null || event.pointerId !== drag.pointerId) return;
       const point = pointInCanvas(event, mapCanvas, true);
       if (drag.kind === "draw") {
         if (!drag.start) return;
@@ -207,7 +212,8 @@ export function MapRegionComparison({
           : clampResizedRect(drag.initialRect, delta, drag.transform);
       setRegion(regionFromScreenRect(primaryMap, nextRect));
     };
-    const finishDrag = (event: globalThis.MouseEvent) => {
+    const finishDrag = (event: globalThis.PointerEvent) => {
+      if (drag.pointerId === null || event.pointerId !== drag.pointerId) return;
       if (drag.kind === "draw") {
         if (!drag.start) return;
         const end = pointInCanvas(event, mapCanvas, true);
@@ -231,25 +237,34 @@ export function MapRegionComparison({
       setDrag(null);
       notifyUserGesture();
     };
-    const cancelDrag = (event: globalThis.KeyboardEvent) => {
-      if (event.key !== "Escape" || boxZoomActive) return;
-      event.preventDefault();
-      event.stopPropagation();
+    const cancelActiveDrag = () => {
       setRegion(drag.kind === "draw" ? drag.previousRegion : drag.initialRegion);
       setPanelOpen(drag.kind === "draw" && Boolean(drag.previousRegion));
       setDrag(null);
       toolRef.current?.focus();
     };
+    const cancelPointer = (event: globalThis.PointerEvent) => {
+      if (drag.pointerId === null || event.pointerId !== drag.pointerId) return;
+      cancelActiveDrag();
+    };
+    const cancelDrag = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== "Escape" || boxZoomActive) return;
+      event.preventDefault();
+      event.stopPropagation();
+      cancelActiveDrag();
+    };
     mapCanvas.classList.toggle("map-canvas--compare-drawing", drag.kind === "draw");
-    mapCanvas.addEventListener("mousedown", startDrawing, { capture: true });
-    window.addEventListener("mousemove", updateDrag);
-    window.addEventListener("mouseup", finishDrag);
+    mapCanvas.addEventListener("pointerdown", startDrawing, { capture: true });
+    window.addEventListener("pointermove", updateDrag);
+    window.addEventListener("pointerup", finishDrag);
+    window.addEventListener("pointercancel", cancelPointer);
     window.addEventListener("keydown", cancelDrag, { capture: true });
     return () => {
       mapCanvas.classList.remove("map-canvas--compare-drawing");
-      mapCanvas.removeEventListener("mousedown", startDrawing, { capture: true });
-      window.removeEventListener("mousemove", updateDrag);
-      window.removeEventListener("mouseup", finishDrag);
+      mapCanvas.removeEventListener("pointerdown", startDrawing, { capture: true });
+      window.removeEventListener("pointermove", updateDrag);
+      window.removeEventListener("pointerup", finishDrag);
+      window.removeEventListener("pointercancel", cancelPointer);
       window.removeEventListener("keydown", cancelDrag, { capture: true });
     };
   }, [boxZoomActive, drag, map, mapCanvas, notifyUserGesture]);
@@ -366,7 +381,7 @@ export function MapRegionComparison({
   const beginDrawing = (previousRegion: GeographicRegion | null) => {
     if (!mapCanvas || !map || !mapReady) return;
     setPanelOpen(false);
-    setDrag({ kind: "draw", start: null, current: null, previousRegion });
+    setDrag({ kind: "draw", start: null, current: null, pointerId: null, previousRegion });
   };
 
   const createKeyboardRegion = () => {
@@ -387,17 +402,19 @@ export function MapRegionComparison({
     notifyUserGesture();
   };
 
-  const beginTransform = (transform: RegionTransform, event: ReactMouseEvent<HTMLButtonElement>) => {
+  const beginTransform = (transform: RegionTransform, event: ReactPointerEvent<HTMLButtonElement>) => {
     if (event.button !== 0 || !map || !mapCanvas || !region || !regionRect) return;
     event.preventDefault();
     event.stopPropagation();
     map.stop();
+    mapCanvas.setPointerCapture?.(event.pointerId);
     notifyUserGesture();
     setPanelOpen(false);
     setDrag({
       kind: "transform",
       transform,
       start: pointInCanvas(event, mapCanvas, true),
+      pointerId: event.pointerId,
       initialRect: projectedScreenRect(map, region),
       initialRegion: region
     });
@@ -493,7 +510,7 @@ export function MapRegionComparison({
             data-map-interaction-control
             aria-label="Move comparison region"
             title="Drag or use arrow keys to move region"
-            onMouseDown={(event) => beginTransform("move", event)}
+            onPointerDown={(event) => beginTransform("move", event)}
             onKeyDown={(event) => transformWithKeyboard("move", event)}
           >
             <DoubleCaretVerticalIcon size={12} />
@@ -504,7 +521,7 @@ export function MapRegionComparison({
             data-map-interaction-control
             aria-label="Resize comparison region width"
             title="Drag horizontally or use Left and Right arrow keys"
-            onMouseDown={(event) => beginTransform("width", event)}
+            onPointerDown={(event) => beginTransform("width", event)}
             onKeyDown={(event) => transformWithKeyboard("width", event)}
           />
           <button
@@ -513,7 +530,7 @@ export function MapRegionComparison({
             data-map-interaction-control
             aria-label="Resize comparison region height"
             title="Drag vertically or use Up and Down arrow keys"
-            onMouseDown={(event) => beginTransform("height", event)}
+            onPointerDown={(event) => beginTransform("height", event)}
             onKeyDown={(event) => transformWithKeyboard("height", event)}
           />
           <button
@@ -522,7 +539,7 @@ export function MapRegionComparison({
             data-map-interaction-control
             aria-label="Resize comparison region width and height"
             title="Drag diagonally or use arrow keys"
-            onMouseDown={(event) => beginTransform("both", event)}
+            onPointerDown={(event) => beginTransform("both", event)}
             onKeyDown={(event) => transformWithKeyboard("both", event)}
           />
         </div>

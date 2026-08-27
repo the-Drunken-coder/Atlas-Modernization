@@ -21,10 +21,12 @@ describe("MapView region comparison", () => {
   it("draws only after the explicit tool is active and creates a region-sized passive map", async () => {
     const rendered = renderMapView({ styleId: "base", style: style("base"), mapSourceOptions });
 
-    fireEvent.mouseDown(rendered.canvas, { button: 0, clientX: 80, clientY: 80 });
+    fireEvent.pointerDown(rendered.canvas, { pointerId: 1, pointerType: "mouse", button: 0, clientX: 80, clientY: 80 });
     expect(screen.queryByTestId("map-comparison-region")).not.toBeInTheDocument();
 
+    rendered.map.stop.mockClear();
     await drawComparison();
+    expect(rendered.map.stop).toHaveBeenCalledOnce();
 
     const region = await screen.findByTestId("map-comparison-region");
     expect(region).toHaveStyle({ left: "70px", top: "60px", width: "180px", height: "80px" });
@@ -43,12 +45,37 @@ describe("MapView region comparison", () => {
     expect(attribution).toHaveAttribute("open");
   });
 
+  it("draws and resizes a region with touch pointers", async () => {
+    renderMapView({ styleId: "base", style: style("base"), mapSourceOptions });
+    await drawComparison("touch");
+
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Resize comparison region width" }), {
+      pointerId: 2,
+      pointerType: "touch",
+      button: 0,
+      clientX: 260,
+      clientY: 120
+    });
+    fireEvent.pointerMove(window, { pointerId: 2, pointerType: "touch", clientX: 300, clientY: 120 });
+    fireEvent.pointerUp(window, { pointerId: 2, pointerType: "touch", clientX: 300, clientY: 120 });
+
+    await waitFor(() => expect(screen.getByTestId("map-comparison-region")).toHaveStyle({ width: "220px" }));
+  });
+
   it("leaves Shift-drag with the existing box-zoom interaction while drawing is armed", async () => {
     const { canvas } = renderMapView({ styleId: "base", style: style("base"), mapSourceOptions });
     fireEvent.click(screen.getByRole("button", { name: "Compare map source inside a region" }));
     const primaryHost = canvas.querySelector<HTMLElement>(".maplibre-host");
     if (!primaryHost) throw new Error("Primary map host is missing");
 
+    fireEvent.pointerDown(primaryHost, {
+      pointerId: 1,
+      pointerType: "mouse",
+      button: 0,
+      clientX: 80,
+      clientY: 80,
+      shiftKey: true
+    });
     fireEvent.mouseDown(primaryHost, { button: 0, clientX: 80, clientY: 80, shiftKey: true });
 
     expect(canvas.querySelector(".map-reticle--zoom")).toBeInTheDocument();
@@ -79,9 +106,9 @@ describe("MapView region comparison", () => {
     fireEvent.click(icon);
     expect(onBackgroundClick).not.toHaveBeenCalled();
 
-    fireEvent.mouseDown(icon, { button: 0, clientX: 20, clientY: 60 });
-    fireEvent.mouseMove(window, { clientX: 200, clientY: 140 });
-    fireEvent.mouseUp(window, { clientX: 200, clientY: 140 });
+    fireEvent.pointerDown(icon, { pointerId: 1, pointerType: "mouse", button: 0, clientX: 20, clientY: 60 });
+    fireEvent.pointerMove(window, { pointerId: 1, pointerType: "mouse", clientX: 200, clientY: 140 });
+    fireEvent.pointerUp(window, { pointerId: 1, pointerType: "mouse", clientX: 200, clientY: 140 });
 
     expect(screen.queryByTestId("map-comparison-region")).not.toBeInTheDocument();
     expect(screen.getByText("Drag a region. Shift-drag still zooms.")).toBeInTheDocument();
@@ -92,9 +119,15 @@ describe("MapView region comparison", () => {
     const zoomButton = document.createElement("button");
     nativeControls.append(zoomButton);
     canvas.append(nativeControls);
-    fireEvent.mouseDown(zoomButton, { button: 0, clientX: 380, clientY: 30 });
-    fireEvent.mouseMove(window, { clientX: 200, clientY: 140 });
-    fireEvent.mouseUp(window, { clientX: 200, clientY: 140 });
+    fireEvent.pointerDown(zoomButton, {
+      pointerId: 2,
+      pointerType: "mouse",
+      button: 0,
+      clientX: 380,
+      clientY: 30
+    });
+    fireEvent.pointerMove(window, { pointerId: 2, pointerType: "mouse", clientX: 200, clientY: 140 });
+    fireEvent.pointerUp(window, { pointerId: 2, pointerType: "mouse", clientX: 200, clientY: 140 });
 
     expect(screen.queryByTestId("map-comparison-region")).not.toBeInTheDocument();
     expect(screen.getByText("Drag a region. Shift-drag still zooms.")).toBeInTheDocument();
@@ -222,14 +255,21 @@ describe("MapView region comparison", () => {
     await drawComparison();
     map.stop.mockClear();
 
-    fireEvent.mouseDown(screen.getByRole("button", { name: "Resize comparison region width" }), {
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Resize comparison region width" }), {
+      pointerId: 1,
+      pointerType: "mouse",
       button: 0,
       clientX: 260,
       clientY: 120
     });
     expect(map.stop).toHaveBeenCalledOnce();
-    fireEvent.mouseMove(window, { clientX: 300, clientY: 120 });
-    fireEvent.mouseUp(screen.getByTestId("map-canvas"), { clientX: 300, clientY: 120 });
+    fireEvent.pointerMove(window, { pointerId: 1, pointerType: "mouse", clientX: 300, clientY: 120 });
+    fireEvent.pointerUp(screen.getByTestId("map-canvas"), {
+      pointerId: 1,
+      pointerType: "mouse",
+      clientX: 300,
+      clientY: 120
+    });
 
     await waitFor(() => expect(screen.getByTestId("map-comparison-region")).toHaveStyle({ width: "220px" }));
     await new Promise((resolve) => window.setTimeout(resolve, 0));
@@ -267,9 +307,15 @@ describe("MapView region comparison", () => {
     );
 
     const move = screen.getByRole("button", { name: "Move comparison region" });
-    fireEvent.mouseDown(move, { button: 0, clientX: 150, clientY: 100 });
-    fireEvent.mouseMove(window, { clientX: 170, clientY: 100 });
-    fireEvent.mouseUp(window, { clientX: 170, clientY: 100 });
+    fireEvent.pointerDown(move, {
+      pointerId: 1,
+      pointerType: "mouse",
+      button: 0,
+      clientX: 150,
+      clientY: 100
+    });
+    fireEvent.pointerMove(window, { pointerId: 1, pointerType: "mouse", clientX: 170, clientY: 100 });
+    fireEvent.pointerUp(window, { pointerId: 1, pointerType: "mouse", clientX: 170, clientY: 100 });
 
     await waitFor(() =>
       expect(screen.getByTestId("map-comparison-region")).toHaveStyle({ left: "0px", width: "170px" })
@@ -416,13 +462,13 @@ describe("MapView region comparison", () => {
   });
 });
 
-async function drawComparison(): Promise<void> {
+async function drawComparison(pointerType: "mouse" | "touch" = "mouse"): Promise<void> {
   fireEvent.click(screen.getByRole("button", { name: "Compare map source inside a region" }));
   const prompt = screen.getByText("Drag a region. Shift-drag still zooms.");
   const surface = prompt.parentElement;
   if (!surface) throw new Error("Drawing surface is missing");
-  fireEvent.mouseDown(surface, { button: 0, clientX: 80, clientY: 80 });
-  fireEvent.mouseMove(window, { clientX: 260, clientY: 160 });
-  fireEvent.mouseUp(window, { clientX: 260, clientY: 160 });
+  fireEvent.pointerDown(surface, { pointerId: 1, pointerType, button: 0, clientX: 80, clientY: 80 });
+  fireEvent.pointerMove(window, { pointerId: 1, pointerType, clientX: 260, clientY: 160 });
+  fireEvent.pointerUp(window, { pointerId: 1, pointerType, clientX: 260, clientY: 160 });
   await screen.findByTestId("map-comparison-region");
 }

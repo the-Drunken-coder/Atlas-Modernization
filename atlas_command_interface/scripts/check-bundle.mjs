@@ -14,7 +14,7 @@ const budgets = {
   initialJavaScript: { raw: 350_000, gzip: 105_000 },
   initialCss: { raw: 30_000, gzip: 6_500 },
   shellJavaScript: { raw: 50_000, gzip: 16_000 },
-  mapViewJavaScript: { raw: 55_000, gzip: 17_500 },
+  mapViewJavaScript: { raw: 56_000, gzip: 17_500 },
   mapLibreJavaScript: { raw: 1_100_000, gzip: 300_000 },
   mapLibreWorkerJavaScript: { raw: 500_000, gzip: 140_000 },
   milsymbolJavaScript: { raw: 900_000, gzip: 240_000 },
