@@ -33,7 +33,6 @@ const maplibreMock = vi.hoisted(() => {
     readonly layers = new Map<string, unknown>();
     readonly easeTo = vi.fn();
     readonly flyTo = vi.fn();
-    readonly jumpTo = vi.fn();
     readonly stop = vi.fn();
     readonly setRenderWorldCopies = vi.fn((value: boolean) => {
       this.renderWorldCopies = value;
