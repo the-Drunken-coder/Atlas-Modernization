@@ -7,6 +7,7 @@ import {
   flyDurationMs,
   INITIAL_WORLD_BOUNDS,
   type MapCameraCommand,
+  type MapTarget,
   PREVIEW_DURATION_MS,
   PREVIEW_POINT_ZOOM,
   PREVIEW_RESTORE_MS,
@@ -326,6 +327,49 @@ describe("MapView camera commands", () => {
       expect(document.querySelector(".map-reticle")).not.toHaveAttribute("data-flashing");
       await act(async () => vi.advanceTimersByTimeAsync(RETICLE_FLASH_MS));
       expect(map.flyTo).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps a committed area reticle attached to its bounds throughout the camera move", async () => {
+    const target: MapTarget = {
+      type: "geometry",
+      id: "place:massachusetts",
+      geometry: {
+        type: "Polygon",
+        coordinates: [
+          [
+            [10, 20],
+            [30, 20],
+            [30, 40],
+            [10, 40],
+            [10, 20]
+          ]
+        ]
+      }
+    };
+    const { map, rerenderMap } = renderMapView({ focusTarget: target });
+    await waitFor(() =>
+      expect(
+        document.querySelector<HTMLElement>(".map-reticle")?.style.getPropertyValue("--map-reticle-target-width")
+      ).toBe("34px")
+    );
+
+    vi.useFakeTimers();
+    try {
+      rerenderMap({ cameraCommand: { seq: 1, intent: "commit", target } });
+      expect(document.querySelector(".map-reticle")).toHaveAttribute("data-flashing", "true");
+
+      await act(async () => vi.advanceTimersByTimeAsync(RETICLE_FLASH_MS));
+      map.project.mockImplementation(([longitude, latitude]) => ({ x: longitude * 4, y: latitude * 3 }));
+      act(() => map.fire("zoom"));
+
+      const reticle = document.querySelector<HTMLElement>(".map-reticle");
+      expect(reticle).toBeInTheDocument();
+      expect(reticle).not.toHaveAttribute("data-flashing");
+      expect(reticle?.style.getPropertyValue("--map-reticle-target-width")).toBe("94px");
+      expect(reticle?.style.getPropertyValue("--map-reticle-target-height")).toBe("74px");
     } finally {
       vi.useRealTimers();
     }

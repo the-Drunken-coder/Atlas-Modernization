@@ -7,7 +7,8 @@ const worcester: MapTarget = {
   type: "point",
   id: "place:worcester",
   coordinates: [-71.8023, 42.2626],
-  label: "Worcester, Massachusetts"
+  label: "Worcester, Massachusetts",
+  reticleSize: 48
 };
 
 const massachusetts: MapTarget = {
@@ -41,12 +42,19 @@ describe("MapView place detail lens", () => {
     await waitFor(() =>
       expect(detailMap.jumpTo).toHaveBeenCalledWith({ center: worcester.coordinates, zoom: 13 }, expect.any(Object))
     );
+    const pointReticle = lens.querySelector<HTMLElement>(".map-reticle");
+    expect(pointReticle?.style.getPropertyValue("--map-reticle-target-width")).toBe("62px");
+    expect(pointReticle?.style.getPropertyValue("--map-reticle-target-height")).toBe("62px");
     expect(rendered.map.jumpTo).not.toHaveBeenCalled();
     expect(rendered.map.fitBounds).not.toHaveBeenCalled();
     expect(rendered.map.flyTo).not.toHaveBeenCalled();
     fireEvent.click(lens);
     expect(rendered.onBackgroundClick).not.toHaveBeenCalled();
 
+    detailMap.project.mockImplementation(([longitude, latitude]) => ({
+      x: (longitude + 74) * 50,
+      y: (43 - latitude) * 50
+    }));
     rendered.rerenderMap({ placeDetailTarget: massachusetts });
 
     await screen.findByRole("region", { name: "Local detail for Massachusetts" });
@@ -59,6 +67,11 @@ describe("MapView place detail lens", () => {
       expect.objectContaining({ duration: 0, maxZoom: 14, padding: 28 }),
       expect.any(Object)
     );
+    const areaReticle = screen
+      .getByRole("region", { name: "Local detail for Massachusetts" })
+      .querySelector<HTMLElement>(".map-reticle");
+    expect(Number.parseFloat(areaReticle?.style.getPropertyValue("--map-reticle-target-width") ?? "")).toBeCloseTo(194);
+    expect(Number.parseFloat(areaReticle?.style.getPropertyValue("--map-reticle-target-height") ?? "")).toBeCloseTo(99);
     expect(rendered.map.fitBounds).not.toHaveBeenCalled();
 
     rendered.rerenderMap({ placeDetailTarget: null });

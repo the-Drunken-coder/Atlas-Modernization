@@ -17,6 +17,7 @@ import {
 } from "./map-reticle.js";
 
 export type MapReticleTarget = MapTarget;
+export type LiteralMapReticleTarget = Exclude<MapTarget, { type: "entity" }>;
 export type HoverTarget = ReticleTarget & { entityId: string };
 export type MarkerBoxCache = { entries: HoverTarget[] | null; mapRect: TargetBox | null };
 export type MapNavigationDirection = "up" | "down" | "left" | "right";
@@ -111,6 +112,12 @@ export function reticleForVisibleTarget(
   return reticleForTarget({ id: target.id, entityId: target.type === "entity" ? target.id : undefined, box });
 }
 
+/** Resolves a literal point or geometry against the map's current camera. */
+export function reticleForLiteralTarget(map: MlMap, target: LiteralMapReticleTarget): ReticleState | null {
+  const box = boxForLiteralTarget(map, target);
+  return box ? reticleForTarget({ id: target.id, box }) : null;
+}
+
 export function targetBoxForEntityId(
   mapCanvas: HTMLElement,
   map: MlMap,
@@ -177,6 +184,10 @@ function boxForMapReticleTarget(
   target: MapReticleTarget
 ): TargetBox | null {
   if (target.type === "entity") return targetBoxForEntityId(mapCanvas, map, sources, target.id);
+  return boxForLiteralTarget(map, target);
+}
+
+function boxForLiteralTarget(map: MlMap, target: LiteralMapReticleTarget): TargetBox | null {
   if (target.type === "point") {
     const point = map.project(target.coordinates);
     return squareAround({ x: point.x, y: point.y }, target.reticleSize ?? 1);

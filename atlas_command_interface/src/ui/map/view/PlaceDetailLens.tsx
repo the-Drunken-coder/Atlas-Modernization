@@ -8,8 +8,11 @@ import {
   PREVIEW_FIT_MAX_ZOOM,
   PREVIEW_POINT_ZOOM
 } from "../interaction/map-camera.js";
+import type { ReticleState } from "../interaction/map-reticle.js";
+import { reticleForLiteralTarget } from "../interaction/map-targets.js";
 import { getMapLibreRuntime, loadMapLibre, type MapLibreRuntime } from "../runtime/maplibre-runtime.js";
-import { cloneStyle, webglAvailable } from "./map-view-utils.js";
+import { MapReticle } from "./MapReticle.js";
+import { cloneStyle, reticlesEqual, webglAvailable } from "./map-view-utils.js";
 
 type PlaceDetailLensProps = {
   target: MapTarget;
@@ -59,21 +62,6 @@ const labelNameStyle = {
   textOverflow: "ellipsis",
   whiteSpace: "nowrap"
 } satisfies CSSProperties;
-const reticleStyle = {
-  position: "absolute",
-  top: "50%",
-  left: "50%",
-  zIndex: 2,
-  width: 24,
-  height: 24,
-  border: "2px solid var(--accent-strong)",
-  boxShadow: "0 0 0 1px color-mix(in srgb, black 58%, transparent)",
-  transform: "translate(-50%, -50%)"
-} satisfies CSSProperties;
-const reticleLineStyle = {
-  position: "absolute",
-  background: "var(--accent-strong)"
-} satisfies CSSProperties;
 const statusStyle = {
   position: "absolute",
   inset: 0,
@@ -95,6 +83,7 @@ export function PlaceDetailLens({ target, style }: PlaceDetailLensProps) {
   const initialStyleRef = useRef(style);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string>();
+  const [reticle, setReticle] = useState<ReticleState | null>(null);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -174,6 +163,28 @@ export function PlaceDetailLens({ target, style }: PlaceDetailLensProps) {
     );
   }, [ready, target]);
 
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready || target.type === "entity") {
+      setReticle(null);
+      return;
+    }
+
+    const sync = () => {
+      const next = reticleForLiteralTarget(map, target);
+      setReticle((current) => (reticlesEqual(current, next) ? current : next));
+    };
+    sync();
+    map.on("move", sync);
+    map.on("zoom", sync);
+    map.on("moveend", sync);
+    return () => {
+      map.off("move", sync);
+      map.off("zoom", sync);
+      map.off("moveend", sync);
+    };
+  }, [ready, target]);
+
   const label = target.type === "entity" ? "Place detail" : (target.label ?? "Place detail");
   return (
     <section className="place-detail-lens" style={lensStyle} aria-label={`Local detail for ${label}`}>
@@ -182,16 +193,7 @@ export function PlaceDetailLens({ target, style }: PlaceDetailLensProps) {
         <span style={labelKindStyle}>Local detail</span>
         <strong style={labelNameStyle}>{label}</strong>
       </div>
-      {ready && !error ? (
-        <div style={reticleStyle} aria-hidden="true">
-          <span
-            style={{ ...reticleLineStyle, top: "50%", left: -7, width: 34, height: 2, transform: "translateY(-50%)" }}
-          />
-          <span
-            style={{ ...reticleLineStyle, top: -7, left: "50%", width: 2, height: 34, transform: "translateX(-50%)" }}
-          />
-        </div>
-      ) : null}
+      {ready && !error && reticle ? <MapReticle reticle={reticle} /> : null}
       {!ready && !error ? (
         <div style={statusStyle} role="status">
           Loading detail

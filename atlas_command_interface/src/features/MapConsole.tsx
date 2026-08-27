@@ -62,7 +62,7 @@ export function MapConsole() {
   const [entityQueries, setEntityQueries] = useState(EMPTY_ENTITY_QUERIES);
   const [placeQuery, setPlaceQuery] = useState("");
   const [placePreviewTarget, setPlacePreviewTarget] = useState<MapTarget | null>(null);
-  const [placeDetailTarget, setPlaceDetailTarget] = useState<MapTarget | null>(null);
+  const [placeFocusTarget, setPlaceFocusTarget] = useState<MapTarget | null>(null);
   const [cameraCommand, setCameraCommand] = useState<MapCameraCommand | null>(null);
   const cameraSequenceRef = useRef(0);
 
@@ -79,19 +79,18 @@ export function MapConsole() {
   }, []);
   const previewPlace = useCallback((target: MapTarget | null) => {
     setPlacePreviewTarget(target);
-    setPlaceDetailTarget(target);
   }, []);
   const focusPlace = useCallback(
     (target: MapTarget) => {
-      setPlacePreviewTarget(target);
-      setPlaceDetailTarget(null);
+      setPlacePreviewTarget(null);
+      setPlaceFocusTarget(target);
       issueCameraCommand(target, "commit");
     },
     [issueCameraCommand]
   );
   const showWorld = useCallback(() => {
     setPlacePreviewTarget(null);
-    setPlaceDetailTarget(null);
+    setPlaceFocusTarget(null);
     cameraSequenceRef.current += 1;
     setCameraCommand({ seq: cameraSequenceRef.current, intent: "world" });
   }, []);
@@ -175,7 +174,8 @@ export function MapConsole() {
     [atlas.config]
   );
   const placesActive = sidebar.view.mode === "list" && sidebar.view.list === "places";
-  const focusTarget = placePreviewTarget ?? (placesActive ? null : entityReticleTarget(selectedEntity));
+  const focusTarget =
+    placePreviewTarget ?? placeFocusTarget ?? (placesActive ? null : entityReticleTarget(selectedEntity));
 
   // Explicit entity and place commits share one camera sequence. MapView
   // ignores repeated sequence numbers, even when the targets differ.
@@ -194,7 +194,7 @@ export function MapConsole() {
       const kind = entityKind(entity);
       if (kind === "other") return;
       setPlacePreviewTarget(null);
-      setPlaceDetailTarget(null);
+      setPlaceFocusTarget(null);
       setCameraCommand(null);
       dispatch({ type: "selectEntity", kind, id, origin: "map" });
     },
@@ -298,7 +298,7 @@ export function MapConsole() {
                 const kind = entityKind(entity);
                 if (kind === "other") return;
                 setPlacePreviewTarget(null);
-                setPlaceDetailTarget(null);
+                setPlaceFocusTarget(null);
                 dispatch({ type: "selectEntity", kind, id: entity.entity_id, origin: "sidebar" });
               }}
               onEntityQueryChange={setEntityQuery}
@@ -340,14 +340,14 @@ export function MapConsole() {
                           : undefined
                       }
                       focusTarget={focusTarget}
-                      placeDetailTarget={placeDetailTarget}
+                      placeDetailTarget={placePreviewTarget}
                       cameraCommand={cameraCommand}
                       onSelectEntity={selectEntityById}
                       onMapContextMenu={commandFlow.onMapContextMenu}
                       onBackgroundClick={() => {
                         commandFlow.closeMapMenu();
                         setPlacePreviewTarget(null);
-                        setPlaceDetailTarget(null);
+                        setPlaceFocusTarget(null);
                         setCameraCommand(null);
                         dispatch({ type: "clearSelection" });
                       }}

@@ -405,7 +405,10 @@ describe("MapConsole", () => {
       expect(screen.getByTestId("map")).toHaveAttribute("data-camera-target", "place:poi.1");
       expect(screen.getByTestId("map")).toHaveAttribute("data-camera-seq", "2");
       expect(screen.getByTestId("map")).toHaveAttribute("data-camera-intent", "commit");
+      expect(screen.getByTestId("map")).toHaveAttribute("data-focus-target", "place:poi.1");
       expect(screen.getByTestId("map")).toHaveAttribute("data-place-detail-target", "");
+      await act(async () => Promise.resolve());
+      expect(screen.getByTestId("map")).toHaveAttribute("data-focus-target", "place:poi.1");
 
       const worldView = screen.getByRole("button", { name: "World view" });
       expect(worldView).toHaveAttribute("title", "World view");
@@ -415,6 +418,7 @@ describe("MapConsole", () => {
       expect(screen.getByTestId("map")).toHaveAttribute("data-camera-target", "");
       expect(screen.getByTestId("map")).toHaveAttribute("data-camera-intent", "world");
       expect(screen.getByTestId("map")).toHaveAttribute("data-camera-seq", "3");
+      expect(screen.getByTestId("map")).toHaveAttribute("data-focus-target", "");
     } finally {
       vi.useRealTimers();
       vi.unstubAllGlobals();
