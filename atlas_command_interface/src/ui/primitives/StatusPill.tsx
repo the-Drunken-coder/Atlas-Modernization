@@ -1,3 +1,5 @@
+import { Tag } from "@blueprintjs/core";
+import { FullCircleIcon } from "@blueprintjs/icons";
 import type { TaskStatus } from "@the-drunken-coder/atlas-sdk";
 import type { CSSProperties } from "react";
 import type { Classification, EntityConnectionStatus, HeartbeatLevel } from "../../atlas/entities.js";
@@ -12,10 +14,14 @@ type StatusPillProps = {
 export function StatusPill({ label, accent, dot = true }: StatusPillProps) {
   const style = accent ? ({ "--pill-accent": accent } as CSSProperties) : undefined;
   return (
-    <span className="pill" style={style}>
-      {dot ? <span className="pill__dot" /> : null}
+    <Tag
+      className="pill"
+      minimal
+      icon={dot ? <FullCircleIcon className="pill__dot" size={7} /> : undefined}
+      style={style}
+    >
       {label}
-    </span>
+    </Tag>
   );
 }
 

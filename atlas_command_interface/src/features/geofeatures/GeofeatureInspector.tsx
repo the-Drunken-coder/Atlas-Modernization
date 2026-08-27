@@ -1,3 +1,4 @@
+import { Callout } from "@blueprintjs/core";
 import type { EntityResource } from "@the-drunken-coder/atlas-sdk";
 import { useEffect, useState } from "react";
 import { entityClassification, entityDisplayName, entityGeometry } from "../../atlas/entities.js";
@@ -85,9 +86,9 @@ export function GeofeatureInspector(props: GeofeatureInspectorProps) {
           </div>
         ) : null}
         {saveError ? (
-          <div className="banner banner--error" style={{ marginTop: 8 }}>
+          <Callout className="banner banner--error" intent="danger" icon={null} compact style={{ marginTop: 8 }}>
             {saveError}
-          </div>
+          </Callout>
         ) : null}
       </Section>
 
@@ -138,7 +139,11 @@ function VertexEditor({
   const isCircle = isCircleFeature(geometry);
   return (
     <div className="stack" style={{ marginTop: 8 }}>
-      {!validity?.valid && validity?.reason ? <div className="banner banner--error">{validity.reason}</div> : null}
+      {!validity?.valid && validity?.reason ? (
+        <Callout className="banner banner--error" intent="danger" icon={null} compact>
+          {validity.reason}
+        </Callout>
+      ) : null}
       {vertices.map((vertex, index) => {
         const removable = canRemoveVertex(geometry, vertex.ref);
         const title = isCircle ? "Center" : `Vertex ${index + 1}`;

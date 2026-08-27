@@ -2,6 +2,7 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { sanitizeConnectionError } from "../atlas/connection-error.js";
 import type { ConnectionError, ConnectionHealth } from "../atlas/data-source.js";
 import { Button } from "./primitives/controls.js";
+import { CloseIcon } from "./primitives/icons.js";
 
 export function ConnectionBadge({
   health,
@@ -139,43 +140,45 @@ export function ConnectionBadge({
                 triggerRef.current?.focus();
               }}
             >
-              <div className="connection-detail__header">
-                <strong id={`${detailId}-title`}>Atlas Core connection error</strong>
-                <Button
-                  ref={closeRef}
-                  variant="ghost"
-                  className="connection-detail__close"
-                  aria-label="Close connection details"
-                  onClick={() => {
-                    setOpen(false);
-                    (triggerRef.current ?? focusAnchorRef.current)?.focus();
-                  }}
-                >
-                  ×
-                </Button>
-              </div>
-              <p id={`${detailId}-description`}>
-                {connectionError.source === "startup"
-                  ? "The initial connection to Atlas Core failed."
-                  : "The live connection to Atlas Core failed."}
-              </p>
-              <p className="connection-detail__message">{connectionError.message}</p>
-              <p className="connection-detail__status" role="status">
-                {health.running ? "Retrying automatically…" : "Retry is available."}
-              </p>
-              <div className="connection-detail__actions">
-                <Button
-                  variant="primary"
-                  onClick={() => {
-                    retryFocusPendingRef.current = true;
-                    setOpen(false);
-                    focusAnchorRef.current?.focus();
-                    onRetry();
-                  }}
-                >
-                  Retry connection
-                </Button>
-              </div>
+              <Callout className="connection-detail__callout" icon={null}>
+                <div className="connection-detail__header">
+                  <strong id={`${detailId}-title`}>Atlas Core connection error</strong>
+                  <Button
+                    ref={closeRef}
+                    variant="ghost"
+                    className="connection-detail__close"
+                    aria-label="Close connection details"
+                    onClick={() => {
+                      setOpen(false);
+                      (triggerRef.current ?? focusAnchorRef.current)?.focus();
+                    }}
+                  >
+                    <CloseIcon size={14} />
+                  </Button>
+                </div>
+                <p id={`${detailId}-description`}>
+                  {connectionError.source === "startup"
+                    ? "The initial connection to Atlas Core failed."
+                    : "The live connection to Atlas Core failed."}
+                </p>
+                <p className="connection-detail__message">{connectionError.message}</p>
+                <p className="connection-detail__status" role="status">
+                  {health.running ? "Retrying automatically…" : "Retry is available."}
+                </p>
+                <div className="connection-detail__actions">
+                  <Button
+                    variant="primary"
+                    onClick={() => {
+                      retryFocusPendingRef.current = true;
+                      setOpen(false);
+                      focusAnchorRef.current?.focus();
+                      onRetry();
+                    }}
+                  >
+                    Retry connection
+                  </Button>
+                </div>
+              </Callout>
             </div>
           ) : null}
         </>
@@ -193,3 +196,5 @@ function connectionBadgeState(
   if (health.running) return { label: "Reconnecting", state: "reconnecting" };
   return { label: "Connecting", state: "connecting" };
 }
+
+import { Callout } from "@blueprintjs/core";

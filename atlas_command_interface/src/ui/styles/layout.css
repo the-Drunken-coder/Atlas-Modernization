@@ -191,6 +191,9 @@
 .account-menu__items {
   display: flex;
   flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
 .account-menu__item {
@@ -206,6 +209,13 @@
   font: inherit;
   text-align: left;
   cursor: pointer;
+}
+
+.account-menu__item > .bp6-button-text {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
 }
 
 .account-menu__item:hover:not(:disabled) {

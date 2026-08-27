@@ -1,3 +1,4 @@
+import { Button } from "@blueprintjs/core";
 import type { CommandAvailability } from "../../atlas/command-targeting.js";
 
 type CommandListProps = {
@@ -16,10 +17,12 @@ export function CommandList({ availabilities, onPick, emptyLabel }: CommandListP
       {availabilities.map((availability) => {
         const { command, manifest } = availability;
         return (
-          <button
+          <Button
             key={command.command}
             type="button"
             className="command-row"
+            fill
+            alignText="start"
             title={command.description}
             onClick={() => onPick(availability)}
           >
@@ -27,7 +30,7 @@ export function CommandList({ availabilities, onPick, emptyLabel }: CommandListP
               <span className="command-row__title">{command.name}</span>
               <span className="command-row__sub">{manifest.description}</span>
             </span>
-          </button>
+          </Button>
         );
       })}
     </div>

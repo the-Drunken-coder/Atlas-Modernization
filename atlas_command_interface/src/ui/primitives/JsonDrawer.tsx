@@ -1,5 +1,6 @@
+import { Button, Collapse } from "@blueprintjs/core";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { CopyIcon } from "./icons.js";
+import { ChevronRightIcon, CopyIcon } from "./icons.js";
 
 type JsonDrawerProps = {
   value: unknown;
@@ -39,33 +40,35 @@ export function JsonDrawer({ value, title = "Raw JSON", defaultOpen = false }: J
   return (
     <div className="json-drawer">
       <div className="json-drawer__summary">
-        <button
+        <Button
           type="button"
           className="json-drawer__toggle"
+          minimal
+          icon={<ChevronRightIcon size={13} style={open ? { transform: "rotate(90deg)" } : undefined} />}
           aria-expanded={open}
           onClick={() => setOpen((value) => !value)}
         >
-          <span>{open ? "▾" : "▸"}</span>
           <span>{title}</span>
-        </button>
+        </Button>
         {open ? (
-          <button
+          <Button
             type="button"
             className="json-drawer__copy"
+            minimal
+            icon={<CopyIcon size={14} />}
             aria-label="Copy JSON"
             title="Copy JSON"
             onClick={() => void copy()}
           >
-            <CopyIcon size={14} />
             {copied ? "Copied" : "Copy"}
-          </button>
+          </Button>
         ) : null}
       </div>
-      {open ? (
+      <Collapse isOpen={open} transitionDuration={0}>
         <div className="json-drawer__body">
           <pre className="json-drawer__pre">{text}</pre>
         </div>
-      ) : null}
+      </Collapse>
     </div>
   );
 }

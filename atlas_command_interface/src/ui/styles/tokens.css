@@ -113,86 +113,9 @@ select {
   font-family: inherit;
 }
 
-/* Blueprint's class contract, limited to the primitives Atlas actually uses. */
-.bp6-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 30px;
-  padding: 5px 10px;
-  border: 1px solid transparent;
-  background: var(--surface-2);
-  color: var(--text-1);
-  cursor: pointer;
-}
-
-.bp6-button:disabled {
-  opacity: 0.55;
-}
-
 .bp6-button:focus-visible {
   outline: 2px solid var(--selected-ring);
   outline-offset: 2px;
-}
-
-.bp6-button.bp6-minimal {
-  background: transparent;
-}
-
-.bp6-button.bp6-intent-primary {
-  background: var(--accent);
-}
-
-.bp6-input {
-  width: 100%;
-  min-height: 30px;
-  padding: 0 9px;
-  font-size: 12px;
-}
-
-.bp6-input-group {
-  position: relative;
-  display: block;
-}
-
-.bp6-input-group > .bp6-icon {
-  position: absolute;
-  top: 50%;
-  left: 9px;
-  transform: translateY(-50%);
-}
-
-.bp6-input-group > .bp6-icon + .bp6-input {
-  padding-left: 30px;
-}
-
-.bp6-html-select {
-  position: relative;
-  display: inline-flex;
-}
-
-.bp6-html-select > select {
-  min-height: 30px;
-  padding: 0 28px 0 9px;
-  appearance: none;
-}
-
-.bp6-html-select > .bp6-icon {
-  position: absolute;
-  top: 50%;
-  right: 8px;
-  transform: translateY(-50%);
-  color: var(--text-3);
-  pointer-events: none;
-}
-
-.bp6-icon {
-  display: inline-flex;
-}
-
-.bp6-icon > svg {
-  display: block;
-  fill: currentcolor;
 }
 
 a {

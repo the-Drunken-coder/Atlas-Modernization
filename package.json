@@ -24,7 +24,9 @@
     "test:clean-workspace": "node scripts/clean-workspace-smoke.mjs"
   },
   "devDependencies": {
-    "@vitest/coverage-v8": "4.1.10"
+    "@vitest/coverage-v8": "4.1.10",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
   },
   "overrides": {
     "undici@7.28.0": "7.29.0"

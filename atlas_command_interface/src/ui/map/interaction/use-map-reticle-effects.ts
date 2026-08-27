@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 import { flushSync } from "react-dom";
 import { clientPointInsideRect, reticlesEqual } from "../view/map-view-utils.js";
 import { pointFromClient } from "./map-reticle.js";
@@ -98,7 +98,7 @@ export function useMapReticleEffects({ options, stateStore, pointer, zooming, re
     };
   }, [mapReady, mapRef, setCameraMoving]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!reticleVisible && !selectedEntityId) return;
     const releaseOnEscape = (event: globalThis.KeyboardEvent) => {
       if (event.key !== "Escape" || stateRef.current.zoomOverlay) return;

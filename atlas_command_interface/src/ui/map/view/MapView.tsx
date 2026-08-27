@@ -1,3 +1,4 @@
+import { Callout } from "@blueprintjs/core";
 import { type MapMouseEvent, type Map as MlMap, type StyleSpecification } from "maplibre-gl";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { MapSourceConfig } from "../../../app/config.js";
@@ -362,13 +363,13 @@ export function MapView({
         />
       ) : null}
       {mapError ? (
-        <div className="map-unavailable" role="status" aria-live="polite">
+        <Callout className="map-unavailable" icon={null} intent="danger" role="status" aria-live="polite">
           <span>Map unavailable</span>
           <code>{mapError}</code>
           <Button variant="primary" onClick={() => setMapError(undefined)}>
             Retry
           </Button>
-        </div>
+        </Callout>
       ) : null}
     </div>
   );

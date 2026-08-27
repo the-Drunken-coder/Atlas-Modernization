@@ -1,3 +1,4 @@
+import { Button } from "@blueprintjs/core";
 import type { ReactElement } from "react";
 import { ENTITY_DESCRIPTORS, type EntityKind } from "../../atlas/entities.js";
 import type { ListKind } from "../../state/selection.js";
@@ -46,15 +47,15 @@ export function SidebarRail({ collapsed, activeList, counts, onSelectList, onTog
         <RailButton key={item.list} item={item} active={activeList === item.list} count={0} onSelect={onSelectList} />
       ))}
       <Tooltip label={collapsed ? "Expand sidebar" : "Collapse sidebar"}>
-        <button
+        <Button
           type="button"
-          className="bp6-button bp6-minimal rail-button"
+          className="rail-button"
+          minimal
+          icon={<CollapseIcon size={20} style={collapsed ? { transform: "scaleX(-1)" } : undefined} />}
           aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
           aria-pressed={collapsed}
           onClick={onToggleCollapsed}
-        >
-          <CollapseIcon size={20} style={collapsed ? { transform: "scaleX(-1)" } : undefined} />
-        </button>
+        />
       </Tooltip>
     </div>
   );
@@ -73,17 +74,19 @@ function RailButton({
 }) {
   return (
     <Tooltip label={item.label}>
-      <button
+      <Button
         type="button"
-        className="bp6-button bp6-minimal rail-button"
+        className="rail-button"
+        minimal
+        active={active}
+        icon={<item.Icon size={20} />}
         aria-label={item.label}
         aria-pressed={active}
         data-active={active}
         onClick={() => onSelect(item.list)}
       >
-        <item.Icon size={20} />
         {count > 0 ? <span className="rail-button__badge">{count}</span> : null}
-      </button>
+      </Button>
     </Tooltip>
   );
 }

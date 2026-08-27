@@ -1,14 +1,15 @@
 import {
-  type ButtonHTMLAttributes,
-  forwardRef,
-  type InputHTMLAttributes,
-  type ReactNode,
-  type SelectHTMLAttributes,
-  useId
-} from "react";
-import { DoubleCaretVerticalIcon } from "./icons.js";
+  Button as BlueprintButton,
+  type ButtonProps as BlueprintButtonProps,
+  FormGroup,
+  HTMLSelect,
+  type HTMLSelectProps,
+  InputGroup,
+  type InputGroupProps
+} from "@blueprintjs/core";
+import { forwardRef, type ReactNode, useId } from "react";
 
-type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
+type ButtonProps = Omit<BlueprintButtonProps, "variant"> & {
   variant?: "default" | "primary" | "ghost";
 };
 
@@ -16,38 +17,41 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
   { variant = "default", className, ...props },
   ref
 ) {
-  const variantClass =
-    variant === "primary" ? " bp6-intent-primary btn--primary" : variant === "ghost" ? " bp6-minimal btn--ghost" : "";
+  const intent = variant === "primary" ? "primary" : undefined;
+  const minimal = variant === "ghost";
   return (
-    <button
+    <BlueprintButton
       ref={ref}
       type="button"
-      className={`bp6-button btn${variantClass}${className ? ` ${className}` : ""}`}
+      className={`btn${variant === "primary" ? " btn--primary" : variant === "ghost" ? " btn--ghost" : ""}${className ? ` ${className}` : ""}`}
+      intent={intent}
+      minimal={minimal}
       {...props}
     />
   );
 });
 
-type IconButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
+type IconButtonProps = BlueprintButtonProps & {
   label: string;
   children: ReactNode;
 };
 
 export function IconButton({ label, children, className, ...props }: IconButtonProps) {
   return (
-    <button
+    <BlueprintButton
       type="button"
-      className={`bp6-button bp6-minimal bp6-small icon-button${className ? ` ${className}` : ""}`}
+      className={`icon-button${className ? ` ${className}` : ""}`}
+      minimal
       aria-label={label}
       title={label}
       {...props}
     >
       {children}
-    </button>
+    </BlueprintButton>
   );
 }
 
-type TextFieldProps = InputHTMLAttributes<HTMLInputElement> & {
+type TextFieldProps = Omit<InputGroupProps, "inputClassName" | "inputRef" | "leftElement" | "rightElement"> & {
   label?: string;
   hint?: string;
   mono?: boolean;
@@ -57,19 +61,18 @@ export function TextField({ label, hint, mono, id: providedId, className, ...pro
   const generatedId = useId();
   const id = providedId ?? generatedId;
   return (
-    <label className="bp6-label field" htmlFor={id}>
-      {label ? <span className="field__label">{label}</span> : null}
-      <input
+    <FormGroup className="field" label={label} labelFor={id} helperText={hint}>
+      <InputGroup
         id={id}
-        className={`bp6-input bp6-fill input${mono ? " input--mono" : ""}${className ? ` ${className}` : ""}`}
+        fill
+        inputClassName={`input${mono ? " input--mono" : ""}${className ? ` ${className}` : ""}`}
         {...props}
       />
-      {hint ? <span className="field__hint">{hint}</span> : null}
-    </label>
+    </FormGroup>
   );
 }
 
-type SelectFieldProps = SelectHTMLAttributes<HTMLSelectElement> & {
+type SelectFieldProps = Omit<HTMLSelectProps, "multiple" | "options"> & {
   label?: string;
   options: Array<{ value: string; label: string; disabled?: boolean }>;
 };
@@ -78,18 +81,14 @@ export function SelectField({ label, options, id: providedId, className, ...prop
   const generatedId = useId();
   const id = providedId ?? generatedId;
   return (
-    <label className="bp6-label field" htmlFor={id}>
-      {label ? <span className="field__label">{label}</span> : null}
-      <span className="bp6-html-select bp6-fill select-shell">
-        <select id={id} className={`select${className ? ` ${className}` : ""}`} {...props}>
-          {options.map((option) => (
-            <option key={option.value} value={option.value} disabled={option.disabled}>
-              {option.label}
-            </option>
-          ))}
-        </select>
-        <DoubleCaretVerticalIcon size={12} />
-      </span>
-    </label>
+    <FormGroup className="field" label={label} labelFor={id}>
+      <HTMLSelect
+        id={id}
+        className={`select-shell${className ? ` ${className}` : ""}`}
+        fill
+        options={options}
+        {...props}
+      />
+    </FormGroup>
   );
 }

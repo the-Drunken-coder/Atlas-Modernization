@@ -1,3 +1,4 @@
+import { Callout } from "@blueprintjs/core";
 import { type ReactNode, useEffect, useState } from "react";
 import { sanitizeConnectionError } from "../atlas/connection-error.js";
 import type { AtlasDataSource } from "../atlas/data-source.js";
@@ -24,9 +25,9 @@ export function Providers({
     coreConfig = providedCoreConfig ?? coreConfigFromEnv(import.meta.env);
   } catch (cause) {
     return (
-      <div className="app-error">
+      <Callout className="app-error" icon={null}>
         <span>{sanitizeConnectionError(cause)}</span>
-      </div>
+      </Callout>
     );
   }
 
@@ -66,7 +67,7 @@ function AtlasBootstrap({
 
   if (error) {
     return (
-      <div className="app-error" role="alert">
+      <Callout className="app-error" icon={null} role="alert">
         <span>Could not load command interface configuration.</span>
         <code>{error}</code>
         <Button
@@ -78,7 +79,7 @@ function AtlasBootstrap({
         >
           Retry configuration
         </Button>
-      </div>
+      </Callout>
     );
   }
   if (!config) {

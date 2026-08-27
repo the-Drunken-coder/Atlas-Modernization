@@ -1,3 +1,4 @@
+import { Callout } from "@blueprintjs/core";
 import type { CommandCatalog, EntityResource, JSONValue } from "@the-drunken-coder/atlas-sdk";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useReducer, useState } from "react";
 import type { MapSourceConfig } from "../app/config.js";
@@ -170,27 +171,27 @@ export function MapConsole() {
   }
   if (atlas.status === "error") {
     return (
-      <div className="app-error" role="alert">
+      <Callout className="app-error" icon={null} role="alert">
         <span>Could not connect to Atlas Core.</span>
         <code>{atlas.error}</code>
         <Button variant="primary" onClick={atlas.reconnect}>
           Retry connection
         </Button>
-      </div>
+      </Callout>
     );
   }
   if (!atlas.config) {
     return (
-      <div className="app-error">
+      <Callout className="app-error" icon={null}>
         <span>Command interface configuration is unavailable.</span>
-      </div>
+      </Callout>
     );
   }
   if (atlas.config.mapSources.length === 0) {
     return (
-      <div className="app-error">
+      <Callout className="app-error" icon={null}>
         <span>No map sources are configured.</span>
-      </div>
+      </Callout>
     );
   }
 
@@ -293,9 +294,9 @@ export function MapConsole() {
                     />
                   </Suspense>
                 ) : (
-                  <div className="app-error" role="alert">
+                  <Callout className="app-error" icon={null} role="alert">
                     <span>The configured default map source is unavailable.</span>
-                  </div>
+                  </Callout>
                 )}
                 <ConnectionBadge health={atlas.health} error={atlas.connectionError} onRetry={atlas.reconnect} />
                 <MapSourcePicker
@@ -322,9 +323,9 @@ export function MapConsole() {
       ) : null}
 
       {submitting && !commandForm ? (
-        <div className="banner banner--info" role="status">
+        <Callout className="banner banner--info" intent="primary" icon={null} compact role="status">
           Tasking pending…
-        </div>
+        </Callout>
       ) : null}
 
       {commandForm && selectedEntity ? (
@@ -337,9 +338,9 @@ export function MapConsole() {
           onSubmit={(input) => void commandFlow.submit(commandForm.availability, input)}
         />
       ) : submitError ? (
-        <div className="banner banner--error" role="alert">
+        <Callout className="banner banner--error" intent="danger" icon={null} compact role="alert">
           {submitError}
-        </div>
+        </Callout>
       ) : null}
     </>
   );

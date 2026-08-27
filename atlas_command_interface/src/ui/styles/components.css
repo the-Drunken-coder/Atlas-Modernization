@@ -45,10 +45,7 @@
 }
 
 .entity-row {
-  display: grid;
-  grid-template-columns: 7px minmax(0, 1fr) 12px;
-  align-items: center;
-  gap: 9px;
+  display: block;
   min-height: 53px;
   padding: 7px 10px;
   border: none;
@@ -58,6 +55,14 @@
   color: var(--text-1);
   text-align: left;
   cursor: pointer;
+  width: 100%;
+}
+
+.entity-row > .bp6-button-text {
+  display: grid;
+  grid-template-columns: 7px minmax(0, 1fr) 12px;
+  align-items: center;
+  gap: 9px;
   width: 100%;
 }
 
@@ -304,8 +309,7 @@
   flex: 0 0 auto;
   width: 7px;
   height: 7px;
-  border-radius: 50%;
-  background: var(--pill-accent, var(--text-2));
+  color: var(--pill-accent, var(--text-2));
 }
 
 /* ---------- Task / command rows ---------- */
@@ -369,6 +373,11 @@
   margin-bottom: var(--space-2);
 }
 
+.command-row > .bp6-button-text {
+  display: flex;
+  width: 100%;
+}
+
 .command-row:hover:not([disabled]) {
   border-color: var(--border-strong);
   background: var(--surface-hover);
@@ -426,21 +435,20 @@
   color: var(--text-1);
 }
 
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+.bp6-form-group.field {
   margin-bottom: var(--space-2);
 }
 
-.field__label {
-  margin-bottom: 0;
+.field > .bp6-label {
+  margin-bottom: 4px;
   font-size: 11px;
   font-weight: 500;
   color: var(--text-2);
 }
 
+.field .bp6-form-helper-text,
 .field__hint {
+  margin-top: 4px;
   font-size: 11px;
   color: var(--text-3);
 }
@@ -485,31 +493,6 @@
   font-family: var(--font-mono);
 }
 
-/* ---------- Tooltip ---------- */
-.tooltip-host {
-  position: relative;
-  display: inline-flex;
-}
-
-.tooltip {
-  position: fixed;
-  z-index: 40;
-  transform: translateY(-50%);
-  padding: 4px 8px;
-  background: var(--surface-3);
-  color: var(--text-1);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  font-size: 11px;
-  white-space: nowrap;
-  pointer-events: none;
-  box-shadow: var(--shadow-menu);
-}
-
-.tooltip[data-placement="top"] {
-  transform: translate(-50%, -100%);
-}
-
 /* ---------- Context menu ---------- */
 .context-menu {
   position: fixed;
@@ -532,8 +515,6 @@
 }
 
 .menu-item {
-  display: flex;
-  flex-direction: column;
   width: 100%;
   padding: 6px 8px;
   border: none;
@@ -544,11 +525,17 @@
   cursor: pointer;
 }
 
-.menu-item:hover:not([disabled]) {
+.menu-item > .bp6-fill {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.menu-item:hover:not(.bp6-disabled) {
   background: var(--accent-muted);
 }
 
-.menu-item[disabled] {
+.menu-item.bp6-disabled {
   color: var(--text-3);
   opacity: 0.65;
   cursor: not-allowed;
