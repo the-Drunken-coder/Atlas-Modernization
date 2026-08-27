@@ -1,5 +1,6 @@
 import { type MapMouseEvent, type Map as MlMap, type StyleSpecification } from "maplibre-gl";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import type { MapSourceConfig } from "../../../app/config.js";
 import { sanitizeConnectionError } from "../../../atlas/connection-error.js";
 import { Button } from "../../primitives/controls.js";
 import { getSidcRuntime, loadSidcRuntime } from "../../symbols/sidc-runtime.js";
@@ -21,6 +22,7 @@ import {
 } from "../rendering/map-symbol-markers.js";
 import { getMapLibreRuntime, loadMapLibre, type MapLibreRuntime } from "../runtime/maplibre-runtime.js";
 import { MapCursorOverlay } from "./MapCursorOverlay.js";
+import { MapRegionComparison } from "./MapRegionComparison.js";
 import { MapReticle } from "./MapReticle.js";
 import { cloneStyle, fitWorldOnce, webglAvailable } from "./map-view-utils.js";
 
@@ -33,6 +35,7 @@ type MapViewProps = {
   sources: MapSources;
   styleId: string;
   style: StyleSpecification;
+  mapSourceOptions: MapSourceConfig[];
   selectedId?: string;
   editing?: MapEditing;
   initialCenter?: [number, number];
@@ -54,6 +57,7 @@ export function MapView({
   sources,
   styleId,
   style,
+  mapSourceOptions,
   selectedId,
   editing,
   initialCenter,
@@ -129,6 +133,7 @@ export function MapView({
           keyboard: false,
           dragRotate: false,
           pitchWithRotate: false,
+          touchPitch: false,
           attributionControl: false,
           boxZoom: {
             boxZoomEnd: (zoomMap, start, end) => mapActionsRef.current.completeBoxZoom(zoomMap, start, end)
@@ -142,6 +147,7 @@ export function MapView({
       const mapInstance = map;
       mapRef.current = mapInstance;
       currentStyleIdRef.current = initialMap.styleId;
+      mapInstance.touchZoomRotate.disableRotation();
       mapInstance.addControl(new maplibre.NavigationControl({ showCompass: false }), "top-right");
       mapInstance.addControl(new maplibre.AttributionControl({ compact: true }), "bottom-left");
 
@@ -334,6 +340,19 @@ export function MapView({
       {...reticleInteraction.canvasHandlers}
     >
       <div className="maplibre-host" ref={containerRef} />
+      <MapRegionComparison
+        mapCanvas={mapCanvasRef.current}
+        map={mapRef.current}
+        maplibre={mapLibreRef.current}
+        mapReady={mapReady}
+        boxZoomActive={reticleInteraction.zooming}
+        baseSourceId={styleId}
+        sourceOptions={mapSourceOptions}
+        sources={sources}
+        editing={editing}
+        notifyUserGesture={notifyUserGesture}
+        suppressNextClick={reticleInteraction.mapActions.suppressNextClick}
+      />
       {reticleInteraction.cursorOverlay ? <MapCursorOverlay {...reticleInteraction.cursorOverlay} /> : null}
       {reticleInteraction.visibleReticle ? (
         <MapReticle

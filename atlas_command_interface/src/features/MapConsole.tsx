@@ -25,9 +25,10 @@ import { AppShell } from "../ui/layout/AppShell.js";
 import { SidebarPanel } from "../ui/layout/SidebarPanel.js";
 import { SidebarRail } from "../ui/layout/SidebarRail.js";
 import type { MapCameraCommand } from "../ui/map/interaction/map-camera.js";
+import { MapSourcePicker } from "../ui/map/MapSourcePicker.js";
 import { buildMapSources } from "../ui/map/rendering/map-sources.js";
 import type { MapReticleTarget } from "../ui/map/view/MapView.js";
-import { Button, SelectField } from "../ui/primitives/controls.js";
+import { Button } from "../ui/primitives/controls.js";
 import { ContextMenu, type MenuItemDef } from "../ui/primitives/Menu.js";
 import { APIKeysPanel } from "./admin/APIKeysPanel.js";
 import { AssetInspector } from "./assets/AssetInspector.js";
@@ -270,6 +271,7 @@ export function MapConsole() {
                       sources={sources}
                       styleId={selectedMapSource.id}
                       style={selectedMapSource.style}
+                      mapSourceOptions={atlas.config.mapSources}
                       selectedId={selectedId}
                       editing={
                         edit
@@ -298,6 +300,7 @@ export function MapConsole() {
                 <ConnectionBadge health={atlas.health} error={atlas.connectionError} onRetry={atlas.reconnect} />
                 <MapSourcePicker
                   sources={atlas.config.mapSources}
+                  defaultSourceId={atlas.config.defaultMapSourceId}
                   value={mapSourcePickerValue}
                   onChange={setSelectedMapSourceId}
                 />
@@ -369,34 +372,6 @@ function PurposeBuiltCommandForm({
       onCancel={onCancel}
       onSubmit={onSubmit}
     />
-  );
-}
-
-function MapSourcePicker({
-  sources,
-  value,
-  onChange
-}: {
-  sources: MapSourceConfig[];
-  value: string;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <div className="map-overlay-tr map-source-control">
-      <SelectField
-        label="Map"
-        value={value}
-        options={sources.map((source) => ({
-          label: source.unavailableReason ? `${source.label} (${source.unavailableReason})` : source.label,
-          value: source.id,
-          disabled: !source.style
-        }))}
-        onChange={(event) => {
-          const source = sources.find((entry) => entry.id === event.currentTarget.value);
-          if (source?.style) onChange(source.id);
-        }}
-      />
-    </div>
   );
 }
 

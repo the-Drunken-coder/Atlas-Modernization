@@ -36,7 +36,11 @@ export function useMapReticleInteraction(options: MapReticleInteractionOptions) 
       onPointerMove: pointer.onPointerMove,
       onWheelCapture: pointer.onWheelCapture
     },
-    mapActions: { cancelBoxZoom: pointer.cancelBoxZoom, completeBoxZoom: pointer.completeBoxZoom }
+    mapActions: {
+      cancelBoxZoom: pointer.cancelBoxZoom,
+      completeBoxZoom: pointer.completeBoxZoom,
+      suppressNextClick: pointer.suppressNextClick
+    }
   };
 }
 
