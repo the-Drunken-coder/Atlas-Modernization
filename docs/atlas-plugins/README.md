@@ -56,15 +56,97 @@ POST /plugins/{plugin_id}/operations/{operation_id}
 
 `GET /plugins` is the authenticated discovery and status endpoint. Core reserves the `/datastreams` namespace but exposes no Datastream discovery or delivery route until that contract defines transport, ordering, replay, latency, and persistence. A Plugin manifest contains only its Plugin ID, display name, Operation descriptors, and optional Tool Asset ID. A Tool Asset ID is `plugin_` followed by the unpadded RFC 4648 base64url encoding of the SHA-256 digest of the exact ASCII Plugin ID. The prefix and 43-character digest encoding produce a 50-character Entity ID without normalization or truncation. When present, the Tool Asset ID must equal that derived value; a mismatch invalidates the manifest. Each Operation descriptor declares the timeout Core enforces for that Operation. Commands remain in the Tool Asset's existing runtime manifest. Plugin manifests do not contain Datastream descriptors, configuration schemas, connector requests, permissions, protocol versions, or upgrade metadata.
 
+### Discovery response
+
+After authentication, `GET /plugins` returns HTTP `200` with `Content-Type: application/json` and this array:
+
+```json
+[
+  {
+    "plugin_id": "adsb",
+    "display_name": "ADS-B",
+    "status": "available",
+    "reason_code": null,
+    "checked_at": "2026-08-27T13:00:00Z",
+    "operations": [
+      {
+        "operation_id": "inspect_aircraft",
+        "display_name": "Inspect aircraft",
+        "timeout_ms": 5000
+      }
+    ],
+    "tool_asset_id": "plugin_rfSey5Te4YU6Prz-hpGcwRnuSBuF9z1COTHZJt_s0G4"
+  }
+]
+```
+
+Core emits one entry per configured Plugin, ordered by `plugin_id`; Operations are ordered by `operation_id`. Every entry contains exactly the fields shown. `display_name` and `tool_asset_id` are strings from the cached manifest or `null` before Core caches a valid manifest; `tool_asset_id` is also `null` for a query-only Plugin. `operations` is empty before Core caches a valid manifest. Core retains cached discovery fields while a Plugin is unavailable.
+
+`status` is `starting`, `available`, or `unavailable`. `checked_at` is the RFC 3339 timestamp of the latest manifest, health, or Operation transport result observed by the status tracker, or `null` before any such result. `reason_code` is `null` for `starting` and `available`. For `unavailable`, it is exactly one of `transport_unreachable`, `transport_timeout`, `invalid_manifest`, `invalid_response`, or `application_unhealthy`. `invalid_manifest` covers a malformed manifest, an identity mismatch, an oversized manifest, or a non-`200` manifest response. `invalid_response` covers a malformed, oversized, or unexpected health or Operation response. Authentication failures continue to use Core's existing public error envelope.
+
 An Operation is always a bounded synchronous JSON request and response. Core applies hard size limits to the public request body and the private Plugin response body. It rejects an oversized request before dispatch and maps an oversized Plugin response to Plugin failure. Core treats input and output as opaque JSON. The Plugin validates input and owns the result shape. Each descriptor declares a timeout, and Core rejects the whole manifest if any timeout exceeds its hard maximum. Core cancels the private request when the public caller disconnects or that timeout expires. The Plugin handler must stop promptly and propagate cancellation to its Source Gateway and Atlas SDK calls. A caller disconnect or Operation timeout applies only to that invocation and does not change Plugin availability. Core returns the Operation result in the same request. Work that must outlive that request uses a Tool Task instead; the Plugin system does not add asynchronous Operation jobs or polling.
 
 Core enforces one hard in-flight Operation limit per configured Plugin. The limit counts requests from private dispatch until the Plugin response, timeout, or caller cancellation completes. Core does not queue requests above the limit. It rejects them immediately with the unavailable Plugin error category and stable reason `capacity_exhausted`, without changing Plugin status. Implementation chooses and tests the numeric limit.
+
+### Operation errors
+
+The Plugin platform implementation adds `PLUGIN_NOT_FOUND`, `PLUGIN_INPUT_REJECTED`, `PLUGIN_UNAVAILABLE`, `PLUGIN_TIMEOUT`, and `PLUGIN_FAILURE` to the Atlas Protocol `ErrorCode` enum before Core exposes the public Plugin routes. Operation failures use Core's existing `ErrorResponse` envelope. `success` remains `false`; Core supplies the human-readable `message` and its normal `error_id`, `timestamp`, and `path` metadata. Clients branch on `error_code` and the fields below, not `message`.
+
+| Failure | HTTP status | `error_code` | `details` |
+| --- | --- | --- | --- |
+| Unknown Plugin or Operation | `404` | `PLUGIN_NOT_FOUND` | Omitted. |
+| Valid private `400` | `400` | `PLUGIN_INPUT_REJECTED` | `plugin_code`, plus `plugin_details` only when the Plugin supplied details. |
+| Plugin cannot be invoked | `503` | `PLUGIN_UNAVAILABLE` | `reason_code`. |
+| Descriptor deadline expires | `504` | `PLUGIN_TIMEOUT` | Omitted. |
+| Valid private `500` | `502` | `PLUGIN_FAILURE` | `plugin_code`, plus `plugin_details` only when the Plugin supplied details. |
+| Invalid or oversized private response | `502` | `PLUGIN_FAILURE` | `reason_code: "invalid_response"`. |
+
+For `PLUGIN_UNAVAILABLE`, `reason_code` is one of the five discovery reasons above, `starting`, or `capacity_exhausted`. `capacity_exhausted` appears only in an Operation error and never changes or appears in `GET /plugins` status. Malformed or oversized public requests continue to use Core's existing `INVALID_JSON`, `BODY_TOO_LARGE`, or `VALIDATION_ERROR` responses. Caller disconnection cancels the private request and produces no response for that caller.
 
 Operations are semantically read-only and side-effect free. They may query Atlas or an External source, including sources whose query API uses HTTP `POST`, but they do not mutate Atlas, change an External source, or start ongoing behavior. Durable changes use normal Core writes, and ongoing actions use Tool Tasks. Core cannot infer side effects from opaque JSON, so Plugin code owns compliance with this contract. The live delivery transport for Datastreams remains open until a real stream establishes its ordering, replay, and latency needs.
 
 ## External-source access
 
 A private Source Gateway container hosts named Source connectors for all Plugins. It is part of the Compose-managed Atlas deployment and has no public API. Core does not proxy external-source traffic, and Plugins do not receive External source credentials.
+
+### Private Gateway protocol
+
+Deployment configuration gives every Plugin one private `http` or `https` Source Gateway origin with no path, query, fragment, or credentials. Connector IDs use the same grammar as Plugin IDs. A Plugin makes one kind of call relative to that origin:
+
+```text
+POST /connectors/{connector_id}/requests
+```
+
+The request uses `Content-Type: application/json` and `Accept: application/json`. Its body has exactly these fields:
+
+```json
+{
+  "method": "GET",
+  "path": "/v1/aircraft",
+  "query": [["bbox", "42.0,-72.0,43.0,-71.0"]],
+  "headers": [["accept", "application/json"]],
+  "body_base64": null
+}
+```
+
+`method` is an uppercase HTTP method. `path` begins with `/` and contains no scheme, authority, query, or fragment. The path and query tuple strings are decoded UTF-8 text, never pre-encoded URL text. The Gateway evaluates connector policy against those decoded values, rejects NUL, backslash, and `.` or `..` path segments, then percent-encodes UTF-8 bytes exactly once. A literal `%` is data and becomes `%25`. The Gateway preserves slash boundaries, query tuple order, and repeated query names; it encodes query spaces as `%20`, not `+`. `query` and `headers` are arrays of two-string tuples so repeated names are preserved; the Gateway adds the configured origin and credentials itself. `body_base64` is `null` for an empty body or the standard padded base64 encoding of the request bytes. The connector body limit counts decoded request bytes, while a separate hard Gateway limit bounds the complete JSON request. The Gateway rejects unknown fields, malformed tuples or base64, disallowed methods, paths, queries, or headers, credential-header overrides, and requests over its configured header or body limits.
+
+Each connector configuration contains request and response header-name allowlists. The Gateway compares HTTP header names case-insensitively and emits response names in lowercase. It preserves repeated values as separate tuples in their received order. It always rejects Plugin-supplied `host`, `content-length`, `authorization`, `proxy-authorization`, `cookie`, and every configured credential header. In both directions it removes `connection`, every header named by `Connection`, `content-length`, `keep-alive`, `proxy-authenticate`, `proxy-authorization`, `proxy-connection`, `te`, `trailer`, `transfer-encoding`, and `upgrade`. It also removes `authorization`, `cookie`, `set-cookie`, and every configured credential header from responses. The Gateway sets `Host` and `Content-Length`, injects connector credentials, and forwards only remaining allowlisted headers. Hard limits bound the tuple count and total decoded header-name and value bytes in each direction.
+
+A valid upstream HTTP response always becomes HTTP `200` from the Gateway, including an upstream `3xx`, `4xx`, or `5xx`. The JSON body has exactly `status`, `headers`, and `body_base64`; `status` is the upstream status, `headers` preserves allowed repeated response headers as two-string tuples, and `body_base64` contains the standard padded base64 encoding of the complete bounded response body.
+
+Gateway failures use `Content-Type: application/json` and a body containing only `code`:
+
+| Gateway status | `code` | Meaning |
+| --- | --- | --- |
+| `400` | `request_rejected` | The request is malformed, disallowed, or over a request limit. |
+| `404` | `unknown_connector` | The connector ID is not configured. |
+| `413` | `response_too_large` | The upstream response exceeded the connector or Gateway limit. |
+| `502` | `upstream_unreachable` | The Gateway could not reach the selected upstream address. |
+| `503` | `circuit_open` | The connector circuit breaker rejected the request. |
+| `504` | `upstream_timeout` | The bounded upstream attempt timed out. |
+
+The Gateway does not authenticate or identify individual Plugin callers. Compose limits the route to the private deployment network, and the trusted first deployment lets every Plugin use every connector. When a Plugin Operation or Task is cancelled, the Plugin cancels this private request; the Gateway cancels the outbound request, performs no later retry, and discards any response. Gateway and Plugin tests must exercise strict decoding, repeated query and header values, binary bodies, failure mapping, response bounds, and cancellation. The protocol has no version negotiation; changing it requires coordinated Plugin, Gateway, and deployment updates.
 
 Source connectors centralize mechanics shared across external systems:
 
@@ -78,7 +160,7 @@ Source connectors centralize mechanics shared across external systems:
 
 Each Source connector pins its external origin and credentials. A Plugin identifies the connector and supplies a relative path, method, query, allowed headers, and body within configured limits. The Gateway rejects absolute URLs, origin overrides, and credential-header overrides. Before every connection, it validates the selected address against the connector's egress policy. Loopback, link-local, and private addresses are denied unless that connector explicitly allows them, and the connection uses only the validated address. The Gateway never follows upstream redirects; it returns each `3xx` response to the Plugin under the same bounded response rules. It does not translate vendor payloads into an Atlas-wide external-data schema. Each Plugin owns the meaning and shape of its source data.
 
-The Gateway buffers the complete upstream response up to the connector's configured response-size limit, which cannot exceed a hard Gateway maximum. It then returns the upstream status, allowed response headers, and raw response bytes to the Plugin. It rejects an oversized response without returning a partial body. It does not require JSON, stream partial data, or wrap data in a normalized external-data envelope.
+The Gateway buffers the complete upstream response up to the connector's configured response-size limit, which counts raw body bytes before base64 encoding and cannot exceed a hard Gateway maximum. Separate hard limits bound allowed response-header bytes and the complete encoded Gateway response. Those limits must allow every permitted raw body and header set to fit its JSON envelope. The Gateway returns the upstream status and allowed response headers, and transports the raw response bytes in `body_base64`. It rejects an oversized response without returning a partial body. It does not require JSON, stream partial data, or wrap data in a normalized external-data envelope. Core's private Plugin response limit applies later, after the Plugin maps source data into an Operation JSON result, and does not limit Gateway responses.
 
 Every source-backed Plugin result must carry enough source provenance and freshness information for callers to judge it. This requirement applies when the Plugin returns the result from an Operation or future Datastream and when it writes the result through the Atlas SDK. The Plugin owns the result-specific fields; the Source Gateway does not add a common metadata envelope.
 
@@ -88,7 +170,7 @@ Connector configuration declares retry safety for specific upstream endpoint and
 
 The Gateway owns fixed failure categories for an unknown connector, rejected request policy, timeout, oversized response, open circuit, and unreachable upstream. It does not return raw network or connector errors. A valid upstream HTTP response is not a Gateway failure, even when its status represents a vendor error. The Gateway returns that status, the allowed headers, and the bounded response body for the Plugin to interpret.
 
-A Source Gateway failure degrades Plugins that depend on External sources. It does not change Core liveness or readiness. All installed Plugins are trusted and may use every configured connector. Connector access is not a Plugin capability and requires no per-Plugin grant.
+A Source Gateway failure degrades Plugins that depend on External sources. It does not change Core liveness or readiness. All installed Plugins are trusted and may use every configured connector. Connector access is not a Plugin capability and requires no per-Plugin grant. The first Compose topology does not sandbox Plugin outbound networking or prevent a trusted Plugin from making a direct outbound request. Using the Gateway for external-source access is an implementation requirement, not a containment boundary. Supporting untrusted Plugin images would require enforced egress isolation.
 
 Deployment configuration defines connector IDs, external origins, request limits, and secret references. The Gateway resolves secret references from environment variables or Compose secrets at startup. Core, Atlas resources, and Plugins do not store those credentials. Changing connector configuration restarts the Gateway.
 
@@ -144,8 +226,8 @@ The private Operation request body is the public request's validated JSON value 
 | Status | Body | Public result |
 | --- | --- | --- |
 | `200` | Any JSON value | Return that value as the Operation result. |
-| `400` | Plugin error object | Map to rejected input. |
-| `500` | Plugin error object | Map to Plugin failure. |
+| `400` | Plugin error object | Map to `PLUGIN_INPUT_REJECTED`. |
+| `500` | Plugin error object | Map to `PLUGIN_FAILURE`. |
 
 A Plugin error object contains a required `code` matching `^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$`, an optional JSON `details` value, and no other fields. Any other status, invalid error object, invalid JSON, or oversized body maps to Plugin failure and makes transport unavailable. A valid `400` or `500` response proves transport is reachable and does not change application health. Core never proxies the private status or raw body. Connection failure maps to an unavailable Plugin, and the descriptor deadline maps to timeout. Core cancels the private HTTP request on caller cancellation or timeout.
 
@@ -171,7 +253,7 @@ Installing or upgrading a Plugin means editing deployment configuration or its i
 
 After the initial health result, Core checks Plugin health on one fixed internal cadence. A connection failure, a manifest or health timeout, or an invalid private response makes the Plugin transport unavailable immediately. Any subsequent valid manifest, health, or Operation response restores transport availability immediately, even when the Operation rejects its input, reports a handled failure, or health remains non-OK. Transport recovery cannot replace a valid cached manifest. A descriptor deadline, caller-initiated cancellation, or capacity rejection affects only that Operation invocation. Transport recovery does not clear an application-level health failure; only a later OK health response does. Core maps a non-OK health response to a stable `application_unhealthy` public reason without exposing its private detail. After Core caches a manifest, discovery continues to show its Operations while the Plugin is unavailable, but invocation fails. An optional Plugin failure does not make Core unhealthy or unready.
 
-Core owns the public Operation error envelope and maps failures into stable categories for rejected input, an unavailable Plugin, timeout, and Plugin failure. It does not proxy the Plugin's HTTP status or raw error body. A Plugin may include a Plugin-specific error code and safe diagnostic data inside the authenticated error details without expanding Atlas's top-level error categories.
+Core owns the public Operation `ErrorResponse` and uses the exact HTTP status, `error_code`, and `details` mapping above. It does not proxy the Plugin's private HTTP status or raw error body. A valid Plugin error object contributes only `plugin_code` and optional `plugin_details` to the authenticated public details.
 
 ## Command-interface integration
 
@@ -181,7 +263,7 @@ Declarative contributions such as map layers, forms, and actions may be consider
 
 A Plugin that operators need to task may register an ordinary Asset with `entity_type: "asset"` and `subtype: "tool"`. Query-only Plugins do not need a Tool Asset. Tool Assets use the existing runtime, Task, and Command systems.
 
-The Plugin derives its Tool Asset ID with the manifest derivation above and performs an idempotent get-or-create through the Atlas SDK during startup. It creates a missing Entity as an `asset` with subtype `tool` and a `custom_plugin` ownership component containing its Plugin ID. It reuses an existing Entity only when its type, subtype, and ownership marker all match. That ownership check also handles the theoretical case where different Plugin IDs derive the same Entity ID. Any mismatch is a conflict, so the Plugin refuses runtime registration and returns a non-OK private health response until an operator corrects it. The Plugin platform extends Core's existing runtime identity guard so `entity_type`, `subtype`, and the ownership marker cannot change after an Asset runtime has registered. Core rejects deletion of a Plugin-owned Tool Asset while its Plugin remains configured, in addition to the existing deletion guard for nonterminal Tasks. Removing the Plugin from deployment configuration is the only uninstall path; after removal and Task terminalization, an operator may delete its Tool Asset.
+The Plugin derives its Tool Asset ID with the manifest derivation above and performs an idempotent get-or-create through the Atlas SDK during startup. It creates a missing Entity as an `asset` with subtype `tool` and the exact ownership component `"custom_plugin": {"plugin_id": "<plugin_id>"}`. The component must be an object with only `plugin_id`, whose value follows the Plugin ID grammar. The Plugin reuses an existing Entity only when its type, subtype, and parsed `plugin_id` all match; JSON object key order is irrelevant. That ownership check also handles the theoretical case where different Plugin IDs derive the same Entity ID. Any mismatch is a conflict, so the Plugin refuses runtime registration and returns a non-OK private health response until an operator corrects it. Core re-reads and validates the stored component during runtime registration, then extends its existing action-level runtime identity guard so `entity_type`, `subtype`, and `custom_plugin.plugin_id` cannot change after registration. That guard covers every component mutation path, including Entity PATCH and check-in. Core performs the same validation before applying the configured-Plugin deletion guard. Removing the Plugin from deployment configuration is the only uninstall path; after removal and Task terminalization, an operator may delete its Tool Asset.
 
 Plugin commands remain dedicated, Protocol-authored Atlas Commands, such as `sensing.scan_area`. A Plugin runtime manifest may advertise the subset it implements, but it cannot extend the production Command Catalog. Adding taskable Plugin behavior therefore remains a coordinated Atlas change with a Command schema, semantics, execution handler, and purpose-built Command Interface input. Plugin installation does not inject commands or generic forms into the browser.
 
@@ -221,15 +303,15 @@ The building is not an Asset or Track. Source-provided height is advisory data a
 
 - Core owns fixed public Plugin routes and reserves the Datastream namespace until its contract exists.
 - Core caps in-flight Operations per Plugin, rejects excess requests without queueing, and leaves Plugin status unchanged.
-- Docker Compose or the deployment orchestrator starts one trusted container per configured Plugin.
+- Docker Compose or the deployment orchestrator starts one trusted container per configured Plugin; Gateway use is an implementation requirement rather than a Plugin egress sandbox.
 - Deployment configuration explicitly maps one path-safe Plugin ID to one private Plugin base URL, and each manifest uses unique path-safe Operation IDs.
 - Core communicates with Plugins through fixed private manifest, health, and Operation HTTP/JSON routes; Plugins do not self-register.
 - Atlas does not model multiple active instances of one Plugin.
 - Plugin code uses the ordinary Atlas SDK with full access; Core does not enforce Plugin-specific capabilities.
 - All Plugins share one full-access Plugin API key.
 - A taskable Plugin may register a Tool Asset with `entity_type: "asset"` and `subtype: "tool"`; query-only Plugins need no Asset.
-- A taskable Plugin creates or ensures its own Tool Asset through the SDK during startup and records its Plugin ID in an ownership component.
-- A Tool Asset ID is `plugin_` plus the unpadded base64url encoding of the full SHA-256 digest of its Plugin ID; Core keeps its type, subtype, and ownership marker immutable after runtime registration, and any mismatch makes the Plugin unavailable.
+- A taskable Plugin creates or ensures its own Tool Asset through the SDK during startup and records its Plugin ID as the strict `custom_plugin.plugin_id` ownership component.
+- A Tool Asset ID is `plugin_` plus the unpadded base64url encoding of the full SHA-256 digest of its Plugin ID; Core keeps its type, subtype, and ownership marker immutable across PATCH, check-in, and every other mutation path after runtime registration.
 - An advertised Tool Asset ID must match the value derived from the manifest's Plugin ID.
 - Core rejects deletion of a Plugin-owned Tool Asset while its Plugin remains configured.
 - Tool Assets implement dedicated Protocol-owned Commands rather than Plugin-defined Commands.
@@ -237,7 +319,7 @@ The building is not an Asset or Track. Source-provided height is advisory data a
 - Plugin Task cancellation uses the existing terminal cancellation and handler abort without a second confirmation.
 - A graceful Plugin runtime stop fails active Tasks with `asset_stopped`; replacement fencing uses `asset_restarted`. Plugins do not resume them automatically.
 - A private Source Gateway container hosts Source connectors for all Plugins.
-- Source connectors pin external origins, validate each selected address against connector egress policy, accept bounded relative requests from Plugins, and do not follow upstream redirects.
+- Source connectors pin external origins, validate each selected address against connector egress policy, accept bounded relative requests through the fixed private Gateway protocol, apply configured header allowlists plus fixed forbidden headers, and do not follow upstream redirects.
 - Every installed Plugin may use every configured Source connector.
 - Plugin and Source Gateway configuration is deployment-owned; secrets come from environment variables or Compose secrets.
 - Plugin containers have no persistent private storage in the first architecture.
@@ -245,15 +327,15 @@ The building is not an Asset or Track. Source-provided height is advisory data a
 - The existing Atlas Protocol revision check between the SDK and Core remains unchanged.
 - Installing or upgrading a Plugin edits deployment configuration and restarts the Compose deployment.
 - A Plugin manifest contains Plugin and Operation discovery fields only; Datastreams, Commands, configuration, credentials, and compatibility metadata stay elsewhere.
-- The private protocol fixes endpoint paths, JSON shapes, timeout units, health semantics, and Operation status mapping.
+- The private Core-to-Plugin and Plugin-to-Gateway protocols fix endpoint paths, JSON or binary framing, bounds, cancellation, and error mapping.
 - Core fetches a Plugin manifest once, retrying until success, and caches it until Core restarts.
 - Core bounds every private Plugin response and rejects a manifest whose Plugin ID differs from deployment configuration or whose Tool Asset ID differs from the value derived from that Plugin ID.
 - Operations are side-effect-free synchronous JSON calls with Plugin-owned validation, bounded request and response bodies, bounded per-Operation timeouts, and propagated cancellation; longer work uses Tool Tasks.
-- Core maps Operation failures into stable Atlas error categories; Plugin-specific codes may appear only in authenticated error details.
+- Core maps Operation failures into five Plugin-specific Protocol error codes; `capacity_exhausted` appears only in authenticated `PLUGIN_UNAVAILABLE` details and does not change discovery status.
 - Every configured Plugin remains discoverable with `starting`, `available`, or `unavailable` status; `starting` lasts through the immediately triggered initial health result after the first valid manifest.
-- Authenticated status reports the latest check time and a stable Core-owned reason code without private endpoints or raw failure data.
+- Authenticated status uses one exact `GET /plugins` response schema with nullable pre-manifest discovery fields and five Core-owned unavailability reason codes.
 - Core checks Plugin health immediately after the first valid manifest and then on a fixed internal cadence. Any valid manifest, health, or Operation response restores transport availability immediately, while a valid cached manifest remains an independent prerequisite and a non-OK health response keeps the Plugin unavailable until a later OK health response.
-- The Source Gateway buffers complete responses and returns upstream status, allowed headers, and raw bytes under a per-connector limit and hard Gateway maximum.
+- The Source Gateway buffers complete responses and returns upstream status, allowed headers, and raw bytes under explicit raw-body, header, and encoded-envelope limits.
 - Source Gateway caching is disabled by default; a connector may enable a disposable in-memory time-to-live cache only for explicitly safe endpoint and method combinations. Mutating requests are never cached, and hard Gateway-wide byte and entry caps bound the cache.
 - Source Gateway retries are bounded by connector-declared endpoint and method rules. A request that may mutate upstream state also requires a provider-supported idempotency key.
 - The Source Gateway returns fixed failure categories; valid upstream HTTP responses remain responses for the Plugin to interpret.
