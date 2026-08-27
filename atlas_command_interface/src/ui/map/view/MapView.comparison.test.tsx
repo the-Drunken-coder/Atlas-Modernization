@@ -218,14 +218,16 @@ describe("MapView region comparison", () => {
   });
 
   it("resizes width by pointer and height by keyboard without navigating entities", async () => {
-    const { onSelectEntity } = renderMapView({ styleId: "base", style: style("base"), mapSourceOptions });
+    const { map, onSelectEntity } = renderMapView({ styleId: "base", style: style("base"), mapSourceOptions });
     await drawComparison();
+    map.stop.mockClear();
 
     fireEvent.mouseDown(screen.getByRole("button", { name: "Resize comparison region width" }), {
       button: 0,
       clientX: 260,
       clientY: 120
     });
+    expect(map.stop).toHaveBeenCalledOnce();
     fireEvent.mouseMove(window, { clientX: 300, clientY: 120 });
     fireEvent.mouseUp(screen.getByTestId("map-canvas"), { clientX: 300, clientY: 120 });
 
@@ -346,6 +348,23 @@ describe("MapView region comparison", () => {
     );
   });
 
+  it("redraws to a keyboard-adjustable default region from the keyboard", async () => {
+    renderMapView({ styleId: "base", style: style("base"), mapSourceOptions });
+    await drawComparison();
+
+    fireEvent.keyDown(screen.getByRole("button", { name: "Redraw" }), { key: "Enter" });
+
+    await waitFor(() =>
+      expect(screen.getByTestId("map-comparison-region")).toHaveStyle({
+        left: "100px",
+        top: "50px",
+        width: "200px",
+        height: "100px"
+      })
+    );
+    expect(screen.getByRole("dialog", { name: "Region comparison" })).toBeInTheDocument();
+  });
+
   it("surfaces unavailable, loading, and tile-error states without animation", async () => {
     const unavailableSources: MapSourceConfig[] = [
       { id: "base", label: "Base map", style: style("base") },
@@ -374,6 +393,7 @@ describe("MapView region comparison", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("tile request failed");
     const mapCount = mapInstances().length;
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(screen.getByRole("button", { name: "Inside region" })).toHaveFocus();
     await waitFor(() => expect(mapInstances()).toHaveLength(mapCount + 1));
   });
 

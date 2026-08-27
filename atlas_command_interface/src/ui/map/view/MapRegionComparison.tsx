@@ -391,6 +391,7 @@ export function MapRegionComparison({
     if (event.button !== 0 || !map || !mapCanvas || !region || !regionRect) return;
     event.preventDefault();
     event.stopPropagation();
+    map.stop();
     notifyUserGesture();
     setPanelOpen(false);
     setDrag({
@@ -629,11 +630,26 @@ export function MapRegionComparison({
             <div className="map-compare__error" role="alert">
               <span>Tile error</span>
               <code>{status.message}</code>
-              <Button onClick={() => setRetryGeneration((generation) => generation + 1)}>Retry</Button>
+              <Button
+                onClick={() => {
+                  panelRef.current?.querySelector<HTMLButtonElement>("[data-map-source-trigger]")?.focus();
+                  setRetryGeneration((generation) => generation + 1);
+                }}
+              >
+                Retry
+              </Button>
             </div>
           ) : null}
           <footer className="map-compare__actions">
-            <Button disabled={!region} onClick={() => beginDrawing(region)}>
+            <Button
+              disabled={!region}
+              onKeyDown={(event) => {
+                if (!["Enter", " "].includes(event.key)) return;
+                event.preventDefault();
+                createKeyboardRegion();
+              }}
+              onClick={() => beginDrawing(region)}
+            >
               Redraw
             </Button>
             <Button variant="ghost" disabled={!region} onClick={clear}>

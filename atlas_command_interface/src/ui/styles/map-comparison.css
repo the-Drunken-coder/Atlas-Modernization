@@ -220,7 +220,7 @@
 
 .map-compare__caption {
   position: absolute;
-  z-index: 26;
+  z-index: 16;
   display: flex;
   max-width: min(210px, calc(100% - 16px));
   min-height: 25px;
