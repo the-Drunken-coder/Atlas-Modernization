@@ -150,6 +150,12 @@ export function MapRegionComparison({
         syncFrameRef.current = undefined;
         const bounds = mapCanvas.getBoundingClientRect();
         const next = visibleScreenRect(map, region, bounds.width, bounds.height);
+        if (
+          !next &&
+          document.activeElement instanceof Element &&
+          document.activeElement.closest(".map-compare__region")
+        )
+          toolRef.current?.focus();
         if (screenRectsEqual(regionRectRef.current, next)) {
           if (next) syncComparisonCamera(map, comparisonMapRef.current, next, false);
           return;
@@ -198,7 +204,7 @@ export function MapRegionComparison({
       const nextRect =
         drag.transform === "move"
           ? clampMovedRect(drag.initialRect, delta, mapCanvas.getBoundingClientRect())
-          : clampResizedRect(drag.initialRect, delta, drag.transform, mapCanvas.getBoundingClientRect());
+          : clampResizedRect(drag.initialRect, delta, drag.transform);
       setRegion(regionFromScreenRect(primaryMap, nextRect));
     };
     const finishDrag = (event: globalThis.MouseEvent) => {
@@ -385,6 +391,7 @@ export function MapRegionComparison({
     if (event.button !== 0 || !map || !mapCanvas || !region || !regionRect) return;
     event.preventDefault();
     event.stopPropagation();
+    notifyUserGesture();
     setPanelOpen(false);
     setDrag({
       kind: "transform",
@@ -407,7 +414,7 @@ export function MapRegionComparison({
     const nextRect =
       transform === "move"
         ? clampMovedRect(projectedRect, delta, viewport)
-        : clampResizedRect(projectedRect, delta, transform, viewport);
+        : clampResizedRect(projectedRect, delta, transform);
     setRegion(regionFromScreenRect(map, nextRect));
     notifyUserGesture();
   };
@@ -734,15 +741,13 @@ function clampMovedRect(rect: ScreenRect, delta: ScreenPoint, viewport: DOMRect)
   };
 }
 
-function clampResizedRect(rect: ScreenRect, delta: ScreenPoint, axes: ResizeAxes, viewport: DOMRect): ScreenRect {
-  const maxWidth = Math.max(0, viewport.width - rect.left);
-  const maxHeight = Math.max(0, viewport.height - rect.top);
-  const minWidth = Math.min(maxWidth, Math.max(MIN_REGION_SIZE, MIN_REGION_SIZE - rect.left));
-  const minHeight = Math.min(maxHeight, Math.max(MIN_REGION_SIZE, MIN_REGION_SIZE - rect.top));
+function clampResizedRect(rect: ScreenRect, delta: ScreenPoint, axes: ResizeAxes): ScreenRect {
+  const minWidth = Math.max(MIN_REGION_SIZE, MIN_REGION_SIZE - rect.left);
+  const minHeight = Math.max(MIN_REGION_SIZE, MIN_REGION_SIZE - rect.top);
   return {
     ...rect,
-    width: axes === "height" ? rect.width : Math.max(minWidth, Math.min(maxWidth, rect.width + delta.x)),
-    height: axes === "width" ? rect.height : Math.max(minHeight, Math.min(maxHeight, rect.height + delta.y))
+    width: axes === "height" ? rect.width : Math.max(minWidth, rect.width + delta.x),
+    height: axes === "width" ? rect.height : Math.max(minHeight, rect.height + delta.y)
   };
 }
 

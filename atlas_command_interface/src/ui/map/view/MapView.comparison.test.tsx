@@ -274,6 +274,42 @@ describe("MapView region comparison", () => {
     );
   });
 
+  it("preserves and grows the off-screen part of a region while resizing", async () => {
+    const { map } = renderMapView({ styleId: "base", style: style("base"), mapSourceOptions });
+    await drawComparison();
+    map.project.mockImplementation((position: [number, number]) => ({ x: position[0] + 200, y: position[1] }));
+    map.unproject.mockImplementation((point: [number, number] | { x: number; y: number }) => {
+      const [x, y] = Array.isArray(point) ? point : [point.x, point.y];
+      return { lng: x - 200, lat: y };
+    });
+    map.fire("move");
+    await waitFor(() =>
+      expect(screen.getByTestId("map-comparison-region")).toHaveStyle({ left: "270px", width: "130px" })
+    );
+
+    fireEvent.keyDown(screen.getByRole("button", { name: "Resize comparison region width" }), {
+      key: "ArrowRight"
+    });
+    map.project.mockImplementation((position: [number, number]) => ({ x: position[0], y: position[1] }));
+    map.fire("move");
+
+    await waitFor(() =>
+      expect(screen.getByTestId("map-comparison-region")).toHaveStyle({ left: "70px", width: "190px" })
+    );
+  });
+
+  it("returns focus to Compare when camera movement hides focused region controls", async () => {
+    const { map } = renderMapView({ styleId: "base", style: style("base"), mapSourceOptions });
+    await drawComparison();
+    screen.getByRole("button", { name: "Move comparison region" }).focus();
+    map.project.mockImplementation((position: [number, number]) => ({ x: position[0] + 500, y: position[1] }));
+
+    map.fire("move");
+
+    await waitFor(() => expect(screen.queryByTestId("map-comparison-region")).not.toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "Compare map source inside a region" })).toHaveFocus();
+  });
+
   it("adjusts comparison opacity and resets it after clear", async () => {
     renderMapView({ styleId: "base", style: style("base"), mapSourceOptions });
     await drawComparison();
