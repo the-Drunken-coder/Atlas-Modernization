@@ -4,6 +4,7 @@ import type { MapSources } from "../rendering/map-sources.js";
 import {
   CAMERA_EVENT_TAG,
   coordsChanged,
+  FIT_DURATION_MS,
   FOLLOW_EASE_MS,
   type FollowEvent,
   type FollowState,
@@ -11,9 +12,13 @@ import {
   followIdle,
   followReducer,
   geometryForTarget,
+  geometryUsesUnwrappedLongitudes,
+  INITIAL_WORLD_BOUNDS,
   isLngLatPosition,
   type MapCameraCommand,
-  planFocusMove
+  PREVIEW_RESTORE_MS,
+  planFocusMove,
+  previewEasing
 } from "./map-camera.js";
 
 const FLY_SEQ_TAG = "atlasFlySeq";
@@ -30,11 +35,18 @@ export function useMapCamera(args: {
   mapReady: boolean;
   sources: MapSources;
   command: MapCameraCommand | null | undefined;
-}): { notifyUserGesture: () => void } {
-  const { mapRef, mapReady, sources, command } = args;
+  onUserGesture?: () => void;
+}): { notifyUserGesture: () => void; releaseCameraOwnership: () => void } {
+  const { mapRef, mapReady, sources, command, onUserGesture } = args;
   const followRef = useRef<FollowState>(followIdle);
   const lastAppliedSeqRef = useRef(0);
   const lastFollowedCoordsRef = useRef<[number, number] | null>(null);
+  const previewOriginRef = useRef<{
+    center: [number, number];
+    zoom: number;
+    renderWorldCopies: boolean;
+  } | null>(null);
+  const renderWorldCopiesOwnedRef = useRef(false);
   const sourcesRef = useRef(sources);
   sourcesRef.current = sources;
 
@@ -58,7 +70,21 @@ export function useMapCamera(args: {
   }, [mapRef]);
 
   const notifyUserGesture = useCallback(() => {
+    const origin = previewOriginRef.current;
+    if (origin) {
+      mapRef.current?.setRenderWorldCopies(origin.renderWorldCopies);
+      renderWorldCopiesOwnedRef.current = false;
+    }
+    previewOriginRef.current = null;
+    onUserGesture?.();
     dispatch({ type: "user-gesture" });
+  }, [dispatch, mapRef, onUserGesture]);
+
+  // A staged commit owns the current view without leaving the previous
+  // preview or entity-follow command active during its reticle flash.
+  const releaseCameraOwnership = useCallback(() => {
+    previewOriginRef.current = null;
+    dispatch({ type: "command-cleared" });
   }, [dispatch]);
 
   // Gesture and animation listeners. Untagged movement means the user moved
@@ -69,7 +95,7 @@ export function useMapCamera(args: {
     if (!map || !mapReady) return;
 
     const onMoveStart = (event?: unknown) => {
-      if (!(event as TaggedEvent)?.[CAMERA_EVENT_TAG]) dispatch({ type: "user-gesture" });
+      if (!(event as TaggedEvent)?.[CAMERA_EVENT_TAG]) notifyUserGesture();
     };
     const onMoveEnd = (event?: unknown) => {
       const tagged = event as TaggedEvent;
@@ -79,7 +105,7 @@ export function useMapCamera(args: {
       // Telemetry may have moved the entity during the flight.
       chaseFollowedEntity();
     };
-    const onGesture = () => dispatch({ type: "user-gesture" });
+    const onGesture = notifyUserGesture;
 
     map.on("movestart", onMoveStart);
     map.on("moveend", onMoveEnd);
@@ -93,7 +119,7 @@ export function useMapCamera(args: {
       map.off("boxzoomstart", onGesture);
       map.off("wheel", onGesture);
     };
-  }, [mapRef, mapReady, dispatch, chaseFollowedEntity]);
+  }, [mapRef, mapReady, dispatch, chaseFollowedEntity, notifyUserGesture]);
 
   // Apply camera commands. Unresolvable targets stay pending and retry on
   // every sources change; the seq is committed only once a move is issued.
@@ -103,9 +129,32 @@ export function useMapCamera(args: {
 
     if (!command) {
       dispatch({ type: "command-cleared" });
+      const origin = previewOriginRef.current;
+      if (origin) {
+        previewOriginRef.current = null;
+        map.setRenderWorldCopies(origin.renderWorldCopies);
+        renderWorldCopiesOwnedRef.current = false;
+        map.easeTo(
+          { center: origin.center, zoom: origin.zoom, duration: PREVIEW_RESTORE_MS, easing: previewEasing },
+          { [CAMERA_EVENT_TAG]: true }
+        );
+      } else if (renderWorldCopiesOwnedRef.current) {
+        map.setRenderWorldCopies(false);
+        renderWorldCopiesOwnedRef.current = false;
+      }
       return;
     }
     if (command.seq <= lastAppliedSeqRef.current) return;
+
+    if (command.intent === "world") {
+      previewOriginRef.current = null;
+      lastAppliedSeqRef.current = command.seq;
+      dispatch({ type: "command-geometry", seq: command.seq });
+      map.setRenderWorldCopies(false);
+      renderWorldCopiesOwnedRef.current = false;
+      map.fitBounds(INITIAL_WORLD_BOUNDS, { padding: 0, duration: FIT_DURATION_MS }, { [CAMERA_EVENT_TAG]: true });
+      return;
+    }
 
     const geometry = geometryForTarget(sources, command.target);
     const view = geometry
@@ -114,7 +163,15 @@ export function useMapCamera(args: {
           return { center: [center.lng, center.lat] as [number, number], zoom: map.getZoom() };
         })()
       : undefined;
-    const move = geometry && view ? planFocusMove(geometry, view) : null;
+    if (command.intent === "preview" && view && !previewOriginRef.current) {
+      previewOriginRef.current = { ...view, renderWorldCopies: map.getRenderWorldCopies() };
+    }
+    if (command.intent !== "preview") previewOriginRef.current = null;
+    if (geometry) {
+      map.setRenderWorldCopies(geometryUsesUnwrappedLongitudes(geometry));
+      renderWorldCopiesOwnedRef.current = true;
+    }
+    const move = geometry && view ? planFocusMove(geometry, view, command.intent) : null;
     if (!move) {
       if (command.target.type === "entity")
         dispatch({ type: "command-pending", seq: command.seq, entityId: command.target.id });
@@ -134,13 +191,26 @@ export function useMapCamera(args: {
       } else {
         dispatch({ type: "command-geometry", seq: command.seq });
       }
-      map.flyTo({ center: move.center, zoom: move.zoom, duration: move.durationMs }, eventData);
+      map.flyTo(
+        {
+          center: move.center,
+          zoom: move.zoom,
+          duration: move.durationMs,
+          ...(command.intent === "preview" ? { easing: previewEasing } : {})
+        },
+        eventData
+      );
       return;
     }
     dispatch({ type: "command-geometry", seq: command.seq });
     map.fitBounds(
       move.bounds,
-      { duration: move.durationMs, maxZoom: move.maxZoom, padding: move.padding },
+      {
+        duration: move.durationMs,
+        maxZoom: move.maxZoom,
+        padding: move.padding,
+        ...(command.intent === "preview" ? { easing: previewEasing } : {})
+      },
       { [CAMERA_EVENT_TAG]: true }
     );
   }, [command, sources, mapReady, mapRef, dispatch]);
@@ -151,5 +221,5 @@ export function useMapCamera(args: {
     chaseFollowedEntity();
   }, [sources, mapReady, chaseFollowedEntity]);
 
-  return { notifyUserGesture };
+  return { notifyUserGesture, releaseCameraOwnership };
 }

@@ -1,12 +1,18 @@
 import { Callout } from "@blueprintjs/core";
 import { type MapMouseEvent, type Map as MlMap, type StyleSpecification } from "maplibre-gl";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { MapSourceConfig } from "../../../app/config.js";
 import { sanitizeConnectionError } from "../../../atlas/connection-error.js";
 import { Button } from "../../primitives/controls.js";
 import { getSidcRuntime, loadSidcRuntime } from "../../symbols/sidc-runtime.js";
-import { CAMERA_EVENT_TAG, type MapCameraCommand } from "../interaction/map-camera.js";
+import {
+  CAMERA_EVENT_TAG,
+  type MapCameraCommand,
+  type MapTarget,
+  RETICLE_FLASH_MS
+} from "../interaction/map-camera.js";
 import type { MapReticleTarget } from "../interaction/map-targets.js";
+import { reticleForVisibleTarget } from "../interaction/map-targets.js";
 import { useMapCamera } from "../interaction/use-map-camera.js";
 import { useMapReticleInteraction } from "../interaction/use-map-reticle-interaction.js";
 import { createEditingMarkers, type MapEditing } from "../rendering/map-editing.js";
@@ -26,6 +32,7 @@ import { MapCursorOverlay } from "./MapCursorOverlay.js";
 import { MapRegionComparison } from "./MapRegionComparison.js";
 import { MapReticle } from "./MapReticle.js";
 import { cloneStyle, fitWorldOnce, webglAvailable } from "./map-view-utils.js";
+import { PlaceDetailLens } from "./PlaceDetailLens.js";
 
 export type MapContextMenuInfo = { lng: number; lat: number; x: number; y: number };
 export type { MapReticleTarget } from "../interaction/map-targets.js";
@@ -41,6 +48,7 @@ type MapViewProps = {
   editing?: MapEditing;
   initialCenter?: [number, number];
   focusTarget?: MapReticleTarget | null;
+  placeDetailTarget?: MapTarget | null;
   cameraCommand?: MapCameraCommand | null;
   onSelectEntity: (id: string) => void;
   onMapContextMenu: (info: MapContextMenuInfo) => void;
@@ -63,6 +71,7 @@ export function MapView({
   editing,
   initialCenter,
   focusTarget,
+  placeDetailTarget,
   cameraCommand,
   onSelectEntity,
   onMapContextMenu,
@@ -87,12 +96,32 @@ export function MapView({
   const styleSwitchErrorRef = useRef(onStyleSwitchError);
   const [mapError, setMapError] = useState<string>();
   const [mapReady, setMapReady] = useState(false);
+  const [appliedCameraCommand, setAppliedCameraCommand] = useState<MapCameraCommand | null | undefined>(() =>
+    cameraCommand?.intent === "commit" ? null : cameraCommand
+  );
+  const [reticleFlashing, setReticleFlashing] = useState(false);
+  const pendingCommitTimeoutRef = useRef<number | undefined>(undefined);
   handlersRef.current = { onSelectEntity, onMapContextMenu };
   styleSwitchErrorRef.current = onStyleSwitchError;
   sourcesRef.current = sources;
   editingRef.current = editing;
   initialMapRef.current = { initialCenter, style, styleId };
-  const { notifyUserGesture } = useMapCamera({ mapRef, mapReady, sources, command: cameraCommand });
+  const clearPendingCommit = useCallback(() => {
+    if (pendingCommitTimeoutRef.current === undefined) return false;
+    window.clearTimeout(pendingCommitTimeoutRef.current);
+    pendingCommitTimeoutRef.current = undefined;
+    return true;
+  }, []);
+  const cancelPendingCommit = useCallback(() => {
+    if (clearPendingCommit()) setReticleFlashing(false);
+  }, [clearPendingCommit]);
+  const { notifyUserGesture, releaseCameraOwnership } = useMapCamera({
+    mapRef,
+    mapReady,
+    sources,
+    command: appliedCameraCommand,
+    onUserGesture: cancelPendingCommit
+  });
   const reticleInteraction = useMapReticleInteraction({
     mapCanvasRef,
     mapRef,
@@ -106,6 +135,36 @@ export function MapView({
   });
   const mapActionsRef = useRef(reticleInteraction.mapActions);
   mapActionsRef.current = reticleInteraction.mapActions;
+
+  useEffect(() => {
+    clearPendingCommit();
+    if (cameraCommand?.intent !== "commit") {
+      setReticleFlashing(false);
+      setAppliedCameraCommand(cameraCommand);
+      return;
+    }
+    // A preview return may still be moving. Freeze it during the flash so the
+    // committed zoom starts from the camera position the operator clicked.
+    const map = mapRef.current;
+    map?.stop();
+    releaseCameraOwnership();
+    const visibleCommitReticle =
+      map && reticleForVisibleTarget(mapCanvasRef.current, map, sourcesRef.current, cameraCommand.target);
+    if (!visibleCommitReticle) {
+      setReticleFlashing(false);
+      setAppliedCameraCommand(cameraCommand);
+      return;
+    }
+    setReticleFlashing(true);
+    pendingCommitTimeoutRef.current = window.setTimeout(() => {
+      pendingCommitTimeoutRef.current = undefined;
+      setReticleFlashing(false);
+      setAppliedCameraCommand(cameraCommand);
+    }, RETICLE_FLASH_MS);
+    return () => {
+      clearPendingCommit();
+    };
+  }, [cameraCommand, clearPendingCommit, releaseCameraOwnership]);
 
   // Create the map once.
   useEffect(() => {
@@ -333,44 +392,48 @@ export function MapView({
   }, [editing, mapReady]);
 
   return (
-    <div
-      className={`map-canvas${reticleInteraction.customCursorVisible ? " map-canvas--custom-cursor" : ""}${reticleInteraction.scrolling ? " map-canvas--scrolling" : ""}`}
-      ref={mapCanvasRef}
-      style={{ position: "absolute", inset: 0 }}
-      data-testid="map-canvas"
-      {...reticleInteraction.canvasHandlers}
-    >
-      <div className="maplibre-host" ref={containerRef} />
-      <MapRegionComparison
-        mapCanvas={mapCanvasRef.current}
-        map={mapRef.current}
-        maplibre={mapLibreRef.current}
-        mapReady={mapReady}
-        boxZoomActive={reticleInteraction.zooming}
-        baseSourceId={styleId}
-        sourceOptions={mapSourceOptions}
-        sources={sources}
-        editing={editing}
-        notifyUserGesture={notifyUserGesture}
-        suppressNextClick={reticleInteraction.mapActions.suppressNextClick}
-      />
-      {reticleInteraction.cursorOverlay ? <MapCursorOverlay {...reticleInteraction.cursorOverlay} /> : null}
-      {reticleInteraction.visibleReticle ? (
-        <MapReticle
-          reticle={reticleInteraction.visibleReticle}
-          scrolling={reticleInteraction.scrolling}
-          zooming={reticleInteraction.zooming}
+    <div className="map-view" style={{ position: "absolute", inset: 0 }}>
+      <div
+        className={`map-canvas${reticleInteraction.customCursorVisible ? " map-canvas--custom-cursor" : ""}${reticleInteraction.scrolling ? " map-canvas--scrolling" : ""}`}
+        ref={mapCanvasRef}
+        style={{ position: "absolute", inset: 0 }}
+        data-testid="map-canvas"
+        {...reticleInteraction.canvasHandlers}
+      >
+        <div className="maplibre-host" ref={containerRef} />
+        <MapRegionComparison
+          mapCanvas={mapCanvasRef.current}
+          map={mapRef.current}
+          maplibre={mapLibreRef.current}
+          mapReady={mapReady}
+          boxZoomActive={reticleInteraction.zooming}
+          baseSourceId={styleId}
+          sourceOptions={mapSourceOptions}
+          sources={sources}
+          editing={editing}
+          notifyUserGesture={notifyUserGesture}
+          suppressNextClick={reticleInteraction.mapActions.suppressNextClick}
         />
-      ) : null}
-      {mapError ? (
-        <Callout className="map-unavailable" icon={null} intent="danger" role="status" aria-live="polite">
-          <span>Map unavailable</span>
-          <code>{mapError}</code>
-          <Button variant="primary" onClick={() => setMapError(undefined)}>
-            Retry
-          </Button>
-        </Callout>
-      ) : null}
+        {reticleInteraction.cursorOverlay ? <MapCursorOverlay {...reticleInteraction.cursorOverlay} /> : null}
+        {reticleInteraction.visibleReticle ? (
+          <MapReticle
+            reticle={reticleInteraction.visibleReticle}
+            flashing={reticleFlashing}
+            scrolling={reticleInteraction.scrolling}
+            zooming={reticleInteraction.zooming}
+          />
+        ) : null}
+        {mapError ? (
+          <Callout className="map-unavailable" icon={null} intent="danger" role="status" aria-live="polite">
+            <span>Map unavailable</span>
+            <code>{mapError}</code>
+            <Button variant="primary" onClick={() => setMapError(undefined)}>
+              Retry
+            </Button>
+          </Callout>
+        ) : null}
+      </div>
+      {placeDetailTarget ? <PlaceDetailLens key={styleId} target={placeDetailTarget} style={style} /> : null}
     </div>
   );
 }

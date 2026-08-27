@@ -17,6 +17,13 @@ describe("sidebar reducer", () => {
     expect(next.restoreFocusId).toBeNull();
   });
 
+  it("opens the Places workspace as a normal list", () => {
+    const next = sidebarReducer(initialSidebarState, { type: "openList", list: "places" });
+
+    expect(next.view).toEqual({ mode: "list", list: "places" });
+    expect(next.selection).toBeNull();
+  });
+
   it("switches to inspector mode when an entity is selected and remembers the list", () => {
     const onTracks = sidebarReducer(initialSidebarState, { type: "openList", list: "tracks" });
     const selected = sidebarReducer(onTracks, {

@@ -30,6 +30,17 @@ describe("MapView external reticle targets", () => {
     expect(map.fitBounds).not.toHaveBeenCalled();
   });
 
+  it("uses the requested target window for point-only place results", async () => {
+    const { rerenderMap } = renderMapView();
+    rerenderMap({ focusTarget: { type: "point", id: "search-1", coordinates: [70, 80], reticleSize: 48 } });
+
+    await waitFor(() => {
+      const overlay = document.querySelector<HTMLElement>(".map-reticle");
+      expect(overlay?.style.getPropertyValue("--map-reticle-target-width")).toBe("62px");
+      expect(overlay?.style.getPropertyValue("--map-reticle-target-height")).toBe("62px");
+    });
+  });
+
   it("keeps the native cursor for external reticles until the pointer drives the reticle", async () => {
     const { canvas, rerenderMap } = renderMapView();
     rerenderMap({ focusTarget: { type: "point", id: "search-1", coordinates: [70, 80] } });
@@ -168,6 +179,22 @@ describe("MapView external reticle targets", () => {
     expect(onBackgroundClick).toHaveBeenCalledTimes(1);
     rerenderMap({ focusTarget: null, selectedId: undefined });
     await waitFor(() => expect(document.querySelector(".map-reticle")).not.toBeInTheDocument());
+  });
+
+  it("leaves Escape from form controls to the focused control", async () => {
+    const { canvas, onBackgroundClick, rerenderMap } = renderMapView({ selectedId: "asset-1" });
+    appendMarker(canvas, "asset-1", rect(70, 90, 20, 20));
+    rerenderMap({ focusTarget: { type: "entity", id: "asset-1" } });
+    await waitFor(() => expect(document.querySelector(".map-reticle")).toBeInTheDocument());
+    const input = document.createElement("input");
+    document.body.appendChild(input);
+    const event = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+
+    fireEvent(input, event);
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(onBackgroundClick).not.toHaveBeenCalled();
+    input.remove();
   });
 
   it("drops the reticle to the pointer when Escape clears selection over the map", async () => {

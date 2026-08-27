@@ -61,6 +61,7 @@ const config: AppConfig = {
   atlasBaseUrl: "/atlas",
   protocolRevision: "rev",
   defaultMapSourceId: "openstreetmap-default",
+  placeSearch: { provider: "maptiler", unavailableReason: "missing key" },
   mapSources: [
     { id: "openstreetmap-default", label: "OpenStreetMap Default", style: styleFixture("openstreetmap-default") }
   ]

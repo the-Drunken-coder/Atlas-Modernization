@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
+import type { UiRawGeometry } from "../../../atlas/geometry.js";
 import {
   type CameraView,
+  COMMIT_FIT_MAX_ZOOM,
   coordsChanged,
   FIT_BOUNDS_PADDING,
   FIT_DURATION_MS,
@@ -11,7 +13,12 @@ import {
   flyDurationMs,
   followIdle,
   followReducer,
-  planFocusMove
+  PREVIEW_DURATION_MS,
+  PREVIEW_FIT_BOUNDS_PADDING,
+  PREVIEW_FIT_MAX_ZOOM,
+  PREVIEW_POINT_ZOOM,
+  planFocusMove,
+  previewEasing
 } from "./map-camera.js";
 
 const view = (center: [number, number], zoom: number): CameraView => ({ center, zoom });
@@ -25,6 +32,16 @@ describe("planFocusMove", () => {
   it("flies points down to the asset view zoom when zoomed in past it", () => {
     const move = planFocusMove({ type: "Point", coordinates: [70, 80] }, view([70, 80], 15));
     expect(move).toMatchObject({ kind: "fly-to", zoom: 15 });
+  });
+
+  it("uses a wider point view for previews", () => {
+    const move = planFocusMove({ type: "Point", coordinates: [0.01, 0.01] }, view([0, 0], 13), "preview");
+    expect(move).toMatchObject({
+      kind: "fly-to",
+      center: [0.01, 0.01],
+      zoom: PREVIEW_POINT_ZOOM,
+      durationMs: PREVIEW_DURATION_MS
+    });
   });
 
   it("fits line geometry bounds with the standard padding and cap", () => {
@@ -52,6 +69,38 @@ describe("planFocusMove", () => {
 
   it("returns null for empty geometry", () => {
     expect(planFocusMove({ type: "LineString", coordinates: [] }, view([0, 0], 4))).toBeNull();
+  });
+
+  it("fits preview geometry loosely and committed geometry tightly", () => {
+    const geometry: UiRawGeometry = {
+      type: "LineString",
+      coordinates: [
+        [10, 20],
+        [30, 5]
+      ]
+    };
+
+    expect(planFocusMove(geometry, view([0, 0], 4), "preview")).toMatchObject({
+      kind: "fit-bounds",
+      maxZoom: PREVIEW_FIT_MAX_ZOOM,
+      padding: PREVIEW_FIT_BOUNDS_PADDING,
+      durationMs: PREVIEW_DURATION_MS
+    });
+    expect(planFocusMove(geometry, view([0, 0], 4), "commit")).toMatchObject({
+      kind: "fit-bounds",
+      maxZoom: COMMIT_FIT_MAX_ZOOM,
+      padding: FIT_BOUNDS_PADDING
+    });
+  });
+});
+
+describe("previewEasing", () => {
+  it("starts and ends slowly while preserving the endpoints", () => {
+    expect(previewEasing(0)).toBe(0);
+    expect(previewEasing(0.25)).toBeLessThan(0.25);
+    expect(previewEasing(0.5)).toBe(0.5);
+    expect(previewEasing(0.75)).toBeGreaterThan(0.75);
+    expect(previewEasing(1)).toBe(1);
   });
 });
 

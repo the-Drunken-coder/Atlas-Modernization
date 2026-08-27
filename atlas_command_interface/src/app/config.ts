@@ -8,11 +8,18 @@ export type MapSourceConfig = {
   unavailableReason?: string;
 };
 
+export type PlaceSearchConfig = {
+  provider: "maptiler";
+  apiKey?: string;
+  unavailableReason?: string;
+};
+
 export type AppConfig = {
   atlasBaseUrl: string;
   protocolRevision: string;
   defaultMapSourceId: string;
   mapSources: MapSourceConfig[];
+  placeSearch: PlaceSearchConfig;
 };
 
 export type CoreConfig = Pick<AppConfig, "atlasBaseUrl" | "protocolRevision">;
@@ -165,10 +172,14 @@ export function coreConfigFromEnv(env: RuntimeEnv): CoreConfig {
 
 export function appConfigFromEnv(env: RuntimeEnv): AppConfig {
   const coreConfig = coreConfigFromEnv(env);
+  const mapTilerApiKey = envValue(env.VITE_MAPTILER_API_KEY);
   return {
     ...coreConfig,
     defaultMapSourceId: DEFAULT_MAP_SOURCE_ID,
-    mapSources: buildMapSourceConfig(env)
+    mapSources: buildMapSourceConfig(env),
+    placeSearch: mapTilerApiKey
+      ? { provider: "maptiler", apiKey: mapTilerApiKey }
+      : { provider: "maptiler", unavailableReason: "missing key" }
   };
 }
 

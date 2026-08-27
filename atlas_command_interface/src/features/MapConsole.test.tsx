@@ -15,7 +15,11 @@ type MockMapViewProps = {
   mapSourceOptions: AppConfig["mapSources"];
   editing?: unknown;
   focusTarget?: { id: string } | null;
-  cameraCommand?: { seq: number; target: { id: string } } | null;
+  placeDetailTarget?: { id: string } | null;
+  cameraCommand?:
+    | { seq: number; intent: "world" }
+    | { seq: number; target: { id: string }; intent?: "focus" | "preview" | "commit" }
+    | null;
   onMapContextMenu?: (info: { lat: number; lng: number; x: number; y: number }) => void;
   onBackgroundClick?: () => void;
   onSelectEntity?: (id: string) => void;
@@ -30,14 +34,17 @@ vi.mock("../ui/map/view/MapView.js", async () => {
   return {
     MapView: (props: MockMapViewProps) => {
       mapViewMock.lastProps = props;
+      const cameraTarget = props.cameraCommand && "target" in props.cameraCommand ? props.cameraCommand.target.id : "";
       return (
         <div
           data-testid="map"
           data-style-id={props.styleId}
           data-editing={props.editing ? "true" : "false"}
           data-focus-target={props.focusTarget?.id ?? ""}
+          data-place-detail-target={props.placeDetailTarget?.id ?? ""}
           data-camera-seq={props.cameraCommand?.seq ?? ""}
-          data-camera-target={props.cameraCommand?.target.id ?? ""}
+          data-camera-target={cameraTarget}
+          data-camera-intent={props.cameraCommand?.intent ?? ""}
           onClick={() => props.onBackgroundClick?.()}
           onContextMenu={(event) => {
             event.preventDefault();
@@ -188,6 +195,7 @@ function appConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     atlasBaseUrl: "/atlas",
     protocolRevision: "rev",
     defaultMapSourceId: "openstreetmap-default",
+    placeSearch: { provider: "maptiler", unavailableReason: "missing key" },
     mapSources: [
       { id: "google-satellite", label: "Google Satellite", unavailableReason: "missing key" },
       { id: "openstreetmap-default", label: "OpenStreetMap Default", style: style("openstreetmap-default") },
@@ -343,6 +351,90 @@ describe("MapConsole", () => {
     await user.click(await screen.findByRole("button", { name: /Rover/ }));
 
     expect(screen.getByTestId("map")).toHaveAttribute("data-focus-target", "asset-1");
+  });
+
+  it("previews places in the detail lens, commits focus, and returns to the world view", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json({
+          type: "FeatureCollection",
+          attribution: "© MapTiler © OpenStreetMap contributors",
+          features: [
+            {
+              id: "poi.1",
+              text: "Worcester Polytechnic Institute",
+              place_name: "Worcester Polytechnic Institute, Worcester, Massachusetts, United States",
+              center: [-71.8063, 42.2746],
+              place_type: ["poi"]
+            }
+          ]
+        })
+      )
+    );
+    try {
+      renderStaticConsole({
+        config: appConfig({ placeSearch: { provider: "maptiler", apiKey: "maptiler-key" } })
+      });
+
+      fireEvent.click(screen.getByRole("button", { name: /Rover/ }));
+      await act(async () => Promise.resolve());
+      expect(screen.getByTestId("map")).toHaveAttribute("data-camera-seq", "1");
+
+      fireEvent.click(screen.getByRole("button", { name: "Places" }));
+      const input = screen.getByRole("searchbox", { name: "Search places" });
+      expect(input).toHaveFocus();
+      fireEvent.change(input, { target: { value: "Worcester" } });
+      await act(async () => vi.advanceTimersByTimeAsync(250));
+
+      const result = screen.getByRole("button", {
+        name: "Worcester Polytechnic Institute, Worcester, Massachusetts, United States"
+      });
+      fireEvent.mouseEnter(result);
+      expect(screen.getByTestId("map")).toHaveAttribute("data-focus-target", "");
+      expect(screen.getByTestId("map")).toHaveAttribute("data-camera-target", "asset-1");
+      await act(async () => vi.advanceTimersByTimeAsync(249));
+      expect(screen.getByTestId("map")).toHaveAttribute("data-place-detail-target", "");
+      await act(async () => vi.advanceTimersByTimeAsync(1));
+      expect(screen.getByTestId("map")).toHaveAttribute("data-focus-target", "place:poi.1");
+      expect(screen.getByTestId("map")).toHaveAttribute("data-place-detail-target", "place:poi.1");
+      expect(screen.getByTestId("map")).toHaveAttribute("data-camera-target", "asset-1");
+
+      fireEvent.click(result);
+      expect(screen.getByTestId("map")).toHaveAttribute("data-camera-target", "place:poi.1");
+      expect(screen.getByTestId("map")).toHaveAttribute("data-camera-seq", "2");
+      expect(screen.getByTestId("map")).toHaveAttribute("data-camera-intent", "commit");
+      expect(screen.getByTestId("map")).toHaveAttribute("data-focus-target", "place:poi.1");
+      expect(screen.getByTestId("map")).toHaveAttribute("data-place-detail-target", "");
+      await act(async () => Promise.resolve());
+      expect(screen.getByTestId("map")).toHaveAttribute("data-focus-target", "place:poi.1");
+
+      fireEvent.click(screen.getByRole("button", { name: "Assets" }));
+      expect(screen.getByTestId("map")).toHaveAttribute("data-camera-intent", "");
+      expect(screen.getByTestId("map")).toHaveAttribute("data-focus-target", "asset-1");
+
+      fireEvent.click(screen.getByRole("button", { name: "Places" }));
+      await act(async () => vi.advanceTimersByTimeAsync(250));
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: "Worcester Polytechnic Institute, Worcester, Massachusetts, United States"
+        })
+      );
+
+      const worldView = screen.getByRole("button", { name: "World view" });
+      expect(worldView).toHaveAttribute("title", "World view");
+      expect(worldView).not.toHaveTextContent("World view");
+      expect(worldView.querySelector("svg")).not.toBeNull();
+      fireEvent.click(worldView);
+      expect(screen.getByTestId("map")).toHaveAttribute("data-camera-target", "");
+      expect(screen.getByTestId("map")).toHaveAttribute("data-camera-intent", "world");
+      expect(screen.getByTestId("map")).toHaveAttribute("data-camera-seq", "4");
+      expect(screen.getByTestId("map")).toHaveAttribute("data-focus-target", "");
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
   });
 
   it("issues a camera command for sidebar selections and bumps the sequence on re-select", async () => {

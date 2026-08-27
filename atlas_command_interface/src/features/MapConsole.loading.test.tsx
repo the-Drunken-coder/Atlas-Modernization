@@ -26,6 +26,7 @@ const atlasValue: AtlasContextValue = {
     atlasBaseUrl: "http://127.0.0.1:8000",
     protocolRevision: "test",
     defaultMapSourceId: "test-map",
+    placeSearch: { provider: "maptiler", unavailableReason: "missing key" },
     mapSources: [{ id: "test-map", label: "Test map", style }]
   },
   snapshot: emptySnapshot(),

@@ -15,15 +15,15 @@ const budgets = {
   // shared component styles and icon-path chunks. Map budgets remain scoped separately.
   initialJavaScript: { raw: 410_000, gzip: 125_000 },
   initialCss: { raw: 510_000, gzip: 55_000 },
-  shellJavaScript: { raw: 130_000, gzip: 42_000 },
-  mapViewJavaScript: { raw: 56_000, gzip: 17_500 },
+  shellJavaScript: { raw: 134_000, gzip: 44_000 },
+  mapViewJavaScript: { raw: 62_000, gzip: 19_000 },
   mapLibreJavaScript: { raw: 1_100_000, gzip: 300_000 },
   mapLibreWorkerJavaScript: { raw: 500_000, gzip: 140_000 },
   milsymbolJavaScript: { raw: 900_000, gzip: 240_000 },
   mapLibreCss: { raw: 85_000, gzip: 11_000 },
   mapRoute: { raw: 2_100_000, gzip: 550_000 },
   allJavaScript: { raw: 3_600_000, gzip: 1_000_000 },
-  allCss: { raw: 590_000, gzip: 65_000 }
+  allCss: { raw: 591_000, gzip: 65_000 }
 };
 
 if (!args.has("--skip-build")) {

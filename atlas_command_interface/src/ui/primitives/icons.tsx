@@ -7,8 +7,10 @@ import {
   DetectionIcon as BlueprintDetectionIcon,
   DoubleCaretVerticalIcon as BlueprintDoubleCaretVerticalIcon,
   DuplicateIcon as BlueprintDuplicateIcon,
+  GlobeIcon as BlueprintGlobeIcon,
   GlobeNetworkIcon as BlueprintGlobeNetworkIcon,
   KeyIcon as BlueprintKeyIcon,
+  MapMarkerIcon as BlueprintMapMarkerIcon,
   PlayIcon as BlueprintPlayIcon,
   PlusIcon as BlueprintPlusIcon,
   PolygonFilterIcon as BlueprintPolygonFilterIcon,
@@ -49,6 +51,10 @@ export function BrandIcon(props: IconProps) {
   return <BlueprintGlobeNetworkIcon {...props} />;
 }
 
+export function WorldViewIcon(props: IconProps) {
+  return <BlueprintGlobeIcon {...props} />;
+}
+
 export function BackIcon(props: IconProps) {
   return <BlueprintArrowLeftIcon {...props} />;
 }
@@ -67,6 +73,10 @@ export function SearchIcon(props: IconProps) {
 
 export function ComparisonIcon(props: IconProps) {
   return <BlueprintSelectionIcon {...props} />;
+}
+
+export function PlaceIcon(props: IconProps) {
+  return <BlueprintMapMarkerIcon {...props} />;
 }
 
 export function DoubleCaretVerticalIcon(props: IconProps) {

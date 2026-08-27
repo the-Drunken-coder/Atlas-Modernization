@@ -34,6 +34,10 @@ const maplibreMock = vi.hoisted(() => {
     readonly easeTo = vi.fn();
     readonly flyTo = vi.fn();
     readonly stop = vi.fn();
+    readonly setRenderWorldCopies = vi.fn((value: boolean) => {
+      this.renderWorldCopies = value;
+    });
+    readonly getRenderWorldCopies = vi.fn(() => this.renderWorldCopies);
     readonly fitScreenCoordinates = vi.fn();
     readonly fitBounds = vi.fn();
     readonly zoomTo = vi.fn();
@@ -85,6 +89,7 @@ const maplibreMock = vi.hoisted(() => {
       return this;
     });
     loaded = true;
+    renderWorldCopies: boolean;
     style: unknown;
     center = { lng: 0, lat: 0 };
     zoom = 4;
@@ -92,6 +97,7 @@ const maplibreMock = vi.hoisted(() => {
     constructor(options: Record<string, unknown>) {
       this.options = options;
       this.style = options.style;
+      this.renderWorldCopies = Boolean(options.renderWorldCopies);
       FakeMap.instances.push(this);
     }
 
@@ -263,6 +269,7 @@ type RenderMapViewProps = {
   editing?: MapEditing;
   focusTarget?: MapReticleTarget | null;
   mapSourceOptions?: MapSourceConfig[];
+  placeDetailTarget?: MapReticleTarget | null;
   onStyleSwitchError?: (error: { failedStyleId: string; activeStyleId: string }) => void;
   selectedId?: string;
   sources?: MapSources;
@@ -291,6 +298,7 @@ export function renderMapView(props: RenderMapViewProps = {}) {
         selectedId={renderProps.selectedId}
         editing={renderProps.editing}
         focusTarget={renderProps.focusTarget}
+        placeDetailTarget={renderProps.placeDetailTarget}
         cameraCommand={renderProps.cameraCommand}
         onBackgroundClick={onBackgroundClick}
         onMapContextMenu={onMapContextMenu}
@@ -312,7 +320,8 @@ export function renderMapView(props: RenderMapViewProps = {}) {
   return {
     canvas,
     stage,
-    map: maplibreMock.FakeMap.instances[0],
+    map: maplibreMock.FakeMap.instances.find((instance) => instance.options.interactive !== false)!,
+    maps: () => [...maplibreMock.FakeMap.instances],
     onBackgroundClick,
     onMapContextMenu,
     onSelectEntity,

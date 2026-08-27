@@ -379,7 +379,7 @@ function isEditableKeyboardTarget(target: EventTarget | null): boolean {
   return (
     target instanceof HTMLElement &&
     (target.matches("input, textarea, select, [role='separator']") ||
-      Boolean(target.closest("[data-map-interaction-control]")) ||
+      Boolean(target.closest("[data-map-interaction-control], .place-row")) ||
       target.isContentEditable)
   );
 }
