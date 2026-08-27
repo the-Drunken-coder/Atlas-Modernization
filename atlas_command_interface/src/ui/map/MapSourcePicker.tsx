@@ -93,6 +93,8 @@ export function MapSourceSelect({
       const maxHeight = Math.floor(Math.min(360, placement === "below" ? below : above));
       const maxWidth = Math.max(0, boundaryBounds.width - 20);
       const minWidth = Math.min(maxWidth, pickerBounds.width + 2);
+      menu.style.minWidth = `${minWidth}px`;
+      menu.style.maxWidth = `${maxWidth}px`;
       const menuWidth = Math.min(maxWidth, Math.max(minWidth, menu.scrollWidth || minWidth));
       const left = Math.max(
         10,

@@ -58,6 +58,19 @@ describe("MapView region comparison", () => {
     expect(screen.getByText("Drag a region. Shift-drag still zooms.")).toBeInTheDocument();
   });
 
+  it("creates a keyboard-adjustable default region when the Compare tool is activated from the keyboard", async () => {
+    renderMapView({ styleId: "base", style: style("base"), mapSourceOptions });
+    const compare = screen.getByRole("button", { name: "Compare map source inside a region" });
+
+    fireEvent.keyDown(compare, { key: "Enter" });
+
+    const region = await screen.findByTestId("map-comparison-region");
+    expect(region).toHaveStyle({ left: "100px", top: "50px", width: "200px", height: "100px" });
+    expect(screen.getByRole("dialog", { name: "Region comparison" })).toBeInTheDocument();
+    fireEvent.keyDown(screen.getByRole("button", { name: "Move comparison region" }), { key: "ArrowRight" });
+    await waitFor(() => expect(region).toHaveStyle({ left: "110px" }));
+  });
+
   it("does not start drawing or select the background from an SVG control target", () => {
     const { canvas, onBackgroundClick } = renderMapView({ styleId: "base", style: style("base"), mapSourceOptions });
     const compare = screen.getByRole("button", { name: "Compare map source inside a region" });
@@ -140,6 +153,17 @@ describe("MapView region comparison", () => {
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
     expect(screen.getByRole("dialog", { name: "Region comparison" })).toBeInTheDocument();
 
+    for (const role of ["dialog", "menu"]) {
+      const foreground = document.createElement("div");
+      foreground.setAttribute("role", role);
+      const foregroundControl = document.createElement("button");
+      foreground.append(foregroundControl);
+      screen.getByTestId("map-canvas").append(foreground);
+      fireEvent.keyDown(foregroundControl, { key: "Escape" });
+      expect(screen.getByRole("dialog", { name: "Region comparison" })).toBeInTheDocument();
+      foreground.remove();
+    }
+
     fireEvent.keyDown(window, { key: "Escape" });
     expect(screen.queryByRole("dialog", { name: "Region comparison" })).not.toBeInTheDocument();
     expect(screen.getByTestId("map-comparison-region")).toBeInTheDocument();
@@ -154,12 +178,12 @@ describe("MapView region comparison", () => {
     vi.spyOn(rendered.canvas, "getBoundingClientRect").mockReturnValue(rect(10, 20, 600, 360));
     await drawComparison();
     const trigger = screen.getByRole("button", { name: "Inside region" });
-    fireEvent.click(trigger);
-    const menu = screen.getByRole("listbox");
     const control = trigger.closest<HTMLElement>(".map-source-control");
     if (!control) throw new Error("Map source control is missing");
     let controlBounds = rect(80, 280, 240, 50);
     vi.spyOn(control, "getBoundingClientRect").mockImplementation(() => controlBounds);
+    fireEvent.click(trigger);
+    const menu = screen.getByRole("listbox");
     Object.defineProperty(menu, "scrollHeight", { configurable: true, value: 300 });
 
     notifyResizeObservers();

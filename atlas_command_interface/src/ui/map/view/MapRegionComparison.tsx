@@ -252,11 +252,13 @@ export function MapRegionComparison({
     if (!region && !panelOpen) return;
     const handleEscape = (event: globalThis.KeyboardEvent) => {
       if (event.key !== "Escape" || drag) return;
-      if (
-        event.target instanceof Element &&
-        event.target.closest('[role="listbox"], [data-map-source-trigger][aria-expanded="true"]')
-      )
-        return;
+      const escapeOwner =
+        event.target instanceof Element
+          ? event.target.closest(
+              '[role="listbox"], [role="menu"], [role="dialog"], [data-map-source-trigger][aria-expanded="true"]'
+            )
+          : null;
+      if (escapeOwner && !escapeOwner.matches(".map-compare__panel")) return;
       event.preventDefault();
       event.stopPropagation();
       if (panelOpen) setPanelOpen(false);
@@ -361,6 +363,24 @@ export function MapRegionComparison({
     setDrag({ kind: "draw", start: null, current: null, previousRegion });
   };
 
+  const createKeyboardRegion = () => {
+    if (!mapCanvas || !map || !mapReady) return;
+    const viewport = mapCanvas.getBoundingClientRect();
+    if (viewport.width < MIN_REGION_SIZE || viewport.height < MIN_REGION_SIZE) return;
+    const width = Math.min(240, Math.max(MIN_REGION_SIZE, viewport.width / 2));
+    const height = Math.min(180, Math.max(MIN_REGION_SIZE, viewport.height / 2));
+    setRegion(
+      regionFromScreenRect(map, {
+        left: (viewport.width - width) / 2,
+        top: (viewport.height - height) / 2,
+        width,
+        height
+      })
+    );
+    setPanelOpen(true);
+    notifyUserGesture();
+  };
+
   const beginTransform = (transform: RegionTransform, event: ReactMouseEvent<HTMLButtonElement>) => {
     if (event.button !== 0 || !map || !mapCanvas || !region || !regionRect) return;
     event.preventDefault();
@@ -418,6 +438,12 @@ export function MapRegionComparison({
           aria-pressed={Boolean(region || drag || panelOpen)}
           disabled={!mapReady}
           title="Compare map source inside a region"
+          onKeyDown={(event) => {
+            if (!region && !drag && availableAlternatives.length > 0 && ["Enter", " "].includes(event.key)) {
+              event.preventDefault();
+              createKeyboardRegion();
+            }
+          }}
           onClick={() => {
             if (drag?.kind === "draw") {
               setRegion(drag.previousRegion);
