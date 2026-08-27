@@ -20,6 +20,8 @@ export function AccountMenu({ username, loggingOut, error, onLogout }: AccountMe
   const containerRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
+  const logoutRef = useRef<HTMLButtonElement>(null);
+  const focusedOpenMenuRef = useRef(false);
 
   const updatePosition = useCallback(() => {
     const triggerBounds = triggerRef.current?.getBoundingClientRect();
@@ -41,6 +43,17 @@ export function AccountMenu({ username, loggingOut, error, onLogout }: AccountMe
   useEffect(() => {
     if (error) setOpen(true);
   }, [error]);
+
+  useEffect(() => {
+    if (!open) {
+      focusedOpenMenuRef.current = false;
+      return;
+    }
+    if (!position || loggingOut || focusedOpenMenuRef.current) return;
+
+    logoutRef.current?.focus();
+    focusedOpenMenuRef.current = true;
+  }, [loggingOut, open, position]);
 
   useEffect(() => {
     if (!open) return;
@@ -68,9 +81,10 @@ export function AccountMenu({ username, loggingOut, error, onLogout }: AccountMe
     };
   }, [error, loggingOut, open, updatePosition]);
 
-  const close = () => {
+  const close = (restoreFocus = false) => {
     setOpen(false);
     setPosition(undefined);
+    if (restoreFocus) triggerRef.current?.focus();
   };
 
   return (
@@ -81,8 +95,7 @@ export function AccountMenu({ username, loggingOut, error, onLogout }: AccountMe
         if (!open || event.key !== "Escape" || loggingOut) return;
         event.preventDefault();
         event.stopPropagation();
-        close();
-        triggerRef.current?.focus();
+        close(true);
       }}
     >
       <button
@@ -95,7 +108,7 @@ export function AccountMenu({ username, loggingOut, error, onLogout }: AccountMe
         title="Account"
         onClick={() => {
           if (loggingOut) return;
-          if (open) close();
+          if (open) close(true);
           else setOpen(true);
         }}
       >
@@ -121,6 +134,7 @@ export function AccountMenu({ username, loggingOut, error, onLogout }: AccountMe
                   <small>Coming soon</small>
                 </button>
                 <button
+                  ref={logoutRef}
                   type="button"
                   className="account-menu__item account-menu__item--danger"
                   disabled={loggingOut}

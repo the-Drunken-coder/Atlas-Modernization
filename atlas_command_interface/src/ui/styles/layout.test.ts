@@ -40,5 +40,7 @@ describe("command interface scrolling", () => {
     const declarations = layout.match(/\.account-menu__popover\s*{([^}]*)}/)?.[1];
 
     expect(declarations).toMatch(/position:\s*fixed/);
+    expect(declarations).toMatch(/max-height:\s*calc\(100dvh\s*-\s*16px\)/);
+    expect(declarations).toMatch(/overflow-y:\s*auto/);
   });
 });
