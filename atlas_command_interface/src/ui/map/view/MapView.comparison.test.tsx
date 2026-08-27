@@ -1,7 +1,7 @@
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { MapSourceConfig } from "../../../app/config.js";
-import { mapInstances, rect, renderMapView, style } from "./MapView.test-harness.js";
+import { mapInstances, notifyResizeObservers, rect, renderMapView, style } from "./MapView.test-harness.js";
 
 const mapSourceOptions: MapSourceConfig[] = [
   { id: "base", label: "Base map", style: style("base") },
@@ -130,6 +130,24 @@ describe("MapView region comparison", () => {
     expect(screen.getByRole("button", { name: "Compare map source inside a region" })).toHaveFocus();
   });
 
+  it("positions a tall source menu within the available map-pane space", async () => {
+    const rendered = renderMapView({ styleId: "base", style: style("base"), mapSourceOptions });
+    vi.spyOn(rendered.canvas, "getBoundingClientRect").mockReturnValue(rect(10, 20, 600, 360));
+    await drawComparison();
+    const trigger = screen.getByRole("button", { name: "Inside region" });
+    fireEvent.click(trigger);
+    const menu = screen.getByRole("listbox");
+    const control = trigger.closest<HTMLElement>(".map-source-control");
+    if (!control) throw new Error("Map source control is missing");
+    vi.spyOn(control, "getBoundingClientRect").mockReturnValue(rect(80, 280, 240, 50));
+    Object.defineProperty(menu, "scrollHeight", { configurable: true, value: 300 });
+
+    notifyResizeObservers();
+
+    await waitFor(() => expect(menu).toHaveAttribute("data-placement", "above"));
+    expect(menu).toHaveStyle({ maxHeight: "256px" });
+  });
+
   it("moves the active region from its explicit keyboard handle without navigating entities", async () => {
     const { onSelectEntity } = renderMapView({ styleId: "base", style: style("base"), mapSourceOptions });
     await drawComparison();
@@ -241,6 +259,12 @@ describe("MapView region comparison", () => {
     const unavailable = renderMapView({ styleId: "base", style: style("base"), mapSourceOptions: unavailableSources });
     fireEvent.click(screen.getByRole("button", { name: "Compare map source inside a region" }));
     expect(screen.getByText(/No alternate source is available/)).toBeInTheDocument();
+    const unavailableTrigger = screen.getByRole("button", { name: "Inside region" });
+    fireEvent.click(unavailableTrigger);
+    expect(screen.getByRole("listbox")).toBeInTheDocument();
+    fireEvent.keyDown(unavailableTrigger, { key: "Escape" });
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Region comparison" })).toBeInTheDocument();
     unavailable.unmount();
 
     renderMapView({ styleId: "base", style: style("base"), mapSourceOptions });

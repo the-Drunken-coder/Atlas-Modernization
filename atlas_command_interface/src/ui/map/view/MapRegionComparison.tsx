@@ -248,7 +248,11 @@ export function MapRegionComparison({
     if (!region && !panelOpen) return;
     const handleEscape = (event: globalThis.KeyboardEvent) => {
       if (event.key !== "Escape" || drag) return;
-      if (event.target instanceof HTMLElement && event.target.closest('[role="listbox"]')) return;
+      if (
+        event.target instanceof Element &&
+        event.target.closest('[role="listbox"], [data-map-source-trigger][aria-expanded="true"]')
+      )
+        return;
       event.preventDefault();
       event.stopPropagation();
       if (panelOpen) setPanelOpen(false);

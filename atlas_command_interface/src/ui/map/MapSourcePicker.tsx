@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { MapSourceConfig } from "../../app/config.js";
 import { DoubleCaretVerticalIcon, TickIcon } from "../primitives/icons.js";
 
@@ -30,6 +30,11 @@ type MapSourceSelectProps = {
   onChange: (value: string) => void;
 };
 
+type MenuLayout = {
+  placement: "above" | "below";
+  maxHeight: number;
+};
+
 export function MapSourceSelect({
   sources,
   value,
@@ -40,6 +45,7 @@ export function MapSourceSelect({
 }: MapSourceSelectProps) {
   const [open, setOpen] = useState(false);
   const [activeSourceId, setActiveSourceId] = useState(value);
+  const [menuLayout, setMenuLayout] = useState<MenuLayout | null>(null);
   const pickerRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const labelId = useId();
@@ -59,6 +65,35 @@ export function MapSourceSelect({
     document.addEventListener("pointerdown", closeOnOutsidePointer);
     return () => document.removeEventListener("pointerdown", closeOnOutsidePointer);
   }, [activeSourceId, open]);
+
+  useLayoutEffect(() => {
+    if (!open) {
+      setMenuLayout(null);
+      return;
+    }
+    const picker = pickerRef.current;
+    const menu = picker?.querySelector<HTMLElement>('[role="listbox"]');
+    const boundary = picker?.closest<HTMLElement>(".map-canvas");
+    if (!picker || !menu || !boundary) return;
+
+    const positionMenu = () => {
+      const pickerBounds = picker.getBoundingClientRect();
+      const boundaryBounds = boundary.getBoundingClientRect();
+      const above = Math.max(0, pickerBounds.top - boundaryBounds.top - 4);
+      const below = Math.max(0, boundaryBounds.bottom - pickerBounds.bottom - 4);
+      const idealHeight = Math.min(360, menu.scrollHeight || 360);
+      const placement = below >= idealHeight || below >= above ? "below" : "above";
+      const maxHeight = Math.floor(Math.min(360, placement === "below" ? below : above));
+      setMenuLayout((current) =>
+        current?.placement === placement && current.maxHeight === maxHeight ? current : { placement, maxHeight }
+      );
+    };
+
+    positionMenu();
+    const observer = new ResizeObserver(positionMenu);
+    observer.observe(boundary);
+    return () => observer.disconnect();
+  }, [open, sources]);
 
   const openMenu = (edge?: "first" | "last") => {
     const availableSources = sources.filter((source) => source.style);
@@ -101,6 +136,12 @@ export function MapSourceSelect({
           else openMenu();
         }}
         onKeyDown={(event) => {
+          if (open && event.key === "Escape") {
+            event.preventDefault();
+            event.stopPropagation();
+            closeMenu(true);
+            return;
+          }
           if (!open && ["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
             event.preventDefault();
             openMenu(event.key === "ArrowUp" || event.key === "End" ? "last" : "first");
@@ -114,6 +155,8 @@ export function MapSourceSelect({
         <div
           id={listboxId}
           className="map-source-menu"
+          style={menuLayout ? { maxHeight: menuLayout.maxHeight } : undefined}
+          data-placement={menuLayout?.placement}
           role="listbox"
           aria-labelledby={labelId}
           onKeyDown={(event) => {
