@@ -276,7 +276,7 @@ export function MapRegionComparison({
       const escapeOwner =
         event.target instanceof Element
           ? event.target.closest(
-              '[role="listbox"], [role="menu"], [role="dialog"], [data-map-source-trigger][aria-expanded="true"]'
+              '[role="listbox"], [role="menu"], [role="dialog"], #account-menu-popover, [aria-controls="account-menu-popover"][aria-expanded="true"], [data-map-source-trigger][aria-expanded="true"]'
             )
           : null;
       if (escapeOwner && !escapeOwner.matches(".map-compare__panel")) return;
@@ -804,7 +804,7 @@ function panelPosition(
 ): { style: CSSProperties; placement: "above" | "below" | "floating" } | undefined {
   if (!rect || !viewport) return undefined;
   const left = Math.max(10, Math.min(viewport.width - PANEL_WIDTH - 10, rect.left));
-  const safeTop = viewport.width <= 520 ? 88 : 10;
+  const safeTop = 88;
   if (rect.top - safeTop - 10 >= panelHeight) {
     return { style: { left, top: rect.top - 10, transform: "translateY(-100%)" }, placement: "above" };
   }

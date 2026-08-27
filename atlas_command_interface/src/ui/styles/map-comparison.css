@@ -77,6 +77,7 @@
 
 .map-compare__move-handle {
   position: absolute;
+  z-index: 3;
   top: -12px;
   right: -12px;
   display: grid;

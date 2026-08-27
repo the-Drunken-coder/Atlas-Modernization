@@ -197,6 +197,19 @@ describe("MapView region comparison", () => {
       foreground.remove();
     }
 
+    for (const foreground of [document.createElement("button"), document.createElement("div")]) {
+      if (foreground instanceof HTMLButtonElement) {
+        foreground.setAttribute("aria-controls", "account-menu-popover");
+        foreground.setAttribute("aria-expanded", "true");
+      } else {
+        foreground.id = "account-menu-popover";
+      }
+      document.body.append(foreground);
+      fireEvent.keyDown(foreground, { key: "Escape" });
+      expect(screen.getByRole("dialog", { name: "Region comparison" })).toBeInTheDocument();
+      foreground.remove();
+    }
+
     fireEvent.keyDown(window, { key: "Escape" });
     expect(screen.queryByRole("dialog", { name: "Region comparison" })).not.toBeInTheDocument();
     expect(screen.getByTestId("map-comparison-region")).toBeInTheDocument();
@@ -430,6 +443,9 @@ describe("MapView region comparison", () => {
     fireEvent.keyDown(unavailableTrigger, { key: "Escape" });
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
     expect(screen.getByRole("dialog", { name: "Region comparison" })).toBeInTheDocument();
+    fireEvent.click(unavailableTrigger);
+    fireEvent.keyDown(unavailableTrigger, { key: "Tab" });
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
     unavailable.unmount();
 
     renderMapView({ styleId: "base", style: style("base"), mapSourceOptions });
@@ -461,7 +477,7 @@ describe("MapView region comparison", () => {
     comparisonMap.fire("error", { error: new Error("tile request failed") });
 
     await waitFor(() => expect(panel).toHaveAttribute("data-placement", "floating"));
-    expect(panel).toHaveStyle({ top: "10px", maxHeight: "340px" });
+    expect(panel).toHaveStyle({ top: "88px", maxHeight: "262px" });
     expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Clear" })).toBeInTheDocument();
   });

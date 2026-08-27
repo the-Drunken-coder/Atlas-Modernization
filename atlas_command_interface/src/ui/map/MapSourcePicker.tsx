@@ -271,6 +271,10 @@ export function MapSourceSelect({
             closeMenu(true);
             return;
           }
+          if (open && event.key === "Tab") {
+            closeMenu(false);
+            return;
+          }
           if (!open && ["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
             event.preventDefault();
             openMenu(event.key === "ArrowUp" || event.key === "End" ? "last" : "first");
