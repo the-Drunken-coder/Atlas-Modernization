@@ -114,7 +114,6 @@ describe("appConfigFromEnv", () => {
           "https://tile.googleapis.com/v1/2dtiles/{z}/{x}/{y}?session=session%20%2F%3F%26&key=google%20key%2F%26"
         ],
         maxzoom: 22,
-        attribution: "Google",
         rasterContrast: 0
       },
       {
@@ -122,7 +121,6 @@ describe("appConfigFromEnv", () => {
         label: "OpenStreetMap Default",
         tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
         maxzoom: 19,
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
         rasterContrast: 0
       },
       {
@@ -130,7 +128,6 @@ describe("appConfigFromEnv", () => {
         label: "USGS Topo",
         tiles: ["https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}"],
         maxzoom: 23,
-        attribution: "USGS The National Map",
         rasterContrast: 0.08
       },
       {
@@ -138,7 +135,6 @@ describe("appConfigFromEnv", () => {
         label: "Mapbox Satellite",
         tiles: ["https://api.mapbox.com/v4/mapbox.satellite/{z}/{x}/{y}.jpg90?access_token=mapbox%20%2F%3F%26"],
         maxzoom: 22,
-        attribution: '&copy; <a href="https://www.mapbox.com/about/maps/">Mapbox</a>',
         rasterContrast: 0
       },
       {
@@ -148,7 +144,6 @@ describe("appConfigFromEnv", () => {
           "https://api.mapbox.com/styles/v1/mapbox/outdoors-v12/tiles/256/{z}/{x}/{y}?access_token=mapbox%20%2F%3F%26"
         ],
         maxzoom: 22,
-        attribution: '&copy; <a href="https://www.mapbox.com/about/maps/">Mapbox</a>',
         rasterContrast: 0
       },
       {
@@ -158,7 +153,6 @@ describe("appConfigFromEnv", () => {
           "https://api.mapbox.com/styles/v1/mapbox/dark-v11/tiles/256/{z}/{x}/{y}?access_token=mapbox%20%2F%3F%26"
         ],
         maxzoom: 22,
-        attribution: '&copy; <a href="https://www.mapbox.com/about/maps/">Mapbox</a>',
         rasterContrast: 0
       },
       {
@@ -166,8 +160,6 @@ describe("appConfigFromEnv", () => {
         label: "Thunderforest Outdoors",
         tiles: ["https://api.thunderforest.com/outdoors/{z}/{x}/{y}.png?apikey=thunderforest%20%2F%3F%26"],
         maxzoom: 22,
-        attribution:
-          '&copy; <a href="https://www.thunderforest.com/">Thunderforest</a>, &copy; OpenStreetMap contributors',
         rasterContrast: 0
       },
       {
@@ -175,7 +167,6 @@ describe("appConfigFromEnv", () => {
         label: "MapTiler Satellite",
         tiles: ["https://api.maptiler.com/maps/satellite/256/{z}/{x}/{y}.jpg?key=maptiler%20%2F%3F%26"],
         maxzoom: 22,
-        attribution: '&copy; <a href="https://www.maptiler.com/copyright/">MapTiler</a>',
         rasterContrast: 0
       },
       {
@@ -183,8 +174,6 @@ describe("appConfigFromEnv", () => {
         label: "MapTiler OSM Dark",
         tiles: ["https://api.maptiler.com/maps/openstreetmap-dark/256/{z}/{x}/{y}.png?key=maptiler%20%2F%3F%26"],
         maxzoom: 22,
-        attribution:
-          '&copy; <a href="https://www.maptiler.com/copyright/">MapTiler</a>, &copy; OpenStreetMap contributors',
         rasterContrast: 0
       },
       {
@@ -197,7 +186,6 @@ describe("appConfigFromEnv", () => {
           "https://d.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png"
         ],
         maxzoom: 20,
-        attribution: '&copy; OpenStreetMap contributors, &copy; <a href="https://carto.com/attributions">CARTO</a>',
         rasterContrast: 0
       }
     ];
@@ -216,8 +204,7 @@ describe("appConfigFromEnv", () => {
               tiles: provider.tiles,
               tileSize: 256,
               minzoom: undefined,
-              maxzoom: provider.maxzoom,
-              attribution: provider.attribution
+              maxzoom: provider.maxzoom
             }
           },
           layers: [

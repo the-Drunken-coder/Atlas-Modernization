@@ -119,7 +119,6 @@ export function PlaceDetailLens({ target, style }: PlaceDetailLensProps) {
 
       const mapInstance = map;
       mapRef.current = mapInstance;
-      mapInstance.addControl(new maplibre.AttributionControl({ compact: true }), "bottom-left");
       const markReady = () => setReady(true);
       mapInstance.on("style.load", markReady);
       if (mapInstance.isStyleLoaded()) markReady();

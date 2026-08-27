@@ -6,7 +6,6 @@ describe("MapTiler place search", () => {
     const fetch = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () =>
       Response.json({
         type: "FeatureCollection",
-        attribution: "© MapTiler © OpenStreetMap contributors",
         features: [
           {
             id: "poi.1",
@@ -39,7 +38,6 @@ describe("MapTiler place search", () => {
     );
     expect(init).toEqual({ signal: controller.signal });
     expect(response).toEqual({
-      attribution: "© MapTiler © OpenStreetMap contributors",
       results: [
         {
           id: "poi.1",
@@ -87,7 +85,6 @@ describe("MapTiler place search", () => {
       vi.fn(async () =>
         Response.json({
           type: "FeatureCollection",
-          attribution: "© MapTiler",
           features: [
             {
               id: "address.1",
@@ -112,7 +109,6 @@ describe("MapTiler place search", () => {
         vi.fn(async () =>
           Response.json({
             type: "FeatureCollection",
-            attribution: "© MapTiler",
             features: [
               {
                 id: `${placeType}.1`,
@@ -138,7 +134,6 @@ describe("MapTiler place search", () => {
       vi.fn(async () =>
         Response.json({
           type: "FeatureCollection",
-          attribution: "© MapTiler",
           features: [
             {
               id: "poi.1",
@@ -220,7 +215,6 @@ describe("MapTiler place search", () => {
       vi.fn(async () =>
         Response.json({
           type: "FeatureCollection",
-          attribution: "© MapTiler",
           features: [
             {
               id: "country.145",
@@ -286,7 +280,7 @@ describe("MapTiler place search", () => {
   it("rejects malformed successful responses", async () => {
     const search = createMapTilerPlaceSearch(
       "key",
-      vi.fn(async () => Response.json({ features: [] }))
+      vi.fn(async () => Response.json({ features: "invalid" }))
     );
 
     await expect(search("Worcester", new AbortController().signal)).rejects.toThrow(

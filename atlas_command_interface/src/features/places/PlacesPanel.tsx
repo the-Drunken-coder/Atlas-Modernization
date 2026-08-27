@@ -157,20 +157,10 @@ export function PlacesPanel({ query, search, unavailableReason, onQueryChange, o
           ) : (
             <div className="panel__empty place-search__empty">No matching places.</div>
           )}
-          <PlaceSearchAttribution />
         </>
       ) : (
         <div className="panel__empty place-search__empty">Search by place name or address.</div>
       )}
-    </div>
-  );
-}
-
-function PlaceSearchAttribution() {
-  return (
-    <div className="place-search__attribution">
-      <a href="https://www.maptiler.com/copyright/">© MapTiler</a>{" "}
-      <a href="https://www.openstreetmap.org/copyright">© OpenStreetMap contributors</a>
     </div>
   );
 }

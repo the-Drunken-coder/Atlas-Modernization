@@ -57,6 +57,8 @@ describe("MapView place detail lens", () => {
     await waitFor(() => expect(rendered.maps()).toHaveLength(2));
     const lens = screen.getByRole("region", { name: "Local detail for Worcester, Massachusetts" });
     const detailMap = rendered.maps().find((map) => map.options.interactive === false)!;
+    expect(detailMap.options).toMatchObject({ interactive: false, attributionControl: false });
+    expect(detailMap.addControl).not.toHaveBeenCalled();
     await waitFor(() =>
       expect(detailMap.jumpTo).toHaveBeenCalledWith({ center: worcester.coordinates, zoom: 13 }, expect.any(Object))
     );

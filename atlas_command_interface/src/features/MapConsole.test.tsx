@@ -360,7 +360,6 @@ describe("MapConsole", () => {
       vi.fn(async () =>
         Response.json({
           type: "FeatureCollection",
-          attribution: "© MapTiler © OpenStreetMap contributors",
           features: [
             {
               id: "poi.1",

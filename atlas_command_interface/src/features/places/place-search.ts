@@ -12,7 +12,6 @@ export type PlaceSearchResult = {
 
 export type PlaceSearchResponse = {
   results: PlaceSearchResult[];
-  attribution: string;
 };
 
 export type PlaceSearch = (query: string, signal: AbortSignal) => Promise<PlaceSearchResponse>;
@@ -42,7 +41,7 @@ export function createMapTilerPlaceSearch(apiKey: string, fetchImpl: Fetch = fet
     }
 
     const payload: unknown = await response.json().catch(() => undefined);
-    if (!isRecord(payload) || !Array.isArray(payload.features) || typeof payload.attribution !== "string") {
+    if (!isRecord(payload) || !Array.isArray(payload.features)) {
       throw new Error("Place search returned an invalid response.");
     }
 
@@ -62,8 +61,7 @@ export function createMapTilerPlaceSearch(apiKey: string, fetchImpl: Fetch = fet
           const result = parseFeature(feature, countryBounds);
           return result ? [result] : [];
         })
-        .slice(0, 5),
-      attribution: payload.attribution
+        .slice(0, 5)
     };
   };
 }

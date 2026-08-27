@@ -96,7 +96,7 @@ Credentialed sources:
 - `thunderforest-outdoors` - set `VITE_THUNDERFOREST_API_KEY`.
 - `maptiler-satellite`, `maptiler-osm-dark` - set `VITE_MAPTILER_API_KEY`.
 
-Microsoft imagery via Bing or Azure Maps is intentionally deferred for the static app because it needs supported tile metadata, required attribution handling, and safer token/key handling.
+Microsoft imagery via Bing or Azure Maps is intentionally deferred for the static app because it needs supported tile metadata and safer token/key handling.
 
 The configured `maptiler-osm-dark` source remains the default whether or not its key is available. A valid explicit operator selection takes precedence; `openstreetmap-default` remains selectable but is not an automatic fallback when the configured default is unavailable.
 
