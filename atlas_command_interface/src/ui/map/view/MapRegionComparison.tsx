@@ -1,4 +1,4 @@
-import type { Map as MlMap, StyleSpecification } from "maplibre-gl";
+import type { MapEventType, Map as MlMap, StyleSpecification } from "maplibre-gl";
 import {
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -155,7 +155,7 @@ export function MapRegionComparison({
         if (
           !next &&
           document.activeElement instanceof Element &&
-          document.activeElement.closest(".map-compare__region")
+          document.activeElement.closest(".map-compare__region, .map-compare__caption, .map-compare__attribution")
         )
           toolRef.current?.focus();
         if (screenRectsEqual(regionRectRef.current, next)) {
@@ -325,8 +325,9 @@ export function MapRegionComparison({
       pushSources(comparisonMap, sourcesRef.current);
       pushEditingOverlay(comparisonMap, editingRef.current);
     };
-    const handleLoading = () => {
-      if (!failed) setStatus({ kind: "loading" });
+    const alternateSourceIds = new Set(Object.keys(source.style.sources));
+    const handleLoading = (event: MapEventType["dataloading"]) => {
+      if (!failed && "sourceId" in event && alternateSourceIds.has(event.sourceId)) setStatus({ kind: "loading" });
     };
     const handleIdle = () => {
       if (!failed) setStatus({ kind: "ready" });
@@ -493,7 +494,7 @@ export function MapRegionComparison({
         <div ref={comparisonHostRef} className="map-compare__map" style={comparisonStyle} aria-hidden="true" />
       ) : null}
 
-      {regionRect ? (
+      {regionRect && !drawing ? (
         <div
           className="map-compare__region"
           style={rectStyle(regionRect)}
@@ -553,7 +554,7 @@ export function MapRegionComparison({
         </div>
       ) : null}
 
-      {regionRect && !panelOpen ? (
+      {regionRect && !panelOpen && !drawing ? (
         <button
           type="button"
           className="map-compare__caption"
@@ -569,7 +570,7 @@ export function MapRegionComparison({
         </button>
       ) : null}
 
-      {source?.style && regionRect && attribution ? (
+      {source?.style && regionRect && attribution && !drawing ? (
         <details
           className="map-compare__attribution"
           style={attributionPosition(regionRect, canvasBounds)}

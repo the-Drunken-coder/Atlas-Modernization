@@ -392,6 +392,18 @@ describe("MapView region comparison", () => {
 
     await waitFor(() => expect(screen.queryByTestId("map-comparison-region")).not.toBeInTheDocument());
     expect(screen.getByRole("button", { name: "Compare map source inside a region" })).toHaveFocus();
+
+    map.project.mockImplementation((position: [number, number]) => ({ x: position[0], y: position[1] }));
+    map.fire("move");
+    await screen.findByTestId("map-comparison-region");
+    fireEvent.click(screen.getByRole("button", { name: "Close comparison controls" }));
+    screen.getByRole("button", { name: /Alternate map · 100%/ }).focus();
+    map.project.mockImplementation((position: [number, number]) => ({ x: position[0] + 500, y: position[1] }));
+
+    map.fire("move");
+
+    await waitFor(() => expect(screen.queryByRole("button", { name: /Alternate map · 100%/ })).not.toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "Compare map source inside a region" })).toHaveFocus();
   });
 
   it("adjusts comparison opacity and resets it after clear", async () => {
@@ -418,6 +430,8 @@ describe("MapView region comparison", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Redraw" }));
     expect(screen.getByText("Drag a region. Shift-drag still zooms.")).toBeInTheDocument();
+    expect(screen.queryByTestId("map-comparison-region")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Comparison map attribution")).not.toBeInTheDocument();
     fireEvent.keyDown(window, { key: "Escape" });
 
     expect(await screen.findByRole("dialog", { name: "Region comparison" })).toBeInTheDocument();
@@ -470,7 +484,11 @@ describe("MapView region comparison", () => {
     await drawComparison();
     const comparisonMap = mapInstances().at(-1);
     if (!comparisonMap) throw new Error("Comparison map is missing");
-    comparisonMap.fire("dataloading");
+    comparisonMap.fire("idle");
+    await waitFor(() => expect(screen.queryByText("Loading tiles")).not.toBeInTheDocument());
+    comparisonMap.fire("dataloading", { sourceId: "geofeatures" });
+    expect(screen.queryByText("Loading tiles")).not.toBeInTheDocument();
+    comparisonMap.fire("dataloading", { sourceId: "alternate" });
     await waitFor(() => expect(screen.getByText("Loading tiles")).toBeInTheDocument());
 
     comparisonMap.fire("error", { error: new Error("tile request failed") });
