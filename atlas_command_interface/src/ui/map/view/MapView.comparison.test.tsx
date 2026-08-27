@@ -1,7 +1,7 @@
 import { fireEvent, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { MapSourceConfig } from "../../../app/config.js";
-import { mapInstances, renderMapView, style } from "./MapView.test-harness.js";
+import { mapInstances, rect, renderMapView, style } from "./MapView.test-harness.js";
 
 const mapSourceOptions: MapSourceConfig[] = [
   { id: "base", label: "Base map", style: style("base") },
@@ -49,6 +49,23 @@ describe("MapView region comparison", () => {
     expect(canvas.querySelector(".map-reticle--zoom")).not.toBeInTheDocument();
     expect(screen.queryByTestId("map-comparison-region")).not.toBeInTheDocument();
     expect(screen.getByText("Drag a region. Shift-drag still zooms.")).toBeInTheDocument();
+  });
+
+  it("does not start drawing or select the background from an SVG control target", () => {
+    const { canvas, onBackgroundClick } = renderMapView({ styleId: "base", style: style("base"), mapSourceOptions });
+    const compare = screen.getByRole("button", { name: "Compare map source inside a region" });
+    const icon = compare.querySelector("svg");
+    if (!icon) throw new Error("Compare icon is missing");
+    fireEvent.click(icon);
+    expect(onBackgroundClick).not.toHaveBeenCalled();
+
+    fireEvent.mouseDown(icon, { button: 0, clientX: 20, clientY: 60 });
+    fireEvent.mouseMove(window, { clientX: 200, clientY: 140 });
+    fireEvent.mouseUp(window, { clientX: 200, clientY: 140 });
+
+    expect(screen.queryByTestId("map-comparison-region")).not.toBeInTheDocument();
+    expect(screen.getByText("Drag a region. Shift-drag still zooms.")).toBeInTheDocument();
+    expect(canvas).toHaveClass("map-canvas--compare-drawing");
   });
 
   it("keeps the secondary camera aligned as the primary map moves", async () => {
@@ -157,6 +174,29 @@ describe("MapView region comparison", () => {
     await waitFor(() => expect(screen.getByTestId("map-comparison-region")).toHaveStyle({ height: "90px" }));
   });
 
+  it("preserves the off-screen part of a region while moving its clipped projection", async () => {
+    const { map } = renderMapView({ styleId: "base", style: style("base"), mapSourceOptions });
+    await drawComparison();
+    map.project.mockImplementation((position: [number, number]) => ({ x: position[0] - 100, y: position[1] }));
+    map.unproject.mockImplementation((point: [number, number] | { x: number; y: number }) => {
+      const [x, y] = Array.isArray(point) ? point : [point.x, point.y];
+      return { lng: x + 100, lat: y };
+    });
+    map.fire("move");
+    await waitFor(() =>
+      expect(screen.getByTestId("map-comparison-region")).toHaveStyle({ left: "0px", width: "150px" })
+    );
+
+    const move = screen.getByRole("button", { name: "Move comparison region" });
+    fireEvent.mouseDown(move, { button: 0, clientX: 150, clientY: 100 });
+    fireEvent.mouseMove(window, { clientX: 170, clientY: 100 });
+    fireEvent.mouseUp(window, { clientX: 170, clientY: 100 });
+
+    await waitFor(() =>
+      expect(screen.getByTestId("map-comparison-region")).toHaveStyle({ left: "0px", width: "170px" })
+    );
+  });
+
   it("adjusts comparison opacity and resets it after clear", async () => {
     renderMapView({ styleId: "base", style: style("base"), mapSourceOptions });
     await drawComparison();
@@ -216,6 +256,24 @@ describe("MapView region comparison", () => {
     const mapCount = mapInstances().length;
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     await waitFor(() => expect(mapInstances()).toHaveLength(mapCount + 1));
+  });
+
+  it("floats a measured error panel when its rendered height does not fit below the region", async () => {
+    const rendered = renderMapView({ styleId: "base", style: style("base"), mapSourceOptions });
+    vi.spyOn(rendered.canvas, "getBoundingClientRect").mockReturnValue(rect(10, 20, 600, 360));
+    await drawComparison();
+    const panel = screen.getByRole("dialog", { name: "Region comparison" });
+    expect(panel).toHaveAttribute("data-placement", "below");
+    Object.defineProperty(panel, "scrollHeight", { configurable: true, value: 280 });
+    const comparisonMap = mapInstances().at(-1);
+    if (!comparisonMap) throw new Error("Comparison map is missing");
+
+    comparisonMap.fire("error", { error: new Error("tile request failed") });
+
+    await waitFor(() => expect(panel).toHaveAttribute("data-placement", "floating"));
+    expect(panel).toHaveStyle({ top: "10px", maxHeight: "340px" });
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Clear" })).toBeInTheDocument();
   });
 });
 

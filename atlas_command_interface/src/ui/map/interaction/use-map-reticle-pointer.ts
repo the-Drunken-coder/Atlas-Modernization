@@ -386,7 +386,7 @@ function isEditableKeyboardTarget(target: EventTarget | null): boolean {
 
 function isMapInteractionControlTarget(target: EventTarget | null): boolean {
   return (
-    target instanceof HTMLElement &&
+    target instanceof Element &&
     Boolean(target.closest(".maplibregl-control-container, [data-map-interaction-control]"))
   );
 }

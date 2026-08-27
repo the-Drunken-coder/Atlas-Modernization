@@ -71,7 +71,7 @@ type MapRegionComparisonProps = {
 
 const MIN_REGION_SIZE = 32;
 const PANEL_WIDTH = 258;
-const PANEL_HEIGHT = 210;
+const PANEL_HEIGHT_ESTIMATE = 210;
 
 export function MapRegionComparison({
   mapCanvas,
@@ -101,6 +101,7 @@ export function MapRegionComparison({
   const [regionRect, setRegionRect] = useState<ScreenRect | null>(null);
   const [drag, setDrag] = useState<DragState | null>(null);
   const [panelOpen, setPanelOpen] = useState(false);
+  const [panelHeight, setPanelHeight] = useState(PANEL_HEIGHT_ESTIMATE);
   const [opacity, setOpacity] = useState(100);
   const [status, setStatus] = useState<ComparisonStatus>({ kind: "idle" });
   const [retryGeneration, setRetryGeneration] = useState(0);
@@ -130,6 +131,13 @@ export function MapRegionComparison({
     });
     return () => cancelAnimationFrame(frame);
   }, [panelOpen]);
+
+  useLayoutEffect(() => {
+    if (!panelOpen) return;
+    const height = panelRef.current?.scrollHeight;
+    if (!height) return;
+    setPanelHeight((current) => (current === height ? current : height));
+  }, [panelOpen, regionRect, source?.id, status]);
 
   useEffect(() => {
     if (!map || !mapCanvas || !mapReady || !region) {
@@ -168,7 +176,7 @@ export function MapRegionComparison({
     const primaryMap = map;
     const startDrawing = (event: globalThis.MouseEvent) => {
       if (drag.kind !== "draw" || drag.start || event.button !== 0 || event.shiftKey) return;
-      if (event.target instanceof HTMLElement && event.target.closest("[data-map-interaction-control]")) return;
+      if (event.target instanceof Element && event.target.closest("[data-map-interaction-control]")) return;
       event.preventDefault();
       event.stopPropagation();
       const point = pointInCanvas(event, mapCanvas, true);
@@ -346,7 +354,7 @@ export function MapRegionComparison({
   };
 
   const beginTransform = (transform: RegionTransform, event: ReactMouseEvent<HTMLButtonElement>) => {
-    if (event.button !== 0 || !mapCanvas || !region || !regionRect) return;
+    if (event.button !== 0 || !map || !mapCanvas || !region || !regionRect) return;
     event.preventDefault();
     event.stopPropagation();
     setPanelOpen(false);
@@ -354,23 +362,24 @@ export function MapRegionComparison({
       kind: "transform",
       transform,
       start: pointInCanvas(event, mapCanvas, true),
-      initialRect: regionRect,
+      initialRect: projectedScreenRect(map, region),
       initialRegion: region
     });
   };
 
   const transformWithKeyboard = (transform: RegionTransform, event: ReactKeyboardEvent<HTMLButtonElement>) => {
-    if (!map || !mapCanvas || !regionRect) return;
+    if (!map || !mapCanvas || !region) return;
     const delta = keyboardDelta(event.key, event.shiftKey ? 40 : 10, transform === "move" ? "both" : transform);
     if (!delta) return;
     event.preventDefault();
     event.stopPropagation();
     setPanelOpen(false);
     const viewport = mapCanvas.getBoundingClientRect();
+    const projectedRect = projectedScreenRect(map, region);
     const nextRect =
       transform === "move"
-        ? clampMovedRect(regionRect, delta, viewport)
-        : clampResizedRect(regionRect, delta, transform, viewport);
+        ? clampMovedRect(projectedRect, delta, viewport)
+        : clampResizedRect(projectedRect, delta, transform, viewport);
     setRegion(regionFromScreenRect(map, nextRect));
     notifyUserGesture();
   };
@@ -379,7 +388,7 @@ export function MapRegionComparison({
     drag?.kind === "draw" && drag.start && drag.current ? rectFromPoints(drag.start, drag.current) : null;
   const drawing = drag?.kind === "draw";
   const canvasBounds = mapCanvas?.getBoundingClientRect();
-  const panelAnchor = panelPosition(regionRect, canvasBounds);
+  const panelAnchor = panelPosition(regionRect, canvasBounds, panelHeight);
   const captionStyle = captionPosition(regionRect, canvasBounds);
   const comparisonStyle = regionRect ? { ...rectStyle(regionRect), opacity: opacity / 100 } : undefined;
   const resizeRightInside = Boolean(
@@ -638,17 +647,26 @@ function visibleScreenRect(
   viewportWidth: number,
   viewportHeight: number
 ): ScreenRect | null {
+  const rect = projectedScreenRect(map, region);
+  const left = Math.max(0, rect.left);
+  const top = Math.max(0, rect.top);
+  const right = Math.min(viewportWidth, rect.left + rect.width);
+  const bottom = Math.min(viewportHeight, rect.top + rect.height);
+  if (right - left < 2 || bottom - top < 2) return null;
+  return { left, top, width: right - left, height: bottom - top };
+}
+
+function projectedScreenRect(map: MlMap, region: GeographicRegion): ScreenRect {
   const points = [
     map.project([region.west, region.north]),
     map.project([region.east, region.north]),
     map.project([region.east, region.south]),
     map.project([region.west, region.south])
   ];
-  const left = Math.max(0, Math.min(...points.map((point) => point.x)));
-  const top = Math.max(0, Math.min(...points.map((point) => point.y)));
-  const right = Math.min(viewportWidth, Math.max(...points.map((point) => point.x)));
-  const bottom = Math.min(viewportHeight, Math.max(...points.map((point) => point.y)));
-  if (right - left < 2 || bottom - top < 2) return null;
+  const left = Math.min(...points.map((point) => point.x));
+  const top = Math.min(...points.map((point) => point.y));
+  const right = Math.max(...points.map((point) => point.x));
+  const bottom = Math.max(...points.map((point) => point.y));
   return { left, top, width: right - left, height: bottom - top };
 }
 
@@ -669,18 +687,20 @@ function syncComparisonCamera(
 }
 
 function clampMovedRect(rect: ScreenRect, delta: ScreenPoint, viewport: DOMRect): ScreenRect {
+  const visibleWidth = Math.min(MIN_REGION_SIZE, rect.width);
+  const visibleHeight = Math.min(MIN_REGION_SIZE, rect.height);
   return {
     ...rect,
-    left: Math.max(0, Math.min(viewport.width - rect.width, rect.left + delta.x)),
-    top: Math.max(0, Math.min(viewport.height - rect.height, rect.top + delta.y))
+    left: Math.max(visibleWidth - rect.width, Math.min(viewport.width - visibleWidth, rect.left + delta.x)),
+    top: Math.max(visibleHeight - rect.height, Math.min(viewport.height - visibleHeight, rect.top + delta.y))
   };
 }
 
 function clampResizedRect(rect: ScreenRect, delta: ScreenPoint, axes: ResizeAxes, viewport: DOMRect): ScreenRect {
   const maxWidth = Math.max(0, viewport.width - rect.left);
   const maxHeight = Math.max(0, viewport.height - rect.top);
-  const minWidth = Math.min(MIN_REGION_SIZE, maxWidth);
-  const minHeight = Math.min(MIN_REGION_SIZE, maxHeight);
+  const minWidth = Math.min(maxWidth, Math.max(MIN_REGION_SIZE, MIN_REGION_SIZE - rect.left));
+  const minHeight = Math.min(maxHeight, Math.max(MIN_REGION_SIZE, MIN_REGION_SIZE - rect.top));
   return {
     ...rect,
     width: axes === "height" ? rect.width : Math.max(minWidth, Math.min(maxWidth, rect.width + delta.x)),
@@ -702,15 +722,16 @@ function rectStyle(rect: ScreenRect): CSSProperties {
 
 function panelPosition(
   rect: ScreenRect | null,
-  viewport: DOMRect | undefined
+  viewport: DOMRect | undefined,
+  panelHeight: number
 ): { style: CSSProperties; placement: "above" | "below" | "floating" } | undefined {
   if (!rect || !viewport) return undefined;
   const left = Math.max(10, Math.min(viewport.width - PANEL_WIDTH - 10, rect.left));
   const safeTop = viewport.width <= 520 ? 88 : 10;
-  if (rect.top >= PANEL_HEIGHT + safeTop) {
+  if (rect.top - safeTop - 10 >= panelHeight) {
     return { style: { left, top: rect.top - 10, transform: "translateY(-100%)" }, placement: "above" };
   }
-  if (viewport.height - rect.top - rect.height >= PANEL_HEIGHT + 10) {
+  if (viewport.height - rect.top - rect.height - 10 >= panelHeight) {
     return { style: { left, top: rect.top + rect.height + 10 }, placement: "below" };
   }
   return {

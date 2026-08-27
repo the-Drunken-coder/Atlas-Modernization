@@ -1,3 +1,7 @@
+.map-canvas {
+  container: map-comparison / inline-size;
+}
+
 .map-compare__tool {
   position: absolute;
   top: 50px;
@@ -404,7 +408,7 @@
   gap: 4px;
 }
 
-@media (max-width: 520px) {
+@container map-comparison (max-width: 520px) {
   .map-compare__drawing-prompt {
     top: 88px;
     left: 10px;
