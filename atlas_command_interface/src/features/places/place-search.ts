@@ -22,6 +22,7 @@ type CountryBoundsLookup = (countryCode: string) => CountryBounds | undefined;
 
 const MAPTILER_GEOCODING_URL = "https://api.maptiler.com/geocoding";
 const POINT_RETICLE_SIZE = 48;
+const MAX_MERCATOR_LATITUDE = 85.051129;
 
 export function createMapTilerPlaceSearch(apiKey: string, fetchImpl: Fetch = fetch): PlaceSearch {
   const normalizedApiKey = apiKey.trim();
@@ -78,9 +79,12 @@ function parseFeature(value: unknown, countryBounds?: CountryBoundsLookup): Plac
   const placeName = stringValue(value.place_name);
   const context = placeName && placeName !== name ? removeNamePrefix(placeName, name) : undefined;
   const targetId = `place:${id}`;
+  const placeTypes = placeTypesFromFeature(value);
   const countryCode = countryCodeFromFeature(value);
-  const bbox = (countryCode && countryBounds?.(countryCode)) ?? boundingBox(value.bbox);
+  const pointOnly = placeTypes.some((placeType) => placeType === "address" || placeType === "poi");
+  const bbox = pointOnly ? undefined : ((countryCode && countryBounds?.(countryCode)) ?? boundingBox(value.bbox));
   const geometry = bbox ? polygonForBounds(bbox) : undefined;
+  const cameraCoordinates: [number, number] = [coordinates[0], clampMercatorLatitude(coordinates[1])];
 
   return {
     id,
@@ -89,7 +93,7 @@ function parseFeature(value: unknown, countryBounds?: CountryBoundsLookup): Plac
     coordinates,
     target: geometry
       ? { type: "geometry", id: targetId, geometry, label: name }
-      : { type: "point", id: targetId, coordinates, label: name, reticleSize: POINT_RETICLE_SIZE }
+      : { type: "point", id: targetId, coordinates: cameraCoordinates, label: name, reticleSize: POINT_RETICLE_SIZE }
   };
 }
 
@@ -99,10 +103,16 @@ function removeNamePrefix(placeName: string, name: string): string {
 }
 
 function countryCodeFromFeature(value: Record<string, unknown>): string | undefined {
-  if (!Array.isArray(value.place_type) || !value.place_type.includes("country") || !isRecord(value.properties)) {
+  if (!placeTypesFromFeature(value).includes("country") || !isRecord(value.properties)) {
     return undefined;
   }
   return stringValue(value.properties.country_code)?.toLowerCase();
+}
+
+function placeTypesFromFeature(value: Record<string, unknown>): string[] {
+  return Array.isArray(value.place_type)
+    ? value.place_type.filter((placeType): placeType is string => typeof placeType === "string")
+    : [];
 }
 
 function polygonForBounds([west, south, east, north]: CountryBounds): UiPolygon {
@@ -131,7 +141,9 @@ function boundingBox(value: unknown): CountryBounds | undefined {
     south >= north
   )
     return undefined;
-  return [west, south, east, north];
+  const clampedSouth = clampMercatorLatitude(south);
+  const clampedNorth = clampMercatorLatitude(north);
+  return clampedSouth < clampedNorth ? [west, clampedSouth, east, clampedNorth] : undefined;
 }
 
 function lngLat(value: unknown): [number, number] | undefined {
@@ -152,4 +164,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
+}
+
+function clampMercatorLatitude(latitude: number): number {
+  return Math.max(-MAX_MERCATOR_LATITUDE, Math.min(MAX_MERCATOR_LATITUDE, latitude));
 }

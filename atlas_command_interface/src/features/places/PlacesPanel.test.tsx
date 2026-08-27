@@ -13,7 +13,8 @@ const pointTarget = {
 };
 
 const response: PlaceSearchResponse = {
-  attribution: "© MapTiler © OpenStreetMap contributors",
+  attribution:
+    '<a href="https://www.maptiler.com/copyright/">&copy; MapTiler</a> <a href="https://www.openstreetmap.org/copyright">&copy; OpenStreetMap contributors</a>',
   results: [
     {
       id: "poi.1",
@@ -77,7 +78,14 @@ describe("PlacesPanel", () => {
     });
     expect(search).toHaveBeenCalledWith("Worcester", expect.any(AbortSignal));
     expect(screen.getByText("1 place")).toBeInTheDocument();
-    expect(screen.getByText("© MapTiler © OpenStreetMap contributors")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "© MapTiler" })).toHaveAttribute(
+      "href",
+      "https://www.maptiler.com/copyright/"
+    );
+    expect(screen.getByRole("link", { name: "© OpenStreetMap contributors" })).toHaveAttribute(
+      "href",
+      "https://www.openstreetmap.org/copyright"
+    );
 
     onPreview.mockClear();
     fireEvent.mouseEnter(result);
@@ -106,6 +114,7 @@ describe("PlacesPanel", () => {
       label: "Boston"
     };
     const onPreview = vi.fn<(target: MapTarget | null) => void>();
+    const onFocus = vi.fn<(target: MapTarget) => void>();
     render(
       <Harness
         search={async () => ({
@@ -122,6 +131,7 @@ describe("PlacesPanel", () => {
           ]
         })}
         onPreview={onPreview}
+        onFocus={onFocus}
       />
     );
 
@@ -147,6 +157,19 @@ describe("PlacesPanel", () => {
 
     fireEvent.blur(worcester);
     expect(onPreview).toHaveBeenLastCalledWith(null);
+
+    fireEvent.focus(worcester);
+    fireEvent.mouseEnter(boston);
+    onPreview.mockClear();
+    fireEvent.click(worcester);
+    expect(onFocus).toHaveBeenCalledWith(pointTarget);
+    await act(async () => vi.advanceTimersByTimeAsync(SEARCH_DELAY));
+    expect(onPreview).not.toHaveBeenCalledWith(bostonTarget);
+    expect(onPreview).toHaveBeenLastCalledWith(null);
+
+    fireEvent.focus(boston);
+    await act(async () => vi.advanceTimersByTimeAsync(SEARCH_DELAY));
+    expect(onPreview).toHaveBeenLastCalledWith(bostonTarget);
   });
 
   it("removes stale rows as soon as a new query starts", async () => {
@@ -248,7 +271,7 @@ describe("PlacesPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Retry search" }));
     await act(async () => vi.advanceTimersByTimeAsync(SEARCH_DELAY));
     expect(screen.getByText("No matching places.")).toBeInTheDocument();
-    expect(screen.getByText("© MapTiler © OpenStreetMap contributors")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "© MapTiler" })).toBeInTheDocument();
     expect(search).toHaveBeenCalledTimes(2);
   });
 

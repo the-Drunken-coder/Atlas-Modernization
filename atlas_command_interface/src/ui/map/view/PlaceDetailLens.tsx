@@ -95,6 +95,7 @@ export function PlaceDetailLens({ target, style }: PlaceDetailLensProps) {
 
     let map: MlMap | undefined;
     let resizeObserver: ResizeObserver | undefined;
+    let resizeFrame: number | undefined;
     let cancelled = false;
     const initializeMap = (maplibre: MapLibreRuntime) => {
       if (cancelled || !containerRef.current) return;
@@ -125,7 +126,10 @@ export function PlaceDetailLens({ target, style }: PlaceDetailLensProps) {
 
       resizeObserver = new ResizeObserver(() => mapInstance.resize({ [CAMERA_EVENT_TAG]: true }));
       resizeObserver.observe(containerRef.current);
-      requestAnimationFrame(() => mapInstance.resize({ [CAMERA_EVENT_TAG]: true }));
+      resizeFrame = requestAnimationFrame(() => {
+        resizeFrame = undefined;
+        if (!cancelled) mapInstance.resize({ [CAMERA_EVENT_TAG]: true });
+      });
     };
 
     const maplibre = getMapLibreRuntime();
@@ -142,6 +146,7 @@ export function PlaceDetailLens({ target, style }: PlaceDetailLensProps) {
     return () => {
       cancelled = true;
       resizeObserver?.disconnect();
+      if (resizeFrame !== undefined) cancelAnimationFrame(resizeFrame);
       map?.remove();
       mapRef.current = undefined;
     };

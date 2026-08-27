@@ -104,7 +104,35 @@ describe("MapTiler place search", () => {
     });
   });
 
-  it("uses provider bounds for address-sized targets", async () => {
+  it.each(["address", "poi"])(
+    "keeps %s results as point targets when provider bounds are present",
+    async (placeType) => {
+      const search = createMapTilerPlaceSearch(
+        "key",
+        vi.fn(async () =>
+          Response.json({
+            type: "FeatureCollection",
+            attribution: "© MapTiler",
+            features: [
+              {
+                id: `${placeType}.1`,
+                text: "100 Institute Road",
+                center: [-71.8063, 42.2746],
+                bbox: [-71.8065, 42.2744, -71.8061, 42.2748],
+                place_type: [placeType]
+              }
+            ]
+          })
+        )
+      );
+
+      await expect(search("100 Institute Road", new AbortController().signal)).resolves.toMatchObject({
+        results: [{ target: { type: "point", coordinates: [-71.8063, 42.2746], reticleSize: 48 } }]
+      });
+    }
+  );
+
+  it("clamps polar camera targets to the Web Mercator latitude range", async () => {
     const search = createMapTilerPlaceSearch(
       "key",
       vi.fn(async () =>
@@ -113,31 +141,41 @@ describe("MapTiler place search", () => {
           attribution: "© MapTiler",
           features: [
             {
-              id: "address.1",
-              text: "100 Institute Road",
-              center: [-71.8063, 42.2746],
-              bbox: [-71.8065, 42.2744, -71.8061, 42.2748],
-              place_type: ["address"]
+              id: "poi.1",
+              text: "North Pole",
+              center: [0, 90],
+              place_type: ["poi"]
+            },
+            {
+              id: "municipality.1",
+              text: "Polar municipality",
+              center: [0, 89],
+              bbox: [-1, 85, 1, 90],
+              place_type: ["municipality"]
             }
           ]
         })
       )
     );
 
-    await expect(search("100 Institute Road", new AbortController().signal)).resolves.toMatchObject({
+    await expect(search("polar", new AbortController().signal)).resolves.toMatchObject({
       results: [
         {
+          coordinates: [0, 90],
+          target: { type: "point", coordinates: [0, 85.051129] }
+        },
+        {
+          coordinates: [0, 89],
           target: {
             type: "geometry",
             geometry: {
-              type: "Polygon",
               coordinates: [
                 [
-                  [-71.8065, 42.2744],
-                  [-71.8061, 42.2744],
-                  [-71.8061, 42.2748],
-                  [-71.8065, 42.2748],
-                  [-71.8065, 42.2744]
+                  [-1, 85],
+                  [1, 85],
+                  [1, 85.051129],
+                  [-1, 85.051129],
+                  [-1, 85]
                 ]
               ]
             }

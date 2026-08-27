@@ -181,6 +181,22 @@ describe("MapView external reticle targets", () => {
     await waitFor(() => expect(document.querySelector(".map-reticle")).not.toBeInTheDocument());
   });
 
+  it("leaves Escape from form controls to the focused control", async () => {
+    const { canvas, onBackgroundClick, rerenderMap } = renderMapView({ selectedId: "asset-1" });
+    appendMarker(canvas, "asset-1", rect(70, 90, 20, 20));
+    rerenderMap({ focusTarget: { type: "entity", id: "asset-1" } });
+    await waitFor(() => expect(document.querySelector(".map-reticle")).toBeInTheDocument());
+    const input = document.createElement("input");
+    document.body.appendChild(input);
+    const event = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+
+    fireEvent(input, event);
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(onBackgroundClick).not.toHaveBeenCalled();
+    input.remove();
+  });
+
   it("drops the reticle to the pointer when Escape clears selection over the map", async () => {
     const { canvas, onBackgroundClick, rerenderMap } = renderMapView({ selectedId: "asset-1" });
     appendMarker(canvas, "asset-1", rect(70, 90, 20, 20));

@@ -35,7 +35,10 @@ const maplibreMock = vi.hoisted(() => {
     readonly flyTo = vi.fn();
     readonly jumpTo = vi.fn();
     readonly stop = vi.fn();
-    readonly setRenderWorldCopies = vi.fn();
+    readonly setRenderWorldCopies = vi.fn((value: boolean) => {
+      this.renderWorldCopies = value;
+    });
+    readonly getRenderWorldCopies = vi.fn(() => this.renderWorldCopies);
     readonly fitScreenCoordinates = vi.fn();
     readonly fitBounds = vi.fn();
     readonly zoomTo = vi.fn();
@@ -87,6 +90,7 @@ const maplibreMock = vi.hoisted(() => {
       return this;
     });
     loaded = true;
+    renderWorldCopies: boolean;
     style: unknown;
     center = { lng: 0, lat: 0 };
     zoom = 4;
@@ -94,6 +98,7 @@ const maplibreMock = vi.hoisted(() => {
     constructor(options: Record<string, unknown>) {
       this.options = options;
       this.style = options.style;
+      this.renderWorldCopies = Boolean(options.renderWorldCopies);
       FakeMap.instances.push(this);
     }
 

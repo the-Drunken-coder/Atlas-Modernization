@@ -1,6 +1,6 @@
 import { Callout } from "@blueprintjs/core";
 import { type MapMouseEvent, type Map as MlMap, type StyleSpecification } from "maplibre-gl";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { MapSourceConfig } from "../../../app/config.js";
 import { sanitizeConnectionError } from "../../../atlas/connection-error.js";
 import { Button } from "../../primitives/controls.js";
@@ -12,6 +12,7 @@ import {
   RETICLE_FLASH_MS
 } from "../interaction/map-camera.js";
 import type { MapReticleTarget } from "../interaction/map-targets.js";
+import { reticleForVisibleTarget } from "../interaction/map-targets.js";
 import { useMapCamera } from "../interaction/use-map-camera.js";
 import { useMapReticleInteraction } from "../interaction/use-map-reticle-interaction.js";
 import { createEditingMarkers, type MapEditing } from "../rendering/map-editing.js";
@@ -99,12 +100,28 @@ export function MapView({
     cameraCommand?.intent === "commit" ? null : cameraCommand
   );
   const [reticleFlashing, setReticleFlashing] = useState(false);
+  const pendingCommitTimeoutRef = useRef<number | undefined>(undefined);
   handlersRef.current = { onSelectEntity, onMapContextMenu };
   styleSwitchErrorRef.current = onStyleSwitchError;
   sourcesRef.current = sources;
   editingRef.current = editing;
   initialMapRef.current = { initialCenter, style, styleId };
-  const { notifyUserGesture } = useMapCamera({ mapRef, mapReady, sources, command: appliedCameraCommand });
+  const clearPendingCommit = useCallback(() => {
+    if (pendingCommitTimeoutRef.current === undefined) return false;
+    window.clearTimeout(pendingCommitTimeoutRef.current);
+    pendingCommitTimeoutRef.current = undefined;
+    return true;
+  }, []);
+  const cancelPendingCommit = useCallback(() => {
+    if (clearPendingCommit()) setReticleFlashing(false);
+  }, [clearPendingCommit]);
+  const { notifyUserGesture, releaseCameraOwnership } = useMapCamera({
+    mapRef,
+    mapReady,
+    sources,
+    command: appliedCameraCommand,
+    onUserGesture: cancelPendingCommit
+  });
   const reticleInteraction = useMapReticleInteraction({
     mapCanvasRef,
     mapRef,
@@ -120,6 +137,7 @@ export function MapView({
   mapActionsRef.current = reticleInteraction.mapActions;
 
   useEffect(() => {
+    clearPendingCommit();
     if (cameraCommand?.intent !== "commit") {
       setReticleFlashing(false);
       setAppliedCameraCommand(cameraCommand);
@@ -127,14 +145,26 @@ export function MapView({
     }
     // A preview return may still be moving. Freeze it during the flash so the
     // committed zoom starts from the camera position the operator clicked.
-    mapRef.current?.stop();
+    const map = mapRef.current;
+    map?.stop();
+    releaseCameraOwnership();
+    const visibleCommitReticle =
+      map && reticleForVisibleTarget(mapCanvasRef.current, map, sourcesRef.current, cameraCommand.target);
+    if (!visibleCommitReticle) {
+      setReticleFlashing(false);
+      setAppliedCameraCommand(cameraCommand);
+      return;
+    }
     setReticleFlashing(true);
-    const timeout = window.setTimeout(() => {
+    pendingCommitTimeoutRef.current = window.setTimeout(() => {
+      pendingCommitTimeoutRef.current = undefined;
       setReticleFlashing(false);
       setAppliedCameraCommand(cameraCommand);
     }, RETICLE_FLASH_MS);
-    return () => window.clearTimeout(timeout);
-  }, [cameraCommand]);
+    return () => {
+      clearPendingCommit();
+    };
+  }, [cameraCommand, clearPendingCommit, releaseCameraOwnership]);
 
   // Create the map once.
   useEffect(() => {

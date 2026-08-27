@@ -65,7 +65,12 @@ export function PlacesPanel({ query, search, unavailableReason, onQueryChange, o
   useEffect(() => () => onPreview(null), [onPreview]);
 
   const results = state.phase === "ready" ? state.response.results : [];
-  const activeResultId = hoveredResultId ?? focusedResultId;
+  const activeResultId =
+    hoveredResultId && hoveredResultId !== suppressedResultId
+      ? hoveredResultId
+      : focusedResultId && focusedResultId !== suppressedResultId
+        ? focusedResultId
+        : null;
   const activeResult = results.find((result) => result.id === activeResultId);
 
   useEffect(() => {
@@ -125,7 +130,10 @@ export function PlacesPanel({ query, search, unavailableReason, onQueryChange, o
                   result={result}
                   onBlur={() => setFocusedResultId((current) => (current === result.id ? null : current))}
                   onCommit={() => {
+                    setHoveredResultId(null);
+                    setFocusedResultId(null);
                     setSuppressedResultId(result.id);
+                    onPreview(null);
                     onFocus(result.target);
                   }}
                   onDismiss={() => {
@@ -149,11 +157,20 @@ export function PlacesPanel({ query, search, unavailableReason, onQueryChange, o
           ) : (
             <div className="panel__empty place-search__empty">No matching places.</div>
           )}
-          <div className="place-search__attribution">{state.response.attribution}</div>
+          <PlaceSearchAttribution />
         </>
       ) : (
         <div className="panel__empty place-search__empty">Search by place name or address.</div>
       )}
+    </div>
+  );
+}
+
+function PlaceSearchAttribution() {
+  return (
+    <div className="place-search__attribution">
+      <a href="https://www.maptiler.com/copyright/">© MapTiler</a>{" "}
+      <a href="https://www.openstreetmap.org/copyright">© OpenStreetMap contributors</a>
     </div>
   );
 }

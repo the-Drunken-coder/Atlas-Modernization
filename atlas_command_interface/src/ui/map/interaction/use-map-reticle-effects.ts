@@ -101,7 +101,7 @@ export function useMapReticleEffects({ options, stateStore, pointer, zooming, re
   useLayoutEffect(() => {
     if (!reticleVisible && !selectedEntityId) return;
     const releaseOnEscape = (event: globalThis.KeyboardEvent) => {
-      if (event.key !== "Escape" || stateRef.current.zoomOverlay) return;
+      if (event.key !== "Escape" || stateRef.current.zoomOverlay || isEditableTarget(event.target)) return;
       event.preventDefault();
       event.stopPropagation();
       if (optionsRef.current.selectedEntityId) optionsRef.current.onBackgroundClick?.();
@@ -216,4 +216,8 @@ export function useMapReticleEffects({ options, stateStore, pointer, zooming, re
     },
     [cancelPendingPointer, scrollLockTimeoutRef, scrollZoomRestoreRef, suppressClickTimeoutRef]
   );
+}
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  return target instanceof HTMLElement && (target.matches("input, textarea, select") || target.isContentEditable);
 }

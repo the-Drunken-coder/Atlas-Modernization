@@ -110,4 +110,16 @@ describe("MapView place detail lens", () => {
     expect(screen.queryByRole("region", { name: /Local detail for/ })).not.toBeInTheDocument();
     expect(detailMap.remove).toHaveBeenCalledOnce();
   });
+
+  it("cancels the queued resize before removing the detail map", async () => {
+    const rendered = renderMapView({ placeDetailTarget: worcester });
+    const detailMap = rendered.maps().find((map) => map.options.interactive === false)!;
+    detailMap.resize.mockClear();
+
+    rendered.rerenderMap({ placeDetailTarget: null });
+    await Promise.resolve();
+
+    expect(detailMap.remove).toHaveBeenCalledOnce();
+    expect(detailMap.resize).not.toHaveBeenCalled();
+  });
 });

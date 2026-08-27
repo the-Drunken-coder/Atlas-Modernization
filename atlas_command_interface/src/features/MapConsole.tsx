@@ -171,6 +171,13 @@ export function MapConsole() {
     [atlas.config]
   );
   const placesActive = sidebar.view.mode === "list" && sidebar.view.list === "places";
+  const selectSidebarList = useCallback((list: ListKind) => {
+    if (list !== "places") {
+      setPlacePreviewTarget(null);
+      setCameraCommand((current) => (current?.intent === "commit" ? null : current));
+    }
+    dispatch({ type: "openList", list });
+  }, []);
   const placeFocusTarget = placesActive && cameraCommand?.intent === "commit" ? cameraCommand.target : null;
   const focusTarget =
     placePreviewTarget ?? placeFocusTarget ?? (placesActive ? null : entityReticleTarget(selectedEntity));
@@ -260,7 +267,7 @@ export function MapConsole() {
             collapsed={sidebar.collapsed}
             activeList={activeList}
             counts={counts}
-            onSelectList={(list) => dispatch({ type: "openList", list })}
+            onSelectList={selectSidebarList}
             onToggleCollapsed={() => dispatch({ type: "toggleCollapsed" })}
           />
         }

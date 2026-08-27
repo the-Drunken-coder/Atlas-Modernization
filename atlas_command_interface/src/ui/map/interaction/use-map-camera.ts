@@ -35,12 +35,18 @@ export function useMapCamera(args: {
   mapReady: boolean;
   sources: MapSources;
   command: MapCameraCommand | null | undefined;
-}): { notifyUserGesture: () => void } {
-  const { mapRef, mapReady, sources, command } = args;
+  onUserGesture?: () => void;
+}): { notifyUserGesture: () => void; releaseCameraOwnership: () => void } {
+  const { mapRef, mapReady, sources, command, onUserGesture } = args;
   const followRef = useRef<FollowState>(followIdle);
   const lastAppliedSeqRef = useRef(0);
   const lastFollowedCoordsRef = useRef<[number, number] | null>(null);
-  const previewOriginRef = useRef<{ center: [number, number]; zoom: number } | null>(null);
+  const previewOriginRef = useRef<{
+    center: [number, number];
+    zoom: number;
+    renderWorldCopies: boolean;
+  } | null>(null);
+  const renderWorldCopiesOwnedRef = useRef(false);
   const sourcesRef = useRef(sources);
   sourcesRef.current = sources;
 
@@ -64,8 +70,21 @@ export function useMapCamera(args: {
   }, [mapRef]);
 
   const notifyUserGesture = useCallback(() => {
+    const origin = previewOriginRef.current;
+    if (origin) {
+      mapRef.current?.setRenderWorldCopies(origin.renderWorldCopies);
+      renderWorldCopiesOwnedRef.current = false;
+    }
     previewOriginRef.current = null;
+    onUserGesture?.();
     dispatch({ type: "user-gesture" });
+  }, [dispatch, mapRef, onUserGesture]);
+
+  // A staged commit owns the current view without leaving the previous
+  // preview or entity-follow command active during its reticle flash.
+  const releaseCameraOwnership = useCallback(() => {
+    previewOriginRef.current = null;
+    dispatch({ type: "command-cleared" });
   }, [dispatch]);
 
   // Gesture and animation listeners. Untagged movement means the user moved
@@ -113,10 +132,15 @@ export function useMapCamera(args: {
       const origin = previewOriginRef.current;
       if (origin) {
         previewOriginRef.current = null;
+        map.setRenderWorldCopies(origin.renderWorldCopies);
+        renderWorldCopiesOwnedRef.current = false;
         map.easeTo(
           { center: origin.center, zoom: origin.zoom, duration: PREVIEW_RESTORE_MS, easing: previewEasing },
           { [CAMERA_EVENT_TAG]: true }
         );
+      } else if (renderWorldCopiesOwnedRef.current) {
+        map.setRenderWorldCopies(false);
+        renderWorldCopiesOwnedRef.current = false;
       }
       return;
     }
@@ -127,20 +151,26 @@ export function useMapCamera(args: {
       lastAppliedSeqRef.current = command.seq;
       dispatch({ type: "command-geometry", seq: command.seq });
       map.setRenderWorldCopies(false);
+      renderWorldCopiesOwnedRef.current = false;
       map.fitBounds(INITIAL_WORLD_BOUNDS, { padding: 0, duration: FIT_DURATION_MS }, { [CAMERA_EVENT_TAG]: true });
       return;
     }
 
     const geometry = geometryForTarget(sources, command.target);
-    if (geometry) map.setRenderWorldCopies(geometryUsesUnwrappedLongitudes(geometry));
     const view = geometry
       ? (() => {
           const center = map.getCenter();
           return { center: [center.lng, center.lat] as [number, number], zoom: map.getZoom() };
         })()
       : undefined;
-    if (command.intent === "preview" && view && !previewOriginRef.current) previewOriginRef.current = view;
+    if (command.intent === "preview" && view && !previewOriginRef.current) {
+      previewOriginRef.current = { ...view, renderWorldCopies: map.getRenderWorldCopies() };
+    }
     if (command.intent !== "preview") previewOriginRef.current = null;
+    if (geometry) {
+      map.setRenderWorldCopies(geometryUsesUnwrappedLongitudes(geometry));
+      renderWorldCopiesOwnedRef.current = true;
+    }
     const move = geometry && view ? planFocusMove(geometry, view, command.intent) : null;
     if (!move) {
       if (command.target.type === "entity")
@@ -191,5 +221,5 @@ export function useMapCamera(args: {
     chaseFollowedEntity();
   }, [sources, mapReady, chaseFollowedEntity]);
 
-  return { notifyUserGesture };
+  return { notifyUserGesture, releaseCameraOwnership };
 }

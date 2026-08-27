@@ -410,6 +410,18 @@ describe("MapConsole", () => {
       await act(async () => Promise.resolve());
       expect(screen.getByTestId("map")).toHaveAttribute("data-focus-target", "place:poi.1");
 
+      fireEvent.click(screen.getByRole("button", { name: "Assets" }));
+      expect(screen.getByTestId("map")).toHaveAttribute("data-camera-intent", "");
+      expect(screen.getByTestId("map")).toHaveAttribute("data-focus-target", "asset-1");
+
+      fireEvent.click(screen.getByRole("button", { name: "Places" }));
+      await act(async () => vi.advanceTimersByTimeAsync(250));
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: "Worcester Polytechnic Institute, Worcester, Massachusetts, United States"
+        })
+      );
+
       const worldView = screen.getByRole("button", { name: "World view" });
       expect(worldView).toHaveAttribute("title", "World view");
       expect(worldView).not.toHaveTextContent("World view");
@@ -417,7 +429,7 @@ describe("MapConsole", () => {
       fireEvent.click(worldView);
       expect(screen.getByTestId("map")).toHaveAttribute("data-camera-target", "");
       expect(screen.getByTestId("map")).toHaveAttribute("data-camera-intent", "world");
-      expect(screen.getByTestId("map")).toHaveAttribute("data-camera-seq", "3");
+      expect(screen.getByTestId("map")).toHaveAttribute("data-camera-seq", "4");
       expect(screen.getByTestId("map")).toHaveAttribute("data-focus-target", "");
     } finally {
       vi.useRealTimers();
