@@ -56,7 +56,7 @@ GET  /datastreams/{plugin_id}/{stream_id}
 
 The lists are authenticated discovery endpoints. A Plugin manifest contains only its Plugin ID, display name, Operation descriptors, Datastream descriptors, and optional Tool Asset ID. Each Operation descriptor declares the timeout Core enforces for that Operation. Commands remain in the Tool Asset's existing runtime manifest. Plugin manifests do not contain configuration schemas, connector requests, permissions, protocol versions, or upgrade metadata.
 
-An Operation is always a bounded synchronous JSON request and response. Core treats input and output as opaque JSON. The Plugin validates input and owns the result shape. Each descriptor declares a timeout, and Core rejects the whole manifest if any timeout exceeds its hard maximum. Core returns the Operation result in the same request. Work that must outlive that request uses a Tool Task instead; the Plugin system does not add asynchronous Operation jobs or polling.
+An Operation is always a bounded synchronous JSON request and response. Core applies hard size limits to the public request body and the private Plugin response body. It rejects an oversized request before dispatch and maps an oversized Plugin response to Plugin failure. Core treats input and output as opaque JSON. The Plugin validates input and owns the result shape. Each descriptor declares a timeout, and Core rejects the whole manifest if any timeout exceeds its hard maximum. Core returns the Operation result in the same request. Work that must outlive that request uses a Tool Task instead; the Plugin system does not add asynchronous Operation jobs or polling.
 
 Operations are semantically read-only and side-effect free. They may query Atlas or an External source, including sources whose query API uses HTTP `POST`, but they do not mutate Atlas, change an External source, or start ongoing behavior. Durable changes use normal Core writes, and ongoing actions use Tool Tasks. Core cannot infer side effects from opaque JSON, so Plugin code owns compliance with this contract. The live delivery transport for Datastreams remains open until a real stream establishes its ordering, replay, and latency needs.
 
@@ -74,7 +74,7 @@ Source connectors centralize mechanics shared across external systems:
 - retries and circuit breaking
 - request metrics and failure status
 
-Each Source connector pins its external origin and credentials. A Plugin identifies the connector and supplies a relative path, method, query, allowed headers, and body within configured limits. The Gateway rejects absolute URLs, origin overrides, and credential-header overrides. It does not translate vendor payloads into an Atlas-wide external-data schema. Each Plugin owns the meaning and shape of its source data.
+Each Source connector pins its external origin and credentials. A Plugin identifies the connector and supplies a relative path, method, query, allowed headers, and body within configured limits. The Gateway rejects absolute URLs, origin overrides, and credential-header overrides. It never follows upstream redirects; it returns each `3xx` response to the Plugin under the same bounded response rules. It does not translate vendor payloads into an Atlas-wide external-data schema. Each Plugin owns the meaning and shape of its source data.
 
 The Gateway buffers the complete upstream response up to the connector's configured response-size limit, which cannot exceed a hard Gateway maximum. It then returns the upstream status, allowed response headers, and raw response bytes to the Plugin. It rejects an oversized response without returning a partial body. It does not require JSON, stream partial data, or wrap data in a normalized external-data envelope.
 
@@ -118,9 +118,9 @@ Installing or upgrading a Plugin means editing deployment configuration or its i
 
 `GET /health` remains Atlas Core liveness only. `GET /readiness` remains limited to dependencies required for Core to serve its base contract.
 
-Plugin, Source Gateway, Source connector, and Datastream status belongs in an authenticated status endpoint. Every configured Plugin remains visible with `starting`, `available`, or `unavailable` status. `starting` means Core has not completed its first manifest check, `available` means the latest reachability check succeeded, and `unavailable` means the latest reachability check failed. Status includes the time of the latest check and a stable Core-owned reason code. It never includes private URLs, raw health responses, credentials, or upstream response bodies.
+Plugin, Source Gateway, Source connector, and Datastream status belongs in an authenticated status endpoint. Every configured Plugin remains visible with `starting`, `available`, or `unavailable` status. `starting` means Core has not completed its first manifest check. `available` means Plugin transport is reachable and its latest health response is OK. `unavailable` means transport failed or the latest health response reported an application-level failure. Status includes the time of the latest check and a stable Core-owned reason code. It never includes private URLs, raw health responses, credentials, or upstream response bodies.
 
-Core checks Plugin health on one fixed internal cadence. Manifest fetches and Operation transport outcomes also update availability immediately instead of waiting for the next health check. A valid Plugin response proves availability even when it rejects the Operation input. Only a connection failure, timeout, or invalid private response makes the Plugin unavailable. After Core caches a manifest, discovery continues to show its Operations and Datastreams while the Plugin is unavailable, but invocation fails. An optional Plugin failure does not make Core unhealthy or unready.
+Core checks Plugin health on one fixed internal cadence. Manifest fetches and Operation transport outcomes update transport availability immediately instead of waiting for the next health check. A valid Plugin response proves transport reachability even when it rejects the Operation input, but it does not clear an application-level health failure. A connection failure, timeout, invalid private response, or valid non-OK health response makes the Plugin unavailable. A later OK health response clears the application-level failure. Core maps a non-OK health response to a stable `application_unhealthy` public reason without exposing its private detail. After Core caches a manifest, discovery continues to show its Operations and Datastreams while the Plugin is unavailable, but invocation fails. An optional Plugin failure does not make Core unhealthy or unready.
 
 Core owns the public Operation error envelope and maps failures into stable categories for rejected input, an unavailable Plugin, timeout, and Plugin failure. It does not proxy the Plugin's HTTP status or raw error body. A Plugin may include a Plugin-specific error code and safe diagnostic data inside the authenticated error details without expanding Atlas's top-level error categories.
 
@@ -132,7 +132,7 @@ Declarative contributions such as map layers, forms, and actions may be consider
 
 A Plugin that operators need to task may register an ordinary Asset with `entity_type: "asset"` and `subtype: "tool"`. Query-only Plugins do not need a Tool Asset. Tool Assets use the existing runtime, Task, and Command systems.
 
-The Plugin derives one stable Tool Asset ID from its Plugin ID and performs an idempotent get-or-create through the Atlas SDK during startup. It creates a missing Entity, reuses an existing `asset` with subtype `tool`, and refuses to register its runtime if that ID belongs to anything else. Core already refuses to delete the Tool Asset while it has nonterminal Tasks. If an operator deletes it after its Tasks become terminal, the Plugin recreates it at its next startup. Removing the Plugin from deployment configuration is the only uninstall path.
+The Plugin derives one stable Tool Asset ID from its Plugin ID and performs an idempotent get-or-create through the Atlas SDK during startup. It creates a missing Entity, reuses an existing `asset` with subtype `tool`, and refuses to register its runtime if that ID belongs to anything else. While that conflict exists, the Plugin returns a non-OK private health response so Core reports it as unavailable. Core already refuses to delete the Tool Asset while it has nonterminal Tasks. If an operator deletes it after its Tasks become terminal, the Plugin recreates it at its next startup. Removing the Plugin from deployment configuration is the only uninstall path.
 
 Plugin commands remain dedicated, Protocol-authored Atlas Commands, such as `adsb.monitor_area`. A Plugin runtime manifest may advertise the subset it implements, but it cannot extend the production Command Catalog. Adding taskable Plugin behavior therefore remains a coordinated Atlas change with a Command schema, semantics, execution handler, and purpose-built Command Interface input. Plugin installation does not inject commands or generic forms into the browser.
 
@@ -156,7 +156,7 @@ An operator selects a Geofeature and creates an `adsb.monitor_area` Task for the
 
 Each monitoring Task uses `immediate` scheduling, so one Tool Asset can monitor several areas concurrently. The Task remains `in_progress` while its handler monitors the area. Cancelling the Task aborts that handler and tells the Plugin to stop publishing observations for that monitoring session.
 
-The Task is the only authority for the monitoring session. The Geofeature does not carry separate desired monitoring state. If the Plugin runtime restarts, Core fails every active monitoring Task with `asset_restarted`. The new runtime does not resume them. An operator must create a new Task to restart monitoring.
+The Task is the only authority for the monitoring session. The Geofeature does not carry separate desired monitoring state. During a planned restart, the Plugin calls the Asset runtime's `stop()`, and Core fails active monitoring Tasks with `asset_stopped`. If a new runtime registration fences the old runtime before it stops, Core uses `asset_restarted`. Neither path resumes the Tasks. An operator must create a new Task to restart monitoring.
 
 One later ADS-B design question is how duplicate aircraft observations map to stable Track identities.
 
@@ -181,9 +181,9 @@ The building is not an Asset or Track. Source-provided height is advisory data a
 - Tool Assets implement dedicated Protocol-owned Commands rather than Plugin-defined Commands.
 - Long-running Plugin Tasks may use `immediate` scheduling so several Tasks can overlap; cancellation is their stop action.
 - Plugin Task cancellation uses the existing terminal cancellation and handler abort without a second confirmation.
-- Plugin runtime restart permanently fails active Tasks; Plugins do not resume them automatically.
+- A graceful Plugin runtime stop fails active Tasks with `asset_stopped`; replacement fencing uses `asset_restarted`. Plugins do not resume them automatically.
 - A private Source Gateway container hosts Source connectors for all Plugins.
-- Source connectors pin external origins and accept bounded relative requests from Plugins.
+- Source connectors pin external origins, accept bounded relative requests from Plugins, and do not follow upstream redirects.
 - Every installed Plugin may use every configured Source connector.
 - Plugin and Source Gateway configuration is deployment-owned; secrets come from environment variables or Compose secrets.
 - Plugin containers have no persistent private storage in the first architecture.
@@ -192,11 +192,11 @@ The building is not an Asset or Track. Source-provided height is advisory data a
 - Installing or upgrading a Plugin edits deployment configuration and restarts the Compose deployment.
 - A Plugin manifest contains discovery fields only; Commands, configuration, credentials, and compatibility metadata stay elsewhere.
 - Core fetches a Plugin manifest once, retrying until success, and caches it until Core restarts.
-- Operations are side-effect-free synchronous JSON calls with Plugin-owned validation and bounded per-Operation timeouts; longer work uses Tool Tasks.
+- Operations are side-effect-free synchronous JSON calls with Plugin-owned validation, bounded request and response bodies, and bounded per-Operation timeouts; longer work uses Tool Tasks.
 - Core maps Operation failures into stable Atlas error categories; Plugin-specific codes may appear only in authenticated error details.
 - Every configured Plugin remains discoverable with `starting`, `available`, or `unavailable` status.
 - Authenticated status reports the latest check time and a stable Core-owned reason code without private endpoints or raw failure data.
-- Core checks Plugin health on a fixed internal cadence, while manifest fetches and Operation transport outcomes update availability immediately.
+- Core checks Plugin health on a fixed internal cadence, while manifest fetches and Operation transport outcomes update transport availability immediately. A non-OK health response keeps the Plugin unavailable until a later OK health response.
 - The Source Gateway buffers complete responses and returns upstream status, allowed headers, and raw bytes under a per-connector limit and hard Gateway maximum.
 - Source Gateway caching is disabled by default; a connector may enable a disposable in-memory time-to-live cache keyed by the complete outbound request.
 - Source Gateway retries are bounded by connector-declared safe methods and statuses, with one circuit breaker per connector.
