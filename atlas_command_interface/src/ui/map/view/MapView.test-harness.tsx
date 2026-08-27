@@ -72,6 +72,7 @@ const maplibreMock = vi.hoisted(() => {
       enable: vi.fn(),
       isEnabled: vi.fn(() => true)
     };
+    readonly touchZoomRotate = { disableRotation: vi.fn() };
     readonly setStyle = vi.fn((style: unknown) => {
       if ((style as { metadata?: { throwOnSetStyle?: boolean } }).metadata?.throwOnSetStyle)
         throw new Error("bad style");

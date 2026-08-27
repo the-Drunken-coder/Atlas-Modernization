@@ -522,14 +522,18 @@ export function MapRegionComparison({
       ) : null}
 
       {source?.style && regionRect && attribution ? (
-        <div
+        <details
           className="map-compare__attribution"
-          style={attributionPosition(regionRect)}
+          style={attributionPosition(regionRect, canvasBounds)}
           data-map-interaction-control
           aria-label="Comparison map attribution"
-          // Map source attributions are trusted build-time provider metadata.
-          dangerouslySetInnerHTML={{ __html: attribution }}
-        />
+        >
+          <summary aria-label="Toggle comparison map attribution">©</summary>
+          <div
+            // Map source attributions are trusted build-time provider metadata.
+            dangerouslySetInnerHTML={{ __html: attribution }}
+          />
+        </details>
       ) : null}
 
       {panelOpen ? (
@@ -756,8 +760,17 @@ function captionPosition(rect: ScreenRect | null, viewport: DOMRect | undefined)
   };
 }
 
-function attributionPosition(rect: ScreenRect): CSSProperties {
-  return { left: rect.left + 4, top: rect.top + rect.height - 22, maxWidth: Math.max(0, rect.width - 8) };
+function attributionPosition(rect: ScreenRect, viewport: DOMRect | undefined): CSSProperties {
+  if (!viewport) return { left: rect.left + 4, top: rect.top + rect.height - 22 };
+  const maxWidth = Math.min(260, Math.max(0, viewport.width - 8));
+  const anchorLeft = rect.left + 4;
+  const alignLeft = anchorLeft + maxWidth <= viewport.width - 4;
+  return {
+    ...(alignLeft ? { left: anchorLeft } : { right: Math.max(4, viewport.width - (rect.left + rect.width) + 4) }),
+    bottom: Math.max(4, viewport.height - (rect.top + rect.height) + 4),
+    maxWidth,
+    maxHeight: Math.max(18, rect.top + rect.height - 8)
+  };
 }
 
 function attributionHtml(sources: StyleSpecification["sources"]): string {

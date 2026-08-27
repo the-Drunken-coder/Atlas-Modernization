@@ -154,6 +154,7 @@ function createRuntime() {
   class FakeMap {
     private readonly sources = new Map<string, { setData: ReturnType<typeof vi.fn> }>();
     private readonly layers = new Set<string>();
+    readonly touchZoomRotate = { disableRotation: vi.fn() };
 
     constructor(options: unknown) {
       loaderMocks.mapConstructor(options);

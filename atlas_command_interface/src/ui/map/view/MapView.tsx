@@ -133,6 +133,7 @@ export function MapView({
           keyboard: false,
           dragRotate: false,
           pitchWithRotate: false,
+          touchPitch: false,
           attributionControl: false,
           boxZoom: {
             boxZoomEnd: (zoomMap, start, end) => mapActionsRef.current.completeBoxZoom(zoomMap, start, end)
@@ -146,6 +147,7 @@ export function MapView({
       const mapInstance = map;
       mapRef.current = mapInstance;
       currentStyleIdRef.current = initialMap.styleId;
+      mapInstance.touchZoomRotate.disableRotation();
       mapInstance.addControl(new maplibre.NavigationControl({ showCompass: false }), "top-right");
       mapInstance.addControl(new maplibre.AttributionControl({ compact: true }), "bottom-left");
 

@@ -30,10 +30,17 @@ describe("MapView region comparison", () => {
     expect(region).toHaveStyle({ left: "70px", top: "60px", width: "180px", height: "80px" });
     expect(screen.getByRole("dialog", { name: "Region comparison" })).toHaveStyle({ top: "88px", maxHeight: "102px" });
     expect(mapInstances()).toHaveLength(2);
+    expect(mapInstances()[0].options).toMatchObject({ dragRotate: false, pitchWithRotate: false, touchPitch: false });
+    expect(mapInstances()[0].touchZoomRotate.disableRotation).toHaveBeenCalledOnce();
     expect(mapInstances()[1].options).toMatchObject({ interactive: false, attributionControl: false });
     expect(mapInstances()[1].getContainer()).toHaveClass("map-compare__map");
     expect(mapInstances()[1].sources.has("geofeatures")).toBe(true);
-    expect(screen.getByLabelText("Comparison map attribution")).toHaveTextContent("Alternate attribution");
+    const attribution = screen.getByLabelText("Comparison map attribution");
+    expect(attribution).toHaveTextContent("Alternate attribution");
+    const attributionToggle = attribution.querySelector("summary");
+    if (!attributionToggle) throw new Error("Comparison attribution toggle is missing");
+    fireEvent.click(attributionToggle);
+    expect(attribution).toHaveAttribute("open");
   });
 
   it("leaves Shift-drag with the existing box-zoom interaction while drawing is armed", async () => {
@@ -151,7 +158,8 @@ describe("MapView region comparison", () => {
     const menu = screen.getByRole("listbox");
     const control = trigger.closest<HTMLElement>(".map-source-control");
     if (!control) throw new Error("Map source control is missing");
-    vi.spyOn(control, "getBoundingClientRect").mockReturnValue(rect(80, 280, 240, 50));
+    let controlBounds = rect(80, 280, 240, 50);
+    vi.spyOn(control, "getBoundingClientRect").mockImplementation(() => controlBounds);
     Object.defineProperty(menu, "scrollHeight", { configurable: true, value: 300 });
 
     notifyResizeObservers();
@@ -159,6 +167,20 @@ describe("MapView region comparison", () => {
     await waitFor(() => expect(menu).toHaveAttribute("data-placement", "above"));
     expect(menu).toHaveStyle({ maxHeight: "256px" });
     expect(menu.parentElement).toBe(rendered.canvas);
+
+    controlBounds = rect(180, 280, 240, 50);
+    const panel = screen.getByRole("dialog", { name: "Region comparison" });
+    panel.style.left = "180px";
+    await waitFor(() => expect(menu).toHaveStyle({ left: "169px" }));
+
+    fireEvent.keyDown(screen.getByRole("option", { name: /Alternate map/ }), { key: "Tab" });
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    expect(screen.getByRole("slider", { name: "Comparison map opacity" })).toHaveFocus();
+
+    fireEvent.click(trigger);
+    fireEvent.keyDown(screen.getByRole("option", { name: /Alternate map/ }), { key: "Tab", shiftKey: true });
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
   });
 
   it("moves the active region from its explicit keyboard handle without navigating entities", async () => {

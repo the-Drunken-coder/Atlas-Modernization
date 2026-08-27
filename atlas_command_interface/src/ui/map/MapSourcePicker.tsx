@@ -115,7 +115,14 @@ export function MapSourceSelect({
     positionMenu();
     const observer = new ResizeObserver(positionMenu);
     observer.observe(boundary);
-    return () => observer.disconnect();
+    observer.observe(picker);
+    const panel = picker.closest(".map-compare__panel");
+    const mutationObserver = panel ? new MutationObserver(positionMenu) : undefined;
+    if (panel) mutationObserver?.observe(panel, { attributes: true, attributeFilter: ["style"] });
+    return () => {
+      observer.disconnect();
+      mutationObserver?.disconnect();
+    };
   }, [open, sources]);
 
   const openMenu = (edge?: "first" | "last") => {
@@ -134,6 +141,18 @@ export function MapSourceSelect({
   const closeMenu = (restoreFocus: boolean) => {
     setOpen(false);
     if (restoreFocus) triggerRef.current?.focus();
+  };
+
+  const focusAfterTrigger = () => {
+    const trigger = triggerRef.current;
+    if (!trigger) return;
+    const scope = trigger.closest<HTMLElement>('[role="dialog"]') ?? document.body;
+    const focusable = Array.from(
+      scope.querySelectorAll<HTMLElement>(
+        'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href], [tabindex]:not([tabindex="-1"])'
+      )
+    ).filter((candidate) => !menuRef.current?.contains(candidate));
+    (focusable[focusable.indexOf(trigger) + 1] ?? trigger).focus();
   };
 
   const menuBoundary = open ? pickerRef.current?.closest<HTMLElement>(".map-canvas") : null;
@@ -155,6 +174,12 @@ export function MapSourceSelect({
           return;
         }
         if (event.key === "Tab") {
+          if (menuBoundary) {
+            event.preventDefault();
+            event.stopPropagation();
+            if (event.shiftKey) triggerRef.current?.focus();
+            else focusAfterTrigger();
+          }
           setOpen(false);
           return;
         }
