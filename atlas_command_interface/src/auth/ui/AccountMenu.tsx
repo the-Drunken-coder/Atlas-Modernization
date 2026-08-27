@@ -1,3 +1,4 @@
+import { Button, Callout, Menu } from "@blueprintjs/core";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { BrandIcon } from "../../ui/primitives/icons.js";
@@ -20,7 +21,6 @@ export function AccountMenu({ username, loggingOut, error, onLogout }: AccountMe
   const containerRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
-  const logoutRef = useRef<HTMLButtonElement>(null);
   const focusedOpenMenuRef = useRef(false);
 
   const updatePosition = useCallback(() => {
@@ -51,7 +51,7 @@ export function AccountMenu({ username, loggingOut, error, onLogout }: AccountMe
     }
     if (!position || loggingOut || focusedOpenMenuRef.current) return;
 
-    logoutRef.current?.focus();
+    popoverRef.current?.querySelector<HTMLButtonElement>('[data-account-action="logout"]')?.focus();
     focusedOpenMenuRef.current = true;
   }, [loggingOut, open, position]);
 
@@ -98,10 +98,12 @@ export function AccountMenu({ username, loggingOut, error, onLogout }: AccountMe
         close(true);
       }}
     >
-      <button
+      <Button
         ref={triggerRef}
         type="button"
-        className="bp6-button bp6-minimal rail__brand rail__brand-button"
+        className="rail__brand rail__brand-button"
+        minimal
+        icon={<BrandIcon size={22} />}
         aria-label="Account"
         aria-expanded={open}
         aria-controls="account-menu-popover"
@@ -111,9 +113,7 @@ export function AccountMenu({ username, loggingOut, error, onLogout }: AccountMe
           if (open) close(true);
           else setOpen(true);
         }}
-      >
-        <BrandIcon size={22} />
-      </button>
+      />
       {open
         ? createPortal(
             <div
@@ -128,25 +128,32 @@ export function AccountMenu({ username, loggingOut, error, onLogout }: AccountMe
                 <span>Your account</span>
                 <strong>{username}</strong>
               </div>
-              <div className="account-menu__items">
-                <button type="button" className="account-menu__item" disabled>
-                  <span>Settings</span>
-                  <small>Coming soon</small>
-                </button>
-                <button
-                  ref={logoutRef}
-                  type="button"
-                  className="account-menu__item account-menu__item--danger"
-                  disabled={loggingOut}
-                  onClick={onLogout}
-                >
-                  {loggingOut ? "Logging out..." : "Log out"}
-                </button>
-              </div>
+              <Menu className="account-menu__items">
+                <li role="none">
+                  <Button className="account-menu__item" minimal fill alignText="start" disabled>
+                    <span>Settings</span>
+                    <small>Coming soon</small>
+                  </Button>
+                </li>
+                <li role="none">
+                  <Button
+                    type="button"
+                    className="account-menu__item account-menu__item--danger"
+                    minimal
+                    fill
+                    alignText="start"
+                    data-account-action="logout"
+                    disabled={loggingOut}
+                    onClick={onLogout}
+                  >
+                    {loggingOut ? "Logging out..." : "Log out"}
+                  </Button>
+                </li>
+              </Menu>
               {error ? (
-                <span className="account-menu__error" role="alert">
+                <Callout className="account-menu__error" intent="danger" icon={null} compact role="alert">
                   {error}
-                </span>
+                </Callout>
               ) : null}
             </div>,
             document.body

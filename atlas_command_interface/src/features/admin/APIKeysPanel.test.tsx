@@ -63,8 +63,6 @@ describe("APIKeysPanel", () => {
       )
       .mockResolvedValueOnce(new Response(null, { status: 204 }));
     vi.stubGlobal("fetch", fetchMock);
-    vi.spyOn(window, "confirm").mockReturnValue(true);
-
     renderPanel();
 
     expect(await screen.findByText("existing")).toBeInTheDocument();
@@ -81,6 +79,7 @@ describe("APIKeysPanel", () => {
     expect(writeText).toHaveBeenCalledWith("atlas_ak_created.secret");
 
     await user.click(screen.getByRole("button", { name: "Revoke existing" }));
+    await user.click(screen.getByRole("button", { name: "Revoke" }));
     await waitFor(() => expect(screen.queryByText("existing")).not.toBeInTheDocument());
     expect(fetchMock.mock.calls[2][0]).toBe("https://core.test/admin/api-keys/atlas_ak_existing");
     expect(fetchMock.mock.calls[2][1]).toMatchObject({ method: "DELETE", credentials: "include" });

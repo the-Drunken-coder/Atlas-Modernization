@@ -93,7 +93,7 @@ describe("sidebar rail + panel", () => {
     screen.getByRole("button", { name: "Tracks" }).focus();
     const tooltip = await screen.findByRole("tooltip");
     expect(tooltip).toHaveTextContent("Tracks");
-    expect(tooltip.parentElement).toBe(document.body);
+    expect(document.body).toContainElement(tooltip);
   });
 
   it("opens a list mode when a rail icon is clicked", async () => {

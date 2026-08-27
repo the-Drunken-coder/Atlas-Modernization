@@ -1,3 +1,4 @@
+import { Alert, Callout } from "@blueprintjs/core";
 import { AtlasAPIError } from "@the-drunken-coder/atlas-sdk";
 import { type AdminAPIKey, type AdminCreatedAPIKey, AtlasAdminClient } from "@the-drunken-coder/atlas-sdk/admin";
 import { type FormEvent, useEffect, useMemo, useState } from "react";
@@ -18,6 +19,7 @@ export function APIKeysPanel() {
   const [error, setError] = useState<string>();
   const [submitting, setSubmitting] = useState(false);
   const [revoking, setRevoking] = useState<string>();
+  const [keyToRevoke, setKeyToRevoke] = useState<AdminAPIKey>();
 
   const admin = useMemo(
     () => (config ? new AtlasAdminClient({ baseUrl: config.atlasBaseUrl, credentials: "include" }) : undefined),
@@ -84,7 +86,7 @@ export function APIKeysPanel() {
   };
 
   const revokeKey = async (key: AdminAPIKey) => {
-    if (!admin || revoking || !window.confirm(`Revoke ${key.name}?`)) return;
+    if (!admin || revoking) return;
     setRevoking(key.id);
     setError(undefined);
     try {
@@ -113,7 +115,11 @@ export function APIKeysPanel() {
         </Button>
       </form>
 
-      {error ? <div className="banner banner--error">{error}</div> : null}
+      {error ? (
+        <Callout className="banner banner--error" intent="danger" icon={null} compact>
+          {error}
+        </Callout>
+      ) : null}
 
       {generated ? (
         <div className="generated-key" role="status">
@@ -145,7 +151,7 @@ export function APIKeysPanel() {
               <IconButton
                 label={`Revoke ${key.name}`}
                 disabled={revoking === key.id}
-                onClick={() => void revokeKey(key)}
+                onClick={() => setKeyToRevoke(key)}
               >
                 <TrashIcon size={16} />
               </IconButton>
@@ -153,6 +159,24 @@ export function APIKeysPanel() {
           ))}
         </ul>
       )}
+      <Alert
+        isOpen={keyToRevoke !== undefined}
+        intent="danger"
+        icon="trash"
+        cancelButtonText="Cancel"
+        confirmButtonText="Revoke"
+        canEscapeKeyCancel
+        canOutsideClickCancel
+        transitionDuration={0}
+        onCancel={() => setKeyToRevoke(undefined)}
+        onConfirm={() => {
+          const key = keyToRevoke;
+          setKeyToRevoke(undefined);
+          if (key) void revokeKey(key);
+        }}
+      >
+        Revoke {keyToRevoke?.name}? Existing clients using this key will lose access.
+      </Alert>
     </div>
   );
 }

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 const tokens = readFileSync(new URL("./tokens.css", import.meta.url), "utf8");
 const layout = readFileSync(new URL("./layout.css", import.meta.url), "utf8");
-const components = readFileSync(new URL("./components.css", import.meta.url), "utf8");
+const tooltip = readFileSync(new URL("../primitives/Tooltip.tsx", import.meta.url), "utf8");
 
 describe("command interface scrolling", () => {
   it("locks the authenticated workspace without clipping the login page", () => {
@@ -30,10 +30,9 @@ describe("command interface scrolling", () => {
     expect(declarations).toMatch(/overscroll-behavior-y:\s*none/);
   });
 
-  it("renders tooltips outside scroll containers", () => {
-    const declarations = components.match(/\.tooltip\s*{([^}]*)}/)?.[1];
-
-    expect(declarations).toMatch(/position:\s*fixed/);
+  it("delegates portaled tooltip positioning to Blueprint", () => {
+    expect(tooltip).toMatch(/Tooltip as BlueprintTooltip/);
+    expect(tooltip).toMatch(/<BlueprintTooltip/);
   });
 
   it("positions the portaled account menu against the viewport", () => {

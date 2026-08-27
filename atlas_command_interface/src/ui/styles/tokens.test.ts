@@ -4,6 +4,10 @@ import { describe, expect, it } from "vitest";
 type Rgb = readonly [number, number, number];
 
 const css = readFileSync(new URL("./tokens.css", import.meta.url), "utf8");
+const blueprintCss = readFileSync(
+  new URL("../../../../node_modules/@blueprintjs/core/lib/css/blueprint.css", import.meta.url),
+  "utf8"
+);
 
 function token(name: string): Rgb {
   const value = css.match(new RegExp(`--${name}:\\s*(#[0-9a-f]{6})`, "i"))?.[1];
@@ -62,7 +66,7 @@ describe("command interface tokens", () => {
   });
 
   it("keeps the decorative select chevron out of pointer hit testing", () => {
-    const declarations = css.match(/\.bp6-html-select > \.bp6-icon\s*{([^}]*)}/)?.[1];
+    const declarations = blueprintCss.match(/\.bp6-html-select \.bp6-icon,[^{]+{([^}]*)}/)?.[1];
     expect(declarations).toMatch(/pointer-events:\s*none/);
   });
 

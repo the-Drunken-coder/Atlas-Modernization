@@ -1,3 +1,4 @@
+import { Button, InputGroup } from "@blueprintjs/core";
 import type { EntityResource } from "@the-drunken-coder/atlas-sdk";
 import { useEffect, useMemo, useRef } from "react";
 import {
@@ -63,18 +64,17 @@ export function EntityList({
   }
   return (
     <div className="entity-browser">
-      <label className="bp6-input-group bp6-small entity-filter">
-        <SearchIcon size={14} />
-        <input
-          ref={filterRef}
-          className="bp6-input"
-          type="search"
-          aria-label="Filter entities"
-          placeholder="Filter entities"
-          value={query}
-          onChange={(event) => onQueryChange(event.currentTarget.value)}
-        />
-      </label>
+      <InputGroup
+        inputRef={filterRef}
+        className="entity-filter"
+        fill
+        leftElement={<SearchIcon size={14} />}
+        type="search"
+        aria-label="Filter entities"
+        placeholder="Filter entities"
+        value={query}
+        onChange={(event) => onQueryChange(event.currentTarget.value)}
+      />
       <div className="entity-list__summary" aria-live="polite">
         {query.trim() ? `${visibleEntities.length} of ${entities.length}` : `${entities.length} total`}
       </div>
@@ -84,9 +84,12 @@ export function EntityList({
         <ul className="entity-list">
           {visibleEntities.map((entity) => (
             <li key={entity.entity_id}>
-              <button
+              <Button
                 type="button"
                 className="entity-row"
+                minimal
+                fill
+                alignText="start"
                 data-selected={entity.entity_id === selectedId}
                 aria-current={entity.entity_id === selectedId ? "true" : undefined}
                 ref={
@@ -106,7 +109,7 @@ export function EntityList({
                   <span className="entity-row__meta">{entityMeta(entity, now)}</span>
                 </span>
                 <ChevronRightIcon size={12} className="entity-row__chevron" />
-              </button>
+              </Button>
             </li>
           ))}
         </ul>

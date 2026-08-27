@@ -1,3 +1,4 @@
+import { Menu, MenuItem } from "@blueprintjs/core";
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 export type MenuItemDef = {
@@ -20,7 +21,7 @@ type ContextMenuProps = {
 
 /** A docked, position-fixed context menu. Closes on outside click or Escape. */
 export function ContextMenu({ x, y, header, items, emptyLabel, onClose }: ContextMenuProps) {
-  const menuRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLUListElement>(null);
   const returnFocusRef = useRef<HTMLElement | null>(
     document.activeElement instanceof HTMLElement ? document.activeElement : null
   );
@@ -29,7 +30,7 @@ export function ContextMenu({ x, y, header, items, emptyLabel, onClose }: Contex
 
   useEffect(() => {
     const menu = menuRef.current;
-    const firstItem = menu?.querySelector<HTMLElement>('[role="menuitem"]:not([disabled])');
+    const firstItem = menu?.querySelector<HTMLElement>('[role="menuitem"]:not([aria-disabled="true"])');
     (firstItem ?? menu)?.focus();
     return () => {
       if (returnFocusRef.current?.isConnected) returnFocusRef.current.focus();
@@ -70,11 +71,10 @@ export function ContextMenu({ x, y, header, items, emptyLabel, onClose }: Contex
         onClick={onClose}
         onContextMenu={(event) => event.preventDefault()}
       />
-      <div
-        ref={menuRef}
+      <Menu
+        ulRef={menuRef}
         className="context-menu"
         style={{ left: position.x, top: position.y }}
-        role="menu"
         aria-label="Position commands"
         tabIndex={items.some((item) => !item.disabled) ? -1 : 0}
         onKeyDown={(event) => {
@@ -88,7 +88,7 @@ export function ContextMenu({ x, y, header, items, emptyLabel, onClose }: Contex
           event.preventDefault();
           event.stopPropagation();
           const enabledItems = Array.from(
-            event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not([disabled])')
+            event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not([aria-disabled="true"])')
           );
           if (enabledItems.length === 0) return;
           const currentIndex = enabledItems.indexOf(document.activeElement as HTMLButtonElement);
@@ -105,38 +105,41 @@ export function ContextMenu({ x, y, header, items, emptyLabel, onClose }: Contex
           next.focus();
         }}
       >
-        {header ? <div className="context-menu__header">{header}</div> : null}
-        {items.length === 0 ? (
-          <div className="menu-item" aria-disabled>
-            {emptyLabel ?? "No actions"}
-          </div>
+        {header ? (
+          <li className="context-menu__header" role="none">
+            {header}
+          </li>
         ) : null}
+        {items.length === 0 ? <MenuItem className="menu-item" disabled text={emptyLabel ?? "No actions"} /> : null}
         {items.map((item) => (
-          <button
+          <MenuItem
             key={item.key}
-            type="button"
-            role="menuitem"
+            tagName="button"
             className="menu-item"
             disabled={item.disabled}
             data-menu-key={item.key}
             tabIndex={item.disabled ? -1 : item.key === activeKey ? 0 : -1}
-            title={item.disabled ? item.disabledReason : undefined}
+            htmlTitle={item.disabled ? item.disabledReason : undefined}
+            text={
+              <>
+                <span className="menu-item__title">{item.title}</span>
+                {item.disabled && item.disabledReason ? (
+                  <span className="menu-item__sub">{item.disabledReason}</span>
+                ) : item.sub ? (
+                  <span className="menu-item__sub">{item.sub}</span>
+                ) : null}
+              </>
+            }
+            multiline
             onFocus={() => setActiveKey(item.key)}
             onClick={() => {
               if (item.disabled) return;
               item.onSelect?.();
               onClose();
             }}
-          >
-            <span className="menu-item__title">{item.title}</span>
-            {item.disabled && item.disabledReason ? (
-              <span className="menu-item__sub">{item.disabledReason}</span>
-            ) : item.sub ? (
-              <span className="menu-item__sub">{item.sub}</span>
-            ) : null}
-          </button>
+          />
         ))}
-      </div>
+      </Menu>
     </>
   );
 }

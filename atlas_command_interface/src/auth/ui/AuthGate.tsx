@@ -1,9 +1,10 @@
+import { Callout } from "@blueprintjs/core";
 import { AtlasAPIError } from "@the-drunken-coder/atlas-sdk";
 import { AtlasAdminClient } from "@the-drunken-coder/atlas-sdk/admin";
 import { Component, type FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import { sanitizeConnectionError } from "../../atlas/connection-error.js";
 import { ConnectionBadge } from "../../ui/ConnectionBadge.js";
-import { Button } from "../../ui/primitives/controls.js";
+import { Button, TextField } from "../../ui/primitives/controls.js";
 import { AccountMenu } from "./AccountMenu.js";
 
 type AuthState =
@@ -81,13 +82,13 @@ export function AuthGate({ baseUrl, children }: { baseUrl: string; children: Rea
             setSessionAttempt((attempt) => attempt + 1);
           }}
         />
-        <div className="login-panel" role="alert">
+        <Callout className="login-panel" icon={null} role="alert">
           <div className="login-panel__header">
             <span className="login-panel__eyebrow">Atlas</span>
             <h1>Core unavailable</h1>
           </div>
           <p>Open the connection error for details and retry.</p>
-        </div>
+        </Callout>
       </main>
     );
   }
@@ -155,7 +156,7 @@ export class WorkspaceErrorBoundary extends Component<
   render() {
     if (!this.state.failed) return this.props.children;
     return (
-      <div className="app-error" role="alert">
+      <Callout className="app-error" icon={null} role="alert">
         <span>The map workspace failed to load.</span>
         <div>
           <Button variant="primary" onClick={this.props.onRetry}>
@@ -166,7 +167,7 @@ export class WorkspaceErrorBoundary extends Component<
           </Button>
         </div>
         {this.props.logoutError ? <span className="app-error__detail">{this.props.logoutError}</span> : null}
-      </div>
+      </Callout>
     );
   }
 }
@@ -220,27 +221,25 @@ function LoginPanel({
           <span className="login-panel__eyebrow">Atlas</span>
           <h1>Sign in</h1>
         </div>
-        <label className="field">
-          <span className="field__label">Username</span>
-          <input
-            className="input"
-            autoComplete="username"
-            autoFocus
-            value={username}
-            onChange={(event) => setUsername(event.target.value)}
-          />
-        </label>
-        <label className="field">
-          <span className="field__label">Password</span>
-          <input
-            className="input"
-            type="password"
-            autoComplete="current-password"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-          />
-        </label>
-        {error ? <div className="banner banner--error">{error}</div> : null}
+        <TextField
+          label="Username"
+          autoComplete="username"
+          autoFocus
+          value={username}
+          onChange={(event) => setUsername(event.target.value)}
+        />
+        <TextField
+          label="Password"
+          type="password"
+          autoComplete="current-password"
+          value={password}
+          onChange={(event) => setPassword(event.target.value)}
+        />
+        {error ? (
+          <Callout className="banner banner--error" intent="danger" icon={null} compact>
+            {error}
+          </Callout>
+        ) : null}
         <Button type="submit" variant="primary" disabled={submitting || username.trim() === "" || password === ""}>
           {submitting ? "Signing in..." : "Sign in"}
         </Button>
