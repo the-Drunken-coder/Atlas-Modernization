@@ -147,7 +147,36 @@ describe("MapTiler place search", () => {
     });
   });
 
-  it("unwraps provider bounds that cross the international date line", async () => {
+  it.each([
+    {
+      name: "Spain",
+      countryCode: "es",
+      center: [-4.837979, 39.326069],
+      providerBounds: [-18.393685, 27.433543, 4.591889, 43.993309],
+      primaryBounds: [-9.392884, 35.94685, 3.039484, 43.748338]
+    },
+    {
+      name: "Japan",
+      countryCode: "jp",
+      center: [139.239418, 36.574844],
+      providerBounds: [122.714175, 20.214581, 154.205541, 45.711205],
+      primaryBounds: [129.408463, 31.029579, 145.543137, 45.551483]
+    },
+    {
+      name: "United States",
+      countryCode: "us",
+      center: [-100.445882, 39.783731],
+      providerBounds: [144.412947, -14.760712, -64.35549, 71.588923],
+      primaryBounds: [-124.68721, 25.08, -66.96466, 49.38905]
+    },
+    {
+      name: "Russia",
+      countryCode: "ru",
+      center: [97.745306, 64.686314],
+      providerBounds: [19.404172, 41.185097, -168.976944, 82.058623],
+      primaryBounds: [27.288185, 41.151416, -169.89958, 77.69792]
+    }
+  ])("uses primary-landmass bounds for $name", async ({ name, countryCode, center, providerBounds, primaryBounds }) => {
     const search = createMapTilerPlaceSearch(
       "key",
       vi.fn(async () =>
@@ -157,17 +186,20 @@ describe("MapTiler place search", () => {
           features: [
             {
               id: "country.145",
-              text: "Russia",
-              center: [97.745306, 64.686314],
-              bbox: [19.4041722, 41.1850968, -168.976944, 82.0586232],
-              place_type: ["country"]
+              text: name,
+              center,
+              bbox: providerBounds,
+              place_type: ["country"],
+              properties: { country_code: countryCode }
             }
           ]
         })
       )
     );
 
-    await expect(search("Russia", new AbortController().signal)).resolves.toMatchObject({
+    const [west, south, east, north] = primaryBounds;
+    const unwrappedEast = east < west ? east + 360 : east;
+    await expect(search(name, new AbortController().signal)).resolves.toMatchObject({
       results: [
         {
           target: {
@@ -176,11 +208,11 @@ describe("MapTiler place search", () => {
               type: "Polygon",
               coordinates: [
                 [
-                  [19.4041722, 41.1850968],
-                  [191.023056, 41.1850968],
-                  [191.023056, 82.0586232],
-                  [19.4041722, 82.0586232],
-                  [19.4041722, 41.1850968]
+                  [west, south],
+                  [unwrappedEast, south],
+                  [unwrappedEast, north],
+                  [west, north],
+                  [west, south]
                 ]
               ]
             }

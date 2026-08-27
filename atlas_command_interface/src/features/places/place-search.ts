@@ -1,5 +1,6 @@
 import type { Position, UiPolygon } from "../../atlas/geometry.js";
 import type { MapTarget } from "../../ui/map/interaction/map-camera.js";
+import type { CountryBounds } from "./primary-country-bounds.js";
 
 export type PlaceSearchResult = {
   id: string;
@@ -17,6 +18,7 @@ export type PlaceSearchResponse = {
 export type PlaceSearch = (query: string, signal: AbortSignal) => Promise<PlaceSearchResponse>;
 
 type Fetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+type CountryBoundsLookup = (countryCode: string) => CountryBounds | undefined;
 
 const MAPTILER_GEOCODING_URL = "https://api.maptiler.com/geocoding";
 const POINT_RETICLE_SIZE = 48;
@@ -43,10 +45,20 @@ export function createMapTilerPlaceSearch(apiKey: string, fetchImpl: Fetch = fet
       throw new Error("Place search returned an invalid response.");
     }
 
+    const countryBounds = payload.features.some(
+      (feature) => isRecord(feature) && countryCodeFromFeature(feature) !== undefined
+    )
+      ? await import("./primary-country-bounds.js")
+          .then(({ primaryCountryBounds }) => primaryCountryBounds)
+          .catch(() => {
+            throw new Error("Place search failed.");
+          })
+      : undefined;
+
     return {
       results: payload.features
         .flatMap((feature) => {
-          const result = parseFeature(feature);
+          const result = parseFeature(feature, countryBounds);
           return result ? [result] : [];
         })
         .slice(0, 5),
@@ -55,7 +67,7 @@ export function createMapTilerPlaceSearch(apiKey: string, fetchImpl: Fetch = fet
   };
 }
 
-function parseFeature(value: unknown): PlaceSearchResult | undefined {
+function parseFeature(value: unknown, countryBounds?: CountryBoundsLookup): PlaceSearchResult | undefined {
   if (!isRecord(value)) return undefined;
   const id = stringValue(value.id);
   const name = stringValue(value.text);
@@ -66,7 +78,8 @@ function parseFeature(value: unknown): PlaceSearchResult | undefined {
   const placeName = stringValue(value.place_name);
   const context = placeName && placeName !== name ? removeNamePrefix(placeName, name) : undefined;
   const targetId = `place:${id}`;
-  const bbox = boundingBox(value.bbox);
+  const countryCode = countryCodeFromFeature(value);
+  const bbox = (countryCode && countryBounds?.(countryCode)) ?? boundingBox(value.bbox);
   const geometry = bbox ? polygonForBounds(bbox) : undefined;
 
   return {
@@ -85,7 +98,14 @@ function removeNamePrefix(placeName: string, name: string): string {
   return placeName.startsWith(prefix) ? placeName.slice(prefix.length).trim() : placeName;
 }
 
-function polygonForBounds([west, south, east, north]: [number, number, number, number]): UiPolygon {
+function countryCodeFromFeature(value: Record<string, unknown>): string | undefined {
+  if (!Array.isArray(value.place_type) || !value.place_type.includes("country") || !isRecord(value.properties)) {
+    return undefined;
+  }
+  return stringValue(value.properties.country_code)?.toLowerCase();
+}
+
+function polygonForBounds([west, south, east, north]: CountryBounds): UiPolygon {
   const unwrappedEast = east < west ? east + 360 : east;
   const southwest: Position = [west, south];
   const southeast: Position = [unwrappedEast, south];
@@ -94,7 +114,7 @@ function polygonForBounds([west, south, east, north]: [number, number, number, n
   return { type: "Polygon", coordinates: [[southwest, southeast, northeast, northwest, southwest]] };
 }
 
-function boundingBox(value: unknown): [number, number, number, number] | undefined {
+function boundingBox(value: unknown): CountryBounds | undefined {
   if (!Array.isArray(value) || value.length < 4) return undefined;
   const [west, south, east, north] = value;
   if (![west, south, east, north].every(isFiniteNumber)) return undefined;
