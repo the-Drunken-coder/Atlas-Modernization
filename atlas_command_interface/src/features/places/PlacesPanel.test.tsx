@@ -13,8 +13,6 @@ const pointTarget = {
 };
 
 const response: PlaceSearchResponse = {
-  attribution:
-    '<a href="https://www.maptiler.com/copyright/">&copy; MapTiler</a> <a href="https://www.openstreetmap.org/copyright">&copy; OpenStreetMap contributors</a>',
   results: [
     {
       id: "poi.1",
@@ -78,14 +76,6 @@ describe("PlacesPanel", () => {
     });
     expect(search).toHaveBeenCalledWith("Worcester", expect.any(AbortSignal));
     expect(screen.getByText("1 place")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "© MapTiler" })).toHaveAttribute(
-      "href",
-      "https://www.maptiler.com/copyright/"
-    );
-    expect(screen.getByRole("link", { name: "© OpenStreetMap contributors" })).toHaveAttribute(
-      "href",
-      "https://www.openstreetmap.org/copyright"
-    );
 
     onPreview.mockClear();
     fireEvent.mouseEnter(result);
@@ -271,7 +261,6 @@ describe("PlacesPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Retry search" }));
     await act(async () => vi.advanceTimersByTimeAsync(SEARCH_DELAY));
     expect(screen.getByText("No matching places.")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "© MapTiler" })).toBeInTheDocument();
     expect(search).toHaveBeenCalledTimes(2);
   });
 

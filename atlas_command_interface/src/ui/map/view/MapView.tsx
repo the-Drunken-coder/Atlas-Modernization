@@ -209,7 +209,6 @@ export function MapView({
       currentStyleIdRef.current = initialMap.styleId;
       mapInstance.touchZoomRotate.disableRotation();
       mapInstance.addControl(new maplibre.NavigationControl({ showCompass: false }), "top-right");
-      mapInstance.addControl(new maplibre.AttributionControl({ compact: true }), "bottom-left");
 
       resizeObserver = new ResizeObserver(() => mapInstance.resize({ [CAMERA_EVENT_TAG]: true }));
       resizeObserver.observe(containerRef.current);

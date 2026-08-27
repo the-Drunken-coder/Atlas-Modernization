@@ -182,12 +182,10 @@ const maplibreMock = vi.hoisted(() => {
 
 vi.mock("maplibre-gl", () => ({
   default: {
-    AttributionControl: maplibreMock.FakeControl,
     Map: maplibreMock.FakeMap,
     Marker: maplibreMock.FakeMarker,
     NavigationControl: maplibreMock.FakeControl
   },
-  AttributionControl: maplibreMock.FakeControl,
   Map: maplibreMock.FakeMap,
   Marker: maplibreMock.FakeMarker,
   NavigationControl: maplibreMock.FakeControl
@@ -195,7 +193,6 @@ vi.mock("maplibre-gl", () => ({
 
 vi.mock("../runtime/maplibre-runtime.js", () => ({
   getMapLibreRuntime: () => ({
-    AttributionControl: maplibreMock.FakeControl,
     Map: maplibreMock.FakeMap,
     Marker: maplibreMock.FakeMarker,
     NavigationControl: maplibreMock.FakeControl

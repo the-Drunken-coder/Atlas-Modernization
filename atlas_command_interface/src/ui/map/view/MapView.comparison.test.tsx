@@ -10,7 +10,7 @@ const mapSourceOptions: MapSourceConfig[] = [
     label: "Alternate map",
     style: {
       version: 8,
-      sources: { alternate: { type: "raster", tiles: [], attribution: "Alternate attribution" } },
+      sources: { alternate: { type: "raster", tiles: [] } },
       layers: []
     }
   },
@@ -32,21 +32,17 @@ describe("MapView region comparison", () => {
     expect(region).toHaveStyle({ left: "70px", top: "60px", width: "180px", height: "80px" });
     expect(screen.getByRole("dialog", { name: "Region comparison" })).toHaveStyle({ top: "88px", maxHeight: "102px" });
     expect(mapInstances()).toHaveLength(2);
-    expect(mapInstances()[0].options).toMatchObject({ dragRotate: false, pitchWithRotate: false, touchPitch: false });
+    expect(mapInstances()[0].options).toMatchObject({
+      dragRotate: false,
+      pitchWithRotate: false,
+      touchPitch: false,
+      attributionControl: false
+    });
+    expect(mapInstances()[0].addControl).toHaveBeenCalledOnce();
     expect(mapInstances()[0].touchZoomRotate.disableRotation).toHaveBeenCalledOnce();
     expect(mapInstances()[1].options).toMatchObject({ interactive: false, attributionControl: false });
     expect(mapInstances()[1].getContainer()).toHaveClass("map-compare__map");
     expect(mapInstances()[1].sources.has("geofeatures")).toBe(true);
-    const attribution = screen.getByLabelText("Comparison map attribution");
-    expect(attribution).toHaveTextContent("Alternate attribution");
-    const attributionToggle = attribution.querySelector("summary");
-    if (!attributionToggle) throw new Error("Comparison attribution toggle is missing");
-    fireEvent.click(attributionToggle);
-    expect(attribution).toHaveAttribute("open");
-    attributionToggle.focus();
-    fireEvent.keyDown(attributionToggle, { key: "Escape" });
-    expect(attribution).not.toHaveAttribute("open");
-    expect(attributionToggle).toHaveFocus();
     expect(region).toBeInTheDocument();
   });
 
@@ -457,7 +453,6 @@ describe("MapView region comparison", () => {
     expect(screen.getByText("Drag a region. Shift-drag still zooms.")).toBeInTheDocument();
     expect(screen.queryByTestId("map-comparison-region")).not.toBeInTheDocument();
     expect(screen.getByTestId("map-canvas").querySelector(".map-compare__map")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Comparison map attribution")).not.toBeInTheDocument();
     fireEvent.keyDown(window, { key: "Escape" });
 
     expect(await screen.findByRole("dialog", { name: "Region comparison" })).toBeInTheDocument();

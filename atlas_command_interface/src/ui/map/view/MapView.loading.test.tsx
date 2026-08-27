@@ -198,7 +198,6 @@ function createRuntime() {
   }
 
   return {
-    AttributionControl: class {},
     Map: FakeMap,
     Marker: class {},
     NavigationControl: class {}

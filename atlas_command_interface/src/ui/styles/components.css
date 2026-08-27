@@ -133,14 +133,6 @@
   font-family: var(--font-mono);
 }
 
-.place-search__attribution {
-  margin-top: auto;
-  padding: 9px 10px;
-  border-top: 1px solid var(--border);
-  color: var(--text-3);
-  font-size: 9px;
-}
-
 /* ---------- API keys ---------- */
 .api-keys-panel {
   display: flex;

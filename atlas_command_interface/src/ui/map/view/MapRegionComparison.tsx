@@ -1,4 +1,4 @@
-import type { MapEventType, Map as MlMap, StyleSpecification } from "maplibre-gl";
+import type { MapEventType, Map as MlMap } from "maplibre-gl";
 import {
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -158,7 +158,7 @@ export function MapRegionComparison({
         if (
           !next &&
           document.activeElement instanceof Element &&
-          document.activeElement.closest(".map-compare__region, .map-compare__caption, .map-compare__attribution")
+          document.activeElement.closest(".map-compare__region, .map-compare__caption")
         )
           toolRef.current?.focus();
         if (screenRectsEqual(regionRectRef.current, next)) {
@@ -273,17 +273,6 @@ export function MapRegionComparison({
     if (!region && !panelOpen) return;
     const handleEscape = (event: globalThis.KeyboardEvent) => {
       if (event.key !== "Escape" || drag) return;
-      const attributionDisclosure =
-        event.target instanceof Element
-          ? event.target.closest<HTMLDetailsElement>(".map-compare__attribution[open]")
-          : null;
-      if (attributionDisclosure) {
-        event.preventDefault();
-        event.stopPropagation();
-        attributionDisclosure.open = false;
-        attributionDisclosure.querySelector<HTMLElement>("summary")?.focus();
-        return;
-      }
       const escapeOwner = foregroundEscapeOwner(event.target);
       if (escapeOwner && !escapeOwner.matches(".map-compare__panel")) return;
       event.preventDefault();
@@ -458,7 +447,6 @@ export function MapRegionComparison({
   const resizeBottomInside = Boolean(
     regionRect && canvasBounds && regionRect.top + regionRect.height >= canvasBounds.height - 14
   );
-  const attribution = source?.style ? attributionHtml(source.style.sources) : "";
 
   return (
     <>
@@ -578,21 +566,6 @@ export function MapRegionComparison({
           </span>
           <StatusLabel status={status} />
         </button>
-      ) : null}
-
-      {source?.style && regionRect && attribution && !drawing ? (
-        <details
-          className="map-compare__attribution"
-          style={attributionPosition(regionRect, canvasBounds)}
-          data-map-interaction-control
-          aria-label="Comparison map attribution"
-        >
-          <summary aria-label="Toggle comparison map attribution">©</summary>
-          <div
-            // Map source attributions are trusted build-time provider metadata.
-            dangerouslySetInnerHTML={{ __html: attribution }}
-          />
-        </details>
       ) : null}
 
       {panelOpen ? (
@@ -838,29 +811,6 @@ function captionPosition(rect: ScreenRect | null, viewport: DOMRect | undefined)
     left: Math.max(8, Math.min(viewport.width - 210, rect.left)),
     top: Math.max(8, rect.top - 30)
   };
-}
-
-function attributionPosition(rect: ScreenRect, viewport: DOMRect | undefined): CSSProperties {
-  if (!viewport) return { left: rect.left + 4, top: rect.top + rect.height - 22 };
-  const maxWidth = Math.min(260, Math.max(0, viewport.width - 8));
-  const anchorLeft = rect.left + 4;
-  const alignLeft = anchorLeft + maxWidth <= viewport.width - 4;
-  return {
-    ...(alignLeft ? { left: anchorLeft } : { right: Math.max(4, viewport.width - (rect.left + rect.width) + 4) }),
-    bottom: Math.max(4, viewport.height - (rect.top + rect.height) + 4),
-    maxWidth,
-    maxHeight: Math.max(18, rect.top + rect.height - 8)
-  };
-}
-
-function attributionHtml(sources: StyleSpecification["sources"]): string {
-  return Object.values(sources)
-    .flatMap((source) => {
-      if (!source || typeof source !== "object" || !("attribution" in source)) return [];
-      const attribution = source.attribution;
-      return typeof attribution === "string" && attribution.trim() ? [attribution] : [];
-    })
-    .join(" · ");
 }
 
 function screenRectsEqual(a: ScreenRect | null, b: ScreenRect | null): boolean {
