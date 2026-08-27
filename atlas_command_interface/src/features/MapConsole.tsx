@@ -271,6 +271,7 @@ export function MapConsole() {
                       sources={sources}
                       styleId={selectedMapSource.id}
                       style={selectedMapSource.style}
+                      mapSourceOptions={atlas.config.mapSources}
                       selectedId={selectedId}
                       editing={
                         edit

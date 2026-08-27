@@ -13,6 +13,7 @@ import {
   PlusIcon as BlueprintPlusIcon,
   PolygonFilterIcon as BlueprintPolygonFilterIcon,
   SearchIcon as BlueprintSearchIcon,
+  SelectionIcon as BlueprintSelectionIcon,
   TickIcon as BlueprintTickIcon,
   TrashIcon as BlueprintTrashIcon
 } from "@blueprintjs/icons";
@@ -62,6 +63,10 @@ export function ChevronRightIcon(props: IconProps) {
 
 export function SearchIcon(props: IconProps) {
   return <BlueprintSearchIcon {...props} />;
+}
+
+export function ComparisonIcon(props: IconProps) {
+  return <BlueprintSelectionIcon {...props} />;
 }
 
 export function DoubleCaretVerticalIcon(props: IconProps) {

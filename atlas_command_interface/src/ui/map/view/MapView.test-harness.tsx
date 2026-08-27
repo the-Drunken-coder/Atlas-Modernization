@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import type { EntityResource } from "@the-drunken-coder/atlas-sdk";
 import type { StyleSpecification } from "maplibre-gl";
 import { afterEach, beforeEach, vi } from "vitest";
+import type { MapSourceConfig } from "../../../app/config.js";
 import type { MapCameraCommand } from "../interaction/map-camera.js";
 import type { MapReticleTarget } from "../interaction/map-targets.js";
 import type { MapEditing } from "../rendering/map-editing.js";
@@ -13,7 +14,9 @@ export type PointLike = { x: number; y: number };
 type Listener = (event?: unknown) => void;
 type ListenerEntry = { listener: Listener; once: boolean };
 type RenderedFeature = { geometry: { type: string; coordinates: unknown }; properties?: { entityId?: string } };
-let resizeCallbacks: ResizeObserverCallback[] = [];
+type ResizeObserverRecord = { active: boolean; callback: ResizeObserverCallback; targets: Set<Element> };
+
+let resizeObservers: ResizeObserverRecord[] = [];
 let animationFrames = new Map<number, FrameRequestCallback>();
 let nextAnimationFrameId = 0;
 
@@ -34,6 +37,7 @@ const maplibreMock = vi.hoisted(() => {
     readonly fitScreenCoordinates = vi.fn();
     readonly fitBounds = vi.fn();
     readonly zoomTo = vi.fn();
+    readonly jumpTo = vi.fn();
     readonly getCenter = vi.fn(() => this.center);
     readonly resize = vi.fn((eventData?: unknown) => {
       this.fire("movestart", eventData);
@@ -50,6 +54,7 @@ const maplibreMock = vi.hoisted(() => {
     });
     readonly queryRenderedFeatures = vi.fn((_point?: unknown, _options?: unknown): RenderedFeature[] => []);
     readonly getBearing = vi.fn(() => 0);
+    readonly getPitch = vi.fn(() => 0);
     readonly getZoom = vi.fn(() => this.zoom);
     readonly getLayer = vi.fn((id: string) => this.layers.get(id));
     readonly getSource = vi.fn((id: string) => this.sources.get(id));
@@ -69,6 +74,7 @@ const maplibreMock = vi.hoisted(() => {
       enable: vi.fn(),
       isEnabled: vi.fn(() => true)
     };
+    readonly touchZoomRotate = { disableRotation: vi.fn() };
     readonly setStyle = vi.fn((style: unknown) => {
       if ((style as { metadata?: { throwOnSetStyle?: boolean } }).metadata?.throwOnSetStyle)
         throw new Error("bad style");
@@ -205,20 +211,32 @@ vi.mock("../../symbols/sidc-runtime.js", () => ({
 beforeEach(() => {
   maplibreMock.FakeMap.instances.length = 0;
   resetMarkerOperationCounts();
-  resizeCallbacks = [];
+  resizeObservers = [];
   animationFrames = new Map();
   nextAnimationFrameId = 0;
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation(() => ({}) as CanvasRenderingContext2D);
   vi.stubGlobal(
     "ResizeObserver",
     class {
+      private readonly record: ResizeObserverRecord;
+
       constructor(callback: ResizeObserverCallback) {
-        resizeCallbacks.push(callback);
+        this.record = { active: true, callback, targets: new Set() };
+        resizeObservers.push(this.record);
       }
 
-      observe() {}
-      unobserve() {}
-      disconnect() {}
+      observe(target: Element) {
+        this.record.targets.add(target);
+      }
+
+      unobserve(target: Element) {
+        this.record.targets.delete(target);
+      }
+
+      disconnect() {
+        this.record.active = false;
+        this.record.targets.clear();
+      }
     }
   );
   vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
@@ -244,6 +262,7 @@ type RenderMapViewProps = {
   cameraCommand?: MapCameraCommand | null;
   editing?: MapEditing;
   focusTarget?: MapReticleTarget | null;
+  mapSourceOptions?: MapSourceConfig[];
   onStyleSwitchError?: (error: { failedStyleId: string; activeStyleId: string }) => void;
   selectedId?: string;
   sources?: MapSources;
@@ -259,33 +278,16 @@ export function renderMapView(props: RenderMapViewProps = {}) {
     sources: buildMapSources([], undefined),
     styleId: "test-style",
     style: style("test-style"),
+    mapSourceOptions: [] as MapSourceConfig[],
     ...props
   };
-  const result = render(
-    <MapView
-      sources={renderProps.sources}
-      styleId={renderProps.styleId}
-      style={renderProps.style}
-      selectedId={renderProps.selectedId}
-      editing={renderProps.editing}
-      focusTarget={renderProps.focusTarget}
-      cameraCommand={renderProps.cameraCommand}
-      onBackgroundClick={onBackgroundClick}
-      onMapContextMenu={onMapContextMenu}
-      onSelectEntity={onSelectEntity}
-      onStyleSwitchError={renderProps.onStyleSwitchError}
-    />
-  );
-
-  const canvas = screen.getByTestId("map-canvas");
-  vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue(rect(10, 20, 400, 200));
-  const rerenderMap = (nextProps: RenderMapViewProps) => {
-    Object.assign(renderProps, nextProps);
-    result.rerender(
+  const view = () => (
+    <div className="map-stage" data-testid="map-stage">
       <MapView
         sources={renderProps.sources}
         styleId={renderProps.styleId}
         style={renderProps.style}
+        mapSourceOptions={renderProps.mapSourceOptions}
         selectedId={renderProps.selectedId}
         editing={renderProps.editing}
         focusTarget={renderProps.focusTarget}
@@ -295,10 +297,21 @@ export function renderMapView(props: RenderMapViewProps = {}) {
         onSelectEntity={onSelectEntity}
         onStyleSwitchError={renderProps.onStyleSwitchError}
       />
-    );
+    </div>
+  );
+  const result = render(view());
+
+  const canvas = screen.getByTestId("map-canvas");
+  const stage = screen.getByTestId("map-stage");
+  vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue(rect(10, 20, 400, 200));
+  vi.spyOn(stage, "getBoundingClientRect").mockReturnValue(rect(10, 20, 400, 200));
+  const rerenderMap = (nextProps: RenderMapViewProps) => {
+    Object.assign(renderProps, nextProps);
+    result.rerender(view());
   };
   return {
     canvas,
+    stage,
     map: maplibreMock.FakeMap.instances[0],
     onBackgroundClick,
     onMapContextMenu,
@@ -307,6 +320,12 @@ export function renderMapView(props: RenderMapViewProps = {}) {
     unmount: result.unmount
   };
 }
+
+export function mapInstances(): FakeMapInstance[] {
+  return maplibreMock.FakeMap.instances;
+}
+
+export type FakeMapInstance = InstanceType<typeof maplibreMock.FakeMap>;
 
 export function style(id: string, metadata: Record<string, unknown> = {}): StyleSpecification {
   return { version: 8, sources: {}, layers: [], metadata: { id, ...metadata } };
@@ -375,8 +394,11 @@ export function rect(left: number, top: number, width: number, height: number): 
   } as DOMRect;
 }
 
-export function notifyResizeObservers(): void {
-  for (const callback of resizeCallbacks) callback([], {} as ResizeObserver);
+export function notifyResizeObservers(target?: Element): void {
+  for (const observer of resizeObservers) {
+    if (!observer.active || (target && !observer.targets.has(target))) continue;
+    observer.callback([], {} as ResizeObserver);
+  }
 }
 
 export function markerOperationCounts() {
