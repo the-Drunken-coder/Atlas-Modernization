@@ -232,7 +232,9 @@ describe("AuthGate", () => {
     expect(screen.queryByText("Signed in as")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Log out" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Account" }));
-    expect(screen.getByRole("group", { name: "Account menu" })).toBeInTheDocument();
+    const accountMenu = screen.getByRole("group", { name: "Account menu" });
+    expect(accountMenu).toBeInTheDocument();
+    expect(accountMenu.parentElement).toBe(document.body);
     expect(screen.getByText("Your account")).toBeInTheDocument();
     expect(screen.getByText("operator")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Settings/ })).toBeDisabled();
@@ -309,6 +311,7 @@ describe("AuthGate", () => {
 
     const account = await screen.findByRole("button", { name: "Account" });
     await user.click(account);
+    expect(screen.getByRole("button", { name: "Log out" })).toHaveFocus();
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("group", { name: "Account menu" })).not.toBeInTheDocument();
     expect(account).toHaveFocus();

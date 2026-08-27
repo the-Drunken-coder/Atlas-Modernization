@@ -492,10 +492,8 @@
 }
 
 .tooltip {
-  position: absolute;
+  position: fixed;
   z-index: 40;
-  left: calc(100% + 8px);
-  top: 50%;
   transform: translateY(-50%);
   padding: 4px 8px;
   background: var(--surface-3);
@@ -509,10 +507,7 @@
 }
 
 .tooltip[data-placement="top"] {
-  left: 50%;
-  top: auto;
-  bottom: calc(100% + 8px);
-  transform: translateX(-50%);
+  transform: translate(-50%, -100%);
 }
 
 /* ---------- Context menu ---------- */
