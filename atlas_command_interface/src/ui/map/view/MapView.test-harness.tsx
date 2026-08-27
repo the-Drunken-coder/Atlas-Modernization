@@ -14,7 +14,9 @@ export type PointLike = { x: number; y: number };
 type Listener = (event?: unknown) => void;
 type ListenerEntry = { listener: Listener; once: boolean };
 type RenderedFeature = { geometry: { type: string; coordinates: unknown }; properties?: { entityId?: string } };
-let resizeCallbacks: ResizeObserverCallback[] = [];
+type ResizeObserverRecord = { active: boolean; callback: ResizeObserverCallback; targets: Set<Element> };
+
+let resizeObservers: ResizeObserverRecord[] = [];
 let animationFrames = new Map<number, FrameRequestCallback>();
 let nextAnimationFrameId = 0;
 
@@ -209,20 +211,32 @@ vi.mock("../../symbols/sidc-runtime.js", () => ({
 beforeEach(() => {
   maplibreMock.FakeMap.instances.length = 0;
   resetMarkerOperationCounts();
-  resizeCallbacks = [];
+  resizeObservers = [];
   animationFrames = new Map();
   nextAnimationFrameId = 0;
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation(() => ({}) as CanvasRenderingContext2D);
   vi.stubGlobal(
     "ResizeObserver",
     class {
+      private readonly record: ResizeObserverRecord;
+
       constructor(callback: ResizeObserverCallback) {
-        resizeCallbacks.push(callback);
+        this.record = { active: true, callback, targets: new Set() };
+        resizeObservers.push(this.record);
       }
 
-      observe() {}
-      unobserve() {}
-      disconnect() {}
+      observe(target: Element) {
+        this.record.targets.add(target);
+      }
+
+      unobserve(target: Element) {
+        this.record.targets.delete(target);
+      }
+
+      disconnect() {
+        this.record.active = false;
+        this.record.targets.clear();
+      }
     }
   );
   vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
@@ -267,28 +281,8 @@ export function renderMapView(props: RenderMapViewProps = {}) {
     mapSourceOptions: [] as MapSourceConfig[],
     ...props
   };
-  const result = render(
-    <MapView
-      sources={renderProps.sources}
-      styleId={renderProps.styleId}
-      style={renderProps.style}
-      mapSourceOptions={renderProps.mapSourceOptions}
-      selectedId={renderProps.selectedId}
-      editing={renderProps.editing}
-      focusTarget={renderProps.focusTarget}
-      cameraCommand={renderProps.cameraCommand}
-      onBackgroundClick={onBackgroundClick}
-      onMapContextMenu={onMapContextMenu}
-      onSelectEntity={onSelectEntity}
-      onStyleSwitchError={renderProps.onStyleSwitchError}
-    />
-  );
-
-  const canvas = screen.getByTestId("map-canvas");
-  vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue(rect(10, 20, 400, 200));
-  const rerenderMap = (nextProps: RenderMapViewProps) => {
-    Object.assign(renderProps, nextProps);
-    result.rerender(
+  const view = () => (
+    <div className="map-stage" data-testid="map-stage">
       <MapView
         sources={renderProps.sources}
         styleId={renderProps.styleId}
@@ -303,10 +297,21 @@ export function renderMapView(props: RenderMapViewProps = {}) {
         onSelectEntity={onSelectEntity}
         onStyleSwitchError={renderProps.onStyleSwitchError}
       />
-    );
+    </div>
+  );
+  const result = render(view());
+
+  const canvas = screen.getByTestId("map-canvas");
+  const stage = screen.getByTestId("map-stage");
+  vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue(rect(10, 20, 400, 200));
+  vi.spyOn(stage, "getBoundingClientRect").mockReturnValue(rect(10, 20, 400, 200));
+  const rerenderMap = (nextProps: RenderMapViewProps) => {
+    Object.assign(renderProps, nextProps);
+    result.rerender(view());
   };
   return {
     canvas,
+    stage,
     map: maplibreMock.FakeMap.instances[0],
     onBackgroundClick,
     onMapContextMenu,
@@ -389,8 +394,11 @@ export function rect(left: number, top: number, width: number, height: number): 
   } as DOMRect;
 }
 
-export function notifyResizeObservers(): void {
-  for (const callback of resizeCallbacks) callback([], {} as ResizeObserver);
+export function notifyResizeObservers(target?: Element): void {
+  for (const observer of resizeObservers) {
+    if (!observer.active || (target && !observer.targets.has(target))) continue;
+    observer.callback([], {} as ResizeObserver);
+  }
 }
 
 export function markerOperationCounts() {

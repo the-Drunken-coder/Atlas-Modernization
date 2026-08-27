@@ -351,6 +351,7 @@ export function MapView({
         sources={sources}
         editing={editing}
         notifyUserGesture={notifyUserGesture}
+        suppressNextClick={reticleInteraction.mapActions.suppressNextClick}
       />
       {reticleInteraction.cursorOverlay ? <MapCursorOverlay {...reticleInteraction.cursorOverlay} /> : null}
       {reticleInteraction.visibleReticle ? (

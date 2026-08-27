@@ -156,6 +156,20 @@ describe("MapView region comparison", () => {
     expect(screen.queryByText("Drag a region. Shift-drag still zooms.")).not.toBeInTheDocument();
   });
 
+  it("suppresses the release click after Escape cancels an active draw", () => {
+    const { canvas, onBackgroundClick } = renderMapView({ styleId: "base", style: style("base"), mapSourceOptions });
+    fireEvent.click(screen.getByRole("button", { name: "Compare map source inside a region" }));
+    fireEvent.pointerDown(canvas, { pointerId: 1, pointerType: "mouse", button: 0, clientX: 80, clientY: 80 });
+    fireEvent.pointerMove(window, { pointerId: 1, pointerType: "mouse", clientX: 100, clientY: 100 });
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    fireEvent.pointerUp(canvas, { pointerId: 1, pointerType: "mouse", clientX: 100, clientY: 100 });
+    fireEvent.click(canvas);
+
+    expect(screen.queryByText("Drag a region. Shift-drag still zooms.")).not.toBeInTheDocument();
+    expect(onBackgroundClick).not.toHaveBeenCalled();
+  });
+
   it("keeps the secondary camera aligned as the primary map moves", async () => {
     const { map } = renderMapView({ styleId: "base", style: style("base"), mapSourceOptions });
     await drawComparison();
@@ -245,6 +259,7 @@ describe("MapView region comparison", () => {
   it("positions a tall source menu within the available map-pane space", async () => {
     const rendered = renderMapView({ styleId: "base", style: style("base"), mapSourceOptions });
     vi.spyOn(rendered.canvas, "getBoundingClientRect").mockReturnValue(rect(10, 20, 600, 360));
+    vi.spyOn(rendered.stage, "getBoundingClientRect").mockReturnValue(rect(10, 20, 600, 360));
     await drawComparison();
     const trigger = screen.getByRole("button", { name: "Inside region" });
     const control = trigger.closest<HTMLElement>(".map-source-control");
@@ -259,10 +274,15 @@ describe("MapView region comparison", () => {
 
     await waitFor(() => expect(menu).toHaveAttribute("data-placement", "above"));
     expect(menu).toHaveStyle({ maxHeight: "256px" });
-    expect(menu.parentElement).toBe(rendered.canvas);
+    expect(menu.parentElement).toBe(rendered.stage);
+    expect(menu).toHaveClass("map-source-menu--comparison");
+
+    const panel = screen.getByRole("dialog", { name: "Region comparison" });
+    controlBounds = rect(80, 240, 240, 50);
+    notifyResizeObservers(panel);
+    await waitFor(() => expect(menu).toHaveStyle({ bottom: "144px" }));
 
     controlBounds = rect(180, 280, 240, 50);
-    const panel = screen.getByRole("dialog", { name: "Region comparison" });
     panel.style.left = "180px";
     await waitFor(() => expect(menu).toHaveStyle({ left: "169px" }));
     controlBounds = rect(180, 240, 240, 50);

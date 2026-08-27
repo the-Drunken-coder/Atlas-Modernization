@@ -314,6 +314,12 @@
 .map-compare__panel--tool {
   top: 50px;
   left: 105px;
+  max-height: calc(100% - 60px);
+  overflow-y: auto;
+}
+
+.map-source-menu--comparison {
+  z-index: 32;
 }
 
 .map-compare__panel::after {
@@ -456,5 +462,6 @@
   .map-compare__panel--tool {
     top: 88px;
     left: 10px;
+    max-height: calc(100% - 98px);
   }
 }

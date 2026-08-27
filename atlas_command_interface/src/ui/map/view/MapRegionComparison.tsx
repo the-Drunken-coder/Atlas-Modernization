@@ -69,6 +69,7 @@ type MapRegionComparisonProps = {
   sources: MapSources;
   editing?: MapEditing;
   notifyUserGesture: () => void;
+  suppressNextClick: () => void;
 };
 
 const MIN_REGION_SIZE = 32;
@@ -85,7 +86,8 @@ export function MapRegionComparison({
   sourceOptions,
   sources,
   editing,
-  notifyUserGesture
+  notifyUserGesture,
+  suppressNextClick
 }: MapRegionComparisonProps) {
   const alternatives = useMemo(
     () => sourceOptions.filter((source) => source.id !== baseSourceId),
@@ -227,18 +229,15 @@ export function MapRegionComparison({
           setPanelOpen(Boolean(drag.previousRegion));
         }
       }
-      if (event.target instanceof Node && mapCanvas.contains(event.target)) {
-        const suppressClick = (clickEvent: globalThis.MouseEvent) => {
-          clickEvent.preventDefault();
-          clickEvent.stopPropagation();
-        };
-        mapCanvas.addEventListener("click", suppressClick, { capture: true, once: true });
-        window.setTimeout(() => mapCanvas.removeEventListener("click", suppressClick, { capture: true }), 0);
-      }
+      if (event.target instanceof Node && mapCanvas.contains(event.target)) suppressNextClick();
       setDrag(null);
       notifyUserGesture();
     };
-    const cancelActiveDrag = () => {
+    const cancelActiveDrag = (suppressReleaseClick: boolean) => {
+      if (drag.pointerId !== null) {
+        if (suppressReleaseClick) suppressNextClick();
+        if (mapCanvas.hasPointerCapture?.(drag.pointerId)) mapCanvas.releasePointerCapture?.(drag.pointerId);
+      }
       setRegion(drag.kind === "draw" ? drag.previousRegion : drag.initialRegion);
       setPanelOpen(drag.kind === "draw" && Boolean(drag.previousRegion));
       setDrag(null);
@@ -246,13 +245,13 @@ export function MapRegionComparison({
     };
     const cancelPointer = (event: globalThis.PointerEvent) => {
       if (drag.pointerId === null || event.pointerId !== drag.pointerId) return;
-      cancelActiveDrag();
+      cancelActiveDrag(false);
     };
     const cancelDrag = (event: globalThis.KeyboardEvent) => {
       if (event.key !== "Escape" || boxZoomActive || foregroundEscapeOwner(event.target)) return;
       event.preventDefault();
       event.stopPropagation();
-      cancelActiveDrag();
+      cancelActiveDrag(true);
     };
     mapCanvas.classList.toggle("map-canvas--compare-drawing", drag.kind === "draw");
     mapCanvas.addEventListener("pointerdown", startDrawing, { capture: true });
@@ -268,7 +267,7 @@ export function MapRegionComparison({
       window.removeEventListener("pointercancel", cancelPointer);
       window.removeEventListener("keydown", cancelDrag, { capture: true });
     };
-  }, [boxZoomActive, drag, map, mapCanvas, notifyUserGesture]);
+  }, [boxZoomActive, drag, map, mapCanvas, notifyUserGesture, suppressNextClick]);
 
   useEffect(() => {
     if (!region && !panelOpen) return;

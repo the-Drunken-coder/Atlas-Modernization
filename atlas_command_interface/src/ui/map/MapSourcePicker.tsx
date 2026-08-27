@@ -80,7 +80,7 @@ export function MapSourceSelect({
     }
     const picker = pickerRef.current;
     const menu = menuRef.current;
-    const boundary = picker?.closest<HTMLElement>(".map-canvas");
+    const boundary = picker?.closest<HTMLElement>(".map-compare__panel")?.closest<HTMLElement>(".map-stage");
     if (!picker || !menu || !boundary) return;
 
     const positionMenu = () => {
@@ -121,6 +121,7 @@ export function MapSourceSelect({
     const panel = picker.closest(".map-compare__panel");
     const mutationObserver = panel ? new MutationObserver(positionMenu) : undefined;
     if (panel) {
+      observer.observe(panel);
       mutationObserver?.observe(panel, { attributes: true, attributeFilter: ["style"] });
       panel.addEventListener("scroll", positionMenu);
     }
@@ -161,12 +162,14 @@ export function MapSourceSelect({
     (focusable[focusable.indexOf(trigger) + 1] ?? trigger).focus();
   };
 
-  const menuBoundary = open ? pickerRef.current?.closest<HTMLElement>(".map-canvas") : null;
+  const menuBoundary = open
+    ? pickerRef.current?.closest<HTMLElement>(".map-compare__panel")?.closest<HTMLElement>(".map-stage")
+    : null;
   const menu = open ? (
     <div
       ref={menuRef}
       id={listboxId}
-      className="map-source-menu"
+      className={`map-source-menu${menuBoundary ? " map-source-menu--comparison" : ""}`}
       style={menuLayout?.style}
       data-placement={menuLayout?.placement}
       data-map-interaction-control
