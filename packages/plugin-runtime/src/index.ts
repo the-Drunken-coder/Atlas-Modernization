@@ -135,7 +135,7 @@ export async function servePlugin<Operations extends OperationMap>(
         return;
       }
       if (request.method === "GET" && requestUrl.pathname === "/health") {
-        let healthy = true;
+        let healthy: boolean;
         try {
           healthy = (await plugin.health?.(requestController.signal)) ?? true;
         } catch {

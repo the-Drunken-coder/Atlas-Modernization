@@ -70,7 +70,7 @@ export function PluginsPanel({ reader: suppliedReader }: { reader?: PluginReader
 
   const moveFocus = (event: KeyboardEvent<HTMLDivElement>, index: number) => {
     if (!snapshot?.length) return;
-    let next = index;
+    let next: number;
     if (event.key === "ArrowDown") next = Math.min(snapshot.length - 1, index + 1);
     else if (event.key === "ArrowUp") next = Math.max(0, index - 1);
     else if (event.key === "Home") next = 0;
