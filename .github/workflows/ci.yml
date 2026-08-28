@@ -229,36 +229,36 @@ jobs:
         run: node --test .github/scripts/atlas-core-release.test.mjs
 
       - name: Validate packaged Docker Compose topology
+        shell: bash
         run: |
+          set -o pipefail
           config_dir="$(mktemp -d)"
           trap 'rm -rf -- "$config_dir"' EXIT
           cp surfaces/core-cli/test/compose.env "$config_dir/.env"
-          ATLAS_CORE_IMAGE=ghcr.io/the-drunken-coder/atlas-core:0.1.0 \
-            docker compose \
+          image="ghcr.io/the-drunken-coder/atlas-core:$(node -p "require('./surfaces/core-cli/package.json').version")"
+          config_json="$(
+            ATLAS_CORE_IMAGE="$image" docker compose \
               --project-name atlas_core_production \
               --env-file "$config_dir/.env" \
               --file surfaces/core-cli/assets/docker-compose.yml \
-              config --quiet
-          ATLAS_CORE_IMAGE=ghcr.io/the-drunken-coder/atlas-core:0.1.0 \
-            docker compose \
-              --project-name atlas_core_production \
-              --env-file "$config_dir/.env" \
-              --file surfaces/core-cli/assets/docker-compose.yml \
-              config --format json | jq -e '
-                .services.api.image == "ghcr.io/the-drunken-coder/atlas-core:0.1.0" and
+              config --format json
+          )"
+          jq -e --arg image "$image" '
+                .services.api.image == $image and
                 .services.api.environment.DATABASE_RECREATE_ON_STARTUP == "false" and
                 .services.api.environment.CORS_ORIGIN_PATTERNS == "https://*.atlas-je0.pages.dev" and
-                .services.api.ports[0].host_ip == "127.0.0.1" and
-                .services.postgres.ports[0].host_ip == "127.0.0.1" and
-                .services.minio.ports[0].host_ip == "127.0.0.1"
-              '
-          CORS_ORIGIN_PATTERNS='' \
-            ATLAS_CORE_IMAGE=ghcr.io/the-drunken-coder/atlas-core:0.1.0 \
-            docker compose \
+                all(.services.api.ports[]; .host_ip == "127.0.0.1") and
+                all(.services.postgres.ports[]; .host_ip == "127.0.0.1") and
+                all(.services.minio.ports[]; .host_ip == "127.0.0.1")
+              ' <<< "$config_json"
+          empty_cors_config="$(
+            CORS_ORIGIN_PATTERNS='' ATLAS_CORE_IMAGE="$image" docker compose \
               --project-name atlas_core_production \
               --env-file "$config_dir/.env" \
               --file surfaces/core-cli/assets/docker-compose.yml \
-              config --format json | jq -e '.services.api.environment.CORS_ORIGIN_PATTERNS == ""'
+              config --format json
+          )"
+          jq -e '.services.api.environment.CORS_ORIGIN_PATTERNS == ""' <<< "$empty_cors_config"
 
   fieldlink:
     name: fieldlink

@@ -23,6 +23,8 @@ test("validates Atlas Core versions", () => {
 
 test("rejects a release older than the current package version", () => {
   assert.equal(run(["validate-next-version", "1.2.3", "1.2.3"], process.cwd()).status, 0);
+  assert.equal(run(["validate-next-version", "1.2.3", "1.2.4"], process.cwd()).status, 0);
+  assert.equal(run(["validate-next-version", "1.9.0", "1.10.0"], process.cwd()).status, 0);
 
   const older = run(["validate-next-version", "1.2.3", "1.2.2"], process.cwd());
   assert.notEqual(older.status, 0);
@@ -32,15 +34,47 @@ test("rejects a release older than the current package version", () => {
 test("extracts and validates the newest release section", () => {
   const directory = mkdtempSync(join(tmpdir(), "atlas-core-release-"));
   try {
+    const previous = "# Changelog\n\nIntro that names ## 1.2.3 - 2026-08-28 inline.\n\n## 1.2.2 - 2026-08-01\n\n- Older.\n";
+    const previousPath = join(directory, "previous.md");
+    writeFileSync(previousPath, previous);
     writeFileSync(
       join(directory, "CHANGELOG.md"),
-      "# Changelog\n\nIntro.\n\n## 1.2.3 - 2026-08-28\n\n### Added\n\n- Added `atlas-core start`.\n\n## 1.2.2 - 2026-08-01\n\n- Older.\n"
+      previous.replace(
+        "## 1.2.2",
+        "## 1.2.3 - 2026-08-28\n\n### Added\n\n- Added `atlas-core start`.\n\n## 1.2.2"
+      )
     );
     assert.equal(run(["existing-date", "1.2.3"], directory).stdout, "2026-08-28");
     const notes = join(directory, "notes.md");
-    const validation = run(["validate-changelog", "1.2.3", "2026-08-28", notes], directory);
+    const validation = run(["validate-changelog", "1.2.3", "2026-08-28", notes, previousPath], directory);
     assert.equal(validation.status, 0, validation.stderr);
     assert.equal(readFileSync(notes, "utf8"), "### Added\n\n- Added `atlas-core start`.\n");
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("rejects invalid or destructive changelog edits", () => {
+  const directory = mkdtempSync(join(tmpdir(), "atlas-core-release-"));
+  const changelog = join(directory, "CHANGELOG.md");
+  const notes = join(directory, "notes.md");
+  try {
+    writeFileSync(changelog, "# Changelog\n\n## 1.2.3 - 2026-08-28\n\nNo bullet.\n");
+    assert.notEqual(run(["validate-changelog", "1.2.3", "2026-08-28", notes], directory).status, 0);
+
+    writeFileSync(changelog, "# Changelog\n\n## 1.2.3 - 2026-08-28\n\n- TODO.\n");
+    assert.notEqual(run(["validate-changelog", "1.2.3", "2026-08-28", notes], directory).status, 0);
+
+    const previous = "# Changelog\n\n## 1.2.2 - 2026-08-01\n\n- Older.\n";
+    const previousPath = join(directory, "previous.md");
+    writeFileSync(previousPath, previous);
+    writeFileSync(
+      changelog,
+      "# Changelog\n\n## 1.2.3 - 2026-08-28\n\n- New.\n\n## 1.2.2 - 2026-08-01\n\n- Rewritten.\n"
+    );
+    const rewritten = run(["validate-changelog", "1.2.3", "2026-08-28", notes, previousPath], directory);
+    assert.notEqual(rewritten.status, 0);
+    assert.match(rewritten.stderr, /without changing the existing changelog/);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

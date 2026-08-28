@@ -18,7 +18,8 @@ switch (command) {
     validateChangelog(
       required(args[0], "version"),
       required(args[1], "date"),
-      required(args[2], "release notes path")
+      required(args[2], "release notes path"),
+      args[3]
     );
     break;
   default:
@@ -28,11 +29,7 @@ switch (command) {
 }
 
 function validateVersion(value) {
-  const prerelease = value?.slice((value.indexOf("-") === -1 ? value.length : value.indexOf("-")) + 1);
-  const hasInvalidNumericIdentifier = prerelease
-    ?.split(".")
-    .some((identifier) => /^\d+$/.test(identifier) && identifier.length > 1 && identifier.startsWith("0"));
-  if (!value || !SEMVER.test(value) || hasInvalidNumericIdentifier) {
+  if (!value || !SEMVER.test(value)) {
     throw new Error(`Atlas Core release version must be SemVer without a leading v or build metadata: ${value ?? ""}`);
   }
 }
@@ -65,23 +62,32 @@ function existingDate(version) {
   return value;
 }
 
-function validateChangelog(version, date, notesPath) {
+function validateChangelog(version, date, notesPath, previousChangelogPath) {
   validateVersion(version);
   if (!DATE.test(date)) throw new Error(`Release date must use YYYY-MM-DD: ${date}`);
   const contents = changelog();
   const heading = `## ${version} - ${date}`;
-  const headings = [...contents.matchAll(/^## .+$/gm)].map((match) => match[0]);
+  const headingMatches = [...contents.matchAll(/^## .+$/gm)];
+  const headings = headingMatches.map((match) => match[0]);
   if (headings[0] !== heading) throw new Error(`${heading} must be the first release heading in CHANGELOG.md`);
   if (headings.filter((candidate) => candidate === heading).length !== 1) {
     throw new Error(`${heading} must appear exactly once in CHANGELOG.md`);
   }
 
-  const start = contents.indexOf(heading) + heading.length;
-  const nextHeading = contents.indexOf("\n## ", start);
-  const notes = contents.slice(start, nextHeading === -1 ? undefined : nextHeading).trim();
+  const headingStart = headingMatches[0].index;
+  const start = headingStart + heading.length;
+  const nextHeading = headingMatches[1]?.index;
+  const notes = contents.slice(start, nextHeading).trim();
   if (!/^[-*] /m.test(notes)) throw new Error(`${heading} must contain at least one release-note bullet`);
   if (/\b(?:TBD|TODO|FIXME|coming soon)\b|<[^>]+>/i.test(notes)) {
     throw new Error(`${heading} contains a placeholder`);
+  }
+  if (previousChangelogPath) {
+    const previous = readFileSync(previousChangelogPath, "utf8");
+    const withoutNewRelease = contents.slice(0, headingStart) + contents.slice(nextHeading ?? contents.length);
+    if (withoutNewRelease !== previous) {
+      throw new Error("The new release section must be prepended without changing the existing changelog");
+    }
   }
   writeFileSync(notesPath, `${notes}\n`);
 }

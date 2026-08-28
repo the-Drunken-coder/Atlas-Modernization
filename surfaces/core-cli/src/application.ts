@@ -252,6 +252,7 @@ class AtlasCoreDeployment {
 
     const initializingState = await this.#writeInitializingState(dockerEngineId, existingState);
     if (!hasEnv) this.#writeConfiguration();
+    if (!hasMinio) await this.#createVolume(MINIO_VOLUME, "minio_data");
 
     let startedMinio = false;
     try {
@@ -272,10 +273,16 @@ class AtlasCoreDeployment {
       await this.#runComposeChecked(["down"]);
       startedMinio = false;
       this.#writeReadyState(initializingState);
-    } finally {
+    } catch (error) {
       if (startedMinio) {
-        await this.#runCompose(["down"]);
+        const cleanup = await this.#runCompose(["down"]);
+        if (cleanup.status !== 0) {
+          throw new Error(
+            `${errorMessage(error)} Cleanup also failed: ${errorMessage(commandFailure("docker compose down", cleanup))}`
+          );
+        }
       }
+      throw error;
     }
 
     this.#stdout.write(`Atlas Core initialized at ${this.#configDir}.\n`);
@@ -287,10 +294,11 @@ class AtlasCoreDeployment {
     const state = this.#requireInitialized();
     const dockerEngineId = await this.#preflight();
     this.#assertStateMatchesRuntime(state, dockerEngineId);
-    await this.#assertStartIsSafe(state);
+    const needsPostgresVolume = await this.#assertStartIsSafe(state);
+    if (needsPostgresVolume) await this.#createVolume(POSTGRES_VOLUME, "postgres_data");
     const attemptedState = this.#recordStartAttempt(state);
     this.#stdout.write(`Starting Atlas Core ${PACKAGE_VERSION}...\n`);
-    await this.#runComposeChecked(["up", "-d", "--pull", "always", "--wait", "--wait-timeout", COMPOSE_WAIT_SECONDS]);
+    await this.#runComposeChecked(["up", "-d", "--pull", "missing", "--wait", "--wait-timeout", COMPOSE_WAIT_SECONDS]);
     this.#recordStarted(attemptedState);
     this.#stdout.write("Atlas Core is ready.\n");
     this.#stdout.write("API:       http://127.0.0.1:8000\n");
@@ -309,10 +317,11 @@ class AtlasCoreDeployment {
     const state = this.#requireInitialized();
     const dockerEngineId = await this.#preflight();
     this.#assertStateMatchesRuntime(state, dockerEngineId);
-    await this.#assertStartIsSafe(state);
+    const needsPostgresVolume = await this.#assertStartIsSafe(state);
+    if (needsPostgresVolume) await this.#createVolume(POSTGRES_VOLUME, "postgres_data");
     const attemptedState = this.#recordStartAttempt(state);
     await this.#runComposeChecked(["down"]);
-    await this.#runComposeChecked(["up", "-d", "--pull", "always", "--wait", "--wait-timeout", COMPOSE_WAIT_SECONDS]);
+    await this.#runComposeChecked(["up", "-d", "--pull", "missing", "--wait", "--wait-timeout", COMPOSE_WAIT_SECONDS]);
     this.#recordStarted(attemptedState);
     this.#stdout.write(`Atlas Core ${PACKAGE_VERSION} restarted and is ready.\n`);
   }
@@ -438,6 +447,21 @@ class AtlasCoreDeployment {
     });
   }
 
+  async #createVolume(name: string, volume: "minio_data" | "postgres_data"): Promise<void> {
+    await this.#checkCommand("docker", [
+      "volume",
+      "create",
+      "--label",
+      `com.docker.compose.project=${PROJECT_NAME}`,
+      "--label",
+      `com.docker.compose.volume=${volume}`,
+      name
+    ]);
+    if (!(await this.#volumeExists(name))) {
+      throw new Error(`Docker created ${name}, but Atlas Core could not verify the volume.`);
+    }
+  }
+
   async #containerExists(name: string): Promise<boolean> {
     const service = name === API_CONTAINER ? "api" : name === POSTGRES_CONTAINER ? "postgres" : "minio";
     return await this.#ownedResourceExists("container", name, {
@@ -478,7 +502,7 @@ class AtlasCoreDeployment {
     return true;
   }
 
-  async #assertStartIsSafe(state: DeploymentState): Promise<void> {
+  async #assertStartIsSafe(state: DeploymentState): Promise<boolean> {
     const [hasPostgres, hasMinio] = await Promise.all([
       this.#volumeExists(POSTGRES_VOLUME),
       this.#volumeExists(MINIO_VOLUME)
@@ -488,6 +512,7 @@ class AtlasCoreDeployment {
         "Atlas Core durable storage is missing. Start stopped so Docker Compose cannot replace it with an empty volume."
       );
     }
+    return !hasPostgres;
   }
 
   #writeConfiguration(): void {
@@ -501,6 +526,7 @@ class AtlasCoreDeployment {
       `ATLAS_ADMIN_PASSWORD=${this.#createSecret()}`,
       "CORS_ORIGINS=https://atlasinterface.com",
       "CORS_ORIGIN_PATTERNS=https://*.atlas-je0.pages.dev",
+      "TRUSTED_PROXY_CIDRS=",
       "",
       "# Optional tuning",
       "DATABASE_POOL_SIZE=5",
@@ -660,7 +686,12 @@ class AtlasCoreDeployment {
     const line = readFileSync(this.#envFile, "utf8")
       .split(/\r?\n/)
       .find((candidate) => candidate.startsWith(`${name}=`));
-    return line?.slice(name.length + 1);
+    const value = line?.slice(name.length + 1).trim();
+    if (value === undefined) return undefined;
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      return value.slice(1, -1);
+    }
+    return value;
   }
 
   async #runCompose(args: string[], inherit = false): Promise<CommandResult> {

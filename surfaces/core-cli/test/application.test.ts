@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { type CLIContext, type CommandRunner, runCLI } from "../src/application.js";
+import { PACKAGE_VERSION } from "../src/package-metadata.js";
 
 type Call = {
   command: string;
@@ -28,6 +29,7 @@ class FakeRunner implements CommandRunner {
   readonly existingContainers = new Set<string>();
   readonly mismatchedResources = new Set<string>();
   inspectionError: { kind: "container" | "volume"; name: string } | undefined;
+  failComposeDown = false;
   failComposeUp = false;
   processStartedAt = "Fri Aug 28 18:00:00 2026";
   serviceStates = [
@@ -49,6 +51,11 @@ class FakeRunner implements CommandRunner {
       inherit: options.inherit ?? false
     });
     if (command === "ps") return result(0, `${this.processStartedAt}\n`);
+    if (args[0] === "volume" && args[1] === "create") {
+      const name = args.at(-1) ?? "";
+      this.existingVolumes.add(name);
+      return result(0, `${name}\n`);
+    }
     if (args[0] === "volume" && args[1] === "inspect") {
       const name = args.at(-1) ?? "";
       if (this.inspectionError?.kind === "volume" && this.inspectionError.name === name) {
@@ -85,6 +92,9 @@ class FakeRunner implements CommandRunner {
     if (args[0] === "info") return result(0, "test-engine-id\n");
     if (this.failComposeUp && composeCommand(this.calls.at(-1) ?? this.calls[0]!)[0] === "up") {
       return result(1, "", "injected compose up failure");
+    }
+    if (this.failComposeDown && composeCommand(this.calls.at(-1) ?? this.calls[0]!)[0] === "down") {
+      return result(1, "", "injected compose down failure");
     }
     return result(0);
   }
@@ -199,6 +209,8 @@ describe("atlas-core CLI", () => {
       dockerEngineId: "test-engine-id"
     });
     expect(statSync(join(config, ".env")).mode & 0o077).toBe(0);
+    expect(test.runner.existingVolumes).toContain("atlas_core_production_minio_data");
+    expect(test.runner.existingVolumes).not.toContain("atlas_core_production_postgres_data");
     expect(test.runner.calls.map(composeCommand).filter((args) => args.length > 0)).toEqual([
       ["up", "-d", "--wait", "--wait-timeout", "120", "minio"],
       [
@@ -285,6 +297,46 @@ describe("atlas-core CLI", () => {
     expect(test.stdout.join("")).toContain("Atlas Core initialized");
   });
 
+  it("reads a quoted bucket name like Compose", async () => {
+    const test = runtime();
+    const config = join(test.home, ".atlas", "core");
+    mkdirSync(config, { recursive: true, mode: 0o700 });
+    writeFileSync(join(config, ".env"), 'MINIO_BUCKET="custom-bucket"   \n', { mode: 0o600 });
+    writeFileSync(
+      join(config, "state.json"),
+      `${JSON.stringify({
+        schema: 1,
+        phase: "initializing",
+        initializedAt: "2026-08-28T12:00:00.000Z",
+        packageVersion: PACKAGE_VERSION,
+        dockerEngineId: "test-engine-id"
+      })}\n`,
+      { mode: 0o600 }
+    );
+    test.runner.existingVolumes.add("atlas_core_production_minio_data");
+
+    expect(await runCLI(["init"], test.context)).toBe(0);
+    expect(test.runner.calls.map(composeCommand)).toContainEqual([
+      "exec",
+      "-T",
+      "minio",
+      "mc",
+      "mb",
+      "--ignore-existing",
+      "local/custom-bucket"
+    ]);
+  });
+
+  it("reports a failed cleanup after initialization fails", async () => {
+    const test = runtime();
+    test.runner.failComposeUp = true;
+    test.runner.failComposeDown = true;
+
+    expect(await runCLI(["init"], test.context)).toBe(1);
+    expect(test.stderr.join("")).toContain("Cleanup also failed");
+    expect(test.stderr.join("")).toContain("injected compose down failure");
+  });
+
   it("propagates Docker inspection failures", async () => {
     const test = runtime();
     test.runner.inspectionError = { kind: "volume", name: "atlas_core_production_postgres_data" };
@@ -323,8 +375,9 @@ describe("atlas-core CLI", () => {
     markInitialized(test, false);
     expect(await runCLI(["start"], test.context)).toBe(0);
     const up = test.runner.calls.find((call) => composeCommand(call)[0] === "up");
-    expect(up?.env.ATLAS_CORE_IMAGE).toBe("ghcr.io/the-drunken-coder/atlas-core:0.1.0");
-    expect(up && composeCommand(up)).toEqual(["up", "-d", "--pull", "always", "--wait", "--wait-timeout", "120"]);
+    expect(up?.env.ATLAS_CORE_IMAGE).toBe(`ghcr.io/the-drunken-coder/atlas-core:${PACKAGE_VERSION}`);
+    expect(up && composeCommand(up)).toEqual(["up", "-d", "--pull", "missing", "--wait", "--wait-timeout", "120"]);
+    expect(test.runner.existingVolumes).toContain("atlas_core_production_postgres_data");
     expect(JSON.parse(readFileSync(join(test.home, ".atlas", "core", "state.json"), "utf8"))).toMatchObject({
       startedAt: "2026-08-28T12:00:00.000Z"
     });
@@ -346,7 +399,7 @@ describe("atlas-core CLI", () => {
     expect(up?.env.MINIO_ROOT_PASSWORD).toBeUndefined();
   });
 
-  it("records a full-stack start attempt before running Compose", async () => {
+  it("can retry a failed first full-stack start", async () => {
     const test = runtime();
     markInitialized(test, false);
     test.runner.failComposeUp = true;
@@ -358,8 +411,7 @@ describe("atlas-core CLI", () => {
     });
 
     test.runner.failComposeUp = false;
-    expect(await runCLI(["start"], test.context)).toBe(1);
-    expect(test.stderr.join("")).toContain("durable storage is missing");
+    expect(await runCLI(["start"], test.context)).toBe(0);
   });
 
   it("refuses to recreate missing durable storage", async () => {

@@ -115,9 +115,11 @@ services:
 
 volumes:
   postgres_data:
-    driver: local
+    external: true
+    name: atlas_core_production_postgres_data
   minio_data:
-    driver: local
+    external: true
+    name: atlas_core_production_minio_data
 
 networks:
   atlas_core_network:

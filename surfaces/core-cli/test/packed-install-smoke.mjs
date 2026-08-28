@@ -17,6 +17,9 @@ function run(command, args, cwd) {
     stdio: "pipe",
     timeout: 60_000
   });
+  if (result.error) {
+    throw new Error(`${command} ${args.join(" ")} failed: ${result.error.message}`);
+  }
   if (result.status !== 0) {
     process.stderr.write(result.stdout ?? "");
     process.stderr.write(result.stderr ?? "");
