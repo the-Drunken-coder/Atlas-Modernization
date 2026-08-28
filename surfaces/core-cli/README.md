@@ -37,7 +37,8 @@ npm package also leaves those durable volumes untouched.
 
 The first release binds the Core API, PostgreSQL, and MinIO ports to loopback. It does not configure public ingress.
 Installing a different CLI version does not upgrade an initialized deployment. `start` and `restart` stop with an
-explicit version mismatch until a backup-aware upgrade path is available.
+explicit version mismatch until a backup-aware upgrade path is available. Both commands require registry access and
+pull the package-versioned image before starting; a locally retagged image is never accepted as the matching Core.
 
 ## External ingress
 

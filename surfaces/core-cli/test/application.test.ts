@@ -387,7 +387,7 @@ describe("atlas-core CLI", () => {
     expect(await runCLI(["start"], test.context)).toBe(0);
     const up = test.runner.calls.find((call) => composeCommand(call)[0] === "up");
     expect(up?.env.ATLAS_CORE_IMAGE).toBe(`ghcr.io/the-drunken-coder/atlas-core:${PACKAGE_VERSION}`);
-    expect(up && composeCommand(up)).toEqual(["up", "-d", "--pull", "missing", "--wait", "--wait-timeout", "120"]);
+    expect(up && composeCommand(up)).toEqual(["up", "-d", "--pull", "always", "--wait", "--wait-timeout", "120"]);
     expect(test.runner.existingVolumes).toContain("atlas_core_production_postgres_data");
     expect(JSON.parse(readFileSync(join(test.home, ".atlas", "core", "state.json"), "utf8"))).toMatchObject({
       startedAt: "2026-08-28T12:00:00.000Z"

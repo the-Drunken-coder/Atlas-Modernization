@@ -298,7 +298,7 @@ class AtlasCoreDeployment {
     if (needsPostgresVolume) await this.#createVolume(POSTGRES_VOLUME, "postgres_data");
     const attemptedState = this.#recordStartAttempt(state);
     this.#stdout.write(`Starting Atlas Core ${PACKAGE_VERSION}...\n`);
-    await this.#runComposeChecked(["up", "-d", "--pull", "missing", "--wait", "--wait-timeout", COMPOSE_WAIT_SECONDS]);
+    await this.#runComposeChecked(["up", "-d", "--pull", "always", "--wait", "--wait-timeout", COMPOSE_WAIT_SECONDS]);
     this.#recordStarted(attemptedState);
     this.#stdout.write("Atlas Core is ready.\n");
     this.#stdout.write("API:       http://127.0.0.1:8000\n");
@@ -321,7 +321,7 @@ class AtlasCoreDeployment {
     if (needsPostgresVolume) await this.#createVolume(POSTGRES_VOLUME, "postgres_data");
     const attemptedState = this.#recordStartAttempt(state);
     await this.#runComposeChecked(["down"]);
-    await this.#runComposeChecked(["up", "-d", "--pull", "missing", "--wait", "--wait-timeout", COMPOSE_WAIT_SECONDS]);
+    await this.#runComposeChecked(["up", "-d", "--pull", "always", "--wait", "--wait-timeout", COMPOSE_WAIT_SECONDS]);
     this.#recordStarted(attemptedState);
     this.#stdout.write(`Atlas Core ${PACKAGE_VERSION} restarted and is ready.\n`);
   }
