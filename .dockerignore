@@ -1,7 +1,6 @@
 # Docker builds use the repository root as context so Core can import the
 # Protocol module. Include only files copied by the Dockerfile.
 *
-!services/
 !services/core/
 !services/core/go.mod
 !services/core/go.sum
@@ -13,7 +12,6 @@
 !services/core/docker/
 !services/core/docker/Dockerfile
 !services/core/docker/production-entrypoint.sh
-!packages/
 !packages/protocol/
 !packages/protocol/go.mod
 !packages/protocol/go.sum
