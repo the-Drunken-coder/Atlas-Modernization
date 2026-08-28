@@ -8,6 +8,7 @@ import {
   readFileSync,
   renameSync,
   type Stats,
+  unlinkSync,
   writeFileSync
 } from "node:fs";
 import { homedir } from "node:os";
@@ -21,6 +22,7 @@ const MINIO_VOLUME = `${PROJECT_NAME}_minio_data`;
 const API_CONTAINER = `${PROJECT_NAME}_api`;
 const POSTGRES_CONTAINER = `${PROJECT_NAME}_postgres`;
 const MINIO_CONTAINER = `${PROJECT_NAME}_minio`;
+const MINIO_INIT_CONTAINER = `${PROJECT_NAME}_minio_init`;
 const REQUIRED_SERVICES = new Set(["api", "minio", "postgres"]);
 const COMPOSE_VARIABLES = [
   "API_AUTH_KEY",
@@ -159,6 +161,7 @@ class AtlasCoreDeployment {
   readonly #configDir: string;
   readonly #envFile: string;
   readonly #stateFile: string;
+  readonly #initLockFile: string;
   readonly #composeFile: string;
   readonly #runner: CommandRunner;
   readonly #stdout: { write(data: string): void };
@@ -173,6 +176,7 @@ class AtlasCoreDeployment {
     this.#configDir = resolveConfigDirectory(context.env.ATLAS_CORE_HOME, context.homeDir);
     this.#envFile = join(this.#configDir, ".env");
     this.#stateFile = join(this.#configDir, "state.json");
+    this.#initLockFile = join(this.#configDir, ".init.lock");
     this.#composeFile = join(context.packageRoot, "assets", "docker-compose.yml");
     this.#runner = context.runner;
     this.#stdout = context.stdout;
@@ -187,7 +191,15 @@ class AtlasCoreDeployment {
   async init(): Promise<void> {
     const dockerEngineId = await this.#preflight();
     this.#prepareConfigDirectory();
+    await this.#acquireInitLock();
+    try {
+      await this.#initialize(dockerEngineId);
+    } finally {
+      this.#releaseInitLock();
+    }
+  }
 
+  async #initialize(dockerEngineId: string): Promise<void> {
     const hasEnv = existsSync(this.#envFile);
     const hasState = existsSync(this.#stateFile);
     if (hasEnv) this.#assertPrivateFile(this.#envFile);
@@ -230,20 +242,25 @@ class AtlasCoreDeployment {
       );
     }
 
-    const [hasPostgres, hasMinio, hasApiContainer, hasPostgresContainer, hasMinioContainer] = await Promise.all([
-      this.#volumeExists(POSTGRES_VOLUME),
-      this.#volumeExists(MINIO_VOLUME),
-      this.#containerExists(API_CONTAINER),
-      this.#containerExists(POSTGRES_CONTAINER),
-      this.#containerExists(MINIO_CONTAINER)
-    ]);
-    if (!hasEnv && (hasPostgres || hasMinio || hasApiContainer || hasPostgresContainer || hasMinioContainer)) {
+    const [hasPostgres, hasMinio, hasApiContainer, hasPostgresContainer, hasMinioContainer, hasMinioInitContainer] =
+      await Promise.all([
+        this.#volumeExists(POSTGRES_VOLUME),
+        this.#volumeExists(MINIO_VOLUME),
+        this.#containerExists(API_CONTAINER),
+        this.#containerExists(POSTGRES_CONTAINER),
+        this.#containerExists(MINIO_CONTAINER),
+        this.#containerExists(MINIO_INIT_CONTAINER)
+      ]);
+    if (
+      !hasEnv &&
+      (hasPostgres || hasMinio || hasApiContainer || hasPostgresContainer || hasMinioContainer || hasMinioInitContainer)
+    ) {
       throw new Error(
         "Atlas Core found containers or durable volumes without matching CLI configuration. " +
           "Initialization stopped so existing data cannot be adopted with new credentials."
       );
     }
-    if (hasEnv && (hasPostgres || hasApiContainer || hasPostgresContainer)) {
+    if (hasEnv && (hasPostgres || hasApiContainer || hasPostgresContainer || hasMinioInitContainer)) {
       throw new Error(
         "Atlas Core found an incomplete initialization with a PostgreSQL volume. " +
           "Initialization stopped because the deployment is no longer provably new."
@@ -439,6 +456,50 @@ class AtlasCoreDeployment {
     return startedAt;
   }
 
+  async #acquireInitLock(): Promise<void> {
+    const processStartedAt = await this.#processStartedAt(process.pid);
+    try {
+      writePrivateFile(
+        this.#initLockFile,
+        `${JSON.stringify({ pid: process.pid, processStartedAt }, null, 2)}\n`,
+        this.#platform,
+        true
+      );
+      return;
+    } catch (error) {
+      if (!isNodeError(error) || error.code !== "EEXIST") throw error;
+    }
+
+    this.#assertPrivateFile(this.#initLockFile);
+    let owner: unknown;
+    try {
+      owner = JSON.parse(readFileSync(this.#initLockFile, "utf8"));
+    } catch {
+      owner = undefined;
+    }
+    if (isInitLock(owner) && processIsRunning(owner.pid)) {
+      try {
+        if ((await this.#processStartedAt(owner.pid)) === owner.processStartedAt) {
+          throw new Error(`Another atlas-core init process is already running with PID ${owner.pid}.`);
+        }
+      } catch (error) {
+        if (processIsRunning(owner.pid)) throw error;
+      }
+    }
+    throw new Error(
+      `Atlas Core found a stale initialization lock at ${this.#initLockFile}. ` +
+        "Confirm that no atlas-core init process is running, remove that file, and run init again."
+    );
+  }
+
+  #releaseInitLock(): void {
+    try {
+      unlinkSync(this.#initLockFile);
+    } catch (error) {
+      if (!isNodeError(error) || error.code !== "ENOENT") throw error;
+    }
+  }
+
   async #volumeExists(name: string): Promise<boolean> {
     const volume = name === POSTGRES_VOLUME ? "postgres_data" : "minio_data";
     return await this.#ownedResourceExists("volume", name, {
@@ -463,7 +524,14 @@ class AtlasCoreDeployment {
   }
 
   async #containerExists(name: string): Promise<boolean> {
-    const service = name === API_CONTAINER ? "api" : name === POSTGRES_CONTAINER ? "postgres" : "minio";
+    const service =
+      name === API_CONTAINER
+        ? "api"
+        : name === POSTGRES_CONTAINER
+          ? "postgres"
+          : name === MINIO_INIT_CONTAINER
+            ? "minio-init"
+            : "minio";
     return await this.#ownedResourceExists("container", name, {
       "com.docker.compose.project": PROJECT_NAME,
       "com.docker.compose.service": service
@@ -863,6 +931,17 @@ function isDeploymentState(value: unknown): value is DeploymentState {
         typeof record.initializingProcessStartedAt === "string")) &&
     (record.startAttemptedAt === undefined || typeof record.startAttemptedAt === "string") &&
     (record.startedAt === undefined || typeof record.startedAt === "string")
+  );
+}
+
+function isInitLock(value: unknown): value is { pid: number; processStartedAt: string } {
+  if (typeof value !== "object" || value === null) return false;
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.pid === "number" &&
+    Number.isInteger(record.pid) &&
+    record.pid > 0 &&
+    typeof record.processStartedAt === "string"
   );
 }
 

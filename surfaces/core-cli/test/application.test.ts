@@ -1,5 +1,6 @@
 import {
   chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -77,7 +78,13 @@ class FakeRunner implements CommandRunner {
         return result(1, "", "permission denied");
       }
       if (!this.existingContainers.has(name)) return result(1, "", `Error: No such container: ${name}`);
-      const service = name.endsWith("_api") ? "api" : name.endsWith("_postgres") ? "postgres" : "minio";
+      const service = name.endsWith("_api")
+        ? "api"
+        : name.endsWith("_postgres")
+          ? "postgres"
+          : name.endsWith("_minio_init")
+            ? "minio-init"
+            : "minio";
       return result(
         0,
         JSON.stringify({
@@ -209,6 +216,7 @@ describe("atlas-core CLI", () => {
       dockerEngineId: "test-engine-id"
     });
     expect(statSync(join(config, ".env")).mode & 0o077).toBe(0);
+    expect(existsSync(join(config, ".init.lock"))).toBe(false);
     expect(test.runner.existingVolumes).toContain("atlas_core_production_minio_data");
     expect(test.runner.existingVolumes).not.toContain("atlas_core_production_postgres_data");
     expect(test.runner.calls.map(composeCommand).filter((args) => args.length > 0)).toEqual([
@@ -239,6 +247,40 @@ describe("atlas-core CLI", () => {
     test.runner.existingContainers.add("atlas_core_production_api");
     expect(await runCLI(["init"], test.context)).toBe(1);
     expect(test.stderr.join("")).toContain("containers or durable volumes without matching CLI configuration");
+  });
+
+  it("refuses to reuse an unmatched MinIO initializer container", async () => {
+    const test = runtime();
+    test.runner.existingContainers.add("atlas_core_production_minio_init");
+    expect(await runCLI(["init"], test.context)).toBe(1);
+    expect(test.stderr.join("")).toContain("containers or durable volumes without matching CLI configuration");
+  });
+
+  it("serializes concurrent initialization", async () => {
+    const test = runtime();
+    const config = join(test.home, ".atlas", "core");
+    mkdirSync(config, { recursive: true, mode: 0o700 });
+    writeFileSync(
+      join(config, ".init.lock"),
+      `${JSON.stringify({ pid: process.pid, processStartedAt: test.runner.processStartedAt })}\n`,
+      { mode: 0o600 }
+    );
+
+    expect(await runCLI(["init"], test.context)).toBe(1);
+    expect(test.stderr.join("")).toContain("Another atlas-core init process");
+    expect(test.runner.calls.map(composeCommand).filter((args) => args.length > 0)).toHaveLength(0);
+  });
+
+  it("fails closed on a stale initialization lock", async () => {
+    const test = runtime();
+    const config = join(test.home, ".atlas", "core");
+    const lock = join(config, ".init.lock");
+    mkdirSync(config, { recursive: true, mode: 0o700 });
+    writeFileSync(lock, `${JSON.stringify({ pid: 2_147_483_647, processStartedAt: "stale" })}\n`, { mode: 0o600 });
+
+    expect(await runCLI(["init"], test.context)).toBe(1);
+    expect(test.stderr.join("")).toContain("stale initialization lock");
+    expect(existsSync(lock)).toBe(true);
   });
 
   it("rejects arbitrary credentials without matching initialization state", async () => {
