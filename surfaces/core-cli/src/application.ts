@@ -45,6 +45,7 @@ const COMPOSE_VARIABLES = [
   "TRUSTED_PROXY_CIDRS"
 ] as const;
 const SUPPORTED_PLATFORMS = new Set<NodeJS.Platform>(["darwin", "linux"]);
+const SUPPORTED_ARCHITECTURES = new Set<NodeJS.Architecture>(["arm64", "x64"]);
 const CONFIG_SCHEMA = 1;
 const COMPOSE_WAIT_SECONDS = "120";
 const DEFAULT_IMAGE = `ghcr.io/the-drunken-coder/atlas-core:${PACKAGE_VERSION}`;
@@ -90,6 +91,7 @@ export type CLIContext = {
   homeDir?: string;
   packageRoot?: string;
   platform?: NodeJS.Platform;
+  architecture?: NodeJS.Architecture;
   nodeVersion?: string;
   now?: () => Date;
   createSecret?: () => string;
@@ -166,6 +168,7 @@ class AtlasCoreDeployment {
   readonly #stderr: { write(data: string): void };
   readonly #env: NodeJS.ProcessEnv;
   readonly #platform: NodeJS.Platform;
+  readonly #architecture: NodeJS.Architecture;
   readonly #nodeVersion: string;
   readonly #now: () => Date;
   readonly #createSecret: () => string;
@@ -181,6 +184,7 @@ class AtlasCoreDeployment {
     this.#stderr = context.stderr;
     this.#env = context.env;
     this.#platform = context.platform;
+    this.#architecture = context.architecture;
     this.#nodeVersion = context.nodeVersion;
     this.#now = context.now;
     this.#createSecret = context.createSecret;
@@ -365,7 +369,10 @@ class AtlasCoreDeployment {
         label: "platform",
         check: async () => {
           if (!SUPPORTED_PLATFORMS.has(this.#platform)) throw new Error(`${this.#platform} is not supported yet`);
-          return this.#platform;
+          if (!SUPPORTED_ARCHITECTURES.has(this.#architecture)) {
+            throw new Error(`${this.#architecture} is not supported yet`);
+          }
+          return `${this.#platform}/${this.#architecture}`;
         }
       },
       {
@@ -418,6 +425,9 @@ class AtlasCoreDeployment {
   async #preflight(): Promise<string> {
     if (!SUPPORTED_PLATFORMS.has(this.#platform)) {
       throw new Error(`Atlas Core supports macOS and Linux. Detected ${this.#platform}.`);
+    }
+    if (!SUPPORTED_ARCHITECTURES.has(this.#architecture)) {
+      throw new Error(`Atlas Core supports arm64 and x64 hosts. Detected ${this.#architecture}.`);
     }
     assertNodeVersion(this.#nodeVersion);
     await this.#checkCommand("docker", ["--version"]);
@@ -756,6 +766,7 @@ type RequiredRuntimeContext = {
   homeDir: string;
   packageRoot: string;
   platform: NodeJS.Platform;
+  architecture: NodeJS.Architecture;
   nodeVersion: string;
   now: () => Date;
   createSecret: () => string;
@@ -853,6 +864,7 @@ function defaultContext(context: CLIContext): RequiredRuntimeContext {
     homeDir: context.homeDir ?? homedir(),
     packageRoot: context.packageRoot ?? dirname(currentDirectory),
     platform: context.platform ?? process.platform,
+    architecture: context.architecture ?? process.arch,
     nodeVersion: context.nodeVersion ?? process.versions.node,
     now: context.now ?? (() => new Date()),
     createSecret: context.createSecret ?? (() => randomBytes(32).toString("base64url"))

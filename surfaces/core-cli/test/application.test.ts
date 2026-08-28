@@ -138,6 +138,7 @@ function runtime(): TestRuntime {
       stderr: { write: (data) => stderr.push(data) },
       env: {},
       platform: "darwin",
+      architecture: "arm64",
       nodeVersion: "24.19.0",
       now: () => new Date("2026-08-28T12:00:00.000Z"),
       createSecret: () => `secret-${++secret}-abcdefghijklmnopqrstuvwxyz`
@@ -194,6 +195,15 @@ describe("atlas-core CLI", () => {
     expect(await runCLI(["launch"], test.context)).toBe(2);
     expect(test.stderr.join("")).toContain("Unknown command: launch");
     expect(test.stderr.join("")).toContain("atlas-core start");
+  });
+
+  it("rejects hosts without a published image architecture", async () => {
+    const test = runtime();
+    test.context.architecture = "ppc64";
+
+    expect(await runCLI(["init"], test.context)).toBe(1);
+    expect(test.stderr.join("")).toContain("supports arm64 and x64 hosts");
+    expect(test.runner.calls).toHaveLength(0);
   });
 
   it("initializes only a new durable deployment", async () => {

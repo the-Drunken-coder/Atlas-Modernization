@@ -1,6 +1,6 @@
 # Atlas Core CLI
 
-`atlas-core` installs and operates one durable Atlas Core deployment on a macOS or Linux host with Docker Compose.
+`atlas-core` installs and operates one durable Atlas Core deployment on an arm64 or x64 macOS or Linux host with Docker Compose.
 The npm package is the operator interface. Atlas Core itself runs from the matching
 `ghcr.io/the-drunken-coder/atlas-core` container image.
 
