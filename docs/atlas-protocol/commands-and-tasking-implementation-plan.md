@@ -238,7 +238,7 @@ Exit gate:
 
 ### Phase 3: Core routes and delivery
 
-Own this phase in `services/core/internal/api/`, `services/core/internal/feed/`, and `services/core/cmd/services/core/`.
+Own this phase in `services/core/internal/api/`, `services/core/internal/feed/`, and `services/core/cmd/atlas_core/`.
 
 1. Add begin and ready runtime-registration routes.
 2. Replace Task PATCH and DELETE with the six lifecycle routes.

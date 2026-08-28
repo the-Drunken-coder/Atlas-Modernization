@@ -17,7 +17,7 @@ import (
 	// database corruption or malformed data at rest, and these errors must
 	// always be logged regardless of the configured application log level or
 	// output. The global logger is used as a fail-safe for these critical
-	// conditions. See cmd/services/core/main.go for the primary logging
+	// conditions. See cmd/atlas_core/main.go for the primary logging
 	// configuration.
 	"github.com/rs/zerolog/log"
 	"github.com/the-drunken-coder/atlas/services/core/internal/jsondecode"

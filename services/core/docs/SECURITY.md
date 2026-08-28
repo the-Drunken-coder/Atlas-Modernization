@@ -7,7 +7,7 @@ _Revision: 2026-07-10_
 CORS is configured in:
 
 - `internal/config/config.go` (origin list loading)
-- `cmd/services/core/main.go` (middleware wiring)
+- `cmd/atlas_core/main.go` (middleware wiring)
 
 ### Default Allowed Origins
 

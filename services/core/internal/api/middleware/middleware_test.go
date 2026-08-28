@@ -1,6 +1,6 @@
 // HTTP middleware tests for Atlas Core.
 // Chi response compression: production uses github.com/go-chi/chi/v5/middleware.Compress(5)
-// in cmd/services/core/main.go — keep gzip tests on that stack, not a separate wrapper.
+// in cmd/atlas_core/main.go — keep gzip tests on that stack, not a separate wrapper.
 package middleware_test
 
 import (
