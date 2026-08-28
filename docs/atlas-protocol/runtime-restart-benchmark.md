@@ -1,6 +1,6 @@
 # Runtime restart fencing benchmark
 
-The repeatable PostgreSQL benchmark is `BenchmarkRuntimeRestartFencing` in `atlas_core/internal/actions/task_runtime_benchmark_test.go`. It seeds Tasks outside the timed section and measures runtime registration against 100, 1,000, and 10,000 nonterminal Tasks.
+The repeatable PostgreSQL benchmark is `BenchmarkRuntimeRestartFencing` in `services/core/internal/actions/task_runtime_benchmark_test.go`. It seeds Tasks outside the timed section and measures runtime registration against 100, 1,000, and 10,000 nonterminal Tasks.
 
 Run it against a disposable, migrated PostgreSQL database:
 

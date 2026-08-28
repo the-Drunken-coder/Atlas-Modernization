@@ -22,7 +22,7 @@ Each active entry under `docs/problems/` is a short-lived note for agent-to-agen
 
 - **Recurring agent confusion** → `AGENTS.md` (after you've seen the same gotcha more than once).
 - **Architectural decisions** → `docs/design-decisions/`.
-- **How the system is supposed to work** → specs under the relevant package's docs (e.g. `atlas_core/docs/`).
+- **How the system is supposed to work** → specs under the relevant package's docs (e.g. `services/core/docs/`).
 
 ### Severity Levels
 
@@ -38,14 +38,14 @@ Each active entry under `docs/problems/` is a short-lived note for agent-to-agen
 2. **Name:** Changed-since query drops cursor on page two
 3. **Issue:** Second page of `GET /queries/changed-since` repeats events when its cursor is not forwarded
 4. **Severity:** S2 (Major)
-5. **Location:** `atlas_core/internal/api/handlers/handler_query.go`, `atlas_core/internal/actions/query_actions.go`
+5. **Location:** `services/core/internal/api/handlers/handler_query.go`, `services/core/internal/actions/query_actions.go`
 6. **Expected:** `GET /queries/changed-since` returns globally ordered events after `since_version` with stable cursor continuation
 7. **Actual:** Repeating the first request repeats events when `next_cursor` is not passed back as `cursor`
 8. **Reproduction:**
    1. Create or update several entities through successive committed writes so the change clock assigns increasing versions
    2. Call `GET /queries/changed-since?since_version=...&limit=1`
    3. Request the next page without `cursor=<next_cursor>` from the first response body
-9. **Notes:** See `atlas_core/docs/PAGINATION.md`; compare handler validation vs `query_actions.go` cursor assembly.
+9. **Notes:** See `services/core/docs/PAGINATION.md`; compare handler validation vs `query_actions.go` cursor assembly.
 
 ### File naming
 

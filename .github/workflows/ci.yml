@@ -16,12 +16,12 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  GO_VERSION_FILE: atlas_core/go.mod
-  GO_SUM_FILE: atlas_core/go.sum
-  PROTOCOL_GO_VERSION_FILE: atlas_protocol/go.mod
-  PROTOCOL_GO_SUM_FILE: atlas_protocol/go.sum
-  PROTOCOL_WORKING_DIRECTORY: atlas_protocol
-  WORKING_DIRECTORY: atlas_core
+  GO_VERSION_FILE: services/core/go.mod
+  GO_SUM_FILE: services/core/go.sum
+  PROTOCOL_GO_VERSION_FILE: packages/protocol/go.mod
+  PROTOCOL_GO_SUM_FILE: packages/protocol/go.sum
+  PROTOCOL_WORKING_DIRECTORY: packages/protocol
+  WORKING_DIRECTORY: services/core
 
 jobs:
   workflow-validation:
@@ -171,7 +171,7 @@ jobs:
         run: npm ci
 
       - name: Verify generated Atlas SDK package metadata is checked in
-        run: git diff --exit-code -- atlas_sdk/src/package-metadata.ts
+        run: git diff --exit-code -- packages/sdk/src/package-metadata.ts
 
       - name: Audit JavaScript workspace dependencies
         run: npm audit --audit-level=high
@@ -189,7 +189,7 @@ jobs:
         run: npm run build:sdk
 
       - name: Verify Atlas SDK package output
-        run: node atlas_sdk/scripts/verify-package-entrypoints.js
+        run: node packages/sdk/scripts/verify-package-entrypoints.js
 
       - name: Smoke test packed Atlas SDK consumer
         run: npm run test:package --workspace @the-drunken-coder/atlas-sdk
@@ -203,14 +203,13 @@ jobs:
       - name: Run Atlas SDK browser tests
         run: npm run test:browser --workspace @the-drunken-coder/atlas-sdk
 
-  atlas-asset-runtime:
-    name: atlas-asset-runtime
+  fieldlink:
+    name: fieldlink
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0
           persist-credentials: false
 
       - name: Set up Node
@@ -223,23 +222,8 @@ jobs:
       - name: Install JavaScript workspace dependencies
         run: npm ci
 
-      - name: Lint asset runtime
-        run: npm run lint --workspace @the-drunken-coder/atlas-asset-runtime
-
-      - name: Check formatting and import order of asset runtime
-        run: npm run format:check --workspace @the-drunken-coder/atlas-asset-runtime
-
-      - name: Type-check asset runtime
-        run: npm run typecheck --workspace @the-drunken-coder/atlas-asset-runtime
-
-      - name: Test asset runtime with coverage ratchet
-        run: npm run test:coverage --workspace @the-drunken-coder/atlas-asset-runtime
-
-      - name: Build asset runtime
-        run: npm run build --workspace @the-drunken-coder/atlas-asset-runtime
-
-      - name: Smoke test packed asset runtime consumer
-        run: npm run test:package --workspace @the-drunken-coder/atlas-asset-runtime
+      - name: Check FieldLink
+        run: npm run check --workspace atlas-fieldlink
 
   javascript-clean-workspace:
     name: javascript-clean-workspace
@@ -258,7 +242,7 @@ jobs:
           cache-dependency-path: package-lock.json
 
       - name: Exercise direct consumer commands from a clean workspace
-        run: node scripts/clean-workspace-smoke.mjs
+        run: node tests/clean-workspace-smoke.mjs
 
   atlas-command-interface:
     name: atlas-command-interface
@@ -489,7 +473,7 @@ jobs:
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
-          file: atlas_core/docker/Dockerfile
+          file: services/core/docker/Dockerfile
           target: development
           push: false
 
@@ -497,6 +481,6 @@ jobs:
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
-          file: atlas_core/docker/Dockerfile
+          file: services/core/docker/Dockerfile
           target: production
           push: false

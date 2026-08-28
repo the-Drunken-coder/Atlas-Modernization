@@ -44,9 +44,9 @@ _Avoid_: Immediate Task, Control Task, operational Task
 6. Commands describe operator intent and observable behavior, not the technology used to perform them.
 7. Protocol owns Command names, definitions, input schemas, optional output schemas, lifecycle states, and manifest shape.
 8. Core owns Task persistence, lifecycle enforcement, tasking order, safety interlocks, and delivery coordination.
-9. The Asset runtime owns accepting work, local execution, and reporting execution outcomes.
+9. The Asset implementation owns accepting work, local execution, and reporting execution outcomes.
 10. Tasks intentionally do not record which operator or client created or cancelled them.
-11. A new Asset runtime receives no work until its execution modules have established their own safe conditions and reported the runtime ready.
+11. A new Asset process receives no work until it has established its own safe conditions and reported its runtime ready.
 
 ## Command Catalog
 
@@ -84,7 +84,7 @@ The catalog does not need wrapper metadata such as a catalog type, name, or desc
 Command definitions are authored as one JSON file per operational namespace. The initial empty catalog has this layout:
 
 ```text
-atlas_protocol/
+packages/protocol/
 ├── commands/
 │   └── README.md
 ├── schema/
@@ -194,7 +194,7 @@ All named Command schemas live in Atlas Protocol. Core validates Task input befo
 Atlas Protocol keeps one canonical authored schema bundle:
 
 ```text
-atlas_protocol/
+packages/protocol/
 ├── schema/jsonschema/atlas.schema.json
 ├── examples/
 └── generated/
@@ -362,12 +362,12 @@ Their named Protocol request schemas and bodies are:
 
 Every successful operation returns the resulting `TaskResource`. Atlas does not define a separate response type for each transition.
 
-Tasking clients create and cancel Tasks. The assigned Asset runtime acknowledges, starts, reports progress, completes, and fails them. Core applies restart transitions and may apply supersession or emergency transitions after Commands defining those policies are added.
+Tasking clients create and cancel Tasks. The assigned Asset implementation acknowledges, starts, reports progress, completes, and fails them. Core applies restart transitions and may apply supersession or emergency transitions after Commands defining those policies are added.
 
 Canonical lifecycle examples follow the operation names:
 
 ```text
-atlas_protocol/examples/
+packages/protocol/examples/
 ├── requests/tasks/
 │   ├── acknowledge.json
 │   ├── start.json
@@ -468,15 +468,14 @@ All Tasks share one authoritative tasking order: ascending `created_at`, then `t
 
 Core's Task records are the source of truth. The Asset keeps the local queue it needs for execution, while operator interfaces derive the queue and current work from Tasks rather than from a second Entity component.
 
-Task creation and lifecycle changes reach the Asset through bounded runtime-scoped polling:
+Core exposes runtime-scoped Task delivery:
 
 1. Core persists the new Task or lifecycle change.
-2. The current Asset runtime requests eligible work on its five-second delivery loop while running.
-3. A separate reconciliation loop refreshes accepted Task states without delaying delivery.
-4. Stable Task IDs make repeated delivery safe.
-5. The Asset acknowledges only after validating, accepting, and placing queued work in its local Task Queue.
+2. The current Asset process requests eligible work using its chosen communication method and schedule.
+3. Stable Task IDs make repeated delivery safe.
+4. The Asset acknowledges only after validating, accepting, and placing queued work in its local Task Queue.
 
-Cancellation reaches an accepted handler through status reconciliation. Commands later added with supersession or safety behavior use the same authoritative Task state. A disconnected Asset receives the current authoritative state when it reconnects rather than acting on an obsolete local copy. An immediate Task that did not start inside its 60-second window is already failed and is never delivered for execution after reconnection.
+The Asset implementation decides how it reconciles accepted Task state. Commands later added with supersession or safety behavior use the same authoritative Task state. A disconnected Asset receives the current authoritative state when it reconnects rather than acting on an obsolete local copy. An immediate Task that did not start inside its 60-second window is already failed and is never delivered for execution after reconnection.
 
 Core releases queued Tasks to a runtime in authoritative tasking order. It does not release a later queued Task until every earlier queued Task has been acknowledged or has become terminal. Immediate Tasks are released in tasking order without waiting for earlier immediate Tasks to finish. These rules prevent transport delay or reordering from changing execution order.
 
@@ -486,42 +485,11 @@ Transport delivery is not Task acknowledgement. WebSocket, change-feed, snapshot
 
 Each Asset process startup creates a fresh `runtime_id`. A temporary network reconnect keeps the same `runtime_id` and local Task Queue.
 
-Registration is a physical-safety barrier, not merely a new network session. Before registration completes, every execution module that could have left physical behavior active must establish its own safe condition and report ready. The condition is deliberately module-specific: MAVLink mobility, ROS mobility, and sensor execution modules may require different actions. A module with no persistent physical behavior may immediately report ready.
+Registration is a physical-safety barrier, not merely a new network session. Before registration completes, the Asset implementation must establish its safe condition and report ready. That condition depends on the physical system and may differ between MAVLink, ROS, sensor, and other Asset implementations.
 
-Core does not define those module actions. It only requires the runtime-wide safe result. If any required execution module cannot establish or confirm its safe condition, the runtime is not ready and receives no Tasks.
+Core does not define the physical actions. It only records whether the current runtime is ready. If the Asset cannot establish or confirm its safe condition, it must not report ready and Core delivers no Tasks.
 
-### Execution-module safety interface
-
-The Asset runtime owns a small registration interface for modules that can cause or preserve physical behavior:
-
-```text
-atlas_asset_runtime/src/
-├── index.ts
-├── execution-module.ts
-├── safety-barrier.ts
-└── runtime.ts
-
-atlas_asset_runtime/test/
-├── runtime.test.ts
-└── safety-barrier.test.ts
-```
-
-Its conceptual contract is:
-
-```ts
-type SafeStateContext = {
-  signal: AbortSignal;
-};
-
-interface ExecutionModule {
-  readonly id: string;
-  establishSafeState(context: SafeStateContext): Promise<void>;
-}
-```
-
-MAVLink, ROS, sensor, and other execution modules implement this interface while keeping their physical procedures private. At startup, the runtime invokes every registered module and waits for every required safe state. It reports ready only after all succeed and receives no Tasks if any fail.
-
-Core observes only whether the runtime-wide barrier is ready. Module identifiers, ordering, retries, and physical actions remain internal to the Asset runtime.
+Atlas currently defines no Asset host implementation or execution-module interface. Those choices remain open until the Asset architecture is designed.
 
 When an Asset process restarts:
 
@@ -529,7 +497,7 @@ When an Asset process restarts:
 2. Its old local Task Queue is cleared.
 3. Core atomically fails every nonterminal Task bound to the previous runtime with code `asset_restarted`.
 4. Core rejects lifecycle updates from the old runtime.
-5. The new runtime establishes safe conditions through its execution modules.
+5. The new Asset process establishes its physical safe condition.
 6. The new runtime republishes its Command Manifest and completes registration before it can receive work.
 
 If Safety Commands are later added and the Core safety interlock is engaged, that change also extends the runtime barrier so the new runtime confirms emergency stop before it can receive any permitted work. Confirmation used for reset must come from the current runtime rather than stale Entity data.
@@ -633,26 +601,20 @@ Task state is presented in user language:
 The rebuild uses one Protocol-owned scenario corpus with focused consumers in each affected module:
 
 ```text
-atlas_protocol/conformance/tasking/
+packages/protocol/conformance/tasking/
 ├── lifecycle.json
 ├── scheduling.json
 ├── outcomes.json
 └── restart.json
 
-atlas_core/internal/integration/
+services/core/internal/integration/
 └── tasking_acceptance_test.go
 
-atlas_sdk/test/
+packages/sdk/test/
 └── tasking-wire.test.ts
-
-atlas_asset_runtime/test/
-└── tasking-fixtures.test.ts
-
-atlas_simulations/test/
-└── fake-core-tasking.test.ts
 ```
 
-The JSON corpus defines portable inputs, events, and expected outcomes. Concrete Core tests are authoritative for lifecycle, ordering, runtime fencing, expiry, and transactional persistence. The SDK test verifies wire mapping, the Asset runtime test verifies fixture compatibility, and the simulation test verifies its in-memory adapter. None of those fake-backed tests claim Core lifecycle conformance. Because the shipped catalog starts empty, the focused consumers use test-only fixture Commands that are excluded from the generated catalog.
+The JSON corpus defines portable inputs, events, and expected outcomes. Concrete Core tests are authoritative for lifecycle, ordering, runtime fencing, expiry, and transactional persistence. The SDK test verifies wire mapping. Asset execution acceptance belongs to the future Asset implementation. Because the shipped catalog starts empty, the focused consumers use test-only fixture Commands that are excluded from the generated catalog.
 
 The empty-catalog infrastructure is not complete until these behaviors are demonstrated:
 
@@ -664,7 +626,7 @@ The empty-catalog infrastructure is not complete until these behaviors are demon
 6. Progress is accepted only when advertised, only while in progress, and never decreases.
 7. Completion validates any required output and commits the output and terminal transition atomically.
 8. Competing terminal operations obey first-valid-update-wins and cannot mutate a terminal Task.
-9. A restart fences the old runtime, fails its nonterminal Tasks, and establishes every registered module's safe state before new work is delivered.
+9. A restart fences the old runtime, fails its nonterminal Tasks, and prevents delivery until the new runtime reports ready.
 10. The generated production catalog is empty, Core serves it unchanged, ready runtimes publish empty manifests, and production Task creation rejects every Command.
 
 Command-specific acceptance travels with the change that adds that Command. In particular:
@@ -705,7 +667,7 @@ The executable module-by-module work plan, cutover rules, and validation gates a
 
 1. Add the empty Protocol catalog structure, Command authoring guide, canonical schema definitions, lifecycle requests, outcome enums, examples, conformance fixtures, generated Command Catalog, Task shape, lifecycle states, and manifest shape.
 2. Replace Core Task behavior and have Core serve the Protocol-owned catalog.
-3. Update the SDK and Asset runtime registration, local Task Queue, lifecycle operations, execution-module safety barrier, and runtime fencing.
+3. Update the SDK's runtime registration, delivery, and lifecycle methods.
 4. Update the command interface to use manifests, purpose-built inputs, and the new Task lifecycle.
 5. Update simulations, examples, focused tests, and developer documentation.
 6. Remove the old catalog, generic Task mutation paths, duplicate status lists, and obsolete Task components.

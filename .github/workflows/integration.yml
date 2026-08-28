@@ -16,9 +16,9 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  GO_VERSION_FILE: atlas_core/go.mod
-  GO_SUM_FILE: atlas_core/go.sum
-  WORKING_DIRECTORY: atlas_core
+  GO_VERSION_FILE: services/core/go.mod
+  GO_SUM_FILE: services/core/go.sum
+  WORKING_DIRECTORY: services/core
   ATLAS_CORE_API_URL: http://localhost:8000
   MINIO_ROOT_PASSWORD: atlas-ci
   POSTGRES_PASSWORD: atlas

@@ -1,0 +1,45 @@
+export interface TransferSenderSession {
+  readonly fragmentCount: number;
+  readonly signal?: AbortSignal;
+  open(timeoutMs: number): Promise<void>;
+  sendFragment(index: number, retransmission: boolean): Promise<void>;
+  requestReceipt(
+    windowStart: number,
+    windowCount: number,
+    timeoutMs: number,
+  ): Promise<number | undefined>;
+  waitForCompletion(timeoutMs: number): Promise<void>;
+  waitBeforeRetry?(phase: "open" | "receipt", attempt: number): Promise<void>;
+  recordRetry?(phase: "open" | "receipt" | "completion" | "fragment"): void;
+}
+
+export interface TransferReceiverState {
+  receipt(
+    windowStart: number,
+    windowCount: number,
+    hasFragment: (index: number) => boolean,
+  ): number;
+}
+
+export interface RetryResult {
+  readonly transferOpenRetries: number;
+  readonly completionRetries: number;
+  readonly retransmissions: number;
+  readonly receiptRequests: number;
+  readonly receiptRequestRetries: number;
+  readonly receipts: number;
+}
+
+export interface RetrySender {
+  run(session: TransferSenderSession): Promise<RetryResult>;
+}
+
+export interface RetryStrategy {
+  readonly id: number;
+  readonly name: string;
+  createSender(): RetrySender;
+  createReceiver(): TransferReceiverState;
+}
+
+export class RetryExhaustedError extends Error {}
+export class TransferRejectedError extends Error {}

@@ -1,0 +1,314 @@
+import { describe, expect, it } from "vitest";
+
+import { parseCommand } from "../src/args.js";
+import { FIELDLINK_MAX_MESSAGE_BYTES } from "../src/frame.js";
+
+describe("CLI arguments", () => {
+  it("parses the three commands", () => {
+    expect(parseCommand(["radios", "list"])).toEqual({
+      name: "list-radios",
+      json: false,
+    });
+    expect(parseCommand(["messages", "list", "--json"])).toEqual({
+      name: "list-messages",
+      json: true,
+    });
+    expect(
+      parseCommand([
+        "adapter",
+        "--radio",
+        "/dev/cu.a",
+        "--channel",
+        "2",
+        "--output",
+        "out",
+        "--allow-inbox-drain",
+      ]),
+    ).toEqual({
+      name: "adapter",
+      radio: "/dev/cu.a",
+      channel: 2,
+      allowInboxDrain: true,
+      evidenceManagedByParent: false,
+      output: "out",
+    });
+    expect(
+      parseCommand([
+        "test",
+        "--a",
+        "/dev/cu.a",
+        "--b",
+        "/dev/cu.b",
+        "--channel",
+        "2",
+        "--allow-inbox-drain",
+      ]),
+    ).toEqual({
+      name: "test",
+      message: "test",
+      a: "/dev/cu.a",
+      b: "/dev/cu.b",
+      channel: 2,
+      input: { kind: "exercise", payloadSize: 64 },
+      retryStrategy: "selective-window",
+      timeoutMs: 1_800_000,
+      allowInboxDrain: true,
+    });
+    expect(
+      parseCommand([
+        "test",
+        "--a",
+        "/dev/cu.a",
+        "--b",
+        "/dev/cu.b",
+        "--channel",
+        "2",
+        "--message",
+        "resource",
+        "--allow-inbox-drain",
+      ]),
+    ).toMatchObject({
+      name: "test",
+      message: "resource",
+      input: { kind: "exercise", payloadSize: 32 },
+    });
+    expect(
+      parseCommand([
+        "test",
+        "--a",
+        "/dev/cu.a",
+        "--b",
+        "/dev/cu.b",
+        "--message",
+        "runtime",
+        "--allow-inbox-drain",
+      ]),
+    ).toMatchObject({
+      name: "test",
+      message: "runtime",
+      input: { kind: "exercise", payloadSize: 32 },
+    });
+  });
+
+  it("accepts the maximum Test payload and rejects invalid values", () => {
+    const base = [
+      "test",
+      "--a",
+      "a",
+      "--b",
+      "b",
+      "--channel",
+      "7",
+      "--allow-inbox-drain",
+    ];
+    expect(
+      parseCommand([
+        ...base,
+        "--payload-size",
+        String(FIELDLINK_MAX_MESSAGE_BYTES - 5),
+        "--timeout-ms",
+        "1",
+        "--output",
+        "out",
+      ]),
+    ).toMatchObject({
+      input: {
+        kind: "exercise",
+        payloadSize: FIELDLINK_MAX_MESSAGE_BYTES - 5,
+      },
+      timeoutMs: 1,
+      output: "out",
+    });
+    expect(() =>
+      parseCommand([
+        ...base,
+        "--payload-size",
+        String(FIELDLINK_MAX_MESSAGE_BYTES - 4),
+      ]),
+    ).toThrow("--payload-size");
+    expect(() => parseCommand([...base, "--retry-strategy", "magic"])).toThrow(
+      "selective-window",
+    );
+    expect(() => parseCommand([...base, "--message", "missing"])).toThrow(
+      "--message must be one of: test, resource, runtime, task, observation, object-content",
+    );
+  });
+
+  it("accepts a Runtime request file instead of a synthetic payload", () => {
+    const base = [
+      "test",
+      "--a",
+      "a",
+      "--b",
+      "b",
+      "--message",
+      "runtime",
+      "--allow-inbox-drain",
+    ];
+    expect(
+      parseCommand([...base, "--runtime-request", "runtime.json"]),
+    ).toMatchObject({
+      input: { kind: "runtime-request", path: "runtime.json" },
+    });
+    expect(() =>
+      parseCommand([
+        ...base,
+        "--runtime-request",
+        "runtime.json",
+        "--payload-size",
+        "32",
+      ]),
+    ).toThrow("cannot be used together");
+    expect(() =>
+      parseCommand([
+        "test",
+        "--a",
+        "a",
+        "--b",
+        "b",
+        "--message",
+        "resource",
+        "--runtime-request",
+        "runtime.json",
+        "--allow-inbox-drain",
+      ]),
+    ).toThrow("requires --message runtime");
+  });
+
+  it("accepts a Resource request file instead of a synthetic payload", () => {
+    const base = [
+      "test",
+      "--a",
+      "a",
+      "--b",
+      "b",
+      "--message",
+      "resource",
+      "--allow-inbox-drain",
+    ];
+    expect(
+      parseCommand([...base, "--resource-request", "request.json"]),
+    ).toMatchObject({
+      input: { kind: "resource-request", path: "request.json" },
+    });
+    expect(() =>
+      parseCommand([
+        ...base,
+        "--resource-request",
+        "request.json",
+        "--payload-size",
+        "32",
+      ]),
+    ).toThrow("cannot be used together");
+    expect(() =>
+      parseCommand([
+        "test",
+        "--a",
+        "a",
+        "--b",
+        "b",
+        "--message",
+        "test",
+        "--resource-request",
+        "request.json",
+        "--allow-inbox-drain",
+      ]),
+    ).toThrow("requires --message resource");
+  });
+
+  it("accepts a Task request file instead of a synthetic payload", () => {
+    const base = [
+      "test",
+      "--a",
+      "a",
+      "--b",
+      "b",
+      "--message",
+      "task",
+      "--allow-inbox-drain",
+    ];
+    expect(
+      parseCommand([...base, "--task-request", "task.json"]),
+    ).toMatchObject({
+      input: { kind: "task-request", path: "task.json" },
+    });
+    expect(() =>
+      parseCommand([
+        ...base,
+        "--task-request",
+        "task.json",
+        "--runtime-request",
+        "runtime.json",
+      ]),
+    ).toThrow("cannot be used together");
+  });
+
+  it("selects a shared channel automatically unless explicitly overridden", () => {
+    const base = ["test", "--a", "a", "--b", "b", "--allow-inbox-drain"];
+    expect(parseCommand(base)).toMatchObject({ channel: "auto" });
+    expect(parseCommand([...base, "--channel", "auto"])).toMatchObject({
+      channel: "auto",
+    });
+    expect(parseCommand([...base, "--channel", "3"])).toMatchObject({
+      channel: 3,
+    });
+    expect(parseCommand([...base, "--channel", "39"])).toMatchObject({
+      channel: 39,
+    });
+    expect(() => parseCommand([...base, "--channel", "256"])).toThrow(
+      "between 0 and 255",
+    );
+  });
+
+  it("requires distinct ports and explicit inbox-drain acknowledgement", () => {
+    expect(() =>
+      parseCommand([
+        "test",
+        "--a",
+        "same",
+        "--b",
+        "same",
+        "--channel",
+        "1",
+        "--allow-inbox-drain",
+      ]),
+    ).toThrow("different serial ports");
+    expect(() =>
+      parseCommand(["adapter", "--radio", "a", "--channel", "1"]),
+    ).toThrow("--allow-inbox-drain");
+    expect(() =>
+      parseCommand([
+        "adapter",
+        "--radio",
+        "a",
+        "--channel",
+        "1",
+        "--allow-inbox-drain",
+      ]),
+    ).toThrow("--output");
+    expect(() =>
+      parseCommand([
+        "adapter",
+        "--radio",
+        "a",
+        "--channel",
+        "1",
+        "--evidence-managed-by-parent",
+        "--allow-inbox-drain",
+      ]),
+    ).toThrow("--output");
+    expect(
+      parseCommand([
+        "adapter",
+        "--radio",
+        "a",
+        "--channel",
+        "1",
+        "--evidence-managed-by-parent",
+        "--output",
+        "out",
+        "--allow-inbox-drain",
+      ]),
+    ).toMatchObject({ evidenceManagedByParent: true, output: "out" });
+  });
+});

@@ -1,6 +1,6 @@
 # Atlas SDK
 
-The Atlas SDK (`atlas_sdk/`) is the single client for Atlas Core: the `@the-drunken-coder/atlas-sdk` TypeScript/JavaScript package with a typed HTTP client, an optional started sync engine (local cache + change feed consumer + reconciliation), a bundled `atlas` CLI, and Node/browser test suites. It targets Node `>=24` and browser runtimes with web-standard `fetch` and `WebSocket`. Public npm publishing is a convenience release step for this greenfield repo, not a compatibility promise.
+The Atlas SDK (`packages/sdk/`) is the single client for Atlas Core: the `@the-drunken-coder/atlas-sdk` TypeScript/JavaScript package with a typed HTTP client, an optional started sync engine (local cache + change feed consumer + reconciliation), a bundled `atlas` CLI, and Node/browser test suites. It targets Node `>=24` and browser runtimes with web-standard `fetch` and `WebSocket`. Public npm publishing is a convenience release step for this greenfield repo, not a compatibility promise.
 
 The SDK is the preferred client path for UI code, asset-side services, and tools. Direct API calls remain acceptable for small tools and non-TypeScript services, but the SDK/CLI should be the default integration surface.
 
@@ -96,9 +96,9 @@ Object `referenced_by` entries are normalized to the protocol `ObjectReference` 
 
 ## Types: generated, not hand-written
 
-Resource, request, and response types come from `atlas_protocol` generated artifacts: the SDK compiles the generated TypeScript source into the package and imports it through ESM `.js` specifiers, rather than copying or hand-writing wire shapes. The generated `RESOURCE_TYPE_VALUES` list and predicates are also the source used by subscriptions, the CLI, and downstream workspaces. Protocol changes propagate by regeneration, while the generated `ATLAS_PROTOCOL_REVISION` constant detects SDK/API mismatches across independently built or deployed versions (see the [protocol doc](../atlas-protocol/README.md)). SDK-specific types (client config, sync status, event/debug shapes) are authored in the SDK.
+Resource, request, and response types come from generated artifacts under `packages/protocol`: the SDK compiles the generated TypeScript source into the package and imports it through ESM `.js` specifiers, rather than copying or hand-writing wire shapes. The generated `RESOURCE_TYPE_VALUES` list and predicates are also the source used by subscriptions, the CLI, and downstream workspaces. Protocol changes propagate by regeneration, while the generated `ATLAS_PROTOCOL_REVISION` constant detects SDK/API mismatches across independently built or deployed versions (see the [protocol doc](../atlas-protocol/README.md)). SDK-specific types (client config, sync status, event/debug shapes) are authored in the SDK.
 
-The TypeScript compiler intentionally uses the repository root as `rootDir` so the built package contains both `dist/atlas_sdk/src/*` and the generated `dist/atlas_protocol/generated/typescript/*` module that the SDK imports. Package metadata points the root export at the built SDK entrypoint, exposes `@the-drunken-coder/atlas-sdk/admin` for browser admin/session and managed API-key calls, and installs the `atlas` CLI binary. The command interface and simulations declare the SDK through the root npm workspace and import those same public exports; no source alias bypasses the package boundary.
+The TypeScript compiler intentionally uses the repository root as `rootDir` so the built package contains both `dist/packages/sdk/src/*` and the generated `dist/packages/protocol/generated/typescript/*` module that the SDK imports. Package metadata points the root export at the built SDK entrypoint, exposes `@the-drunken-coder/atlas-sdk/admin` for browser admin/session and managed API-key calls, and installs the `atlas` CLI binary. The command interface and simulations declare the SDK through the root npm workspace and import those same public exports; no source alias bypasses the package boundary.
 
 ## CLI and cross-language story
 
@@ -110,7 +110,7 @@ Install JavaScript dependencies once from the repository root with `npm ci`. Foc
 
 ## Auth
 
-Atlas Core has optional API-key auth (`X-API-Key` or `Authorization: Bearer`). The default `atlas.py --dev` launcher enables it and stores a generated local bootstrap key in `atlas_core/docker/.env.local`; raw Core startup follows its explicit settings and does not load that local credential file. The SDK `apiKey` option sends `X-API-Key` on HTTP requests and an `auth` frame on the websocket feed connection; it does not send Bearer headers. Keys can be the local or production bootstrap key, or managed keys created through Core admin auth. Per-client identity, scoped keys, audit, and token refresh stay out of scope until Core has a richer auth model.
+Atlas Core has optional API-key auth (`X-API-Key` or `Authorization: Bearer`). The default `atlas.py --dev` launcher enables it and stores a generated local bootstrap key in `services/core/docker/.env.local`; raw Core startup follows its explicit settings and does not load that local credential file. The SDK `apiKey` option sends `X-API-Key` on HTTP requests and an `auth` frame on the websocket feed connection; it does not send Bearer headers. Keys can be the local or production bootstrap key, or managed keys created through Core admin auth. Per-client identity, scoped keys, audit, and token refresh stay out of scope until Core has a richer auth model.
 
 ## Composite functions
 
@@ -128,7 +128,7 @@ Higher-level functions (multiple endpoints, or one endpoint with opinionated def
 
 ## Testing
 
-The test harness in `atlas_sdk/test/` drives a fake Core and feed through Entity writes, Task lifecycle changes, Object writes, deletions, dropped events, and forced version gaps while keeping a ledger of every write. At checkpoints and at the end, the SDK cache must match the ledger, watchers must receive every relevant change, and reconciliation must recover from injected faults. The same suite runs in Node and a browser through Playwright, alongside unit tests and the CLI smoke test.
+The test harness in `packages/sdk/test/` drives a fake Core and feed through Entity writes, Task lifecycle changes, Object writes, deletions, dropped events, and forced version gaps while keeping a ledger of every write. At checkpoints and at the end, the SDK cache must match the ledger, watchers must receive every relevant change, and reconciliation must recover from injected faults. The same suite runs in Node and a browser through Playwright, alongside unit tests and the CLI smoke test.
 
 ## Known gaps (explicitly deferred)
 

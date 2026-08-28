@@ -13,9 +13,9 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  GO_VERSION_FILE: atlas_core/go.mod
-  GO_SUM_FILE: atlas_core/go.sum
-  WORKING_DIRECTORY: atlas_core
+  GO_VERSION_FILE: services/core/go.mod
+  GO_SUM_FILE: services/core/go.sum
+  WORKING_DIRECTORY: services/core
   TRIVY_VERSION: v0.70.0
 
 jobs:
@@ -42,7 +42,7 @@ jobs:
 
       - name: Build production image for scanning
         working-directory: .
-        run: docker build --target production -t atlas-core:nightly -f atlas_core/docker/Dockerfile .
+        run: docker build --target production -t atlas-core:nightly -f services/core/docker/Dockerfile .
 
       - name: Scan repository filesystem
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
@@ -115,7 +115,7 @@ jobs:
       - name: Check Docker image references
         working-directory: .
         run: |
-          grep -RInE 'FROM |image:' atlas_core/docker .github || true
+          grep -RInE 'FROM |image:' services/core/docker .github || true
 
       - name: Check GitHub Action references
         working-directory: .

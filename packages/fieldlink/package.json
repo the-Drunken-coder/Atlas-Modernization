@@ -1,0 +1,43 @@
+{
+  "name": "atlas-fieldlink",
+  "private": true,
+  "description": "Message-centered FieldLink delivery over MeshCore",
+  "type": "module",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "bin": {
+    "fieldlink": "dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "check": "npm run format:check && npm run lint && npm run typecheck && npm test && npm run test:python && npm run build",
+    "fieldlink": "tsx src/cli.ts",
+    "fieldlink:tui": "python3 tools/fieldlink_tui.py",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "biome lint --config-path biome.json .",
+    "test": "vitest run",
+    "test:mission": "vitest run tests/network-simulation.test.ts tests/observation.test.ts tests/object-content.test.ts tests/congestion.test.ts tests/node.test.ts",
+    "test:python": "python3 -m unittest discover -s tests -p 'test_*.py'",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@liamcottle/meshcore.js": "1.13.0",
+    "serialport": "13.0.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.9",
+    "@types/node": "^24.10.1",
+    "prettier": "^3.6.2",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.8"
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "name": "@the-drunken-coder/atlas-simulations",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local Atlas simulation workbench.",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "dev:server": "tsx src/server/index.ts",
+    "start": "tsx src/server/index.ts",
+    "test:coverage": "vitest run --coverage",
+    "build": "tsc --noEmit -p tsconfig.json && vite build",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json",
+    "lint": "biome lint --config-path biome.json .",
+    "format:check": "biome check --linter-enabled=false .",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@the-drunken-coder/atlas-sdk": "0.1.0",
+    "lucide-react": "^1.32.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "tsx": "^4.23.12"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.9",
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/react": "^16.3.0",
+    "@testing-library/user-event": "^14.6.5",
+    "@types/node": "^26.2.0",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@vitejs/plugin-react": "^6.0.5",
+    "jsdom": "^30.0.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.1",
+    "vitest": "^4.1.10"
+  }
+}
