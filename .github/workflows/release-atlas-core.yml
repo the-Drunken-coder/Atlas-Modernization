@@ -388,6 +388,7 @@ jobs:
       - name: Tag release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_SHA: ${{ steps.commit.outputs.release_sha }}
           VERSION: ${{ inputs.version }}
         run: |
           tag="atlas-core-v$VERSION"
@@ -503,6 +504,7 @@ jobs:
 
       - name: Publish npm package
         env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           VERSION: ${{ inputs.version }}
         run: |
           package="release-artifacts/atlas-core-$VERSION.tgz"
