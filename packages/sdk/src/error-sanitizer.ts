@@ -170,7 +170,7 @@ function sanitizeDetailValue(value: unknown, depth: number, budget: { remaining:
     }
     return result;
   }
-  if (typeof value !== "object" || value === null) return undefined;
+  if (typeof value !== "object") return undefined;
   const result: Record<string, JSONValue> = Object.create(null) as Record<string, JSONValue>;
   try {
     for (const [key, item] of Object.entries(value)) {
