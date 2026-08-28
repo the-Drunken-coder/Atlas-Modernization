@@ -35,7 +35,7 @@ func TestHTTPClientDecodesExactPrivateProtocol(t *testing.T) {
 	if clientErr != nil || !healthy {
 		t.Fatalf("health = %t, %v", healthy, clientErr)
 	}
-	result, remoteErr, clientErr := client.invoke(context.Background(), server.URL, "inspect_fixture", map[string]any{"key": "alpha"})
+	result, remoteErr, clientErr := client.invoke(context.Background(), server.URL, "inspect_fixture", json.RawMessage(`{"key":"alpha"}`))
 	object, objectOK := result.(map[string]any)
 	value, valueOK := object["value"].(json.Number)
 	if clientErr != nil || remoteErr != nil || !objectOK || !valueOK || value.String() != "7" {
@@ -182,6 +182,58 @@ func TestHTTPClientMapsCancellationAndDeadline(t *testing.T) {
 				t.Fatal("private request did not observe context completion")
 			}
 		})
+	}
+}
+
+func TestHTTPClientMapsCancellationAndDeadlineWhileReadingBody(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		context  func() (context.Context, context.CancelFunc)
+		wantKind clientFailure
+	}{
+		{name: "cancellation", context: func() (context.Context, context.CancelFunc) { return context.WithCancel(context.Background()) }, wantKind: failureCanceled},
+		{name: "deadline", context: func() (context.Context, context.CancelFunc) {
+			return context.WithTimeout(context.Background(), 50*time.Millisecond)
+		}, wantKind: failureTimeout},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			bodyStarted := make(chan struct{})
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				w.(http.Flusher).Flush()
+				close(bodyStarted)
+				<-r.Context().Done()
+			}))
+			t.Cleanup(server.Close)
+			ctx, cancel := test.context()
+			defer cancel()
+			result := make(chan *clientError, 1)
+			go func() {
+				_, _, err := newHTTPClient(server.Client()).invoke(ctx, server.URL, "inspect_fixture", json.RawMessage("null"))
+				result <- err
+			}()
+			<-bodyStarted
+			if test.wantKind == failureCanceled {
+				cancel()
+			}
+			select {
+			case err := <-result:
+				if err == nil || err.kind != test.wantKind {
+					t.Fatalf("error = %#v, want %s", err, test.wantKind)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("private response body did not observe context completion")
+			}
+		})
+	}
+}
+
+func TestDefaultHTTPClientBypassesEnvironmentProxies(t *testing.T) {
+	client := newHTTPClient(nil)
+	transport, ok := client.client.Transport.(*http.Transport)
+	if !ok || transport.Proxy != nil {
+		t.Fatalf("private transport = %#v, want proxy disabled", client.client.Transport)
 	}
 }
 

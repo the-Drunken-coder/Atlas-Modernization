@@ -248,8 +248,20 @@ func (c *ConnectorConfig) normalize() error {
 				return fmt.Errorf("credential header %s cannot be supplied by Plugins", header)
 			}
 		}
+		if route.Retry.MaxRetries > 0 && !route.ReadOnly && !containsName(route.AllowedRequestHeaders, route.Retry.IdempotencyHeader) {
+			return fmt.Errorf("routes[%d]: retry.idempotency_header must appear in allowed_request_headers", index)
+		}
 	}
 	return nil
+}
+
+func containsName(values []string, wanted string) bool {
+	for _, value := range values {
+		if value == wanted {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *RouteRule) normalize() error {

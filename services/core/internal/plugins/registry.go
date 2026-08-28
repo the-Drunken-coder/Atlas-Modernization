@@ -3,6 +3,7 @@ package plugins
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"sync"
@@ -151,7 +152,7 @@ func (r *Registry) List() []protocol.PluginStatus {
 	return statuses
 }
 
-func (r *Registry) Invoke(ctx context.Context, pluginID, operationID string, input protocol.JSONValue) (protocol.JSONValue, *InvokeError) {
+func (r *Registry) Invoke(ctx context.Context, pluginID, operationID string, input json.RawMessage) (protocol.JSONValue, *InvokeError) {
 	state, timeout, invokeErr := r.operation(pluginID, operationID)
 	if invokeErr != nil {
 		return nil, invokeErr
@@ -171,6 +172,7 @@ func (r *Registry) Invoke(ctx context.Context, pluginID, operationID string, inp
 		case failureCanceled:
 			return nil, &InvokeError{Kind: InvokeCanceled}
 		case failureTimeout:
+			r.recordTransportObservation(pluginID)
 			return nil, &InvokeError{Kind: InvokeTimeout}
 		case failureInvalidResponse:
 			r.recordFailure(pluginID, protocol.PluginUnavailableReasonInvalidResponse)
@@ -194,6 +196,13 @@ func (r *Registry) Invoke(ctx context.Context, pluginID, operationID string, inp
 		PluginDetails: remoteErr.details,
 		HasDetails:    remoteErr.hasDetails,
 	}
+}
+
+func (r *Registry) recordTransportObservation(pluginID string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	now := r.options.Now().UTC()
+	r.entries[pluginID].checkedAt = &now
 }
 
 func (r *Registry) operation(pluginID, operationID string) (*entry, time.Duration, *InvokeError) {

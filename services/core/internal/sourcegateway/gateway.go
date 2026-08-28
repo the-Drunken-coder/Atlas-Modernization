@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -93,6 +94,7 @@ func New(cfg Config, options Options) (*Gateway, error) {
 		if client == nil {
 			transport := &http.Transport{
 				Proxy:                 nil,
+				DisableCompression:    true,
 				ForceAttemptHTTP2:     false,
 				MaxConnsPerHost:       connectorConfig.Limits.MaxConcurrency,
 				MaxIdleConnsPerHost:   connectorConfig.Limits.MaxConcurrency,
@@ -174,10 +176,34 @@ func addressAllowed(address netip.Addr, policy EgressPolicy) bool {
 	if address.IsLinkLocalUnicast() || address.IsLinkLocalMulticast() {
 		return policy.AllowLinkLocal
 	}
-	if address.IsPrivate() {
+	if address.IsPrivate() || isSpecialNonPublic(address) {
 		return policy.AllowPrivate
 	}
 	return true
+}
+
+var specialNonPublicPrefixes = []netip.Prefix{
+	netip.MustParsePrefix("0.0.0.0/8"),
+	netip.MustParsePrefix("100.64.0.0/10"),
+	netip.MustParsePrefix("192.0.0.0/24"),
+	netip.MustParsePrefix("192.0.2.0/24"),
+	netip.MustParsePrefix("192.88.99.0/24"),
+	netip.MustParsePrefix("198.18.0.0/15"),
+	netip.MustParsePrefix("198.51.100.0/24"),
+	netip.MustParsePrefix("203.0.113.0/24"),
+	netip.MustParsePrefix("240.0.0.0/4"),
+	netip.MustParsePrefix("2001:2::/48"),
+	netip.MustParsePrefix("2001:db8::/32"),
+	netip.MustParsePrefix("fec0::/10"),
+}
+
+func isSpecialNonPublic(address netip.Addr) bool {
+	for _, prefix := range specialNonPublicPrefixes {
+		if prefix.Contains(address) {
+			return true
+		}
+	}
+	return false
 }
 
 func (g *Gateway) Handler() http.Handler {
@@ -259,17 +285,23 @@ func (g *Gateway) execute(ctx context.Context, connector *connector, input Conne
 	}
 	requestContext, cancel := context.WithTimeout(ctx, time.Duration(connector.config.Limits.TimeoutMS)*time.Millisecond)
 	defer cancel()
+	if requestContext.Err() != nil {
+		return ConnectorResponse{}, 1, "miss", timeoutOrCancellation(requestContext)
+	}
 	select {
 	case connector.semaphore <- struct{}{}:
 		defer func() { <-connector.semaphore }()
 	case <-requestContext.Done():
 		return ConnectorResponse{}, 1, "miss", timeoutOrCancellation(requestContext)
 	}
-	if err := connector.waitForRate(requestContext, g.now); err != nil {
-		return ConnectorResponse{}, 1, "miss", timeoutOrCancellation(requestContext)
+	if connector.circuitOpen(g.now()) {
+		return ConnectorResponse{}, 1, "miss", &gatewayError{code: FailureCircuitOpen}
 	}
 	maxAttempts := rule.Retry.MaxRetries + 1
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		if err := connector.waitForRate(requestContext, g.now); err != nil {
+			return ConnectorResponse{}, attempt, "miss", timeoutOrCancellation(requestContext)
+		}
 		response, failure := connector.attempt(requestContext, prepared, rule)
 		if failure == nil {
 			connector.recordReachable()
@@ -281,8 +313,8 @@ func (g *Gateway) execute(ctx context.Context, connector *connector, input Conne
 			}
 			return response, attempt, cacheOutcome(rule.Cache.TTLMS), nil
 		}
-		if errors.Is(requestContext.Err(), context.Canceled) && errors.Is(ctx.Err(), context.Canceled) {
-			return ConnectorResponse{}, attempt, "miss", failure
+		if requestContext.Err() != nil {
+			return ConnectorResponse{}, attempt, "miss", timeoutOrCancellation(requestContext)
 		}
 		if attempt < maxAttempts && retryFailure(rule.Retry.Failures, failure.code) {
 			continue
@@ -302,7 +334,9 @@ type preparedRequest struct {
 }
 
 func (c *connector) prepare(input ConnectorRequest) (preparedRequest, RouteRule, *gatewayError) {
-	input.Method = strings.ToUpper(strings.TrimSpace(input.Method))
+	if input.Method != strings.TrimSpace(input.Method) || input.Method != strings.ToUpper(input.Method) {
+		return preparedRequest{}, RouteRule{}, rejected(errors.New("method must use its canonical uppercase form"))
+	}
 	if err := validateDecodedPath(input.Path); err != nil {
 		return preparedRequest{}, RouteRule{}, rejected(err)
 	}
@@ -333,7 +367,7 @@ func (c *connector) prepare(input ConnectorRequest) (preparedRequest, RouteRule,
 	var body []byte
 	if input.BodyBase64 != nil {
 		decoded, err := base64.StdEncoding.Strict().DecodeString(*input.BodyBase64)
-		if err != nil {
+		if err != nil || base64.StdEncoding.EncodeToString(decoded) != *input.BodyBase64 {
 			return preparedRequest{}, RouteRule{}, rejected(errors.New("body_base64 is invalid"))
 		}
 		body = decoded
@@ -374,6 +408,7 @@ func (c *connector) attempt(ctx context.Context, prepared preparedRequest, rule 
 	for name, value := range c.secretHeaders {
 		request.Header.Set(name, value)
 	}
+	request.Header.Set("User-Agent", "")
 	request.ContentLength = int64(len(prepared.body))
 	response, err := c.client.Do(request)
 	if err != nil {
@@ -385,6 +420,9 @@ func (c *connector) attempt(ctx context.Context, prepared preparedRequest, rule 
 	defer func() { _ = response.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(response.Body, c.config.Limits.MaxResponseBytes+1))
 	if err != nil {
+		if ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) {
+			return ConnectorResponse{}, &gatewayError{code: FailureUpstreamTimeout, err: err}
+		}
 		return ConnectorResponse{}, &gatewayError{code: FailureUpstreamUnreachable, err: err}
 	}
 	if int64(len(body)) > c.config.Limits.MaxResponseBytes {
@@ -445,21 +483,39 @@ func (c *connector) waitForRate(ctx context.Context, now func() time.Time) error
 		return nil
 	}
 	interval := time.Duration(float64(time.Second) / c.config.Rate.RequestsPerSecond)
-	c.rateMu.Lock()
-	current := now()
-	waitUntil := c.nextRequest
-	if waitUntil.Before(current) {
-		waitUntil = current
-	}
-	c.nextRequest = waitUntil.Add(interval)
-	c.rateMu.Unlock()
-	timer := time.NewTimer(time.Until(waitUntil))
-	defer timer.Stop()
-	select {
-	case <-timer.C:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
+	for {
+		c.rateMu.Lock()
+		current := now()
+		waitUntil := c.nextRequest
+		if waitUntil.Before(current) {
+			waitUntil = current
+		}
+		if !waitUntil.After(current) {
+			c.nextRequest = waitUntil.Add(interval)
+			c.rateMu.Unlock()
+			return nil
+		}
+		c.rateMu.Unlock()
+
+		timer := time.NewTimer(waitUntil.Sub(current))
+		select {
+		case <-timer.C:
+			c.rateMu.Lock()
+			if c.nextRequest.Equal(waitUntil) {
+				c.nextRequest = waitUntil.Add(interval)
+				c.rateMu.Unlock()
+				return nil
+			}
+			c.rateMu.Unlock()
+		case <-ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			return ctx.Err()
+		}
 	}
 }
 
@@ -536,15 +592,33 @@ func cacheOutcome(ttl int64) string {
 
 func requestCacheKey(connectorID string, request preparedRequest) string {
 	hash := sha256.New()
-	_, _ = io.WriteString(hash, connectorID+"\x00"+request.method+"\x00"+request.path+"\x00")
+	writeCachePart(hash, []byte("connector"))
+	writeCachePart(hash, []byte(connectorID))
+	writeCachePart(hash, []byte("method"))
+	writeCachePart(hash, []byte(request.method))
+	writeCachePart(hash, []byte("path"))
+	writeCachePart(hash, []byte(request.path))
+	writeCachePart(hash, []byte("query"))
+	writeCachePart(hash, []byte(strconv.Itoa(len(request.query))))
 	for _, tuple := range request.query {
-		_, _ = io.WriteString(hash, tuple[0]+"\x00"+tuple[1]+"\x00")
+		writeCachePart(hash, []byte(tuple[0]))
+		writeCachePart(hash, []byte(tuple[1]))
 	}
+	writeCachePart(hash, []byte("headers"))
+	writeCachePart(hash, []byte(strconv.Itoa(len(request.headers))))
 	for _, tuple := range request.headers {
-		_, _ = io.WriteString(hash, tuple[0]+"\x00"+tuple[1]+"\x00")
+		writeCachePart(hash, []byte(tuple[0]))
+		writeCachePart(hash, []byte(tuple[1]))
 	}
-	_, _ = hash.Write(request.body)
+	writeCachePart(hash, []byte("body"))
+	writeCachePart(hash, request.body)
 	return hex.EncodeToString(hash.Sum(nil))
+}
+
+func writeCachePart(target io.Writer, value []byte) {
+	_, _ = io.WriteString(target, strconv.Itoa(len(value)))
+	_, _ = io.WriteString(target, ":")
+	_, _ = target.Write(value)
 }
 
 type cacheEntry struct {

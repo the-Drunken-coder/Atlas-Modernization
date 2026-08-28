@@ -2,6 +2,7 @@ package sourcegateway
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/rs/zerolog"
 )
@@ -126,10 +128,9 @@ func TestGatewayHandlerMapsFailuresAndCachesSafeResponses(t *testing.T) {
 
 func TestGatewayBoundsRetriesCircuitAndCancellation(t *testing.T) {
 	var calls atomic.Int32
-	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
 		calls.Add(1)
-		<-request.Context().Done()
-		return nil, request.Context().Err()
+		return nil, context.DeadlineExceeded
 	})}
 	config := testConnectorConfig()
 	config.Limits.TimeoutMS = 20
@@ -163,7 +164,10 @@ func TestGatewayBoundsRetriesCircuitAndCancellation(t *testing.T) {
 }
 
 func TestAddressPolicyRejectsPrivateLoopbackAndLinkLocalByDefault(t *testing.T) {
-	for _, address := range []string{"127.0.0.1", "10.0.0.1", "169.254.1.1", "::1", "fe80::1"} {
+	for _, address := range []string{
+		"127.0.0.1", "10.0.0.1", "169.254.1.1", "::1", "fe80::1",
+		"0.1.2.3", "100.64.0.1", "192.0.0.1", "192.88.99.1", "198.18.0.1", "240.0.0.1", "255.255.255.255", "fec0::1",
+	} {
 		parsed := netip.MustParseAddr(address)
 		if addressAllowed(parsed, EgressPolicy{}) {
 			t.Fatalf("expected %s to be rejected", address)
@@ -171,8 +175,163 @@ func TestAddressPolicyRejectsPrivateLoopbackAndLinkLocalByDefault(t *testing.T) 
 	}
 	if !addressAllowed(netip.MustParseAddr("127.0.0.1"), EgressPolicy{AllowLoopback: true}) ||
 		!addressAllowed(netip.MustParseAddr("10.0.0.1"), EgressPolicy{AllowPrivate: true}) ||
+		!addressAllowed(netip.MustParseAddr("100.64.0.1"), EgressPolicy{AllowPrivate: true}) ||
 		!addressAllowed(netip.MustParseAddr("169.254.1.1"), EgressPolicy{AllowLinkLocal: true}) {
 		t.Fatal("explicit egress allowances were not honored")
+	}
+}
+
+func TestCacheKeySeparatesRequestSections(t *testing.T) {
+	query := preparedRequest{method: "GET", path: "/fixture", query: []HeaderTuple{{"a", "b"}}}
+	header := preparedRequest{method: "GET", path: "/fixture", headers: []HeaderTuple{{"a", "b"}}}
+	body := preparedRequest{method: "GET", path: "/fixture", body: []byte("a\x00b\x00")}
+	keys := map[string]bool{
+		requestCacheKey("reference", query):  true,
+		requestCacheKey("reference", header): true,
+		requestCacheKey("reference", body):   true,
+	}
+	if len(keys) != 3 {
+		t.Fatalf("cache key sections collided: %v", keys)
+	}
+}
+
+func TestQueuedRequestRechecksCircuitAfterConcurrencyWait(t *testing.T) {
+	var calls atomic.Int32
+	passedInitialCircuitCheck := make(chan struct{})
+	var clockCalls atomic.Int32
+	config := testConnectorConfig()
+	config.Limits.MaxConcurrency = 1
+	config.CircuitBreaker.Failures = 1
+	gateway, err := New(Config{Connectors: []ConnectorConfig{config}}, Options{
+		Now: func() time.Time {
+			if clockCalls.Add(1) == 1 {
+				close(passedInitialCircuitCheck)
+			}
+			return time.Now()
+		},
+		Client: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			calls.Add(1)
+			return nil, errors.New("offline")
+		})},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connector := gateway.connectors["reference"]
+	connector.semaphore <- struct{}{}
+	result := make(chan *gatewayError, 1)
+	go func() {
+		_, _, _, failure := gateway.execute(context.Background(), connector, ConnectorRequest{
+			Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{},
+		})
+		result <- failure
+	}()
+	<-passedInitialCircuitCheck
+	connector.recordFailure(time.Now())
+	<-connector.semaphore
+	select {
+	case failure := <-result:
+		if failure == nil || failure.code != FailureCircuitOpen || calls.Load() != 0 {
+			t.Fatalf("queued request = %v, upstream calls = %d", failure, calls.Load())
+		}
+	case <-time.After(time.Second):
+		t.Fatal("queued request did not resume")
+	}
+}
+
+func TestRateLimitCountsRetriesAndCanceledWaitersDoNotReserveCapacity(t *testing.T) {
+	now := time.Now()
+	config := testConnectorConfig()
+	config.Rate.RequestsPerSecond = 1000
+	config.Routes[0].Retry = RetryRule{MaxRetries: 2, Statuses: []int{http.StatusServiceUnavailable}}
+	gateway, err := New(Config{Connectors: []ConnectorConfig{config}}, Options{
+		Now: func() time.Time { return now },
+		Client: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return &http.Response{StatusCode: http.StatusServiceUnavailable, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("retry"))}, nil
+		})},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connector := gateway.connectors["reference"]
+	_, attempts, _, failure := gateway.execute(context.Background(), connector, ConnectorRequest{
+		Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{},
+	})
+	if failure != nil || attempts != 3 || !connector.nextRequest.Equal(now.Add(3*time.Millisecond)) {
+		t.Fatalf("attempts=%d next=%s failure=%v", attempts, connector.nextRequest, failure)
+	}
+
+	reserved := now.Add(time.Hour)
+	connector.nextRequest = reserved
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := connector.waitForRate(ctx, func() time.Time { return now }); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled wait = %v", err)
+	}
+	if !connector.nextRequest.Equal(reserved) {
+		t.Fatalf("canceled waiter moved reservation to %s", connector.nextRequest)
+	}
+}
+
+type contextBody struct{ ctx context.Context }
+
+func (b contextBody) Read([]byte) (int, error) {
+	<-b.ctx.Done()
+	return 0, b.ctx.Err()
+}
+
+func (contextBody) Close() error { return nil }
+
+func TestGatewayClassifiesBodyDeadlineAndDoesNotRetry(t *testing.T) {
+	var calls atomic.Int32
+	config := testConnectorConfig()
+	config.Limits.TimeoutMS = 20
+	config.Routes[0].Retry = RetryRule{MaxRetries: 3, Failures: []string{string(FailureUpstreamTimeout)}}
+	gateway, err := New(Config{Connectors: []ConnectorConfig{config}}, Options{Client: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		calls.Add(1)
+		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: contextBody{ctx: request.Context()}}, nil
+	})}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, attempts, _, failure := gateway.execute(context.Background(), gateway.connectors["reference"], ConnectorRequest{
+		Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{},
+	})
+	if failure == nil || failure.code != FailureUpstreamTimeout || attempts != 1 || calls.Load() != 1 {
+		t.Fatalf("attempts=%d calls=%d failure=%v", attempts, calls.Load(), failure)
+	}
+}
+
+func TestDefaultTransportPreservesCompressedBytesAndAddsNoImplicitHeaders(t *testing.T) {
+	var compressed bytes.Buffer
+	zipper := gzip.NewWriter(&compressed)
+	_, _ = zipper.Write([]byte("payload"))
+	_ = zipper.Close()
+	var acceptEncoding, userAgent string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		acceptEncoding = r.Header.Get("Accept-Encoding")
+		userAgent = r.Header.Get("User-Agent")
+		w.Header().Set("Content-Encoding", "gzip")
+		_, _ = w.Write(compressed.Bytes())
+	}))
+	t.Cleanup(server.Close)
+	config := testConnectorConfig()
+	config.Origin = server.URL
+	config.Egress.AllowLoopback = true
+	config.Routes[0].AllowedResponseHeaders = []string{"content-encoding"}
+	gateway, err := New(Config{Connectors: []ConnectorConfig{config}}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, _, _, failure := gateway.execute(context.Background(), gateway.connectors["reference"], ConnectorRequest{
+		Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{},
+	})
+	if failure != nil {
+		t.Fatal(failure)
+	}
+	body, err := base64.StdEncoding.DecodeString(response.BodyBase64)
+	if err != nil || !bytes.Equal(body, compressed.Bytes()) || acceptEncoding != "" || userAgent != "" {
+		t.Fatalf("body preserved=%t accept-encoding=%q user-agent=%q error=%v", bytes.Equal(body, compressed.Bytes()), acceptEncoding, userAgent, err)
 	}
 }
 
@@ -180,6 +339,7 @@ func TestWireRejectsUnknownFieldsMalformedTuplesAndPaths(t *testing.T) {
 	for _, input := range []string{
 		`{"method":"GET","path":"/","query":[],"headers":[],"body_base64":null,"extra":true}`,
 		`{"method":"GET","path":"/","query":[["one"]],"headers":[],"body_base64":null}`,
+		`{"method":"GET","path":"/","query":[],"headers":[],"body_base64":""}`,
 	} {
 		if _, err := decodeRequest(strings.NewReader(input)); err == nil {
 			t.Fatalf("expected strict decode failure for %s", input)
@@ -189,6 +349,26 @@ func TestWireRejectsUnknownFieldsMalformedTuplesAndPaths(t *testing.T) {
 		if err := validateDecodedPath(path); err == nil {
 			t.Fatalf("expected path %q to fail", path)
 		}
+	}
+	config := testConnectorConfig()
+	gateway, err := New(Config{Connectors: []ConnectorConfig{config}}, Options{Client: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return nil, errors.New("must not be called")
+	})}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, _, failure := gateway.execute(context.Background(), gateway.connectors["reference"], ConnectorRequest{
+		Method: "get", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{},
+	})
+	if failure == nil || failure.code != FailureRequestRejected {
+		t.Fatalf("lowercase method = %v", failure)
+	}
+	nonCanonicalBase64 := "Zh=="
+	_, _, _, failure = gateway.execute(context.Background(), gateway.connectors["reference"], ConnectorRequest{
+		Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{}, BodyBase64: &nonCanonicalBase64,
+	})
+	if failure == nil || failure.code != FailureRequestRejected {
+		t.Fatalf("non-canonical base64 = %v", failure)
 	}
 	data, err := json.Marshal(HeaderTuple{"a", "b"})
 	if err != nil || string(data) != `["a","b"]` {

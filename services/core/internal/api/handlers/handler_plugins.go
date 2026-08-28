@@ -15,7 +15,7 @@ const maxPluginOperationInputBytes = 1 << 20
 
 type pluginRegistry interface {
 	List() []protocol.PluginStatus
-	Invoke(context.Context, string, string, protocol.JSONValue) (protocol.JSONValue, *plugins.InvokeError)
+	Invoke(context.Context, string, string, json.RawMessage) (protocol.JSONValue, *plugins.InvokeError)
 }
 
 func (h *Handler) ListPlugins(w http.ResponseWriter, r *http.Request) {
@@ -43,7 +43,7 @@ func (h *Handler) InvokePluginOperation(w http.ResponseWriter, r *http.Request) 
 		h.writeError(w, r, http.StatusBadRequest, "Invalid JSON body", protocol.ErrorCodeInvalidJSON)
 		return
 	}
-	result, err := h.plugins.Invoke(r.Context(), chi.URLParam(r, "plugin_id"), chi.URLParam(r, "operation_id"), value)
+	result, err := h.plugins.Invoke(r.Context(), chi.URLParam(r, "plugin_id"), chi.URLParam(r, "operation_id"), input)
 	if err == nil {
 		writeJSON(w, r, http.StatusOK, result)
 		return

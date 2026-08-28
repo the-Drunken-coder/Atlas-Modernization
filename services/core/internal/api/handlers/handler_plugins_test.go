@@ -17,12 +17,12 @@ type pluginRegistryStub struct {
 	statuses []protocol.PluginStatus
 	result   protocol.JSONValue
 	err      *coreplugins.InvokeError
-	input    protocol.JSONValue
+	input    json.RawMessage
 }
 
 func (s *pluginRegistryStub) List() []protocol.PluginStatus { return s.statuses }
 
-func (s *pluginRegistryStub) Invoke(_ context.Context, _, _ string, input protocol.JSONValue) (protocol.JSONValue, *coreplugins.InvokeError) {
+func (s *pluginRegistryStub) Invoke(_ context.Context, _, _ string, input json.RawMessage) (protocol.JSONValue, *coreplugins.InvokeError) {
 	s.input = input
 	return s.result, s.err
 }
@@ -49,13 +49,13 @@ func TestPluginHandlersExposeOnlyDiscoveryAndInvocationContracts(t *testing.T) {
 	}
 
 	invokeRecorder := httptest.NewRecorder()
-	handler.InvokePluginOperation(invokeRecorder, pluginInvokeRequest(`{"key":"alpha"}`))
+	input := `{"key":"<alpha>", "nested" : [1]}`
+	handler.InvokePluginOperation(invokeRecorder, pluginInvokeRequest(input))
 	if invokeRecorder.Code != http.StatusOK || strings.TrimSpace(invokeRecorder.Body.String()) != `{"value":"alpha"}` {
 		t.Fatalf("invoke = %d %s", invokeRecorder.Code, invokeRecorder.Body.String())
 	}
-	input, ok := registry.input.(map[string]any)
-	if !ok || input["key"] != "alpha" {
-		t.Fatalf("decoded input = %#v", registry.input)
+	if string(registry.input) != input {
+		t.Fatalf("forwarded input = %q, want %q", registry.input, input)
 	}
 }
 

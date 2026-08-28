@@ -1,5 +1,6 @@
-import { sanitizeErrorMessage } from "./error-sanitizer.js";
+import { sanitizeErrorDetails, sanitizeErrorMessage } from "./error-sanitizer.js";
 import { parseAtlasJSON, stringifyAtlasJSON } from "./json.js";
+import type { JSONValue } from "./protocol.js";
 import { isTimerDelayInRange, MAX_TIMER_DELAY_MS } from "./timer.js";
 import type { FetchLike } from "./types.js";
 import { joinAtlasUrl, normalizeAtlasBaseUrl } from "./url.js";
@@ -26,6 +27,7 @@ export class AtlasAPIError extends Error {
   readonly status: number;
   readonly response: unknown;
   readonly errorCode?: string;
+  readonly details?: JSONValue;
 
   constructor(message: string, status: number, response: unknown) {
     const safeResponse = safeErrorPayload(response);
@@ -34,6 +36,7 @@ export class AtlasAPIError extends Error {
     this.status = status;
     this.response = safeResponse;
     this.errorCode = errorCodeFromPayload(safeResponse);
+    this.details = errorDetailsFromPayload(safeResponse);
   }
 }
 
@@ -112,12 +115,14 @@ export class HttpTransport {
     signal?: AbortSignal,
     requestHeaders?: HeadersInit
   ): Promise<T> {
-    const response = await this.raw(method, path, body, ifMatchVersion, signal, requestHeaders);
-    const value = await readSuccessfulJSON(response, signal);
-    if (!validate(value)) {
-      throw new TypeError(`Atlas response failed validation for ${method} ${path}`);
-    }
-    return value;
+    return this.withRequestTimeout(signal, async (requestSignal) => {
+      const response = await this.raw(method, path, body, ifMatchVersion, requestSignal, requestHeaders);
+      const value = await readSuccessfulJSON(response, requestSignal);
+      if (!validate(value)) {
+        throw new TypeError(`Atlas response failed validation for ${method} ${path}`);
+      }
+      return value;
+    });
   }
 
   async versionedJSON<T>(
@@ -128,16 +133,18 @@ export class HttpTransport {
     signal?: AbortSignal,
     requestHeaders?: HeadersInit
   ): Promise<VersionedResponse<T>> {
-    const response = await this.raw(method, path, body, undefined, signal, requestHeaders);
-    const value = await readSuccessfulJSON(response, signal);
-    if (!validate(value)) {
-      throw new TypeError(`Atlas response failed validation for ${method} ${path}`);
-    }
-    const version = strongETagVersion(response.headers.get("ETag"));
-    if (version === undefined) {
-      throw new TypeError(`Atlas response did not include a valid resource ETag for ${method} ${path}`);
-    }
-    return { value, version };
+    return this.withRequestTimeout(signal, async (requestSignal) => {
+      const response = await this.raw(method, path, body, undefined, requestSignal, requestHeaders);
+      const value = await readSuccessfulJSON(response, requestSignal);
+      if (!validate(value)) {
+        throw new TypeError(`Atlas response failed validation for ${method} ${path}`);
+      }
+      const version = strongETagVersion(response.headers.get("ETag"));
+      if (version === undefined) {
+        throw new TypeError(`Atlas response did not include a valid resource ETag for ${method} ${path}`);
+      }
+      return { value, version };
+    });
   }
 
   async empty(
@@ -148,22 +155,26 @@ export class HttpTransport {
     signal?: AbortSignal,
     requestHeaders?: HeadersInit
   ): Promise<void> {
-    const response = await this.raw(method, path, body, ifMatchVersion, signal, requestHeaders);
-    if (response.status !== 204) {
-      throw new TypeError(`Atlas response failed validation for ${method} ${path}`);
-    }
+    await this.withRequestTimeout(signal, async (requestSignal) => {
+      const response = await this.raw(method, path, body, ifMatchVersion, requestSignal, requestHeaders);
+      if (response.status !== 204) {
+        throw new TypeError(`Atlas response failed validation for ${method} ${path}`);
+      }
+    });
   }
 
   async arrayBuffer(method: string, path: string, signal?: AbortSignal): Promise<ArrayBuffer> {
-    const response = await this.raw(method, path, undefined, undefined, signal);
-    try {
-      return await response.arrayBuffer();
-    } catch (error) {
-      throwTransportBodyError(error, signal);
-    }
+    return this.withRequestTimeout(signal, async (requestSignal) => {
+      const response = await this.raw(method, path, undefined, undefined, requestSignal);
+      try {
+        return await response.arrayBuffer();
+      } catch (error) {
+        throwTransportBodyError(error, requestSignal);
+      }
+    });
   }
 
-  async raw(
+  private async raw(
     method: string,
     path: string,
     body?: unknown,
@@ -175,7 +186,7 @@ export class HttpTransport {
     if (body !== undefined) headers.set("Content-Type", "application/json");
     if (this.apiKey) headers.set("X-API-Key", this.apiKey);
     if (ifMatchVersion !== undefined) headers.set("If-Match", `"v${ifMatchVersion}"`);
-    const response = await this.fetchWithTimeout(joinAtlasUrl(this.baseUrl, path), {
+    const response = await this.fetchRequest(joinAtlasUrl(this.baseUrl, path), {
       method,
       headers,
       credentials: this.credentials,
@@ -193,25 +204,34 @@ export class HttpTransport {
     return response;
   }
 
-  private async fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
+  private async fetchRequest(url: string, init: RequestInit): Promise<Response> {
+    try {
+      return await this.fetchImpl(url, init);
+    } catch (error) {
+      if (init.signal?.aborted) throw init.signal.reason;
+      const message = sanitizeErrorMessage(error);
+      if (isAtlasTransportError(error)) throw error;
+      throw new AtlasTransportError(message);
+    }
+  }
+
+  private async withRequestTimeout<T>(
+    signal: AbortSignal | undefined,
+    operation: (requestSignal: AbortSignal) => Promise<T>
+  ): Promise<T> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.requestTimeoutMs);
-    const requestSignal = init.signal ? AbortSignal.any([controller.signal, init.signal]) : controller.signal;
+    const requestSignal = signal ? AbortSignal.any([controller.signal, signal]) : controller.signal;
     try {
-      return await this.fetchImpl(url, {
-        ...init,
-        signal: requestSignal
-      });
+      return await operation(requestSignal);
     } catch (error) {
-      if (init.signal?.aborted && requestSignal.reason === init.signal.reason) {
-        throw init.signal.reason;
+      if (signal?.aborted && requestSignal.reason === signal.reason) {
+        throw signal.reason;
       }
       if (controller.signal.aborted) {
         throw new AtlasTransportError(`Atlas request timed out after ${this.requestTimeoutMs}ms`);
       }
-      const message = sanitizeErrorMessage(error);
-      if (isAtlasTransportError(error)) throw error;
-      throw new AtlasTransportError(message);
+      throw error;
     } finally {
       clearTimeout(timeout);
     }
@@ -267,6 +287,11 @@ function errorCodeFromPayload(payload: unknown): string | undefined {
   return errorResponseFields(payload)?.error_code;
 }
 
+function errorDetailsFromPayload(payload: unknown): JSONValue | undefined {
+  if (typeof payload !== "object" || payload === null || !("details" in payload)) return undefined;
+  return sanitizeErrorDetails(payload.details);
+}
+
 function errorResponseFields(payload: unknown): { error_code?: string; message?: string } | undefined {
   if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
     return undefined;
@@ -291,9 +316,14 @@ function safeErrorPayload(payload: unknown): unknown {
     typeof payload === "object" && payload !== null && "success" in payload && payload.success === false
       ? false
       : undefined;
+  const details =
+    typeof payload === "object" && payload !== null && "details" in payload
+      ? sanitizeErrorDetails(payload.details)
+      : undefined;
   return {
     ...(success === undefined ? {} : { success }),
     ...(fields.error_code === undefined ? {} : { error_code: fields.error_code }),
-    ...(fields.message === undefined ? {} : { message: sanitizeErrorMessage(fields.message) })
+    ...(fields.message === undefined ? {} : { message: sanitizeErrorMessage(fields.message) }),
+    ...(details === undefined ? {} : { details })
   };
 }

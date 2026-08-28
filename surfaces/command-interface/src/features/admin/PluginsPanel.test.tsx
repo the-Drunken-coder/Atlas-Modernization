@@ -80,6 +80,8 @@ describe("PluginsPanel", () => {
 
     await vi.advanceTimersByTimeAsync(10_000);
     expect(list).toHaveBeenCalledTimes(3);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(list).toHaveBeenCalledTimes(3);
     view.unmount();
     expect(signals.at(-1)?.aborted).toBe(true);
   });

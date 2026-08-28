@@ -27,8 +27,7 @@ export function PluginsPanel({ reader: suppliedReader }: { reader?: PluginReader
   const rowRefs = useRef<Array<HTMLDivElement | null>>([]);
 
   const refresh = useCallback(async () => {
-    if (!reader) return;
-    requestRef.current?.abort();
+    if (!reader || requestRef.current) return;
     const controller = new AbortController();
     requestRef.current = controller;
     setRefreshing(true);
@@ -53,11 +52,19 @@ export function PluginsPanel({ reader: suppliedReader }: { reader?: PluginReader
   }, [reader]);
 
   useEffect(() => {
-    void refresh();
-    const timer = window.setInterval(() => void refresh(), pollingIntervalMs);
+    let stopped = false;
+    let timer: number | undefined;
+    const poll = async () => {
+      await refresh();
+      if (!stopped) timer = window.setTimeout(() => void poll(), pollingIntervalMs);
+    };
+    void poll();
     return () => {
-      window.clearInterval(timer);
-      requestRef.current?.abort();
+      stopped = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+      const controller = requestRef.current;
+      requestRef.current = undefined;
+      controller?.abort();
     };
   }, [refresh]);
 

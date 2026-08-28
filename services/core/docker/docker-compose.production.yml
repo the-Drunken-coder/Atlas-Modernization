@@ -59,6 +59,10 @@ services:
       target: source-gateway-production
     container_name: atlas_core_production_source_gateway
     restart: unless-stopped
+    environment:
+      ATLAS_SOURCE_GATEWAY_CONFIG: /app/source_gateway.json
+    volumes:
+      - ${ATLAS_SOURCE_GATEWAY_CONFIG_FILE:-./source_gateway.production.json}:/app/source_gateway.json:ro
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 10s

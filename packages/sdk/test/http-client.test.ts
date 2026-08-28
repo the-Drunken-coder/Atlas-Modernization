@@ -77,7 +77,12 @@ describe("AtlasClient HTTP", () => {
 
     const failure = await client.queries.full().catch((error: unknown) => error);
 
-    expect(failure).toMatchObject({ status: 503, errorCode: "CORE_UNAVAILABLE" });
+    expect(failure).toMatchObject({
+      status: 503,
+      errorCode: "CORE_UNAVAILABLE",
+      details: { api_key: "[redacted]" },
+      response: expect.objectContaining({ details: { api_key: "[redacted]" } })
+    });
     expect(JSON.stringify(failure)).not.toContain(secret);
     expect((failure as Error).message).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/);
   });
@@ -122,6 +127,27 @@ describe("AtlasClient HTTP", () => {
       new Promise((_resolve, reject) => {
         init?.signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
       });
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, requestTimeoutMs: 50 });
+
+    try {
+      const handshake = expect(client.handshake()).rejects.toThrow("Atlas request timed out after 50ms");
+      await vi.advanceTimersByTimeAsync(50);
+      await handshake;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps the request timeout active while reading a response body", async () => {
+    vi.useFakeTimers();
+    const fetchImpl: typeof fetch = async (_url, init) => {
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          init?.signal?.addEventListener("abort", () => controller.error(init.signal?.reason), { once: true });
+        }
+      });
+      return new Response(body, { status: 200, headers: { "Content-Type": "application/json" } });
+    };
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, requestTimeoutMs: 50 });
 
     try {

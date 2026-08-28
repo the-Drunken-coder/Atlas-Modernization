@@ -75,6 +75,34 @@ func TestHandshakeProtocolRevisionMatchesProtocolRevision(t *testing.T) {
 	}
 }
 
+func TestPluginStatusStateFieldsStayConsistent(t *testing.T) {
+	valid := []string{
+		`{"plugin_id":"reference","display_name":null,"status":"starting","reason_code":null,"checked_at":null,"operations":[],"tool_asset_id":null}`,
+		`{"plugin_id":"reference","display_name":"Reference","status":"starting","reason_code":null,"checked_at":"2026-08-28T12:00:00Z","operations":[],"tool_asset_id":null}`,
+		`{"plugin_id":"reference","display_name":"Reference","status":"available","reason_code":null,"checked_at":"2026-08-28T12:00:00Z","operations":[],"tool_asset_id":null}`,
+		`{"plugin_id":"reference","display_name":null,"status":"unavailable","reason_code":"invalid_manifest","checked_at":"2026-08-28T12:00:00Z","operations":[],"tool_asset_id":null}`,
+	}
+	for _, value := range valid {
+		if errors := protocol.ValidatePluginStatus(json.RawMessage(value)); len(errors) > 0 {
+			t.Errorf("valid Plugin status rejected: %s: %v", value, errors)
+		}
+	}
+
+	invalid := []string{
+		`{"plugin_id":"reference","display_name":null,"status":"starting","reason_code":"transport_timeout","checked_at":null,"operations":[],"tool_asset_id":null}`,
+		`{"plugin_id":"reference","display_name":"Reference","status":"available","reason_code":"transport_timeout","checked_at":"2026-08-28T12:00:00Z","operations":[],"tool_asset_id":null}`,
+		`{"plugin_id":"reference","display_name":null,"status":"available","reason_code":null,"checked_at":"2026-08-28T12:00:00Z","operations":[],"tool_asset_id":null}`,
+		`{"plugin_id":"reference","display_name":"Reference","status":"available","reason_code":null,"checked_at":null,"operations":[],"tool_asset_id":null}`,
+		`{"plugin_id":"reference","display_name":null,"status":"unavailable","reason_code":null,"checked_at":"2026-08-28T12:00:00Z","operations":[],"tool_asset_id":null}`,
+		`{"plugin_id":"reference","display_name":null,"status":"unavailable","reason_code":"invalid_manifest","checked_at":null,"operations":[],"tool_asset_id":null}`,
+	}
+	for _, value := range invalid {
+		if errors := protocol.ValidatePluginStatus(json.RawMessage(value)); len(errors) == 0 {
+			t.Errorf("contradictory Plugin status accepted: %s", value)
+		}
+	}
+}
+
 func TestSubscriptionsReadyExampleValidates(t *testing.T) {
 	root := moduleRoot(t)
 	data, err := os.ReadFile(filepath.Join(root, "examples", "feed", "server-ready", "subscriptions-ready.json"))

@@ -1,5 +1,5 @@
 import { once } from "node:events";
-import { AtlasAPIError, type EntityResource } from "@the-drunken-coder/atlas-sdk";
+import { AtlasAPIError, type EntityResource, type JSONValue } from "@the-drunken-coder/atlas-sdk";
 import { describe, expect, it, vi } from "vitest";
 import {
   definePlugin,
@@ -39,6 +39,12 @@ describe("Atlas Plugin runtime", () => {
       tool_asset_id: "plugin_rfSey5Te4YU6Prz-hpGcwRnuSBuF9z1COTHZJt_s0G4"
     });
     expect(deriveToolAssetId("adsb")).toBe(plugin.manifest.tool_asset_id);
+    expect(Object.isFrozen(plugin)).toBe(true);
+    expect(Object.isFrozen(plugin.operations)).toBe(true);
+    expect(Object.isFrozen(plugin.operations.inspect_aircraft)).toBe(true);
+    expect(Object.isFrozen(plugin.manifest)).toBe(true);
+    expect(Object.isFrozen(plugin.manifest.operations)).toBe(true);
+    expect(Object.isFrozen(plugin.manifest.operations[0])).toBe(true);
     expect(() => definePlugin({ pluginId: "bad-id", displayName: "Bad", operations: {} })).toThrow(TypeError);
   });
 
@@ -54,6 +60,12 @@ describe("Atlas Plugin runtime", () => {
           handler(input) {
             if (input === "bad") throw new PluginInputError("bad_key", { field: "key" });
             if (input === "fail") throw new PluginFailureError("source_failed");
+            if (input === "mutated") {
+              const details: Record<string, JSONValue> = { field: "key" };
+              const failure = new PluginInputError("bad_key", details);
+              details.self = details;
+              throw failure;
+            }
             return { received: input };
           }
         }
@@ -79,6 +91,10 @@ describe("Atlas Plugin runtime", () => {
       await expect(postJSON(`${origin}/operations/inspect_fixture`, "fail")).resolves.toEqual({
         status: 500,
         body: { code: "source_failed" }
+      });
+      await expect(postJSON(`${origin}/operations/inspect_fixture`, "mutated")).resolves.toEqual({
+        status: 500,
+        body: { code: "operation_failed" }
       });
     } finally {
       server.close();
@@ -108,8 +124,61 @@ describe("Atlas Plugin runtime", () => {
     }
   });
 
+  it("aborts active handlers on lifecycle shutdown and rejects an already-aborted lifecycle", async () => {
+    const lifecycle = new AbortController();
+    let handlerSignal: AbortSignal | undefined;
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const plugin = definePlugin({
+      pluginId: "reference",
+      displayName: "Reference",
+      operations: {
+        inspect_fixture: {
+          displayName: "Inspect fixture",
+          timeoutMs: 1000,
+          handler: async (_input, signal) => {
+            handlerSignal = signal;
+            entered();
+            await new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }));
+            return null;
+          }
+        }
+      }
+    });
+    const server = await servePlugin(plugin, { host: "127.0.0.1", port: 0, signal: lifecycle.signal });
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("missing server address");
+    const request = fetch(`http://127.0.0.1:${address.port}/operations/inspect_fixture`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "null"
+    }).catch(() => undefined);
+    await started;
+    const closed = once(server, "close");
+    lifecycle.abort(new Error("shutdown"));
+    await closed;
+    await request;
+    expect(handlerSignal?.aborted).toBe(true);
+
+    const alreadyStopped = new AbortController();
+    alreadyStopped.abort(new Error("stopped"));
+    await expect(servePlugin(plugin, { host: "127.0.0.1", port: 0, signal: alreadyStopped.signal })).rejects.toThrow(
+      "stopped"
+    );
+  });
+
+  it("rejects non-JSON Plugin error details", () => {
+    const cyclic: { self?: unknown } = {};
+    cyclic.self = cyclic;
+    expect(() => new PluginInputError("invalid_input", cyclic as never)).toThrow("must be a JSON value");
+    expect(() => new PluginFailureError("operation_failed", 1n as never)).toThrow("must be a JSON value");
+  });
+
   it("transports repeated headers and binary bodies through the Source Gateway client", async () => {
     const fetchMock = vi.fn<typeof fetch>(async (_url, init) => {
+      expect(init?.redirect).toBe("manual");
       const request = JSON.parse(String(init?.body));
       expect(request).toEqual({
         method: "POST",
@@ -163,11 +232,64 @@ describe("Atlas Plugin runtime", () => {
   it("exposes only fixed Source Gateway failure categories", async () => {
     const client = new SourceGatewayClient(
       "http://gateway.test",
-      vi.fn<typeof fetch>(async () => new Response('{"code":"circuit_open"}', { status: 503 }))
+      vi.fn<typeof fetch>(
+        async () =>
+          new Response('{"code":"circuit_open"}', {
+            status: 503,
+            headers: { "Content-Type": "application/json" }
+          })
+      )
     );
     await expect(client.request("reference", { method: "GET", path: "/" })).rejects.toEqual(
       new SourceGatewayError("circuit_open")
     );
+  });
+
+  it("enforces the exact Source Gateway response and wire contract", async () => {
+    const requestBodies: unknown[] = [];
+    const client = new SourceGatewayClient(
+      "http://gateway.test",
+      vi.fn<typeof fetch>(async (_url, init) => {
+        requestBodies.push(JSON.parse(String(init?.body)));
+        return new Response('{"status":204,"headers":[],"body_base64":""}', {
+          status: 200,
+          headers: { "Content-Type": "application/json; charset=utf-8" }
+        });
+      })
+    );
+    await expect(
+      client.request("reference", { method: "GET", path: "/", body: new Uint8Array() })
+    ).resolves.toMatchObject({
+      status: 204,
+      body: new Uint8Array()
+    });
+    expect(requestBodies[0]).toMatchObject({ method: "GET", body_base64: null });
+    await expect(client.request("reference", { method: "get", path: "/" })).rejects.toThrow("uppercase");
+
+    for (const response of [
+      new Response('{"status":99,"headers":[],"body_base64":""}', {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      }),
+      new Response('{"status":200,"headers":[],"body_base64":"%%%"}', {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      }),
+      new Response('{"code":"circuit_open"}', {
+        status: 502,
+        headers: { "Content-Type": "application/json" }
+      }),
+      new Response('{"status":200,"headers":[],"body_base64":""}', {
+        status: 200,
+        headers: { "Content-Type": "text/plain" }
+      })
+    ]) {
+      const invalid = new SourceGatewayClient(
+        "http://gateway.test",
+        vi.fn<typeof fetch>(async () => response)
+      );
+      await expect(invalid.request("reference", { method: "GET", path: "/" })).rejects.toThrow(TypeError);
+    }
   });
 
   it("gets or creates a matching Tool Asset and rejects ownership conflicts", async () => {
@@ -181,14 +303,20 @@ describe("Atlas Plugin runtime", () => {
         create
       }
     };
-    await expect(ensureToolAsset(missingClient, "reference", { alias: "Reference" })).resolves.toEqual(entity);
-    expect(create).toHaveBeenCalledWith({
-      entity_id: entity.entity_id,
-      entity_type: "asset",
-      subtype: "tool",
-      alias: "Reference",
-      components: { custom_plugin: { plugin_id: "reference" } }
-    });
+    const controller = new AbortController();
+    await expect(
+      ensureToolAsset(missingClient, "reference", { alias: "Reference", signal: controller.signal })
+    ).resolves.toEqual(entity);
+    expect(create).toHaveBeenCalledWith(
+      {
+        entity_id: entity.entity_id,
+        entity_type: "asset",
+        subtype: "tool",
+        alias: "Reference",
+        components: { custom_plugin: { plugin_id: "reference" } }
+      },
+      { signal: controller.signal }
+    );
 
     const conflicting = { ...entity, subtype: "vehicle" };
     await expect(

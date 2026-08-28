@@ -1,3 +1,5 @@
+import type { JSONValue } from "./protocol.js";
+
 const SAFE_FALLBACK = "An unsafe error message was removed.";
 const QUOTED_PARAMETER = /([?&#;])([^=&#;\s]+)=((?:(["'])(?:\\.|(?!\4)[^\\])*\4))/gi;
 const SENSITIVE_PARAMETER =
@@ -146,6 +148,44 @@ export function sanitizeErrorMessage(cause: unknown, options: ErrorMessageSaniti
   }
   if (!settled) return fallback;
   return truncateMessage(sanitized, maxLength);
+}
+
+export function sanitizeErrorDetails(value: unknown): JSONValue | undefined {
+  return sanitizeDetailValue(value, 0, { remaining: 10_000 });
+}
+
+function sanitizeDetailValue(value: unknown, depth: number, budget: { remaining: number }): JSONValue | undefined {
+  if (depth > 32 || budget.remaining-- <= 0) return undefined;
+  if (value === null || typeof value === "boolean") return value;
+  if (typeof value === "number") return Number.isFinite(value) ? value : undefined;
+  if (typeof value === "string") {
+    return sanitizeErrorMessage(value, { fallback: "[redacted]", maxLength: 4096 });
+  }
+  if (Array.isArray(value)) {
+    const result: JSONValue[] = [];
+    for (const item of value) {
+      const sanitized = sanitizeDetailValue(item, depth + 1, budget);
+      if (sanitized === undefined) return undefined;
+      result.push(sanitized);
+    }
+    return result;
+  }
+  if (typeof value !== "object" || value === null) return undefined;
+  const result: Record<string, JSONValue> = Object.create(null) as Record<string, JSONValue>;
+  try {
+    for (const [key, item] of Object.entries(value)) {
+      if (isSensitiveName(key)) {
+        result[key] = "[redacted]";
+        continue;
+      }
+      const sanitized = sanitizeDetailValue(item, depth + 1, budget);
+      if (sanitized === undefined) return undefined;
+      result[key] = sanitized;
+    }
+  } catch {
+    return undefined;
+  }
+  return result;
 }
 
 function truncateMessage(message: string, maxLength: number): string {

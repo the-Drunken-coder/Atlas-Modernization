@@ -71,6 +71,9 @@ func (r *ConnectorRequest) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(fields["body_base64"], &body); err != nil {
 		return errors.New("body_base64 must be a string or null")
 	}
+	if body == "" {
+		return errors.New("body_base64 must be null for an empty body")
+	}
 	r.BodyBase64 = &body
 	return nil
 }

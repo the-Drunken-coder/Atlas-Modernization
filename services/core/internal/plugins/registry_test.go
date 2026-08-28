@@ -2,6 +2,7 @@ package plugins
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 	"testing"
@@ -39,7 +40,7 @@ func (f *fakeClient) health(ctx context.Context, _ string) (bool, *clientError) 
 	return health(ctx)
 }
 
-func (f *fakeClient) invoke(ctx context.Context, _, _ string, _ protocol.JSONValue) (protocol.JSONValue, *remoteOperationError, *clientError) {
+func (f *fakeClient) invoke(ctx context.Context, _, _ string, _ json.RawMessage) (protocol.JSONValue, *remoteOperationError, *clientError) {
 	f.mu.Lock()
 	invoke := f.invokeFunc
 	f.mu.Unlock()
@@ -115,10 +116,11 @@ func TestRegistryApplicationHealthAndOperationRecoveryAreIndependent(t *testing.
 
 func TestRegistryMapsOperationFailuresWithoutChangingHealthyStatus(t *testing.T) {
 	client := &fakeClient{manifestValue: fixtureManifest(10 * time.Millisecond)}
+	now := time.Date(2026, time.August, 28, 12, 0, 0, 0, time.UTC)
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	registry := New(ctx, []Endpoint{{ID: "reference", BaseURL: "http://reference:8080"}}, Options{
-		Client: client, RetryCadence: time.Millisecond, HealthCadence: time.Hour,
+		Client: client, RetryCadence: time.Millisecond, HealthCadence: time.Hour, Now: func() time.Time { return now },
 	})
 	waitForStatus(t, registry, protocol.PluginStatusStateAvailable)
 
@@ -141,12 +143,16 @@ func TestRegistryMapsOperationFailuresWithoutChangingHealthyStatus(t *testing.T)
 		return nil, nil, &clientError{kind: failureTimeout, err: ctx.Err()}
 	}
 	client.mu.Unlock()
+	now = now.Add(time.Minute)
 	_, timeoutErr := registry.Invoke(context.Background(), "reference", "inspect_fixture", nil)
 	if timeoutErr == nil || timeoutErr.Kind != InvokeTimeout {
 		t.Fatalf("timeout error = %#v", timeoutErr)
 	}
 	if registry.List()[0].Status != protocol.PluginStatusStateAvailable {
 		t.Fatal("Operation timeout changed Plugin status")
+	}
+	if checkedAt := registry.List()[0].CheckedAt; checkedAt == nil || *checkedAt != now.Format(time.RFC3339Nano) {
+		t.Fatalf("Operation timeout checked_at = %v, want %s", checkedAt, now.Format(time.RFC3339Nano))
 	}
 }
 

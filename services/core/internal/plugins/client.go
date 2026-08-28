@@ -45,7 +45,7 @@ type remoteOperationError struct {
 type privateClient interface {
 	manifest(context.Context, string) (protocol.PluginManifest, *clientError)
 	health(context.Context, string) (bool, *clientError)
-	invoke(context.Context, string, string, protocol.JSONValue) (protocol.JSONValue, *remoteOperationError, *clientError)
+	invoke(context.Context, string, string, json.RawMessage) (protocol.JSONValue, *remoteOperationError, *clientError)
 }
 
 type httpClient struct {
@@ -54,7 +54,9 @@ type httpClient struct {
 
 func newHTTPClient(client *http.Client) *httpClient {
 	if client == nil {
-		client = &http.Client{}
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.Proxy = nil
+		client = &http.Client{Transport: transport}
 	}
 	copy := *client
 	copy.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
@@ -67,7 +69,7 @@ func (c *httpClient) manifest(ctx context.Context, baseURL string) (protocol.Plu
 		return protocol.PluginManifest{}, err
 	}
 	defer func() { _ = response.Body.Close() }()
-	data, readErr := readPrivateResponse(response, failureInvalidManifest)
+	data, readErr := readPrivateResponse(ctx, response, failureInvalidManifest)
 	if readErr != nil {
 		return protocol.PluginManifest{}, readErr
 	}
@@ -97,7 +99,7 @@ func (c *httpClient) health(ctx context.Context, baseURL string) (bool, *clientE
 		return false, err
 	}
 	defer func() { _ = response.Body.Close() }()
-	data, readErr := readPrivateResponse(response, failureInvalidResponse)
+	data, readErr := readPrivateResponse(ctx, response, failureInvalidResponse)
 	if readErr != nil {
 		return false, readErr
 	}
@@ -120,18 +122,17 @@ func (c *httpClient) invoke(
 	ctx context.Context,
 	baseURL string,
 	operationID string,
-	input protocol.JSONValue,
+	input json.RawMessage,
 ) (protocol.JSONValue, *remoteOperationError, *clientError) {
-	body, err := json.Marshal(input)
-	if err != nil {
-		return nil, nil, invalidResponse(err)
+	if len(input) == 0 {
+		input = json.RawMessage("null")
 	}
-	response, requestErr := c.request(ctx, http.MethodPost, baseURL+"/operations/"+operationID, bytes.NewReader(body))
+	response, requestErr := c.request(ctx, http.MethodPost, baseURL+"/operations/"+operationID, bytes.NewReader(input))
 	if requestErr != nil {
 		return nil, nil, requestErr
 	}
 	defer func() { _ = response.Body.Close() }()
-	data, readErr := readPrivateResponse(response, failureInvalidResponse)
+	data, readErr := readPrivateResponse(ctx, response, failureInvalidResponse)
 	if readErr != nil {
 		return nil, nil, readErr
 	}
@@ -184,19 +185,35 @@ func (c *httpClient) request(ctx context.Context, method, target string, body io
 	return nil, &clientError{kind: failureUnreachable, err: err}
 }
 
-func readPrivateResponse(response *http.Response, invalidKind clientFailure) ([]byte, *clientError) {
+func readPrivateResponse(ctx context.Context, response *http.Response, invalidKind clientFailure) ([]byte, *clientError) {
+	if contextErr := privateContextError(ctx, nil); contextErr != nil {
+		return nil, contextErr
+	}
 	mediaType, _, err := mime.ParseMediaType(response.Header.Get("Content-Type"))
 	if err != nil || !strings.EqualFold(mediaType, "application/json") {
 		return nil, &clientError{kind: invalidKind, err: fmt.Errorf("private response is not application/json")}
 	}
 	data, err := io.ReadAll(io.LimitReader(response.Body, maxPrivateResponseBytes+1))
 	if err != nil {
+		if contextErr := privateContextError(ctx, err); contextErr != nil {
+			return nil, contextErr
+		}
 		return nil, &clientError{kind: invalidKind, err: err}
 	}
 	if len(data) > maxPrivateResponseBytes {
 		return nil, &clientError{kind: invalidKind, err: fmt.Errorf("private response exceeds size limit")}
 	}
 	return data, nil
+}
+
+func privateContextError(ctx context.Context, err error) *clientError {
+	if errors.Is(ctx.Err(), context.Canceled) {
+		return &clientError{kind: failureCanceled, err: err}
+	}
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded) {
+		return &clientError{kind: failureTimeout, err: err}
+	}
+	return nil
 }
 
 func decodeStrictJSON(data []byte, target any) error {

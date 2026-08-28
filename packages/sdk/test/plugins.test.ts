@@ -44,6 +44,52 @@ describe("AtlasClient Plugins", () => {
     await expect(client.plugins.invoke("reference", "inspect_fixture", null)).rejects.toThrow();
   });
 
+  it("rejects contradictory Plugin discovery states", async () => {
+    const client = new AtlasClient({
+      baseUrl: "https://core.test",
+      sync: false,
+      fetch: async () =>
+        jsonResponse([
+          {
+            plugin_id: "reference",
+            display_name: "Reference Fixture",
+            status: "available",
+            reason_code: "transport_timeout",
+            checked_at: "2026-08-28T12:00:00Z",
+            operations: [],
+            tool_asset_id: null
+          }
+        ])
+    });
+
+    await expect(client.plugins.list()).rejects.toThrow("response failed validation");
+  });
+
+  it("preserves structured Plugin failure details", async () => {
+    const client = new AtlasClient({
+      baseUrl: "https://core.test",
+      sync: false,
+      fetch: async () =>
+        new Response(
+          JSON.stringify({
+            success: false,
+            error_code: "PLUGIN_FAILURE",
+            message: "Plugin Operation failed",
+            details: { plugin_code: "source_failed", plugin_details: { field: "key" } }
+          }),
+          { status: 502, headers: { "Content-Type": "application/json" } }
+        )
+    });
+
+    await expect(client.plugins.invoke("reference", "inspect_fixture", null)).rejects.toMatchObject({
+      errorCode: "PLUGIN_FAILURE",
+      details: { plugin_code: "source_failed", plugin_details: { field: "key" } },
+      response: expect.objectContaining({
+        details: { plugin_code: "source_failed", plugin_details: { field: "key" } }
+      })
+    });
+  });
+
   it("propagates caller cancellation", async () => {
     const fetchMock = vi.fn<typeof fetch>(async (_url, init) => {
       await new Promise((_, reject) => init?.signal?.addEventListener("abort", () => reject(init.signal?.reason)));

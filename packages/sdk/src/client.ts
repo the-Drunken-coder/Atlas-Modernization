@@ -106,8 +106,18 @@ export class AtlasClient {
 
   readonly entities = {
     get: (id: string, options?: ReadOptions) => this.engine.readEntity(id, options),
-    create: (entity: EntityCreateRequest) =>
-      this.engine.writeResource("POST", "/entities", entity, "entity", entity.entity_id, isEntityResource),
+    create: (entity: EntityCreateRequest, options?: { signal?: AbortSignal }) =>
+      this.engine.writeResource(
+        "POST",
+        "/entities",
+        entity,
+        "entity",
+        entity.entity_id,
+        isEntityResource,
+        undefined,
+        undefined,
+        options?.signal
+      ),
     update: (id: string, patch: EntityUpdateRequest, options?: { ifMatchVersion?: number }) =>
       this.engine.writeResource(
         "PATCH",

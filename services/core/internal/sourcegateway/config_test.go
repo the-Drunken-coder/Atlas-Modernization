@@ -55,6 +55,15 @@ func TestConfigRejectsUnsafeCacheRetryAndCredentials(t *testing.T) {
 		t.Fatal("expected mutating retry without idempotency key to fail")
 	}
 
+	base.Routes[0].Retry.IdempotencyHeader = "idempotency-key"
+	if _, err := New(Config{Connectors: []ConnectorConfig{base}}, Options{}); err == nil {
+		t.Fatal("expected unallowlisted idempotency header to fail")
+	}
+	base.Routes[0].AllowedRequestHeaders = []string{"idempotency-key"}
+	if _, err := New(Config{Connectors: []ConnectorConfig{base}}, Options{}); err != nil {
+		t.Fatalf("allowlisted idempotency header failed: %v", err)
+	}
+
 	base = testConnectorConfig()
 	base.SecretHeaders = map[string]SecretRef{"authorization": {Environment: "TOKEN"}}
 	if _, err := New(Config{Connectors: []ConnectorConfig{base}}, Options{}); err == nil {
