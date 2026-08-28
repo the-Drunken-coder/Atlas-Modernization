@@ -246,19 +246,23 @@ jobs:
           jq -e --arg image "$image" '
                 .services.api.image == $image and
                 .services.api.environment.DATABASE_RECREATE_ON_STARTUP == "false" and
+                .services.api.environment.CORS_ORIGINS == "https://atlasinterface.com" and
                 .services.api.environment.CORS_ORIGIN_PATTERNS == "https://*.atlas-je0.pages.dev" and
                 all(.services.api.ports[]; .host_ip == "127.0.0.1") and
                 all(.services.postgres.ports[]; .host_ip == "127.0.0.1") and
                 all(.services.minio.ports[]; .host_ip == "127.0.0.1")
               ' <<< "$config_json"
           empty_cors_config="$(
-            CORS_ORIGIN_PATTERNS='' ATLAS_CORE_IMAGE="$image" docker compose \
+            CORS_ORIGINS='' CORS_ORIGIN_PATTERNS='' ATLAS_CORE_IMAGE="$image" docker compose \
               --project-name atlas_core_production \
               --env-file "$config_dir/.env" \
               --file surfaces/core-cli/assets/docker-compose.yml \
               config --format json
           )"
-          jq -e '.services.api.environment.CORS_ORIGIN_PATTERNS == ""' <<< "$empty_cors_config"
+          jq -e '
+            .services.api.environment.CORS_ORIGINS == "" and
+            .services.api.environment.CORS_ORIGIN_PATTERNS == ""
+          ' <<< "$empty_cors_config"
 
   fieldlink:
     name: fieldlink
