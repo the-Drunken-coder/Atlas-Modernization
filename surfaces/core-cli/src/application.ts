@@ -111,6 +111,7 @@ type DeploymentState = {
   packageVersion: string;
   dockerEngineId: string;
   initializingPid?: number;
+  initializingProcessStartedAt?: string;
   startAttemptedAt?: string;
   startedAt?: string;
 };
@@ -210,12 +211,16 @@ class AtlasCoreDeployment {
       this.#assertStateMatchesRuntime(existingState, dockerEngineId);
       if (
         existingState.initializingPid !== undefined &&
+        existingState.initializingProcessStartedAt !== undefined &&
         existingState.initializingPid !== process.pid &&
         processIsRunning(existingState.initializingPid)
       ) {
-        throw new Error(
-          `Another atlas-core init process is already running with PID ${existingState.initializingPid}.`
-        );
+        const processStartedAt = await this.#processStartedAt(existingState.initializingPid);
+        if (processStartedAt === existingState.initializingProcessStartedAt) {
+          throw new Error(
+            `Another atlas-core init process is already running with PID ${existingState.initializingPid}.`
+          );
+        }
       }
     }
     if (hasEnv && !existingState) {
@@ -245,7 +250,7 @@ class AtlasCoreDeployment {
       );
     }
 
-    const initializingState = this.#writeInitializingState(dockerEngineId, existingState);
+    const initializingState = await this.#writeInitializingState(dockerEngineId, existingState);
     if (!hasEnv) this.#writeConfiguration();
 
     let startedMinio = false;
@@ -419,6 +424,12 @@ class AtlasCoreDeployment {
     return result.stdout || result.stderr;
   }
 
+  async #processStartedAt(pid: number): Promise<string> {
+    const startedAt = oneLine(await this.#checkCommand("ps", ["-o", "lstart=", "-p", String(pid)]));
+    if (!startedAt) throw new Error(`Could not identify the process running with PID ${pid}.`);
+    return startedAt;
+  }
+
   async #volumeExists(name: string): Promise<boolean> {
     const volume = name === POSTGRES_VOLUME ? "postgres_data" : "minio_data";
     return await this.#ownedResourceExists("volume", name, {
@@ -512,14 +523,18 @@ class AtlasCoreDeployment {
     }
   }
 
-  #writeInitializingState(dockerEngineId: string, previous: DeploymentState | undefined): DeploymentState {
+  async #writeInitializingState(
+    dockerEngineId: string,
+    previous: DeploymentState | undefined
+  ): Promise<DeploymentState> {
     const state: DeploymentState = {
       schema: CONFIG_SCHEMA,
       phase: "initializing",
       initializedAt: previous?.initializedAt ?? this.#now().toISOString(),
       packageVersion: PACKAGE_VERSION,
       dockerEngineId,
-      initializingPid: process.pid
+      initializingPid: process.pid,
+      initializingProcessStartedAt: await this.#processStartedAt(process.pid)
     };
     try {
       writePrivateFile(this.#stateFile, `${JSON.stringify(state, null, 2)}\n`, this.#platform, previous === undefined);
@@ -538,6 +553,7 @@ class AtlasCoreDeployment {
       phase: "ready"
     };
     delete readyState.initializingPid;
+    delete readyState.initializingProcessStartedAt;
     writePrivateFile(this.#stateFile, `${JSON.stringify(readyState, null, 2)}\n`, this.#platform);
   }
 
@@ -809,10 +825,11 @@ function isDeploymentState(value: unknown): value is DeploymentState {
     typeof record.initializedAt === "string" &&
     typeof record.packageVersion === "string" &&
     typeof record.dockerEngineId === "string" &&
-    (record.initializingPid === undefined ||
+    ((record.initializingPid === undefined && record.initializingProcessStartedAt === undefined) ||
       (typeof record.initializingPid === "number" &&
         Number.isInteger(record.initializingPid) &&
-        record.initializingPid > 0)) &&
+        record.initializingPid > 0 &&
+        typeof record.initializingProcessStartedAt === "string")) &&
     (record.startAttemptedAt === undefined || typeof record.startAttemptedAt === "string") &&
     (record.startedAt === undefined || typeof record.startedAt === "string")
   );

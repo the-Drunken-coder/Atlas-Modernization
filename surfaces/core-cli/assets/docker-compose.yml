@@ -22,7 +22,7 @@ services:
       SERVER_PORT: "8000"
       ENABLE_API_AUTH: "true"
       CORS_ORIGINS: ${CORS_ORIGINS:-https://atlasinterface.com}
-      CORS_ORIGIN_PATTERNS: ${CORS_ORIGIN_PATTERNS:-https://*.atlas-je0.pages.dev}
+      CORS_ORIGIN_PATTERNS: ${CORS_ORIGIN_PATTERNS-}
       TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-}
       API_AUTH_KEY: ${API_AUTH_KEY:?API_AUTH_KEY must be set}
       ATLAS_ADMIN_PASSWORD: ${ATLAS_ADMIN_PASSWORD:?ATLAS_ADMIN_PASSWORD must be set}

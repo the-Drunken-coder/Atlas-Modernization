@@ -247,10 +247,18 @@ jobs:
               config --format json | jq -e '
                 .services.api.image == "ghcr.io/the-drunken-coder/atlas-core:0.1.0" and
                 .services.api.environment.DATABASE_RECREATE_ON_STARTUP == "false" and
+                .services.api.environment.CORS_ORIGIN_PATTERNS == "https://*.atlas-je0.pages.dev" and
                 .services.api.ports[0].host_ip == "127.0.0.1" and
                 .services.postgres.ports[0].host_ip == "127.0.0.1" and
                 .services.minio.ports[0].host_ip == "127.0.0.1"
               '
+          CORS_ORIGIN_PATTERNS= \
+            ATLAS_CORE_IMAGE=ghcr.io/the-drunken-coder/atlas-core:0.1.0 \
+            docker compose \
+              --project-name atlas_core_production \
+              --env-file "$config_dir/.env" \
+              --file surfaces/core-cli/assets/docker-compose.yml \
+              config --format json | jq -e '.services.api.environment.CORS_ORIGIN_PATTERNS == ""'
 
   fieldlink:
     name: fieldlink

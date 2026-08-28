@@ -29,6 +29,7 @@ class FakeRunner implements CommandRunner {
   readonly mismatchedResources = new Set<string>();
   inspectionError: { kind: "container" | "volume"; name: string } | undefined;
   failComposeUp = false;
+  processStartedAt = "Fri Aug 28 18:00:00 2026";
   serviceStates = [
     { Service: "api", State: "running", Health: "healthy" },
     { Service: "minio", State: "running", Health: "healthy" },
@@ -47,6 +48,7 @@ class FakeRunner implements CommandRunner {
       env: { ...options.env },
       inherit: options.inherit ?? false
     });
+    if (command === "ps") return result(0, `${this.processStartedAt}\n`);
     if (args[0] === "volume" && args[1] === "inspect") {
       const name = args.at(-1) ?? "";
       if (this.inspectionError?.kind === "volume" && this.inspectionError.name === name) {
@@ -250,13 +252,37 @@ describe("atlas-core CLI", () => {
         initializedAt: "2026-08-28T12:00:00.000Z",
         packageVersion: "0.1.0",
         dockerEngineId: "test-engine-id",
-        initializingPid: 1
+        initializingPid: 1,
+        initializingProcessStartedAt: test.runner.processStartedAt
       })}\n`,
       { mode: 0o600 }
     );
 
     expect(await runCLI(["init"], test.context)).toBe(1);
     expect(test.stderr.join("")).toContain("Another atlas-core init process");
+  });
+
+  it("recovers when an interrupted initialization PID has been reused", async () => {
+    const test = runtime();
+    const config = join(test.home, ".atlas", "core");
+    mkdirSync(config, { recursive: true, mode: 0o700 });
+    writeFileSync(join(config, ".env"), "POSTGRES_PASSWORD=initializing\n", { mode: 0o600 });
+    writeFileSync(
+      join(config, "state.json"),
+      `${JSON.stringify({
+        schema: 1,
+        phase: "initializing",
+        initializedAt: "2026-08-28T12:00:00.000Z",
+        packageVersion: "0.1.0",
+        dockerEngineId: "test-engine-id",
+        initializingPid: 1,
+        initializingProcessStartedAt: "Fri Aug 28 17:00:00 2026"
+      })}\n`,
+      { mode: 0o600 }
+    );
+
+    expect(await runCLI(["init"], test.context)).toBe(0);
+    expect(test.stdout.join("")).toContain("Atlas Core initialized");
   });
 
   it("propagates Docker inspection failures", async () => {
