@@ -49,10 +49,10 @@ jobs:
         if: matrix.language == 'go'
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: atlas_core/go.mod
+          go-version-file: services/core/go.mod
           cache-dependency-path: |
-            atlas_core/go.sum
-            atlas_protocol/go.sum
+            services/core/go.sum
+            packages/protocol/go.sum
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
@@ -64,8 +64,8 @@ jobs:
       - name: Build Go modules
         if: matrix.build-mode == 'manual'
         run: |
-          (cd atlas_protocol && go test ./...)
-          (cd atlas_core && go test ./...)
+          (cd packages/protocol && go test ./...)
+          (cd services/core && go test ./...)
 
       - name: Analyze
         uses: github/codeql-action/analyze@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7

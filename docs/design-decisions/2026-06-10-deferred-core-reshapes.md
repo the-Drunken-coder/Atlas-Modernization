@@ -6,5 +6,5 @@
 4. **Decision:** Keep health and readiness handlers direct because they report process and dependency status rather than domain actions. Do not add another snapshot-version table. The change clock is the snapshot. Migration v7 supersedes the earlier nullable Task-assignment decision.
 5. **Alternatives considered:** Routing health and readiness through actions adds code without clarifying domain behavior. A dedicated snapshot-version table duplicates the clock row. Mutable or nullable Task assignment conflicts with the Protocol Task contract.
 6. **Consequences:** Health and readiness remain direct handlers. Snapshot reads use the change clock. A Task keeps its Asset ID even after the Asset Entity is deleted.
-7. **Location:** `atlas_core/internal/actions/query_actions.go`, `atlas_core/internal/database/migrations.go`, `atlas_core/internal/api/handlers/handler_health.go`
+7. **Location:** `services/core/internal/actions/query_actions.go`, `services/core/internal/database/migrations.go`, `services/core/internal/api/handlers/handler_health.go`
 8. **Notes:** Snapshot behavior follows `docs/design-decisions/2026-06-12-change-feed-websocket-fat-events.md`. Task behavior follows `docs/atlas-protocol/commands-and-tasking.md`.

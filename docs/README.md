@@ -1,6 +1,6 @@
 # Atlas Modernization — documentation index
 
-_Revision: 2026-07-12_
+_Revision: 2026-08-27_
 
 This is the single entry point for project documentation. Docs are split into **project-level**
 (this `docs/` tree, spanning every package) and **package-level** (each package's own `docs/`).
@@ -9,7 +9,6 @@ This is the single entry point for project documentation. Docs are split into **
 
 | Location | What it holds | Use it when… |
 | --- | --- | --- |
-| [`docs/atlas-asset-runtime/`](atlas-asset-runtime/) | Asset runtime design: registration, safety barriers, runtime-scoped Task delivery polling, telemetry, and failure behavior. | "How does asset-side code participate in Atlas?" |
 | [`docs/atlas-change-feed/`](atlas-change-feed/) | Change feed design: websocket push contract, subscription filters, consumption rules, simulation-testing approach. | "How do clients learn about writes without polling?" |
 | [`docs/atlas-plugins/`](atlas-plugins/) | Plugin architecture: operations, datastreams, external sources, isolation, and Core ownership. | "How does Atlas add external-data and extension capabilities?" |
 | [`docs/atlas-protocol/`](atlas-protocol/) | Atlas Protocol design decisions and reference docs. | "Why is the protocol shaped this way?" |
@@ -24,14 +23,18 @@ Start templates: [`design-decisions/_EXAMPLE_DESIGN_DECISION_.md`](design-decisi
 
 | Package | Docs | What it is |
 | --- | --- | --- |
-| `atlas_core/` | [`atlas_core/docs/`](../atlas_core/docs/README.md) | The Go HTTP API: handlers, actions, durable production database/storage, and explicit development scratch mode. Operational reference (pagination, errors, security, database workflow, entity/task/object shapes). |
-| `atlas_protocol/` | [`atlas_protocol/README.md`](../atlas_protocol/README.md) and [`docs/atlas-protocol/`](atlas-protocol/) | Buildable Atlas Protocol module: JSON Schema source, generated contracts, validators, examples, tooling, and planning/reference docs. |
-| `atlas_sdk/` | [`docs/atlas-sdk/`](atlas-sdk/) | TypeScript/JavaScript Atlas SDK package: typed client, optional sync engine, CLI, package metadata, and Node/browser test suites. |
-| `atlas_asset_runtime/` | [`docs/atlas-asset-runtime/`](atlas-asset-runtime/) | TypeScript/Node asset runtime: process registration, telemetry reporting, and runtime-scoped Task execution through the Atlas SDK. |
-| `atlas_command_interface/` | [`atlas_command_interface/README.md`](../atlas_command_interface/README.md) | Atlas Command interface: Cloudflare Pages-hosted map console. |
-| `atlas_simulations/` | [`atlas_simulations/README.md`](../atlas_simulations/README.md) | Local simulation workbench for running trusted scenario scripts against Atlas Core through the SDK. |
+| `services/core/` | [`services/core/docs/`](../services/core/docs/README.md) | The Go HTTP API: handlers, actions, durable production database/storage, and explicit development scratch mode. Operational reference (pagination, errors, security, database workflow, entity/task/object shapes). |
+| `packages/protocol/` | [`packages/protocol/README.md`](../packages/protocol/README.md) and [`docs/atlas-protocol/`](atlas-protocol/) | Buildable Atlas Protocol module: JSON Schema source, generated contracts, validators, examples, tooling, and planning/reference docs. |
+| `packages/sdk/` | [`docs/atlas-sdk/`](atlas-sdk/) | TypeScript/JavaScript Atlas SDK package: typed client, optional sync engine, CLI, package metadata, and Node/browser test suites. |
+| `packages/fieldlink/` | [`packages/fieldlink/docs/`](../packages/fieldlink/docs/README.md) | MeshCore transport, registered FieldLink messages, radio adapter, and hardware harness. |
+| `edge/asset/` | [`edge/asset/README.md`](../edge/asset/README.md) | Reserved Asset role. No implementation exists yet. |
+| `edge/gateway/` | [`edge/gateway/README.md`](../edge/gateway/README.md) | Reserved Gateway role. No implementation exists yet. |
+| `edge/gateway/` | [`edge/gateway/README.md`](../edge/gateway/README.md) | Field Gateway ownership and dependency rules. No implementation exists yet. |
+| `surfaces/command-interface/` | [`surfaces/command-interface/README.md`](../surfaces/command-interface/README.md) | Atlas Command interface: Cloudflare Pages-hosted map console. |
+| `simulations/` | [`simulations/README.md`](../simulations/README.md) | Local simulation workbench for running trusted scenario scripts against Atlas Core through the SDK. |
+| `tests/` | Root test scripts | Checks that compose more than one top-level module. |
 
-Use **`atlas_core/docs/`** when the question is "how does this API behave?"
+Use **`services/core/docs/`** when the question is "how does this API behave?"
 
 ## Other root files
 

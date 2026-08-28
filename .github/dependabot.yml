@@ -2,7 +2,7 @@ version: 2
 
 updates:
   - package-ecosystem: gomod
-    directory: /atlas_core
+    directory: /services/core
     schedule:
       interval: weekly
     groups:
@@ -15,7 +15,7 @@ updates:
     open-pull-requests-limit: 5
 
   - package-ecosystem: gomod
-    directory: /atlas_protocol
+    directory: /packages/protocol
     schedule:
       interval: weekly
     groups:
@@ -41,7 +41,7 @@ updates:
     open-pull-requests-limit: 5
 
   - package-ecosystem: docker
-    directory: /atlas_core/docker
+    directory: /services/core/docker
     schedule:
       interval: weekly
     groups:

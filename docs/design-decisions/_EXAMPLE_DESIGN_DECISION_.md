@@ -19,8 +19,8 @@ Each entry under `docs/design-decisions/` records a durable architectural or imp
 ### What does not belong here
 
 - **Transient bugs or blockers** → `docs/problems/`.
-- **Operational how-to** → the relevant package's docs (e.g. `atlas_core/docs/`).
-- **API or schema reference** → specs and docs under the relevant package (e.g. `atlas_core/docs/`).
+- **Operational how-to** → the relevant package's docs (e.g. `services/core/docs/`).
+- **API or schema reference** → specs and docs under the relevant package (e.g. `services/core/docs/`).
 
 ### File naming
 

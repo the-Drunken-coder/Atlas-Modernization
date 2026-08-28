@@ -8,6 +8,10 @@ Atlas is a control plane for observing entities, preserving operational data, an
 An Entity that represents a taskable or reporting system participating in Atlas.
 _Avoid_: Plugin, device record
 
+**Asset Host**:
+The one computer running the Atlas process for one Asset. Attached autopilots, sensors, radios, and controllers are peripherals of that host.
+_Avoid_: distributed Asset, Asset cluster
+
 **Tool Asset**:
 An Asset that represents a taskable Plugin. It receives Protocol-authored Commands through the normal Atlas Task system.
 _Avoid_: every Plugin, Operation
@@ -33,6 +37,16 @@ _Avoid_: Plugin, data model
 **Source Gateway**:
 The Atlas component through which Plugins use Source connectors without receiving External source credentials.
 _Avoid_: External source, data normalizer
+
+## Edge communications
+
+**Communication method**:
+A way an Asset Host or Edge Gateway exchanges Atlas data with another Atlas node. FieldLink, IP, and future radio protocols are communication methods, not Asset capabilities.
+_Avoid_: FieldLink as the generic transport, Asset behavior
+
+**Edge Gateway**:
+A field-deployed Atlas system that connects one or more communication methods to Atlas Core without representing an Asset.
+_Avoid_: Asset Host, Source Gateway
 
 **Plugin**:
 An Atlas-managed extension that consumes External sources or Atlas data and may expose Operations, publish Datastreams, or request Atlas actions. A configured Plugin maps to one deployment-managed container and may optionally register one Tool Asset. Its availability may be `starting`, `available`, or `unavailable`.

@@ -1,6 +1,6 @@
 # Atlas Change Feed
 
-The change feed is the push channel out of Atlas Core: a websocket endpoint (`/feed`) that streams change events to connected clients so they learn about writes without polling. It is implemented across all three packages: the wire contract is authored in `atlas_protocol/schema/jsonschema/atlas.schema.json`, Core serves the feed from `atlas_core/internal/feed/`, and the Atlas SDK ([`../atlas-sdk/README.md`](../atlas-sdk/README.md)) is the primary consumer.
+The change feed is the push channel out of Atlas Core: a websocket endpoint (`/feed`) that streams change events to connected clients so they learn about writes without polling. It is implemented across all three packages: the wire contract is authored in `packages/protocol/schema/jsonschema/atlas.schema.json`, Core serves the feed from `services/core/internal/feed/`, and the Atlas SDK ([`../atlas-sdk/README.md`](../atlas-sdk/README.md)) is the primary consumer.
 
 This document is the behavioral contract. The durable rationale lives in the [design decision](../design-decisions/2026-06-12-change-feed-websocket-fat-events.md).
 
@@ -67,6 +67,6 @@ These rules are the language-neutral half of the contract that makes a non-TypeS
 
 Three layers cover the feed from routing through end-to-end recovery:
 
-- `atlas_core/internal/feed/simulation_test.go` — focused subscription-routing and slow-consumer tests for the fanout hub.
-- `atlas_core/internal/api/handlers/handler_feed_integration_test.go` — the full chain against real Postgres: HTTP write → transactional event row → durable dispatcher → websocket client, including proof that rejected writes do not advance the change clock.
-- `atlas_sdk/test/` — a sibling ledger-style harness around the TypeScript client with a fake Core/feed transport, running identically in Node and browser.
+- `services/core/internal/feed/simulation_test.go` — focused subscription-routing and slow-consumer tests for the fanout hub.
+- `services/core/internal/api/handlers/handler_feed_integration_test.go` — the full chain against real Postgres: HTTP write → transactional event row → durable dispatcher → websocket client, including proof that rejected writes do not advance the change clock.
+- `packages/sdk/test/` — a sibling ledger-style harness around the TypeScript client with a fake Core/feed transport, running identically in Node and browser.

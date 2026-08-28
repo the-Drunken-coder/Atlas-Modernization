@@ -2,7 +2,7 @@
 2. **Name:** Command interface copy uses prohibited em dashes
 3. **Issue:** Inspector placeholders, formatting helpers, and status descriptions use user-visible em dashes despite the machine-wide visual constraint prohibiting them.
 4. **Severity:** S4 (Minor)
-5. **Location:** Atlas Command Interface under `atlas_command_interface/src/features/`, `atlas_command_interface/src/atlas/format.ts`, and `atlas_command_interface/src/ui/primitives/StatusPill.tsx`
+5. **Location:** Atlas Command Interface under `surfaces/command-interface/src/features/`, `surfaces/command-interface/src/atlas/format.ts`, and `surfaces/command-interface/src/ui/primitives/StatusPill.tsx`
 6. **Expected:** Missing inspector values use the selected compact label `N/A`; prose uses ordinary punctuation with the same meaning and no em dash.
 7. **Actual:** Missing-value placeholders and inline status prose display em dashes.
 8. **Reproduction:**

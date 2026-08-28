@@ -1,27 +1,27 @@
-# Docker builds use the repository root as context so atlas_core can import the
-# sibling atlas_protocol module. Include only files copied by the Dockerfile.
+# Docker builds use the repository root as context so Core can import the
+# Protocol module. Include only files copied by the Dockerfile.
 *
-!atlas_core/
-!atlas_core/go.mod
-!atlas_core/go.sum
-!atlas_core/cmd/
-!atlas_core/cmd/**
-!atlas_core/internal/
-!atlas_core/internal/**
-!atlas_core/atlas_core.settings.json.example
-!atlas_core/docker/
-!atlas_core/docker/Dockerfile
-!atlas_core/docker/production-entrypoint.sh
-!atlas_protocol/
-!atlas_protocol/go.mod
-!atlas_protocol/go.sum
-!atlas_protocol/generated/
-!atlas_protocol/generated/go/
-!atlas_protocol/generated/go/atlasprotocol/
-!atlas_protocol/generated/go/atlasprotocol/*.go
-!atlas_protocol/schema/
-!atlas_protocol/schema/embed.go
-!atlas_protocol/schema/jsonschema/
-!atlas_protocol/schema/jsonschema/*.json
-!atlas_protocol/validator/
-!atlas_protocol/validator/*.go
+!services/core/
+!services/core/go.mod
+!services/core/go.sum
+!services/core/cmd/
+!services/core/cmd/**
+!services/core/internal/
+!services/core/internal/**
+!services/core/atlas_core.settings.json.example
+!services/core/docker/
+!services/core/docker/Dockerfile
+!services/core/docker/production-entrypoint.sh
+!packages/protocol/
+!packages/protocol/go.mod
+!packages/protocol/go.sum
+!packages/protocol/generated/
+!packages/protocol/generated/go/
+!packages/protocol/generated/go/atlasprotocol/
+!packages/protocol/generated/go/atlasprotocol/*.go
+!packages/protocol/schema/
+!packages/protocol/schema/embed.go
+!packages/protocol/schema/jsonschema/
+!packages/protocol/schema/jsonschema/*.json
+!packages/protocol/validator/
+!packages/protocol/validator/*.go

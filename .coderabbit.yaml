@@ -51,9 +51,9 @@ reviews:
   # Canonical label guidance; issue enrichment reuses this anchor below.
   labeling_instructions: &atlas_labeling_instructions
     - label: "atlas-core"
-      instructions: "Suggest for changes under atlas_core/."
+      instructions: "Suggest for changes under services/core/."
     - label: "atlas-protocol"
-      instructions: "Suggest for changes under atlas_protocol/ or docs/atlas-protocol/."
+      instructions: "Suggest for changes under packages/protocol/ or docs/atlas-protocol/."
     - label: "ci"
       instructions: "Suggest for GitHub Actions, Docker, or verification workflow changes."
     - label: "security"
@@ -61,7 +61,7 @@ reviews:
     - label: "docs"
       instructions: "Suggest for documentation-only changes."
   path_instructions:
-    - path: "atlas_core/**/*.go"
+    - path: "services/core/**/*.go"
       instructions: |
         Review as production Go even though the project is greenfield. Be strict
         about correctness, error wrapping, validation gaps, HTTP/API contract
@@ -70,24 +70,24 @@ reviews:
         request body limits, and tests for edge/error paths. Prefer breaking
         cleanups over compatibility shims, but flag accidental behavior deletion
         when tests, handlers, serializers, or docs still imply the behavior exists.
-    - path: "atlas_core/internal/actions/**"
+    - path: "services/core/internal/actions/**"
       instructions: |
         Pay extra attention to business invariants, database transactions,
         row/advisory locks, change-version ordering, tombstones, storage cleanup
         retries, object upload replacement, validation-before-persistence, and
         whether merged JSON blobs are revalidated after mutation.
-    - path: "atlas_core/internal/api/**"
+    - path: "services/core/internal/api/**"
       instructions: |
         Check request decoding, body limits, status codes, error mapping, auth
         boundaries, pagination headers, ETags/If-Match, upload/download behavior,
         and serializer compatibility with the documented API surface.
-    - path: "atlas_core/internal/config/**"
+    - path: "services/core/internal/config/**"
       instructions: |
         Check environment-variable precedence, settings-file behavior, Docker
         Compose .env compatibility, secret-file loading, placeholder-secret
         rejection, and whether auth or storage defaults are safe for the stated
         local/development posture.
-    - path: "atlas_core/internal/database/**"
+    - path: "services/core/internal/database/**"
       instructions: |
         Production PostgreSQL storage is durable and uses ordered migrations plus
         migration-ledger and schema-fingerprint verification. Development may opt
@@ -95,46 +95,46 @@ reviews:
         migrations, startup-mode separation, indexes that match query order,
         deletion tombstones, monotonic versioning, backup/restore coverage, and
         preservation of admin_records and migration history.
-    - path: "atlas_core/internal/storage/**"
+    - path: "services/core/internal/storage/**"
       instructions: |
         Production MinIO storage is durable: startup requires the configured bucket
         to exist and must preserve it. Development scratch mode may clear the bucket
         explicitly. Review bucket provisioning and startup-mode separation, object
         path generation, stale blob cleanup, upload/download streaming, error
         translation, secret handling, and backup/restore coverage.
-    - path: "atlas_core/docker/**"
+    - path: "services/core/docker/**"
       instructions: |
         Review Docker and Compose changes for build-context correctness across
-        atlas_core/ and atlas_protocol/, required environment variables, .env
+        services/core/ and packages/protocol/, required environment variables, .env
         precedence, loopback binding, health checks, production auth posture,
         pinned images, secret exposure, and explicit separation between development
         scratch storage and durable production storage.
-    - path: "atlas_core/docs/**"
+    - path: "services/core/docs/**"
       instructions: |
         Check docs against live code. Flag stale endpoint behavior, incorrect
         development-scratch or production-durable storage claims, wrong module
         roots, outdated environment variables, and missing verification commands.
-    - path: "atlas_protocol/schema/**"
+    - path: "packages/protocol/schema/**"
       instructions: |
         Treat draft 2020-12 JSON Schema in
-        atlas_protocol/schema/jsonschema/atlas.schema.json as the protocol source
+        packages/protocol/schema/jsonschema/atlas.schema.json as the protocol source
         of truth. Flag incomplete constraints, accidental compatibility aliases,
         schema/example drift, hand-edited generated artifacts, and missing updates
         to generated Go/TypeScript artifacts, protocol tests, and docs.
-    - path: "atlas_protocol/tools/**"
+    - path: "packages/protocol/tools/**"
       instructions: |
         Review generators for deterministic output, stable ordering, error
         handling, path safety, generated-file freshness, schema coverage, and
-        whether reusable generated artifacts remain in atlas_protocol/ rather
-        than atlas_core/internal/.
-    - path: "atlas_protocol/generated/**"
+        whether reusable generated artifacts remain in packages/protocol/ rather
+        than services/core/internal/.
+    - path: "packages/protocol/generated/**"
       instructions: |
         Generated artifacts may still reveal generator or schema drift. Check
         whether generated Go, generated TypeScript, examples, and the canonical
         JSON Schema source are mutually consistent.
         Do not ask for hand edits to generated files; ask for generator/schema
         fixes and regeneration.
-    - path: "atlas_protocol/protocoltest/**"
+    - path: "packages/protocol/protocoltest/**"
       instructions: |
         Review tests for canonical protocol coverage, rejection of legacy aliases,
         raw JSON trailing-data rejection, numeric precision, edge cases, and
@@ -142,7 +142,7 @@ reviews:
     - path: "docs/atlas-protocol/**"
       instructions: |
         Planning/reference docs live here. Flag stale links to the old root-level
-        Atlas Protocol/ folder, drift from atlas_protocol/ implementation status,
+        Atlas Protocol/ folder, drift from packages/protocol/ implementation status,
         vague implementation plans, or ownership confusion between Atlas Protocol
         and Atlas Core.
     - path: "docs/design-decisions/**"
@@ -160,7 +160,7 @@ reviews:
         Review for CI correctness, least-privilege permissions, action pinning,
         branch/base assumptions, working-directory mistakes, module-root commands,
         secret/token exposure, cache poisoning, and whether checks actually cover
-        atlas_core/ plus atlas_protocol/.
+        services/core/ plus packages/protocol/.
     - path: "**/*_test.go"
       instructions: |
         Tests should assert behavior and failure modes, not implementation trivia.
@@ -232,12 +232,12 @@ reviews:
         instructions: |
           The PR must state the relevant verification that was run, or explicitly
           explain why it was not run. For Go changes this should include
-          atlas_core `go test ./...` and/or atlas_protocol `go test ./...` plus
+          services/core `go test ./...` and/or packages/protocol `go test ./...` plus
           `go run ./tools/check` when protocol artifacts are touched.
       - mode: "error"
         name: "Protocol artifact freshness"
         instructions: |
-          If atlas_protocol/schema, atlas_protocol/tools, or generated protocol
+          If packages/protocol/schema, packages/protocol/tools, or generated protocol
           artifacts change, the PR must keep canonical JSON Schema, generated
           Go, generated TypeScript, examples, and protocol tests consistent. Flag
           stale generated output or hand edits that should have come from the
@@ -245,9 +245,9 @@ reviews:
       - mode: "error"
         name: "Module boundary"
         instructions: |
-          atlas_core is the Go service module root. atlas_protocol is the buildable
+          services/core is the Go service module root. packages/protocol is the buildable
           sibling protocol module. Flag commands, imports, Docker contexts, or docs
-          that blur those boundaries or move protocol source into atlas_core/internal.
+          that blur those boundaries or move protocol source into services/core/internal.
       - mode: "error"
         name: "Storage lifecycle posture"
         instructions: |
@@ -351,9 +351,9 @@ knowledge_base:
     filePatterns:
       - "AGENTS.md"
       - "README.md"
-      - "atlas_core/README.md"
-      - "atlas_core/docs/**/*.md"
-      - "atlas_protocol/README.md"
+      - "services/core/README.md"
+      - "services/core/docs/**/*.md"
+      - "packages/protocol/README.md"
       - "docs/atlas-protocol/**/*.md"
       - "docs/design-decisions/**/*.md"
   learnings:
@@ -379,17 +379,17 @@ code_generation:
   docstrings:
     language: "en-US"
     path_instructions:
-      - path: "atlas_core/**/*.go"
+      - path: "services/core/**/*.go"
         instructions: |
           Generate docstrings only when they clarify exported behavior, invariants,
           concurrency, validation, or operational risk. Do not add empty narration.
   unit_tests:
     path_instructions:
-      - path: "atlas_core/**/*.go"
+      - path: "services/core/**/*.go"
         instructions: |
           Prefer focused Go tests that cover behavior, edge cases, validation
           failures, transaction/storage cleanup paths, and API contract regressions.
-      - path: "atlas_protocol/**"
+      - path: "packages/protocol/**"
         instructions: |
           Prefer tests that prove canonical JSON Schema, generated Go, generated
           TypeScript, raw JSON validators, examples, and artifact freshness stay

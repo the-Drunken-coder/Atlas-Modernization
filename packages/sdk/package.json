@@ -1,0 +1,72 @@
+{
+  "name": "@the-drunken-coder/atlas-sdk",
+  "version": "0.1.0",
+  "description": "TypeScript SDK and CLI for Atlas Core.",
+  "author": "the-Drunken-coder",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/the-Drunken-coder/Atlas-Modernization.git",
+    "directory": "packages/sdk"
+  },
+  "homepage": "https://github.com/the-Drunken-coder/Atlas-Modernization/tree/main/packages/sdk#readme",
+  "bugs": {
+    "url": "https://github.com/the-Drunken-coder/Atlas-Modernization/issues"
+  },
+  "keywords": [
+    "atlas",
+    "atlas-core",
+    "sdk",
+    "change-feed",
+    "websocket"
+  ],
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "files": [
+    "dist/"
+  ],
+  "main": "./dist/packages/sdk/src/index.js",
+  "types": "./dist/packages/sdk/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/packages/sdk/src/index.d.ts",
+      "import": "./dist/packages/sdk/src/index.js",
+      "default": "./dist/packages/sdk/src/index.js"
+    },
+    "./admin": {
+      "types": "./dist/packages/sdk/src/admin.d.ts",
+      "import": "./dist/packages/sdk/src/admin.js",
+      "default": "./dist/packages/sdk/src/admin.js"
+    }
+  },
+  "bin": {
+    "atlas": "./dist/packages/sdk/src/cli.js"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "build": "tsc -p tsconfig.json",
+    "prebuild": "node ./scripts/generate-package-metadata.mjs",
+    "prepack": "npm run clean && npm run build",
+    "test:package": "node ./test/packed-consumer-smoke.mjs",
+    "lint": "biome lint --config-path biome.json .",
+    "format:check": "biome check --linter-enabled=false .",
+    "test:node": "vitest run --environment node",
+    "test:browser": "vitest run --config vitest.browser.config.ts",
+    "test:types": "tsc -p tsconfig.type-tests.json",
+    "test:coverage": "vitest run --coverage --environment node",
+    "test": "npm run test:types && npm run test:node && npm run test:browser"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.9",
+    "@types/node": "26.2.0",
+    "@vitest/browser-playwright": "4.1.10",
+    "playwright": "1.62.1",
+    "typescript": "^7.0.2",
+    "vitest": "4.1.10"
+  }
+}

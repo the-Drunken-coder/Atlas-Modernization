@@ -11,5 +11,5 @@
    - Future agents should not remove Core-owned login/session code merely because the hosted deployment uses Cloudflare Tunnel.
    - Core should avoid adding Cloudflare-specific identity header assumptions to its required auth path.
    - API keys remain Atlas-owned machine credentials; Cloudflare service tokens can be layered outside Core, but they do not replace Atlas API-key metadata, revocation, or admin UI workflows by default.
-7. **Location:** `atlas_core/internal/admin/`, `atlas_core/internal/api/handlers/handler_admin_auth.go`, `atlas_core/internal/api/handlers/handler_admin_api_keys.go`, `atlas_core/internal/api/middleware/middleware.go`, `atlas_core/docs/SECURITY.md`, `atlas_core/docs/DEPLOYMENT_RUNBOOK.md`, `atlas_command_interface/src/auth/`
+7. **Location:** `services/core/internal/admin/`, `services/core/internal/api/handlers/handler_admin_auth.go`, `services/core/internal/api/handlers/handler_admin_api_keys.go`, `services/core/internal/api/middleware/middleware.go`, `services/core/docs/SECURITY.md`, `services/core/docs/DEPLOYMENT_RUNBOOK.md`, `surfaces/command-interface/src/auth/`
 8. **Notes:** This is an independence decision, not a claim that Cloudflare Access is weak or inappropriate. Access is acceptable as an optional outer gate for deployments that choose Cloudflare, but it is not the Atlas Core authentication boundary.

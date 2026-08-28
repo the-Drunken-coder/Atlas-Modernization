@@ -1,6 +1,6 @@
 # Atlas Modernization
 
-This workspace is the Atlas modernization repo: Core, Protocol, SDK, asset runtime, Command Interface, simulations, and project docs live here as separate modules that move together.
+This workspace is the Atlas monorepo. Hosted services, operator surfaces, field software, reusable packages, simulations, cross-system tests, and project docs move together without sharing ownership.
 
 ## JavaScript toolchain
 
@@ -17,28 +17,31 @@ npm run format:check --workspace @the-drunken-coder/atlas-command-interface
 
 Linting and formatting checks cover each selected package in full, matching the commands run by CI.
 
-## What lives here
+## Repository map
 
-- **`atlas_core/`** — the core backend: the Go HTTP API, durable production database/object-store layer, Docker setup, and command catalog.
-- **`atlas_protocol/`** — the buildable Atlas Protocol module: JSON Schema source, generated contracts, validators, examples, and protocol tooling.
-- **`atlas_sdk/`** — the TypeScript/JavaScript Atlas SDK package: typed client, optional sync engine, CLI, and Node/browser test suites.
-- **`atlas_asset_runtime/`** — the TypeScript/Node runtime for check-in-driven asset telemetry and command handling through the SDK.
-- **`atlas_command_interface/`** — Atlas Command interface: a Cloudflare Pages/Vite map console.
-- **`atlas_simulations/`** — local Atlas simulation workbench: trusted scenario scripts, server-side SDK clients, and a browser UI for running local simulation runs.
-- **`docs/`** — project-level documentation that spans packages, including Atlas Protocol planning/reference docs in [`docs/atlas-protocol/`](docs/atlas-protocol/) and Atlas SDK design docs in [`docs/atlas-sdk/`](docs/atlas-sdk/).
+- `services/core/` contains the hosted Go control plane, durable storage integration, and deployment files.
+- `surfaces/command-interface/` contains the operator-facing Cloudflare Pages/Vite application.
+- `edge/asset/` reserves the field Asset role. It contains only a README while the Asset architecture is being designed.
+- `edge/gateway/` reserves the field Gateway role. It contains only a README while the Gateway architecture is being designed.
+- `packages/protocol/` contains the Atlas schema, generated contracts, validators, examples, and protocol tools.
+- `packages/sdk/` contains the TypeScript/JavaScript Atlas client, sync engine, and CLI.
+- `packages/fieldlink/` contains FieldLink's MeshCore transport, registered messages, radio adapter, and hardware harness. FieldLink is one communication method, not the Asset architecture.
+- `simulations/` contains the local simulation workbench.
+- `tests/` contains checks that cross top-level ownership lines.
+- `docs/` contains project-wide documentation and design decisions.
 
 ## JavaScript workspace
 
-The SDK, asset runtime, command interface, and simulations are npm workspaces with one root lockfile. Use Node.js 24 and install their dependencies once from the repository root:
+The SDK, FieldLink, command interface, and simulations are npm workspaces with one root lockfile. Use Node.js 24 and install their dependencies once from the repository root:
 
 ```bash
 npm ci
 npm run build
 ```
 
-The asset runtime declares `@the-drunken-coder/atlas-sdk` as a normal dependency and consumes only its public exports. Simulations use the runtime for asset behavior while retaining direct SDK access for scenario orchestration. Root scripts build those dependencies in order so a clean checkout exercises the same package boundaries and built artifacts that published packages will expose.
+Simulations use the SDK directly. FieldLink remains independent of Core, the SDK, and Asset policy. No Asset or Gateway implementation currently exists under `edge/`.
 
-Useful focused commands are `npm run build:sdk`, `npm run build:asset-runtime`, `npm run build:command-interface`, `npm run build:simulations`, `npm run dev:command-interface`, `npm run dev:simulations`, and `npm run dev:simulations-server`.
+Useful focused commands are `npm run build:sdk`, `npm run build:fieldlink`, `npm run build:command-interface`, `npm run build:simulations`, `npm run dev:command-interface`, `npm run dev:simulations`, and `npm run dev:simulations-server`.
 
 ## Agent guidance
 

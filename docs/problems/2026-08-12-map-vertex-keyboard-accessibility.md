@@ -2,7 +2,7 @@
 2. **Name:** Map vertex handles are not keyboard operable
 3. **Issue:** Existing geometry vertices can be moved by dragging and removed with a context-menu action, but the vertex handles are non-focusable `div` elements with no keyboard equivalents.
 4. **Severity:** S3 (Moderate)
-5. **Location:** Atlas Command Interface, `atlas_command_interface/src/ui/map/rendering/map-editing.ts` and `atlas_command_interface/src/ui/styles/map.css`
+5. **Location:** Atlas Command Interface, `surfaces/command-interface/src/ui/map/rendering/map-editing.ts` and `surfaces/command-interface/src/ui/styles/map.css`
 6. **Expected:** A focused vertex handle moves by 1 meter with an arrow key, moves by 10 meters with Shift plus an arrow key, and removes the vertex with Delete or Backspace only when `canRemoveVertex` permits it. The numeric inspector remains available for exact coordinates.
 7. **Actual:** Vertex handles cannot receive keyboard focus. The existing focus-visible rule is unreachable, and drag plus right-click are the only direct-map controls.
 8. **Reproduction:**

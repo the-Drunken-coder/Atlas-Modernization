@@ -1,6 +1,6 @@
 # ==============================================================================
 # Atlas Modernization
-# Go service (atlas_core/) with Python tooling under atlas_core/scripts/.
+# Go service (services/core/) with Python tooling under services/core/scripts/.
 # This lives at the repo root and applies to the entire tree.
 # ==============================================================================
 
@@ -36,8 +36,8 @@ docker-compose.override.yml
 *.dll
 *.so
 *.dylib
-# Built service binary (anchored so cmd/atlas_core/ source is kept)
-/atlas_core/atlas_core
+# Built service binary (anchored so cmd/services/core/ source is kept)
+/services/core/atlas_core
 # Test binaries and coverage output
 *.test
 *.out
@@ -51,17 +51,17 @@ vendor/
 # --- JavaScript / TypeScript SDK ---
 node_modules/
 coverage/
-/atlas_sdk/dist/
-/atlas_asset_runtime/dist/
-/atlas_command_interface/dist/
-/atlas_command_interface/storybook-static/
-/atlas_command_interface/.wrangler/
-/atlas_command_interface/.dev.vars*
-/atlas_command_interface/worker-configuration.d.ts
-/atlas_simulations/dist/
-/atlas_simulations/.atlas-simulations/
+/packages/sdk/dist/
+/packages/fieldlink/dist/
+/surfaces/command-interface/dist/
+/surfaces/command-interface/storybook-static/
+/surfaces/command-interface/.wrangler/
+/surfaces/command-interface/.dev.vars*
+/surfaces/command-interface/worker-configuration.d.ts
+/simulations/dist/
+/simulations/.atlas-simulations/
 
-# --- Python tooling (atlas_core/scripts/) ---
+# --- Python tooling (services/core/scripts/) ---
 __pycache__/
 *.py[cod]
 *$py.class
