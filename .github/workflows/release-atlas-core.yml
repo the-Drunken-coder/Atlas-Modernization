@@ -411,24 +411,41 @@ jobs:
             git push origin "$tag"
           fi
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+
       - name: Check for the published Atlas Core image
         id: image
         env:
+          RELEASE_SHA: ${{ steps.commit.outputs.release_sha }}
           VERSION: ${{ inputs.version }}
         run: |
-          if docker manifest inspect "ghcr.io/the-drunken-coder/atlas-core:$VERSION" >/dev/null 2>&1; then
-            echo "already_published=true" >> "$GITHUB_OUTPUT"
-          else
+          image="ghcr.io/the-drunken-coder/atlas-core:$VERSION"
+          if ! docker manifest inspect "$image" >/dev/null 2>&1; then
             echo "already_published=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+
+          for platform in linux/amd64 linux/arm64; do
+            if ! config="$(
+              docker buildx imagetools inspect "$image" \
+                --format "{{json (index .Image \"$platform\")}}" 2>/dev/null
+            )"; then
+              echo "$image does not contain the expected $platform image." >&2
+              exit 1
+            fi
+            revision="$(jq -r '.config.Labels["org.opencontainers.image.revision"] // empty' <<< "$config")"
+            version="$(jq -r '.config.Labels["org.opencontainers.image.version"] // empty' <<< "$config")"
+            if [ "$revision" != "$RELEASE_SHA" ] || [ "$version" != "$VERSION" ]; then
+              echo "$image has unexpected release labels for $platform." >&2
+              exit 1
+            fi
+          done
+          echo "already_published=true" >> "$GITHUB_OUTPUT"
 
       - name: Set up QEMU
         if: steps.image.outputs.already_published != 'true'
         uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
-
-      - name: Set up Docker Buildx
-        if: steps.image.outputs.already_published != 'true'
-        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
 
       - name: Sign in to GitHub Container Registry
         if: steps.image.outputs.already_published != 'true'
