@@ -112,8 +112,6 @@ type DeploymentState = {
   initializedAt: string;
   packageVersion: string;
   dockerEngineId: string;
-  initializingPid?: number;
-  initializingProcessStartedAt?: string;
   startAttemptedAt?: string;
   startedAt?: string;
 };
@@ -191,7 +189,7 @@ class AtlasCoreDeployment {
   async init(): Promise<void> {
     const dockerEngineId = await this.#preflight();
     this.#prepareConfigDirectory();
-    await this.#acquireInitLock();
+    this.#acquireInitLock();
     try {
       await this.#initialize(dockerEngineId);
     } finally {
@@ -219,22 +217,7 @@ class AtlasCoreDeployment {
       this.#stdout.write(`Atlas Core is already initialized at ${this.#configDir}.\n`);
       return;
     }
-    if (existingState) {
-      this.#assertStateMatchesRuntime(existingState, dockerEngineId);
-      if (
-        existingState.initializingPid !== undefined &&
-        existingState.initializingProcessStartedAt !== undefined &&
-        existingState.initializingPid !== process.pid &&
-        processIsRunning(existingState.initializingPid)
-      ) {
-        const processStartedAt = await this.#processStartedAt(existingState.initializingPid);
-        if (processStartedAt === existingState.initializingProcessStartedAt) {
-          throw new Error(
-            `Another atlas-core init process is already running with PID ${existingState.initializingPid}.`
-          );
-        }
-      }
-    }
+    if (existingState) this.#assertStateMatchesRuntime(existingState, dockerEngineId);
     if (hasEnv && !existingState) {
       throw new Error(
         `Atlas Core found ${this.#envFile} without matching initialization state. ` +
@@ -267,7 +250,7 @@ class AtlasCoreDeployment {
       );
     }
 
-    const initializingState = await this.#writeInitializingState(dockerEngineId, existingState);
+    const initializingState = this.#writeInitializingState(dockerEngineId, existingState);
     if (!hasEnv) this.#writeConfiguration();
     if (!hasMinio) await this.#createVolume(MINIO_VOLUME, "minio_data");
 
@@ -450,21 +433,9 @@ class AtlasCoreDeployment {
     return result.stdout || result.stderr;
   }
 
-  async #processStartedAt(pid: number): Promise<string> {
-    const startedAt = oneLine(await this.#checkCommand("ps", ["-o", "lstart=", "-p", String(pid)]));
-    if (!startedAt) throw new Error(`Could not identify the process running with PID ${pid}.`);
-    return startedAt;
-  }
-
-  async #acquireInitLock(): Promise<void> {
-    const processStartedAt = await this.#processStartedAt(process.pid);
+  #acquireInitLock(): void {
     try {
-      writePrivateFile(
-        this.#initLockFile,
-        `${JSON.stringify({ pid: process.pid, processStartedAt }, null, 2)}\n`,
-        this.#platform,
-        true
-      );
+      writePrivateFile(this.#initLockFile, `${JSON.stringify({ pid: process.pid }, null, 2)}\n`, this.#platform, true);
       return;
     } catch (error) {
       if (!isNodeError(error) || error.code !== "EEXIST") throw error;
@@ -477,18 +448,10 @@ class AtlasCoreDeployment {
     } catch {
       owner = undefined;
     }
-    if (isInitLock(owner) && processIsRunning(owner.pid)) {
-      try {
-        if ((await this.#processStartedAt(owner.pid)) === owner.processStartedAt) {
-          throw new Error(`Another atlas-core init process is already running with PID ${owner.pid}.`);
-        }
-      } catch (error) {
-        if (processIsRunning(owner.pid)) throw error;
-      }
-    }
+    const ownerDescription = isInitLock(owner) ? ` by PID ${owner.pid}` : "";
     throw new Error(
-      `Atlas Core found a stale initialization lock at ${this.#initLockFile}. ` +
-        "Confirm that no atlas-core init process is running, remove that file, and run init again."
+      `Atlas Core initialization is locked${ownerDescription} at ${this.#initLockFile}. ` +
+        "If no atlas-core init process is running, remove that file and run init again."
     );
   }
 
@@ -617,18 +580,13 @@ class AtlasCoreDeployment {
     }
   }
 
-  async #writeInitializingState(
-    dockerEngineId: string,
-    previous: DeploymentState | undefined
-  ): Promise<DeploymentState> {
+  #writeInitializingState(dockerEngineId: string, previous: DeploymentState | undefined): DeploymentState {
     const state: DeploymentState = {
       schema: CONFIG_SCHEMA,
       phase: "initializing",
       initializedAt: previous?.initializedAt ?? this.#now().toISOString(),
       packageVersion: PACKAGE_VERSION,
-      dockerEngineId,
-      initializingPid: process.pid,
-      initializingProcessStartedAt: await this.#processStartedAt(process.pid)
+      dockerEngineId
     };
     try {
       writePrivateFile(this.#stateFile, `${JSON.stringify(state, null, 2)}\n`, this.#platform, previous === undefined);
@@ -646,8 +604,6 @@ class AtlasCoreDeployment {
       ...state,
       phase: "ready"
     };
-    delete readyState.initializingPid;
-    delete readyState.initializingProcessStartedAt;
     writePrivateFile(this.#stateFile, `${JSON.stringify(readyState, null, 2)}\n`, this.#platform);
   }
 
@@ -924,25 +880,15 @@ function isDeploymentState(value: unknown): value is DeploymentState {
     typeof record.initializedAt === "string" &&
     typeof record.packageVersion === "string" &&
     typeof record.dockerEngineId === "string" &&
-    ((record.initializingPid === undefined && record.initializingProcessStartedAt === undefined) ||
-      (typeof record.initializingPid === "number" &&
-        Number.isInteger(record.initializingPid) &&
-        record.initializingPid > 0 &&
-        typeof record.initializingProcessStartedAt === "string")) &&
     (record.startAttemptedAt === undefined || typeof record.startAttemptedAt === "string") &&
     (record.startedAt === undefined || typeof record.startedAt === "string")
   );
 }
 
-function isInitLock(value: unknown): value is { pid: number; processStartedAt: string } {
+function isInitLock(value: unknown): value is { pid: number } {
   if (typeof value !== "object" || value === null) return false;
   const record = value as Record<string, unknown>;
-  return (
-    typeof record.pid === "number" &&
-    Number.isInteger(record.pid) &&
-    record.pid > 0 &&
-    typeof record.processStartedAt === "string"
-  );
+  return typeof record.pid === "number" && Number.isInteger(record.pid) && record.pid > 0;
 }
 
 function resolveConfigDirectory(configured: string | undefined, homeDir: string): string {
@@ -950,15 +896,6 @@ function resolveConfigDirectory(configured: string | undefined, homeDir: string)
   if (configured === "~") return homeDir;
   if (configured.startsWith("~/")) return resolve(homeDir, configured.slice(2));
   return resolve(configured);
-}
-
-function processIsRunning(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return isNodeError(error) && error.code === "EPERM";
-  }
 }
 
 function parseComposeServiceStates(stdout: string): ComposeServiceState[] {

@@ -393,6 +393,18 @@ jobs:
           fi
           echo "release_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
+      - name: Require a run from the release commit
+        env:
+          RELEASE_SHA: ${{ steps.commit.outputs.release_sha }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          if [ "$RELEASE_SHA" != "$GITHUB_SHA" ]; then
+            echo "Release commit $RELEASE_SHA was pushed to main." >&2
+            echo "Dispatch Release Atlas Core for $VERSION again from the new main head before publishing." >&2
+            echo "The second run is required so npm provenance identifies the release commit." >&2
+            exit 1
+          fi
+
       - name: Tag release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -413,6 +425,13 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+
+      - name: Sign in to GitHub Container Registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Check for the published Atlas Core image
         id: image
@@ -446,14 +465,6 @@ jobs:
       - name: Set up QEMU
         if: steps.image.outputs.already_published != 'true'
         uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
-
-      - name: Sign in to GitHub Container Registry
-        if: steps.image.outputs.already_published != 'true'
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish Atlas Core image
         if: steps.image.outputs.already_published != 'true'

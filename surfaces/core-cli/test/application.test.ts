@@ -32,7 +32,6 @@ class FakeRunner implements CommandRunner {
   inspectionError: { kind: "container" | "volume"; name: string } | undefined;
   failComposeDown = false;
   failComposeUp = false;
-  processStartedAt = "Fri Aug 28 18:00:00 2026";
   serviceStates = [
     { Service: "api", State: "running", Health: "healthy" },
     { Service: "minio", State: "running", Health: "healthy" },
@@ -51,7 +50,6 @@ class FakeRunner implements CommandRunner {
       env: { ...options.env },
       inherit: options.inherit ?? false
     });
-    if (command === "ps") return result(0, `${this.processStartedAt}\n`);
     if (args[0] === "volume" && args[1] === "create") {
       const name = args.at(-1) ?? "";
       this.existingVolumes.add(name);
@@ -260,14 +258,10 @@ describe("atlas-core CLI", () => {
     const test = runtime();
     const config = join(test.home, ".atlas", "core");
     mkdirSync(config, { recursive: true, mode: 0o700 });
-    writeFileSync(
-      join(config, ".init.lock"),
-      `${JSON.stringify({ pid: process.pid, processStartedAt: test.runner.processStartedAt })}\n`,
-      { mode: 0o600 }
-    );
+    writeFileSync(join(config, ".init.lock"), `${JSON.stringify({ pid: process.pid })}\n`, { mode: 0o600 });
 
     expect(await runCLI(["init"], test.context)).toBe(1);
-    expect(test.stderr.join("")).toContain("Another atlas-core init process");
+    expect(test.stderr.join("")).toContain("initialization is locked");
     expect(test.runner.calls.map(composeCommand).filter((args) => args.length > 0)).toHaveLength(0);
   });
 
@@ -276,10 +270,10 @@ describe("atlas-core CLI", () => {
     const config = join(test.home, ".atlas", "core");
     const lock = join(config, ".init.lock");
     mkdirSync(config, { recursive: true, mode: 0o700 });
-    writeFileSync(lock, `${JSON.stringify({ pid: 2_147_483_647, processStartedAt: "stale" })}\n`, { mode: 0o600 });
+    writeFileSync(lock, `${JSON.stringify({ pid: 2_147_483_647 })}\n`, { mode: 0o600 });
 
     expect(await runCLI(["init"], test.context)).toBe(1);
-    expect(test.stderr.join("")).toContain("stale initialization lock");
+    expect(test.stderr.join("")).toContain("If no atlas-core init process is running, remove that file");
     expect(existsSync(lock)).toBe(true);
   });
 
@@ -293,7 +287,7 @@ describe("atlas-core CLI", () => {
     expect(test.stderr.join("")).toContain("without matching initialization state");
   });
 
-  it("does not resume initialization while the recorded process is still running", async () => {
+  it("resumes interrupted initialization when no lock remains", async () => {
     const test = runtime();
     const config = join(test.home, ".atlas", "core");
     mkdirSync(config, { recursive: true, mode: 0o700 });
@@ -305,32 +299,7 @@ describe("atlas-core CLI", () => {
         phase: "initializing",
         initializedAt: "2026-08-28T12:00:00.000Z",
         packageVersion: "0.1.0",
-        dockerEngineId: "test-engine-id",
-        initializingPid: 1,
-        initializingProcessStartedAt: test.runner.processStartedAt
-      })}\n`,
-      { mode: 0o600 }
-    );
-
-    expect(await runCLI(["init"], test.context)).toBe(1);
-    expect(test.stderr.join("")).toContain("Another atlas-core init process");
-  });
-
-  it("recovers when an interrupted initialization PID has been reused", async () => {
-    const test = runtime();
-    const config = join(test.home, ".atlas", "core");
-    mkdirSync(config, { recursive: true, mode: 0o700 });
-    writeFileSync(join(config, ".env"), "POSTGRES_PASSWORD=initializing\n", { mode: 0o600 });
-    writeFileSync(
-      join(config, "state.json"),
-      `${JSON.stringify({
-        schema: 1,
-        phase: "initializing",
-        initializedAt: "2026-08-28T12:00:00.000Z",
-        packageVersion: "0.1.0",
-        dockerEngineId: "test-engine-id",
-        initializingPid: 1,
-        initializingProcessStartedAt: "Fri Aug 28 17:00:00 2026"
+        dockerEngineId: "test-engine-id"
       })}\n`,
       { mode: 0o600 }
     );
