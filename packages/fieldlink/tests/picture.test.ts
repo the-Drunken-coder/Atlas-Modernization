@@ -125,6 +125,40 @@ describe("FieldLink Picture", () => {
     }
   });
 
+  it("persists tighter bounds applied while opening stored state", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "fieldlink-picture-"));
+    const path = join(directory, "picture.json");
+    const first = observation("track-0-v1", "track", "track-0", "12:00", {});
+    const second = observation("track-1-v1", "track", "track-1", "12:01", {});
+    const latest = observation("track-2-v1", "track", "track-2", "12:02", {});
+    try {
+      const original = await FieldLinkPicture.open({ path });
+      for (const record of [first, second, latest]) {
+        await original.record(received(record));
+      }
+      await original.close();
+
+      const tightened = await FieldLinkPicture.open({
+        path,
+        maximumJournalEntries: 1,
+        maximumLatestEntries: 1,
+        maximumSeenEntries: 1,
+      });
+      expect(tightened.journal()).toHaveLength(1);
+      expect(tightened.list()).toHaveLength(1);
+      await tightened.close();
+
+      const reopened = await FieldLinkPicture.open({ path });
+      expect(reopened.journal()).toHaveLength(1);
+      expect(reopened.list()).toMatchObject([{ observationId: "track-2-v1" }]);
+      await expect(reopened.record(received(first))).resolves.toBe(true);
+      await expect(reopened.record(received(latest))).resolves.toBe(false);
+      await reopened.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("scopes replay detection by source and resolves equal timestamps deterministically", async () => {
     const directory = await mkdtemp(join(tmpdir(), "fieldlink-picture-"));
     try {

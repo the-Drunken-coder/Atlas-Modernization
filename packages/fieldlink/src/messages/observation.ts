@@ -159,10 +159,19 @@ function isResourceType(value: unknown): value is ObservationResourceType {
 }
 
 function isTimestamp(value: unknown): value is string {
+  if (
+    typeof value !== "string" ||
+    !/^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/.test(
+      value,
+    )
+  ) {
+    return false;
+  }
+  const date = value.slice(0, 10);
+  const calendar = new Date(`${date}T00:00:00Z`);
   return (
-    typeof value === "string" &&
-    value.includes("T") &&
-    (value.endsWith("Z") || /[+-]\d{2}:\d{2}$/.test(value)) &&
+    Number.isFinite(calendar.getTime()) &&
+    calendar.toISOString().slice(0, 10) === date &&
     Number.isFinite(Date.parse(value))
   );
 }

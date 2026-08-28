@@ -49,6 +49,12 @@ describe("Observation publication", () => {
         observed_at: "2026-08-26 12:00:00Z",
       }),
     ).toBe(false);
+    expect(
+      observationMessage.validate({
+        ...example,
+        observed_at: "2026-02-30T12:00:00Z",
+      }),
+    ).toBe(false);
   });
 
   it("publishes one unconfirmed transfer that every listener collects", async () => {

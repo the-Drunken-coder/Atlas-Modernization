@@ -123,7 +123,9 @@ export class FieldLinkPicture {
     for (const key of stored.seen) {
       picture.#seen.set(key, true);
     }
-    picture.#enforceBounds();
+    if (picture.#enforceBounds()) {
+      await picture.#persist();
+    }
     return picture;
   }
 
@@ -216,10 +218,10 @@ export class FieldLinkPicture {
     };
   }
 
-  #enforceBounds(): void {
-    trimStart(this.#journal, this.#maximumJournalEntries);
-    trimMap(this.#latest, this.#maximumLatestEntries);
-    trimMap(this.#seen, this.#maximumSeenEntries);
+  #enforceBounds(): boolean {
+    let changed = trimStart(this.#journal, this.#maximumJournalEntries);
+    changed = trimMap(this.#latest, this.#maximumLatestEntries) || changed;
+    changed = trimMap(this.#seen, this.#maximumSeenEntries) || changed;
 
     while (serializedBytes(this.#stored()) > this.#maximumStoredBytes) {
       if (this.#journal.length > 0) {
@@ -231,7 +233,9 @@ export class FieldLinkPicture {
       } else {
         break;
       }
+      changed = true;
     }
+    return changed;
   }
 
   #stored(): StoredPicture {
@@ -308,20 +312,25 @@ function remember(map: Map<string, true>, key: string): void {
   map.set(key, true);
 }
 
-function trimStart(values: unknown[], maximum: number): void {
+function trimStart(values: unknown[], maximum: number): boolean {
   if (values.length > maximum) {
     values.splice(0, values.length - maximum);
+    return true;
   }
+  return false;
 }
 
-function trimMap<Key, Value>(map: Map<Key, Value>, maximum: number): void {
+function trimMap<Key, Value>(map: Map<Key, Value>, maximum: number): boolean {
+  let changed = false;
   while (map.size > maximum) {
     const oldest = map.keys().next().value;
     if (oldest === undefined) {
-      return;
+      return changed;
     }
     map.delete(oldest);
+    changed = true;
   }
+  return changed;
 }
 
 function serializedBytes(stored: StoredPicture): number {
