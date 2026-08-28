@@ -1,0 +1,383 @@
+import { createHash } from "node:crypto";
+import { createServer, type Server } from "node:http";
+import type { EntityCreateRequest, EntityResource, JSONValue, PluginManifest } from "@the-drunken-coder/atlas-sdk";
+import { isAtlasAPIError, isJSONValue } from "@the-drunken-coder/atlas-sdk";
+
+const identifierPattern = /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/;
+const maxBodyBytes = 1 << 20;
+
+type OperationHandler<Input extends JSONValue, Output extends JSONValue> = {
+  bivarianceHack(input: Input, signal: AbortSignal): Output | Promise<Output>;
+}["bivarianceHack"];
+
+export type Operation<Input extends JSONValue = JSONValue, Output extends JSONValue = JSONValue> = {
+  displayName: string;
+  timeoutMs: number;
+  handler: OperationHandler<Input, Output>;
+};
+
+export type OperationMap = Record<string, Operation>;
+
+export type PluginDefinition<Operations extends OperationMap> = {
+  pluginId: string;
+  displayName: string;
+  operations: Operations;
+  taskable?: boolean;
+  health?: (signal: AbortSignal) => boolean | Promise<boolean>;
+};
+
+export type DefinedPlugin<Operations extends OperationMap> = PluginDefinition<Operations> & {
+  manifest: PluginManifest;
+};
+
+export function definePlugin<const Operations extends OperationMap>(
+  definition: PluginDefinition<Operations>
+): DefinedPlugin<Operations> {
+  requireIdentifier("Plugin", definition.pluginId);
+  requireDisplayName("Plugin", definition.displayName);
+  const operations = Object.entries(definition.operations)
+    .map(([operationId, operation]) => {
+      requireIdentifier("Operation", operationId);
+      requireDisplayName(`Operation ${operationId}`, operation.displayName);
+      if (!Number.isInteger(operation.timeoutMs) || operation.timeoutMs < 1 || operation.timeoutMs > 25_000) {
+        throw new TypeError(`Operation ${operationId} timeoutMs must be an integer between 1 and 25000`);
+      }
+      return {
+        operation_id: operationId,
+        display_name: operation.displayName.trim(),
+        timeout_ms: operation.timeoutMs
+      };
+    })
+    .sort((left, right) => left.operation_id.localeCompare(right.operation_id));
+  const manifest: PluginManifest = {
+    plugin_id: definition.pluginId,
+    display_name: definition.displayName.trim(),
+    operations,
+    ...(definition.taskable ? { tool_asset_id: deriveToolAssetId(definition.pluginId) } : {})
+  };
+  return Object.freeze({ ...definition, manifest });
+}
+
+export class PluginInputError extends Error {
+  constructor(
+    readonly pluginCode: string,
+    readonly details?: JSONValue
+  ) {
+    requireIdentifier("Plugin error", pluginCode);
+    super(pluginCode);
+    this.name = "PluginInputError";
+  }
+}
+
+export class PluginFailureError extends Error {
+  constructor(
+    readonly pluginCode: string,
+    readonly details?: JSONValue
+  ) {
+    requireIdentifier("Plugin error", pluginCode);
+    super(pluginCode);
+    this.name = "PluginFailureError";
+  }
+}
+
+export type ServePluginOptions = {
+  host?: string;
+  port?: number;
+  signal?: AbortSignal;
+};
+
+export async function servePlugin<Operations extends OperationMap>(
+  plugin: DefinedPlugin<Operations>,
+  options: ServePluginOptions = {}
+): Promise<Server> {
+  const server = createServer(async (request, response) => {
+    const requestController = new AbortController();
+    const abort = () => requestController.abort();
+    request.once("aborted", abort);
+    response.once("close", () => {
+      if (!response.writableEnded) abort();
+    });
+    try {
+      const requestUrl = new URL(request.url ?? "/", "http://plugin.invalid");
+      if (request.method === "GET" && requestUrl.pathname === "/manifest") {
+        writeJSON(response, 200, plugin.manifest);
+        return;
+      }
+      if (request.method === "GET" && requestUrl.pathname === "/health") {
+        let healthy = true;
+        try {
+          healthy = (await plugin.health?.(requestController.signal)) ?? true;
+        } catch {
+          healthy = false;
+        }
+        writeJSON(response, healthy ? 200 : 503, {
+          status: healthy ? "ok" : "unhealthy"
+        });
+        return;
+      }
+      const match = /^\/operations\/([a-z][a-z0-9]*(?:_[a-z0-9]+)*)$/.exec(requestUrl.pathname);
+      if (request.method !== "POST" || !match) {
+        writeJSON(response, 404, { code: "route_not_found" });
+        return;
+      }
+      const operation = plugin.operations[match[1]];
+      if (!operation) {
+        writeJSON(response, 404, { code: "operation_not_found" });
+        return;
+      }
+      const input = await readJSON(request, requestController.signal);
+      const result = await operation.handler(input, requestController.signal);
+      if (!isJSONValue(result)) throw new PluginFailureError("invalid_output");
+      writeJSON(response, 200, result);
+    } catch (error) {
+      if (requestController.signal.aborted || response.headersSent) return;
+      if (error instanceof PluginInputError) {
+        writeJSON(response, 400, pluginErrorBody(error.pluginCode, error.details));
+      } else if (error instanceof PluginFailureError) {
+        writeJSON(response, 500, pluginErrorBody(error.pluginCode, error.details));
+      } else if (error instanceof SyntaxError || error instanceof RangeError) {
+        writeJSON(response, 400, { code: "invalid_input" });
+      } else {
+        writeJSON(response, 500, { code: "operation_failed" });
+      }
+    }
+  });
+  options.signal?.addEventListener("abort", () => server.close(), {
+    once: true
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(options.port ?? 8080, options.host ?? "0.0.0.0", () => {
+      server.off("error", reject);
+      resolve();
+    });
+  });
+  return server;
+}
+
+export type HeaderTuple = readonly [string, string];
+
+export type SourceGatewayRequest = {
+  method: string;
+  path: string;
+  query?: readonly HeaderTuple[];
+  headers?: readonly HeaderTuple[];
+  body?: Uint8Array | null;
+};
+
+export type SourceGatewayResponse = {
+  status: number;
+  headers: HeaderTuple[];
+  body: Uint8Array;
+};
+
+export type SourceGatewayFailureCode =
+  | "request_rejected"
+  | "unknown_connector"
+  | "response_too_large"
+  | "upstream_unreachable"
+  | "circuit_open"
+  | "upstream_timeout";
+
+export class SourceGatewayError extends Error {
+  constructor(readonly failureCode: SourceGatewayFailureCode) {
+    super(failureCode);
+    this.name = "SourceGatewayError";
+  }
+}
+
+export class SourceGatewayClient {
+  private readonly origin: string;
+
+  constructor(
+    origin: string,
+    private readonly fetchImplementation: typeof fetch = globalThis.fetch
+  ) {
+    const parsed = new URL(origin);
+    if ((parsed.protocol !== "http:" && parsed.protocol !== "https:") || parsed.username || parsed.password) {
+      throw new TypeError("Source Gateway origin must be an HTTP origin without credentials");
+    }
+    if ((parsed.pathname !== "/" && parsed.pathname !== "") || parsed.search || parsed.hash) {
+      throw new TypeError("Source Gateway origin must not contain a path, query, or fragment");
+    }
+    this.origin = parsed.origin;
+  }
+
+  async request(
+    connectorId: string,
+    request: SourceGatewayRequest,
+    options?: { signal?: AbortSignal }
+  ): Promise<SourceGatewayResponse> {
+    requireIdentifier("Connector", connectorId);
+    const response = await this.fetchImplementation(
+      `${this.origin}/connectors/${encodeURIComponent(connectorId)}/requests`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json"
+        },
+        body: JSON.stringify({
+          method: request.method,
+          path: request.path,
+          query: request.query ?? [],
+          headers: request.headers ?? [],
+          body_base64: request.body == null ? null : Buffer.from(request.body).toString("base64")
+        }),
+        signal: options?.signal
+      }
+    );
+    const payload: unknown = await response.json();
+    if (!response.ok) {
+      const code = readGatewayFailure(payload);
+      throw new SourceGatewayError(code);
+    }
+    if (!isGatewayResponse(payload)) throw new TypeError("Source Gateway response is invalid");
+    return {
+      status: payload.status,
+      headers: payload.headers,
+      body: Uint8Array.from(Buffer.from(payload.body_base64, "base64"))
+    };
+  }
+}
+
+export function deriveToolAssetId(pluginId: string): string {
+  requireIdentifier("Plugin", pluginId);
+  return `plugin_${createHash("sha256").update(pluginId, "ascii").digest("base64url")}`;
+}
+
+export async function ensureToolAsset(
+  client: ToolAssetClient,
+  pluginId: string,
+  options?: { alias?: string; signal?: AbortSignal }
+): Promise<EntityResource> {
+  const entityId = deriveToolAssetId(pluginId);
+  let existing: EntityResource | undefined;
+  try {
+    existing = await client.entities.get(entityId, {
+      fresh: true,
+      signal: options?.signal
+    });
+  } catch (error) {
+    if (!isAtlasAPIError(error) || error.status !== 404) throw error;
+  }
+  if (existing) {
+    requireMatchingToolAsset(existing, pluginId);
+    return existing;
+  }
+  try {
+    return await client.entities.create({
+      entity_id: entityId,
+      entity_type: "asset",
+      subtype: "tool",
+      alias: options?.alias,
+      components: { custom_plugin: { plugin_id: pluginId } }
+    });
+  } catch (error) {
+    if (!isAtlasAPIError(error) || error.status !== 409) throw error;
+    const raced = await client.entities.get(entityId, {
+      fresh: true,
+      signal: options?.signal
+    });
+    requireMatchingToolAsset(raced, pluginId);
+    return raced;
+  }
+}
+
+export type ToolAssetClient = {
+  entities: {
+    get(id: string, options?: { fresh?: boolean; signal?: AbortSignal }): Promise<EntityResource>;
+    create(entity: EntityCreateRequest): Promise<EntityResource>;
+  };
+};
+
+function requireMatchingToolAsset(entity: EntityResource, pluginId: string): void {
+  const ownership = entity.components?.custom_plugin;
+  if (
+    entity.entity_type !== "asset" ||
+    entity.subtype !== "tool" ||
+    ownership?.plugin_id !== pluginId ||
+    Object.keys(ownership).length !== 1
+  ) {
+    throw new Error(`Entity ${entity.entity_id} conflicts with Plugin ${pluginId} Tool Asset ownership`);
+  }
+}
+
+async function readJSON(request: NodeJS.ReadableStream, signal: AbortSignal): Promise<JSONValue> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of request) {
+    if (signal.aborted) throw signal.reason;
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    size += buffer.length;
+    if (size > maxBodyBytes) throw new RangeError("request body exceeds limit");
+    chunks.push(buffer);
+  }
+  const value: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  if (!isJSONValue(value)) throw new SyntaxError("request body is not a JSON value");
+  return value;
+}
+
+function writeJSON(response: import("node:http").ServerResponse, status: number, value: JSONValue): void {
+  if (response.destroyed) return;
+  const body = JSON.stringify(value);
+  response.writeHead(status, {
+    "Content-Type": "application/json",
+    "Content-Length": Buffer.byteLength(body)
+  });
+  response.end(body);
+}
+
+function pluginErrorBody(code: string, details: JSONValue | undefined): JSONValue {
+  return details === undefined ? { code } : { code, details };
+}
+
+function requireIdentifier(subject: string, value: string): void {
+  if (!identifierPattern.test(value) || value.length > 64) {
+    throw new TypeError(`${subject} identifier must use lowercase underscore-separated segments`);
+  }
+}
+
+function requireDisplayName(subject: string, value: string): void {
+  if (!value.trim()) throw new TypeError(`${subject} display name must not be empty`);
+}
+
+function readGatewayFailure(value: unknown): SourceGatewayFailureCode {
+  if (typeof value !== "object" || value === null || Object.keys(value).length !== 1 || !("code" in value)) {
+    throw new TypeError("Source Gateway failure response is invalid");
+  }
+  const codes: readonly SourceGatewayFailureCode[] = [
+    "request_rejected",
+    "unknown_connector",
+    "response_too_large",
+    "upstream_unreachable",
+    "circuit_open",
+    "upstream_timeout"
+  ];
+  if (typeof value.code !== "string" || !codes.includes(value.code as SourceGatewayFailureCode)) {
+    throw new TypeError("Source Gateway failure response is invalid");
+  }
+  return value.code as SourceGatewayFailureCode;
+}
+
+function isGatewayResponse(value: unknown): value is { status: number; headers: HeaderTuple[]; body_base64: string } {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    Object.keys(value).some((key) => !["status", "headers", "body_base64"].includes(key))
+  ) {
+    return false;
+  }
+  if (
+    !("status" in value) ||
+    !Number.isInteger(value.status) ||
+    !("body_base64" in value) ||
+    typeof value.body_base64 !== "string"
+  ) {
+    return false;
+  }
+  if (!("headers" in value) || !Array.isArray(value.headers)) return false;
+  return value.headers.every(
+    (tuple) => Array.isArray(tuple) && tuple.length === 2 && tuple.every((part) => typeof part === "string")
+  );
+}

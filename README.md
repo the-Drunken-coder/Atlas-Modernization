@@ -26,14 +26,16 @@ Linting and formatting checks cover each selected package in full, matching the 
 - `edge/gateway/` reserves the field Gateway role. It contains only a README while the Gateway architecture is being designed.
 - `packages/protocol/` contains the Atlas schema, generated contracts, validators, examples, and protocol tools.
 - `packages/sdk/` contains the TypeScript/JavaScript Atlas client, sync engine, and CLI.
+- `packages/plugin-runtime/` contains the supported TypeScript Plugin authoring runtime and Source Gateway client.
 - `packages/fieldlink/` contains FieldLink's MeshCore transport, registered messages, radio adapter, and hardware harness. FieldLink is one communication method, not the Asset architecture.
+- `plugins/reference/` contains the development-only deterministic Plugin and source fixture.
 - `simulations/` contains the local simulation workbench.
 - `tests/` contains checks that cross top-level ownership lines.
 - `docs/` contains project-wide documentation and design decisions.
 
 ## JavaScript workspace
 
-The SDK, FieldLink, Atlas Core CLI, command interface, and simulations are npm workspaces with one root lockfile. Use Node.js 24 and install their dependencies once from the repository root:
+The SDK, Plugin runtime, development reference Plugin, FieldLink, Atlas Core CLI, command interface, and simulations are npm workspaces with one root lockfile. Use Node.js 24 and install their dependencies once from the repository root:
 
 ```bash
 npm ci
@@ -42,7 +44,7 @@ npm run build
 
 Simulations use the SDK directly. FieldLink remains independent of Core, the SDK, and Asset policy. No Asset or Gateway implementation currently exists under `edge/`.
 
-Useful focused commands are `npm run build:sdk`, `npm run build:fieldlink`, `npm run build:core-cli`, `npm run build:command-interface`, `npm run build:simulations`, `npm run dev:command-interface`, `npm run dev:simulations`, and `npm run dev:simulations-server`.
+Useful focused commands are `npm run build:sdk`, `npm run build:plugin-runtime`, `npm run build:reference-plugin`, `npm run build:fieldlink`, `npm run build:core-cli`, `npm run build:command-interface`, `npm run build:simulations`, `npm run dev:command-interface`, `npm run dev:simulations`, and `npm run dev:simulations-server`.
 
 ## Agent guidance
 

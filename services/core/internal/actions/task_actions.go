@@ -20,28 +20,41 @@ const taskSelectSQL = `SELECT ` + taskColumns + ` FROM tasks`
 // TaskActions owns Task validation, persistence, lifecycle, ordering, and
 // runtime fencing. Transport and HTTP handlers are adapters around this seam.
 type TaskActions struct {
-	pool    *pgxpool.Pool
-	catalog map[string]protocol.CommandDefinition
+	pool         *pgxpool.Pool
+	catalog      map[string]protocol.CommandDefinition
+	pluginAssets map[string]string
 }
 
 // NewTaskActions creates the production Task module from the generated catalog.
 func NewTaskActions(pool *pgxpool.Pool) *TaskActions {
+	return NewTaskActionsWithPlugins(pool, nil)
+}
+
+func NewTaskActionsWithPlugins(pool *pgxpool.Pool, pluginIDs []string) *TaskActions {
 	var catalog protocol.CommandCatalog
 	if err := json.Unmarshal([]byte(protocol.CommandCatalogJSON), &catalog); err != nil {
 		panic(fmt.Sprintf("decode generated Command Catalog: %v", err))
 	}
-	return NewTaskActionsWithCatalog(pool, catalog)
+	return newTaskActions(pool, catalog, pluginIDs)
 }
 
 // NewTaskActionsWithCatalog creates a Task module with an explicit catalog.
 // It exists so shared conformance fixtures can exercise behavior while the
 // production catalog remains empty.
 func NewTaskActionsWithCatalog(pool *pgxpool.Pool, catalog protocol.CommandCatalog) *TaskActions {
+	return newTaskActions(pool, catalog, nil)
+}
+
+func NewTaskActionsWithCatalogAndPlugins(pool *pgxpool.Pool, catalog protocol.CommandCatalog, pluginIDs []string) *TaskActions {
+	return newTaskActions(pool, catalog, pluginIDs)
+}
+
+func newTaskActions(pool *pgxpool.Pool, catalog protocol.CommandCatalog, pluginIDs []string) *TaskActions {
 	byName := make(map[string]protocol.CommandDefinition, len(catalog))
 	for _, command := range catalog {
 		byName[command.Command] = command
 	}
-	return &TaskActions{pool: pool, catalog: byName}
+	return &TaskActions{pool: pool, catalog: byName, pluginAssets: configuredToolAssets(pluginIDs)}
 }
 
 func scanTask(row rowScanner) (*models.Task, error) {
@@ -119,11 +132,17 @@ func manifestEntry(manifest protocol.CommandManifest, command string) (protocol.
 	return protocol.CommandManifestEntry{}, false
 }
 
-func effectiveScheduling(value protocol.CommandScheduling) protocol.CommandScheduling {
-	if value == "" {
-		return protocol.CommandSchedulingQueued
+func resolveScheduling(command protocol.CommandDefinition, entry protocol.CommandManifestEntry) (protocol.CommandScheduling, error) {
+	if command.Scheduling != "" {
+		if entry.Scheduling != command.Scheduling {
+			return "", NewValidationError("Command Manifest scheduling does not match the Command Catalog")
+		}
+		return command.Scheduling, nil
 	}
-	return value
+	if entry.Scheduling != protocol.CommandSchedulingQueued && entry.Scheduling != protocol.CommandSchedulingImmediate {
+		return "", NewValidationError("Command Manifest must choose queued or immediate scheduling")
+	}
+	return entry.Scheduling, nil
 }
 
 func (a *TaskActions) storedCommandDefinition(taskID, commandName string) (protocol.CommandDefinition, error) {

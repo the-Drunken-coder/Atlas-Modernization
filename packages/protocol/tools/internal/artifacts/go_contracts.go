@@ -37,6 +37,9 @@ var goStructContracts = []goStructContract{
 	{goType: "MetadataBlock"},
 	{goType: "CommandDefinition"},
 	{goType: "CommandManifestEntry"},
+	{goType: "PluginOperationDescriptor"},
+	{goType: "PluginManifest"},
+	{goType: "PluginStatus"},
 	{goType: "ProtocolRevisionResponse"},
 	{goType: "EntityCheckInRequest", typeOverrides: map[string]goTypeOverride{
 		"status":      {schemaType: "string", goType: "*string"},
@@ -100,6 +103,8 @@ var goEnumContracts = []goEnumContract{
 	{goType: "ResourceType", aliasedFields: []string{"resource_type"}},
 	{goType: "FeedEventName", definitions: []string{"FeedEvent"}, property: "event", aliasedFields: []string{"event"}, constantPrefix: "FeedEvent"},
 	{goType: "ErrorCode"},
+	{goType: "PluginStatusState"},
+	{goType: "PluginUnavailableReason"},
 	{goType: "CommandScheduling"},
 	{goType: "TaskStatus"},
 	{goType: "TaskFailureCode"},

@@ -24,8 +24,12 @@ func (a *TaskActions) Acknowledge(ctx context.Context, taskID, runtimeID string)
 	return a.withTaskTransition(ctx, taskID, runtimeID, false, a.requireAcknowledgeOrder, acknowledgeTask)
 }
 
-func acknowledgeTask(task *models.Task, command protocol.CommandDefinition, _ protocol.CommandManifestEntry, now time.Time) (bool, error) {
-	if effectiveScheduling(command.Scheduling) == protocol.CommandSchedulingImmediate {
+func acknowledgeTask(task *models.Task, command protocol.CommandDefinition, manifest protocol.CommandManifestEntry, now time.Time) (bool, error) {
+	scheduling, err := resolveScheduling(command, manifest)
+	if err != nil {
+		return false, err
+	}
+	if scheduling == protocol.CommandSchedulingImmediate {
 		return false, NewValidationError("Immediate Tasks are started without acknowledgement")
 	}
 	if task.Status == string(protocol.TaskStatusAcknowledged) {
@@ -46,14 +50,18 @@ func (a *TaskActions) Start(ctx context.Context, taskID, runtimeID string) (*mod
 	return a.withTaskTransition(ctx, taskID, runtimeID, true, a.requireStartOrder, startTask)
 }
 
-func startTask(task *models.Task, command protocol.CommandDefinition, _ protocol.CommandManifestEntry, now time.Time) (bool, error) {
+func startTask(task *models.Task, command protocol.CommandDefinition, manifest protocol.CommandManifestEntry, now time.Time) (bool, error) {
 	if task.Status == string(protocol.TaskStatusFailed) && jsonEqual(task.Failure, mustMarshalTaskFailure(immediateStartTimeoutFailure())) {
 		return false, nil
 	}
 	if task.Status == string(protocol.TaskStatusInProgress) {
 		return false, nil
 	}
-	if effectiveScheduling(command.Scheduling) == protocol.CommandSchedulingImmediate {
+	scheduling, err := resolveScheduling(command, manifest)
+	if err != nil {
+		return false, err
+	}
+	if scheduling == protocol.CommandSchedulingImmediate {
 		if task.Status != string(protocol.TaskStatusPending) {
 			return false, invalidTaskTransition(task, "start")
 		}
@@ -244,7 +252,7 @@ func cancelTask(task *models.Task, _ protocol.CommandDefinition, manifest protoc
 }
 
 type taskMutation func(*models.Task, protocol.CommandDefinition, protocol.CommandManifestEntry, time.Time) (bool, error)
-type taskPrecondition func(context.Context, pgx.Tx, *models.Task, protocol.CommandDefinition) error
+type taskPrecondition func(context.Context, pgx.Tx, *models.Task, protocol.CommandDefinition, protocol.CommandManifestEntry, protocol.CommandManifest) error
 
 func (a *TaskActions) withTaskTransition(ctx context.Context, taskID, runtimeID string, allowTerminalRetryWithoutCurrentRuntime bool, precondition taskPrecondition, mutate taskMutation) (*models.Task, error) {
 	if err := ValidateTaskID(taskID); err != nil {
@@ -313,7 +321,7 @@ func (a *TaskActions) withTaskTransition(ctx context.Context, taskID, runtimeID 
 		return nil, NewValidationError("current runtime no longer advertises the Task Command")
 	}
 	if precondition != nil {
-		if err := precondition(ctx, tx, task, command); err != nil {
+		if err := precondition(ctx, tx, task, command, entry, manifest); err != nil {
 			return nil, err
 		}
 	}
@@ -341,31 +349,39 @@ func (a *TaskActions) withTaskTransition(ctx context.Context, taskID, runtimeID 
 	return updated, nil
 }
 
-func (a *TaskActions) requireAcknowledgeOrder(ctx context.Context, tx pgx.Tx, task *models.Task, command protocol.CommandDefinition) error {
-	if task.Status != string(protocol.TaskStatusPending) || effectiveScheduling(command.Scheduling) != protocol.CommandSchedulingQueued {
+func (a *TaskActions) requireAcknowledgeOrder(ctx context.Context, tx pgx.Tx, task *models.Task, command protocol.CommandDefinition, entry protocol.CommandManifestEntry, manifest protocol.CommandManifest) error {
+	scheduling, err := resolveScheduling(command, entry)
+	if err != nil {
+		return err
+	}
+	if task.Status != string(protocol.TaskStatusPending) || scheduling != protocol.CommandSchedulingQueued {
 		return nil
 	}
-	return a.requireNoSchedulingBlocker(ctx, tx, task, protocol.CommandSchedulingQueued, []string{string(protocol.TaskStatusPending)}, false, false, "an earlier queued Task is still pending")
+	return a.requireNoSchedulingBlocker(ctx, tx, task, manifest, protocol.CommandSchedulingQueued, []string{string(protocol.TaskStatusPending)}, false, false, "an earlier queued Task is still pending")
 }
 
-func (a *TaskActions) requireStartOrder(ctx context.Context, tx pgx.Tx, task *models.Task, command protocol.CommandDefinition) error {
-	scheduling := effectiveScheduling(command.Scheduling)
+func (a *TaskActions) requireStartOrder(ctx context.Context, tx pgx.Tx, task *models.Task, command protocol.CommandDefinition, entry protocol.CommandManifestEntry, manifest protocol.CommandManifest) error {
+	scheduling, err := resolveScheduling(command, entry)
+	if err != nil {
+		return err
+	}
 	if scheduling == protocol.CommandSchedulingImmediate {
 		if task.Status != string(protocol.TaskStatusPending) {
 			return nil
 		}
-		return a.requireNoSchedulingBlocker(ctx, tx, task, scheduling, []string{string(protocol.TaskStatusPending)}, false, true, "an earlier immediate Task has not started")
+		return a.requireNoSchedulingBlocker(ctx, tx, task, manifest, scheduling, []string{string(protocol.TaskStatusPending)}, false, true, "an earlier immediate Task has not started")
 	}
 	if task.Status != string(protocol.TaskStatusAcknowledged) {
 		return nil
 	}
-	return a.requireNoSchedulingBlocker(ctx, tx, task, scheduling, []string{string(protocol.TaskStatusPending), string(protocol.TaskStatusAcknowledged)}, true, false, "an earlier queued Task has not become terminal")
+	return a.requireNoSchedulingBlocker(ctx, tx, task, manifest, scheduling, []string{string(protocol.TaskStatusPending), string(protocol.TaskStatusAcknowledged)}, true, false, "an earlier queued Task has not become terminal")
 }
 
 func (a *TaskActions) requireNoSchedulingBlocker(
 	ctx context.Context,
 	tx pgx.Tx,
 	task *models.Task,
+	manifest protocol.CommandManifest,
 	scheduling protocol.CommandScheduling,
 	earlierStatuses []string,
 	includeAnyInProgress bool,
@@ -395,7 +411,15 @@ func (a *TaskActions) requireNoSchedulingBlocker(
 		if err != nil {
 			return err
 		}
-		if effectiveScheduling(blockingCommand.Scheduling) == scheduling {
+		blockingEntry, ok := manifestEntry(manifest, commandName)
+		if !ok {
+			return NewValidationError("current runtime no longer advertises a blocking Task Command")
+		}
+		blockingScheduling, err := resolveScheduling(blockingCommand, blockingEntry)
+		if err != nil {
+			return err
+		}
+		if blockingScheduling == scheduling {
 			return NewValidationError(message)
 		}
 	}

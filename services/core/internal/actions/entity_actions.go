@@ -18,12 +18,17 @@ import (
 
 // EntityActions handles entity business logic.
 type EntityActions struct {
-	pool *pgxpool.Pool
+	pool         *pgxpool.Pool
+	pluginAssets map[string]string
 }
 
 // NewEntityActions creates a new EntityActions instance.
 func NewEntityActions(pool *pgxpool.Pool) *EntityActions {
-	return &EntityActions{pool: pool}
+	return NewEntityActionsWithPlugins(pool, nil)
+}
+
+func NewEntityActionsWithPlugins(pool *pgxpool.Pool, pluginIDs []string) *EntityActions {
+	return &EntityActions{pool: pool, pluginAssets: configuredToolAssets(pluginIDs)}
 }
 
 // EntityDetail is the Entity resource plus its runtime-owned Command Manifest
@@ -328,18 +333,6 @@ func (a *EntityActions) Update(ctx context.Context, entityID string, params Upda
 	if err := checkExpectedVersion("entity", params.ExpectedVersion, entity.Version); err != nil {
 		return nil, err
 	}
-	if params.EntityType != nil {
-		requestedType := strings.TrimSpace(*params.EntityType)
-		if requestedType != entity.Type {
-			var registeredRuntime bool
-			if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM asset_runtimes WHERE asset_id = $1)`, entityID).Scan(&registeredRuntime); err != nil {
-				return nil, fmt.Errorf("check Entity runtime before type change: %w", err)
-			}
-			if registeredRuntime {
-				return nil, NewValidationError("entity_type cannot change after an Asset runtime has registered")
-			}
-		}
-	}
 	if params.IsEmpty() {
 		if err := tx.Commit(ctx); err != nil {
 			return nil, fmt.Errorf("failed to commit entity precondition transaction: %w", err)
@@ -394,6 +387,27 @@ func (a *EntityActions) Update(ctx context.Context, entityID string, params Upda
 	})
 	if err != nil {
 		return nil, err
+	}
+	var registeredRuntime bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM asset_runtimes WHERE asset_id = $1)`, entityID).Scan(&registeredRuntime); err != nil {
+		return nil, fmt.Errorf("check Entity runtime before identity change: %w", err)
+	}
+	if registeredRuntime {
+		if newType != entity.Type {
+			return nil, NewValidationError("entity_type cannot change after an Asset runtime has registered")
+		}
+		beforePluginID, beforeOwned, beforeErr := toolAssetPluginID(entity)
+		candidate := cloneEntityModel(entity)
+		candidate.Type = newType
+		candidate.Subtype = newSubtype
+		candidate.JSON = jsonBytes
+		afterPluginID, afterOwned, afterErr := toolAssetPluginID(candidate)
+		if beforeErr != nil || afterErr != nil {
+			return nil, NewValidationError("custom_plugin ownership cannot change after an Asset runtime has registered")
+		}
+		if (beforeOwned || afterOwned) && (!equalOptionalString(newSubtype, entity.Subtype) || beforeOwned != afterOwned || beforePluginID != afterPluginID) {
+			return nil, NewValidationError("entity_type, subtype, and custom_plugin.plugin_id cannot change after an Asset runtime has registered")
+		}
 	}
 
 	version, err := nextChangeVersion(ctx, tx)
@@ -456,6 +470,13 @@ func (a *EntityActions) Delete(ctx context.Context, entityID string) error {
 			return NewEntityNotFoundError(entityID)
 		}
 		return fmt.Errorf("failed to get entity for deletion: %w", err)
+	}
+	configuredPluginID := a.pluginAssets[entityID]
+	if err := validateToolAsset(entity, configuredPluginID); err != nil {
+		return err
+	}
+	if configuredPluginID != "" {
+		return NewValidationError("configured Plugin Tool Asset cannot be deleted until its Plugin is removed")
 	}
 
 	var hasNonterminalTasks bool

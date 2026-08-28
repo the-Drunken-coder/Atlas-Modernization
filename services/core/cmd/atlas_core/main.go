@@ -22,6 +22,7 @@ import (
 	"github.com/the-drunken-coder/atlas/services/core/internal/config"
 	"github.com/the-drunken-coder/atlas/services/core/internal/database"
 	"github.com/the-drunken-coder/atlas/services/core/internal/feed"
+	"github.com/the-drunken-coder/atlas/services/core/internal/plugins"
 	"github.com/the-drunken-coder/atlas/services/core/internal/storage"
 )
 
@@ -146,7 +147,11 @@ func main() {
 	if err := db.EnsureTables(ensureCtx); err != nil {
 		logger.Fatal().Err(err).Msg("Failed to ensure database tables")
 	}
-	taskActions := actions.NewTaskActions(db.Pool)
+	configuredPluginIDs := make([]string, 0, len(cfg.Plugins))
+	for _, plugin := range cfg.Plugins {
+		configuredPluginIDs = append(configuredPluginIDs, plugin.ID)
+	}
+	taskActions := actions.NewTaskActionsWithPlugins(db.Pool, configuredPluginIDs)
 	for {
 		reconciled, err := taskActions.ReconcileImmediateTimeouts(ensureCtx)
 		if err != nil {
@@ -203,7 +208,12 @@ func main() {
 		)
 	}
 
-	handler := handlers.NewHandlerWithFeed(db, storageClient, logger, cfg, feedHub, adminAuth)
+	pluginEndpoints := make([]plugins.Endpoint, 0, len(cfg.Plugins))
+	for _, configured := range cfg.Plugins {
+		pluginEndpoints = append(pluginEndpoints, plugins.Endpoint{ID: configured.ID, BaseURL: configured.BaseURL})
+	}
+	pluginRegistry := plugins.New(runtimeCtx, pluginEndpoints, plugins.Options{})
+	handler := handlers.NewHandlerWithPlugins(db, storageClient, logger, cfg, feedHub, adminAuth, pluginRegistry)
 
 	r := chi.NewRouter()
 
@@ -230,6 +240,8 @@ func main() {
 	r.Get("/resources", handler.Resources)
 	r.Get("/protocol/revision", handler.ProtocolRevision)
 	r.Get("/command-catalog", handler.GetCommandCatalog)
+	r.Get("/plugins", handler.ListPlugins)
+	r.Post("/plugins/{plugin_id}/operations/{operation_id}", handler.InvokePluginOperation)
 	r.Get("/feed", handler.Feed)
 	r.Post("/admin/auth/login", handler.AdminLogin)
 	r.Post("/admin/auth/logout", handler.AdminLogout)

@@ -1,6 +1,6 @@
 # Atlas plugins
 
-Status: agreed architecture. No plugin runtime, source connector, plugin operation, or datastream exists yet.
+Status: Plugin platform v1 implemented. Datastream delivery, executable UI Plugins, marketplace/install APIs, hot upgrades, untrusted-Plugin isolation, scoped Plugin credentials, and persistent Plugin storage remain deferred.
 
 Atlas plugins add bounded capabilities without deploying a new public API for every integration. Atlas remains the public control plane. Plugins run behind Core-owned routes, consume external data through Atlas-managed source connectors, and use normal Atlas resource and task systems when their results become durable or cause action.
 
@@ -190,7 +190,7 @@ Deployment configuration gives Core each Plugin's stable ID and private base URL
 
 ### Private HTTP protocol
 
-A configured Plugin base URL is an `http` or `https` origin with no path, query, fragment, or credentials. Core makes only these private calls relative to that origin:
+A configured Plugin base URL is a plain `http` origin with no path, query, fragment, or credentials. Core makes only these private calls relative to that origin:
 
 | Request | Purpose |
 | --- | --- |

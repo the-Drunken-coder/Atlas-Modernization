@@ -206,6 +206,14 @@ jobs:
       - name: Run Atlas SDK browser tests
         run: npm run test:browser --workspace @the-drunken-coder/atlas-sdk
 
+      - name: Check Atlas Plugin runtime
+        run: |
+          npm run lint --workspace @the-drunken-coder/atlas-plugin-runtime
+          npm run format:check --workspace @the-drunken-coder/atlas-plugin-runtime
+          npm test --workspace @the-drunken-coder/atlas-plugin-runtime
+          npm run build:plugin-runtime
+          npm run build:reference-plugin
+
   atlas-core-package:
     name: atlas-core-package
     runs-on: ubuntu-latest
@@ -474,7 +482,7 @@ jobs:
           sudo apt-get install -y jq shellcheck
 
       - name: Build Atlas Core
-        run: go build ./cmd/atlas_core
+        run: go build ./cmd/atlas_core ./cmd/atlas_source_gateway
 
       - name: Validate JSON files
         run: |
@@ -611,4 +619,20 @@ jobs:
           context: .
           file: services/core/docker/Dockerfile
           target: production
+          push: false
+
+      - name: Build Source Gateway production image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        with:
+          context: .
+          file: services/core/docker/Dockerfile
+          target: source-gateway-production
+          push: false
+
+      - name: Build reference Plugin and source fixtures
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        with:
+          context: .
+          file: plugins/reference/Dockerfile
+          target: plugin
           push: false

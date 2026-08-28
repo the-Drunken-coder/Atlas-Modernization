@@ -1,0 +1,35 @@
+{
+  "name": "@the-drunken-coder/atlas-plugin-runtime",
+  "version": "0.1.0",
+  "description": "TypeScript authoring runtime for Atlas Plugins.",
+  "type": "module",
+  "engines": { "node": ">=24" },
+  "files": ["dist/", "README.md"],
+  "main": "./dist/packages/plugin-runtime/src/index.js",
+  "types": "./dist/packages/plugin-runtime/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/packages/plugin-runtime/src/index.d.ts",
+      "import": "./dist/packages/plugin-runtime/src/index.js",
+      "default": "./dist/packages/plugin-runtime/src/index.js"
+    }
+  },
+  "scripts": {
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "build": "tsc -p tsconfig.json",
+    "lint": "biome lint --config-path biome.json .",
+    "format:check": "biome check --linter-enabled=false .",
+    "test:node": "vitest run --environment node",
+    "test:types": "tsc -p tsconfig.type-tests.json",
+    "test": "npm run test:types && npm run test:node"
+  },
+  "dependencies": {
+    "@the-drunken-coder/atlas-sdk": "0.1.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.9",
+    "@types/node": "26.2.0",
+    "typescript": "^7.0.2",
+    "vitest": "4.1.10"
+  }
+}

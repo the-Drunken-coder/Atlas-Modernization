@@ -10,6 +10,9 @@ import (
 var runtimeValidatorTypeNames = []string{
 	"CommandCatalog",
 	"CommandManifest",
+	"PluginManifest",
+	"PluginStatus",
+	"PluginDiscoveryResponse",
 	"ProtocolRevisionResponse",
 	"EntityCheckInRequest",
 	"EntityCheckInFullResponse",
@@ -40,6 +43,7 @@ var runtimeValidatorTypeNames = []string{
 	"FeedHandshakeMessage",
 	"FeedSubscriptionsReadyMessage",
 	"GeometryComponent",
+	"CustomPluginComponent",
 	"JSONValue",
 	"ProtocolRevision",
 	"ResourceType",

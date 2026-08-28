@@ -47,10 +47,12 @@ const LIST_TITLES = Object.fromEntries([
   ...ENTITY_KINDS.map((kind) => [ENTITY_DESCRIPTORS[kind].list, ENTITY_DESCRIPTORS[kind].label]),
   ["places", "Places"],
   ["commands", "Commands"],
+  ["plugins", "Plugins"],
   ["apiKeys", "API Keys"]
 ]) as Record<ListKind, string>;
 
 const MapView = lazy(() => import("../ui/map/view/MapView.js").then((module) => ({ default: module.MapView })));
+const PluginsPanel = lazy(() => import("./admin/PluginsPanel.js").then((module) => ({ default: module.PluginsPanel })));
 
 type CommandManifestStatus = "ready" | "loading" | "unavailable";
 const EMPTY_ENTITY_QUERIES = Object.fromEntries(ENTITY_KINDS.map((kind) => [kind, ""])) as Record<EntityKind, string>;
@@ -283,7 +285,12 @@ export function MapConsole() {
                 </IconButton>
               ) : undefined
             }
-            onCollapse={() => dispatch({ type: "setCollapsed", collapsed: true })}
+            onCollapse={() => {
+              dispatch({ type: "setCollapsed", collapsed: true });
+              requestAnimationFrame(() => {
+                document.querySelector<HTMLElement>(`[data-list="${activeList ?? "assets"}"]`)?.focus();
+              });
+            }}
           >
             <PanelBody
               snapshot={snapshot}
@@ -571,6 +578,19 @@ function ListBody({
   }
   if (list === "apiKeys") {
     return <APIKeysPanel />;
+  }
+  if (list === "plugins") {
+    return (
+      <Suspense
+        fallback={
+          <div className="panel__empty" role="status">
+            Loading Plugin status…
+          </div>
+        }
+      >
+        <PluginsPanel />
+      </Suspense>
+    );
   }
 
   const kind = ENTITY_KIND_BY_LIST[list];

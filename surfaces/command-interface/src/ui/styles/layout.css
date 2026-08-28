@@ -367,6 +367,7 @@
 }
 
 .panel__body {
+	container-type: inline-size;
   flex: 1;
   min-height: 0;
   overflow-x: hidden;

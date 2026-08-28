@@ -10,9 +10,11 @@ import type {
   EntityCreateRequest,
   EntityResource,
   EntityUpdateRequest,
+  JSONValue,
   ObjectCreateRequest,
   ObjectResource,
   ObjectUpdateRequest,
+  PluginStatus,
   RuntimeReadyRequest,
   RuntimeRegistrationRequest,
   RuntimeStopRequest,
@@ -21,6 +23,7 @@ import type {
   TaskProgressRequest,
   TaskResource
 } from "./protocol.js";
+import { isJSONValue, isPluginDiscoveryResponse } from "./protocol.js";
 import { SyncEngine } from "./sync-engine.js";
 import type {
   AtlasSubscription,
@@ -251,6 +254,25 @@ export class AtlasClient {
 
   readonly commandCatalog = (): Promise<CommandCatalog> =>
     this.transport.json("GET", "/command-catalog", isCommandCatalog);
+
+  readonly plugins = {
+    list: (options?: { signal?: AbortSignal }): Promise<PluginStatus[]> =>
+      this.transport.json("GET", "/plugins", isPluginDiscoveryResponse, undefined, undefined, options?.signal),
+    invoke: (
+      pluginId: string,
+      operationId: string,
+      input: JSONValue,
+      options?: { signal?: AbortSignal }
+    ): Promise<JSONValue> =>
+      this.transport.json(
+        "POST",
+        `/plugins/${encodeURIComponent(pluginId)}/operations/${encodeURIComponent(operationId)}`,
+        isJSONValue,
+        input,
+        undefined,
+        options?.signal
+      )
+  };
 
   sync = {
     start: async () => {
