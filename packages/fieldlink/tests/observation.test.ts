@@ -28,6 +28,29 @@ describe("Observation publication", () => {
     ).toBe(false);
   });
 
+  it("requires an ISO timestamp with an explicit time zone", () => {
+    const example = observationMessage.examples[0];
+    expect(example).toBeDefined();
+    expect(
+      observationMessage.validate({
+        ...example,
+        observed_at: "2026-08-26T12:00:00+04:00",
+      }),
+    ).toBe(true);
+    expect(
+      observationMessage.validate({
+        ...example,
+        observed_at: "2026-08-26T12:00:00",
+      }),
+    ).toBe(false);
+    expect(
+      observationMessage.validate({
+        ...example,
+        observed_at: "2026-08-26 12:00:00Z",
+      }),
+    ).toBe(false);
+  });
+
   it("publishes one unconfirmed transfer that every listener collects", async () => {
     const network = new BroadcastMemoryNetwork();
     const aTransport = network.add();

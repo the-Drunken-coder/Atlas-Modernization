@@ -489,7 +489,7 @@ def wait_for_database_schema_docker(container_name=None, max_retries=60, delay=2
                 print(f"[OK] Database schema version {version} ready!")
                 return True
         except subprocess.TimeoutExpired:
-            pass
+            logger.debug("Database schema check timed out, retrying")
 
         if attempt < max_retries - 1:
             print(f"[WAIT] Schema not ready (attempt {attempt + 1}/{max_retries}), retrying...")
@@ -669,7 +669,6 @@ def verify_tunnel_connection(public_url=None, max_retries=10, delay=2.0):
         except json.JSONDecodeError:
             # A warming tunnel may serve a non-JSON HTML error page; keep retrying.
             logger.debug("Tunnel verification got non-JSON response, retrying")
-            pass
         except Exception as exc:
             logger.debug("Tunnel verification attempt failed: %s", exc)  # Other error, retry
 

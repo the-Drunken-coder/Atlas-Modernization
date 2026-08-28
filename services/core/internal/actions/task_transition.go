@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/the-drunken-coder/atlas/services/core/internal/models"
 	protocol "github.com/the-drunken-coder/atlas/packages/protocol/generated/go/atlasprotocol"
 	protocolvalidator "github.com/the-drunken-coder/atlas/packages/protocol/validator"
+	"github.com/the-drunken-coder/atlas/services/core/internal/models"
 )
 
 const immediateStartWindow = time.Minute

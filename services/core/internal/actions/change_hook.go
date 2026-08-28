@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	protocol "github.com/the-drunken-coder/atlas/packages/protocol/generated/go/atlasprotocol"
 	"github.com/the-drunken-coder/atlas/services/core/internal/models"
 	"github.com/the-drunken-coder/atlas/services/core/internal/serializers"
-	protocol "github.com/the-drunken-coder/atlas/packages/protocol/generated/go/atlasprotocol"
 )
 
 type ChangeEvent = protocol.FeedEventName

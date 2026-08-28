@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/rs/zerolog/log"
-	"github.com/the-drunken-coder/atlas/services/core/internal/models"
 	protocol "github.com/the-drunken-coder/atlas/packages/protocol/generated/go/atlasprotocol"
+	"github.com/the-drunken-coder/atlas/services/core/internal/models"
 )
 
 // APIMetadataTimeLayout matches metadata.created_at / updated_at in JSON responses.

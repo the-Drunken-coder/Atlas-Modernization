@@ -13,11 +13,11 @@ import (
 	"time"
 
 	"github.com/rs/zerolog"
+	protocol "github.com/the-drunken-coder/atlas/packages/protocol/generated/go/atlasprotocol"
 	"github.com/the-drunken-coder/atlas/services/core/internal/actions"
 	"github.com/the-drunken-coder/atlas/services/core/internal/jsondecode"
 	"github.com/the-drunken-coder/atlas/services/core/internal/serializers"
 	"github.com/the-drunken-coder/atlas/services/core/internal/storage"
-	protocol "github.com/the-drunken-coder/atlas/packages/protocol/generated/go/atlasprotocol"
 )
 
 // ErrorResponse represents an API error response.

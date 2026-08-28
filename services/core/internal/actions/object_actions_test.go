@@ -13,9 +13,9 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	protocol "github.com/the-drunken-coder/atlas/packages/protocol/generated/go/atlasprotocol"
 	"github.com/the-drunken-coder/atlas/services/core/internal/storage"
 	"github.com/the-drunken-coder/atlas/services/core/internal/testenv"
-	protocol "github.com/the-drunken-coder/atlas/packages/protocol/generated/go/atlasprotocol"
 )
 
 func TestNormalizeOptionalObjectString(t *testing.T) {

@@ -1144,6 +1144,7 @@ def put(screen: curses.window, row: int, column: int, text: str, style: int = 0)
     try:
         screen.addnstr(row, column, text, max(0, width - column - 1), style)
     except curses.error:
+        # A terminal resize can invalidate the measured bounds before this write.
         pass
 
 

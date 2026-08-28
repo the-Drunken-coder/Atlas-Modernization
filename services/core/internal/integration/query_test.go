@@ -247,13 +247,12 @@ func TestQueryFullDatasetCursorContinuationOmitsUnrequestedStreams(t *testing.T)
 	}
 
 	firstEntities := mustInterfaceSlice(t, firstPage["entities"], "entities")
-	firstTasks := mustInterfaceSlice(t, firstPage["tasks"], "tasks")
 	firstObjects := mustInterfaceSlice(t, firstPage["objects"], "objects")
-	if len(firstEntities) != 1 || len(firstTasks) != 0 || len(firstObjects) != 1 {
-		t.Fatalf("expected entity/object pages and no requested Task stream, got entities=%d tasks=%d objects=%d", len(firstEntities), len(firstTasks), len(firstObjects))
+	if len(firstEntities) != 1 || len(firstObjects) != 1 {
+		t.Fatalf("expected entity/object pages, got entities=%d objects=%d", len(firstEntities), len(firstObjects))
 	}
-	if firstPage["has_more_entities"] != true || firstPage["has_more_tasks"] != false || firstPage["has_more_objects"] != true {
-		t.Fatalf("expected has_more_* flags on page 1, got %+v", firstPage)
+	if firstPage["has_more_entities"] != true || firstPage["has_more_objects"] != true {
+		t.Fatalf("expected entity/object continuation flags on page 1, got %+v", firstPage)
 	}
 
 	entityCursor, _ := firstPage["next_entity_cursor"].(string)

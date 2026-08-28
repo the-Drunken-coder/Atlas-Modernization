@@ -183,6 +183,7 @@ def write_compose_env_file(env_path: str, lines: list[str]) -> None:
         try:
             os.unlink(temp_path)
         except FileNotFoundError:
+            # os.replace may already have moved the temporary file into place.
             pass
         raise
 
@@ -196,6 +197,7 @@ def fsync_directory(path: str) -> None:
     try:
         os.fsync(dir_fd)
     except OSError:
+        # Some filesystems do not support directory fsync.
         pass
     finally:
         os.close(dir_fd)

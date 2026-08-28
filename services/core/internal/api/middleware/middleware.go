@@ -19,8 +19,8 @@ import (
 	"golang.org/x/net/publicsuffix"
 
 	"github.com/rs/zerolog"
-	"github.com/the-drunken-coder/atlas/services/core/internal/admin"
 	protocol "github.com/the-drunken-coder/atlas/packages/protocol/generated/go/atlasprotocol"
+	"github.com/the-drunken-coder/atlas/services/core/internal/admin"
 )
 
 var unauthorizedErrorBody = []byte(`{"success":false,"message":"Unauthorized","error_code":"` + string(protocol.ErrorCodeUnauthorized) + `"}`)

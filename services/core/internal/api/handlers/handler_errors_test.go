@@ -10,12 +10,12 @@ import (
 
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/rs/zerolog"
+	protocol "github.com/the-drunken-coder/atlas/packages/protocol/generated/go/atlasprotocol"
 	"github.com/the-drunken-coder/atlas/services/core/internal/actions"
 	custommiddleware "github.com/the-drunken-coder/atlas/services/core/internal/api/middleware"
 	"github.com/the-drunken-coder/atlas/services/core/internal/models"
 	"github.com/the-drunken-coder/atlas/services/core/internal/serializers"
 	"github.com/the-drunken-coder/atlas/services/core/internal/storage"
-	protocol "github.com/the-drunken-coder/atlas/packages/protocol/generated/go/atlasprotocol"
 )
 
 func TestHandleActionErrorMapsKnownErrorTypes(t *testing.T) {

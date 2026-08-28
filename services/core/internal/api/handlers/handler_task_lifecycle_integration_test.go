@@ -13,10 +13,10 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/rs/zerolog"
+	protocol "github.com/the-drunken-coder/atlas/packages/protocol/generated/go/atlasprotocol"
 	"github.com/the-drunken-coder/atlas/services/core/internal/actions"
 	"github.com/the-drunken-coder/atlas/services/core/internal/config"
 	atlasdb "github.com/the-drunken-coder/atlas/services/core/internal/database"
-	protocol "github.com/the-drunken-coder/atlas/packages/protocol/generated/go/atlasprotocol"
 )
 
 func TestTaskLifecycleRoutesWithFixtureCommands(t *testing.T) {

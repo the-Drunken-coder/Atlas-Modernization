@@ -161,7 +161,8 @@ function isResourceType(value: unknown): value is ObservationResourceType {
 function isTimestamp(value: unknown): value is string {
   return (
     typeof value === "string" &&
-    /T.*(?:Z|[+-]\d{2}:\d{2})$/.test(value) &&
+    value.includes("T") &&
+    (value.endsWith("Z") || /[+-]\d{2}:\d{2}$/.test(value)) &&
     Number.isFinite(Date.parse(value))
   );
 }

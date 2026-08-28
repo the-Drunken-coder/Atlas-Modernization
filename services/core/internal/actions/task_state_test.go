@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/the-drunken-coder/atlas/services/core/internal/models"
 	protocol "github.com/the-drunken-coder/atlas/packages/protocol/generated/go/atlasprotocol"
+	"github.com/the-drunken-coder/atlas/services/core/internal/models"
 )
 
 var taskStateTestTime = time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)

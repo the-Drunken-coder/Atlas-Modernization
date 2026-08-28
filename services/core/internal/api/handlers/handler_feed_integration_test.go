@@ -19,13 +19,13 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog"
+	protocol "github.com/the-drunken-coder/atlas/packages/protocol/generated/go/atlasprotocol"
 	"github.com/the-drunken-coder/atlas/services/core/internal/actions"
 	"github.com/the-drunken-coder/atlas/services/core/internal/admin"
 	"github.com/the-drunken-coder/atlas/services/core/internal/config"
 	atlasdb "github.com/the-drunken-coder/atlas/services/core/internal/database"
 	"github.com/the-drunken-coder/atlas/services/core/internal/feed"
 	"github.com/the-drunken-coder/atlas/services/core/internal/testenv"
-	protocol "github.com/the-drunken-coder/atlas/packages/protocol/generated/go/atlasprotocol"
 )
 
 const feedIntegrationAPIKey = "feed-integration-key"

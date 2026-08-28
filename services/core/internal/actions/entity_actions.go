@@ -12,8 +12,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/the-drunken-coder/atlas/services/core/internal/models"
 	protocol "github.com/the-drunken-coder/atlas/packages/protocol/generated/go/atlasprotocol"
+	"github.com/the-drunken-coder/atlas/services/core/internal/models"
 )
 
 // EntityActions handles entity business logic.

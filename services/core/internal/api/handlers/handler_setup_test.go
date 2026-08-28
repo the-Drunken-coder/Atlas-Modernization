@@ -8,11 +8,11 @@ import (
 	"testing"
 
 	"github.com/rs/zerolog"
+	protocol "github.com/the-drunken-coder/atlas/packages/protocol/generated/go/atlasprotocol"
 	"github.com/the-drunken-coder/atlas/services/core/internal/admin"
 	"github.com/the-drunken-coder/atlas/services/core/internal/config"
 	"github.com/the-drunken-coder/atlas/services/core/internal/database"
 	"github.com/the-drunken-coder/atlas/services/core/internal/storage"
-	protocol "github.com/the-drunken-coder/atlas/packages/protocol/generated/go/atlasprotocol"
 )
 
 func TestNewHandlerRequiresConfig(t *testing.T) {

@@ -5,11 +5,11 @@ import (
 	"net/http"
 	"strings"
 
+	protocol "github.com/the-drunken-coder/atlas/packages/protocol/generated/go/atlasprotocol"
 	"github.com/the-drunken-coder/atlas/services/core/internal/actions"
 	custommiddleware "github.com/the-drunken-coder/atlas/services/core/internal/api/middleware"
 	"github.com/the-drunken-coder/atlas/services/core/internal/config"
 	"github.com/the-drunken-coder/atlas/services/core/internal/feed"
-	protocol "github.com/the-drunken-coder/atlas/packages/protocol/generated/go/atlasprotocol"
 )
 
 // Feed upgrades the request to the Atlas change-feed websocket.

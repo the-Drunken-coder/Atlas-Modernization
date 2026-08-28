@@ -6,9 +6,9 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	protocol "github.com/the-drunken-coder/atlas/packages/protocol/generated/go/atlasprotocol"
 	"github.com/the-drunken-coder/atlas/services/core/internal/actions"
 	"github.com/the-drunken-coder/atlas/services/core/internal/serializers"
-	protocol "github.com/the-drunken-coder/atlas/packages/protocol/generated/go/atlasprotocol"
 )
 
 // --- Entity Handlers ---

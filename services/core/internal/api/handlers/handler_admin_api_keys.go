@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/the-drunken-coder/atlas/services/core/internal/admin"
 	protocol "github.com/the-drunken-coder/atlas/packages/protocol/generated/go/atlasprotocol"
+	"github.com/the-drunken-coder/atlas/services/core/internal/admin"
 )
 
 type adminCreateAPIKeyRequest struct {

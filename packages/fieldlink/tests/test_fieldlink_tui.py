@@ -4,8 +4,8 @@ import signal
 import sys
 import tempfile
 import unittest
+import unittest.mock as mock
 from pathlib import Path
-from unittest import mock
 
 
 SCRIPT = Path(__file__).parents[1] / "tools" / "fieldlink_tui.py"

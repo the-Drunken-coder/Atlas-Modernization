@@ -275,7 +275,7 @@ function immutableClone<T>(value: T): T {
 }
 
 function deepFreeze<T>(value: T): T {
-  if (typeof value !== "object" || value === null) return value;
+  if (value === null || typeof value !== "object") return value;
   const seen = new WeakSet<object>();
   const work: object[] = [value];
   while (work.length > 0) {

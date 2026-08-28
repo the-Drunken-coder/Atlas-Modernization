@@ -13,9 +13,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/the-drunken-coder/atlas/services/core/internal/models"
 	protocol "github.com/the-drunken-coder/atlas/packages/protocol/generated/go/atlasprotocol"
 	protocolvalidator "github.com/the-drunken-coder/atlas/packages/protocol/validator"
+	"github.com/the-drunken-coder/atlas/services/core/internal/models"
 )
 
 // CreateTaskParams is the complete immutable Task creation input.

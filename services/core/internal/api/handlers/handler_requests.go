@@ -3,8 +3,8 @@ package handlers
 import (
 	"time"
 
-	"github.com/the-drunken-coder/atlas/services/core/internal/actions"
 	protocol "github.com/the-drunken-coder/atlas/packages/protocol/generated/go/atlasprotocol"
+	"github.com/the-drunken-coder/atlas/services/core/internal/actions"
 )
 
 type createEntityRequest struct {

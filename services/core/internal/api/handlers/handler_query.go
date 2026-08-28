@@ -5,9 +5,9 @@ import (
 	"net/http"
 	"strings"
 
+	protocol "github.com/the-drunken-coder/atlas/packages/protocol/generated/go/atlasprotocol"
 	"github.com/the-drunken-coder/atlas/services/core/internal/actions"
 	"github.com/the-drunken-coder/atlas/services/core/internal/serializers"
-	protocol "github.com/the-drunken-coder/atlas/packages/protocol/generated/go/atlasprotocol"
 )
 
 func serializeFullDatasetResult(result *actions.FullDatasetResult) *protocol.FullDatasetResponse {

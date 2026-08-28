@@ -10,8 +10,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/the-drunken-coder/atlas/services/core/internal/models"
 	protocol "github.com/the-drunken-coder/atlas/packages/protocol/generated/go/atlasprotocol"
+	"github.com/the-drunken-coder/atlas/services/core/internal/models"
 )
 
 const taskColumns = `task_id, asset_id, command, input, status, progress, output, completion_attempt, failure, cancellation, idempotency_key, runtime_id, created_at, acknowledged_at, started_at, finished_at, updated_at, version`
