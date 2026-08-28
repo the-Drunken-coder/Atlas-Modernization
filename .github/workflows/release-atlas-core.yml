@@ -17,6 +17,7 @@ concurrency:
 env:
   GO_VERSION_FILE: services/core/go.mod
   GO_SUM_FILE: services/core/go.sum
+  NPM_VERSION: 11.6.2
   OPENCODE_VERSION: 1.18.21
   OPENCODE_MODEL: opencode-go/gpt-5.6-luna
 
@@ -67,16 +68,6 @@ jobs:
             echo "The checked-out commit does not match the dispatched commit." >&2
             exit 1
           fi
-
-      - name: Install JavaScript workspace dependencies
-        run: npm ci
-
-      - name: Check release inputs
-        run: |
-          npm audit --audit-level=high
-          npm run check --workspace atlas-core
-          (cd packages/protocol && go run ./tools/check && go test ./...)
-          (cd services/core && go test ./...)
 
       - name: Select changelog date
         id: release
@@ -174,10 +165,26 @@ jobs:
               printf '%s\n' "$untracked" >&2
               exit 1
             fi
+            ignored="$(git ls-files --others --ignored --exclude-standard)"
+            if [ -n "$ignored" ]; then
+              echo "OpenCode left unexpected ignored files:" >&2
+              printf '%s\n' "$ignored" >&2
+              exit 1
+            fi
           fi
           mkdir -p release-artifacts
           node .github/scripts/atlas-core-release.mjs \
             validate-changelog "$VERSION" "$RELEASE_DATE" release-artifacts/release-notes.md
+
+      - name: Install JavaScript workspace dependencies
+        run: npm ci
+
+      - name: Check release inputs
+        run: |
+          npm audit --audit-level=high
+          npm run check --workspace atlas-core
+          (cd packages/protocol && go run ./tools/check && go test ./...)
+          (cd services/core && go test ./...)
 
       - name: Version and pack the npm CLI
         env:
@@ -256,15 +263,16 @@ jobs:
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
 
+      - name: Install npm with trusted publishing support
+        run: |
+          npm install --global --ignore-scripts "npm@$NPM_VERSION"
+          npm --version | grep -Fx "$NPM_VERSION"
+
       - name: Verify reviewed release
+        id: package
         env:
           VERSION: ${{ inputs.version }}
-          RELEASE_DATE: ${{ needs.prepare.outputs.release_date }}
         run: |
-          node .github/scripts/atlas-core-release.mjs validate-version "$VERSION"
-          node .github/scripts/atlas-core-release.mjs \
-            validate-changelog "$VERSION" "$RELEASE_DATE" release-artifacts/release-notes-verified.md
-          cmp release-artifacts/release-notes.md release-artifacts/release-notes-verified.md
           (
             cd release-artifacts
             sha256sum --check SHA256SUMS
@@ -274,28 +282,67 @@ jobs:
             echo "Prepared package version $package_version does not match $VERSION." >&2
             exit 1
           fi
-
-      - name: Refuse a stale main branch
-        run: |
-          git fetch origin main --tags
-          if [ "$(git rev-parse origin/main)" != "$GITHUB_SHA" ]; then
-            echo "main moved after this release was dispatched. Run the workflow again from the new head." >&2
+          package="release-artifacts/atlas-core-$VERSION.tgz"
+          npm_view_error="$(mktemp)"
+          if published_integrity="$(npm view "atlas-core@$VERSION" dist.integrity 2>"$npm_view_error")"; then
+            local_integrity="sha512-$(openssl dgst -sha512 -binary "$package" | openssl base64 -A)"
+            if [ "$published_integrity" != "$local_integrity" ]; then
+              echo "atlas-core@$VERSION is already published with different contents." >&2
+              exit 1
+            fi
+            echo "already_published=true" >> "$GITHUB_OUTPUT"
+          elif grep -q 'E404' "$npm_view_error"; then
+            echo "already_published=false" >> "$GITHUB_OUTPUT"
+          else
+            cat "$npm_view_error" >&2
             exit 1
           fi
 
-      - name: Recheck npm package
+      - name: Refuse a stale main branch
+        id: main
+        env:
+          VERSION: ${{ inputs.version }}
         run: |
-          npm ci
-          npm run format:check --workspace atlas-core
-          npm run lint --workspace atlas-core
-          npm run typecheck --workspace atlas-core
-          npm test --workspace atlas-core
-          npm run build --workspace atlas-core
-          git diff --check
+          git fetch origin main --tags
+          main_sha="$(git rev-parse origin/main)"
+          if [ "$main_sha" = "$GITHUB_SHA" ]; then
+            echo "release_sha=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$(git rev-parse "$main_sha^")" != "$GITHUB_SHA" ]; then
+            echo "main moved beyond this release's generated commit. Dispatch a new release run." >&2
+            exit 1
+          fi
+          if [ "$(git show -s --format=%s "$main_sha")" != "chore(release): atlas-core v$VERSION" ]; then
+            echo "main moved to an unexpected commit after this release was dispatched." >&2
+            exit 1
+          fi
+          while IFS= read -r path; do
+            case "$path" in
+              CHANGELOG.md|package-lock.json|surfaces/core-cli/package.json|surfaces/core-cli/src/package-metadata.ts)
+                ;;
+              *)
+                echo "The existing release commit changed an unexpected file: $path" >&2
+                exit 1
+                ;;
+            esac
+          done < <(git diff --name-only "$GITHUB_SHA..$main_sha")
+          for path in \
+            CHANGELOG.md \
+            package-lock.json \
+            surfaces/core-cli/package.json \
+            surfaces/core-cli/src/package-metadata.ts; do
+            if ! git diff --quiet "$main_sha" -- "$path"; then
+              echo "The existing release commit does not match the reviewed $path artifact." >&2
+              exit 1
+            fi
+          done
+          echo "release_sha=$main_sha" >> "$GITHUB_OUTPUT"
 
       - name: Commit release files
         id: commit
         env:
+          EXISTING_RELEASE_SHA: ${{ steps.main.outputs.release_sha }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ inputs.version }}
         run: |
@@ -309,6 +356,10 @@ jobs:
                 ;;
             esac
           done < <(git diff --name-only)
+          if [ -n "$EXISTING_RELEASE_SHA" ]; then
+            echo "release_sha=$EXISTING_RELEASE_SHA" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           tag="atlas-core-v$VERSION"
           if git rev-parse --verify --quiet "refs/tags/$tag" >/dev/null; then
             if ! git diff --quiet; then
@@ -338,7 +389,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ inputs.version }}
-          RELEASE_SHA: ${{ steps.commit.outputs.release_sha }}
         run: |
           tag="atlas-core-v$VERSION"
           if git rev-parse --verify --quiet "refs/tags/$tag" >/dev/null; then
@@ -353,12 +403,15 @@ jobs:
           fi
 
       - name: Set up QEMU
+        if: steps.package.outputs.already_published != 'true'
         uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
 
       - name: Set up Docker Buildx
+        if: steps.package.outputs.already_published != 'true'
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
 
       - name: Sign in to GitHub Container Registry
+        if: steps.package.outputs.already_published != 'true'
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
@@ -366,6 +419,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish Atlas Core image
+        if: steps.package.outputs.already_published != 'true'
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
@@ -379,37 +433,90 @@ jobs:
             org.opencontainers.image.revision=${{ steps.commit.outputs.release_sha }}
             org.opencontainers.image.version=${{ inputs.version }}
 
+      - name: Verify the image is publicly pullable
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          docker logout ghcr.io >/dev/null 2>&1 || true
+          if ! docker manifest inspect "ghcr.io/the-drunken-coder/atlas-core:$VERSION" >/dev/null; then
+            echo "The Atlas Core image is not anonymously pullable." >&2
+            echo "Make the GHCR package public, then rerun this failed job before publishing npm." >&2
+            exit 1
+          fi
+
+      - name: Create or verify GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          tag="atlas-core-v$VERSION"
+          package="release-artifacts/atlas-core-$VERSION.tgz"
+          release_exists=false
+          release_is_draft=true
+          if gh release view "$tag" >/dev/null 2>&1; then
+            release_exists=true
+            release_is_draft="$(gh release view "$tag" --json isDraft --jq .isDraft)"
+            if [ "$(gh release view "$tag" --json name --jq .name)" != "Atlas Core $VERSION" ]; then
+              echo "GitHub Release $tag has an unexpected title." >&2
+              exit 1
+            fi
+            if [ "$(gh release view "$tag" --json isPrerelease --jq .isPrerelease)" != "false" ]; then
+              echo "GitHub Release $tag is unexpectedly marked as a prerelease." >&2
+              exit 1
+            fi
+            if [ "$(gh release view "$tag" --json body --jq .body)" != "$(cat release-artifacts/release-notes.md)" ]; then
+              echo "GitHub Release $tag has notes that do not match the reviewed artifact." >&2
+              exit 1
+            fi
+          else
+            gh release create "$tag" \
+              --draft \
+              --verify-tag \
+              --title "Atlas Core $VERSION" \
+              --notes-file release-artifacts/release-notes.md
+          fi
+
+          if [ "$release_exists" = "false" ] || [ "$release_is_draft" = "true" ]; then
+            gh release upload "$tag" \
+              "$package#atlas-core-$VERSION.tgz" \
+              "release-artifacts/SHA256SUMS#SHA256SUMS" \
+              --clobber
+          fi
+
+          expected_assets="$(printf '%s\n' SHA256SUMS "atlas-core-$VERSION.tgz" | sort)"
+          actual_assets="$(gh release view "$tag" --json assets --jq '.assets[].name' | sort)"
+          if [ "$actual_assets" != "$expected_assets" ]; then
+            echo "GitHub Release $tag has an unexpected asset set." >&2
+            exit 1
+          fi
+          downloaded="$(mktemp -d)"
+          gh release download "$tag" \
+            --dir "$downloaded" \
+            --pattern "atlas-core-$VERSION.tgz" \
+            --pattern SHA256SUMS
+          cmp "$package" "$downloaded/atlas-core-$VERSION.tgz"
+          cmp release-artifacts/SHA256SUMS "$downloaded/SHA256SUMS"
+
+          if [ "$release_is_draft" = "true" ]; then
+            gh release edit "$tag" --draft=false --latest
+          fi
+
       - name: Publish npm package
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           VERSION: ${{ inputs.version }}
         run: |
           package="release-artifacts/atlas-core-$VERSION.tgz"
-          if published_integrity="$(npm view "atlas-core@$VERSION" dist.integrity 2>/dev/null)"; then
+          npm_view_error="$(mktemp)"
+          if published_integrity="$(npm view "atlas-core@$VERSION" dist.integrity 2>"$npm_view_error")"; then
             local_integrity="sha512-$(openssl dgst -sha512 -binary "$package" | openssl base64 -A)"
             if [ "$published_integrity" != "$local_integrity" ]; then
               echo "atlas-core@$VERSION is already published with different contents." >&2
               exit 1
             fi
             echo "atlas-core@$VERSION is already published with the reviewed contents."
-          else
+          elif grep -q 'E404' "$npm_view_error"; then
             npm publish "$package" --access public --provenance
-          fi
-
-      - name: Create GitHub Release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ inputs.version }}
-          RELEASE_SHA: ${{ steps.commit.outputs.release_sha }}
-        run: |
-          tag="atlas-core-v$VERSION"
-          if gh release view "$tag" >/dev/null 2>&1; then
-            echo "GitHub Release $tag already exists; leaving it unchanged."
           else
-            gh release create "$tag" \
-              --target "$RELEASE_SHA" \
-              --title "Atlas Core $VERSION" \
-              --notes-file release-artifacts/release-notes.md \
-              "release-artifacts/atlas-core-$VERSION.tgz#atlas-core-$VERSION.tgz" \
-              "release-artifacts/SHA256SUMS#SHA256SUMS"
+            cat "$npm_view_error" >&2
+            exit 1
           fi

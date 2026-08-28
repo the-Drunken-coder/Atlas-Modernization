@@ -1,8 +1,17 @@
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  type Stats,
+  writeFileSync
+} from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PACKAGE_NAME, PACKAGE_VERSION } from "./package-metadata.js";
 
@@ -13,8 +22,29 @@ const API_CONTAINER = `${PROJECT_NAME}_api`;
 const POSTGRES_CONTAINER = `${PROJECT_NAME}_postgres`;
 const MINIO_CONTAINER = `${PROJECT_NAME}_minio`;
 const REQUIRED_SERVICES = new Set(["api", "minio", "postgres"]);
+const COMPOSE_VARIABLES = [
+  "API_AUTH_KEY",
+  "ATLAS_ADMIN_PASSWORD",
+  "ATLAS_CORE_IMAGE",
+  "CORS_ORIGINS",
+  "CORS_ORIGIN_PATTERNS",
+  "DATABASE_MAX_OVERFLOW",
+  "DATABASE_POOL_IDLE_TIMEOUT",
+  "DATABASE_POOL_PRE_PING",
+  "DATABASE_POOL_RECYCLE",
+  "DATABASE_POOL_SIZE",
+  "DATABASE_POOL_TIMEOUT",
+  "MAX_UPLOAD_SIZE_MB",
+  "MAX_VIEW_SIZE_MB",
+  "MINIO_BUCKET",
+  "MINIO_ROOT_PASSWORD",
+  "MINIO_ROOT_USER",
+  "POSTGRES_PASSWORD",
+  "TRUSTED_PROXY_CIDRS"
+] as const;
 const SUPPORTED_PLATFORMS = new Set<NodeJS.Platform>(["darwin", "linux"]);
 const CONFIG_SCHEMA = 1;
+const COMPOSE_WAIT_SECONDS = "120";
 const DEFAULT_IMAGE = `ghcr.io/the-drunken-coder/atlas-core:${PACKAGE_VERSION}`;
 
 const usage = `Atlas Core ${PACKAGE_VERSION}
@@ -76,9 +106,19 @@ type Command =
 
 type DeploymentState = {
   schema: number;
+  phase: "initializing" | "ready";
   initializedAt: string;
   packageVersion: string;
+  dockerEngineId: string;
+  initializingPid?: number;
+  startAttemptedAt?: string;
   startedAt?: string;
+};
+
+type ComposeServiceState = {
+  Service: string;
+  State: string;
+  Health: string;
 };
 
 class UsageError extends Error {
@@ -129,7 +169,7 @@ class AtlasCoreDeployment {
   readonly #createSecret: () => string;
 
   constructor(context: RequiredRuntimeContext) {
-    this.#configDir = context.env.ATLAS_CORE_HOME || join(context.homeDir, ".atlas", "core");
+    this.#configDir = resolveConfigDirectory(context.env.ATLAS_CORE_HOME, context.homeDir);
     this.#envFile = join(this.#configDir, ".env");
     this.#stateFile = join(this.#configDir, "state.json");
     this.#composeFile = join(context.packageRoot, "assets", "docker-compose.yml");
@@ -144,13 +184,47 @@ class AtlasCoreDeployment {
   }
 
   async init(): Promise<void> {
-    await this.#preflight();
-    if (this.#isInitialized()) {
+    const dockerEngineId = await this.#preflight();
+    this.#prepareConfigDirectory();
+
+    const hasEnv = existsSync(this.#envFile);
+    const hasState = existsSync(this.#stateFile);
+    if (hasEnv) this.#assertPrivateFile(this.#envFile);
+    if (hasState) this.#assertPrivateFile(this.#stateFile);
+
+    const existingState = this.#readState();
+    if (hasState && !existingState) {
+      throw new Error(`${this.#stateFile} is invalid. Initialization stopped so existing storage is not adopted.`);
+    }
+    if (existingState && existingState.schema !== CONFIG_SCHEMA) {
+      throw new Error(`Atlas Core state schema ${existingState.schema} is not supported by this CLI.`);
+    }
+    if (existingState?.phase === "ready") {
+      if (!hasEnv)
+        throw new Error(`Atlas Core state exists without ${this.#envFile}. Restore the matching credentials.`);
+      this.#assertStateMatchesRuntime(existingState, dockerEngineId);
       this.#stdout.write(`Atlas Core is already initialized at ${this.#configDir}.\n`);
       return;
     }
+    if (existingState) {
+      this.#assertStateMatchesRuntime(existingState, dockerEngineId);
+      if (
+        existingState.initializingPid !== undefined &&
+        existingState.initializingPid !== process.pid &&
+        processIsRunning(existingState.initializingPid)
+      ) {
+        throw new Error(
+          `Another atlas-core init process is already running with PID ${existingState.initializingPid}.`
+        );
+      }
+    }
+    if (hasEnv && !existingState) {
+      throw new Error(
+        `Atlas Core found ${this.#envFile} without matching initialization state. ` +
+          "Initialization stopped so arbitrary credentials cannot adopt existing storage."
+      );
+    }
 
-    const hasEnv = existsSync(this.#envFile);
     const [hasPostgres, hasMinio, hasApiContainer, hasPostgresContainer, hasMinioContainer] = await Promise.all([
       this.#volumeExists(POSTGRES_VOLUME),
       this.#volumeExists(MINIO_VOLUME),
@@ -171,22 +245,31 @@ class AtlasCoreDeployment {
       );
     }
 
+    const initializingState = this.#writeInitializingState(dockerEngineId, existingState);
     if (!hasEnv) this.#writeConfiguration();
 
     let startedMinio = false;
     try {
       this.#stdout.write("Provisioning the new durable MinIO store...\n");
-      await this.#runComposeChecked(["up", "-d", "--wait", "minio"]);
       startedMinio = true;
+      await this.#runComposeChecked(["up", "-d", "--wait", "--wait-timeout", COMPOSE_WAIT_SECONDS, "minio"]);
+      await this.#runComposeChecked([
+        "exec",
+        "-T",
+        "minio",
+        "sh",
+        "-c",
+        'mc alias set local http://127.0.0.1:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null'
+      ]);
       const bucket = this.#readConfigValue("MINIO_BUCKET") ?? "atlas-media";
       await this.#runComposeChecked(["exec", "-T", "minio", "mc", "mb", "--ignore-existing", `local/${bucket}`]);
       await this.#runComposeChecked(["exec", "-T", "minio", "mc", "anonymous", "set", "none", `local/${bucket}`]);
-      await this.#runComposeChecked(["down", "--remove-orphans"]);
+      await this.#runComposeChecked(["down"]);
       startedMinio = false;
-      this.#writeState();
+      this.#writeReadyState(initializingState);
     } finally {
       if (startedMinio) {
-        await this.#runCompose(["down", "--remove-orphans"]);
+        await this.#runCompose(["down"]);
       }
     }
 
@@ -197,43 +280,54 @@ class AtlasCoreDeployment {
 
   async start(): Promise<void> {
     const state = this.#requireInitialized();
-    await this.#preflight();
+    const dockerEngineId = await this.#preflight();
+    this.#assertStateMatchesRuntime(state, dockerEngineId);
     await this.#assertStartIsSafe(state);
+    const attemptedState = this.#recordStartAttempt(state);
     this.#stdout.write(`Starting Atlas Core ${PACKAGE_VERSION}...\n`);
-    await this.#runComposeChecked(["up", "-d", "--pull", "missing", "--wait"]);
-    this.#recordStarted(state);
+    await this.#runComposeChecked(["up", "-d", "--pull", "always", "--wait", "--wait-timeout", COMPOSE_WAIT_SECONDS]);
+    this.#recordStarted(attemptedState);
     this.#stdout.write("Atlas Core is ready.\n");
     this.#stdout.write("API:       http://127.0.0.1:8000\n");
     this.#stdout.write("MinIO UI:  http://127.0.0.1:9001\n");
   }
 
   async stop(): Promise<void> {
-    this.#requireInitialized();
-    await this.#preflight();
-    await this.#runComposeChecked(["down", "--remove-orphans"]);
+    const state = this.#requireInitialized();
+    const dockerEngineId = await this.#preflight();
+    this.#assertStateMatchesRuntime(state, dockerEngineId);
+    await this.#runComposeChecked(["down"]);
     this.#stdout.write("Atlas Core stopped. Durable volumes were preserved.\n");
   }
 
   async restart(): Promise<void> {
     const state = this.#requireInitialized();
-    await this.#preflight();
+    const dockerEngineId = await this.#preflight();
+    this.#assertStateMatchesRuntime(state, dockerEngineId);
     await this.#assertStartIsSafe(state);
-    await this.#runComposeChecked(["down", "--remove-orphans"]);
-    await this.#runComposeChecked(["up", "-d", "--pull", "missing", "--wait"]);
-    this.#recordStarted(state);
+    const attemptedState = this.#recordStartAttempt(state);
+    await this.#runComposeChecked(["down"]);
+    await this.#runComposeChecked(["up", "-d", "--pull", "always", "--wait", "--wait-timeout", COMPOSE_WAIT_SECONDS]);
+    this.#recordStarted(attemptedState);
     this.#stdout.write(`Atlas Core ${PACKAGE_VERSION} restarted and is ready.\n`);
   }
 
   async status(): Promise<boolean> {
-    this.#requireInitialized();
-    await this.#preflight();
-    const result = await this.#runCompose(["ps", "--status", "running", "--services"]);
+    const state = this.#requireInitialized();
+    const dockerEngineId = await this.#preflight();
+    this.#assertStateMatchesRuntime(state, dockerEngineId);
+    const result = await this.#runCompose(["ps", "--all", "--format", "json"]);
     if (result.status !== 0) throw commandFailure("docker compose ps", result);
-    if (result.stdout) this.#stdout.write(result.stdout);
-    const running = new Set(result.stdout.split(/\s+/).filter(Boolean));
-    const missing = [...REQUIRED_SERVICES].filter((service) => !running.has(service));
-    if (missing.length > 0) {
-      this.#stderr.write(`Atlas Core is not ready. Missing running services: ${missing.join(", ")}.\n`);
+    const services = parseComposeServiceStates(result.stdout);
+    const failures = [...REQUIRED_SERVICES].flatMap((service) => {
+      const current = services.find((candidate) => candidate.Service === service);
+      if (!current) return [`${service} is missing`];
+      if (current.State !== "running") return [`${service} is ${current.State || "in an unknown state"}`];
+      if (current.Health !== "healthy") return [`${service} is ${current.Health || "not reporting health"}`];
+      return [];
+    });
+    if (failures.length > 0) {
+      this.#stderr.write(`Atlas Core is not ready: ${failures.join(", ")}.\n`);
       return false;
     }
     this.#stdout.write("Atlas Core is running.\n");
@@ -241,8 +335,9 @@ class AtlasCoreDeployment {
   }
 
   async logs(service: "api" | "minio" | "postgres" | undefined, follow: boolean): Promise<void> {
-    this.#requireInitialized();
-    await this.#preflight();
+    const state = this.#requireInitialized();
+    const dockerEngineId = await this.#preflight();
+    this.#assertStateMatchesRuntime(state, dockerEngineId);
     const args = ["logs", "--tail", "200"];
     if (follow) args.push("--follow");
     if (service) args.push(service);
@@ -277,17 +372,17 @@ class AtlasCoreDeployment {
       {
         label: "Docker daemon",
         check: async () => {
-          await this.#checkCommand("docker", ["info"]);
-          return "available";
+          const dockerEngineId = oneLine(await this.#checkCommand("docker", ["info", "--format", "{{.ID}}"]));
+          if (!dockerEngineId) throw new Error("Docker did not report an engine ID");
+          return dockerEngineId;
         }
       },
       {
         label: "configuration",
         check: async () => {
-          this.#requireInitialized();
-          if (this.#platform !== "win32" && (statSync(this.#envFile).mode & 0o077) !== 0) {
-            throw new Error(`${this.#envFile} is readable by other users`);
-          }
+          const state = this.#requireInitialized();
+          const dockerEngineId = oneLine(await this.#checkCommand("docker", ["info", "--format", "{{.ID}}"]));
+          this.#assertStateMatchesRuntime(state, dockerEngineId);
           await this.#runComposeChecked(["config", "--quiet"]);
           return this.#configDir;
         }
@@ -306,14 +401,16 @@ class AtlasCoreDeployment {
     return healthy;
   }
 
-  async #preflight(): Promise<void> {
+  async #preflight(): Promise<string> {
     if (!SUPPORTED_PLATFORMS.has(this.#platform)) {
       throw new Error(`Atlas Core supports macOS and Linux. Detected ${this.#platform}.`);
     }
     assertNodeVersion(this.#nodeVersion);
     await this.#checkCommand("docker", ["--version"]);
     await this.#checkCommand("docker", ["compose", "version"]);
-    await this.#checkCommand("docker", ["info"]);
+    const dockerEngineId = oneLine(await this.#checkCommand("docker", ["info", "--format", "{{.ID}}"]));
+    if (!dockerEngineId) throw new Error("Docker did not report an engine ID.");
+    return dockerEngineId;
   }
 
   async #checkCommand(command: string, args: string[]): Promise<string> {
@@ -323,27 +420,59 @@ class AtlasCoreDeployment {
   }
 
   async #volumeExists(name: string): Promise<boolean> {
-    const result = await this.#runner.run("docker", ["volume", "inspect", name], { env: this.#env });
-    return result.status === 0;
+    const volume = name === POSTGRES_VOLUME ? "postgres_data" : "minio_data";
+    return await this.#ownedResourceExists("volume", name, {
+      "com.docker.compose.project": PROJECT_NAME,
+      "com.docker.compose.volume": volume
+    });
   }
 
   async #containerExists(name: string): Promise<boolean> {
-    const result = await this.#runner.run("docker", ["container", "inspect", name], { env: this.#env });
-    return result.status === 0;
+    const service = name === API_CONTAINER ? "api" : name === POSTGRES_CONTAINER ? "postgres" : "minio";
+    return await this.#ownedResourceExists("container", name, {
+      "com.docker.compose.project": PROJECT_NAME,
+      "com.docker.compose.service": service
+    });
+  }
+
+  async #ownedResourceExists(
+    kind: "container" | "volume",
+    name: string,
+    expectedLabels: Record<string, string>
+  ): Promise<boolean> {
+    const result = await this.#runner.run("docker", [kind, "inspect", "--format", "{{json .Labels}}", name], {
+      env: this.#env
+    });
+    if (result.status !== 0) {
+      if (new RegExp(`no such ${kind}`, "i").test(result.stderr || result.stdout)) return false;
+      throw commandFailure(`docker ${kind} inspect ${name}`, result);
+    }
+
+    let labels: unknown;
+    try {
+      labels = JSON.parse(result.stdout);
+    } catch {
+      throw new Error(`Docker returned invalid ownership labels for ${kind} ${name}.`);
+    }
+    if (typeof labels !== "object" || labels === null) {
+      throw new Error(`Atlas Core found ${kind} ${name} without Docker Compose ownership labels.`);
+    }
+    const record = labels as Record<string, unknown>;
+    const mismatch = Object.entries(expectedLabels).find(([key, value]) => record[key] !== value);
+    if (mismatch) {
+      throw new Error(
+        `Atlas Core found ${kind} ${name} without the expected ${mismatch[0]}=${mismatch[1]} ownership label.`
+      );
+    }
+    return true;
   }
 
   async #assertStartIsSafe(state: DeploymentState): Promise<void> {
-    if (state.packageVersion !== PACKAGE_VERSION) {
-      throw new Error(
-        `Atlas Core ${state.packageVersion} initialized this deployment, but the installed CLI is ${PACKAGE_VERSION}. ` +
-          `Reinstall atlas-core@${state.packageVersion}; automatic upgrades are not supported yet.`
-      );
-    }
     const [hasPostgres, hasMinio] = await Promise.all([
       this.#volumeExists(POSTGRES_VOLUME),
       this.#volumeExists(MINIO_VOLUME)
     ]);
-    if (!hasMinio || (state.startedAt !== undefined && !hasPostgres)) {
+    if (!hasMinio || ((state.startAttemptedAt !== undefined || state.startedAt !== undefined) && !hasPostgres)) {
       throw new Error(
         "Atlas Core durable storage is missing. Start stopped so Docker Compose cannot replace it with an empty volume."
       );
@@ -351,8 +480,6 @@ class AtlasCoreDeployment {
   }
 
   #writeConfiguration(): void {
-    mkdirSync(this.#configDir, { recursive: true, mode: 0o700 });
-    if (this.#platform !== "win32") chmodSync(this.#configDir, 0o700);
     const contents = [
       "# Generated by atlas-core init. Keep this file private and back it up securely.",
       `POSTGRES_PASSWORD=${this.#createSecret()}`,
@@ -375,21 +502,58 @@ class AtlasCoreDeployment {
       "MAX_VIEW_SIZE_MB=10",
       ""
     ].join("\n");
-    writePrivateFile(this.#envFile, contents, this.#platform);
+    try {
+      writePrivateFile(this.#envFile, contents, this.#platform, true);
+    } catch (error) {
+      if (isNodeError(error) && error.code === "EEXIST") {
+        throw new Error(`Another atlas-core init process created ${this.#envFile}. Run init again after it exits.`);
+      }
+      throw error;
+    }
   }
 
-  #writeState(): void {
+  #writeInitializingState(dockerEngineId: string, previous: DeploymentState | undefined): DeploymentState {
     const state: DeploymentState = {
       schema: CONFIG_SCHEMA,
-      initializedAt: this.#now().toISOString(),
-      packageVersion: PACKAGE_VERSION
+      phase: "initializing",
+      initializedAt: previous?.initializedAt ?? this.#now().toISOString(),
+      packageVersion: PACKAGE_VERSION,
+      dockerEngineId,
+      initializingPid: process.pid
     };
-    writePrivateFile(this.#stateFile, `${JSON.stringify(state, null, 2)}\n`, this.#platform);
+    try {
+      writePrivateFile(this.#stateFile, `${JSON.stringify(state, null, 2)}\n`, this.#platform, previous === undefined);
+    } catch (error) {
+      if (isNodeError(error) && error.code === "EEXIST") {
+        throw new Error(`Another atlas-core init process created ${this.#stateFile}. Run init again after it exits.`);
+      }
+      throw error;
+    }
+    return state;
+  }
+
+  #writeReadyState(state: DeploymentState): void {
+    const readyState: DeploymentState = {
+      ...state,
+      phase: "ready"
+    };
+    delete readyState.initializingPid;
+    writePrivateFile(this.#stateFile, `${JSON.stringify(readyState, null, 2)}\n`, this.#platform);
+  }
+
+  #recordStartAttempt(state: DeploymentState): DeploymentState {
+    const attemptedState: DeploymentState = {
+      ...state,
+      startAttemptedAt: state.startAttemptedAt ?? this.#now().toISOString()
+    };
+    writePrivateFile(this.#stateFile, `${JSON.stringify(attemptedState, null, 2)}\n`, this.#platform);
+    return attemptedState;
   }
 
   #recordStarted(state: DeploymentState): void {
     const startedState: DeploymentState = {
       ...state,
+      startAttemptedAt: state.startAttemptedAt ?? this.#now().toISOString(),
       startedAt: state.startedAt ?? this.#now().toISOString()
     };
     writePrivateFile(this.#stateFile, `${JSON.stringify(startedState, null, 2)}\n`, this.#platform);
@@ -406,17 +570,74 @@ class AtlasCoreDeployment {
     }
   }
 
-  #isInitialized(): boolean {
-    const state = this.#readState();
-    return existsSync(this.#envFile) && state?.schema === CONFIG_SCHEMA;
-  }
-
   #requireInitialized(): DeploymentState {
+    if (!existsSync(this.#configDir) || !existsSync(this.#envFile) || !existsSync(this.#stateFile)) {
+      throw new Error("Atlas Core is not initialized. Run atlas-core init first.");
+    }
+    this.#assertPrivateConfiguration();
     const state = this.#readState();
-    if (!existsSync(this.#envFile) || state?.schema !== CONFIG_SCHEMA) {
+    if (state?.schema !== CONFIG_SCHEMA || state.phase !== "ready") {
       throw new Error("Atlas Core is not initialized. Run atlas-core init first.");
     }
     return state;
+  }
+
+  #prepareConfigDirectory(): void {
+    if (!existsSync(this.#configDir)) {
+      mkdirSync(this.#configDir, { recursive: true, mode: 0o700 });
+      if (this.#platform !== "win32") chmodSync(this.#configDir, 0o700);
+      return;
+    }
+    this.#assertPrivateDirectory();
+  }
+
+  #assertPrivateConfiguration(): void {
+    this.#assertPrivateDirectory();
+    if (existsSync(this.#envFile)) this.#assertPrivateFile(this.#envFile);
+    if (existsSync(this.#stateFile)) this.#assertPrivateFile(this.#stateFile);
+  }
+
+  #assertPrivateDirectory(): void {
+    const info = lstatSync(this.#configDir);
+    if (info.isSymbolicLink() || !info.isDirectory()) {
+      throw new Error(`${this.#configDir} must be a regular directory, not a symlink or another file type.`);
+    }
+    this.#assertPrivateOwnershipAndMode(this.#configDir, info, 0o700);
+  }
+
+  #assertPrivateFile(path: string): void {
+    const info = lstatSync(path);
+    if (info.isSymbolicLink() || !info.isFile()) {
+      throw new Error(`${path} must be a regular file, not a symlink or another file type.`);
+    }
+    this.#assertPrivateOwnershipAndMode(path, info, 0o600);
+  }
+
+  #assertPrivateOwnershipAndMode(path: string, info: Stats, expectedMode: number): void {
+    if (this.#platform === "win32") return;
+    const currentUserId = process.getuid?.();
+    if (currentUserId !== undefined && info.uid !== currentUserId) {
+      throw new Error(`${path} is owned by UID ${info.uid}, not the current user.`);
+    }
+    const actualMode = info.mode & 0o777;
+    if (actualMode !== expectedMode) {
+      throw new Error(`${path} must have mode ${expectedMode.toString(8)}, not ${actualMode.toString(8)}.`);
+    }
+  }
+
+  #assertStateMatchesRuntime(state: DeploymentState, dockerEngineId: string): void {
+    if (state.packageVersion !== PACKAGE_VERSION) {
+      throw new Error(
+        `Atlas Core ${state.packageVersion} initialized this deployment, but the installed CLI is ${PACKAGE_VERSION}. ` +
+          `Reinstall atlas-core@${state.packageVersion}; automatic upgrades are not supported yet.`
+      );
+    }
+    if (state.dockerEngineId !== dockerEngineId) {
+      throw new Error(
+        `Atlas Core was initialized on Docker engine ${state.dockerEngineId}, but the current engine is ${dockerEngineId}. ` +
+          "Restore the original Docker context before operating this deployment."
+      );
+    }
   }
 
   #readConfigValue(name: string): string | undefined {
@@ -427,9 +648,12 @@ class AtlasCoreDeployment {
   }
 
   async #runCompose(args: string[], inherit = false): Promise<CommandResult> {
+    const env = { ...this.#env };
+    for (const variable of COMPOSE_VARIABLES) delete env[variable];
+    env.ATLAS_CORE_IMAGE = DEFAULT_IMAGE;
     return await this.#runner.run("docker", this.#composeArgs(args), {
       cwd: this.#configDir,
-      env: { ...this.#env, ATLAS_CORE_IMAGE: DEFAULT_IMAGE },
+      env,
       inherit
     });
   }
@@ -564,7 +788,12 @@ function defaultContext(context: CLIContext): RequiredRuntimeContext {
   };
 }
 
-function writePrivateFile(path: string, contents: string, platform: NodeJS.Platform): void {
+function writePrivateFile(path: string, contents: string, platform: NodeJS.Platform, exclusive = false): void {
+  if (exclusive) {
+    writeFileSync(path, contents, { encoding: "utf8", mode: 0o600, flag: "wx" });
+    if (platform !== "win32") chmodSync(path, 0o600);
+    return;
+  }
   const temporaryPath = `${path}.${process.pid}.tmp`;
   writeFileSync(temporaryPath, contents, { encoding: "utf8", mode: 0o600, flag: "wx" });
   renameSync(temporaryPath, path);
@@ -576,10 +805,63 @@ function isDeploymentState(value: unknown): value is DeploymentState {
   const record = value as Record<string, unknown>;
   return (
     typeof record.schema === "number" &&
+    (record.phase === "initializing" || record.phase === "ready") &&
     typeof record.initializedAt === "string" &&
     typeof record.packageVersion === "string" &&
+    typeof record.dockerEngineId === "string" &&
+    (record.initializingPid === undefined ||
+      (typeof record.initializingPid === "number" &&
+        Number.isInteger(record.initializingPid) &&
+        record.initializingPid > 0)) &&
+    (record.startAttemptedAt === undefined || typeof record.startAttemptedAt === "string") &&
     (record.startedAt === undefined || typeof record.startedAt === "string")
   );
+}
+
+function resolveConfigDirectory(configured: string | undefined, homeDir: string): string {
+  if (!configured) return join(homeDir, ".atlas", "core");
+  if (configured === "~") return homeDir;
+  if (configured.startsWith("~/")) return resolve(homeDir, configured.slice(2));
+  return resolve(configured);
+}
+
+function processIsRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return isNodeError(error) && error.code === "EPERM";
+  }
+}
+
+function parseComposeServiceStates(stdout: string): ComposeServiceState[] {
+  const output = stdout.trim();
+  if (!output) return [];
+  let candidates: unknown[];
+  try {
+    const value: unknown = JSON.parse(output);
+    candidates = Array.isArray(value) ? value : [value];
+  } catch {
+    try {
+      candidates = output.split(/\r?\n/).map((line) => JSON.parse(line) as unknown);
+    } catch {
+      throw new Error("Docker Compose returned invalid JSON from ps.");
+    }
+  }
+  return candidates.map((candidate) => {
+    if (typeof candidate !== "object" || candidate === null) {
+      throw new Error("Docker Compose returned an invalid service from ps.");
+    }
+    const record = candidate as Record<string, unknown>;
+    if (typeof record.Service !== "string" || typeof record.State !== "string" || typeof record.Health !== "string") {
+      throw new Error("Docker Compose returned an incomplete service from ps.");
+    }
+    return { Service: record.Service, State: record.State, Health: record.Health };
+  });
+}
+
+function isNodeError(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error;
 }
 
 function assertNodeVersion(version: string): void {

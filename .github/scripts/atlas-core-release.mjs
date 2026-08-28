@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync } from "node:fs";
 
-const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const [command, ...args] = process.argv.slice(2);
 
@@ -46,46 +46,11 @@ function validateNextVersion(current, requested) {
 }
 
 function compareVersions(left, right) {
-  const leftVersion = parseVersion(left);
-  const rightVersion = parseVersion(right);
-  for (const key of ["major", "minor", "patch"]) {
-    const difference = leftVersion[key] - rightVersion[key];
+  const leftVersion = left.split(".").map(Number);
+  const rightVersion = right.split(".").map(Number);
+  for (let index = 0; index < leftVersion.length; index += 1) {
+    const difference = leftVersion[index] - rightVersion[index];
     if (difference !== 0) return Math.sign(difference);
-  }
-  return comparePrerelease(leftVersion.prerelease, rightVersion.prerelease);
-}
-
-function parseVersion(value) {
-  const separator = value.indexOf("-");
-  const core = separator === -1 ? value : value.slice(0, separator);
-  const prerelease = separator === -1 ? undefined : value.slice(separator + 1);
-  const [major, minor, patch] = core.split(".").map(Number);
-  return {
-    major,
-    minor,
-    patch,
-    prerelease: prerelease?.split(".") ?? []
-  };
-}
-
-function comparePrerelease(left, right) {
-  if (left.length === 0 || right.length === 0) {
-    if (left.length === right.length) return 0;
-    return left.length === 0 ? 1 : -1;
-  }
-  for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
-    const leftPart = left[index];
-    const rightPart = right[index];
-    if (leftPart === undefined || rightPart === undefined) {
-      if (leftPart === rightPart) return 0;
-      return leftPart === undefined ? -1 : 1;
-    }
-    if (leftPart === rightPart) continue;
-    const leftNumeric = /^\d+$/.test(leftPart);
-    const rightNumeric = /^\d+$/.test(rightPart);
-    if (leftNumeric && rightNumeric) return Math.sign(Number(leftPart) - Number(rightPart));
-    if (leftNumeric !== rightNumeric) return leftNumeric ? -1 : 1;
-    return leftPart < rightPart ? -1 : 1;
   }
   return 0;
 }

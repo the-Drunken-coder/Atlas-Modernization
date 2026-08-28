@@ -18,19 +18,15 @@ test("validates Atlas Core versions", () => {
   assert.notEqual(invalid.status, 0);
   assert.match(invalid.stderr, /without a leading v/);
   assert.notEqual(run(["validate-version", "1.2.3-01"], process.cwd()).status, 0);
+  assert.notEqual(run(["validate-version", "1.2.3-beta.1"], process.cwd()).status, 0);
 });
 
 test("rejects a release older than the current package version", () => {
   assert.equal(run(["validate-next-version", "1.2.3", "1.2.3"], process.cwd()).status, 0);
-  assert.equal(run(["validate-next-version", "1.2.3-beta.2", "1.2.3"], process.cwd()).status, 0);
-  assert.equal(run(["validate-next-version", "1.2.3-beta.2", "1.2.3-beta.10"], process.cwd()).status, 0);
 
   const older = run(["validate-next-version", "1.2.3", "1.2.2"], process.cwd());
   assert.notEqual(older.status, 0);
   assert.match(older.stderr, /older than the current package version/);
-
-  const olderPrerelease = run(["validate-next-version", "1.2.3", "1.2.3-rc.1"], process.cwd());
-  assert.notEqual(olderPrerelease.status, 0);
 });
 
 test("extracts and validates the newest release section", () => {

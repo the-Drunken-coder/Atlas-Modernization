@@ -16,11 +16,14 @@ identifies the npm CLI, the GHCR image, the git tag, and the GitHub Release.
 npm cannot configure trusted publishing until the first publication creates the package. Keep the bootstrap token's
 expiration short and do not reuse it elsewhere.
 
+The first run stops after pushing the GHCR image if anonymous pulls are still blocked. Make
+`ghcr.io/the-drunken-coder/atlas-core` public, then rerun the failed publishing job. The workflow will reuse the
+reviewed release commit and tag, verify the public image, and publish npm only after that check passes.
+
 ## After the first release
 
 1. Confirm the `atlas-core` npm package is public.
-2. Make `ghcr.io/the-drunken-coder/atlas-core` public. A new GHCR package may begin as private even when its source
-   repository is public.
+2. Confirm `ghcr.io/the-drunken-coder/atlas-core` remains public.
 3. Configure npm trusted publishing with these exact values:
    - organization or user: `the-Drunken-coder`
    - repository: `Atlas-Modernization`
@@ -35,14 +38,16 @@ Later releases require no npm token.
 
 ## Release flow
 
-1. Open **Actions**, select **Release Atlas Core**, and enter a SemVer value without a leading `v`.
+1. Open **Actions**, select **Release Atlas Core**, and enter a stable SemVer value without a leading `v`. Prerelease
+   versions are not supported.
 2. The preparation job checks Core and the npm package, gives the relevant git history to
    `opencode-go/gpt-5.6-luna`, and requires OpenCode to edit only `CHANGELOG.md`.
 3. Inspect the changelog diff and the prepared artifact in the workflow run.
 4. Approve the `release` environment deployment.
-5. The publishing job refuses to continue if `main` moved. It commits the version and changelog, pushes
-   `atlas-core-v<version>`, publishes the multi-architecture GHCR image and npm tarball, and creates the GitHub
-   Release.
+5. The publishing job refuses unrelated movement on `main`. It commits the version and changelog, pushes
+   `atlas-core-v<version>`, publishes the multi-architecture GHCR image, verifies anonymous access, and creates or
+   verifies the GitHub Release. npm publication is the final step.
 
-A rerun may reuse an already committed changelog section after a partial publication. It never asks OpenCode to write
-the same release section twice.
+A failed-job rerun recognizes the exact generated release commit, tag, image visibility, npm integrity, and release
+assets. It repairs an incomplete draft release but rejects mismatched published artifacts. It never asks OpenCode to
+write the same release section twice or rebuilds the image after npm already contains the reviewed tarball.

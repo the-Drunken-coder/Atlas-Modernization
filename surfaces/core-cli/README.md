@@ -50,7 +50,9 @@ for CORS, command-interface configuration, readiness checks, and trusted-proxy b
 
 PostgreSQL and the configured MinIO bucket are one durable store. Back them up and restore them together. The CLI
 never enables Core's destructive development startup mode and never passes `--volumes` to `docker compose down`.
-After the first successful start, it also refuses to recreate either durable volume if one goes missing.
+After the first full-stack start attempt, it refuses to recreate either durable volume if one goes missing. It also
+binds the state directory to the Docker engine that initialized it and verifies Docker Compose ownership labels before
+using an existing container or volume.
 
 If `init` finds existing Atlas volumes without its matching configuration, it stops. Do not delete those volumes to
 silence the check. Recover the credentials and paired storage instead.
