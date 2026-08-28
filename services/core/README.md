@@ -85,6 +85,21 @@ when that path is explicitly mounted and readable inside the process.
 
 For the production-image single-host stack:
 
+The published `atlas-core` npm CLI is the simplest path for a new single-host
+deployment. It generates owner-only credentials, proves that no prior Atlas
+volumes exist, provisions the initial MinIO bucket, and keeps later starts in
+durable mode:
+
+```bash
+npm install --global atlas-core
+atlas-core init
+atlas-core start
+```
+
+The CLI binds Core and its storage services to loopback in its first release.
+Use the manual production flow below for existing storage, custom ingress, or a
+deployment that does not fit the packaged topology.
+
 ```bash
 umask 077
 set -a
@@ -96,8 +111,8 @@ export MINIO_BUCKET="${MINIO_BUCKET:-atlas-media}"
 The owner-readable environment file must define `POSTGRES_PASSWORD`,
 `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD`, `API_AUTH_KEY`, and
 `ATLAS_ADMIN_PASSWORD`; the admin password must contain at least 12 characters.
-Before the first production start on a new MinIO volume, provision the configured
-durable bucket and verify it exists; production startup deliberately will not create it.
+Before the first manual production start on a new MinIO volume, provision the configured
+durable bucket and verify it exists; Core startup deliberately will not create it.
 `MINIO_BUCKET` defaults to `atlas-media` when the operator file omits it.
 
 ```bash

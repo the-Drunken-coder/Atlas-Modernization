@@ -9,6 +9,7 @@ This is the single entry point for project documentation. Docs are split into **
 
 | Location | What it holds | Use it when… |
 | --- | --- | --- |
+| [`docs/atlas-core/`](atlas-core/) | Atlas Core packaging, ingress, and release operations. | "How is the installable Core deployed or released?" |
 | [`docs/atlas-change-feed/`](atlas-change-feed/) | Change feed design: websocket push contract, subscription filters, consumption rules, simulation-testing approach. | "How do clients learn about writes without polling?" |
 | [`docs/atlas-plugins/`](atlas-plugins/) | Plugin architecture: operations, datastreams, external sources, isolation, and Core ownership. | "How does Atlas add external-data and extension capabilities?" |
 | [`docs/atlas-protocol/`](atlas-protocol/) | Atlas Protocol design decisions and reference docs. | "Why is the protocol shaped this way?" |
@@ -24,6 +25,7 @@ Start templates: [`design-decisions/_EXAMPLE_DESIGN_DECISION_.md`](design-decisi
 | Package | Docs | What it is |
 | --- | --- | --- |
 | `services/core/` | [`services/core/docs/`](../services/core/docs/README.md) | The Go HTTP API: handlers, actions, durable production database/storage, and explicit development scratch mode. Operational reference (pagination, errors, security, database workflow, entity/task/object shapes). |
+| `surfaces/core-cli/` | [`surfaces/core-cli/README.md`](../surfaces/core-cli/README.md) | The published `atlas-core` npm CLI for a durable single-host Core deployment. |
 | `packages/protocol/` | [`packages/protocol/README.md`](../packages/protocol/README.md) and [`docs/atlas-protocol/`](atlas-protocol/) | Buildable Atlas Protocol module: JSON Schema source, generated contracts, validators, examples, tooling, and planning/reference docs. |
 | `packages/sdk/` | [`docs/atlas-sdk/`](atlas-sdk/) | TypeScript/JavaScript Atlas SDK package: typed client, optional sync engine, CLI, package metadata, and Node/browser test suites. |
 | `packages/fieldlink/` | [`packages/fieldlink/docs/`](../packages/fieldlink/docs/README.md) | MeshCore transport, registered FieldLink messages, radio adapter, and hardware harness. |

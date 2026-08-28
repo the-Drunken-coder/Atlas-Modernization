@@ -203,6 +203,55 @@ jobs:
       - name: Run Atlas SDK browser tests
         run: npm run test:browser --workspace @the-drunken-coder/atlas-sdk
 
+  atlas-core-package:
+    name: atlas-core-package
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install JavaScript workspace dependencies
+        run: npm ci
+
+      - name: Check Atlas Core npm package
+        run: npm run check --workspace atlas-core
+
+      - name: Test Atlas Core release validation
+        run: node --test .github/scripts/atlas-core-release.test.mjs
+
+      - name: Validate packaged Docker Compose topology
+        run: |
+          config_dir="$(mktemp -d)"
+          trap 'rm -rf -- "$config_dir"' EXIT
+          cp surfaces/core-cli/test/compose.env "$config_dir/.env"
+          ATLAS_CORE_IMAGE=ghcr.io/the-drunken-coder/atlas-core:0.1.0 \
+            docker compose \
+              --project-name atlas_core_production \
+              --env-file "$config_dir/.env" \
+              --file surfaces/core-cli/assets/docker-compose.yml \
+              config --quiet
+          ATLAS_CORE_IMAGE=ghcr.io/the-drunken-coder/atlas-core:0.1.0 \
+            docker compose \
+              --project-name atlas_core_production \
+              --env-file "$config_dir/.env" \
+              --file surfaces/core-cli/assets/docker-compose.yml \
+              config --format json | jq -e '
+                .services.api.image == "ghcr.io/the-drunken-coder/atlas-core:0.1.0" and
+                .services.api.environment.DATABASE_RECREATE_ON_STARTUP == "false" and
+                .services.api.ports[0].host_ip == "127.0.0.1" and
+                .services.postgres.ports[0].host_ip == "127.0.0.1" and
+                .services.minio.ports[0].host_ip == "127.0.0.1"
+              '
+
   fieldlink:
     name: fieldlink
     runs-on: ubuntu-latest

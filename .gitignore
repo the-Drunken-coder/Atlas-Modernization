@@ -53,6 +53,7 @@ node_modules/
 coverage/
 /packages/sdk/dist/
 /packages/fieldlink/dist/
+/surfaces/core-cli/dist/
 /surfaces/command-interface/dist/
 /surfaces/command-interface/storybook-static/
 /surfaces/command-interface/.wrangler/
