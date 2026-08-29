@@ -599,6 +599,15 @@ jobs:
           fi
           echo "integrity=$local_integrity" >> "$GITHUB_OUTPUT"
 
+      - name: Require an existing npm version for main recovery
+        if: steps.phase.outputs.recovery == 'true' && steps.npm.outputs.version_exists != 'true'
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          echo "Main recovery cannot publish atlas-core@$VERSION with immutable-tag provenance." >&2
+          echo "Dispatch the workflow from atlas-core-v$VERSION to publish an absent npm version." >&2
+          exit 1
+
       - name: Create or verify draft GitHub Release
         if: steps.phase.outputs.mode == 'publish'
         env:
@@ -659,7 +668,10 @@ jobs:
           cmp release-artifacts/SHA256SUMS "$downloaded/SHA256SUMS"
 
       - name: Bootstrap the npm package
-        if: steps.npm.outputs.version_exists == 'false' && steps.npm.outputs.package_exists == 'false'
+        if: >-
+          steps.phase.outputs.recovery != 'true' &&
+          steps.npm.outputs.version_exists == 'false' &&
+          steps.npm.outputs.package_exists == 'false'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           VERSION: ${{ inputs.version }}
@@ -671,7 +683,10 @@ jobs:
           npm publish "./release-artifacts/atlas-core-$VERSION.tgz" --access public --provenance
 
       - name: Publish npm package through trusted publishing
-        if: steps.npm.outputs.version_exists == 'false' && steps.npm.outputs.package_exists == 'true'
+        if: >-
+          steps.phase.outputs.recovery != 'true' &&
+          steps.npm.outputs.version_exists == 'false' &&
+          steps.npm.outputs.package_exists == 'true'
         env:
           VERSION: ${{ inputs.version }}
         run: |

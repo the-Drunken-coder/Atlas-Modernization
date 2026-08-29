@@ -9,6 +9,7 @@ set -euo pipefail
 
 tag="atlas-core-v$VERSION"
 recover_existing_release="${RECOVER_EXISTING_RELEASE:-false}"
+recovery=false
 release_paths=(
   CHANGELOG.md
   package-lock.json
@@ -56,6 +57,7 @@ if [ "$GITHUB_REF" = "refs/heads/main" ]; then
     release_sha="$(git rev-list -n 1 "$tag")"
     validate_release_commit "$release_sha"
     mode=publish
+    recovery=true
     source_sha="$(git rev-parse "$release_sha^")"
   else
     if [ "$recover_existing_release" = "true" ]; then
@@ -82,6 +84,7 @@ fi
 
 {
   echo "mode=$mode"
+  echo "recovery=$recovery"
   echo "source_sha=$source_sha"
   echo "release_sha=$release_sha"
 } >> "$GITHUB_OUTPUT"

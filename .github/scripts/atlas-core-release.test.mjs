@@ -36,8 +36,20 @@ test("publishes the npm archive as a local filesystem path", () => {
 
 test("installs the npm package before auditing its signatures", () => {
   const source = readFileSync(workflow, "utf8");
-  assert.match(source, /npm install --ignore-scripts "atlas-core@\$VERSION"/);
-  assert.doesNotMatch(source, /npm install --package-lock-only/);
+  assert.match(
+    source,
+    /npm init --yes --silent >\/dev\/null\n\s+npm install --ignore-scripts "atlas-core@\$VERSION" >\/dev\/null\n\s+npm audit signatures/
+  );
+  assert.doesNotMatch(source, /npm install[^\n]*--package-lock-only(?:=true)?/);
+});
+
+test("does not publish a missing npm version from main recovery", () => {
+  const source = readFileSync(workflow, "utf8");
+  assert.match(
+    source,
+    /if: steps\.phase\.outputs\.recovery == 'true' && steps\.npm\.outputs\.version_exists != 'true'/
+  );
+  assert.equal(source.match(/steps\.phase\.outputs\.recovery != 'true'/g)?.length, 2);
 });
 
 test("recovers an existing immutable release only when explicitly requested", () => {
@@ -96,7 +108,7 @@ test("recovers an existing immutable release only when explicitly requested", ()
     assert.equal(recovery.status, 0, recovery.stderr);
     assert.equal(
       readFileSync(output, "utf8"),
-      `mode=publish\nsource_sha=${sourceSha}\nrelease_sha=${releaseSha}\n`
+      `mode=publish\nrecovery=true\nsource_sha=${sourceSha}\nrelease_sha=${releaseSha}\n`
     );
 
     writeFileSync(packagePath, '{"version":"0.1.0","atlasCoreImage":"different"}\n');
