@@ -7,6 +7,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 const script = join(dirname(fileURLToPath(import.meta.url)), "atlas-core-release.mjs");
+const workflow = join(dirname(fileURLToPath(import.meta.url)), "../workflows/release-atlas-core.yml");
 
 function run(args, cwd) {
   return spawnSync(process.execPath, [script, ...args], { cwd, encoding: "utf8", stdio: "pipe" });
@@ -19,6 +20,11 @@ test("validates Atlas Core versions", () => {
   assert.match(invalid.stderr, /without a leading v/);
   assert.notEqual(run(["validate-version", "1.2.3-01"], process.cwd()).status, 0);
   assert.notEqual(run(["validate-version", "1.2.3-beta.1"], process.cwd()).status, 0);
+});
+
+test("publishes the npm archive as a local filesystem path", () => {
+  const source = readFileSync(workflow, "utf8");
+  assert.equal(source.match(/npm publish "\.\/release-artifacts\/atlas-core-\$VERSION\.tgz"/g)?.length, 2);
 });
 
 test("rejects a release older than the current package version", () => {
