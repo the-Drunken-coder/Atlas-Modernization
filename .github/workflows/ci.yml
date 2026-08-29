@@ -263,6 +263,19 @@ jobs:
             .services.api.environment.CORS_ORIGINS == "" and
             .services.api.environment.CORS_ORIGIN_PATTERNS == ""
           ' <<< "$empty_cors_config"
+          init_config_json="$(
+            ATLAS_CORE_IMAGE="$image" docker compose \
+              --project-name atlas_core_production \
+              --env-file "$config_dir/.env" \
+              --file surfaces/core-cli/assets/docker-compose.init.yml \
+              config --format json
+          )"
+          jq -e '
+            (.services | keys) == ["minio"] and
+            (.volumes | keys) == ["minio_data"] and
+            .volumes.minio_data.external == true and
+            .volumes.minio_data.name == "atlas_core_production_minio_data"
+          ' <<< "$init_config_json"
 
   fieldlink:
     name: fieldlink

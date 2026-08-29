@@ -166,6 +166,7 @@ class AtlasCoreDeployment {
   readonly #stateFile: string;
   readonly #initLockFile: string;
   readonly #composeFile: string;
+  readonly #initComposeFile: string;
   readonly #runner: CommandRunner;
   readonly #stdout: { write(data: string): void };
   readonly #stderr: { write(data: string): void };
@@ -183,6 +184,7 @@ class AtlasCoreDeployment {
     this.#stateFile = join(this.#configDir, "state.json");
     this.#initLockFile = join(this.#configDir, ".init.lock");
     this.#composeFile = join(context.packageRoot, "assets", "docker-compose.yml");
+    this.#initComposeFile = join(context.packageRoot, "assets", "docker-compose.init.yml");
     this.#runner = context.runner;
     this.#stdout = context.stdout;
     this.#stderr = context.stderr;
@@ -272,8 +274,8 @@ class AtlasCoreDeployment {
     try {
       this.#stdout.write("Provisioning the new durable MinIO store...\n");
       startedMinio = true;
-      await this.#runComposeChecked(["up", "-d", "--wait", "--wait-timeout", COMPOSE_WAIT_SECONDS, "minio"]);
-      await this.#runComposeChecked([
+      await this.#runInitComposeChecked(["up", "-d", "--wait", "--wait-timeout", COMPOSE_WAIT_SECONDS, "minio"]);
+      await this.#runInitComposeChecked([
         "exec",
         "-T",
         "minio",
@@ -282,14 +284,14 @@ class AtlasCoreDeployment {
         'mc alias set local http://127.0.0.1:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null'
       ]);
       const bucket = this.#readConfigValue("MINIO_BUCKET") ?? "atlas-media";
-      await this.#runComposeChecked(["exec", "-T", "minio", "mc", "mb", "--ignore-existing", `local/${bucket}`]);
-      await this.#runComposeChecked(["exec", "-T", "minio", "mc", "anonymous", "set", "none", `local/${bucket}`]);
-      await this.#runComposeChecked(["down"]);
+      await this.#runInitComposeChecked(["exec", "-T", "minio", "mc", "mb", "--ignore-existing", `local/${bucket}`]);
+      await this.#runInitComposeChecked(["exec", "-T", "minio", "mc", "anonymous", "set", "none", `local/${bucket}`]);
+      await this.#runInitComposeChecked(["down"]);
       startedMinio = false;
       this.#writeReadyState(initializingState);
     } catch (error) {
       if (startedMinio) {
-        const cleanup = await this.#runCompose(["down"]);
+        const cleanup = await this.#runInitCompose(["down"]);
         if (cleanup.status !== 0) {
           throw new Error(
             `${errorMessage(error)} Cleanup also failed: ${errorMessage(commandFailure("docker compose down", cleanup))}`
@@ -787,10 +789,18 @@ class AtlasCoreDeployment {
   }
 
   async #runCompose(args: string[], inherit = false): Promise<CommandResult> {
+    return await this.#runComposeFile(this.#composeFile, args, inherit);
+  }
+
+  async #runInitCompose(args: string[]): Promise<CommandResult> {
+    return await this.#runComposeFile(this.#initComposeFile, args);
+  }
+
+  async #runComposeFile(composeFile: string, args: string[], inherit = false): Promise<CommandResult> {
     const env = { ...this.#env };
     for (const variable of COMPOSE_VARIABLES) delete env[variable];
     env.ATLAS_CORE_IMAGE = this.#imageReference ?? UNRELEASED_IMAGE;
-    return await this.#runner.run("docker", this.#composeArgs(args), {
+    return await this.#runner.run("docker", this.#composeArgs(composeFile, args), {
       cwd: this.#configDir,
       env,
       inherit
@@ -799,20 +809,19 @@ class AtlasCoreDeployment {
 
   async #runComposeChecked(args: string[]): Promise<void> {
     const result = await this.#runCompose(args);
-    if (result.status !== 0) throw commandFailure(`docker ${this.#composeArgs(args).join(" ")}`, result);
+    if (result.status !== 0)
+      throw commandFailure(`docker ${this.#composeArgs(this.#composeFile, args).join(" ")}`, result);
   }
 
-  #composeArgs(args: string[]): string[] {
-    return [
-      "compose",
-      "--project-name",
-      PROJECT_NAME,
-      "--env-file",
-      this.#envFile,
-      "--file",
-      this.#composeFile,
-      ...args
-    ];
+  async #runInitComposeChecked(args: string[]): Promise<void> {
+    const result = await this.#runInitCompose(args);
+    if (result.status !== 0) {
+      throw commandFailure(`docker ${this.#composeArgs(this.#initComposeFile, args).join(" ")}`, result);
+    }
+  }
+
+  #composeArgs(composeFile: string, args: string[]): string[] {
+    return ["compose", "--project-name", PROJECT_NAME, "--env-file", this.#envFile, "--file", composeFile, ...args];
   }
 }
 

@@ -410,7 +410,10 @@ jobs:
               exit 1
             fi
           done
-          digest="sha256:$(docker buildx imagetools inspect "$image" --raw | sha256sum | cut -d' ' -f1)"
+          digest="$(
+            docker buildx imagetools inspect "$image" --format '{{json .Manifest}}' |
+              jq -er '.digest | select(test("^sha256:[0-9a-f]{64}$"))'
+          )"
           echo "already_published=true" >> "$GITHUB_OUTPUT"
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
 

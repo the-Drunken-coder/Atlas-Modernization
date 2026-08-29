@@ -52,6 +52,7 @@ try {
     "README.md",
     "LICENSE",
     "dist/cli.js",
+    "assets/docker-compose.init.yml",
     "assets/docker-compose.yml",
     "assets/postgres/init.sql"
   ]) {

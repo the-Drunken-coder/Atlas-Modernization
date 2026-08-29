@@ -185,6 +185,11 @@ function composeCommand(call: Call): string[] {
   return call.args.slice(commandIndex);
 }
 
+function composeFile(call: Call): string | undefined {
+  const fileFlagIndex = call.args.indexOf("--file");
+  return fileFlagIndex === -1 ? undefined : call.args[fileFlagIndex + 1];
+}
+
 function markInitialized(test: TestRuntime, started = true): void {
   const config = join(test.home, ".atlas", "core");
   mkdirSync(config, { recursive: true, mode: 0o700 });
@@ -256,7 +261,9 @@ describe("atlas-core CLI", () => {
     expect(test.runner.existingNetworks).not.toContain(INIT_LOCK_NETWORK);
     expect(test.runner.existingVolumes).toContain("atlas_core_production_minio_data");
     expect(test.runner.existingVolumes).not.toContain("atlas_core_production_postgres_data");
-    expect(test.runner.calls.map(composeCommand).filter((args) => args.length > 0)).toEqual([
+    const composeCalls = test.runner.calls.filter((call) => composeCommand(call).length > 0);
+    expect(composeCalls.every((call) => composeFile(call)?.endsWith("docker-compose.init.yml"))).toBe(true);
+    expect(composeCalls.map(composeCommand)).toEqual([
       ["up", "-d", "--wait", "--wait-timeout", "120", "minio"],
       [
         "exec",

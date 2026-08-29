@@ -1,0 +1,16 @@
+name: atlas_core_production
+
+services:
+  minio:
+    extends:
+      file: docker-compose.yml
+      service: minio
+
+volumes:
+  minio_data:
+    external: true
+    name: atlas_core_production_minio_data
+
+networks:
+  atlas_core_network:
+    driver: bridge
