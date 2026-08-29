@@ -130,15 +130,23 @@ test("extracts and validates the newest release section", () => {
 test("validates the first release after the changelog introduction", () => {
   const directory = mkdtempSync(join(tmpdir(), "atlas-core-release-"));
   try {
-    const previous = "# Changelog\n\nRelease notes are listed newest first.\n";
     const previousPath = join(directory, "previous.md");
-    writeFileSync(previousPath, previous);
-    writeFileSync(join(directory, "CHANGELOG.md"), `${previous}\n## 0.1.0 - 2026-08-29\n\n- First release.\n`);
-
     const notes = join(directory, "notes.md");
-    const validation = run(["validate-changelog", "0.1.0", "2026-08-29", notes, previousPath], directory);
-    assert.equal(validation.status, 0, validation.stderr);
-    assert.equal(readFileSync(notes, "utf8"), "- First release.\n");
+    for (const previous of [
+      "# Changelog\n\nRelease notes are listed newest first.\n",
+      "# Changelog\n\nRelease notes are listed newest first."
+    ]) {
+      const separator = previous.endsWith("\n") ? "\n" : "\n\n";
+      writeFileSync(previousPath, previous);
+      writeFileSync(
+        join(directory, "CHANGELOG.md"),
+        `${previous}${separator}## 0.1.0 - 2026-08-29\n\n- First release.\n`
+      );
+
+      const validation = run(["validate-changelog", "0.1.0", "2026-08-29", notes, previousPath], directory);
+      assert.equal(validation.status, 0, validation.stderr);
+      assert.equal(readFileSync(notes, "utf8"), "- First release.\n");
+    }
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
