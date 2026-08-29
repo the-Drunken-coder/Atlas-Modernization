@@ -504,7 +504,7 @@ describe("atlas-core CLI", () => {
   it("refuses to start from an unreleased package without a pinned image", async () => {
     const test = runtime();
     markInitialized(test, false);
-    delete test.context.imageReference;
+    test.context.imageReference = "";
 
     expect(await runCLI(["start"], test.context)).toBe(1);
     expect(test.stderr.join("")).toContain("has no pinned Core image");
