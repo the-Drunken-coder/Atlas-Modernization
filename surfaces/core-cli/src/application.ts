@@ -51,6 +51,7 @@ const CONFIG_SCHEMA = 1;
 const COMPOSE_WAIT_SECONDS = "120";
 const MINIMUM_COMPOSE_VERSION = [2, 17, 0] as const;
 const UNRELEASED_IMAGE = "ghcr.io/the-drunken-coder/atlas-core:unreleased";
+const SUPPORTED_DOCKER_ARCHITECTURES = new Set(["amd64", "arm64", "aarch64", "x86_64"]);
 
 const usage = `Atlas Core ${PACKAGE_VERSION}
 
@@ -119,6 +120,12 @@ type DeploymentState = {
   dockerEngineId: string;
   startAttemptedAt?: string;
   startedAt?: string;
+};
+
+type DockerRuntime = {
+  architecture: string;
+  engineId: string;
+  operatingSystem: string;
 };
 
 type ComposeServiceState = {
@@ -338,8 +345,9 @@ class AtlasCoreDeployment {
     const needsPostgresVolume = await this.#assertStartIsSafe(state);
     if (needsPostgresVolume) await this.#createVolume(POSTGRES_VOLUME, "postgres_data");
     const attemptedState = this.#recordStartAttempt(state);
+    await this.#runComposeChecked(["pull"]);
     await this.#runComposeChecked(["down"]);
-    await this.#runComposeChecked(["up", "-d", "--pull", "always", "--wait", "--wait-timeout", COMPOSE_WAIT_SECONDS]);
+    await this.#runComposeChecked(["up", "-d", "--pull", "never", "--wait", "--wait-timeout", COMPOSE_WAIT_SECONDS]);
     this.#recordStarted(attemptedState);
     this.#stdout.write(`Atlas Core ${PACKAGE_VERSION} restarted and is ready.\n`);
   }
@@ -411,17 +419,16 @@ class AtlasCoreDeployment {
       {
         label: "Docker daemon",
         check: async () => {
-          const dockerEngineId = oneLine(await this.#checkCommand("docker", ["info", "--format", "{{.ID}}"]));
-          if (!dockerEngineId) throw new Error("Docker did not report an engine ID");
-          return dockerEngineId;
+          const runtime = await this.#dockerRuntime();
+          return `${runtime.engineId} (${runtime.operatingSystem}/${runtime.architecture})`;
         }
       },
       {
         label: "configuration",
         check: async () => {
           const state = this.#requireInitialized();
-          const dockerEngineId = oneLine(await this.#checkCommand("docker", ["info", "--format", "{{.ID}}"]));
-          this.#assertStateMatchesRuntime(state, dockerEngineId);
+          const runtime = await this.#dockerRuntime();
+          this.#assertStateMatchesRuntime(state, runtime.engineId);
           await this.#runComposeChecked(["config", "--quiet"]);
           return this.#configDir;
         }
@@ -451,9 +458,46 @@ class AtlasCoreDeployment {
     await this.#checkCommand("docker", ["--version"]);
     const composeVersion = oneLine(await this.#checkCommand("docker", ["compose", "version", "--short"]));
     assertComposeVersion(composeVersion);
-    const dockerEngineId = oneLine(await this.#checkCommand("docker", ["info", "--format", "{{.ID}}"]));
-    if (!dockerEngineId) throw new Error("Docker did not report an engine ID.");
-    return dockerEngineId;
+    return (await this.#dockerRuntime()).engineId;
+  }
+
+  async #dockerRuntime(): Promise<DockerRuntime> {
+    const context = oneLine(await this.#checkCommand("docker", ["context", "show"]));
+    if (!context) throw new Error("Docker did not report an active context.");
+    const contextHost = oneLine(
+      await this.#checkCommand("docker", [
+        "context",
+        "inspect",
+        context,
+        "--format",
+        '{{(index .Endpoints "docker").Host}}'
+      ])
+    );
+    const configuredContext = this.#env.DOCKER_CONTEXT?.trim();
+    const dockerHost = configuredContext ? contextHost : this.#env.DOCKER_HOST?.trim() || contextHost;
+    if (!dockerHost.startsWith("unix://")) {
+      throw new Error(
+        `Atlas Core requires a local Docker daemon over a Unix socket. Context ${context} uses ${dockerHost || "no endpoint"}.`
+      );
+    }
+
+    const raw = await this.#checkCommand("docker", ["info", "--format", "{{json .}}"]);
+    let info: unknown;
+    try {
+      info = JSON.parse(raw);
+    } catch {
+      throw new Error("Docker returned invalid daemon information.");
+    }
+    if (!isDockerInfo(info)) {
+      throw new Error("Docker daemon information is missing its ID, operating system, or architecture.");
+    }
+    if (info.OSType !== "linux") {
+      throw new Error(`Atlas Core requires a Linux Docker daemon. Detected ${info.OSType}.`);
+    }
+    if (!SUPPORTED_DOCKER_ARCHITECTURES.has(info.Architecture)) {
+      throw new Error(`Atlas Core supports amd64 and arm64 Docker daemons. Detected ${info.Architecture}.`);
+    }
+    return { architecture: info.Architecture, engineId: info.ID, operatingSystem: info.OSType };
   }
 
   async #checkCommand(command: string, args: string[]): Promise<string> {
@@ -799,6 +843,11 @@ class AtlasCoreDeployment {
   async #runComposeFile(composeFile: string, args: string[], inherit = false): Promise<CommandResult> {
     const env = { ...this.#env };
     for (const variable of COMPOSE_VARIABLES) delete env[variable];
+    for (const variable of Object.keys(env)) {
+      if (variable.startsWith("COMPOSE_")) delete env[variable];
+    }
+    env.COMPOSE_IGNORE_ORPHANS = "0";
+    env.COMPOSE_REMOVE_ORPHANS = "0";
     env.ATLAS_CORE_IMAGE = this.#imageReference ?? UNRELEASED_IMAGE;
     return await this.#runner.run("docker", this.#composeArgs(composeFile, args), {
       cwd: this.#configDir,
@@ -963,6 +1012,17 @@ function isDeploymentState(value: unknown): value is DeploymentState {
     typeof record.dockerEngineId === "string" &&
     (record.startAttemptedAt === undefined || typeof record.startAttemptedAt === "string") &&
     (record.startedAt === undefined || typeof record.startedAt === "string")
+  );
+}
+
+function isDockerInfo(value: unknown): value is { ID: string; OSType: string; Architecture: string } {
+  if (!value || typeof value !== "object") return false;
+  const info = value as Record<string, unknown>;
+  return (
+    typeof info.ID === "string" &&
+    info.ID.length > 0 &&
+    typeof info.OSType === "string" &&
+    typeof info.Architecture === "string"
   );
 }
 

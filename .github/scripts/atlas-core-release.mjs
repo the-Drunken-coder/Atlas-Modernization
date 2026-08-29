@@ -14,6 +14,20 @@ switch (command) {
   case "existing-date":
     process.stdout.write(existingDate(required(args[0], "version")) ?? "");
     break;
+  case "prepare-package":
+    preparePackage(required(args[0], "version"), args[1] ?? "surfaces/core-cli/package.json");
+    break;
+  case "validate-npm-attestation":
+    validateNpmAttestation({
+      version: required(args[0], "version"),
+      integrity: required(args[1], "integrity"),
+      bundlePath: required(args[2], "attestation bundle path"),
+      repository: required(args[3], "repository"),
+      workflow: required(args[4], "workflow path"),
+      ref: required(args[5], "workflow ref"),
+      commit: required(args[6], "release commit")
+    });
+    break;
   case "validate-changelog":
     validateChangelog(
       required(args[0], "version"),
@@ -24,7 +38,7 @@ switch (command) {
     break;
   default:
     throw new Error(
-      "usage: atlas-core-release.mjs validate-version|validate-next-version|existing-date|validate-changelog"
+      "usage: atlas-core-release.mjs validate-version|validate-next-version|existing-date|prepare-package|validate-changelog|validate-npm-attestation"
     );
 }
 
@@ -50,6 +64,45 @@ function compareVersions(left, right) {
     if (difference !== 0) return Math.sign(difference);
   }
   return 0;
+}
+
+function preparePackage(version, path) {
+  validateVersion(version);
+  const packageJSON = JSON.parse(readFileSync(path, "utf8"));
+  validateVersion(packageJSON.version);
+  if (packageJSON.version !== version) packageJSON.atlasCoreImage = null;
+  writeFileSync(path, `${JSON.stringify(packageJSON, null, 2)}\n`);
+}
+
+function validateNpmAttestation({ version, integrity, bundlePath, repository, workflow, ref, commit }) {
+  validateVersion(version);
+  if (!/^sha512-[A-Za-z0-9+/]+={0,2}$/.test(integrity)) throw new Error(`Invalid npm integrity: ${integrity}`);
+  if (!/^[0-9a-f]{40}$/.test(commit)) throw new Error(`Invalid release commit: ${commit}`);
+
+  const response = JSON.parse(readFileSync(bundlePath, "utf8"));
+  const attestation = response.attestations?.find(
+    (candidate) => candidate?.predicateType === "https://slsa.dev/provenance/v1"
+  );
+  const encodedPayload = attestation?.bundle?.dsseEnvelope?.payload;
+  if (typeof encodedPayload !== "string") throw new Error("npm did not return a SLSA provenance attestation");
+  const statement = JSON.parse(Buffer.from(encodedPayload, "base64").toString("utf8"));
+  const expectedDigest = Buffer.from(integrity.slice("sha512-".length), "base64").toString("hex");
+  const subject = statement.subject?.find((candidate) => candidate?.name === `pkg:npm/atlas-core@${version}`);
+  if (subject?.digest?.sha512 !== expectedDigest) {
+    throw new Error("npm provenance subject does not match the published Atlas Core package");
+  }
+
+  const parameters = statement.predicate?.buildDefinition?.externalParameters?.workflow;
+  if (parameters?.repository !== repository || parameters?.path !== workflow || parameters?.ref !== ref) {
+    throw new Error("npm provenance identifies an unexpected repository, workflow, or ref");
+  }
+  const dependencies = statement.predicate?.buildDefinition?.resolvedDependencies;
+  if (!Array.isArray(dependencies) || !dependencies.some((dependency) => dependency?.digest?.gitCommit === commit)) {
+    throw new Error("npm provenance does not identify the release commit");
+  }
+  if (statement.predicate?.runDetails?.builder?.id !== "https://github.com/actions/runner/github-hosted") {
+    throw new Error("npm provenance does not identify a GitHub-hosted runner");
+  }
 }
 
 function existingDate(version) {

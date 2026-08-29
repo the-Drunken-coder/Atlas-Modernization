@@ -53,8 +53,7 @@ try {
     "LICENSE",
     "dist/cli.js",
     "assets/docker-compose.init.yml",
-    "assets/docker-compose.yml",
-    "assets/postgres/init.sql"
+    "assets/docker-compose.yml"
   ]) {
     if (!existsSync(join(installed, path))) throw new Error(`installed package is missing ${path}`);
   }

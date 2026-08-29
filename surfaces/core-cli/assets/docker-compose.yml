@@ -55,11 +55,11 @@ services:
       POSTGRES_USER: atlas
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
       POSTGRES_INITDB_ARGS: "--auth-local=md5 --auth-host=md5"
+    command: ["postgres", "-c", "timezone=UTC"]
     ports:
       - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "PGPASSWORD=\"$$POSTGRES_PASSWORD\" pg_isready -U atlas -d atlas_core"]
       interval: 10s

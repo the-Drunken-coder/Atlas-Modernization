@@ -31,6 +31,79 @@ test("rejects a release older than the current package version", () => {
   assert.match(older.stderr, /older than the current package version/);
 });
 
+test("clears an old image pin only when preparing a new version", () => {
+  const directory = mkdtempSync(join(tmpdir(), "atlas-core-release-"));
+  const packagePath = join(directory, "package.json");
+  try {
+    writeFileSync(packagePath, `${JSON.stringify({ version: "1.2.3", atlasCoreImage: "old-image" })}\n`);
+    assert.equal(run(["prepare-package", "1.2.4", packagePath], directory).status, 0);
+    assert.deepEqual(JSON.parse(readFileSync(packagePath, "utf8")), { version: "1.2.3", atlasCoreImage: null });
+
+    writeFileSync(packagePath, `${JSON.stringify({ version: "1.2.4", atlasCoreImage: "reviewed-image" })}\n`);
+    assert.equal(run(["prepare-package", "1.2.4", packagePath], directory).status, 0);
+    assert.deepEqual(JSON.parse(readFileSync(packagePath, "utf8")), {
+      version: "1.2.4",
+      atlasCoreImage: "reviewed-image"
+    });
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("validates npm provenance against the immutable release ref and commit", () => {
+  const directory = mkdtempSync(join(tmpdir(), "atlas-core-release-"));
+  const bundlePath = join(directory, "attestations.json");
+  const commit = "a".repeat(40);
+  const digest = "b".repeat(128);
+  const integrity = `sha512-${Buffer.from(digest, "hex").toString("base64")}`;
+  const statement = {
+    subject: [{ name: "pkg:npm/atlas-core@1.2.3", digest: { sha512: digest } }],
+    predicate: {
+      buildDefinition: {
+        externalParameters: {
+          workflow: {
+            ref: "refs/tags/atlas-core-v1.2.3",
+            repository: "https://github.com/the-Drunken-coder/Atlas-Modernization",
+            path: ".github/workflows/release-atlas-core.yml"
+          }
+        },
+        resolvedDependencies: [{ digest: { gitCommit: commit } }]
+      },
+      runDetails: { builder: { id: "https://github.com/actions/runner/github-hosted" } }
+    }
+  };
+  try {
+    writeFileSync(
+      bundlePath,
+      JSON.stringify({
+        attestations: [
+          {
+            predicateType: "https://slsa.dev/provenance/v1",
+            bundle: { dsseEnvelope: { payload: Buffer.from(JSON.stringify(statement)).toString("base64") } }
+          }
+        ]
+      })
+    );
+    const args = [
+      "validate-npm-attestation",
+      "1.2.3",
+      integrity,
+      bundlePath,
+      "https://github.com/the-Drunken-coder/Atlas-Modernization",
+      ".github/workflows/release-atlas-core.yml",
+      "refs/tags/atlas-core-v1.2.3",
+      commit
+    ];
+    assert.equal(run(args, directory).status, 0);
+
+    const wrongCommit = run([...args.slice(0, -1), "c".repeat(40)], directory);
+    assert.notEqual(wrongCommit.status, 0);
+    assert.match(wrongCommit.stderr, /release commit/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("extracts and validates the newest release section", () => {
   const directory = mkdtempSync(join(tmpdir(), "atlas-core-release-"));
   try {

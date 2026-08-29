@@ -37,6 +37,9 @@ class FakeRunner implements CommandRunner {
   failComposeDown = false;
   failComposeUp = false;
   composeVersion = "5.1.2";
+  contextHost = "unix:///var/run/docker.sock";
+  dockerArchitecture = "arm64";
+  dockerOperatingSystem = "linux";
   serviceStates = [
     { Service: "api", State: "running", Health: "healthy" },
     { Service: "minio", State: "running", Health: "healthy" },
@@ -121,7 +124,18 @@ class FakeRunner implements CommandRunner {
     if (args.includes("ps")) return result(0, this.serviceStates.map((service) => JSON.stringify(service)).join("\n"));
     if (args[0] === "--version") return result(0, "Docker version 29.4.0\n");
     if (args[0] === "compose" && args[1] === "version") return result(0, `${this.composeVersion}\n`);
-    if (args[0] === "info") return result(0, "test-engine-id\n");
+    if (args[0] === "context" && args[1] === "show") return result(0, "default\n");
+    if (args[0] === "context" && args[1] === "inspect") return result(0, `${this.contextHost}\n`);
+    if (args[0] === "info") {
+      return result(
+        0,
+        JSON.stringify({
+          ID: "test-engine-id",
+          OSType: this.dockerOperatingSystem,
+          Architecture: this.dockerArchitecture
+        })
+      );
+    }
     if (this.failComposeUp && composeCommand(this.calls.at(-1) ?? this.calls[0]!)[0] === "up") {
       return result(1, "", "injected compose up failure");
     }
@@ -202,7 +216,7 @@ function markInitialized(test: TestRuntime, started = true): void {
       schema: 1,
       phase: "ready",
       initializedAt: "2026-08-28T12:00:00.000Z",
-      packageVersion: "0.1.0",
+      packageVersion: PACKAGE_VERSION,
       dockerEngineId: "test-engine-id",
       ...(started
         ? {
@@ -239,6 +253,34 @@ describe("atlas-core CLI", () => {
     expect(test.runner.calls).toHaveLength(0);
   });
 
+  it("rejects a remote Docker context before creating configuration", async () => {
+    const test = runtime();
+    test.runner.contextHost = "ssh://core.example.com";
+    test.context.env = { DOCKER_CONTEXT: "remote", DOCKER_HOST: "unix:///var/run/docker.sock" };
+
+    expect(await runCLI(["init"], test.context)).toBe(1);
+    expect(test.stderr.join("")).toContain("requires a local Docker daemon over a Unix socket");
+    expect(existsSync(join(test.home, ".atlas", "core"))).toBe(false);
+  });
+
+  it("rejects a non-Linux Docker daemon before creating configuration", async () => {
+    const test = runtime();
+    test.runner.dockerOperatingSystem = "windows";
+
+    expect(await runCLI(["init"], test.context)).toBe(1);
+    expect(test.stderr.join("")).toContain("requires a Linux Docker daemon");
+    expect(existsSync(join(test.home, ".atlas", "core"))).toBe(false);
+  });
+
+  it("rejects an unsupported Docker daemon architecture before creating configuration", async () => {
+    const test = runtime();
+    test.runner.dockerArchitecture = "s390x";
+
+    expect(await runCLI(["init"], test.context)).toBe(1);
+    expect(test.stderr.join("")).toContain("supports amd64 and arm64 Docker daemons");
+    expect(existsSync(join(test.home, ".atlas", "core"))).toBe(false);
+  });
+
   it("initializes only a new durable deployment", async () => {
     const test = runtime();
     expect(await runCLI(["init"], test.context)).toBe(0);
@@ -253,7 +295,7 @@ describe("atlas-core CLI", () => {
       schema: 1,
       phase: "ready",
       initializedAt: "2026-08-28T12:00:00.000Z",
-      packageVersion: "0.1.0",
+      packageVersion: PACKAGE_VERSION,
       dockerEngineId: "test-engine-id"
     });
     expect(statSync(join(config, ".env")).mode & 0o077).toBe(0);
@@ -363,7 +405,7 @@ describe("atlas-core CLI", () => {
         schema: 1,
         phase: "initializing",
         initializedAt: "2026-08-28T12:00:00.000Z",
-        packageVersion: "0.1.0",
+        packageVersion: PACKAGE_VERSION,
         dockerEngineId: "test-engine-id"
       })}\n`,
       { mode: 0o600 }
@@ -474,6 +516,9 @@ describe("atlas-core CLI", () => {
     markInitialized(test, false);
     test.context.env = {
       PATH: "/usr/bin:/bin",
+      COMPOSE_FILE: "/tmp/attacker.yml",
+      COMPOSE_IGNORE_ORPHANS: "1",
+      COMPOSE_REMOVE_ORPHANS: "1",
       POSTGRES_PASSWORD: "caller-postgres",
       MINIO_ROOT_PASSWORD: "caller-minio"
     };
@@ -483,6 +528,21 @@ describe("atlas-core CLI", () => {
     expect(up?.env.PATH).toBe("/usr/bin:/bin");
     expect(up?.env.POSTGRES_PASSWORD).toBeUndefined();
     expect(up?.env.MINIO_ROOT_PASSWORD).toBeUndefined();
+    expect(up?.env.COMPOSE_FILE).toBeUndefined();
+    expect(up?.env.COMPOSE_IGNORE_ORPHANS).toBe("0");
+    expect(up?.env.COMPOSE_REMOVE_ORPHANS).toBe("0");
+  });
+
+  it("pulls a restart image before stopping the running deployment", async () => {
+    const test = runtime();
+    markInitialized(test);
+
+    expect(await runCLI(["restart"], test.context)).toBe(0);
+    expect(test.runner.calls.map(composeCommand).filter((args) => args.length > 0)).toEqual([
+      ["pull"],
+      ["down"],
+      ["up", "-d", "--pull", "never", "--wait", "--wait-timeout", "120"]
+    ]);
   });
 
   it("can retry a failed first full-stack start", async () => {

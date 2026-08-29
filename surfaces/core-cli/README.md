@@ -6,7 +6,9 @@ The npm package is the operator interface. Atlas Core itself runs from the match
 
 ## Install
 
-Install Node.js 24 or newer and Docker with Compose 2.17.0 or newer, then install the CLI globally:
+Install Node.js 24 or newer and Docker with Compose 2.17.0 or newer, then install the CLI globally. The CLI requires a
+local Linux Docker daemon over a Unix socket; it refuses remote Docker contexts because the fixed deployment names and
+durable volumes belong to one host.
 
 ```bash
 npm install --global atlas-core
