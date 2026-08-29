@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,10 +7,17 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 const script = join(dirname(fileURLToPath(import.meta.url)), "atlas-core-release.mjs");
+const phaseScript = join(dirname(fileURLToPath(import.meta.url)), "select-atlas-core-release-phase.sh");
 const workflow = join(dirname(fileURLToPath(import.meta.url)), "../workflows/release-atlas-core.yml");
 
 function run(args, cwd) {
   return spawnSync(process.execPath, [script, ...args], { cwd, encoding: "utf8", stdio: "pipe" });
+}
+
+function git(args, cwd) {
+  const result = spawnSync("git", args, { cwd, encoding: "utf8", stdio: "pipe" });
+  assert.equal(result.status, 0, result.stderr);
+  return result.stdout.trim();
 }
 
 test("validates Atlas Core versions", () => {
@@ -31,6 +38,80 @@ test("installs the npm package before auditing its signatures", () => {
   const source = readFileSync(workflow, "utf8");
   assert.match(source, /npm install --ignore-scripts "atlas-core@\$VERSION"/);
   assert.doesNotMatch(source, /npm install --package-lock-only/);
+});
+
+test("recovers an existing immutable release only when explicitly requested", () => {
+  const directory = mkdtempSync(join(tmpdir(), "atlas-core-phase-"));
+  const output = join(directory, "github-output");
+  const packagePath = join(directory, "surfaces/core-cli/package.json");
+  try {
+    mkdirSync(join(directory, "surfaces/core-cli/src"), { recursive: true });
+    writeFileSync(join(directory, "CHANGELOG.md"), "# Changelog\n");
+    writeFileSync(join(directory, "package-lock.json"), "{}\n");
+    writeFileSync(packagePath, '{"version":"0.1.0","atlasCoreImage":null}\n');
+    writeFileSync(join(directory, "surfaces/core-cli/src/package-metadata.ts"), "export const image = undefined;\n");
+    git(["init"], directory);
+    git(["config", "user.name", "Atlas Core release test"], directory);
+    git(["config", "user.email", "atlas-core@example.invalid"], directory);
+    git(["add", "."], directory);
+    git(["commit", "-m", "feat: add Atlas Core package"], directory);
+    const sourceSha = git(["rev-parse", "HEAD"], directory);
+
+    writeFileSync(packagePath, '{"version":"0.1.0","atlasCoreImage":"ghcr.io/example/core@sha256:abc"}\n');
+    git(["add", packagePath], directory);
+    git(["commit", "-m", "chore(release): atlas-core v0.1.0"], directory);
+    const releaseSha = git(["rev-parse", "HEAD"], directory);
+    git(["tag", "--annotate", "atlas-core-v0.1.0", "--message", "Atlas Core 0.1.0"], directory);
+
+    writeFileSync(join(directory, "repair.txt"), "updated workflow\n");
+    git(["add", "repair.txt"], directory);
+    git(["commit", "-m", "fix(release): repair verification"], directory);
+    const mainSha = git(["rev-parse", "HEAD"], directory);
+    git(["update-ref", "refs/remotes/origin/main", mainSha], directory);
+
+    const environment = {
+      ...process.env,
+      GITHUB_OUTPUT: output,
+      GITHUB_REF: "refs/heads/main",
+      GITHUB_SHA: mainSha,
+      VERSION: "0.1.0"
+    };
+    writeFileSync(output, "");
+    const ordinaryRun = spawnSync("bash", [phaseScript], {
+      cwd: directory,
+      encoding: "utf8",
+      env: { ...environment, RECOVER_EXISTING_RELEASE: "false" },
+      stdio: "pipe"
+    });
+    assert.notEqual(ordinaryRun.status, 0);
+    assert.match(ordinaryRun.stderr, /already exists/);
+
+    writeFileSync(output, "");
+    const recovery = spawnSync("bash", [phaseScript], {
+      cwd: directory,
+      encoding: "utf8",
+      env: { ...environment, RECOVER_EXISTING_RELEASE: "true" },
+      stdio: "pipe"
+    });
+    assert.equal(recovery.status, 0, recovery.stderr);
+    assert.equal(
+      readFileSync(output, "utf8"),
+      `mode=publish\nsource_sha=${sourceSha}\nrelease_sha=${releaseSha}\n`
+    );
+
+    writeFileSync(packagePath, '{"version":"0.1.0","atlasCoreImage":"different"}\n');
+    writeFileSync(output, "");
+    const mismatchedRecovery = spawnSync("bash", [phaseScript], {
+      cwd: directory,
+      encoding: "utf8",
+      env: { ...environment, RECOVER_EXISTING_RELEASE: "true" },
+      stdio: "pipe"
+    });
+    assert.notEqual(mismatchedRecovery.status, 0);
+    assert.match(mismatchedRecovery.stderr, /does not match/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test("rejects a release older than the current package version", () => {

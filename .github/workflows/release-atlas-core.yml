@@ -7,6 +7,11 @@ on:
         description: SemVer without a leading v, for example 0.1.0
         required: true
         type: string
+      recover_existing_release:
+        description: Resume an existing exact release without moving its immutable tag
+        required: false
+        default: false
+        type: boolean
 
 permissions: {}
 
@@ -371,62 +376,11 @@ jobs:
       - name: Select release phase
         id: phase
         env:
+          RECOVER_EXISTING_RELEASE: ${{ inputs.recover_existing_release }}
           VERSION: ${{ inputs.version }}
         run: |
           git fetch origin main --tags
-          tag="atlas-core-v$VERSION"
-          if [ "$GITHUB_REF" = "refs/heads/main" ]; then
-            if [ "$(git rev-parse origin/main)" != "$GITHUB_SHA" ]; then
-              echo "main moved after this release was dispatched. Start a new release run." >&2
-              exit 1
-            fi
-            if git rev-parse --verify --quiet "refs/tags/$tag" >/dev/null; then
-              echo "$tag already exists. Dispatch this workflow from that immutable tag." >&2
-              exit 1
-            fi
-            mode=prepare
-            source_sha="$GITHUB_SHA"
-            release_sha=
-          elif [ "$GITHUB_REF" = "refs/tags/$tag" ]; then
-            if [ "$(git rev-list -n 1 "$tag")" != "$GITHUB_SHA" ]; then
-              echo "$tag does not identify the dispatched commit." >&2
-              exit 1
-            fi
-            if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
-              echo "$tag is not reachable from main." >&2
-              exit 1
-            fi
-            if [ "$(git show -s --format=%s "$GITHUB_SHA")" != "chore(release): atlas-core v$VERSION" ]; then
-              echo "$tag does not identify the Atlas Core release commit." >&2
-              exit 1
-            fi
-            while IFS= read -r path; do
-              case "$path" in
-                CHANGELOG.md|package-lock.json|surfaces/core-cli/package.json|surfaces/core-cli/src/package-metadata.ts)
-                  ;;
-                *)
-                  echo "The release commit changed an unexpected file: $path" >&2
-                  exit 1
-                  ;;
-              esac
-            done < <(git diff --name-only "$GITHUB_SHA^..$GITHUB_SHA")
-            if ! git diff --quiet; then
-              echo "The reviewed release artifact does not match $tag." >&2
-              git diff --stat >&2
-              exit 1
-            fi
-            mode=publish
-            source_sha="$(git rev-parse "$GITHUB_SHA^")"
-            release_sha="$GITHUB_SHA"
-          else
-            echo "Dispatch Atlas Core releases from main or refs/tags/$tag." >&2
-            exit 1
-          fi
-          {
-            echo "mode=$mode"
-            echo "source_sha=$source_sha"
-            echo "release_sha=$release_sha"
-          } >> "$GITHUB_OUTPUT"
+          bash .github/scripts/select-atlas-core-release-phase.sh
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
@@ -612,6 +566,39 @@ jobs:
             exit 1
           fi
 
+      - name: Inspect npm publication state
+        id: npm
+        if: steps.phase.outputs.mode == 'publish'
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          package="release-artifacts/atlas-core-$VERSION.tgz"
+          local_integrity="sha512-$(openssl dgst -sha512 -binary "$package" | openssl base64 -A)"
+          version_error="$(mktemp)"
+          if published_integrity="$(npm view "atlas-core@$VERSION" dist.integrity 2>"$version_error")"; then
+            if [ "$published_integrity" != "$local_integrity" ]; then
+              echo "atlas-core@$VERSION is already published with different contents." >&2
+              exit 1
+            fi
+            echo "package_exists=true" >> "$GITHUB_OUTPUT"
+            echo "version_exists=true" >> "$GITHUB_OUTPUT"
+          elif grep -q 'E404' "$version_error"; then
+            package_error="$(mktemp)"
+            if npm view atlas-core name >/dev/null 2>"$package_error"; then
+              echo "package_exists=true" >> "$GITHUB_OUTPUT"
+            elif grep -q 'E404' "$package_error"; then
+              echo "package_exists=false" >> "$GITHUB_OUTPUT"
+            else
+              cat "$package_error" >&2
+              exit 1
+            fi
+            echo "version_exists=false" >> "$GITHUB_OUTPUT"
+          else
+            cat "$version_error" >&2
+            exit 1
+          fi
+          echo "integrity=$local_integrity" >> "$GITHUB_OUTPUT"
+
       - name: Create or verify draft GitHub Release
         if: steps.phase.outputs.mode == 'publish'
         env:
@@ -670,39 +657,6 @@ jobs:
             --pattern SHA256SUMS
           cmp "$package" "$downloaded/atlas-core-$VERSION.tgz"
           cmp release-artifacts/SHA256SUMS "$downloaded/SHA256SUMS"
-
-      - name: Inspect npm publication state
-        id: npm
-        if: steps.phase.outputs.mode == 'publish'
-        env:
-          VERSION: ${{ inputs.version }}
-        run: |
-          package="release-artifacts/atlas-core-$VERSION.tgz"
-          local_integrity="sha512-$(openssl dgst -sha512 -binary "$package" | openssl base64 -A)"
-          version_error="$(mktemp)"
-          if published_integrity="$(npm view "atlas-core@$VERSION" dist.integrity 2>"$version_error")"; then
-            if [ "$published_integrity" != "$local_integrity" ]; then
-              echo "atlas-core@$VERSION is already published with different contents." >&2
-              exit 1
-            fi
-            echo "package_exists=true" >> "$GITHUB_OUTPUT"
-            echo "version_exists=true" >> "$GITHUB_OUTPUT"
-          elif grep -q 'E404' "$version_error"; then
-            package_error="$(mktemp)"
-            if npm view atlas-core name >/dev/null 2>"$package_error"; then
-              echo "package_exists=true" >> "$GITHUB_OUTPUT"
-            elif grep -q 'E404' "$package_error"; then
-              echo "package_exists=false" >> "$GITHUB_OUTPUT"
-            else
-              cat "$package_error" >&2
-              exit 1
-            fi
-            echo "version_exists=false" >> "$GITHUB_OUTPUT"
-          else
-            cat "$version_error" >&2
-            exit 1
-          fi
-          echo "integrity=$local_integrity" >> "$GITHUB_OUTPUT"
 
       - name: Bootstrap the npm package
         if: steps.npm.outputs.version_exists == 'false' && steps.npm.outputs.package_exists == 'false'
