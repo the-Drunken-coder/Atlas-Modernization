@@ -760,7 +760,7 @@ jobs:
           (
             cd "$consumer"
             npm init --yes --silent >/dev/null
-            npm install --package-lock-only --ignore-scripts "atlas-core@$VERSION" >/dev/null
+            npm install --ignore-scripts "atlas-core@$VERSION" >/dev/null
             npm audit signatures
           )
 

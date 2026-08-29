@@ -27,6 +27,12 @@ test("publishes the npm archive as a local filesystem path", () => {
   assert.equal(source.match(/npm publish "\.\/release-artifacts\/atlas-core-\$VERSION\.tgz"/g)?.length, 2);
 });
 
+test("installs the npm package before auditing its signatures", () => {
+  const source = readFileSync(workflow, "utf8");
+  assert.match(source, /npm install --ignore-scripts "atlas-core@\$VERSION"/);
+  assert.doesNotMatch(source, /npm install --package-lock-only/);
+});
+
 test("rejects a release older than the current package version", () => {
   assert.equal(run(["validate-next-version", "1.2.3", "1.2.3"], process.cwd()).status, 0);
   assert.equal(run(["validate-next-version", "1.2.3", "1.2.4"], process.cwd()).status, 0);
