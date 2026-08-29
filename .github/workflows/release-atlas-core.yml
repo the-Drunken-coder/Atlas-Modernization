@@ -479,6 +479,22 @@ jobs:
           npm run check --workspace atlas-core
           git diff --check
 
+      - name: Test packed CLI on disposable Docker host
+        if: steps.phase.outputs.mode == 'prepare'
+        env:
+          ATLAS_CORE_ACCEPTANCE_DISPOSABLE: "1"
+          IMAGE_REFERENCE: ${{ steps.image.outputs.reference }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          package_root="$(mktemp -d)"
+          npm pack --workspace atlas-core \
+            --pack-destination "$package_root" \
+            --json \
+            --silent > "$package_root/npm-pack.json"
+          package="$package_root/atlas-core-$VERSION.tgz"
+          test -f "$package"
+          bash .github/scripts/test-atlas-core-package.sh "$package" "$VERSION" "$IMAGE_REFERENCE"
+
       - name: Commit and atomically tag release
         id: commit
         if: steps.phase.outputs.mode == 'prepare'
