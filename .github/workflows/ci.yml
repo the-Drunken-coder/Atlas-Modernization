@@ -203,6 +203,127 @@ jobs:
       - name: Run Atlas SDK browser tests
         run: npm run test:browser --workspace @the-drunken-coder/atlas-sdk
 
+  atlas-core-package:
+    name: atlas-core-package
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install JavaScript workspace dependencies
+        run: npm ci
+
+      - name: Check Atlas Core npm package
+        run: npm run check --workspace atlas-core
+
+      - name: Test Atlas Core release validation
+        run: node --test .github/scripts/atlas-core-release.test.mjs
+
+      - name: Validate packaged Docker Compose topology
+        shell: bash
+        run: |
+          set -o pipefail
+          config_dir="$(mktemp -d)"
+          trap 'rm -rf -- "$config_dir"' EXIT
+          cp surfaces/core-cli/test/compose.env "$config_dir/.env"
+          image="ghcr.io/the-drunken-coder/atlas-core:$(node -p "require('./surfaces/core-cli/package.json').version")"
+          config_json="$(
+            ATLAS_CORE_IMAGE="$image" docker compose \
+              --project-name atlas_core_production \
+              --env-file "$config_dir/.env" \
+              --file surfaces/core-cli/assets/docker-compose.yml \
+              config --format json
+          )"
+          jq -e --arg image "$image" '
+                .services.api.image == $image and
+                .services.api.environment.DATABASE_RECREATE_ON_STARTUP == "false" and
+                .services.api.environment.CORS_ORIGINS == "https://atlasinterface.com" and
+                .services.api.environment.CORS_ORIGIN_PATTERNS == "https://*.atlas-je0.pages.dev" and
+                .services.postgres.command == ["postgres", "-c", "timezone=UTC"] and
+                (.services.postgres.volumes | length) == 1 and
+                .services.postgres.volumes[0].type == "volume" and
+                all(.services.api.ports[]; .host_ip == "127.0.0.1") and
+                all(.services.postgres.ports[]; .host_ip == "127.0.0.1") and
+                all(.services.minio.ports[]; .host_ip == "127.0.0.1")
+              ' <<< "$config_json"
+          empty_cors_config="$(
+            CORS_ORIGINS='' CORS_ORIGIN_PATTERNS='' ATLAS_CORE_IMAGE="$image" docker compose \
+              --project-name atlas_core_production \
+              --env-file "$config_dir/.env" \
+              --file surfaces/core-cli/assets/docker-compose.yml \
+              config --format json
+          )"
+          jq -e '
+            .services.api.environment.CORS_ORIGINS == "" and
+            .services.api.environment.CORS_ORIGIN_PATTERNS == ""
+          ' <<< "$empty_cors_config"
+          init_config_json="$(
+            ATLAS_CORE_IMAGE="$image" docker compose \
+              --project-name atlas_core_production \
+              --env-file "$config_dir/.env" \
+              --file surfaces/core-cli/assets/docker-compose.init.yml \
+              config --format json
+          )"
+          jq -e '
+            (.services | keys) == ["minio"] and
+            (.volumes | keys) == ["minio_data"] and
+            .volumes.minio_data.external == true and
+            .volumes.minio_data.name == "atlas_core_production_minio_data"
+          ' <<< "$init_config_json"
+
+      - name: Exercise packaged initialization against Docker
+        shell: bash
+        run: |
+          set -euo pipefail
+          test_root="$(mktemp -d)"
+          config_dir="$test_root/core-home"
+          package_dir="$test_root/package"
+          consumer="$test_root/consumer"
+          minio_volume=atlas_core_production_minio_data
+          postgres_volume=atlas_core_production_postgres_data
+          cleanup() {
+            docker container rm --force \
+              atlas_core_production_api \
+              atlas_core_production_postgres \
+              atlas_core_production_minio \
+              atlas_core_production_minio_init >/dev/null 2>&1 || true
+            docker network rm atlas_core_production_default atlas_core_production_init_lock >/dev/null 2>&1 || true
+            docker volume rm --force "$minio_volume" "$postgres_volume" >/dev/null 2>&1 || true
+            rm -rf "$test_root"
+          }
+          trap cleanup EXIT
+          if docker volume inspect "$minio_volume" >/dev/null 2>&1 || \
+             docker volume inspect "$postgres_volume" >/dev/null 2>&1; then
+            echo "The isolated runner already has an Atlas Core test volume." >&2
+            exit 1
+          fi
+
+          mkdir -p "$package_dir" "$consumer"
+          pack_json="$(npm pack --workspace atlas-core --pack-destination "$package_dir" --json --silent)"
+          filename="$(jq -er '.[0].filename' <<< "$pack_json")"
+          (
+            cd "$consumer"
+            npm init --yes --silent >/dev/null
+            npm install --ignore-scripts "$package_dir/$filename" --silent
+          )
+          ATLAS_CORE_HOME="$config_dir" "$consumer/node_modules/.bin/atlas-core" init
+          jq -e '.phase == "ready" and .dockerEngineId != ""' "$config_dir/state.json"
+          docker volume inspect "$minio_volume" --format '{{json .Labels}}' |
+            jq -e '."com.docker.compose.project" == "atlas_core_production" and ."com.docker.compose.volume" == "minio_data"'
+          if docker volume inspect "$postgres_volume" >/dev/null 2>&1; then
+            echo "atlas-core init created PostgreSQL storage before the first start." >&2
+            exit 1
+          fi
+
   fieldlink:
     name: fieldlink
     runs-on: ubuntu-latest

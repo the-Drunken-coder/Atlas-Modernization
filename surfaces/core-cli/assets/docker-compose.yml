@@ -1,0 +1,126 @@
+name: atlas_core_production
+
+services:
+  api:
+    image: ${ATLAS_CORE_IMAGE:?ATLAS_CORE_IMAGE must be set by the atlas-core CLI}
+    container_name: atlas_core_production_api
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://atlas:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/atlas_core
+      DATABASE_POOL_SIZE: ${DATABASE_POOL_SIZE:-5}
+      DATABASE_MAX_OVERFLOW: ${DATABASE_MAX_OVERFLOW:-10}
+      DATABASE_POOL_RECYCLE: ${DATABASE_POOL_RECYCLE:-3600}
+      DATABASE_POOL_TIMEOUT: ${DATABASE_POOL_TIMEOUT:-30}
+      DATABASE_POOL_IDLE_TIMEOUT: ${DATABASE_POOL_IDLE_TIMEOUT:-600}
+      DATABASE_POOL_PRE_PING: ${DATABASE_POOL_PRE_PING:-true}
+      DATABASE_RECREATE_ON_STARTUP: "false"
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:?MINIO_ROOT_USER must be set}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set}
+      MINIO_BUCKET: ${MINIO_BUCKET:-atlas-media}
+      MINIO_SECURE: "false"
+      SERVER_PORT: "8000"
+      ENABLE_API_AUTH: "true"
+      CORS_ORIGINS: ${CORS_ORIGINS-}
+      CORS_ORIGIN_PATTERNS: ${CORS_ORIGIN_PATTERNS-}
+      TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-}
+      API_AUTH_KEY: ${API_AUTH_KEY:?API_AUTH_KEY must be set}
+      ATLAS_ADMIN_PASSWORD: ${ATLAS_ADMIN_PASSWORD:?ATLAS_ADMIN_PASSWORD must be set}
+      MAX_UPLOAD_SIZE_MB: ${MAX_UPLOAD_SIZE_MB:-100}
+      MAX_VIEW_SIZE_MB: ${MAX_VIEW_SIZE_MB:-10}
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/readiness"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - atlas_core_network
+
+  postgres:
+    image: postgres:15@sha256:1b92e7a80c021647bf70f5d3eb66066a998e4f5cf43c07bb9dc9f729782cf88e
+    container_name: atlas_core_production_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: atlas_core
+      POSTGRES_USER: atlas
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      POSTGRES_INITDB_ARGS: "--auth-local=md5 --auth-host=md5"
+    command: ["postgres", "-c", "timezone=UTC"]
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "PGPASSWORD=\"$$POSTGRES_PASSWORD\" pg_isready -U atlas -d atlas_core"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - atlas_core_network
+
+  minio:
+    image: minio/minio:RELEASE.2024-01-31T20-20-33Z@sha256:4092433a77e510826874b36f369696df43407a763d7f901a61d74e83e6fd95bc
+    container_name: atlas_core_production_minio
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER must be set}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set}
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - atlas_core_network
+
+  minio-init:
+    image: minio/mc:RELEASE.2024-01-31T08-59-40Z@sha256:c084c9a67c7a9ed5f37cc7f2a905010861aaa882bec76da10352305c9709b6d2
+    container_name: atlas_core_production_minio_init
+    restart: "no"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER must be set}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set}
+      MINIO_BUCKET: ${MINIO_BUCKET:-atlas-media}
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        set -e
+        mc alias set atlas http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" >/dev/null
+        mc stat "atlas/$$MINIO_BUCKET" >/dev/null
+        mc anonymous set none "atlas/$$MINIO_BUCKET"
+        echo 'MinIO bucket verified successfully'
+    networks:
+      - atlas_core_network
+
+volumes:
+  postgres_data:
+    external: true
+    name: atlas_core_production_postgres_data
+  minio_data:
+    external: true
+    name: atlas_core_production_minio_data
+
+networks:
+  atlas_core_network:
+    driver: bridge

@@ -20,6 +20,7 @@ Linting and formatting checks cover each selected package in full, matching the 
 ## Repository map
 
 - `services/core/` contains the hosted Go control plane, durable storage integration, and deployment files.
+- `surfaces/core-cli/` contains the published `atlas-core` npm CLI for one durable single-host deployment.
 - `surfaces/command-interface/` contains the operator-facing Cloudflare Pages/Vite application.
 - `edge/asset/` reserves the field Asset role. It contains only a README while the Asset architecture is being designed.
 - `edge/gateway/` reserves the field Gateway role. It contains only a README while the Gateway architecture is being designed.
@@ -32,7 +33,7 @@ Linting and formatting checks cover each selected package in full, matching the 
 
 ## JavaScript workspace
 
-The SDK, FieldLink, command interface, and simulations are npm workspaces with one root lockfile. Use Node.js 24 and install their dependencies once from the repository root:
+The SDK, FieldLink, Atlas Core CLI, command interface, and simulations are npm workspaces with one root lockfile. Use Node.js 24 and install their dependencies once from the repository root:
 
 ```bash
 npm ci
@@ -41,7 +42,7 @@ npm run build
 
 Simulations use the SDK directly. FieldLink remains independent of Core, the SDK, and Asset policy. No Asset or Gateway implementation currently exists under `edge/`.
 
-Useful focused commands are `npm run build:sdk`, `npm run build:fieldlink`, `npm run build:command-interface`, `npm run build:simulations`, `npm run dev:command-interface`, `npm run dev:simulations`, and `npm run dev:simulations-server`.
+Useful focused commands are `npm run build:sdk`, `npm run build:fieldlink`, `npm run build:core-cli`, `npm run build:command-interface`, `npm run build:simulations`, `npm run dev:command-interface`, `npm run dev:simulations`, and `npm run dev:simulations-server`.
 
 ## Agent guidance
 
