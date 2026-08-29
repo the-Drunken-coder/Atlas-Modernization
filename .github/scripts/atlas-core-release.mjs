@@ -138,8 +138,13 @@ function validateChangelog(version, date, notesPath, previousChangelogPath) {
   if (previousChangelogPath) {
     const previous = readFileSync(previousChangelogPath, "utf8");
     const withoutNewRelease = contents.slice(0, headingStart) + contents.slice(nextHeading ?? contents.length);
-    if (withoutNewRelease !== previous) {
-      throw new Error("The new release section must be prepended without changing the existing changelog");
+    const firstReleasePrefix = previous.endsWith("\n\n")
+      ? previous
+      : `${previous}${previous.endsWith("\n") ? "\n" : "\n\n"}`;
+    const appendedFirstReleaseAfterIntroduction =
+      nextHeading === undefined && headingMatches.length === 1 && contents.slice(0, headingStart) === firstReleasePrefix;
+    if (withoutNewRelease !== previous && !appendedFirstReleaseAfterIntroduction) {
+      throw new Error("The new release section must be inserted without changing the existing changelog");
     }
   }
   writeFileSync(notesPath, `${notes}\n`);
