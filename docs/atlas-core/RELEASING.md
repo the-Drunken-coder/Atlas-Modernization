@@ -58,7 +58,20 @@ Later releases require no npm token.
 
 Do not rerun the job that stops after pushing the release commit and tag. Dispatch the workflow from the immutable tag
 as described above. If another commit reaches `main` before the atomic push, neither the release commit nor tag is
-pushed. Later failed-job reruns recognize the exact generated release commit, pinned image digest, tag, image
+pushed. Failed tagged-job reruns recognize the exact generated release commit, pinned image digest, tag, image
 visibility, npm integrity, provenance, and release assets. They repair an incomplete draft release but reject
 mismatched published artifacts. The workflow never asks OpenCode to write the same release section twice or rebuilds
 the image after its digest is committed.
+
+## Recovering with an updated workflow
+
+Use `recover_existing_release` only when npm already contains the exact version with matching integrity, but the
+immutable-tag run cannot finish because its tagged workflow contains a bug fixed later on `main`. Dispatch **Release
+Atlas Core** from `main` for the same version, enable **Resume an existing exact release**, inspect the rebuilt
+artifacts, and approve the `release` environment.
+
+The recovery run keeps the existing tag fixed, requires its release commit and package files to match, verifies npm
+integrity before changing draft assets, and rechecks the pinned image, tag-bound npm provenance, registry signature,
+release notes, and assets before publishing the draft GitHub Release. It cannot publish npm. If the npm version does
+not exist, leave recovery disabled and dispatch from `atlas-core-v<version>` so publication provenance remains bound
+to the immutable tag.
