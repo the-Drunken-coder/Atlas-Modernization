@@ -16,6 +16,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import { type CLIContext, type CommandRunner, runCLI } from "../src/application.js";
 import { PACKAGE_VERSION } from "../src/package-metadata.js";
 
+const TEST_IMAGE = `ghcr.io/the-drunken-coder/atlas-core@sha256:${"a".repeat(64)}`;
+const INIT_LOCK_NETWORK = "atlas_core_production_init_lock";
+
 type Call = {
   command: string;
   args: string[];
@@ -28,10 +31,12 @@ class FakeRunner implements CommandRunner {
   readonly calls: Call[] = [];
   readonly existingVolumes = new Set<string>();
   readonly existingContainers = new Set<string>();
+  readonly existingNetworks = new Set<string>();
   readonly mismatchedResources = new Set<string>();
   inspectionError: { kind: "container" | "volume"; name: string } | undefined;
   failComposeDown = false;
   failComposeUp = false;
+  composeVersion = "5.1.2";
   serviceStates = [
     { Service: "api", State: "running", Health: "healthy" },
     { Service: "minio", State: "running", Health: "healthy" },
@@ -50,6 +55,28 @@ class FakeRunner implements CommandRunner {
       env: { ...options.env },
       inherit: options.inherit ?? false
     });
+    if (args[0] === "network" && args[1] === "create") {
+      const name = args.at(-1) ?? "";
+      if (this.existingNetworks.has(name)) return result(1, "", `network with name ${name} already exists`);
+      this.existingNetworks.add(name);
+      return result(0, `${name}\n`);
+    }
+    if (args[0] === "network" && args[1] === "inspect") {
+      const name = args.at(-1) ?? "";
+      if (!this.existingNetworks.has(name)) return result(1, "", `Error: No such network: ${name}`);
+      return result(
+        0,
+        JSON.stringify({
+          "io.atlas.core.engine": "test-engine-id",
+          "io.atlas.core.lock": "initialization",
+          "io.atlas.core.project": "atlas_core_production"
+        })
+      );
+    }
+    if (args[0] === "network" && args[1] === "rm") {
+      this.existingNetworks.delete(args.at(-1) ?? "");
+      return result(0);
+    }
     if (args[0] === "volume" && args[1] === "create") {
       const name = args.at(-1) ?? "";
       this.existingVolumes.add(name);
@@ -93,7 +120,7 @@ class FakeRunner implements CommandRunner {
     }
     if (args.includes("ps")) return result(0, this.serviceStates.map((service) => JSON.stringify(service)).join("\n"));
     if (args[0] === "--version") return result(0, "Docker version 29.4.0\n");
-    if (args[0] === "compose" && args[1] === "version") return result(0, "Docker Compose version v5.1.2\n");
+    if (args[0] === "compose" && args[1] === "version") return result(0, `${this.composeVersion}\n`);
     if (args[0] === "info") return result(0, "test-engine-id\n");
     if (this.failComposeUp && composeCommand(this.calls.at(-1) ?? this.calls[0]!)[0] === "up") {
       return result(1, "", "injected compose up failure");
@@ -141,7 +168,8 @@ function runtime(): TestRuntime {
       architecture: "arm64",
       nodeVersion: "24.19.0",
       now: () => new Date("2026-08-28T12:00:00.000Z"),
-      createSecret: () => `secret-${++secret}-abcdefghijklmnopqrstuvwxyz`
+      createSecret: () => `secret-${++secret}-abcdefghijklmnopqrstuvwxyz`,
+      imageReference: TEST_IMAGE
     }
   };
 }
@@ -225,6 +253,7 @@ describe("atlas-core CLI", () => {
     });
     expect(statSync(join(config, ".env")).mode & 0o077).toBe(0);
     expect(existsSync(join(config, ".init.lock"))).toBe(false);
+    expect(test.runner.existingNetworks).not.toContain(INIT_LOCK_NETWORK);
     expect(test.runner.existingVolumes).toContain("atlas_core_production_minio_data");
     expect(test.runner.existingVolumes).not.toContain("atlas_core_production_postgres_data");
     expect(test.runner.calls.map(composeCommand).filter((args) => args.length > 0)).toEqual([
@@ -285,6 +314,25 @@ describe("atlas-core CLI", () => {
     expect(await runCLI(["init"], test.context)).toBe(1);
     expect(test.stderr.join("")).toContain("If no atlas-core init process is running, remove that file");
     expect(existsSync(lock)).toBe(true);
+  });
+
+  it("serializes initialization across configuration directories on one Docker engine", async () => {
+    const test = runtime();
+    test.runner.existingNetworks.add(INIT_LOCK_NETWORK);
+    test.context.env = { ATLAS_CORE_HOME: join(test.home, "another-core-home") };
+
+    expect(await runCLI(["init"], test.context)).toBe(1);
+    expect(test.stderr.join("")).toContain("initialization is already locked on Docker engine");
+    expect(existsSync(join(test.home, "another-core-home", ".env"))).toBe(false);
+  });
+
+  it("rejects Docker Compose versions without the required wait timeout", async () => {
+    const test = runtime();
+    test.runner.composeVersion = "2.16.0";
+
+    expect(await runCLI(["init"], test.context)).toBe(1);
+    expect(test.stderr.join("")).toContain("requires Docker Compose 2.17.0 or newer");
+    expect(existsSync(join(test.home, ".atlas", "core"))).toBe(false);
   });
 
   it("rejects arbitrary credentials without matching initialization state", async () => {
@@ -396,12 +444,22 @@ describe("atlas-core CLI", () => {
     markInitialized(test, false);
     expect(await runCLI(["start"], test.context)).toBe(0);
     const up = test.runner.calls.find((call) => composeCommand(call)[0] === "up");
-    expect(up?.env.ATLAS_CORE_IMAGE).toBe(`ghcr.io/the-drunken-coder/atlas-core:${PACKAGE_VERSION}`);
+    expect(up?.env.ATLAS_CORE_IMAGE).toBe(TEST_IMAGE);
     expect(up && composeCommand(up)).toEqual(["up", "-d", "--pull", "always", "--wait", "--wait-timeout", "120"]);
     expect(test.runner.existingVolumes).toContain("atlas_core_production_postgres_data");
     expect(JSON.parse(readFileSync(join(test.home, ".atlas", "core", "state.json"), "utf8"))).toMatchObject({
       startedAt: "2026-08-28T12:00:00.000Z"
     });
+  });
+
+  it("refuses to start from an unreleased package without a pinned image", async () => {
+    const test = runtime();
+    markInitialized(test, false);
+    delete test.context.imageReference;
+
+    expect(await runCLI(["start"], test.context)).toBe(1);
+    expect(test.stderr.join("")).toContain("has no pinned Core image");
+    expect(test.runner.calls.some((call) => composeCommand(call)[0] === "up")).toBe(false);
   });
 
   it("does not let caller environment variables override generated configuration", async () => {

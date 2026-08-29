@@ -16,11 +16,12 @@ identifies the npm CLI, the GHCR image, the git tag, and the GitHub Release.
 npm cannot configure trusted publishing until the first publication creates the package. Keep the bootstrap token's
 expiration short and do not reuse it elsewhere.
 
-After the first approved run pushes the release commit, dispatch the workflow again for the same version from the new
-`main` head. Publication starts only from that second run so npm provenance identifies the release commit. On the
-first package release, the second run stops after pushing the GHCR image if anonymous pulls are still blocked. Make
-`ghcr.io/the-drunken-coder/atlas-core` public, then rerun that failed publishing job. The workflow will reuse the
-reviewed release commit and tag, verify the public image, and publish npm only after that check passes.
+The first approved run publishes the multi-architecture image, records its immutable manifest digest in the npm
+package, pushes the dedicated release commit, and then stops. Dispatch the workflow again for the same version from
+that exact new `main` head. Publication starts only from that second run so npm provenance identifies the release
+commit and the package can pin the already-reviewed image. On the first package release, the second run stops if
+anonymous image access is still blocked. Make `ghcr.io/the-drunken-coder/atlas-core` public, then rerun that failed
+publishing job. The workflow verifies the pinned public image before publishing npm.
 
 ## After the first release
 
@@ -46,14 +47,14 @@ Later releases require no npm token.
    `opencode-go/gpt-5.6-luna`, and requires OpenCode to edit only `CHANGELOG.md`.
 3. Inspect the changelog diff and the prepared artifact in the workflow run.
 4. Approve the `release` environment deployment.
-5. The publishing job refuses unrelated movement on `main`, commits the version and changelog, pushes that release
-   commit, and stops.
-6. Dispatch the workflow again for the same version from the new `main` head and approve the reviewed artifacts. This
-   run pushes `atlas-core-v<version>`, publishes or verifies the multi-architecture GHCR image, verifies anonymous
-   access, and creates or verifies the GitHub Release. npm publication is the final step.
+5. The publishing job refuses unrelated movement on `main`, publishes the reviewed image, commits its immutable
+   digest with the version and changelog, pushes that dedicated release commit, and stops.
+6. Dispatch the workflow again for the same version from that exact new `main` head and approve the reviewed artifacts.
+   This run pushes `atlas-core-v<version>`, verifies the pinned public image, and creates or verifies the GitHub
+   Release. npm publication is the final step.
 
-Do not rerun the job that stops after pushing the release commit; dispatch the workflow from the new `main` head as
-described above. Later failed-job reruns recognize the exact generated release commit, tag, image visibility, npm
+Do not rerun the job that stops after pushing the release commit; dispatch the workflow from that exact commit as
+described above. If another commit reaches `main` first, the workflow refuses to publish the stale release. Later
+failed-job reruns recognize the exact generated release commit, pinned image digest, tag, image visibility, npm
 integrity, and release assets. They repair an incomplete draft release but reject mismatched published artifacts. The
-workflow never asks OpenCode to write the same release section twice or rebuilds the image after npm already contains
-the reviewed tarball.
+workflow never asks OpenCode to write the same release section twice or rebuilds the image after its digest is committed.

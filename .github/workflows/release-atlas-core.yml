@@ -313,18 +313,32 @@ jobs:
         run: |
           git fetch origin main --tags
           main_sha="$(git rev-parse origin/main)"
+          release_subject="chore(release): atlas-core v$VERSION"
           if [ "$main_sha" = "$GITHUB_SHA" ]; then
-            echo "release_sha=" >> "$GITHUB_OUTPUT"
-            exit 0
+            if [ "$(git show -s --format=%s "$main_sha")" != "$release_subject" ]; then
+              existing_release_sha="$(
+                git log --format='%H%x09%s' "$main_sha" |
+                  awk -F '\t' -v subject="$release_subject" '$2 == subject { print $1; exit }'
+              )"
+              if [ -n "$existing_release_sha" ]; then
+                echo "main moved beyond generated release commit $existing_release_sha." >&2
+                echo "Do not publish $VERSION from a later commit with stale release notes." >&2
+                exit 1
+              fi
+              echo "release_sha=" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          else
+            if [ "$(git rev-parse "$main_sha^")" != "$GITHUB_SHA" ]; then
+              echo "main moved beyond this release's generated commit. Dispatch a new release run." >&2
+              exit 1
+            fi
+            if [ "$(git show -s --format=%s "$main_sha")" != "$release_subject" ]; then
+              echo "main moved to an unexpected commit after this release was dispatched." >&2
+              exit 1
+            fi
           fi
-          if [ "$(git rev-parse "$main_sha^")" != "$GITHUB_SHA" ]; then
-            echo "main moved beyond this release's generated commit. Dispatch a new release run." >&2
-            exit 1
-          fi
-          if [ "$(git show -s --format=%s "$main_sha")" != "chore(release): atlas-core v$VERSION" ]; then
-            echo "main moved to an unexpected commit after this release was dispatched." >&2
-            exit 1
-          fi
+
           while IFS= read -r path; do
             case "$path" in
               CHANGELOG.md|package-lock.json|surfaces/core-cli/package.json|surfaces/core-cli/src/package-metadata.ts)
@@ -334,7 +348,7 @@ jobs:
                 exit 1
                 ;;
             esac
-          done < <(git diff --name-only "$GITHUB_SHA..$main_sha")
+          done < <(git diff --name-only "$main_sha^..$main_sha")
           for path in \
             CHANGELOG.md \
             package-lock.json \
@@ -346,6 +360,111 @@ jobs:
             fi
           done
           echo "release_sha=$main_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+
+      - name: Sign in to GitHub Container Registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check for the reviewed Atlas Core image
+        id: existing_image
+        env:
+          RELEASE_SHA: ${{ steps.main.outputs.release_sha }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -o pipefail
+          image="ghcr.io/the-drunken-coder/atlas-core:$VERSION"
+          if [ -n "$RELEASE_SHA" ]; then
+            source_sha="$(git rev-parse "$RELEASE_SHA^")"
+          else
+            source_sha="$GITHUB_SHA"
+          fi
+          echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
+
+          if ! docker manifest inspect "$image" >/dev/null 2>&1; then
+            if [ -n "$RELEASE_SHA" ]; then
+              echo "$image is missing, but the release commit already pins its digest." >&2
+              exit 1
+            fi
+            echo "already_published=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          for platform in linux/amd64 linux/arm64; do
+            if ! config="$(
+              docker buildx imagetools inspect "$image" \
+                --format "{{json (index .Image \"$platform\")}}" 2>/dev/null
+            )"; then
+              echo "$image does not contain the expected $platform image." >&2
+              exit 1
+            fi
+            revision="$(jq -r '.config.Labels["org.opencontainers.image.revision"] // empty' <<< "$config")"
+            version="$(jq -r '.config.Labels["org.opencontainers.image.version"] // empty' <<< "$config")"
+            if [ "$revision" != "$source_sha" ] || [ "$version" != "$VERSION" ]; then
+              echo "$image has unexpected release labels for $platform." >&2
+              exit 1
+            fi
+          done
+          digest="sha256:$(docker buildx imagetools inspect "$image" --raw | sha256sum | cut -d' ' -f1)"
+          echo "already_published=true" >> "$GITHUB_OUTPUT"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        if: steps.existing_image.outputs.already_published != 'true' && steps.main.outputs.release_sha == ''
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+
+      - name: Publish Atlas Core image
+        id: built_image
+        if: steps.existing_image.outputs.already_published != 'true' && steps.main.outputs.release_sha == ''
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        with:
+          context: .
+          file: services/core/docker/Dockerfile
+          target: production
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ghcr.io/the-drunken-coder/atlas-core:${{ inputs.version }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/the-Drunken-coder/Atlas-Modernization
+            org.opencontainers.image.revision=${{ steps.existing_image.outputs.source_sha }}
+            org.opencontainers.image.version=${{ inputs.version }}
+
+      - name: Select immutable Atlas Core image
+        id: image
+        env:
+          BUILT_DIGEST: ${{ steps.built_image.outputs.digest }}
+          EXISTING_DIGEST: ${{ steps.existing_image.outputs.digest }}
+        run: |
+          digest="${EXISTING_DIGEST:-$BUILT_DIGEST}"
+          if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "Atlas Core image did not produce a valid manifest digest: $digest" >&2
+            exit 1
+          fi
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "reference=ghcr.io/the-drunken-coder/atlas-core@$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Record immutable image in the npm package
+        env:
+          IMAGE_REFERENCE: ${{ steps.image.outputs.reference }}
+        run: |
+          node - <<'NODE'
+          const { readFileSync, writeFileSync } = require("node:fs");
+          const path = "surfaces/core-cli/package.json";
+          const packageJSON = JSON.parse(readFileSync(path, "utf8"));
+          const image = process.env.IMAGE_REFERENCE;
+          if (packageJSON.atlasCoreImage !== null && packageJSON.atlasCoreImage !== image) {
+            throw new Error(`Release artifact pins ${packageJSON.atlasCoreImage}, not ${image}`);
+          }
+          packageJSON.atlasCoreImage = image;
+          writeFileSync(path, `${JSON.stringify(packageJSON, null, 2)}\n`);
+          NODE
+          npm run prebuild --workspace atlas-core
+          git diff --check
 
       - name: Commit release files
         id: commit
@@ -386,11 +505,13 @@ jobs:
             package-lock.json \
             surfaces/core-cli/package.json \
             surfaces/core-cli/src/package-metadata.ts
-          if ! git diff --cached --quiet; then
+          if git diff --cached --quiet; then
+            git commit --allow-empty -m "chore(release): atlas-core v$VERSION"
+          else
             git commit -m "chore(release): atlas-core v$VERSION"
-            gh auth setup-git
-            git push origin HEAD:main
           fi
+          gh auth setup-git
+          git push origin HEAD:main
           echo "release_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Require a run from the release commit
@@ -422,64 +543,6 @@ jobs:
             gh auth setup-git
             git push origin "$tag"
           fi
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
-
-      - name: Sign in to GitHub Container Registry
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Check for the published Atlas Core image
-        id: image
-        env:
-          RELEASE_SHA: ${{ steps.commit.outputs.release_sha }}
-          VERSION: ${{ inputs.version }}
-        run: |
-          image="ghcr.io/the-drunken-coder/atlas-core:$VERSION"
-          if ! docker manifest inspect "$image" >/dev/null 2>&1; then
-            echo "already_published=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          for platform in linux/amd64 linux/arm64; do
-            if ! config="$(
-              docker buildx imagetools inspect "$image" \
-                --format "{{json (index .Image \"$platform\")}}" 2>/dev/null
-            )"; then
-              echo "$image does not contain the expected $platform image." >&2
-              exit 1
-            fi
-            revision="$(jq -r '.config.Labels["org.opencontainers.image.revision"] // empty' <<< "$config")"
-            version="$(jq -r '.config.Labels["org.opencontainers.image.version"] // empty' <<< "$config")"
-            if [ "$revision" != "$RELEASE_SHA" ] || [ "$version" != "$VERSION" ]; then
-              echo "$image has unexpected release labels for $platform." >&2
-              exit 1
-            fi
-          done
-          echo "already_published=true" >> "$GITHUB_OUTPUT"
-
-      - name: Set up QEMU
-        if: steps.image.outputs.already_published != 'true'
-        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
-
-      - name: Publish Atlas Core image
-        if: steps.image.outputs.already_published != 'true'
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
-        with:
-          context: .
-          file: services/core/docker/Dockerfile
-          target: production
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ghcr.io/the-drunken-coder/atlas-core:${{ inputs.version }}
-          labels: |
-            org.opencontainers.image.source=https://github.com/the-Drunken-coder/Atlas-Modernization
-            org.opencontainers.image.revision=${{ steps.commit.outputs.release_sha }}
-            org.opencontainers.image.version=${{ inputs.version }}
 
       - name: Verify the image is publicly pullable
         env:

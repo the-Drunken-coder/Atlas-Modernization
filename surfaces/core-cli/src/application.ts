@@ -14,7 +14,7 @@ import {
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { PACKAGE_NAME, PACKAGE_VERSION } from "./package-metadata.js";
+import { PACKAGE_IMAGE, PACKAGE_NAME, PACKAGE_VERSION } from "./package-metadata.js";
 
 const PROJECT_NAME = "atlas_core_production";
 const POSTGRES_VOLUME = `${PROJECT_NAME}_postgres_data`;
@@ -23,6 +23,7 @@ const API_CONTAINER = `${PROJECT_NAME}_api`;
 const POSTGRES_CONTAINER = `${PROJECT_NAME}_postgres`;
 const MINIO_CONTAINER = `${PROJECT_NAME}_minio`;
 const MINIO_INIT_CONTAINER = `${PROJECT_NAME}_minio_init`;
+const INIT_LOCK_NETWORK = `${PROJECT_NAME}_init_lock`;
 const REQUIRED_SERVICES = new Set(["api", "minio", "postgres"]);
 const COMPOSE_VARIABLES = [
   "API_AUTH_KEY",
@@ -48,7 +49,8 @@ const SUPPORTED_PLATFORMS = new Set<NodeJS.Platform>(["darwin", "linux"]);
 const SUPPORTED_ARCHITECTURES = new Set<NodeJS.Architecture>(["arm64", "x64"]);
 const CONFIG_SCHEMA = 1;
 const COMPOSE_WAIT_SECONDS = "120";
-const DEFAULT_IMAGE = `ghcr.io/the-drunken-coder/atlas-core:${PACKAGE_VERSION}`;
+const MINIMUM_COMPOSE_VERSION = [2, 17, 0] as const;
+const UNRELEASED_IMAGE = "ghcr.io/the-drunken-coder/atlas-core:unreleased";
 
 const usage = `Atlas Core ${PACKAGE_VERSION}
 
@@ -95,6 +97,7 @@ export type CLIContext = {
   nodeVersion?: string;
   now?: () => Date;
   createSecret?: () => string;
+  imageReference?: string;
 };
 
 type Command =
@@ -172,6 +175,7 @@ class AtlasCoreDeployment {
   readonly #nodeVersion: string;
   readonly #now: () => Date;
   readonly #createSecret: () => string;
+  readonly #imageReference: string | undefined;
 
   constructor(context: RequiredRuntimeContext) {
     this.#configDir = resolveConfigDirectory(context.env.ATLAS_CORE_HOME, context.homeDir);
@@ -188,6 +192,7 @@ class AtlasCoreDeployment {
     this.#nodeVersion = context.nodeVersion;
     this.#now = context.now;
     this.#createSecret = context.createSecret;
+    this.#imageReference = context.imageReference;
   }
 
   async init(): Promise<void> {
@@ -195,7 +200,12 @@ class AtlasCoreDeployment {
     this.#prepareConfigDirectory();
     this.#acquireInitLock();
     try {
-      await this.#initialize(dockerEngineId);
+      await this.#acquireDockerInitLock(dockerEngineId);
+      try {
+        await this.#initialize(dockerEngineId);
+      } finally {
+        await this.#releaseDockerInitLock();
+      }
     } finally {
       this.#releaseInitLock();
     }
@@ -298,6 +308,7 @@ class AtlasCoreDeployment {
     const state = this.#requireInitialized();
     const dockerEngineId = await this.#preflight();
     this.#assertStateMatchesRuntime(state, dockerEngineId);
+    this.#requirePublishedImage();
     const needsPostgresVolume = await this.#assertStartIsSafe(state);
     if (needsPostgresVolume) await this.#createVolume(POSTGRES_VOLUME, "postgres_data");
     const attemptedState = this.#recordStartAttempt(state);
@@ -321,6 +332,7 @@ class AtlasCoreDeployment {
     const state = this.#requireInitialized();
     const dockerEngineId = await this.#preflight();
     this.#assertStateMatchesRuntime(state, dockerEngineId);
+    this.#requirePublishedImage();
     const needsPostgresVolume = await this.#assertStartIsSafe(state);
     if (needsPostgresVolume) await this.#createVolume(POSTGRES_VOLUME, "postgres_data");
     const attemptedState = this.#recordStartAttempt(state);
@@ -388,7 +400,11 @@ class AtlasCoreDeployment {
       },
       {
         label: "Docker Compose",
-        check: async () => oneLine(await this.#checkCommand("docker", ["compose", "version"]))
+        check: async () => {
+          const version = oneLine(await this.#checkCommand("docker", ["compose", "version", "--short"]));
+          assertComposeVersion(version);
+          return version;
+        }
       },
       {
         label: "Docker daemon",
@@ -431,7 +447,8 @@ class AtlasCoreDeployment {
     }
     assertNodeVersion(this.#nodeVersion);
     await this.#checkCommand("docker", ["--version"]);
-    await this.#checkCommand("docker", ["compose", "version"]);
+    const composeVersion = oneLine(await this.#checkCommand("docker", ["compose", "version", "--short"]));
+    assertComposeVersion(composeVersion);
     const dockerEngineId = oneLine(await this.#checkCommand("docker", ["info", "--format", "{{.ID}}"]));
     if (!dockerEngineId) throw new Error("Docker did not report an engine ID.");
     return dockerEngineId;
@@ -471,6 +488,37 @@ class AtlasCoreDeployment {
     } catch (error) {
       if (!isNodeError(error) || error.code !== "ENOENT") throw error;
     }
+  }
+
+  async #acquireDockerInitLock(dockerEngineId: string): Promise<void> {
+    const labels = {
+      "io.atlas.core.engine": dockerEngineId,
+      "io.atlas.core.lock": "initialization",
+      "io.atlas.core.project": PROJECT_NAME
+    };
+    const args = ["network", "create"];
+    for (const [name, value] of Object.entries(labels)) args.push("--label", `${name}=${value}`);
+    args.push(INIT_LOCK_NETWORK);
+
+    const result = await this.#runner.run("docker", args, { env: this.#env });
+    if (result.status === 0) return;
+
+    const inspection = await this.#runner.run(
+      "docker",
+      ["network", "inspect", "--format", "{{json .Labels}}", INIT_LOCK_NETWORK],
+      { env: this.#env }
+    );
+    if (inspection.status !== 0) throw commandFailure(`docker ${args.join(" ")}`, result);
+    this.#assertResourceLabels("initialization lock", INIT_LOCK_NETWORK, inspection.stdout, labels);
+    throw new Error(
+      `Atlas Core initialization is already locked on Docker engine ${dockerEngineId}. ` +
+        `If no atlas-core init process is running, remove ${INIT_LOCK_NETWORK} with docker network rm and run init again.`
+    );
+  }
+
+  async #releaseDockerInitLock(): Promise<void> {
+    const result = await this.#runner.run("docker", ["network", "rm", INIT_LOCK_NETWORK], { env: this.#env });
+    if (result.status !== 0) throw commandFailure(`docker network rm ${INIT_LOCK_NETWORK}`, result);
   }
 
   async #volumeExists(name: string): Promise<boolean> {
@@ -524,14 +572,19 @@ class AtlasCoreDeployment {
       throw commandFailure(`docker ${kind} inspect ${name}`, result);
     }
 
+    this.#assertResourceLabels(kind, name, result.stdout, expectedLabels);
+    return true;
+  }
+
+  #assertResourceLabels(kind: string, name: string, stdout: string, expectedLabels: Record<string, string>): void {
     let labels: unknown;
     try {
-      labels = JSON.parse(result.stdout);
+      labels = JSON.parse(stdout);
     } catch {
       throw new Error(`Docker returned invalid ownership labels for ${kind} ${name}.`);
     }
     if (typeof labels !== "object" || labels === null) {
-      throw new Error(`Atlas Core found ${kind} ${name} without Docker Compose ownership labels.`);
+      throw new Error(`Atlas Core found ${kind} ${name} without ownership labels.`);
     }
     const record = labels as Record<string, unknown>;
     const mismatch = Object.entries(expectedLabels).find(([key, value]) => record[key] !== value);
@@ -540,7 +593,6 @@ class AtlasCoreDeployment {
         `Atlas Core found ${kind} ${name} without the expected ${mismatch[0]}=${mismatch[1]} ownership label.`
       );
     }
-    return true;
   }
 
   async #assertStartIsSafe(state: DeploymentState): Promise<boolean> {
@@ -716,6 +768,12 @@ class AtlasCoreDeployment {
     }
   }
 
+  #requirePublishedImage(): void {
+    if (!this.#imageReference) {
+      throw new Error("This atlas-core package was not produced by the release workflow and has no pinned Core image.");
+    }
+  }
+
   #readConfigValue(name: string): string | undefined {
     const line = readFileSync(this.#envFile, "utf8")
       .split(/\r?\n/)
@@ -731,7 +789,7 @@ class AtlasCoreDeployment {
   async #runCompose(args: string[], inherit = false): Promise<CommandResult> {
     const env = { ...this.#env };
     for (const variable of COMPOSE_VARIABLES) delete env[variable];
-    env.ATLAS_CORE_IMAGE = DEFAULT_IMAGE;
+    env.ATLAS_CORE_IMAGE = this.#imageReference ?? UNRELEASED_IMAGE;
     return await this.#runner.run("docker", this.#composeArgs(args), {
       cwd: this.#configDir,
       env,
@@ -770,6 +828,7 @@ type RequiredRuntimeContext = {
   nodeVersion: string;
   now: () => Date;
   createSecret: () => string;
+  imageReference: string | undefined;
 };
 
 export async function runCLI(argv: string[], context: CLIContext = {}): Promise<number> {
@@ -867,7 +926,8 @@ function defaultContext(context: CLIContext): RequiredRuntimeContext {
     architecture: context.architecture ?? process.arch,
     nodeVersion: context.nodeVersion ?? process.versions.node,
     now: context.now ?? (() => new Date()),
-    createSecret: context.createSecret ?? (() => randomBytes(32).toString("base64url"))
+    createSecret: context.createSecret ?? (() => randomBytes(32).toString("base64url")),
+    imageReference: context.imageReference ?? PACKAGE_IMAGE
   };
 }
 
@@ -944,6 +1004,21 @@ function assertNodeVersion(version: string): void {
   const major = Number.parseInt(version.split(".")[0] ?? "", 10);
   if (!Number.isInteger(major) || major < 24) {
     throw new Error(`Atlas Core requires Node.js 24 or newer. Detected ${version}.`);
+  }
+}
+
+function assertComposeVersion(version: string): void {
+  const match = /^v?(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/.exec(version);
+  if (!match) throw new Error(`Docker Compose returned an unsupported version: ${version}`);
+  const actual = match.slice(1, 4).map(Number);
+  for (let index = 0; index < MINIMUM_COMPOSE_VERSION.length; index += 1) {
+    const difference = (actual[index] ?? 0) - (MINIMUM_COMPOSE_VERSION[index] ?? 0);
+    if (difference > 0) return;
+    if (difference < 0) {
+      throw new Error(
+        `Atlas Core requires Docker Compose ${MINIMUM_COMPOSE_VERSION.join(".")} or newer. Detected ${version}.`
+      );
+    }
   }
 }
 

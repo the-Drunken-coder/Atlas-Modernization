@@ -1,6 +1,7 @@
 {
   "name": "atlas-core",
   "version": "0.1.0",
+  "atlasCoreImage": null,
   "description": "Install and operate a durable Atlas Core deployment with Docker Compose.",
   "author": "the-Drunken-coder",
   "license": "MIT",

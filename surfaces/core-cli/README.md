@@ -6,7 +6,7 @@ The npm package is the operator interface. Atlas Core itself runs from the match
 
 ## Install
 
-Install Node.js 24 or newer and Docker with Compose, then install the CLI globally:
+Install Node.js 24 or newer and Docker with Compose 2.17.0 or newer, then install the CLI globally:
 
 ```bash
 npm install --global atlas-core
@@ -38,7 +38,8 @@ npm package also leaves those durable volumes untouched.
 The first release binds the Core API, PostgreSQL, and MinIO ports to loopback. It does not configure public ingress.
 Installing a different CLI version does not upgrade an initialized deployment. `start` and `restart` stop with an
 explicit version mismatch until a backup-aware upgrade path is available. Both commands require registry access and
-pull the package-versioned image before starting; a locally retagged image is never accepted as the matching Core.
+pull the release's digest-pinned image before starting; neither a locally retagged image nor an overwritten registry
+tag can replace the reviewed Core image.
 
 ## External ingress
 
@@ -53,7 +54,8 @@ PostgreSQL and the configured MinIO bucket are one durable store. Back them up a
 never enables Core's destructive development startup mode and never passes `--volumes` to `docker compose down`.
 After the first full-stack start attempt, it refuses to recreate either durable volume if one goes missing. It also
 binds the state directory to the Docker engine that initialized it and verifies Docker Compose ownership labels before
-using an existing container or volume.
+using an existing container or volume. Initialization also takes a Docker-engine-scoped project lock, so different
+configuration directories cannot initialize the same fixed deployment concurrently.
 
 If `init` finds existing Atlas volumes without its matching configuration, it stops. Do not delete those volumes to
 silence the check. Recover the credentials and paired storage instead.
