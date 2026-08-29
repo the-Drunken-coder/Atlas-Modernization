@@ -714,7 +714,7 @@ jobs:
             echo "The first atlas-core release requires the short-lived NPM_TOKEN bootstrap secret." >&2
             exit 1
           fi
-          npm publish "release-artifacts/atlas-core-$VERSION.tgz" --access public --provenance
+          npm publish "./release-artifacts/atlas-core-$VERSION.tgz" --access public --provenance
 
       - name: Publish npm package through trusted publishing
         if: steps.npm.outputs.version_exists == 'false' && steps.npm.outputs.package_exists == 'true'
@@ -725,7 +725,7 @@ jobs:
             echo "Trusted publication must not receive a token fallback." >&2
             exit 1
           fi
-          npm publish "release-artifacts/atlas-core-$VERSION.tgz" --access public --provenance
+          npm publish "./release-artifacts/atlas-core-$VERSION.tgz" --access public --provenance
 
       - name: Verify npm integrity, signatures, and provenance
         if: steps.phase.outputs.mode == 'publish'
