@@ -473,6 +473,21 @@ describe("atlas-core CLI", () => {
     expect(test.stderr.join("")).toContain("ownership label");
   });
 
+  it("reads container ownership labels from the Docker container config", async () => {
+    const test = runtime();
+    const container = "atlas_core_production_api";
+    test.runner.existingContainers.add(container);
+
+    expect(await runCLI(["init"], test.context)).toBe(1);
+    expect(test.stderr.join("")).toContain("containers or durable volumes without matching CLI configuration");
+    expect(test.runner.calls).toContainEqual(
+      expect.objectContaining({
+        command: "docker",
+        args: ["container", "inspect", "--format", "{{json .Config.Labels}}", container]
+      })
+    );
+  });
+
   it("does not reprovision an initialized deployment", async () => {
     const test = runtime();
     markInitialized(test);

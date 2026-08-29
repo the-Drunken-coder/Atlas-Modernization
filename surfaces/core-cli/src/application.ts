@@ -610,7 +610,8 @@ class AtlasCoreDeployment {
     name: string,
     expectedLabels: Record<string, string>
   ): Promise<boolean> {
-    const result = await this.#runner.run("docker", [kind, "inspect", "--format", "{{json .Labels}}", name], {
+    const labelsFormat = kind === "container" ? "{{json .Config.Labels}}" : "{{json .Labels}}";
+    const result = await this.#runner.run("docker", [kind, "inspect", "--format", labelsFormat, name], {
       env: this.#env
     });
     if (result.status !== 0) {

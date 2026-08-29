@@ -50,8 +50,10 @@ Later releases require no npm token.
    process environment.
 3. Inspect the changelog diff and the prepared artifact in the workflow run.
 4. Approve the `release` environment deployment.
-5. The publishing job refuses movement on `main`, publishes a candidate image, commits its immutable digest with the
-   version and changelog, atomically pushes the dedicated release commit and tag, and stops.
+5. The publishing job refuses movement on `main`, publishes a candidate image, installs the packed CLI on its
+   disposable Linux runner, checks existing-container refusal and a complete local deployment lifecycle, then commits
+   the immutable image digest with the version and changelog. It atomically pushes the dedicated release commit and
+   tag, then stops.
 6. Dispatch the workflow again for the same version from `atlas-core-v<version>` and approve the reviewed artifacts.
    This run verifies and promotes only the pinned digest, prepares a draft GitHub Release, publishes npm, verifies npm
    integrity, signatures, and provenance, then makes the GitHub Release public and latest.
