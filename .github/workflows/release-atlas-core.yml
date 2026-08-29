@@ -128,8 +128,8 @@ jobs:
           ## $VERSION - $RELEASE_DATE
 
           Keep every existing byte of CHANGELOG.md in place. If it has no existing release heading that starts with
-          `## `, append the new section after the existing title and introduction. Otherwise, insert the new section
-          immediately before the first existing release heading. Never place it before `# Changelog`.
+          '## ', append the new section after the existing title and introduction. Otherwise, insert the new section
+          immediately before the first existing release heading. Never place it before '# Changelog'.
 
           Read .atlas-core-release-context.md and the relevant repository files. Write concise operator-facing
           release notes using only facts you can verify. Use Markdown bullets. Add Added, Changed, Fixed, or Security
