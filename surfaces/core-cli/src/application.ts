@@ -16,6 +16,12 @@ import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import { PACKAGE_IMAGE, PACKAGE_NAME, PACKAGE_VERSION } from "./package-metadata.js";
+import {
+  type AtlasCoreOperator,
+  createInteractiveCLI,
+  type DeploymentSnapshot,
+  type InteractiveCLI
+} from "./terminal-ui.js";
 
 const PROJECT_NAME = "atlas_core_production";
 const POSTGRES_VOLUME = `${PROJECT_NAME}_postgres_data`;
@@ -60,11 +66,13 @@ const SUPPORTED_DOCKER_ARCHITECTURES = new Set(["amd64", "arm64", "aarch64", "x8
 const usage = `Atlas Core ${PACKAGE_VERSION}
 
 Usage:
+  atlas-core
   atlas-core init
   atlas-core start
   atlas-core stop
   atlas-core restart
   atlas-core reset
+  atlas-core config
   atlas-core status
   atlas-core logs [core|postgres|minio] [--follow]
   atlas-core doctor
@@ -105,13 +113,16 @@ export type CLIContext = {
   createSecret?: () => string;
   confirmReset?: (question: string) => Promise<boolean>;
   imageReference?: string;
+  interactive?: InteractiveCLI;
 };
 
 type Command =
   | { kind: "doctor" }
+  | { kind: "config" }
   | { kind: "help" }
   | { kind: "init" }
   | { kind: "logs"; service?: "api" | "minio" | "postgres"; follow: boolean }
+  | { kind: "menu" }
   | { kind: "reset" }
   | { kind: "restart" }
   | { kind: "start" }
@@ -174,7 +185,7 @@ class ProcessCommandRunner implements CommandRunner {
   }
 }
 
-class AtlasCoreDeployment {
+class AtlasCoreDeployment implements AtlasCoreOperator {
   readonly #configDir: string;
   readonly #envFile: string;
   readonly #stateFile: string;
@@ -405,25 +416,59 @@ class AtlasCoreDeployment {
   async restart(): Promise<void> {
     const state = this.#requireInitialized();
     const dockerEngineId = await this.#preflight();
-    this.#assertStateMatchesRuntime(state, dockerEngineId);
-    this.#requirePublishedImage();
-    const needsPostgresVolume = await this.#assertStartIsSafe(state);
-    if (needsPostgresVolume) await this.#createVolume(POSTGRES_VOLUME, "postgres_data");
-    const attemptedState = this.#recordStartAttempt(state);
-    await this.#runComposeChecked(["pull"]);
-    await this.#runComposeChecked(["down"]);
-    await this.#runComposeChecked(["up", "-d", "--pull", "never", "--wait", "--wait-timeout", COMPOSE_WAIT_SECONDS]);
-    this.#recordStarted(attemptedState);
-    this.#stdout.write(`Atlas Core ${PACKAGE_VERSION} restarted and is ready.\n`);
+    await this.#restart(state, dockerEngineId);
   }
 
-  async status(): Promise<boolean> {
+  async configureAdminPassword(password: string): Promise<void> {
+    assertAdminPassword(password);
     const state = this.#requireInitialized();
     const dockerEngineId = await this.#preflight();
     this.#assertStateMatchesRuntime(state, dockerEngineId);
+    const snapshot = await this.#deploymentSnapshot();
+    if (snapshot.status !== "stopped") this.#requirePublishedImage();
+    this.#replaceConfigValue("ATLAS_ADMIN_PASSWORD", quoteComposeValue(password));
+    this.#stdout.write("Atlas Core admin password updated for username admin.\n");
+    if (snapshot.status === "stopped") {
+      this.#stdout.write("The new password will take effect the next time Atlas Core starts.\n");
+      return;
+    }
+    this.#stdout.write("Restarting Atlas Core to apply the new password...\n");
+    await this.#restart(state, dockerEngineId);
+  }
+
+  async status(): Promise<boolean> {
+    const snapshot = await this.snapshot();
+    if (snapshot.status === "not-initialized")
+      throw new Error("Atlas Core is not initialized. Run atlas-core init first.");
+    if (snapshot.status === "stopped") {
+      this.#stderr.write("Atlas Core is stopped.\n");
+      return false;
+    }
+    if (snapshot.status === "degraded") {
+      this.#stderr.write(`Atlas Core is not ready: ${snapshot.detail}.\n`);
+      return false;
+    }
+    this.#stdout.write("Atlas Core is running.\n");
+    return true;
+  }
+
+  async snapshot(): Promise<DeploymentSnapshot> {
+    if (!existsSync(this.#configDir) || !existsSync(this.#envFile) || !existsSync(this.#stateFile)) {
+      return { status: "not-initialized", detail: "Initialize Atlas Core to create its private configuration." };
+    }
+    const state = this.#requireInitialized();
+    const dockerEngineId = await this.#preflight();
+    this.#assertStateMatchesRuntime(state, dockerEngineId);
+    return await this.#deploymentSnapshot();
+  }
+
+  async #deploymentSnapshot(): Promise<DeploymentSnapshot> {
     const result = await this.#runCompose(["ps", "--all", "--format", "json"]);
     if (result.status !== 0) throw commandFailure("docker compose ps", result);
     const services = parseComposeServiceStates(result.stdout);
+    if (services.length === 0) {
+      return { status: "stopped", detail: "Atlas Core is initialized and stopped. Durable storage is preserved." };
+    }
     const failures = [...REQUIRED_SERVICES].flatMap((service) => {
       const current = services.find((candidate) => candidate.Service === service);
       if (!current) return [`${service} is missing`];
@@ -432,11 +477,9 @@ class AtlasCoreDeployment {
       return [];
     });
     if (failures.length > 0) {
-      this.#stderr.write(`Atlas Core is not ready: ${failures.join(", ")}.\n`);
-      return false;
+      return { status: "degraded", detail: failures.join(", ") };
     }
-    this.#stdout.write("Atlas Core is running.\n");
-    return true;
+    return { status: "ready", detail: "Core API, PostgreSQL, and MinIO are running and healthy." };
   }
 
   async logs(service: "api" | "minio" | "postgres" | undefined, follow: boolean): Promise<void> {
@@ -743,6 +786,19 @@ class AtlasCoreDeployment {
     return !hasPostgres;
   }
 
+  async #restart(state: DeploymentState, dockerEngineId: string): Promise<void> {
+    this.#assertStateMatchesRuntime(state, dockerEngineId);
+    this.#requirePublishedImage();
+    const needsPostgresVolume = await this.#assertStartIsSafe(state);
+    if (needsPostgresVolume) await this.#createVolume(POSTGRES_VOLUME, "postgres_data");
+    const attemptedState = this.#recordStartAttempt(state);
+    await this.#runComposeChecked(["pull"]);
+    await this.#runComposeChecked(["down"]);
+    await this.#runComposeChecked(["up", "-d", "--pull", "never", "--wait", "--wait-timeout", COMPOSE_WAIT_SECONDS]);
+    this.#recordStarted(attemptedState);
+    this.#stdout.write(`Atlas Core ${PACKAGE_VERSION} restarted and is ready.\n`);
+  }
+
   #writeConfiguration(): void {
     const contents = [
       "# Generated by atlas-core init. Keep this file private and back it up securely.",
@@ -939,6 +995,16 @@ class AtlasCoreDeployment {
     return value;
   }
 
+  #replaceConfigValue(name: string, value: string): void {
+    this.#assertPrivateFile(this.#envFile);
+    const contents = readFileSync(this.#envFile, "utf8");
+    const lines = contents.split(/\r?\n/);
+    const index = lines.findIndex((line) => line.startsWith(`${name}=`));
+    if (index === -1) throw new Error(`${this.#envFile} does not contain ${name}. Restore the matching configuration.`);
+    lines[index] = `${name}=${value}`;
+    writePrivateFile(this.#envFile, lines.join("\n"), this.#platform);
+  }
+
   async #runCompose(args: string[], inherit = false): Promise<CommandResult> {
     return await this.#runComposeFile(this.#composeFile, args, inherit);
   }
@@ -995,6 +1061,7 @@ type RequiredRuntimeContext = {
   createSecret: () => string;
   confirmReset: (question: string) => Promise<boolean>;
   imageReference: string | undefined;
+  interactive: InteractiveCLI;
 };
 
 export async function runCLI(argv: string[], context: CLIContext = {}): Promise<number> {
@@ -1011,7 +1078,14 @@ export async function runCLI(argv: string[], context: CLIContext = {}): Promise<
     }
 
     const deployment = new AtlasCoreDeployment(runtime);
+    if (command.kind === "menu") {
+      await runtime.interactive.runMenu(deployment);
+      return 0;
+    }
     switch (command.kind) {
+      case "config":
+        await runtime.interactive.configureAdmin(deployment);
+        return 0;
       case "doctor":
         return (await deployment.doctor()) ? 0 : 1;
       case "init":
@@ -1045,12 +1119,14 @@ export async function runCLI(argv: string[], context: CLIContext = {}): Promise<
 }
 
 function parseCommand(argv: string[]): Command {
-  if (argv.length === 0 || (argv.length === 1 && ["help", "--help", "-h"].includes(argv[0] ?? ""))) {
+  if (argv.length === 0) return { kind: "menu" };
+  if (argv.length === 1 && ["help", "--help", "-h"].includes(argv[0] ?? "")) {
     return { kind: "help" };
   }
   const [name, ...args] = argv;
   switch (name) {
     case "doctor":
+    case "config":
     case "init":
     case "restart":
     case "start":
@@ -1100,7 +1176,8 @@ function defaultContext(context: CLIContext): RequiredRuntimeContext {
     now: context.now ?? (() => new Date()),
     createSecret: context.createSecret ?? (() => randomBytes(32).toString("base64url")),
     confirmReset: context.confirmReset ?? askForResetConfirmation,
-    imageReference: context.imageReference ?? PACKAGE_IMAGE
+    imageReference: context.imageReference ?? PACKAGE_IMAGE,
+    interactive: context.interactive ?? createInteractiveCLI()
   };
 }
 
@@ -1219,6 +1296,28 @@ function assertComposeVersion(version: string): void {
       );
     }
   }
+}
+
+function assertAdminPassword(password: string): void {
+  const trimmed = password.trim();
+  if (password !== trimmed) throw new Error("Admin password cannot begin or end with whitespace.");
+  if (/[\r\n\0]/u.test(password)) throw new Error("Admin password cannot contain line breaks or null characters.");
+  const placeholder = trimmed.toLocaleLowerCase();
+  if (
+    [
+      "password",
+      "replace_with_secure_admin_password",
+      "replace-with-secure-admin-password",
+      "your-secure-admin-password"
+    ].includes(placeholder)
+  ) {
+    throw new Error("Admin password cannot be a development default or example placeholder.");
+  }
+  if (Array.from(trimmed).length < 12) throw new Error("Admin password must contain at least 12 characters.");
+}
+
+function quoteComposeValue(value: string): string {
+  return `'${value.replaceAll("'", "\\'")}'`;
 }
 
 function commandFailure(command: string, result: CommandResult): Error {

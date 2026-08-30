@@ -12,28 +12,45 @@ durable volumes belong to one host.
 
 ```bash
 npm install --global atlas-core
-atlas-core init
-atlas-core start
+atlas-core
 ```
 
-`init` generates strong local credentials and provisions the MinIO bucket only when it can prove the deployment is
-new. It refuses to create new credentials over existing Atlas containers or volumes. Configuration is stored in `~/.atlas/core`
-with owner-only permissions. Set `ATLAS_CORE_HOME` before the first command to choose another location.
+Running `atlas-core` without arguments opens an interactive action menu. It provides initialization, start and stop,
+status, admin account configuration, logs, diagnostics, and the confirmed reset flow. Arrow keys move through the
+menu, typing filters it, Enter selects an action, and Escape or `q` exits.
+
+Initialization generates strong local credentials and provisions the MinIO bucket only when it can prove the deployment
+is new. It refuses to create new credentials over existing Atlas containers or volumes. Configuration is stored in
+`~/.atlas/core` with owner-only permissions. Set `ATLAS_CORE_HOME` before the first command to choose another location.
+
+The menu is a user-friendly layer over the same commands shown below. Those commands remain available for scripts and
+direct operation.
 
 ## Commands
 
 ```text
+atlas-core
 atlas-core help
 atlas-core init
 atlas-core start
 atlas-core stop
 atlas-core restart
 atlas-core reset
+atlas-core config
 atlas-core status
 atlas-core logs [core|postgres|minio] [--follow]
 atlas-core doctor
 atlas-core version
 ```
+
+`config` has one purpose: manually change the password for the fixed `admin` account. The password is entered twice in
+an interactive hidden prompt and must contain at least 12 characters. Passwords are never accepted as command arguments,
+which keeps them out of shell history and process listings. No other deployment settings are exposed by the menu or the
+config command.
+
+When Core is running, `config` restarts it so the new password applies to subsequent logins. When Core is stopped, the
+new password applies on the next start. Existing browser sessions expire normally. The initial random password remains
+in `~/.atlas/core/.env` until the operator changes it.
 
 `stop` removes containers and the private Compose network. It preserves PostgreSQL and MinIO volumes. Removing the
 npm package also leaves those durable volumes untouched.

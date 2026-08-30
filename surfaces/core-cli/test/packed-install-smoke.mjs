@@ -52,6 +52,7 @@ try {
     "README.md",
     "LICENSE",
     "dist/cli.js",
+    "dist/terminal-ui.js",
     "assets/docker-compose.init.yml",
     "assets/docker-compose.yml"
   ]) {
@@ -71,6 +72,9 @@ try {
   if (!output.includes("atlas-core start")) throw new Error("installed atlas-core binary did not print help");
   if (!output.includes("atlas-core reset")) {
     throw new Error("installed atlas-core binary did not document reset");
+  }
+  if (!output.includes("atlas-core config")) {
+    throw new Error("installed atlas-core binary did not document admin account configuration");
   }
 } finally {
   rmSync(temporaryDirectory, { recursive: true, force: true });
