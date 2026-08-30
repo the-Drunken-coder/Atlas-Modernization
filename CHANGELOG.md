@@ -3,6 +3,18 @@
 Atlas Core release notes are listed newest first. The manual release workflow writes each new section from the
 verified commit history with OpenCode Go, then pauses for approval before publishing.
 
+## 0.1.4 - 2026-08-30
+
+### Added
+
+- `atlas-core status` and the interactive status view now show deployment state, Core and CLI versions, service health, image details, uptime, restart counts, and Docker resource metrics, with service log access and refresh and diagnostics actions.
+- `atlas-core update [cli|all]` and the interactive update flow check the npm `latest` release and support updating only the CLI or updating the CLI and Atlas Core together.
+
+### Changed
+
+- Core updates require confirmation of a current paired PostgreSQL and MinIO backup, preserve credentials and durable storage, and leave a stopped deployment stopped.
+- A failed update leaves credentials, durable volumes, and the recorded Core version unchanged for inspection and retry; CLI-only updates leave the running Core unchanged.
+
 ## 0.1.3 - 2026-08-30
 
 ### Added
