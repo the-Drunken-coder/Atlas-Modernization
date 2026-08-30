@@ -12,7 +12,7 @@ class TestTerminal {
   });
   #output = "";
 
-  constructor(columns = 100, interactive = true) {
+  constructor(columns = 100, interactive = true, rows = 40) {
     Object.assign(this.input, {
       isRaw: false,
       isTTY: interactive,
@@ -23,7 +23,7 @@ class TestTerminal {
     Object.assign(this.output, {
       columns,
       isTTY: interactive,
-      rows: 40
+      rows
     });
     this.output.on("data", (data: Buffer) => {
       this.#output += data.toString();
@@ -231,6 +231,22 @@ describe("Atlas Core terminal UI", () => {
     expect(deployment.details).toHaveBeenCalledOnce();
   });
 
+  it("shows a minimum-height state for status on a 24-row terminal", async () => {
+    const terminal = new TestTerminal(80, true, 24);
+    const deployment = operator();
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("View status");
+    terminal.write("\r");
+    await terminal.waitFor("Status needs at least 30 rows.");
+    terminal.write("\r");
+    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
+    terminal.write("q");
+    await menu;
+
+    expect(deployment.details).toHaveBeenCalledOnce();
+  });
+
   it("shows logs for all services from the log picker", async () => {
     const terminal = new TestTerminal();
     const deployment = operator();
@@ -253,9 +269,12 @@ describe("Atlas Core terminal UI", () => {
 
   it("renders an intentional narrow-terminal state", async () => {
     const terminal = new TestTerminal(36);
-    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(operator());
+    const deployment = operator();
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
 
     await terminal.waitFor("Resize to at least 40 columns.");
+    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledOnce());
+    await nextInputTurn();
     terminal.write("q");
     await menu;
   });
@@ -535,6 +554,45 @@ describe("Atlas Core terminal UI", () => {
     await update;
 
     expect(resolvedAfterCtrlC).toBe(true);
+  });
+
+  it("exits when Ctrl-C is pressed during a slow update check", async () => {
+    const terminal = new TestTerminal();
+    const deployment = operator();
+    let finishUpdateCheck: (() => void) | undefined;
+    deployment.checkForUpdates.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finishUpdateCheck = () =>
+            resolve({
+              cliVersion: "0.1.5",
+              coreVersion: "0.1.5",
+              latestVersion: "0.1.5",
+              cliUpdateAvailable: false,
+              coreUpdateAvailable: false
+            });
+        })
+    );
+    let exited = false;
+    const update = createInteractiveCLI(terminal.input, terminal.output)
+      .runUpdate(deployment)
+      .then(() => {
+        exited = true;
+      });
+
+    await terminal.waitFor("Checking npm for the latest release...");
+    await vi.waitFor(() => expect(deployment.checkForUpdates).toHaveBeenCalledOnce());
+    terminal.write("\u0003");
+    await nextInputTurn();
+    const exitedAfterCtrlC = exited;
+    if (!exited) {
+      finishUpdateCheck?.();
+      await terminal.waitFor("The CLI and Atlas Core are current.");
+      terminal.write("q");
+    }
+    await update;
+
+    expect(exitedAfterCtrlC).toBe(true);
   });
 
   it("offers initialization instead of configuration before first setup", async () => {

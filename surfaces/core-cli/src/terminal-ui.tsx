@@ -95,6 +95,7 @@ type AtlasCoreAppProps = {
 };
 
 const MINIMUM_TERMINAL_COLUMNS = 40;
+const MINIMUM_STATUS_ROWS = 30;
 
 export function createInteractiveCLI(
   input: NodeJS.ReadStream = process.stdin,
@@ -515,11 +516,13 @@ function StatusScreen({
   onReload(): void;
   view: DeploymentDetails | Error;
 }): ReactNode {
-  const { columns } = useWindowSize();
+  const { columns, rows } = useWindowSize();
   const [selected, setSelected] = useState(0);
   const services = view instanceof Error ? [] : view.services;
   const index = Math.min(selected, Math.max(0, services.length - 1));
-  const canInteract = columns >= MINIMUM_TERMINAL_COLUMNS;
+  const hasEnoughColumns = columns >= MINIMUM_TERMINAL_COLUMNS;
+  const hasEnoughRows = view instanceof Error || rows >= MINIMUM_STATUS_ROWS;
+  const canInteract = hasEnoughColumns && hasEnoughRows;
 
   useInput((input, key) => {
     const modified = hasCommandModifier(key);
@@ -537,7 +540,8 @@ function StatusScreen({
     }
   });
 
-  if (!canInteract) return <NarrowTerminal />;
+  if (!hasEnoughColumns) return <NarrowTerminal />;
+  if (!hasEnoughRows) return <ShortStatusTerminal />;
   const width = columns;
   if (view instanceof Error) {
     return (
@@ -924,8 +928,11 @@ function MessageScreen({ message, onBack, title }: { message: string; onBack(): 
 }
 
 function BusyScreen({ captureInput, label }: { captureInput: boolean; label: string }): ReactNode {
+  const { exit } = useApp();
   const { columns } = useWindowSize();
-  useInput(() => undefined, { isActive: captureInput });
+  useInput((input, key) => {
+    if (!captureInput && key.ctrl && input === "c") exit();
+  });
   if (columns < MINIMUM_TERMINAL_COLUMNS) return <NarrowTerminal />;
   return (
     <Box flexDirection="column" width={columns}>
@@ -980,6 +987,18 @@ function NarrowTerminal(): ReactNode {
       </Text>
       <Text>Terminal too narrow.</Text>
       <Text dimColor>Resize to at least 40 columns.</Text>
+    </Box>
+  );
+}
+
+function ShortStatusTerminal(): ReactNode {
+  return (
+    <Box flexDirection="column">
+      <Text bold color="cyan">
+        ATLAS CORE
+      </Text>
+      <Text>Status needs at least 30 rows.</Text>
+      <Text dimColor>Resize the terminal or press Enter or Esc to go back.</Text>
     </Box>
   );
 }
