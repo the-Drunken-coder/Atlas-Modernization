@@ -93,6 +93,8 @@ type OperationResult = {
   failure?: Error;
 };
 
+type KeyValue = readonly [string, string];
+
 type AtlasCoreAppProps = {
   input: NodeJS.ReadStream;
   mode: AppMode;
@@ -532,31 +534,43 @@ function StatusScreen({
   view: DeploymentDetails | Error;
 }): ReactNode {
   const { columns, rows } = useWindowSize();
+  const actionPending = useRef(false);
   const [selected, setSelected] = useState(0);
   const services = view instanceof Error ? [] : view.services;
   const index = Math.min(selected, Math.max(0, services.length - 1));
   const hasEnoughColumns = columns >= MINIMUM_TERMINAL_COLUMNS;
-  const hasEnoughRows = view instanceof Error || rows >= MINIMUM_STATUS_ROWS;
+  const requiredRows = view instanceof Error ? MINIMUM_STATUS_ROWS : requiredStatusRows(view, columns);
+  const hasEnoughRows = view instanceof Error || rows >= requiredRows;
   const canInteract = hasEnoughColumns && hasEnoughRows;
 
   useInput((input, key) => {
+    if (actionPending.current) return;
     const modified = hasCommandModifier(key);
-    if (key.escape || key.return || (key.ctrl && input === "c") || (!modified && input === "q")) onBack();
-    else if (!canInteract || modified) return;
-    else if (input === "r") onReload();
-    else if (input === "d") onDiagnostics();
-    else if ((key.leftArrow || key.upArrow) && services.length > 0) {
+    if (key.escape || key.return || (key.ctrl && input === "c") || (!modified && input === "q")) {
+      actionPending.current = true;
+      onBack();
+    } else if (!canInteract || modified) return;
+    else if (input === "r") {
+      actionPending.current = true;
+      onReload();
+    } else if (input === "d") {
+      actionPending.current = true;
+      onDiagnostics();
+    } else if ((key.leftArrow || key.upArrow) && services.length > 0) {
       setSelected((index - 1 + services.length) % services.length);
     } else if ((key.rightArrow || key.downArrow) && services.length > 0) {
       setSelected((index + 1) % services.length);
     } else if (input === "l") {
       const service = services[index];
-      if (service) onLogs(service.id);
+      if (service) {
+        actionPending.current = true;
+        onLogs(service.id);
+      }
     }
   });
 
   if (!hasEnoughColumns) return <NarrowTerminal />;
-  if (!hasEnoughRows) return <ShortStatusTerminal />;
+  if (!hasEnoughRows) return <ShortStatusTerminal requiredRows={requiredRows} />;
   const width = columns;
   if (view instanceof Error) {
     return (
@@ -614,14 +628,7 @@ function StatusScreen({
       )}
       <Text> </Text>
       <Text bold>DEPLOYMENT</Text>
-      <KeyValues
-        values={[
-          ["Initialized", view.initializedAt],
-          ["Image", view.image ?? "No running Core image"],
-          ["Configuration", "Credentials and durable volumes preserved"]
-        ]}
-        width={width}
-      />
+      <KeyValues values={deploymentValues(view)} width={width} />
       {view.performanceError ? (
         <Text color="yellow">Performance statistics unavailable: {view.performanceError}</Text>
       ) : null}
@@ -632,30 +639,15 @@ function StatusScreen({
 }
 
 function ServiceDetails({ service, width }: { service: DeploymentService; width: number }): ReactNode {
-  const status = `${service.state || "unknown"}${service.health ? `, ${service.health}` : ""}`;
   return (
     <Box flexDirection="column">
       <Text bold>{service.label}</Text>
-      <KeyValues
-        values={[
-          ["Status", status],
-          ["Container", service.container],
-          ["Uptime", service.uptime ?? "Not running"],
-          ["Restarts", service.restarts?.toString() ?? "Not available"],
-          ["CPU", service.cpuPercent ?? "Not available"],
-          ["Memory", joinMetric(service.memoryUsage, service.memoryPercent)],
-          ["Network I/O", service.networkIO ?? "Not available"],
-          ["Block I/O", service.blockIO ?? "Not available"],
-          ["Processes", service.processes ?? "Not available"],
-          ["Image", service.image ?? "Not available"]
-        ]}
-        width={width}
-      />
+      <KeyValues values={serviceValues(service)} width={width} />
     </Box>
   );
 }
 
-function KeyValues({ values, width }: { values: Array<readonly [string, string]>; width: number }): ReactNode {
+function KeyValues({ values, width }: { values: KeyValue[]; width: number }): ReactNode {
   const labelWidth = Math.min(14, Math.max(...values.map(([label]) => label.length)));
   return values.map(([label, value]) => (
     <Box key={label} width={width}>
@@ -667,6 +659,79 @@ function KeyValues({ values, width }: { values: Array<readonly [string, string]>
       </Box>
     </Box>
   ));
+}
+
+function serviceValues(service: DeploymentService): KeyValue[] {
+  const status = `${service.state || "unknown"}${service.health ? `, ${service.health}` : ""}`;
+  return [
+    ["Status", status],
+    ["Container", service.container],
+    ["Uptime", service.uptime ?? "Not running"],
+    ["Restarts", service.restarts?.toString() ?? "Not available"],
+    ["CPU", service.cpuPercent ?? "Not available"],
+    ["Memory", joinMetric(service.memoryUsage, service.memoryPercent)],
+    ["Network I/O", service.networkIO ?? "Not available"],
+    ["Block I/O", service.blockIO ?? "Not available"],
+    ["Processes", service.processes ?? "Not available"],
+    ["Image", service.image ?? "Not available"]
+  ];
+}
+
+function deploymentValues(view: DeploymentDetails): KeyValue[] {
+  return [
+    ["Initialized", view.initializedAt],
+    ["Image", view.image ?? "No running Core image"],
+    ["Configuration", "Credentials and durable volumes preserved"]
+  ];
+}
+
+function requiredStatusRows(view: DeploymentDetails, width: number): number {
+  const right = `${stateName(view.snapshot.status)}  Core v${view.coreVersion}  CLI v${view.cliVersion}`;
+  const serviceRows =
+    view.services.length === 0
+      ? wrappedRows("No Atlas Core containers are running.", width)
+      : Math.max(
+          ...view.services.map(
+            (service) => wrappedRows(service.label, width) + keyValueRows(serviceValues(service), width)
+          )
+        );
+  const endpointRows =
+    width >= 72
+      ? wrappedRows(`API ${view.apiEndpoint}   MinIO ${view.minioEndpoint}`, width)
+      : wrappedRows(`API ${view.apiEndpoint}`, width) + wrappedRows(`MinIO ${view.minioEndpoint}`, width);
+  const serviceChoiceRows = width >= 72 ? (view.services.length > 0 ? 1 : 0) : view.services.length;
+  const performanceRows = view.performanceError
+    ? wrappedRows(`Performance statistics unavailable: ${view.performanceError}`, width)
+    : 0;
+  const rows =
+    wrappedRows(`ATLAS CORE > STATUS ${right}`, width) +
+    wrappedRows(view.snapshot.detail, width) +
+    endpointRows +
+    1 +
+    1 +
+    serviceChoiceRows +
+    1 +
+    serviceRows +
+    1 +
+    1 +
+    keyValueRows(deploymentValues(view), width) +
+    performanceRows +
+    1 +
+    wrappedRows("←/→ service   r refresh   l logs   d diagnostics   Enter or Esc back", width);
+  return Math.max(MINIMUM_STATUS_ROWS, rows);
+}
+
+function keyValueRows(values: KeyValue[], width: number): number {
+  const labelWidth = Math.min(14, Math.max(...values.map(([label]) => label.length)));
+  const valueWidth = Math.max(1, width - labelWidth - 2);
+  return values.reduce((rows, [, value]) => rows + wrappedRows(value, valueWidth), 0);
+}
+
+function wrappedRows(value: string, width: number): number {
+  const lineWidth = Math.max(1, width);
+  return value
+    .split("\n")
+    .reduce((rows, line) => rows + Math.max(1, Math.ceil(Array.from(line).length / lineWidth)), 0);
 }
 
 function ConfigureMenu({ onAdmin, onBack }: { onAdmin(): void; onBack(): void }): ReactNode {
@@ -720,14 +785,21 @@ function SimpleMenu({
   title: string;
 }): ReactNode {
   const { columns } = useWindowSize();
+  const actionPending = useRef(false);
   const [selected, setSelected] = useState(0);
   const canInteract = columns >= MINIMUM_TERMINAL_COLUMNS;
   useInput((input, key) => {
-    if (key.escape || (key.ctrl && input === "c")) onBack();
-    else if (!canInteract || hasCommandModifier(key)) return;
+    if (actionPending.current) return;
+    if (key.escape || (key.ctrl && input === "c")) {
+      actionPending.current = true;
+      onBack();
+    } else if (!canInteract || hasCommandModifier(key)) return;
     else if (key.upArrow) setSelected((value) => (value - 1 + choices.length) % choices.length);
     else if (key.downArrow) setSelected((value) => (value + 1) % choices.length);
-    else if (key.return) onSelect(selected);
+    else if (key.return) {
+      actionPending.current = true;
+      onSelect(selected);
+    }
   });
   if (!canInteract) return <NarrowTerminal />;
   return (
@@ -747,6 +819,7 @@ function SimpleMenu({
 
 function PasswordScreen({ onCancel, onSubmit }: { onCancel(): void; onSubmit(password: string): void }): ReactNode {
   const { columns } = useWindowSize();
+  const actionPending = useRef(false);
   const [confirmation, setConfirmation] = useState(false);
   const [error, setError] = useState<string>();
   const [password, setPassword] = useState("");
@@ -768,17 +841,26 @@ function PasswordScreen({ onCancel, onSubmit }: { onCancel(): void; onSubmit(pas
       setConfirmation(false);
       return;
     }
+    actionPending.current = true;
     onSubmit(password);
   };
 
   useInput((input, key) => {
-    if (key.escape || (key.ctrl && input === "c")) onCancel();
-    else if (!canInteract || hasCommandModifier(key)) return;
+    if (actionPending.current) return;
+    if (key.escape || (key.ctrl && input === "c")) {
+      actionPending.current = true;
+      onCancel();
+    } else if (!canInteract || hasCommandModifier(key)) return;
     else if (key.return) submit();
     else if (key.backspace || key.delete) setValue((current) => Array.from(current).slice(0, -1).join(""));
     else if (isPrintableInput(input, key)) setValue((current) => current + input);
   });
-  usePaste((pasted) => setValue((current) => current + printableText(pasted)), { isActive: canInteract });
+  usePaste(
+    (pasted) => {
+      if (!actionPending.current) setValue((current) => current + printableText(pasted));
+    },
+    { isActive: canInteract }
+  );
 
   if (!canInteract) return <NarrowTerminal />;
   return (
@@ -809,18 +891,25 @@ function UpdateMenu({
   onReview(scope: UpdateScope): void;
 }): ReactNode {
   const { columns } = useWindowSize();
+  const actionPending = useRef(false);
   const choices = useMemo(() => updateChoices(info), [info]);
   const [selected, setSelected] = useState(0);
   const canInteract = columns >= MINIMUM_TERMINAL_COLUMNS;
   useInput((input, key) => {
+    if (actionPending.current) return;
     const modified = hasCommandModifier(key);
-    if (key.escape || (key.ctrl && input === "c") || (!modified && input === "q")) onBack();
-    else if (!canInteract || modified) return;
-    else if (input === "r") onReload();
-    else if (key.upArrow && choices.length > 0) setSelected((value) => (value - 1 + choices.length) % choices.length);
+    if (key.escape || (key.ctrl && input === "c") || (!modified && input === "q")) {
+      actionPending.current = true;
+      onBack();
+    } else if (!canInteract || modified) return;
+    else if (input === "r") {
+      actionPending.current = true;
+      onReload();
+    } else if (key.upArrow && choices.length > 0) setSelected((value) => (value - 1 + choices.length) % choices.length);
     else if (key.downArrow && choices.length > 0) setSelected((value) => (value + 1) % choices.length);
     else if (key.return) {
       const choice = choices[selected];
+      actionPending.current = true;
       if (choice) onReview(choice.scope);
       else onBack();
     }
@@ -885,8 +974,10 @@ function UpdateReview({
   const canInteract = columns >= MINIMUM_TERMINAL_COLUMNS;
   useInput((input, key) => {
     if (actionPending.current) return;
-    if (key.escape || (key.ctrl && input === "c")) onBack();
-    else if (!canInteract || hasCommandModifier(key)) return;
+    if (key.escape || (key.ctrl && input === "c")) {
+      actionPending.current = true;
+      onBack();
+    } else if (!canInteract || hasCommandModifier(key)) return;
     else if (key.return) {
       actionPending.current = true;
       onApply();
@@ -932,8 +1023,13 @@ function UpdateReview({
 
 function MessageScreen({ message, onBack, title }: { message: string; onBack(): void; title: string }): ReactNode {
   const { columns } = useWindowSize();
+  const actionPending = useRef(false);
   useInput((input, key) => {
-    if (key.return || key.escape || (key.ctrl && input === "c")) onBack();
+    if (actionPending.current) return;
+    if (key.return || key.escape || (key.ctrl && input === "c")) {
+      actionPending.current = true;
+      onBack();
+    }
   });
   if (columns < MINIMUM_TERMINAL_COLUMNS) return <NarrowTerminal />;
   return (
@@ -1014,13 +1110,13 @@ function NarrowTerminal(): ReactNode {
   );
 }
 
-function ShortStatusTerminal(): ReactNode {
+function ShortStatusTerminal({ requiredRows }: { requiredRows: number }): ReactNode {
   return (
     <Box flexDirection="column">
       <Text bold color="cyan">
         ATLAS CORE
       </Text>
-      <Text>Status needs at least 30 rows.</Text>
+      <Text>Status needs at least {requiredRows} rows at this width.</Text>
       <Text dimColor>Resize the terminal or press Enter or Esc to go back.</Text>
     </Box>
   );

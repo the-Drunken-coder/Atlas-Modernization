@@ -256,13 +256,40 @@ describe("Atlas Core terminal UI", () => {
 
     await terminal.waitFor("View status");
     terminal.write("\r");
-    await terminal.waitFor("Status needs at least 30 rows.");
+    await terminal.waitFor("Status needs at least 30 rows at this width.");
     terminal.write("\r");
     await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
     terminal.write("q");
     await menu;
 
     expect(deployment.details).toHaveBeenCalledOnce();
+  });
+
+  it("accounts for wrapped image values in the status height requirement", async () => {
+    const terminal = new TestTerminal(40, true, 30);
+    const deployment = operator();
+    const baseDetails = await deployment.details();
+    const image = `ghcr.io/atlas/core@sha256:${"a".repeat(64)}`;
+    deployment.details.mockClear();
+    const wrappedDetails = {
+      ...baseDetails,
+      image,
+      services: baseDetails.services.map((service) => ({ ...service, image }))
+    };
+    deployment.details.mockResolvedValue(wrappedDetails);
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("View status");
+    terminal.write("\r");
+    await vi.waitFor(() => expect(deployment.details).toHaveBeenCalledOnce());
+    await nextInputTurn();
+    terminal.write("\r");
+    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
+    terminal.write("q");
+    await menu;
+
+    const requiredRows = terminal.text.match(/Status needs at least (\d+) rows/u)?.[1];
+    expect(Number(requiredRows)).toBeGreaterThan(30);
   });
 
   it("shows logs for all services from the log picker", async () => {
@@ -283,6 +310,35 @@ describe("Atlas Core terminal UI", () => {
     await menu;
 
     expect(deployment.logs).toHaveBeenCalledWith(undefined, false);
+  });
+
+  it("dispatches only one log selection when Enter repeats before the screen changes", async () => {
+    const terminal = new TestTerminal();
+    const deployment = operator();
+    let finishLogs: (() => void) | undefined;
+    const pendingLogs = new Promise<undefined>((resolve) => {
+      finishLogs = () => resolve(undefined);
+    });
+    deployment.logs.mockImplementation(() => pendingLogs);
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("View logs");
+    terminal.write("logs");
+    await terminal.waitFor("Filter: logs");
+    terminal.write("\r");
+    await terminal.waitFor("All services");
+    terminal.write("\u001b[13u\u001b[13u");
+    await vi.waitFor(() => expect(deployment.logs).toHaveBeenCalled());
+    await nextInputTurn();
+    const logCallsAfterRepeatedEnter = deployment.logs.mock.calls.length;
+    finishLogs?.();
+    await terminal.waitFor("Press Enter to return to Atlas Core.");
+    terminal.write("\r");
+    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
+    terminal.write("q");
+    await menu;
+
+    expect(logCallsAfterRepeatedEnter).toBe(1);
   });
 
   it("renders an intentional narrow-terminal state", async () => {
@@ -379,6 +435,37 @@ describe("Atlas Core terminal UI", () => {
 
     expect(deployment.configureAdminPassword).toHaveBeenCalledWith(password);
     expect(terminal.text).not.toContain(password);
+  });
+
+  it("submits the admin password once when confirmation Enter repeats", async () => {
+    const terminal = new TestTerminal();
+    const deployment = operator();
+    const password = "correct-horse-battery-staple";
+    let finishConfiguration: (() => void) | undefined;
+    const pendingConfiguration = new Promise<undefined>((resolve) => {
+      finishConfiguration = () => resolve(undefined);
+    });
+    deployment.configureAdminPassword.mockImplementation(() => pendingConfiguration);
+    const configuration = createInteractiveCLI(terminal.input, terminal.output).configureAdmin(deployment);
+
+    await terminal.waitFor("New password");
+    terminal.write(password);
+    await terminal.waitFor("*".repeat(password.length));
+    terminal.write("\r");
+    await terminal.waitFor("Confirm password");
+    const beforeConfirmation = terminal.raw.length;
+    terminal.write(password);
+    await terminal.waitForRawChange(beforeConfirmation);
+    terminal.write("\u001b[13u\u001b[13u");
+    await vi.waitFor(() => expect(deployment.configureAdminPassword).toHaveBeenCalled());
+    await nextInputTurn();
+    const configurationCallsAfterRepeatedEnter = deployment.configureAdminPassword.mock.calls.length;
+    finishConfiguration?.();
+    await terminal.waitFor("Press Enter to return to Atlas Core.");
+    terminal.write("\r");
+    await configuration;
+
+    expect(configurationCallsAfterRepeatedEnter).toBe(1);
   });
 
   it("accepts a pasted admin password", async () => {
