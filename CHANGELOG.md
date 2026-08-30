@@ -3,6 +3,17 @@
 Atlas Core release notes are listed newest first. The manual release workflow writes each new section from the
 verified commit history with OpenCode Go, then pauses for approval before publishing.
 
+## 0.1.3 - 2026-08-30
+
+### Added
+
+- Running `atlas-core` without arguments now opens an interactive operator menu for initialization, lifecycle actions, admin configuration, logs, diagnostics, and reset.
+- The menu supports arrow-key navigation, typing to filter actions, Enter to select, and Escape or `q` to exit; it requires an interactive terminal.
+
+### Changed
+
+- The existing commands remain available for scripts and direct operation after installing the CLI with `npm install --global atlas-core`.
+
 ## 0.1.2 - 2026-08-30
 
 ### Added
