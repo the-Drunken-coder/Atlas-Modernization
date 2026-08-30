@@ -176,7 +176,19 @@ func (g *typeScriptGenerator) objectType(schema typeScriptSchema, current string
 		} else {
 			builder.WriteString("[key: string]: ")
 		}
-		builder.WriteString(g.typeFor(patternSchema, current, indent+1))
+		indexTypes := []string{g.typeFor(patternSchema, current, indent+1)}
+		if strings.HasPrefix(key, "^custom_") {
+			for propertyName, property := range props {
+				propertySchema, ok := property.(map[string]any)
+				if ok && strings.HasPrefix(propertyName, "custom_") {
+					indexTypes = append(indexTypes, g.typeFor(propertySchema, current, indent+1))
+					if !required[propertyName] {
+						indexTypes = append(indexTypes, "undefined")
+					}
+				}
+			}
+		}
+		builder.WriteString(strings.Join(uniqueStrings(indexTypes), " | "))
 		builder.WriteString(";\n")
 	}
 

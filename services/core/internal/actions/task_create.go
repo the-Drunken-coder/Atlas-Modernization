@@ -100,8 +100,8 @@ func (a *TaskActions) Create(ctx context.Context, params CreateTaskParams, idemp
 	if !ok {
 		return nil, false, NewValidationError("Asset runtime does not advertise Command support")
 	}
-	if effectiveScheduling(entry.Scheduling) != effectiveScheduling(command.Scheduling) {
-		return nil, false, NewValidationError("Asset runtime scheduling does not match the Command Catalog")
+	if _, err := resolveScheduling(command, entry); err != nil {
+		return nil, false, err
 	}
 	if validationErrors := protocolvalidator.ValidateDefinition(commandDefinitionName(command.InputSchema), params.Input); len(validationErrors) > 0 {
 		return nil, false, NewValidationErrorWithDetails("Invalid Command input", validationErrors)

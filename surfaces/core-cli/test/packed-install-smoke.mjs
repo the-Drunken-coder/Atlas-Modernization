@@ -54,7 +54,8 @@ try {
     "dist/cli.js",
     "dist/terminal-ui.js",
     "assets/docker-compose.init.yml",
-    "assets/docker-compose.yml"
+    "assets/docker-compose.yml",
+    "assets/source_gateway.production.json"
   ]) {
     if (!existsSync(join(installed, path))) throw new Error(`installed package is missing ${path}`);
   }
@@ -64,6 +65,9 @@ try {
   const compose = readFileSync(join(installed, "assets", "docker-compose.yml"), "utf8");
   if (!compose.includes('mc alias set -- atlas http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"')) {
     throw new Error("installed package does not protect MinIO credentials from option parsing");
+  }
+  if (!compose.includes('command: ["./atlas_source_gateway"]')) {
+    throw new Error("installed package does not run the Source Gateway");
   }
   const installedBin = join(
     project,

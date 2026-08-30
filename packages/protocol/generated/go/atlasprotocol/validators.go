@@ -156,6 +156,10 @@ func ValidateEntityComponents(value any) []string {
 	return validator.ValidateDefinition("EntityComponents", value)
 }
 
+func ValidateCustomPluginComponent(value any) []string {
+	return validator.ValidateDefinition("CustomPluginComponent", value)
+}
+
 func ValidateCommandCatalog(value any) []string {
 	return validator.ValidateDefinition("CommandCatalog", value)
 }
@@ -166,6 +170,18 @@ func ValidateCommandManifest(value any) []string {
 
 func ValidateCommandManifestEntry(value any) []string {
 	return validator.ValidateDefinition("CommandManifestEntry", value)
+}
+
+func ValidatePluginManifest(value any) []string {
+	return validator.ValidateDefinition("PluginManifest", value)
+}
+
+func ValidatePluginStatus(value any) []string {
+	return validator.ValidateDefinition("PluginStatus", value)
+}
+
+func ValidatePluginDiscoveryResponse(value any) []string {
+	return validator.ValidateDefinition("PluginDiscoveryResponse", value)
 }
 
 func ValidateMediaRefsComponent(value any) []string {

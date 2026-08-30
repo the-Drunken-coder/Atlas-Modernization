@@ -4,6 +4,7 @@ import {
   ChevronRightIcon as BlueprintChevronRightIcon,
   CrossIcon as BlueprintCrossIcon,
   CubeIcon as BlueprintCubeIcon,
+  DataConnectionIcon as BlueprintDataConnectionIcon,
   DetectionIcon as BlueprintDetectionIcon,
   DoubleCaretVerticalIcon as BlueprintDoubleCaretVerticalIcon,
   DuplicateIcon as BlueprintDuplicateIcon,
@@ -45,6 +46,10 @@ export function CommandsIcon(props: IconProps) {
 
 export function KeyIcon(props: IconProps) {
   return <BlueprintKeyIcon {...props} />;
+}
+
+export function PluginsIcon(props: IconProps) {
+  return <BlueprintDataConnectionIcon {...props} />;
 }
 
 export function BrandIcon(props: IconProps) {

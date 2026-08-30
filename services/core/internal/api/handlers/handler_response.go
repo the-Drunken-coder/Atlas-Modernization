@@ -56,6 +56,33 @@ func (h *Handler) writeError(w http.ResponseWriter, r *http.Request, status int,
 	h.writeErrorWithCause(w, r, status, message, errorCode, nil)
 }
 
+func (h *Handler) writeErrorWithDetails(w http.ResponseWriter, r *http.Request, status int, message string, errorCode protocol.ErrorCode, details map[string]protocol.JSONValue, cause error) {
+	errorID := generateErrorID()
+	resp := ErrorResponse{
+		Success:   false,
+		Message:   message,
+		ErrorCode: errorCode,
+		ErrorID:   errorID,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Path:      r.URL.Path,
+		Details:   details,
+	}
+	event := h.requestLogger(r).Warn()
+	if status >= http.StatusInternalServerError {
+		event = h.requestLogger(r).Error()
+	}
+	if cause != nil && status >= http.StatusInternalServerError {
+		event = event.Err(cause)
+	}
+	event.Str("error_id", errorID).
+		Str("error_code", string(errorCode)).
+		Str("path", r.URL.Path).
+		Str("method", r.Method).
+		Int("status", status).
+		Msg(message)
+	writeJSON(w, r, status, resp)
+}
+
 // writeErrorWithCause writes an error response and logs an optional wrapped cause (for 5xx diagnostics).
 func (h *Handler) writeErrorWithCause(w http.ResponseWriter, r *http.Request, status int, message string, errorCode protocol.ErrorCode, cause error) {
 	errorID := generateErrorID()

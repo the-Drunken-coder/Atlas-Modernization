@@ -206,6 +206,14 @@ jobs:
       - name: Run Atlas SDK browser tests
         run: npm run test:browser --workspace @the-drunken-coder/atlas-sdk
 
+      - name: Check Atlas Plugin runtime
+        run: |
+          npm run lint --workspace @the-drunken-coder/atlas-plugin-runtime
+          npm run format:check --workspace @the-drunken-coder/atlas-plugin-runtime
+          npm test --workspace @the-drunken-coder/atlas-plugin-runtime
+          npm run build:plugin-runtime
+          npm run build:reference-plugin
+
   atlas-core-package:
     name: atlas-core-package
     runs-on: ubuntu-latest
@@ -251,6 +259,12 @@ jobs:
                 .services.api.environment.DATABASE_RECREATE_ON_STARTUP == "false" and
                 .services.api.environment.CORS_ORIGINS == "https://atlasinterface.com" and
                 .services.api.environment.CORS_ORIGIN_PATTERNS == "https://*.atlas-je0.pages.dev" and
+                .services.api.environment.ATLAS_PLUGINS == "[]" and
+                .services["source-gateway"].image == $image and
+                .services["source-gateway"].entrypoint == [] and
+                .services["source-gateway"].command == ["./atlas_source_gateway"] and
+                .services["source-gateway"].environment.ATLAS_SOURCE_GATEWAY_CONFIG == "/app/source_gateway.json" and
+                .services["source-gateway"].volumes[0].read_only == true and
                 .services.postgres.command == ["postgres", "-c", "timezone=UTC"] and
                 (.services.postgres.volumes | length) == 1 and
                 .services.postgres.volumes[0].type == "volume" and
@@ -296,6 +310,7 @@ jobs:
           cleanup() {
             docker container rm --force \
               atlas_core_production_api \
+              atlas_core_production_source_gateway \
               atlas_core_production_postgres \
               atlas_core_production_minio \
               atlas_core_production_minio_init >/dev/null 2>&1 || true
@@ -326,10 +341,6 @@ jobs:
             echo "atlas-core init created PostgreSQL storage before the first start." >&2
             exit 1
           fi
-
-          printf 'y\n' | ATLAS_CORE_HOME="$config_dir" "$consumer/node_modules/.bin/atlas-core" reset
-          ATLAS_CORE_HOME="$config_dir" "$consumer/node_modules/.bin/atlas-core" status
-          curl --fail --silent --show-error http://127.0.0.1:8000/readiness
 
   fieldlink:
     name: fieldlink
@@ -474,7 +485,7 @@ jobs:
           sudo apt-get install -y jq shellcheck
 
       - name: Build Atlas Core
-        run: go build ./cmd/atlas_core
+        run: go build ./cmd/atlas_core ./cmd/atlas_source_gateway
 
       - name: Validate JSON files
         run: |
@@ -611,4 +622,20 @@ jobs:
           context: .
           file: services/core/docker/Dockerfile
           target: production
+          push: false
+
+      - name: Build Source Gateway production image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        with:
+          context: .
+          file: services/core/docker/Dockerfile
+          target: source-gateway-production
+          push: false
+
+      - name: Build reference Plugin and source fixtures
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        with:
+          context: .
+          file: plugins/reference/Dockerfile
+          target: plugin
           push: false

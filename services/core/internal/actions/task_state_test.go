@@ -17,49 +17,51 @@ func TestTaskLifecycleStateMachine(t *testing.T) {
 	commands := NewTaskActionsWithCatalog(nil, catalog).catalog
 	queued := commands["fixture.queued"]
 	immediate := commands["fixture.immediate"]
+	queuedScheduling := protocol.CommandManifestEntry{Scheduling: protocol.CommandSchedulingQueued}
+	immediateScheduling := protocol.CommandManifestEntry{Scheduling: protocol.CommandSchedulingImmediate}
 	progressManifest := protocol.CommandManifestEntry{SupportsProgress: true}
 	cancellableManifest := protocol.CommandManifestEntry{SupportsCancel: true}
 
 	t.Run("acknowledge", func(t *testing.T) {
 		task := taskStateFixture(protocol.TaskStatusPending)
-		changed, err := acknowledgeTask(task, queued, protocol.CommandManifestEntry{}, taskStateTestTime)
+		changed, err := acknowledgeTask(task, queued, queuedScheduling, taskStateTestTime)
 		if err != nil || !changed || task.Status != string(protocol.TaskStatusAcknowledged) || task.AcknowledgedAt == nil {
 			t.Fatalf("acknowledgeTask = %#v, %t, %v", task, changed, err)
 		}
-		if changed, err = acknowledgeTask(task, queued, protocol.CommandManifestEntry{}, taskStateTestTime); err != nil || changed {
+		if changed, err = acknowledgeTask(task, queued, queuedScheduling, taskStateTestTime); err != nil || changed {
 			t.Fatalf("repeated acknowledge = %t, %v", changed, err)
 		}
-		if _, err := acknowledgeTask(taskStateFixture(protocol.TaskStatusPending), immediate, protocol.CommandManifestEntry{}, taskStateTestTime); err == nil {
+		if _, err := acknowledgeTask(taskStateFixture(protocol.TaskStatusPending), immediate, immediateScheduling, taskStateTestTime); err == nil {
 			t.Fatal("immediate Task accepted acknowledgement")
 		}
-		if _, err := acknowledgeTask(taskStateFixture(protocol.TaskStatusInProgress), queued, protocol.CommandManifestEntry{}, taskStateTestTime); err == nil {
+		if _, err := acknowledgeTask(taskStateFixture(protocol.TaskStatusInProgress), queued, queuedScheduling, taskStateTestTime); err == nil {
 			t.Fatal("in-progress Task accepted acknowledgement")
 		}
 	})
 
 	t.Run("start", func(t *testing.T) {
 		queuedTask := taskStateFixture(protocol.TaskStatusAcknowledged)
-		changed, err := startTask(queuedTask, queued, protocol.CommandManifestEntry{}, taskStateTestTime)
+		changed, err := startTask(queuedTask, queued, queuedScheduling, taskStateTestTime)
 		if err != nil || !changed || queuedTask.Status != string(protocol.TaskStatusInProgress) || queuedTask.StartedAt == nil {
 			t.Fatalf("start queued Task = %#v, %t, %v", queuedTask, changed, err)
 		}
-		if changed, err = startTask(queuedTask, queued, protocol.CommandManifestEntry{}, taskStateTestTime); err != nil || changed {
+		if changed, err = startTask(queuedTask, queued, queuedScheduling, taskStateTestTime); err != nil || changed {
 			t.Fatalf("repeated start = %t, %v", changed, err)
 		}
 		immediateTask := taskStateFixture(protocol.TaskStatusPending)
-		if changed, err = startTask(immediateTask, immediate, protocol.CommandManifestEntry{}, taskStateTestTime); err != nil || !changed || immediateTask.AcknowledgedAt == nil {
+		if changed, err = startTask(immediateTask, immediate, immediateScheduling, taskStateTestTime); err != nil || !changed || immediateTask.AcknowledgedAt == nil {
 			t.Fatalf("start immediate Task = %#v, %t, %v", immediateTask, changed, err)
 		}
 		expiredTask := taskStateFixture(protocol.TaskStatusPending)
 		expiredTask.CreatedAt = taskStateTestTime.Add(-immediateStartWindow)
-		if changed, err = startTask(expiredTask, immediate, protocol.CommandManifestEntry{}, taskStateTestTime); err != nil || !changed || expiredTask.Status != string(protocol.TaskStatusFailed) {
+		if changed, err = startTask(expiredTask, immediate, immediateScheduling, taskStateTestTime); err != nil || !changed || expiredTask.Status != string(protocol.TaskStatusFailed) {
 			t.Fatalf("start expired immediate Task = %#v, %t, %v", expiredTask, changed, err)
 		}
 		var timeoutFailure protocol.TaskFailure
 		if err := json.Unmarshal(expiredTask.Failure, &timeoutFailure); err != nil || timeoutFailure.Code != protocol.TaskFailureCodeImmediateStartTimeout {
 			t.Fatalf("expired immediate Task failure = %#v, %v", timeoutFailure, err)
 		}
-		if _, err := startTask(taskStateFixture(protocol.TaskStatusPending), queued, protocol.CommandManifestEntry{}, taskStateTestTime); err == nil {
+		if _, err := startTask(taskStateFixture(protocol.TaskStatusPending), queued, queuedScheduling, taskStateTestTime); err == nil {
 			t.Fatal("pending queued Task started before acknowledgement")
 		}
 	})
@@ -271,8 +273,16 @@ func TestTaskStateHelpers(t *testing.T) {
 	if _, ok := manifestEntry(manifest, "missing"); ok {
 		t.Fatal("manifestEntry found an absent Command")
 	}
-	if effectiveScheduling("") != protocol.CommandSchedulingQueued || effectiveScheduling(protocol.CommandSchedulingImmediate) != protocol.CommandSchedulingImmediate {
-		t.Fatal("effectiveScheduling did not apply the queued default")
+	omitted := protocol.CommandDefinition{Command: "fixture.choice"}
+	if got, err := resolveScheduling(omitted, protocol.CommandManifestEntry{Scheduling: protocol.CommandSchedulingImmediate}); err != nil || got != protocol.CommandSchedulingImmediate {
+		t.Fatalf("manifest-selected scheduling = %q, %v", got, err)
+	}
+	declared := protocol.CommandDefinition{Command: "fixture.fixed", Scheduling: protocol.CommandSchedulingQueued}
+	if got, err := resolveScheduling(declared, protocol.CommandManifestEntry{Scheduling: protocol.CommandSchedulingQueued}); err != nil || got != protocol.CommandSchedulingQueued {
+		t.Fatalf("catalog-selected scheduling = %q, %v", got, err)
+	}
+	if _, err := resolveScheduling(declared, protocol.CommandManifestEntry{Scheduling: protocol.CommandSchedulingImmediate}); err == nil {
+		t.Fatal("resolveScheduling accepted a catalog mismatch")
 	}
 	if !jsonEqual([]byte(`{"a":1,"b":2}`), []byte(`{"b":2,"a":1}`)) || jsonEqual([]byte(`{`), []byte(`[`)) {
 		t.Fatal("jsonEqual did not compare canonical and malformed JSON correctly")

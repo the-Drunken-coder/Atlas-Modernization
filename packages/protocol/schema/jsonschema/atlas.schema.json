@@ -186,6 +186,18 @@
       },
       "type": "object"
     },
+    "CustomPluginComponent": {
+      "additionalProperties": false,
+      "properties": {
+        "plugin_id": {
+          "$ref": "#/$defs/PluginIdentifier"
+        }
+      },
+      "required": [
+        "plugin_id"
+      ],
+      "type": "object"
+    },
     "EntityComponents": {
       "additionalProperties": false,
       "patternProperties": {
@@ -196,6 +208,9 @@
       "properties": {
         "communications": {
           "$ref": "#/$defs/CommunicationsComponent"
+        },
+        "custom_plugin": {
+          "$ref": "#/$defs/CustomPluginComponent"
         },
         "geometry": {
           "$ref": "#/$defs/GeometryComponent"
@@ -561,7 +576,12 @@
         "OBJECT_ALREADY_EXISTS",
         "OBJECT_PATH_CONFLICT",
         "CURSOR_EXPIRED",
-        "PRECONDITION_FAILED"
+        "PRECONDITION_FAILED",
+        "PLUGIN_NOT_FOUND",
+        "PLUGIN_INPUT_REJECTED",
+        "PLUGIN_UNAVAILABLE",
+        "PLUGIN_TIMEOUT",
+        "PLUGIN_FAILURE"
       ]
     },
     "ErrorResponse": {
@@ -1527,6 +1547,228 @@
     "ProtocolSchemaName": {
       "pattern": "^atlas(?:\\.[a-z][a-z0-9]*(?:_[a-z0-9]+)*)+\\.[A-Z][A-Za-z0-9]*$",
       "type": "string"
+    },
+    "PluginDiscoveryResponse": {
+      "items": {
+        "$ref": "#/$defs/PluginStatus"
+      },
+      "type": "array"
+    },
+    "PluginIdentifier": {
+      "maxLength": 64,
+      "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$",
+      "type": "string"
+    },
+    "PluginManifest": {
+      "additionalProperties": false,
+      "properties": {
+        "display_name": {
+          "$ref": "#/$defs/NonEmptyString",
+          "maxLength": 100,
+          "type": "string"
+        },
+        "operations": {
+          "items": {
+            "$ref": "#/$defs/PluginOperationDescriptor"
+          },
+          "type": "array"
+        },
+        "plugin_id": {
+          "$ref": "#/$defs/PluginIdentifier"
+        },
+        "tool_asset_id": {
+          "maxLength": 50,
+          "pattern": "^plugin_[A-Za-z0-9_-]{43}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "display_name",
+        "operations",
+        "plugin_id"
+      ],
+      "type": "object"
+    },
+    "PluginOperationDescriptor": {
+      "additionalProperties": false,
+      "properties": {
+        "display_name": {
+          "$ref": "#/$defs/NonEmptyString",
+          "maxLength": 100,
+          "type": "string"
+        },
+        "operation_id": {
+          "$ref": "#/$defs/PluginIdentifier"
+        },
+        "timeout_ms": {
+          "maximum": 25000,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "display_name",
+        "operation_id",
+        "timeout_ms"
+      ],
+      "type": "object"
+    },
+    "PluginStatus": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "starting"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "reason_code": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "available"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "checked_at": {
+                "$ref": "#/$defs/RFC3339Timestamp"
+              },
+              "display_name": {
+                "$ref": "#/$defs/NonEmptyString",
+                "maxLength": 100,
+                "type": "string"
+              },
+              "reason_code": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "unavailable"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "checked_at": {
+                "$ref": "#/$defs/RFC3339Timestamp"
+              },
+              "reason_code": {
+                "$ref": "#/$defs/PluginUnavailableReason"
+              }
+            }
+          }
+        }
+      ],
+      "properties": {
+        "checked_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RFC3339Timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "display_name": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NonEmptyString",
+              "maxLength": 100,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "operations": {
+          "items": {
+            "$ref": "#/$defs/PluginOperationDescriptor"
+          },
+          "type": "array"
+        },
+        "plugin_id": {
+          "$ref": "#/$defs/PluginIdentifier"
+        },
+        "reason_code": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PluginUnavailableReason"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/PluginStatusState"
+        },
+        "tool_asset_id": {
+          "anyOf": [
+            {
+              "maxLength": 50,
+              "pattern": "^plugin_[A-Za-z0-9_-]{43}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "checked_at",
+        "display_name",
+        "operations",
+        "plugin_id",
+        "reason_code",
+        "status",
+        "tool_asset_id"
+      ],
+      "type": "object"
+    },
+    "PluginStatusState": {
+      "enum": [
+        "starting",
+        "available",
+        "unavailable"
+      ]
+    },
+    "PluginUnavailableReason": {
+      "enum": [
+        "transport_unreachable",
+        "transport_timeout",
+        "invalid_manifest",
+        "invalid_response",
+        "application_unhealthy"
+      ]
     },
     "ProtocolRevision": {
       "pattern": "^sha256:[A-Fa-f0-9]{64}$",

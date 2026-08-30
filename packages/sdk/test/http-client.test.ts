@@ -16,6 +16,7 @@ import {
   ProtocolMismatchError
 } from "../src";
 import { AtlasAdminClient } from "../src/admin.js";
+import { HttpTransport } from "../src/http.js";
 import { entity, FakeCore, object, task } from "./support/fake-core.js";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -77,7 +78,12 @@ describe("AtlasClient HTTP", () => {
 
     const failure = await client.queries.full().catch((error: unknown) => error);
 
-    expect(failure).toMatchObject({ status: 503, errorCode: "CORE_UNAVAILABLE" });
+    expect(failure).toMatchObject({
+      status: 503,
+      errorCode: "CORE_UNAVAILABLE",
+      details: { api_key: "[redacted]" },
+      response: expect.objectContaining({ details: { api_key: "[redacted]" } })
+    });
     expect(JSON.stringify(failure)).not.toContain(secret);
     expect((failure as Error).message).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/);
   });
@@ -131,6 +137,61 @@ describe("AtlasClient HTTP", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("keeps the request timeout active while reading a response body", async () => {
+    vi.useFakeTimers();
+    const fetchImpl: typeof fetch = async (_url, init) => {
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          init?.signal?.addEventListener("abort", () => controller.error(init.signal?.reason), { once: true });
+        }
+      });
+      return new Response(body, { status: 200, headers: { "Content-Type": "application/json" } });
+    };
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, requestTimeoutMs: 50 });
+
+    try {
+      const handshake = expect(client.handshake()).rejects.toThrow("Atlas request timed out after 50ms");
+      await vi.advanceTimersByTimeAsync(50);
+      await handshake;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("rejects a successful JSON body that resolves after the request timeout", async () => {
+    vi.useFakeTimers();
+    const response = Response.json([]);
+    vi.spyOn(response, "text").mockImplementationOnce(
+      () => new Promise((resolve) => setTimeout(() => resolve("[]"), 100))
+    );
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: async () => response, requestTimeoutMs: 50 });
+
+    try {
+      const plugins = expect(client.plugins.list()).rejects.toThrow("Atlas request timed out after 50ms");
+      await vi.advanceTimersByTimeAsync(100);
+      await plugins;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("rejects a successful binary body that resolves after caller cancellation", async () => {
+    const controller = new AbortController();
+    const reason = new Error("caller canceled download");
+    const response = new Response(new Uint8Array([1, 2, 3]));
+    vi.spyOn(response, "arrayBuffer").mockImplementationOnce(async () => {
+      controller.abort(reason);
+      return new Uint8Array([1, 2, 3]).buffer;
+    });
+    const transport = new HttpTransport({
+      baseUrl: "http://atlas.test",
+      fetchImpl: async () => response,
+      requestTimeoutMs: 1_000
+    });
+
+    await expect(transport.arrayBuffer("GET", "/binary", controller.signal)).rejects.toBe(reason);
   });
 
   it("labels fetch failures as transport errors", async () => {

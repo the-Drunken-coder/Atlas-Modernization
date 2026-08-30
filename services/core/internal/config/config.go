@@ -5,6 +5,11 @@ import (
 	"net/netip"
 )
 
+type PluginConfig struct {
+	ID      string `json:"id"`
+	BaseURL string `json:"base_url"`
+}
+
 // Config holds all application configuration.
 type Config struct {
 	// Server settings
@@ -45,6 +50,8 @@ type Config struct {
 	MaxUploadSizeMB int64 // Maximum file upload size in megabytes
 	MaxViewSizeMB   int64 // Maximum file size for inline viewing in megabytes
 
+	// Private Plugin endpoints managed by the deployment.
+	Plugins []PluginConfig
 }
 
 // Load loads configuration from environment variables and settings file.

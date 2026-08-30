@@ -7,7 +7,7 @@ export type DeploymentSnapshot = {
 };
 
 export type DeploymentService = {
-  id: "api" | "minio" | "postgres";
+  id: "api" | "minio" | "postgres" | "source-gateway";
   label: string;
   container: string;
   state: string;
@@ -51,7 +51,7 @@ export type AtlasCoreOperator = {
   details(): Promise<DeploymentDetails>;
   doctor(): Promise<boolean>;
   init(): Promise<void>;
-  logs(service: "api" | "minio" | "postgres" | undefined, follow: boolean): Promise<void>;
+  logs(service: "api" | "minio" | "postgres" | "source-gateway" | undefined, follow: boolean): Promise<void>;
   reset(): Promise<void>;
   restart(): Promise<void>;
   snapshot(): Promise<DeploymentSnapshot>;
@@ -729,10 +729,16 @@ async function applyUpdate(
   return true;
 }
 
-async function selectLogService(terminal: TerminalIO): Promise<"api" | "cancel" | "minio" | "postgres" | undefined> {
-  const choices: Array<{ label: string; service: "api" | "cancel" | "minio" | "postgres" | undefined }> = [
+async function selectLogService(
+  terminal: TerminalIO
+): Promise<"api" | "cancel" | "minio" | "postgres" | "source-gateway" | undefined> {
+  const choices: Array<{
+    label: string;
+    service: "api" | "cancel" | "minio" | "postgres" | "source-gateway" | undefined;
+  }> = [
     { label: "All services", service: undefined },
     { label: "Core API", service: "api" },
+    { label: "Source Gateway", service: "source-gateway" },
     { label: "PostgreSQL", service: "postgres" },
     { label: "MinIO", service: "minio" },
     { label: "Back", service: "cancel" }

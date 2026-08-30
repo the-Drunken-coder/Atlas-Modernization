@@ -87,6 +87,9 @@ func (a *TaskActions) installRuntimeRegistration(ctx context.Context, assetID, r
 	if entity.Type != "asset" {
 		return false, NewValidationError("only asset Entities can register a runtime")
 	}
+	if err := validateToolAsset(entity, a.pluginAssets[assetID]); err != nil {
+		return false, err
+	}
 	var previousRuntimeID string
 	var stopped bool
 	err = tx.QueryRow(ctx, `SELECT runtime_id, stopped FROM asset_runtimes WHERE asset_id = $1 FOR UPDATE`, assetID).Scan(&previousRuntimeID, &stopped)
@@ -294,8 +297,8 @@ func validateCommandManifestCatalog(catalog map[string]protocol.CommandDefinitio
 		if !ok {
 			return NewValidationError("Command Manifest contains a Command outside the production catalog")
 		}
-		if effectiveScheduling(entry.Scheduling) != effectiveScheduling(command.Scheduling) {
-			return NewValidationError("Command Manifest scheduling does not match the Command Catalog")
+		if _, err := resolveScheduling(command, entry); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -356,7 +359,8 @@ func (a *TaskActions) Deliverable(ctx context.Context, assetID, runtimeID string
 	runtimeID = strings.TrimSpace(runtimeID)
 	var currentRuntimeID string
 	var ready bool
-	if err := a.pool.QueryRow(ctx, `SELECT runtime_id, ready FROM asset_runtimes WHERE asset_id = $1`, assetID).Scan(&currentRuntimeID, &ready); err != nil {
+	var manifestJSON []byte
+	if err := a.pool.QueryRow(ctx, `SELECT runtime_id, ready, manifest FROM asset_runtimes WHERE asset_id = $1`, assetID).Scan(&currentRuntimeID, &ready, &manifestJSON); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, NewValidationError("Asset has no registered runtime")
 		}
@@ -365,10 +369,22 @@ func (a *TaskActions) Deliverable(ctx context.Context, assetID, runtimeID string
 	if !ready || runtimeID != currentRuntimeID {
 		return nil, NewValidationError("Atlas-Runtime-ID does not identify the current ready runtime")
 	}
-	immediateCommands := make([]string, 0, len(a.catalog))
-	for name, command := range a.catalog {
-		if effectiveScheduling(command.Scheduling) == protocol.CommandSchedulingImmediate {
-			immediateCommands = append(immediateCommands, name)
+	var manifest protocol.CommandManifest
+	if err := json.Unmarshal(manifestJSON, &manifest); err != nil {
+		return nil, fmt.Errorf("decode ready Asset runtime manifest: %w", err)
+	}
+	immediateCommands := make([]string, 0, len(manifest))
+	for _, entry := range manifest {
+		command, ok := a.catalog[entry.Command]
+		if !ok {
+			return nil, fmt.Errorf("stored runtime manifest references unknown Command %s", entry.Command)
+		}
+		scheduling, err := resolveScheduling(command, entry)
+		if err != nil {
+			return nil, err
+		}
+		if scheduling == protocol.CommandSchedulingImmediate {
+			immediateCommands = append(immediateCommands, entry.Command)
 		}
 	}
 	rows, err := a.pool.Query(ctx, `
@@ -486,13 +502,16 @@ func (a *TaskActions) failRuntimeTaskBatch(ctx context.Context, assetID, runtime
 // Tasks that did not start within the Protocol deadline. Repeated calls drain a
 // backlog without holding one transaction for the entire backlog.
 func (a *TaskActions) ReconcileImmediateTimeouts(ctx context.Context) (int, error) {
-	var immediate []string
+	var immediate, manifestSelected []string
 	for name, command := range a.catalog {
-		if effectiveScheduling(command.Scheduling) == protocol.CommandSchedulingImmediate {
+		switch command.Scheduling {
+		case protocol.CommandSchedulingImmediate:
 			immediate = append(immediate, name)
+		case "":
+			manifestSelected = append(manifestSelected, name)
 		}
 	}
-	if len(immediate) == 0 {
+	if len(immediate) == 0 && len(manifestSelected) == 0 {
 		return 0, nil
 	}
 	tx, err := beginChangeTx(ctx, a.pool, "reconcile immediate Task deadlines")
@@ -505,7 +524,19 @@ func (a *TaskActions) ReconcileImmediateTimeouts(ctx context.Context) (int, erro
 		return 0, fmt.Errorf("read database time for immediate Task deadlines: %w", err)
 	}
 	now = now.UTC()
-	rows, err := tx.Query(ctx, taskSelectSQL+` WHERE command = ANY($1) AND status = 'pending' AND created_at <= $2 ORDER BY created_at, task_id LIMIT $3 FOR UPDATE SKIP LOCKED`, immediate, now.Add(-immediateStartWindow), immediateTimeoutBatchSize)
+	rows, err := tx.Query(ctx, taskSelectSQL+` WHERE task_id IN (
+		SELECT t.task_id FROM tasks t
+		LEFT JOIN asset_runtimes r ON r.asset_id = t.asset_id AND r.runtime_id = t.runtime_id
+		WHERE t.status = 'pending' AND t.created_at <= $3
+			AND (
+				t.command = ANY($1)
+				OR (t.command = ANY($2) AND EXISTS (
+					SELECT 1 FROM jsonb_array_elements(r.manifest) entry
+					WHERE entry->>'command' = t.command AND entry->>'scheduling' = 'immediate'
+				))
+			)
+		ORDER BY t.created_at, t.task_id LIMIT $4
+	) ORDER BY created_at, task_id FOR UPDATE`, immediate, manifestSelected, now.Add(-immediateStartWindow), immediateTimeoutBatchSize)
 	if err != nil {
 		return 0, fmt.Errorf("lock expired immediate Tasks: %w", err)
 	}

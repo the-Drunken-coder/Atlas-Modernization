@@ -78,6 +78,13 @@ stack refuses to start unless `ENABLE_API_AUTH=true`,
 `DATABASE_RECREATE_ON_STARTUP` is not enabled. Browser admins
 can create additional managed machine keys after sign-in.
 
+Development Compose also starts the private Source Gateway, a deterministic
+`reference` source, and the query-only `reference` Plugin. After Core starts,
+`GET /plugins` reports that Plugin and `inspect_fixture` accepts
+`{"key":"alpha"}` or `{"key":"bravo"}`. The production topology starts the
+Source Gateway with an empty connector configuration and does not include the
+reference containers.
+
 The bundled production Compose stack accepts only `ATLAS_ADMIN_PASSWORD`
 because it does not mount an operator password file. Direct Core processes and
 custom raw-container deployments may still use `ATLAS_ADMIN_PASSWORD_FILE`
@@ -146,6 +153,16 @@ cd services/core
 go run ./cmd/atlas_core
 ```
 
+Run the Source Gateway separately with a deployment-owned connector file:
+
+```bash
+ATLAS_SOURCE_GATEWAY_CONFIG=docker/source_gateway.development.json \
+  go run ./cmd/atlas_source_gateway
+```
+
+See [`docs/SOURCE_GATEWAY.md`](docs/SOURCE_GATEWAY.md) for its strict
+configuration contract and defaults.
+
 ### Build
 
 ```bash
@@ -199,6 +216,7 @@ Key environment variables:
 - `API_AUTH_KEY` (required bootstrap key when auth enabled; required, strong, and non-placeholder in the production Docker image)
 - `MAX_UPLOAD_SIZE_MB` (default `100`, must be `1..10240`)
 - `MAX_VIEW_SIZE_MB` (default `10`, must be `1..100`)
+- `ATLAS_PLUGINS` (complete JSON-array override of configured Plugin IDs and private plain-HTTP origins, for example `[{"id":"reference","base_url":"http://reference-plugin:8080"}]`)
 
 ## API Surface
 
@@ -256,6 +274,15 @@ Key environment variables:
 - `GET /queries/full`
 - `GET /queries/changed-since?since_version=<version>`
 - `GET /command-catalog`
+
+### Plugins
+
+- `GET /plugins`
+- `POST /plugins/{plugin_id}/operations/{operation_id}`
+
+Core owns discovery, health monitoring, dispatch, request bounds, cancellation,
+and public error mapping. Plugin failure does not affect Core liveness or
+readiness. See [`../../docs/atlas-plugins/README.md`](../../docs/atlas-plugins/README.md).
 
 `full` accepts per-resource limits and cursors and returns one stable pre-hydration `version` across all continuation pages. After consuming them, drain `changed-since` from that baseline instead of deriving a cursor from resource metadata. `changed-since` accepts `limit` plus one opaque `cursor` and returns globally ordered feed events with a monotonic `version`; pass it back as `since_version` on the next poll. See `docs/PAGINATION.md`.
 

@@ -6,15 +6,19 @@
   },
   "workspaces": [
     "packages/sdk",
+    "packages/plugin-runtime",
     "packages/fieldlink",
     "surfaces/core-cli",
+    "plugins/reference",
     "surfaces/command-interface",
     "simulations"
   ],
   "scripts": {
     "postinstall": "npm run build:sdk",
-    "build": "npm run build:fieldlink && npm run build:sdk && npm run build:core-cli && npm run build --workspace @the-drunken-coder/atlas-command-interface && npm run build --workspace @the-drunken-coder/atlas-simulations",
+    "build": "npm run build:fieldlink && npm run build:sdk && npm run build:plugin-runtime && npm run build:reference-plugin && npm run build:core-cli && npm run build --workspace @the-drunken-coder/atlas-command-interface && npm run build --workspace @the-drunken-coder/atlas-simulations",
     "build:sdk": "npm run build --workspace @the-drunken-coder/atlas-sdk",
+    "build:plugin-runtime": "npm run build --workspace @the-drunken-coder/atlas-plugin-runtime",
+    "build:reference-plugin": "npm run build --workspace @the-drunken-coder/atlas-reference-plugin",
     "build:fieldlink": "npm run build --workspace atlas-fieldlink",
     "build:core-cli": "npm run build --workspace atlas-core",
     "fieldlink": "npm run fieldlink --workspace atlas-fieldlink --",

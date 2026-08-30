@@ -57,6 +57,11 @@ const (
 	ErrorCodeObjectPathConflict     ErrorCode = "OBJECT_PATH_CONFLICT"
 	ErrorCodeCursorExpired          ErrorCode = "CURSOR_EXPIRED"
 	ErrorCodePreconditionFailed     ErrorCode = "PRECONDITION_FAILED"
+	ErrorCodePluginNotFound         ErrorCode = "PLUGIN_NOT_FOUND"
+	ErrorCodePluginInputRejected    ErrorCode = "PLUGIN_INPUT_REJECTED"
+	ErrorCodePluginUnavailable      ErrorCode = "PLUGIN_UNAVAILABLE"
+	ErrorCodePluginTimeout          ErrorCode = "PLUGIN_TIMEOUT"
+	ErrorCodePluginFailure          ErrorCode = "PLUGIN_FAILURE"
 )
 
 // ErrorResponse is exported so HTTP handlers can attach request metadata.
@@ -179,6 +184,47 @@ type CommandManifestEntry struct {
 
 // CommandManifest is the fixed set of Commands advertised by a ready runtime.
 type CommandManifest = []CommandManifestEntry
+
+type PluginStatusState string
+
+const (
+	PluginStatusStateStarting    PluginStatusState = "starting"
+	PluginStatusStateAvailable   PluginStatusState = "available"
+	PluginStatusStateUnavailable PluginStatusState = "unavailable"
+)
+
+type PluginUnavailableReason string
+
+const (
+	PluginUnavailableReasonTransportUnreachable PluginUnavailableReason = "transport_unreachable"
+	PluginUnavailableReasonTransportTimeout     PluginUnavailableReason = "transport_timeout"
+	PluginUnavailableReasonInvalidManifest      PluginUnavailableReason = "invalid_manifest"
+	PluginUnavailableReasonInvalidResponse      PluginUnavailableReason = "invalid_response"
+	PluginUnavailableReasonApplicationUnhealthy PluginUnavailableReason = "application_unhealthy"
+)
+
+type PluginOperationDescriptor struct {
+	OperationID string `json:"operation_id"`
+	DisplayName string `json:"display_name"`
+	TimeoutMs   int64  `json:"timeout_ms"`
+}
+
+type PluginManifest struct {
+	PluginID    string                      `json:"plugin_id"`
+	DisplayName string                      `json:"display_name"`
+	Operations  []PluginOperationDescriptor `json:"operations"`
+	ToolAssetID string                      `json:"tool_asset_id,omitempty"`
+}
+
+type PluginStatus struct {
+	PluginID    string                      `json:"plugin_id"`
+	DisplayName *string                     `json:"display_name"`
+	Status      PluginStatusState           `json:"status"`
+	ReasonCode  *PluginUnavailableReason    `json:"reason_code"`
+	CheckedAt   *string                     `json:"checked_at"`
+	Operations  []PluginOperationDescriptor `json:"operations"`
+	ToolAssetID *string                     `json:"tool_asset_id"`
+}
 
 type ProtocolRevisionResponse struct {
 	ProtocolRevision string `json:"protocol_revision"`

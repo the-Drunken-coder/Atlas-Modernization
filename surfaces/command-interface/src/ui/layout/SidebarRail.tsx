@@ -8,6 +8,7 @@ import {
   CommandsIcon,
   GeofeaturesIcon,
   KeyIcon,
+  PluginsIcon,
   SearchIcon,
   TracksIcon
 } from "../primitives/icons.js";
@@ -28,7 +29,10 @@ const PRIMARY_RAIL_ITEMS: RailItem[] = [
   { list: "commands", label: "Commands", Icon: CommandsIcon }
 ];
 
-const ADMIN_RAIL_ITEMS: RailItem[] = [{ list: "apiKeys", label: "API Keys", Icon: KeyIcon }];
+const ADMIN_RAIL_ITEMS: RailItem[] = [
+  { list: "plugins", label: "Plugins", Icon: PluginsIcon },
+  { list: "apiKeys", label: "API Keys", Icon: KeyIcon }
+];
 
 type SidebarRailProps = {
   collapsed: boolean;
@@ -92,6 +96,7 @@ function RailButton({
         aria-label={item.label}
         aria-pressed={active}
         data-active={active}
+        data-list={item.list}
         onClick={() => onSelect(item.list)}
       >
         {count > 0 ? <span className="rail-button__badge">{count}</span> : null}
