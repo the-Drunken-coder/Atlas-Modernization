@@ -3,6 +3,13 @@
 Atlas Core release notes are listed newest first. The manual release workflow writes each new section from the
 verified commit history with OpenCode Go, then pauses for approval before publishing.
 
+## 0.1.1 - 2026-08-29
+
+### Fixed
+
+- `atlas-core init` now reads Docker container ownership labels correctly when checking for existing Atlas Core containers.
+- Release verification now installs `atlas-core@$VERSION` in a clean consumer before auditing npm signatures.
+
 ## 0.1.0 - 2026-08-29
 
 ### Added
