@@ -16,8 +16,10 @@ atlas-core
 ```
 
 Running `atlas-core` without arguments opens an interactive action menu. It provides initialization, start and stop,
-status, admin account configuration, logs, diagnostics, and the confirmed reset flow. Arrow keys move through the
-menu, typing filters it, Enter selects an action, and Escape or `q` exits.
+service health and performance, configuration, updates, logs, diagnostics, and the confirmed reset flow. The status
+view reports CPU, memory, network and block I/O, process count, uptime, restart count, health, and image details from
+Docker. Arrow keys move through menus and services, typing filters the main menu, Enter selects an action, and Escape
+or `q` goes back.
 
 Initialization generates strong local credentials and provisions the MinIO bucket only when it can prove the deployment
 is new. It refuses to create new credentials over existing Atlas containers or volumes. Configuration is stored in
@@ -37,43 +39,62 @@ atlas-core stop
 atlas-core restart
 atlas-core reset
 atlas-core config
+atlas-core update [cli|all]
 atlas-core status
 atlas-core logs [core|postgres|minio] [--follow]
 atlas-core doctor
 atlas-core version
 ```
 
-`config` has one purpose: manually change the password for the fixed `admin` account. The password is entered twice in
-an interactive hidden prompt and must contain at least 12 characters. Passwords are never accepted as command arguments,
-which keeps them out of shell history and process listings. No other deployment settings are exposed by the menu or the
-config command.
+The menu's `Configure` action opens a configuration menu. `Admin account` changes the password for the fixed `admin`
+username. The direct `config` command opens the same hidden password prompt. The password must contain at least 12
+characters and is never accepted as a command argument, which keeps it out of shell history and process listings. No
+other deployment settings are exposed yet.
 
 When Core is running, `config` restarts it so the new password applies to subsequent logins. When Core is stopped, the
 new password applies on the next start. Existing browser sessions expire normally. The initial random password remains
 in `~/.atlas/core/.env` until the operator changes it.
+
+## Updates
+
+The menu's `Update` action checks the npm `latest` release and shows the installed CLI version, running Core version,
+and available release before changing anything. Choose one of two update scopes:
+
+- `Update CLI only` or `atlas-core update cli` installs the latest global CLI through the current npm prefix. The
+  running Atlas Core containers, credentials, and durable storage stay unchanged.
+- `Update CLI + Atlas Core` or `atlas-core update all` installs the latest CLI, pulls that release's digest-pinned Core
+  image, and restarts a running deployment against the existing PostgreSQL and MinIO volumes. A stopped deployment
+  stays stopped.
+
+Core releases may carry schema migrations. Before a Core update, create and validate the paired PostgreSQL and MinIO
+backup described in the [deployment runbook](https://github.com/the-Drunken-coder/Atlas-Modernization/blob/main/services/core/docs/DEPLOYMENT_RUNBOOK.md#pre-deploy-backup).
+The menu review screen and `atlas-core update all` both require confirmation that a current paired backup exists.
+CLI-only updates do not require a deployment backup because they do not change the running Core or its stores.
+
+CLI-only updates may leave the CLI newer than the running Core. Status, logs, diagnostics, stop, reset, and the explicit
+update flow remain available in that state. Start and restart refuse to change Core implicitly and direct the operator
+to `atlas-core update all`.
+
+For a running deployment, the CLI records the new Core version only after Docker reports the updated services healthy.
+For a stopped deployment, it records the version after pulling the reviewed image and leaves Core stopped. If an update
+fails, it does not delete credentials or volumes and leaves the recorded Core version unchanged so the operator can
+inspect logs and retry. Updating the global CLI requires write access to the npm prefix where `atlas-core` is installed.
 
 `stop` removes containers and the private Compose network. It preserves PostgreSQL and MinIO volumes. Removing the
 npm package also leaves those durable volumes untouched.
 
 `reset` is the explicit exception. It permanently deletes the known Atlas Core containers, both durable volumes, and
 the credentials and state in the selected `ATLAS_CORE_HOME`. It then creates new credentials and empty storage, and
-starts the image pinned by the installed CLI package. Install `atlas-core@latest` first when the goal is to reset onto
-the newest release:
-
-```bash
-npm install --global atlas-core@latest
-atlas-core reset
-```
+starts the image pinned by the installed CLI package. Reset is for intentionally discarding a deployment, not for
+updates. Use `atlas-core update all` to move an existing deployment to the newest release without deleting its data.
 
 Reset lists what it will delete and asks `Continue? [y/N]`. It proceeds only after `y` or `yes`. Reset verifies
 ownership labels and stops before deleting anything if another container uses either durable volume. It does not remove
 separately managed tunnels, reverse proxies, or their credentials.
 
 The first release binds the Core API, PostgreSQL, and MinIO ports to loopback. It does not configure public ingress.
-Installing a different CLI version does not upgrade an initialized deployment. `start` and `restart` stop with an
-explicit version mismatch until a backup-aware upgrade path is available. Both commands require registry access and
-pull the release's digest-pinned image before starting; neither a locally retagged image nor an overwritten registry
-tag can replace the reviewed Core image.
+Start, restart, and update require registry access and pull the release's digest-pinned image. Neither a locally
+retagged image nor an overwritten registry tag can replace the reviewed Core image.
 
 ## External ingress
 

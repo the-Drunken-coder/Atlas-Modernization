@@ -10,16 +10,17 @@ import {
 } from "../src/terminal-ui.js";
 
 class FakeTerminal implements TerminalIO {
-  readonly columns = 100;
+  readonly columns: number;
   readonly interactive: boolean;
   readonly output: string[] = [];
   readonly #keys: TerminalKey[];
   readCount = 0;
   opened = false;
 
-  constructor(keys: TerminalKey[], interactive = true) {
+  constructor(keys: TerminalKey[], interactive = true, columns = 100) {
     this.#keys = [...keys];
     this.interactive = interactive;
+    this.columns = columns;
   }
 
   open(): void {
@@ -52,7 +53,69 @@ function enter(): TerminalKey {
 
 function operator(snapshot: DeploymentSnapshot = { status: "ready", detail: "Everything is healthy." }) {
   return {
+    checkForUpdates: vi.fn(async () => ({
+      cliVersion: "0.1.3",
+      coreVersion: "0.1.3",
+      latestVersion: "0.1.3",
+      cliUpdateAvailable: false,
+      coreUpdateAvailable: false
+    })),
     configureAdminPassword: vi.fn(async () => undefined),
+    details: vi.fn(async () => ({
+      snapshot,
+      cliVersion: "0.1.3",
+      coreVersion: "0.1.3",
+      initializedAt: "2026-08-28T12:00:00.000Z",
+      apiEndpoint: "http://127.0.0.1:8000",
+      minioEndpoint: "http://127.0.0.1:9001",
+      services: [
+        {
+          id: "api" as const,
+          label: "Core API",
+          container: "atlas_core_production_api",
+          state: "running",
+          health: "healthy",
+          cpuPercent: "1.00%",
+          memoryUsage: "128MiB / 1GiB",
+          memoryPercent: "12.50%",
+          networkIO: "1MB / 2MB",
+          blockIO: "3MB / 4MB",
+          processes: "12",
+          uptime: "4d 2h",
+          restarts: 0
+        },
+        {
+          id: "postgres" as const,
+          label: "PostgreSQL",
+          container: "atlas_core_production_postgres",
+          state: "running",
+          health: "healthy",
+          cpuPercent: "2.00%",
+          memoryUsage: "256MiB / 1GiB",
+          memoryPercent: "25.00%",
+          networkIO: "2MB / 3MB",
+          blockIO: "4MB / 5MB",
+          processes: "13",
+          uptime: "4d 2h",
+          restarts: 0
+        },
+        {
+          id: "minio" as const,
+          label: "MinIO",
+          container: "atlas_core_production_minio",
+          state: "running",
+          health: "healthy",
+          cpuPercent: "3.00%",
+          memoryUsage: "192MiB / 1GiB",
+          memoryPercent: "18.75%",
+          networkIO: "3MB / 4MB",
+          blockIO: "5MB / 6MB",
+          processes: "14",
+          uptime: "4d 2h",
+          restarts: 0
+        }
+      ]
+    })),
     doctor: vi.fn(async () => true),
     init: vi.fn(async () => undefined),
     logs: vi.fn(async () => undefined),
@@ -61,7 +124,8 @@ function operator(snapshot: DeploymentSnapshot = { status: "ready", detail: "Eve
     snapshot: vi.fn(async () => snapshot),
     start: vi.fn(async () => undefined),
     status: vi.fn(async () => true),
-    stop: vi.fn(async () => undefined)
+    stop: vi.fn(async () => undefined),
+    update: vi.fn(async () => undefined)
   } satisfies AtlasCoreOperator;
 }
 
@@ -74,7 +138,8 @@ describe("Atlas Core terminal UI", () => {
 
     const screen = terminal.output.join("");
     expect(screen).toContain("ATLAS CORE");
-    expect(screen).toContain("Configure admin account");
+    expect(screen).toContain("Configure");
+    expect(screen).toContain("Update");
     expect(screen).toContain("Reset Atlas Core");
     expect(deployment.snapshot).toHaveBeenCalledOnce();
     expect(deployment.start).not.toHaveBeenCalled();
@@ -166,18 +231,116 @@ describe("Atlas Core terminal UI", () => {
     expect(setRawMode).toHaveBeenLastCalledWith(false);
   });
 
-  it("runs menu actions through the shared operator", async () => {
+  it("opens the service-focused status view through the shared operator", async () => {
     const terminal = new FakeTerminal([enter(), enter(), key("q")]);
     const deployment = operator();
 
     await createInteractiveCLIForTerminal(terminal).runMenu(deployment);
 
-    expect(deployment.status).toHaveBeenCalledOnce();
+    expect(deployment.details).toHaveBeenCalledOnce();
+    expect(terminal.output.join("")).toContain("ATLAS CORE > STATUS");
+    expect(terminal.output.join("")).toContain("1.00%");
     expect(deployment.snapshot).toHaveBeenCalledTimes(2);
   });
 
+  it("moves between services in the detailed status view", async () => {
+    const terminal = new FakeTerminal([enter(), key("\u001b[C", "right"), enter(), key("q")]);
+    const deployment = operator();
+
+    await createInteractiveCLIForTerminal(terminal).runMenu(deployment);
+
+    const screen = terminal.output.join("");
+    expect(screen).toContain("[PostgreSQL]");
+    expect(screen).toContain("256MiB / 1GiB");
+    expect(screen).toContain("Network I/O");
+  });
+
+  it("fits the detailed status view in a narrow terminal", async () => {
+    const terminal = new FakeTerminal([enter(), enter(), key("q")], true, 44);
+    const deployment = operator();
+
+    await createInteractiveCLIForTerminal(terminal).runMenu(deployment);
+
+    const statusScreen = terminal.output
+      .join("")
+      .split("\u001b[2J\u001b[H")
+      .filter((screen) => screen.includes("ATLAS CORE > STATUS"))
+      .at(-1)
+      ?.replace(/\u001b\[[0-9;?]*[A-Za-z]/gu, "")
+      .split("ATLAS CORE > STATUS")
+      .at(-1);
+    expect(statusScreen).toBeDefined();
+    expect((statusScreen ?? "").split("\n").filter((line) => line.length > 44)).toEqual([]);
+  });
+
+  it("opens Admin account from the Configure submenu", async () => {
+    const filter = [..."configure"].map((character) => key(character));
+    const terminal = new FakeTerminal([...filter, enter(), key("\u001b[B", "down"), enter(), key("q")]);
+    const deployment = operator();
+
+    await createInteractiveCLIForTerminal(terminal).runMenu(deployment);
+
+    expect(terminal.output.join("")).toContain("Admin account");
+    expect(deployment.configureAdminPassword).not.toHaveBeenCalled();
+  });
+
+  it("updates the CLI and Core from the update menu", async () => {
+    const filter = [..."update"].map((character) => key(character));
+    const terminal = new FakeTerminal([...filter, enter(), key("\u001b[B", "down"), enter(), enter(), enter()]);
+    const deployment = operator();
+    deployment.checkForUpdates.mockResolvedValue({
+      cliVersion: "0.1.3",
+      coreVersion: "0.1.3",
+      latestVersion: "0.1.4",
+      cliUpdateAvailable: true,
+      coreUpdateAvailable: true
+    });
+
+    await createInteractiveCLIForTerminal(terminal).runMenu(deployment);
+
+    expect(deployment.update).toHaveBeenCalledWith("all", "0.1.4", true);
+    expect(terminal.output.join("")).toContain("PostgreSQL, MinIO, credentials, and configuration are preserved");
+    expect(terminal.output.join("")).toContain("paired PostgreSQL and MinIO backup exists");
+  });
+
+  it("labels a Core-only update without claiming the CLI will change", async () => {
+    const terminal = new FakeTerminal([enter(), enter(), enter()]);
+    const deployment = operator();
+    deployment.checkForUpdates.mockResolvedValue({
+      cliVersion: "0.1.3",
+      coreVersion: "0.1.2",
+      latestVersion: "0.1.3",
+      cliUpdateAvailable: false,
+      coreUpdateAvailable: true
+    });
+
+    await createInteractiveCLIForTerminal(terminal).runUpdate(deployment);
+
+    expect(terminal.output.join("")).toContain("Update Atlas Core");
+    expect(terminal.output.join("")).toContain("CLI stays at 0.1.3");
+    expect(deployment.update).toHaveBeenCalledWith("all", "0.1.3", true);
+  });
+
+  it("propagates an interactive update failure after showing the recovery message", async () => {
+    const terminal = new FakeTerminal([enter(), enter(), enter()]);
+    const deployment = operator();
+    deployment.checkForUpdates.mockResolvedValue({
+      cliVersion: "0.1.3",
+      coreVersion: "0.1.3",
+      latestVersion: "0.1.4",
+      cliUpdateAvailable: true,
+      coreUpdateAvailable: true
+    });
+    deployment.update.mockRejectedValue(new Error("npm install failed"));
+
+    await expect(createInteractiveCLIForTerminal(terminal).runUpdate(deployment)).rejects.toThrow("npm install failed");
+
+    expect(terminal.output.join("")).toContain("The update stopped without deleting Atlas Core data");
+    expect(terminal.opened).toBe(false);
+  });
+
   it("shows logs for all services from the log picker", async () => {
-    const arrows = Array.from({ length: 4 }, () => key("\u001b[B", "down"));
+    const arrows = Array.from({ length: 5 }, () => key("\u001b[B", "down"));
     const terminal = new FakeTerminal([...arrows, enter(), enter(), enter(), key("q")]);
     const deployment = operator();
 
@@ -194,6 +357,6 @@ describe("Atlas Core terminal UI", () => {
 
     const screen = terminal.output.join("");
     expect(screen).toContain("Initialize Atlas Core");
-    expect(screen).not.toContain("Configure admin account");
+    expect(screen).not.toContain(" Configure ");
   });
 });

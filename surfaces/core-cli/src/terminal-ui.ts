@@ -6,8 +6,49 @@ export type DeploymentSnapshot = {
   detail: string;
 };
 
+export type DeploymentService = {
+  id: "api" | "minio" | "postgres";
+  label: string;
+  container: string;
+  state: string;
+  health: string;
+  cpuPercent?: string;
+  memoryUsage?: string;
+  memoryPercent?: string;
+  networkIO?: string;
+  blockIO?: string;
+  processes?: string;
+  uptime?: string;
+  restarts?: number;
+  image?: string;
+};
+
+export type DeploymentDetails = {
+  snapshot: DeploymentSnapshot;
+  cliVersion: string;
+  coreVersion: string;
+  initializedAt: string;
+  apiEndpoint: string;
+  minioEndpoint: string;
+  image?: string;
+  services: DeploymentService[];
+  performanceError?: string;
+};
+
+export type UpdateInfo = {
+  cliVersion: string;
+  coreVersion?: string;
+  latestVersion: string;
+  cliUpdateAvailable: boolean;
+  coreUpdateAvailable: boolean;
+};
+
+export type UpdateScope = "all" | "cli";
+
 export type AtlasCoreOperator = {
+  checkForUpdates(): Promise<UpdateInfo>;
   configureAdminPassword(password: string): Promise<void>;
+  details(): Promise<DeploymentDetails>;
   doctor(): Promise<boolean>;
   init(): Promise<void>;
   logs(service: "api" | "minio" | "postgres" | undefined, follow: boolean): Promise<void>;
@@ -17,11 +58,13 @@ export type AtlasCoreOperator = {
   start(): Promise<void>;
   status(): Promise<boolean>;
   stop(): Promise<void>;
+  update(scope: UpdateScope, expectedVersion?: string, coreBackupConfirmed?: boolean): Promise<void>;
 };
 
 export type InteractiveCLI = {
   configureAdmin(operator: AtlasCoreOperator): Promise<void>;
   runMenu(operator: AtlasCoreOperator): Promise<void>;
+  runUpdate(operator: AtlasCoreOperator): Promise<void>;
 };
 
 export type TerminalKey = Pick<Key, "ctrl" | "meta" | "name" | "sequence" | "shift">;
@@ -36,7 +79,7 @@ export type TerminalIO = {
 };
 
 type Action = {
-  id: "configure" | "doctor" | "init" | "logs" | "quit" | "reset" | "restart" | "start" | "status" | "stop";
+  id: "configure" | "doctor" | "init" | "logs" | "quit" | "reset" | "restart" | "start" | "status" | "stop" | "update";
   label: string;
   detail: string;
 };
@@ -49,6 +92,7 @@ const BOLD = "\u001b[1m";
 const DIM = "\u001b[2m";
 const CYAN = "\u001b[36m";
 const RED = "\u001b[31m";
+const YELLOW = "\u001b[33m";
 const REVERSE = "\u001b[7m";
 
 class NodeTerminal implements TerminalIO {
@@ -195,6 +239,15 @@ export function createInteractiveCLIForTerminal(terminal: TerminalIO): Interacti
     },
     runMenu: async (operator) => {
       await runMenu(operator, terminal);
+    },
+    runUpdate: async (operator) => {
+      assertInteractive(terminal);
+      terminal.open();
+      try {
+        await runUpdateMenu(operator, terminal);
+      } finally {
+        terminal.close();
+      }
     }
   };
 }
@@ -232,7 +285,7 @@ async function runMenu(operator: AtlasCoreOperator, terminal: TerminalIO): Promi
         const action = actions[selected];
         if (!action) continue;
         if (action.id === "quit") return;
-        await runAction(operator, terminal, action);
+        if ((await runAction(operator, terminal, action)) === "exit") return;
         snapshot = await readSnapshot(operator);
         filter = "";
         selected = 0;
@@ -249,36 +302,50 @@ async function runMenu(operator: AtlasCoreOperator, terminal: TerminalIO): Promi
   }
 }
 
-async function runAction(operator: AtlasCoreOperator, terminal: TerminalIO, action: Action): Promise<void> {
+async function runAction(
+  operator: AtlasCoreOperator,
+  terminal: TerminalIO,
+  action: Action
+): Promise<"continue" | "exit"> {
   if (action.id === "configure") {
+    if ((await selectConfigureOption(terminal)) === "back") return "continue";
     terminal.write(CLEAR_SCREEN);
-    terminal.write(`${BOLD}Configure Atlas Core admin account${RESET_STYLE}\nUsername: admin\n\n`);
+    terminal.write(`${BOLD}Configure > Admin account${RESET_STYLE}\nUsername: admin\n\n`);
     let password: string | undefined;
     try {
       password = await promptForPassword(terminal);
     } catch (error) {
       terminal.write(`\n${RED}${errorMessage(error)}${RESET_STYLE}\n\nPress Enter to return to the menu.`);
       await waitForReturn(terminal);
-      return;
+      return "continue";
     }
     if (password === undefined) {
       terminal.write("\nAdmin password unchanged.\n\nPress Enter to return to the menu.");
       await waitForReturn(terminal);
-      return;
+      return "continue";
     }
     await runVisibleOperation(terminal, async () => {
       await operator.configureAdminPassword(password);
     });
-    return;
+    return "continue";
   }
 
   if (action.id === "logs") {
     const service = await selectLogService(terminal);
-    if (service === "cancel") return;
+    if (service === "cancel") return "continue";
     await runVisibleOperation(terminal, async () => {
       await operator.logs(service, false);
     });
-    return;
+    return "continue";
+  }
+
+  if (action.id === "status") {
+    await runStatusView(operator, terminal);
+    return "continue";
+  }
+
+  if (action.id === "update") {
+    return (await runUpdateMenu(operator, terminal)) ? "exit" : "continue";
   }
 
   await runVisibleOperation(terminal, async () => {
@@ -298,18 +365,18 @@ async function runAction(operator: AtlasCoreOperator, terminal: TerminalIO, acti
       case "start":
         await operator.start();
         return;
-      case "status":
-        await operator.status();
-        return;
       case "stop":
         await operator.stop();
         return;
       case "configure":
       case "logs":
       case "quit":
+      case "status":
+      case "update":
         return;
     }
   });
+  return "continue";
 }
 
 async function runVisibleOperation(terminal: TerminalIO, operation: () => Promise<void>): Promise<void> {
@@ -367,6 +434,301 @@ async function readSecret(terminal: TerminalIO, label: string): Promise<string |
   }
 }
 
+async function selectConfigureOption(terminal: TerminalIO): Promise<"admin" | "back"> {
+  const choices = ["Admin account", "Back"] as const;
+  let selected = 0;
+  while (true) {
+    terminal.write(`${CLEAR_SCREEN}${BOLD}Configure${RESET_STYLE}\n\n`);
+    for (const [index, choice] of choices.entries()) {
+      const line = `${index === selected ? ">" : " "} ${choice}`;
+      terminal.write(index === selected ? `${REVERSE}${line}${RESET_STYLE}\n` : `${line}\n`);
+    }
+    terminal.write(
+      `\n${DIM}${wrap("↑/↓ move   Enter select   Esc back", Math.max(44, terminal.columns)).join("\n")}${RESET_STYLE}`
+    );
+    const key = await terminal.readKey();
+    if (key.name === "escape" || (key.ctrl && key.name === "c")) return "back";
+    if (choices.length > 0 && key.name === "up") selected = (selected - 1 + choices.length) % choices.length;
+    if (choices.length > 0 && key.name === "down") selected = (selected + 1) % choices.length;
+    if (key.name === "return" || key.name === "enter") return selected === 0 ? "admin" : "back";
+  }
+}
+
+type StatusView = DeploymentDetails | Error;
+
+async function runStatusView(operator: AtlasCoreOperator, terminal: TerminalIO): Promise<void> {
+  let selected = 0;
+  let view = await loadStatusView(operator, terminal);
+  while (true) {
+    if (!(view instanceof Error)) selected = Math.min(selected, Math.max(0, view.services.length - 1));
+    renderStatusView(terminal, view, selected);
+    const key = await terminal.readKey();
+    if (
+      key.name === "escape" ||
+      (key.ctrl && key.name === "c") ||
+      key.name === "q" ||
+      key.name === "return" ||
+      key.name === "enter"
+    ) {
+      return;
+    }
+    if (key.name === "r") {
+      view = await loadStatusView(operator, terminal);
+      continue;
+    }
+    if (key.name === "d") {
+      await runVisibleOperation(terminal, async () => {
+        await operator.doctor();
+      });
+      view = await loadStatusView(operator, terminal);
+      continue;
+    }
+    if (view instanceof Error || view.services.length === 0) continue;
+    if (key.name === "left" || key.name === "up") {
+      selected = (selected - 1 + view.services.length) % view.services.length;
+      continue;
+    }
+    if (key.name === "right" || key.name === "down") {
+      selected = (selected + 1) % view.services.length;
+      continue;
+    }
+    if (key.name === "l") {
+      const service = view.services[selected];
+      if (!service) continue;
+      await runVisibleOperation(terminal, async () => {
+        await operator.logs(service.id, false);
+      });
+      view = await loadStatusView(operator, terminal);
+    }
+  }
+}
+
+async function loadStatusView(operator: AtlasCoreOperator, terminal: TerminalIO): Promise<StatusView> {
+  terminal.write(
+    `${CLEAR_SCREEN}${BOLD}ATLAS CORE > STATUS${RESET_STYLE}\n\nLoading deployment and Docker statistics...`
+  );
+  try {
+    return await operator.details();
+  } catch (error) {
+    return new Error(errorMessage(error));
+  }
+}
+
+function renderStatusView(terminal: TerminalIO, view: StatusView, selected: number): void {
+  const width = Math.max(44, terminal.columns);
+  terminal.write(`${CLEAR_SCREEN}${BOLD}${CYAN}ATLAS CORE > STATUS${RESET_STYLE}\n`);
+  if (view instanceof Error) {
+    terminal.write(`\n${RED}Status unavailable${RESET_STYLE}\n${wrap(view.message, width).join("\n")}\n`);
+    terminal.write(
+      `${"─".repeat(width)}\n${DIM}${wrap("r retry   d diagnostics   Enter or Esc back", width).join("\n")}${RESET_STYLE}`
+    );
+    return;
+  }
+
+  const state = view.snapshot.status.replace("not-initialized", "NOT INITIALIZED").toUpperCase();
+  const versionStyle = view.cliVersion === view.coreVersion ? "" : YELLOW;
+  terminal.write(
+    `${state}  ${versionStyle}Core v${view.coreVersion}  CLI v${view.cliVersion}${versionStyle ? RESET_STYLE : ""}\n`
+  );
+  terminal.write(`${wrap(view.snapshot.detail, width).join("\n")}\n`);
+  if (width >= 72) {
+    terminal.write(`${DIM}API ${view.apiEndpoint}   MinIO ${view.minioEndpoint}${RESET_STYLE}\n`);
+  } else {
+    terminal.write(`${DIM}API    ${view.apiEndpoint}\nMinIO  ${view.minioEndpoint}${RESET_STYLE}\n`);
+  }
+  terminal.write(`${"─".repeat(width)}\n`);
+
+  const service = view.services[selected];
+  if (service) {
+    terminal.write(`${BOLD}SERVICES${RESET_STYLE}  `);
+    for (const [index, candidate] of view.services.entries()) {
+      const label = index === selected ? `[${candidate.label}]` : candidate.label;
+      terminal.write(index === selected ? `${REVERSE}${label}${RESET_STYLE}` : label);
+      if (index < view.services.length - 1) terminal.write("  ");
+    }
+    terminal.write("\n\n");
+    renderServiceDetails(terminal, service, width);
+  } else {
+    terminal.write(`${BOLD}SERVICES${RESET_STYLE}\nNo Atlas Core containers are running.\n`);
+  }
+
+  terminal.write(`\n${BOLD}DEPLOYMENT${RESET_STYLE}\n`);
+  writeKeyValues(terminal, width, [
+    ["Initialized", view.initializedAt],
+    ["Image", view.image ?? "No running Core image"],
+    ["Configuration", "Credentials and durable volumes preserved"]
+  ]);
+  if (view.performanceError) {
+    const message = `Performance statistics unavailable: ${view.performanceError}`;
+    terminal.write(`\n${YELLOW}${wrap(message, width).join("\n")}${RESET_STYLE}\n`);
+  }
+  terminal.write(`${"─".repeat(width)}\n`);
+  terminal.write(
+    `${DIM}${wrap("←/→ service   r refresh   l logs   d diagnostics   Enter or Esc back", width).join("\n")}${RESET_STYLE}`
+  );
+}
+
+function renderServiceDetails(terminal: TerminalIO, service: DeploymentService, width: number): void {
+  terminal.write(`${BOLD}${service.label}${RESET_STYLE}\n`);
+  const status = `${service.state || "unknown"}${service.health ? `, ${service.health}` : ""}`;
+  writeKeyValues(terminal, width, [
+    ["Status", status],
+    ["Container", service.container],
+    ["Uptime", service.uptime ?? "Not running"],
+    ["Restarts", service.restarts?.toString() ?? "Not available"],
+    ["CPU", service.cpuPercent ?? "Not available"],
+    ["Memory", joinMetric(service.memoryUsage, service.memoryPercent)],
+    ["Network I/O", service.networkIO ?? "Not available"],
+    ["Block I/O", service.blockIO ?? "Not available"],
+    ["Processes", service.processes ?? "Not available"],
+    ["Image", service.image ?? "Not available"]
+  ]);
+}
+
+function writeKeyValues(terminal: TerminalIO, width: number, values: Array<readonly [string, string]>): void {
+  const labelWidth = Math.min(14, Math.max(...values.map(([label]) => label.length)));
+  const valueWidth = Math.max(20, width - labelWidth - 3);
+  for (const [label, value] of values) {
+    const lines = wrap(value, valueWidth);
+    terminal.write(`${DIM}${pad(label, labelWidth)}${RESET_STYLE}  ${lines[0] ?? ""}\n`);
+    for (const line of lines.slice(1)) terminal.write(`${" ".repeat(labelWidth + 2)}${line}\n`);
+  }
+}
+
+function joinMetric(value: string | undefined, percentage: string | undefined): string {
+  if (!value) return "Not available";
+  return percentage ? `${value} (${percentage})` : value;
+}
+
+async function runUpdateMenu(operator: AtlasCoreOperator, terminal: TerminalIO): Promise<boolean> {
+  terminal.write(`${CLEAR_SCREEN}${BOLD}ATLAS CORE > UPDATE${RESET_STYLE}\n\nChecking npm for the latest release...`);
+  let info: UpdateInfo;
+  try {
+    info = await operator.checkForUpdates();
+  } catch (error) {
+    terminal.write(`${CLEAR_SCREEN}${BOLD}ATLAS CORE > UPDATE${RESET_STYLE}\n\n`);
+    terminal.write(`${RED}${errorMessage(error)}${RESET_STYLE}\n\nPress Enter to return.`);
+    await waitForReturn(terminal);
+    return false;
+  }
+
+  const choices: Array<{ label: string; scope: UpdateScope }> = [];
+  if (info.cliUpdateAvailable) choices.push({ label: "Update CLI only", scope: "cli" });
+  if (info.coreVersion && (info.cliUpdateAvailable || info.coreUpdateAvailable)) {
+    choices.push({
+      label: info.cliUpdateAvailable ? "Update CLI + Atlas Core" : "Update Atlas Core",
+      scope: "all"
+    });
+  }
+  let selected = 0;
+  while (true) {
+    renderUpdateMenu(terminal, info, choices, selected);
+    const key = await terminal.readKey();
+    if (key.name === "escape" || (key.ctrl && key.name === "c") || key.name === "q") return false;
+    if (key.name === "r") return await runUpdateMenu(operator, terminal);
+    if (choices.length === 0 && (key.name === "return" || key.name === "enter")) return false;
+    if (choices.length > 0 && key.name === "up") selected = (selected - 1 + choices.length) % choices.length;
+    if (choices.length > 0 && key.name === "down") selected = (selected + 1) % choices.length;
+    if ((key.name === "return" || key.name === "enter") && choices[selected]) {
+      const choice = choices[selected];
+      if (!choice || !(await confirmUpdate(terminal, info, choice.scope))) continue;
+      return await applyUpdate(operator, terminal, choice.scope, info.latestVersion);
+    }
+  }
+}
+
+function renderUpdateMenu(
+  terminal: TerminalIO,
+  info: UpdateInfo,
+  choices: Array<{ label: string; scope: UpdateScope }>,
+  selected: number
+): void {
+  const width = Math.max(44, terminal.columns);
+  terminal.write(`${CLEAR_SCREEN}${BOLD}${CYAN}ATLAS CORE > UPDATE${RESET_STYLE}\n\n`);
+  terminal.write(`${DIM}Installed CLI${RESET_STYLE}  ${info.cliVersion}\n`);
+  terminal.write(`${DIM}Running Core ${RESET_STYLE}  ${info.coreVersion ?? "Not initialized"}\n`);
+  terminal.write(`${DIM}Latest release${RESET_STYLE}  ${info.latestVersion}\n\n`);
+  if (choices.length === 0) {
+    terminal.write("The CLI and Atlas Core are current.\n");
+    terminal.write(`\n${DIM}${wrap("r check again   Enter or Esc back", width).join("\n")}${RESET_STYLE}`);
+    return;
+  }
+  terminal.write(`${BOLD}CHOOSE UPDATE${RESET_STYLE}\n`);
+  for (const [index, choice] of choices.entries()) {
+    const line = `${index === selected ? ">" : " "} ${choice.label}`;
+    terminal.write(index === selected ? `${REVERSE}${line}${RESET_STYLE}\n` : `${line}\n`);
+  }
+  terminal.write("\n");
+  if (choices[selected]?.scope === "cli") {
+    terminal.write(
+      `${wrap("Install the latest CLI and leave the running Atlas Core version unchanged.", width).join("\n")}\n`
+    );
+  } else {
+    terminal.write(
+      `${wrap("Preserve credentials and durable data, install the latest CLI, then restart Atlas Core on its reviewed image.", width).join("\n")}\n`
+    );
+  }
+  terminal.write(
+    `\n${DIM}${wrap("↑/↓ move   Enter review   r check again   Esc back", width).join("\n")}${RESET_STYLE}`
+  );
+}
+
+async function confirmUpdate(terminal: TerminalIO, info: UpdateInfo, scope: UpdateScope): Promise<boolean> {
+  const width = Math.max(44, terminal.columns);
+  terminal.write(`${CLEAR_SCREEN}${BOLD}REVIEW UPDATE${RESET_STYLE}\n\n`);
+  if (scope === "cli") {
+    terminal.write(`CLI ${info.cliVersion} → ${info.latestVersion}\n`);
+    terminal.write(`Atlas Core stays at ${info.coreVersion ?? "not initialized"}.\n\n`);
+    terminal.write(`${wrap("The current process exits after npm installs the CLI.", width).join("\n")}\n`);
+  } else {
+    terminal.write(
+      info.cliUpdateAvailable
+        ? `CLI ${info.cliVersion} → ${info.latestVersion}\n`
+        : `CLI stays at ${info.cliVersion}.\n`
+    );
+    terminal.write(`Atlas Core ${info.coreVersion} → ${info.latestVersion}\n\n`);
+    terminal.write(
+      `${wrap("PostgreSQL, MinIO, credentials, and configuration are preserved. Atlas Core restarts after the image pull.", width).join("\n")}\n`
+    );
+    terminal.write(
+      `\n${YELLOW}${wrap("Continuing confirms that a current paired PostgreSQL and MinIO backup exists.", width).join("\n")}${RESET_STYLE}\n`
+    );
+  }
+  terminal.write(`\n${DIM}${wrap("Enter update   Esc back", width).join("\n")}${RESET_STYLE}`);
+  while (true) {
+    const key = await terminal.readKey();
+    if (key.name === "escape" || (key.ctrl && key.name === "c")) return false;
+    if (key.name === "return" || key.name === "enter") return true;
+  }
+}
+
+async function applyUpdate(
+  operator: AtlasCoreOperator,
+  terminal: TerminalIO,
+  scope: UpdateScope,
+  expectedVersion: string
+): Promise<boolean> {
+  terminal.write(CLEAR_SCREEN);
+  terminal.close();
+  let failure: { error: unknown } | undefined;
+  try {
+    await operator.update(scope, expectedVersion, scope === "all");
+  } catch (error) {
+    failure = { error };
+    terminal.write(`\n${RED}${errorMessage(error)}${RESET_STYLE}\n`);
+  }
+  terminal.write(
+    failure
+      ? "\nThe update stopped without deleting Atlas Core data. Rerun atlas-core to inspect or retry.\n"
+      : "\nUpdate complete. Rerun atlas-core to use the installed CLI.\n"
+  );
+  terminal.write("\nPress Enter to exit.");
+  terminal.open();
+  await waitForReturn(terminal);
+  if (failure) throw failure.error;
+  return true;
+}
+
 async function selectLogService(terminal: TerminalIO): Promise<"api" | "cancel" | "minio" | "postgres" | undefined> {
   const choices: Array<{ label: string; service: "api" | "cancel" | "minio" | "postgres" | undefined }> = [
     { label: "All services", service: undefined },
@@ -382,7 +744,9 @@ async function selectLogService(terminal: TerminalIO): Promise<"api" | "cancel" 
       const line = `${index === selected ? ">" : " "} ${choice.label}`;
       terminal.write(index === selected ? `${REVERSE}${line}${RESET_STYLE}\n` : `${line}\n`);
     }
-    terminal.write(`\n${DIM}↑/↓ move   Enter select   Esc back${RESET_STYLE}`);
+    terminal.write(
+      `\n${DIM}${wrap("↑/↓ move   Enter select   Esc back", Math.max(44, terminal.columns)).join("\n")}${RESET_STYLE}`
+    );
     const key = await terminal.readKey();
     if (key.name === "escape" || (key.ctrl && key.name === "c")) return "cancel";
     if (key.name === "up") selected = (selected - 1 + choices.length) % choices.length;
@@ -402,6 +766,11 @@ function menuActions(snapshot: DeploymentSnapshot): Action[] {
       label: "Initialize Atlas Core",
       detail: "Create private credentials and provision the new durable MinIO store."
     });
+    actions.push({
+      id: "update",
+      label: "Update",
+      detail: "Check npm and update the Atlas Core CLI."
+    });
   } else {
     actions.push({ id: "status", label: "View status", detail: snapshot.detail });
     if (snapshot.status === "ready") {
@@ -412,9 +781,14 @@ function menuActions(snapshot: DeploymentSnapshot): Action[] {
     actions.push(
       { id: "restart", label: "Restart Atlas Core", detail: "Pull the pinned image, then restart the deployment." },
       {
+        id: "update",
+        label: "Update",
+        detail: "Check npm, then update only the CLI or update the CLI and Atlas Core together."
+      },
+      {
         id: "configure",
-        label: "Configure admin account",
-        detail: "Change the password for the fixed admin username. No other settings are exposed."
+        label: "Configure",
+        detail: "Open Atlas Core configuration. Admin account settings are available here."
       },
       { id: "logs", label: "View logs", detail: "Show the latest logs for all services or one service." }
     );
@@ -473,12 +847,15 @@ function renderMenu(
       const label = `${index === selected ? ">" : " "} ${action.label}`;
       terminal.write(index === selected ? `${REVERSE}${label}${RESET_STYLE}\n` : `${label}\n`);
     }
-    terminal.write(`\n${BOLD}DETAILS${RESET_STYLE}\n${actions[selected]?.detail ?? "No actions match the filter."}\n`);
+    const detail = actions[selected]?.detail ?? "No actions match the filter.";
+    terminal.write(`\n${BOLD}DETAILS${RESET_STYLE}\n${wrap(detail, width).join("\n")}\n`);
   }
 
   terminal.write(`${"─".repeat(width)}\n`);
   terminal.write(`Filter: ${filter || `${DIM}type to filter${RESET_STYLE}`}\n`);
-  terminal.write(`${DIM}↑/↓ move   Enter select   Backspace edit   Esc or q quit${RESET_STYLE}`);
+  terminal.write(
+    `${DIM}${wrap("↑/↓ move   Enter select   Backspace edit   Esc or q quit", width).join("\n")}${RESET_STYLE}`
+  );
 }
 
 async function readSnapshot(operator: AtlasCoreOperator): Promise<DeploymentSnapshot> {
@@ -496,7 +873,19 @@ function isPrintableKey(key: TerminalKey): key is TerminalKey & { sequence: stri
 function wrap(value: string, width: number): string[] {
   const lines: string[] = [];
   let current = "";
-  for (const word of value.split(/\s+/)) {
+  for (let word of value.split(/\s+/)) {
+    if (word.length > width) {
+      if (current) {
+        lines.push(current);
+        current = "";
+      }
+      while (word.length > width) {
+        lines.push(word.slice(0, width));
+        word = word.slice(width);
+      }
+      current = word;
+      continue;
+    }
     if (!current) current = word;
     else if (current.length + word.length + 1 <= width) current += ` ${word}`;
     else {

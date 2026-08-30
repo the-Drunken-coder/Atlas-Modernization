@@ -12,15 +12,19 @@ import {
   writeFileSync
 } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import { PACKAGE_IMAGE, PACKAGE_NAME, PACKAGE_VERSION } from "./package-metadata.js";
 import {
   type AtlasCoreOperator,
   createInteractiveCLI,
+  type DeploymentDetails,
+  type DeploymentService,
   type DeploymentSnapshot,
-  type InteractiveCLI
+  type InteractiveCLI,
+  type UpdateInfo,
+  type UpdateScope
 } from "./terminal-ui.js";
 
 const PROJECT_NAME = "atlas_core_production";
@@ -35,6 +39,11 @@ const RESET_CONTAINERS = [API_CONTAINER, POSTGRES_CONTAINER, MINIO_CONTAINER, MI
 const RESET_VOLUMES = [POSTGRES_VOLUME, MINIO_VOLUME] as const;
 const RESET_CONTAINER_NAMES = new Set<string>(RESET_CONTAINERS);
 const REQUIRED_SERVICES = new Set(["api", "minio", "postgres"]);
+const SERVICES = [
+  { id: "api", label: "Core API", container: API_CONTAINER },
+  { id: "postgres", label: "PostgreSQL", container: POSTGRES_CONTAINER },
+  { id: "minio", label: "MinIO", container: MINIO_CONTAINER }
+] as const;
 const COMPOSE_VARIABLES = [
   "API_AUTH_KEY",
   "ATLAS_ADMIN_PASSWORD",
@@ -73,6 +82,7 @@ Usage:
   atlas-core restart
   atlas-core reset
   atlas-core config
+  atlas-core update [cli|all]
   atlas-core status
   atlas-core logs [core|postgres|minio] [--follow]
   atlas-core doctor
@@ -111,6 +121,7 @@ export type CLIContext = {
   nodeVersion?: string;
   now?: () => Date;
   createSecret?: () => string;
+  confirmCoreUpdate?: (question: string) => Promise<boolean>;
   confirmReset?: (question: string) => Promise<boolean>;
   imageReference?: string;
   interactive?: InteractiveCLI;
@@ -128,6 +139,8 @@ type Command =
   | { kind: "start" }
   | { kind: "status" }
   | { kind: "stop" }
+  | { kind: "update"; scope?: UpdateScope }
+  | { kind: "apply-core-update"; fromVersion: string; expectedImage: string }
   | { kind: "version" };
 
 type DeploymentState = {
@@ -150,6 +163,22 @@ type ComposeServiceState = {
   Service: string;
   State: string;
   Health: string;
+};
+
+type DockerStats = {
+  Name: string;
+  CPUPerc: string;
+  MemUsage: string;
+  MemPerc: string;
+  NetIO: string;
+  BlockIO: string;
+  PIDs: string;
+};
+
+type DockerContainerDetails = {
+  Config: { Image: string };
+  State: { StartedAt: string };
+  RestartCount: number;
 };
 
 class UsageError extends Error {
@@ -201,6 +230,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   readonly #nodeVersion: string;
   readonly #now: () => Date;
   readonly #createSecret: () => string;
+  readonly #confirmCoreUpdate: (question: string) => Promise<boolean>;
   readonly #confirmReset: (question: string) => Promise<boolean>;
   readonly #imageReference: string | undefined;
 
@@ -220,6 +250,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     this.#nodeVersion = context.nodeVersion;
     this.#now = context.now;
     this.#createSecret = context.createSecret;
+    this.#confirmCoreUpdate = context.confirmCoreUpdate;
     this.#confirmReset = context.confirmReset;
     this.#imageReference = context.imageReference;
   }
@@ -256,7 +287,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     if (existingState?.phase === "ready") {
       if (!hasEnv)
         throw new Error(`Atlas Core state exists without ${this.#envFile}. Restore the matching credentials.`);
-      this.#assertStateMatchesRuntime(existingState, dockerEngineId);
+      this.#assertStateMatchesEngine(existingState, dockerEngineId);
       this.#stdout.write(`Atlas Core is already initialized at ${this.#configDir}.\n`);
       return;
     }
@@ -408,7 +439,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   async stop(): Promise<void> {
     const state = this.#requireInitialized();
     const dockerEngineId = await this.#preflight();
-    this.#assertStateMatchesRuntime(state, dockerEngineId);
+    this.#assertStateMatchesEngine(state, dockerEngineId);
     await this.#runComposeChecked(["down"]);
     this.#stdout.write("Atlas Core stopped. Durable volumes were preserved.\n");
   }
@@ -423,8 +454,9 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     assertAdminPassword(password);
     const state = this.#requireInitialized();
     const dockerEngineId = await this.#preflight();
-    this.#assertStateMatchesRuntime(state, dockerEngineId);
+    this.#assertStateMatchesEngine(state, dockerEngineId);
     const snapshot = await this.#deploymentSnapshot();
+    if (snapshot.status !== "stopped") this.#assertPackageVersionMatches(state);
     if (snapshot.status !== "stopped") this.#requirePublishedImage();
     this.#replaceConfigValue("ATLAS_ADMIN_PASSWORD", quoteComposeValue(password));
     this.#stdout.write("Atlas Core admin password updated for username admin.\n");
@@ -434,6 +466,121 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     }
     this.#stdout.write("Restarting Atlas Core to apply the new password...\n");
     await this.#restart(state, dockerEngineId);
+  }
+
+  async checkForUpdates(): Promise<UpdateInfo> {
+    const release = await this.#latestRelease();
+    let state: DeploymentState | undefined;
+    try {
+      state = this.#readInitializedStateIfPresent();
+    } catch {
+      state = undefined;
+    }
+    return {
+      cliVersion: PACKAGE_VERSION,
+      ...(state ? { coreVersion: state.packageVersion } : {}),
+      latestVersion: release.version,
+      cliUpdateAvailable: compareVersions(PACKAGE_VERSION, release.version, "installed CLI", "npm") < 0,
+      coreUpdateAvailable: state
+        ? compareVersions(state.packageVersion, release.version, "running Atlas Core", "npm") < 0
+        : false
+    };
+  }
+
+  async update(scope: UpdateScope, expectedVersion?: string, coreBackupConfirmed = false): Promise<void> {
+    const release = await this.#latestRelease();
+    if (expectedVersion && release.version !== expectedVersion) {
+      throw new Error(
+        `npm latest changed from ${expectedVersion} to ${release.version} while the update menu was open. Review the update again.`
+      );
+    }
+    if (compareVersions(PACKAGE_VERSION, release.version, "installed CLI", "npm") > 0) {
+      throw new Error(`Installed CLI ${PACKAGE_VERSION} is newer than npm's latest release ${release.version}.`);
+    }
+
+    const updateCLI = compareVersions(PACKAGE_VERSION, release.version, "installed CLI", "npm") < 0;
+    if (scope === "cli") {
+      if (!updateCLI) {
+        this.#stdout.write(`Atlas Core CLI ${PACKAGE_VERSION} is already current.\n`);
+        return;
+      }
+      await this.#installCLI(release.version);
+      this.#stdout.write(`Atlas Core CLI ${release.version} installed. The running Core was not changed.\n`);
+      return;
+    }
+
+    const state = this.#readInitializedStateIfPresent();
+    if (state && compareVersions(state.packageVersion, release.version, "running Atlas Core", "npm") > 0) {
+      throw new Error(
+        `Running Atlas Core ${state.packageVersion} is newer than npm's latest release ${release.version}.`
+      );
+    }
+    const updateCore =
+      state !== undefined && compareVersions(state.packageVersion, release.version, "running Atlas Core", "npm") < 0;
+    if (!state) {
+      if (updateCLI) await this.#installCLI(release.version);
+      this.#stdout.write(
+        "Atlas Core is not initialized. The CLI is current and there is no Core deployment to update.\n"
+      );
+      return;
+    }
+    if (!updateCLI && !updateCore) {
+      this.#stdout.write(`Atlas Core CLI and deployment ${PACKAGE_VERSION} are already current.\n`);
+      return;
+    }
+    if (updateCore && !coreBackupConfirmed) {
+      this.#stdout.write(
+        "Atlas Core updates may apply schema migrations. Create and validate a paired PostgreSQL and MinIO backup before continuing.\n"
+      );
+      if (!(await this.#confirmCoreUpdate("Confirm a current paired backup exists. Continue? [y/N] "))) {
+        this.#stdout.write("Atlas Core update cancelled.\n");
+        return;
+      }
+    }
+    if (updateCLI) {
+      await this.#installCLI(release.version);
+      if (updateCore) await this.#runInstalledCoreUpdate(release.version, release.image, state.packageVersion);
+      return;
+    }
+    if (updateCore) await this.applyCoreUpdate(state.packageVersion, release.image);
+  }
+
+  async applyCoreUpdate(fromVersion: string, expectedImage: string): Promise<void> {
+    const state = this.#requireInitialized();
+    if (state.packageVersion !== fromVersion) {
+      throw new Error(
+        `Atlas Core changed from ${fromVersion} to ${state.packageVersion} before the update could start. Check status and retry.`
+      );
+    }
+    const comparison = compareVersions(fromVersion, PACKAGE_VERSION, "running Atlas Core", "installed CLI");
+    if (comparison > 0) throw new Error(`Atlas Core refuses to downgrade from ${fromVersion} to ${PACKAGE_VERSION}.`);
+    if (comparison === 0) {
+      this.#stdout.write(`Atlas Core ${PACKAGE_VERSION} is already current.\n`);
+      return;
+    }
+
+    const imageReference = this.#requirePublishedImage();
+    if (imageReference !== expectedImage) {
+      throw new Error(`Installed Atlas Core ${PACKAGE_VERSION} pins ${imageReference}, not ${expectedImage}.`);
+    }
+    const dockerEngineId = await this.#preflight();
+    this.#assertStateMatchesEngine(state, dockerEngineId);
+    const snapshot = await this.#deploymentSnapshot();
+    const needsPostgresVolume = await this.#assertStartIsSafe(state);
+    if (needsPostgresVolume) await this.#createVolume(POSTGRES_VOLUME, "postgres_data");
+
+    this.#stdout.write(`Updating Atlas Core ${fromVersion} to ${PACKAGE_VERSION}...\n`);
+    await this.#runComposeChecked(["pull"]);
+    if (snapshot.status !== "stopped") {
+      await this.#runComposeChecked(["down"]);
+      await this.#runComposeChecked(["up", "-d", "--pull", "never", "--wait", "--wait-timeout", COMPOSE_WAIT_SECONDS]);
+    }
+    this.#writeDeploymentState({ ...state, packageVersion: PACKAGE_VERSION });
+    this.#stdout.write(
+      snapshot.status === "stopped"
+        ? `Atlas Core ${PACKAGE_VERSION} is ready for its next start. Durable data and credentials were preserved.\n`
+        : `Atlas Core ${PACKAGE_VERSION} is healthy. Durable data and credentials were preserved.\n`
+    );
   }
 
   async status(): Promise<boolean> {
@@ -458,34 +605,117 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     }
     const state = this.#requireInitialized();
     const dockerEngineId = await this.#preflight();
-    this.#assertStateMatchesRuntime(state, dockerEngineId);
+    this.#assertStateMatchesEngine(state, dockerEngineId);
     return await this.#deploymentSnapshot();
   }
 
+  async details(): Promise<DeploymentDetails> {
+    const state = this.#requireInitialized();
+    const dockerEngineId = await this.#preflight();
+    this.#assertStateMatchesEngine(state, dockerEngineId);
+    const serviceStates = await this.#composeServiceStates();
+    const snapshot = deploymentSnapshotFromServices(serviceStates);
+    const { services, error } = await this.#deploymentServices(serviceStates);
+    const image = services.find((service) => service.id === "api")?.image;
+    return {
+      snapshot,
+      cliVersion: PACKAGE_VERSION,
+      coreVersion: state.packageVersion,
+      initializedAt: state.initializedAt,
+      apiEndpoint: "http://127.0.0.1:8000",
+      minioEndpoint: "http://127.0.0.1:9001",
+      services,
+      ...(image ? { image } : {}),
+      ...(error ? { performanceError: error } : {})
+    };
+  }
+
   async #deploymentSnapshot(): Promise<DeploymentSnapshot> {
+    return deploymentSnapshotFromServices(await this.#composeServiceStates());
+  }
+
+  async #composeServiceStates(): Promise<ComposeServiceState[]> {
     const result = await this.#runCompose(["ps", "--all", "--format", "json"]);
     if (result.status !== 0) throw commandFailure("docker compose ps", result);
-    const services = parseComposeServiceStates(result.stdout);
-    if (services.length === 0) {
-      return { status: "stopped", detail: "Atlas Core is initialized and stopped. Durable storage is preserved." };
+    return parseComposeServiceStates(result.stdout);
+  }
+
+  async #deploymentServices(
+    serviceStates: ComposeServiceState[]
+  ): Promise<{ services: DeploymentService[]; error?: string }> {
+    const runningContainers = SERVICES.filter(({ id }) =>
+      serviceStates.some((service) => service.Service === id && service.State === "running")
+    ).map(({ container }) => container);
+    const stats = new Map<string, DockerStats>();
+    const errors: string[] = [];
+    if (runningContainers.length > 0) {
+      const result = await this.#runner.run(
+        "docker",
+        ["stats", "--no-stream", "--format", "{{json .}}", ...runningContainers],
+        { env: this.#env }
+      );
+      if (result.status === 0) {
+        try {
+          for (const item of parseDockerStats(result.stdout)) stats.set(item.Name, item);
+        } catch (error) {
+          errors.push(errorMessage(error));
+        }
+      } else {
+        errors.push(errorMessage(commandFailure("docker stats", result)));
+      }
     }
-    const failures = [...REQUIRED_SERVICES].flatMap((service) => {
-      const current = services.find((candidate) => candidate.Service === service);
-      if (!current) return [`${service} is missing`];
-      if (current.State !== "running") return [`${service} is ${current.State || "in an unknown state"}`];
-      if (current.Health !== "healthy") return [`${service} is ${current.Health || "not reporting health"}`];
-      return [];
-    });
-    if (failures.length > 0) {
-      return { status: "degraded", detail: failures.join(", ") };
+
+    const services: DeploymentService[] = [];
+    for (const definition of SERVICES) {
+      const state = serviceStates.find((candidate) => candidate.Service === definition.id);
+      const service: DeploymentService = {
+        ...definition,
+        state: state?.State || "missing",
+        health: state?.Health || "not reporting health"
+      };
+      const currentStats = stats.get(definition.container);
+      if (currentStats) {
+        service.cpuPercent = currentStats.CPUPerc;
+        service.memoryUsage = currentStats.MemUsage;
+        service.memoryPercent = currentStats.MemPerc;
+        service.networkIO = currentStats.NetIO;
+        service.blockIO = currentStats.BlockIO;
+        service.processes = currentStats.PIDs;
+      }
+      if (state?.State === "running") {
+        const inspection = await this.#runner.run(
+          "docker",
+          [
+            "container",
+            "inspect",
+            "--format",
+            "{{json .Config.Image}}\t{{json .State.StartedAt}}\t{{.RestartCount}}",
+            definition.container
+          ],
+          { env: this.#env }
+        );
+        if (inspection.status === 0) {
+          try {
+            const details = parseDockerContainerDetails(inspection.stdout);
+            service.uptime = formatUptime(this.#now(), details.State.StartedAt);
+            service.restarts = details.RestartCount;
+            service.image = details.Config.Image;
+          } catch (error) {
+            errors.push(`${definition.label}: ${errorMessage(error)}`);
+          }
+        } else {
+          errors.push(`${definition.label}: ${errorMessage(commandFailure("docker container inspect", inspection))}`);
+        }
+      }
+      services.push(service);
     }
-    return { status: "ready", detail: "Core API, PostgreSQL, and MinIO are running and healthy." };
+    return errors.length > 0 ? { services, error: errors.join("; ") } : { services };
   }
 
   async logs(service: "api" | "minio" | "postgres" | undefined, follow: boolean): Promise<void> {
     const state = this.#requireInitialized();
     const dockerEngineId = await this.#preflight();
-    this.#assertStateMatchesRuntime(state, dockerEngineId);
+    this.#assertStateMatchesEngine(state, dockerEngineId);
     const args = ["logs", "--tail", "200"];
     if (follow) args.push("--follow");
     if (service) args.push(service);
@@ -536,9 +766,9 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
         check: async () => {
           const state = this.#requireInitialized();
           const runtime = await this.#dockerRuntime();
-          this.#assertStateMatchesRuntime(state, runtime.engineId);
+          this.#assertStateMatchesEngine(state, runtime.engineId);
           await this.#runComposeChecked(["config", "--quiet"]);
-          return this.#configDir;
+          return `${this.#configDir} (Core ${state.packageVersion})`;
         }
       }
     ];
@@ -889,6 +1119,58 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     }
   }
 
+  #readInitializedStateIfPresent(): DeploymentState | undefined {
+    const paths = [this.#configDir, this.#envFile, this.#stateFile];
+    if (paths.every((path) => !existsSync(path))) return undefined;
+    return this.#requireInitialized();
+  }
+
+  async #latestRelease(): Promise<{ version: string; image: string }> {
+    const result = await this.#runner.run(
+      "npm",
+      ["view", `${PACKAGE_NAME}@latest`, "version", "atlasCoreImage", "--json"],
+      { env: this.#env }
+    );
+    if (result.status !== 0) throw commandFailure(`npm view ${PACKAGE_NAME}@latest`, result);
+    return parseNpmRelease(result.stdout);
+  }
+
+  async #installCLI(version: string): Promise<void> {
+    this.#stdout.write(`Installing Atlas Core CLI ${version}...\n`);
+    const result = await this.#runner.run("npm", ["install", "--global", `${PACKAGE_NAME}@${version}`], {
+      env: this.#env,
+      inherit: true
+    });
+    if (result.status !== 0) throw commandFailure(`npm install --global ${PACKAGE_NAME}@${version}`, result);
+  }
+
+  async #runInstalledCoreUpdate(version: string, expectedImage: string, fromVersion: string): Promise<void> {
+    const rootResult = await this.#runner.run("npm", ["root", "--global"], { env: this.#env });
+    if (rootResult.status !== 0) throw commandFailure("npm root --global", rootResult);
+    const globalRoot = oneLine(rootResult.stdout);
+    if (!globalRoot) throw new Error("npm did not report its global package directory after the CLI update.");
+    const installedCLI = resolveInstalledCLI(join(globalRoot, PACKAGE_NAME));
+    const childEnvironment = { ...this.#env, ATLAS_CORE_HOME: this.#configDir };
+    const versionResult = await this.#runner.run(process.execPath, [installedCLI, "version"], {
+      env: childEnvironment
+    });
+    if (versionResult.status !== 0) throw commandFailure(`${installedCLI} version`, versionResult);
+    if (oneLine(versionResult.stdout) !== `${PACKAGE_NAME} ${version}`) {
+      throw new Error(`npm installed an unexpected Atlas Core CLI: ${oneLine(versionResult.stdout) || "no version"}.`);
+    }
+    const updateResult = await this.#runner.run(
+      process.execPath,
+      [installedCLI, "__apply-core-update", fromVersion, expectedImage],
+      {
+        env: childEnvironment,
+        inherit: true
+      }
+    );
+    if (updateResult.status !== 0) {
+      throw commandFailure(`Atlas Core ${version} deployment update`, updateResult);
+    }
+  }
+
   #requireInitialized(): DeploymentState {
     if (!existsSync(this.#configDir) || !existsSync(this.#envFile) || !existsSync(this.#stateFile)) {
       throw new Error("Atlas Core is not initialized. Run atlas-core init first.");
@@ -899,6 +1181,10 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       throw new Error("Atlas Core is not initialized. Run atlas-core init first.");
     }
     return state;
+  }
+
+  #writeDeploymentState(state: DeploymentState): void {
+    writePrivateFile(this.#stateFile, `${JSON.stringify(state, null, 2)}\n`, this.#platform);
   }
 
   #prepareConfigDirectory(): void {
@@ -962,12 +1248,20 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   }
 
   #assertStateMatchesRuntime(state: DeploymentState, dockerEngineId: string): void {
+    this.#assertStateMatchesEngine(state, dockerEngineId);
+    this.#assertPackageVersionMatches(state);
+  }
+
+  #assertPackageVersionMatches(state: DeploymentState): void {
     if (state.packageVersion !== PACKAGE_VERSION) {
       throw new Error(
         `Atlas Core ${state.packageVersion} initialized this deployment, but the installed CLI is ${PACKAGE_VERSION}. ` +
-          `Reinstall atlas-core@${state.packageVersion}; automatic upgrades are not supported yet.`
+          "Run atlas-core update all to update the deployment explicitly."
       );
     }
+  }
+
+  #assertStateMatchesEngine(state: DeploymentState, dockerEngineId: string): void {
     if (state.dockerEngineId !== dockerEngineId) {
       throw new Error(
         `Atlas Core was initialized on Docker engine ${state.dockerEngineId}, but the current engine is ${dockerEngineId}. ` +
@@ -1059,6 +1353,7 @@ type RequiredRuntimeContext = {
   nodeVersion: string;
   now: () => Date;
   createSecret: () => string;
+  confirmCoreUpdate: (question: string) => Promise<boolean>;
   confirmReset: (question: string) => Promise<boolean>;
   imageReference: string | undefined;
   interactive: InteractiveCLI;
@@ -1080,6 +1375,10 @@ export async function runCLI(argv: string[], context: CLIContext = {}): Promise<
     const deployment = new AtlasCoreDeployment(runtime);
     if (command.kind === "menu") {
       await runtime.interactive.runMenu(deployment);
+      return 0;
+    }
+    if (command.kind === "apply-core-update") {
+      await deployment.applyCoreUpdate(command.fromVersion, command.expectedImage);
       return 0;
     }
     switch (command.kind) {
@@ -1108,6 +1407,10 @@ export async function runCLI(argv: string[], context: CLIContext = {}): Promise<
       case "stop":
         await deployment.stop();
         return 0;
+      case "update":
+        if (command.scope) await deployment.update(command.scope);
+        else await runtime.interactive.runUpdate(deployment);
+        return 0;
       default:
         return assertNever(command);
     }
@@ -1135,6 +1438,15 @@ function parseCommand(argv: string[]): Command {
     case "version":
       if (args.length > 0) throw new UsageError(`${name} does not accept arguments`);
       return { kind: name };
+    case "update":
+      if (args.length === 0) return { kind: "update" };
+      if (args.length === 1 && (args[0] === "cli" || args[0] === "all")) {
+        return { kind: "update", scope: args[0] };
+      }
+      throw new UsageError("update accepts cli or all");
+    case "__apply-core-update":
+      if (args.length !== 2) throw new UsageError("invalid internal update request");
+      return { kind: "apply-core-update", fromVersion: args[0] ?? "", expectedImage: args[1] ?? "" };
     case "reset":
       if (args.length > 0) throw new UsageError("reset does not accept arguments");
       return { kind: "reset" };
@@ -1175,13 +1487,14 @@ function defaultContext(context: CLIContext): RequiredRuntimeContext {
     nodeVersion: context.nodeVersion ?? process.versions.node,
     now: context.now ?? (() => new Date()),
     createSecret: context.createSecret ?? (() => randomBytes(32).toString("base64url")),
-    confirmReset: context.confirmReset ?? askForResetConfirmation,
+    confirmCoreUpdate: context.confirmCoreUpdate ?? askForConfirmation,
+    confirmReset: context.confirmReset ?? askForConfirmation,
     imageReference: context.imageReference ?? PACKAGE_IMAGE,
     interactive: context.interactive ?? createInteractiveCLI()
   };
 }
 
-async function askForResetConfirmation(question: string): Promise<boolean> {
+async function askForConfirmation(question: string): Promise<boolean> {
   const prompt = createInterface({ input: process.stdin, output: process.stdout });
   try {
     return await new Promise<boolean>((resolveConfirmation) => {
@@ -1270,6 +1583,161 @@ function parseComposeServiceStates(stdout: string): ComposeServiceState[] {
     }
     return { Service: record.Service, State: record.State, Health: record.Health };
   });
+}
+
+function deploymentSnapshotFromServices(services: ComposeServiceState[]): DeploymentSnapshot {
+  if (services.length === 0) {
+    return { status: "stopped", detail: "Atlas Core is initialized and stopped. Durable storage is preserved." };
+  }
+  const failures = [...REQUIRED_SERVICES].flatMap((service) => {
+    const current = services.find((candidate) => candidate.Service === service);
+    if (!current) return [`${service} is missing`];
+    if (current.State !== "running") return [`${service} is ${current.State || "in an unknown state"}`];
+    if (current.Health !== "healthy") return [`${service} is ${current.Health || "not reporting health"}`];
+    return [];
+  });
+  if (failures.length > 0) return { status: "degraded", detail: failures.join(", ") };
+  return { status: "ready", detail: "Core API, PostgreSQL, and MinIO are running and healthy." };
+}
+
+function parseDockerStats(stdout: string): DockerStats[] {
+  const output = stdout.trim();
+  if (!output) return [];
+  let values: unknown[];
+  try {
+    const parsed: unknown = JSON.parse(output);
+    values = Array.isArray(parsed) ? parsed : [parsed];
+  } catch {
+    try {
+      values = output.split(/\r?\n/).map((line) => JSON.parse(line) as unknown);
+    } catch {
+      throw new Error("Docker returned invalid performance statistics.");
+    }
+  }
+  return values.map((value) => {
+    if (typeof value !== "object" || value === null) throw new Error("Docker returned invalid performance statistics.");
+    const record = value as Record<string, unknown>;
+    const fields = ["Name", "CPUPerc", "MemUsage", "MemPerc", "NetIO", "BlockIO", "PIDs"] as const;
+    if (fields.some((field) => typeof record[field] !== "string")) {
+      throw new Error("Docker returned incomplete performance statistics.");
+    }
+    return Object.fromEntries(fields.map((field) => [field, record[field]])) as DockerStats;
+  });
+}
+
+function parseDockerContainerDetails(stdout: string): DockerContainerDetails {
+  const [rawImage, rawStartedAt, rawRestartCount, ...extra] = stdout.trim().split("\t");
+  if (!rawImage || !rawStartedAt || !rawRestartCount || extra.length > 0) {
+    throw new Error("Docker returned incomplete container details.");
+  }
+  let image: unknown;
+  let startedAt: unknown;
+  try {
+    image = JSON.parse(rawImage);
+    startedAt = JSON.parse(rawStartedAt);
+  } catch {
+    throw new Error("Docker returned invalid container details.");
+  }
+  const restartCount = Number(rawRestartCount);
+  if (
+    typeof image !== "string" ||
+    typeof startedAt !== "string" ||
+    !Number.isInteger(restartCount) ||
+    restartCount < 0
+  ) {
+    throw new Error("Docker returned incomplete container details.");
+  }
+  return {
+    Config: { Image: image },
+    State: { StartedAt: startedAt },
+    RestartCount: restartCount
+  };
+}
+
+function parseNpmRelease(stdout: string): { version: string; image: string } {
+  let value: unknown;
+  try {
+    value = JSON.parse(stdout);
+  } catch {
+    throw new Error("npm returned invalid Atlas Core release metadata.");
+  }
+  if (typeof value !== "object" || value === null) {
+    throw new Error("npm returned incomplete Atlas Core release metadata.");
+  }
+  const record = value as Record<string, unknown>;
+  if (typeof record.version !== "string") throw new Error("npm did not return the latest Atlas Core version.");
+  validateVersion(record.version, "npm");
+  if (
+    typeof record.atlasCoreImage !== "string" ||
+    !/^ghcr\.io\/the-drunken-coder\/atlas-core@sha256:[0-9a-f]{64}$/u.test(record.atlasCoreImage)
+  ) {
+    throw new Error("npm did not return the reviewed Atlas Core image for its latest release.");
+  }
+  return { version: record.version, image: record.atlasCoreImage };
+}
+
+function resolveInstalledCLI(packageDirectory: string): string {
+  let value: unknown;
+  try {
+    value = JSON.parse(readFileSync(join(packageDirectory, "package.json"), "utf8"));
+  } catch {
+    throw new Error(`npm installed Atlas Core without readable package metadata at ${packageDirectory}.`);
+  }
+  if (typeof value !== "object" || value === null) {
+    throw new Error("The installed Atlas Core package metadata is invalid.");
+  }
+  const bin = (value as Record<string, unknown>).bin;
+  const entry =
+    typeof bin === "string"
+      ? bin
+      : typeof bin === "object" && bin !== null
+        ? (bin as Record<string, unknown>)[PACKAGE_NAME]
+        : undefined;
+  if (typeof entry !== "string" || entry.length === 0) {
+    throw new Error(`The installed Atlas Core package does not define its ${PACKAGE_NAME} executable.`);
+  }
+  const installedCLI = resolve(packageDirectory, entry);
+  const relativeEntry = relative(packageDirectory, installedCLI);
+  if (
+    relativeEntry === "" ||
+    relativeEntry === ".." ||
+    relativeEntry.startsWith(`..${sep}`) ||
+    isAbsolute(relativeEntry)
+  ) {
+    throw new Error("The installed Atlas Core package executable points outside its package directory.");
+  }
+  return installedCLI;
+}
+
+function validateVersion(version: string, source: string): void {
+  if (!/^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/u.test(version)) {
+    throw new Error(`${source} has an invalid Atlas Core version: ${version}`);
+  }
+}
+
+function compareVersions(left: string, right: string, leftSource: string, rightSource: string): number {
+  validateVersion(left, leftSource);
+  validateVersion(right, rightSource);
+  const leftParts = left.split(".").map(Number);
+  const rightParts = right.split(".").map(Number);
+  for (let index = 0; index < 3; index += 1) {
+    const difference = (leftParts[index] ?? 0) - (rightParts[index] ?? 0);
+    if (difference !== 0) return Math.sign(difference);
+  }
+  return 0;
+}
+
+function formatUptime(now: Date, startedAt: string): string {
+  const start = new Date(startedAt);
+  const milliseconds = now.getTime() - start.getTime();
+  if (!Number.isFinite(start.getTime()) || milliseconds < 0) return "Not available";
+  const minutes = Math.floor(milliseconds / 60_000);
+  const days = Math.floor(minutes / (24 * 60));
+  const hours = Math.floor((minutes % (24 * 60)) / 60);
+  const remainingMinutes = minutes % 60;
+  if (days > 0) return `${days}d ${hours}h`;
+  if (hours > 0) return `${hours}h ${remainingMinutes}m`;
+  return `${remainingMinutes}m`;
 }
 
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {
