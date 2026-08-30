@@ -1,4 +1,4 @@
-import { Box, render, Text, useApp, useInput, usePaste, useWindowSize } from "ink";
+import { Box, type Key, render, Text, useApp, useInput, usePaste, useWindowSize } from "ink";
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { PACKAGE_VERSION } from "./package-metadata.js";
 
@@ -75,7 +75,7 @@ type Action = {
 };
 
 type Screen =
-  | { kind: "busy"; label: string }
+  | { captureInput: boolean; kind: "busy"; label: string }
   | { kind: "configure" }
   | { kind: "logs" }
   | { kind: "menu"; snapshot: DeploymentSnapshot }
@@ -93,6 +93,8 @@ type AtlasCoreAppProps = {
   operator: AtlasCoreOperator;
   output: NodeJS.WriteStream;
 };
+
+const MINIMUM_TERMINAL_COLUMNS = 40;
 
 export function createInteractiveCLI(
   input: NodeJS.ReadStream = process.stdin,
@@ -138,15 +140,19 @@ async function runInkApp(
 
 function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): ReactNode {
   const { exit, suspendTerminal, waitUntilRenderFlush } = useApp();
-  const [screen, setScreen] = useState<Screen>({ kind: "busy", label: initialLoadingLabel(mode) });
+  const [screen, setScreen] = useState<Screen>({
+    captureInput: false,
+    kind: "busy",
+    label: initialLoadingLabel(mode)
+  });
 
   const loadMenu = useCallback(async () => {
-    setScreen({ kind: "busy", label: "Checking deployment..." });
+    setScreen({ captureInput: false, kind: "busy", label: "Checking deployment..." });
     setScreen({ kind: "menu", snapshot: await readSnapshot(operator) });
   }, [operator]);
 
   const loadStatus = useCallback(async () => {
-    setScreen({ kind: "busy", label: "Loading deployment and Docker statistics..." });
+    setScreen({ captureInput: false, kind: "busy", label: "Loading deployment and Docker statistics..." });
     try {
       setScreen({ kind: "status", view: await operator.details() });
     } catch (error) {
@@ -155,7 +161,7 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
   }, [operator]);
 
   const loadUpdate = useCallback(async () => {
-    setScreen({ kind: "busy", label: "Checking npm for the latest release..." });
+    setScreen({ captureInput: false, kind: "busy", label: "Checking npm for the latest release..." });
     try {
       setScreen({ kind: "update", info: await operator.checkForUpdates() });
     } catch (error) {
@@ -182,7 +188,7 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
 
   const runVisibleOperation = useCallback(
     async (label: string, operation: () => Promise<void>): Promise<Error | undefined> => {
-      setScreen({ kind: "busy", label: `${label}...` });
+      setScreen({ captureInput: true, kind: "busy", label: `${label}...` });
       await waitUntilRenderFlush();
       let failure: Error | undefined;
       await suspendTerminal(async () => {
@@ -291,7 +297,7 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
 
   const applyUpdate = useCallback(
     async (info: UpdateInfo, scope: UpdateScope) => {
-      setScreen({ kind: "busy", label: "Applying reviewed update..." });
+      setScreen({ captureInput: true, kind: "busy", label: "Applying reviewed update..." });
       await waitUntilRenderFlush();
       let failure: Error | undefined;
       await suspendTerminal(async () => {
@@ -315,7 +321,7 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
     [exit, input, operator, output, suspendTerminal, waitUntilRenderFlush]
   );
 
-  if (screen.kind === "busy") return <BusyScreen label={screen.label} />;
+  if (screen.kind === "busy") return <BusyScreen captureInput={screen.captureInput} label={screen.label} />;
   if (screen.kind === "menu") {
     return <MainMenu onSelect={(action) => void runMainAction(action)} snapshot={screen.snapshot} />;
   }
@@ -390,12 +396,15 @@ function MainMenu({ onSelect, snapshot }: { onSelect(action: Action): void; snap
   const [selected, setSelected] = useState(0);
   const filtered = useMemo(() => filteredActions(actions, filter), [actions, filter]);
   const index = Math.min(selected, Math.max(0, filtered.length - 1));
+  const canInteract = columns >= MINIMUM_TERMINAL_COLUMNS;
 
   useInput((input, key) => {
-    if ((key.ctrl && input === "c") || key.escape || (input === "q" && filter === "")) {
+    const modified = hasCommandModifier(key);
+    if ((key.ctrl && input === "c") || key.escape || (!modified && input === "q" && filter === "")) {
       exit();
       return;
     }
+    if (!canInteract || modified) return;
     if (key.upArrow) {
       setSelected(filtered.length === 0 ? 0 : (index - 1 + filtered.length) % filtered.length);
       return;
@@ -414,20 +423,23 @@ function MainMenu({ onSelect, snapshot }: { onSelect(action: Action): void; snap
       if (action) onSelect(action);
       return;
     }
-    if (isPrintableInput(input)) {
+    if (isPrintableInput(input, key)) {
       setFilter((value) => value + input);
       setSelected(0);
     }
   });
-  usePaste((value) => {
-    const printable = printableText(value);
-    if (printable) {
-      setFilter((current) => current + printable);
-      setSelected(0);
-    }
-  });
+  usePaste(
+    (value) => {
+      const printable = printableText(value);
+      if (printable) {
+        setFilter((current) => current + printable);
+        setSelected(0);
+      }
+    },
+    { isActive: canInteract }
+  );
 
-  if (columns < 40) return <NarrowTerminal />;
+  if (!canInteract) return <NarrowTerminal />;
   const width = columns;
   const wide = width >= 72;
   const actionWidth = Math.min(34, Math.max(24, Math.floor(width * 0.42)));
@@ -507,9 +519,12 @@ function StatusScreen({
   const [selected, setSelected] = useState(0);
   const services = view instanceof Error ? [] : view.services;
   const index = Math.min(selected, Math.max(0, services.length - 1));
+  const canInteract = columns >= MINIMUM_TERMINAL_COLUMNS;
 
   useInput((input, key) => {
-    if (key.escape || key.return || (key.ctrl && input === "c") || input === "q") onBack();
+    const modified = hasCommandModifier(key);
+    if (key.escape || key.return || (key.ctrl && input === "c") || (!modified && input === "q")) onBack();
+    else if (!canInteract || modified) return;
     else if (input === "r") onReload();
     else if (input === "d") onDiagnostics();
     else if ((key.leftArrow || key.upArrow) && services.length > 0) {
@@ -522,7 +537,7 @@ function StatusScreen({
     }
   });
 
-  if (columns < 40) return <NarrowTerminal />;
+  if (!canInteract) return <NarrowTerminal />;
   const width = columns;
   if (view instanceof Error) {
     return (
@@ -687,13 +702,15 @@ function SimpleMenu({
 }): ReactNode {
   const { columns } = useWindowSize();
   const [selected, setSelected] = useState(0);
+  const canInteract = columns >= MINIMUM_TERMINAL_COLUMNS;
   useInput((input, key) => {
     if (key.escape || (key.ctrl && input === "c")) onBack();
+    else if (!canInteract || hasCommandModifier(key)) return;
     else if (key.upArrow) setSelected((value) => (value - 1 + choices.length) % choices.length);
     else if (key.downArrow) setSelected((value) => (value + 1) % choices.length);
     else if (key.return) onSelect(selected);
   });
-  if (columns < 40) return <NarrowTerminal />;
+  if (!canInteract) return <NarrowTerminal />;
   return (
     <Box flexDirection="column" width={columns}>
       <Header title={title} />
@@ -715,6 +732,7 @@ function PasswordScreen({ onCancel, onSubmit }: { onCancel(): void; onSubmit(pas
   const [error, setError] = useState<string>();
   const [password, setPassword] = useState("");
   const [value, setValue] = useState("");
+  const canInteract = columns >= MINIMUM_TERMINAL_COLUMNS;
 
   const submit = (): void => {
     if (!confirmation) {
@@ -736,13 +754,14 @@ function PasswordScreen({ onCancel, onSubmit }: { onCancel(): void; onSubmit(pas
 
   useInput((input, key) => {
     if (key.escape || (key.ctrl && input === "c")) onCancel();
+    else if (!canInteract || hasCommandModifier(key)) return;
     else if (key.return) submit();
     else if (key.backspace || key.delete) setValue((current) => Array.from(current).slice(0, -1).join(""));
-    else if (isPrintableInput(input)) setValue((current) => current + input);
+    else if (isPrintableInput(input, key)) setValue((current) => current + input);
   });
-  usePaste((pasted) => setValue((current) => current + printableText(pasted)));
+  usePaste((pasted) => setValue((current) => current + printableText(pasted)), { isActive: canInteract });
 
-  if (columns < 40) return <NarrowTerminal />;
+  if (!canInteract) return <NarrowTerminal />;
   return (
     <Box flexDirection="column" width={columns}>
       <Header title="Configure > Admin account" />
@@ -773,8 +792,11 @@ function UpdateMenu({
   const { columns } = useWindowSize();
   const choices = useMemo(() => updateChoices(info), [info]);
   const [selected, setSelected] = useState(0);
+  const canInteract = columns >= MINIMUM_TERMINAL_COLUMNS;
   useInput((input, key) => {
-    if (key.escape || (key.ctrl && input === "c") || input === "q") onBack();
+    const modified = hasCommandModifier(key);
+    if (key.escape || (key.ctrl && input === "c") || (!modified && input === "q")) onBack();
+    else if (!canInteract || modified) return;
     else if (input === "r") onReload();
     else if (key.upArrow && choices.length > 0) setSelected((value) => (value - 1 + choices.length) % choices.length);
     else if (key.downArrow && choices.length > 0) setSelected((value) => (value + 1) % choices.length);
@@ -785,7 +807,7 @@ function UpdateMenu({
     }
   });
 
-  if (columns < 40) return <NarrowTerminal />;
+  if (!canInteract) return <NarrowTerminal />;
   const choice = choices[selected];
   return (
     <Box flexDirection="column" width={columns}>
@@ -840,11 +862,13 @@ function UpdateReview({
   scope: UpdateScope;
 }): ReactNode {
   const { columns } = useWindowSize();
+  const canInteract = columns >= MINIMUM_TERMINAL_COLUMNS;
   useInput((input, key) => {
     if (key.escape || (key.ctrl && input === "c")) onBack();
+    else if (!canInteract || hasCommandModifier(key)) return;
     else if (key.return) onApply();
   });
-  if (columns < 40) return <NarrowTerminal />;
+  if (!canInteract) return <NarrowTerminal />;
   return (
     <Box flexDirection="column" width={columns}>
       <Header title="REVIEW UPDATE" />
@@ -884,10 +908,10 @@ function UpdateReview({
 
 function MessageScreen({ message, onBack, title }: { message: string; onBack(): void; title: string }): ReactNode {
   const { columns } = useWindowSize();
-  useInput((_input, key) => {
-    if (key.return || key.escape) onBack();
+  useInput((input, key) => {
+    if (key.return || key.escape || (key.ctrl && input === "c")) onBack();
   });
-  if (columns < 40) return <NarrowTerminal />;
+  if (columns < MINIMUM_TERMINAL_COLUMNS) return <NarrowTerminal />;
   return (
     <Box flexDirection="column" width={columns}>
       <Header title={title} />
@@ -899,9 +923,10 @@ function MessageScreen({ message, onBack, title }: { message: string; onBack(): 
   );
 }
 
-function BusyScreen({ label }: { label: string }): ReactNode {
+function BusyScreen({ captureInput, label }: { captureInput: boolean; label: string }): ReactNode {
   const { columns } = useWindowSize();
-  if (columns < 40) return <NarrowTerminal />;
+  useInput(() => undefined, { isActive: captureInput });
+  if (columns < MINIMUM_TERMINAL_COLUMNS) return <NarrowTerminal />;
   return (
     <Box flexDirection="column" width={columns}>
       <Header title="ATLAS CORE" />
@@ -1085,8 +1110,12 @@ function pad(value: string, width: number): string {
   return clipped.padEnd(width);
 }
 
-function isPrintableInput(input: string): boolean {
-  return /^[^\u0000-\u001f\u007f]+$/u.test(input);
+function isPrintableInput(input: string, key: Key): boolean {
+  return !hasCommandModifier(key) && /^[^\u0000-\u001f\u007f]+$/u.test(input);
+}
+
+function hasCommandModifier(key: Key): boolean {
+  return key.ctrl || key.meta || key.super || key.hyper;
 }
 
 function printableText(value: string): string {

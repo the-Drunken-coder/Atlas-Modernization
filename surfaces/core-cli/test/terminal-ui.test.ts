@@ -1,3 +1,4 @@
+import { createInterface } from "node:readline/promises";
 import { PassThrough } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
 import { type AtlasCoreOperator, createInteractiveCLI, type DeploymentSnapshot } from "../src/terminal-ui.js";
@@ -39,6 +40,20 @@ class TestTerminal {
 
   write(value: string): void {
     this.input.write(value);
+  }
+
+  resize(columns: number): void {
+    Object.assign(this.output, { columns });
+    this.output.emit("resize");
+  }
+
+  writeWhenVisible(value: string, input: string): void {
+    const writeInput = (): void => {
+      if (!this.text.includes(value)) return;
+      this.output.off("data", writeInput);
+      this.write(input);
+    };
+    this.output.on("data", writeInput);
   }
 
   async waitFor(value: string): Promise<void> {
@@ -162,6 +177,40 @@ describe("Atlas Core terminal UI", () => {
     await menu;
   });
 
+  it("discards reset confirmation typed before the warning prompt appears", async () => {
+    const terminal = new TestTerminal();
+    const deployment = operator();
+    let answer: string | undefined;
+    let confirmationSettled = false;
+    deployment.reset.mockImplementation(async () => {
+      terminal.output.write("Reset permanently deletes Atlas Core data.\n");
+      const prompt = createInterface({ input: terminal.input, output: terminal.output });
+      try {
+        answer = await prompt.question("Continue? [y/N] ");
+        confirmationSettled = true;
+      } finally {
+        prompt.close();
+      }
+    });
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("Reset Atlas Core");
+    terminal.writeWhenVisible("Reset Atlas Core...", "yes\n");
+    terminal.write("reset");
+    await terminal.waitFor("Filter: reset");
+    terminal.write("\r");
+    await terminal.waitFor("Continue? [y/N]");
+    await nextInputTurn();
+    if (!confirmationSettled) terminal.write("no\n");
+    await terminal.waitFor("Press Enter to return to Atlas Core.");
+    terminal.write("\r");
+    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
+    terminal.write("q");
+    await menu;
+
+    expect(answer).toBe("no");
+  });
+
   it("opens the service status view and moves between services", async () => {
     const terminal = new TestTerminal();
     const deployment = operator();
@@ -189,6 +238,41 @@ describe("Atlas Core terminal UI", () => {
     await terminal.waitFor("Resize to at least 40 columns.");
     terminal.write("q");
     await menu;
+  });
+
+  it("blocks a hidden Core update confirmation after the terminal becomes narrow", async () => {
+    const terminal = new TestTerminal();
+    const deployment = operator();
+    deployment.checkForUpdates.mockResolvedValue({
+      cliVersion: "0.1.5",
+      coreVersion: "0.1.5",
+      latestVersion: "0.1.6",
+      cliUpdateAvailable: true,
+      coreUpdateAvailable: true
+    });
+    const update = createInteractiveCLI(terminal.input, terminal.output).runUpdate(deployment);
+
+    await terminal.waitFor("Update CLI + Atlas Core");
+    terminal.write("\u001b[B");
+    await terminal.waitFor("Preserve credentials and durable data");
+    terminal.write("\r");
+    await terminal.waitFor("paired PostgreSQL and MinIO backup exists");
+    terminal.resize(36);
+    await terminal.waitFor("Resize to at least 40 columns.");
+    terminal.write("\r");
+    await nextInputTurn();
+    const updateCallsAfterHiddenEnter = deployment.update.mock.calls.length;
+    if (updateCallsAfterHiddenEnter > 0) {
+      await terminal.waitFor("Press Enter to exit.");
+      terminal.write("\r");
+    } else {
+      terminal.write("\u001b");
+      await nextInputTurn();
+      terminal.write("q");
+    }
+    await update;
+
+    expect(updateCallsAfterHiddenEnter).toBe(0);
   });
 
   it("masks the admin password and never writes its value", async () => {
@@ -233,6 +317,63 @@ describe("Atlas Core terminal UI", () => {
     await configuration;
 
     expect(deployment.configureAdminPassword).not.toHaveBeenCalled();
+  });
+
+  it("does not insert Ctrl-letter input into an admin password", async () => {
+    const terminal = new TestTerminal();
+    const deployment = operator();
+    const configuration = createInteractiveCLI(terminal.input, terminal.output).configureAdmin(deployment);
+
+    await terminal.waitFor("New password");
+    terminal.write("\u0001");
+    await nextInputTurn();
+    terminal.write("x");
+    await terminal.waitFor("*");
+    terminal.write("\r");
+    await terminal.waitFor("Confirm password");
+    const beforeConfirmation = terminal.raw.length;
+    terminal.write("x");
+    await terminal.waitForRawChange(beforeConfirmation);
+    terminal.write("\r");
+    await vi.waitFor(() =>
+      expect(
+        terminal.text.includes("Press Enter to return to Atlas Core.") ||
+          terminal.text.includes("Passwords did not match")
+      ).toBe(true)
+    );
+    const passwordWasSubmitted = deployment.configureAdminPassword.mock.calls.length > 0;
+    if (passwordWasSubmitted) {
+      terminal.write("\r");
+    } else {
+      terminal.write("\u001b");
+    }
+    await configuration;
+
+    expect(deployment.configureAdminPassword).toHaveBeenCalledWith("x");
+  });
+
+  it("does not treat Ctrl-D as the diagnostics shortcut", async () => {
+    const terminal = new TestTerminal();
+    const deployment = operator();
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("View status");
+    terminal.write("\r");
+    await terminal.waitFor("Network I/O");
+    terminal.write("\u0004");
+    await nextInputTurn();
+    const doctorCallsAfterCtrlD = deployment.doctor.mock.calls.length;
+    if (doctorCallsAfterCtrlD > 0) {
+      await terminal.waitFor("Press Enter to return to Atlas Core.");
+      terminal.write("\r");
+      await vi.waitFor(() => expect(deployment.details).toHaveBeenCalledTimes(2));
+    }
+    terminal.write("q");
+    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
+    terminal.write("q");
+    await menu;
+
+    expect(doctorCallsAfterCtrlD).toBe(0);
   });
 
   it("applies the reviewed CLI and Core update and exits", async () => {
@@ -283,6 +424,27 @@ describe("Atlas Core terminal UI", () => {
     await expect(update).rejects.toThrow("npm install failed");
   });
 
+  it("returns from an update-check error when Ctrl-C is pressed", async () => {
+    const terminal = new TestTerminal();
+    const deployment = operator();
+    deployment.checkForUpdates.mockRejectedValue(new Error("npm is unavailable"));
+    let resolved = false;
+    const update = createInteractiveCLI(terminal.input, terminal.output)
+      .runUpdate(deployment)
+      .then(() => {
+        resolved = true;
+      });
+
+    await terminal.waitFor("Update check failed");
+    terminal.write("\u0003");
+    await nextInputTurn();
+    const resolvedAfterCtrlC = resolved;
+    if (!resolved) terminal.write("\u001b");
+    await update;
+
+    expect(resolvedAfterCtrlC).toBe(true);
+  });
+
   it("offers initialization instead of configuration before first setup", async () => {
     const terminal = new TestTerminal();
     const deployment = operator({ status: "not-initialized", detail: "Initialize Atlas Core." });
@@ -318,4 +480,8 @@ describe("Atlas Core terminal UI", () => {
 
 function stripAnsi(value: string): string {
   return value.replace(/\u001b(?:\][^\u0007]*(?:\u0007|\u001b\\)|\[[0-?]*[ -/]*[@-~]|[@-_])/gu, "");
+}
+
+async function nextInputTurn(): Promise<void> {
+  await new Promise<void>((resolve) => setTimeout(resolve, 25));
 }
