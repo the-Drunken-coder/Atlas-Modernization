@@ -327,6 +327,10 @@ jobs:
             exit 1
           fi
 
+          printf 'y\n' | ATLAS_CORE_HOME="$config_dir" "$consumer/node_modules/.bin/atlas-core" reset
+          ATLAS_CORE_HOME="$config_dir" "$consumer/node_modules/.bin/atlas-core" status
+          curl --fail --silent --show-error http://127.0.0.1:8000/readiness
+
   fieldlink:
     name: fieldlink
     runs-on: ubuntu-latest

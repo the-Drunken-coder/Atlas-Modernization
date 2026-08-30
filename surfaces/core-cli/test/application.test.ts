@@ -33,6 +33,7 @@ class FakeRunner implements CommandRunner {
   readonly existingContainers = new Set<string>();
   readonly existingNetworks = new Set<string>();
   readonly mismatchedResources = new Set<string>();
+  readonly volumeUsers = new Map<string, Set<string>>();
   inspectionError: { kind: "container" | "volume"; name: string } | undefined;
   failComposeDown = false;
   failComposeUp = false;
@@ -83,6 +84,23 @@ class FakeRunner implements CommandRunner {
     if (args[0] === "volume" && args[1] === "create") {
       const name = args.at(-1) ?? "";
       this.existingVolumes.add(name);
+      return result(0, `${name}\n`);
+    }
+    if (args[0] === "volume" && args[1] === "rm") {
+      const name = args.at(-1) ?? "";
+      if ((this.volumeUsers.get(name)?.size ?? 0) > 0) return result(1, "", `volume ${name} is in use`);
+      this.existingVolumes.delete(name);
+      return result(0, `${name}\n`);
+    }
+    if (args[0] === "container" && args[1] === "ls") {
+      const filter = args[args.indexOf("--filter") + 1] ?? "";
+      const volume = filter.startsWith("volume=") ? filter.slice("volume=".length) : "";
+      return result(0, [...(this.volumeUsers.get(volume) ?? [])].join("\n"));
+    }
+    if (args[0] === "container" && args[1] === "rm") {
+      const name = args.at(-1) ?? "";
+      this.existingContainers.delete(name);
+      for (const users of this.volumeUsers.values()) users.delete(name);
       return result(0, `${name}\n`);
     }
     if (args[0] === "volume" && args[1] === "inspect") {
@@ -183,6 +201,7 @@ function runtime(): TestRuntime {
       nodeVersion: "24.19.0",
       now: () => new Date("2026-08-28T12:00:00.000Z"),
       createSecret: () => `secret-${++secret}-abcdefghijklmnopqrstuvwxyz`,
+      confirmReset: async () => false,
       imageReference: TEST_IMAGE
     }
   };
@@ -494,6 +513,102 @@ describe("atlas-core CLI", () => {
     expect(await runCLI(["init"], test.context)).toBe(0);
     expect(test.stdout.join("")).toContain("already initialized");
     expect(test.runner.calls.some((call) => composeCommand(call)[0] === "up")).toBe(false);
+  });
+
+  it("cancels reset unless the operator confirms", async () => {
+    const test = runtime();
+    markInitialized(test);
+
+    expect(await runCLI(["reset"], test.context)).toBe(0);
+    expect(test.stdout.join("")).toContain("Reset permanently deletes Atlas Core containers");
+    expect(test.stdout.join("")).toContain("Atlas Core reset cancelled");
+    expect(test.runner.calls).toHaveLength(0);
+    expect(existsSync(join(test.home, ".atlas", "core", ".env"))).toBe(true);
+    expect(test.runner.existingVolumes).toContain("atlas_core_production_postgres_data");
+  });
+
+  it("deletes an existing deployment and starts fresh with the installed release", async () => {
+    const test = runtime();
+    test.context.confirmReset = async (question) => question === "Continue? [y/N] ";
+    const containers = [
+      "atlas_core_production_api",
+      "atlas_core_production_postgres",
+      "atlas_core_production_minio",
+      "atlas_core_production_minio_init"
+    ];
+    for (const container of containers) test.runner.existingContainers.add(container);
+    test.runner.existingVolumes.add("atlas_core_production_postgres_data");
+    test.runner.existingVolumes.add("atlas_core_production_minio_data");
+    test.runner.volumeUsers.set("atlas_core_production_postgres_data", new Set(["atlas_core_production_postgres"]));
+    test.runner.volumeUsers.set("atlas_core_production_minio_data", new Set(["atlas_core_production_minio"]));
+
+    expect(await runCLI(["reset"], test.context)).toBe(0);
+
+    expect(test.runner.existingContainers).not.toContain("atlas_core_production_api");
+    expect(test.runner.existingVolumes).toContain("atlas_core_production_postgres_data");
+    expect(test.runner.existingVolumes).toContain("atlas_core_production_minio_data");
+    expect(test.runner.calls).toContainEqual(
+      expect.objectContaining({ command: "docker", args: ["pull", TEST_IMAGE] })
+    );
+    for (const container of containers) {
+      expect(test.runner.calls).toContainEqual(
+        expect.objectContaining({ command: "docker", args: ["container", "rm", "--force", container] })
+      );
+    }
+    const state = JSON.parse(readFileSync(join(test.home, ".atlas", "core", "state.json"), "utf8"));
+    expect(state).toMatchObject({ phase: "ready", packageVersion: PACKAGE_VERSION, dockerEngineId: "test-engine-id" });
+    expect(test.stdout.join("")).toContain(`Atlas Core ${PACKAGE_VERSION} reset is complete`);
+  });
+
+  it("allows an installed release to reset a deployment initialized by an older CLI", async () => {
+    const test = runtime();
+    test.context.confirmReset = async () => true;
+    markInitialized(test);
+    test.runner.existingContainers.add("atlas_core_production_postgres");
+    test.runner.existingContainers.add("atlas_core_production_minio");
+    test.runner.volumeUsers.set("atlas_core_production_postgres_data", new Set(["atlas_core_production_postgres"]));
+    test.runner.volumeUsers.set("atlas_core_production_minio_data", new Set(["atlas_core_production_minio"]));
+    const statePath = join(test.home, ".atlas", "core", "state.json");
+    const state = JSON.parse(readFileSync(statePath, "utf8"));
+    writeFileSync(statePath, `${JSON.stringify({ ...state, packageVersion: "0.1.0" })}\n`, { mode: 0o600 });
+
+    expect(await runCLI(["reset"], test.context)).toBe(0);
+    expect(JSON.parse(readFileSync(statePath, "utf8"))).toMatchObject({ packageVersion: PACKAGE_VERSION });
+  });
+
+  it("refuses to reset a same-name resource without matching ownership labels", async () => {
+    const test = runtime();
+    test.context.confirmReset = async () => true;
+    const container = "atlas_core_production_api";
+    test.runner.existingContainers.add(container);
+    test.runner.mismatchedResources.add(container);
+
+    expect(await runCLI(["reset"], test.context)).toBe(1);
+    expect(test.stderr.join("")).toContain("ownership label");
+    expect(test.runner.existingContainers).toContain(container);
+    expect(
+      test.runner.calls.some(
+        (call) => (call.args[0] === "container" || call.args[0] === "volume") && call.args[1] === "rm"
+      )
+    ).toBe(false);
+  });
+
+  it("refuses to reset a volume used by an unknown container", async () => {
+    const test = runtime();
+    test.context.confirmReset = async () => true;
+    const volume = "atlas_core_production_postgres_data";
+    test.runner.existingVolumes.add(volume);
+    test.runner.volumeUsers.set(volume, new Set(["backup-reader"]));
+
+    expect(await runCLI(["reset"], test.context)).toBe(1);
+    expect(test.stderr.join("")).toContain("backup-reader");
+    expect(test.stderr.join("")).toContain("before deleting anything");
+    expect(test.runner.existingVolumes).toContain(volume);
+    expect(
+      test.runner.calls.some(
+        (call) => (call.args[0] === "container" || call.args[0] === "volume") && call.args[1] === "rm"
+      )
+    ).toBe(false);
   });
 
   it("requires init before starting", async () => {
