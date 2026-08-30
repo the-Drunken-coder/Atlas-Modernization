@@ -1,6 +1,8 @@
+import { PassThrough } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
 import {
   type AtlasCoreOperator,
+  createInteractiveCLI,
   createInteractiveCLIForTerminal,
   type DeploymentSnapshot,
   type TerminalIO,
@@ -9,13 +11,15 @@ import {
 
 class FakeTerminal implements TerminalIO {
   readonly columns = 100;
-  readonly interactive = true;
+  readonly interactive: boolean;
   readonly output: string[] = [];
   readonly #keys: TerminalKey[];
+  readCount = 0;
   opened = false;
 
-  constructor(keys: TerminalKey[]) {
+  constructor(keys: TerminalKey[], interactive = true) {
     this.#keys = [...keys];
+    this.interactive = interactive;
   }
 
   open(): void {
@@ -27,6 +31,7 @@ class FakeTerminal implements TerminalIO {
   }
 
   async readKey(): Promise<TerminalKey> {
+    this.readCount += 1;
     const key = this.#keys.shift();
     if (!key) throw new Error("Fake terminal ran out of keys");
     return key;
@@ -90,6 +95,55 @@ describe("Atlas Core terminal UI", () => {
     expect(output).not.toContain(password);
     expect(output).toContain("*".repeat(password.length));
     expect(terminal.opened).toBe(false);
+  });
+
+  it("rejects mismatched password confirmation without changing the account", async () => {
+    const password = "correct-horse-battery-staple";
+    const confirmation = "different-admin-password";
+    const terminal = new FakeTerminal([
+      ...[...password].map((character) => key(character)),
+      enter(),
+      ...[...confirmation].map((character) => key(character)),
+      enter()
+    ]);
+    const deployment = operator();
+
+    await expect(createInteractiveCLIForTerminal(terminal).configureAdmin(deployment)).rejects.toThrow(
+      "Passwords did not match"
+    );
+
+    expect(deployment.configureAdminPassword).not.toHaveBeenCalled();
+    expect(terminal.opened).toBe(false);
+  });
+
+  it("rejects configuration outside an interactive terminal before reading input", async () => {
+    const terminal = new FakeTerminal([], false);
+    const deployment = operator();
+
+    await expect(createInteractiveCLIForTerminal(terminal).configureAdmin(deployment)).rejects.toThrow(
+      "requires an interactive terminal"
+    );
+
+    expect(terminal.readCount).toBe(0);
+    expect(deployment.configureAdminPassword).not.toHaveBeenCalled();
+  });
+
+  it("restores terminal mode when input ends", async () => {
+    const input = new PassThrough();
+    const setRawMode = vi.fn(() => input);
+    Object.assign(input, { isTTY: true, setRawMode });
+    const output = new PassThrough();
+    Object.assign(output, { columns: 100, isTTY: true });
+    const deployment = operator({ status: "not-initialized", detail: "Initialize Atlas Core." });
+
+    const menu = createInteractiveCLI(
+      input as unknown as NodeJS.ReadStream,
+      output as unknown as NodeJS.WriteStream
+    ).runMenu(deployment);
+    input.end();
+
+    await expect(menu).rejects.toThrow("lost its terminal input");
+    expect(setRawMode).toHaveBeenLastCalledWith(false);
   });
 
   it("runs menu actions through the shared operator", async () => {

@@ -714,7 +714,7 @@ describe("atlas-core CLI", () => {
 
     const env = readFileSync(join(test.home, ".atlas", "core", ".env"), "utf8");
     expect(env).toContain("MINIO_BUCKET=atlas-media");
-    expect(env).toContain("ATLAS_ADMIN_PASSWORD='correct-horse-battery-staple'");
+    expect(env).toContain('ATLAS_ADMIN_PASSWORD="correct-horse-battery-staple"');
     expect(statSync(join(test.home, ".atlas", "core", ".env")).mode & 0o077).toBe(0);
     expect(test.stdout.join("")).not.toContain("correct-horse-battery-staple");
     expect(test.stdout.join("")).toContain("take effect the next time Atlas Core starts");
@@ -727,14 +727,31 @@ describe("atlas-core CLI", () => {
     test.runner.serviceStates = [];
     test.context.interactive = {
       configureAdmin: async (operator) => {
-        await operator.configureAdminPassword("correct$horse#battery'staple\\end");
+        await operator.configureAdminPassword("correct$horse#battery'staple\\end\"quoted");
       },
       runMenu: async () => undefined
     };
 
     expect(await runCLI(["config"], test.context)).toBe(0);
     expect(readFileSync(join(test.home, ".atlas", "core", ".env"), "utf8")).toContain(
-      "ATLAS_ADMIN_PASSWORD='correct$horse#battery\\'staple\\end'"
+      `ATLAS_ADMIN_PASSWORD="correct$$horse#battery'staple\\\\end\\"quoted"`
+    );
+  });
+
+  it("quotes an admin password ending in a backslash", async () => {
+    const test = runtime();
+    markInitialized(test, false);
+    test.runner.serviceStates = [];
+    test.context.interactive = {
+      configureAdmin: async (operator) => {
+        await operator.configureAdminPassword("correct-horse-battery-staple\\");
+      },
+      runMenu: async () => undefined
+    };
+
+    expect(await runCLI(["config"], test.context)).toBe(0);
+    expect(readFileSync(join(test.home, ".atlas", "core", ".env"), "utf8")).toContain(
+      `ATLAS_ADMIN_PASSWORD="correct-horse-battery-staple\\\\"`
     );
   });
 

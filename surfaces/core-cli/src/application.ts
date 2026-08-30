@@ -1317,7 +1317,10 @@ function assertAdminPassword(password: string): void {
 }
 
 function quoteComposeValue(value: string): string {
-  return `'${value.replaceAll("'", "\\'")}'`;
+  return `"${value
+    .replaceAll("\\", "\\\\")
+    .replaceAll('"', '\\"')
+    .replaceAll("$", () => "$$")}"`;
 }
 
 function commandFailure(command: string, result: CommandResult): Error {

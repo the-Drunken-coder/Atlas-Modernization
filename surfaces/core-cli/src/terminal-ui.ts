@@ -88,8 +88,27 @@ class NodeTerminal implements TerminalIO {
   }
 
   async readKey(): Promise<TerminalKey> {
-    return await new Promise((resolve) => {
-      this.#input.once("keypress", (sequence: string, key: Key) => resolve({ ...key, sequence }));
+    return await new Promise((resolve, reject) => {
+      const cleanup = () => {
+        this.#input.off("keypress", onKeypress);
+        this.#input.off("end", onEnd);
+        this.#input.off("error", onError);
+      };
+      const onKeypress = (sequence: string, key: Key) => {
+        cleanup();
+        resolve({ ...key, sequence });
+      };
+      const onEnd = () => {
+        cleanup();
+        reject(new Error("Atlas Core lost its terminal input."));
+      };
+      const onError = (error: Error) => {
+        cleanup();
+        reject(new Error(`Atlas Core lost its terminal input: ${error.message}`));
+      };
+      this.#input.on("keypress", onKeypress);
+      this.#input.once("end", onEnd);
+      this.#input.once("error", onError);
     });
   }
 
