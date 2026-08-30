@@ -236,6 +236,25 @@ class ProcessCommandRunner implements CommandRunner {
   }
 }
 
+class CancellableCommandRunner implements CommandRunner {
+  readonly #runner: CommandRunner;
+  #cancelled = false;
+
+  constructor(runner: CommandRunner) {
+    this.#runner = runner;
+  }
+
+  cancelAll(): void {
+    this.#cancelled = true;
+    this.#runner.cancelAll?.();
+  }
+
+  async run(command: string, args: string[], options?: RunOptions): Promise<CommandResult> {
+    if (this.#cancelled) throw new Error("Atlas Core command was cancelled.");
+    return await this.#runner.run(command, args, options);
+  }
+}
+
 class AtlasCoreDeployment implements AtlasCoreOperator {
   readonly #configDir: string;
   readonly #envFile: string;
@@ -263,7 +282,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     this.#initLockFile = join(this.#configDir, ".init.lock");
     this.#composeFile = join(context.packageRoot, "assets", "docker-compose.yml");
     this.#initComposeFile = join(context.packageRoot, "assets", "docker-compose.init.yml");
-    this.#runner = context.runner;
+    this.#runner = new CancellableCommandRunner(context.runner);
     this.#stdout = context.stdout;
     this.#stderr = context.stderr;
     this.#env = context.env;

@@ -372,16 +372,20 @@ describe("atlas-core CLI", () => {
     expect(test.runner.calls).toHaveLength(0);
   });
 
-  it("cancels pending commands when the interactive UI exits a loading screen", async () => {
+  it("cancels pending commands and prevents later commands from starting", async () => {
     const test = runtime();
     test.context.interactive = {
       configureAdmin: async () => undefined,
       runMenu: async () => undefined,
-      runUpdate: async (operator) => operator.cancelPending()
+      runUpdate: async (operator) => {
+        operator.cancelPending();
+        await expect(operator.checkForUpdates()).rejects.toThrow("Atlas Core command was cancelled.");
+      }
     };
 
     expect(await runCLI(["update"], test.context)).toBe(0);
     expect(test.runner.cancelAllCalls).toBe(1);
+    expect(test.runner.calls).toHaveLength(0);
   });
 
   it("rejects unknown update scopes", async () => {
