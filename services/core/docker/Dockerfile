@@ -1,8 +1,12 @@
 # Multi-stage Dockerfile for ATLAS Core System (Go)
 # Production runtime: slim alpine:3.24. Go stages pin the Alpine Go image by digest.
 
-# Build stage: multi-arch index digest (not the per-platform manifest SHA).
-FROM golang:1.27-alpine@sha256:4c9fe60190a2a3350ddc51de80d0224b8a6698d12bdfc999fee45ea9d6c46dbc AS builder
+# Compile on the runner's native architecture. Go emits the binary for each
+# requested image platform without running the compiler through QEMU.
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine@sha256:4c9fe60190a2a3350ddc51de80d0224b8a6698d12bdfc999fee45ea9d6c46dbc AS builder
+
+ARG TARGETOS
+ARG TARGETARCH
 
 # Alpine packages (base is alpine3.24); refresh versions when bumping the Go base image.
 RUN apk add --no-cache git ca-certificates
@@ -24,9 +28,9 @@ COPY packages/protocol/ /packages/protocol/
 COPY services/core/cmd/ ./cmd/
 COPY services/core/internal/ ./internal/
 
-# Build the binary
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o atlas_core ./cmd/atlas_core && \
-    CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o atlas_source_gateway ./cmd/atlas_source_gateway
+# Build the binaries for the requested image platform.
+RUN CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH" go build -ldflags="-w -s" -o atlas_core ./cmd/atlas_core && \
+    CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH" go build -ldflags="-w -s" -o atlas_source_gateway ./cmd/atlas_source_gateway
 
 # Development stage: use the same multi-arch index digest as the builder stage.
 FROM golang:1.27-alpine@sha256:4c9fe60190a2a3350ddc51de80d0224b8a6698d12bdfc999fee45ea9d6c46dbc AS development

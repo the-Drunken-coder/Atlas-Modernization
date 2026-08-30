@@ -82,7 +82,10 @@ jobs:
           cache-dependency-path: ${{ env.GO_SUM_FILE }}
 
       - name: Run actionlint
-        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.11
+        # actionlint v1.7.11 predates GitHub's concurrency.queue syntax.
+        run: >-
+          go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.11
+          -ignore 'unexpected key "queue" for "concurrency" section'
 
       - name: Run zizmor
         uses: zizmorcore/zizmor-action@3dc1ecc9bcb9e94e9b2c709687979e1298497054 # v0.6.2

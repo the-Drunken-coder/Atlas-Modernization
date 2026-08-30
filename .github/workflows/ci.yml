@@ -40,7 +40,10 @@ jobs:
           cache-dependency-path: ${{ env.GO_SUM_FILE }}
 
       - name: Run actionlint over all workflows
-        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.11
+        # actionlint v1.7.11 predates GitHub's concurrency.queue syntax.
+        run: >-
+          go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.11
+          -ignore 'unexpected key "queue" for "concurrency" section'
 
       - name: Check Atlas Core release shell
         run: bash -n .github/scripts/test-atlas-core-package.sh
