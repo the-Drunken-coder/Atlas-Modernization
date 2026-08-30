@@ -356,7 +356,7 @@ describe("atlas-core CLI", () => {
         "minio",
         "sh",
         "-c",
-        'mc alias set local http://127.0.0.1:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null'
+        'mc alias set -- local http://127.0.0.1:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null'
       ],
       ["exec", "-T", "minio", "mc", "mb", "--ignore-existing", "local/atlas-media"],
       ["exec", "-T", "minio", "mc", "anonymous", "set", "none", "local/atlas-media"],

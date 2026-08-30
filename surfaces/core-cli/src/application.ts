@@ -308,7 +308,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
         "minio",
         "sh",
         "-c",
-        'mc alias set local http://127.0.0.1:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null'
+        'mc alias set -- local http://127.0.0.1:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null'
       ]);
       const bucket = this.#readConfigValue("MINIO_BUCKET") ?? "atlas-media";
       await this.#runInitComposeChecked(["exec", "-T", "minio", "mc", "mb", "--ignore-existing", `local/${bucket}`]);
