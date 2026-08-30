@@ -64,6 +64,7 @@ test("uses a cached fast path for immutable-tag publication", () => {
   const source = readFileSync(workflow, "utf8");
   assert.match(source, /cache-from: type=gha,scope=atlas-core-release/);
   assert.match(source, /cache-to: type=gha,mode=max,scope=atlas-core-release/);
+  assert.match(source, /no-cache-filters: production/);
   assert.match(source, /mode: \$\{\{ steps\.phase\.outputs\.mode \}\}/);
   assert.match(source, /name: Upload isolated changelog\n\s+if: steps\.phase\.outputs\.mode == 'prepare'/);
   assert.match(source, /name: Set up Go\n\s+if: needs\.changelog\.outputs\.mode == 'prepare'/);
@@ -72,6 +73,14 @@ test("uses a cached fast path for immutable-tag publication", () => {
   assert.match(source, /permissions:\n\s+actions: write\n\s+contents: write/);
   assert.match(source, /gh workflow run release-atlas-core\.yml/);
   assert.doesNotMatch(source, /Require a run from the immutable release tag/);
+});
+
+test("serializes every Atlas Core release dispatch without replacing pending runs", () => {
+  const source = readFileSync(workflow, "utf8");
+  assert.match(
+    source,
+    /concurrency:\n\s+group: release-atlas-core\n\s+cancel-in-progress: false\n\s+queue: max/
+  );
 });
 
 test("recovers an existing immutable release only when explicitly requested", () => {

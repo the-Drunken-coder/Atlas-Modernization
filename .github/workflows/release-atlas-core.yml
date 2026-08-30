@@ -18,6 +18,7 @@ permissions: {}
 concurrency:
   group: release-atlas-core
   cancel-in-progress: false
+  queue: max
 
 env:
   GO_VERSION_FILE: services/core/go.mod
@@ -445,6 +446,7 @@ jobs:
           tags: ghcr.io/the-drunken-coder/atlas-core:candidate-${{ inputs.version }}-${{ github.sha }}
           cache-from: type=gha,scope=atlas-core-release
           cache-to: type=gha,mode=max,scope=atlas-core-release
+          no-cache-filters: production
           labels: |
             org.opencontainers.image.source=https://github.com/the-Drunken-coder/Atlas-Modernization
             org.opencontainers.image.revision=${{ needs.changelog.outputs.source_sha }}
