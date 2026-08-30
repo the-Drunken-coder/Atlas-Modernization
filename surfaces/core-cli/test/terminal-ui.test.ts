@@ -231,6 +231,26 @@ describe("Atlas Core terminal UI", () => {
     expect(deployment.details).toHaveBeenCalledOnce();
   });
 
+  it("shows logs for all services from the log picker", async () => {
+    const terminal = new TestTerminal();
+    const deployment = operator();
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("View logs");
+    terminal.write("logs");
+    await terminal.waitFor("Filter: logs");
+    terminal.write("\r");
+    await terminal.waitFor("All services");
+    terminal.write("\r");
+    await terminal.waitFor("Press Enter to return to Atlas Core.");
+    terminal.write("\r");
+    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
+    terminal.write("q");
+    await menu;
+
+    expect(deployment.logs).toHaveBeenCalledWith(undefined, false);
+  });
+
   it("renders an intentional narrow-terminal state", async () => {
     const terminal = new TestTerminal(36);
     const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(operator());
@@ -275,6 +295,32 @@ describe("Atlas Core terminal UI", () => {
     expect(updateCallsAfterHiddenEnter).toBe(0);
   });
 
+  it("opens the admin account from the Configure submenu", async () => {
+    const terminal = new TestTerminal();
+    const deployment = operator();
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("Configure");
+    terminal.write("configure");
+    await terminal.waitFor("Filter: configure");
+    const beforeSubmenu = terminal.raw.length;
+    terminal.write("\r");
+    await terminal.waitForRawChange(beforeSubmenu);
+    await nextInputTurn();
+    terminal.write("\r");
+    await terminal.waitFor("New password");
+    const beforeCancel = terminal.raw.length;
+    terminal.write("\u001b");
+    await terminal.waitForRawChange(beforeCancel);
+    await nextInputTurn();
+    terminal.write("\u001b");
+    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
+    terminal.write("q");
+    await menu;
+
+    expect(deployment.configureAdminPassword).not.toHaveBeenCalled();
+  });
+
   it("masks the admin password and never writes its value", async () => {
     const terminal = new TestTerminal();
     const deployment = operator();
@@ -288,6 +334,29 @@ describe("Atlas Core terminal UI", () => {
     await terminal.waitFor("Confirm password");
     const beforeConfirmation = terminal.raw.length;
     terminal.write(password);
+    await terminal.waitForRawChange(beforeConfirmation);
+    terminal.write("\r");
+    await terminal.waitFor("Press Enter to return to Atlas Core.");
+    terminal.write("\r");
+    await configuration;
+
+    expect(deployment.configureAdminPassword).toHaveBeenCalledWith(password);
+    expect(terminal.text).not.toContain(password);
+  });
+
+  it("accepts a pasted admin password", async () => {
+    const terminal = new TestTerminal();
+    const deployment = operator();
+    const password = "correct-horse-battery-staple";
+    const configuration = createInteractiveCLI(terminal.input, terminal.output).configureAdmin(deployment);
+
+    await terminal.waitFor("New password");
+    terminal.write(`\u001b[200~${password}\u001b[201~`);
+    await terminal.waitFor("*".repeat(password.length));
+    terminal.write("\r");
+    await terminal.waitFor("Confirm password");
+    const beforeConfirmation = terminal.raw.length;
+    terminal.write(`\u001b[200~${password}\u001b[201~`);
     await terminal.waitForRawChange(beforeConfirmation);
     terminal.write("\r");
     await terminal.waitFor("Press Enter to return to Atlas Core.");
@@ -401,6 +470,29 @@ describe("Atlas Core terminal UI", () => {
     expect(deployment.update).toHaveBeenCalledWith("all", "0.1.6", true);
   });
 
+  it("labels and applies a Core-only update without claiming the CLI will change", async () => {
+    const terminal = new TestTerminal();
+    const deployment = operator();
+    deployment.checkForUpdates.mockResolvedValue({
+      cliVersion: "0.1.5",
+      coreVersion: "0.1.4",
+      latestVersion: "0.1.5",
+      cliUpdateAvailable: false,
+      coreUpdateAvailable: true
+    });
+    const update = createInteractiveCLI(terminal.input, terminal.output).runUpdate(deployment);
+
+    await terminal.waitFor("Update Atlas Core");
+    terminal.write("\r");
+    await terminal.waitFor("CLI stays at 0.1.5.");
+    terminal.write("\r");
+    await terminal.waitFor("Update complete");
+    terminal.write("\r");
+    await update;
+
+    expect(deployment.update).toHaveBeenCalledWith("all", "0.1.5", true);
+  });
+
   it("propagates an update failure after showing the recovery message", async () => {
     const terminal = new TestTerminal();
     const deployment = operator();
@@ -475,6 +567,20 @@ describe("Atlas Core terminal UI", () => {
 
     await expect(menu).rejects.toThrow("lost its terminal input");
     expect(terminal.setRawMode).toHaveBeenLastCalledWith(false);
+  });
+
+  it("exits cleanly when input ends while an operation owns the terminal", async () => {
+    const terminal = new TestTerminal();
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(operator());
+
+    await terminal.waitFor("View status");
+    terminal.write("diagnostics");
+    await terminal.waitFor("Filter: diagnostics");
+    terminal.write("\r");
+    await terminal.waitFor("Press Enter to return to Atlas Core.");
+    terminal.input.end();
+
+    await expect(menu).rejects.toThrow("lost its terminal input");
   });
 });
 

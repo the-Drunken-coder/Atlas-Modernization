@@ -1058,7 +1058,7 @@ async function readSnapshot(operator: AtlasCoreOperator): Promise<DeploymentSnap
 }
 
 async function waitForReturn(input: NodeJS.ReadStream): Promise<void> {
-  await new Promise<void>((resolve, reject) => {
+  await new Promise<void>((resolve) => {
     const cleanup = (): void => {
       input.off("data", onData);
       input.off("end", onEnd);
@@ -1071,11 +1071,11 @@ async function waitForReturn(input: NodeJS.ReadStream): Promise<void> {
     };
     const onEnd = (): void => {
       cleanup();
-      reject(new Error("Atlas Core lost its terminal input."));
+      resolve();
     };
-    const onError = (error: Error): void => {
+    const onError = (): void => {
       cleanup();
-      reject(new Error(`Atlas Core lost its terminal input: ${error.message}`));
+      resolve();
     };
     input.on("data", onData);
     input.once("end", onEnd);
