@@ -3,6 +3,19 @@
 Atlas Core release notes are listed newest first. The manual release workflow writes each new section from the
 verified commit history with OpenCode Go, then pauses for approval before publishing.
 
+## 0.1.5 - 2026-08-30
+
+### Added
+
+- Core now supports configured trusted Plugins through authenticated `GET /plugins` discovery and `POST /plugins/{plugin_id}/operations/{operation_id}` synchronous JSON operations, with bounded requests, responses, timeouts, cancellation, and Plugin-specific error codes.
+- The Compose deployment now includes a private Source Gateway for configured external-source connectors. Operators can set `ATLAS_SOURCE_GATEWAY_CONFIG_FILE`; connector credentials are supplied through environment variables or files rather than stored in connector configuration or Atlas resources.
+
+### Changed
+
+- Plugin and Source Gateway configuration is deployment-owned; installing or upgrading a Plugin requires changing deployment configuration or its image and restarting the Compose deployment. Production starts with no configured Plugins or Source Gateway connectors by default.
+- Source Gateway connectors enforce configured origins, egress policy, header allowlists, request and response limits, rate limits, caching, retries, and circuit breaking. Plugin or Source Gateway failures do not change Core liveness or readiness.
+- The Core-to-Plugin protocol has no version negotiation or compatibility layer, so coordinated Plugin and deployment updates are required when that contract changes.
+
 ## 0.1.4 - 2026-08-30
 
 ### Added
