@@ -1302,7 +1302,7 @@ function assertAdminPassword(password: string): void {
   const trimmed = password.trim();
   if (password !== trimmed) throw new Error("Admin password cannot begin or end with whitespace.");
   if (/[\r\n\0]/u.test(password)) throw new Error("Admin password cannot contain line breaks or null characters.");
-  const placeholder = trimmed.toLocaleLowerCase();
+  const placeholder = trimmed.toLowerCase();
   if (
     [
       "password",

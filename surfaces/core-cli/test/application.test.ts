@@ -797,6 +797,24 @@ describe("atlas-core CLI", () => {
     expect(test.runner.calls).toHaveLength(0);
   });
 
+  it("rejects an uppercase example password", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const envPath = join(test.home, ".atlas", "core", ".env");
+    const before = readFileSync(envPath, "utf8");
+    test.context.interactive = {
+      configureAdmin: async (operator) => {
+        await operator.configureAdminPassword("REPLACE_WITH_SECURE_ADMIN_PASSWORD");
+      },
+      runMenu: async () => undefined
+    };
+
+    expect(await runCLI(["config"], test.context)).toBe(1);
+    expect(test.stderr.join("")).toContain("development default");
+    expect(readFileSync(envPath, "utf8")).toBe(before);
+    expect(test.runner.calls).toHaveLength(0);
+  });
+
   it("can retry a failed first full-stack start", async () => {
     const test = runtime();
     markInitialized(test, false);

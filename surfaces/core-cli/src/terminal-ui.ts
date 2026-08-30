@@ -54,7 +54,43 @@ const REVERSE = "\u001b[7m";
 class NodeTerminal implements TerminalIO {
   readonly #input: NodeJS.ReadStream;
   readonly #output: NodeJS.WriteStream;
-  #listeningForKeys = false;
+  readonly #queuedKeys: TerminalKey[] = [];
+  #inputFailure: Error | undefined;
+  #keypressEventsEnabled = false;
+  #open = false;
+  #pendingRead:
+    | {
+        reject: (error: Error) => void;
+        resolve: (key: TerminalKey) => void;
+      }
+    | undefined;
+
+  readonly #onKeypress = (sequence: string, key: Key): void => {
+    const terminalKey = { ...key, sequence };
+    const pendingRead = this.#pendingRead;
+    if (pendingRead) {
+      this.#pendingRead = undefined;
+      pendingRead.resolve(terminalKey);
+      return;
+    }
+    this.#queuedKeys.push(terminalKey);
+  };
+
+  readonly #onEnd = (): void => {
+    this.#failInput(new Error("Atlas Core lost its terminal input."));
+  };
+
+  readonly #onError = (error: Error): void => {
+    this.#failInput(new Error(`Atlas Core lost its terminal input: ${error.message}`));
+  };
+
+  readonly #onSighup = (): void => {
+    this.#terminate("SIGHUP");
+  };
+
+  readonly #onSigterm = (): void => {
+    this.#terminate("SIGTERM");
+  };
 
   constructor(input: NodeJS.ReadStream, output: NodeJS.WriteStream) {
     this.#input = input;
@@ -72,9 +108,17 @@ class NodeTerminal implements TerminalIO {
   open(): void {
     if (!this.interactive)
       throw new Error("Atlas Core's menu requires an interactive terminal. Use atlas-core help to list commands.");
-    if (!this.#listeningForKeys) {
+    if (!this.#keypressEventsEnabled) {
       emitKeypressEvents(this.#input);
-      this.#listeningForKeys = true;
+      this.#keypressEventsEnabled = true;
+    }
+    if (!this.#open) {
+      this.#input.on("keypress", this.#onKeypress);
+      this.#input.once("end", this.#onEnd);
+      this.#input.once("error", this.#onError);
+      process.once("SIGHUP", this.#onSighup);
+      process.once("SIGTERM", this.#onSigterm);
+      this.#open = true;
     }
     this.#input.setRawMode(true);
     this.#input.resume();
@@ -82,38 +126,45 @@ class NodeTerminal implements TerminalIO {
   }
 
   close(): void {
+    if (this.#open) {
+      this.#input.off("keypress", this.#onKeypress);
+      this.#input.off("end", this.#onEnd);
+      this.#input.off("error", this.#onError);
+      process.off("SIGHUP", this.#onSighup);
+      process.off("SIGTERM", this.#onSigterm);
+      this.#queuedKeys.length = 0;
+      this.#open = false;
+    }
     if (this.#input.isTTY && this.#input.setRawMode) this.#input.setRawMode(false);
     this.#input.pause();
     this.write(`${RESET_STYLE}${SHOW_CURSOR}`);
   }
 
   async readKey(): Promise<TerminalKey> {
+    const queuedKey = this.#queuedKeys.shift();
+    if (queuedKey) return queuedKey;
+    if (this.#inputFailure) throw this.#inputFailure;
+    if (this.#pendingRead) throw new Error("Atlas Core is already waiting for terminal input.");
     return await new Promise((resolve, reject) => {
-      const cleanup = () => {
-        this.#input.off("keypress", onKeypress);
-        this.#input.off("end", onEnd);
-        this.#input.off("error", onError);
-      };
-      const onKeypress = (sequence: string, key: Key) => {
-        cleanup();
-        resolve({ ...key, sequence });
-      };
-      const onEnd = () => {
-        cleanup();
-        reject(new Error("Atlas Core lost its terminal input."));
-      };
-      const onError = (error: Error) => {
-        cleanup();
-        reject(new Error(`Atlas Core lost its terminal input: ${error.message}`));
-      };
-      this.#input.on("keypress", onKeypress);
-      this.#input.once("end", onEnd);
-      this.#input.once("error", onError);
+      this.#pendingRead = { reject, resolve };
     });
   }
 
   write(data: string): void {
     this.#output.write(data);
+  }
+
+  #failInput(error: Error): void {
+    this.#inputFailure ??= error;
+    const pendingRead = this.#pendingRead;
+    if (!pendingRead) return;
+    this.#pendingRead = undefined;
+    pendingRead.reject(this.#inputFailure);
+  }
+
+  #terminate(signal: "SIGHUP" | "SIGTERM"): void {
+    this.close();
+    process.kill(process.pid, signal);
   }
 }
 

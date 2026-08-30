@@ -97,6 +97,26 @@ describe("Atlas Core terminal UI", () => {
     expect(terminal.opened).toBe(false);
   });
 
+  it("accepts a pasted password without dropping keypresses", async () => {
+    const input = new PassThrough();
+    const setRawMode = vi.fn(() => input);
+    Object.assign(input, { isTTY: true, setRawMode });
+    const output = new PassThrough();
+    Object.assign(output, { columns: 100, isTTY: true });
+    const password = "correct-horse-battery-staple";
+    const deployment = operator();
+
+    const configuration = createInteractiveCLI(
+      input as unknown as NodeJS.ReadStream,
+      output as unknown as NodeJS.WriteStream
+    ).configureAdmin(deployment);
+    input.write(`${password}\r${password}\r`);
+
+    await configuration;
+    expect(deployment.configureAdminPassword).toHaveBeenCalledWith(password);
+    expect(setRawMode).toHaveBeenLastCalledWith(false);
+  });
+
   it("rejects mismatched password confirmation without changing the account", async () => {
     const password = "correct-horse-battery-staple";
     const confirmation = "different-admin-password";
