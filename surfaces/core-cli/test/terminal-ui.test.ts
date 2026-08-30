@@ -178,6 +178,23 @@ describe("Atlas Core terminal UI", () => {
     await menu;
   });
 
+  it("dispatches the selection moved in the same input chunk", async () => {
+    const terminal = new TestTerminal();
+    const deployment = operator();
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("View status");
+    terminal.write("\u001b[B\r");
+    await terminal.waitFor("Press Enter to return to Atlas Core.");
+    terminal.write("\r");
+    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
+    terminal.write("q");
+    await menu;
+
+    expect(deployment.stop).toHaveBeenCalledOnce();
+    expect(deployment.details).not.toHaveBeenCalled();
+  });
+
   it("uses a compact main menu on a 40 by 24 terminal", async () => {
     const terminal = new TestTerminal(40, true, 24);
     const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(
@@ -417,6 +434,34 @@ describe("Atlas Core terminal UI", () => {
       await nextInputTurn();
       terminal.write("q");
     }
+    await update;
+
+    expect(updateCallsAfterHiddenEnter).toBe(0);
+  });
+
+  it("blocks a Core update confirmation when the review is too tall", async () => {
+    const terminal = new TestTerminal(40, true, 10);
+    const deployment = operator();
+    deployment.checkForUpdates.mockResolvedValue({
+      cliVersion: "0.1.5",
+      coreVersion: "0.1.5",
+      latestVersion: "0.1.6",
+      cliUpdateAvailable: true,
+      coreUpdateAvailable: true
+    });
+    const update = createInteractiveCLI(terminal.input, terminal.output).runUpdate(deployment);
+
+    await terminal.waitFor("Update CLI + Atlas Core");
+    terminal.write("\u001b[B");
+    await terminal.waitFor("Preserve credentials and durable data");
+    terminal.write("\r");
+    await terminal.waitFor("Update review needs at least");
+    terminal.write("\r");
+    await nextInputTurn();
+    const updateCallsAfterHiddenEnter = deployment.update.mock.calls.length;
+    terminal.write("\u001b");
+    await nextInputTurn();
+    terminal.write("q");
     await update;
 
     expect(updateCallsAfterHiddenEnter).toBe(0);
@@ -838,18 +883,29 @@ describe("Atlas Core terminal UI", () => {
     expect(terminal.setRawMode).toHaveBeenLastCalledWith(false);
   });
 
-  it("exits cleanly when input ends while an operation owns the terminal", async () => {
+  it("cancels the active operation when input ends", async () => {
     const terminal = new TestTerminal();
-    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(operator());
+    const deployment = operator();
+    let finishDiagnostics: (() => void) | undefined;
+    deployment.doctor.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finishDiagnostics = () => resolve(true);
+        })
+    );
+    deployment.cancelPending.mockImplementation(() => finishDiagnostics?.());
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
 
     await terminal.waitFor("View status");
     terminal.write("diagnostics");
     await terminal.waitFor("Filter: diagnostics");
     terminal.write("\r");
-    await terminal.waitFor("Press Enter to return to Atlas Core.");
-    terminal.input.end();
+    await terminal.waitFor("Run diagnostics...");
+    await vi.waitFor(() => expect(deployment.doctor).toHaveBeenCalledOnce());
+    terminal.input.emit("end");
 
     await expect(menu).rejects.toThrow("lost its terminal input");
+    expect(deployment.cancelPending).toHaveBeenCalledOnce();
   });
 });
 

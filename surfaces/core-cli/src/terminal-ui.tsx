@@ -149,6 +149,7 @@ async function runInkApp(
 
 function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): ReactNode {
   const { exit, suspendTerminal, waitUntilRenderFlush } = useApp();
+  const terminalLost = useRef(false);
   const [screen, setScreen] = useState<Screen>({
     kind: "busy",
     label: initialLoadingLabel(mode)
@@ -184,15 +185,23 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
   }, [loadMenu, loadUpdate, mode]);
 
   useEffect(() => {
-    const onEnd = (): void => exit(new Error("Atlas Core lost its terminal input."));
-    const onError = (error: Error): void => exit(new Error(`Atlas Core lost its terminal input: ${error.message}`));
+    const onEnd = (): void => {
+      terminalLost.current = true;
+      operator.cancelPending();
+      exit(new Error("Atlas Core lost its terminal input."));
+    };
+    const onError = (error: Error): void => {
+      terminalLost.current = true;
+      operator.cancelPending();
+      exit(new Error(`Atlas Core lost its terminal input: ${error.message}`));
+    };
     input.once("end", onEnd);
     input.once("error", onError);
     return () => {
       input.off("end", onEnd);
       input.off("error", onError);
     };
-  }, [exit, input]);
+  }, [exit, input, operator]);
 
   const runVisibleOperation = useCallback(
     async (label: string, operation: () => Promise<void>): Promise<OperationResult> => {
@@ -201,7 +210,7 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
       let result: OperationResult = { cancelled: false };
       await suspendTerminal(async () => {
         result = await runCancelableOperation(operator, operation);
-        if (result.cancelled) return;
+        if (result.cancelled || terminalLost.current) return;
         if (result.failure) output.write(`\n${result.failure.message}\n`);
         output.write("\nPress Enter to return to Atlas Core.");
         await waitForReturn(input);
@@ -405,6 +414,7 @@ function MainMenu({ onSelect, snapshot }: { onSelect(action: Action): void; snap
   const { columns, rows } = useWindowSize();
   const actions = useMemo(() => menuActions(snapshot), [snapshot]);
   const actionPending = useRef(false);
+  const selectedRef = useRef(0);
   const [filter, setFilter] = useState("");
   const [selected, setSelected] = useState(0);
   const filtered = useMemo(() => filteredActions(actions, filter), [actions, filter]);
@@ -428,20 +438,25 @@ function MainMenu({ onSelect, snapshot }: { onSelect(action: Action): void; snap
     }
     if (!canInteract || modified) return;
     if (key.upArrow) {
-      setSelected(filtered.length === 0 ? 0 : (index - 1 + filtered.length) % filtered.length);
+      const next = filtered.length === 0 ? 0 : (selectedRef.current - 1 + filtered.length) % filtered.length;
+      selectedRef.current = next;
+      setSelected(next);
       return;
     }
     if (key.downArrow) {
-      setSelected(filtered.length === 0 ? 0 : (index + 1) % filtered.length);
+      const next = filtered.length === 0 ? 0 : (selectedRef.current + 1) % filtered.length;
+      selectedRef.current = next;
+      setSelected(next);
       return;
     }
     if (key.backspace || key.delete) {
       setFilter((value) => Array.from(value).slice(0, -1).join(""));
+      selectedRef.current = 0;
       setSelected(0);
       return;
     }
     if (key.return) {
-      const action = filtered[index];
+      const action = filtered[Math.min(selectedRef.current, Math.max(0, filtered.length - 1))];
       if (action) {
         actionPending.current = true;
         onSelect(action);
@@ -450,6 +465,7 @@ function MainMenu({ onSelect, snapshot }: { onSelect(action: Action): void; snap
     }
     if (isPrintableInput(input, key)) {
       setFilter((value) => value + input);
+      selectedRef.current = 0;
       setSelected(0);
     }
   });
@@ -459,6 +475,7 @@ function MainMenu({ onSelect, snapshot }: { onSelect(action: Action): void; snap
       const printable = printableText(value);
       if (printable) {
         setFilter((current) => current + printable);
+        selectedRef.current = 0;
         setSelected(0);
       }
     },
@@ -1032,9 +1049,11 @@ function UpdateReview({
   onBack(): void;
   scope: UpdateScope;
 }): ReactNode {
-  const { columns } = useWindowSize();
+  const { columns, rows } = useWindowSize();
   const actionPending = useRef(false);
-  const canInteract = columns >= MINIMUM_TERMINAL_COLUMNS;
+  const requiredRows = updateReviewRows(info, scope, columns);
+  const hasEnoughRows = rows >= requiredRows;
+  const canInteract = columns >= MINIMUM_TERMINAL_COLUMNS && hasEnoughRows;
   useInput((input, key) => {
     if (actionPending.current) return;
     if (key.escape || (key.ctrl && input === "c")) {
@@ -1046,7 +1065,8 @@ function UpdateReview({
       onApply();
     }
   });
-  if (!canInteract) return <NarrowTerminal />;
+  if (columns < MINIMUM_TERMINAL_COLUMNS) return <NarrowTerminal />;
+  if (!hasEnoughRows) return <ShortUpdateReview requiredRows={requiredRows} />;
   return (
     <Box flexDirection="column" width={columns}>
       <Header title="REVIEW UPDATE" />
@@ -1194,6 +1214,47 @@ function ShortStatusTerminal({ requiredRows }: { requiredRows: number }): ReactN
       <Text>Status needs at least {requiredRows} rows at this width.</Text>
       <Text dimColor>Resize the terminal or press Enter or Esc to go back.</Text>
     </Box>
+  );
+}
+
+function ShortUpdateReview({ requiredRows }: { requiredRows: number }): ReactNode {
+  return (
+    <Box flexDirection="column">
+      <Text bold color="cyan">
+        ATLAS CORE
+      </Text>
+      <Text>Update review needs at least {requiredRows} rows at this width.</Text>
+      <Text dimColor>Resize the terminal or press Esc to go back.</Text>
+    </Box>
+  );
+}
+
+function updateReviewRows(info: UpdateInfo, scope: UpdateScope, width: number): number {
+  const headerAndFooterRows =
+    wrappedRows("REVIEW UPDATE", width) + 1 + 1 + wrappedRows("Enter update   Esc back", width);
+  if (scope === "cli") {
+    return (
+      headerAndFooterRows +
+      wrappedRows(`CLI ${info.cliVersion} → ${info.latestVersion}`, width) +
+      wrappedRows(`Atlas Core stays at ${info.coreVersion ?? "not initialized"}.`, width) +
+      1 +
+      wrappedRows("The current process exits after npm installs the CLI.", width)
+    );
+  }
+  return (
+    headerAndFooterRows +
+    wrappedRows(
+      info.cliUpdateAvailable ? `CLI ${info.cliVersion} → ${info.latestVersion}` : `CLI stays at ${info.cliVersion}.`,
+      width
+    ) +
+    wrappedRows(`Atlas Core ${info.coreVersion} → ${info.latestVersion}`, width) +
+    1 +
+    wrappedRows(
+      "PostgreSQL, MinIO, credentials, and configuration are preserved. Atlas Core restarts after the image pull.",
+      width
+    ) +
+    1 +
+    wrappedRows("Continuing confirms that a current paired PostgreSQL and MinIO backup exists.", width)
   );
 }
 
