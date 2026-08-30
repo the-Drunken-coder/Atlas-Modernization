@@ -1,7 +1,8 @@
 # Releasing Atlas Core
 
-Atlas Core releases come only from the manually dispatched `Release Atlas Core` GitHub Actions workflow. One version
-identifies the npm CLI, the GHCR image, the git tag, and the GitHub Release.
+Atlas Core releases start from the manually dispatched `Release Atlas Core` GitHub Actions workflow. One version
+identifies the npm CLI, the GHCR image, the git tag, and the GitHub Release. The workflow dispatches its immutable-tag
+publication run automatically after preparing the release.
 
 ## Before the first release
 
@@ -11,19 +12,19 @@ identifies the npm CLI, the GHCR image, the git tag, and the GitHub Release.
 3. Create a short-lived npm granular access token with read/write package access and **Bypass 2FA**. Because
    `atlas-core` does not exist yet, the first token may need access to all packages owned by the publishing account.
    Store it as an environment secret named `NPM_TOKEN`.
-4. Allow the release workflow's `GITHUB_TOKEN` to push its release commit to `main`, or grant that workflow the narrow
-   ruleset bypass required for the push.
+4. Give Actions the read and write workflow permission so the release workflow's `GITHUB_TOKEN` can push the release
+   commit and dispatch the tagged run. If a ruleset protects `main`, grant this workflow the narrow required bypass.
 
 npm cannot configure trusted publishing until the first publication creates the package. Keep the bootstrap token's
 expiration short and do not reuse it elsewhere.
 
 The first approved run publishes a version-and-commit-specific candidate image, records its immutable manifest digest
-in the npm package, and atomically pushes the dedicated release commit and `atlas-core-v<version>` tag. It then stops.
-Dispatch the workflow again for the same version from that immutable tag. Publication starts only from this tagged
-run so npm provenance identifies the release commit and the package pins the reviewed image. Ordinary movement on
-`main` cannot invalidate the tagged publishing run. On the first package release, the tagged run stops if anonymous
-image access is still blocked. Make `ghcr.io/the-drunken-coder/atlas-core` public, then rerun that failed job. The
-workflow verifies the exact public digest before publishing npm.
+in the npm package, and atomically pushes the dedicated release commit and `atlas-core-v<version>` tag. It then queues
+the same workflow from that immutable tag. Publication starts only from this tagged run so npm provenance identifies
+the release commit and the package pins the reviewed image. Ordinary movement on `main` cannot invalidate the tagged
+publishing run. On the first package release, the tagged run stops if anonymous image access is still blocked. Make
+`ghcr.io/the-drunken-coder/atlas-core` public, then rerun that failed job. The workflow verifies the exact public digest
+before publishing npm.
 
 ## After the first release
 
@@ -52,18 +53,19 @@ Later releases require no npm token.
 4. Approve the `release` environment deployment.
 5. The publishing job refuses movement on `main`, publishes a candidate image, installs the packed CLI on its
    disposable Linux runner, checks existing-container refusal and a complete local deployment lifecycle, then commits
-   the immutable image digest with the version and changelog. It atomically pushes the dedicated release commit and
-   tag, then stops.
-6. Dispatch the workflow again for the same version from `atlas-core-v<version>` and approve the reviewed artifacts.
-   This run verifies and promotes only the pinned digest, prepares a draft GitHub Release, publishes npm, verifies npm
-   integrity, signatures, and provenance, then makes the GitHub Release public and latest.
+   the immutable image digest with the version and changelog. It atomically pushes the dedicated release commit and tag,
+   queues the immutable-tag publication run, and finishes successfully.
+6. Approve the automatically queued `atlas-core-v<version>` run. This run rebuilds and checks the npm archive from the
+   immutable release commit without repeating the Go and Protocol source checks. It verifies and promotes only the
+   pinned image digest, prepares a draft GitHub Release, publishes npm, verifies npm integrity, signatures, and
+   provenance, then makes the GitHub Release public and latest.
 
-Do not rerun the job that stops after pushing the release commit and tag. Dispatch the workflow from the immutable tag
-as described above. If another commit reaches `main` before the atomic push, neither the release commit nor tag is
-pushed. Failed tagged-job reruns recognize the exact generated release commit, pinned image digest, tag, image
-visibility, npm integrity, provenance, and release assets. They repair an incomplete draft release but reject
-mismatched published artifacts. The workflow never asks OpenCode to write the same release section twice or rebuilds
-the image after its digest is committed.
+If automatic dispatch fails after the atomic push, dispatch the workflow manually from the immutable tag. Do not rerun
+the original preparation job after it has pushed the release commit and tag. If another commit reaches `main` before
+the atomic push, neither the release commit nor tag is pushed. Failed tagged-job reruns recognize the exact generated
+release commit, pinned image digest, tag, image visibility, npm integrity, provenance, and release assets. They repair
+an incomplete draft release but reject mismatched published artifacts. The workflow never asks OpenCode to write the
+same release section twice or rebuilds the image after its digest is committed.
 
 ## Recovering with an updated workflow
 

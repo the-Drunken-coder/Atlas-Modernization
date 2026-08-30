@@ -9,6 +9,7 @@ import assert from "node:assert/strict";
 const script = join(dirname(fileURLToPath(import.meta.url)), "atlas-core-release.mjs");
 const phaseScript = join(dirname(fileURLToPath(import.meta.url)), "select-atlas-core-release-phase.sh");
 const workflow = join(dirname(fileURLToPath(import.meta.url)), "../workflows/release-atlas-core.yml");
+const dockerfile = join(dirname(fileURLToPath(import.meta.url)), "../../services/core/docker/Dockerfile");
 
 function run(args, cwd) {
   return spawnSync(process.execPath, [script, ...args], { cwd, encoding: "utf8", stdio: "pipe" });
@@ -47,9 +48,30 @@ test("does not publish a missing npm version from main recovery", () => {
   const source = readFileSync(workflow, "utf8");
   assert.match(
     source,
-    /if: steps\.phase\.outputs\.recovery == 'true' && steps\.npm\.outputs\.version_exists != 'true'/
+    /if: needs\.changelog\.outputs\.recovery == 'true' && steps\.npm\.outputs\.version_exists != 'true'/
   );
-  assert.equal(source.match(/steps\.phase\.outputs\.recovery != 'true'/g)?.length, 2);
+  assert.equal(source.match(/needs\.changelog\.outputs\.recovery != 'true'/g)?.length, 2);
+});
+
+test("cross-compiles release binaries on the native build platform", () => {
+  const source = readFileSync(dockerfile, "utf8");
+  assert.match(source, /FROM --platform=\$BUILDPLATFORM golang:[^\n]+ AS builder/);
+  assert.match(source, /ARG TARGETOS\nARG TARGETARCH/);
+  assert.equal(source.match(/GOOS="\$TARGETOS" GOARCH="\$TARGETARCH"/g)?.length, 2);
+});
+
+test("uses a cached fast path for immutable-tag publication", () => {
+  const source = readFileSync(workflow, "utf8");
+  assert.match(source, /cache-from: type=gha,scope=atlas-core-release/);
+  assert.match(source, /cache-to: type=gha,mode=max,scope=atlas-core-release/);
+  assert.match(source, /mode: \$\{\{ steps\.phase\.outputs\.mode \}\}/);
+  assert.match(source, /name: Upload isolated changelog\n\s+if: steps\.phase\.outputs\.mode == 'prepare'/);
+  assert.match(source, /name: Set up Go\n\s+if: needs\.changelog\.outputs\.mode == 'prepare'/);
+  assert.match(source, /name: Install Atlas Core dependencies\n\s+if: needs\.changelog\.outputs\.mode == 'prepare'/);
+  assert.equal(source.match(/npm ci --workspace atlas-core --ignore-scripts/g)?.length, 2);
+  assert.match(source, /permissions:\n\s+actions: write\n\s+contents: write/);
+  assert.match(source, /gh workflow run release-atlas-core\.yml/);
+  assert.doesNotMatch(source, /Require a run from the immutable release tag/);
 });
 
 test("recovers an existing immutable release only when explicitly requested", () => {

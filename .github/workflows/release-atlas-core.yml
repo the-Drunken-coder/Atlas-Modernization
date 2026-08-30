@@ -28,11 +28,15 @@ env:
 
 jobs:
   changelog:
-    name: Draft isolated changelog
+    name: Plan and draft isolated changelog
     runs-on: ubuntu-latest
     permissions:
       contents: read
     outputs:
+      mode: ${{ steps.phase.outputs.mode }}
+      recovery: ${{ steps.phase.outputs.recovery }}
+      source_sha: ${{ steps.phase.outputs.source_sha }}
+      release_sha: ${{ steps.phase.outputs.release_sha }}
       release_date: ${{ steps.release.outputs.release_date }}
     steps:
       - name: Checkout dispatched commit
@@ -47,8 +51,10 @@ jobs:
           node-version-file: .nvmrc
           package-manager-cache: false
 
-      - name: Validate release request
+      - name: Validate and select release phase
+        id: phase
         env:
+          RECOVER_EXISTING_RELEASE: ${{ inputs.recover_existing_release }}
           VERSION: ${{ inputs.version }}
         run: |
           node .github/scripts/atlas-core-release.mjs validate-version "$VERSION"
@@ -68,6 +74,8 @@ jobs:
             echo "The checked-out commit does not match the dispatched commit." >&2
             exit 1
           fi
+          git fetch origin main --tags
+          bash .github/scripts/select-atlas-core-release-phase.sh
 
       - name: Select changelog date
         id: release
@@ -84,7 +92,7 @@ jobs:
           fi
 
       - name: Build factual changelog context
-        if: steps.release.outputs.already_prepared == 'false'
+        if: steps.phase.outputs.mode == 'prepare' && steps.release.outputs.already_prepared == 'false'
         env:
           VERSION: ${{ inputs.version }}
           RELEASE_DATE: ${{ steps.release.outputs.release_date }}
@@ -116,7 +124,7 @@ jobs:
           } > .atlas-core-release-context.md
 
       - name: Write changelog with OpenCode Go
-        if: steps.release.outputs.already_prepared == 'false'
+        if: steps.phase.outputs.mode == 'prepare' && steps.release.outputs.already_prepared == 'false'
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
           OPENCODE_DISABLE_AUTOUPDATE: "true"
@@ -151,6 +159,7 @@ jobs:
             "$prompt"
 
       - name: Validate isolated changelog
+        if: steps.phase.outputs.mode == 'prepare'
         env:
           VERSION: ${{ inputs.version }}
           RELEASE_DATE: ${{ steps.release.outputs.release_date }}
@@ -190,6 +199,7 @@ jobs:
           fi
 
       - name: Upload isolated changelog
+        if: steps.phase.outputs.mode == 'prepare'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: atlas-core-changelog-${{ inputs.version }}
@@ -213,12 +223,14 @@ jobs:
           persist-credentials: false
 
       - name: Download isolated changelog
+        if: needs.changelog.outputs.mode == 'prepare'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: atlas-core-changelog-${{ inputs.version }}
           path: reviewed-changelog
 
       - name: Accept only the reviewed changelog artifact
+        if: needs.changelog.outputs.mode == 'prepare'
         env:
           VERSION: ${{ inputs.version }}
           RELEASE_DATE: ${{ needs.changelog.outputs.release_date }}
@@ -245,7 +257,18 @@ jobs:
           fi
           rm -rf reviewed-changelog
 
+      - name: Prepare committed release notes
+        if: needs.changelog.outputs.mode == 'publish'
+        env:
+          VERSION: ${{ inputs.version }}
+          RELEASE_DATE: ${{ needs.changelog.outputs.release_date }}
+        run: |
+          mkdir -p release-artifacts
+          node .github/scripts/atlas-core-release.mjs \
+            validate-changelog "$VERSION" "$RELEASE_DATE" release-artifacts/release-notes.md
+
       - name: Set up Go
+        if: needs.changelog.outputs.mode == 'prepare'
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: ${{ env.GO_VERSION_FILE }}
@@ -257,13 +280,14 @@ jobs:
           node-version-file: .nvmrc
           package-manager-cache: false
 
-      - name: Install exact npm and workspace dependencies
+      - name: Install exact npm and Atlas Core dependencies
         run: |
           npm install --global --ignore-scripts "npm@$NPM_VERSION"
           npm --version | grep -Fx "$NPM_VERSION"
-          npm ci
+          npm ci --workspace atlas-core --ignore-scripts
 
       - name: Version the npm CLI
+        if: needs.changelog.outputs.mode == 'prepare'
         env:
           VERSION: ${{ inputs.version }}
         run: |
@@ -271,12 +295,19 @@ jobs:
           npm version "$VERSION" --workspace atlas-core --no-git-tag-version --allow-same-version
 
       - name: Check versioned release inputs
+        if: needs.changelog.outputs.mode == 'prepare'
         run: |
           npm audit --audit-level=high
           npm run check --workspace atlas-core
           node --test .github/scripts/atlas-core-release.test.mjs
           (cd packages/protocol && go run ./tools/check && go test ./...)
           (cd services/core && go test ./...)
+
+      - name: Check immutable package inputs
+        if: needs.changelog.outputs.mode == 'publish'
+        run: |
+          npm run check --workspace atlas-core
+          git diff --exit-code
 
       - name: Pack the npm CLI
         env:
@@ -293,6 +324,7 @@ jobs:
           )
 
       - name: Validate release diff
+        if: needs.changelog.outputs.mode == 'prepare'
         run: |
           while IFS= read -r path; do
             case "$path" in
@@ -326,10 +358,11 @@ jobs:
 
   publish:
     name: Publish approved release
-    needs: prepare
+    needs: [changelog, prepare]
     runs-on: ubuntu-latest
     environment: release
     permissions:
+      actions: write
       contents: write
       id-token: write
       packages: write
@@ -353,11 +386,15 @@ jobs:
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
 
-      - name: Install exact npm and workspace dependencies
+      - name: Install exact npm
         run: |
           npm install --global --ignore-scripts "npm@$NPM_VERSION"
           npm --version | grep -Fx "$NPM_VERSION"
-          npm ci
+
+      - name: Install Atlas Core dependencies
+        if: needs.changelog.outputs.mode == 'prepare'
+        run: |
+          npm ci --workspace atlas-core --ignore-scripts
 
       - name: Verify reviewed package
         env:
@@ -373,8 +410,7 @@ jobs:
             exit 1
           fi
 
-      - name: Select release phase
-        id: phase
+      - name: Revalidate release phase
         env:
           RECOVER_EXISTING_RELEASE: ${{ inputs.recover_existing_release }}
           VERSION: ${{ inputs.version }}
@@ -393,12 +429,12 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up QEMU
-        if: steps.phase.outputs.mode == 'prepare'
+        if: needs.changelog.outputs.mode == 'prepare'
         uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
 
       - name: Publish candidate Atlas Core image
         id: built_image
-        if: steps.phase.outputs.mode == 'prepare'
+        if: needs.changelog.outputs.mode == 'prepare'
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
@@ -407,16 +443,18 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ghcr.io/the-drunken-coder/atlas-core:candidate-${{ inputs.version }}-${{ github.sha }}
+          cache-from: type=gha,scope=atlas-core-release
+          cache-to: type=gha,mode=max,scope=atlas-core-release
           labels: |
             org.opencontainers.image.source=https://github.com/the-Drunken-coder/Atlas-Modernization
-            org.opencontainers.image.revision=${{ steps.phase.outputs.source_sha }}
+            org.opencontainers.image.revision=${{ needs.changelog.outputs.source_sha }}
             org.opencontainers.image.version=${{ inputs.version }}
 
       - name: Select immutable Atlas Core image
         id: image
         env:
           BUILT_DIGEST: ${{ steps.built_image.outputs.digest }}
-          MODE: ${{ steps.phase.outputs.mode }}
+          MODE: ${{ needs.changelog.outputs.mode }}
         run: |
           if [ "$MODE" = "prepare" ]; then
             digest="$BUILT_DIGEST"
@@ -436,7 +474,7 @@ jobs:
       - name: Verify immutable Atlas Core image
         env:
           IMAGE_REFERENCE: ${{ steps.image.outputs.reference }}
-          SOURCE_SHA: ${{ steps.phase.outputs.source_sha }}
+          SOURCE_SHA: ${{ needs.changelog.outputs.source_sha }}
           VERSION: ${{ inputs.version }}
         run: |
           set -o pipefail
@@ -462,7 +500,7 @@ jobs:
           fi
 
       - name: Record immutable image in the npm package
-        if: steps.phase.outputs.mode == 'prepare'
+        if: needs.changelog.outputs.mode == 'prepare'
         env:
           IMAGE_REFERENCE: ${{ steps.image.outputs.reference }}
         run: |
@@ -480,7 +518,7 @@ jobs:
           git diff --check
 
       - name: Test packed CLI on disposable Docker host
-        if: steps.phase.outputs.mode == 'prepare'
+        if: needs.changelog.outputs.mode == 'prepare'
         env:
           ATLAS_CORE_ACCEPTANCE_DISPOSABLE: "1"
           IMAGE_REFERENCE: ${{ steps.image.outputs.reference }}
@@ -497,7 +535,7 @@ jobs:
 
       - name: Commit and atomically tag release
         id: commit
-        if: steps.phase.outputs.mode == 'prepare'
+        if: needs.changelog.outputs.mode == 'prepare'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ inputs.version }}
@@ -527,18 +565,20 @@ jobs:
           git push --atomic origin HEAD:main "refs/tags/$tag:refs/tags/$tag"
           echo "release_sha=$release_sha" >> "$GITHUB_OUTPUT"
 
-      - name: Require a run from the immutable release tag
-        if: steps.phase.outputs.mode == 'prepare'
+      - name: Dispatch immutable tag publication
+        if: needs.changelog.outputs.mode == 'prepare'
         env:
-          RELEASE_SHA: ${{ steps.commit.outputs.release_sha }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ inputs.version }}
         run: |
-          echo "Release commit $RELEASE_SHA and atlas-core-v$VERSION were pushed atomically." >&2
-          echo "Dispatch Release Atlas Core for $VERSION from atlas-core-v$VERSION to publish." >&2
-          exit 1
+          tag="atlas-core-v$VERSION"
+          gh workflow run release-atlas-core.yml \
+            --ref "$tag" \
+            --field version="$VERSION"
+          echo "Queued Atlas Core $VERSION publication from $tag."
 
       - name: Promote the reviewed digest to the version tag
-        if: steps.phase.outputs.mode == 'publish'
+        if: needs.changelog.outputs.mode == 'publish'
         env:
           IMAGE_REFERENCE: ${{ steps.image.outputs.reference }}
           PINNED_DIGEST: ${{ steps.image.outputs.digest }}
@@ -571,7 +611,7 @@ jobs:
           fi
 
       - name: Verify the exact image digest is publicly pullable
-        if: steps.phase.outputs.mode == 'publish'
+        if: needs.changelog.outputs.mode == 'publish'
         env:
           IMAGE_REFERENCE: ${{ steps.image.outputs.reference }}
         run: |
@@ -584,7 +624,7 @@ jobs:
 
       - name: Inspect npm publication state
         id: npm
-        if: steps.phase.outputs.mode == 'publish'
+        if: needs.changelog.outputs.mode == 'publish'
         env:
           VERSION: ${{ inputs.version }}
         run: |
@@ -616,7 +656,7 @@ jobs:
           echo "integrity=$local_integrity" >> "$GITHUB_OUTPUT"
 
       - name: Require an existing npm version for main recovery
-        if: steps.phase.outputs.recovery == 'true' && steps.npm.outputs.version_exists != 'true'
+        if: needs.changelog.outputs.recovery == 'true' && steps.npm.outputs.version_exists != 'true'
         env:
           VERSION: ${{ inputs.version }}
         run: |
@@ -625,7 +665,7 @@ jobs:
           exit 1
 
       - name: Create or verify draft GitHub Release
-        if: steps.phase.outputs.mode == 'publish'
+        if: needs.changelog.outputs.mode == 'publish'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ inputs.version }}
@@ -685,7 +725,7 @@ jobs:
 
       - name: Bootstrap the npm package
         if: >-
-          steps.phase.outputs.recovery != 'true' &&
+          needs.changelog.outputs.recovery != 'true' &&
           steps.npm.outputs.version_exists == 'false' &&
           steps.npm.outputs.package_exists == 'false'
         env:
@@ -700,7 +740,7 @@ jobs:
 
       - name: Publish npm package through trusted publishing
         if: >-
-          steps.phase.outputs.recovery != 'true' &&
+          needs.changelog.outputs.recovery != 'true' &&
           steps.npm.outputs.version_exists == 'false' &&
           steps.npm.outputs.package_exists == 'true'
         env:
@@ -713,10 +753,10 @@ jobs:
           npm publish "./release-artifacts/atlas-core-$VERSION.tgz" --access public --provenance
 
       - name: Verify npm integrity, signatures, and provenance
-        if: steps.phase.outputs.mode == 'publish'
+        if: needs.changelog.outputs.mode == 'publish'
         env:
           EXPECTED_INTEGRITY: ${{ steps.npm.outputs.integrity }}
-          RELEASE_SHA: ${{ steps.phase.outputs.release_sha }}
+          RELEASE_SHA: ${{ needs.changelog.outputs.release_sha }}
           VERSION: ${{ inputs.version }}
         run: |
           attestations="$(mktemp)"
@@ -752,7 +792,7 @@ jobs:
           )
 
       - name: Publish GitHub Release
-        if: steps.phase.outputs.mode == 'publish'
+        if: needs.changelog.outputs.mode == 'publish'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ inputs.version }}
