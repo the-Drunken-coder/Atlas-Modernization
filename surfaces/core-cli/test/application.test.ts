@@ -51,6 +51,7 @@ class FakeRunner implements CommandRunner {
   inspectionError: { kind: "container" | "volume"; name: string } | undefined;
   failComposeDown = false;
   failComposeConfig = false;
+  failComposePull = false;
   failComposeUp = false;
   failStats = false;
   failInstalledCoreUpdate = false;
@@ -271,6 +272,9 @@ class FakeRunner implements CommandRunner {
     const compose = composeCommand(call);
     if (this.failComposeConfig && compose[0] === "config") {
       return result(1, "", "injected compose config failure");
+    }
+    if (this.failComposePull && compose[0] === "pull") {
+      return result(1, "", "injected compose pull failure");
     }
     if (this.failComposeUp && compose[0] === "up") {
       return result(1, "", "injected compose up failure");
@@ -1243,6 +1247,9 @@ describe("atlas-core CLI", () => {
   it("restarts a running deployment after changing the admin password", async () => {
     const test = runtime();
     markInitialized(test);
+    const plugin = installTestPluginCatalog(test);
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
+    test.runner.calls.length = 0;
     test.context.interactive = {
       configureAdmin: async (operator) => {
         await operator.configureAdminPassword("new-production-password");
@@ -1252,17 +1259,187 @@ describe("atlas-core CLI", () => {
     };
 
     expect(await runCLI(["config"], test.context)).toBe(0);
-    expect(test.runner.calls.map(composeCommand).filter((args) => args.length > 0)).toContainEqual(["pull"]);
-    expect(test.runner.calls.map(composeCommand).filter((args) => args.length > 0)).toContainEqual(["down"]);
-    expect(test.runner.calls.map(composeCommand).filter((args) => args.length > 0)).toContainEqual([
-      "up",
-      "-d",
-      "--pull",
-      "never",
-      "--wait",
-      "--wait-timeout",
-      "120"
+    expect(test.runner.calls.map(composeCommand).filter((args) => args.length > 0)).toEqual([
+      ["ps", "--all", "--format", "json"],
+      ["pull"],
+      ["down"],
+      ["up", "-d", "--pull", "never", "--wait", "--wait-timeout", "120"]
     ]);
+    const pluginCompose = join(test.home, ".atlas", "core", "plugins", plugin.pluginId, "compose.yml");
+    for (const call of test.runner.calls.filter((candidate) => composeCommand(candidate).length > 0)) {
+      expect(call.args).toContain(pluginCompose);
+    }
+    expect(readFileSync(join(test.home, ".atlas", "core", ".env"), "utf8")).toContain(
+      'ATLAS_ADMIN_PASSWORD="new-production-password"'
+    );
+    expect(test.stdout.join("")).toContain("Atlas Core admin password updated for username admin");
+  });
+
+  it("refuses to change a running admin password when paired durable storage is missing", async () => {
+    const test = runtime();
+    markInitialized(test);
+    test.runner.existingVolumes.delete("atlas_core_production_postgres_data");
+    const envPath = join(test.home, ".atlas", "core", ".env");
+    const before = readFileSync(envPath, "utf8");
+    test.context.interactive = {
+      configureAdmin: async (operator) => {
+        await operator.configureAdminPassword("new-production-password");
+      },
+      runMenu: async () => undefined,
+      runUpdate: async () => undefined
+    };
+
+    expect(await runCLI(["config"], test.context)).toBe(1);
+    expect(test.stderr.join("")).toContain("durable storage is missing");
+    expect(readFileSync(envPath, "utf8")).toBe(before);
+    expect(test.runner.calls.some((call) => ["pull", "down", "up"].includes(composeCommand(call)[0] ?? ""))).toBe(
+      false
+    );
+  });
+
+  it("pulls before disruption and preserves the running password when the pull fails", async () => {
+    const test = runtime();
+    markInitialized(test);
+    test.runner.failComposePull = true;
+    const envPath = join(test.home, ".atlas", "core", ".env");
+    const before = readFileSync(envPath, "utf8");
+    test.context.interactive = {
+      configureAdmin: async (operator) => {
+        await operator.configureAdminPassword("new-production-password");
+      },
+      runMenu: async () => undefined,
+      runUpdate: async () => undefined
+    };
+
+    expect(await runCLI(["config"], test.context)).toBe(1);
+    expect(readFileSync(envPath, "utf8")).toBe(before);
+    expect(test.runner.calls.map(composeCommand).filter((args) => args.length > 0)).toEqual([
+      ["ps", "--all", "--format", "json"],
+      ["pull"]
+    ]);
+    expect(test.stdout.join("")).not.toContain("admin password updated");
+  });
+
+  it("restores the prior password and deployment after a partial stop failure", async () => {
+    const test = runtime();
+    markInitialized(test);
+    test.runner.failComposeDown = true;
+    let downCalls = 0;
+    test.runner.onRun = (call) => {
+      if (composeCommand(call)[0] !== "down") return;
+      downCalls++;
+      if (downCalls === 2) test.runner.failComposeDown = false;
+    };
+    const envPath = join(test.home, ".atlas", "core", ".env");
+    const before = readFileSync(envPath, "utf8");
+    test.context.interactive = {
+      configureAdmin: async (operator) => {
+        await operator.configureAdminPassword("new-production-password");
+      },
+      runMenu: async () => undefined,
+      runUpdate: async () => undefined
+    };
+
+    expect(await runCLI(["config"], test.context)).toBe(1);
+    expect(readFileSync(envPath, "utf8")).toBe(before);
+    expect(test.stderr.join("")).toContain("previous admin password and running deployment were restored");
+    expect(test.runner.calls.map(composeCommand).filter((args) => args.length > 0)).toEqual([
+      ["ps", "--all", "--format", "json"],
+      ["pull"],
+      ["down"],
+      ["down"],
+      ["up", "-d", "--pull", "never", "--wait", "--wait-timeout", "120"]
+    ]);
+  });
+
+  it("restores the prior password and deployment after replacement startup fails", async () => {
+    const test = runtime();
+    markInitialized(test);
+    test.runner.failComposeUp = true;
+    let upCalls = 0;
+    test.runner.onRun = (call) => {
+      if (composeCommand(call)[0] !== "up") return;
+      upCalls++;
+      if (upCalls === 2) test.runner.failComposeUp = false;
+    };
+    const envPath = join(test.home, ".atlas", "core", ".env");
+    const before = readFileSync(envPath, "utf8");
+    test.context.interactive = {
+      configureAdmin: async (operator) => {
+        await operator.configureAdminPassword("new-production-password");
+      },
+      runMenu: async () => undefined,
+      runUpdate: async () => undefined
+    };
+
+    expect(await runCLI(["config"], test.context)).toBe(1);
+    expect(readFileSync(envPath, "utf8")).toBe(before);
+    expect(test.stderr.join("")).toContain("previous admin password and running deployment were restored");
+    expect(test.runner.calls.map(composeCommand).filter((args) => args.length > 0)).toEqual([
+      ["ps", "--all", "--format", "json"],
+      ["pull"],
+      ["down"],
+      ["up", "-d", "--pull", "never", "--wait", "--wait-timeout", "120"],
+      ["down"],
+      ["up", "-d", "--pull", "never", "--wait", "--wait-timeout", "120"]
+    ]);
+    expect(test.stdout.join("")).not.toContain("admin password updated");
+  });
+
+  it("preserves cancellation after restoring the prior password and deployment", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const envPath = join(test.home, ".atlas", "core", ".env");
+    const before = readFileSync(envPath, "utf8");
+    test.context.interactive = {
+      configureAdmin: async (operator) => {
+        let cancelled = false;
+        test.runner.onRun = (call) => {
+          if (cancelled || composeCommand(call)[0] !== "up") return;
+          cancelled = true;
+          operator.cancelPending();
+        };
+        await expect(operator.configureAdminPassword("new-production-password")).rejects.toMatchObject({
+          message: "Atlas Core command was cancelled.",
+          name: "CommandCancelledError"
+        });
+      },
+      runMenu: async () => undefined,
+      runUpdate: async () => undefined
+    };
+
+    expect(await runCLI(["config"], test.context)).toBe(0);
+    expect(readFileSync(envPath, "utf8")).toBe(before);
+    expect(test.runner.calls.map(composeCommand).filter((args) => args.length > 0)).toEqual([
+      ["ps", "--all", "--format", "json"],
+      ["pull"],
+      ["down"],
+      ["up", "-d", "--pull", "never", "--wait", "--wait-timeout", "120"],
+      ["down"],
+      ["up", "-d", "--pull", "never", "--wait", "--wait-timeout", "120"]
+    ]);
+    expect(test.stdout.join("")).not.toContain("admin password updated");
+  });
+
+  it("reports when the prior deployment cannot be restored", async () => {
+    const test = runtime();
+    markInitialized(test);
+    test.runner.failComposeUp = true;
+    const envPath = join(test.home, ".atlas", "core", ".env");
+    const before = readFileSync(envPath, "utf8");
+    test.context.interactive = {
+      configureAdmin: async (operator) => {
+        await operator.configureAdminPassword("new-production-password");
+      },
+      runMenu: async () => undefined,
+      runUpdate: async () => undefined
+    };
+
+    expect(await runCLI(["config"], test.context)).toBe(1);
+    expect(readFileSync(envPath, "utf8")).toBe(before);
+    expect(test.stderr.join("")).toContain("Rollback also reported");
+    expect(test.runner.calls.filter((call) => composeCommand(call)[0] === "up")).toHaveLength(2);
+    expect(test.stdout.join("")).not.toContain("admin password updated");
   });
 
   it("rejects a weak admin password without changing configuration", async () => {

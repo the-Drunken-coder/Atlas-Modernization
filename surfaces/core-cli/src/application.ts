@@ -672,16 +672,59 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     await this.#withInitializedMutation(async (state, dockerEngineId) => {
       this.#assertStateMatchesEngine(state, dockerEngineId);
       const snapshot = await this.#deploymentSnapshot(state.enabledPlugins);
-      if (snapshot.status !== "stopped") this.#assertPackageVersionMatches(state);
-      if (snapshot.status !== "stopped") this.#requirePublishedImage();
-      this.#replaceConfigValue("ATLAS_ADMIN_PASSWORD", quoteComposeValue(password));
-      this.#stdout.write("Atlas Core admin password updated for username admin.\n");
       if (snapshot.status === "stopped") {
+        this.#replaceConfigValue("ATLAS_ADMIN_PASSWORD", quoteComposeValue(password));
+        this.#stdout.write("Atlas Core admin password updated for username admin.\n");
         this.#stdout.write("The new password will take effect the next time Atlas Core starts.\n");
         return;
       }
+
+      this.#assertPackageVersionMatches(state);
+      this.#requirePublishedImage();
+      this.#assertEnabledPluginDeployment(state);
+      const needsPostgresVolume = await this.#assertStartIsSafe(state);
+      if (needsPostgresVolume) await this.#createVolume(POSTGRES_VOLUME, "postgres_data");
+      const previousConfiguration = readFileSync(this.#envFile, "utf8");
+      const nextConfiguration = this.#configurationWithValue(
+        previousConfiguration,
+        "ATLAS_ADMIN_PASSWORD",
+        quoteComposeValue(password)
+      );
+
+      await this.#runComposeChecked(["pull"], state.enabledPlugins);
+      const attemptedState = this.#recordStartAttempt(state);
       this.#stdout.write("Restarting Atlas Core to apply the new password...\n");
-      await this.#restart(state, dockerEngineId);
+      try {
+        await this.#runComposeChecked(["down"], state.enabledPlugins);
+        writePrivateFile(this.#envFile, nextConfiguration, this.#platform);
+        await this.#runComposeChecked(
+          ["up", "-d", "--pull", "never", "--wait", "--wait-timeout", COMPOSE_WAIT_SECONDS],
+          state.enabledPlugins
+        );
+        this.#recordStarted(attemptedState);
+      } catch (error) {
+        const rollbackErrors: string[] = [];
+        await attemptRollback(rollbackErrors, () =>
+          writePrivateFile(this.#envFile, previousConfiguration, this.#platform)
+        );
+        await attemptRollback(rollbackErrors, async () => {
+          const cleanup = await this.#runComposeCleanup(["down"], state.enabledPlugins);
+          if (cleanup.status !== 0) throw commandFailure("stop failed admin password replacement", cleanup);
+        });
+        await attemptRollback(rollbackErrors, async () => {
+          const restore = await this.#runComposeCleanup(
+            ["up", "-d", "--pull", "never", "--wait", "--wait-timeout", COMPOSE_WAIT_SECONDS],
+            state.enabledPlugins
+          );
+          if (restore.status !== 0) throw commandFailure("restore previous Atlas Core deployment", restore);
+          this.#recordStarted(attemptedState);
+        });
+        if (error instanceof CommandCancelledError || rollbackErrors.length > 0) {
+          throw transactionFailure(error, rollbackErrors);
+        }
+        throw new Error(`${errorMessage(error)} The previous admin password and running deployment were restored.`);
+      }
+      this.#stdout.write("Atlas Core admin password updated for username admin.\n");
     });
   }
 
@@ -2173,11 +2216,15 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   #replaceConfigValue(name: string, value: string): void {
     this.#assertPrivateFile(this.#envFile);
     const contents = readFileSync(this.#envFile, "utf8");
+    writePrivateFile(this.#envFile, this.#configurationWithValue(contents, name, value), this.#platform);
+  }
+
+  #configurationWithValue(contents: string, name: string, value: string): string {
     const lines = contents.split(/\r?\n/);
     const index = lines.findIndex((line) => line.startsWith(`${name}=`));
     if (index === -1) throw new Error(`${this.#envFile} does not contain ${name}. Restore the matching configuration.`);
     lines[index] = `${name}=${value}`;
-    writePrivateFile(this.#envFile, lines.join("\n"), this.#platform);
+    return lines.join("\n");
   }
 
   async #runCompose(
