@@ -80,6 +80,9 @@ try {
   if (!output.includes("atlas-core config")) {
     throw new Error("installed atlas-core binary did not document admin account configuration");
   }
+  if (!output.includes("atlas-core update [cli|all]")) {
+    throw new Error("installed atlas-core binary did not document updates");
+  }
 } finally {
   rmSync(temporaryDirectory, { recursive: true, force: true });
 }

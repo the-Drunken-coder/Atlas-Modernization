@@ -15,6 +15,7 @@ import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { type CLIContext, type CommandRunner, runCLI } from "../src/application.js";
 import { PACKAGE_VERSION } from "../src/package-metadata.js";
+import type { DeploymentDetails } from "../src/terminal-ui.js";
 
 const TEST_IMAGE = `ghcr.io/the-drunken-coder/atlas-core@sha256:${"a".repeat(64)}`;
 const INIT_LOCK_NETWORK = "atlas_core_production_init_lock";
@@ -37,10 +38,15 @@ class FakeRunner implements CommandRunner {
   inspectionError: { kind: "container" | "volume"; name: string } | undefined;
   failComposeDown = false;
   failComposeUp = false;
+  failStats = false;
+  failInstalledCoreUpdate = false;
   composeVersion = "5.1.2";
   contextHost = "unix:///var/run/docker.sock";
   dockerArchitecture = "arm64";
   dockerOperatingSystem = "linux";
+  latestVersion = PACKAGE_VERSION;
+  latestImage = TEST_IMAGE;
+  installedVersion = PACKAGE_VERSION;
   serviceStates = [
     { Service: "api", State: "running", Health: "healthy" },
     { Service: "minio", State: "running", Health: "healthy" },
@@ -59,6 +65,22 @@ class FakeRunner implements CommandRunner {
       env: { ...options.env },
       inherit: options.inherit ?? false
     });
+    if (command === "npm" && args[0] === "view") {
+      return result(0, JSON.stringify({ version: this.latestVersion, atlasCoreImage: this.latestImage }));
+    }
+    if (command === "npm" && args[0] === "install" && args[1] === "--global") {
+      this.installedVersion = args[2]?.split("@").at(-1) ?? this.installedVersion;
+      return result(0);
+    }
+    if (command === "npm" && args[0] === "root" && args[1] === "--global") {
+      return result(0, "/fake/npm-global/lib/node_modules\n");
+    }
+    if (command === process.execPath && args.at(-1) === "version") {
+      return result(0, `atlas-core ${this.installedVersion}\n`);
+    }
+    if (command === process.execPath && args.includes("__apply-core-update")) {
+      return this.failInstalledCoreUpdate ? result(1, "", "injected installed update failure") : result(0);
+    }
     if (args[0] === "network" && args[1] === "create") {
       const name = args.at(-1) ?? "";
       if (this.existingNetworks.has(name)) return result(1, "", `network with name ${name} already exists`);
@@ -123,7 +145,6 @@ class FakeRunner implements CommandRunner {
       if (this.inspectionError?.kind === "container" && this.inspectionError.name === name) {
         return result(1, "", "permission denied");
       }
-      if (!this.existingContainers.has(name)) return result(1, "", `Error: No such container: ${name}`);
       const service = name.endsWith("_api")
         ? "api"
         : name.endsWith("_postgres")
@@ -131,12 +152,42 @@ class FakeRunner implements CommandRunner {
           : name.endsWith("_minio_init")
             ? "minio-init"
             : "minio";
+      if (
+        args[args.indexOf("--format") + 1] === "{{json .Config.Image}}\t{{json .State.StartedAt}}\t{{.RestartCount}}"
+      ) {
+        if (!this.serviceStates.some((candidate) => candidate.Service === service)) {
+          return result(1, "", `Error: No such container: ${name}`);
+        }
+        return result(0, `${JSON.stringify(TEST_IMAGE)}\t"2026-08-28T08:00:00.000Z"\t${service === "api" ? 1 : 0}\n`);
+      }
+      if (!this.existingContainers.has(name)) return result(1, "", `Error: No such container: ${name}`);
       return result(
         0,
         JSON.stringify({
           "com.docker.compose.project": this.mismatchedResources.has(name) ? "other" : "atlas_core_production",
           "com.docker.compose.service": service
         })
+      );
+    }
+    if (args[0] === "stats") {
+      if (this.failStats) return result(1, "", "injected stats failure");
+      const formatIndex = args.indexOf("--format");
+      const names = args.slice(formatIndex + 2);
+      return result(
+        0,
+        names
+          .map((name, index) =>
+            JSON.stringify({
+              Name: name,
+              CPUPerc: `${index + 1}.00%`,
+              MemUsage: `${128 + index * 64}MiB / 1GiB`,
+              MemPerc: `${12.5 + index * 6.25}%`,
+              NetIO: `${index + 1}MB / ${index + 2}MB`,
+              BlockIO: `${index + 3}MB / ${index + 4}MB`,
+              PIDs: `${10 + index}`
+            })
+          )
+          .join("\n")
       );
     }
     if (args.includes("ps")) return result(0, this.serviceStates.map((service) => JSON.stringify(service)).join("\n"));
@@ -250,6 +301,12 @@ function markInitialized(test: TestRuntime, started = true): void {
   );
 }
 
+function setCoreVersion(test: TestRuntime, version: string): void {
+  const statePath = join(test.home, ".atlas", "core", "state.json");
+  const state = JSON.parse(readFileSync(statePath, "utf8"));
+  writeFileSync(statePath, `${JSON.stringify({ ...state, packageVersion: version })}\n`, { mode: 0o600 });
+}
+
 describe("atlas-core CLI", () => {
   it("opens the interactive menu for no command", async () => {
     const test = runtime();
@@ -258,7 +315,8 @@ describe("atlas-core CLI", () => {
       configureAdmin: async () => undefined,
       runMenu: async () => {
         opened = true;
-      }
+      },
+      runUpdate: async () => undefined
     };
     expect(await runCLI([], test.context)).toBe(0);
     expect(opened).toBe(true);
@@ -270,6 +328,47 @@ describe("atlas-core CLI", () => {
     expect(await runCLI(["help"], test.context)).toBe(0);
     expect(test.stdout.join("")).toContain("atlas-core config");
     expect(test.runner.calls).toHaveLength(0);
+  });
+
+  it("opens the interactive update menu when no update scope is supplied", async () => {
+    const test = runtime();
+    let opened = false;
+    test.context.interactive = {
+      configureAdmin: async () => undefined,
+      runMenu: async () => undefined,
+      runUpdate: async () => {
+        opened = true;
+      }
+    };
+
+    expect(await runCLI(["update"], test.context)).toBe(0);
+    expect(opened).toBe(true);
+    expect(test.runner.calls).toHaveLength(0);
+  });
+
+  it("rejects unknown update scopes", async () => {
+    const test = runtime();
+    expect(await runCLI(["update", "core"], test.context)).toBe(2);
+    expect(test.stderr.join("")).toContain("update accepts cli or all");
+    expect(test.runner.calls).toHaveLength(0);
+  });
+
+  it("does not install a release newer than the one reviewed in the menu", async () => {
+    const test = runtime();
+    test.runner.latestVersion = "0.1.4";
+    test.context.interactive = {
+      configureAdmin: async () => undefined,
+      runMenu: async () => undefined,
+      runUpdate: async (operator) => {
+        const info = await operator.checkForUpdates();
+        test.runner.latestVersion = "0.1.5";
+        await operator.update("cli", info.latestVersion);
+      }
+    };
+
+    expect(await runCLI(["update"], test.context)).toBe(1);
+    expect(test.stderr.join("")).toContain("changed from 0.1.4 to 0.1.5");
+    expect(test.runner.installedVersion).toBe(PACKAGE_VERSION);
   });
 
   it("does not accept an admin password as a command argument", async () => {
@@ -707,7 +806,8 @@ describe("atlas-core CLI", () => {
       configureAdmin: async (operator) => {
         await operator.configureAdminPassword("correct-horse-battery-staple");
       },
-      runMenu: async () => undefined
+      runMenu: async () => undefined,
+      runUpdate: async () => undefined
     };
 
     expect(await runCLI(["config"], test.context)).toBe(0);
@@ -729,7 +829,8 @@ describe("atlas-core CLI", () => {
       configureAdmin: async (operator) => {
         await operator.configureAdminPassword("correct$horse#battery'staple\\end\"quoted");
       },
-      runMenu: async () => undefined
+      runMenu: async () => undefined,
+      runUpdate: async () => undefined
     };
 
     expect(await runCLI(["config"], test.context)).toBe(0);
@@ -746,7 +847,8 @@ describe("atlas-core CLI", () => {
       configureAdmin: async (operator) => {
         await operator.configureAdminPassword("correct-horse-battery-staple\\");
       },
-      runMenu: async () => undefined
+      runMenu: async () => undefined,
+      runUpdate: async () => undefined
     };
 
     expect(await runCLI(["config"], test.context)).toBe(0);
@@ -762,7 +864,8 @@ describe("atlas-core CLI", () => {
       configureAdmin: async (operator) => {
         await operator.configureAdminPassword("new-production-password");
       },
-      runMenu: async () => undefined
+      runMenu: async () => undefined,
+      runUpdate: async () => undefined
     };
 
     expect(await runCLI(["config"], test.context)).toBe(0);
@@ -788,7 +891,8 @@ describe("atlas-core CLI", () => {
       configureAdmin: async (operator) => {
         await operator.configureAdminPassword("password");
       },
-      runMenu: async () => undefined
+      runMenu: async () => undefined,
+      runUpdate: async () => undefined
     };
 
     expect(await runCLI(["config"], test.context)).toBe(1);
@@ -806,7 +910,8 @@ describe("atlas-core CLI", () => {
       configureAdmin: async (operator) => {
         await operator.configureAdminPassword("REPLACE_WITH_SECURE_ADMIN_PASSWORD");
       },
-      runMenu: async () => undefined
+      runMenu: async () => undefined,
+      runUpdate: async () => undefined
     };
 
     expect(await runCLI(["config"], test.context)).toBe(1);
@@ -842,12 +947,137 @@ describe("atlas-core CLI", () => {
   it("blocks an implicit Core version upgrade", async () => {
     const test = runtime();
     markInitialized(test);
-    const statePath = join(test.home, ".atlas", "core", "state.json");
-    const state = JSON.parse(readFileSync(statePath, "utf8"));
-    writeFileSync(statePath, `${JSON.stringify({ ...state, packageVersion: "0.0.9" })}\n`);
+    setCoreVersion(test, "0.0.9");
     expect(await runCLI(["start"], test.context)).toBe(1);
-    expect(test.stderr.join("")).toContain("automatic upgrades are not supported yet");
+    expect(test.stderr.join("")).toContain("Run atlas-core update all");
     expect(test.runner.calls.some((call) => composeCommand(call)[0] === "up")).toBe(false);
+  });
+
+  it("lets a newer CLI inspect an older running Core", async () => {
+    const test = runtime();
+    markInitialized(test);
+    setCoreVersion(test, "0.1.2");
+
+    expect(await runCLI(["status"], test.context)).toBe(0);
+    expect(test.stdout.join("")).toContain("Atlas Core is running");
+  });
+
+  it("updates only the global CLI when requested", async () => {
+    const test = runtime();
+    markInitialized(test);
+    test.runner.latestVersion = "0.1.4";
+
+    expect(await runCLI(["update", "cli"], test.context)).toBe(0);
+    expect(test.runner.installedVersion).toBe("0.1.4");
+    expect(test.runner.calls).toContainEqual(
+      expect.objectContaining({
+        command: "npm",
+        args: ["install", "--global", "atlas-core@0.1.4"],
+        inherit: true
+      })
+    );
+    expect(JSON.parse(readFileSync(join(test.home, ".atlas", "core", "state.json"), "utf8")).packageVersion).toBe(
+      PACKAGE_VERSION
+    );
+    expect(test.runner.calls.some((call) => composeCommand(call)[0] === "down")).toBe(false);
+  });
+
+  it("can update the CLI when deployment configuration is incomplete", async () => {
+    const test = runtime();
+    mkdirSync(join(test.home, ".atlas", "core"), { recursive: true, mode: 0o700 });
+    test.runner.latestVersion = "0.1.4";
+
+    expect(await runCLI(["update", "cli"], test.context)).toBe(0);
+    expect(test.runner.installedVersion).toBe("0.1.4");
+  });
+
+  it("uses the newly installed CLI to update Core", async () => {
+    const test = runtime();
+    markInitialized(test);
+    test.runner.latestVersion = "0.1.4";
+
+    expect(await runCLI(["update", "all"], test.context)).toBe(0);
+    expect(test.runner.installedVersion).toBe("0.1.4");
+    expect(test.runner.calls).toContainEqual(
+      expect.objectContaining({
+        command: process.execPath,
+        args: [
+          "/fake/npm-global/lib/node_modules/atlas-core/dist/cli.js",
+          "__apply-core-update",
+          PACKAGE_VERSION,
+          TEST_IMAGE
+        ],
+        inherit: true
+      })
+    );
+  });
+
+  it("updates Core in place and advances state only after it is healthy", async () => {
+    const test = runtime();
+    markInitialized(test);
+    setCoreVersion(test, "0.1.2");
+
+    expect(await runCLI(["update", "all"], test.context)).toBe(0);
+    expect(test.runner.calls.map(composeCommand).filter((args) => args.length > 0)).toContainEqual(["pull"]);
+    expect(test.runner.calls.map(composeCommand).filter((args) => args.length > 0)).toContainEqual(["down"]);
+    expect(test.runner.calls.map(composeCommand).filter((args) => args.length > 0)).toContainEqual([
+      "up",
+      "-d",
+      "--pull",
+      "never",
+      "--wait",
+      "--wait-timeout",
+      "120"
+    ]);
+    expect(JSON.parse(readFileSync(join(test.home, ".atlas", "core", "state.json"), "utf8")).packageVersion).toBe(
+      PACKAGE_VERSION
+    );
+    expect(test.runner.existingVolumes).toContain("atlas_core_production_postgres_data");
+    expect(test.runner.existingVolumes).toContain("atlas_core_production_minio_data");
+    expect(test.runner.calls.some((call) => call.args[0] === "volume" && call.args[1] === "rm")).toBe(false);
+  });
+
+  it("refuses a Core update when the installed package pins another image", async () => {
+    const test = runtime();
+    markInitialized(test);
+    setCoreVersion(test, "0.1.2");
+    test.runner.latestImage = `ghcr.io/the-drunken-coder/atlas-core@sha256:${"b".repeat(64)}`;
+
+    expect(await runCLI(["update", "all"], test.context)).toBe(1);
+    expect(test.stderr.join("")).toContain("pins");
+    expect(test.runner.calls.some((call) => composeCommand(call)[0] === "down")).toBe(false);
+    expect(JSON.parse(readFileSync(join(test.home, ".atlas", "core", "state.json"), "utf8")).packageVersion).toBe(
+      "0.1.2"
+    );
+  });
+
+  it("does not advance Core state when the updated deployment fails health checks", async () => {
+    const test = runtime();
+    markInitialized(test);
+    setCoreVersion(test, "0.1.2");
+    test.runner.failComposeUp = true;
+
+    expect(await runCLI(["update", "all"], test.context)).toBe(1);
+    expect(JSON.parse(readFileSync(join(test.home, ".atlas", "core", "state.json"), "utf8")).packageVersion).toBe(
+      "0.1.2"
+    );
+    expect(test.runner.existingVolumes).toContain("atlas_core_production_postgres_data");
+    expect(test.runner.existingVolumes).toContain("atlas_core_production_minio_data");
+  });
+
+  it("updates a stopped deployment without starting it", async () => {
+    const test = runtime();
+    markInitialized(test);
+    setCoreVersion(test, "0.1.2");
+    test.runner.serviceStates = [];
+
+    expect(await runCLI(["update", "all"], test.context)).toBe(0);
+    const composeCalls = test.runner.calls.map(composeCommand).filter((args) => args.length > 0);
+    expect(composeCalls).toContainEqual(["pull"]);
+    expect(composeCalls.some((args) => args[0] === "down" || args[0] === "up")).toBe(false);
+    expect(JSON.parse(readFileSync(join(test.home, ".atlas", "core", "state.json"), "utf8")).packageVersion).toBe(
+      PACKAGE_VERSION
+    );
   });
 
   it("refuses to operate the deployment through another Docker engine", async () => {
@@ -900,6 +1130,58 @@ describe("atlas-core CLI", () => {
     const logs = test.runner.calls.find((call) => composeCommand(call)[0] === "logs");
     expect(logs && composeCommand(logs)).toEqual(["logs", "--tail", "200", "--follow", "api"]);
     expect(logs?.inherit).toBe(true);
+  });
+
+  it("reports health and Docker performance for each service", async () => {
+    const test = runtime();
+    markInitialized(test);
+    let details: DeploymentDetails | undefined;
+    test.context.interactive = {
+      configureAdmin: async () => undefined,
+      runMenu: async (operator) => {
+        details = await operator.details();
+      },
+      runUpdate: async () => undefined
+    };
+
+    expect(await runCLI([], test.context)).toBe(0);
+    expect(details).toMatchObject({
+      snapshot: { status: "ready" },
+      cliVersion: PACKAGE_VERSION,
+      coreVersion: PACKAGE_VERSION,
+      image: TEST_IMAGE,
+      services: [
+        {
+          id: "api",
+          cpuPercent: "1.00%",
+          memoryUsage: "128MiB / 1GiB",
+          uptime: "4h 0m",
+          restarts: 1
+        },
+        { id: "postgres", cpuPercent: "2.00%" },
+        { id: "minio", cpuPercent: "3.00%" }
+      ]
+    });
+  });
+
+  it("keeps health available when Docker statistics fail", async () => {
+    const test = runtime();
+    markInitialized(test);
+    test.runner.failStats = true;
+    let details: DeploymentDetails | undefined;
+    test.context.interactive = {
+      configureAdmin: async () => undefined,
+      runMenu: async (operator) => {
+        details = await operator.details();
+      },
+      runUpdate: async () => undefined
+    };
+
+    expect(await runCLI([], test.context)).toBe(0);
+    expect(details?.snapshot.status).toBe("ready");
+    expect(details?.performanceError).toContain("docker stats failed");
+    expect(details?.services[0]).toMatchObject({ id: "api", health: "healthy" });
+    expect(details?.services[0]?.cpuPercent).toBeUndefined();
   });
 
   it("returns unhealthy status when a required service is missing", async () => {

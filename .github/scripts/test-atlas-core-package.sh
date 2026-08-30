@@ -82,6 +82,21 @@ ATLAS_CORE_HOME="$core_home" "$cli" start
 ATLAS_CORE_HOME="$core_home" "$cli" doctor
 ATLAS_CORE_HOME="$core_home" "$cli" status
 curl --fail --silent --show-error http://127.0.0.1:8000/readiness
+
+node -e '
+  const fs = require("node:fs");
+  const path = process.argv[1];
+  const state = JSON.parse(fs.readFileSync(path, "utf8"));
+  state.packageVersion = "0.0.0";
+  fs.writeFileSync(path, `${JSON.stringify(state, null, 2)}\n`);
+' "$core_home/state.json"
+ATLAS_CORE_HOME="$core_home" "$cli" __apply-core-update 0.0.0 "$expected_image"
+test "$(node -p "require(process.argv[1]).packageVersion" "$core_home/state.json")" = "$version"
+ATLAS_CORE_HOME="$core_home" "$cli" status
+docker volume inspect atlas_core_production_postgres_data >/dev/null
+docker volume inspect atlas_core_production_minio_data >/dev/null
+curl --fail --silent --show-error http://127.0.0.1:8000/readiness
+
 printf 'y\n' | ATLAS_CORE_HOME="$core_home" "$cli" reset
 ATLAS_CORE_HOME="$core_home" "$cli" doctor
 ATLAS_CORE_HOME="$core_home" "$cli" status
