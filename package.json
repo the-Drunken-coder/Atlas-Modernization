@@ -28,7 +28,7 @@
     "test:clean-workspace": "node tests/clean-workspace-smoke.mjs"
   },
   "devDependencies": {
-    "@vitest/coverage-v8": "4.1.10",
+    "@vitest/coverage-v8": "4.1.11",
     "react": "19.2.8",
     "react-dom": "19.2.8"
   },
