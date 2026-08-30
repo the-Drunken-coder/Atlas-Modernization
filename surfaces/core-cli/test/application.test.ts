@@ -20,6 +20,15 @@ import type { DeploymentDetails } from "../src/terminal-ui.js";
 const TEST_IMAGE = `ghcr.io/the-drunken-coder/atlas-core@sha256:${"a".repeat(64)}`;
 const INIT_LOCK_NETWORK = "atlas_core_production_init_lock";
 
+function nextPatchVersion(version: string): string {
+  const [major, minor, patch, ...extra] = version.split(".");
+  if (!major || !minor || !patch || extra.length > 0) throw new Error(`Invalid test package version: ${version}`);
+  return `${major}.${minor}.${Number(patch) + 1}`;
+}
+
+const NEXT_PACKAGE_VERSION = nextPatchVersion(PACKAGE_VERSION);
+const FOLLOWING_PACKAGE_VERSION = nextPatchVersion(NEXT_PACKAGE_VERSION);
+
 type Call = {
   command: string;
   args: string[];
@@ -364,19 +373,19 @@ describe("atlas-core CLI", () => {
 
   it("does not install a release newer than the one reviewed in the menu", async () => {
     const test = runtime();
-    test.runner.latestVersion = "0.1.4";
+    test.runner.latestVersion = NEXT_PACKAGE_VERSION;
     test.context.interactive = {
       configureAdmin: async () => undefined,
       runMenu: async () => undefined,
       runUpdate: async (operator) => {
         const info = await operator.checkForUpdates();
-        test.runner.latestVersion = "0.1.5";
+        test.runner.latestVersion = FOLLOWING_PACKAGE_VERSION;
         await operator.update("cli", info.latestVersion);
       }
     };
 
     expect(await runCLI(["update"], test.context)).toBe(1);
-    expect(test.stderr.join("")).toContain("changed from 0.1.4 to 0.1.5");
+    expect(test.stderr.join("")).toContain(`changed from ${NEXT_PACKAGE_VERSION} to ${FOLLOWING_PACKAGE_VERSION}`);
     expect(test.runner.installedVersion).toBe(PACKAGE_VERSION);
   });
 
@@ -974,14 +983,14 @@ describe("atlas-core CLI", () => {
   it("updates only the global CLI when requested", async () => {
     const test = runtime();
     markInitialized(test);
-    test.runner.latestVersion = "0.1.4";
+    test.runner.latestVersion = NEXT_PACKAGE_VERSION;
 
     expect(await runCLI(["update", "cli"], test.context)).toBe(0);
-    expect(test.runner.installedVersion).toBe("0.1.4");
+    expect(test.runner.installedVersion).toBe(NEXT_PACKAGE_VERSION);
     expect(test.runner.calls).toContainEqual(
       expect.objectContaining({
         command: "npm",
-        args: ["install", "--global", "atlas-core@0.1.4"],
+        args: ["install", "--global", `atlas-core@${NEXT_PACKAGE_VERSION}`],
         inherit: true
       })
     );
@@ -994,10 +1003,10 @@ describe("atlas-core CLI", () => {
   it("can update the CLI when deployment configuration is incomplete", async () => {
     const test = runtime();
     mkdirSync(join(test.home, ".atlas", "core"), { recursive: true, mode: 0o700 });
-    test.runner.latestVersion = "0.1.4";
+    test.runner.latestVersion = NEXT_PACKAGE_VERSION;
 
     expect(await runCLI(["update", "cli"], test.context)).toBe(0);
-    expect(test.runner.installedVersion).toBe("0.1.4");
+    expect(test.runner.installedVersion).toBe(NEXT_PACKAGE_VERSION);
   });
 
   it("identifies an invalid npm release version", async () => {
@@ -1011,7 +1020,7 @@ describe("atlas-core CLI", () => {
   it("cancels a Core update without a confirmed paired backup", async () => {
     const test = runtime();
     markInitialized(test);
-    test.runner.latestVersion = "0.1.4";
+    test.runner.latestVersion = NEXT_PACKAGE_VERSION;
 
     expect(await runCLI(["update", "all"], test.context)).toBe(0);
     expect(test.stdout.join("")).toContain("paired PostgreSQL and MinIO backup");
@@ -1023,11 +1032,11 @@ describe("atlas-core CLI", () => {
   it("uses the newly installed CLI to update Core", async () => {
     const test = runtime();
     markInitialized(test);
-    test.runner.latestVersion = "0.1.4";
+    test.runner.latestVersion = NEXT_PACKAGE_VERSION;
     test.context.confirmCoreUpdate = async () => true;
 
     expect(await runCLI(["update", "all"], test.context)).toBe(0);
-    expect(test.runner.installedVersion).toBe("0.1.4");
+    expect(test.runner.installedVersion).toBe(NEXT_PACKAGE_VERSION);
     expect(test.runner.calls).toContainEqual(
       expect.objectContaining({
         command: process.execPath,
@@ -1045,7 +1054,7 @@ describe("atlas-core CLI", () => {
   it("reports a failure from the newly installed Core updater", async () => {
     const test = runtime();
     markInitialized(test);
-    test.runner.latestVersion = "0.1.4";
+    test.runner.latestVersion = NEXT_PACKAGE_VERSION;
     test.runner.failInstalledCoreUpdate = true;
     test.context.confirmCoreUpdate = async () => true;
 
