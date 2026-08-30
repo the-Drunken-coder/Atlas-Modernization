@@ -116,6 +116,7 @@ type RunOptions = {
 };
 
 export type CommandRunner = {
+  cancelAll?(): void;
   run(command: string, args: string[], options?: RunOptions): Promise<CommandResult>;
 };
 
@@ -199,6 +200,12 @@ class UsageError extends Error {
 }
 
 class ProcessCommandRunner implements CommandRunner {
+  readonly #children = new Set<ReturnType<typeof spawn>>();
+
+  cancelAll(): void {
+    for (const child of this.#children) child.kill();
+  }
+
   async run(command: string, args: string[], options: RunOptions = {}): Promise<CommandResult> {
     return await new Promise((resolve, reject) => {
       const child = spawn(command, args, {
@@ -206,6 +213,7 @@ class ProcessCommandRunner implements CommandRunner {
         env: options.env,
         stdio: options.inherit ? "inherit" : ["ignore", "pipe", "pipe"]
       });
+      this.#children.add(child);
       let stdout = "";
       let stderr = "";
       child.stdout?.setEncoding("utf8");
@@ -216,8 +224,12 @@ class ProcessCommandRunner implements CommandRunner {
       child.stderr?.on("data", (chunk: string) => {
         stderr += chunk;
       });
-      child.once("error", reject);
+      child.once("error", (error) => {
+        this.#children.delete(child);
+        reject(error);
+      });
       child.once("close", (status) => {
+        this.#children.delete(child);
         resolve({ status: status ?? 1, stdout, stderr });
       });
     });
@@ -263,6 +275,10 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     this.#confirmCoreUpdate = context.confirmCoreUpdate;
     this.#confirmReset = context.confirmReset;
     this.#imageReference = context.imageReference;
+  }
+
+  cancelPending(): void {
+    this.#runner.cancelAll?.();
   }
 
   async init(): Promise<void> {

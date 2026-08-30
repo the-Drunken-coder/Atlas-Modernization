@@ -1,5 +1,5 @@
 import { Box, type Key, render, Text, useApp, useInput, usePaste, useWindowSize } from "ink";
-import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PACKAGE_VERSION } from "./package-metadata.js";
 
 export type DeploymentSnapshot = {
@@ -47,6 +47,7 @@ export type UpdateInfo = {
 export type UpdateScope = "all" | "cli";
 
 export type AtlasCoreOperator = {
+  cancelPending(): void;
   checkForUpdates(): Promise<UpdateInfo>;
   configureAdminPassword(password: string): Promise<void>;
   details(): Promise<DeploymentDetails>;
@@ -322,7 +323,11 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
     [exit, input, operator, output, suspendTerminal, waitUntilRenderFlush]
   );
 
-  if (screen.kind === "busy") return <BusyScreen captureInput={screen.captureInput} label={screen.label} />;
+  if (screen.kind === "busy") {
+    return (
+      <BusyScreen captureInput={screen.captureInput} label={screen.label} onCancel={() => operator.cancelPending()} />
+    );
+  }
   if (screen.kind === "menu") {
     return <MainMenu onSelect={(action) => void runMainAction(action)} snapshot={screen.snapshot} />;
   }
@@ -393,6 +398,7 @@ function MainMenu({ onSelect, snapshot }: { onSelect(action: Action): void; snap
   const { exit } = useApp();
   const { columns } = useWindowSize();
   const actions = useMemo(() => menuActions(snapshot), [snapshot]);
+  const actionPending = useRef(false);
   const [filter, setFilter] = useState("");
   const [selected, setSelected] = useState(0);
   const filtered = useMemo(() => filteredActions(actions, filter), [actions, filter]);
@@ -400,6 +406,7 @@ function MainMenu({ onSelect, snapshot }: { onSelect(action: Action): void; snap
   const canInteract = columns >= MINIMUM_TERMINAL_COLUMNS;
 
   useInput((input, key) => {
+    if (actionPending.current) return;
     const modified = hasCommandModifier(key);
     if ((key.ctrl && input === "c") || key.escape || (!modified && input === "q" && filter === "")) {
       exit();
@@ -421,7 +428,10 @@ function MainMenu({ onSelect, snapshot }: { onSelect(action: Action): void; snap
     }
     if (key.return) {
       const action = filtered[index];
-      if (action) onSelect(action);
+      if (action) {
+        actionPending.current = true;
+        onSelect(action);
+      }
       return;
     }
     if (isPrintableInput(input, key)) {
@@ -431,6 +441,7 @@ function MainMenu({ onSelect, snapshot }: { onSelect(action: Action): void; snap
   });
   usePaste(
     (value) => {
+      if (actionPending.current) return;
       const printable = printableText(value);
       if (printable) {
         setFilter((current) => current + printable);
@@ -927,11 +938,22 @@ function MessageScreen({ message, onBack, title }: { message: string; onBack(): 
   );
 }
 
-function BusyScreen({ captureInput, label }: { captureInput: boolean; label: string }): ReactNode {
+function BusyScreen({
+  captureInput,
+  label,
+  onCancel
+}: {
+  captureInput: boolean;
+  label: string;
+  onCancel(): void;
+}): ReactNode {
   const { exit } = useApp();
   const { columns } = useWindowSize();
   useInput((input, key) => {
-    if (!captureInput && key.ctrl && input === "c") exit();
+    if (!captureInput && key.ctrl && input === "c") {
+      onCancel();
+      exit();
+    }
   });
   if (columns < MINIMUM_TERMINAL_COLUMNS) return <NarrowTerminal />;
   return (

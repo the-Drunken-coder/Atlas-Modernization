@@ -63,6 +63,11 @@ class FakeRunner implements CommandRunner {
     { Service: "minio", State: "running", Health: "healthy" },
     { Service: "postgres", State: "running", Health: "healthy" }
   ];
+  cancelAllCalls = 0;
+
+  cancelAll(): void {
+    this.cancelAllCalls++;
+  }
 
   async run(
     command: string,
@@ -365,6 +370,18 @@ describe("atlas-core CLI", () => {
     expect(await runCLI(["update"], test.context)).toBe(0);
     expect(opened).toBe(true);
     expect(test.runner.calls).toHaveLength(0);
+  });
+
+  it("cancels pending commands when the interactive UI exits a loading screen", async () => {
+    const test = runtime();
+    test.context.interactive = {
+      configureAdmin: async () => undefined,
+      runMenu: async () => undefined,
+      runUpdate: async (operator) => operator.cancelPending()
+    };
+
+    expect(await runCLI(["update"], test.context)).toBe(0);
+    expect(test.runner.cancelAllCalls).toBe(1);
   });
 
   it("rejects unknown update scopes", async () => {

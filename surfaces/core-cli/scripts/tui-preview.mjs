@@ -42,6 +42,7 @@ if (!allowedStates.has(initialState)) {
 
   const preview = (message) => process.stdout.write(`[preview only] ${message}\n`);
   const operator = {
+    cancelPending() {},
     async checkForUpdates() {
       return {
         cliVersion: "0.1.5",

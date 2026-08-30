@@ -67,6 +67,7 @@ class TestTerminal {
 
 function operator(snapshot: DeploymentSnapshot = { status: "ready", detail: "Everything is healthy." }) {
   return {
+    cancelPending: vi.fn(),
     checkForUpdates: vi.fn(async () => ({
       cliVersion: "0.1.5",
       coreVersion: "0.1.5",
@@ -229,6 +230,23 @@ describe("Atlas Core terminal UI", () => {
     await menu;
 
     expect(deployment.details).toHaveBeenCalledOnce();
+  });
+
+  it("dispatches only one action when Enter repeats before the screen changes", async () => {
+    const terminal = new TestTerminal();
+    const deployment = operator();
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("View status");
+    terminal.write("\u001b[13u\u001b[13u");
+    await terminal.waitFor("Network I/O");
+    const detailsCallsAfterRepeatedEnter = deployment.details.mock.calls.length;
+    terminal.write("\r");
+    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
+    terminal.write("q");
+    await menu;
+
+    expect(detailsCallsAfterRepeatedEnter).toBe(1);
   });
 
   it("shows a minimum-height state for status on a 24-row terminal", async () => {
@@ -593,6 +611,7 @@ describe("Atlas Core terminal UI", () => {
     await update;
 
     expect(exitedAfterCtrlC).toBe(true);
+    expect(deployment.cancelPending).toHaveBeenCalledOnce();
   });
 
   it("offers initialization instead of configuration before first setup", async () => {
