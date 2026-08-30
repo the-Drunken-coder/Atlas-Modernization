@@ -76,7 +76,7 @@ type Action = {
 };
 
 type Screen =
-  | { captureInput: boolean; kind: "busy"; label: string }
+  | { kind: "busy"; label: string }
   | { kind: "configure" }
   | { kind: "logs" }
   | { kind: "menu"; snapshot: DeploymentSnapshot }
@@ -87,6 +87,11 @@ type Screen =
   | { kind: "update-review"; info: UpdateInfo; scope: UpdateScope };
 
 type AppMode = "configure" | "menu" | "update";
+
+type OperationResult = {
+  cancelled: boolean;
+  failure?: Error;
+};
 
 type AtlasCoreAppProps = {
   input: NodeJS.ReadStream;
@@ -143,18 +148,17 @@ async function runInkApp(
 function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): ReactNode {
   const { exit, suspendTerminal, waitUntilRenderFlush } = useApp();
   const [screen, setScreen] = useState<Screen>({
-    captureInput: false,
     kind: "busy",
     label: initialLoadingLabel(mode)
   });
 
   const loadMenu = useCallback(async () => {
-    setScreen({ captureInput: false, kind: "busy", label: "Checking deployment..." });
+    setScreen({ kind: "busy", label: "Checking deployment..." });
     setScreen({ kind: "menu", snapshot: await readSnapshot(operator) });
   }, [operator]);
 
   const loadStatus = useCallback(async () => {
-    setScreen({ captureInput: false, kind: "busy", label: "Loading deployment and Docker statistics..." });
+    setScreen({ kind: "busy", label: "Loading deployment and Docker statistics..." });
     try {
       setScreen({ kind: "status", view: await operator.details() });
     } catch (error) {
@@ -163,7 +167,7 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
   }, [operator]);
 
   const loadUpdate = useCallback(async () => {
-    setScreen({ captureInput: false, kind: "busy", label: "Checking npm for the latest release..." });
+    setScreen({ kind: "busy", label: "Checking npm for the latest release..." });
     try {
       setScreen({ kind: "update", info: await operator.checkForUpdates() });
     } catch (error) {
@@ -189,23 +193,21 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
   }, [exit, input]);
 
   const runVisibleOperation = useCallback(
-    async (label: string, operation: () => Promise<void>): Promise<Error | undefined> => {
-      setScreen({ captureInput: true, kind: "busy", label: `${label}...` });
+    async (label: string, operation: () => Promise<void>): Promise<OperationResult> => {
+      setScreen({ kind: "busy", label: `${label}...` });
       await waitUntilRenderFlush();
-      let failure: Error | undefined;
+      let result: OperationResult = { cancelled: false };
       await suspendTerminal(async () => {
-        try {
-          await operation();
-        } catch (error) {
-          failure = new Error(errorMessage(error));
-          output.write(`\n${failure.message}\n`);
-        }
+        result = await runCancelableOperation(operator, operation);
+        if (result.cancelled) return;
+        if (result.failure) output.write(`\n${result.failure.message}\n`);
         output.write("\nPress Enter to return to Atlas Core.");
         await waitForReturn(input);
       });
-      return failure;
+      if (result.cancelled) exit();
+      return result;
     },
-    [input, output, suspendTerminal, waitUntilRenderFlush]
+    [exit, input, operator, output, suspendTerminal, waitUntilRenderFlush]
   );
 
   const runMainAction = useCallback(
@@ -231,7 +233,7 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
         return;
       }
 
-      await runVisibleOperation(action.label, async () => {
+      const result = await runVisibleOperation(action.label, async () => {
         switch (action.id) {
           case "doctor":
             await operator.doctor();
@@ -259,6 +261,7 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
             return;
         }
       });
+      if (result.cancelled) return;
       await loadMenu();
     },
     [exit, loadMenu, loadStatus, loadUpdate, operator, runVisibleOperation]
@@ -266,9 +269,10 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
 
   const showLogs = useCallback(
     async (service: "api" | "minio" | "postgres" | "source-gateway" | undefined, returnTo: "menu" | "status") => {
-      await runVisibleOperation("Loading logs", async () => {
+      const result = await runVisibleOperation("Loading logs", async () => {
         await operator.logs(service, false);
       });
+      if (result.cancelled) return;
       if (returnTo === "status") await loadStatus();
       else await loadMenu();
     },
@@ -276,19 +280,21 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
   );
 
   const runStatusDoctor = useCallback(async () => {
-    await runVisibleOperation("Running diagnostics", async () => {
+    const result = await runVisibleOperation("Running diagnostics", async () => {
       await operator.doctor();
     });
+    if (result.cancelled) return;
     await loadStatus();
   }, [loadStatus, operator, runVisibleOperation]);
 
   const configureAdmin = useCallback(
     async (password: string) => {
-      const failure = await runVisibleOperation("Changing admin password", async () => {
+      const result = await runVisibleOperation("Changing admin password", async () => {
         await operator.configureAdminPassword(password);
       });
+      if (result.cancelled) return;
       if (mode === "configure") {
-        if (failure) exit(failure);
+        if (result.failure) exit(result.failure);
         else exit();
         return;
       }
@@ -299,34 +305,32 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
 
   const applyUpdate = useCallback(
     async (info: UpdateInfo, scope: UpdateScope) => {
-      setScreen({ captureInput: true, kind: "busy", label: "Applying reviewed update..." });
+      setScreen({ kind: "busy", label: "Applying reviewed update..." });
       await waitUntilRenderFlush();
-      let failure: Error | undefined;
+      let result: OperationResult = { cancelled: false };
       await suspendTerminal(async () => {
-        try {
+        result = await runCancelableOperation(operator, async () => {
           await operator.update(scope, info.latestVersion, scope === "all");
-        } catch (error) {
-          failure = new Error(errorMessage(error));
-          output.write(`\n${failure.message}\n`);
-        }
+        });
+        if (result.cancelled) return;
+        if (result.failure) output.write(`\n${result.failure.message}\n`);
         output.write(
-          failure
+          result.failure
             ? "\nThe update stopped without deleting Atlas Core data. Rerun atlas-core to inspect or retry.\n"
             : "\nUpdate complete. Rerun atlas-core to use the installed CLI.\n"
         );
         output.write("\nPress Enter to exit.");
         await waitForReturn(input);
       });
-      if (failure) exit(failure);
+      if (result.cancelled) exit();
+      else if (result.failure) exit(result.failure);
       else exit();
     },
     [exit, input, operator, output, suspendTerminal, waitUntilRenderFlush]
   );
 
   if (screen.kind === "busy") {
-    return (
-      <BusyScreen captureInput={screen.captureInput} label={screen.label} onCancel={() => operator.cancelPending()} />
-    );
+    return <BusyScreen label={screen.label} onCancel={() => operator.cancelPending()} />;
   }
   if (screen.kind === "menu") {
     return <MainMenu onSelect={(action) => void runMainAction(action)} snapshot={screen.snapshot} />;
@@ -877,11 +881,16 @@ function UpdateReview({
   scope: UpdateScope;
 }): ReactNode {
   const { columns } = useWindowSize();
+  const actionPending = useRef(false);
   const canInteract = columns >= MINIMUM_TERMINAL_COLUMNS;
   useInput((input, key) => {
+    if (actionPending.current) return;
     if (key.escape || (key.ctrl && input === "c")) onBack();
     else if (!canInteract || hasCommandModifier(key)) return;
-    else if (key.return) onApply();
+    else if (key.return) {
+      actionPending.current = true;
+      onApply();
+    }
   });
   if (!canInteract) return <NarrowTerminal />;
   return (
@@ -938,19 +947,11 @@ function MessageScreen({ message, onBack, title }: { message: string; onBack(): 
   );
 }
 
-function BusyScreen({
-  captureInput,
-  label,
-  onCancel
-}: {
-  captureInput: boolean;
-  label: string;
-  onCancel(): void;
-}): ReactNode {
+function BusyScreen({ label, onCancel }: { label: string; onCancel(): void }): ReactNode {
   const { exit } = useApp();
   const { columns } = useWindowSize();
   useInput((input, key) => {
-    if (!captureInput && key.ctrl && input === "c") {
+    if (key.ctrl && input === "c") {
       onCancel();
       exit();
     }
@@ -1123,6 +1124,27 @@ async function waitForReturn(input: NodeJS.ReadStream): Promise<void> {
     input.once("error", onError);
     input.resume();
   });
+}
+
+async function runCancelableOperation(
+  operator: AtlasCoreOperator,
+  operation: () => Promise<void>
+): Promise<OperationResult> {
+  // Ink pauses its input hooks while the terminal is suspended, so Ctrl-C arrives as SIGINT here.
+  let cancelled = false;
+  const onInterrupt = (): void => {
+    cancelled = true;
+    operator.cancelPending();
+  };
+  process.once("SIGINT", onInterrupt);
+  try {
+    await operation();
+    return { cancelled };
+  } catch (error) {
+    return cancelled ? { cancelled } : { cancelled, failure: new Error(errorMessage(error)) };
+  } finally {
+    process.off("SIGINT", onInterrupt);
+  }
 }
 
 function assertInteractive(input: NodeJS.ReadStream, output: NodeJS.WriteStream): void {

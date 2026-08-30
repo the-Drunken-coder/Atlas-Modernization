@@ -507,6 +507,38 @@ describe("Atlas Core terminal UI", () => {
     expect(deployment.update).toHaveBeenCalledWith("all", "0.1.6", true);
   });
 
+  it("dispatches only one reviewed update when Enter repeats before the screen changes", async () => {
+    const terminal = new TestTerminal();
+    const deployment = operator();
+    deployment.checkForUpdates.mockResolvedValue({
+      cliVersion: "0.1.5",
+      coreVersion: "0.1.5",
+      latestVersion: "0.1.6",
+      cliUpdateAvailable: true,
+      coreUpdateAvailable: true
+    });
+    let finishUpdate: (() => void) | undefined;
+    const pendingUpdate = new Promise<undefined>((resolve) => {
+      finishUpdate = () => resolve(undefined);
+    });
+    deployment.update.mockImplementation(() => pendingUpdate);
+    const update = createInteractiveCLI(terminal.input, terminal.output).runUpdate(deployment);
+
+    await terminal.waitFor("Update CLI only");
+    terminal.write("\r");
+    await terminal.waitFor("REVIEW UPDATE");
+    terminal.write("\u001b[13u\u001b[13u");
+    await vi.waitFor(() => expect(deployment.update).toHaveBeenCalled());
+    await nextInputTurn();
+    const updateCallsAfterRepeatedEnter = deployment.update.mock.calls.length;
+    finishUpdate?.();
+    await terminal.waitFor("Update complete");
+    terminal.write("\r");
+    await update;
+
+    expect(updateCallsAfterRepeatedEnter).toBe(1);
+  });
+
   it("labels and applies a Core-only update without claiming the CLI will change", async () => {
     const terminal = new TestTerminal();
     const deployment = operator();
@@ -612,6 +644,45 @@ describe("Atlas Core terminal UI", () => {
 
     expect(exitedAfterCtrlC).toBe(true);
     expect(deployment.cancelPending).toHaveBeenCalledOnce();
+  });
+
+  it("cancels and exits when Ctrl-C is pressed during an update operation", async () => {
+    const terminal = new TestTerminal();
+    const deployment = operator();
+    deployment.checkForUpdates.mockResolvedValue({
+      cliVersion: "0.1.5",
+      coreVersion: "0.1.5",
+      latestVersion: "0.1.6",
+      cliUpdateAvailable: true,
+      coreUpdateAvailable: true
+    });
+    let finishUpdate: (() => void) | undefined;
+    deployment.update.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finishUpdate = () => resolve(undefined);
+        })
+    );
+    deployment.cancelPending.mockImplementation(() => finishUpdate?.());
+    let exited = false;
+    const update = createInteractiveCLI(terminal.input, terminal.output)
+      .runUpdate(deployment)
+      .then(() => {
+        exited = true;
+      });
+
+    await terminal.waitFor("Update CLI only");
+    terminal.write("\r");
+    await terminal.waitFor("REVIEW UPDATE");
+    terminal.write("\r");
+    await terminal.waitFor("Applying reviewed update...");
+    await vi.waitFor(() => expect(deployment.update).toHaveBeenCalledOnce());
+    process.emit("SIGINT", "SIGINT");
+    await vi.waitFor(() => expect(exited).toBe(true));
+    await update;
+
+    expect(deployment.cancelPending).toHaveBeenCalledOnce();
+    expect(terminal.text).not.toContain("Update complete");
   });
 
   it("offers initialization instead of configuration before first setup", async () => {
