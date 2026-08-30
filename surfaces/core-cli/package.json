@@ -1,7 +1,7 @@
 {
   "name": "atlas-core",
-  "version": "0.1.1",
-  "atlasCoreImage": "ghcr.io/the-drunken-coder/atlas-core@sha256:74461a0f8b81b1b2911731ac8563990709d134a64b5dfd005632100c01d6f168",
+  "version": "0.1.2",
+  "atlasCoreImage": "ghcr.io/the-drunken-coder/atlas-core@sha256:7069156f347c2268afae229b62c4910a2b42ca1a2ed00d640df149880ea10833",
   "description": "Install and operate a durable Atlas Core deployment with Docker Compose.",
   "author": "the-Drunken-coder",
   "license": "MIT",

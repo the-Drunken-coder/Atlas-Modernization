@@ -3,6 +3,17 @@
 Atlas Core release notes are listed newest first. The manual release workflow writes each new section from the
 verified commit history with OpenCode Go, then pauses for approval before publishing.
 
+## 0.1.2 - 2026-08-30
+
+### Added
+
+- `atlas-core reset` now provides an explicit, confirmation-gated way to permanently delete the Atlas Core containers, PostgreSQL and MinIO volumes, credentials, and state, then recreate empty storage and start the installed release.
+- To reset onto the newest release, install `atlas-core@latest` before running `atlas-core reset`.
+
+### Security
+
+- Reset verifies Atlas Core ownership labels and stops before deletion if either durable volume is used by an unknown container.
+
 ## 0.1.1 - 2026-08-29
 
 ### Fixed
