@@ -66,6 +66,11 @@ and available release before changing anything. Choose one of two update scopes:
   image, and restarts a running deployment against the existing PostgreSQL and MinIO volumes. A stopped deployment
   stays stopped.
 
+Core releases may carry schema migrations. Before a Core update, create and validate the paired PostgreSQL and MinIO
+backup described in the [deployment runbook](https://github.com/the-Drunken-coder/Atlas-Modernization/blob/main/services/core/docs/DEPLOYMENT_RUNBOOK.md#pre-deploy-backup).
+The menu review screen and `atlas-core update all` both require confirmation that a current paired backup exists.
+CLI-only updates do not require a deployment backup because they do not change the running Core or its stores.
+
 CLI-only updates may leave the CLI newer than the running Core. Status, logs, diagnostics, stop, reset, and the explicit
 update flow remain available in that state. Start and restart refuse to change Core implicitly and direct the operator
 to `atlas-core update all`.

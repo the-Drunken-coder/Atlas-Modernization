@@ -92,6 +92,7 @@ node -e '
 ' "$core_home/state.json"
 ATLAS_CORE_HOME="$core_home" "$cli" __apply-core-update 0.0.0 "$expected_image"
 test "$(node -p "require(process.argv[1]).packageVersion" "$core_home/state.json")" = "$version"
+test "$(docker container inspect --format '{{.Config.Image}}' atlas_core_production_api)" = "$expected_image"
 ATLAS_CORE_HOME="$core_home" "$cli" status
 docker volume inspect atlas_core_production_postgres_data >/dev/null
 docker volume inspect atlas_core_production_minio_data >/dev/null

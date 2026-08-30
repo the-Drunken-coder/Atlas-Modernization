@@ -298,8 +298,27 @@ describe("Atlas Core terminal UI", () => {
 
     await createInteractiveCLIForTerminal(terminal).runMenu(deployment);
 
-    expect(deployment.update).toHaveBeenCalledWith("all", "0.1.4");
+    expect(deployment.update).toHaveBeenCalledWith("all", "0.1.4", true);
     expect(terminal.output.join("")).toContain("PostgreSQL, MinIO, credentials, and configuration are preserved");
+    expect(terminal.output.join("")).toContain("paired PostgreSQL and MinIO backup exists");
+  });
+
+  it("labels a Core-only update without claiming the CLI will change", async () => {
+    const terminal = new FakeTerminal([enter(), enter(), enter()]);
+    const deployment = operator();
+    deployment.checkForUpdates.mockResolvedValue({
+      cliVersion: "0.1.3",
+      coreVersion: "0.1.2",
+      latestVersion: "0.1.3",
+      cliUpdateAvailable: false,
+      coreUpdateAvailable: true
+    });
+
+    await createInteractiveCLIForTerminal(terminal).runUpdate(deployment);
+
+    expect(terminal.output.join("")).toContain("Update Atlas Core");
+    expect(terminal.output.join("")).toContain("CLI stays at 0.1.3");
+    expect(deployment.update).toHaveBeenCalledWith("all", "0.1.3", true);
   });
 
   it("propagates an interactive update failure after showing the recovery message", async () => {

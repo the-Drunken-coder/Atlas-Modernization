@@ -12,7 +12,7 @@ import {
   writeFileSync
 } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import { PACKAGE_IMAGE, PACKAGE_NAME, PACKAGE_VERSION } from "./package-metadata.js";
@@ -121,6 +121,7 @@ export type CLIContext = {
   nodeVersion?: string;
   now?: () => Date;
   createSecret?: () => string;
+  confirmCoreUpdate?: (question: string) => Promise<boolean>;
   confirmReset?: (question: string) => Promise<boolean>;
   imageReference?: string;
   interactive?: InteractiveCLI;
@@ -229,6 +230,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   readonly #nodeVersion: string;
   readonly #now: () => Date;
   readonly #createSecret: () => string;
+  readonly #confirmCoreUpdate: (question: string) => Promise<boolean>;
   readonly #confirmReset: (question: string) => Promise<boolean>;
   readonly #imageReference: string | undefined;
 
@@ -248,6 +250,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     this.#nodeVersion = context.nodeVersion;
     this.#now = context.now;
     this.#createSecret = context.createSecret;
+    this.#confirmCoreUpdate = context.confirmCoreUpdate;
     this.#confirmReset = context.confirmReset;
     this.#imageReference = context.imageReference;
   }
@@ -477,23 +480,25 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       cliVersion: PACKAGE_VERSION,
       ...(state ? { coreVersion: state.packageVersion } : {}),
       latestVersion: release.version,
-      cliUpdateAvailable: compareVersions(PACKAGE_VERSION, release.version) < 0,
-      coreUpdateAvailable: state ? compareVersions(state.packageVersion, release.version) < 0 : false
+      cliUpdateAvailable: compareVersions(PACKAGE_VERSION, release.version, "installed CLI", "npm") < 0,
+      coreUpdateAvailable: state
+        ? compareVersions(state.packageVersion, release.version, "running Atlas Core", "npm") < 0
+        : false
     };
   }
 
-  async update(scope: UpdateScope, expectedVersion?: string): Promise<void> {
+  async update(scope: UpdateScope, expectedVersion?: string, coreBackupConfirmed = false): Promise<void> {
     const release = await this.#latestRelease();
     if (expectedVersion && release.version !== expectedVersion) {
       throw new Error(
         `npm latest changed from ${expectedVersion} to ${release.version} while the update menu was open. Review the update again.`
       );
     }
-    if (compareVersions(PACKAGE_VERSION, release.version) > 0) {
+    if (compareVersions(PACKAGE_VERSION, release.version, "installed CLI", "npm") > 0) {
       throw new Error(`Installed CLI ${PACKAGE_VERSION} is newer than npm's latest release ${release.version}.`);
     }
 
-    const updateCLI = compareVersions(PACKAGE_VERSION, release.version) < 0;
+    const updateCLI = compareVersions(PACKAGE_VERSION, release.version, "installed CLI", "npm") < 0;
     if (scope === "cli") {
       if (!updateCLI) {
         this.#stdout.write(`Atlas Core CLI ${PACKAGE_VERSION} is already current.\n`);
@@ -505,12 +510,13 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     }
 
     const state = this.#readInitializedStateIfPresent();
-    if (state && compareVersions(state.packageVersion, release.version) > 0) {
+    if (state && compareVersions(state.packageVersion, release.version, "running Atlas Core", "npm") > 0) {
       throw new Error(
         `Running Atlas Core ${state.packageVersion} is newer than npm's latest release ${release.version}.`
       );
     }
-    const updateCore = state !== undefined && compareVersions(state.packageVersion, release.version) < 0;
+    const updateCore =
+      state !== undefined && compareVersions(state.packageVersion, release.version, "running Atlas Core", "npm") < 0;
     if (!state) {
       if (updateCLI) await this.#installCLI(release.version);
       this.#stdout.write(
@@ -521,6 +527,15 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     if (!updateCLI && !updateCore) {
       this.#stdout.write(`Atlas Core CLI and deployment ${PACKAGE_VERSION} are already current.\n`);
       return;
+    }
+    if (updateCore && !coreBackupConfirmed) {
+      this.#stdout.write(
+        "Atlas Core updates may apply schema migrations. Create and validate a paired PostgreSQL and MinIO backup before continuing.\n"
+      );
+      if (!(await this.#confirmCoreUpdate("Confirm a current paired backup exists. Continue? [y/N] "))) {
+        this.#stdout.write("Atlas Core update cancelled.\n");
+        return;
+      }
     }
     if (updateCLI) {
       await this.#installCLI(release.version);
@@ -537,7 +552,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
         `Atlas Core changed from ${fromVersion} to ${state.packageVersion} before the update could start. Check status and retry.`
       );
     }
-    const comparison = compareVersions(fromVersion, PACKAGE_VERSION);
+    const comparison = compareVersions(fromVersion, PACKAGE_VERSION, "running Atlas Core", "installed CLI");
     if (comparison > 0) throw new Error(`Atlas Core refuses to downgrade from ${fromVersion} to ${PACKAGE_VERSION}.`);
     if (comparison === 0) {
       this.#stdout.write(`Atlas Core ${PACKAGE_VERSION} is already current.\n`);
@@ -1134,7 +1149,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     if (rootResult.status !== 0) throw commandFailure("npm root --global", rootResult);
     const globalRoot = oneLine(rootResult.stdout);
     if (!globalRoot) throw new Error("npm did not report its global package directory after the CLI update.");
-    const installedCLI = join(globalRoot, PACKAGE_NAME, "dist", "cli.js");
+    const installedCLI = resolveInstalledCLI(join(globalRoot, PACKAGE_NAME));
     const childEnvironment = { ...this.#env, ATLAS_CORE_HOME: this.#configDir };
     const versionResult = await this.#runner.run(process.execPath, [installedCLI, "version"], {
       env: childEnvironment
@@ -1338,6 +1353,7 @@ type RequiredRuntimeContext = {
   nodeVersion: string;
   now: () => Date;
   createSecret: () => string;
+  confirmCoreUpdate: (question: string) => Promise<boolean>;
   confirmReset: (question: string) => Promise<boolean>;
   imageReference: string | undefined;
   interactive: InteractiveCLI;
@@ -1471,13 +1487,14 @@ function defaultContext(context: CLIContext): RequiredRuntimeContext {
     nodeVersion: context.nodeVersion ?? process.versions.node,
     now: context.now ?? (() => new Date()),
     createSecret: context.createSecret ?? (() => randomBytes(32).toString("base64url")),
-    confirmReset: context.confirmReset ?? askForResetConfirmation,
+    confirmCoreUpdate: context.confirmCoreUpdate ?? askForConfirmation,
+    confirmReset: context.confirmReset ?? askForConfirmation,
     imageReference: context.imageReference ?? PACKAGE_IMAGE,
     interactive: context.interactive ?? createInteractiveCLI()
   };
 }
 
-async function askForResetConfirmation(question: string): Promise<boolean> {
+async function askForConfirmation(question: string): Promise<boolean> {
   const prompt = createInterface({ input: process.stdin, output: process.stdout });
   try {
     return await new Promise<boolean>((resolveConfirmation) => {
@@ -1649,7 +1666,7 @@ function parseNpmRelease(stdout: string): { version: string; image: string } {
   }
   const record = value as Record<string, unknown>;
   if (typeof record.version !== "string") throw new Error("npm did not return the latest Atlas Core version.");
-  validateVersion(record.version);
+  validateVersion(record.version, "npm");
   if (
     typeof record.atlasCoreImage !== "string" ||
     !/^ghcr\.io\/the-drunken-coder\/atlas-core@sha256:[0-9a-f]{64}$/u.test(record.atlasCoreImage)
@@ -1659,15 +1676,48 @@ function parseNpmRelease(stdout: string): { version: string; image: string } {
   return { version: record.version, image: record.atlasCoreImage };
 }
 
-function validateVersion(version: string): void {
+function resolveInstalledCLI(packageDirectory: string): string {
+  let value: unknown;
+  try {
+    value = JSON.parse(readFileSync(join(packageDirectory, "package.json"), "utf8"));
+  } catch {
+    throw new Error(`npm installed Atlas Core without readable package metadata at ${packageDirectory}.`);
+  }
+  if (typeof value !== "object" || value === null) {
+    throw new Error("The installed Atlas Core package metadata is invalid.");
+  }
+  const bin = (value as Record<string, unknown>).bin;
+  const entry =
+    typeof bin === "string"
+      ? bin
+      : typeof bin === "object" && bin !== null
+        ? (bin as Record<string, unknown>)[PACKAGE_NAME]
+        : undefined;
+  if (typeof entry !== "string" || entry.length === 0) {
+    throw new Error(`The installed Atlas Core package does not define its ${PACKAGE_NAME} executable.`);
+  }
+  const installedCLI = resolve(packageDirectory, entry);
+  const relativeEntry = relative(packageDirectory, installedCLI);
+  if (
+    relativeEntry === "" ||
+    relativeEntry === ".." ||
+    relativeEntry.startsWith(`..${sep}`) ||
+    isAbsolute(relativeEntry)
+  ) {
+    throw new Error("The installed Atlas Core package executable points outside its package directory.");
+  }
+  return installedCLI;
+}
+
+function validateVersion(version: string, source: string): void {
   if (!/^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/u.test(version)) {
-    throw new Error(`npm returned an invalid Atlas Core version: ${version}`);
+    throw new Error(`${source} has an invalid Atlas Core version: ${version}`);
   }
 }
 
-function compareVersions(left: string, right: string): number {
-  validateVersion(left);
-  validateVersion(right);
+function compareVersions(left: string, right: string, leftSource: string, rightSource: string): number {
+  validateVersion(left, leftSource);
+  validateVersion(right, rightSource);
   const leftParts = left.split(".").map(Number);
   const rightParts = right.split(".").map(Number);
   for (let index = 0; index < 3; index += 1) {

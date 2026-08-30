@@ -58,7 +58,7 @@ export type AtlasCoreOperator = {
   start(): Promise<void>;
   status(): Promise<boolean>;
   stop(): Promise<void>;
-  update(scope: UpdateScope, expectedVersion?: string): Promise<void>;
+  update(scope: UpdateScope, expectedVersion?: string, coreBackupConfirmed?: boolean): Promise<void>;
 };
 
 export type InteractiveCLI = {
@@ -615,7 +615,10 @@ async function runUpdateMenu(operator: AtlasCoreOperator, terminal: TerminalIO):
   const choices: Array<{ label: string; scope: UpdateScope }> = [];
   if (info.cliUpdateAvailable) choices.push({ label: "Update CLI only", scope: "cli" });
   if (info.coreVersion && (info.cliUpdateAvailable || info.coreUpdateAvailable)) {
-    choices.push({ label: "Update CLI + Atlas Core", scope: "all" });
+    choices.push({
+      label: info.cliUpdateAvailable ? "Update CLI + Atlas Core" : "Update Atlas Core",
+      scope: "all"
+    });
   }
   let selected = 0;
   while (true) {
@@ -678,10 +681,17 @@ async function confirmUpdate(terminal: TerminalIO, info: UpdateInfo, scope: Upda
     terminal.write(`Atlas Core stays at ${info.coreVersion ?? "not initialized"}.\n\n`);
     terminal.write(`${wrap("The current process exits after npm installs the CLI.", width).join("\n")}\n`);
   } else {
-    terminal.write(`CLI ${info.cliVersion} → ${info.latestVersion}\n`);
+    terminal.write(
+      info.cliUpdateAvailable
+        ? `CLI ${info.cliVersion} → ${info.latestVersion}\n`
+        : `CLI stays at ${info.cliVersion}.\n`
+    );
     terminal.write(`Atlas Core ${info.coreVersion} → ${info.latestVersion}\n\n`);
     terminal.write(
       `${wrap("PostgreSQL, MinIO, credentials, and configuration are preserved. Atlas Core restarts after the image pull.", width).join("\n")}\n`
+    );
+    terminal.write(
+      `\n${YELLOW}${wrap("Continuing confirms that a current paired PostgreSQL and MinIO backup exists.", width).join("\n")}${RESET_STYLE}\n`
     );
   }
   terminal.write(`\n${DIM}${wrap("Enter update   Esc back", width).join("\n")}${RESET_STYLE}`);
@@ -702,7 +712,7 @@ async function applyUpdate(
   terminal.close();
   let failure: { error: unknown } | undefined;
   try {
-    await operator.update(scope, expectedVersion);
+    await operator.update(scope, expectedVersion, scope === "all");
   } catch (error) {
     failure = { error };
     terminal.write(`\n${RED}${errorMessage(error)}${RESET_STYLE}\n`);

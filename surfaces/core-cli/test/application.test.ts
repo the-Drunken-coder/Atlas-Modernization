@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { type CLIContext, type CommandRunner, runCLI } from "../src/application.js";
-import { PACKAGE_VERSION } from "../src/package-metadata.js";
+import { PACKAGE_NAME, PACKAGE_VERSION } from "../src/package-metadata.js";
 import type { DeploymentDetails } from "../src/terminal-ui.js";
 
 const TEST_IMAGE = `ghcr.io/the-drunken-coder/atlas-core@sha256:${"a".repeat(64)}`;
@@ -44,6 +44,7 @@ class FakeRunner implements CommandRunner {
   contextHost = "unix:///var/run/docker.sock";
   dockerArchitecture = "arm64";
   dockerOperatingSystem = "linux";
+  globalRoot = "";
   latestVersion = PACKAGE_VERSION;
   latestImage = TEST_IMAGE;
   installedVersion = PACKAGE_VERSION;
@@ -73,7 +74,7 @@ class FakeRunner implements CommandRunner {
       return result(0);
     }
     if (command === "npm" && args[0] === "root" && args[1] === "--global") {
-      return result(0, "/fake/npm-global/lib/node_modules\n");
+      return result(0, `${this.globalRoot}\n`);
     }
     if (command === process.execPath && args.at(-1) === "version") {
       return result(0, `atlas-core ${this.installedVersion}\n`);
@@ -233,6 +234,13 @@ function runtime(): TestRuntime {
   const home = mkdtempSync(join(tmpdir(), "atlas-core-test-"));
   temporaryDirectories.push(home);
   const runner = new FakeRunner();
+  runner.globalRoot = join(home, "npm-global", "lib", "node_modules");
+  const installedPackage = join(runner.globalRoot, PACKAGE_NAME);
+  mkdirSync(installedPackage, { recursive: true });
+  writeFileSync(
+    join(installedPackage, "package.json"),
+    `${JSON.stringify({ bin: { [PACKAGE_NAME]: "./dist/cli.js" } })}\n`
+  );
   const stdout: string[] = [];
   const stderr: string[] = [];
   let secret = 0;
@@ -252,6 +260,7 @@ function runtime(): TestRuntime {
       nodeVersion: "24.19.0",
       now: () => new Date("2026-08-28T12:00:00.000Z"),
       createSecret: () => `secret-${++secret}-abcdefghijklmnopqrstuvwxyz`,
+      confirmCoreUpdate: async () => false,
       confirmReset: async () => false,
       imageReference: TEST_IMAGE
     }
@@ -991,10 +1000,31 @@ describe("atlas-core CLI", () => {
     expect(test.runner.installedVersion).toBe("0.1.4");
   });
 
+  it("identifies an invalid npm release version", async () => {
+    const test = runtime();
+    test.runner.latestVersion = "next";
+
+    expect(await runCLI(["update", "cli"], test.context)).toBe(1);
+    expect(test.stderr.join("")).toContain("npm has an invalid Atlas Core version: next");
+  });
+
+  it("cancels a Core update without a confirmed paired backup", async () => {
+    const test = runtime();
+    markInitialized(test);
+    test.runner.latestVersion = "0.1.4";
+
+    expect(await runCLI(["update", "all"], test.context)).toBe(0);
+    expect(test.stdout.join("")).toContain("paired PostgreSQL and MinIO backup");
+    expect(test.stdout.join("")).toContain("Atlas Core update cancelled");
+    expect(test.runner.installedVersion).toBe(PACKAGE_VERSION);
+    expect(test.runner.calls.some((call) => composeCommand(call)[0] === "down")).toBe(false);
+  });
+
   it("uses the newly installed CLI to update Core", async () => {
     const test = runtime();
     markInitialized(test);
     test.runner.latestVersion = "0.1.4";
+    test.context.confirmCoreUpdate = async () => true;
 
     expect(await runCLI(["update", "all"], test.context)).toBe(0);
     expect(test.runner.installedVersion).toBe("0.1.4");
@@ -1002,7 +1032,7 @@ describe("atlas-core CLI", () => {
       expect.objectContaining({
         command: process.execPath,
         args: [
-          "/fake/npm-global/lib/node_modules/atlas-core/dist/cli.js",
+          join(test.runner.globalRoot, PACKAGE_NAME, "dist", "cli.js"),
           "__apply-core-update",
           PACKAGE_VERSION,
           TEST_IMAGE
@@ -1012,10 +1042,22 @@ describe("atlas-core CLI", () => {
     );
   });
 
+  it("reports a failure from the newly installed Core updater", async () => {
+    const test = runtime();
+    markInitialized(test);
+    test.runner.latestVersion = "0.1.4";
+    test.runner.failInstalledCoreUpdate = true;
+    test.context.confirmCoreUpdate = async () => true;
+
+    expect(await runCLI(["update", "all"], test.context)).toBe(1);
+    expect(test.stderr.join("")).toContain("injected installed update failure");
+  });
+
   it("updates Core in place and advances state only after it is healthy", async () => {
     const test = runtime();
     markInitialized(test);
     setCoreVersion(test, "0.1.2");
+    test.context.confirmCoreUpdate = async () => true;
 
     expect(await runCLI(["update", "all"], test.context)).toBe(0);
     expect(test.runner.calls.map(composeCommand).filter((args) => args.length > 0)).toContainEqual(["pull"]);
@@ -1042,6 +1084,7 @@ describe("atlas-core CLI", () => {
     markInitialized(test);
     setCoreVersion(test, "0.1.2");
     test.runner.latestImage = `ghcr.io/the-drunken-coder/atlas-core@sha256:${"b".repeat(64)}`;
+    test.context.confirmCoreUpdate = async () => true;
 
     expect(await runCLI(["update", "all"], test.context)).toBe(1);
     expect(test.stderr.join("")).toContain("pins");
@@ -1051,11 +1094,21 @@ describe("atlas-core CLI", () => {
     );
   });
 
+  it("identifies an invalid recorded Core version", async () => {
+    const test = runtime();
+    markInitialized(test);
+    setCoreVersion(test, "legacy");
+
+    expect(await runCLI(["update", "all"], test.context)).toBe(1);
+    expect(test.stderr.join("")).toContain("running Atlas Core has an invalid Atlas Core version: legacy");
+  });
+
   it("does not advance Core state when the updated deployment fails health checks", async () => {
     const test = runtime();
     markInitialized(test);
     setCoreVersion(test, "0.1.2");
     test.runner.failComposeUp = true;
+    test.context.confirmCoreUpdate = async () => true;
 
     expect(await runCLI(["update", "all"], test.context)).toBe(1);
     expect(JSON.parse(readFileSync(join(test.home, ".atlas", "core", "state.json"), "utf8")).packageVersion).toBe(
@@ -1070,6 +1123,7 @@ describe("atlas-core CLI", () => {
     markInitialized(test);
     setCoreVersion(test, "0.1.2");
     test.runner.serviceStates = [];
+    test.context.confirmCoreUpdate = async () => true;
 
     expect(await runCLI(["update", "all"], test.context)).toBe(0);
     const composeCalls = test.runner.calls.map(composeCommand).filter((args) => args.length > 0);
