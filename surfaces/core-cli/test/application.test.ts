@@ -1077,6 +1077,11 @@ describe("atlas-core CLI", () => {
     markInitialized(test);
     setCoreVersion(test, "0.1.2");
     test.context.confirmCoreUpdate = async () => true;
+    const envPath = join(test.home, ".atlas", "core", ".env");
+    const configuredEnvironment = readFileSync(envPath, "utf8")
+      .replace("ATLAS_PLUGINS=[]", 'ATLAS_PLUGINS=[{"id":"reference","base_url":"http://reference:8080"}]')
+      .replace("ATLAS_SOURCE_GATEWAY_CONFIG_FILE=", "ATLAS_SOURCE_GATEWAY_CONFIG_FILE=/etc/atlas/gateway.json");
+    writeFileSync(envPath, configuredEnvironment, { mode: 0o600 });
 
     expect(await runCLI(["update", "all"], test.context)).toBe(0);
     expect(test.runner.calls.map(composeCommand).filter((args) => args.length > 0)).toContainEqual(["pull"]);
@@ -1096,6 +1101,7 @@ describe("atlas-core CLI", () => {
     expect(test.runner.existingVolumes).toContain("atlas_core_production_postgres_data");
     expect(test.runner.existingVolumes).toContain("atlas_core_production_minio_data");
     expect(test.runner.calls.some((call) => call.args[0] === "volume" && call.args[1] === "rm")).toBe(false);
+    expect(readFileSync(envPath, "utf8")).toBe(configuredEnvironment);
   });
 
   it("refuses a Core update when the installed package pins another image", async () => {

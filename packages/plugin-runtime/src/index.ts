@@ -418,7 +418,9 @@ function requireIdentifier(subject: string, value: string): void {
 }
 
 function requireDisplayName(subject: string, value: string): void {
-  if (!value.trim()) throw new TypeError(`${subject} display name must not be empty`);
+  const trimmed = value.trim();
+  if (!trimmed) throw new TypeError(`${subject} display name must not be empty`);
+  if ([...trimmed].length > 100) throw new TypeError(`${subject} display name must be no more than 100 characters`);
 }
 
 function readGatewayFailure(value: unknown): SourceGatewayFailureCode {

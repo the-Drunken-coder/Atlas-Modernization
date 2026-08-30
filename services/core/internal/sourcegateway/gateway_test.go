@@ -126,6 +126,35 @@ func TestGatewayHandlerMapsFailuresAndCachesSafeResponses(t *testing.T) {
 	}
 }
 
+func TestGatewayDoesNotCacheAnExhaustedRetryStatus(t *testing.T) {
+	var calls atomic.Int32
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		status := http.StatusServiceUnavailable
+		body := "retry"
+		if calls.Add(1) > 2 {
+			status = http.StatusOK
+			body = "recovered"
+		}
+		return &http.Response{StatusCode: status, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}, nil
+	})}
+	config := testConnectorConfig()
+	config.Routes[0].Cache.TTLMS = 10_000
+	config.Routes[0].Retry = RetryRule{MaxRetries: 1, Statuses: []int{http.StatusServiceUnavailable}}
+	gateway, err := New(Config{Connectors: []ConnectorConfig{config}}, Options{Client: client})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := ConnectorRequest{Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{}}
+	response, attempts, cacheResult, failure := gateway.execute(context.Background(), gateway.connectors["reference"], request)
+	if failure != nil || attempts != 2 || response.Status != http.StatusServiceUnavailable || cacheResult != "miss" {
+		t.Fatalf("unexpected exhausted retry response=%+v attempts=%d cache=%s failure=%v", response, attempts, cacheResult, failure)
+	}
+	response, _, cacheResult, failure = gateway.execute(context.Background(), gateway.connectors["reference"], request)
+	if failure != nil || response.Status != http.StatusOK || cacheResult != "stored" || calls.Load() != 3 {
+		t.Fatalf("recovery response=%+v cache=%s calls=%d failure=%v", response, cacheResult, calls.Load(), failure)
+	}
+}
+
 func TestGatewayBoundsRetriesCircuitAndCancellation(t *testing.T) {
 	var calls atomic.Int32
 	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
@@ -178,6 +207,32 @@ func TestAddressPolicyRejectsPrivateLoopbackAndLinkLocalByDefault(t *testing.T) 
 		!addressAllowed(netip.MustParseAddr("100.64.0.1"), EgressPolicy{AllowPrivate: true}) ||
 		!addressAllowed(netip.MustParseAddr("169.254.1.1"), EgressPolicy{AllowLinkLocal: true}) {
 		t.Fatal("explicit egress allowances were not honored")
+	}
+}
+
+func TestAddressPolicyClassifiesIPv4TranslationDestinations(t *testing.T) {
+	for _, address := range []string{
+		"64:ff9b::7f00:1",
+		"64:ff9b::a00:1",
+		"64:ff9b::a9fe:a9fe",
+		"64:ff9b:1::7f00:1",
+	} {
+		if addressAllowed(netip.MustParseAddr(address), EgressPolicy{}) {
+			t.Fatalf("expected translated address %s to be rejected", address)
+		}
+	}
+	if !addressAllowed(netip.MustParseAddr("64:ff9b::808:808"), EgressPolicy{}) {
+		t.Fatal("expected a translated public address to be allowed")
+	}
+	if !addressAllowed(netip.MustParseAddr("64:ff9b::7f00:1"), EgressPolicy{AllowLoopback: true}) ||
+		!addressAllowed(netip.MustParseAddr("64:ff9b::a00:1"), EgressPolicy{AllowPrivate: true}) ||
+		!addressAllowed(netip.MustParseAddr("64:ff9b::a9fe:a9fe"), EgressPolicy{AllowLinkLocal: true}) {
+		t.Fatal("translated destinations did not honor explicit egress allowances")
+	}
+	if addressAllowed(netip.MustParseAddr("64:ff9b:1::808:808"), EgressPolicy{
+		AllowPrivate: true, AllowLoopback: true, AllowLinkLocal: true,
+	}) {
+		t.Fatal("expected an ambiguous local-use translation address to be rejected")
 	}
 }
 

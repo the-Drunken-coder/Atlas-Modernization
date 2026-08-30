@@ -48,6 +48,23 @@ describe("Atlas Plugin runtime", () => {
     expect(() => definePlugin({ pluginId: "bad-id", displayName: "Bad", operations: {} })).toThrow(TypeError);
   });
 
+  it("enforces Protocol display-name lengths by Unicode code point", () => {
+    const operation = { displayName: "x".repeat(100), timeoutMs: 1000, handler: () => null };
+    expect(() =>
+      definePlugin({ pluginId: "reference", displayName: "😀".repeat(100), operations: { inspect_fixture: operation } })
+    ).not.toThrow();
+    expect(() =>
+      definePlugin({ pluginId: "reference", displayName: "😀".repeat(101), operations: { inspect_fixture: operation } })
+    ).toThrow("Plugin display name must be no more than 100 characters");
+    expect(() =>
+      definePlugin({
+        pluginId: "reference",
+        displayName: "Reference",
+        operations: { inspect_fixture: { ...operation, displayName: "x".repeat(101) } }
+      })
+    ).toThrow("Operation inspect_fixture display name must be no more than 100 characters");
+  });
+
   it("serves manifest, health, results, and typed private errors", async () => {
     const plugin = definePlugin({
       pluginId: "reference",

@@ -223,7 +223,9 @@ export class HttpTransport {
     const timeout = setTimeout(() => controller.abort(), this.requestTimeoutMs);
     const requestSignal = signal ? AbortSignal.any([controller.signal, signal]) : controller.signal;
     try {
-      return await operation(requestSignal);
+      const result = await operation(requestSignal);
+      requestSignal.throwIfAborted();
+      return result;
     } catch (error) {
       if (signal?.aborted && requestSignal.reason === signal.reason) {
         throw signal.reason;

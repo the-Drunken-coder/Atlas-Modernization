@@ -170,6 +170,15 @@ func addressAllowed(address netip.Addr, policy EgressPolicy) bool {
 	if !address.IsValid() || address.IsUnspecified() || address.IsMulticast() {
 		return false
 	}
+	if wellKnownIPv4TranslationPrefix.Contains(address) {
+		bits := address.As16()
+		return addressAllowed(netip.AddrFrom4([4]byte{bits[12], bits[13], bits[14], bits[15]}), policy)
+	}
+	// The local-use /48 permits multiple embedding prefix lengths. Without the
+	// connector's translation prefix, the embedded IPv4 destination is ambiguous.
+	if localIPv4TranslationPrefix.Contains(address) {
+		return false
+	}
 	if address.IsLoopback() {
 		return policy.AllowLoopback
 	}
@@ -181,6 +190,11 @@ func addressAllowed(address netip.Addr, policy EgressPolicy) bool {
 	}
 	return true
 }
+
+var (
+	wellKnownIPv4TranslationPrefix = netip.MustParsePrefix("64:ff9b::/96")
+	localIPv4TranslationPrefix     = netip.MustParsePrefix("64:ff9b:1::/48")
+)
 
 var specialNonPublicPrefixes = []netip.Prefix{
 	netip.MustParsePrefix("0.0.0.0/8"),
@@ -305,13 +319,18 @@ func (g *Gateway) execute(ctx context.Context, connector *connector, input Conne
 		response, failure := connector.attempt(requestContext, prepared, rule)
 		if failure == nil {
 			connector.recordReachable()
-			if attempt < maxAttempts && retryStatus(rule.Retry.Statuses, response.Status) {
+			retryable := retryStatus(rule.Retry.Statuses, response.Status)
+			if attempt < maxAttempts && retryable {
 				continue
 			}
-			if rule.Cache.TTLMS > 0 {
+			cacheResult := "bypass"
+			if rule.Cache.TTLMS > 0 && !retryable {
 				g.cache.put(key, response, g.now().Add(time.Duration(rule.Cache.TTLMS)*time.Millisecond))
+				cacheResult = "stored"
+			} else if rule.Cache.TTLMS > 0 {
+				cacheResult = "miss"
 			}
-			return response, attempt, cacheOutcome(rule.Cache.TTLMS), nil
+			return response, attempt, cacheResult, nil
 		}
 		if requestContext.Err() != nil {
 			return ConnectorResponse{}, attempt, "miss", timeoutOrCancellation(requestContext)
@@ -581,13 +600,6 @@ func containsHeader(headers []HeaderTuple, name string) bool {
 		}
 	}
 	return false
-}
-
-func cacheOutcome(ttl int64) string {
-	if ttl > 0 {
-		return "stored"
-	}
-	return "bypass"
 }
 
 func requestCacheKey(connectorID string, request preparedRequest) string {
