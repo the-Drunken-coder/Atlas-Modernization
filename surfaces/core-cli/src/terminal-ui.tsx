@@ -414,6 +414,7 @@ function MainMenu({ onSelect, snapshot }: { onSelect(action: Action): void; snap
   const { columns, rows } = useWindowSize();
   const actions = useMemo(() => menuActions(snapshot), [snapshot]);
   const actionPending = useRef(false);
+  const filterRef = useRef("");
   const selectedRef = useRef(0);
   const [filter, setFilter] = useState("");
   const [selected, setSelected] = useState(0);
@@ -432,31 +433,34 @@ function MainMenu({ onSelect, snapshot }: { onSelect(action: Action): void; snap
   useInput((input, key) => {
     if (actionPending.current) return;
     const modified = hasCommandModifier(key);
-    if ((key.ctrl && input === "c") || key.escape || (!modified && input === "q" && filter === "")) {
+    if ((key.ctrl && input === "c") || key.escape || (!modified && input === "q" && filterRef.current === "")) {
       exit();
       return;
     }
     if (!canInteract || modified) return;
+    const currentFiltered = filteredActions(actions, filterRef.current);
     if (key.upArrow) {
-      const next = filtered.length === 0 ? 0 : (selectedRef.current - 1 + filtered.length) % filtered.length;
+      const next =
+        currentFiltered.length === 0 ? 0 : (selectedRef.current - 1 + currentFiltered.length) % currentFiltered.length;
       selectedRef.current = next;
       setSelected(next);
       return;
     }
     if (key.downArrow) {
-      const next = filtered.length === 0 ? 0 : (selectedRef.current + 1) % filtered.length;
+      const next = currentFiltered.length === 0 ? 0 : (selectedRef.current + 1) % currentFiltered.length;
       selectedRef.current = next;
       setSelected(next);
       return;
     }
     if (key.backspace || key.delete) {
-      setFilter((value) => Array.from(value).slice(0, -1).join(""));
+      filterRef.current = Array.from(filterRef.current).slice(0, -1).join("");
+      setFilter(filterRef.current);
       selectedRef.current = 0;
       setSelected(0);
       return;
     }
     if (key.return) {
-      const action = filtered[Math.min(selectedRef.current, Math.max(0, filtered.length - 1))];
+      const action = currentFiltered[Math.min(selectedRef.current, Math.max(0, currentFiltered.length - 1))];
       if (action) {
         actionPending.current = true;
         onSelect(action);
@@ -464,7 +468,8 @@ function MainMenu({ onSelect, snapshot }: { onSelect(action: Action): void; snap
       return;
     }
     if (isPrintableInput(input, key)) {
-      setFilter((value) => value + input);
+      filterRef.current += input;
+      setFilter(filterRef.current);
       selectedRef.current = 0;
       setSelected(0);
     }
@@ -474,7 +479,8 @@ function MainMenu({ onSelect, snapshot }: { onSelect(action: Action): void; snap
       if (actionPending.current) return;
       const printable = printableText(value);
       if (printable) {
-        setFilter((current) => current + printable);
+        filterRef.current += printable;
+        setFilter(filterRef.current);
         selectedRef.current = 0;
         setSelected(0);
       }
@@ -615,6 +621,7 @@ function StatusScreen({
 }): ReactNode {
   const { columns, rows } = useWindowSize();
   const actionPending = useRef(false);
+  const selectedRef = useRef(0);
   const [selected, setSelected] = useState(0);
   const services = view instanceof Error ? [] : view.services;
   const index = Math.min(selected, Math.max(0, services.length - 1));
@@ -637,11 +644,15 @@ function StatusScreen({
       actionPending.current = true;
       onDiagnostics();
     } else if ((key.leftArrow || key.upArrow) && services.length > 0) {
-      setSelected((index - 1 + services.length) % services.length);
+      const next = (Math.min(selectedRef.current, services.length - 1) - 1 + services.length) % services.length;
+      selectedRef.current = next;
+      setSelected(next);
     } else if ((key.rightArrow || key.downArrow) && services.length > 0) {
-      setSelected((index + 1) % services.length);
+      const next = (Math.min(selectedRef.current, services.length - 1) + 1) % services.length;
+      selectedRef.current = next;
+      setSelected(next);
     } else if (input === "l") {
-      const service = services[index];
+      const service = services[Math.min(selectedRef.current, Math.max(0, services.length - 1))];
       if (service) {
         actionPending.current = true;
         onLogs(service.id);
@@ -907,29 +918,35 @@ function SimpleMenu({
 function PasswordScreen({ onCancel, onSubmit }: { onCancel(): void; onSubmit(password: string): void }): ReactNode {
   const { columns } = useWindowSize();
   const actionPending = useRef(false);
+  const confirmationRef = useRef(false);
+  const passwordRef = useRef("");
+  const valueRef = useRef("");
   const [confirmation, setConfirmation] = useState(false);
   const [error, setError] = useState<string>();
-  const [password, setPassword] = useState("");
   const [value, setValue] = useState("");
   const canInteract = columns >= MINIMUM_TERMINAL_COLUMNS;
 
   const submit = (): void => {
-    if (!confirmation) {
-      setPassword(value);
+    if (!confirmationRef.current) {
+      passwordRef.current = valueRef.current;
+      valueRef.current = "";
       setValue("");
+      confirmationRef.current = true;
       setConfirmation(true);
       setError(undefined);
       return;
     }
-    if (value !== password) {
+    if (valueRef.current !== passwordRef.current) {
       setError("Passwords did not match. The admin password was not changed.");
-      setPassword("");
+      passwordRef.current = "";
+      valueRef.current = "";
       setValue("");
+      confirmationRef.current = false;
       setConfirmation(false);
       return;
     }
     actionPending.current = true;
-    onSubmit(password);
+    onSubmit(passwordRef.current);
   };
 
   useInput((input, key) => {
@@ -939,12 +956,20 @@ function PasswordScreen({ onCancel, onSubmit }: { onCancel(): void; onSubmit(pas
       onCancel();
     } else if (!canInteract || hasCommandModifier(key)) return;
     else if (key.return) submit();
-    else if (key.backspace || key.delete) setValue((current) => Array.from(current).slice(0, -1).join(""));
-    else if (isPrintableInput(input, key)) setValue((current) => current + input);
+    else if (key.backspace || key.delete) {
+      const next = Array.from(valueRef.current).slice(0, -1).join("");
+      valueRef.current = next;
+      setValue(next);
+    } else if (isPrintableInput(input, key)) {
+      valueRef.current += input;
+      setValue(valueRef.current);
+    }
   });
   usePaste(
     (pasted) => {
-      if (!actionPending.current) setValue((current) => current + printableText(pasted));
+      if (actionPending.current) return;
+      valueRef.current += printableText(pasted);
+      setValue(valueRef.current);
     },
     { isActive: canInteract }
   );

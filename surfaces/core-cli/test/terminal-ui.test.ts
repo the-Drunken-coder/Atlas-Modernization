@@ -283,6 +283,26 @@ describe("Atlas Core terminal UI", () => {
     expect(deployment.details).toHaveBeenCalledOnce();
   });
 
+  it("opens logs for the status service selected in the same input chunk", async () => {
+    const terminal = new TestTerminal();
+    const deployment = operator();
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("View status");
+    terminal.write("\r");
+    await terminal.waitFor("Network I/O");
+    terminal.write("\u001b[Cl");
+    await terminal.waitFor("Press Enter to return to Atlas Core.");
+    terminal.write("\r");
+    await vi.waitFor(() => expect(deployment.details).toHaveBeenCalledTimes(2));
+    terminal.write("\r");
+    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
+    terminal.write("q");
+    await menu;
+
+    expect(deployment.logs).toHaveBeenCalledWith("postgres", false);
+  });
+
   it("dispatches only one action when Enter repeats before the screen changes", async () => {
     const terminal = new TestTerminal();
     const deployment = operator();
@@ -349,9 +369,7 @@ describe("Atlas Core terminal UI", () => {
     const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
 
     await terminal.waitFor("View logs");
-    terminal.write("logs");
-    await terminal.waitFor("Filter: logs");
-    terminal.write("\r");
+    terminal.write("logs\u001b[13u");
     await terminal.waitFor("All services");
     terminal.write("\r");
     await terminal.waitFor("Press Enter to return to Atlas Core.");
@@ -513,6 +531,23 @@ describe("Atlas Core terminal UI", () => {
 
     expect(deployment.configureAdminPassword).toHaveBeenCalledWith(password);
     expect(terminal.text).not.toContain(password);
+  });
+
+  it("captures password text submitted in the same input chunk", async () => {
+    const terminal = new TestTerminal();
+    const deployment = operator();
+    const password = "correct-horse-battery-staple";
+    const configuration = createInteractiveCLI(terminal.input, terminal.output).configureAdmin(deployment);
+
+    await terminal.waitFor("New password");
+    terminal.write(`${password}\u001b[13u`);
+    await terminal.waitFor("Confirm password");
+    terminal.write(`${password}\u001b[13u`);
+    await terminal.waitFor("Press Enter to return to Atlas Core.");
+    terminal.write("\r");
+    await configuration;
+
+    expect(deployment.configureAdminPassword).toHaveBeenCalledWith(password);
   });
 
   it("submits the admin password once when confirmation Enter repeats", async () => {
