@@ -87,6 +87,7 @@ WORKDIR /app
 
 # Copy binary from builder
 COPY --from=builder /app/atlas_core .
+COPY --from=builder /app/atlas_source_gateway .
 COPY services/core/docker/production-entrypoint.sh ./production-entrypoint.sh
 
 # Change ownership to app user

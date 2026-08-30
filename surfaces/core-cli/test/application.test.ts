@@ -59,6 +59,7 @@ class FakeRunner implements CommandRunner {
   installedVersion = PACKAGE_VERSION;
   serviceStates = [
     { Service: "api", State: "running", Health: "healthy" },
+    { Service: "source-gateway", State: "running", Health: "healthy" },
     { Service: "minio", State: "running", Health: "healthy" },
     { Service: "postgres", State: "running", Health: "healthy" }
   ];
@@ -157,11 +158,13 @@ class FakeRunner implements CommandRunner {
       }
       const service = name.endsWith("_api")
         ? "api"
-        : name.endsWith("_postgres")
-          ? "postgres"
-          : name.endsWith("_minio_init")
-            ? "minio-init"
-            : "minio";
+        : name.endsWith("_source_gateway")
+          ? "source-gateway"
+          : name.endsWith("_postgres")
+            ? "postgres"
+            : name.endsWith("_minio_init")
+              ? "minio-init"
+              : "minio";
       if (
         args[args.indexOf("--format") + 1] === "{{json .Config.Image}}\t{{json .State.StartedAt}}\t{{.RestartCount}}"
       ) {
@@ -451,6 +454,8 @@ describe("atlas-core CLI", () => {
     expect(env).toContain("MINIO_ROOT_PASSWORD=secret-2-");
     expect(env).toContain("API_AUTH_KEY=secret-3-");
     expect(env).toContain("ATLAS_ADMIN_PASSWORD=secret-4-");
+    expect(env).toContain("ATLAS_PLUGINS=[]");
+    expect(env).toContain("ATLAS_SOURCE_GATEWAY_CONFIG_FILE=");
     expect(JSON.parse(readFileSync(join(config, "state.json"), "utf8"))).toEqual({
       schema: 1,
       phase: "ready",
@@ -673,6 +678,7 @@ describe("atlas-core CLI", () => {
     test.context.confirmReset = async (question) => question === "Continue? [y/N] ";
     const containers = [
       "atlas_core_production_api",
+      "atlas_core_production_source_gateway",
       "atlas_core_production_postgres",
       "atlas_core_production_minio",
       "atlas_core_production_minio_init"
@@ -790,6 +796,8 @@ describe("atlas-core CLI", () => {
       COMPOSE_FILE: "/tmp/attacker.yml",
       COMPOSE_IGNORE_ORPHANS: "1",
       COMPOSE_REMOVE_ORPHANS: "1",
+      ATLAS_PLUGINS: '[{"id":"caller","base_url":"http://caller:8080"}]',
+      ATLAS_SOURCE_GATEWAY_CONFIG_FILE: "/tmp/caller-gateway.json",
       POSTGRES_PASSWORD: "caller-postgres",
       MINIO_ROOT_PASSWORD: "caller-minio"
     };
@@ -799,6 +807,8 @@ describe("atlas-core CLI", () => {
     expect(up?.env.PATH).toBe("/usr/bin:/bin");
     expect(up?.env.POSTGRES_PASSWORD).toBeUndefined();
     expect(up?.env.MINIO_ROOT_PASSWORD).toBeUndefined();
+    expect(up?.env.ATLAS_PLUGINS).toBeUndefined();
+    expect(up?.env.ATLAS_SOURCE_GATEWAY_CONFIG_FILE).toBeUndefined();
     expect(up?.env.COMPOSE_FILE).toBeUndefined();
     expect(up?.env.COMPOSE_IGNORE_ORPHANS).toBe("0");
     expect(up?.env.COMPOSE_REMOVE_ORPHANS).toBe("0");
@@ -1195,6 +1205,14 @@ describe("atlas-core CLI", () => {
     expect(logs?.inherit).toBe(true);
   });
 
+  it("targets Source Gateway logs directly", async () => {
+    const test = runtime();
+    markInitialized(test);
+    expect(await runCLI(["logs", "source-gateway"], test.context)).toBe(0);
+    const logs = test.runner.calls.find((call) => composeCommand(call)[0] === "logs");
+    expect(logs && composeCommand(logs)).toEqual(["logs", "--tail", "200", "source-gateway"]);
+  });
+
   it("reports health and Docker performance for each service", async () => {
     const test = runtime();
     markInitialized(test);
@@ -1221,8 +1239,9 @@ describe("atlas-core CLI", () => {
           uptime: "4h 0m",
           restarts: 1
         },
-        { id: "postgres", cpuPercent: "2.00%" },
-        { id: "minio", cpuPercent: "3.00%" }
+        { id: "source-gateway", cpuPercent: "2.00%" },
+        { id: "postgres", cpuPercent: "3.00%" },
+        { id: "minio", cpuPercent: "4.00%" }
       ]
     });
   });
@@ -1253,6 +1272,14 @@ describe("atlas-core CLI", () => {
     test.runner.serviceStates = test.runner.serviceStates.filter((service) => service.Service !== "api");
     expect(await runCLI(["status"], test.context)).toBe(1);
     expect(test.stderr.join("")).toContain("api is missing");
+  });
+
+  it("returns unhealthy status when the Source Gateway is missing", async () => {
+    const test = runtime();
+    markInitialized(test);
+    test.runner.serviceStates = test.runner.serviceStates.filter((service) => service.Service !== "source-gateway");
+    expect(await runCLI(["status"], test.context)).toBe(1);
+    expect(test.stderr.join("")).toContain("source-gateway is missing");
   });
 
   it("returns unhealthy status when a running service fails its health check", async () => {

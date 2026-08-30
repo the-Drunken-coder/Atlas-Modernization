@@ -41,7 +41,7 @@ atlas-core reset
 atlas-core config
 atlas-core update [cli|all]
 atlas-core status
-atlas-core logs [core|postgres|minio] [--follow]
+atlas-core logs [core|source-gateway|postgres|minio] [--follow]
 atlas-core doctor
 atlas-core version
 ```
@@ -91,6 +91,11 @@ updates. Use `atlas-core update all` to move an existing deployment to the newes
 Reset lists what it will delete and asks `Continue? [y/N]`. It proceeds only after `y` or `yes`. Reset verifies
 ownership labels and stops before deleting anything if another container uses either durable volume. It does not remove
 separately managed tunnels, reverse proxies, or their credentials.
+
+The packaged deployment also starts the private Source Gateway from the same immutable Core image. Its committed
+configuration has no connectors, and Core starts with no configured Plugins. `ATLAS_PLUGINS` and
+`ATLAS_SOURCE_GATEWAY_CONFIG_FILE` remain deployment-file settings; the CLI does not add installation or connector
+configuration commands.
 
 The first release binds the Core API, PostgreSQL, and MinIO ports to loopback. It does not configure public ingress.
 Start, restart, and update require registry access and pull the release's digest-pinned image. Neither a locally

@@ -35,6 +35,7 @@ trap cleanup EXIT
 
 for resource in \
   atlas_core_production_api \
+  atlas_core_production_source_gateway \
   atlas_core_production_postgres \
   atlas_core_production_minio \
   atlas_core_production_minio_init; do

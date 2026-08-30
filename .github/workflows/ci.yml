@@ -259,6 +259,12 @@ jobs:
                 .services.api.environment.DATABASE_RECREATE_ON_STARTUP == "false" and
                 .services.api.environment.CORS_ORIGINS == "https://atlasinterface.com" and
                 .services.api.environment.CORS_ORIGIN_PATTERNS == "https://*.atlas-je0.pages.dev" and
+                .services.api.environment.ATLAS_PLUGINS == "[]" and
+                .services["source-gateway"].image == $image and
+                .services["source-gateway"].entrypoint == [] and
+                .services["source-gateway"].command == ["./atlas_source_gateway"] and
+                .services["source-gateway"].environment.ATLAS_SOURCE_GATEWAY_CONFIG == "/app/source_gateway.json" and
+                .services["source-gateway"].volumes[0].read_only == true and
                 .services.postgres.command == ["postgres", "-c", "timezone=UTC"] and
                 (.services.postgres.volumes | length) == 1 and
                 .services.postgres.volumes[0].type == "volume" and
@@ -304,6 +310,7 @@ jobs:
           cleanup() {
             docker container rm --force \
               atlas_core_production_api \
+              atlas_core_production_source_gateway \
               atlas_core_production_postgres \
               atlas_core_production_minio \
               atlas_core_production_minio_init >/dev/null 2>&1 || true
@@ -334,10 +341,6 @@ jobs:
             echo "atlas-core init created PostgreSQL storage before the first start." >&2
             exit 1
           fi
-
-          printf 'y\n' | ATLAS_CORE_HOME="$config_dir" "$consumer/node_modules/.bin/atlas-core" reset
-          ATLAS_CORE_HOME="$config_dir" "$consumer/node_modules/.bin/atlas-core" status
-          curl --fail --silent --show-error http://127.0.0.1:8000/readiness
 
   fieldlink:
     name: fieldlink

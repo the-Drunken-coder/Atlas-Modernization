@@ -31,16 +31,24 @@ const PROJECT_NAME = "atlas_core_production";
 const POSTGRES_VOLUME = `${PROJECT_NAME}_postgres_data`;
 const MINIO_VOLUME = `${PROJECT_NAME}_minio_data`;
 const API_CONTAINER = `${PROJECT_NAME}_api`;
+const SOURCE_GATEWAY_CONTAINER = `${PROJECT_NAME}_source_gateway`;
 const POSTGRES_CONTAINER = `${PROJECT_NAME}_postgres`;
 const MINIO_CONTAINER = `${PROJECT_NAME}_minio`;
 const MINIO_INIT_CONTAINER = `${PROJECT_NAME}_minio_init`;
 const INIT_LOCK_NETWORK = `${PROJECT_NAME}_init_lock`;
-const RESET_CONTAINERS = [API_CONTAINER, POSTGRES_CONTAINER, MINIO_CONTAINER, MINIO_INIT_CONTAINER] as const;
+const RESET_CONTAINERS = [
+  API_CONTAINER,
+  SOURCE_GATEWAY_CONTAINER,
+  POSTGRES_CONTAINER,
+  MINIO_CONTAINER,
+  MINIO_INIT_CONTAINER
+] as const;
 const RESET_VOLUMES = [POSTGRES_VOLUME, MINIO_VOLUME] as const;
 const RESET_CONTAINER_NAMES = new Set<string>(RESET_CONTAINERS);
-const REQUIRED_SERVICES = new Set(["api", "minio", "postgres"]);
+const REQUIRED_SERVICES = new Set(["api", "source-gateway", "minio", "postgres"]);
 const SERVICES = [
   { id: "api", label: "Core API", container: API_CONTAINER },
+  { id: "source-gateway", label: "Source Gateway", container: SOURCE_GATEWAY_CONTAINER },
   { id: "postgres", label: "PostgreSQL", container: POSTGRES_CONTAINER },
   { id: "minio", label: "MinIO", container: MINIO_CONTAINER }
 ] as const;
@@ -48,6 +56,8 @@ const COMPOSE_VARIABLES = [
   "API_AUTH_KEY",
   "ATLAS_ADMIN_PASSWORD",
   "ATLAS_CORE_IMAGE",
+  "ATLAS_PLUGINS",
+  "ATLAS_SOURCE_GATEWAY_CONFIG_FILE",
   "CORS_ORIGINS",
   "CORS_ORIGIN_PATTERNS",
   "DATABASE_MAX_OVERFLOW",
@@ -84,7 +94,7 @@ Usage:
   atlas-core config
   atlas-core update [cli|all]
   atlas-core status
-  atlas-core logs [core|postgres|minio] [--follow]
+  atlas-core logs [core|source-gateway|postgres|minio] [--follow]
   atlas-core doctor
   atlas-core version
   atlas-core help
@@ -132,7 +142,7 @@ type Command =
   | { kind: "config" }
   | { kind: "help" }
   | { kind: "init" }
-  | { kind: "logs"; service?: "api" | "minio" | "postgres"; follow: boolean }
+  | { kind: "logs"; service?: "api" | "minio" | "postgres" | "source-gateway"; follow: boolean }
   | { kind: "menu" }
   | { kind: "reset" }
   | { kind: "restart" }
@@ -712,7 +722,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     return errors.length > 0 ? { services, error: errors.join("; ") } : { services };
   }
 
-  async logs(service: "api" | "minio" | "postgres" | undefined, follow: boolean): Promise<void> {
+  async logs(service: "api" | "minio" | "postgres" | "source-gateway" | undefined, follow: boolean): Promise<void> {
     const state = this.#requireInitialized();
     const dockerEngineId = await this.#preflight();
     this.#assertStateMatchesEngine(state, dockerEngineId);
@@ -932,11 +942,13 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     const service =
       name === API_CONTAINER
         ? "api"
-        : name === POSTGRES_CONTAINER
-          ? "postgres"
-          : name === MINIO_INIT_CONTAINER
-            ? "minio-init"
-            : "minio";
+        : name === SOURCE_GATEWAY_CONTAINER
+          ? "source-gateway"
+          : name === POSTGRES_CONTAINER
+            ? "postgres"
+            : name === MINIO_INIT_CONTAINER
+              ? "minio-init"
+              : "minio";
     return await this.#ownedResourceExists("container", name, {
       "com.docker.compose.project": PROJECT_NAME,
       "com.docker.compose.service": service
@@ -1038,6 +1050,8 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       "MINIO_BUCKET=atlas-media",
       `API_AUTH_KEY=${this.#createSecret()}`,
       `ATLAS_ADMIN_PASSWORD=${this.#createSecret()}`,
+      "ATLAS_PLUGINS=[]",
+      "ATLAS_SOURCE_GATEWAY_CONFIG_FILE=",
       "CORS_ORIGINS=https://atlasinterface.com",
       "CORS_ORIGIN_PATTERNS=https://*.atlas-je0.pages.dev",
       "TRUSTED_PROXY_CIDRS=",
@@ -1458,7 +1472,7 @@ function parseCommand(argv: string[]): Command {
 }
 
 function parseLogs(args: string[]): Extract<Command, { kind: "logs" }> {
-  let service: "api" | "minio" | "postgres" | undefined;
+  let service: "api" | "minio" | "postgres" | "source-gateway" | undefined;
   let follow = false;
   for (const arg of args) {
     if (arg === "--follow" || arg === "-f") {
@@ -1467,7 +1481,7 @@ function parseLogs(args: string[]): Extract<Command, { kind: "logs" }> {
     }
     if (service) throw new UsageError("logs accepts at most one service");
     if (arg === "core" || arg === "api") service = "api";
-    else if (arg === "postgres" || arg === "minio") service = arg;
+    else if (arg === "postgres" || arg === "minio" || arg === "source-gateway") service = arg;
     else throw new UsageError(`Unknown logs service: ${arg}`);
   }
   return service === undefined ? { kind: "logs", follow } : { kind: "logs", service, follow };
@@ -1597,7 +1611,7 @@ function deploymentSnapshotFromServices(services: ComposeServiceState[]): Deploy
     return [];
   });
   if (failures.length > 0) return { status: "degraded", detail: failures.join(", ") };
-  return { status: "ready", detail: "Core API, PostgreSQL, and MinIO are running and healthy." };
+  return { status: "ready", detail: "Core API, Source Gateway, PostgreSQL, and MinIO are running and healthy." };
 }
 
 function parseDockerStats(stdout: string): DockerStats[] {

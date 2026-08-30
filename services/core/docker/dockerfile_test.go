@@ -112,6 +112,9 @@ func TestDockerfileKeepsAuthDisabledSettingsOutOfProductionImage(t *testing.T) {
 	if !strings.Contains(production, "COPY services/core/docker/production-entrypoint.sh ./production-entrypoint.sh") {
 		t.Fatal("production image should copy the fail-closed auth entrypoint")
 	}
+	if !strings.Contains(production, "COPY --from=builder /app/atlas_source_gateway .") {
+		t.Fatal("production image should include the Source Gateway binary for packaged Compose")
+	}
 	if !strings.Contains(production, `ENTRYPOINT ["./production-entrypoint.sh"]`) {
 		t.Fatal("production image should run the fail-closed auth entrypoint")
 	}
