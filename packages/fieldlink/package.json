@@ -29,15 +29,15 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@liamcottle/meshcore.js": "1.13.0",
+    "@liamcottle/meshcore.js": "1.15.0",
     "serialport": "13.0.0"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.9",
+    "@biomejs/biome": "2.5.10",
     "@types/node": "^24.10.1",
     "prettier": "^3.6.2",
     "tsx": "^4.20.6",
     "typescript": "^5.9.3",
-    "vitest": "^4.0.8"
+    "vitest": "^4.1.11"
   }
 }
