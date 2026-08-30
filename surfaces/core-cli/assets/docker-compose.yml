@@ -106,7 +106,7 @@ services:
       - -c
       - |
         set -e
-        mc alias set atlas http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" >/dev/null
+        mc alias set -- atlas http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" >/dev/null
         mc stat "atlas/$$MINIO_BUCKET" >/dev/null
         mc anonymous set none "atlas/$$MINIO_BUCKET"
         echo 'MinIO bucket verified successfully'

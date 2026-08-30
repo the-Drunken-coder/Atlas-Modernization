@@ -226,7 +226,9 @@ function composeFile(call: Call): string | undefined {
 function markInitialized(test: TestRuntime, started = true): void {
   const config = join(test.home, ".atlas", "core");
   mkdirSync(config, { recursive: true, mode: 0o700 });
-  writeFileSync(join(config, ".env"), "MINIO_BUCKET=atlas-media\n", { mode: 0o600 });
+  writeFileSync(join(config, ".env"), "MINIO_BUCKET=atlas-media\nATLAS_ADMIN_PASSWORD='original-admin-password'\n", {
+    mode: 0o600
+  });
   test.runner.existingVolumes.add("atlas_core_production_minio_data");
   if (started) test.runner.existingVolumes.add("atlas_core_production_postgres_data");
   writeFileSync(
@@ -249,10 +251,32 @@ function markInitialized(test: TestRuntime, started = true): void {
 }
 
 describe("atlas-core CLI", () => {
-  it("prints help for no command", async () => {
+  it("opens the interactive menu for no command", async () => {
     const test = runtime();
+    let opened = false;
+    test.context.interactive = {
+      configureAdmin: async () => undefined,
+      runMenu: async () => {
+        opened = true;
+      }
+    };
     expect(await runCLI([], test.context)).toBe(0);
-    expect(test.stdout.join("")).toContain("atlas-core init");
+    expect(opened).toBe(true);
+    expect(test.runner.calls).toHaveLength(0);
+  });
+
+  it("still prints help without opening the menu", async () => {
+    const test = runtime();
+    expect(await runCLI(["help"], test.context)).toBe(0);
+    expect(test.stdout.join("")).toContain("atlas-core config");
+    expect(test.runner.calls).toHaveLength(0);
+  });
+
+  it("does not accept an admin password as a command argument", async () => {
+    const test = runtime();
+    expect(await runCLI(["config", "correct-horse-battery-staple"], test.context)).toBe(2);
+    expect(test.stderr.join("")).toContain("config does not accept arguments");
+    expect(test.stderr.join("")).not.toContain("correct-horse-battery-staple");
     expect(test.runner.calls).toHaveLength(0);
   });
 
@@ -332,7 +356,7 @@ describe("atlas-core CLI", () => {
         "minio",
         "sh",
         "-c",
-        'mc alias set local http://127.0.0.1:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null'
+        'mc alias set -- local http://127.0.0.1:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null'
       ],
       ["exec", "-T", "minio", "mc", "mb", "--ignore-existing", "local/atlas-media"],
       ["exec", "-T", "minio", "mc", "anonymous", "set", "none", "local/atlas-media"],
@@ -673,6 +697,122 @@ describe("atlas-core CLI", () => {
       ["down"],
       ["up", "-d", "--pull", "never", "--wait", "--wait-timeout", "120"]
     ]);
+  });
+
+  it("changes only the admin password and defers applying it while stopped", async () => {
+    const test = runtime();
+    markInitialized(test, false);
+    test.runner.serviceStates = [];
+    test.context.interactive = {
+      configureAdmin: async (operator) => {
+        await operator.configureAdminPassword("correct-horse-battery-staple");
+      },
+      runMenu: async () => undefined
+    };
+
+    expect(await runCLI(["config"], test.context)).toBe(0);
+
+    const env = readFileSync(join(test.home, ".atlas", "core", ".env"), "utf8");
+    expect(env).toContain("MINIO_BUCKET=atlas-media");
+    expect(env).toContain('ATLAS_ADMIN_PASSWORD="correct-horse-battery-staple"');
+    expect(statSync(join(test.home, ".atlas", "core", ".env")).mode & 0o077).toBe(0);
+    expect(test.stdout.join("")).not.toContain("correct-horse-battery-staple");
+    expect(test.stdout.join("")).toContain("take effect the next time Atlas Core starts");
+    expect(test.runner.calls.map(composeCommand).filter((args) => args[0] === "down" || args[0] === "up")).toEqual([]);
+  });
+
+  it("quotes admin passwords without changing Compose-literal characters", async () => {
+    const test = runtime();
+    markInitialized(test, false);
+    test.runner.serviceStates = [];
+    test.context.interactive = {
+      configureAdmin: async (operator) => {
+        await operator.configureAdminPassword("correct$horse#battery'staple\\end\"quoted");
+      },
+      runMenu: async () => undefined
+    };
+
+    expect(await runCLI(["config"], test.context)).toBe(0);
+    expect(readFileSync(join(test.home, ".atlas", "core", ".env"), "utf8")).toContain(
+      `ATLAS_ADMIN_PASSWORD="correct$$horse#battery'staple\\\\end\\"quoted"`
+    );
+  });
+
+  it("quotes an admin password ending in a backslash", async () => {
+    const test = runtime();
+    markInitialized(test, false);
+    test.runner.serviceStates = [];
+    test.context.interactive = {
+      configureAdmin: async (operator) => {
+        await operator.configureAdminPassword("correct-horse-battery-staple\\");
+      },
+      runMenu: async () => undefined
+    };
+
+    expect(await runCLI(["config"], test.context)).toBe(0);
+    expect(readFileSync(join(test.home, ".atlas", "core", ".env"), "utf8")).toContain(
+      `ATLAS_ADMIN_PASSWORD="correct-horse-battery-staple\\\\"`
+    );
+  });
+
+  it("restarts a running deployment after changing the admin password", async () => {
+    const test = runtime();
+    markInitialized(test);
+    test.context.interactive = {
+      configureAdmin: async (operator) => {
+        await operator.configureAdminPassword("new-production-password");
+      },
+      runMenu: async () => undefined
+    };
+
+    expect(await runCLI(["config"], test.context)).toBe(0);
+    expect(test.runner.calls.map(composeCommand).filter((args) => args.length > 0)).toContainEqual(["pull"]);
+    expect(test.runner.calls.map(composeCommand).filter((args) => args.length > 0)).toContainEqual(["down"]);
+    expect(test.runner.calls.map(composeCommand).filter((args) => args.length > 0)).toContainEqual([
+      "up",
+      "-d",
+      "--pull",
+      "never",
+      "--wait",
+      "--wait-timeout",
+      "120"
+    ]);
+  });
+
+  it("rejects a weak admin password without changing configuration", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const envPath = join(test.home, ".atlas", "core", ".env");
+    const before = readFileSync(envPath, "utf8");
+    test.context.interactive = {
+      configureAdmin: async (operator) => {
+        await operator.configureAdminPassword("password");
+      },
+      runMenu: async () => undefined
+    };
+
+    expect(await runCLI(["config"], test.context)).toBe(1);
+    expect(test.stderr.join("")).toContain("development default");
+    expect(readFileSync(envPath, "utf8")).toBe(before);
+    expect(test.runner.calls).toHaveLength(0);
+  });
+
+  it("rejects an uppercase example password", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const envPath = join(test.home, ".atlas", "core", ".env");
+    const before = readFileSync(envPath, "utf8");
+    test.context.interactive = {
+      configureAdmin: async (operator) => {
+        await operator.configureAdminPassword("REPLACE_WITH_SECURE_ADMIN_PASSWORD");
+      },
+      runMenu: async () => undefined
+    };
+
+    expect(await runCLI(["config"], test.context)).toBe(1);
+    expect(test.stderr.join("")).toContain("development default");
+    expect(readFileSync(envPath, "utf8")).toBe(before);
+    expect(test.runner.calls).toHaveLength(0);
   });
 
   it("can retry a failed first full-stack start", async () => {

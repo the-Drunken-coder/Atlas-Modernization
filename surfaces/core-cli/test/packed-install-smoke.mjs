@@ -52,6 +52,7 @@ try {
     "README.md",
     "LICENSE",
     "dist/cli.js",
+    "dist/terminal-ui.js",
     "assets/docker-compose.init.yml",
     "assets/docker-compose.yml"
   ]) {
@@ -60,6 +61,10 @@ try {
 
   const packageJSON = JSON.parse(readFileSync(join(installed, "package.json"), "utf8"));
   if (typeof packageJSON.bin?.["atlas-core"] !== "string") throw new Error("installed package is missing its bin");
+  const compose = readFileSync(join(installed, "assets", "docker-compose.yml"), "utf8");
+  if (!compose.includes('mc alias set -- atlas http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"')) {
+    throw new Error("installed package does not protect MinIO credentials from option parsing");
+  }
   const installedBin = join(
     project,
     "node_modules",
@@ -71,6 +76,9 @@ try {
   if (!output.includes("atlas-core start")) throw new Error("installed atlas-core binary did not print help");
   if (!output.includes("atlas-core reset")) {
     throw new Error("installed atlas-core binary did not document reset");
+  }
+  if (!output.includes("atlas-core config")) {
+    throw new Error("installed atlas-core binary did not document admin account configuration");
   }
 } finally {
   rmSync(temporaryDirectory, { recursive: true, force: true });
