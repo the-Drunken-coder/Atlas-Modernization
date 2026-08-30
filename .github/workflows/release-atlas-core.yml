@@ -719,10 +719,14 @@ jobs:
           RELEASE_SHA: ${{ steps.phase.outputs.release_sha }}
           VERSION: ${{ inputs.version }}
         run: |
+          attestations="$(mktemp)"
           for attempt in $(seq 1 12); do
             published_integrity="$(npm view "atlas-core@$VERSION" dist.integrity 2>/dev/null || true)"
             attestation_url="$(npm view "atlas-core@$VERSION" dist.attestations.url 2>/dev/null || true)"
-            if [ "$published_integrity" = "$EXPECTED_INTEGRITY" ] && [ -n "$attestation_url" ]; then
+            if [ "$published_integrity" = "$EXPECTED_INTEGRITY" ] && \
+              [ -n "$attestation_url" ] && \
+              curl --connect-timeout 5 --max-time 15 --fail --silent --show-error \
+                "$attestation_url" > "$attestations"; then
               break
             fi
             if [ "$attempt" = 12 ]; then
@@ -731,8 +735,6 @@ jobs:
             fi
             sleep 5
           done
-          attestations="$(mktemp)"
-          curl --fail --silent --show-error "$attestation_url" > "$attestations"
           node .github/scripts/atlas-core-release.mjs validate-npm-attestation \
             "$VERSION" \
             "$EXPECTED_INTEGRITY" \
