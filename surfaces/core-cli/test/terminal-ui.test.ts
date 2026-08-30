@@ -178,6 +178,40 @@ describe("Atlas Core terminal UI", () => {
     await menu;
   });
 
+  it("uses a compact main menu on a 40 by 24 terminal", async () => {
+    const terminal = new TestTerminal(40, true, 24);
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(
+      operator({
+        status: "degraded",
+        detail:
+          "Core API, Source Gateway, PostgreSQL, and MinIO are not reporting health. Inspect container status and logs before attempting a restart."
+      })
+    );
+
+    await terminal.waitFor("Reset Atlas Core");
+    expect(terminal.text).toContain("ACTIONS");
+    expect(terminal.text).not.toContain("DETAILS");
+    const before = terminal.raw.length;
+    terminal.write("\u001b[B");
+    await terminal.waitForRawChange(before);
+    terminal.write("q");
+    await menu;
+  });
+
+  it("blocks hidden main-menu actions when even the compact menu is too tall", async () => {
+    const terminal = new TestTerminal(40, true, 10);
+    const deployment = operator();
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("Menu needs at least");
+    terminal.write("\r");
+    await nextInputTurn();
+    terminal.write("q");
+    await menu;
+
+    expect(deployment.details).not.toHaveBeenCalled();
+  });
+
   it("discards reset confirmation typed before the warning prompt appears", async () => {
     const terminal = new TestTerminal();
     const deployment = operator();

@@ -402,14 +402,22 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
 
 function MainMenu({ onSelect, snapshot }: { onSelect(action: Action): void; snapshot: DeploymentSnapshot }): ReactNode {
   const { exit } = useApp();
-  const { columns } = useWindowSize();
+  const { columns, rows } = useWindowSize();
   const actions = useMemo(() => menuActions(snapshot), [snapshot]);
   const actionPending = useRef(false);
   const [filter, setFilter] = useState("");
   const [selected, setSelected] = useState(0);
   const filtered = useMemo(() => filteredActions(actions, filter), [actions, filter]);
   const index = Math.min(selected, Math.max(0, filtered.length - 1));
-  const canInteract = columns >= MINIMUM_TERMINAL_COLUMNS;
+  const width = columns;
+  const wide = width >= 72;
+  const actionWidth = Math.min(34, Math.max(24, Math.floor(width * 0.42)));
+  const action = filtered[index];
+  const compactRows = compactMainMenuRows(snapshot, filtered, filter, width);
+  const fullRows = fullMainMenuRows(snapshot, filtered, action, filter, width, actionWidth, wide);
+  const hasEnoughRows = rows >= compactRows;
+  const canInteract = columns >= MINIMUM_TERMINAL_COLUMNS && hasEnoughRows;
+  const compact = rows < fullRows;
 
   useInput((input, key) => {
     if (actionPending.current) return;
@@ -457,18 +465,21 @@ function MainMenu({ onSelect, snapshot }: { onSelect(action: Action): void; snap
     { isActive: canInteract }
   );
 
-  if (!canInteract) return <NarrowTerminal />;
-  const width = columns;
-  const wide = width >= 72;
-  const actionWidth = Math.min(34, Math.max(24, Math.floor(width * 0.42)));
-  const action = filtered[index];
+  if (columns < MINIMUM_TERMINAL_COLUMNS) return <NarrowTerminal />;
+  if (!hasEnoughRows) return <ShortMainMenu requiredRows={compactRows} />;
 
   return (
     <Box flexDirection="column" width={width}>
       <Header right={`v${PACKAGE_VERSION}  ${stateName(snapshot.status)}`} title="ATLAS CORE" />
       <Text dimColor>Manage one durable deployment</Text>
       <Rule width={width} />
-      {wide ? (
+      {compact ? (
+        <Box flexDirection="column">
+          <Text bold>ACTIONS</Text>
+          <ActionRows actions={filtered} selected={index} width={width} />
+          <Text>{pad(action?.detail ?? "No actions match the filter.", width)}</Text>
+        </Box>
+      ) : wide ? (
         <Box>
           <Box flexDirection="column" width={actionWidth}>
             <Text bold>ACTIONS</Text>
@@ -505,7 +516,7 @@ function MainMenu({ onSelect, snapshot }: { onSelect(action: Action): void; snap
         <StateText status={snapshot.status} />
         <Text dimColor>Filter: {filter || "type to filter"}</Text>
       </Box>
-      <Text>{snapshot.detail}</Text>
+      {compact ? null : <Text>{snapshot.detail}</Text>}
       <Text dimColor>{"↑/↓ move   Enter select   Backspace edit   Esc or q quit"}</Text>
     </Box>
   );
@@ -518,6 +529,58 @@ function ActionRows({ actions, selected, width }: { actions: Action[]; selected:
       {pad(`${index === selected ? ">" : " "} ${action.label}`, width)}
     </Text>
   ));
+}
+
+function compactMainMenuRows(snapshot: DeploymentSnapshot, actions: Action[], filter: string, width: number): number {
+  return (
+    mainMenuHeaderRows(snapshot, width) +
+    actionRows(actions) +
+    1 +
+    1 +
+    wrappedRows(`${stateName(snapshot.status)} Filter: ${filter || "type to filter"}`, width) +
+    wrappedRows("↑/↓ move   Enter select   Backspace edit   Esc or q quit", width)
+  );
+}
+
+function fullMainMenuRows(
+  snapshot: DeploymentSnapshot,
+  actions: Action[],
+  action: Action | undefined,
+  filter: string,
+  width: number,
+  actionWidth: number,
+  wide: boolean
+): number {
+  const detail = action?.detail ?? "No actions match the filter.";
+  const bodyRows = wide
+    ? Math.max(
+        actionRows(actions),
+        1 +
+          wrappedRows(action?.label ?? "No actions match the filter.", Math.max(1, width - actionWidth - 2)) +
+          1 +
+          wrappedRows(detail, Math.max(1, width - actionWidth - 2))
+      )
+    : actionRows(actions) + 2 + wrappedRows(detail, width);
+  return (
+    mainMenuHeaderRows(snapshot, width) +
+    bodyRows +
+    1 +
+    wrappedRows(`${stateName(snapshot.status)} Filter: ${filter || "type to filter"}`, width) +
+    wrappedRows(snapshot.detail, width) +
+    wrappedRows("↑/↓ move   Enter select   Backspace edit   Esc or q quit", width)
+  );
+}
+
+function mainMenuHeaderRows(snapshot: DeploymentSnapshot, width: number): number {
+  return (
+    wrappedRows(`ATLAS CORE v${PACKAGE_VERSION} ${stateName(snapshot.status)}`, width) +
+    wrappedRows("Manage one durable deployment", width) +
+    1
+  );
+}
+
+function actionRows(actions: Action[]): number {
+  return 1 + Math.max(1, actions.length);
 }
 
 function StatusScreen({
@@ -1106,6 +1169,18 @@ function NarrowTerminal(): ReactNode {
       </Text>
       <Text>Terminal too narrow.</Text>
       <Text dimColor>Resize to at least 40 columns.</Text>
+    </Box>
+  );
+}
+
+function ShortMainMenu({ requiredRows }: { requiredRows: number }): ReactNode {
+  return (
+    <Box flexDirection="column">
+      <Text bold color="cyan">
+        ATLAS CORE
+      </Text>
+      <Text>Menu needs at least {requiredRows} rows at this width.</Text>
+      <Text dimColor>Resize the terminal or press Esc or q to exit.</Text>
     </Box>
   );
 }
