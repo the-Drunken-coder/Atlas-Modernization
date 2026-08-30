@@ -1,70 +1,69 @@
 import { PassThrough } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
-import {
-  type AtlasCoreOperator,
-  createInteractiveCLI,
-  createInteractiveCLIForTerminal,
-  type DeploymentSnapshot,
-  type TerminalIO,
-  type TerminalKey
-} from "../src/terminal-ui.js";
+import { type AtlasCoreOperator, createInteractiveCLI, type DeploymentSnapshot } from "../src/terminal-ui.js";
 
-class FakeTerminal implements TerminalIO {
-  readonly columns: number;
-  readonly interactive: boolean;
-  readonly output: string[] = [];
-  readonly #keys: TerminalKey[];
-  readCount = 0;
-  opened = false;
+class TestTerminal {
+  readonly input = new PassThrough() as PassThrough & NodeJS.ReadStream;
+  readonly output = new PassThrough() as PassThrough & NodeJS.WriteStream;
+  readonly setRawMode = vi.fn((enabled: boolean) => {
+    Object.assign(this.input, { isRaw: enabled });
+    return this.input;
+  });
+  #output = "";
 
-  constructor(keys: TerminalKey[], interactive = true, columns = 100) {
-    this.#keys = [...keys];
-    this.interactive = interactive;
-    this.columns = columns;
+  constructor(columns = 100, interactive = true) {
+    Object.assign(this.input, {
+      isRaw: false,
+      isTTY: interactive,
+      ref: () => this.input,
+      setRawMode: interactive ? this.setRawMode : undefined,
+      unref: () => this.input
+    });
+    Object.assign(this.output, {
+      columns,
+      isTTY: interactive,
+      rows: 40
+    });
+    this.output.on("data", (data: Buffer) => {
+      this.#output += data.toString();
+    });
   }
 
-  open(): void {
-    this.opened = true;
+  get raw(): string {
+    return this.#output;
   }
 
-  close(): void {
-    this.opened = false;
+  get text(): string {
+    return stripAnsi(this.#output);
   }
 
-  async readKey(): Promise<TerminalKey> {
-    this.readCount += 1;
-    const key = this.#keys.shift();
-    if (!key) throw new Error("Fake terminal ran out of keys");
-    return key;
+  write(value: string): void {
+    this.input.write(value);
   }
 
-  write(data: string): void {
-    this.output.push(data);
+  async waitFor(value: string): Promise<void> {
+    await vi.waitFor(() => expect(this.text).toContain(value), { timeout: 2_000 });
   }
-}
 
-function key(sequence: string, name = sequence): TerminalKey {
-  return { ctrl: false, meta: false, name, sequence, shift: false };
-}
-
-function enter(): TerminalKey {
-  return key("\r", "return");
+  async waitForRawChange(previousLength: number): Promise<void> {
+    await vi.waitFor(() => expect(this.raw.length).toBeGreaterThan(previousLength), { timeout: 2_000 });
+  }
 }
 
 function operator(snapshot: DeploymentSnapshot = { status: "ready", detail: "Everything is healthy." }) {
   return {
     checkForUpdates: vi.fn(async () => ({
-      cliVersion: "0.1.3",
-      coreVersion: "0.1.3",
-      latestVersion: "0.1.3",
+      cliVersion: "0.1.5",
+      coreVersion: "0.1.5",
+      latestVersion: "0.1.5",
       cliUpdateAvailable: false,
       coreUpdateAvailable: false
     })),
     configureAdminPassword: vi.fn(async () => undefined),
     details: vi.fn(async () => ({
       snapshot,
-      cliVersion: "0.1.3",
-      coreVersion: "0.1.3",
+      cliVersion: "0.1.5",
+      coreVersion: "0.1.5",
       initializedAt: "2026-08-28T12:00:00.000Z",
       apiEndpoint: "http://127.0.0.1:8000",
       minioEndpoint: "http://127.0.0.1:9001",
@@ -130,233 +129,193 @@ function operator(snapshot: DeploymentSnapshot = { status: "ready", detail: "Eve
 }
 
 describe("Atlas Core terminal UI", () => {
-  it("shows the action menu and exits without changing anything", async () => {
-    const terminal = new FakeTerminal([key("q")]);
+  it("shows the selected split console and exits without changing anything", async () => {
+    const terminal = new TestTerminal();
     const deployment = operator();
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
 
-    await createInteractiveCLIForTerminal(terminal).runMenu(deployment);
+    await terminal.waitFor("Reset Atlas Core");
+    expect(terminal.text).toContain("ACTIONS");
+    expect(terminal.text).toContain("DETAILS");
+    expect(terminal.text).toContain("Everything is healthy.");
+    terminal.write("q");
+    await menu;
 
-    const screen = terminal.output.join("");
-    expect(screen).toContain("ATLAS CORE");
-    expect(screen).toContain("Configure");
-    expect(screen).toContain("Update");
-    expect(screen).toContain("Reset Atlas Core");
     expect(deployment.snapshot).toHaveBeenCalledOnce();
     expect(deployment.start).not.toHaveBeenCalled();
-    expect(terminal.opened).toBe(false);
+    expect(terminal.setRawMode).toHaveBeenLastCalledWith(false);
   });
 
-  it("masks a manually entered admin password", async () => {
-    const password = "correct-horse-battery-staple";
-    const keys = [...password].map((character) => key(character));
-    const terminal = new FakeTerminal([...keys, enter(), ...keys, enter()]);
+  it("updates only changed terminal lines when an arrow key moves selection", async () => {
+    const terminal = new TestTerminal();
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(operator());
+
+    await terminal.waitFor("View status");
+    const before = terminal.raw.length;
+    terminal.write("\u001b[B");
+    await terminal.waitForRawChange(before);
+    const arrowFrame = terminal.raw.slice(before);
+
+    expect(arrowFrame).not.toContain("\u001b[2J");
+    expect(arrowFrame).not.toContain("\u001bc");
+    terminal.write("q");
+    await menu;
+  });
+
+  it("opens the service status view and moves between services", async () => {
+    const terminal = new TestTerminal();
     const deployment = operator();
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
 
-    await createInteractiveCLIForTerminal(terminal).configureAdmin(deployment);
-
-    expect(deployment.configureAdminPassword).toHaveBeenCalledWith(password);
-    const output = terminal.output.join("");
-    expect(output).toContain("Username: admin");
-    expect(output).not.toContain(password);
-    expect(output).toContain("*".repeat(password.length));
-    expect(terminal.opened).toBe(false);
-  });
-
-  it("accepts a pasted password without dropping keypresses", async () => {
-    const input = new PassThrough();
-    const setRawMode = vi.fn(() => input);
-    Object.assign(input, { isTTY: true, setRawMode });
-    const output = new PassThrough();
-    Object.assign(output, { columns: 100, isTTY: true });
-    const password = "correct-horse-battery-staple";
-    const deployment = operator();
-
-    const configuration = createInteractiveCLI(
-      input as unknown as NodeJS.ReadStream,
-      output as unknown as NodeJS.WriteStream
-    ).configureAdmin(deployment);
-    input.write(`${password}\r${password}\r`);
-
-    await configuration;
-    expect(deployment.configureAdminPassword).toHaveBeenCalledWith(password);
-    expect(setRawMode).toHaveBeenLastCalledWith(false);
-  });
-
-  it("rejects mismatched password confirmation without changing the account", async () => {
-    const password = "correct-horse-battery-staple";
-    const confirmation = "different-admin-password";
-    const terminal = new FakeTerminal([
-      ...[...password].map((character) => key(character)),
-      enter(),
-      ...[...confirmation].map((character) => key(character)),
-      enter()
-    ]);
-    const deployment = operator();
-
-    await expect(createInteractiveCLIForTerminal(terminal).configureAdmin(deployment)).rejects.toThrow(
-      "Passwords did not match"
-    );
-
-    expect(deployment.configureAdminPassword).not.toHaveBeenCalled();
-    expect(terminal.opened).toBe(false);
-  });
-
-  it("rejects configuration outside an interactive terminal before reading input", async () => {
-    const terminal = new FakeTerminal([], false);
-    const deployment = operator();
-
-    await expect(createInteractiveCLIForTerminal(terminal).configureAdmin(deployment)).rejects.toThrow(
-      "requires an interactive terminal"
-    );
-
-    expect(terminal.readCount).toBe(0);
-    expect(deployment.configureAdminPassword).not.toHaveBeenCalled();
-  });
-
-  it("restores terminal mode when input ends", async () => {
-    const input = new PassThrough();
-    const setRawMode = vi.fn(() => input);
-    Object.assign(input, { isTTY: true, setRawMode });
-    const output = new PassThrough();
-    Object.assign(output, { columns: 100, isTTY: true });
-    const deployment = operator({ status: "not-initialized", detail: "Initialize Atlas Core." });
-
-    const menu = createInteractiveCLI(
-      input as unknown as NodeJS.ReadStream,
-      output as unknown as NodeJS.WriteStream
-    ).runMenu(deployment);
-    input.end();
-
-    await expect(menu).rejects.toThrow("lost its terminal input");
-    expect(setRawMode).toHaveBeenLastCalledWith(false);
-  });
-
-  it("opens the service-focused status view through the shared operator", async () => {
-    const terminal = new FakeTerminal([enter(), enter(), key("q")]);
-    const deployment = operator();
-
-    await createInteractiveCLIForTerminal(terminal).runMenu(deployment);
+    await terminal.waitFor("View status");
+    terminal.write("\r");
+    await terminal.waitFor("Network I/O");
+    terminal.write("\u001b[C");
+    await terminal.waitFor("256MiB / 1GiB");
+    const beforeBack = terminal.raw.length;
+    terminal.write("\r");
+    await terminal.waitForRawChange(beforeBack);
+    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
+    terminal.write("q");
+    await menu;
 
     expect(deployment.details).toHaveBeenCalledOnce();
-    expect(terminal.output.join("")).toContain("ATLAS CORE > STATUS");
-    expect(terminal.output.join("")).toContain("1.00%");
-    expect(deployment.snapshot).toHaveBeenCalledTimes(2);
   });
 
-  it("moves between services in the detailed status view", async () => {
-    const terminal = new FakeTerminal([enter(), key("\u001b[C", "right"), enter(), key("q")]);
-    const deployment = operator();
+  it("renders an intentional narrow-terminal state", async () => {
+    const terminal = new TestTerminal(36);
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(operator());
 
-    await createInteractiveCLIForTerminal(terminal).runMenu(deployment);
-
-    const screen = terminal.output.join("");
-    expect(screen).toContain("[PostgreSQL]");
-    expect(screen).toContain("256MiB / 1GiB");
-    expect(screen).toContain("Network I/O");
+    await terminal.waitFor("Resize to at least 40 columns.");
+    terminal.write("q");
+    await menu;
   });
 
-  it("fits the detailed status view in a narrow terminal", async () => {
-    const terminal = new FakeTerminal([enter(), enter(), key("q")], true, 44);
+  it("masks the admin password and never writes its value", async () => {
+    const terminal = new TestTerminal();
     const deployment = operator();
+    const password = "correct-horse-battery-staple";
+    const configuration = createInteractiveCLI(terminal.input, terminal.output).configureAdmin(deployment);
 
-    await createInteractiveCLIForTerminal(terminal).runMenu(deployment);
+    await terminal.waitFor("New password");
+    terminal.write(password);
+    await terminal.waitFor("*".repeat(password.length));
+    terminal.write("\r");
+    await terminal.waitFor("Confirm password");
+    const beforeConfirmation = terminal.raw.length;
+    terminal.write(password);
+    await terminal.waitForRawChange(beforeConfirmation);
+    terminal.write("\r");
+    await terminal.waitFor("Press Enter to return to Atlas Core.");
+    terminal.write("\r");
+    await configuration;
 
-    const statusScreen = terminal.output
-      .join("")
-      .split("\u001b[2J\u001b[H")
-      .filter((screen) => screen.includes("ATLAS CORE > STATUS"))
-      .at(-1)
-      ?.replace(/\u001b\[[0-9;?]*[A-Za-z]/gu, "")
-      .split("ATLAS CORE > STATUS")
-      .at(-1);
-    expect(statusScreen).toBeDefined();
-    expect((statusScreen ?? "").split("\n").filter((line) => line.length > 44)).toEqual([]);
+    expect(deployment.configureAdminPassword).toHaveBeenCalledWith(password);
+    expect(terminal.text).not.toContain(password);
   });
 
-  it("opens Admin account from the Configure submenu", async () => {
-    const filter = [..."configure"].map((character) => key(character));
-    const terminal = new FakeTerminal([...filter, enter(), key("\u001b[B", "down"), enter(), key("q")]);
+  it("keeps mismatched password confirmation inside the form", async () => {
+    const terminal = new TestTerminal();
     const deployment = operator();
+    const configuration = createInteractiveCLI(terminal.input, terminal.output).configureAdmin(deployment);
 
-    await createInteractiveCLIForTerminal(terminal).runMenu(deployment);
+    await terminal.waitFor("New password");
+    terminal.write("correct-horse-battery-staple");
+    await terminal.waitFor("****************************");
+    terminal.write("\r");
+    await terminal.waitFor("Confirm password");
+    const beforeConfirmation = terminal.raw.length;
+    terminal.write("different-admin-password");
+    await terminal.waitForRawChange(beforeConfirmation);
+    terminal.write("\r");
+    await terminal.waitFor("Passwords did not match");
+    terminal.write("\u001b");
+    await configuration;
 
-    expect(terminal.output.join("")).toContain("Admin account");
     expect(deployment.configureAdminPassword).not.toHaveBeenCalled();
   });
 
-  it("updates the CLI and Core from the update menu", async () => {
-    const filter = [..."update"].map((character) => key(character));
-    const terminal = new FakeTerminal([...filter, enter(), key("\u001b[B", "down"), enter(), enter(), enter()]);
+  it("applies the reviewed CLI and Core update and exits", async () => {
+    const terminal = new TestTerminal();
     const deployment = operator();
     deployment.checkForUpdates.mockResolvedValue({
-      cliVersion: "0.1.3",
-      coreVersion: "0.1.3",
-      latestVersion: "0.1.4",
+      cliVersion: "0.1.5",
+      coreVersion: "0.1.5",
+      latestVersion: "0.1.6",
       cliUpdateAvailable: true,
       coreUpdateAvailable: true
     });
+    const update = createInteractiveCLI(terminal.input, terminal.output).runUpdate(deployment);
 
-    await createInteractiveCLIForTerminal(terminal).runMenu(deployment);
+    await terminal.waitFor("Update CLI + Atlas Core");
+    terminal.write("\u001b[B");
+    await terminal.waitFor("Preserve credentials and durable data");
+    terminal.write("\r");
+    await terminal.waitFor("paired PostgreSQL and MinIO backup exists");
+    terminal.write("\r");
+    await terminal.waitFor("Update complete");
+    terminal.write("\r");
+    await update;
 
-    expect(deployment.update).toHaveBeenCalledWith("all", "0.1.4", true);
-    expect(terminal.output.join("")).toContain("PostgreSQL, MinIO, credentials, and configuration are preserved");
-    expect(terminal.output.join("")).toContain("paired PostgreSQL and MinIO backup exists");
+    expect(deployment.update).toHaveBeenCalledWith("all", "0.1.6", true);
   });
 
-  it("labels a Core-only update without claiming the CLI will change", async () => {
-    const terminal = new FakeTerminal([enter(), enter(), enter()]);
+  it("propagates an update failure after showing the recovery message", async () => {
+    const terminal = new TestTerminal();
     const deployment = operator();
     deployment.checkForUpdates.mockResolvedValue({
-      cliVersion: "0.1.3",
-      coreVersion: "0.1.2",
-      latestVersion: "0.1.3",
-      cliUpdateAvailable: false,
-      coreUpdateAvailable: true
-    });
-
-    await createInteractiveCLIForTerminal(terminal).runUpdate(deployment);
-
-    expect(terminal.output.join("")).toContain("Update Atlas Core");
-    expect(terminal.output.join("")).toContain("CLI stays at 0.1.3");
-    expect(deployment.update).toHaveBeenCalledWith("all", "0.1.3", true);
-  });
-
-  it("propagates an interactive update failure after showing the recovery message", async () => {
-    const terminal = new FakeTerminal([enter(), enter(), enter()]);
-    const deployment = operator();
-    deployment.checkForUpdates.mockResolvedValue({
-      cliVersion: "0.1.3",
-      coreVersion: "0.1.3",
-      latestVersion: "0.1.4",
+      cliVersion: "0.1.5",
+      coreVersion: "0.1.5",
+      latestVersion: "0.1.6",
       cliUpdateAvailable: true,
       coreUpdateAvailable: true
     });
     deployment.update.mockRejectedValue(new Error("npm install failed"));
+    const update = createInteractiveCLI(terminal.input, terminal.output).runUpdate(deployment);
 
-    await expect(createInteractiveCLIForTerminal(terminal).runUpdate(deployment)).rejects.toThrow("npm install failed");
+    await terminal.waitFor("Update CLI only");
+    terminal.write("\r");
+    await terminal.waitFor("REVIEW UPDATE");
+    terminal.write("\r");
+    await terminal.waitFor("The update stopped without deleting Atlas Core data");
+    terminal.write("\r");
 
-    expect(terminal.output.join("")).toContain("The update stopped without deleting Atlas Core data");
-    expect(terminal.opened).toBe(false);
+    await expect(update).rejects.toThrow("npm install failed");
   });
 
-  it("shows logs for all services from the log picker", async () => {
-    const arrows = Array.from({ length: 5 }, () => key("\u001b[B", "down"));
-    const terminal = new FakeTerminal([...arrows, enter(), enter(), enter(), key("q")]);
+  it("offers initialization instead of configuration before first setup", async () => {
+    const terminal = new TestTerminal();
+    const deployment = operator({ status: "not-initialized", detail: "Initialize Atlas Core." });
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("Initialize Atlas Core");
+    expect(terminal.text).not.toContain(" Configure ");
+    terminal.write("q");
+    await menu;
+  });
+
+  it("rejects a non-interactive terminal before reading input", async () => {
+    const terminal = new TestTerminal(100, false);
     const deployment = operator();
 
-    await createInteractiveCLIForTerminal(terminal).runMenu(deployment);
-
-    expect(deployment.logs).toHaveBeenCalledWith(undefined, false);
+    await expect(createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment)).rejects.toThrow(
+      "requires an interactive terminal"
+    );
+    expect(deployment.snapshot).not.toHaveBeenCalled();
   });
 
-  it("offers initialization instead of account configuration before first setup", async () => {
-    const terminal = new FakeTerminal([key("q")]);
-    const deployment = operator({ status: "not-initialized", detail: "Initialize Atlas Core." });
+  it("restores terminal mode when input ends", async () => {
+    const terminal = new TestTerminal();
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(operator());
 
-    await createInteractiveCLIForTerminal(terminal).runMenu(deployment);
+    await terminal.waitFor("ATLAS CORE");
+    terminal.input.end();
 
-    const screen = terminal.output.join("");
-    expect(screen).toContain("Initialize Atlas Core");
-    expect(screen).not.toContain(" Configure ");
+    await expect(menu).rejects.toThrow("lost its terminal input");
+    expect(terminal.setRawMode).toHaveBeenLastCalledWith(false);
   });
 });
+
+function stripAnsi(value: string): string {
+  return value.replace(/\u001b(?:\][^\u0007]*(?:\u0007|\u001b\\)|\[[0-?]*[ -/]*[@-~]|[@-_])/gu, "");
+}

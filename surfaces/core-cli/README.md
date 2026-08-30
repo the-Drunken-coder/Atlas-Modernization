@@ -21,6 +21,19 @@ view reports CPU, memory, network and block I/O, process count, uptime, restart 
 Docker. Arrow keys move through menus and services, typing filters the main menu, Enter selects an action, and Escape
 or `q` goes back.
 
+### Preview the terminal UI
+
+From a repository checkout, run the visual preview with fixture data:
+
+```bash
+python3 scripts/preview_atlas_core_tui.py
+```
+
+Use `--state stopped`, `--state degraded`, or `--state not-initialized` to open another deployment state. The preview
+builds and runs the real terminal UI, but its operator is entirely in memory. It never contacts Docker, reads Atlas Core
+configuration, uses credentials, accesses the network, or changes containers and durable storage. Pass `--no-build` to
+reuse the current `surfaces/core-cli/dist` output while iterating on visual changes.
+
 Initialization generates strong local credentials and provisions the MinIO bucket only when it can prove the deployment
 is new. It refuses to create new credentials over existing Atlas containers or volumes. Configuration is stored in
 `~/.atlas/core` with owner-only permissions. Set `ATLAS_CORE_HOME` before the first command to choose another location.
