@@ -700,12 +700,12 @@ async function applyUpdate(
 ): Promise<boolean> {
   terminal.write(CLEAR_SCREEN);
   terminal.close();
-  let failure: string | undefined;
+  let failure: { error: unknown } | undefined;
   try {
     await operator.update(scope, expectedVersion);
   } catch (error) {
-    failure = errorMessage(error);
-    terminal.write(`\n${RED}${failure}${RESET_STYLE}\n`);
+    failure = { error };
+    terminal.write(`\n${RED}${errorMessage(error)}${RESET_STYLE}\n`);
   }
   terminal.write(
     failure
@@ -715,6 +715,7 @@ async function applyUpdate(
   terminal.write("\nPress Enter to exit.");
   terminal.open();
   await waitForReturn(terminal);
+  if (failure) throw failure.error;
   return true;
 }
 

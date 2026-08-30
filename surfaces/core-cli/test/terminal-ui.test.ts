@@ -302,6 +302,24 @@ describe("Atlas Core terminal UI", () => {
     expect(terminal.output.join("")).toContain("PostgreSQL, MinIO, credentials, and configuration are preserved");
   });
 
+  it("propagates an interactive update failure after showing the recovery message", async () => {
+    const terminal = new FakeTerminal([enter(), enter(), enter()]);
+    const deployment = operator();
+    deployment.checkForUpdates.mockResolvedValue({
+      cliVersion: "0.1.3",
+      coreVersion: "0.1.3",
+      latestVersion: "0.1.4",
+      cliUpdateAvailable: true,
+      coreUpdateAvailable: true
+    });
+    deployment.update.mockRejectedValue(new Error("npm install failed"));
+
+    await expect(createInteractiveCLIForTerminal(terminal).runUpdate(deployment)).rejects.toThrow("npm install failed");
+
+    expect(terminal.output.join("")).toContain("The update stopped without deleting Atlas Core data");
+    expect(terminal.opened).toBe(false);
+  });
+
   it("shows logs for all services from the log picker", async () => {
     const arrows = Array.from({ length: 5 }, () => key("\u001b[B", "down"));
     const terminal = new FakeTerminal([...arrows, enter(), enter(), enter(), key("q")]);
