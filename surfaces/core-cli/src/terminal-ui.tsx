@@ -866,6 +866,7 @@ function SimpleMenu({
 }): ReactNode {
   const { columns } = useWindowSize();
   const actionPending = useRef(false);
+  const selectedRef = useRef(0);
   const [selected, setSelected] = useState(0);
   const canInteract = columns >= MINIMUM_TERMINAL_COLUMNS;
   useInput((input, key) => {
@@ -874,11 +875,17 @@ function SimpleMenu({
       actionPending.current = true;
       onBack();
     } else if (!canInteract || hasCommandModifier(key)) return;
-    else if (key.upArrow) setSelected((value) => (value - 1 + choices.length) % choices.length);
-    else if (key.downArrow) setSelected((value) => (value + 1) % choices.length);
-    else if (key.return) {
+    else if (key.upArrow) {
+      const next = (selectedRef.current - 1 + choices.length) % choices.length;
+      selectedRef.current = next;
+      setSelected(next);
+    } else if (key.downArrow) {
+      const next = (selectedRef.current + 1) % choices.length;
+      selectedRef.current = next;
+      setSelected(next);
+    } else if (key.return) {
       actionPending.current = true;
-      onSelect(selected);
+      onSelect(selectedRef.current);
     }
   });
   if (!canInteract) return <NarrowTerminal />;
@@ -972,8 +979,10 @@ function UpdateMenu({
 }): ReactNode {
   const { columns } = useWindowSize();
   const actionPending = useRef(false);
+  const selectedRef = useRef(0);
   const choices = useMemo(() => updateChoices(info), [info]);
   const [selected, setSelected] = useState(0);
+  const selectedIndex = Math.min(selected, Math.max(0, choices.length - 1));
   const canInteract = columns >= MINIMUM_TERMINAL_COLUMNS;
   useInput((input, key) => {
     if (actionPending.current) return;
@@ -985,10 +994,16 @@ function UpdateMenu({
     else if (input === "r") {
       actionPending.current = true;
       onReload();
-    } else if (key.upArrow && choices.length > 0) setSelected((value) => (value - 1 + choices.length) % choices.length);
-    else if (key.downArrow && choices.length > 0) setSelected((value) => (value + 1) % choices.length);
-    else if (key.return) {
-      const choice = choices[selected];
+    } else if (key.upArrow && choices.length > 0) {
+      const next = (Math.min(selectedRef.current, choices.length - 1) - 1 + choices.length) % choices.length;
+      selectedRef.current = next;
+      setSelected(next);
+    } else if (key.downArrow && choices.length > 0) {
+      const next = (Math.min(selectedRef.current, choices.length - 1) + 1) % choices.length;
+      selectedRef.current = next;
+      setSelected(next);
+    } else if (key.return) {
+      const choice = choices[Math.min(selectedRef.current, Math.max(0, choices.length - 1))];
       actionPending.current = true;
       if (choice) onReview(choice.scope);
       else onBack();
@@ -996,7 +1011,7 @@ function UpdateMenu({
   });
 
   if (!canInteract) return <NarrowTerminal />;
-  const choice = choices[selected];
+  const choice = choices[selectedIndex];
   return (
     <Box flexDirection="column" width={columns}>
       <Header title="ATLAS CORE > UPDATE" />
@@ -1016,8 +1031,8 @@ function UpdateMenu({
         <>
           <Text bold>CHOOSE UPDATE</Text>
           {choices.map((candidate, index) => (
-            <Text inverse={index === selected} key={candidate.scope}>
-              {pad(`${index === selected ? ">" : " "} ${candidate.label}`, columns)}
+            <Text inverse={index === selectedIndex} key={candidate.scope}>
+              {pad(`${index === selectedIndex ? ">" : " "} ${candidate.label}`, columns)}
             </Text>
           ))}
           <Text> </Text>

@@ -363,7 +363,7 @@ describe("Atlas Core terminal UI", () => {
     expect(deployment.logs).toHaveBeenCalledWith(undefined, false);
   });
 
-  it("dispatches only one log selection when Enter repeats before the screen changes", async () => {
+  it("dispatches the newly selected log once when input is coalesced", async () => {
     const terminal = new TestTerminal();
     const deployment = operator();
     let finishLogs: (() => void) | undefined;
@@ -378,7 +378,7 @@ describe("Atlas Core terminal UI", () => {
     await terminal.waitFor("Filter: logs");
     terminal.write("\r");
     await terminal.waitFor("All services");
-    terminal.write("\u001b[13u\u001b[13u");
+    terminal.write("\u001b[B\u001b[13u\u001b[13u");
     await vi.waitFor(() => expect(deployment.logs).toHaveBeenCalled());
     await nextInputTurn();
     const logCallsAfterRepeatedEnter = deployment.logs.mock.calls.length;
@@ -390,6 +390,7 @@ describe("Atlas Core terminal UI", () => {
     await menu;
 
     expect(logCallsAfterRepeatedEnter).toBe(1);
+    expect(deployment.logs).toHaveBeenCalledWith("api", false);
   });
 
   it("renders an intentional narrow-terminal state", async () => {
@@ -417,9 +418,7 @@ describe("Atlas Core terminal UI", () => {
     const update = createInteractiveCLI(terminal.input, terminal.output).runUpdate(deployment);
 
     await terminal.waitFor("Update CLI + Atlas Core");
-    terminal.write("\u001b[B");
-    await terminal.waitFor("Preserve credentials and durable data");
-    terminal.write("\r");
+    terminal.write("\u001b[B\r");
     await terminal.waitFor("paired PostgreSQL and MinIO backup exists");
     terminal.resize(36);
     await terminal.waitFor("Resize to at least 40 columns.");
