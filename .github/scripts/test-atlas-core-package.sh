@@ -82,6 +82,10 @@ ATLAS_CORE_HOME="$core_home" "$cli" start
 ATLAS_CORE_HOME="$core_home" "$cli" doctor
 ATLAS_CORE_HOME="$core_home" "$cli" status
 curl --fail --silent --show-error http://127.0.0.1:8000/readiness
+printf 'y\n' | ATLAS_CORE_HOME="$core_home" "$cli" reset
+ATLAS_CORE_HOME="$core_home" "$cli" doctor
+ATLAS_CORE_HOME="$core_home" "$cli" status
+curl --fail --silent --show-error http://127.0.0.1:8000/readiness
 ATLAS_CORE_HOME="$core_home" "$cli" stop
 
 docker volume inspect atlas_core_production_postgres_data >/dev/null

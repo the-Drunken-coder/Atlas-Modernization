@@ -13,6 +13,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import { PACKAGE_IMAGE, PACKAGE_NAME, PACKAGE_VERSION } from "./package-metadata.js";
 
@@ -24,6 +25,9 @@ const POSTGRES_CONTAINER = `${PROJECT_NAME}_postgres`;
 const MINIO_CONTAINER = `${PROJECT_NAME}_minio`;
 const MINIO_INIT_CONTAINER = `${PROJECT_NAME}_minio_init`;
 const INIT_LOCK_NETWORK = `${PROJECT_NAME}_init_lock`;
+const RESET_CONTAINERS = [API_CONTAINER, POSTGRES_CONTAINER, MINIO_CONTAINER, MINIO_INIT_CONTAINER] as const;
+const RESET_VOLUMES = [POSTGRES_VOLUME, MINIO_VOLUME] as const;
+const RESET_CONTAINER_NAMES = new Set<string>(RESET_CONTAINERS);
 const REQUIRED_SERVICES = new Set(["api", "minio", "postgres"]);
 const COMPOSE_VARIABLES = [
   "API_AUTH_KEY",
@@ -60,6 +64,7 @@ Usage:
   atlas-core start
   atlas-core stop
   atlas-core restart
+  atlas-core reset
   atlas-core status
   atlas-core logs [core|postgres|minio] [--follow]
   atlas-core doctor
@@ -98,6 +103,7 @@ export type CLIContext = {
   nodeVersion?: string;
   now?: () => Date;
   createSecret?: () => string;
+  confirmReset?: (question: string) => Promise<boolean>;
   imageReference?: string;
 };
 
@@ -106,6 +112,7 @@ type Command =
   | { kind: "help" }
   | { kind: "init" }
   | { kind: "logs"; service?: "api" | "minio" | "postgres"; follow: boolean }
+  | { kind: "reset" }
   | { kind: "restart" }
   | { kind: "start" }
   | { kind: "status" }
@@ -183,6 +190,7 @@ class AtlasCoreDeployment {
   readonly #nodeVersion: string;
   readonly #now: () => Date;
   readonly #createSecret: () => string;
+  readonly #confirmReset: (question: string) => Promise<boolean>;
   readonly #imageReference: string | undefined;
 
   constructor(context: RequiredRuntimeContext) {
@@ -201,6 +209,7 @@ class AtlasCoreDeployment {
     this.#nodeVersion = context.nodeVersion;
     this.#now = context.now;
     this.#createSecret = context.createSecret;
+    this.#confirmReset = context.confirmReset;
     this.#imageReference = context.imageReference;
   }
 
@@ -316,6 +325,10 @@ class AtlasCoreDeployment {
   async start(): Promise<void> {
     const state = this.#requireInitialized();
     const dockerEngineId = await this.#preflight();
+    await this.#start(state, dockerEngineId);
+  }
+
+  async #start(state: DeploymentState, dockerEngineId: string): Promise<void> {
     this.#assertStateMatchesRuntime(state, dockerEngineId);
     this.#requirePublishedImage();
     const needsPostgresVolume = await this.#assertStartIsSafe(state);
@@ -327,6 +340,58 @@ class AtlasCoreDeployment {
     this.#stdout.write("Atlas Core is ready.\n");
     this.#stdout.write("API:       http://127.0.0.1:8000\n");
     this.#stdout.write("MinIO UI:  http://127.0.0.1:9001\n");
+  }
+
+  async reset(): Promise<void> {
+    this.#stdout.write(
+      `Reset permanently deletes Atlas Core containers, PostgreSQL and MinIO data, and configuration at ${this.#configDir}.\n`
+    );
+    if (!(await this.#confirmReset("Continue? [y/N] "))) {
+      this.#stdout.write("Atlas Core reset cancelled.\n");
+      return;
+    }
+    const imageReference = this.#requirePublishedImage();
+    const dockerEngineId = await this.#preflight();
+    await this.#checkCommand("docker", ["pull", imageReference]);
+    this.#prepareConfigDirectory();
+    this.#assertResetConfigurationMatchesRuntime(dockerEngineId);
+    this.#acquireInitLock();
+    try {
+      await this.#acquireDockerInitLock(dockerEngineId);
+      try {
+        await this.#reset(dockerEngineId);
+      } finally {
+        await this.#releaseDockerInitLock();
+      }
+    } finally {
+      this.#releaseInitLock();
+    }
+  }
+
+  async #reset(dockerEngineId: string): Promise<void> {
+    const existingContainers: string[] = [];
+    for (const name of RESET_CONTAINERS) {
+      if (await this.#containerExists(name)) existingContainers.push(name);
+    }
+    const existingVolumes: string[] = [];
+    for (const name of RESET_VOLUMES) {
+      if (await this.#volumeExists(name)) existingVolumes.push(name);
+    }
+    await this.#assertResetVolumesHaveNoUnknownUsers(existingVolumes);
+
+    for (const name of existingContainers) {
+      await this.#checkCommand("docker", ["container", "rm", "--force", name]);
+    }
+    for (const name of existingVolumes) {
+      await this.#checkCommand("docker", ["volume", "rm", name]);
+    }
+    this.#deleteConfigurationFile(this.#stateFile);
+    this.#deleteConfigurationFile(this.#envFile);
+
+    this.#stdout.write(`Reinitializing Atlas Core ${PACKAGE_VERSION} with new credentials and empty storage.\n`);
+    await this.#initialize(dockerEngineId);
+    await this.#start(this.#requireInitialized(), dockerEngineId);
+    this.#stdout.write(`Atlas Core ${PACKAGE_VERSION} reset is complete.\n`);
   }
 
   async stop(): Promise<void> {
@@ -605,6 +670,29 @@ class AtlasCoreDeployment {
     });
   }
 
+  async #assertResetVolumesHaveNoUnknownUsers(volumes: string[]): Promise<void> {
+    for (const volume of volumes) {
+      const output = await this.#checkCommand("docker", [
+        "container",
+        "ls",
+        "--all",
+        "--filter",
+        `volume=${volume}`,
+        "--format",
+        "{{.Names}}"
+      ]);
+      const unexpected = output
+        .split(/\r?\n/)
+        .map((name) => name.trim())
+        .filter((name) => name && !RESET_CONTAINER_NAMES.has(name));
+      if (unexpected.length > 0) {
+        throw new Error(
+          `Atlas Core volume ${volume} is also used by ${unexpected.join(", ")}. Reset stopped before deleting anything.`
+        );
+      }
+    }
+  }
+
   async #ownedResourceExists(
     kind: "container" | "volume",
     name: string,
@@ -772,6 +860,23 @@ class AtlasCoreDeployment {
     if (existsSync(this.#stateFile)) this.#assertPrivateFile(this.#stateFile);
   }
 
+  #assertResetConfigurationMatchesRuntime(dockerEngineId: string): void {
+    this.#assertPrivateConfiguration();
+    const state = this.#readState();
+    if (state && state.dockerEngineId !== dockerEngineId) {
+      throw new Error(
+        `Atlas Core configuration belongs to Docker engine ${state.dockerEngineId}, but the current engine is ${dockerEngineId}. ` +
+          "Restore the original Docker context before resetting this deployment."
+      );
+    }
+  }
+
+  #deleteConfigurationFile(path: string): void {
+    if (!existsSync(path)) return;
+    this.#assertPrivateFile(path);
+    unlinkSync(path);
+  }
+
   #assertPrivateDirectory(): void {
     const info = lstatSync(this.#configDir);
     if (info.isSymbolicLink() || !info.isDirectory()) {
@@ -815,10 +920,11 @@ class AtlasCoreDeployment {
     }
   }
 
-  #requirePublishedImage(): void {
+  #requirePublishedImage(): string {
     if (!this.#imageReference) {
       throw new Error("This atlas-core package was not produced by the release workflow and has no pinned Core image.");
     }
+    return this.#imageReference;
   }
 
   #readConfigValue(name: string): string | undefined {
@@ -887,6 +993,7 @@ type RequiredRuntimeContext = {
   nodeVersion: string;
   now: () => Date;
   createSecret: () => string;
+  confirmReset: (question: string) => Promise<boolean>;
   imageReference: string | undefined;
 };
 
@@ -912,6 +1019,9 @@ export async function runCLI(argv: string[], context: CLIContext = {}): Promise<
         return 0;
       case "logs":
         await deployment.logs(command.service, command.follow);
+        return 0;
+      case "reset":
+        await deployment.reset();
         return 0;
       case "restart":
         await deployment.restart();
@@ -949,6 +1059,9 @@ function parseCommand(argv: string[]): Command {
     case "version":
       if (args.length > 0) throw new UsageError(`${name} does not accept arguments`);
       return { kind: name };
+    case "reset":
+      if (args.length > 0) throw new UsageError("reset does not accept arguments");
+      return { kind: "reset" };
     case "logs":
       return parseLogs(args);
     default:
@@ -986,8 +1099,24 @@ function defaultContext(context: CLIContext): RequiredRuntimeContext {
     nodeVersion: context.nodeVersion ?? process.versions.node,
     now: context.now ?? (() => new Date()),
     createSecret: context.createSecret ?? (() => randomBytes(32).toString("base64url")),
+    confirmReset: context.confirmReset ?? askForResetConfirmation,
     imageReference: context.imageReference ?? PACKAGE_IMAGE
   };
+}
+
+async function askForResetConfirmation(question: string): Promise<boolean> {
+  const prompt = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    return await new Promise<boolean>((resolveConfirmation) => {
+      prompt.once("close", () => resolveConfirmation(false));
+      void prompt.question(question).then(
+        (answer) => resolveConfirmation(/^(?:y|yes)$/i.test(answer.trim())),
+        () => resolveConfirmation(false)
+      );
+    });
+  } finally {
+    prompt.close();
+  }
 }
 
 function writePrivateFile(path: string, contents: string, platform: NodeJS.Platform, exclusive = false): void {

@@ -69,6 +69,9 @@ try {
   if (!existsSync(installedBin)) throw new Error("npm did not install the atlas-core command");
   const output = run(installedBin, ["help"], project);
   if (!output.includes("atlas-core start")) throw new Error("installed atlas-core binary did not print help");
+  if (!output.includes("atlas-core reset")) {
+    throw new Error("installed atlas-core binary did not document reset");
+  }
 } finally {
   rmSync(temporaryDirectory, { recursive: true, force: true });
 }

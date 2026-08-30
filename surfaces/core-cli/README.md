@@ -28,6 +28,7 @@ atlas-core init
 atlas-core start
 atlas-core stop
 atlas-core restart
+atlas-core reset
 atlas-core status
 atlas-core logs [core|postgres|minio] [--follow]
 atlas-core doctor
@@ -36,6 +37,20 @@ atlas-core version
 
 `stop` removes containers and the private Compose network. It preserves PostgreSQL and MinIO volumes. Removing the
 npm package also leaves those durable volumes untouched.
+
+`reset` is the explicit exception. It permanently deletes the known Atlas Core containers, both durable volumes, and
+the credentials and state in the selected `ATLAS_CORE_HOME`. It then creates new credentials and empty storage, and
+starts the image pinned by the installed CLI package. Install `atlas-core@latest` first when the goal is to reset onto
+the newest release:
+
+```bash
+npm install --global atlas-core@latest
+atlas-core reset
+```
+
+Reset lists what it will delete and asks `Continue? [y/N]`. It proceeds only after `y` or `yes`. Reset verifies
+ownership labels and stops before deleting anything if another container uses either durable volume. It does not remove
+separately managed tunnels, reverse proxies, or their credentials.
 
 The first release binds the Core API, PostgreSQL, and MinIO ports to loopback. It does not configure public ingress.
 Installing a different CLI version does not upgrade an initialized deployment. `start` and `restart` stop with an
@@ -59,5 +74,6 @@ binds the state directory to the Docker engine that initialized it and verifies 
 using an existing container or volume. Initialization also takes a Docker-engine-scoped project lock, so different
 configuration directories cannot initialize the same fixed deployment concurrently.
 
-If `init` finds existing Atlas volumes without its matching configuration, it stops. Do not delete those volumes to
-silence the check. Recover the credentials and paired storage instead.
+If `init` finds existing Atlas volumes without its matching configuration, it stops. Recover the credentials and paired
+storage unless you intend to discard the deployment. Use the confirmed `reset` command only when permanent deletion is
+the desired outcome.
