@@ -1,11 +1,12 @@
 import { Callout } from "@blueprintjs/core";
 import { AtlasAPIError } from "@the-drunken-coder/atlas-sdk";
 import { AtlasAdminClient } from "@the-drunken-coder/atlas-sdk/admin";
-import { Component, type FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
+import { Component, type FormEvent, lazy, type ReactNode, Suspense, useEffect, useRef, useState } from "react";
 import { sanitizeConnectionError } from "../../atlas/connection-error.js";
 import { ConnectionBadge } from "../../ui/ConnectionBadge.js";
 import { Button, TextField } from "../../ui/primitives/controls.js";
-import { AccountMenu } from "./AccountMenu.js";
+
+const AccountMenu = lazy(() => import("./AccountMenu.js"));
 
 type AuthState =
   | { status: "loading" }
@@ -130,7 +131,9 @@ function AuthenticatedShell({
 
   return (
     <section className="authenticated-shell">
-      <AccountMenu username={username} loggingOut={loggingOut} error={error} onLogout={() => void logout()} />
+      <Suspense fallback={null}>
+        <AccountMenu username={username} loggingOut={loggingOut} error={error} onLogout={() => void logout()} />
+      </Suspense>
       <WorkspaceErrorBoundary
         loggingOut={loggingOut}
         logoutError={error}

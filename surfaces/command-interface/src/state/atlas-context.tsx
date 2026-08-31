@@ -6,8 +6,7 @@ import {
   type AtlasDataSource,
   type CommandSubmission,
   type ConnectionError,
-  type ConnectionHealth,
-  createSdkDataSource
+  type ConnectionHealth
 } from "../atlas/data-source.js";
 import type { UiGeometry } from "../atlas/geometry.js";
 import { type AtlasSnapshot, emptySnapshot } from "../atlas/store.js";
@@ -47,7 +46,7 @@ export function AtlasProvider({
   children,
   config: providedConfig,
   loadConfig = fetchAppConfig,
-  createDataSource = createSdkDataSource
+  createDataSource
 }: AtlasProviderProps) {
   const [status, setStatus] = useState<AtlasStatus>("loading");
   const [error, setError] = useState<string>();
@@ -103,7 +102,10 @@ export function AtlasProvider({
         if (cancelled) return;
         setConfig(resolvedConfig);
 
-        const dataSource = createDataSource(resolvedConfig);
+        const resolvedCreateDataSource =
+          createDataSource ?? (await import("../atlas/data-source.js")).createSdkDataSource;
+        if (cancelled) return;
+        const dataSource = resolvedCreateDataSource(resolvedConfig);
         dataSourceRef.current = dataSource;
         setEntityDetailsAvailable(Boolean(dataSource.loadEntityDetails));
 
