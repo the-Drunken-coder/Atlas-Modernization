@@ -3,6 +3,16 @@
 Atlas Core release notes are listed newest first. The manual release workflow writes each new section from the
 verified commit history with OpenCode Go, then pauses for approval before publishing.
 
+## 0.1.6 - 2026-08-31
+
+### Added
+
+- The interactive `atlas-core` menu, status view, and update flow now use an Ink-based terminal interface with terminal-size guidance and keyboard navigation.
+
+### Changed
+
+- The release workflow now prepares and verifies release artifacts before publication, builds Atlas Core images for `linux/amd64` and `linux/arm64`, and publishes from the immutable release tag.
+
 ## 0.1.5 - 2026-08-30
 
 ### Added
