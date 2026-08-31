@@ -131,15 +131,15 @@ function AuthenticatedShell({
 
   return (
     <section className="authenticated-shell">
-      <Suspense fallback={null}>
-        <AccountMenu username={username} loggingOut={loggingOut} error={error} onLogout={() => void logout()} />
-      </Suspense>
       <WorkspaceErrorBoundary
         loggingOut={loggingOut}
         logoutError={error}
         onRetry={() => window.location.reload()}
         onLogout={() => void logout()}
       >
+        <Suspense fallback={null}>
+          <AccountMenu username={username} loggingOut={loggingOut} error={error} onLogout={() => void logout()} />
+        </Suspense>
         {children}
       </WorkspaceErrorBoundary>
     </section>
