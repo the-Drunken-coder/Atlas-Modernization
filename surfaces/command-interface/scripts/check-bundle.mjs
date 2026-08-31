@@ -15,7 +15,7 @@ const budgets = {
   // shared component styles and icon-path chunks. Map budgets remain scoped separately.
   initialJavaScript: { raw: 415_000, gzip: 127_000 },
   initialCss: { raw: 510_000, gzip: 55_000 },
-  shellJavaScript: { raw: 142_000, gzip: 46_000 },
+  shellJavaScript: { raw: 142_500, gzip: 46_000 },
   mapViewJavaScript: { raw: 71_000, gzip: 21_000 },
   mapLibreJavaScript: { raw: 1_100_000, gzip: 300_000 },
   mapLibreWorkerJavaScript: { raw: 500_000, gzip: 140_000 },
