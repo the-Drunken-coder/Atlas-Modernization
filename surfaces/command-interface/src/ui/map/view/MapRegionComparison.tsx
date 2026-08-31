@@ -122,13 +122,13 @@ export function MapRegionComparison({
   regionRectRef.current = regionRect;
 
   useEffect(() => {
-    if (!exclusiveDrawingActive || drag?.kind !== "draw") return;
+    if (!exclusiveDrawingActive || !drag) return;
     if (drag.pointerId !== null && mapCanvas?.hasPointerCapture?.(drag.pointerId)) {
       suppressNextClick();
       mapCanvas.releasePointerCapture?.(drag.pointerId);
     }
-    setRegion(drag.previousRegion);
-    setPanelOpen(Boolean(drag.previousRegion));
+    setRegion(drag.kind === "draw" ? drag.previousRegion : drag.initialRegion);
+    if (drag.kind === "draw") setPanelOpen(Boolean(drag.previousRegion));
     setDrag(null);
   }, [drag, exclusiveDrawingActive, mapCanvas, suppressNextClick]);
 
