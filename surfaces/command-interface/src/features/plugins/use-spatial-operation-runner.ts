@@ -104,11 +104,16 @@ export function useSpatialOperationRunner({
     setError(undefined);
   }, [abortRequest]);
 
-  const setArea = useCallback((next: MapArea) => {
-    setAreaState(next);
-    setStatus("idle");
-    setError(undefined);
-  }, []);
+  const setArea = useCallback(
+    (next: MapArea) => {
+      abortRequest();
+      setAreaState(next);
+      setStatus("idle");
+      setStale(result !== null);
+      setError(undefined);
+    },
+    [abortRequest, result]
+  );
 
   const beginDrawing = useCallback(() => {
     abortRequest();

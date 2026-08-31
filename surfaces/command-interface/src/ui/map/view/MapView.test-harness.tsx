@@ -7,7 +7,7 @@ import type { MapCameraCommand } from "../interaction/map-camera.js";
 import type { MapReticleTarget } from "../interaction/map-targets.js";
 import type { MapEditing } from "../rendering/map-editing.js";
 import { buildMapSources, type MapSources } from "../rendering/map-sources.js";
-import { MapView } from "./MapView.js";
+import { type MapSpatialInteraction, MapView } from "./MapView.js";
 
 export type PointLike = { x: number; y: number };
 
@@ -60,6 +60,12 @@ const maplibreMock = vi.hoisted(() => {
     readonly getBearing = vi.fn(() => 0);
     readonly getPitch = vi.fn(() => 0);
     readonly getZoom = vi.fn(() => this.zoom);
+    readonly getBounds = vi.fn(() => ({
+      getWest: () => -20,
+      getSouth: () => -10,
+      getEast: () => 20,
+      getNorth: () => 10
+    }));
     readonly getLayer = vi.fn((id: string) => this.layers.get(id));
     readonly getSource = vi.fn((id: string) => this.sources.get(id));
     readonly cameraForBounds = vi.fn(
@@ -270,6 +276,7 @@ type RenderMapViewProps = {
   onStyleSwitchError?: (error: { failedStyleId: string; activeStyleId: string }) => void;
   selectedId?: string;
   sources?: MapSources;
+  spatial?: MapSpatialInteraction;
   styleId?: string;
   style?: StyleSpecification;
 };
@@ -297,6 +304,7 @@ export function renderMapView(props: RenderMapViewProps = {}) {
         focusTarget={renderProps.focusTarget}
         placeDetailTarget={renderProps.placeDetailTarget}
         cameraCommand={renderProps.cameraCommand}
+        spatial={renderProps.spatial}
         onBackgroundClick={onBackgroundClick}
         onMapContextMenu={onMapContextMenu}
         onSelectEntity={onSelectEntity}

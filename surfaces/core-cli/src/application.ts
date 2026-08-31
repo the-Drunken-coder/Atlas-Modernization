@@ -948,11 +948,12 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     }
     const snapshot = await this.#deploymentSnapshot();
     const candidatePluginIds = state.enabledPlugins.filter((candidate) => candidate !== pluginId);
-    const removeResult = await this.#runCompose(["rm", "-s", "-f", plugin.service], false, state.enabledPlugins);
-    if (removeResult.status !== 0) throw commandFailure("docker compose rm", removeResult);
-    const backup = this.#backupPluginAssets(pluginId);
+    const backup = this.#copyPluginAssetsBackup(pluginId);
     let stateCommitted = false;
     try {
+      const removeResult = await this.#runCompose(["rm", "-s", "-f", plugin.service], false, state.enabledPlugins);
+      if (removeResult.status !== 0) throw commandFailure("docker compose rm", removeResult);
+      this.#removePluginAssets(pluginId);
       this.#writeDeploymentState({ ...state, enabledPlugins: candidatePluginIds });
       stateCommitted = true;
       await this.#runComposeChecked(["config", "--quiet"], candidatePluginIds);
@@ -1399,6 +1400,19 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     const backup = join(this.#pluginConfigRoot, `.${pluginId}.backup.${process.pid}.${randomBytes(6).toString("hex")}`);
     renameSync(target, backup);
     return backup;
+  }
+
+  #copyPluginAssetsBackup(pluginId: string): string {
+    const target = join(this.#pluginConfigRoot, pluginId);
+    if (!existsSync(target)) throw new Error(`Enabled Plugin ${pluginId} has no private deployment assets.`);
+    const backup = join(this.#pluginConfigRoot, `.${pluginId}.backup.${process.pid}.${randomBytes(6).toString("hex")}`);
+    try {
+      cpSync(target, backup, { recursive: true, dereference: false, errorOnExist: true, force: false });
+      return backup;
+    } catch (error) {
+      rmSync(backup, { recursive: true, force: true });
+      throw error;
+    }
   }
 
   #restorePluginAssets(pluginId: string, backup: string): void {

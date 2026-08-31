@@ -1456,6 +1456,21 @@ describe("atlas-core CLI", () => {
     expect(existsSync(join(test.home, ".atlas", "core", "plugins", plugin.pluginId))).toBe(false);
   });
 
+  it("does not remove a Plugin container when its rollback backup cannot be created", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const plugin = installTestPluginCatalog(test);
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
+    rmSync(join(test.home, ".atlas", "core", "plugins", plugin.pluginId), { recursive: true, force: true });
+    test.runner.calls.length = 0;
+
+    expect(await runCLI(["plugins", "disable", plugin.pluginId], test.context)).toBe(1);
+    expect(test.runner.calls.map(composeCommand)).not.toContainEqual(["rm", "-s", "-f", plugin.service]);
+    expect(JSON.parse(readFileSync(join(test.home, ".atlas", "core", "state.json"), "utf8"))).toMatchObject({
+      enabledPlugins: [plugin.pluginId]
+    });
+  });
+
   it("allows Plugin status and logs across CLI-only version drift but rejects mutations", async () => {
     const test = runtime();
     markInitialized(test);

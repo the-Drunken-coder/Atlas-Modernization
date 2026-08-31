@@ -324,7 +324,7 @@ func (g *Gateway) execute(ctx context.Context, connector *connector, input Conne
 				continue
 			}
 			cacheResult := "bypass"
-			if rule.Cache.TTLMS > 0 && !retryable {
+			if rule.Cache.TTLMS > 0 && !retryable && cacheableStatus(response.Status) {
 				g.cache.put(key, response, g.now().Add(time.Duration(rule.Cache.TTLMS)*time.Millisecond))
 				cacheResult = "stored"
 			} else if rule.Cache.TTLMS > 0 {
@@ -342,6 +342,10 @@ func (g *Gateway) execute(ctx context.Context, connector *connector, input Conne
 		return ConnectorResponse{}, attempt, "miss", failure
 	}
 	panic("unreachable")
+}
+
+func cacheableStatus(status int) bool {
+	return status < http.StatusInternalServerError && status != http.StatusTooManyRequests
 }
 
 type preparedRequest struct {

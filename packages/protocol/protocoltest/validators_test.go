@@ -42,6 +42,23 @@ func TestGeneratedValidatorsRejectCyclicValues(t *testing.T) {
 	}
 }
 
+func TestGeneratedMapAreaValidatorAppliesSemanticLimits(t *testing.T) {
+	valid := map[string]any{"west": -71.001, "south": 42.0, "east": -71.0, "north": 42.001}
+	if errors := protocol.ValidateMapArea(valid); len(errors) != 0 {
+		t.Fatalf("ValidateMapArea(valid) errors = %v", errors)
+	}
+
+	assertErrorContains(t, protocol.ValidateMapArea(map[string]any{
+		"west": 10.0, "south": 42.0, "east": -10.0, "north": 42.001,
+	}), "west must be less than east")
+	assertErrorContains(t, protocol.ValidateMapArea(map[string]any{
+		"west": -71.001, "south": 42.001, "east": -71.0, "north": 42.0,
+	}), "south must be less than north")
+	assertErrorContains(t, protocol.ValidateMapArea(map[string]any{
+		"west": -71.1, "south": 42.0, "east": -71.0, "north": 42.1,
+	}), "area must not exceed 5 km²")
+}
+
 func TestErrorExamplesValidate(t *testing.T) {
 	root := moduleRoot(t)
 	assertExamplesValidate(t, filepath.Join(root, "examples", "errors"), protocol.ValidateErrorResponse)

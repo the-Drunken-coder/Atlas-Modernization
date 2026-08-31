@@ -20,7 +20,9 @@ const (
 	schemaBundlePath     = "jsonschema/atlas.schema.json"
 	schemaBundleLocation = "atlas.schema.json"
 	// MaxGeometryPositions is the aggregate position limit for one Polygon.
-	MaxGeometryPositions = 10000
+	MaxGeometryPositions   = 10000
+	maxMapAreaSquareMeters = 5_000_000
+	earthRadiusMeters      = 6_371_008.8
 )
 
 type compiledSchema struct {
@@ -457,6 +459,8 @@ func semanticErrors(definition string, value any) []string {
 	switch definition {
 	case "CommandCatalog":
 		return commandCatalogSemanticErrors(value)
+	case "MapArea":
+		return mapAreaSemanticErrors(value)
 	case "GeometryComponent":
 		return geometrySemanticErrors(value, "")
 	case "EntityComponents":
@@ -474,6 +478,37 @@ func semanticErrors(definition string, value any) []string {
 	default:
 		return nil
 	}
+}
+
+func mapAreaSemanticErrors(value any) []string {
+	payload, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+	west, westOK := payload["west"].(float64)
+	south, southOK := payload["south"].(float64)
+	east, eastOK := payload["east"].(float64)
+	north, northOK := payload["north"].(float64)
+	if !westOK || !southOK || !eastOK || !northOK {
+		return nil
+	}
+	var errors []string
+	if west >= east {
+		errors = append(errors, "west must be less than east")
+	}
+	if south >= north {
+		errors = append(errors, "south must be less than north")
+	}
+	if len(errors) > 0 {
+		return errors
+	}
+	radians := math.Pi / 180
+	squareMeters := earthRadiusMeters * earthRadiusMeters * (east - west) * radians *
+		(math.Sin(north*radians) - math.Sin(south*radians))
+	if squareMeters > maxMapAreaSquareMeters {
+		return []string{"area must not exceed 5 km²"}
+	}
+	return nil
 }
 
 func commandCatalogSemanticErrors(value any) []string {

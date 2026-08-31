@@ -39,6 +39,12 @@ type Candidate = {
 
 class MalformedSourceResponse extends Error {}
 
+class SourceRemarkError extends Error {
+  constructor(readonly pluginCode: "source_busy" | "source_timeout" | "source_unavailable") {
+    super(pluginCode);
+  }
+}
+
 export function createBuildingSearchOperation(gateway: Gateway, now: () => Date = () => new Date()) {
   return defineSpatialOperation({
     displayName: "Search buildings",
@@ -59,6 +65,9 @@ export function createBuildingSearchOperation(gateway: Gateway, now: () => Date 
       try {
         return buildResult(payload, now());
       } catch (error) {
+        if (error instanceof SourceRemarkError) {
+          throw new PluginFailureError(error.pluginCode);
+        }
         if (error instanceof MalformedSourceResponse) {
           throw new PluginFailureError("malformed_source_response");
         }
@@ -139,7 +148,12 @@ export function buildResult(payload: unknown, retrievedAt: Date): SpatialOperati
 }
 
 function parseCandidates(payload: unknown): Candidate[] {
-  if (!isRecord(payload) || !Array.isArray(payload.elements)) throw new MalformedSourceResponse();
+  if (!isRecord(payload)) throw new MalformedSourceResponse();
+  if (Object.hasOwn(payload, "remark")) {
+    if (typeof payload.remark !== "string" || !payload.remark.trim()) throw new MalformedSourceResponse();
+    throw new SourceRemarkError(overpassRemarkCode(payload.remark));
+  }
+  if (!Array.isArray(payload.elements)) throw new MalformedSourceResponse();
   const byElement = new Map<string, Candidate>();
   for (const value of payload.elements) {
     if (!isRecord(value) || (value.type !== "way" && value.type !== "relation")) {
@@ -162,6 +176,20 @@ function parseCandidates(payload: unknown): Candidate[] {
     const typeOrder = (left.type === "way" ? 0 : 1) - (right.type === "way" ? 0 : 1);
     return typeOrder || left.id - right.id;
   });
+}
+
+function overpassRemarkCode(remark: string): SourceRemarkError["pluginCode"] {
+  const normalized = remark.toLowerCase();
+  if (normalized.includes("timed out") || normalized.includes("timeout")) return "source_timeout";
+  if (
+    normalized.includes("too many requests") ||
+    normalized.includes("rate limit") ||
+    normalized.includes("busy") ||
+    normalized.includes("slots available")
+  ) {
+    return "source_busy";
+  }
+  return "source_unavailable";
 }
 
 function parseTags(value: unknown): Tags {

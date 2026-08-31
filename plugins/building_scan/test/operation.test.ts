@@ -158,6 +158,24 @@ describe("Building Scan", () => {
     await expect(pending).rejects.toThrow("cancelled");
   });
 
+  it("rejects an HTTP 200 timeout remark without publishing recorded partial elements", async () => {
+    const payload = await fixture("remark-timeout.json");
+    const operation = createBuildingSearchOperation({ request: async () => response(200, payload) });
+    await expect(operation.handler(area, new AbortController().signal)).rejects.toMatchObject({
+      pluginCode: "source_timeout"
+    });
+  });
+
+  it.each([
+    ["runtime error: The dispatcher is busy and no slots are available.", "source_busy"],
+    ["runtime error: Backend database unavailable.", "source_unavailable"]
+  ])("maps HTTP 200 Overpass remark failures", async (remark, pluginCode) => {
+    const operation = createBuildingSearchOperation({
+      request: async () => response(200, { remark, elements: [squareElement(1)] })
+    });
+    await expect(operation.handler(area, new AbortController().signal)).rejects.toMatchObject({ pluginCode });
+  });
+
   it("uses the configured connector, identifying header, and encoded query", async () => {
     const requests: Array<{ connectorId: string; request: SourceGatewayRequest; signal: AbortSignal | undefined }> = [];
     const operation = createBuildingSearchOperation(

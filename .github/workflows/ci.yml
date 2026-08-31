@@ -218,6 +218,11 @@ jobs:
           npm run plugins:verify
           npm run plugins:check-seepage
           npm run plugins:check
+          npm run plugins:catalog
+          git diff --exit-code -- \
+            surfaces/core-cli/src/plugin-catalog.generated.ts \
+            surfaces/core-cli/assets/plugin-catalog.json \
+            surfaces/core-cli/assets/plugins
 
   atlas-core-package:
     name: atlas-core-package

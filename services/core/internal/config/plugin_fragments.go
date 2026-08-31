@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -20,32 +21,35 @@ func (c *Config) loadPluginEndpointFragments(directory string) error {
 	if directory == "" {
 		return nil
 	}
-	entries, err := os.ReadDir(directory)
+	root, err := os.OpenRoot(directory)
 	if err != nil {
-		return fmt.Errorf("read Plugin endpoint configuration directory: %w", err)
+		return fmt.Errorf("open plugin endpoint configuration directory: %w", err)
+	}
+	defer func() { _ = root.Close() }()
+	entries, err := fs.ReadDir(root.FS(), ".")
+	if err != nil {
+		return fmt.Errorf("read plugin endpoint configuration directory: %w", err)
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
 	for _, entry := range entries {
 		if entry.IsDir() || !entry.Type().IsRegular() || filepath.Ext(entry.Name()) != ".json" {
-			return fmt.Errorf("Plugin endpoint configuration directory contains unsupported entry %q", entry.Name())
+			return fmt.Errorf("plugin endpoint configuration directory contains unsupported entry %q", entry.Name())
 		}
-		path := filepath.Join(directory, entry.Name())
-		// #nosec G304 -- the deployment operator supplies the private fragment directory.
-		data, err := os.ReadFile(path)
+		data, err := root.ReadFile(entry.Name())
 		if err != nil {
-			return fmt.Errorf("read Plugin endpoint fragment %s: %w", entry.Name(), err)
+			return fmt.Errorf("read plugin endpoint fragment %s: %w", entry.Name(), err)
 		}
 		if len(data) == 0 || len(data) > maxPluginEndpointFragmentBytes {
-			return fmt.Errorf("Plugin endpoint fragment %s must contain 1 to %d bytes", entry.Name(), maxPluginEndpointFragmentBytes)
+			return fmt.Errorf("plugin endpoint fragment %s must contain 1 to %d bytes", entry.Name(), maxPluginEndpointFragmentBytes)
 		}
 		decoder := json.NewDecoder(bytes.NewReader(data))
 		decoder.DisallowUnknownFields()
 		var endpoint PluginConfig
 		if err := decoder.Decode(&endpoint); err != nil {
-			return fmt.Errorf("decode Plugin endpoint fragment %s: %w", entry.Name(), err)
+			return fmt.Errorf("decode plugin endpoint fragment %s: %w", entry.Name(), err)
 		}
 		if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-			return fmt.Errorf("Plugin endpoint fragment %s contains trailing JSON", entry.Name())
+			return fmt.Errorf("plugin endpoint fragment %s contains trailing JSON", entry.Name())
 		}
 		c.Plugins = append(c.Plugins, endpoint)
 	}

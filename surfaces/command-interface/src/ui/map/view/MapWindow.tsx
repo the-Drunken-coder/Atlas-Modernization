@@ -88,7 +88,7 @@ export function MapWindow({
     const current = currentPosition();
     if (!current) return;
     const distance = event.shiftKey ? 24 : 8;
-    let next = current;
+    let next: Position;
     if (event.key === "ArrowLeft") next = { ...current, left: current.left - distance };
     else if (event.key === "ArrowRight") next = { ...current, left: current.left + distance };
     else if (event.key === "ArrowUp") next = { ...current, top: current.top - distance };

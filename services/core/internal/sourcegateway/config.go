@@ -144,7 +144,7 @@ func loadConnectorFragments(directory string) ([]ConnectorConfig, error) {
 	connectors := make([]ConnectorConfig, 0, len(entries))
 	for _, entry := range entries {
 		if entry.IsDir() || !entry.Type().IsRegular() || filepath.Ext(entry.Name()) != ".json" {
-			return nil, fmt.Errorf("Source Gateway connector configuration directory contains unsupported entry %q", entry.Name())
+			return nil, fmt.Errorf("source gateway connector configuration directory contains unsupported entry %q", entry.Name())
 		}
 		path := filepath.Join(directory, entry.Name())
 		// #nosec G304 -- the deployment operator supplies the private fragment directory.
@@ -162,7 +162,7 @@ func loadConnectorFragments(directory string) ([]ConnectorConfig, error) {
 			return nil, fmt.Errorf("decode Source Gateway connector fragment %s: %w", entry.Name(), decodeErr)
 		}
 		if !errors.Is(trailingErr, io.EOF) {
-			return nil, fmt.Errorf("Source Gateway connector fragment %s contains trailing JSON", entry.Name())
+			return nil, fmt.Errorf("source gateway connector fragment %s contains trailing JSON", entry.Name())
 		}
 		if closeErr != nil {
 			return nil, fmt.Errorf("close Source Gateway connector fragment %s: %w", entry.Name(), closeErr)

@@ -10,6 +10,7 @@ const script = join(dirname(fileURLToPath(import.meta.url)), "atlas-core-release
 const phaseScript = join(dirname(fileURLToPath(import.meta.url)), "select-atlas-core-release-phase.sh");
 const workflow = join(dirname(fileURLToPath(import.meta.url)), "../workflows/release-atlas-core.yml");
 const dockerfile = join(dirname(fileURLToPath(import.meta.url)), "../../services/core/docker/Dockerfile");
+const coreCLIPackage = join(dirname(fileURLToPath(import.meta.url)), "../../surfaces/core-cli/package.json");
 
 function run(args, cwd) {
   return spawnSync(process.execPath, [script, ...args], { cwd, encoding: "utf8", stdio: "pipe" });
@@ -42,6 +43,12 @@ test("installs the npm package before auditing its signatures", () => {
     /npm init --yes --silent >\/dev\/null\n\s+npm install --ignore-scripts "atlas-core@\$VERSION" >\/dev\/null\n\s+npm audit signatures/
   );
   assert.doesNotMatch(source, /npm install[^\n]*--package-lock-only(?:=true)?/);
+});
+
+test("does not regenerate the Plugin catalog before release image digests are selected", () => {
+  const packageJSON = JSON.parse(readFileSync(coreCLIPackage, "utf8"));
+  assert.doesNotMatch(packageJSON.scripts.prebuild, /plugins\.mjs generate-catalog/);
+  assert.match(packageJSON.scripts.prebuild, /generate-package-metadata/);
 });
 
 test("does not publish a missing npm version from main recovery", () => {
