@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "plugin_id": "reference",
+  "display_name": "Reference Fixture",
+  "lifecycle": "query_only",
+  "package": "@the-drunken-coder/atlas-reference-plugin",
+  "docker_target": "plugin",
+  "service": "reference-plugin",
+  "compose": "compose.yml",
+  "core_endpoint": "core-endpoint.json",
+  "source_connector": "source-connector.json",
+  "release": { "channel": "development" },
+  "shared_code_forbidden_terms": ["atlas_reference_fixture"]
+}

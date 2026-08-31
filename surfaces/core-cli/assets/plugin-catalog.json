@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "plugins": [
+    {
+      "plugin_id": "building_scan",
+      "display_name": "Building Scan",
+      "lifecycle": "query_only",
+      "service": "building-scan-plugin",
+      "image": null,
+      "assets": {
+        "compose": "compose.yml",
+        "core_endpoint": "core-endpoint.json",
+        "source_connector": "source-connector.json"
+      }
+    }
+  ]
+}

@@ -28,7 +28,6 @@ services:
       ATLAS_ADMIN_PASSWORD: ${ATLAS_ADMIN_PASSWORD:?ATLAS_ADMIN_PASSWORD must be set}
       MAX_UPLOAD_SIZE_MB: ${MAX_UPLOAD_SIZE_MB:-100}
       MAX_VIEW_SIZE_MB: ${MAX_VIEW_SIZE_MB:-10}
-      ATLAS_PLUGINS: "${ATLAS_PLUGINS:-[]}"
     ports:
       - "127.0.0.1:8000:8000"
     depends_on:
@@ -56,7 +55,7 @@ services:
     environment:
       ATLAS_SOURCE_GATEWAY_CONFIG: /app/source_gateway.json
     volumes:
-      - ${ATLAS_SOURCE_GATEWAY_CONFIG_FILE:-./source_gateway.production.json}:/app/source_gateway.json:ro
+      - ./source_gateway.production.json:/app/source_gateway.json:ro
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 10s

@@ -1,0 +1,4 @@
+{
+  "id": "building_scan",
+  "base_url": "http://building-scan-plugin:8080"
+}

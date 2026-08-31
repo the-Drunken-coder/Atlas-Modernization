@@ -55,7 +55,7 @@ coverage/
 /packages/plugin-runtime/dist/
 /packages/fieldlink/dist/
 /surfaces/core-cli/dist/
-/plugins/reference/dist/
+/plugins/*/dist/
 /surfaces/command-interface/dist/
 /surfaces/command-interface/storybook-static/
 /surfaces/command-interface/.wrangler/

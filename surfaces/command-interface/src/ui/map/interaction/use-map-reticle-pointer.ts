@@ -348,6 +348,7 @@ export function useMapReticlePointer({ options, stateStore }: PointerHookOptions
     zoomPointerInsideMapRef,
     cancelPendingPointer,
     clearPointer,
+    consumeSuppressedClick,
     restoreReticleAtCurrentZoomPoint,
     restoreReticleFromClientPoint,
     suppressNextClick,

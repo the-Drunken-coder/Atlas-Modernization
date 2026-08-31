@@ -21,6 +21,18 @@ describe("MapView wheel interaction", () => {
     expect(wheel.defaultPrevented).toBe(true);
   });
 
+  it("allows map-owned controls to scroll", () => {
+    const { canvas } = renderMapView();
+    const control = document.createElement("div");
+    control.dataset.mapInteractionControl = "";
+    canvas.append(control);
+    const wheel = new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: 120 });
+
+    fireEvent(control, wheel);
+
+    expect(wheel.defaultPrevented).toBe(false);
+  });
+
   it("keeps a hovered marker box aligned while the map camera moves", async () => {
     const { canvas, map } = renderMapView();
     let markerRect = rect(70, 90, 28, 40);

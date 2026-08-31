@@ -1,0 +1,28 @@
+{
+  "id": "building_scan",
+  "origin": "https://overpass-api.de",
+  "routes": [
+    {
+      "method": "POST",
+      "path_prefix": "/api/interpreter",
+      "allowed_query_names": [],
+      "allowed_request_headers": ["content-type", "user-agent"],
+      "allowed_response_headers": ["content-type"],
+      "read_only": true,
+      "cache": { "ttl_ms": 60000 },
+      "retry": { "max_retries": 0, "statuses": [], "failures": [], "idempotency_header": "" }
+    }
+  ],
+  "secret_headers": {},
+  "egress": {},
+  "limits": {
+    "timeout_ms": 15000,
+    "max_request_bytes": 65536,
+    "max_response_bytes": 16777216,
+    "max_concurrency": 1,
+    "max_header_count": 64,
+    "max_header_bytes": 65536
+  },
+  "rate": { "requests_per_second": 0.2 },
+  "circuit_breaker": { "failures": 3, "open_ms": 30000 }
+}

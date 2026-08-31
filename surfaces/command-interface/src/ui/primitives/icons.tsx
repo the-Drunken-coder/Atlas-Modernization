@@ -1,12 +1,15 @@
 import {
   ArrowLeftIcon as BlueprintArrowLeftIcon,
+  ChevronDownIcon as BlueprintChevronDownIcon,
   ChevronLeftIcon as BlueprintChevronLeftIcon,
   ChevronRightIcon as BlueprintChevronRightIcon,
+  ChevronUpIcon as BlueprintChevronUpIcon,
   CrossIcon as BlueprintCrossIcon,
   CubeIcon as BlueprintCubeIcon,
   DataConnectionIcon as BlueprintDataConnectionIcon,
   DetectionIcon as BlueprintDetectionIcon,
   DoubleCaretVerticalIcon as BlueprintDoubleCaretVerticalIcon,
+  DragHandleVerticalIcon as BlueprintDragHandleVerticalIcon,
   DuplicateIcon as BlueprintDuplicateIcon,
   GlobeIcon as BlueprintGlobeIcon,
   GlobeNetworkIcon as BlueprintGlobeNetworkIcon,
@@ -72,6 +75,14 @@ export function ChevronRightIcon(props: IconProps) {
   return <BlueprintChevronRightIcon {...props} />;
 }
 
+export function ChevronDownIcon(props: IconProps) {
+  return <BlueprintChevronDownIcon {...props} />;
+}
+
+export function ChevronUpIcon(props: IconProps) {
+  return <BlueprintChevronUpIcon {...props} />;
+}
+
 export function SearchIcon(props: IconProps) {
   return <BlueprintSearchIcon {...props} />;
 }
@@ -86,6 +97,10 @@ export function PlaceIcon(props: IconProps) {
 
 export function DoubleCaretVerticalIcon(props: IconProps) {
   return <BlueprintDoubleCaretVerticalIcon {...props} />;
+}
+
+export function DragHandleVerticalIcon(props: IconProps) {
+  return <BlueprintDragHandleVerticalIcon {...props} />;
 }
 
 export function TickIcon(props: IconProps) {

@@ -20,7 +20,9 @@ const (
 	schemaBundlePath     = "jsonschema/atlas.schema.json"
 	schemaBundleLocation = "atlas.schema.json"
 	// MaxGeometryPositions is the aggregate position limit for one Polygon.
-	MaxGeometryPositions = 10000
+	MaxGeometryPositions   = 10000
+	maxMapAreaSquareMeters = 5_000_000
+	earthRadiusMeters      = 6_371_008.8
 )
 
 type compiledSchema struct {
@@ -457,6 +459,12 @@ func semanticErrors(definition string, value any) []string {
 	switch definition {
 	case "CommandCatalog":
 		return commandCatalogSemanticErrors(value)
+	case "MapArea":
+		return mapAreaSemanticErrors(value)
+	case "SpatialGeometry":
+		return geometrySemanticErrors(value, "")
+	case "SpatialOperationResult":
+		return spatialOperationResultSemanticErrors(value)
 	case "GeometryComponent":
 		return geometrySemanticErrors(value, "")
 	case "EntityComponents":
@@ -474,6 +482,37 @@ func semanticErrors(definition string, value any) []string {
 	default:
 		return nil
 	}
+}
+
+func mapAreaSemanticErrors(value any) []string {
+	payload, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+	west, westOK := numberAsFloat(payload["west"])
+	south, southOK := numberAsFloat(payload["south"])
+	east, eastOK := numberAsFloat(payload["east"])
+	north, northOK := numberAsFloat(payload["north"])
+	if !westOK || !southOK || !eastOK || !northOK {
+		return nil
+	}
+	var errors []string
+	if west >= east {
+		errors = append(errors, "west must be less than east")
+	}
+	if south >= north {
+		errors = append(errors, "south must be less than north")
+	}
+	if len(errors) > 0 {
+		return errors
+	}
+	radians := math.Pi / 180
+	squareMeters := earthRadiusMeters * earthRadiusMeters * (east - west) * radians *
+		(math.Sin(north*radians) - math.Sin(south*radians))
+	if squareMeters > maxMapAreaSquareMeters {
+		return []string{"area must not exceed 5 km²"}
+	}
+	return nil
 }
 
 func commandCatalogSemanticErrors(value any) []string {
@@ -571,7 +610,7 @@ func componentGeometrySemanticErrors(value any, path string) []string {
 
 func geometrySemanticErrors(value any, path string) []string {
 	geometry, ok := value.(map[string]any)
-	if !ok || geometry["type"] != "Polygon" {
+	if !ok {
 		return nil
 	}
 	rawCoordinates, ok := geometry["coordinates"].([]any)
@@ -579,6 +618,17 @@ func geometrySemanticErrors(value any, path string) []string {
 		return nil
 	}
 
+	switch geometry["type"] {
+	case "Polygon":
+		return polygonCoordinatesSemanticErrors(rawCoordinates, path, "coordinates")
+	case "MultiPolygon":
+		return multiPolygonCoordinatesSemanticErrors(rawCoordinates, path)
+	default:
+		return nil
+	}
+}
+
+func polygonCoordinatesSemanticErrors(rawCoordinates []any, path, coordinatesPath string) []string {
 	var errors []string
 	totalPositions := 0
 	for i, rawRing := range rawCoordinates {
@@ -591,11 +641,63 @@ func geometrySemanticErrors(value any, path string) []string {
 			continue
 		}
 		if !positionsEqual(ring[0], ring[len(ring)-1]) {
-			errors = append(errors, joinPath(path, fmt.Sprintf("coordinates.%d", i))+": polygon ring must be closed")
+			errors = append(errors, joinPath(path, fmt.Sprintf("%s.%d", coordinatesPath, i))+": polygon ring must be closed")
+		}
+	}
+	if totalPositions > MaxGeometryPositions {
+		errors = append(errors, joinPath(path, coordinatesPath)+fmt.Sprintf(": polygon positions must not exceed %d", MaxGeometryPositions))
+	}
+	return errors
+}
+
+func multiPolygonCoordinatesSemanticErrors(rawCoordinates []any, path string) []string {
+	var errors []string
+	totalPositions := 0
+	for polygonIndex, rawPolygon := range rawCoordinates {
+		polygon, ok := rawPolygon.([]any)
+		if !ok {
+			continue
+		}
+		for ringIndex, rawRing := range polygon {
+			ring, ok := rawRing.([]any)
+			if !ok {
+				continue
+			}
+			totalPositions += len(ring)
+			if len(ring) >= 2 && !positionsEqual(ring[0], ring[len(ring)-1]) {
+				errors = append(errors, joinPath(path, fmt.Sprintf("coordinates.%d.%d", polygonIndex, ringIndex))+": polygon ring must be closed")
+			}
 		}
 	}
 	if totalPositions > MaxGeometryPositions {
 		errors = append(errors, joinPath(path, "coordinates")+fmt.Sprintf(": polygon positions must not exceed %d", MaxGeometryPositions))
+	}
+	return errors
+}
+
+func spatialOperationResultSemanticErrors(value any) []string {
+	payload, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+	features, ok := payload["features"].([]any)
+	if !ok {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(features))
+	var errors []string
+	for index, rawFeature := range features {
+		feature, ok := rawFeature.(map[string]any)
+		if !ok {
+			continue
+		}
+		if id, ok := feature["id"].(string); ok && id != "" {
+			if _, duplicate := seen[id]; duplicate {
+				errors = append(errors, fmt.Sprintf("features.%d.id: feature ID %q is duplicated", index, id))
+			}
+			seen[id] = struct{}{}
+		}
+		errors = append(errors, geometrySemanticErrors(feature["geometry"], fmt.Sprintf("features.%d.geometry", index))...)
 	}
 	return errors
 }

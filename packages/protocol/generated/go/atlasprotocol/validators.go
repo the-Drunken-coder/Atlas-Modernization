@@ -184,6 +184,18 @@ func ValidatePluginDiscoveryResponse(value any) []string {
 	return validator.ValidateDefinition("PluginDiscoveryResponse", value)
 }
 
+func ValidateMapArea(value any) []string {
+	return validator.ValidateDefinition("MapArea", value)
+}
+
+func ValidateSpatialGeometry(value any) []string {
+	return validator.ValidateDefinition("SpatialGeometry", value)
+}
+
+func ValidateSpatialOperationResult(value any) []string {
+	return validator.ValidateDefinition("SpatialOperationResult", value)
+}
+
 func ValidateMediaRefsComponent(value any) []string {
 	return validator.ValidateDefinition("MediaRefsComponent", value)
 }

@@ -1,0 +1,123 @@
+{
+  "version": 0.6,
+  "generator": "recorded-test-fixture",
+  "elements": [
+    {
+      "type": "relation",
+      "id": 30,
+      "tags": { "building": "school", "name": "Atlas School", "building:levels": "3" },
+      "members": [
+        {
+          "type": "way",
+          "ref": 301,
+          "role": "outer",
+          "geometry": [
+            { "lat": 42.001, "lon": -71.004 },
+            { "lat": 42.001, "lon": -71.002 },
+            { "lat": 42.003, "lon": -71.002 }
+          ]
+        },
+        {
+          "type": "way",
+          "ref": 302,
+          "role": "outer",
+          "geometry": [
+            { "lat": 42.003, "lon": -71.002 },
+            { "lat": 42.003, "lon": -71.004 },
+            { "lat": 42.001, "lon": -71.004 }
+          ]
+        },
+        {
+          "type": "way",
+          "ref": 303,
+          "role": "inner",
+          "geometry": [
+            { "lat": 42.0015, "lon": -71.0035 },
+            { "lat": 42.0025, "lon": -71.0035 },
+            { "lat": 42.0025, "lon": -71.0025 },
+            { "lat": 42.0015, "lon": -71.0025 },
+            { "lat": 42.0015, "lon": -71.0035 }
+          ]
+        },
+        {
+          "type": "way",
+          "ref": 304,
+          "role": "outer",
+          "geometry": [
+            { "lat": 42.004, "lon": -71.004 },
+            { "lat": 42.004, "lon": -71.003 },
+            { "lat": 42.005, "lon": -71.003 },
+            { "lat": 42.005, "lon": -71.004 },
+            { "lat": 42.004, "lon": -71.004 }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "way",
+      "id": 20,
+      "tags": { "building": "yes" },
+      "geometry": [
+        { "lat": 42.006, "lon": -71.004 },
+        { "lat": 42.006, "lon": -71.003 },
+        { "lat": 42.007, "lon": -71.003 },
+        { "lat": 42.007, "lon": -71.004 },
+        { "lat": 42.006, "lon": -71.004 }
+      ]
+    },
+    {
+      "type": "way",
+      "id": 10,
+      "version": 7,
+      "timestamp": "2026-08-29T16:42:10Z",
+      "changeset": 123456789,
+      "user": "Atlas Mapper",
+      "uid": 42,
+      "tags": {
+        "building": "office_building",
+        "name": "Atlas Hall",
+        "addr:housenumber": "100",
+        "addr:street": "Main Street",
+        "height": "12 m",
+        "building:levels": "4",
+        "operator": "Atlas",
+        "roof:shape": "flat",
+        "start_date": "1984"
+      },
+      "geometry": [
+        { "lat": 42.008, "lon": -71.004 },
+        { "lat": 42.008, "lon": -71.003 },
+        { "lat": 42.009, "lon": -71.003 },
+        { "lat": 42.009, "lon": -71.004 },
+        { "lat": 42.008, "lon": -71.004 }
+      ]
+    },
+    {
+      "type": "way",
+      "id": 10,
+      "version": 7,
+      "timestamp": "2026-08-29T16:42:10Z",
+      "changeset": 123456789,
+      "user": "Atlas Mapper",
+      "uid": 42,
+      "tags": {
+        "building": "office_building",
+        "name": "Atlas Hall",
+        "addr:housenumber": "100",
+        "addr:street": "Main Street",
+        "height": "12 m",
+        "building:levels": "4",
+        "operator": "Atlas",
+        "roof:shape": "flat",
+        "start_date": "1984"
+      },
+      "geometry": [
+        { "lat": 42.008, "lon": -71.004 },
+        { "lat": 42.008, "lon": -71.003 },
+        { "lat": 42.009, "lon": -71.003 },
+        { "lat": 42.009, "lon": -71.004 },
+        { "lat": 42.008, "lon": -71.004 }
+      ]
+    }
+  ]
+}

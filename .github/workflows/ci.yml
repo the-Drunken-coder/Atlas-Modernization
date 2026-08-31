@@ -215,7 +215,14 @@ jobs:
           npm run format:check --workspace @the-drunken-coder/atlas-plugin-runtime
           npm test --workspace @the-drunken-coder/atlas-plugin-runtime
           npm run build:plugin-runtime
-          npm run build:reference-plugin
+          npm run plugins:verify
+          npm run plugins:check-seepage
+          npm run plugins:check
+          npm run plugins:catalog
+          git diff --exit-code -- \
+            surfaces/core-cli/src/plugin-catalog.generated.ts \
+            surfaces/core-cli/assets/plugin-catalog.json \
+            surfaces/core-cli/assets/plugins
 
   atlas-core-package:
     name: atlas-core-package
@@ -262,7 +269,7 @@ jobs:
                 .services.api.environment.DATABASE_RECREATE_ON_STARTUP == "false" and
                 .services.api.environment.CORS_ORIGINS == "https://atlasinterface.com" and
                 .services.api.environment.CORS_ORIGIN_PATTERNS == "https://*.atlas-je0.pages.dev" and
-                .services.api.environment.ATLAS_PLUGINS == "[]" and
+                (.services.api.environment | has("ATLAS_PLUGINS") | not) and
                 .services["source-gateway"].image == $image and
                 .services["source-gateway"].entrypoint == [] and
                 .services["source-gateway"].command == ["./atlas_source_gateway"] and
@@ -317,7 +324,7 @@ jobs:
               atlas_core_production_postgres \
               atlas_core_production_minio \
               atlas_core_production_minio_init >/dev/null 2>&1 || true
-            docker network rm atlas_core_production_default atlas_core_production_init_lock >/dev/null 2>&1 || true
+            docker network rm atlas_core_production_default atlas_core_production_mutation_lock >/dev/null 2>&1 || true
             docker volume rm --force "$minio_volume" "$postgres_volume" >/dev/null 2>&1 || true
             rm -rf "$test_root"
           }
@@ -611,6 +618,12 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+
       - name: Build development image
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
@@ -635,10 +648,5 @@ jobs:
           target: source-gateway-production
           push: false
 
-      - name: Build reference Plugin and source fixtures
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
-        with:
-          context: .
-          file: plugins/reference/Dockerfile
-          target: plugin
-          push: false
+      - name: Build catalog Plugins
+        run: npm run plugins:docker-build

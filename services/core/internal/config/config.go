@@ -3,6 +3,7 @@ package config
 
 import (
 	"net/netip"
+	"os"
 )
 
 type PluginConfig struct {
@@ -68,6 +69,9 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	if err := cfg.applyEnvironmentOverrides(); err != nil {
+		return nil, err
+	}
+	if err := cfg.loadPluginEndpointFragments(os.Getenv("ATLAS_PLUGIN_CONFIG_DIR")); err != nil {
 		return nil, err
 	}
 	if err := cfg.validate(); err != nil {

@@ -1,6 +1,8 @@
 # Atlas plugins
 
-Status: Plugin platform v1 implemented. Datastream delivery, executable UI Plugins, marketplace/install APIs, hot upgrades, untrusted-Plugin isolation, scoped Plugin credentials, and persistent Plugin storage remain deferred.
+Status: Plugin platform v1 and the first-party query-only catalog are implemented. Datastream delivery, executable UI
+Plugins, third-party installation, hot upgrades, untrusted-Plugin isolation, scoped Plugin credentials, persistent
+Plugin storage, and taskable-Plugin lifecycle management remain deferred.
 
 Atlas plugins add bounded capabilities without deploying a new public API for every integration. Atlas remains the public control plane. Plugins run behind Core-owned routes, consume external data through Atlas-managed source connectors, and use normal Atlas resource and task systems when their results become durable or cause action.
 
@@ -19,7 +21,7 @@ Atlas plugins add bounded capabilities without deploying a new public API for ev
 - Direct plugin database access.
 - Arbitrary plugin-owned public HTTP routes.
 - Treating every plugin result as a durable Atlas resource.
-- A plugin marketplace, hot installation, or automatic dependency resolution.
+- A third-party marketplace, arbitrary image installation, hot installation, or automatic dependency resolution.
 
 ## Model
 
@@ -210,14 +212,21 @@ Core sends `Accept: application/json` on every call and `Content-Type: applicati
     {
       "operation_id": "inspect_aircraft",
       "display_name": "Inspect aircraft",
-      "timeout_ms": 5000
+      "timeout_ms": 5000,
+      "interaction": { "kind": "map_area" }
     }
   ],
   "tool_asset_id": "plugin_rfSey5Te4YU6Prz-hpGcwRnuSBuF9z1COTHZJt_s0G4"
 }
 ```
 
-`plugin_id`, `display_name`, and `operations` are required, and each display name is a nonempty string. `tool_asset_id` is optional and omitted for a query-only Plugin. Each Operation requires `operation_id`, `display_name`, and a positive integer `timeout_ms`, measured in milliseconds and no greater than Core's hard maximum. The operations array may be empty. Core rejects unknown fields in the manifest or an Operation descriptor, invalid identifiers, duplicate Operation IDs, invalid timeouts, identity mismatches, and any status other than `200`.
+`plugin_id`, `display_name`, and `operations` are required, and each display name is a nonempty string. `tool_asset_id`
+is optional and omitted for a query-only Plugin. Each Operation requires `operation_id`, `display_name`, and a positive
+integer `timeout_ms`, measured in milliseconds and no greater than Core's hard maximum. An Operation may also declare
+the fixed, non-executable interaction descriptor `{ "kind": "map_area" }`. Core validates this descriptor and continues
+to proxy Operation bodies as opaque JSON. The operations array may be empty. Core rejects unknown fields in the
+manifest or an Operation descriptor, invalid identifiers, duplicate Operation IDs, invalid timeouts, identity
+mismatches, and any status other than `200`.
 
 `GET /health` has two valid responses. HTTP `200` with `{"status":"ok"}` is healthy. HTTP `503` with `{"status":"unhealthy"}` is an application-level health failure. Any other status or body is an invalid private response and a transport failure. Health has no detail field; Plugin logs own private diagnostics.
 
@@ -243,7 +252,12 @@ The first architecture has no separate Plugin Definition and Plugin Instance con
 
 Plugin settings live in deployment files and environment variables mounted into the Plugin container. Atlas has no Plugin configuration API or Plugin configuration resources. Runtime operator intent still uses Operations or Tasks.
 
-Installing or upgrading a Plugin means editing deployment configuration or its image tag and restarting the Atlas Compose deployment. Core has no installation or upgrade API. A development Compose restart may clear scratch data under the existing destructive development workflow. Production restarts continue to preserve durable storage; data loss is not part of the Plugin upgrade contract.
+The Atlas Core CLI manages a generated catalog of trusted first-party, query-only Plugins. It enables or disables them
+by staging the Plugin-owned Compose overlay, Core endpoint fragment, and Source Gateway connector fragment, validating
+the complete Compose model, and restarting the affected services. Catalog images are published with Atlas Core,
+multi-architecture, and pinned by digest in the CLI package. This is restart-based deployment management, not a Core
+installation API, hot installation, arbitrary bundle loading, or a marketplace. Operators may still supply equivalent
+deployment files outside the packaged CLI. Production restarts preserve durable Core storage.
 
 ## Health, readiness, and status
 
@@ -257,9 +271,12 @@ Core owns the public Operation `ErrorResponse` and uses the exact HTTP status, `
 
 ## Command-interface integration
 
-The first version does not load executable UI code from Plugins. The Command Interface may use generic discovery and status data. A first-party feature may also understand a specific Plugin's Operation or a future Datastream contract.
-
-Declarative contributions such as map layers, forms, and actions may be considered after real Plugin interfaces exist. Arbitrary Plugin-provided JavaScript remains deferred.
+The Command Interface never loads executable UI code from Plugins. It discovers fixed `map_area` interaction metadata
+through `GET /plugins` and provides one generic rectangle and spatial-result runner for every Operation that advertises
+that interaction. The shared runner validates the Protocol `MapArea` and `SpatialOperationResult` contracts, renders
+Polygon and MultiPolygon results, and displays generic fields, truncation, provenance, freshness, and attribution. It
+does not branch on Plugin IDs, Operation IDs, or providers. Other declarative interaction kinds need a concrete shared
+contract before they are added. Arbitrary Plugin-provided JavaScript remains deferred.
 
 A Plugin that operators need to task may register an ordinary Asset with `entity_type: "asset"` and `subtype: "tool"`. Query-only Plugins do not need a Tool Asset. Tool Assets use the existing runtime, Task, and Command systems.
 
@@ -325,7 +342,7 @@ The building is not an Asset or Track. Source-provided height is advisory data a
 - Plugin containers have no persistent private storage in the first architecture.
 - The private Core-to-Plugin contract has no Plugin protocol version or compatibility negotiation.
 - The existing Atlas Protocol revision check between the SDK and Core remains unchanged.
-- Installing or upgrading a Plugin edits deployment configuration and restarts the Compose deployment.
+- The Atlas Core CLI enables and disables digest-pinned first-party query-only Plugins from its generated catalog by staging Plugin-owned deployment fragments and restarting the Compose deployment.
 - A Plugin manifest contains Plugin and Operation discovery fields only; Datastreams, Commands, configuration, credentials, and compatibility metadata stay elsewhere.
 - The private Core-to-Plugin and Plugin-to-Gateway protocols fix endpoint paths, JSON or binary framing, bounds, cancellation, and error mapping.
 - Core fetches a Plugin manifest once, retrying until success, and caches it until Core restarts.
@@ -345,11 +362,13 @@ The building is not an Asset or Track. Source-provided height is advisory data a
 - Source-backed Plugin results carry enough provenance and freshness information for callers to judge them.
 - Durable results use normal Atlas Entity and Object systems.
 - Plugin status does not change Core liveness.
-- Executable UI plugins are deferred.
+- Fixed `map_area` interaction metadata is implemented; executable UI plugins remain deferred.
 - The Datastream delivery contract and reserved delivery route are deferred until a concrete use case needs them.
 
 ## Design status
 
 The Plugin platform architecture design tree is closed. The documents specify behavioral bounds but leave health cadence, timeout ceilings, response limits, the per-Plugin in-flight Operation limit, retry counts, cache durations, and circuit-breaker thresholds to implementation.
 
-Datastream delivery, executable browser plugins, declarative UI contributions, and ADS-B Track identity remain deliberately deferred. Each needs a concrete use case or Plugin design before Atlas should decide it.
+Datastream delivery, executable browser plugins, additional declarative interaction kinds, arbitrary third-party
+installation, taskable-Plugin lifecycle management, and ADS-B Track identity remain deliberately deferred. Each needs a
+concrete use case or Plugin design before Atlas should decide it.

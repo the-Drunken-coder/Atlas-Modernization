@@ -1,5 +1,5 @@
 import { Callout } from "@blueprintjs/core";
-import type { CommandCatalog, EntityResource, JSONValue } from "@the-drunken-coder/atlas-sdk";
+import type { CommandCatalog, EntityResource, JSONValue, SpatialFeature } from "@the-drunken-coder/atlas-sdk";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { MapSourceConfig } from "../app/config.js";
 import { type CommandAvailability, commandsForTargeting } from "../atlas/command-targeting.js";
@@ -26,13 +26,13 @@ import { AppShell } from "../ui/layout/AppShell.js";
 import { SidebarPanel } from "../ui/layout/SidebarPanel.js";
 import { SidebarRail } from "../ui/layout/SidebarRail.js";
 import type { MapCameraCommand, MapTarget } from "../ui/map/interaction/map-camera.js";
-import { MapSourcePicker } from "../ui/map/MapSourcePicker.js";
 import { buildMapSources } from "../ui/map/rendering/map-sources.js";
 import type { MapReticleTarget } from "../ui/map/view/MapView.js";
 import { Button, IconButton } from "../ui/primitives/controls.js";
 import { WorldViewIcon } from "../ui/primitives/icons.js";
 import { ContextMenu, type MenuItemDef } from "../ui/primitives/Menu.js";
 import { APIKeysPanel } from "./admin/APIKeysPanel.js";
+import type { PluginSelection } from "./admin/PluginsPanel.js";
 import { AssetInspector } from "./assets/AssetInspector.js";
 import { CommandList } from "./commands/CommandList.js";
 import { type CommandFormState, useCommandFlow } from "./commands/use-command-flow.js";
@@ -41,6 +41,7 @@ import { GeofeatureInspector } from "./geofeatures/GeofeatureInspector.js";
 import { type GeometryEditState, useGeometryEdit } from "./geofeatures/use-geometry-edit.js";
 import { PlacesPanel } from "./places/PlacesPanel.js";
 import { createMapTilerPlaceSearch, type PlaceSearch } from "./places/place-search.js";
+import { type SpatialOperationRunner, useSpatialOperationRunner } from "./plugins/use-spatial-operation-runner.js";
 import { TrackInspector } from "./tracks/TrackInspector.js";
 
 const LIST_TITLES = Object.fromEntries([
@@ -52,7 +53,13 @@ const LIST_TITLES = Object.fromEntries([
 ]) as Record<ListKind, string>;
 
 const MapView = lazy(() => import("../ui/map/view/MapView.js").then((module) => ({ default: module.MapView })));
+const MapSourcePicker = lazy(() =>
+  import("../ui/map/MapSourcePicker.js").then((module) => ({ default: module.MapSourcePicker }))
+);
 const PluginsPanel = lazy(() => import("./admin/PluginsPanel.js").then((module) => ({ default: module.PluginsPanel })));
+const SpatialResultsInspector = lazy(() =>
+  import("./plugins/SpatialResultsInspector.js").then((module) => ({ default: module.SpatialResultsInspector }))
+);
 
 type CommandManifestStatus = "ready" | "loading" | "unavailable";
 const EMPTY_ENTITY_QUERIES = Object.fromEntries(ENTITY_KINDS.map((kind) => [kind, ""])) as Record<EntityKind, string>;
@@ -64,8 +71,13 @@ export function MapConsole() {
   const [entityQueries, setEntityQueries] = useState(EMPTY_ENTITY_QUERIES);
   const [placeQuery, setPlaceQuery] = useState("");
   const [placePreviewTarget, setPlacePreviewTarget] = useState<MapTarget | null>(null);
+  const [spatialPreviewTarget, setSpatialPreviewTarget] = useState<MapTarget | null>(null);
   const [cameraCommand, setCameraCommand] = useState<MapCameraCommand | null>(null);
+  const [pluginSelection, setPluginSelection] = useState<PluginSelection>();
   const cameraSequenceRef = useRef(0);
+  const spatial = useSpatialOperationRunner({ baseUrl: atlas.config?.atlasBaseUrl });
+
+  useEffect(() => setSpatialPreviewTarget(null), [spatial.result, spatial.target]);
 
   const [selectedMapSourceId, setSelectedMapSourceId] = useState<string>();
 
@@ -181,8 +193,15 @@ export function MapConsole() {
     dispatch({ type: "openList", list });
   }, []);
   const placeFocusTarget = placesActive && cameraCommand?.intent === "commit" ? cameraCommand.target : null;
+  const pluginsActive = sidebar.view.mode === "list" && sidebar.view.list === "plugins";
+  const selectedSpatialTarget =
+    pluginsActive && spatial.selectedFeature ? spatialFeatureTarget(spatial.selectedFeature) : null;
   const focusTarget =
-    placePreviewTarget ?? placeFocusTarget ?? (placesActive ? null : entityReticleTarget(selectedEntity));
+    spatialPreviewTarget ??
+    placePreviewTarget ??
+    placeFocusTarget ??
+    selectedSpatialTarget ??
+    (placesActive ? null : entityReticleTarget(selectedEntity));
 
   // Explicit entity and place commits share one camera sequence. MapView
   // ignores repeated sequence numbers, even when the targets differ.
@@ -245,6 +264,22 @@ export function MapConsole() {
 
   const activeList: ListKind | null =
     sidebar.view.mode === "list" ? sidebar.view.list : selection ? listForKind(selection.kind) : null;
+  const pluginActive = activeList === "plugins";
+  const pluginOperationActive = Boolean(
+    pluginActive && pluginSelection && spatial.target?.pluginId === pluginSelection.pluginId
+  );
+  const currentPanelTitle = pluginOperationActive
+    ? (spatial.target?.operationName ?? "Spatial operation")
+    : pluginActive && pluginSelection
+      ? pluginSelection.name
+      : panelTitle(sidebar, selection?.kind);
+  const currentPanelBack = pluginOperationActive
+    ? spatial.closeTarget
+    : pluginActive && pluginSelection
+      ? () => setPluginSelection(undefined)
+      : sidebar.view.mode === "inspector"
+        ? () => dispatch({ type: "back" })
+        : undefined;
   const selectedMapSource =
     availableMapSource(atlas.config.mapSources.find((source) => source.id === selectedMapSourceId)) ??
     availableMapSource(atlas.config.mapSources.find((source) => source.id === atlas.config?.defaultMapSourceId));
@@ -275,8 +310,8 @@ export function MapConsole() {
         }
         panel={
           <SidebarPanel
-            title={panelTitle(sidebar, selection?.kind)}
-            onBack={sidebar.view.mode === "inspector" ? () => dispatch({ type: "back" }) : undefined}
+            title={currentPanelTitle}
+            onBack={currentPanelBack}
             autoFocusBack={sidebar.focusRequest?.id === selection?.id}
             headerAction={
               activeList === "places" ? (
@@ -309,6 +344,7 @@ export function MapConsole() {
                 const kind = entityKind(entity);
                 if (kind === "other") return;
                 setPlacePreviewTarget(null);
+                setSpatialPreviewTarget(null);
                 dispatch({ type: "selectEntity", kind, id: entity.entity_id, origin: "sidebar" });
               }}
               onEntityQueryChange={setEntityQuery}
@@ -320,6 +356,9 @@ export function MapConsole() {
               onChangeDraft={geometryEdit.changeDraft}
               onSaveEdit={() => void geometryEdit.saveEdit()}
               onCancelEdit={geometryEdit.cancelEdit}
+              spatial={spatial}
+              pluginSelection={pluginSelection}
+              onPluginSelectionChange={setPluginSelection}
             />
           </SidebarPanel>
         }
@@ -352,6 +391,21 @@ export function MapConsole() {
                       focusTarget={focusTarget}
                       placeDetailTarget={placePreviewTarget}
                       cameraCommand={cameraCommand}
+                      spatial={
+                        spatial.target
+                          ? {
+                              area: spatial.area,
+                              drawing: spatial.status === "drawing",
+                              features: spatial.result?.features ?? [],
+                              selectedFeatureId: spatial.selectedFeature?.id,
+                              onAreaChange: spatial.setArea,
+                              onDrawingComplete: spatial.cancelDrawing,
+                              onCancelDrawing: spatial.cancelDrawing,
+                              onViewportArea: spatial.setViewportArea,
+                              onSelectFeature: spatial.selectFeature
+                            }
+                          : undefined
+                      }
                       onSelectEntity={selectEntityById}
                       onMapContextMenu={commandFlow.onMapContextMenu}
                       onBackgroundClick={() => {
@@ -369,12 +423,26 @@ export function MapConsole() {
                   </Callout>
                 )}
                 <ConnectionBadge health={atlas.health} error={atlas.connectionError} onRetry={atlas.reconnect} />
-                <MapSourcePicker
-                  sources={atlas.config.mapSources}
-                  defaultSourceId={atlas.config.defaultMapSourceId}
-                  value={mapSourcePickerValue}
-                  onChange={setSelectedMapSourceId}
-                />
+                <Suspense fallback={null}>
+                  <MapSourcePicker
+                    sources={atlas.config.mapSources}
+                    defaultSourceId={atlas.config.defaultMapSourceId}
+                    value={mapSourcePickerValue}
+                    onChange={setSelectedMapSourceId}
+                  />
+                </Suspense>
+                <Suspense fallback={null}>
+                  <SpatialResultsInspector
+                    spatial={spatial}
+                    onPreviewFeature={(feature) =>
+                      setSpatialPreviewTarget(feature ? spatialFeatureTarget(feature) : null)
+                    }
+                    onFocusFeature={(feature) => {
+                      setSpatialPreviewTarget(null);
+                      issueCameraCommand(spatialFeatureTarget(feature), "commit");
+                    }}
+                  />
+                </Suspense>
               </div>
             </div>
           </>
@@ -475,6 +543,9 @@ type PanelBodyProps = {
   onChangeDraft: (geometry: UiGeometry) => void;
   onSaveEdit: () => void;
   onCancelEdit: () => void;
+  spatial: SpatialOperationRunner;
+  pluginSelection?: PluginSelection;
+  onPluginSelectionChange: (selection?: PluginSelection) => void;
 };
 
 function PanelBody(props: PanelBodyProps) {
@@ -536,7 +607,10 @@ function ListBody({
   onPlaceQueryChange,
   onPreviewPlace,
   onFocusPlace,
-  onPickCommand
+  onPickCommand,
+  spatial,
+  pluginSelection,
+  onPluginSelectionChange
 }: { list: ListKind } & PanelBodyProps) {
   if (list === "commands") {
     if (selectedEntity && entityKind(selectedEntity) === "asset") {
@@ -588,7 +662,7 @@ function ListBody({
           </div>
         }
       >
-        <PluginsPanel />
+        <PluginsPanel selection={pluginSelection} onSelectionChange={onPluginSelectionChange} spatial={spatial} />
       </Suspense>
     );
   }
@@ -609,6 +683,15 @@ function ListBody({
 
 function entityReticleTarget(entity: EntityResource | undefined): MapReticleTarget | null {
   return entity && entityKind(entity) !== "other" ? { type: "entity", id: entity.entity_id } : null;
+}
+
+function spatialFeatureTarget(feature: SpatialFeature): MapTarget {
+  return {
+    type: "geometry",
+    id: `spatial:${feature.id}`,
+    geometry: feature.geometry,
+    label: feature.title
+  };
 }
 
 function panelTitle(sidebar: SidebarState, selectionKind?: EntityKind): string {

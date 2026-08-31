@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -27,24 +28,42 @@ func TestPluginConfigurationNormalizesAndRejectsInvalidEndpoints(t *testing.T) {
 	}
 }
 
-func TestAtlasPluginsEnvironmentReplacesSettingsArray(t *testing.T) {
-	const value = `[{"id":"reference","base_url":"http://reference:8080"}]`
-	if err := os.Setenv("ATLAS_PLUGINS", value); err != nil {
+func TestPluginEndpointFragmentsLoadSortedAndFailClosed(t *testing.T) {
+	directory := t.TempDir()
+	write := func(name, contents string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(directory, name), []byte(contents), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("20_second.json", `{"id":"second","base_url":"http://second:8080"}`)
+	write("10_first.json", `{"id":"first","base_url":"http://first:8080"}`)
+	cfg := Config{}
+	if err := cfg.loadPluginEndpointFragments(directory); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.Unsetenv("ATLAS_PLUGINS") })
-	cfg := Config{Plugins: []PluginConfig{{ID: "from_settings", BaseURL: "http://settings:8080"}}}
-	if err := cfg.applyEnvironmentOverrides(); err != nil {
-		t.Fatalf("applyEnvironmentOverrides: %v", err)
-	}
-	if len(cfg.Plugins) != 1 || cfg.Plugins[0].ID != "reference" {
-		t.Fatalf("Plugins = %#v", cfg.Plugins)
+	if got := []string{cfg.Plugins[0].ID, cfg.Plugins[1].ID}; got[0] != "first" || got[1] != "second" {
+		t.Fatalf("Plugin order = %v", got)
 	}
 
-	if err := os.Setenv("ATLAS_PLUGINS", `{}`); err != nil {
+	write("30_invalid.json", `{"id":"third"}`)
+	if err := cfg.loadPluginEndpointFragments(directory); err != nil {
+		t.Fatalf("fragment decoding should leave semantic validation to validatePlugins: %v", err)
+	}
+	if err := cfg.validatePlugins(); err == nil || !strings.Contains(err.Error(), "plain HTTP origin") {
+		t.Fatalf("partial fragment error = %v", err)
+	}
+
+	write("40_unknown.json", `{"id":"fourth","base_url":"http://fourth:8080","unknown":true}`)
+	if err := cfg.loadPluginEndpointFragments(directory); err == nil || !strings.Contains(err.Error(), "unknown") {
+		t.Fatalf("unknown field error = %v", err)
+	}
+
+	if err := os.Remove(filepath.Join(directory, "40_unknown.json")); err != nil {
 		t.Fatal(err)
 	}
-	if err := (&Config{}).applyEnvironmentOverrides(); err == nil || !strings.Contains(err.Error(), "JSON array") {
-		t.Fatalf("invalid override error = %v", err)
+	write("40_oversized.json", strings.Repeat(" ", maxPluginEndpointFragmentBytes+1))
+	if err := cfg.loadPluginEndpointFragments(directory); err == nil || !strings.Contains(err.Error(), "1 to") {
+		t.Fatalf("oversized fragment error = %v", err)
 	}
 }

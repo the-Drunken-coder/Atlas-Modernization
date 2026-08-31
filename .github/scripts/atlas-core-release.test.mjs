@@ -10,6 +10,7 @@ const script = join(dirname(fileURLToPath(import.meta.url)), "atlas-core-release
 const phaseScript = join(dirname(fileURLToPath(import.meta.url)), "select-atlas-core-release-phase.sh");
 const workflow = join(dirname(fileURLToPath(import.meta.url)), "../workflows/release-atlas-core.yml");
 const dockerfile = join(dirname(fileURLToPath(import.meta.url)), "../../services/core/docker/Dockerfile");
+const coreCLIPackage = join(dirname(fileURLToPath(import.meta.url)), "../../surfaces/core-cli/package.json");
 
 function run(args, cwd) {
   return spawnSync(process.execPath, [script, ...args], { cwd, encoding: "utf8", stdio: "pipe" });
@@ -44,6 +45,12 @@ test("installs the npm package before auditing its signatures", () => {
   assert.doesNotMatch(source, /npm install[^\n]*--package-lock-only(?:=true)?/);
 });
 
+test("does not regenerate the Plugin catalog before release image digests are selected", () => {
+  const packageJSON = JSON.parse(readFileSync(coreCLIPackage, "utf8"));
+  assert.doesNotMatch(packageJSON.scripts.prebuild, /plugins\.mjs generate-catalog/);
+  assert.match(packageJSON.scripts.prebuild, /generate-package-metadata/);
+});
+
 test("does not publish a missing npm version from main recovery", () => {
   const source = readFileSync(workflow, "utf8");
   assert.match(
@@ -73,14 +80,12 @@ test("uses a cached fast path for immutable-tag publication", () => {
   assert.match(source, /permissions:\n\s+actions: write\n\s+contents: write/);
   assert.match(source, /gh workflow run release-atlas-core\.yml/);
   assert.doesNotMatch(source, /Require a run from the immutable release tag/);
+  assert.equal(source.match(/resolved to \$promoted_digest after promotion/g)?.length, 2);
 });
 
-test("serializes every Atlas Core release dispatch without replacing pending runs", () => {
+test("uses GitHub concurrency without cancelling the active release", () => {
   const source = readFileSync(workflow, "utf8");
-  assert.match(
-    source,
-    /concurrency:\n\s+group: release-atlas-core\n\s+cancel-in-progress: false\n\s+queue: max/
-  );
+  assert.match(source, /concurrency:\n\s+group: release-atlas-core\n\s+cancel-in-progress: false/);
 });
 
 test("recovers an existing immutable release only when explicitly requested", () => {
@@ -171,15 +176,26 @@ test("clears an old image pin only when preparing a new version", () => {
   const directory = mkdtempSync(join(tmpdir(), "atlas-core-release-"));
   const packagePath = join(directory, "package.json");
   try {
-    writeFileSync(packagePath, `${JSON.stringify({ version: "1.2.3", atlasCoreImage: "old-image" })}\n`);
+    writeFileSync(
+      packagePath,
+      `${JSON.stringify({ version: "1.2.3", atlasCoreImage: "old-image", atlasPluginImages: { fixture: "old" } })}\n`
+    );
     assert.equal(run(["prepare-package", "1.2.4", packagePath], directory).status, 0);
-    assert.deepEqual(JSON.parse(readFileSync(packagePath, "utf8")), { version: "1.2.3", atlasCoreImage: null });
+    assert.deepEqual(JSON.parse(readFileSync(packagePath, "utf8")), {
+      version: "1.2.3",
+      atlasCoreImage: null,
+      atlasPluginImages: {}
+    });
 
-    writeFileSync(packagePath, `${JSON.stringify({ version: "1.2.4", atlasCoreImage: "reviewed-image" })}\n`);
+    writeFileSync(
+      packagePath,
+      `${JSON.stringify({ version: "1.2.4", atlasCoreImage: "reviewed-image", atlasPluginImages: { fixture: "reviewed" } })}\n`
+    );
     assert.equal(run(["prepare-package", "1.2.4", packagePath], directory).status, 0);
     assert.deepEqual(JSON.parse(readFileSync(packagePath, "utf8")), {
       version: "1.2.4",
-      atlasCoreImage: "reviewed-image"
+      atlasCoreImage: "reviewed-image",
+      atlasPluginImages: { fixture: "reviewed" }
     });
   } finally {
     rmSync(directory, { recursive: true, force: true });

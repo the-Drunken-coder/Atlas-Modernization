@@ -3,6 +3,7 @@ import { AtlasAPIError, type EntityResource, type JSONValue } from "@the-drunken
 import { describe, expect, it, vi } from "vitest";
 import {
   definePlugin,
+  defineSpatialOperation,
   deriveToolAssetId,
   ensureToolAsset,
   PluginFailureError,
@@ -63,6 +64,48 @@ describe("Atlas Plugin runtime", () => {
         operations: { inspect_fixture: { ...operation, displayName: "x".repeat(101) } }
       })
     ).toThrow("Operation inspect_fixture display name must be no more than 100 characters");
+  });
+
+  it("defines map-area Operations with shared input and output validation", async () => {
+    const operation = defineSpatialOperation({
+      displayName: "Search area",
+      timeoutMs: 1000,
+      handler: (_area) => ({
+        features: [],
+        provenance: { connector_id: "fixture", source: "Recorded fixture" },
+        attribution: { text: "Fixture data", url: "https://example.test/attribution" },
+        retrieved_at: "2026-08-30T12:00:00Z",
+        truncation: null
+      })
+    });
+    const plugin = definePlugin({
+      pluginId: "spatial_fixture",
+      displayName: "Spatial fixture",
+      operations: { search: operation }
+    });
+
+    expect(plugin.manifest.operations[0]).toMatchObject({ interaction: { kind: "map_area" } });
+    expect(plugin.manifest.operations[0]?.interaction).not.toBe(operation.interaction);
+    expect(plugin.operations.search.interaction).toBe(plugin.manifest.operations[0]?.interaction);
+    expect(Object.isFrozen(plugin.operations.search.interaction)).toBe(true);
+    await expect(
+      operation.handler({ west: -71.31, south: 42.27, east: -71.3, north: 42.28 }, new AbortController().signal)
+    ).resolves.toMatchObject({ features: [], truncation: null });
+    await expect(
+      operation.handler({ west: 179.9, south: 0, east: -179.9, north: 0.01 }, new AbortController().signal)
+    ).rejects.toMatchObject({ pluginCode: "invalid_map_area" });
+    await expect(
+      operation.handler({ west: -72, south: 41, east: -71, north: 42 }, new AbortController().signal)
+    ).rejects.toMatchObject({ pluginCode: "invalid_map_area" });
+
+    const invalidResult = defineSpatialOperation({
+      displayName: "Invalid result",
+      timeoutMs: 1000,
+      handler: () => ({ features: [] }) as never
+    });
+    await expect(
+      invalidResult.handler({ west: -71.31, south: 42.27, east: -71.3, north: 42.28 }, new AbortController().signal)
+    ).rejects.toMatchObject({ pluginCode: "invalid_spatial_result" });
   });
 
   it("serves manifest, health, results, and typed private errors", async () => {

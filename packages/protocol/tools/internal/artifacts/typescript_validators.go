@@ -13,6 +13,9 @@ var runtimeValidatorTypeNames = []string{
 	"PluginManifest",
 	"PluginStatus",
 	"PluginDiscoveryResponse",
+	"MapArea",
+	"SpatialGeometry",
+	"SpatialOperationResult",
 	"ProtocolRevisionResponse",
 	"EntityCheckInRequest",
 	"EntityCheckInFullResponse",
@@ -69,6 +72,12 @@ func runtimeValidatorSource(g *typeScriptGenerator) (string, error) {
 		}
 		if name == "CommandCatalog" {
 			check = "(" + check + " && atlasProtocolHasValidCommandCatalogSemantics(value))"
+		}
+		if name == "MapArea" {
+			check = "(" + check + " && atlasProtocolHasValidMapAreaSemantics(value))"
+		}
+		if name == "SpatialOperationResult" {
+			check = "(" + check + " && atlasProtocolHasUniqueSpatialFeatureIDs(value))"
 		}
 		builder.WriteString("export function ")
 		builder.WriteString(validatorFunctionName(name))
@@ -288,13 +297,23 @@ func (g *typeScriptGenerator) runtimeRefValidatorExpression(valueExpr string, re
 	if name == "GeoJSONPolygon" {
 		expression = "(" + expression + " && atlasProtocolHasValidPolygonSemantics(" + valueExpr + "))"
 	}
+	if name == "GeoJSONMultiPolygon" {
+		expression = "(" + expression + " && atlasProtocolHasValidMultiPolygonSemantics(" + valueExpr + "))"
+	}
 	return expression, nil
 }
 
 func runtimeStringValidatorExpression(valueExpr string, schema typeScriptSchema) string {
 	checks := []string{}
-	if format, ok := schema["format"].(string); ok && format == "date-time" {
-		checks = append(checks, "atlasProtocolIsRFC3339String("+valueExpr+")")
+	if format, ok := schema["format"].(string); ok {
+		switch format {
+		case "date-time":
+			checks = append(checks, "atlasProtocolIsRFC3339String("+valueExpr+")")
+		case "uri":
+			checks = append(checks, "atlasProtocolIsURIString("+valueExpr+")")
+		default:
+			checks = append(checks, "typeof "+valueExpr+" === \"string\"")
+		}
 	} else {
 		checks = append(checks, "typeof "+valueExpr+" === \"string\"")
 	}

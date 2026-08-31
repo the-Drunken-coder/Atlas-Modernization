@@ -27,7 +27,10 @@ export {
   type TaskCreateOptions,
   type TaskFailOptions
 } from "./client.js";
-export { type ErrorMessageSanitizerOptions, sanitizeErrorMessage } from "./error-sanitizer.js";
+export {
+  type ErrorMessageSanitizerOptions,
+  sanitizeErrorMessage
+} from "./error-sanitizer.js";
 export type {
   ChangedSinceResponse,
   Classification,
@@ -50,12 +53,14 @@ export type {
   FullDatasetResponse,
   GeoJSONCircleFeature,
   GeoJSONLineString,
+  GeoJSONMultiPolygon,
   GeoJSONPoint,
   GeoJSONPolygon,
   GeoJSONPosition,
   GeometryComponent,
   JSONValue,
   LinkState,
+  MapArea,
   ObjectCreateRequest,
   ObjectDetailResource,
   ObjectResource,
@@ -63,6 +68,7 @@ export type {
   PluginDiscoveryResponse,
   PluginManifest,
   PluginOperationDescriptor,
+  PluginOperationInteraction,
   PluginStatus,
   PluginStatusState,
   PluginUnavailableReason,
@@ -72,6 +78,14 @@ export type {
   RuntimeRegistrationRequest,
   RuntimeStopRequest,
   RuntimeTaskDeliveryResponse,
+  SpatialAttribution,
+  SpatialFeature,
+  SpatialField,
+  SpatialGeometry,
+  SpatialOperationResult,
+  SpatialSourceProvenance,
+  SpatialTruncation,
+  SpatialTruncationReason,
   TaskAcknowledgeRequest,
   TaskCancellation,
   TaskCancellationCode,
@@ -100,6 +114,7 @@ export {
   isFullDatasetResponse,
   isGeometryComponent,
   isJSONValue,
+  isMapArea,
   isObjectCreateRequest,
   isObjectUpdateRequest,
   isPluginDiscoveryResponse,
@@ -111,6 +126,8 @@ export {
   isRuntimeRegistrationRequest,
   isRuntimeStopRequest,
   isRuntimeTaskDeliveryResponse,
+  isSpatialGeometry,
+  isSpatialOperationResult,
   isTaskAcknowledgeRequest,
   isTaskCancelRequest,
   isTaskCompleteRequest,
@@ -120,4 +137,5 @@ export {
   isTaskStartRequest,
   RESOURCE_TYPE_VALUES
 } from "./protocol.js";
+export { mapAreaSquareMeters } from "./spatial.js";
 export { joinAtlasUrl, normalizeAtlasBaseUrl } from "./url.js";

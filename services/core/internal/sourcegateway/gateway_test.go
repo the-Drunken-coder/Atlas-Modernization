@@ -155,6 +155,40 @@ func TestGatewayDoesNotCacheAnExhaustedRetryStatus(t *testing.T) {
 	}
 }
 
+func TestGatewayDoesNotCacheTransientHTTPResponsesWithoutRetries(t *testing.T) {
+	for _, status := range []int{http.StatusTooManyRequests, http.StatusInternalServerError} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			var calls atomic.Int32
+			client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				responseStatus := status
+				if calls.Add(1) > 1 {
+					responseStatus = http.StatusOK
+				}
+				return &http.Response{
+					StatusCode: responseStatus,
+					Header:     http.Header{},
+					Body:       io.NopCloser(strings.NewReader(http.StatusText(responseStatus))),
+				}, nil
+			})}
+			config := testConnectorConfig()
+			config.Routes[0].Cache.TTLMS = 10_000
+			gateway, err := New(Config{Connectors: []ConnectorConfig{config}}, Options{Client: client})
+			if err != nil {
+				t.Fatal(err)
+			}
+			request := ConnectorRequest{Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{}}
+			first, _, cacheResult, failure := gateway.execute(context.Background(), gateway.connectors["reference"], request)
+			if failure != nil || first.Status != status || cacheResult != "miss" {
+				t.Fatalf("transient response=%+v cache=%s failure=%v", first, cacheResult, failure)
+			}
+			second, _, cacheResult, failure := gateway.execute(context.Background(), gateway.connectors["reference"], request)
+			if failure != nil || second.Status != http.StatusOK || cacheResult != "stored" || calls.Load() != 2 {
+				t.Fatalf("recovery response=%+v cache=%s calls=%d failure=%v", second, cacheResult, calls.Load(), failure)
+			}
+		})
+	}
+}
+
 func TestGatewayBoundsRetriesCircuitAndCancellation(t *testing.T) {
 	var calls atomic.Int32
 	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
@@ -387,6 +421,32 @@ func TestDefaultTransportPreservesCompressedBytesAndAddsNoImplicitHeaders(t *tes
 	body, err := base64.StdEncoding.DecodeString(response.BodyBase64)
 	if err != nil || !bytes.Equal(body, compressed.Bytes()) || acceptEncoding != "" || userAgent != "" {
 		t.Fatalf("body preserved=%t accept-encoding=%q user-agent=%q error=%v", bytes.Equal(body, compressed.Bytes()), acceptEncoding, userAgent, err)
+	}
+}
+
+func TestDefaultTransportPreservesAllowedUserAgent(t *testing.T) {
+	var userAgent string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		userAgent = r.Header.Get("User-Agent")
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(server.Close)
+	config := testConnectorConfig()
+	config.Origin = server.URL
+	config.Egress.AllowLoopback = true
+	config.Routes[0].AllowedRequestHeaders = []string{"user-agent"}
+	gateway, err := New(Config{Connectors: []ConnectorConfig{config}}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, _, failure := gateway.execute(context.Background(), gateway.connectors["reference"], ConnectorRequest{
+		Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{{"user-agent", "Atlas Plugin/1"}},
+	})
+	if failure != nil {
+		t.Fatal(failure)
+	}
+	if userAgent != "Atlas Plugin/1" {
+		t.Fatalf("user-agent=%q", userAgent)
 	}
 }
 

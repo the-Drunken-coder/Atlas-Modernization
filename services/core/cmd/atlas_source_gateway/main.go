@@ -20,7 +20,7 @@ func main() {
 	if configPath == "" {
 		configPath = "source_gateway.json"
 	}
-	configuration, err := sourcegateway.LoadConfig(configPath)
+	configuration, err := sourcegateway.LoadConfig(configPath, os.Getenv("ATLAS_SOURCE_CONNECTOR_CONFIG_DIR"))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to load Source Gateway configuration: %v\n", err)
 		os.Exit(1)

@@ -1,0 +1,29 @@
+services:
+  api:
+    environment:
+      ATLAS_PLUGIN_CONFIG_DIR: /app/plugin-endpoints
+    volumes:
+      - ${ATLAS_PLUGIN_CONFIG_ROOT:-../../../plugins}/building_scan/core-endpoint.json:/app/plugin-endpoints/building_scan.json:ro
+
+  source-gateway:
+    environment:
+      ATLAS_SOURCE_CONNECTOR_CONFIG_DIR: /app/source-connectors
+    volumes:
+      - ${ATLAS_PLUGIN_CONFIG_ROOT:-../../../plugins}/building_scan/source-connector.json:/app/source-connectors/building_scan.json:ro
+
+  building-scan-plugin:
+    image: "@atlas/plugin-image@"
+    container_name: atlas_building_scan_plugin
+    restart: unless-stopped
+    environment:
+      ATLAS_SOURCE_GATEWAY_ORIGIN: http://source-gateway:8080
+    depends_on:
+      source-gateway:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - atlas_core_network

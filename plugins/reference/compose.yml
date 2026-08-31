@@ -1,0 +1,48 @@
+services:
+  api:
+    environment:
+      ATLAS_PLUGIN_CONFIG_DIR: /app/plugin-endpoints
+    volumes:
+      - ${ATLAS_PLUGIN_CONFIG_ROOT:-../../../plugins}/reference/core-endpoint.json:/app/plugin-endpoints/reference.json:ro
+
+  source-gateway:
+    environment:
+      ATLAS_SOURCE_CONNECTOR_CONFIG_DIR: /app/source-connectors
+    volumes:
+      - ${ATLAS_PLUGIN_CONFIG_ROOT:-../../../plugins}/reference/source-connector.json:/app/source-connectors/reference.json:ro
+    depends_on:
+      reference-source:
+        condition: service_started
+
+  reference-source:
+    build:
+      context: ../../..
+      dockerfile: plugins/reference/Dockerfile
+      target: source
+    container_name: atlas_reference_source
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8090/fixture?key=alpha"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - atlas_core_network
+
+  reference-plugin:
+    build:
+      context: ../../..
+      dockerfile: plugins/reference/Dockerfile
+      target: plugin
+    container_name: atlas_reference_plugin
+    environment:
+      ATLAS_SOURCE_GATEWAY_ORIGIN: http://source-gateway:8080
+    depends_on:
+      source-gateway:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - atlas_core_network

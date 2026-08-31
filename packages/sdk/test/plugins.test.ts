@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import { AtlasClient } from "../src/index.js";
+import { AtlasClient, mapAreaSquareMeters } from "../src/index.js";
 
 describe("AtlasClient Plugins", () => {
+  it("calculates the spherical area of a map rectangle", () => {
+    expect(mapAreaSquareMeters({ west: 0, south: 0, east: 1, north: 1 })).toBeCloseTo(12_363_718_145.18, -2);
+  });
+
   it("lists Plugin status and invokes an Operation using the documented paths", async () => {
     const fetchMock = vi
       .fn<typeof fetch>()
@@ -42,6 +46,45 @@ describe("AtlasClient Plugins", () => {
 
     await expect(client.plugins.list()).rejects.toThrow("response failed validation");
     await expect(client.plugins.invoke("reference", "inspect_fixture", null)).rejects.toThrow();
+  });
+
+  it("validates spatial input and result contracts", async () => {
+    const result = {
+      features: [],
+      provenance: { connector_id: "fixture", source: "Recorded fixture" },
+      attribution: { text: "Fixture data", url: "https://example.test/attribution" },
+      retrieved_at: "2026-08-30T12:00:00Z",
+      truncation: null
+    };
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(result));
+    const client = new AtlasClient({ baseUrl: "https://core.test", fetch: fetchMock, sync: false });
+
+    await expect(
+      client.plugins.invokeSpatial("fixture", "search", {
+        west: -71.31,
+        south: 42.27,
+        east: -71.3,
+        north: 42.28
+      })
+    ).resolves.toEqual(result);
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({
+      body: '{"west":-71.31,"south":42.27,"east":-71.3,"north":42.28}'
+    });
+    expect(() =>
+      client.plugins.invokeSpatial("fixture", "search", { west: 179.9, south: 0, east: -179.9, north: 0.01 })
+    ).toThrow("no larger than 5 km²");
+
+    fetchMock.mockResolvedValueOnce(jsonResponse({ ...result, features: [{ id: "duplicate" }, { id: "duplicate" }] }));
+    await expect(
+      client.plugins.invokeSpatial("fixture", "search", { west: -71.31, south: 42.27, east: -71.3, north: 42.28 })
+    ).rejects.toThrow("response failed validation");
+
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ ...result, attribution: { ...result.attribution, url: "https://exa mple" } })
+    );
+    await expect(
+      client.plugins.invokeSpatial("fixture", "search", { west: -71.31, south: 42.27, east: -71.3, north: 42.28 })
+    ).rejects.toThrow("response failed validation");
   });
 
   it("rejects contradictory Plugin discovery states", async () => {

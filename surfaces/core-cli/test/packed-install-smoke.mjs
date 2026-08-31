@@ -55,12 +55,21 @@ try {
     "dist/terminal-ui.js",
     "assets/docker-compose.init.yml",
     "assets/docker-compose.yml",
+    "assets/plugin-catalog.json",
     "assets/source_gateway.production.json"
   ]) {
     if (!existsSync(join(installed, path))) throw new Error(`installed package is missing ${path}`);
   }
 
   const packageJSON = JSON.parse(readFileSync(join(installed, "package.json"), "utf8"));
+  const pluginCatalog = JSON.parse(readFileSync(join(installed, "assets", "plugin-catalog.json"), "utf8"));
+  for (const plugin of pluginCatalog.plugins ?? []) {
+    for (const asset of Object.values(plugin.assets ?? {})) {
+      if (!existsSync(join(installed, "assets", "plugins", plugin.plugin_id, asset))) {
+        throw new Error(`installed package is missing catalog asset ${plugin.plugin_id}/${asset}`);
+      }
+    }
+  }
   if (typeof packageJSON.bin?.["atlas-core"] !== "string") throw new Error("installed package is missing its bin");
   const compose = readFileSync(join(installed, "assets", "docker-compose.yml"), "utf8");
   if (!compose.includes('mc alias set -- atlas http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"')) {

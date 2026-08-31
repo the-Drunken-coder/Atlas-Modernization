@@ -1,11 +1,6 @@
 package config
 
 import (
-	"bytes"
-	"encoding/json"
-	"errors"
-	"fmt"
-	"io"
 	"os"
 )
 
@@ -91,21 +86,6 @@ func loadFromEnvironment() (*Config, error) {
 }
 
 func (c *Config) applyEnvironmentOverrides() error {
-	if value, ok := os.LookupEnv("ATLAS_PLUGINS"); ok {
-		var plugins []PluginConfig
-		decoder := json.NewDecoder(bytes.NewReader([]byte(value)))
-		decoder.DisallowUnknownFields()
-		if err := decoder.Decode(&plugins); err != nil {
-			return fmt.Errorf("ATLAS_PLUGINS must be a JSON array: %w", err)
-		}
-		if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-			return fmt.Errorf("ATLAS_PLUGINS must contain one JSON array")
-		}
-		if plugins == nil {
-			return fmt.Errorf("ATLAS_PLUGINS must be a JSON array")
-		}
-		c.Plugins = plugins
-	}
 	if err := c.applyCORSOverrides(); err != nil {
 		return err
 	}

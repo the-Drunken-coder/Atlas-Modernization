@@ -1,7 +1,13 @@
-import { AtlasAPIError, AtlasClient, type PluginStatus } from "@the-drunken-coder/atlas-sdk";
-import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Callout } from "@blueprintjs/core";
+import { AtlasAPIError, AtlasClient, mapAreaSquareMeters, type PluginStatus } from "@the-drunken-coder/atlas-sdk";
+import { type KeyboardEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { sanitizeConnectionError } from "../../atlas/connection-error.js";
 import { useAtlas } from "../../state/atlas-context.js";
+import { Button, IconButton } from "../../ui/primitives/controls.js";
+import { CloseIcon } from "../../ui/primitives/icons.js";
+import { formatSpatialReason, formatSpatialRetrievalTime } from "../plugins/spatial-format.js";
+import type { SpatialOperationRunner } from "../plugins/use-spatial-operation-runner.js";
+import { PanelListRow } from "../shared/PanelListRow.js";
 
 const pollingIntervalMs = 10_000;
 
@@ -9,7 +15,22 @@ type PluginReader = {
   list(options?: { signal?: AbortSignal }): Promise<PluginStatus[]>;
 };
 
-export function PluginsPanel({ reader: suppliedReader }: { reader?: PluginReader }) {
+export type PluginSelection = {
+  pluginId: string;
+  name: string;
+};
+
+export function PluginsPanel({
+  selection,
+  onSelectionChange,
+  reader: suppliedReader,
+  spatial
+}: {
+  selection?: PluginSelection;
+  onSelectionChange(selection?: PluginSelection): void;
+  reader?: PluginReader;
+  spatial?: SpatialOperationRunner;
+}) {
   const { config } = useAtlas();
   const reader = useMemo<PluginReader | undefined>(
     () =>
@@ -24,7 +45,8 @@ export function PluginsPanel({ reader: suppliedReader }: { reader?: PluginReader
   const [refreshing, setRefreshing] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
   const requestRef = useRef<AbortController | undefined>(undefined);
-  const rowRefs = useRef<Array<HTMLDivElement | null>>([]);
+  const rowRefs = useRef(new Map<string, HTMLButtonElement>());
+  const previousSelectionRef = useRef(selection?.pluginId);
 
   const refresh = useCallback(async () => {
     if (!reader || requestRef.current) return;
@@ -68,7 +90,45 @@ export function PluginsPanel({ reader: suppliedReader }: { reader?: PluginReader
     };
   }, [refresh]);
 
-  const moveFocus = (event: KeyboardEvent<HTMLDivElement>, index: number) => {
+  const selectedPlugin = snapshot?.find((plugin) => plugin.plugin_id === selection?.pluginId);
+  const selectedTargetOperation =
+    selectedPlugin && spatial?.target?.pluginId === selectedPlugin.plugin_id
+      ? selectedPlugin.operations.find(
+          (operation) =>
+            operation.operation_id === spatial.target?.operationId && operation.interaction?.kind === "map_area"
+        )
+      : undefined;
+  useEffect(() => {
+    if (selection && snapshot && !selectedPlugin) {
+      onSelectionChange(undefined);
+      spatial?.closeTarget();
+    }
+  }, [onSelectionChange, selectedPlugin, selection, snapshot, spatial]);
+
+  useEffect(() => {
+    if (!spatial?.target || !selectedPlugin || spatial.target.pluginId !== selectedPlugin.plugin_id) return;
+    if (selectedPlugin.status !== "available") return;
+    if (!selectedTargetOperation) {
+      spatial.closeTarget();
+      return;
+    }
+    spatial.refreshTarget({
+      pluginId: selectedPlugin.plugin_id,
+      pluginName: selectedPlugin.display_name ?? selectedPlugin.plugin_id,
+      operationId: selectedTargetOperation.operation_id,
+      operationName: selectedTargetOperation.display_name
+    });
+  }, [selectedPlugin, selectedTargetOperation, spatial]);
+
+  useLayoutEffect(() => {
+    const previous = previousSelectionRef.current;
+    previousSelectionRef.current = selection?.pluginId;
+    if (selection || !previous) return;
+    const frame = requestAnimationFrame(() => rowRefs.current.get(previous)?.focus());
+    return () => cancelAnimationFrame(frame);
+  }, [selection]);
+
+  const moveFocus = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
     if (!snapshot?.length) return;
     let next: number;
     if (event.key === "ArrowDown") next = Math.min(snapshot.length - 1, index + 1);
@@ -78,25 +138,36 @@ export function PluginsPanel({ reader: suppliedReader }: { reader?: PluginReader
     else return;
     event.preventDefault();
     setActiveIndex(next);
-    rowRefs.current[next]?.focus();
+    rowRefs.current.get(snapshot[next].plugin_id)?.focus();
   };
 
+  if (selectedPlugin) {
+    return spatial?.target?.pluginId === selectedPlugin.plugin_id &&
+      selectedPlugin.status === "available" &&
+      selectedTargetOperation &&
+      spatial ? (
+      <SpatialOperationControls spatial={spatial} />
+    ) : (
+      <PluginDetail plugin={selectedPlugin} spatial={spatial} />
+    );
+  }
+
   return (
-    <section className="plugins-panel" aria-label="Plugin status">
-      <div className="plugins-panel__toolbar">
+    <section className="plugins-panel entity-browser" aria-label="Plugins">
+      <div className="entity-list__summary plugin-browser__summary">
         <span aria-live="polite">
           {snapshot ? `${snapshot.length} configured` : refreshing ? "Checking plugins" : "Status unavailable"}
         </span>
-        <button className="plugins-panel__refresh" type="button" disabled={refreshing} onClick={() => void refresh()}>
+        <Button variant="ghost" disabled={refreshing} onClick={() => void refresh()}>
           {refreshing ? "Refreshing" : "Refresh"}
-        </button>
+        </Button>
       </div>
 
       {error ? (
-        <div className="plugins-panel__error" role="alert">
-          <strong>{snapshot ? "Refresh failed. Showing last successful check." : "Plugin status unavailable."}</strong>
+        <Callout className="banner banner--error" intent="danger" icon={null} compact role="alert">
+          <strong>{snapshot ? "Refresh failed. Showing the last check." : "Plugin status unavailable."}</strong>
           <span>{error}</span>
-        </div>
+        </Callout>
       ) : null}
 
       {!snapshot ? (
@@ -106,72 +177,189 @@ export function PluginsPanel({ reader: suppliedReader }: { reader?: PluginReader
       ) : snapshot.length === 0 ? (
         <div className="panel__empty">No Plugins are configured.</div>
       ) : (
-        <div className="plugin-table" role="table" aria-label="Configured Plugins">
-          <div className="plugin-table__header" role="row">
-            <span role="columnheader">State</span>
-            <span role="columnheader">Plugin</span>
-            <span role="columnheader">Operations</span>
-            <span role="columnheader">Checked</span>
-          </div>
-          <div role="rowgroup">
-            {snapshot.map((plugin, index) => (
-              <div
-                key={plugin.plugin_id}
+        <ul className="entity-list" aria-label="Configured Plugins">
+          {snapshot.map((plugin, index) => (
+            <li key={plugin.plugin_id}>
+              <PanelListRow
                 ref={(node) => {
-                  rowRefs.current[index] = node;
+                  if (node) rowRefs.current.set(plugin.plugin_id, node);
+                  else rowRefs.current.delete(plugin.plugin_id);
                 }}
-                className="plugin-row"
-                data-status={plugin.status}
-                role="row"
+                title={plugin.display_name ?? plugin.plugin_id}
+                meta={`${formatStatus(plugin)} · ${operationSummary(plugin)}`}
+                indicatorColor={statusColor(plugin.status)}
                 tabIndex={index === activeIndex ? 0 : -1}
-                onClick={() => setActiveIndex(index)}
+                onClick={() => {
+                  setActiveIndex(index);
+                  onSelectionChange({ pluginId: plugin.plugin_id, name: plugin.display_name ?? plugin.plugin_id });
+                }}
                 onFocus={() => setActiveIndex(index)}
                 onKeyDown={(event) => moveFocus(event, index)}
-              >
-                <div className="plugin-row__state" role="cell" data-label="State">
-                  <span className="plugin-state-marker" aria-hidden />
-                  <strong>{plugin.status}</strong>
-                  {plugin.reason_code ? <span>{formatReason(plugin.reason_code)}</span> : null}
-                </div>
-                <div className="plugin-row__identity" role="cell" data-label="Plugin">
-                  <strong>{plugin.display_name ?? plugin.plugin_id}</strong>
-                  <code>{plugin.plugin_id}</code>
-                  {plugin.tool_asset_id ? <code title={plugin.tool_asset_id}>Asset {plugin.tool_asset_id}</code> : null}
-                </div>
-                <div className="plugin-row__operations" role="cell" data-label="Operations">
-                  {plugin.operations.length === 0 ? (
-                    <span>None</span>
-                  ) : (
-                    plugin.operations.map((operation) => (
-                      <span
-                        key={operation.operation_id}
-                        title={`${operation.display_name}, ${operation.timeout_ms} ms`}
-                      >
-                        {operation.operation_id}
-                      </span>
-                    ))
-                  )}
-                </div>
-                <time role="cell" data-label="Checked" dateTime={plugin.checked_at ?? undefined}>
-                  {formatCheckedAt(plugin.checked_at)}
-                </time>
-              </div>
-            ))}
-          </div>
-        </div>
+              />
+            </li>
+          ))}
+        </ul>
       )}
     </section>
   );
 }
 
-function formatReason(reason: string): string {
-  return reason.replaceAll("_", " ");
+function PluginDetail({ plugin, spatial }: { plugin: PluginStatus; spatial?: SpatialOperationRunner }) {
+  const operations = plugin.operations.filter((operation) => operation.interaction?.kind === "map_area");
+  return (
+    <div className="plugin-detail" aria-label={plugin.display_name ?? plugin.plugin_id}>
+      <div className="plugin-detail__summary">
+        <span className="plugin-detail__status-dot" style={{ background: statusColor(plugin.status) }} aria-hidden />
+        <span>{`${formatStatus(plugin)} · ${operationSummary(plugin)}`}</span>
+      </div>
+
+      {plugin.status !== "available" ? (
+        <Callout className="banner banner--error" intent="danger" icon={null} compact role="status">
+          <strong>Plugin unavailable</strong>
+          <span>{plugin.reason_code ? formatSpatialReason(plugin.reason_code) : "The plugin is not ready."}</span>
+        </Callout>
+      ) : operations.length === 0 ? (
+        <div className="panel__empty">This plugin has no map area operations.</div>
+      ) : (
+        <ul className="entity-list plugin-operation-list" aria-label="Operations">
+          {operations.map((operation) => (
+            <li key={operation.operation_id}>
+              <PanelListRow
+                title={operation.display_name}
+                meta={`Map area · ${formatTimeout(operation.timeout_ms)}`}
+                indicatorColor="var(--accent)"
+                onClick={() =>
+                  spatial?.selectTarget({
+                    pluginId: plugin.plugin_id,
+                    pluginName: plugin.display_name ?? plugin.plugin_id,
+                    operationId: operation.operation_id,
+                    operationName: operation.display_name
+                  })
+                }
+              />
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
 }
 
-function formatCheckedAt(value: string | null): string {
-  if (!value) return "Waiting";
-  const date = new Date(value);
-  return Number.isNaN(date.valueOf())
-    ? value
-    : date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+function SpatialOperationControls({ spatial }: { spatial: SpatialOperationRunner }) {
+  const area = spatial.area;
+  const result = spatial.result;
+  const featureCount = result?.features.length ?? 0;
+  const busy = spatial.status === "loading" || spatial.status === "drawing";
+
+  return (
+    <div className="plugin-operation" aria-label={spatial.target?.operationName} data-spatial-operation>
+      <div className="plugin-operation__area">
+        <div className="plugin-operation__area-heading">
+          <strong>{area ? "Selected area" : "Area"}</strong>
+          {area ? <span>{formatAreaSize(area)} km²</span> : <span>No area selected</span>}
+          {area || result ? (
+            <IconButton label="Clear selected area and results" onClick={spatial.clear}>
+              <CloseIcon size={13} />
+            </IconButton>
+          ) : null}
+        </div>
+        {area ? <div className="plugin-operation__bounds">{formatBounds(area)}</div> : null}
+        <div className="plugin-operation__actions">
+          {area ? (
+            <Button variant="primary" disabled={busy} onClick={() => void spatial.search()}>
+              Search
+            </Button>
+          ) : null}
+          <Button variant={area ? "default" : "primary"} disabled={busy} onClick={spatial.beginDrawing}>
+            {area ? "Redraw" : "Draw area"}
+          </Button>
+          <Button aria-label="Use current view" disabled={busy} onClick={spatial.useCurrentView}>
+            Current view
+          </Button>
+        </div>
+      </div>
+
+      {spatial.status === "drawing" ? (
+        <Callout
+          className="banner banner--info plugin-operation__notice"
+          intent="primary"
+          icon={null}
+          compact
+          role="status"
+        >
+          <span>Drag on the map. Escape cancels.</span>
+          <Button variant="ghost" onClick={spatial.cancel}>
+            Cancel
+          </Button>
+        </Callout>
+      ) : null}
+      {spatial.status === "loading" ? (
+        <Callout
+          className="banner banner--info plugin-operation__notice"
+          intent="primary"
+          icon={null}
+          compact
+          role="status"
+        >
+          <span>{spatial.stale ? "Searching. Previous results remain visible." : "Searching selected area."}</span>
+          <Button variant="ghost" onClick={spatial.cancel}>
+            Cancel
+          </Button>
+        </Callout>
+      ) : null}
+      {spatial.error ? (
+        <Callout
+          className="banner banner--error plugin-operation__notice"
+          intent="danger"
+          icon={null}
+          compact
+          role="alert"
+        >
+          <span>
+            <strong>Source error</strong> {spatial.error}
+          </span>
+          {area ? (
+            <Button variant="ghost" onClick={() => void spatial.retry()}>
+              Retry
+            </Button>
+          ) : null}
+        </Callout>
+      ) : null}
+
+      {result ? (
+        <div className="plugin-operation__result-summary" aria-live="polite">
+          <span>{`${featureCount} result${featureCount === 1 ? "" : "s"}`}</span>
+          {spatial.stale ? <span>stale</span> : <span>{formatSpatialRetrievalTime(result.retrieved_at)}</span>}
+          {result.truncation ? <span>Truncated: {formatSpatialReason(result.truncation.reason)}</span> : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function formatAreaSize(area: { west: number; south: number; east: number; north: number }): string {
+  return (mapAreaSquareMeters(area) / 1_000_000).toFixed(2);
+}
+
+function formatBounds(area: { west: number; south: number; east: number; north: number }): string {
+  return `${area.south.toFixed(5)}, ${area.west.toFixed(5)} to ${area.north.toFixed(5)}, ${area.east.toFixed(5)}`;
+}
+
+function formatStatus(plugin: PluginStatus): string {
+  return plugin.reason_code ? `${plugin.status}: ${formatSpatialReason(plugin.reason_code)}` : plugin.status;
+}
+
+function operationSummary(plugin: PluginStatus): string {
+  const count = plugin.operations.length;
+  return `${count} operation${count === 1 ? "" : "s"}`;
+}
+
+function formatTimeout(timeoutMs: number): string {
+  return timeoutMs >= 1000 ? `${timeoutMs / 1000}s timeout` : `${timeoutMs}ms timeout`;
+}
+
+function statusColor(status: PluginStatus["status"]): string {
+  if (status === "available") return "var(--success)";
+  if (status === "unavailable") return "var(--error)";
+  return "var(--warning)";
 }

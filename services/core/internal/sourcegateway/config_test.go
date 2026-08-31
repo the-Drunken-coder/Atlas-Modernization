@@ -3,6 +3,7 @@ package sourcegateway
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -10,32 +11,71 @@ import (
 func TestConfigDefaultsAndStrictDecoding(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "source_gateway.json")
 	contents := `{
-		"connectors":[{
-			"id":"reference","origin":"https://source.example",
-			"routes":[{"method":"GET","path_prefix":"/fixture","allowed_query_names":["key"],"allowed_request_headers":[],"allowed_response_headers":[],"read_only":true,"cache":{},"retry":{}}],
-			"secret_headers":{},"egress":{},"limits":{},"rate":{},"circuit_breaker":{}
-		}]
+		"listen_address":":8080"
 	}`
 	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	config, err := LoadConfig(path)
+	connectorDirectory := filepath.Join(t.TempDir(), "connectors")
+	if err := os.Mkdir(connectorDirectory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	connector := `{
+		"id":"reference","origin":"https://source.example",
+		"routes":[{"method":"GET","path_prefix":"/fixture","allowed_query_names":["key"],"allowed_request_headers":[],"allowed_response_headers":[],"read_only":true,"cache":{},"retry":{}}],
+		"secret_headers":{},"egress":{},"limits":{},"rate":{},"circuit_breaker":{}
+	}`
+	if err := os.WriteFile(filepath.Join(connectorDirectory, "reference.json"), []byte(connector), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	config, err := LoadConfig(path, connectorDirectory)
 	if err != nil {
 		t.Fatal(err)
 	}
-	connector := config.Connectors[0]
-	if connector.Limits.TimeoutMS != 10_000 || connector.Limits.MaxRequestBytes != 256<<10 || connector.Limits.MaxResponseBytes != 4<<20 {
-		t.Fatalf("unexpected defaults: %+v", connector.Limits)
+	loadedConnector := config.Connectors[0]
+	if loadedConnector.Limits.TimeoutMS != 10_000 || loadedConnector.Limits.MaxRequestBytes != 256<<10 || loadedConnector.Limits.MaxResponseBytes != 4<<20 {
+		t.Fatalf("unexpected defaults: %+v", loadedConnector.Limits)
 	}
-	if connector.Limits.MaxConcurrency != 4 || connector.CircuitBreaker.Failures != 3 || connector.CircuitBreaker.OpenMS != 30_000 {
-		t.Fatalf("unexpected control defaults: %+v %+v", connector.Limits, connector.CircuitBreaker)
+	if loadedConnector.Limits.MaxConcurrency != 4 || loadedConnector.CircuitBreaker.Failures != 3 || loadedConnector.CircuitBreaker.OpenMS != 30_000 {
+		t.Fatalf("unexpected control defaults: %+v %+v", loadedConnector.Limits, loadedConnector.CircuitBreaker)
 	}
 
 	if err := os.WriteFile(path, []byte(`{"connectors":[],"unknown":true}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := LoadConfig(path); err == nil {
+	if _, err := LoadConfig(path, connectorDirectory); err == nil {
 		t.Fatal("expected unknown configuration field to fail")
+	}
+
+	if err := os.WriteFile(path, []byte(`{"listen_address":":8080"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(connectorDirectory, "unknown.json"), []byte(`{"id":"other","unknown":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadConfig(path, connectorDirectory); err == nil {
+		t.Fatal("expected unknown connector fragment field to fail")
+	}
+}
+
+func TestConfigRejectsFilesAboveSizeLimits(t *testing.T) {
+	basePath := filepath.Join(t.TempDir(), "source_gateway.json")
+	if err := os.WriteFile(basePath, []byte(`{"listen_address":":8080"}`+strings.Repeat(" ", maxBaseConfigBytes)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadConfig(basePath, ""); err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("oversized base configuration error = %v", err)
+	}
+
+	if err := os.WriteFile(basePath, []byte(`{"listen_address":":8080"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	connectorDirectory := t.TempDir()
+	if err := os.WriteFile(filepath.Join(connectorDirectory, "oversized.json"), []byte(strings.Repeat(" ", maxConnectorConfigBytes+1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadConfig(basePath, connectorDirectory); err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("oversized connector fragment error = %v", err)
 	}
 }
 

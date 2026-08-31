@@ -3,6 +3,7 @@
 import {
   type GeoJSONCircleFeature,
   type GeoJSONLineString,
+  type GeoJSONMultiPolygon,
   type GeoJSONPoint,
   type GeoJSONPolygon,
   type GeoJSONPosition,
@@ -14,7 +15,8 @@ export type Position = GeoJSONPosition;
 export type UiPoint = GeoJSONPoint;
 export type UiLineString = GeoJSONLineString;
 export type UiPolygon = GeoJSONPolygon;
-export type UiRawGeometry = UiPoint | UiLineString | UiPolygon;
+export type UiMultiPolygon = GeoJSONMultiPolygon;
+export type UiRawGeometry = UiPoint | UiLineString | UiPolygon | UiMultiPolygon;
 export type UiCircleFeature = GeoJSONCircleFeature;
 export type UiGeometry = GeometryComponent;
 

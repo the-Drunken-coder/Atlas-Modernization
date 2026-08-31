@@ -1,6 +1,7 @@
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { MapSourceConfig } from "../../../app/config.js";
+import type { MapSpatialInteraction } from "./MapView.js";
 import { mapInstances, notifyResizeObservers, rect, renderMapView, style } from "./MapView.test-harness.js";
 
 const mapSourceOptions: MapSourceConfig[] = [
@@ -18,6 +19,50 @@ const mapSourceOptions: MapSourceConfig[] = [
 ];
 
 describe("MapView region comparison", () => {
+  it("keeps comparison and spatial area drawing mutually exclusive", async () => {
+    const spatial = spatialInteraction(true);
+    const rendered = renderMapView({ styleId: "base", style: style("base"), mapSourceOptions, spatial });
+    vi.mocked(spatial.onCancelDrawing).mockImplementation(() => {
+      rendered.rerenderMap({ spatial: { ...spatial, drawing: false } });
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Compare map source inside a region" }));
+
+    expect(spatial.onCancelDrawing).toHaveBeenCalledOnce();
+    expect(screen.queryByText("Drag an area. Press Escape to cancel.")).not.toBeInTheDocument();
+    expect(screen.getByText("Drag a region. Shift-drag still zooms.")).toBeInTheDocument();
+
+    rendered.rerenderMap({ spatial: { ...spatial, drawing: true } });
+
+    await waitFor(() => expect(screen.queryByText("Drag a region. Shift-drag still zooms.")).not.toBeInTheDocument());
+    expect(screen.getByText("Drag an area. Press Escape to cancel.")).toBeInTheDocument();
+  });
+
+  it("cancels an active comparison transform when spatial drawing starts", async () => {
+    const spatial = spatialInteraction(false);
+    const rendered = renderMapView({ styleId: "base", style: style("base"), mapSourceOptions, spatial });
+    await drawComparison();
+    const region = screen.getByTestId("map-comparison-region");
+
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Resize comparison region width" }), {
+      pointerId: 2,
+      pointerType: "mouse",
+      button: 0,
+      clientX: 260,
+      clientY: 120
+    });
+    fireEvent.pointerMove(window, { pointerId: 2, pointerType: "mouse", clientX: 300, clientY: 120 });
+    await waitFor(() => expect(region).toHaveStyle({ width: "220px" }));
+
+    rendered.rerenderMap({ spatial: { ...spatial, drawing: true } });
+    await waitFor(() => expect(region).toHaveStyle({ width: "180px" }));
+
+    fireEvent.pointerMove(window, { pointerId: 2, pointerType: "mouse", clientX: 340, clientY: 120 });
+    fireEvent.pointerUp(window, { pointerId: 2, pointerType: "mouse", clientX: 340, clientY: 120 });
+    expect(region).toHaveStyle({ width: "180px" });
+    expect(screen.getByText("Drag an area. Press Escape to cancel.")).toBeInTheDocument();
+  });
+
   it("draws only after the explicit tool is active and creates a region-sized passive map", async () => {
     const rendered = renderMapView({ styleId: "base", style: style("base"), mapSourceOptions });
 
@@ -115,7 +160,7 @@ describe("MapView region comparison", () => {
 
     expect(screen.queryByTestId("map-comparison-region")).not.toBeInTheDocument();
     expect(screen.getByText("Drag a region. Shift-drag still zooms.")).toBeInTheDocument();
-    expect(canvas).toHaveClass("map-canvas--compare-drawing");
+    expect(canvas).toHaveClass("map-canvas--region-drawing");
 
     const nativeControls = document.createElement("div");
     nativeControls.className = "maplibregl-control-container";
@@ -541,6 +586,7 @@ describe("MapView region comparison", () => {
 });
 
 async function drawComparison(pointerType: "mouse" | "touch" = "mouse"): Promise<void> {
+  const mapCount = mapInstances().length;
   fireEvent.click(screen.getByRole("button", { name: "Compare map source inside a region" }));
   const prompt = screen.getByText("Drag a region. Shift-drag still zooms.");
   const surface = prompt.parentElement;
@@ -549,4 +595,18 @@ async function drawComparison(pointerType: "mouse" | "touch" = "mouse"): Promise
   fireEvent.pointerMove(window, { pointerId: 1, pointerType, clientX: 260, clientY: 160 });
   fireEvent.pointerUp(window, { pointerId: 1, pointerType, clientX: 260, clientY: 160 });
   await screen.findByTestId("map-comparison-region");
+  await waitFor(() => expect(mapInstances().length).toBeGreaterThan(mapCount));
+}
+
+function spatialInteraction(drawing: boolean): MapSpatialInteraction {
+  return {
+    area: null,
+    drawing,
+    features: [],
+    onAreaChange: vi.fn(),
+    onDrawingComplete: vi.fn(),
+    onCancelDrawing: vi.fn(),
+    onViewportArea: vi.fn(),
+    onSelectFeature: vi.fn()
+  };
 }

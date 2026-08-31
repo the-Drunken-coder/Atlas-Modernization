@@ -1,7 +1,15 @@
 import { createHash } from "node:crypto";
 import { createServer, type Server } from "node:http";
-import type { EntityCreateRequest, EntityResource, JSONValue, PluginManifest } from "@the-drunken-coder/atlas-sdk";
-import { isAtlasAPIError, isJSONValue } from "@the-drunken-coder/atlas-sdk";
+import type {
+  EntityCreateRequest,
+  EntityResource,
+  JSONValue,
+  MapArea,
+  PluginManifest,
+  PluginOperationInteraction,
+  SpatialOperationResult
+} from "@the-drunken-coder/atlas-sdk";
+import { isAtlasAPIError, isJSONValue, isMapArea, isSpatialOperationResult } from "@the-drunken-coder/atlas-sdk";
 
 const identifierPattern = /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/;
 const maxBodyBytes = 1 << 20;
@@ -14,7 +22,29 @@ export type Operation<Input extends JSONValue = JSONValue, Output extends JSONVa
   displayName: string;
   timeoutMs: number;
   handler: OperationHandler<Input, Output>;
+  interaction?: PluginOperationInteraction;
 };
+
+export type SpatialOperation = Operation<MapArea, SpatialOperationResult> & {
+  interaction: { readonly kind: "map_area" };
+};
+
+export function defineSpatialOperation(definition: Omit<SpatialOperation, "interaction">): SpatialOperation {
+  return Object.freeze({
+    ...definition,
+    interaction: Object.freeze({ kind: "map_area" as const }),
+    async handler(input: MapArea, signal: AbortSignal): Promise<SpatialOperationResult> {
+      if (!isMapArea(input)) {
+        throw new PluginInputError("invalid_map_area");
+      }
+      const result = await definition.handler(input, signal);
+      if (!isSpatialOperationResult(result)) {
+        throw new PluginFailureError("invalid_spatial_result");
+      }
+      return result;
+    }
+  });
+}
 
 export type OperationMap = Record<string, Operation>;
 
@@ -41,25 +71,28 @@ export function definePlugin<const Operations extends OperationMap>(
     if (!Number.isInteger(operation.timeoutMs) || operation.timeoutMs < 1 || operation.timeoutMs > 25_000) {
       throw new TypeError(`Operation ${operationId} timeoutMs must be an integer between 1 and 25000`);
     }
-    return [operationId, operation] as const;
+    const interaction = normalizeOperationInteraction(operationId, operation.interaction);
+    return [operationId, operation, interaction] as const;
   });
   const operations = operationEntries
-    .map(([operationId, operation]) => {
+    .map(([operationId, operation, interaction]) => {
       return Object.freeze({
         operation_id: operationId,
         display_name: operation.displayName.trim(),
-        timeout_ms: operation.timeoutMs
+        timeout_ms: operation.timeoutMs,
+        ...(interaction ? { interaction } : {})
       });
     })
     .sort((left, right) => left.operation_id.localeCompare(right.operation_id));
   const normalizedOperations = Object.freeze(
     Object.fromEntries(
-      operationEntries.map(([operationId, operation]) => [
+      operationEntries.map(([operationId, operation, interaction]) => [
         operationId,
         Object.freeze({
           displayName: operation.displayName.trim(),
           timeoutMs: operation.timeoutMs,
-          handler: operation.handler
+          handler: operation.handler,
+          ...(interaction ? { interaction } : {})
         })
       ])
     )
@@ -421,6 +454,17 @@ function requireDisplayName(subject: string, value: string): void {
   const trimmed = value.trim();
   if (!trimmed) throw new TypeError(`${subject} display name must not be empty`);
   if ([...trimmed].length > 100) throw new TypeError(`${subject} display name must be no more than 100 characters`);
+}
+
+function normalizeOperationInteraction(
+  operationId: string,
+  interaction: PluginOperationInteraction | undefined
+): PluginOperationInteraction | undefined {
+  if (interaction === undefined) return undefined;
+  if (Object.keys(interaction).length !== 1 || interaction.kind !== "map_area") {
+    throw new TypeError(`Operation ${operationId} interaction is invalid`);
+  }
+  return Object.freeze({ kind: interaction.kind });
 }
 
 function readGatewayFailure(value: unknown): SourceGatewayFailureCode {

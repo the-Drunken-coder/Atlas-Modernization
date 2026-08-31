@@ -1,0 +1,15 @@
+{
+  "elements": [
+    {
+      "type": "way",
+      "id": 1,
+      "tags": { "building": "yes" },
+      "geometry": [
+        { "lat": 42, "lon": -71 },
+        { "lat": 42.001, "lon": -71 },
+        { "lat": 42.001, "lon": -70.999 },
+        { "lat": 42, "lon": -70.999 }
+      ]
+    }
+  ]
+}

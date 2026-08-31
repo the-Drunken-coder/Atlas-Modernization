@@ -15,10 +15,12 @@ import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { type CLIContext, type CommandRunner, runCLI } from "../src/application.js";
 import { PACKAGE_NAME, PACKAGE_VERSION } from "../src/package-metadata.js";
+import type { PluginCatalogEntry } from "../src/plugin-catalog.js";
 import type { DeploymentDetails } from "../src/terminal-ui.js";
 
 const TEST_IMAGE = `ghcr.io/the-drunken-coder/atlas-core@sha256:${"a".repeat(64)}`;
-const INIT_LOCK_NETWORK = "atlas_core_production_init_lock";
+const TEST_PLUGIN_IMAGE = `ghcr.io/the-drunken-coder/atlas-spatial-fixture@sha256:${"b".repeat(64)}`;
+const MUTATION_LOCK_NETWORK = "atlas_core_production_mutation_lock";
 
 function nextPatchVersion(version: string): string {
   const [major, minor, patch, ...extra] = version.split(".");
@@ -56,6 +58,7 @@ class FakeRunner implements CommandRunner {
   globalRoot = "";
   latestVersion = PACKAGE_VERSION;
   latestImage = TEST_IMAGE;
+  runningCoreImage = TEST_IMAGE;
   installedVersion = PACKAGE_VERSION;
   onRun: ((call: Call) => void) | undefined;
   serviceStates = [
@@ -113,7 +116,7 @@ class FakeRunner implements CommandRunner {
         0,
         JSON.stringify({
           "io.atlas.core.engine": "test-engine-id",
-          "io.atlas.core.lock": "initialization",
+          "io.atlas.core.lock": "mutation",
           "io.atlas.core.project": "atlas_core_production"
         })
       );
@@ -135,6 +138,9 @@ class FakeRunner implements CommandRunner {
     }
     if (args[0] === "container" && args[1] === "ls") {
       const filter = args[args.indexOf("--filter") + 1] ?? "";
+      if (filter === "label=com.docker.compose.project=atlas_core_production") {
+        return result(0, [...this.existingContainers].filter((name) => !this.mismatchedResources.has(name)).join("\n"));
+      }
       const volume = filter.startsWith("volume=") ? filter.slice("volume=".length) : "";
       return result(0, [...(this.volumeUsers.get(volume) ?? [])].join("\n"));
     }
@@ -173,6 +179,12 @@ class FakeRunner implements CommandRunner {
             : name.endsWith("_minio_init")
               ? "minio-init"
               : "minio";
+      if (args[args.indexOf("--format") + 1] === "{{json .Config.Image}}") {
+        if (!this.serviceStates.some((candidate) => candidate.Service === service)) {
+          return result(1, "", `Error: No such container: ${name}`);
+        }
+        return result(0, `${JSON.stringify(this.runningCoreImage)}\n`);
+      }
       if (
         args[args.indexOf("--format") + 1] === "{{json .Config.Image}}\t{{json .State.StartedAt}}\t{{.RestartCount}}"
       ) {
@@ -292,10 +304,37 @@ function result(status: number, stdout = "", stderr = "") {
 }
 
 function composeCommand(call: Call): string[] {
-  const fileFlagIndex = call.args.indexOf("--file");
+  const fileFlagIndex = call.args.lastIndexOf("--file");
   if (fileFlagIndex === -1) return [];
   const commandIndex = fileFlagIndex + 2;
   return call.args.slice(commandIndex);
+}
+
+function installTestPluginCatalog(test: TestRuntime): PluginCatalogEntry {
+  const packageRoot = join(test.home, "test-package");
+  const pluginRoot = join(packageRoot, "assets", "plugins", "spatial_fixture");
+  mkdirSync(pluginRoot, { recursive: true });
+  writeFileSync(join(pluginRoot, "compose.yml"), "services:\n  spatial-fixture-plugin:\n    image: fixture\n");
+  writeFileSync(
+    join(pluginRoot, "core-endpoint.json"),
+    '{"id":"spatial_fixture","base_url":"http://spatial-fixture-plugin:8080"}\n'
+  );
+  writeFileSync(join(pluginRoot, "source-connector.json"), '{"id":"spatial_fixture"}\n');
+  const plugin: PluginCatalogEntry = {
+    pluginId: "spatial_fixture",
+    displayName: "Spatial Fixture",
+    lifecycle: "query_only",
+    service: "spatial-fixture-plugin",
+    image: TEST_PLUGIN_IMAGE,
+    assets: {
+      compose: "compose.yml",
+      core_endpoint: "core-endpoint.json",
+      source_connector: "source-connector.json"
+    }
+  };
+  test.context.packageRoot = packageRoot;
+  test.context.pluginCatalog = [plugin];
+  return plugin;
 }
 
 function composeFile(call: Call): string | undefined {
@@ -499,18 +538,17 @@ describe("atlas-core CLI", () => {
     expect(env).toContain("MINIO_ROOT_PASSWORD=secret-2-");
     expect(env).toContain("API_AUTH_KEY=secret-3-");
     expect(env).toContain("ATLAS_ADMIN_PASSWORD=secret-4-");
-    expect(env).toContain("ATLAS_PLUGINS=[]");
-    expect(env).toContain("ATLAS_SOURCE_GATEWAY_CONFIG_FILE=");
     expect(JSON.parse(readFileSync(join(config, "state.json"), "utf8"))).toEqual({
-      schema: 1,
+      schema: 2,
       phase: "ready",
       initializedAt: "2026-08-28T12:00:00.000Z",
       packageVersion: PACKAGE_VERSION,
-      dockerEngineId: "test-engine-id"
+      dockerEngineId: "test-engine-id",
+      enabledPlugins: []
     });
     expect(statSync(join(config, ".env")).mode & 0o077).toBe(0);
-    expect(existsSync(join(config, ".init.lock"))).toBe(false);
-    expect(test.runner.existingNetworks).not.toContain(INIT_LOCK_NETWORK);
+    expect(existsSync(join(config, ".mutation.lock"))).toBe(false);
+    expect(test.runner.existingNetworks).not.toContain(MUTATION_LOCK_NETWORK);
     expect(test.runner.existingVolumes).toContain("atlas_core_production_minio_data");
     expect(test.runner.existingVolumes).not.toContain("atlas_core_production_postgres_data");
     const composeCalls = test.runner.calls.filter((call) => composeCommand(call).length > 0);
@@ -556,32 +594,32 @@ describe("atlas-core CLI", () => {
     const test = runtime();
     const config = join(test.home, ".atlas", "core");
     mkdirSync(config, { recursive: true, mode: 0o700 });
-    writeFileSync(join(config, ".init.lock"), `${JSON.stringify({ pid: process.pid })}\n`, { mode: 0o600 });
+    writeFileSync(join(config, ".mutation.lock"), `${JSON.stringify({ pid: process.pid })}\n`, { mode: 0o600 });
 
     expect(await runCLI(["init"], test.context)).toBe(1);
-    expect(test.stderr.join("")).toContain("initialization is locked");
+    expect(test.stderr.join("")).toContain("deployment mutation is locked");
     expect(test.runner.calls.map(composeCommand).filter((args) => args.length > 0)).toHaveLength(0);
   });
 
   it("fails closed on a stale initialization lock", async () => {
     const test = runtime();
     const config = join(test.home, ".atlas", "core");
-    const lock = join(config, ".init.lock");
+    const lock = join(config, ".mutation.lock");
     mkdirSync(config, { recursive: true, mode: 0o700 });
     writeFileSync(lock, `${JSON.stringify({ pid: 2_147_483_647 })}\n`, { mode: 0o600 });
 
     expect(await runCLI(["init"], test.context)).toBe(1);
-    expect(test.stderr.join("")).toContain("If no atlas-core init process is running, remove that file");
+    expect(test.stderr.join("")).toContain("If no atlas-core process is changing the deployment, remove that file");
     expect(existsSync(lock)).toBe(true);
   });
 
   it("serializes initialization across configuration directories on one Docker engine", async () => {
     const test = runtime();
-    test.runner.existingNetworks.add(INIT_LOCK_NETWORK);
+    test.runner.existingNetworks.add(MUTATION_LOCK_NETWORK);
     test.context.env = { ATLAS_CORE_HOME: join(test.home, "another-core-home") };
 
     expect(await runCLI(["init"], test.context)).toBe(1);
-    expect(test.stderr.join("")).toContain("initialization is already locked on Docker engine");
+    expect(test.stderr.join("")).toContain("deployment mutation is already locked on Docker engine");
     expect(existsSync(join(test.home, "another-core-home", ".env"))).toBe(false);
   });
 
@@ -766,6 +804,39 @@ describe("atlas-core CLI", () => {
 
     expect(await runCLI(["reset"], test.context)).toBe(0);
     expect(JSON.parse(readFileSync(statePath, "utf8"))).toMatchObject({ packageVersion: PACKAGE_VERSION });
+  });
+
+  it("resets when recorded Plugin Compose fragments are already missing", async () => {
+    const test = runtime();
+    test.context.confirmReset = async () => true;
+    markInitialized(test);
+    const statePath = join(test.home, ".atlas", "core", "state.json");
+    const state = JSON.parse(readFileSync(statePath, "utf8"));
+    writeFileSync(statePath, `${JSON.stringify({ ...state, schema: 2, enabledPlugins: ["missing_plugin"] })}\n`, {
+      mode: 0o600
+    });
+
+    expect(await runCLI(["reset"], test.context)).toBe(0);
+    expect(test.runner.calls.some((call) => call.args.includes("missing_plugin/compose.yml"))).toBe(false);
+    expect(test.runner.calls.map(composeCommand)).toContainEqual(["down", "--remove-orphans"]);
+  });
+
+  it("removes project Plugin containers when reset configuration is incomplete", async () => {
+    const test = runtime();
+    test.context.confirmReset = async () => true;
+    markInitialized(test);
+    const pluginContainer = "atlas_core_production_spatial_fixture";
+    test.runner.existingContainers.add(pluginContainer);
+    rmSync(join(test.home, ".atlas", "core", ".env"));
+
+    expect(await runCLI(["reset"], test.context)).toBe(0);
+    expect(test.runner.existingContainers).not.toContain(pluginContainer);
+    expect(test.runner.calls).toContainEqual(
+      expect.objectContaining({
+        command: "docker",
+        args: ["container", "rm", "--force", pluginContainer]
+      })
+    );
   });
 
   it("refuses to reset a same-name resource without matching ownership labels", async () => {
@@ -1123,9 +1194,7 @@ describe("atlas-core CLI", () => {
     setCoreVersion(test, "0.1.2");
     test.context.confirmCoreUpdate = async () => true;
     const envPath = join(test.home, ".atlas", "core", ".env");
-    const configuredEnvironment = readFileSync(envPath, "utf8")
-      .replace("ATLAS_PLUGINS=[]", 'ATLAS_PLUGINS=[{"id":"reference","base_url":"http://reference:8080"}]')
-      .replace("ATLAS_SOURCE_GATEWAY_CONFIG_FILE=", "ATLAS_SOURCE_GATEWAY_CONFIG_FILE=/etc/atlas/gateway.json");
+    const configuredEnvironment = readFileSync(envPath, "utf8");
     writeFileSync(envPath, configuredEnvironment, { mode: 0o600 });
 
     expect(await runCLI(["update", "all"], test.context)).toBe(0);
@@ -1186,6 +1255,22 @@ describe("atlas-core CLI", () => {
     );
     expect(test.runner.existingVolumes).toContain("atlas_core_production_postgres_data");
     expect(test.runner.existingVolumes).toContain("atlas_core_production_minio_data");
+  });
+
+  it("uses the previous Core image only when rolling back a disrupted update", async () => {
+    const test = runtime();
+    const previousImage = `ghcr.io/the-drunken-coder/atlas-core@sha256:${"c".repeat(64)}`;
+    markInitialized(test);
+    setCoreVersion(test, "0.1.2");
+    test.runner.runningCoreImage = previousImage;
+    test.runner.failComposeUp = true;
+    test.context.confirmCoreUpdate = async () => true;
+
+    expect(await runCLI(["update", "all"], test.context)).toBe(1);
+    const upCalls = test.runner.calls.filter((call) => composeCommand(call)[0] === "up");
+    expect(upCalls).toHaveLength(2);
+    expect(upCalls[0]?.env.ATLAS_CORE_IMAGE).toBe(TEST_IMAGE);
+    expect(upCalls[1]?.env.ATLAS_CORE_IMAGE).toBe(previousImage);
   });
 
   it("updates a stopped deployment without starting it", async () => {
@@ -1342,6 +1427,195 @@ describe("atlas-core CLI", () => {
 
     expect(await runCLI(["status"], test.context)).toBe(1);
     expect(test.stderr.join("")).toContain("api is unhealthy");
+  });
+
+  it("migrates schema 1 state and lists catalog Plugins without changing deployment versions", async () => {
+    const test = runtime();
+    markInitialized(test);
+    installTestPluginCatalog(test);
+    setCoreVersion(test, "0.1.2");
+
+    expect(await runCLI(["plugins"], test.context)).toBe(0);
+    expect(test.stdout.join("")).toContain("spatial_fixture\tSpatial Fixture\tdisabled");
+    const state = JSON.parse(readFileSync(join(test.home, ".atlas", "core", "state.json"), "utf8"));
+    expect(state).toMatchObject({ schema: 2, enabledPlugins: [], packageVersion: "0.1.2" });
+  });
+
+  it("enables a pinned query-only Plugin transactionally and includes its overlay", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const plugin = installTestPluginCatalog(test);
+
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
+    const configRoot = join(test.home, ".atlas", "core", "plugins", plugin.pluginId);
+    expect(JSON.parse(readFileSync(join(test.home, ".atlas", "core", "state.json"), "utf8"))).toMatchObject({
+      schema: 2,
+      enabledPlugins: [plugin.pluginId]
+    });
+    for (const file of ["compose.yml", "core-endpoint.json", "source-connector.json", "deployment.json"]) {
+      expect(existsSync(join(configRoot, file))).toBe(true);
+      expect(statSync(join(configRoot, file)).mode & 0o777).toBe(
+        file === "compose.yml" || file === "deployment.json" ? 0o600 : 0o644
+      );
+    }
+    expect(JSON.parse(readFileSync(join(configRoot, "deployment.json"), "utf8"))).toEqual({
+      schema: 1,
+      pluginId: plugin.pluginId,
+      displayName: plugin.displayName,
+      lifecycle: plugin.lifecycle,
+      service: plugin.service
+    });
+    expect(test.runner.calls.some((call) => call.args[0] === "pull" && call.args[1] === TEST_PLUGIN_IMAGE)).toBe(true);
+    const configCall = test.runner.calls.find((call) => composeCommand(call)[0] === "config");
+    expect(configCall?.args).toContain(join(configRoot, "compose.yml"));
+    expect(test.runner.calls.map(composeCommand)).toContainEqual([
+      "up",
+      "-d",
+      "--pull",
+      "never",
+      "--force-recreate",
+      "--wait",
+      "--wait-timeout",
+      "120",
+      "api",
+      "source-gateway",
+      plugin.service
+    ]);
+  });
+
+  it("enables a Plugin without starting a stopped deployment", async () => {
+    const test = runtime();
+    markInitialized(test, false);
+    const plugin = installTestPluginCatalog(test);
+    test.runner.serviceStates = [];
+
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
+    expect(test.runner.calls.map(composeCommand)).not.toContainEqual(expect.arrayContaining(["up"]));
+    expect(test.stdout.join("")).toContain("It will start with Atlas Core");
+  });
+
+  it("rolls back Plugin state and private assets when a running enable fails", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const plugin = installTestPluginCatalog(test);
+    test.runner.failComposeUp = true;
+
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(1);
+    expect(JSON.parse(readFileSync(join(test.home, ".atlas", "core", "state.json"), "utf8"))).toMatchObject({
+      enabledPlugins: []
+    });
+    expect(existsSync(join(test.home, ".atlas", "core", "plugins", plugin.pluginId))).toBe(false);
+    expect(test.stderr.join("")).toContain("injected compose up failure");
+  });
+
+  it("completes Plugin enable rollback after cancellation", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const plugin = installTestPluginCatalog(test);
+    test.runner.failComposeUp = true;
+    test.context.interactive = {
+      configureAdmin: async () => undefined,
+      runUpdate: async () => undefined,
+      runMenu: async (operator) => {
+        let cancelled = false;
+        test.runner.onRun = (call) => {
+          if (cancelled || composeCommand(call)[0] !== "up") return;
+          cancelled = true;
+          operator.cancelPending();
+        };
+        await expect(operator.pluginEnable(plugin.pluginId)).rejects.toThrow("injected compose up failure");
+      }
+    };
+
+    expect(await runCLI([], test.context)).toBe(0);
+    expect(JSON.parse(readFileSync(join(test.home, ".atlas", "core", "state.json"), "utf8"))).toMatchObject({
+      enabledPlugins: []
+    });
+    expect(existsSync(join(test.home, ".atlas", "core", "plugins", plugin.pluginId))).toBe(false);
+    expect(test.runner.calls.map(composeCommand)).toContainEqual(["rm", "-s", "-f", plugin.service]);
+    expect(
+      test.runner.calls
+        .map(composeCommand)
+        .filter((args) => args[0] === "up" && args.includes("api") && !args.includes(plugin.service))
+    ).toHaveLength(1);
+  });
+
+  it("serializes Plugin mutations with the deployment lock", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const plugin = installTestPluginCatalog(test);
+    const config = join(test.home, ".atlas", "core");
+    writeFileSync(join(config, ".mutation.lock"), `${JSON.stringify({ pid: process.pid })}\n`, { mode: 0o600 });
+
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(1);
+    expect(test.stderr.join("")).toContain("deployment mutation is locked");
+    expect(test.runner.calls.some((call) => call.args[0] === "pull" && call.args[1] === TEST_PLUGIN_IMAGE)).toBe(false);
+    expect(existsSync(join(config, "plugins", plugin.pluginId))).toBe(false);
+  });
+
+  it("disables with the old composition, preserves the cached image, and removes staged assets", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const plugin = installTestPluginCatalog(test);
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
+    test.runner.calls.length = 0;
+
+    expect(await runCLI(["plugins", "disable", plugin.pluginId], test.context)).toBe(0);
+    expect(test.runner.calls.map(composeCommand)).toContainEqual(["rm", "-s", "-f", plugin.service]);
+    expect(test.runner.calls.some((call) => call.args[0] === "image" && call.args[1] === "rm")).toBe(false);
+    expect(JSON.parse(readFileSync(join(test.home, ".atlas", "core", "state.json"), "utf8"))).toMatchObject({
+      enabledPlugins: []
+    });
+    expect(existsSync(join(test.home, ".atlas", "core", "plugins", plugin.pluginId))).toBe(false);
+  });
+
+  it("does not remove a Plugin container when its rollback backup cannot be created", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const plugin = installTestPluginCatalog(test);
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
+    rmSync(join(test.home, ".atlas", "core", "plugins", plugin.pluginId), { recursive: true, force: true });
+    test.runner.calls.length = 0;
+
+    expect(await runCLI(["plugins", "disable", plugin.pluginId], test.context)).toBe(1);
+    expect(test.runner.calls.map(composeCommand)).not.toContainEqual(["rm", "-s", "-f", plugin.service]);
+    expect(JSON.parse(readFileSync(join(test.home, ".atlas", "core", "state.json"), "utf8"))).toMatchObject({
+      enabledPlugins: [plugin.pluginId]
+    });
+  });
+
+  it("uses staged metadata for Plugin status and logs across CLI-only catalog drift", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const plugin = installTestPluginCatalog(test);
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
+    setCoreVersion(test, "0.1.2");
+    expect(await runCLI(["plugins", "disable", plugin.pluginId], test.context)).toBe(1);
+    expect(test.stderr.join("")).toContain("update all");
+    test.context.pluginCatalog = [
+      {
+        ...plugin,
+        displayName: "Renamed Spatial Fixture",
+        service: "renamed-spatial-fixture"
+      }
+    ];
+    test.stdout.length = 0;
+    test.runner.calls.length = 0;
+
+    expect(await runCLI(["plugins", "status"], test.context)).toBe(0);
+    expect(await runCLI(["plugins", "status", plugin.pluginId], test.context)).toBe(0);
+    expect(await runCLI(["plugins", "logs", plugin.pluginId], test.context)).toBe(0);
+    expect(test.stdout.join("")).toContain(`${plugin.pluginId}\t${plugin.displayName}\tenabled`);
+    expect(test.stdout.join("")).not.toContain("Renamed Spatial Fixture");
+    expect(test.runner.calls.map(composeCommand)).toContainEqual(["logs", "--tail", "200", plugin.service]);
+  });
+
+  it("rejects arbitrary Plugin IDs and bundles", async () => {
+    const test = runtime();
+    markInitialized(test);
+    installTestPluginCatalog(test);
+    expect(await runCLI(["plugins", "enable", "not_cataloged"], test.context)).toBe(1);
+    expect(await runCLI(["plugins", "enable", "spatial_fixture", "/tmp/bundle"], test.context)).toBe(2);
   });
 
   it("resolves a relative ATLAS_CORE_HOME before invoking Compose", async () => {

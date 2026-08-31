@@ -1,6 +1,13 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { CommandCatalog, EntityResource, TaskResource } from "@the-drunken-coder/atlas-sdk";
+import type {
+  CommandCatalog,
+  EntityResource,
+  MapArea,
+  PluginStatus,
+  SpatialOperationResult,
+  TaskResource
+} from "@the-drunken-coder/atlas-sdk";
 import { describe, expect, it, vi } from "vitest";
 import { styleFixture as style } from "../../test/fixtures.js";
 import type { AppConfig } from "../app/config.js";
@@ -24,6 +31,7 @@ type MockMapViewProps = {
   onBackgroundClick?: () => void;
   onSelectEntity?: (id: string) => void;
   onStyleSwitchError?: (error: { failedStyleId: string; activeStyleId: string }) => void;
+  spatial?: { onViewportArea: (area: MapArea) => void };
 };
 
 const mapViewMock = vi.hoisted(() => ({ lastProps: undefined as MockMapViewProps | undefined }));
@@ -57,6 +65,14 @@ vi.mock("../ui/map/view/MapView.js", async () => {
             onClick={(event) => {
               event.stopPropagation();
               props.onSelectEntity?.("asset-1");
+            }}
+          />
+          <button
+            type="button"
+            data-testid="map-set-viewport"
+            onClick={(event) => {
+              event.stopPropagation();
+              props.spatial?.onViewportArea({ west: -71.001, south: 42, east: -71, north: 42.001 });
             }}
           />
         </div>
@@ -121,6 +137,62 @@ const circleArea: EntityResource = {
 };
 
 const healthyConnection: ConnectionHealth = { running: true, healthy: true, degraded: false };
+const availablePlugin: PluginStatus = {
+  plugin_id: "reference",
+  display_name: "Reference Fixture",
+  status: "available",
+  reason_code: null,
+  checked_at: "2026-08-31T12:00:00Z",
+  operations: [
+    {
+      operation_id: "inspect_fixture",
+      display_name: "Inspect fixture",
+      timeout_ms: 5000,
+      interaction: { kind: "map_area" }
+    }
+  ],
+  tool_asset_id: null
+};
+const spatialResult: SpatialOperationResult = {
+  features: [
+    {
+      id: "way/1",
+      title: "First building",
+      geometry: {
+        type: "Polygon",
+        coordinates: [
+          [
+            [-71.001, 42],
+            [-71, 42],
+            [-71, 42.001],
+            [-71.001, 42]
+          ]
+        ]
+      },
+      fields: [{ label: "building", value: "yes" }]
+    },
+    {
+      id: "way/2",
+      title: "Second building",
+      geometry: {
+        type: "Polygon",
+        coordinates: [
+          [
+            [-71.003, 42.002],
+            [-71.002, 42.002],
+            [-71.002, 42.003],
+            [-71.003, 42.002]
+          ]
+        ]
+      },
+      fields: [{ label: "building", value: "commercial" }]
+    }
+  ],
+  provenance: { connector_id: "fixture", source: "Fixture source" },
+  attribution: { text: "Fixture attribution", url: "https://example.test/attribution" },
+  retrieved_at: "2026-08-31T12:00:00Z",
+  truncation: null
+};
 
 function makeFakeDataSource(geofeature: EntityResource = area, health: ConnectionHealth = healthyConnection) {
   let current: AtlasSnapshot = {
@@ -248,6 +320,78 @@ function renderStaticConsole(overrides: Partial<AtlasContextValue> = {}) {
 }
 
 describe("MapConsole", () => {
+  it("uses the standard sidebar header for Plugin and operation navigation", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json([availablePlugin]))
+    );
+    const user = userEvent.setup();
+    try {
+      renderStaticConsole();
+
+      await user.click(screen.getByRole("button", { name: "Plugins" }));
+      expect(screen.getByText("Plugins", { selector: ".panel__title" })).toBeInTheDocument();
+
+      await user.click(await screen.findByRole("button", { name: /Reference Fixture/ }));
+      expect(screen.getByText("Reference Fixture", { selector: ".panel__title" })).toBeInTheDocument();
+      expect(screen.getAllByRole("button", { name: "Back" })).toHaveLength(1);
+
+      await user.click(screen.getByRole("button", { name: /Inspect fixture/ }));
+      expect(screen.getByText("Inspect fixture", { selector: ".panel__title" })).toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: "Back" }));
+      expect(screen.getByText("Reference Fixture", { selector: ".panel__title" })).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "Back" }));
+      expect(screen.getByText("Plugins", { selector: ".panel__title" })).toBeInTheDocument();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("targets spatial rows on hover and focus, then commits their geometry on click", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_input, init) =>
+        (init?.method ?? "GET") === "POST" ? Response.json(spatialResult) : Response.json([availablePlugin])
+      )
+    );
+    const user = userEvent.setup();
+    try {
+      renderStaticConsole();
+
+      await user.click(screen.getByRole("button", { name: "Plugins" }));
+      await user.click(await screen.findByRole("button", { name: /Reference Fixture/ }));
+      await user.click(screen.getByRole("button", { name: /Inspect fixture/ }));
+      await user.click(screen.getByTestId("map-set-viewport"));
+      await user.click(screen.getByRole("button", { name: "Use current view" }));
+      await user.click(screen.getByRole("button", { name: "Search" }));
+
+      const first = await screen.findByRole("button", { name: /First building/ });
+      const second = screen.getByRole("button", { name: /Second building/ });
+      const map = screen.getByTestId("map");
+      expect(map).toHaveAttribute("data-focus-target", "spatial:way/1");
+
+      fireEvent.mouseEnter(second);
+      expect(map).toHaveAttribute("data-focus-target", "spatial:way/2");
+      fireEvent.mouseLeave(second);
+      expect(map).toHaveAttribute("data-focus-target", "spatial:way/1");
+
+      fireEvent.focus(second);
+      expect(map).toHaveAttribute("data-focus-target", "spatial:way/2");
+      fireEvent.blur(second);
+      expect(map).toHaveAttribute("data-focus-target", "spatial:way/1");
+
+      await user.click(second);
+      expect(second).toHaveAttribute("data-selected", "true");
+      expect(first).not.toHaveAttribute("data-selected");
+      expect(map).toHaveAttribute("data-focus-target", "spatial:way/2");
+      expect(map).toHaveAttribute("data-camera-target", "spatial:way/2");
+      expect(map).toHaveAttribute("data-camera-intent", "commit");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("shows the intentional no-Commands state for the empty Protocol catalog", async () => {
     const user = userEvent.setup();
     const { fake } = makeFakeDataSource();

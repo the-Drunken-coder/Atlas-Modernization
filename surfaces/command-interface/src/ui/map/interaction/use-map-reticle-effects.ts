@@ -40,7 +40,10 @@ export function useMapReticleEffects({ options, stateStore, pointer, zooming, re
   useEffect(() => {
     const mapCanvas = mapCanvasRef.current;
     if (!mapCanvas) return;
-    const preventPageScroll = (event: globalThis.WheelEvent) => event.preventDefault();
+    const preventPageScroll = (event: globalThis.WheelEvent) => {
+      if (event.target instanceof Element && event.target.closest("[data-map-interaction-control]")) return;
+      event.preventDefault();
+    };
     mapCanvas.addEventListener("wheel", preventPageScroll, { capture: true, passive: false });
     return () => mapCanvas.removeEventListener("wheel", preventPageScroll, { capture: true });
   }, [mapCanvasRef]);

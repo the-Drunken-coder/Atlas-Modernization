@@ -158,3 +158,5 @@ export function AccountMenu({ username, loggingOut, error, onLogout }: AccountMe
     </div>
   );
 }
+
+export default AccountMenu;
