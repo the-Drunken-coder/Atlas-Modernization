@@ -366,8 +366,8 @@ describe("MapConsole", () => {
       await user.click(screen.getByRole("button", { name: "Use current view" }));
       await user.click(screen.getByRole("button", { name: "Search" }));
 
-      const first = await screen.findByRole("option", { name: /First building/ });
-      const second = screen.getByRole("option", { name: /Second building/ });
+      const first = await screen.findByRole("button", { name: /First building/ });
+      const second = screen.getByRole("button", { name: /Second building/ });
       const map = screen.getByTestId("map");
       expect(map).toHaveAttribute("data-focus-target", "spatial:way/1");
 
@@ -382,8 +382,8 @@ describe("MapConsole", () => {
       expect(map).toHaveAttribute("data-focus-target", "spatial:way/1");
 
       await user.click(second);
-      expect(second).toHaveAttribute("aria-selected", "true");
-      expect(first).toHaveAttribute("aria-selected", "false");
+      expect(second).toHaveAttribute("data-selected", "true");
+      expect(first).not.toHaveAttribute("data-selected");
       expect(map).toHaveAttribute("data-focus-target", "spatial:way/2");
       expect(map).toHaveAttribute("data-camera-target", "spatial:way/2");
       expect(map).toHaveAttribute("data-camera-intent", "commit");

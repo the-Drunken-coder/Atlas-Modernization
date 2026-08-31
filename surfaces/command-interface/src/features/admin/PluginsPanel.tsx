@@ -91,12 +91,34 @@ export function PluginsPanel({
   }, [refresh]);
 
   const selectedPlugin = snapshot?.find((plugin) => plugin.plugin_id === selection?.pluginId);
+  const selectedTargetOperation =
+    selectedPlugin && spatial?.target?.pluginId === selectedPlugin.plugin_id
+      ? selectedPlugin.operations.find(
+          (operation) =>
+            operation.operation_id === spatial.target?.operationId && operation.interaction?.kind === "map_area"
+        )
+      : undefined;
   useEffect(() => {
     if (selection && snapshot && !selectedPlugin) {
       onSelectionChange(undefined);
       spatial?.closeTarget();
     }
   }, [onSelectionChange, selectedPlugin, selection, snapshot, spatial]);
+
+  useEffect(() => {
+    if (!spatial?.target || !selectedPlugin || spatial.target.pluginId !== selectedPlugin.plugin_id) return;
+    if (selectedPlugin.status !== "available") return;
+    if (!selectedTargetOperation) {
+      spatial.closeTarget();
+      return;
+    }
+    spatial.refreshTarget({
+      pluginId: selectedPlugin.plugin_id,
+      pluginName: selectedPlugin.display_name ?? selectedPlugin.plugin_id,
+      operationId: selectedTargetOperation.operation_id,
+      operationName: selectedTargetOperation.display_name
+    });
+  }, [selectedPlugin, selectedTargetOperation, spatial]);
 
   useLayoutEffect(() => {
     const previous = previousSelectionRef.current;
@@ -122,6 +144,7 @@ export function PluginsPanel({
   if (selectedPlugin) {
     return spatial?.target?.pluginId === selectedPlugin.plugin_id &&
       selectedPlugin.status === "available" &&
+      selectedTargetOperation &&
       spatial ? (
       <SpatialOperationControls spatial={spatial} />
     ) : (

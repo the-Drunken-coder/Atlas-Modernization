@@ -119,7 +119,7 @@ export function overpassQuery(area: MapArea): string {
 
 export function buildResult(payload: unknown, retrievedAt: Date): SpatialOperationResult {
   if (Number.isNaN(retrievedAt.getTime())) throw new TypeError("retrieval time must be valid");
-  const candidates = parseCandidates(payload);
+  const { candidates, sourceLimitReached } = parseCandidates(payload);
   const result: SpatialOperationResult = {
     features: [],
     provenance: { connector_id: connectorId, source: "OpenStreetMap through an Overpass-compatible endpoint" },
@@ -127,18 +127,22 @@ export function buildResult(payload: unknown, retrievedAt: Date): SpatialOperati
     retrieved_at: retrievedAt.toISOString(),
     truncation: null
   };
+  const budgetBaseBytes = Buffer.byteLength(
+    JSON.stringify({ ...result, truncation: { reason: "response_budget" as const } })
+  );
+  let featureBytes = 0;
 
   for (const candidate of candidates.slice(0, featureLimit)) {
     const feature = candidateToFeature(candidate);
-    const next = { ...result, features: [...result.features, feature] };
-    const nextWithTruncation = { ...next, truncation: { reason: "response_budget" as const } };
-    if (Buffer.byteLength(JSON.stringify(nextWithTruncation)) >= responseBudgetBytes) {
+    const nextFeatureBytes = Buffer.byteLength(JSON.stringify(feature)) + (result.features.length === 0 ? 0 : 1);
+    if (budgetBaseBytes + featureBytes + nextFeatureBytes >= responseBudgetBytes) {
       result.truncation = { reason: "response_budget" };
       break;
     }
+    featureBytes += nextFeatureBytes;
     result.features.push(feature);
   }
-  if (result.truncation === null && candidates.length > featureLimit) {
+  if (result.truncation === null && (sourceLimitReached || candidates.length > featureLimit)) {
     result.truncation = { reason: "feature_limit" };
   }
   if (Buffer.byteLength(JSON.stringify(result)) >= responseBudgetBytes) {
@@ -147,7 +151,7 @@ export function buildResult(payload: unknown, retrievedAt: Date): SpatialOperati
   return result;
 }
 
-function parseCandidates(payload: unknown): Candidate[] {
+function parseCandidates(payload: unknown): { candidates: Candidate[]; sourceLimitReached: boolean } {
   if (!isRecord(payload)) throw new MalformedSourceResponse();
   if (Object.hasOwn(payload, "remark")) {
     if (typeof payload.remark !== "string" || !payload.remark.trim()) throw new MalformedSourceResponse();
@@ -172,10 +176,13 @@ function parseCandidates(payload: unknown): Candidate[] {
     if (existing && JSON.stringify(existing) !== JSON.stringify(candidate)) throw new MalformedSourceResponse();
     byElement.set(key, candidate);
   }
-  return [...byElement.values()].sort((left, right) => {
-    const typeOrder = (left.type === "way" ? 0 : 1) - (right.type === "way" ? 0 : 1);
-    return typeOrder || left.id - right.id;
-  });
+  return {
+    candidates: [...byElement.values()].sort((left, right) => {
+      const typeOrder = (left.type === "way" ? 0 : 1) - (right.type === "way" ? 0 : 1);
+      return typeOrder || left.id - right.id;
+    }),
+    sourceLimitReached: payload.elements.length >= candidateLimit
+  };
 }
 
 function overpassRemarkCode(remark: string): SourceRemarkError["pluginCode"] {
@@ -195,7 +202,8 @@ function overpassRemarkCode(remark: string): SourceRemarkError["pluginCode"] {
 function parseTags(value: unknown): Tags {
   if (!isRecord(value)) throw new MalformedSourceResponse();
   const tags: Tags = {};
-  for (const [key, tag] of Object.entries(value)) {
+  for (const key of Object.keys(value).sort()) {
+    const tag = value[key];
     if (!key.trim() || typeof tag !== "string" || !tag.trim()) throw new MalformedSourceResponse();
     tags[key] = tag;
   }

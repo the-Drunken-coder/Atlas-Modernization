@@ -327,6 +327,11 @@ function packageRootArgument(commandArgs, commandName) {
 
 function checkSeepage(entries) {
   const forbiddenTerms = entries.flatMap((plugin) => plugin.manifest.shared_code_forbidden_terms);
+  const pluginIdLiterals = entries.flatMap((plugin) => [
+    JSON.stringify(plugin.id),
+    `'${plugin.id}'`,
+    `\`${plugin.id}\``
+  ]);
   const packageNames = entries.map((plugin) => plugin.packageName);
   const violations = [];
   for (const root of sharedProductionRoots) {
@@ -335,7 +340,7 @@ function checkSeepage(entries) {
     for (const file of walkFiles(absoluteRoot)) {
       const repositoryPath = relative(repositoryRoot, file).split(sep).join("/");
       if (generatedSharedFiles.has(repositoryPath)) continue;
-      if (/(?:^|\/)(?:test|tests)(?:\/|$)|\.(?:test|spec)\.[cm]?[jt]sx?$/u.test(repositoryPath)) continue;
+      if (/(?:^|\/)(?:test|tests)(?:\/|$)|_test\.go$|\.(?:test|spec)\.[cm]?[jt]sx?$/u.test(repositoryPath)) continue;
       const contents = readFileSync(file, "utf8");
       for (const match of contents.matchAll(/(?:from\s*|import\s*)["']([^"']+)["']/gu)) {
         if (entries.some((plugin) => match[1].includes(`plugins/${plugin.id}`))) {
@@ -348,6 +353,11 @@ function checkSeepage(entries) {
       for (const term of forbiddenTerms) {
         if (contents.toLocaleLowerCase().includes(term.toLocaleLowerCase())) {
           violations.push(`${repositoryPath}: contains plugin-owned term ${JSON.stringify(term)}`);
+        }
+      }
+      for (const literal of pluginIdLiterals) {
+        if (contents.includes(literal)) {
+          violations.push(`${repositoryPath}: contains hard-coded plugin ID ${literal}`);
         }
       }
     }

@@ -189,7 +189,7 @@ describe("PluginsPanel", () => {
     await user.click(screen.getByRole("button", { name: "Search" }));
 
     expect(
-      await screen.findByRole("option", {
+      await screen.findByRole("button", {
         name: new RegExp(`Result from ${pluginId}`)
       })
     ).toBeInTheDocument();
@@ -226,12 +226,12 @@ describe("PluginsPanel", () => {
     await openSpatialOperation(user, available.display_name ?? available.plugin_id, "Inspect fixture");
 
     await user.click(screen.getByRole("button", { name: "Search" }));
-    expect(await screen.findByRole("option", { name: /Fixture result/ })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /Fixture result/ })).toBeInTheDocument();
     expect(screen.getByText("Results truncated: feature limit")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Search" }));
     expect(await screen.findByText("Searching. Previous results remain visible.")).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: /Fixture result/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Fixture result/ })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     expect(signals[0]?.aborted).toBe(true);
     expect(await screen.findByText("Results are stale.")).toBeInTheDocument();
@@ -241,7 +241,7 @@ describe("PluginsPanel", () => {
     expect(screen.getByText("fixture source offline Previous results retained.")).toBeInTheDocument();
     expect(screen.getByText("stale")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: /Fixture result/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Fixture result/ })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Retry" }));
     await waitFor(() => expect(executor.invokeSpatial).toHaveBeenCalledTimes(4));
     expect(executor.invokeSpatial).toHaveBeenLastCalledWith(
@@ -274,13 +274,36 @@ describe("PluginsPanel", () => {
     renderSpatialPanel(reader, executor);
     await openSpatialOperation(user, available.display_name ?? available.plugin_id, "Inspect fixture");
     await user.click(screen.getByRole("button", { name: "Search" }));
-    expect(await screen.findByRole("option", { name: /Fixture result/ })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /Fixture result/ })).toBeInTheDocument();
 
     await vi.advanceTimersByTimeAsync(10_000);
     expect(await screen.findByText("Plugin unavailable")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Search" })).not.toBeInTheDocument();
-    expect(screen.getByRole("option", { name: /Fixture result/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Fixture result/ })).toBeInTheDocument();
     expect(executor.invokeSpatial).toHaveBeenCalledOnce();
+  });
+
+  it("closes a spatial runner when refreshed discovery removes its operation", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const reader = {
+      list: vi
+        .fn<() => Promise<PluginStatus[]>>()
+        .mockResolvedValueOnce([available])
+        .mockResolvedValue([{ ...available, operations: [] }])
+    };
+    const executor: SpatialOperationExecutor = {
+      invokeSpatial: vi.fn(async () => spatialResponse())
+    };
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+
+    renderSpatialPanel(reader, executor);
+    await openSpatialOperation(user, available.display_name ?? available.plugin_id, "Inspect fixture");
+    expect(screen.getByRole("button", { name: "Search" })).toBeInTheDocument();
+
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(await screen.findByText("This plugin has no map area operations.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Search" })).not.toBeInTheDocument();
   });
 });
 

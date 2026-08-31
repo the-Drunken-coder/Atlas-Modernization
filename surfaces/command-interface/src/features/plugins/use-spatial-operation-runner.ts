@@ -35,6 +35,7 @@ export type SpatialOperationRunner = {
   stale: boolean;
   error?: string;
   selectTarget(target: SpatialOperationTarget): void;
+  refreshTarget(target: SpatialOperationTarget): void;
   closeTarget(): void;
   beginDrawing(): void;
   cancelDrawing(): void;
@@ -93,6 +94,14 @@ export function useSpatialOperationRunner({
     },
     [abortRequest]
   );
+
+  const refreshTarget = useCallback((next: SpatialOperationTarget) => {
+    setTarget((current) => {
+      if (!current || current.pluginId !== next.pluginId || current.operationId !== next.operationId) return current;
+      if (current.pluginName === next.pluginName && current.operationName === next.operationName) return current;
+      return next;
+    });
+  }, []);
 
   const closeTarget = useCallback(() => {
     abortRequest();
@@ -229,6 +238,7 @@ export function useSpatialOperationRunner({
     stale,
     error,
     selectTarget,
+    refreshTarget,
     closeTarget,
     beginDrawing,
     cancelDrawing,

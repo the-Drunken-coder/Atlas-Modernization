@@ -20,7 +20,7 @@ import type { DeploymentDetails } from "../src/terminal-ui.js";
 
 const TEST_IMAGE = `ghcr.io/the-drunken-coder/atlas-core@sha256:${"a".repeat(64)}`;
 const TEST_PLUGIN_IMAGE = `ghcr.io/the-drunken-coder/atlas-spatial-fixture@sha256:${"b".repeat(64)}`;
-const INIT_LOCK_NETWORK = "atlas_core_production_init_lock";
+const MUTATION_LOCK_NETWORK = "atlas_core_production_mutation_lock";
 
 function nextPatchVersion(version: string): string {
   const [major, minor, patch, ...extra] = version.split(".");
@@ -116,7 +116,7 @@ class FakeRunner implements CommandRunner {
         0,
         JSON.stringify({
           "io.atlas.core.engine": "test-engine-id",
-          "io.atlas.core.lock": "initialization",
+          "io.atlas.core.lock": "mutation",
           "io.atlas.core.project": "atlas_core_production"
         })
       );
@@ -138,6 +138,9 @@ class FakeRunner implements CommandRunner {
     }
     if (args[0] === "container" && args[1] === "ls") {
       const filter = args[args.indexOf("--filter") + 1] ?? "";
+      if (filter === "label=com.docker.compose.project=atlas_core_production") {
+        return result(0, [...this.existingContainers].filter((name) => !this.mismatchedResources.has(name)).join("\n"));
+      }
       const volume = filter.startsWith("volume=") ? filter.slice("volume=".length) : "";
       return result(0, [...(this.volumeUsers.get(volume) ?? [])].join("\n"));
     }
@@ -544,8 +547,8 @@ describe("atlas-core CLI", () => {
       enabledPlugins: []
     });
     expect(statSync(join(config, ".env")).mode & 0o077).toBe(0);
-    expect(existsSync(join(config, ".init.lock"))).toBe(false);
-    expect(test.runner.existingNetworks).not.toContain(INIT_LOCK_NETWORK);
+    expect(existsSync(join(config, ".mutation.lock"))).toBe(false);
+    expect(test.runner.existingNetworks).not.toContain(MUTATION_LOCK_NETWORK);
     expect(test.runner.existingVolumes).toContain("atlas_core_production_minio_data");
     expect(test.runner.existingVolumes).not.toContain("atlas_core_production_postgres_data");
     const composeCalls = test.runner.calls.filter((call) => composeCommand(call).length > 0);
@@ -591,32 +594,32 @@ describe("atlas-core CLI", () => {
     const test = runtime();
     const config = join(test.home, ".atlas", "core");
     mkdirSync(config, { recursive: true, mode: 0o700 });
-    writeFileSync(join(config, ".init.lock"), `${JSON.stringify({ pid: process.pid })}\n`, { mode: 0o600 });
+    writeFileSync(join(config, ".mutation.lock"), `${JSON.stringify({ pid: process.pid })}\n`, { mode: 0o600 });
 
     expect(await runCLI(["init"], test.context)).toBe(1);
-    expect(test.stderr.join("")).toContain("initialization is locked");
+    expect(test.stderr.join("")).toContain("deployment mutation is locked");
     expect(test.runner.calls.map(composeCommand).filter((args) => args.length > 0)).toHaveLength(0);
   });
 
   it("fails closed on a stale initialization lock", async () => {
     const test = runtime();
     const config = join(test.home, ".atlas", "core");
-    const lock = join(config, ".init.lock");
+    const lock = join(config, ".mutation.lock");
     mkdirSync(config, { recursive: true, mode: 0o700 });
     writeFileSync(lock, `${JSON.stringify({ pid: 2_147_483_647 })}\n`, { mode: 0o600 });
 
     expect(await runCLI(["init"], test.context)).toBe(1);
-    expect(test.stderr.join("")).toContain("If no atlas-core init process is running, remove that file");
+    expect(test.stderr.join("")).toContain("If no atlas-core process is changing the deployment, remove that file");
     expect(existsSync(lock)).toBe(true);
   });
 
   it("serializes initialization across configuration directories on one Docker engine", async () => {
     const test = runtime();
-    test.runner.existingNetworks.add(INIT_LOCK_NETWORK);
+    test.runner.existingNetworks.add(MUTATION_LOCK_NETWORK);
     test.context.env = { ATLAS_CORE_HOME: join(test.home, "another-core-home") };
 
     expect(await runCLI(["init"], test.context)).toBe(1);
-    expect(test.stderr.join("")).toContain("initialization is already locked on Docker engine");
+    expect(test.stderr.join("")).toContain("deployment mutation is already locked on Docker engine");
     expect(existsSync(join(test.home, "another-core-home", ".env"))).toBe(false);
   });
 
@@ -816,6 +819,24 @@ describe("atlas-core CLI", () => {
     expect(await runCLI(["reset"], test.context)).toBe(0);
     expect(test.runner.calls.some((call) => call.args.includes("missing_plugin/compose.yml"))).toBe(false);
     expect(test.runner.calls.map(composeCommand)).toContainEqual(["down", "--remove-orphans"]);
+  });
+
+  it("removes project Plugin containers when reset configuration is incomplete", async () => {
+    const test = runtime();
+    test.context.confirmReset = async () => true;
+    markInitialized(test);
+    const pluginContainer = "atlas_core_production_spatial_fixture";
+    test.runner.existingContainers.add(pluginContainer);
+    rmSync(join(test.home, ".atlas", "core", ".env"));
+
+    expect(await runCLI(["reset"], test.context)).toBe(0);
+    expect(test.runner.existingContainers).not.toContain(pluginContainer);
+    expect(test.runner.calls).toContainEqual(
+      expect.objectContaining({
+        command: "docker",
+        args: ["container", "rm", "--force", pluginContainer]
+      })
+    );
   });
 
   it("refuses to reset a same-name resource without matching ownership labels", async () => {
@@ -1485,6 +1506,51 @@ describe("atlas-core CLI", () => {
     });
     expect(existsSync(join(test.home, ".atlas", "core", "plugins", plugin.pluginId))).toBe(false);
     expect(test.stderr.join("")).toContain("injected compose up failure");
+  });
+
+  it("completes Plugin enable rollback after cancellation", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const plugin = installTestPluginCatalog(test);
+    test.runner.failComposeUp = true;
+    test.context.interactive = {
+      configureAdmin: async () => undefined,
+      runUpdate: async () => undefined,
+      runMenu: async (operator) => {
+        let cancelled = false;
+        test.runner.onRun = (call) => {
+          if (cancelled || composeCommand(call)[0] !== "up") return;
+          cancelled = true;
+          operator.cancelPending();
+        };
+        await expect(operator.pluginEnable(plugin.pluginId)).rejects.toThrow("injected compose up failure");
+      }
+    };
+
+    expect(await runCLI([], test.context)).toBe(0);
+    expect(JSON.parse(readFileSync(join(test.home, ".atlas", "core", "state.json"), "utf8"))).toMatchObject({
+      enabledPlugins: []
+    });
+    expect(existsSync(join(test.home, ".atlas", "core", "plugins", plugin.pluginId))).toBe(false);
+    expect(test.runner.calls.map(composeCommand)).toContainEqual(["rm", "-s", "-f", plugin.service]);
+    expect(
+      test.runner.calls
+        .map(composeCommand)
+        .filter((args) => args[0] === "up" && args.includes("api") && !args.includes(plugin.service))
+    ).toHaveLength(1);
+  });
+
+  it("serializes Plugin mutations with the deployment lock", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const plugin = installTestPluginCatalog(test);
+    const config = join(test.home, ".atlas", "core");
+    writeFileSync(join(config, ".mutation.lock"), `${JSON.stringify({ pid: process.pid })}\n`, { mode: 0o600 });
+
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(1);
+    expect(test.stderr.join("")).toContain("deployment mutation is locked");
+    expect(test.runner.calls.some((call) => call.args[0] === "pull" && call.args[1] === TEST_PLUGIN_IMAGE)).toBe(false);
+    expect(existsSync(join(config, "plugins", plugin.pluginId))).toBe(false);
   });
 
   it("disables with the old composition, preserves the cached image, and removes staged assets", async () => {

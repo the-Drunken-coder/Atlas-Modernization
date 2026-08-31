@@ -112,6 +112,22 @@ describe("Building Scan", () => {
     expect(result.truncation).toEqual({ reason: "feature_limit" });
   });
 
+  it("reports source truncation when the 501-record sentinel contains a duplicate", () => {
+    const first = { ...squareElement(1), tags: { building: "yes", name: "Atlas Hall" } };
+    const result = buildResult(
+      {
+        elements: [
+          first,
+          ...Array.from({ length: 499 }, (_, index) => squareElement(index + 2)),
+          { ...first, tags: { name: "Atlas Hall", building: "yes" } }
+        ]
+      },
+      retrievedAt
+    );
+    expect(result.features).toHaveLength(500);
+    expect(result.truncation).toEqual({ reason: "feature_limit" });
+  });
+
   it("stays below the response budget and reports budget truncation", () => {
     const result = buildResult(
       {

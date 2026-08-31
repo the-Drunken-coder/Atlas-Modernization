@@ -39,7 +39,7 @@ const SOURCE_GATEWAY_CONTAINER = `${PROJECT_NAME}_source_gateway`;
 const POSTGRES_CONTAINER = `${PROJECT_NAME}_postgres`;
 const MINIO_CONTAINER = `${PROJECT_NAME}_minio`;
 const MINIO_INIT_CONTAINER = `${PROJECT_NAME}_minio_init`;
-const INIT_LOCK_NETWORK = `${PROJECT_NAME}_init_lock`;
+const MUTATION_LOCK_NETWORK = `${PROJECT_NAME}_mutation_lock`;
 const RESET_CONTAINERS = [
   API_CONTAINER,
   SOURCE_GATEWAY_CONTAINER,
@@ -287,7 +287,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   readonly #configDir: string;
   readonly #envFile: string;
   readonly #stateFile: string;
-  readonly #initLockFile: string;
+  readonly #mutationLockFile: string;
   readonly #composeFile: string;
   readonly #initComposeFile: string;
   readonly #packageRoot: string;
@@ -310,7 +310,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     this.#configDir = resolveConfigDirectory(context.env.ATLAS_CORE_HOME, context.homeDir);
     this.#envFile = join(this.#configDir, ".env");
     this.#stateFile = join(this.#configDir, "state.json");
-    this.#initLockFile = join(this.#configDir, ".init.lock");
+    this.#mutationLockFile = join(this.#configDir, ".mutation.lock");
     this.#composeFile = join(context.packageRoot, "assets", "docker-compose.yml");
     this.#initComposeFile = join(context.packageRoot, "assets", "docker-compose.init.yml");
     this.#packageRoot = context.packageRoot;
@@ -336,17 +336,34 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
 
   async init(): Promise<void> {
     const dockerEngineId = await this.#preflight();
+    await this.#withMutationLock(dockerEngineId, async () => await this.#initialize(dockerEngineId));
+  }
+
+  async #withInitializedMutation<T>(
+    action: (state: DeploymentState, dockerEngineId: string) => Promise<T>
+  ): Promise<T> {
+    if (!existsSync(this.#configDir) || !existsSync(this.#envFile) || !existsSync(this.#stateFile)) {
+      throw new Error("Atlas Core is not initialized. Run atlas-core init first.");
+    }
+    const dockerEngineId = await this.#preflight();
+    return await this.#withMutationLock(dockerEngineId, async () => {
+      const state = this.#requireInitialized();
+      return await action(state, dockerEngineId);
+    });
+  }
+
+  async #withMutationLock<T>(dockerEngineId: string, action: () => Promise<T>): Promise<T> {
     this.#prepareConfigDirectory();
-    this.#acquireInitLock();
+    this.#acquireMutationLock();
     try {
-      await this.#acquireDockerInitLock(dockerEngineId);
+      await this.#acquireDockerMutationLock(dockerEngineId);
       try {
-        await this.#initialize(dockerEngineId);
+        return await action();
       } finally {
-        await this.#releaseDockerInitLock();
+        await this.#releaseDockerMutationLock();
       }
     } finally {
-      this.#releaseInitLock();
+      this.#releaseMutationLock();
     }
   }
 
@@ -446,9 +463,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   }
 
   async start(): Promise<void> {
-    const state = this.#requireInitialized();
-    const dockerEngineId = await this.#preflight();
-    await this.#start(state, dockerEngineId);
+    await this.#withInitializedMutation(async (state, dockerEngineId) => await this.#start(state, dockerEngineId));
   }
 
   async #start(state: DeploymentState, dockerEngineId: string): Promise<void> {
@@ -480,26 +495,17 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     const imageReference = this.#requirePublishedImage();
     const dockerEngineId = await this.#preflight();
     await this.#checkCommand("docker", ["pull", imageReference]);
-    this.#prepareConfigDirectory();
-    this.#assertResetConfigurationMatchesRuntime(dockerEngineId);
-    this.#acquireInitLock();
-    try {
-      await this.#acquireDockerInitLock(dockerEngineId);
-      try {
-        await this.#reset(dockerEngineId);
-      } finally {
-        await this.#releaseDockerInitLock();
-      }
-    } finally {
-      this.#releaseInitLock();
-    }
+    await this.#withMutationLock(dockerEngineId, async () => {
+      this.#assertResetConfigurationMatchesRuntime(dockerEngineId);
+      await this.#reset(dockerEngineId);
+    });
   }
 
   async #reset(dockerEngineId: string): Promise<void> {
     const previousState = this.#readState();
-    const existingContainers: string[] = [];
+    const existingContainers = new Set(await this.#projectContainerNames());
     for (const name of RESET_CONTAINERS) {
-      if (await this.#containerExists(name)) existingContainers.push(name);
+      if (await this.#containerExists(name)) existingContainers.add(name);
     }
     const existingVolumes: string[] = [];
     for (const name of RESET_VOLUMES) {
@@ -515,7 +521,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       await this.#runComposeChecked(["down", "--remove-orphans"], resetPluginIds);
     }
 
-    for (const name of existingContainers) {
+    for (const name of [...existingContainers].sort()) {
       await this.#checkCommand("docker", ["container", "rm", "--force", name]);
     }
     for (const name of existingVolumes) {
@@ -532,35 +538,33 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   }
 
   async stop(): Promise<void> {
-    const state = this.#requireInitialized();
-    const dockerEngineId = await this.#preflight();
-    this.#assertStateMatchesEngine(state, dockerEngineId);
-    await this.#runComposeChecked(["down"], state.enabledPlugins);
-    this.#stdout.write("Atlas Core stopped. Durable volumes were preserved.\n");
+    await this.#withInitializedMutation(async (state, dockerEngineId) => {
+      this.#assertStateMatchesEngine(state, dockerEngineId);
+      await this.#runComposeChecked(["down"], state.enabledPlugins);
+      this.#stdout.write("Atlas Core stopped. Durable volumes were preserved.\n");
+    });
   }
 
   async restart(): Promise<void> {
-    const state = this.#requireInitialized();
-    const dockerEngineId = await this.#preflight();
-    await this.#restart(state, dockerEngineId);
+    await this.#withInitializedMutation(async (state, dockerEngineId) => await this.#restart(state, dockerEngineId));
   }
 
   async configureAdminPassword(password: string): Promise<void> {
     assertAdminPassword(password);
-    const state = this.#requireInitialized();
-    const dockerEngineId = await this.#preflight();
-    this.#assertStateMatchesEngine(state, dockerEngineId);
-    const snapshot = await this.#deploymentSnapshot(state.enabledPlugins);
-    if (snapshot.status !== "stopped") this.#assertPackageVersionMatches(state);
-    if (snapshot.status !== "stopped") this.#requirePublishedImage();
-    this.#replaceConfigValue("ATLAS_ADMIN_PASSWORD", quoteComposeValue(password));
-    this.#stdout.write("Atlas Core admin password updated for username admin.\n");
-    if (snapshot.status === "stopped") {
-      this.#stdout.write("The new password will take effect the next time Atlas Core starts.\n");
-      return;
-    }
-    this.#stdout.write("Restarting Atlas Core to apply the new password...\n");
-    await this.#restart(state, dockerEngineId);
+    await this.#withInitializedMutation(async (state, dockerEngineId) => {
+      this.#assertStateMatchesEngine(state, dockerEngineId);
+      const snapshot = await this.#deploymentSnapshot(state.enabledPlugins);
+      if (snapshot.status !== "stopped") this.#assertPackageVersionMatches(state);
+      if (snapshot.status !== "stopped") this.#requirePublishedImage();
+      this.#replaceConfigValue("ATLAS_ADMIN_PASSWORD", quoteComposeValue(password));
+      this.#stdout.write("Atlas Core admin password updated for username admin.\n");
+      if (snapshot.status === "stopped") {
+        this.#stdout.write("The new password will take effect the next time Atlas Core starts.\n");
+        return;
+      }
+      this.#stdout.write("Restarting Atlas Core to apply the new password...\n");
+      await this.#restart(state, dockerEngineId);
+    });
   }
 
   async checkForUpdates(): Promise<UpdateInfo> {
@@ -641,7 +645,17 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   }
 
   async applyCoreUpdate(fromVersion: string, expectedImage: string): Promise<void> {
-    const state = this.#requireInitialized();
+    await this.#withInitializedMutation(
+      async (state, dockerEngineId) => await this.#applyCoreUpdate(state, dockerEngineId, fromVersion, expectedImage)
+    );
+  }
+
+  async #applyCoreUpdate(
+    state: DeploymentState,
+    dockerEngineId: string,
+    fromVersion: string,
+    expectedImage: string
+  ): Promise<void> {
     if (state.packageVersion !== fromVersion) {
       throw new Error(
         `Atlas Core changed from ${fromVersion} to ${state.packageVersion} before the update could start. Check status and retry.`
@@ -658,7 +672,6 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     if (imageReference !== expectedImage) {
       throw new Error(`Installed Atlas Core ${PACKAGE_VERSION} pins ${imageReference}, not ${expectedImage}.`);
     }
-    const dockerEngineId = await this.#preflight();
     this.#assertStateMatchesEngine(state, dockerEngineId);
     const enabledPlugins = this.#catalogPluginsForState(state, true);
     const snapshot = await this.#deploymentSnapshot(state.enabledPlugins);
@@ -689,15 +702,18 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       this.#writeDeploymentState({ ...state, packageVersion: PACKAGE_VERSION });
     } catch (error) {
       const rollbackErrors: string[] = [];
-      this.#restoreEnabledPluginAssets(pluginBackups);
+      for (const [pluginId, backup] of pluginBackups) {
+        await attemptRollback(rollbackErrors, async () => this.#restorePluginAssets(pluginId, backup));
+      }
       if (deploymentChangeStarted && previousImage) {
-        const restore = await this.#runCompose(
-          ["up", "-d", "--pull", "never", "--wait", "--wait-timeout", COMPOSE_WAIT_SECONDS],
-          false,
-          state.enabledPlugins,
-          previousImage
-        );
-        if (restore.status !== 0) rollbackErrors.push(errorMessage(commandFailure("restore Atlas Core", restore)));
+        await attemptRollback(rollbackErrors, async () => {
+          const restore = await this.#runComposeCleanup(
+            ["up", "-d", "--pull", "never", "--wait", "--wait-timeout", COMPOSE_WAIT_SECONDS],
+            state.enabledPlugins,
+            previousImage
+          );
+          if (restore.status !== 0) throw commandFailure("restore Atlas Core", restore);
+        });
       }
       throw transactionFailure(error, rollbackErrors);
     }
@@ -894,8 +910,13 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
 
   async pluginEnable(pluginId: string): Promise<void> {
     const plugin = this.#requireCatalogPlugin(pluginId, true);
-    const state = this.#requireInitialized();
-    const dockerEngineId = await this.#preflight();
+    await this.#withInitializedMutation(
+      async (state, dockerEngineId) => await this.#pluginEnable(plugin, state, dockerEngineId)
+    );
+  }
+
+  async #pluginEnable(plugin: PluginCatalogEntry, state: DeploymentState, dockerEngineId: string): Promise<void> {
+    const pluginId = plugin.pluginId;
     this.#assertStateMatchesRuntime(state, dockerEngineId);
     if (state.enabledPlugins.includes(pluginId)) {
       this.#stdout.write(`Plugin ${plugin.displayName} is already enabled.\n`);
@@ -932,29 +953,33 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       }
     } catch (error) {
       const rollbackErrors: string[] = [];
-      if (stateCommitted) this.#writeDeploymentState(state);
-      const removeResult = await this.#runCompose(["rm", "-s", "-f", plugin.service], false, candidatePluginIds);
-      if (removeResult.status !== 0)
-        rollbackErrors.push(errorMessage(commandFailure("docker compose rm", removeResult)));
-      this.#removePluginAssets(pluginId);
+      if (stateCommitted) {
+        await attemptRollback(rollbackErrors, async () => this.#writeDeploymentState(state));
+      }
+      await attemptRollback(rollbackErrors, async () => {
+        const removeResult = await this.#runComposeCleanup(["rm", "-s", "-f", plugin.service], candidatePluginIds);
+        if (removeResult.status !== 0) throw commandFailure("docker compose rm", removeResult);
+      });
+      await attemptRollback(rollbackErrors, async () => this.#removePluginAssets(pluginId));
       if (snapshot.status !== "stopped") {
-        const restore = await this.#runCompose(
-          [
-            "up",
-            "-d",
-            "--pull",
-            "never",
-            "--force-recreate",
-            "--wait",
-            "--wait-timeout",
-            COMPOSE_WAIT_SECONDS,
-            "api",
-            "source-gateway"
-          ],
-          false,
-          state.enabledPlugins
-        );
-        if (restore.status !== 0) rollbackErrors.push(errorMessage(commandFailure("restore Atlas Core", restore)));
+        await attemptRollback(rollbackErrors, async () => {
+          const restore = await this.#runComposeCleanup(
+            [
+              "up",
+              "-d",
+              "--pull",
+              "never",
+              "--force-recreate",
+              "--wait",
+              "--wait-timeout",
+              COMPOSE_WAIT_SECONDS,
+              "api",
+              "source-gateway"
+            ],
+            state.enabledPlugins
+          );
+          if (restore.status !== 0) throw commandFailure("restore Atlas Core", restore);
+        });
       }
       throw transactionFailure(error, rollbackErrors);
     }
@@ -967,8 +992,13 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
 
   async pluginDisable(pluginId: string): Promise<void> {
     const plugin = this.#requireCatalogPlugin(pluginId, false);
-    const state = this.#requireInitialized();
-    const dockerEngineId = await this.#preflight();
+    await this.#withInitializedMutation(
+      async (state, dockerEngineId) => await this.#pluginDisable(plugin, state, dockerEngineId)
+    );
+  }
+
+  async #pluginDisable(plugin: PluginCatalogEntry, state: DeploymentState, dockerEngineId: string): Promise<void> {
+    const pluginId = plugin.pluginId;
     this.#assertStateMatchesRuntime(state, dockerEngineId);
     if (!state.enabledPlugins.includes(pluginId)) {
       this.#stdout.write(`Plugin ${plugin.displayName} is already disabled.\n`);
@@ -1004,27 +1034,30 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       }
     } catch (error) {
       const rollbackErrors: string[] = [];
-      if (stateCommitted) this.#writeDeploymentState(state);
-      this.#restorePluginAssets(pluginId, backup);
+      if (stateCommitted) {
+        await attemptRollback(rollbackErrors, async () => this.#writeDeploymentState(state));
+      }
+      await attemptRollback(rollbackErrors, async () => this.#restorePluginAssets(pluginId, backup));
       if (snapshot.status !== "stopped") {
-        const restore = await this.#runCompose(
-          [
-            "up",
-            "-d",
-            "--pull",
-            "never",
-            "--force-recreate",
-            "--wait",
-            "--wait-timeout",
-            COMPOSE_WAIT_SECONDS,
-            "api",
-            "source-gateway",
-            plugin.service
-          ],
-          false,
-          state.enabledPlugins
-        );
-        if (restore.status !== 0) rollbackErrors.push(errorMessage(commandFailure("restore Atlas Core", restore)));
+        await attemptRollback(rollbackErrors, async () => {
+          const restore = await this.#runComposeCleanup(
+            [
+              "up",
+              "-d",
+              "--pull",
+              "never",
+              "--force-recreate",
+              "--wait",
+              "--wait-timeout",
+              COMPOSE_WAIT_SECONDS,
+              "api",
+              "source-gateway",
+              plugin.service
+            ],
+            state.enabledPlugins
+          );
+          if (restore.status !== 0) throw commandFailure("restore Atlas Core", restore);
+        });
       }
       throw transactionFailure(error, rollbackErrors);
     }
@@ -1157,65 +1190,72 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     return result.stdout || result.stderr;
   }
 
-  #acquireInitLock(): void {
+  #acquireMutationLock(): void {
     try {
-      writePrivateFile(this.#initLockFile, `${JSON.stringify({ pid: process.pid }, null, 2)}\n`, this.#platform, true);
+      writePrivateFile(
+        this.#mutationLockFile,
+        `${JSON.stringify({ pid: process.pid }, null, 2)}\n`,
+        this.#platform,
+        true
+      );
       return;
     } catch (error) {
       if (!isNodeError(error) || error.code !== "EEXIST") throw error;
     }
 
-    this.#assertPrivateFile(this.#initLockFile);
+    this.#assertPrivateFile(this.#mutationLockFile);
     let owner: unknown;
     try {
-      owner = JSON.parse(readFileSync(this.#initLockFile, "utf8"));
+      owner = JSON.parse(readFileSync(this.#mutationLockFile, "utf8"));
     } catch {
       owner = undefined;
     }
     const ownerDescription = isInitLock(owner) ? ` by PID ${owner.pid}` : "";
     throw new Error(
-      `Atlas Core initialization is locked${ownerDescription} at ${this.#initLockFile}. ` +
-        "If no atlas-core init process is running, remove that file and run init again."
+      `Atlas Core deployment mutation is locked${ownerDescription} at ${this.#mutationLockFile}. ` +
+        "If no atlas-core process is changing the deployment, remove that file and retry."
     );
   }
 
-  #releaseInitLock(): void {
+  #releaseMutationLock(): void {
     try {
-      unlinkSync(this.#initLockFile);
+      unlinkSync(this.#mutationLockFile);
     } catch (error) {
       if (!isNodeError(error) || error.code !== "ENOENT") throw error;
     }
   }
 
-  async #acquireDockerInitLock(dockerEngineId: string): Promise<void> {
+  async #acquireDockerMutationLock(dockerEngineId: string): Promise<void> {
     const labels = {
       "io.atlas.core.engine": dockerEngineId,
-      "io.atlas.core.lock": "initialization",
+      "io.atlas.core.lock": "mutation",
       "io.atlas.core.project": PROJECT_NAME
     };
     const args = ["network", "create"];
     for (const [name, value] of Object.entries(labels)) args.push("--label", `${name}=${value}`);
-    args.push(INIT_LOCK_NETWORK);
+    args.push(MUTATION_LOCK_NETWORK);
 
     const result = await this.#runner.run("docker", args, { env: this.#env });
     if (result.status === 0) return;
 
     const inspection = await this.#runner.run(
       "docker",
-      ["network", "inspect", "--format", "{{json .Labels}}", INIT_LOCK_NETWORK],
+      ["network", "inspect", "--format", "{{json .Labels}}", MUTATION_LOCK_NETWORK],
       { env: this.#env }
     );
     if (inspection.status !== 0) throw commandFailure(`docker ${args.join(" ")}`, result);
-    this.#assertResourceLabels("initialization lock", INIT_LOCK_NETWORK, inspection.stdout, labels);
+    this.#assertResourceLabels("deployment mutation lock", MUTATION_LOCK_NETWORK, inspection.stdout, labels);
     throw new Error(
-      `Atlas Core initialization is already locked on Docker engine ${dockerEngineId}. ` +
-        `If no atlas-core init process is running, remove ${INIT_LOCK_NETWORK} with docker network rm and run init again.`
+      `Atlas Core deployment mutation is already locked on Docker engine ${dockerEngineId}. ` +
+        `If no atlas-core process is changing the deployment, remove ${MUTATION_LOCK_NETWORK} with docker network rm and retry.`
     );
   }
 
-  async #releaseDockerInitLock(): Promise<void> {
-    const result = await this.#runner.runCleanup("docker", ["network", "rm", INIT_LOCK_NETWORK], { env: this.#env });
-    if (result.status !== 0) throw commandFailure(`docker network rm ${INIT_LOCK_NETWORK}`, result);
+  async #releaseDockerMutationLock(): Promise<void> {
+    const result = await this.#runner.runCleanup("docker", ["network", "rm", MUTATION_LOCK_NETWORK], {
+      env: this.#env
+    });
+    if (result.status !== 0) throw commandFailure(`docker network rm ${MUTATION_LOCK_NETWORK}`, result);
   }
 
   async #volumeExists(name: string): Promise<boolean> {
@@ -1276,6 +1316,36 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       throw new Error(`Docker returned invalid image metadata for ${name}.`);
     }
     return image;
+  }
+
+  async #projectContainerNames(): Promise<string[]> {
+    const output = await this.#checkCommand("docker", [
+      "container",
+      "ls",
+      "--all",
+      "--filter",
+      `label=com.docker.compose.project=${PROJECT_NAME}`,
+      "--format",
+      "{{.Names}}"
+    ]);
+    const names = [
+      ...new Set(
+        output
+          .split(/\r?\n/)
+          .map((name) => name.trim())
+          .filter(Boolean)
+      )
+    ].sort();
+    for (const name of names) {
+      if (
+        !(await this.#ownedResourceExists("container", name, {
+          "com.docker.compose.project": PROJECT_NAME
+        }))
+      ) {
+        throw new Error(`Docker listed Atlas Core container ${name}, but it disappeared before reset could verify it.`);
+      }
+    }
+    return names;
   }
 
   async #assertResetVolumesHaveNoUnknownUsers(volumes: string[]): Promise<void> {
@@ -1857,6 +1927,14 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     imageReference = this.#imageReference ?? UNRELEASED_IMAGE
   ): Promise<CommandResult> {
     return await this.#runComposeFile(this.#composeFile, args, inherit, false, pluginIds, imageReference);
+  }
+
+  async #runComposeCleanup(
+    args: string[],
+    pluginIds: readonly string[],
+    imageReference = this.#imageReference ?? UNRELEASED_IMAGE
+  ): Promise<CommandResult> {
+    return await this.#runComposeFile(this.#composeFile, args, false, true, pluginIds, imageReference);
   }
 
   async #runInitCompose(args: string[]): Promise<CommandResult> {
@@ -2449,6 +2527,14 @@ function transactionFailure(error: unknown, rollbackErrors: readonly string[]): 
 
 function oneLine(value: string): string {
   return value.trim().split(/\r?\n/, 1)[0] ?? "";
+}
+
+async function attemptRollback(rollbackErrors: string[], action: () => void | Promise<void>): Promise<void> {
+  try {
+    await action();
+  } catch (error) {
+    rollbackErrors.push(errorMessage(error));
+  }
 }
 
 function errorMessage(error: unknown): string {

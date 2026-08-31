@@ -122,17 +122,42 @@ export function featureForEntityId(sources: MapSources, entityId: string): MapFe
 export function boundsForGeometry(geometry: UiRawGeometry): [[number, number], [number, number]] | null {
   const positions = collectLngLatPositions(geometry.coordinates);
   if (positions.length === 0) return null;
-  const lngValues = positions.map((position) => position[0]);
+  const [west, east] = minimumLongitudeInterval(positions.map((position) => position[0]));
   const latValues = positions.map((position) => position[1]);
   return [
-    [Math.min(...lngValues), Math.min(...latValues)],
-    [Math.max(...lngValues), Math.max(...latValues)]
+    [west, Math.min(...latValues)],
+    [east, Math.max(...latValues)]
   ];
 }
 
 /** True when a geometry continues past the canonical world to cross the date line. */
 export function geometryUsesUnwrappedLongitudes(geometry: UiRawGeometry): boolean {
-  return collectLngLatPositions(geometry.coordinates).some(([longitude]) => longitude < -180 || longitude > 180);
+  const positions = collectLngLatPositions(geometry.coordinates);
+  if (positions.some(([longitude]) => longitude < -180 || longitude > 180)) return true;
+  if (positions.length === 0) return false;
+  const [west, east] = minimumLongitudeInterval(positions.map(([longitude]) => longitude));
+  return west < -180 || east > 180;
+}
+
+function minimumLongitudeInterval(longitudes: number[]): [west: number, east: number] {
+  const canonicalWest = Math.min(...longitudes);
+  const canonicalEast = Math.max(...longitudes);
+  if (canonicalEast - canonicalWest <= 180) return [canonicalWest, canonicalEast];
+  const normalized = longitudes.map((longitude) => ((longitude % 360) + 360) % 360).sort((left, right) => left - right);
+  let largestGap = -1;
+  let startIndex = 0;
+  for (let index = 0; index < normalized.length; index++) {
+    const current = normalized[index];
+    const next = index === normalized.length - 1 ? normalized[0] + 360 : normalized[index + 1];
+    const gap = next - current;
+    if (gap > largestGap) {
+      largestGap = gap;
+      startIndex = (index + 1) % normalized.length;
+    }
+  }
+  const start = normalized[startIndex];
+  const west = start >= 180 ? start - 360 : start;
+  return [west, west + 360 - largestGap];
 }
 
 export function collectLngLatPositions(value: unknown): Position[] {

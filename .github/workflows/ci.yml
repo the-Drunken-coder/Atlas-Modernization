@@ -324,7 +324,7 @@ jobs:
               atlas_core_production_postgres \
               atlas_core_production_minio \
               atlas_core_production_minio_init >/dev/null 2>&1 || true
-            docker network rm atlas_core_production_default atlas_core_production_init_lock >/dev/null 2>&1 || true
+            docker network rm atlas_core_production_default atlas_core_production_mutation_lock >/dev/null 2>&1 || true
             docker volume rm --force "$minio_volume" "$postgres_volume" >/dev/null 2>&1 || true
             rm -rf "$test_root"
           }

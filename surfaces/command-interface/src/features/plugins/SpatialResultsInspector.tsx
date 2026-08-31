@@ -59,13 +59,11 @@ export function SpatialResultsInspector({
         <div className="spatial-map-window__empty">No results in this area.</div>
       ) : (
         <div className="spatial-map-window__content">
-          <ul className="entity-list spatial-map-window__results" role="listbox" aria-label="Spatial results">
+          <ul className="entity-list spatial-map-window__results" aria-label="Spatial results">
             {result.features.map((feature) => (
-              <li key={feature.id} role="none">
+              <li key={feature.id}>
                 <PanelListRow
                   className="spatial-map-window__result"
-                  role="option"
-                  aria-selected={selected?.id === feature.id}
                   title={feature.title}
                   meta={feature.id}
                   indicatorColor="var(--map-geofeature)"

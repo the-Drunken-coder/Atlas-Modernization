@@ -104,6 +104,66 @@ describe("planFocusMove", () => {
     });
   });
 
+  it("fits a polygon across the antimeridian by the short interval", () => {
+    const move = planFocusMove(
+      {
+        type: "Polygon",
+        coordinates: [
+          [
+            [179, 10],
+            [-179, 10],
+            [-179, 12],
+            [179, 10]
+          ]
+        ]
+      },
+      view([180, 11], 4)
+    );
+
+    expect(move).toMatchObject({
+      kind: "fit-bounds",
+      bounds: [
+        [179, 10],
+        [181, 12]
+      ]
+    });
+  });
+
+  it("fits every polygon in an antimeridian multipolygon by the short interval", () => {
+    const move = planFocusMove(
+      {
+        type: "MultiPolygon",
+        coordinates: [
+          [
+            [
+              [178, 10],
+              [179, 10],
+              [179, 11],
+              [178, 10]
+            ]
+          ],
+          [
+            [
+              [-179, 12],
+              [-178, 12],
+              [-178, 13],
+              [-179, 12]
+            ]
+          ]
+        ]
+      },
+      view([180, 11], 4)
+    );
+
+    expect(move).toMatchObject({
+      kind: "fit-bounds",
+      bounds: [
+        [178, 10],
+        [182, 13]
+      ]
+    });
+  });
+
   it("returns null for empty geometry", () => {
     expect(planFocusMove({ type: "LineString", coordinates: [] }, view([0, 0], 4))).toBeNull();
   });
