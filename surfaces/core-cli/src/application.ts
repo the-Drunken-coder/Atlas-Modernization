@@ -116,6 +116,7 @@ type RunOptions = {
 };
 
 export type CommandRunner = {
+  cancelAll?(): void;
   run(command: string, args: string[], options?: RunOptions): Promise<CommandResult>;
 };
 
@@ -199,6 +200,12 @@ class UsageError extends Error {
 }
 
 class ProcessCommandRunner implements CommandRunner {
+  readonly #children = new Set<ReturnType<typeof spawn>>();
+
+  cancelAll(): void {
+    for (const child of this.#children) child.kill();
+  }
+
   async run(command: string, args: string[], options: RunOptions = {}): Promise<CommandResult> {
     return await new Promise((resolve, reject) => {
       const child = spawn(command, args, {
@@ -206,6 +213,7 @@ class ProcessCommandRunner implements CommandRunner {
         env: options.env,
         stdio: options.inherit ? "inherit" : ["ignore", "pipe", "pipe"]
       });
+      this.#children.add(child);
       let stdout = "";
       let stderr = "";
       child.stdout?.setEncoding("utf8");
@@ -216,11 +224,38 @@ class ProcessCommandRunner implements CommandRunner {
       child.stderr?.on("data", (chunk: string) => {
         stderr += chunk;
       });
-      child.once("error", reject);
+      child.once("error", (error) => {
+        this.#children.delete(child);
+        reject(error);
+      });
       child.once("close", (status) => {
+        this.#children.delete(child);
         resolve({ status: status ?? 1, stdout, stderr });
       });
     });
+  }
+}
+
+class CancellableCommandRunner implements CommandRunner {
+  readonly #runner: CommandRunner;
+  #cancelled = false;
+
+  constructor(runner: CommandRunner) {
+    this.#runner = runner;
+  }
+
+  cancelAll(): void {
+    this.#cancelled = true;
+    this.#runner.cancelAll?.();
+  }
+
+  async run(command: string, args: string[], options?: RunOptions): Promise<CommandResult> {
+    if (this.#cancelled) throw new Error("Atlas Core command was cancelled.");
+    return await this.#runner.run(command, args, options);
+  }
+
+  async runCleanup(command: string, args: string[], options?: RunOptions): Promise<CommandResult> {
+    return await this.#runner.run(command, args, options);
   }
 }
 
@@ -231,7 +266,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   readonly #initLockFile: string;
   readonly #composeFile: string;
   readonly #initComposeFile: string;
-  readonly #runner: CommandRunner;
+  readonly #runner: CancellableCommandRunner;
   readonly #stdout: { write(data: string): void };
   readonly #stderr: { write(data: string): void };
   readonly #env: NodeJS.ProcessEnv;
@@ -251,7 +286,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     this.#initLockFile = join(this.#configDir, ".init.lock");
     this.#composeFile = join(context.packageRoot, "assets", "docker-compose.yml");
     this.#initComposeFile = join(context.packageRoot, "assets", "docker-compose.init.yml");
-    this.#runner = context.runner;
+    this.#runner = new CancellableCommandRunner(context.runner);
     this.#stdout = context.stdout;
     this.#stderr = context.stderr;
     this.#env = context.env;
@@ -263,6 +298,10 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     this.#confirmCoreUpdate = context.confirmCoreUpdate;
     this.#confirmReset = context.confirmReset;
     this.#imageReference = context.imageReference;
+  }
+
+  cancelPending(): void {
+    this.#runner.cancelAll?.();
   }
 
   async init(): Promise<void> {
@@ -359,7 +398,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       this.#writeReadyState(initializingState);
     } catch (error) {
       if (startedMinio) {
-        const cleanup = await this.#runInitCompose(["down"]);
+        const cleanup = await this.#runInitComposeCleanup(["down"]);
         if (cleanup.status !== 0) {
           throw new Error(
             `${errorMessage(error)} Cleanup also failed: ${errorMessage(commandFailure("docker compose down", cleanup))}`
@@ -911,7 +950,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   }
 
   async #releaseDockerInitLock(): Promise<void> {
-    const result = await this.#runner.run("docker", ["network", "rm", INIT_LOCK_NETWORK], { env: this.#env });
+    const result = await this.#runner.runCleanup("docker", ["network", "rm", INIT_LOCK_NETWORK], { env: this.#env });
     if (result.status !== 0) throw commandFailure(`docker network rm ${INIT_LOCK_NETWORK}`, result);
   }
 
@@ -1321,7 +1360,16 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     return await this.#runComposeFile(this.#initComposeFile, args);
   }
 
-  async #runComposeFile(composeFile: string, args: string[], inherit = false): Promise<CommandResult> {
+  async #runInitComposeCleanup(args: string[]): Promise<CommandResult> {
+    return await this.#runComposeFile(this.#initComposeFile, args, false, true);
+  }
+
+  async #runComposeFile(
+    composeFile: string,
+    args: string[],
+    inherit = false,
+    allowAfterCancellation = false
+  ): Promise<CommandResult> {
     const env = { ...this.#env };
     for (const variable of COMPOSE_VARIABLES) delete env[variable];
     for (const variable of Object.keys(env)) {
@@ -1330,11 +1378,14 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     env.COMPOSE_IGNORE_ORPHANS = "0";
     env.COMPOSE_REMOVE_ORPHANS = "0";
     env.ATLAS_CORE_IMAGE = this.#imageReference ?? UNRELEASED_IMAGE;
-    return await this.#runner.run("docker", this.#composeArgs(composeFile, args), {
+    const options = {
       cwd: this.#configDir,
       env,
       inherit
-    });
+    };
+    return allowAfterCancellation
+      ? await this.#runner.runCleanup("docker", this.#composeArgs(composeFile, args), options)
+      : await this.#runner.run("docker", this.#composeArgs(composeFile, args), options);
   }
 
   async #runComposeChecked(args: string[]): Promise<void> {

@@ -57,25 +57,33 @@ class FakeRunner implements CommandRunner {
   latestVersion = PACKAGE_VERSION;
   latestImage = TEST_IMAGE;
   installedVersion = PACKAGE_VERSION;
+  onRun: ((call: Call) => void) | undefined;
   serviceStates = [
     { Service: "api", State: "running", Health: "healthy" },
     { Service: "source-gateway", State: "running", Health: "healthy" },
     { Service: "minio", State: "running", Health: "healthy" },
     { Service: "postgres", State: "running", Health: "healthy" }
   ];
+  cancelAllCalls = 0;
+
+  cancelAll(): void {
+    this.cancelAllCalls++;
+  }
 
   async run(
     command: string,
     args: string[],
     options: { cwd?: string; env?: NodeJS.ProcessEnv; inherit?: boolean } = {}
   ): Promise<{ status: number; stdout: string; stderr: string }> {
-    this.calls.push({
+    const call = {
       command,
       args,
       cwd: options.cwd,
       env: { ...options.env },
       inherit: options.inherit ?? false
-    });
+    };
+    this.calls.push(call);
+    this.onRun?.(call);
     if (command === "npm" && args[0] === "view") {
       return result(0, JSON.stringify({ version: this.latestVersion, atlasCoreImage: this.latestImage }));
     }
@@ -365,6 +373,43 @@ describe("atlas-core CLI", () => {
     expect(await runCLI(["update"], test.context)).toBe(0);
     expect(opened).toBe(true);
     expect(test.runner.calls).toHaveLength(0);
+  });
+
+  it("cancels pending commands and prevents later commands from starting", async () => {
+    const test = runtime();
+    test.context.interactive = {
+      configureAdmin: async () => undefined,
+      runMenu: async () => undefined,
+      runUpdate: async (operator) => {
+        operator.cancelPending();
+        await expect(operator.checkForUpdates()).rejects.toThrow("Atlas Core command was cancelled.");
+      }
+    };
+
+    expect(await runCLI(["update"], test.context)).toBe(0);
+    expect(test.runner.cancelAllCalls).toBe(1);
+    expect(test.runner.calls).toHaveLength(0);
+  });
+
+  it("allows initialization cleanup commands after cancellation", async () => {
+    const test = runtime();
+    test.context.interactive = {
+      configureAdmin: async () => undefined,
+      runUpdate: async () => undefined,
+      runMenu: async (operator) => {
+        let cancelled = false;
+        test.runner.onRun = (call) => {
+          if (cancelled || composeCommand(call)[0] !== "up") return;
+          cancelled = true;
+          operator.cancelPending();
+        };
+        await expect(operator.init()).rejects.toThrow("Atlas Core command was cancelled.");
+      }
+    };
+
+    expect(await runCLI([], test.context)).toBe(0);
+    expect(test.runner.calls.map(composeCommand)).toContainEqual(["down"]);
+    expect(test.runner.calls.some((call) => call.args[0] === "network" && call.args[1] === "rm")).toBe(true);
   });
 
   it("rejects unknown update scopes", async () => {
