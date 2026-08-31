@@ -130,7 +130,7 @@ type AtlasCoreAppProps = {
 };
 
 const MINIMUM_TERMINAL_COLUMNS = 40;
-const MINIMUM_STATUS_ROWS = 30;
+const STATUS_REFRESH_INTERVAL_MS = 5_000;
 
 export function createInteractiveCLI(
   input: NodeJS.ReadStream = process.stdin,
@@ -176,6 +176,7 @@ async function runInkApp(
 
 function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): ReactNode {
   const { exit, suspendTerminal, waitUntilRenderFlush } = useApp();
+  const statusRefreshPending = useRef<Promise<void> | undefined>(undefined);
   const terminalLost = useRef(false);
   const [screen, setScreen] = useState<Screen>({
     kind: "busy",
@@ -193,6 +194,29 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
       setScreen({ kind: "status", view: await operator.details() });
     } catch (error) {
       setScreen({ kind: "status", view: new Error(errorMessage(error)) });
+    }
+  }, [operator]);
+
+  const refreshStatus = useCallback(async () => {
+    const currentRefresh = statusRefreshPending.current;
+    if (currentRefresh) {
+      await currentRefresh;
+      return;
+    }
+    const refresh = (async () => {
+      try {
+        const view = await operator.details();
+        setScreen((current) => (current.kind === "status" ? { kind: "status", view } : current));
+      } catch (error) {
+        const view = new Error(errorMessage(error));
+        setScreen((current) => (current.kind === "status" ? { kind: "status", view } : current));
+      }
+    })();
+    statusRefreshPending.current = refresh;
+    try {
+      await refresh;
+    } finally {
+      if (statusRefreshPending.current === refresh) statusRefreshPending.current = undefined;
     }
   }, [operator]);
 
@@ -443,7 +467,7 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
         onBack={() => void loadMenu()}
         onDiagnostics={() => void runStatusDoctor()}
         onLogs={(service) => void showLogs(service, "status")}
-        onReload={() => void loadStatus()}
+        onReload={refreshStatus}
         view={screen.view}
       />
     );
@@ -690,19 +714,60 @@ function StatusScreen({
   onBack(): void;
   onDiagnostics(): void;
   onLogs(service: DeploymentService["id"]): void;
-  onReload(): void;
+  onReload(): Promise<void>;
   view: DeploymentDetails | Error;
 }): ReactNode {
   const { columns, rows } = useWindowSize();
   const actionPending = useRef(false);
+  const scrollRef = useRef(0);
   const selectedRef = useRef(0);
+  const [scroll, setScroll] = useState(0);
   const [selected, setSelected] = useState(0);
   const services = view instanceof Error ? [] : view.services;
   const index = Math.min(selected, Math.max(0, services.length - 1));
   const hasEnoughColumns = columns >= MINIMUM_TERMINAL_COLUMNS;
-  const requiredRows = view instanceof Error ? MINIMUM_STATUS_ROWS : requiredStatusRows(view, columns);
+  const service = services[index];
+  const bodyRows = view instanceof Error ? 0 : statusBodyRows(view, service, columns);
+  const headerRows = view instanceof Error ? 0 : statusHeaderRows(view, columns);
+  const footerTemplate = statusFooterText(
+    bodyRows > 0 ? { first: bodyRows, last: bodyRows, total: bodyRows } : undefined,
+    services.length
+  );
+  const footerRows = 1 + wrappedRows(footerTemplate, columns);
+  const requiredRows = headerRows + footerRows + 1;
   const hasEnoughRows = view instanceof Error || rows >= requiredRows;
+  const viewportRows = Math.max(1, rows - headerRows - footerRows);
+  const maxScroll = Math.max(0, bodyRows - viewportRows);
+  const scrollOffset = Math.min(scroll, maxScroll);
+  scrollRef.current = scrollOffset;
+  const footer = statusFooterText(
+    maxScroll > 0
+      ? {
+          first: scrollOffset + 1,
+          last: Math.min(bodyRows, scrollOffset + viewportRows),
+          total: bodyRows
+        }
+      : undefined,
+    services.length
+  );
   const canInteract = hasEnoughColumns && hasEnoughRows;
+
+  useEffect(() => {
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const schedule = (): void => {
+      timer = setTimeout(() => {
+        void onReload().finally(() => {
+          if (!stopped) schedule();
+        });
+      }, STATUS_REFRESH_INTERVAL_MS);
+    };
+    schedule();
+    return () => {
+      stopped = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [onReload]);
 
   useInput((input, key) => {
     if (actionPending.current) return;
@@ -712,19 +777,30 @@ function StatusScreen({
       onBack();
     } else if (!canInteract || modified) return;
     else if (input === "r") {
-      actionPending.current = true;
-      onReload();
+      void onReload();
     } else if (input === "d") {
       actionPending.current = true;
       onDiagnostics();
-    } else if ((key.leftArrow || key.upArrow) && services.length > 0) {
+    } else if (key.upArrow && maxScroll > 0) {
+      const next = Math.max(0, scrollRef.current - 1);
+      scrollRef.current = next;
+      setScroll(next);
+    } else if (key.downArrow && maxScroll > 0) {
+      const next = Math.min(maxScroll, scrollRef.current + 1);
+      scrollRef.current = next;
+      setScroll(next);
+    } else if (key.leftArrow && services.length > 0) {
       const next = (Math.min(selectedRef.current, services.length - 1) - 1 + services.length) % services.length;
       selectedRef.current = next;
       setSelected(next);
-    } else if ((key.rightArrow || key.downArrow) && services.length > 0) {
+      scrollRef.current = 0;
+      setScroll(0);
+    } else if (key.rightArrow && services.length > 0) {
       const next = (Math.min(selectedRef.current, services.length - 1) + 1) % services.length;
       selectedRef.current = next;
       setSelected(next);
+      scrollRef.current = 0;
+      setScroll(0);
     } else if (input === "l") {
       const service = services[Math.min(selectedRef.current, Math.max(0, services.length - 1))];
       if (service) {
@@ -747,12 +823,11 @@ function StatusScreen({
         </Text>
         <Text>{view.message}</Text>
         <Rule width={width} />
-        <Text dimColor>{"r retry   d diagnostics   Enter or Esc back"}</Text>
+        <Text dimColor>{"r retry   d diagnostics   Enter back   live 5s"}</Text>
       </Box>
     );
   }
 
-  const service = services[index];
   return (
     <Box flexDirection="column" width={width}>
       <Header
@@ -769,17 +844,41 @@ function StatusScreen({
         </>
       )}
       <Rule width={width} />
+      <Box height={viewportRows} overflowY="hidden">
+        <Box flexDirection="column" flexShrink={0} position="relative" top={-scrollOffset}>
+          <StatusBody index={index} service={service} view={view} width={width} />
+        </Box>
+      </Box>
+      <Rule width={width} />
+      <Text dimColor>{footer}</Text>
+    </Box>
+  );
+}
+
+function StatusBody({
+  index,
+  service,
+  view,
+  width
+}: {
+  index: number;
+  service: DeploymentService | undefined;
+  view: DeploymentDetails;
+  width: number;
+}): ReactNode {
+  return (
+    <Box flexDirection="column" flexShrink={0}>
       <Text bold>SERVICES</Text>
       {width >= 72 ? (
         <Box>
-          {services.map((candidate, candidateIndex) => (
+          {view.services.map((candidate, candidateIndex) => (
             <Text inverse={candidateIndex === index} key={candidate.id}>
               {` ${candidate.label} `}
             </Text>
           ))}
         </Box>
       ) : (
-        services.map((candidate, candidateIndex) => (
+        view.services.map((candidate, candidateIndex) => (
           <Text inverse={candidateIndex === index} key={candidate.id}>
             {pad(`${candidateIndex === index ? ">" : " "} ${candidate.label}`, width)}
           </Text>
@@ -797,8 +896,6 @@ function StatusScreen({
       {view.performanceError ? (
         <Text color="yellow">Performance statistics unavailable: {view.performanceError}</Text>
       ) : null}
-      <Rule width={width} />
-      <Text dimColor>{"←/→ service   r refresh   l logs   d diagnostics   Enter or Esc back"}</Text>
     </Box>
   );
 }
@@ -850,40 +947,44 @@ function deploymentValues(view: DeploymentDetails): KeyValue[] {
   ];
 }
 
-function requiredStatusRows(view: DeploymentDetails, width: number): number {
+function statusHeaderRows(view: DeploymentDetails, width: number): number {
   const right = `${stateName(view.snapshot.status)}  Core v${view.coreVersion}  CLI v${view.cliVersion}`;
-  const serviceRows =
-    view.services.length === 0
-      ? wrappedRows("No Atlas Core containers are running.", width)
-      : Math.max(
-          ...view.services.map(
-            (service) => wrappedRows(service.label, width) + keyValueRows(serviceValues(service), width)
-          )
-        );
   const endpointRows =
     width >= 72
       ? wrappedRows(`API ${view.apiEndpoint}   MinIO ${view.minioEndpoint}`, width)
       : wrappedRows(`API ${view.apiEndpoint}`, width) + wrappedRows(`MinIO ${view.minioEndpoint}`, width);
+  return (
+    wrappedRows(`ATLAS CORE > STATUS ${right}`, width) + wrappedRows(view.snapshot.detail, width) + endpointRows + 1
+  );
+}
+
+function statusBodyRows(view: DeploymentDetails, service: DeploymentService | undefined, width: number): number {
+  const serviceRows = service
+    ? wrappedRows(service.label, width) + keyValueRows(serviceValues(service), width)
+    : wrappedRows("No Atlas Core containers are running.", width);
   const serviceChoiceRows = width >= 72 ? (view.services.length > 0 ? 1 : 0) : view.services.length;
   const performanceRows = view.performanceError
     ? wrappedRows(`Performance statistics unavailable: ${view.performanceError}`, width)
     : 0;
-  const rows =
-    wrappedRows(`ATLAS CORE > STATUS ${right}`, width) +
-    wrappedRows(view.snapshot.detail, width) +
-    endpointRows +
-    1 +
-    1 +
-    serviceChoiceRows +
-    1 +
-    serviceRows +
-    1 +
-    1 +
-    keyValueRows(deploymentValues(view), width) +
-    performanceRows +
-    1 +
-    wrappedRows("←/→ service   r refresh   l logs   d diagnostics   Enter or Esc back", width);
-  return Math.max(MINIMUM_STATUS_ROWS, rows);
+  return (
+    1 + serviceChoiceRows + 1 + serviceRows + 1 + 1 + keyValueRows(deploymentValues(view), width) + performanceRows
+  );
+}
+
+function statusFooterText(
+  scroll: { first: number; last: number; total: number } | undefined,
+  serviceCount: number
+): string {
+  const controls = [
+    ...(scroll ? [`↑/↓ ${scroll.first}-${scroll.last}/${scroll.total}`] : []),
+    ...(serviceCount > 1 ? ["←/→ service"] : []),
+    ...(serviceCount > 0 ? ["l logs"] : []),
+    "d diagnostics",
+    "r refresh",
+    "Enter back",
+    "live 5s"
+  ];
+  return controls.join("  ");
 }
 
 function keyValueRows(values: KeyValue[], width: number): number {

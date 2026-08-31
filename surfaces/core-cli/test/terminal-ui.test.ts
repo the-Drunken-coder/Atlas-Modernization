@@ -324,14 +324,18 @@ describe("Atlas Core terminal UI", () => {
     expect(detailsCallsAfterRepeatedEnter).toBe(1);
   });
 
-  it("shows a minimum-height state for status on a 24-row terminal", async () => {
+  it("shows a scrollable status viewport on a 24-row terminal", async () => {
     const terminal = new TestTerminal(80, true, 24);
     const deployment = operator();
     const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
 
     await terminal.waitFor("View status");
     terminal.write("\r");
-    await terminal.waitFor("Status needs at least 30 rows at this width.");
+    await terminal.waitFor("↑/↓ 1-18/19");
+    expect(terminal.text).not.toContain("Status needs at least");
+    terminal.write("\u001b[B");
+    await terminal.waitFor("↑/↓ 2-19/19");
+    await terminal.waitFor("Credentials and durable volumes preserved");
     terminal.write("\r");
     await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
     terminal.write("q");
@@ -340,7 +344,7 @@ describe("Atlas Core terminal UI", () => {
     expect(deployment.details).toHaveBeenCalledOnce();
   });
 
-  it("accounts for wrapped image values in the status height requirement", async () => {
+  it("keeps wrapped status values reachable through the viewport", async () => {
     const terminal = new TestTerminal(40, true, 30);
     const deployment = operator();
     const baseDetails = await deployment.details();
@@ -357,14 +361,71 @@ describe("Atlas Core terminal UI", () => {
     await terminal.waitFor("View status");
     terminal.write("\r");
     await vi.waitFor(() => expect(deployment.details).toHaveBeenCalledOnce());
+    await terminal.waitFor("r refresh");
+    expect(terminal.text).not.toContain("Status needs at least");
+    terminal.write("\u001b[B".repeat(20));
+    await terminal.waitFor("↑/↓ 8-28/28");
+    terminal.write("\r");
+    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
+    terminal.write("q");
+    await menu;
+  });
+
+  it("refreshes status automatically", async () => {
+    const terminal = new TestTerminal(80, true, 24);
+    const deployment = operator();
+    const baseDetails = await deployment.details();
+    deployment.details.mockClear();
+    deployment.details.mockResolvedValueOnce(baseDetails).mockResolvedValueOnce({
+      ...baseDetails,
+      services: baseDetails.services.map((service) =>
+        service.id === "api" ? { ...service, cpuPercent: "9.99%" } : service
+      )
+    });
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("View status");
+    terminal.write("\r");
+    await terminal.waitFor("CPU          1.00%");
+    await vi.waitFor(() => expect(deployment.details).toHaveBeenCalledTimes(2), {
+      interval: 50,
+      timeout: 6_500
+    });
+    await terminal.waitFor("CPU          9.99%");
+    terminal.write("\r");
+    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
+    terminal.write("q");
+    await menu;
+  }, 8_000);
+
+  it("coalesces manual status refreshes", async () => {
+    const terminal = new TestTerminal(80, true, 24);
+    const deployment = operator();
+    const baseDetails = await deployment.details();
+    let finishRefresh: ((details: typeof baseDetails) => void) | undefined;
+    const pendingRefresh = new Promise<typeof baseDetails>((resolve) => {
+      finishRefresh = resolve;
+    });
+    deployment.details.mockClear();
+    deployment.details.mockResolvedValueOnce(baseDetails).mockImplementationOnce(() => pendingRefresh);
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("View status");
+    terminal.write("\r");
+    await terminal.waitFor("CPU          1.00%");
+    terminal.write("r");
+    await vi.waitFor(() => expect(deployment.details).toHaveBeenCalledTimes(2));
+    terminal.write("r");
+    await nextInputTurn();
+    const callsWhileRefreshWasPending = deployment.details.mock.calls.length;
+    finishRefresh?.(baseDetails);
     await nextInputTurn();
     terminal.write("\r");
     await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
     terminal.write("q");
     await menu;
 
-    const requiredRows = terminal.text.match(/Status needs at least (\d+) rows/u)?.[1];
-    expect(Number(requiredRows)).toBeGreaterThan(30);
+    expect(callsWhileRefreshWasPending).toBe(2);
   });
 
   it("shows logs for all services from the log picker", async () => {
