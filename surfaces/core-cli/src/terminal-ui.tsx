@@ -46,6 +46,16 @@ export type UpdateInfo = {
 
 export type UpdateScope = "all" | "cli";
 
+export type PluginDeploymentStatus = {
+  pluginId: string;
+  displayName: string;
+  lifecycle: "query_only";
+  enabled: boolean;
+  packaged: boolean;
+  state?: string;
+  health?: string;
+};
+
 export type AtlasCoreOperator = {
   cancelPending(): void;
   checkForUpdates(): Promise<UpdateInfo>;
@@ -54,6 +64,10 @@ export type AtlasCoreOperator = {
   doctor(): Promise<boolean>;
   init(): Promise<void>;
   logs(service: "api" | "minio" | "postgres" | "source-gateway" | undefined, follow: boolean): Promise<void>;
+  pluginDisable(pluginId: string): Promise<void>;
+  pluginEnable(pluginId: string): Promise<void>;
+  pluginLogs(pluginId: string, follow: boolean): Promise<void>;
+  pluginStatuses(pluginId?: string): Promise<PluginDeploymentStatus[]>;
   reset(): Promise<void>;
   restart(): Promise<void>;
   snapshot(): Promise<DeploymentSnapshot>;
@@ -70,7 +84,19 @@ export type InteractiveCLI = {
 };
 
 type Action = {
-  id: "configure" | "doctor" | "init" | "logs" | "quit" | "reset" | "restart" | "start" | "status" | "stop" | "update";
+  id:
+    | "configure"
+    | "doctor"
+    | "init"
+    | "logs"
+    | "plugins"
+    | "quit"
+    | "reset"
+    | "restart"
+    | "start"
+    | "status"
+    | "stop"
+    | "update";
   label: string;
   detail: string;
 };
@@ -81,6 +107,7 @@ type Screen =
   | { kind: "logs" }
   | { kind: "menu"; snapshot: DeploymentSnapshot }
   | { kind: "password" }
+  | { kind: "plugins"; view: PluginDeploymentStatus[] | Error }
   | { kind: "status"; view: DeploymentDetails | Error }
   | { kind: "update"; info: UpdateInfo }
   | { kind: "update-error"; message: string }
@@ -178,6 +205,15 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
     }
   }, [operator]);
 
+  const loadPlugins = useCallback(async () => {
+    setScreen({ kind: "busy", label: "Loading Plugins..." });
+    try {
+      setScreen({ kind: "plugins", view: await operator.pluginStatuses() });
+    } catch (error) {
+      setScreen({ kind: "plugins", view: new Error(errorMessage(error)) });
+    }
+  }, [operator]);
+
   useEffect(() => {
     if (mode === "configure") setScreen({ kind: "password" });
     else if (mode === "update") void loadUpdate();
@@ -235,6 +271,10 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
         setScreen({ kind: "logs" });
         return;
       }
+      if (action.id === "plugins") {
+        await loadPlugins();
+        return;
+      }
       if (action.id === "status") {
         await loadStatus();
         return;
@@ -251,6 +291,8 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
             return;
           case "init":
             await operator.init();
+            return;
+          case "plugins":
             return;
           case "reset":
             await operator.reset();
@@ -275,7 +317,28 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
       if (result.cancelled) return;
       await loadMenu();
     },
-    [exit, loadMenu, loadStatus, loadUpdate, operator, runVisibleOperation]
+    [exit, loadMenu, loadPlugins, loadStatus, loadUpdate, operator, runVisibleOperation]
+  );
+
+  const togglePlugin = useCallback(
+    async (plugin: PluginDeploymentStatus) => {
+      const result = await runVisibleOperation(plugin.enabled ? "Disabling Plugin" : "Enabling Plugin", async () => {
+        if (plugin.enabled) await operator.pluginDisable(plugin.pluginId);
+        else await operator.pluginEnable(plugin.pluginId);
+      });
+      if (!result.cancelled) await loadPlugins();
+    },
+    [loadPlugins, operator, runVisibleOperation]
+  );
+
+  const showPluginLogs = useCallback(
+    async (plugin: PluginDeploymentStatus) => {
+      const result = await runVisibleOperation("Loading Plugin logs", async () => {
+        await operator.pluginLogs(plugin.pluginId, false);
+      });
+      if (!result.cancelled) await loadPlugins();
+    },
+    [loadPlugins, operator, runVisibleOperation]
   );
 
   const showLogs = useCallback(
@@ -362,6 +425,17 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
   }
   if (screen.kind === "logs") {
     return <LogsMenu onBack={() => void loadMenu()} onSelect={(service) => void showLogs(service, "menu")} />;
+  }
+  if (screen.kind === "plugins") {
+    return (
+      <PluginsMenu
+        onBack={() => void loadMenu()}
+        onLogs={(plugin) => void showPluginLogs(plugin)}
+        onReload={() => void loadPlugins()}
+        onToggle={(plugin) => void togglePlugin(plugin)}
+        view={screen.view}
+      />
+    );
   }
   if (screen.kind === "status") {
     return (
@@ -864,6 +938,87 @@ function LogsMenu({
   );
 }
 
+function PluginsMenu({
+  onBack,
+  onLogs,
+  onReload,
+  onToggle,
+  view
+}: {
+  onBack(): void;
+  onLogs(plugin: PluginDeploymentStatus): void;
+  onReload(): void;
+  onToggle(plugin: PluginDeploymentStatus): void;
+  view: PluginDeploymentStatus[] | Error;
+}): ReactNode {
+  const { columns } = useWindowSize();
+  const actionPending = useRef(false);
+  const selectedRef = useRef(0);
+  const [selected, setSelected] = useState(0);
+  const plugins = view instanceof Error ? [] : view;
+  const index = Math.min(selected, Math.max(0, plugins.length - 1));
+  const plugin = plugins[index];
+  useInput((input, key) => {
+    if (actionPending.current) return;
+    const modified = hasCommandModifier(key);
+    if (key.escape || (key.ctrl && input === "c") || (!modified && input === "q")) {
+      actionPending.current = true;
+      onBack();
+    } else if (modified) return;
+    else if (input === "r") {
+      actionPending.current = true;
+      onReload();
+    } else if (key.upArrow && plugins.length > 0) {
+      const next = (Math.min(selectedRef.current, plugins.length - 1) - 1 + plugins.length) % plugins.length;
+      selectedRef.current = next;
+      setSelected(next);
+    } else if (key.downArrow && plugins.length > 0) {
+      const next = (Math.min(selectedRef.current, plugins.length - 1) + 1) % plugins.length;
+      selectedRef.current = next;
+      setSelected(next);
+    } else if (key.return && plugin?.packaged) {
+      actionPending.current = true;
+      onToggle(plugin);
+    } else if (input === "l" && plugin?.enabled) {
+      actionPending.current = true;
+      onLogs(plugin);
+    }
+  });
+  if (columns < MINIMUM_TERMINAL_COLUMNS) return <NarrowTerminal />;
+  return (
+    <Box flexDirection="column" width={columns}>
+      <Header title="ATLAS CORE > PLUGINS" />
+      <Text> </Text>
+      {view instanceof Error ? (
+        <Text color="red">{view.message}</Text>
+      ) : plugins.length === 0 ? (
+        <Text>No first-party Plugins are included in this package.</Text>
+      ) : (
+        <>
+          <Text bold>PLUGIN CATALOG</Text>
+          {plugins.map((candidate, candidateIndex) => {
+            const runtime = candidate.state ? `  ${candidate.state}/${candidate.health || "unknown"}` : "";
+            const availability = candidate.packaged ? "" : "  image unavailable";
+            return (
+              <Text inverse={candidateIndex === index} key={candidate.pluginId}>
+                {pad(
+                  `${candidateIndex === index ? ">" : " "} ${candidate.displayName}  ${candidate.enabled ? "enabled" : "disabled"}${runtime}${availability}`,
+                  columns
+                )}
+              </Text>
+            );
+          })}
+          <Text> </Text>
+          <Text>{plugin?.pluginId}</Text>
+          <Text dimColor>{plugin?.lifecycle === "query_only" ? "Query-only, stateless" : "Unsupported lifecycle"}</Text>
+        </>
+      )}
+      <Rule width={columns} />
+      <Text dimColor>{"↑/↓ move   Enter enable/disable   l logs   r refresh   Esc back"}</Text>
+    </Box>
+  );
+}
+
 function SimpleMenu({
   choices,
   onBack,
@@ -1341,6 +1496,11 @@ function menuActions(snapshot: DeploymentSnapshot): Action[] {
         id: "configure",
         label: "Configure",
         detail: "Open Atlas Core configuration. Admin account settings are available here."
+      },
+      {
+        id: "plugins",
+        label: "Plugins",
+        detail: "Enable, disable, inspect, and view logs for first-party query-only Plugins."
       },
       { id: "logs", label: "View logs", detail: "Show the latest logs for all services or one service." }
     );

@@ -1,0 +1,24 @@
+{
+  "name": "@the-drunken-coder/atlas-building-scan-plugin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "lint": "biome lint --config-path biome.json .",
+    "format:check": "biome check --linter-enabled=false .",
+    "test": "vitest run",
+    "start": "node dist/plugins/building_scan/src/index.js"
+  },
+  "dependencies": {
+    "@the-drunken-coder/atlas-plugin-runtime": "0.1.0",
+    "@the-drunken-coder/atlas-sdk": "0.1.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.10",
+    "@types/node": "26.2.0",
+    "typescript": "^7.0.2",
+    "vitest": "4.1.11"
+  }
+}

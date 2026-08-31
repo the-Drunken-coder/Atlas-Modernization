@@ -1,11 +1,14 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { AtlasAPIError, type PluginStatus } from "@the-drunken-coder/atlas-sdk";
+import { AtlasAPIError, type PluginStatus, type SpatialOperationResult } from "@the-drunken-coder/atlas-sdk";
+import { useEffect, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { styleFixture } from "../../../test/fixtures.js";
 import { emptySnapshot } from "../../atlas/store.js";
 import { type AtlasContextValue, AtlasStaticProvider } from "../../state/atlas-context.js";
-import { PluginsPanel } from "./PluginsPanel.js";
+import { SpatialResultsInspector } from "../plugins/SpatialResultsInspector.js";
+import { type SpatialOperationExecutor, useSpatialOperationRunner } from "../plugins/use-spatial-operation-runner.js";
+import { type PluginSelection, PluginsPanel } from "./PluginsPanel.js";
 
 const available: PluginStatus = {
   plugin_id: "reference",
@@ -13,7 +16,14 @@ const available: PluginStatus = {
   status: "available",
   reason_code: null,
   checked_at: "2026-08-28T12:00:00Z",
-  operations: [{ operation_id: "inspect_fixture", display_name: "Inspect fixture", timeout_ms: 5000 }],
+  operations: [
+    {
+      operation_id: "inspect_fixture",
+      display_name: "Inspect fixture",
+      timeout_ms: 5000,
+      interaction: { kind: "map_area" }
+    }
+  ],
   tool_asset_id: null
 };
 
@@ -45,9 +55,9 @@ describe("PluginsPanel", () => {
     renderPanel({ list: vi.fn(async () => [available, starting, unavailable]) });
 
     expect(await screen.findByText("Reference Fixture")).toBeInTheDocument();
-    expect(screen.getAllByText("starting_plugin")).toHaveLength(2);
-    expect(screen.getByText("transport timeout")).toBeInTheDocument();
-    expect(screen.getAllByText("inspect_fixture")).toHaveLength(2);
+    expect(screen.getByText("starting_plugin")).toBeInTheDocument();
+    expect(screen.getByText(/unavailable: transport timeout/)).toBeInTheDocument();
+    expect(screen.queryByText("inspect_fixture")).not.toBeInTheDocument();
     expect(screen.queryByText(/invoke/i)).not.toBeInTheDocument();
   });
 
@@ -75,7 +85,7 @@ describe("PluginsPanel", () => {
 
     expect(await screen.findByText("Reference Fixture")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Refresh" }));
-    expect(await screen.findByText("Refresh failed. Showing last successful check.")).toBeInTheDocument();
+    expect(await screen.findByText("Refresh failed. Showing the last check.")).toBeInTheDocument();
     expect(screen.getByText("Reference Fixture")).toBeInTheDocument();
 
     await vi.advanceTimersByTimeAsync(10_000);
@@ -98,9 +108,8 @@ describe("PluginsPanel", () => {
     const user = userEvent.setup();
     try {
       renderPanel(reader);
-      const rows = await screen.findAllByRole("row");
-      const firstDataRow = rows[1];
-      const secondDataRow = rows[2];
+      const firstDataRow = await screen.findByRole("button", { name: /Reference Fixture/ });
+      const secondDataRow = screen.getByRole("button", { name: /Weather Feed/ });
       firstDataRow.focus();
       await user.keyboard("{ArrowDown}");
       expect(secondDataRow).toHaveFocus();
@@ -112,7 +121,148 @@ describe("PluginsPanel", () => {
       window.removeEventListener("atlas-auth-expired", expired);
     }
   });
+
+  it.each([
+    ["terrain_probe", "Inspect terrain", "terrain_result"],
+    ["parcel_lookup", "Inspect parcels", "parcel_result"]
+  ])("runs map-area operations identically for %s", async (pluginId, operationName, featureId) => {
+    const plugin: PluginStatus = {
+      ...available,
+      plugin_id: pluginId,
+      display_name: pluginId.replaceAll("_", " "),
+      operations: [
+        {
+          operation_id: `${pluginId}_search`,
+          display_name: operationName,
+          timeout_ms: 8000,
+          interaction: { kind: "map_area" }
+        }
+      ]
+    };
+    const response: SpatialOperationResult = {
+      features: [
+        {
+          id: featureId,
+          title: `Result from ${pluginId}`,
+          geometry: {
+            type: "Polygon",
+            coordinates: [
+              [
+                [-71.001, 42.001],
+                [-71.0, 42.001],
+                [-71.0, 42.0],
+                [-71.001, 42.001]
+              ]
+            ]
+          },
+          fields: [{ label: "Kind", value: "Fixture" }]
+        }
+      ],
+      provenance: { connector_id: "fixture_source", source: "Fixture source" },
+      attribution: { text: "Fixture attribution", url: "https://example.test/attribution" },
+      retrieved_at: "2026-08-30T12:00:00Z",
+      truncation: null
+    };
+    const executor: SpatialOperationExecutor = { invokeSpatial: vi.fn(async () => response) };
+    const user = userEvent.setup();
+
+    renderSpatialPanel({ list: vi.fn(async () => [plugin]) }, executor);
+    const pluginButton = (await screen.findByText(pluginId.replaceAll("_", " "))).closest("button");
+    expect(pluginButton).not.toBeNull();
+    await user.click(pluginButton as HTMLButtonElement);
+    await user.click(screen.getByRole("button", { name: new RegExp(operationName, "i") }));
+    await user.click(screen.getByRole("button", { name: "Use current view" }));
+    await user.click(screen.getByRole("button", { name: "Search" }));
+
+    expect(await screen.findByRole("option", { name: new RegExp(`Result from ${pluginId}`) })).toBeInTheDocument();
+    expect(screen.queryByText("West")).not.toBeInTheDocument();
+    expect(screen.getByText("0.01 km²")).toBeInTheDocument();
+    expect(executor.invokeSpatial).toHaveBeenCalledWith(
+      pluginId,
+      `${pluginId}_search`,
+      { west: -71.001, south: 42, east: -71, north: 42.001 },
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
+    );
+  });
+
+  it("keeps prior results visible through refresh, cancellation, and source failure", async () => {
+    const firstResponse = spatialResponse({ truncation: { reason: "feature_limit" } });
+    const signals: AbortSignal[] = [];
+    const executor: SpatialOperationExecutor = {
+      invokeSpatial: vi
+        .fn<SpatialOperationExecutor["invokeSpatial"]>()
+        .mockResolvedValueOnce(firstResponse)
+        .mockImplementationOnce((_pluginId, _operationId, _area, options) => {
+          if (options?.signal) signals.push(options.signal);
+          return new Promise((_resolve, reject) => {
+            options?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+          });
+        })
+        .mockRejectedValueOnce(new Error("fixture source offline"))
+    };
+    const user = userEvent.setup();
+
+    renderSpatialPanel({ list: vi.fn(async () => [available]) }, executor);
+    await openSpatialOperation(user, available.display_name ?? available.plugin_id, "Inspect fixture");
+
+    await user.click(screen.getByRole("button", { name: "Search" }));
+    expect(await screen.findByRole("option", { name: /Fixture result/ })).toBeInTheDocument();
+    expect(screen.getByText("Results truncated: feature limit")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Search" }));
+    expect(await screen.findByText("Searching. Previous results remain visible.")).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: /Fixture result/ })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(signals[0]?.aborted).toBe(true);
+    expect(await screen.findByText("Results are stale.")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Search" }));
+    expect(await screen.findByText("Source error")).toBeInTheDocument();
+    expect(screen.getByText("fixture source offline Previous results retained.")).toBeInTheDocument();
+    expect(screen.getByText("stale")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: /Fixture result/ })).toBeInTheDocument();
+  });
 });
+
+async function openSpatialOperation(
+  user: ReturnType<typeof userEvent.setup>,
+  pluginName: string,
+  operationName: string
+) {
+  const pluginButton = (await screen.findByText(pluginName)).closest("button");
+  expect(pluginButton).not.toBeNull();
+  await user.click(pluginButton as HTMLButtonElement);
+  await user.click(screen.getByRole("button", { name: new RegExp(operationName, "i") }));
+  await user.click(screen.getByRole("button", { name: "Use current view" }));
+}
+
+function spatialResponse({ truncation = null }: Pick<SpatialOperationResult, "truncation">): SpatialOperationResult {
+  return {
+    features: [
+      {
+        id: "fixture_result",
+        title: "Fixture result",
+        geometry: {
+          type: "Polygon",
+          coordinates: [
+            [
+              [-71.001, 42.001],
+              [-71, 42.001],
+              [-71, 42],
+              [-71.001, 42.001]
+            ]
+          ]
+        },
+        fields: [{ label: "Kind", value: "Fixture" }]
+      }
+    ],
+    provenance: { connector_id: "fixture_source", source: "Fixture source" },
+    attribution: { text: "Fixture attribution", url: "https://example.test/attribution" },
+    retrieved_at: "2026-08-30T12:00:00Z",
+    truncation
+  };
+}
 
 function renderPanel(reader: { list(options?: { signal?: AbortSignal }): Promise<PluginStatus[]> }) {
   const value: AtlasContextValue = {
@@ -138,7 +288,63 @@ function renderPanel(reader: { list(options?: { signal?: AbortSignal }): Promise
   };
   return render(
     <AtlasStaticProvider value={value}>
-      <PluginsPanel reader={reader} />
+      <PluginsPanel reader={reader} onSelectionChange={() => undefined} />
     </AtlasStaticProvider>
   );
+}
+
+function renderSpatialPanel(
+  reader: { list(options?: { signal?: AbortSignal }): Promise<PluginStatus[]> },
+  executor: SpatialOperationExecutor
+) {
+  const value = atlasContextValue();
+  return render(
+    <AtlasStaticProvider value={value}>
+      <SpatialPanel reader={reader} executor={executor} />
+    </AtlasStaticProvider>
+  );
+}
+
+function SpatialPanel({
+  reader,
+  executor
+}: {
+  reader: { list(options?: { signal?: AbortSignal }): Promise<PluginStatus[]> };
+  executor: SpatialOperationExecutor;
+}) {
+  const spatial = useSpatialOperationRunner({ executor });
+  const [selection, setSelection] = useState<PluginSelection>();
+  useEffect(() => {
+    spatial.setViewportArea({ west: -71.001, south: 42, east: -71, north: 42.001 });
+  }, [spatial.setViewportArea]);
+  return (
+    <>
+      <PluginsPanel reader={reader} selection={selection} onSelectionChange={setSelection} spatial={spatial} />
+      <SpatialResultsInspector spatial={spatial} onPreviewFeature={() => {}} onFocusFeature={() => {}} />
+    </>
+  );
+}
+
+function atlasContextValue(): AtlasContextValue {
+  return {
+    status: "ready",
+    config: {
+      atlasBaseUrl: "https://core.test",
+      protocolRevision: "rev",
+      defaultMapSourceId: "openstreetmap-default",
+      placeSearch: { provider: "maptiler", unavailableReason: "missing key" },
+      mapSources: [
+        { id: "openstreetmap-default", label: "OpenStreetMap Default", style: styleFixture("openstreetmap-default") }
+      ]
+    },
+    snapshot: emptySnapshot(),
+    health: { running: true, healthy: true, degraded: false },
+    reconnect() {},
+    submitCommand: async () => {
+      throw new Error("not used");
+    },
+    updateGeometry: async () => {
+      throw new Error("not used");
+    }
+  };
 }

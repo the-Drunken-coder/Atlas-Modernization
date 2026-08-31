@@ -28,7 +28,6 @@ services:
       MINIO_BUCKET: ${MINIO_BUCKET:-atlas-media}
       MINIO_SECURE: "false"
       SERVER_PORT: "8000"
-      ATLAS_PLUGINS: '[{"id":"reference","base_url":"http://reference-plugin:8080"}]'
     ports:
       - "127.0.0.1:8000:8000"
     volumes:
@@ -64,44 +63,8 @@ services:
       - ../internal:/app/internal:ro
       - ../../../packages/protocol:/packages/protocol:ro
       - ./source_gateway.development.json:/app/source_gateway.json:ro
-    depends_on:
-      reference-source:
-        condition: service_started
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - atlas_core_network
-
-  reference-source:
-    build:
-      context: ../../..
-      dockerfile: plugins/reference/Dockerfile
-      target: source
-    container_name: atlas_reference_source
-    healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8090/fixture?key=alpha"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - atlas_core_network
-
-  reference-plugin:
-    build:
-      context: ../../..
-      dockerfile: plugins/reference/Dockerfile
-      target: plugin
-    container_name: atlas_reference_plugin
-    environment:
-      ATLAS_SOURCE_GATEWAY_ORIGIN: http://source-gateway:8080
-    depends_on:
-      source-gateway:
-        condition: service_started
-    healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health"]
       interval: 10s
       timeout: 5s
       retries: 5

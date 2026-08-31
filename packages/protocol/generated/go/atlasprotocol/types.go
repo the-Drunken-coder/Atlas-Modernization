@@ -203,10 +203,22 @@ const (
 	PluginUnavailableReasonApplicationUnhealthy PluginUnavailableReason = "application_unhealthy"
 )
 
+type SpatialTruncationReason string
+
+const (
+	SpatialTruncationReasonFeatureLimit   SpatialTruncationReason = "feature_limit"
+	SpatialTruncationReasonResponseBudget SpatialTruncationReason = "response_budget"
+)
+
+type PluginOperationInteraction struct {
+	Kind string `json:"kind"`
+}
+
 type PluginOperationDescriptor struct {
-	OperationID string `json:"operation_id"`
-	DisplayName string `json:"display_name"`
-	TimeoutMs   int64  `json:"timeout_ms"`
+	OperationID string                      `json:"operation_id"`
+	DisplayName string                      `json:"display_name"`
+	TimeoutMs   int64                       `json:"timeout_ms"`
+	Interaction *PluginOperationInteraction `json:"interaction,omitempty"`
 }
 
 type PluginManifest struct {
@@ -224,6 +236,47 @@ type PluginStatus struct {
 	CheckedAt   *string                     `json:"checked_at"`
 	Operations  []PluginOperationDescriptor `json:"operations"`
 	ToolAssetID *string                     `json:"tool_asset_id"`
+}
+
+type MapArea struct {
+	West  float64 `json:"west"`
+	South float64 `json:"south"`
+	East  float64 `json:"east"`
+	North float64 `json:"north"`
+}
+
+type SpatialField struct {
+	Label string `json:"label"`
+	Value string `json:"value"`
+}
+
+type SpatialFeature struct {
+	ID       string         `json:"id"`
+	Title    string         `json:"title"`
+	Geometry JSONValue      `json:"geometry"`
+	Fields   []SpatialField `json:"fields"`
+}
+
+type SpatialSourceProvenance struct {
+	ConnectorID string `json:"connector_id"`
+	Source      string `json:"source"`
+}
+
+type SpatialAttribution struct {
+	Text string `json:"text"`
+	Url  string `json:"url"`
+}
+
+type SpatialTruncation struct {
+	Reason SpatialTruncationReason `json:"reason"`
+}
+
+type SpatialOperationResult struct {
+	Features    []SpatialFeature        `json:"features"`
+	Provenance  SpatialSourceProvenance `json:"provenance"`
+	Attribution SpatialAttribution      `json:"attribution"`
+	RetrievedAt string                  `json:"retrieved_at"`
+	Truncation  *SpatialTruncation      `json:"truncation"`
 }
 
 type ProtocolRevisionResponse struct {

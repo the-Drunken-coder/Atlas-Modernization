@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "plugin_id": "building_scan",
+  "display_name": "Building Scan",
+  "lifecycle": "query_only",
+  "package": "@the-drunken-coder/atlas-building-scan-plugin",
+  "docker_target": "plugin",
+  "service": "building-scan-plugin",
+  "compose": "compose.yml",
+  "core_endpoint": "core-endpoint.json",
+  "source_connector": "source-connector.json",
+  "release": {
+    "channel": "atlas_core",
+    "image_repository": "ghcr.io/the-drunken-coder/atlas-building-scan"
+  },
+  "shared_code_forbidden_terms": ["search_buildings", "overpass"]
+}

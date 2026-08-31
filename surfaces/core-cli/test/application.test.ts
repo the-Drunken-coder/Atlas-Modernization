@@ -15,9 +15,11 @@ import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { type CLIContext, type CommandRunner, runCLI } from "../src/application.js";
 import { PACKAGE_NAME, PACKAGE_VERSION } from "../src/package-metadata.js";
+import type { PluginCatalogEntry } from "../src/plugin-catalog.js";
 import type { DeploymentDetails } from "../src/terminal-ui.js";
 
 const TEST_IMAGE = `ghcr.io/the-drunken-coder/atlas-core@sha256:${"a".repeat(64)}`;
+const TEST_PLUGIN_IMAGE = `ghcr.io/the-drunken-coder/atlas-spatial-fixture@sha256:${"b".repeat(64)}`;
 const INIT_LOCK_NETWORK = "atlas_core_production_init_lock";
 
 function nextPatchVersion(version: string): string {
@@ -292,10 +294,37 @@ function result(status: number, stdout = "", stderr = "") {
 }
 
 function composeCommand(call: Call): string[] {
-  const fileFlagIndex = call.args.indexOf("--file");
+  const fileFlagIndex = call.args.lastIndexOf("--file");
   if (fileFlagIndex === -1) return [];
   const commandIndex = fileFlagIndex + 2;
   return call.args.slice(commandIndex);
+}
+
+function installTestPluginCatalog(test: TestRuntime): PluginCatalogEntry {
+  const packageRoot = join(test.home, "test-package");
+  const pluginRoot = join(packageRoot, "assets", "plugins", "spatial_fixture");
+  mkdirSync(pluginRoot, { recursive: true });
+  writeFileSync(join(pluginRoot, "compose.yml"), "services:\n  spatial-fixture-plugin:\n    image: fixture\n");
+  writeFileSync(
+    join(pluginRoot, "core-endpoint.json"),
+    '{"id":"spatial_fixture","base_url":"http://spatial-fixture-plugin:8080"}\n'
+  );
+  writeFileSync(join(pluginRoot, "source-connector.json"), '{"id":"spatial_fixture"}\n');
+  const plugin: PluginCatalogEntry = {
+    pluginId: "spatial_fixture",
+    displayName: "Spatial Fixture",
+    lifecycle: "query_only",
+    service: "spatial-fixture-plugin",
+    image: TEST_PLUGIN_IMAGE,
+    assets: {
+      compose: "compose.yml",
+      core_endpoint: "core-endpoint.json",
+      source_connector: "source-connector.json"
+    }
+  };
+  test.context.packageRoot = packageRoot;
+  test.context.pluginCatalog = [plugin];
+  return plugin;
 }
 
 function composeFile(call: Call): string | undefined {
@@ -499,14 +528,13 @@ describe("atlas-core CLI", () => {
     expect(env).toContain("MINIO_ROOT_PASSWORD=secret-2-");
     expect(env).toContain("API_AUTH_KEY=secret-3-");
     expect(env).toContain("ATLAS_ADMIN_PASSWORD=secret-4-");
-    expect(env).toContain("ATLAS_PLUGINS=[]");
-    expect(env).toContain("ATLAS_SOURCE_GATEWAY_CONFIG_FILE=");
     expect(JSON.parse(readFileSync(join(config, "state.json"), "utf8"))).toEqual({
-      schema: 1,
+      schema: 2,
       phase: "ready",
       initializedAt: "2026-08-28T12:00:00.000Z",
       packageVersion: PACKAGE_VERSION,
-      dockerEngineId: "test-engine-id"
+      dockerEngineId: "test-engine-id",
+      enabledPlugins: []
     });
     expect(statSync(join(config, ".env")).mode & 0o077).toBe(0);
     expect(existsSync(join(config, ".init.lock"))).toBe(false);
@@ -1123,9 +1151,7 @@ describe("atlas-core CLI", () => {
     setCoreVersion(test, "0.1.2");
     test.context.confirmCoreUpdate = async () => true;
     const envPath = join(test.home, ".atlas", "core", ".env");
-    const configuredEnvironment = readFileSync(envPath, "utf8")
-      .replace("ATLAS_PLUGINS=[]", 'ATLAS_PLUGINS=[{"id":"reference","base_url":"http://reference:8080"}]')
-      .replace("ATLAS_SOURCE_GATEWAY_CONFIG_FILE=", "ATLAS_SOURCE_GATEWAY_CONFIG_FILE=/etc/atlas/gateway.json");
+    const configuredEnvironment = readFileSync(envPath, "utf8");
     writeFileSync(envPath, configuredEnvironment, { mode: 0o600 });
 
     expect(await runCLI(["update", "all"], test.context)).toBe(0);
@@ -1342,6 +1368,114 @@ describe("atlas-core CLI", () => {
 
     expect(await runCLI(["status"], test.context)).toBe(1);
     expect(test.stderr.join("")).toContain("api is unhealthy");
+  });
+
+  it("migrates schema 1 state and lists catalog Plugins without changing deployment versions", async () => {
+    const test = runtime();
+    markInitialized(test);
+    installTestPluginCatalog(test);
+    setCoreVersion(test, "0.1.2");
+
+    expect(await runCLI(["plugins"], test.context)).toBe(0);
+    expect(test.stdout.join("")).toContain("spatial_fixture\tSpatial Fixture\tdisabled");
+    const state = JSON.parse(readFileSync(join(test.home, ".atlas", "core", "state.json"), "utf8"));
+    expect(state).toMatchObject({ schema: 2, enabledPlugins: [], packageVersion: "0.1.2" });
+  });
+
+  it("enables a pinned query-only Plugin transactionally and includes its overlay", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const plugin = installTestPluginCatalog(test);
+
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
+    const configRoot = join(test.home, ".atlas", "core", "plugins", plugin.pluginId);
+    expect(JSON.parse(readFileSync(join(test.home, ".atlas", "core", "state.json"), "utf8"))).toMatchObject({
+      schema: 2,
+      enabledPlugins: [plugin.pluginId]
+    });
+    for (const file of ["compose.yml", "core-endpoint.json", "source-connector.json"]) {
+      expect(existsSync(join(configRoot, file))).toBe(true);
+      expect(statSync(join(configRoot, file)).mode & 0o077).toBe(0);
+    }
+    expect(test.runner.calls.some((call) => call.args[0] === "pull" && call.args[1] === TEST_PLUGIN_IMAGE)).toBe(true);
+    const configCall = test.runner.calls.find((call) => composeCommand(call)[0] === "config");
+    expect(configCall?.args).toContain(join(configRoot, "compose.yml"));
+    expect(test.runner.calls.map(composeCommand)).toContainEqual([
+      "up",
+      "-d",
+      "--pull",
+      "never",
+      "--force-recreate",
+      "--wait",
+      "--wait-timeout",
+      "120",
+      "api",
+      "source-gateway",
+      plugin.service
+    ]);
+  });
+
+  it("enables a Plugin without starting a stopped deployment", async () => {
+    const test = runtime();
+    markInitialized(test, false);
+    const plugin = installTestPluginCatalog(test);
+    test.runner.serviceStates = [];
+
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
+    expect(test.runner.calls.map(composeCommand)).not.toContainEqual(expect.arrayContaining(["up"]));
+    expect(test.stdout.join("")).toContain("It will start with Atlas Core");
+  });
+
+  it("rolls back Plugin state and private assets when a running enable fails", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const plugin = installTestPluginCatalog(test);
+    test.runner.failComposeUp = true;
+
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(1);
+    expect(JSON.parse(readFileSync(join(test.home, ".atlas", "core", "state.json"), "utf8"))).toMatchObject({
+      enabledPlugins: []
+    });
+    expect(existsSync(join(test.home, ".atlas", "core", "plugins", plugin.pluginId))).toBe(false);
+    expect(test.stderr.join("")).toContain("injected compose up failure");
+  });
+
+  it("disables with the old composition, preserves the cached image, and removes staged assets", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const plugin = installTestPluginCatalog(test);
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
+    test.runner.calls.length = 0;
+
+    expect(await runCLI(["plugins", "disable", plugin.pluginId], test.context)).toBe(0);
+    expect(test.runner.calls.map(composeCommand)).toContainEqual(["rm", "-s", "-f", plugin.service]);
+    expect(test.runner.calls.some((call) => call.args[0] === "image" && call.args[1] === "rm")).toBe(false);
+    expect(JSON.parse(readFileSync(join(test.home, ".atlas", "core", "state.json"), "utf8"))).toMatchObject({
+      enabledPlugins: []
+    });
+    expect(existsSync(join(test.home, ".atlas", "core", "plugins", plugin.pluginId))).toBe(false);
+  });
+
+  it("allows Plugin status and logs across CLI-only version drift but rejects mutations", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const plugin = installTestPluginCatalog(test);
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
+    setCoreVersion(test, "0.1.2");
+    test.stdout.length = 0;
+
+    expect(await runCLI(["plugins", "status", plugin.pluginId], test.context)).toBe(0);
+    expect(await runCLI(["plugins", "logs", plugin.pluginId], test.context)).toBe(0);
+    expect(await runCLI(["plugins", "disable", plugin.pluginId], test.context)).toBe(1);
+    expect(test.stderr.join("")).toContain("update all");
+  });
+
+  it("rejects arbitrary Plugin IDs and bundles", async () => {
+    const test = runtime();
+    markInitialized(test);
+    installTestPluginCatalog(test);
+    expect(await runCLI(["plugins", "enable", "not_cataloged"], test.context)).toBe(1);
+    expect(await runCLI(["plugins", "enable", "spatial_fixture", "/tmp/bundle"], test.context)).toBe(2);
   });
 
   it("resolves a relative ATLAS_CORE_HOME before invoking Compose", async () => {

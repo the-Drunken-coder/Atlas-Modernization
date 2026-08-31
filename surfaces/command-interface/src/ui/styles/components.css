@@ -146,196 +146,145 @@
   min-width: 0;
 }
 
-.plugins-panel__toolbar {
-  position: sticky;
-  z-index: 2;
-  top: 0;
+.plugin-browser__summary {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  min-height: 42px;
-  padding: 6px var(--space-2);
-  border-bottom: 1px solid var(--border);
-  background: var(--surface-1);
-  color: var(--text-2);
-  font-family: var(--font-mono);
-  font-size: 10px;
-  text-transform: uppercase;
+  gap: var(--space-2);
+  padding-block: 3px;
 }
 
-.plugins-panel__refresh {
-  min-height: 26px;
-  padding: 0 8px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--surface-2);
-  color: var(--text-1);
-  font: inherit;
-  cursor: pointer;
+.plugin-browser__summary .btn {
+  min-height: 24px;
 }
 
-.plugins-panel__refresh:hover:not(:disabled) {
-  background: var(--surface-hover);
-}
-
-.plugins-panel__refresh:disabled {
-  opacity: 0.55;
-  cursor: default;
-}
-
-.plugins-panel__error {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: var(--space-2);
-  border-bottom: 1px solid var(--error);
-  background: rgb(220 90 85 / 10%);
-  color: var(--error-text);
-  font-size: 11px;
-}
-
-.plugin-table__header,
-.plugin-row {
-  display: grid;
-  grid-template-columns: minmax(82px, 0.8fr) minmax(120px, 1.35fr) minmax(100px, 1fr) minmax(72px, 0.7fr);
-}
-
-.plugin-table__header {
-  position: sticky;
-  z-index: 1;
-  top: 42px;
-  border-bottom: 1px solid var(--border-strong);
-  background: var(--bg-base);
-  color: var(--text-3);
-  font-family: var(--font-mono);
-  font-size: 9px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-.plugin-table__header > span,
-.plugin-row > * {
+.plugin-detail,
+.plugin-operation {
   min-width: 0;
-  padding: 7px 8px;
-  border-right: 1px solid var(--border);
 }
 
-.plugin-table__header > span:last-child,
-.plugin-row > *:last-child {
-  border-right: 0;
-}
-
-.plugin-row {
-  border-bottom: 1px solid var(--border);
-  background: var(--surface-1);
-  color: var(--text-2);
-  cursor: default;
-}
-
-.plugin-row:hover {
-  background: var(--surface-hover);
-}
-
-.plugin-row:focus-visible {
-  position: relative;
-  z-index: 1;
-  background: var(--accent-muted);
-  outline: 2px solid var(--selected-ring);
-  outline-offset: -2px;
-}
-
-.plugin-row__state,
-.plugin-row__identity,
-.plugin-row__operations {
+.plugin-detail__summary {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  min-height: 30px;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-2);
+  font-size: 10px;
 }
 
-.plugin-row__state {
-  position: relative;
-  padding-left: 17px;
+.plugin-detail__status-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
 }
 
-.plugin-state-marker {
-  position: absolute;
-  top: 11px;
-  left: 7px;
-  width: 5px;
-  height: 5px;
-  background: var(--warning);
+.plugin-operation-list {
+  margin: 0;
+  border-top: 1px solid var(--border);
 }
 
-.plugin-row[data-status="available"] .plugin-state-marker {
-  background: var(--success);
+.plugin-operation {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
 }
 
-.plugin-row[data-status="unavailable"] .plugin-state-marker {
-  background: var(--error);
+.plugin-operation__area {
+  display: grid;
+  gap: 7px;
 }
 
-.plugin-row__state strong,
-.plugin-row__identity strong {
-  overflow: hidden;
-  color: var(--text-1);
-  font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.plugin-operation__area-heading {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 7px;
+  min-height: 28px;
 }
 
-.plugin-row__state strong {
-  font-family: var(--font-mono);
-  font-size: 9px;
-  text-transform: uppercase;
+.plugin-operation__area-heading strong {
+  font-size: 12px;
+  font-weight: 600;
 }
 
-.plugin-row__state span,
-.plugin-row__identity code,
-.plugin-row__operations span,
-.plugin-row time {
+.plugin-operation__area-heading span {
+  color: var(--text-2);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.plugin-operation__area-heading .icon-button {
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  min-height: 24px;
+}
+
+.plugin-operation__bounds {
   overflow: hidden;
   color: var(--text-3);
   font-family: var(--font-mono);
   font-size: 9px;
+  font-variant-numeric: tabular-nums;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-@container (max-width: 360px) {
-  .plugin-table__header {
-    display: none;
-  }
-
-  .plugin-row {
-    grid-template-columns: 1fr;
-    padding: var(--space-1) 0;
-  }
-
-  .plugin-row > * {
-    display: grid;
-    grid-template-columns: 72px minmax(0, 1fr);
-    padding: 3px var(--space-2);
-    border-right: 0;
-  }
-
-  .plugin-row > *::before {
-    content: attr(data-label);
-    color: var(--text-3);
-    font-family: var(--font-mono);
-    font-size: 9px;
-    text-transform: uppercase;
-  }
-
-  .plugin-row__state {
-    padding-left: var(--space-2);
-  }
-
-  .plugin-state-marker {
-    top: 8px;
-    left: 60px;
-  }
+.plugin-operation__actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 6px;
 }
 
+.plugin-operation__notice {
+  margin: 0;
+  padding: 5px 7px;
+}
+
+.plugin-operation__notice .bp6-callout-body {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 7px;
+}
+
+.plugin-operation__notice .btn {
+  min-height: 24px;
+  padding: 2px 5px;
+  font-size: 10px;
+}
+
+.plugin-operation__result-summary {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  min-width: 0;
+  padding-top: 7px;
+  border-top: 1px solid var(--border);
+  color: var(--text-3);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
+
+.plugin-operation__result-summary span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plugin-operation__result-summary span + span::before {
+  content: " · ";
+  white-space: pre;
+}
+
+.inspector__empty-value {
+  color: var(--text-3);
+  font-size: 12px;
+}
 .api-key-create {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

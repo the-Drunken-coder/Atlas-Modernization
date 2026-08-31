@@ -57,7 +57,25 @@ atlas-core status
 atlas-core logs [core|source-gateway|postgres|minio] [--follow]
 atlas-core doctor
 atlas-core version
+atlas-core plugins
+atlas-core plugins enable <plugin_id>
+atlas-core plugins disable <plugin_id>
+atlas-core plugins status [plugin_id]
+atlas-core plugins logs <plugin_id> [--follow]
 ```
+
+## Plugins
+
+The `Plugins` menu and matching commands manage trusted, query-only Plugins published in the installed Atlas Core
+catalog. Building Scan is available as an opt-in first-party Plugin; no Plugin is enabled by default. The CLI does not
+accept arbitrary paths, images, or third-party bundles.
+
+Enabling a Plugin pulls the catalog's immutable image digest, stages its private Compose and configuration fragments,
+validates the complete Compose model, and then commits the new state. A running deployment starts the Plugin and
+restarts Core and Source Gateway with a health wait. A stopped deployment stays stopped. Failure restores the previous
+files, state, and running composition. Disabling removes the stateless Plugin container and its fragments but keeps the
+cached image. Plugin mutations require the CLI and deployment versions to match; status and logs remain available after
+a CLI-only update.
 
 The menu's `Configure` action opens a configuration menu. `Admin account` changes the password for the fixed `admin`
 username. The direct `config` command opens the same hidden password prompt. The password must contain at least 12
@@ -76,8 +94,9 @@ and available release before changing anything. Choose one of two update scopes:
 - `Update CLI only` or `atlas-core update cli` installs the latest global CLI through the current npm prefix. The
   running Atlas Core containers, credentials, and durable storage stay unchanged.
 - `Update CLI + Atlas Core` or `atlas-core update all` installs the latest CLI, pulls that release's digest-pinned Core
-  image, and restarts a running deployment against the existing PostgreSQL and MinIO volumes. A stopped deployment
-  stays stopped.
+  image plus every enabled Plugin image, and restarts a running deployment against the existing PostgreSQL and MinIO
+  volumes. A stopped deployment stays stopped. The update refuses a target catalog that no longer contains an enabled
+  Plugin and pulls every target digest before changing the deployment.
 
 Core releases may carry schema migrations. Before a Core update, create and validate the paired PostgreSQL and MinIO
 backup described in the [deployment runbook](https://github.com/the-Drunken-coder/Atlas-Modernization/blob/main/services/core/docs/DEPLOYMENT_RUNBOOK.md#pre-deploy-backup).
@@ -105,10 +124,10 @@ Reset lists what it will delete and asks `Continue? [y/N]`. It proceeds only aft
 ownership labels and stops before deleting anything if another container uses either durable volume. It does not remove
 separately managed tunnels, reverse proxies, or their credentials.
 
-The packaged deployment also starts the private Source Gateway from the same immutable Core image. Its committed
-configuration has no connectors, and Core starts with no configured Plugins. `ATLAS_PLUGINS` and
-`ATLAS_SOURCE_GATEWAY_CONFIG_FILE` remain deployment-file settings; the CLI does not add installation or connector
-configuration commands.
+The packaged deployment also starts the private Source Gateway from the same immutable Core image. Its base
+configuration has no connectors, and Core starts with no configured Plugins. Enabling a catalog Plugin mounts that
+Plugin's endpoint and connector fragments into private directories without adding Plugin-specific settings to the base
+Compose file.
 
 The first release binds the Core API, PostgreSQL, and MinIO ports to loopback. It does not configure public ingress.
 Start, restart, and update require registry access and pull the release's digest-pinned image. Neither a locally

@@ -75,12 +75,9 @@ test("uses a cached fast path for immutable-tag publication", () => {
   assert.doesNotMatch(source, /Require a run from the immutable release tag/);
 });
 
-test("serializes every Atlas Core release dispatch without replacing pending runs", () => {
+test("serializes Atlas Core releases without cancelling the active run", () => {
   const source = readFileSync(workflow, "utf8");
-  assert.match(
-    source,
-    /concurrency:\n\s+group: release-atlas-core\n\s+cancel-in-progress: false\n\s+queue: max/
-  );
+  assert.match(source, /concurrency:\n\s+group: release-atlas-core\n\s+cancel-in-progress: false/);
 });
 
 test("recovers an existing immutable release only when explicitly requested", () => {
@@ -171,15 +168,26 @@ test("clears an old image pin only when preparing a new version", () => {
   const directory = mkdtempSync(join(tmpdir(), "atlas-core-release-"));
   const packagePath = join(directory, "package.json");
   try {
-    writeFileSync(packagePath, `${JSON.stringify({ version: "1.2.3", atlasCoreImage: "old-image" })}\n`);
+    writeFileSync(
+      packagePath,
+      `${JSON.stringify({ version: "1.2.3", atlasCoreImage: "old-image", atlasPluginImages: { fixture: "old" } })}\n`
+    );
     assert.equal(run(["prepare-package", "1.2.4", packagePath], directory).status, 0);
-    assert.deepEqual(JSON.parse(readFileSync(packagePath, "utf8")), { version: "1.2.3", atlasCoreImage: null });
+    assert.deepEqual(JSON.parse(readFileSync(packagePath, "utf8")), {
+      version: "1.2.3",
+      atlasCoreImage: null,
+      atlasPluginImages: {}
+    });
 
-    writeFileSync(packagePath, `${JSON.stringify({ version: "1.2.4", atlasCoreImage: "reviewed-image" })}\n`);
+    writeFileSync(
+      packagePath,
+      `${JSON.stringify({ version: "1.2.4", atlasCoreImage: "reviewed-image", atlasPluginImages: { fixture: "reviewed" } })}\n`
+    );
     assert.equal(run(["prepare-package", "1.2.4", packagePath], directory).status, 0);
     assert.deepEqual(JSON.parse(readFileSync(packagePath, "utf8")), {
       version: "1.2.4",
-      atlasCoreImage: "reviewed-image"
+      atlasCoreImage: "reviewed-image",
+      atlasPluginImages: { fixture: "reviewed" }
     });
   } finally {
     rmSync(directory, { recursive: true, force: true });

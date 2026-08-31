@@ -67,6 +67,43 @@ describe("planFocusMove", () => {
     });
   });
 
+  it("fits all polygons in a multipolygon target", () => {
+    const move = planFocusMove(
+      {
+        type: "MultiPolygon",
+        coordinates: [
+          [
+            [
+              [10, 20],
+              [12, 20],
+              [12, 22],
+              [10, 20]
+            ]
+          ],
+          [
+            [
+              [30, 5],
+              [32, 5],
+              [32, 7],
+              [30, 5]
+            ]
+          ]
+        ]
+      },
+      view([0, 0], 4),
+      "commit"
+    );
+
+    expect(move).toMatchObject({
+      kind: "fit-bounds",
+      bounds: [
+        [10, 5],
+        [32, 22]
+      ],
+      maxZoom: COMMIT_FIT_MAX_ZOOM
+    });
+  });
+
   it("returns null for empty geometry", () => {
     expect(planFocusMove({ type: "LineString", coordinates: [] }, view([0, 0], 4))).toBeNull();
   });

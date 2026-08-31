@@ -1,6 +1,7 @@
 import { Callout } from "@blueprintjs/core";
+import type { MapArea } from "@the-drunken-coder/atlas-sdk";
 import { type MapMouseEvent, type Map as MlMap, type StyleSpecification } from "maplibre-gl";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { type MouseEvent as ReactMouseEvent, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { MapSourceConfig } from "../../../app/config.js";
 import { sanitizeConnectionError } from "../../../atlas/connection-error.js";
 import { Button } from "../../primitives/controls.js";
@@ -16,7 +17,14 @@ import { reticleForVisibleTarget } from "../interaction/map-targets.js";
 import { useMapCamera } from "../interaction/use-map-camera.js";
 import { useMapReticleInteraction } from "../interaction/use-map-reticle-interaction.js";
 import { createEditingMarkers, type MapEditing } from "../rendering/map-editing.js";
-import { pushEditingOverlay, pushSources, registerSourcesAndLayers } from "../rendering/map-layers.js";
+import {
+  pushEditingOverlay,
+  pushSources,
+  pushSpatialOverlay,
+  registerSourcesAndLayers,
+  SPATIAL_RESULT_LAYERS,
+  type SpatialMapOverlay
+} from "../rendering/map-layers.js";
 import { type MapSources } from "../rendering/map-sources.js";
 import {
   clearMarkers,
@@ -28,6 +36,7 @@ import {
   updateSymbolMarkerElement
 } from "../rendering/map-symbol-markers.js";
 import { getMapLibreRuntime, loadMapLibre, type MapLibreRuntime } from "../runtime/maplibre-runtime.js";
+import { MapAreaSelection } from "./MapAreaSelection.js";
 import { MapCursorOverlay } from "./MapCursorOverlay.js";
 import { MapRegionComparison } from "./MapRegionComparison.js";
 import { MapReticle } from "./MapReticle.js";
@@ -50,10 +59,21 @@ type MapViewProps = {
   focusTarget?: MapReticleTarget | null;
   placeDetailTarget?: MapTarget | null;
   cameraCommand?: MapCameraCommand | null;
+  spatial?: MapSpatialInteraction;
   onSelectEntity: (id: string) => void;
   onMapContextMenu: (info: MapContextMenuInfo) => void;
   onBackgroundClick?: () => void;
   onStyleSwitchError?: (error: { failedStyleId: string; activeStyleId: string }) => void;
+};
+
+export type MapSpatialInteraction = SpatialMapOverlay & {
+  area: MapArea | null;
+  drawing: boolean;
+  onAreaChange(area: MapArea): void;
+  onDrawingComplete(): void;
+  onCancelDrawing(): void;
+  onViewportArea(area: MapArea): void;
+  onSelectFeature(id: string): void;
 };
 
 type SymbolMarkerEntry = {
@@ -73,6 +93,7 @@ export function MapView({
   focusTarget,
   placeDetailTarget,
   cameraCommand,
+  spatial,
   onSelectEntity,
   onMapContextMenu,
   onBackgroundClick,
@@ -84,6 +105,7 @@ export function MapView({
   const mapLibreRef = useRef<MapLibreRuntime | undefined>(undefined);
   const sourcesRef = useRef(sources);
   const editingRef = useRef(editing);
+  const spatialRef = useRef(spatial);
   const initialMapRef = useRef({ initialCenter, style, styleId });
   const currentStyleIdRef = useRef<string | undefined>(undefined);
   const pendingStyleIdRef = useRef<string | undefined>(undefined);
@@ -105,6 +127,7 @@ export function MapView({
   styleSwitchErrorRef.current = onStyleSwitchError;
   sourcesRef.current = sources;
   editingRef.current = editing;
+  spatialRef.current = spatial;
   initialMapRef.current = { initialCenter, style, styleId };
   const clearPendingCommit = useCallback(() => {
     if (pendingCommitTimeoutRef.current === undefined) return false;
@@ -220,6 +243,7 @@ export function MapView({
         setMapReady(true);
         pushSources(mapInstance, sourcesRef.current);
         pushEditingOverlay(mapInstance, editingRef.current);
+        pushSpatialOverlay(mapInstance, spatialRef.current);
         fitWorldOnce(mapInstance, fitWorldOnceRef);
 
         if (!eventsRegisteredRef.current) {
@@ -250,6 +274,7 @@ export function MapView({
             registerSourcesAndLayers(mapInstance);
             pushSources(mapInstance, sourcesRef.current);
             pushEditingOverlay(mapInstance, editingRef.current);
+            pushSpatialOverlay(mapInstance, spatialRef.current);
           }
           styleSwitchErrorRef.current?.({ failedStyleId, activeStyleId: currentStyleIdRef.current ?? failedStyleId });
         }
@@ -303,6 +328,7 @@ export function MapView({
         registerSourcesAndLayers(map);
         pushSources(map, sourcesRef.current);
         pushEditingOverlay(map, editingRef.current);
+        pushSpatialOverlay(map, spatialRef.current);
       }
       styleSwitchErrorRef.current?.({ failedStyleId: styleId, activeStyleId: currentStyleIdRef.current ?? styleId });
     };
@@ -390,6 +416,33 @@ export function MapView({
     editMarkersRef.current = createEditingMarkers(map, editing, maplibre.Marker);
   }, [editing, mapReady]);
 
+  useEffect(() => {
+    const map = mapRef.current;
+    if (map && readyRef.current) pushSpatialOverlay(map, spatial);
+  }, [spatial]);
+
+  const handleCanvasClick = (event: ReactMouseEvent<HTMLDivElement>) => {
+    const map = mapRef.current;
+    if (
+      map &&
+      spatial &&
+      !(event.target instanceof Element && event.target.closest("[data-map-interaction-control]"))
+    ) {
+      const bounds = event.currentTarget.getBoundingClientRect();
+      const feature = map.queryRenderedFeatures([event.clientX - bounds.left, event.clientY - bounds.top], {
+        layers: SPATIAL_RESULT_LAYERS
+      })[0];
+      const featureId = feature?.properties?.featureId;
+      if (typeof featureId === "string") {
+        event.preventDefault();
+        event.stopPropagation();
+        spatial.onSelectFeature(featureId);
+        return;
+      }
+    }
+    reticleInteraction.canvasHandlers.onClick(event);
+  };
+
   return (
     <div className="map-view" style={{ position: "absolute", inset: 0 }}>
       <div
@@ -398,6 +451,7 @@ export function MapView({
         style={{ position: "absolute", inset: 0 }}
         data-testid="map-canvas"
         {...reticleInteraction.canvasHandlers}
+        onClick={handleCanvasClick}
       >
         <div className="maplibre-host" ref={containerRef} />
         <MapRegionComparison
@@ -413,6 +467,20 @@ export function MapView({
           notifyUserGesture={notifyUserGesture}
           suppressNextClick={reticleInteraction.mapActions.suppressNextClick}
         />
+        {spatial ? (
+          <MapAreaSelection
+            mapCanvas={mapCanvasRef.current}
+            map={mapRef.current}
+            mapReady={mapReady}
+            area={spatial.area}
+            drawing={spatial.drawing}
+            onAreaChange={spatial.onAreaChange}
+            onDrawingComplete={spatial.onDrawingComplete}
+            onCancelDrawing={spatial.onCancelDrawing}
+            onViewportArea={spatial.onViewportArea}
+            suppressNextClick={reticleInteraction.mapActions.suppressNextClick}
+          />
+        ) : null}
         {reticleInteraction.cursorOverlay ? <MapCursorOverlay {...reticleInteraction.cursorOverlay} /> : null}
         {reticleInteraction.visibleReticle ? (
           <MapReticle

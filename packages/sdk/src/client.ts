@@ -11,6 +11,7 @@ import type {
   EntityResource,
   EntityUpdateRequest,
   JSONValue,
+  MapArea,
   ObjectCreateRequest,
   ObjectResource,
   ObjectUpdateRequest,
@@ -19,11 +20,12 @@ import type {
   RuntimeRegistrationRequest,
   RuntimeStopRequest,
   RuntimeTaskDeliveryResponse,
+  SpatialOperationResult,
   TaskCreateRequest,
   TaskProgressRequest,
   TaskResource
 } from "./protocol.js";
-import { isJSONValue, isPluginDiscoveryResponse } from "./protocol.js";
+import { isJSONValue, isMapArea, isPluginDiscoveryResponse, isSpatialOperationResult } from "./protocol.js";
 import { SyncEngine } from "./sync-engine.js";
 import type {
   AtlasSubscription,
@@ -281,7 +283,25 @@ export class AtlasClient {
         input,
         undefined,
         options?.signal
-      )
+      ),
+    invokeSpatial: (
+      pluginId: string,
+      operationId: string,
+      area: MapArea,
+      options?: { signal?: AbortSignal }
+    ): Promise<SpatialOperationResult> => {
+      if (!isMapArea(area)) {
+        throw new TypeError("Spatial Operation input must be a non-crossing map area no larger than 5 km²");
+      }
+      return this.transport.json(
+        "POST",
+        `/plugins/${encodeURIComponent(pluginId)}/operations/${encodeURIComponent(operationId)}`,
+        isSpatialOperationResult,
+        area,
+        undefined,
+        options?.signal
+      );
+    }
   };
 
   sync = {

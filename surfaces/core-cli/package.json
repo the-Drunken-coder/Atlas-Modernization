@@ -2,6 +2,7 @@
   "name": "atlas-core",
   "version": "0.1.6",
   "atlasCoreImage": "ghcr.io/the-drunken-coder/atlas-core@sha256:a25359313df8d452215ce354f282c7a0f61e58ec3b3d8cb94fdabefeaa25c7ba",
+  "atlasPluginImages": {},
   "description": "Install and operate a durable Atlas Core deployment with Docker Compose.",
   "author": "the-Drunken-coder",
   "license": "MIT",
@@ -38,7 +39,7 @@
   },
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
-    "prebuild": "node scripts/generate-package-metadata.mjs",
+    "prebuild": "node ../../scripts/plugins.mjs generate-catalog --package-root surfaces/core-cli && node scripts/generate-package-metadata.mjs",
     "build": "tsc -p tsconfig.build.json",
     "prepack": "npm run clean && npm run build",
     "typecheck": "tsc --noEmit -p tsconfig.json",

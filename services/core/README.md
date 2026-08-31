@@ -78,12 +78,11 @@ stack refuses to start unless `ENABLE_API_AUTH=true`,
 `DATABASE_RECREATE_ON_STARTUP` is not enabled. Browser admins
 can create additional managed machine keys after sign-in.
 
-Development Compose also starts the private Source Gateway, a deterministic
-`reference` source, and the query-only `reference` Plugin. After Core starts,
-`GET /plugins` reports that Plugin and `inspect_fixture` accepts
-`{"key":"alpha"}` or `{"key":"bravo"}`. The production topology starts the
-Source Gateway with an empty connector configuration and does not include the
-reference containers.
+Development Compose starts the private Source Gateway with an empty base connector configuration. Plugin containers
+and both fragment directories are added by Plugin-owned Compose overlays such as `plugins/reference/compose.yml`.
+With that development-only overlay applied, `GET /plugins` reports the query-only `reference` Plugin and
+`inspect_fixture` accepts `{"key":"alpha"}` or `{"key":"bravo"}`. The production base topology also starts without
+configured Plugins or connectors.
 
 The bundled production Compose stack accepts only `ATLAS_ADMIN_PASSWORD`
 because it does not mount an operator password file. Direct Core processes and
@@ -153,10 +152,11 @@ cd services/core
 go run ./cmd/atlas_core
 ```
 
-Run the Source Gateway separately with a deployment-owned connector file:
+Run the Source Gateway separately with a deployment-owned base settings file and optional connector-fragment directory:
 
 ```bash
 ATLAS_SOURCE_GATEWAY_CONFIG=docker/source_gateway.development.json \
+  ATLAS_SOURCE_CONNECTOR_CONFIG_DIR=/path/to/connector-fragments \
   go run ./cmd/atlas_source_gateway
 ```
 
@@ -216,7 +216,12 @@ Key environment variables:
 - `API_AUTH_KEY` (required bootstrap key when auth enabled; required, strong, and non-placeholder in the production Docker image)
 - `MAX_UPLOAD_SIZE_MB` (default `100`, must be `1..10240`)
 - `MAX_VIEW_SIZE_MB` (default `10`, must be `1..100`)
-- `ATLAS_PLUGINS` (complete JSON-array override of configured Plugin IDs and private plain-HTTP origins, for example `[{"id":"reference","base_url":"http://reference-plugin:8080"}]`)
+- `ATLAS_PLUGIN_CONFIG_DIR` (optional directory of strict `*.json` Plugin endpoint fragments; each file contains one `id` and private `base_url`)
+- `ATLAS_SOURCE_CONNECTOR_CONFIG_DIR` (Source Gateway directory of strict `*.json` connector fragments, loaded with the base settings file)
+
+Both fragment directories are read in sorted filename order. Unknown fields, invalid files, duplicate IDs, or a partially
+configured fragment fail startup. Plugin folders own their endpoint and connector fragments; shared Core settings do not
+contain a Plugin registry.
 
 ## API Surface
 

@@ -115,7 +115,7 @@ describe("MapView region comparison", () => {
 
     expect(screen.queryByTestId("map-comparison-region")).not.toBeInTheDocument();
     expect(screen.getByText("Drag a region. Shift-drag still zooms.")).toBeInTheDocument();
-    expect(canvas).toHaveClass("map-canvas--compare-drawing");
+    expect(canvas).toHaveClass("map-canvas--region-drawing");
 
     const nativeControls = document.createElement("div");
     nativeControls.className = "maplibregl-control-container";

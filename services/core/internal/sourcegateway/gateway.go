@@ -427,7 +427,9 @@ func (c *connector) attempt(ctx context.Context, prepared preparedRequest, rule 
 	for name, value := range c.secretHeaders {
 		request.Header.Set(name, value)
 	}
-	request.Header.Set("User-Agent", "")
+	if !containsHeader(prepared.headers, "user-agent") {
+		request.Header.Set("User-Agent", "")
+	}
 	request.ContentLength = int64(len(prepared.body))
 	response, err := c.client.Do(request)
 	if err != nil {

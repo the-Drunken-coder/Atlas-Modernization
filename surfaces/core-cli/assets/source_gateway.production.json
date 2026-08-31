@@ -1,4 +1,3 @@
 {
-  "listen_address": ":8080",
-  "connectors": []
+  "listen_address": ":8080"
 }

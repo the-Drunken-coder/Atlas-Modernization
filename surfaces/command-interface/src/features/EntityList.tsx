@@ -1,4 +1,4 @@
-import { Button, InputGroup } from "@blueprintjs/core";
+import { InputGroup } from "@blueprintjs/core";
 import type { EntityResource } from "@the-drunken-coder/atlas-sdk";
 import { useEffect, useMemo, useRef } from "react";
 import {
@@ -14,8 +14,9 @@ import {
   heartbeatLevel
 } from "../atlas/entities.js";
 import { formatPercent, formatRelativeTime } from "../atlas/format.js";
-import { ChevronRightIcon, SearchIcon } from "../ui/primitives/icons.js";
+import { SearchIcon } from "../ui/primitives/icons.js";
 import { connectionStatusColor, connectionStatusLabel } from "../ui/primitives/StatusPill.js";
+import { PanelListRow } from "./shared/PanelListRow.js";
 import { useHeartbeatClock } from "./useHeartbeatClock.js";
 
 type EntityListProps = {
@@ -84,13 +85,11 @@ export function EntityList({
         <ul className="entity-list">
           {visibleEntities.map((entity) => (
             <li key={entity.entity_id}>
-              <Button
-                type="button"
-                className="entity-row"
-                minimal
-                fill
-                alignText="start"
-                data-selected={entity.entity_id === selectedId}
+              <PanelListRow
+                title={entityDisplayName(entity)}
+                meta={entityMeta(entity, now)}
+                indicatorColor={entityDotColor(entity, now)}
+                selected={entity.entity_id === selectedId}
                 aria-current={entity.entity_id === selectedId ? "true" : undefined}
                 ref={
                   entity.entity_id === selectedId && entity.entity_id === restoreFocusId ? restoreFocusRef : undefined
@@ -102,14 +101,7 @@ export function EntityList({
                 onFocus={() => {
                   focusedEntityIdRef.current = entity.entity_id;
                 }}
-              >
-                <span className="entity-row__dot" style={{ background: entityDotColor(entity, now) }} />
-                <span className="entity-row__main">
-                  <span className="entity-row__name">{entityDisplayName(entity)}</span>
-                  <span className="entity-row__meta">{entityMeta(entity, now)}</span>
-                </span>
-                <ChevronRightIcon size={12} className="entity-row__chevron" />
-              </Button>
+              />
             </li>
           ))}
         </ul>

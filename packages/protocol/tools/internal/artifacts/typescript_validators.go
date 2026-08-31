@@ -13,6 +13,9 @@ var runtimeValidatorTypeNames = []string{
 	"PluginManifest",
 	"PluginStatus",
 	"PluginDiscoveryResponse",
+	"MapArea",
+	"SpatialGeometry",
+	"SpatialOperationResult",
 	"ProtocolRevisionResponse",
 	"EntityCheckInRequest",
 	"EntityCheckInFullResponse",
@@ -69,6 +72,12 @@ func runtimeValidatorSource(g *typeScriptGenerator) (string, error) {
 		}
 		if name == "CommandCatalog" {
 			check = "(" + check + " && atlasProtocolHasValidCommandCatalogSemantics(value))"
+		}
+		if name == "MapArea" {
+			check = "(" + check + " && atlasProtocolHasValidMapAreaSemantics(value))"
+		}
+		if name == "SpatialOperationResult" {
+			check = "(" + check + " && atlasProtocolHasUniqueSpatialFeatureIDs(value))"
 		}
 		builder.WriteString("export function ")
 		builder.WriteString(validatorFunctionName(name))
@@ -287,6 +296,9 @@ func (g *typeScriptGenerator) runtimeRefValidatorExpression(valueExpr string, re
 	}
 	if name == "GeoJSONPolygon" {
 		expression = "(" + expression + " && atlasProtocolHasValidPolygonSemantics(" + valueExpr + "))"
+	}
+	if name == "GeoJSONMultiPolygon" {
+		expression = "(" + expression + " && atlasProtocolHasValidMultiPolygonSemantics(" + valueExpr + "))"
 	}
 	return expression, nil
 }

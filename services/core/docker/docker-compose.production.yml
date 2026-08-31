@@ -33,7 +33,6 @@ services:
       ATLAS_ADMIN_PASSWORD: ${ATLAS_ADMIN_PASSWORD:?ATLAS_ADMIN_PASSWORD must be set}
       MAX_UPLOAD_SIZE_MB: ${MAX_UPLOAD_SIZE_MB:-100}
       MAX_VIEW_SIZE_MB: ${MAX_VIEW_SIZE_MB:-10}
-      ATLAS_PLUGINS: "${ATLAS_PLUGINS:-[]}"
     ports:
       - "127.0.0.1:8000:8000"
     depends_on:

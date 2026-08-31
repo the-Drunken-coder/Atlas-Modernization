@@ -12,7 +12,7 @@ import {
   entityLinkState,
   entityPosition
 } from "../../../atlas/entities.js";
-import { displayGeometry, type UiRawGeometry } from "../../../atlas/geometry.js";
+import { displayGeometry, type UiPoint, type UiRawGeometry } from "../../../atlas/geometry.js";
 
 export type MapFeatureProperties = {
   entityId: string;
@@ -88,7 +88,7 @@ export function buildMapSources(entities: EntityResource[], selectedId: string |
   return sources;
 }
 
-function pointGeometry(entity: EntityResource): UiRawGeometry | undefined {
+function pointGeometry(entity: EntityResource): UiPoint | undefined {
   const position = entityPosition(entity);
   return position ? { type: "Point", coordinates: position } : undefined;
 }

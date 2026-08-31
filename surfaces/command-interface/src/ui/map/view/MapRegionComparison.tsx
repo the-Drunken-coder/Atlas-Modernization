@@ -13,12 +13,13 @@ import "../../styles/map-comparison.css";
 import type { MapSourceConfig } from "../../../app/config.js";
 import { sanitizeConnectionError } from "../../../atlas/connection-error.js";
 import { Button, IconButton } from "../../primitives/controls.js";
-import { CloseIcon, ComparisonIcon, DoubleCaretVerticalIcon, TrashIcon } from "../../primitives/icons.js";
+import { CloseIcon, ComparisonIcon, TrashIcon } from "../../primitives/icons.js";
 import { MapSourceSelect } from "../MapSourcePicker.js";
 import type { MapEditing } from "../rendering/map-editing.js";
 import { pushEditingOverlay, pushSources, registerSourcesAndLayers } from "../rendering/map-layers.js";
 import type { MapSources } from "../rendering/map-sources.js";
 import type { MapLibreRuntime } from "../runtime/maplibre-runtime.js";
+import { MapRegionSelection, type RegionTransform, type ResizeAxes, type ScreenRect } from "./MapRegionSelection.js";
 import { cloneStyle } from "./map-view-utils.js";
 
 type GeographicRegion = {
@@ -26,13 +27,6 @@ type GeographicRegion = {
   south: number;
   east: number;
   north: number;
-};
-
-type ScreenRect = {
-  left: number;
-  top: number;
-  width: number;
-  height: number;
 };
 
 type DragState =
@@ -53,8 +47,6 @@ type DragState =
     };
 
 type ScreenPoint = { x: number; y: number };
-type ResizeAxes = "width" | "height" | "both";
-type RegionTransform = "move" | ResizeAxes;
 
 type ComparisonStatus = { kind: "idle" } | { kind: "loading" } | { kind: "ready" } | { kind: "error"; message: string };
 
@@ -158,7 +150,7 @@ export function MapRegionComparison({
         if (
           !next &&
           document.activeElement instanceof Element &&
-          document.activeElement.closest(".map-compare__region, .map-compare__caption")
+          document.activeElement.closest(".map-region-selection, .map-compare__caption")
         )
           toolRef.current?.focus();
         if (screenRectsEqual(regionRectRef.current, next)) {
@@ -253,14 +245,14 @@ export function MapRegionComparison({
       event.stopPropagation();
       cancelActiveDrag(true);
     };
-    mapCanvas.classList.toggle("map-canvas--compare-drawing", drag.kind === "draw");
+    mapCanvas.classList.toggle("map-canvas--region-drawing", drag.kind === "draw");
     mapCanvas.addEventListener("pointerdown", startDrawing, { capture: true });
     window.addEventListener("pointermove", updateDrag);
     window.addEventListener("pointerup", finishDrag);
     window.addEventListener("pointercancel", cancelPointer);
     window.addEventListener("keydown", cancelDrag, { capture: true });
     return () => {
-      mapCanvas.classList.remove("map-canvas--compare-drawing");
+      mapCanvas.classList.remove("map-canvas--region-drawing");
       mapCanvas.removeEventListener("pointerdown", startDrawing, { capture: true });
       window.removeEventListener("pointermove", updateDrag);
       window.removeEventListener("pointerup", finishDrag);
@@ -441,12 +433,6 @@ export function MapRegionComparison({
   const panelAnchor = panelPosition(regionRect, canvasBounds, panelHeight);
   const captionStyle = captionPosition(regionRect, canvasBounds);
   const comparisonStyle = regionRect ? { ...rectStyle(regionRect), opacity: opacity / 100 } : undefined;
-  const resizeRightInside = Boolean(
-    regionRect && canvasBounds && regionRect.left + regionRect.width >= canvasBounds.width - 14
-  );
-  const resizeBottomInside = Boolean(
-    regionRect && canvasBounds && regionRect.top + regionRect.height >= canvasBounds.height - 14
-  );
 
   return (
     <>
@@ -492,65 +478,17 @@ export function MapRegionComparison({
         <div ref={comparisonHostRef} className="map-compare__map" style={comparisonStyle} aria-hidden="true" />
       ) : null}
 
-      {regionRect && !drawing ? (
-        <div
-          className="map-compare__region"
-          style={rectStyle(regionRect)}
-          data-resize-right-inside={resizeRightInside || undefined}
-          data-resize-bottom-inside={resizeBottomInside || undefined}
-          data-testid="map-comparison-region"
-        >
-          <button
-            type="button"
-            className="map-compare__move-handle"
-            data-map-interaction-control
-            aria-label="Move comparison region"
-            title="Drag or use arrow keys to move region"
-            onPointerDown={(event) => beginTransform("move", event)}
-            onKeyDown={(event) => transformWithKeyboard("move", event)}
-          >
-            <DoubleCaretVerticalIcon size={12} />
-          </button>
-          <button
-            type="button"
-            className="map-compare__resize-handle map-compare__resize-handle--right"
-            data-map-interaction-control
-            aria-label="Resize comparison region width"
-            title="Drag horizontally or use Left and Right arrow keys"
-            onPointerDown={(event) => beginTransform("width", event)}
-            onKeyDown={(event) => transformWithKeyboard("width", event)}
-          />
-          <button
-            type="button"
-            className="map-compare__resize-handle map-compare__resize-handle--bottom"
-            data-map-interaction-control
-            aria-label="Resize comparison region height"
-            title="Drag vertically or use Up and Down arrow keys"
-            onPointerDown={(event) => beginTransform("height", event)}
-            onKeyDown={(event) => transformWithKeyboard("height", event)}
-          />
-          <button
-            type="button"
-            className="map-compare__resize-handle map-compare__resize-handle--corner"
-            data-map-interaction-control
-            aria-label="Resize comparison region width and height"
-            title="Drag diagonally or use arrow keys"
-            onPointerDown={(event) => beginTransform("both", event)}
-            onKeyDown={(event) => transformWithKeyboard("both", event)}
-          />
-        </div>
-      ) : null}
-
-      {drawing ? (
-        <div className="map-compare__drawing-surface">
-          {drawingRect && (drawingRect.width > 0 || drawingRect.height > 0) ? (
-            <div className="map-compare__drawing-region" style={rectStyle(drawingRect)} />
-          ) : null}
-          <div className="map-compare__drawing-prompt" role="status">
-            Drag a region. Shift-drag still zooms.
-          </div>
-        </div>
-      ) : null}
+      <MapRegionSelection
+        rect={regionRect}
+        drawing={drawing}
+        drawingRect={drawingRect}
+        drawingPrompt="Drag a region. Shift-drag still zooms."
+        label="comparison region"
+        testId="map-comparison-region"
+        viewport={canvasBounds}
+        onPointerDown={beginTransform}
+        onKeyDown={transformWithKeyboard}
+      />
 
       {regionRect && !panelOpen && !drawing ? (
         <button

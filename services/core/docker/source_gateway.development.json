@@ -1,26 +1,3 @@
 {
-  "listen_address": ":8080",
-  "connectors": [
-    {
-      "id": "reference",
-      "origin": "http://reference-source:8090",
-      "routes": [
-        {
-          "method": "GET",
-          "path_prefix": "/fixture",
-          "allowed_query_names": ["key"],
-          "allowed_request_headers": [],
-          "allowed_response_headers": ["content-type", "x-fixture"],
-          "read_only": true,
-          "cache": {},
-          "retry": {}
-        }
-      ],
-      "secret_headers": {},
-      "egress": { "allow_private": true },
-      "limits": {},
-      "rate": {},
-      "circuit_breaker": {}
-    }
-  ]
+  "listen_address": ":8080"
 }

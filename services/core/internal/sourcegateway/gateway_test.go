@@ -390,6 +390,32 @@ func TestDefaultTransportPreservesCompressedBytesAndAddsNoImplicitHeaders(t *tes
 	}
 }
 
+func TestDefaultTransportPreservesAllowedUserAgent(t *testing.T) {
+	var userAgent string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		userAgent = r.Header.Get("User-Agent")
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(server.Close)
+	config := testConnectorConfig()
+	config.Origin = server.URL
+	config.Egress.AllowLoopback = true
+	config.Routes[0].AllowedRequestHeaders = []string{"user-agent"}
+	gateway, err := New(Config{Connectors: []ConnectorConfig{config}}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, _, failure := gateway.execute(context.Background(), gateway.connectors["reference"], ConnectorRequest{
+		Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{{"user-agent", "Atlas Plugin/1"}},
+	})
+	if failure != nil {
+		t.Fatal(failure)
+	}
+	if userAgent != "Atlas Plugin/1" {
+		t.Fatalf("user-agent=%q", userAgent)
+	}
+}
+
 func TestWireRejectsUnknownFieldsMalformedTuplesAndPaths(t *testing.T) {
 	for _, input := range []string{
 		`{"method":"GET","path":"/","query":[],"headers":[],"body_base64":null,"extra":true}`,

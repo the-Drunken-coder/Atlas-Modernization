@@ -10,15 +10,14 @@ import (
 
 // SettingsFile represents the atlas_core.settings.json file structure.
 type SettingsFile struct {
-	LogLevel            string         `json:"log_level"`
-	CORSOrigins         []string       `json:"cors_origins"`
-	CORSOriginPatterns  []string       `json:"cors_origin_patterns"`
-	EnableAPIAuth       bool           `json:"enable_api_auth"`
-	APIAuthKey          string         `json:"api_auth_key"`
-	AdminCookieSameSite string         `json:"admin_cookie_samesite"`
-	MaxUploadSizeMB     *int64         `json:"max_upload_size_mb"`
-	MaxViewSizeMB       *int64         `json:"max_view_size_mb"`
-	Plugins             []PluginConfig `json:"plugins"`
+	LogLevel            string   `json:"log_level"`
+	CORSOrigins         []string `json:"cors_origins"`
+	CORSOriginPatterns  []string `json:"cors_origin_patterns"`
+	EnableAPIAuth       bool     `json:"enable_api_auth"`
+	APIAuthKey          string   `json:"api_auth_key"`
+	AdminCookieSameSite string   `json:"admin_cookie_samesite"`
+	MaxUploadSizeMB     *int64   `json:"max_upload_size_mb"`
+	MaxViewSizeMB       *int64   `json:"max_view_size_mb"`
 }
 
 func (c *Config) loadSettingsFile() error {
@@ -83,9 +82,6 @@ func (s SettingsFile) applyTo(c *Config) {
 	}
 	if _, ok := os.LookupEnv("MAX_VIEW_SIZE_MB"); !ok && s.MaxViewSizeMB != nil {
 		c.MaxViewSizeMB = *s.MaxViewSizeMB
-	}
-	if _, ok := os.LookupEnv("ATLAS_PLUGINS"); !ok && s.Plugins != nil {
-		c.Plugins = append([]PluginConfig(nil), s.Plugins...)
 	}
 }
 

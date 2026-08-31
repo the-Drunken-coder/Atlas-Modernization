@@ -70,7 +70,10 @@ function preparePackage(version, path) {
   validateVersion(version);
   const packageJSON = JSON.parse(readFileSync(path, "utf8"));
   validateVersion(packageJSON.version);
-  if (packageJSON.version !== version) packageJSON.atlasCoreImage = null;
+  if (packageJSON.version !== version) {
+    packageJSON.atlasCoreImage = null;
+    packageJSON.atlasPluginImages = {};
+  }
   writeFileSync(path, `${JSON.stringify(packageJSON, null, 2)}\n`);
 }
 

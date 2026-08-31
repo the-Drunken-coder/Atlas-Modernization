@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -95,7 +97,7 @@ type CircuitBreakerSettings struct {
 	OpenMS   int64 `json:"open_ms"`
 }
 
-func LoadConfig(path string) (Config, error) {
+func LoadConfig(path string, connectorDirectory string) (Config, error) {
 	// #nosec G304 -- the deployment operator supplies this private configuration path.
 	file, err := os.Open(path)
 	if err != nil {
@@ -104,17 +106,70 @@ func LoadConfig(path string) (Config, error) {
 	defer func() { _ = file.Close() }()
 	decoder := json.NewDecoder(io.LimitReader(file, 4<<20))
 	decoder.DisallowUnknownFields()
-	var cfg Config
-	if err := decoder.Decode(&cfg); err != nil {
+	var base struct {
+		ListenAddress   string `json:"listen_address"`
+		CacheMaxEntries int    `json:"cache_max_entries"`
+		CacheMaxBytes   int64  `json:"cache_max_bytes"`
+	}
+	if err := decoder.Decode(&base); err != nil {
 		return Config{}, fmt.Errorf("decode Source Gateway configuration: %w", err)
 	}
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return Config{}, fmt.Errorf("source gateway configuration contains trailing JSON")
 	}
+	cfg := Config{
+		ListenAddress: base.ListenAddress, CacheMaxEntries: base.CacheMaxEntries, CacheMaxBytes: base.CacheMaxBytes,
+	}
+	connectors, err := loadConnectorFragments(connectorDirectory)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.Connectors = connectors
 	if err := cfg.normalize(); err != nil {
 		return Config{}, err
 	}
 	return cfg, nil
+}
+
+func loadConnectorFragments(directory string) ([]ConnectorConfig, error) {
+	directory = strings.TrimSpace(directory)
+	if directory == "" {
+		return nil, nil
+	}
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		return nil, fmt.Errorf("read Source Gateway connector configuration directory: %w", err)
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+	connectors := make([]ConnectorConfig, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() || !entry.Type().IsRegular() || filepath.Ext(entry.Name()) != ".json" {
+			return nil, fmt.Errorf("Source Gateway connector configuration directory contains unsupported entry %q", entry.Name())
+		}
+		path := filepath.Join(directory, entry.Name())
+		// #nosec G304 -- the deployment operator supplies the private fragment directory.
+		file, err := os.Open(path)
+		if err != nil {
+			return nil, fmt.Errorf("open Source Gateway connector fragment %s: %w", entry.Name(), err)
+		}
+		decoder := json.NewDecoder(io.LimitReader(file, 1<<20))
+		decoder.DisallowUnknownFields()
+		var connector ConnectorConfig
+		decodeErr := decoder.Decode(&connector)
+		trailingErr := decoder.Decode(&struct{}{})
+		closeErr := file.Close()
+		if decodeErr != nil {
+			return nil, fmt.Errorf("decode Source Gateway connector fragment %s: %w", entry.Name(), decodeErr)
+		}
+		if !errors.Is(trailingErr, io.EOF) {
+			return nil, fmt.Errorf("Source Gateway connector fragment %s contains trailing JSON", entry.Name())
+		}
+		if closeErr != nil {
+			return nil, fmt.Errorf("close Source Gateway connector fragment %s: %w", entry.Name(), closeErr)
+		}
+		connectors = append(connectors, connector)
+	}
+	return connectors, nil
 }
 
 func (c *Config) normalize() error {
