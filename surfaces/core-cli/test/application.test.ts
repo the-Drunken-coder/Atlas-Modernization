@@ -815,6 +815,7 @@ describe("atlas-core CLI", () => {
 
     expect(await runCLI(["reset"], test.context)).toBe(0);
     expect(test.runner.calls.some((call) => call.args.includes("missing_plugin/compose.yml"))).toBe(false);
+    expect(test.runner.calls.map(composeCommand)).toContainEqual(["down", "--remove-orphans"]);
   });
 
   it("refuses to reset a same-name resource without matching ownership labels", async () => {
@@ -1430,10 +1431,19 @@ describe("atlas-core CLI", () => {
       schema: 2,
       enabledPlugins: [plugin.pluginId]
     });
-    for (const file of ["compose.yml", "core-endpoint.json", "source-connector.json"]) {
+    for (const file of ["compose.yml", "core-endpoint.json", "source-connector.json", "deployment.json"]) {
       expect(existsSync(join(configRoot, file))).toBe(true);
-      expect(statSync(join(configRoot, file)).mode & 0o777).toBe(file === "compose.yml" ? 0o600 : 0o644);
+      expect(statSync(join(configRoot, file)).mode & 0o777).toBe(
+        file === "compose.yml" || file === "deployment.json" ? 0o600 : 0o644
+      );
     }
+    expect(JSON.parse(readFileSync(join(configRoot, "deployment.json"), "utf8"))).toEqual({
+      schema: 1,
+      pluginId: plugin.pluginId,
+      displayName: plugin.displayName,
+      lifecycle: plugin.lifecycle,
+      service: plugin.service
+    });
     expect(test.runner.calls.some((call) => call.args[0] === "pull" && call.args[1] === TEST_PLUGIN_IMAGE)).toBe(true);
     const configCall = test.runner.calls.find((call) => composeCommand(call)[0] === "config");
     expect(configCall?.args).toContain(join(configRoot, "compose.yml"));
@@ -1508,18 +1518,23 @@ describe("atlas-core CLI", () => {
     });
   });
 
-  it("allows Plugin status and logs across CLI-only version drift but rejects mutations", async () => {
+  it("uses staged metadata for Plugin status and logs across CLI-only catalog drift", async () => {
     const test = runtime();
     markInitialized(test);
     const plugin = installTestPluginCatalog(test);
     expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
     setCoreVersion(test, "0.1.2");
-    test.stdout.length = 0;
-
-    expect(await runCLI(["plugins", "status", plugin.pluginId], test.context)).toBe(0);
-    expect(await runCLI(["plugins", "logs", plugin.pluginId], test.context)).toBe(0);
     expect(await runCLI(["plugins", "disable", plugin.pluginId], test.context)).toBe(1);
     expect(test.stderr.join("")).toContain("update all");
+    test.context.pluginCatalog = [];
+    test.stdout.length = 0;
+    test.runner.calls.length = 0;
+
+    expect(await runCLI(["plugins", "status"], test.context)).toBe(0);
+    expect(await runCLI(["plugins", "status", plugin.pluginId], test.context)).toBe(0);
+    expect(await runCLI(["plugins", "logs", plugin.pluginId], test.context)).toBe(0);
+    expect(test.stdout.join("")).toContain(`${plugin.pluginId}\t${plugin.displayName}\tenabled`);
+    expect(test.runner.calls.map(composeCommand)).toContainEqual(["logs", "--tail", "200", plugin.service]);
   });
 
   it("rejects arbitrary Plugin IDs and bundles", async () => {

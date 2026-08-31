@@ -473,6 +473,8 @@ export function MapView({
           sourceOptions={mapSourceOptions}
           sources={sources}
           editing={editing}
+          exclusiveDrawingActive={spatial?.drawing ?? false}
+          onBeginDrawing={() => spatial?.onCancelDrawing()}
           notifyUserGesture={notifyUserGesture}
           suppressNextClick={reticleInteraction.mapActions.suppressNextClick}
         />

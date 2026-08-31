@@ -3,13 +3,13 @@ services:
     environment:
       ATLAS_PLUGIN_CONFIG_DIR: /app/plugin-endpoints
     volumes:
-      - ${ATLAS_PLUGIN_CONFIG_ROOT:-./plugins}/building_scan/core-endpoint.json:/app/plugin-endpoints/building_scan.json:ro
+      - ${ATLAS_PLUGIN_CONFIG_ROOT:-../../../plugins}/building_scan/core-endpoint.json:/app/plugin-endpoints/building_scan.json:ro
 
   source-gateway:
     environment:
       ATLAS_SOURCE_CONNECTOR_CONFIG_DIR: /app/source-connectors
     volumes:
-      - ${ATLAS_PLUGIN_CONFIG_ROOT:-./plugins}/building_scan/source-connector.json:/app/source-connectors/building_scan.json:ro
+      - ${ATLAS_PLUGIN_CONFIG_ROOT:-../../../plugins}/building_scan/source-connector.json:/app/source-connectors/building_scan.json:ro
 
   building-scan-plugin:
     image: "@atlas/plugin-image@"

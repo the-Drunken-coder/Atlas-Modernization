@@ -61,6 +61,8 @@ type MapRegionComparisonProps = {
   sourceOptions: MapSourceConfig[];
   sources: MapSources;
   editing?: MapEditing;
+  exclusiveDrawingActive: boolean;
+  onBeginDrawing: () => void;
   notifyUserGesture: () => void;
   suppressNextClick: () => void;
 };
@@ -79,6 +81,8 @@ export function MapRegionComparison({
   sourceOptions,
   sources,
   editing,
+  exclusiveDrawingActive,
+  onBeginDrawing,
   notifyUserGesture,
   suppressNextClick
 }: MapRegionComparisonProps) {
@@ -116,6 +120,17 @@ export function MapRegionComparison({
   sourcesRef.current = sources;
   editingRef.current = editing;
   regionRectRef.current = regionRect;
+
+  useEffect(() => {
+    if (!exclusiveDrawingActive || drag?.kind !== "draw") return;
+    if (drag.pointerId !== null && mapCanvas?.hasPointerCapture?.(drag.pointerId)) {
+      suppressNextClick();
+      mapCanvas.releasePointerCapture?.(drag.pointerId);
+    }
+    setRegion(drag.previousRegion);
+    setPanelOpen(Boolean(drag.previousRegion));
+    setDrag(null);
+  }, [drag, exclusiveDrawingActive, mapCanvas, suppressNextClick]);
 
   useEffect(() => {
     if (source?.style) return;
@@ -369,6 +384,7 @@ export function MapRegionComparison({
 
   const beginDrawing = (previousRegion: GeographicRegion | null) => {
     if (!mapCanvas || !map || !mapReady) return;
+    onBeginDrawing();
     setPanelOpen(false);
     setDrag({ kind: "draw", start: null, current: null, pointerId: null, previousRegion });
   };
@@ -379,6 +395,7 @@ export function MapRegionComparison({
     if (viewport.width < MIN_REGION_SIZE || viewport.height < MIN_REGION_SIZE) return;
     const width = Math.min(240, Math.max(MIN_REGION_SIZE, viewport.width / 2));
     const height = Math.min(180, Math.max(MIN_REGION_SIZE, viewport.height / 2));
+    onBeginDrawing();
     map.stop();
     setRegion(
       regionFromScreenRect(map, {

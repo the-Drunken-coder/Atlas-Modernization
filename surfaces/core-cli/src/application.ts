@@ -176,6 +176,18 @@ type DeploymentState = {
   startedAt?: string;
 };
 
+type DeployedPluginMetadata = {
+  schema: 1;
+  pluginId: string;
+  displayName: string;
+  lifecycle: "query_only";
+  service: string;
+};
+
+type ReadablePlugin = DeployedPluginMetadata & {
+  packaged: boolean;
+};
+
 type DockerRuntime = {
   architecture: string;
   engineId: string;
@@ -499,8 +511,8 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       previousState?.enabledPlugins.filter((pluginId) =>
         existsSync(join(this.#pluginConfigRoot, pluginId, "compose.yml"))
       ) ?? [];
-    if (resetPluginIds.length > 0) {
-      await this.#runComposeChecked(["down"], resetPluginIds);
+    if (existsSync(this.#envFile)) {
+      await this.#runComposeChecked(["down", "--remove-orphans"], resetPluginIds);
     }
 
     for (const name of existingContainers) {
@@ -838,9 +850,16 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   }
 
   async pluginStatuses(pluginId?: string): Promise<PluginDeploymentStatus[]> {
-    const requested = pluginId ? [this.#requireCatalogPlugin(pluginId, false)] : [...this.#pluginCatalog];
     const state = this.#readInitializedStateIfPresent();
     const enabled = new Set(state?.enabledPlugins ?? []);
+    const requested = pluginId
+      ? [this.#pluginForRead(pluginId, state)]
+      : [
+          ...this.#pluginCatalog.map((plugin) => this.#readableCatalogPlugin(plugin)),
+          ...(state?.enabledPlugins ?? [])
+            .filter((enabledPluginId) => !this.#pluginCatalog.some((plugin) => plugin.pluginId === enabledPluginId))
+            .map((enabledPluginId) => this.#readableDeployedPlugin(enabledPluginId))
+        ].sort((left, right) => left.pluginId.localeCompare(right.pluginId));
     let serviceStates: ComposeServiceState[] = [];
     if (state) {
       const dockerEngineId = await this.#preflight();
@@ -854,16 +873,16 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
         displayName: plugin.displayName,
         lifecycle: plugin.lifecycle,
         enabled: enabled.has(plugin.pluginId),
-        packaged: plugin.image !== null,
+        packaged: plugin.packaged,
         ...(service ? { state: service.State, health: service.Health } : {})
       };
     });
   }
 
   async pluginLogs(pluginId: string, follow: boolean): Promise<void> {
-    const plugin = this.#requireCatalogPlugin(pluginId, false);
     const state = this.#requireInitialized();
     if (!state.enabledPlugins.includes(pluginId)) throw new Error(`Plugin ${pluginId} is not enabled.`);
+    const plugin = this.#pluginForRead(pluginId, state);
     const dockerEngineId = await this.#preflight();
     this.#assertStateMatchesEngine(state, dockerEngineId);
     const args = ["logs", "--tail", "200"];
@@ -1365,12 +1384,83 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     return state.enabledPlugins.map((pluginId) => this.#requireCatalogPlugin(pluginId, requireImages));
   }
 
+  #readableCatalogPlugin(plugin: PluginCatalogEntry): ReadablePlugin {
+    return {
+      schema: 1,
+      pluginId: plugin.pluginId,
+      displayName: plugin.displayName,
+      lifecycle: plugin.lifecycle,
+      service: plugin.service,
+      packaged: plugin.image !== null
+    };
+  }
+
+  #pluginForRead(pluginId: string, state: DeploymentState | undefined): ReadablePlugin {
+    const catalogPlugin = this.#pluginCatalog.find((plugin) => plugin.pluginId === pluginId);
+    if (catalogPlugin) return this.#readableCatalogPlugin(catalogPlugin);
+    if (state?.enabledPlugins.includes(pluginId)) return this.#readableDeployedPlugin(pluginId);
+    throw new Error(`Unknown first-party Plugin: ${pluginId}`);
+  }
+
+  #readableDeployedPlugin(pluginId: string): ReadablePlugin {
+    return { ...this.#readDeployedPluginMetadata(pluginId), packaged: false };
+  }
+
+  #readDeployedPluginMetadata(pluginId: string): DeployedPluginMetadata {
+    const path = join(this.#pluginConfigRoot, pluginId, "deployment.json");
+    if (!existsSync(path)) throw new Error(`Enabled Plugin ${pluginId} is missing private file deployment.json.`);
+    this.#assertRegularFile(path, 0o600);
+    let value: unknown;
+    try {
+      value = JSON.parse(readFileSync(path, "utf8"));
+    } catch {
+      throw new Error(`Enabled Plugin ${pluginId} has invalid deployment metadata.`);
+    }
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+      throw new Error(`Enabled Plugin ${pluginId} has invalid deployment metadata.`);
+    }
+    const record = value as Record<string, unknown>;
+    const keys = Object.keys(record).sort();
+    const expectedKeys = ["displayName", "lifecycle", "pluginId", "schema", "service"];
+    if (
+      keys.length !== expectedKeys.length ||
+      keys.some((key, index) => key !== expectedKeys[index]) ||
+      record.schema !== 1 ||
+      record.pluginId !== pluginId ||
+      typeof record.displayName !== "string" ||
+      record.displayName.length === 0 ||
+      record.displayName.trim() !== record.displayName ||
+      record.lifecycle !== "query_only" ||
+      typeof record.service !== "string" ||
+      !/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/u.test(record.service)
+    ) {
+      throw new Error(`Enabled Plugin ${pluginId} has invalid deployment metadata.`);
+    }
+    return {
+      schema: 1,
+      pluginId,
+      displayName: record.displayName,
+      lifecycle: record.lifecycle,
+      service: record.service
+    };
+  }
+
   #assertEnabledPluginDeployment(state: DeploymentState): void {
     for (const plugin of this.#catalogPluginsForState(state, true)) {
       for (const file of ["compose.yml", "core-endpoint.json", "source-connector.json"]) {
         const path = join(this.#pluginConfigRoot, plugin.pluginId, file);
         if (!existsSync(path)) throw new Error(`Enabled Plugin ${plugin.pluginId} is missing private file ${file}.`);
         this.#assertRegularFile(path, file === "compose.yml" ? 0o600 : 0o644);
+      }
+      const deployed = this.#readDeployedPluginMetadata(plugin.pluginId);
+      if (
+        deployed.displayName !== plugin.displayName ||
+        deployed.lifecycle !== plugin.lifecycle ||
+        deployed.service !== plugin.service
+      ) {
+        throw new Error(
+          `Enabled Plugin ${plugin.pluginId} deployment metadata does not match this Atlas Core package.`
+        );
       }
     }
   }
@@ -1401,6 +1491,14 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
         cpSync(sourcePath, destinationPath, { dereference: false, errorOnExist: true, force: false });
         if (this.#platform !== "win32") chmodSync(destinationPath, destinationName === "compose.yml" ? 0o600 : 0o644);
       }
+      const deployment: DeployedPluginMetadata = {
+        schema: 1,
+        pluginId: plugin.pluginId,
+        displayName: plugin.displayName,
+        lifecycle: plugin.lifecycle,
+        service: plugin.service
+      };
+      writePrivateFile(join(staging, "deployment.json"), `${JSON.stringify(deployment, null, 2)}\n`, this.#platform);
       renameSync(staging, target);
     } catch (error) {
       rmSync(staging, { recursive: true, force: true });
