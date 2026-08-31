@@ -52,7 +52,9 @@ afterEach(() => {
 
 describe("PluginsPanel", () => {
   it("renders dense available, starting, and unavailable status rows", async () => {
-    renderPanel({ list: vi.fn(async () => [available, starting, unavailable]) });
+    renderPanel({
+      list: vi.fn(async () => [available, starting, unavailable])
+    });
 
     expect(await screen.findByText("Reference Fixture")).toBeInTheDocument();
     expect(screen.getByText("starting_plugin")).toBeInTheDocument();
@@ -108,8 +110,12 @@ describe("PluginsPanel", () => {
     const user = userEvent.setup();
     try {
       renderPanel(reader);
-      const firstDataRow = await screen.findByRole("button", { name: /Reference Fixture/ });
-      const secondDataRow = screen.getByRole("button", { name: /Weather Feed/ });
+      const firstDataRow = await screen.findByRole("button", {
+        name: /Reference Fixture/
+      });
+      const secondDataRow = screen.getByRole("button", {
+        name: /Weather Feed/
+      });
       firstDataRow.focus();
       await user.keyboard("{ArrowDown}");
       expect(secondDataRow).toHaveFocus();
@@ -158,12 +164,20 @@ describe("PluginsPanel", () => {
           fields: [{ label: "Kind", value: "Fixture" }]
         }
       ],
-      provenance: { connector_id: "fixture_source", source: "Fixture source" },
-      attribution: { text: "Fixture attribution", url: "https://example.test/attribution" },
+      provenance: {
+        connector_id: "fixture_source",
+        source: "Fixture source"
+      },
+      attribution: {
+        text: "Fixture attribution",
+        url: "https://example.test/attribution"
+      },
       retrieved_at: "2026-08-30T12:00:00Z",
       truncation: null
     };
-    const executor: SpatialOperationExecutor = { invokeSpatial: vi.fn(async () => response) };
+    const executor: SpatialOperationExecutor = {
+      invokeSpatial: vi.fn(async () => response)
+    };
     const user = userEvent.setup();
 
     renderSpatialPanel({ list: vi.fn(async () => [plugin]) }, executor);
@@ -174,7 +188,11 @@ describe("PluginsPanel", () => {
     await user.click(screen.getByRole("button", { name: "Use current view" }));
     await user.click(screen.getByRole("button", { name: "Search" }));
 
-    expect(await screen.findByRole("option", { name: new RegExp(`Result from ${pluginId}`) })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("option", {
+        name: new RegExp(`Result from ${pluginId}`)
+      })
+    ).toBeInTheDocument();
     expect(screen.queryByText("West")).not.toBeInTheDocument();
     expect(screen.getByText("0.01 km²")).toBeInTheDocument();
     expect(executor.invokeSpatial).toHaveBeenCalledWith(
@@ -186,7 +204,9 @@ describe("PluginsPanel", () => {
   });
 
   it("keeps prior results visible through refresh, cancellation, and source failure", async () => {
-    const firstResponse = spatialResponse({ truncation: { reason: "feature_limit" } });
+    const firstResponse = spatialResponse({
+      truncation: { reason: "feature_limit" }
+    });
     const signals: AbortSignal[] = [];
     const executor: SpatialOperationExecutor = {
       invokeSpatial: vi
@@ -198,7 +218,7 @@ describe("PluginsPanel", () => {
             options?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
           });
         })
-        .mockRejectedValueOnce(new Error("fixture source offline"))
+        .mockRejectedValue(new Error("fixture source offline"))
     };
     const user = userEvent.setup();
 
@@ -222,6 +242,45 @@ describe("PluginsPanel", () => {
     expect(screen.getByText("stale")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: /Fixture result/ })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(executor.invokeSpatial).toHaveBeenCalledTimes(4));
+    expect(executor.invokeSpatial).toHaveBeenLastCalledWith(
+      available.plugin_id,
+      available.operations[0].operation_id,
+      { west: -71.001, south: 42, east: -71, north: 42.001 },
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
+    );
+  });
+
+  it("blocks invocation when polling reports that the open plugin became unavailable", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const reader = {
+      list: vi
+        .fn<() => Promise<PluginStatus[]>>()
+        .mockResolvedValueOnce([available])
+        .mockResolvedValue([
+          {
+            ...available,
+            status: "unavailable",
+            reason_code: "transport_timeout"
+          }
+        ])
+    };
+    const executor: SpatialOperationExecutor = {
+      invokeSpatial: vi.fn(async () => spatialResponse())
+    };
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+
+    renderSpatialPanel(reader, executor);
+    await openSpatialOperation(user, available.display_name ?? available.plugin_id, "Inspect fixture");
+    await user.click(screen.getByRole("button", { name: "Search" }));
+    expect(await screen.findByRole("option", { name: /Fixture result/ })).toBeInTheDocument();
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(await screen.findByText("Plugin unavailable")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Search" })).not.toBeInTheDocument();
+    expect(screen.getByRole("option", { name: /Fixture result/ })).toBeInTheDocument();
+    expect(executor.invokeSpatial).toHaveBeenCalledOnce();
   });
 });
 
@@ -237,7 +296,9 @@ async function openSpatialOperation(
   await user.click(screen.getByRole("button", { name: "Use current view" }));
 }
 
-function spatialResponse({ truncation = null }: Pick<SpatialOperationResult, "truncation">): SpatialOperationResult {
+function spatialResponse({
+  truncation = null
+}: Partial<Pick<SpatialOperationResult, "truncation">> = {}): SpatialOperationResult {
   return {
     features: [
       {
@@ -258,34 +319,17 @@ function spatialResponse({ truncation = null }: Pick<SpatialOperationResult, "tr
       }
     ],
     provenance: { connector_id: "fixture_source", source: "Fixture source" },
-    attribution: { text: "Fixture attribution", url: "https://example.test/attribution" },
+    attribution: {
+      text: "Fixture attribution",
+      url: "https://example.test/attribution"
+    },
     retrieved_at: "2026-08-30T12:00:00Z",
     truncation
   };
 }
 
 function renderPanel(reader: { list(options?: { signal?: AbortSignal }): Promise<PluginStatus[]> }) {
-  const value: AtlasContextValue = {
-    status: "ready",
-    config: {
-      atlasBaseUrl: "https://core.test",
-      protocolRevision: "rev",
-      defaultMapSourceId: "openstreetmap-default",
-      placeSearch: { provider: "maptiler", unavailableReason: "missing key" },
-      mapSources: [
-        { id: "openstreetmap-default", label: "OpenStreetMap Default", style: styleFixture("openstreetmap-default") }
-      ]
-    },
-    snapshot: emptySnapshot(),
-    health: { running: true, healthy: true, degraded: false },
-    reconnect() {},
-    submitCommand: async () => {
-      throw new Error("not used");
-    },
-    updateGeometry: async () => {
-      throw new Error("not used");
-    }
-  };
+  const value = atlasContextValue();
   return render(
     <AtlasStaticProvider value={value}>
       <PluginsPanel reader={reader} onSelectionChange={() => undefined} />
@@ -315,7 +359,12 @@ function SpatialPanel({
   const spatial = useSpatialOperationRunner({ executor });
   const [selection, setSelection] = useState<PluginSelection>();
   useEffect(() => {
-    spatial.setViewportArea({ west: -71.001, south: 42, east: -71, north: 42.001 });
+    spatial.setViewportArea({
+      west: -71.001,
+      south: 42,
+      east: -71,
+      north: 42.001
+    });
   }, [spatial.setViewportArea]);
   return (
     <>
@@ -334,7 +383,11 @@ function atlasContextValue(): AtlasContextValue {
       defaultMapSourceId: "openstreetmap-default",
       placeSearch: { provider: "maptiler", unavailableReason: "missing key" },
       mapSources: [
-        { id: "openstreetmap-default", label: "OpenStreetMap Default", style: styleFixture("openstreetmap-default") }
+        {
+          id: "openstreetmap-default",
+          label: "OpenStreetMap Default",
+          style: styleFixture("openstreetmap-default")
+        }
       ]
     },
     snapshot: emptySnapshot(),

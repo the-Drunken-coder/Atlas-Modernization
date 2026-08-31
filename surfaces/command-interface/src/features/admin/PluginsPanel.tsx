@@ -1,10 +1,11 @@
 import { Callout } from "@blueprintjs/core";
-import { AtlasAPIError, AtlasClient, type PluginStatus } from "@the-drunken-coder/atlas-sdk";
+import { AtlasAPIError, AtlasClient, mapAreaSquareMeters, type PluginStatus } from "@the-drunken-coder/atlas-sdk";
 import { type KeyboardEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { sanitizeConnectionError } from "../../atlas/connection-error.js";
 import { useAtlas } from "../../state/atlas-context.js";
 import { Button, IconButton } from "../../ui/primitives/controls.js";
 import { CloseIcon } from "../../ui/primitives/icons.js";
+import { formatSpatialReason, formatSpatialRetrievalTime } from "../plugins/spatial-format.js";
 import type { SpatialOperationRunner } from "../plugins/use-spatial-operation-runner.js";
 import { PanelListRow } from "../shared/PanelListRow.js";
 
@@ -119,7 +120,9 @@ export function PluginsPanel({
   };
 
   if (selectedPlugin) {
-    return spatial?.target?.pluginId === selectedPlugin.plugin_id && spatial ? (
+    return spatial?.target?.pluginId === selectedPlugin.plugin_id &&
+      selectedPlugin.status === "available" &&
+      spatial ? (
       <SpatialOperationControls spatial={spatial} />
     ) : (
       <PluginDetail plugin={selectedPlugin} spatial={spatial} />
@@ -190,7 +193,7 @@ function PluginDetail({ plugin, spatial }: { plugin: PluginStatus; spatial?: Spa
       {plugin.status !== "available" ? (
         <Callout className="banner banner--error" intent="danger" icon={null} compact role="status">
           <strong>Plugin unavailable</strong>
-          <span>{plugin.reason_code ? formatReason(plugin.reason_code) : "The plugin is not ready."}</span>
+          <span>{plugin.reason_code ? formatSpatialReason(plugin.reason_code) : "The plugin is not ready."}</span>
         </Callout>
       ) : operations.length === 0 ? (
         <div className="panel__empty">This plugin has no map area operations.</div>
@@ -226,7 +229,7 @@ function SpatialOperationControls({ spatial }: { spatial: SpatialOperationRunner
   const busy = spatial.status === "loading" || spatial.status === "drawing";
 
   return (
-    <div className="plugin-operation" aria-label={spatial.target?.operationName}>
+    <div className="plugin-operation" aria-label={spatial.target?.operationName} data-spatial-operation>
       <div className="plugin-operation__area">
         <div className="plugin-operation__area-heading">
           <strong>{area ? "Selected area" : "Area"}</strong>
@@ -303,8 +306,8 @@ function SpatialOperationControls({ spatial }: { spatial: SpatialOperationRunner
       {result ? (
         <div className="plugin-operation__result-summary" aria-live="polite">
           <span>{`${featureCount} result${featureCount === 1 ? "" : "s"}`}</span>
-          {spatial.stale ? <span>stale</span> : <span>{formatRetrievedAt(result.retrieved_at)}</span>}
-          {result.truncation ? <span>Truncated: {formatReason(result.truncation.reason)}</span> : null}
+          {spatial.stale ? <span>stale</span> : <span>{formatSpatialRetrievalTime(result.retrieved_at)}</span>}
+          {result.truncation ? <span>Truncated: {formatSpatialReason(result.truncation.reason)}</span> : null}
         </div>
       ) : null}
     </div>
@@ -312,30 +315,15 @@ function SpatialOperationControls({ spatial }: { spatial: SpatialOperationRunner
 }
 
 function formatAreaSize(area: { west: number; south: number; east: number; north: number }): string {
-  const earthRadiusMeters = 6_371_008.8;
-  const middleLatitude = ((area.south + area.north) / 2) * (Math.PI / 180);
-  const width = earthRadiusMeters * Math.cos(middleLatitude) * (area.east - area.west) * (Math.PI / 180);
-  const height = earthRadiusMeters * (area.north - area.south) * (Math.PI / 180);
-  return ((width * height) / 1_000_000).toFixed(2);
+  return (mapAreaSquareMeters(area) / 1_000_000).toFixed(2);
 }
 
 function formatBounds(area: { west: number; south: number; east: number; north: number }): string {
   return `${area.south.toFixed(5)}, ${area.west.toFixed(5)} to ${area.north.toFixed(5)}, ${area.east.toFixed(5)}`;
 }
 
-function formatRetrievedAt(value: string): string {
-  const date = new Date(value);
-  return Number.isNaN(date.valueOf())
-    ? value
-    : date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit", second: "2-digit" });
-}
-
-function formatReason(reason: string): string {
-  return reason.replaceAll("_", " ");
-}
-
 function formatStatus(plugin: PluginStatus): string {
-  return plugin.reason_code ? `${plugin.status}: ${formatReason(plugin.reason_code)}` : plugin.status;
+  return plugin.reason_code ? `${plugin.status}: ${formatSpatialReason(plugin.reason_code)}` : plugin.status;
 }
 
 function operationSummary(plugin: PluginStatus): string {

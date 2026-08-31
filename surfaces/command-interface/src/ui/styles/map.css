@@ -156,9 +156,7 @@
   display: grid;
   flex: 1;
   grid-template-columns: minmax(150px, 0.85fr) minmax(170px, 1.15fr);
-  height: 310px;
   min-height: 0;
-  max-height: 310px;
 }
 
 .spatial-map-window__results {
@@ -264,8 +262,6 @@
 
   .spatial-map-window__content {
     grid-template-columns: 1fr;
-    height: 330px;
-    max-height: 330px;
   }
 
   .spatial-map-window__results {

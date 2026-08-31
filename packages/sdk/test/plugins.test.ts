@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import { AtlasClient } from "../src/index.js";
+import { AtlasClient, mapAreaSquareMeters } from "../src/index.js";
 
 describe("AtlasClient Plugins", () => {
+  it("calculates the spherical area of a map rectangle", () => {
+    expect(mapAreaSquareMeters({ west: 0, south: 0, east: 1, north: 1 })).toBeCloseTo(12_363_718_145.18, -2);
+  });
+
   it("lists Plugin status and invokes an Operation using the documented paths", async () => {
     const fetchMock = vi
       .fn<typeof fetch>()
@@ -71,6 +75,13 @@ describe("AtlasClient Plugins", () => {
     ).toThrow("no larger than 5 km²");
 
     fetchMock.mockResolvedValueOnce(jsonResponse({ ...result, features: [{ id: "duplicate" }, { id: "duplicate" }] }));
+    await expect(
+      client.plugins.invokeSpatial("fixture", "search", { west: -71.31, south: 42.27, east: -71.3, north: 42.28 })
+    ).rejects.toThrow("response failed validation");
+
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ ...result, attribution: { ...result.attribution, url: "https://exa mple" } })
+    );
     await expect(
       client.plugins.invokeSpatial("fixture", "search", { west: -71.31, south: 42.27, east: -71.3, north: 42.28 })
     ).rejects.toThrow("response failed validation");

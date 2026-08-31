@@ -466,6 +466,7 @@ func TestTypeScriptSourceGeneratesArrayBoundsAndStrictRFC3339Validators(t *testi
 					"items": { "type": "number" }
 				},
 				"published_at": { "type": "string", "format": "date-time" }
+				,"source_url": { "type": "string", "format": "uri" }
 			},
 			"required": ["entity_id", "entity_type"],
 			"$defs": {
@@ -487,6 +488,8 @@ func TestTypeScriptSourceGeneratesArrayBoundsAndStrictRFC3339Validators(t *testi
 		`const atlasProtocolPatternCache = new Map<string, RegExp>();`,
 		`const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|[+-]\d{2}:\d{2})$/.exec(value);`,
 		`day > atlasProtocolDaysInMonth(year, month)`,
+		`atlasProtocolIsURIString(value["source_url"])`,
+		`new URL(value);`,
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("generated TypeScript missing %q:\n%s", want, text)

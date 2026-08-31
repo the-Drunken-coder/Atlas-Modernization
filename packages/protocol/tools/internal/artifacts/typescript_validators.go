@@ -305,8 +305,15 @@ func (g *typeScriptGenerator) runtimeRefValidatorExpression(valueExpr string, re
 
 func runtimeStringValidatorExpression(valueExpr string, schema typeScriptSchema) string {
 	checks := []string{}
-	if format, ok := schema["format"].(string); ok && format == "date-time" {
-		checks = append(checks, "atlasProtocolIsRFC3339String("+valueExpr+")")
+	if format, ok := schema["format"].(string); ok {
+		switch format {
+		case "date-time":
+			checks = append(checks, "atlasProtocolIsRFC3339String("+valueExpr+")")
+		case "uri":
+			checks = append(checks, "atlasProtocolIsURIString("+valueExpr+")")
+		default:
+			checks = append(checks, "typeof "+valueExpr+" === \"string\"")
+		}
 	} else {
 		checks = append(checks, "typeof "+valueExpr+" === \"string\"")
 	}

@@ -58,6 +58,7 @@ class FakeRunner implements CommandRunner {
   globalRoot = "";
   latestVersion = PACKAGE_VERSION;
   latestImage = TEST_IMAGE;
+  runningCoreImage = TEST_IMAGE;
   installedVersion = PACKAGE_VERSION;
   onRun: ((call: Call) => void) | undefined;
   serviceStates = [
@@ -175,6 +176,12 @@ class FakeRunner implements CommandRunner {
             : name.endsWith("_minio_init")
               ? "minio-init"
               : "minio";
+      if (args[args.indexOf("--format") + 1] === "{{json .Config.Image}}") {
+        if (!this.serviceStates.some((candidate) => candidate.Service === service)) {
+          return result(1, "", `Error: No such container: ${name}`);
+        }
+        return result(0, `${JSON.stringify(this.runningCoreImage)}\n`);
+      }
       if (
         args[args.indexOf("--format") + 1] === "{{json .Config.Image}}\t{{json .State.StartedAt}}\t{{.RestartCount}}"
       ) {
@@ -796,6 +803,20 @@ describe("atlas-core CLI", () => {
     expect(JSON.parse(readFileSync(statePath, "utf8"))).toMatchObject({ packageVersion: PACKAGE_VERSION });
   });
 
+  it("resets when recorded Plugin Compose fragments are already missing", async () => {
+    const test = runtime();
+    test.context.confirmReset = async () => true;
+    markInitialized(test);
+    const statePath = join(test.home, ".atlas", "core", "state.json");
+    const state = JSON.parse(readFileSync(statePath, "utf8"));
+    writeFileSync(statePath, `${JSON.stringify({ ...state, schema: 2, enabledPlugins: ["missing_plugin"] })}\n`, {
+      mode: 0o600
+    });
+
+    expect(await runCLI(["reset"], test.context)).toBe(0);
+    expect(test.runner.calls.some((call) => call.args.includes("missing_plugin/compose.yml"))).toBe(false);
+  });
+
   it("refuses to reset a same-name resource without matching ownership labels", async () => {
     const test = runtime();
     test.context.confirmReset = async () => true;
@@ -1214,6 +1235,22 @@ describe("atlas-core CLI", () => {
     expect(test.runner.existingVolumes).toContain("atlas_core_production_minio_data");
   });
 
+  it("uses the previous Core image only when rolling back a disrupted update", async () => {
+    const test = runtime();
+    const previousImage = `ghcr.io/the-drunken-coder/atlas-core@sha256:${"c".repeat(64)}`;
+    markInitialized(test);
+    setCoreVersion(test, "0.1.2");
+    test.runner.runningCoreImage = previousImage;
+    test.runner.failComposeUp = true;
+    test.context.confirmCoreUpdate = async () => true;
+
+    expect(await runCLI(["update", "all"], test.context)).toBe(1);
+    const upCalls = test.runner.calls.filter((call) => composeCommand(call)[0] === "up");
+    expect(upCalls).toHaveLength(2);
+    expect(upCalls[0]?.env.ATLAS_CORE_IMAGE).toBe(TEST_IMAGE);
+    expect(upCalls[1]?.env.ATLAS_CORE_IMAGE).toBe(previousImage);
+  });
+
   it("updates a stopped deployment without starting it", async () => {
     const test = runtime();
     markInitialized(test);
@@ -1395,7 +1432,7 @@ describe("atlas-core CLI", () => {
     });
     for (const file of ["compose.yml", "core-endpoint.json", "source-connector.json"]) {
       expect(existsSync(join(configRoot, file))).toBe(true);
-      expect(statSync(join(configRoot, file)).mode & 0o077).toBe(0);
+      expect(statSync(join(configRoot, file)).mode & 0o777).toBe(file === "compose.yml" ? 0o600 : 0o644);
     }
     expect(test.runner.calls.some((call) => call.args[0] === "pull" && call.args[1] === TEST_PLUGIN_IMAGE)).toBe(true);
     const configCall = test.runner.calls.find((call) => composeCommand(call)[0] === "config");

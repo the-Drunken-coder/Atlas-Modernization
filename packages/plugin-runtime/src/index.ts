@@ -71,28 +71,28 @@ export function definePlugin<const Operations extends OperationMap>(
     if (!Number.isInteger(operation.timeoutMs) || operation.timeoutMs < 1 || operation.timeoutMs > 25_000) {
       throw new TypeError(`Operation ${operationId} timeoutMs must be an integer between 1 and 25000`);
     }
-    requireOperationInteraction(operationId, operation.interaction);
-    return [operationId, operation] as const;
+    const interaction = normalizeOperationInteraction(operationId, operation.interaction);
+    return [operationId, operation, interaction] as const;
   });
   const operations = operationEntries
-    .map(([operationId, operation]) => {
+    .map(([operationId, operation, interaction]) => {
       return Object.freeze({
         operation_id: operationId,
         display_name: operation.displayName.trim(),
         timeout_ms: operation.timeoutMs,
-        ...(operation.interaction ? { interaction: operation.interaction } : {})
+        ...(interaction ? { interaction } : {})
       });
     })
     .sort((left, right) => left.operation_id.localeCompare(right.operation_id));
   const normalizedOperations = Object.freeze(
     Object.fromEntries(
-      operationEntries.map(([operationId, operation]) => [
+      operationEntries.map(([operationId, operation, interaction]) => [
         operationId,
         Object.freeze({
           displayName: operation.displayName.trim(),
           timeoutMs: operation.timeoutMs,
           handler: operation.handler,
-          ...(operation.interaction ? { interaction: operation.interaction } : {})
+          ...(interaction ? { interaction } : {})
         })
       ])
     )
@@ -456,11 +456,15 @@ function requireDisplayName(subject: string, value: string): void {
   if ([...trimmed].length > 100) throw new TypeError(`${subject} display name must be no more than 100 characters`);
 }
 
-function requireOperationInteraction(operationId: string, interaction: PluginOperationInteraction | undefined): void {
-  if (interaction === undefined) return;
+function normalizeOperationInteraction(
+  operationId: string,
+  interaction: PluginOperationInteraction | undefined
+): PluginOperationInteraction | undefined {
+  if (interaction === undefined) return undefined;
   if (Object.keys(interaction).length !== 1 || interaction.kind !== "map_area") {
     throw new TypeError(`Operation ${operationId} interaction is invalid`);
   }
+  return Object.freeze({ kind: interaction.kind });
 }
 
 function readGatewayFailure(value: unknown): SourceGatewayFailureCode {

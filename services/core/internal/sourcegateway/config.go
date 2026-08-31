@@ -18,6 +18,8 @@ import (
 )
 
 const (
+	maxBaseConfigBytes       = 4 << 20
+	maxConnectorConfigBytes  = 1 << 20
 	HardMaxRequestBodyBytes  = 4 << 20
 	HardMaxResponseBodyBytes = 16 << 20
 	HardMaxWireRequestBytes  = 8 << 20
@@ -103,8 +105,11 @@ func LoadConfig(path string, connectorDirectory string) (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("open Source Gateway configuration: %w", err)
 	}
-	defer func() { _ = file.Close() }()
-	decoder := json.NewDecoder(io.LimitReader(file, 4<<20))
+	data, err := readBoundedConfig(file, maxBaseConfigBytes)
+	if err != nil {
+		return Config{}, fmt.Errorf("read Source Gateway configuration: %w", err)
+	}
+	decoder := json.NewDecoder(strings.NewReader(string(data)))
 	decoder.DisallowUnknownFields()
 	var base struct {
 		ListenAddress   string `json:"listen_address"`
@@ -152,24 +157,39 @@ func loadConnectorFragments(directory string) ([]ConnectorConfig, error) {
 		if err != nil {
 			return nil, fmt.Errorf("open Source Gateway connector fragment %s: %w", entry.Name(), err)
 		}
-		decoder := json.NewDecoder(io.LimitReader(file, 1<<20))
+		data, readErr := readBoundedConfig(file, maxConnectorConfigBytes)
+		if readErr != nil {
+			return nil, fmt.Errorf("read Source Gateway connector fragment %s: %w", entry.Name(), readErr)
+		}
+		decoder := json.NewDecoder(strings.NewReader(string(data)))
 		decoder.DisallowUnknownFields()
 		var connector ConnectorConfig
 		decodeErr := decoder.Decode(&connector)
 		trailingErr := decoder.Decode(&struct{}{})
-		closeErr := file.Close()
 		if decodeErr != nil {
 			return nil, fmt.Errorf("decode Source Gateway connector fragment %s: %w", entry.Name(), decodeErr)
 		}
 		if !errors.Is(trailingErr, io.EOF) {
 			return nil, fmt.Errorf("source gateway connector fragment %s contains trailing JSON", entry.Name())
 		}
-		if closeErr != nil {
-			return nil, fmt.Errorf("close Source Gateway connector fragment %s: %w", entry.Name(), closeErr)
-		}
 		connectors = append(connectors, connector)
 	}
 	return connectors, nil
+}
+
+func readBoundedConfig(file *os.File, maximum int64) ([]byte, error) {
+	data, readErr := io.ReadAll(io.LimitReader(file, maximum+1))
+	closeErr := file.Close()
+	if readErr != nil {
+		return nil, readErr
+	}
+	if closeErr != nil {
+		return nil, closeErr
+	}
+	if int64(len(data)) > maximum {
+		return nil, fmt.Errorf("file exceeds %d bytes", maximum)
+	}
+	return data, nil
 }
 
 func (c *Config) normalize() error {

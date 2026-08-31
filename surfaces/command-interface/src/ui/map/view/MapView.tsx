@@ -422,12 +422,21 @@ export function MapView({
   }, [spatial]);
 
   const handleCanvasClick = (event: ReactMouseEvent<HTMLDivElement>) => {
+    if (reticleInteraction.mapActions.consumeSuppressedClick()) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
     const map = mapRef.current;
     if (
       map &&
       spatial &&
       !(event.target instanceof Element && event.target.closest("[data-map-interaction-control]"))
     ) {
+      if (!SPATIAL_RESULT_LAYERS.every((layerId) => map.getLayer(layerId))) {
+        reticleInteraction.canvasHandlers.onClick(event);
+        return;
+      }
       const bounds = event.currentTarget.getBoundingClientRect();
       const feature = map.queryRenderedFeatures([event.clientX - bounds.left, event.clientY - bounds.top], {
         layers: SPATIAL_RESULT_LAYERS

@@ -114,7 +114,7 @@ async function requestSource(gateway: Gateway, area: MapArea, signal: AbortSigna
 
 export function overpassQuery(area: MapArea): string {
   const bounds = `${area.south},${area.west},${area.north},${area.east}`;
-  return `[out:json][timeout:15];\n(\n  way["building"](${bounds});\n  relation["building"](${bounds});\n);\nout meta geom ${candidateLimit};`;
+  return `[out:json][timeout:9];\n(\n  way["building"](${bounds});\n  relation["building"](${bounds});\n);\nout meta geom ${candidateLimit};`;
 }
 
 export function buildResult(payload: unknown, retrievedAt: Date): SpatialOperationResult {
@@ -193,7 +193,6 @@ function overpassRemarkCode(remark: string): SourceRemarkError["pluginCode"] {
 }
 
 function parseTags(value: unknown): Tags {
-  if (value === undefined) return {};
   if (!isRecord(value)) throw new MalformedSourceResponse();
   const tags: Tags = {};
   for (const [key, tag] of Object.entries(value)) {

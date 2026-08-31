@@ -15,6 +15,7 @@ describe("Building Scan", () => {
     const query = overpassQuery(area);
     expect(query).toContain('way["building"](42,-71.01,42.01,-71)');
     expect(query).toContain('relation["building"](42,-71.01,42.01,-71)');
+    expect(query).toContain("[timeout:9]");
     expect(query).toContain("out meta geom 501");
   });
 
@@ -35,7 +36,7 @@ describe("Building Scan", () => {
     });
   });
 
-  it("parses closed ways, holes, multiple outers, labels, missing tags, and duplicate elements deterministically", async () => {
+  it("parses closed ways, holes, multiple outers, labels, missing optional tags, and duplicate elements deterministically", async () => {
     const payload = await fixture("buildings.json");
     const first = buildResult(payload, retrievedAt);
     const second = buildResult(payload, retrievedAt);
@@ -74,7 +75,13 @@ describe("Building Scan", () => {
 
   it("fails closed on malformed geometry and conflicting duplicates", async () => {
     const malformed = await fixture("malformed-geometry.json");
-    expect(() => buildResult(malformed, retrievedAt)).toThrow();
+    const operation = createBuildingSearchOperation(
+      { request: async () => response(200, malformed) },
+      () => retrievedAt
+    );
+    await expect(operation.handler(area, new AbortController().signal)).rejects.toMatchObject({
+      pluginCode: "malformed_source_response"
+    });
     expect(() => buildResult({ elements: [{ ...squareElement(2), version: "invalid" }] }, retrievedAt)).toThrow();
     const duplicate = squareElement(1);
     expect(() =>
@@ -85,6 +92,15 @@ describe("Building Scan", () => {
         retrievedAt
       )
     ).toThrow();
+  });
+
+  it("rejects source elements without tags", async () => {
+    const operation = createBuildingSearchOperation({
+      request: async () => response(200, { elements: [{ ...squareElement(1), tags: undefined }] })
+    });
+    await expect(operation.handler(area, new AbortController().signal)).rejects.toMatchObject({
+      pluginCode: "malformed_source_response"
+    });
   });
 
   it("reports feature-limit truncation after 501 candidates", () => {

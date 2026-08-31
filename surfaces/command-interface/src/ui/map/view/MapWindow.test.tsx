@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { MapWindow } from "./MapWindow.js";
@@ -33,29 +33,63 @@ describe("MapWindow", () => {
   });
 
   it("moves with arrow keys and clamps the window to its map", () => {
-    const view = render(
-      <div>
-        <MapWindow title="Fixture results" onClose={() => undefined}>
-          Window body
-        </MapWindow>
-      </div>
-    );
-    const map = view.container.firstElementChild as HTMLElement;
-    const windowElement = screen.getByRole("complementary", { name: "Fixture results" });
-    Object.defineProperties(map, { clientWidth: { value: 500 }, clientHeight: { value: 400 } });
-    Object.defineProperties(windowElement, { offsetWidth: { value: 200 }, offsetHeight: { value: 150 } });
-    map.getBoundingClientRect = () => rect(0, 0, 500, 400);
-    windowElement.getBoundingClientRect = () => rect(100, 50, 200, 150);
+    let notifyResize: (() => void) | undefined;
+    const resizeObserverDescriptor = Object.getOwnPropertyDescriptor(globalThis, "ResizeObserver");
+    Object.defineProperty(globalThis, "ResizeObserver", {
+      configurable: true,
+      value: class {
+        constructor(callback: ResizeObserverCallback) {
+          notifyResize = () => callback([], this as unknown as ResizeObserver);
+        }
+        observe() {}
+        disconnect() {}
+      }
+    });
+    try {
+      const view = render(
+        <div>
+          <MapWindow title="Fixture results" onClose={() => undefined}>
+            Window body
+          </MapWindow>
+        </div>
+      );
+      const map = view.container.firstElementChild as HTMLElement;
+      const windowElement = screen.getByRole("complementary", {
+        name: "Fixture results"
+      });
+      Object.defineProperties(map, {
+        clientWidth: { value: 500, configurable: true },
+        clientHeight: { value: 400, configurable: true }
+      });
+      Object.defineProperties(windowElement, {
+        offsetWidth: { value: 200, configurable: true },
+        offsetHeight: { value: 150, configurable: true }
+      });
+      map.getBoundingClientRect = () => rect(0, 0, 500, 400);
+      windowElement.getBoundingClientRect = () => rect(100, 50, 200, 150);
 
-    const move = screen.getByRole("button", { name: "Move Fixture results window. Use arrow keys." });
-    fireEvent.keyDown(move, { key: "ArrowRight" });
-    expect(windowElement).toHaveStyle({ left: "108px", top: "50px" });
+      const move = screen.getByRole("button", {
+        name: "Move Fixture results window. Use arrow keys."
+      });
+      fireEvent.keyDown(move, { key: "ArrowRight" });
+      expect(windowElement).toHaveStyle({ left: "108px", top: "50px" });
 
-    windowElement.getBoundingClientRect = () => rect(295, 245, 200, 150);
-    fireEvent.keyDown(move, { key: "ArrowRight", shiftKey: true });
-    windowElement.getBoundingClientRect = () => rect(300, 245, 200, 150);
-    fireEvent.keyDown(move, { key: "ArrowDown", shiftKey: true });
-    expect(windowElement).toHaveStyle({ left: "300px", top: "250px" });
+      windowElement.getBoundingClientRect = () => rect(295, 245, 200, 150);
+      fireEvent.keyDown(move, { key: "ArrowRight", shiftKey: true });
+      windowElement.getBoundingClientRect = () => rect(300, 245, 200, 150);
+      fireEvent.keyDown(move, { key: "ArrowDown", shiftKey: true });
+      expect(windowElement).toHaveStyle({ left: "300px", top: "250px" });
+
+      Object.defineProperties(map, {
+        clientWidth: { value: 250 },
+        clientHeight: { value: 180 }
+      });
+      act(() => notifyResize?.());
+      expect(windowElement).toHaveStyle({ left: "50px", top: "30px" });
+    } finally {
+      if (resizeObserverDescriptor) Object.defineProperty(globalThis, "ResizeObserver", resizeObserverDescriptor);
+      else Reflect.deleteProperty(globalThis, "ResizeObserver");
+    }
   });
 });
 

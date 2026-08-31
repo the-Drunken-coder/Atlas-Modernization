@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	protocol "github.com/the-drunken-coder/atlas/packages/protocol/generated/go/atlasprotocol"
+	protocolvalidator "github.com/the-drunken-coder/atlas/packages/protocol/validator"
 )
 
 func TestEntityExamplesValidate(t *testing.T) {
@@ -57,6 +58,44 @@ func TestGeneratedMapAreaValidatorAppliesSemanticLimits(t *testing.T) {
 	assertErrorContains(t, protocol.ValidateMapArea(map[string]any{
 		"west": -71.1, "south": 42.0, "east": -71.0, "north": 42.1,
 	}), "area must not exceed 5 km²")
+	assertErrorContains(t, protocol.ValidateMapArea(json.RawMessage(`{"west":1,"south":0,"east":0,"north":1}`)), "west must be less than east")
+}
+
+func TestGeneratedSpatialValidatorsApplySemanticLimits(t *testing.T) {
+	openMultiPolygon := map[string]any{
+		"type": "MultiPolygon",
+		"coordinates": []any{[]any{[]any{
+			[]any{0.0, 0.0}, []any{1.0, 0.0}, []any{1.0, 1.0}, []any{0.0, 1.0},
+		}}},
+	}
+	assertErrorContains(t, protocol.ValidateSpatialGeometry(openMultiPolygon), "polygon ring must be closed")
+
+	positions := make([]any, protocolvalidator.MaxGeometryPositions+1)
+	for index := range positions {
+		positions[index] = []any{0.0, 0.0}
+	}
+	assertErrorContains(t, protocol.ValidateSpatialGeometry(map[string]any{
+		"type":        "MultiPolygon",
+		"coordinates": []any{[]any{positions}},
+	}), "polygon positions must not exceed")
+
+	geometry := map[string]any{
+		"type": "Polygon",
+		"coordinates": []any{[]any{
+			[]any{0.0, 0.0}, []any{1.0, 0.0}, []any{1.0, 1.0}, []any{0.0, 0.0},
+		}},
+	}
+	result := map[string]any{
+		"features": []any{
+			map[string]any{"id": "duplicate", "title": "First", "geometry": geometry, "fields": []any{map[string]any{"label": "Type", "value": "building"}}},
+			map[string]any{"id": "duplicate", "title": "Second", "geometry": geometry, "fields": []any{map[string]any{"label": "Type", "value": "building"}}},
+		},
+		"provenance":   map[string]any{"connector_id": "fixture", "source": "Fixture"},
+		"attribution":  map[string]any{"text": "Fixture", "url": "https://example.test/attribution"},
+		"retrieved_at": "2026-08-31T12:00:00Z",
+		"truncation":   nil,
+	}
+	assertErrorContains(t, protocol.ValidateSpatialOperationResult(result), "feature ID \"duplicate\" is duplicated")
 }
 
 func TestErrorExamplesValidate(t *testing.T) {

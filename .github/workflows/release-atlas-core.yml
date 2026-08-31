@@ -714,6 +714,14 @@ jobs:
               cat "$inspect_error" >&2
               exit 1
             fi
+            promoted_digest="$(
+              docker buildx imagetools inspect "$final_image" --format '{{json .Manifest}}' |
+                jq -er '.digest | select(test("^sha256:[0-9a-f]{64}$"))'
+            )"
+            if [ "$promoted_digest" != "$pinned_digest" ]; then
+              echo "$final_image resolved to $promoted_digest after promotion." >&2
+              exit 1
+            fi
           done
 
       - name: Verify the exact image digest is publicly pullable

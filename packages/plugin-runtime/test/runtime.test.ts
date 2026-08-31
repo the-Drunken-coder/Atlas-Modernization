@@ -85,6 +85,9 @@ describe("Atlas Plugin runtime", () => {
     });
 
     expect(plugin.manifest.operations[0]).toMatchObject({ interaction: { kind: "map_area" } });
+    expect(plugin.manifest.operations[0]?.interaction).not.toBe(operation.interaction);
+    expect(plugin.operations.search.interaction).toBe(plugin.manifest.operations[0]?.interaction);
+    expect(Object.isFrozen(plugin.operations.search.interaction)).toBe(true);
     await expect(
       operation.handler({ west: -71.31, south: 42.27, east: -71.3, north: 42.28 }, new AbortController().signal)
     ).resolves.toMatchObject({ features: [], truncation: null });

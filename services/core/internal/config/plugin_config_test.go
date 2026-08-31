@@ -58,4 +58,12 @@ func TestPluginEndpointFragmentsLoadSortedAndFailClosed(t *testing.T) {
 	if err := cfg.loadPluginEndpointFragments(directory); err == nil || !strings.Contains(err.Error(), "unknown") {
 		t.Fatalf("unknown field error = %v", err)
 	}
+
+	if err := os.Remove(filepath.Join(directory, "40_unknown.json")); err != nil {
+		t.Fatal(err)
+	}
+	write("40_oversized.json", strings.Repeat(" ", maxPluginEndpointFragmentBytes+1))
+	if err := cfg.loadPluginEndpointFragments(directory); err == nil || !strings.Contains(err.Error(), "1 to") {
+		t.Fatalf("oversized fragment error = %v", err)
+	}
 }

@@ -13,7 +13,10 @@ export type PointLike = { x: number; y: number };
 
 type Listener = (event?: unknown) => void;
 type ListenerEntry = { listener: Listener; once: boolean };
-type RenderedFeature = { geometry: { type: string; coordinates: unknown }; properties?: { entityId?: string } };
+type RenderedFeature = {
+  geometry: { type: string; coordinates: unknown };
+  properties?: { entityId?: string; featureId?: string };
+};
 type ResizeObserverRecord = { active: boolean; callback: ResizeObserverCallback; targets: Set<Element> };
 
 let resizeObservers: ResizeObserverRecord[] = [];

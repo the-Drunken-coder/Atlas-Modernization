@@ -7,6 +7,7 @@ import {
 } from "@the-drunken-coder/atlas-sdk";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { sanitizeConnectionError } from "../../atlas/connection-error.js";
+import { foregroundEscapeOwner } from "../../ui/map/interaction/foreground-escape-owner.js";
 
 export type SpatialOperationTarget = {
   pluginId: string;
@@ -107,6 +108,12 @@ export function useSpatialOperationRunner({
   const setArea = useCallback(
     (next: MapArea) => {
       abortRequest();
+      if (!isMapArea(next)) {
+        setStatus("error");
+        setStale(result !== null);
+        setError("Select a non-crossing area no larger than 5 km².");
+        return;
+      }
       setAreaState(next);
       setStatus("idle");
       setStale(result !== null);
@@ -200,13 +207,16 @@ export function useSpatialOperationRunner({
   useEffect(() => {
     if (status !== "drawing" && status !== "loading") return;
     const handleEscape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      const owner = foregroundEscapeOwner(event.target);
+      if (owner && !owner.matches("[data-spatial-operation]")) return;
       event.preventDefault();
-      event.stopPropagation();
+      if (status === "drawing") event.stopPropagation();
       cancel();
     };
-    window.addEventListener("keydown", handleEscape, { capture: true });
-    return () => window.removeEventListener("keydown", handleEscape, { capture: true });
+    const capture = status === "drawing";
+    window.addEventListener("keydown", handleEscape, { capture });
+    return () => window.removeEventListener("keydown", handleEscape, { capture });
   }, [cancel, status]);
 
   return {

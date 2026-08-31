@@ -21,7 +21,7 @@ const response: SpatialOperationResult = {
           ]
         ]
       },
-      fields: []
+      fields: [{ label: "Kind", value: "Fixture" }]
     }
   ],
   provenance: { connector_id: "fixture", source: "Fixture" },
@@ -31,6 +31,24 @@ const response: SpatialOperationResult = {
 };
 
 describe("useSpatialOperationRunner", () => {
+  it("rejects invalid areas without replacing the last valid selection", () => {
+    const hook = renderHook(() => useSpatialOperationRunner({ executor: { invokeSpatial: vi.fn() } }));
+
+    act(() => hook.result.current.setArea(area));
+    act(() =>
+      hook.result.current.setArea({
+        west: -72,
+        south: 41,
+        east: -71,
+        north: 42
+      })
+    );
+
+    expect(hook.result.current.area).toEqual(area);
+    expect(hook.result.current.status).toBe("error");
+    expect(hook.result.current.error).toContain("no larger than 5 km²");
+  });
+
   it("aborts an active request and marks retained results stale when the area changes", async () => {
     const signals: AbortSignal[] = [];
     const executor: SpatialOperationExecutor = {

@@ -14,6 +14,7 @@ import type { MapSourceConfig } from "../../../app/config.js";
 import { sanitizeConnectionError } from "../../../atlas/connection-error.js";
 import { Button, IconButton } from "../../primitives/controls.js";
 import { CloseIcon, ComparisonIcon, TrashIcon } from "../../primitives/icons.js";
+import { foregroundEscapeOwner } from "../interaction/foreground-escape-owner.js";
 import { MapSourceSelect } from "../MapSourcePicker.js";
 import type { MapEditing } from "../rendering/map-editing.js";
 import { pushEditingOverlay, pushSources, registerSourcesAndLayers } from "../rendering/map-layers.js";
@@ -713,14 +714,6 @@ function keyboardDelta(key: string, step: number, axes: ResizeAxes): ScreenPoint
 
 function rectStyle(rect: ScreenRect): CSSProperties {
   return { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
-}
-
-function foregroundEscapeOwner(target: EventTarget | null): Element | null {
-  return target instanceof Element
-    ? target.closest(
-        '[role="listbox"], [role="menu"], [role="dialog"], #account-menu-popover, [aria-controls="account-menu-popover"][aria-expanded="true"], [data-map-source-trigger][aria-expanded="true"]'
-      )
-    : null;
 }
 
 function panelPosition(

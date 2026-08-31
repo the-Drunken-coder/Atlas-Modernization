@@ -39,6 +39,7 @@ export function useMapReticleInteraction(options: MapReticleInteractionOptions) 
     mapActions: {
       cancelBoxZoom: pointer.cancelBoxZoom,
       completeBoxZoom: pointer.completeBoxZoom,
+      consumeSuppressedClick: pointer.consumeSuppressedClick,
       suppressNextClick: pointer.suppressNextClick
     }
   };

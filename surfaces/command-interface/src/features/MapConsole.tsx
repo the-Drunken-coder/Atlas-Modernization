@@ -26,7 +26,6 @@ import { AppShell } from "../ui/layout/AppShell.js";
 import { SidebarPanel } from "../ui/layout/SidebarPanel.js";
 import { SidebarRail } from "../ui/layout/SidebarRail.js";
 import type { MapCameraCommand, MapTarget } from "../ui/map/interaction/map-camera.js";
-import { MapSourcePicker } from "../ui/map/MapSourcePicker.js";
 import { buildMapSources } from "../ui/map/rendering/map-sources.js";
 import type { MapReticleTarget } from "../ui/map/view/MapView.js";
 import { Button, IconButton } from "../ui/primitives/controls.js";
@@ -42,7 +41,6 @@ import { GeofeatureInspector } from "./geofeatures/GeofeatureInspector.js";
 import { type GeometryEditState, useGeometryEdit } from "./geofeatures/use-geometry-edit.js";
 import { PlacesPanel } from "./places/PlacesPanel.js";
 import { createMapTilerPlaceSearch, type PlaceSearch } from "./places/place-search.js";
-import { SpatialResultsInspector } from "./plugins/SpatialResultsInspector.js";
 import { type SpatialOperationRunner, useSpatialOperationRunner } from "./plugins/use-spatial-operation-runner.js";
 import { TrackInspector } from "./tracks/TrackInspector.js";
 
@@ -55,7 +53,13 @@ const LIST_TITLES = Object.fromEntries([
 ]) as Record<ListKind, string>;
 
 const MapView = lazy(() => import("../ui/map/view/MapView.js").then((module) => ({ default: module.MapView })));
+const MapSourcePicker = lazy(() =>
+  import("../ui/map/MapSourcePicker.js").then((module) => ({ default: module.MapSourcePicker }))
+);
 const PluginsPanel = lazy(() => import("./admin/PluginsPanel.js").then((module) => ({ default: module.PluginsPanel })));
+const SpatialResultsInspector = lazy(() =>
+  import("./plugins/SpatialResultsInspector.js").then((module) => ({ default: module.SpatialResultsInspector }))
+);
 
 type CommandManifestStatus = "ready" | "loading" | "unavailable";
 const EMPTY_ENTITY_QUERIES = Object.fromEntries(ENTITY_KINDS.map((kind) => [kind, ""])) as Record<EntityKind, string>;
@@ -419,22 +423,26 @@ export function MapConsole() {
                   </Callout>
                 )}
                 <ConnectionBadge health={atlas.health} error={atlas.connectionError} onRetry={atlas.reconnect} />
-                <MapSourcePicker
-                  sources={atlas.config.mapSources}
-                  defaultSourceId={atlas.config.defaultMapSourceId}
-                  value={mapSourcePickerValue}
-                  onChange={setSelectedMapSourceId}
-                />
-                <SpatialResultsInspector
-                  spatial={spatial}
-                  onPreviewFeature={(feature) =>
-                    setSpatialPreviewTarget(feature ? spatialFeatureTarget(feature) : null)
-                  }
-                  onFocusFeature={(feature) => {
-                    setSpatialPreviewTarget(null);
-                    issueCameraCommand(spatialFeatureTarget(feature), "commit");
-                  }}
-                />
+                <Suspense fallback={null}>
+                  <MapSourcePicker
+                    sources={atlas.config.mapSources}
+                    defaultSourceId={atlas.config.defaultMapSourceId}
+                    value={mapSourcePickerValue}
+                    onChange={setSelectedMapSourceId}
+                  />
+                </Suspense>
+                <Suspense fallback={null}>
+                  <SpatialResultsInspector
+                    spatial={spatial}
+                    onPreviewFeature={(feature) =>
+                      setSpatialPreviewTarget(feature ? spatialFeatureTarget(feature) : null)
+                    }
+                    onFocusFeature={(feature) => {
+                      setSpatialPreviewTarget(null);
+                      issueCameraCommand(spatialFeatureTarget(feature), "commit");
+                    }}
+                  />
+                </Suspense>
               </div>
             </div>
           </>

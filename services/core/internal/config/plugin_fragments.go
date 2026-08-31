@@ -35,9 +35,17 @@ func (c *Config) loadPluginEndpointFragments(directory string) error {
 		if entry.IsDir() || !entry.Type().IsRegular() || filepath.Ext(entry.Name()) != ".json" {
 			return fmt.Errorf("plugin endpoint configuration directory contains unsupported entry %q", entry.Name())
 		}
-		data, err := root.ReadFile(entry.Name())
+		file, err := root.Open(entry.Name())
 		if err != nil {
-			return fmt.Errorf("read plugin endpoint fragment %s: %w", entry.Name(), err)
+			return fmt.Errorf("open plugin endpoint fragment %s: %w", entry.Name(), err)
+		}
+		data, readErr := io.ReadAll(io.LimitReader(file, maxPluginEndpointFragmentBytes+1))
+		closeErr := file.Close()
+		if readErr != nil {
+			return fmt.Errorf("read plugin endpoint fragment %s: %w", entry.Name(), readErr)
+		}
+		if closeErr != nil {
+			return fmt.Errorf("close plugin endpoint fragment %s: %w", entry.Name(), closeErr)
 		}
 		if len(data) == 0 || len(data) > maxPluginEndpointFragmentBytes {
 			return fmt.Errorf("plugin endpoint fragment %s must contain 1 to %d bytes", entry.Name(), maxPluginEndpointFragmentBytes)

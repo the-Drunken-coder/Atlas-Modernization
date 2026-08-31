@@ -3,6 +3,7 @@ package sourcegateway
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -54,6 +55,27 @@ func TestConfigDefaultsAndStrictDecoding(t *testing.T) {
 	}
 	if _, err := LoadConfig(path, connectorDirectory); err == nil {
 		t.Fatal("expected unknown connector fragment field to fail")
+	}
+}
+
+func TestConfigRejectsFilesAboveSizeLimits(t *testing.T) {
+	basePath := filepath.Join(t.TempDir(), "source_gateway.json")
+	if err := os.WriteFile(basePath, []byte(`{"listen_address":":8080"}`+strings.Repeat(" ", maxBaseConfigBytes)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadConfig(basePath, ""); err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("oversized base configuration error = %v", err)
+	}
+
+	if err := os.WriteFile(basePath, []byte(`{"listen_address":":8080"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	connectorDirectory := t.TempDir()
+	if err := os.WriteFile(filepath.Join(connectorDirectory, "oversized.json"), []byte(strings.Repeat(" ", maxConnectorConfigBytes+1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadConfig(basePath, connectorDirectory); err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("oversized connector fragment error = %v", err)
 	}
 }
 

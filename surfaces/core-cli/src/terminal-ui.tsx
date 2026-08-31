@@ -958,13 +958,14 @@ function PluginsMenu({
   const plugins = view instanceof Error ? [] : view;
   const index = Math.min(selected, Math.max(0, plugins.length - 1));
   const plugin = plugins[index];
+  const canInteract = columns >= MINIMUM_TERMINAL_COLUMNS;
   useInput((input, key) => {
     if (actionPending.current) return;
     const modified = hasCommandModifier(key);
     if (key.escape || (key.ctrl && input === "c") || (!modified && input === "q")) {
       actionPending.current = true;
       onBack();
-    } else if (modified) return;
+    } else if (!canInteract || modified) return;
     else if (input === "r") {
       actionPending.current = true;
       onReload();

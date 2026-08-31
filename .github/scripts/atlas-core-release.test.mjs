@@ -80,9 +80,10 @@ test("uses a cached fast path for immutable-tag publication", () => {
   assert.match(source, /permissions:\n\s+actions: write\n\s+contents: write/);
   assert.match(source, /gh workflow run release-atlas-core\.yml/);
   assert.doesNotMatch(source, /Require a run from the immutable release tag/);
+  assert.equal(source.match(/resolved to \$promoted_digest after promotion/g)?.length, 2);
 });
 
-test("serializes Atlas Core releases without cancelling the active run", () => {
+test("uses GitHub concurrency without cancelling the active release", () => {
   const source = readFileSync(workflow, "utf8");
   assert.match(source, /concurrency:\n\s+group: release-atlas-core\n\s+cancel-in-progress: false/);
 });

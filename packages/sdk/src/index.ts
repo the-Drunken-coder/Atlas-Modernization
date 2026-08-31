@@ -27,7 +27,10 @@ export {
   type TaskCreateOptions,
   type TaskFailOptions
 } from "./client.js";
-export { type ErrorMessageSanitizerOptions, sanitizeErrorMessage } from "./error-sanitizer.js";
+export {
+  type ErrorMessageSanitizerOptions,
+  sanitizeErrorMessage
+} from "./error-sanitizer.js";
 export type {
   ChangedSinceResponse,
   Classification,
@@ -134,4 +137,5 @@ export {
   isTaskStartRequest,
   RESOURCE_TYPE_VALUES
 } from "./protocol.js";
+export { mapAreaSquareMeters } from "./spatial.js";
 export { joinAtlasUrl, normalizeAtlasBaseUrl } from "./url.js";

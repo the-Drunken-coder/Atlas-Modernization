@@ -2,6 +2,7 @@ import type { SpatialFeature } from "@the-drunken-coder/atlas-sdk";
 import { MapWindow } from "../../ui/map/view/MapWindow.js";
 import { PanelListRow } from "../shared/PanelListRow.js";
 import { FieldGrid } from "../shared/panels.js";
+import { formatSpatialReason, formatSpatialRetrievalTime } from "./spatial-format.js";
 import type { SpatialOperationRunner } from "./use-spatial-operation-runner.js";
 
 export function SpatialResultsInspector({
@@ -31,7 +32,7 @@ export function SpatialResultsInspector({
       footer={
         <>
           <span className="spatial-map-window__source" title={result.provenance.source}>
-            {result.provenance.source} · {formatRetrievedAt(result.retrieved_at)}
+            {result.provenance.source} · {formatSpatialRetrievalTime(result.retrieved_at)}
           </span>
           <a href={result.attribution.url} target="_blank" rel="noreferrer">
             {result.attribution.text}
@@ -50,7 +51,7 @@ export function SpatialResultsInspector({
               ? "Refreshing. Previous results retained."
               : spatial.stale
                 ? "Results are stale."
-                : `Results truncated: ${formatReason(result.truncation?.reason ?? "")}`}
+                : `Results truncated: ${formatSpatialReason(result.truncation?.reason ?? "")}`}
         </div>
       ) : null}
 
@@ -60,7 +61,7 @@ export function SpatialResultsInspector({
         <div className="spatial-map-window__content">
           <ul className="entity-list spatial-map-window__results" role="listbox" aria-label="Spatial results">
             {result.features.map((feature) => (
-              <li key={feature.id}>
+              <li key={feature.id} role="none">
                 <PanelListRow
                   className="spatial-map-window__result"
                   role="option"
@@ -106,15 +107,4 @@ export function SpatialResultsInspector({
       )}
     </MapWindow>
   );
-}
-
-function formatReason(reason: string): string {
-  return reason.replaceAll("_", " ");
-}
-
-function formatRetrievedAt(value: string): string {
-  const date = new Date(value);
-  return Number.isNaN(date.valueOf())
-    ? value
-    : date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit", second: "2-digit" });
 }

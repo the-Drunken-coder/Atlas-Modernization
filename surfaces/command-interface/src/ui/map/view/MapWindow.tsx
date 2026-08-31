@@ -37,6 +37,25 @@ export function MapWindow({
     return () => query.removeEventListener("change", update);
   }, []);
 
+  useEffect(() => {
+    const element = windowRef.current;
+    const parent = element?.parentElement;
+    if (!element || !parent || docked || typeof ResizeObserver !== "function") return;
+    const observer = new ResizeObserver(() => {
+      setPosition((current) => {
+        if (!current) return current;
+        const next = {
+          left: clamp(current.left, 0, Math.max(0, parent.clientWidth - element.offsetWidth)),
+          top: clamp(current.top, 0, Math.max(0, parent.clientHeight - element.offsetHeight))
+        };
+        return next.left === current.left && next.top === current.top ? current : next;
+      });
+    });
+    observer.observe(parent);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [docked]);
+
   const moveTo = useCallback((left: number, top: number) => {
     const element = windowRef.current;
     const parent = element?.parentElement;
