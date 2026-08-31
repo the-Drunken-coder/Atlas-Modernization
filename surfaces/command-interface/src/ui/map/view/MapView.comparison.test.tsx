@@ -541,6 +541,7 @@ describe("MapView region comparison", () => {
 });
 
 async function drawComparison(pointerType: "mouse" | "touch" = "mouse"): Promise<void> {
+  const mapCount = mapInstances().length;
   fireEvent.click(screen.getByRole("button", { name: "Compare map source inside a region" }));
   const prompt = screen.getByText("Drag a region. Shift-drag still zooms.");
   const surface = prompt.parentElement;
@@ -549,4 +550,5 @@ async function drawComparison(pointerType: "mouse" | "touch" = "mouse"): Promise
   fireEvent.pointerMove(window, { pointerId: 1, pointerType, clientX: 260, clientY: 160 });
   fireEvent.pointerUp(window, { pointerId: 1, pointerType, clientX: 260, clientY: 160 });
   await screen.findByTestId("map-comparison-region");
+  await waitFor(() => expect(mapInstances().length).toBeGreaterThan(mapCount));
 }
