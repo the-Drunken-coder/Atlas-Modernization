@@ -871,7 +871,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     const requested = pluginId
       ? [this.#pluginForRead(pluginId, state)]
       : [
-          ...this.#pluginCatalog.map((plugin) => this.#readableCatalogPlugin(plugin)),
+          ...this.#pluginCatalog.map((plugin) => this.#pluginForRead(plugin.pluginId, state)),
           ...(state?.enabledPlugins ?? [])
             .filter((enabledPluginId) => !this.#pluginCatalog.some((plugin) => plugin.pluginId === enabledPluginId))
             .map((enabledPluginId) => this.#readableDeployedPlugin(enabledPluginId))
@@ -1466,14 +1466,17 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   }
 
   #pluginForRead(pluginId: string, state: DeploymentState | undefined): ReadablePlugin {
+    if (state?.enabledPlugins.includes(pluginId)) return this.#readableDeployedPlugin(pluginId);
     const catalogPlugin = this.#pluginCatalog.find((plugin) => plugin.pluginId === pluginId);
     if (catalogPlugin) return this.#readableCatalogPlugin(catalogPlugin);
-    if (state?.enabledPlugins.includes(pluginId)) return this.#readableDeployedPlugin(pluginId);
     throw new Error(`Unknown first-party Plugin: ${pluginId}`);
   }
 
   #readableDeployedPlugin(pluginId: string): ReadablePlugin {
-    return { ...this.#readDeployedPluginMetadata(pluginId), packaged: false };
+    return {
+      ...this.#readDeployedPluginMetadata(pluginId),
+      packaged: this.#pluginCatalog.some((plugin) => plugin.pluginId === pluginId)
+    };
   }
 
   #readDeployedPluginMetadata(pluginId: string): DeployedPluginMetadata {

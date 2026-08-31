@@ -1592,7 +1592,13 @@ describe("atlas-core CLI", () => {
     setCoreVersion(test, "0.1.2");
     expect(await runCLI(["plugins", "disable", plugin.pluginId], test.context)).toBe(1);
     expect(test.stderr.join("")).toContain("update all");
-    test.context.pluginCatalog = [];
+    test.context.pluginCatalog = [
+      {
+        ...plugin,
+        displayName: "Renamed Spatial Fixture",
+        service: "renamed-spatial-fixture"
+      }
+    ];
     test.stdout.length = 0;
     test.runner.calls.length = 0;
 
@@ -1600,6 +1606,7 @@ describe("atlas-core CLI", () => {
     expect(await runCLI(["plugins", "status", plugin.pluginId], test.context)).toBe(0);
     expect(await runCLI(["plugins", "logs", plugin.pluginId], test.context)).toBe(0);
     expect(test.stdout.join("")).toContain(`${plugin.pluginId}\t${plugin.displayName}\tenabled`);
+    expect(test.stdout.join("")).not.toContain("Renamed Spatial Fixture");
     expect(test.runner.calls.map(composeCommand)).toContainEqual(["logs", "--tail", "200", plugin.service]);
   });
 

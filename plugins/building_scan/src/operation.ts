@@ -57,7 +57,7 @@ export function createBuildingSearchOperation(gateway: Gateway, now: () => Date 
 
       let payload: unknown;
       try {
-        payload = JSON.parse(new TextDecoder().decode(response.body));
+        payload = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(response.body));
       } catch {
         throw new PluginFailureError("malformed_source_response");
       }

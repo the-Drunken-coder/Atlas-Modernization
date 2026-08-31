@@ -103,6 +103,22 @@ describe("Building Scan", () => {
     });
   });
 
+  it("rejects invalid UTF-8 instead of publishing replacement characters", async () => {
+    const prefix = new TextEncoder().encode('{"elements":[],"source":"');
+    const suffix = new TextEncoder().encode('"}');
+    const operation = createBuildingSearchOperation({
+      request: async () => ({
+        status: 200,
+        headers: [],
+        body: new Uint8Array([...prefix, 0xff, ...suffix])
+      })
+    });
+
+    await expect(operation.handler(area, new AbortController().signal)).rejects.toMatchObject({
+      pluginCode: "malformed_source_response"
+    });
+  });
+
   it("reports feature-limit truncation after 501 candidates", () => {
     const result = buildResult(
       { elements: Array.from({ length: 501 }, (_, index) => squareElement(index + 1)) },
