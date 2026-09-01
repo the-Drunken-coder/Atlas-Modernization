@@ -13,7 +13,7 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { type CLIContext, type CommandRunner, runCLI } from "../src/application.js";
+import { type CLIContext, type CommandRunner, ProcessCommandRunner, runCLI } from "../src/application.js";
 import { PACKAGE_NAME, PACKAGE_VERSION } from "../src/package-metadata.js";
 import type { PluginCatalogEntry } from "../src/plugin-catalog.js";
 import type { DeploymentDetails } from "../src/terminal-ui.js";
@@ -469,6 +469,17 @@ describe("atlas-core CLI", () => {
     expect(await runCLI([], test.context)).toBe(0);
     expect(test.runner.calls.map(composeCommand)).toContainEqual(["down"]);
     expect(test.runner.calls.some((call) => call.args[0] === "network" && call.args[1] === "rm")).toBe(true);
+  });
+
+  it("does not terminate a pending cleanup process when ordinary commands are cancelled", async () => {
+    const runner = new ProcessCommandRunner();
+    const operation = runner.run(process.execPath, ["-e", "setTimeout(() => {}, 2_000)"]);
+    const cleanup = runner.runCleanup(process.execPath, ["-e", "setTimeout(() => {}, 100)"]);
+
+    runner.cancelAll();
+
+    await expect(operation).resolves.toMatchObject({ status: 1 });
+    await expect(cleanup).resolves.toMatchObject({ status: 0 });
   });
 
   it("rejects unknown update scopes", async () => {
@@ -1560,7 +1571,6 @@ describe("atlas-core CLI", () => {
     const test = runtime();
     markInitialized(test);
     const plugin = installTestPluginCatalog(test);
-    test.runner.failComposeUp = true;
     test.context.interactive = {
       configureAdmin: async () => undefined,
       runUpdate: async () => undefined,
@@ -1571,7 +1581,10 @@ describe("atlas-core CLI", () => {
           cancelled = true;
           operator.cancelPending();
         };
-        await expect(operator.pluginEnable(plugin.pluginId)).rejects.toThrow("injected compose up failure");
+        await expect(operator.pluginEnable(plugin.pluginId)).resolves.toEqual({
+          previousDeploymentPreserved: true,
+          status: "cancelled"
+        });
       }
     };
 

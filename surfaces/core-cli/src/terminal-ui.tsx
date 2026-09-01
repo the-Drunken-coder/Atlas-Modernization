@@ -1,6 +1,7 @@
 import { Box, type Key, render, Text, useApp, useInput, usePaste, useWindowSize } from "ink";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import wrapAnsi from "wrap-ansi";
+import { CommandCancelledError } from "./operation-errors.js";
 import { PACKAGE_VERSION } from "./package-metadata.js";
 
 export type DeploymentSnapshot = {
@@ -65,6 +66,8 @@ export type PluginActivity = {
 
 export type PluginActivityReporter = (activity: PluginActivity) => void;
 
+export type PluginOperationOutcome = { status: "success" } | { previousDeploymentPreserved: true; status: "cancelled" };
+
 export type AtlasCoreOperator = {
   cancelPending(): void;
   checkForUpdates(): Promise<UpdateInfo>;
@@ -73,8 +76,8 @@ export type AtlasCoreOperator = {
   doctor(): Promise<boolean>;
   init(): Promise<void>;
   logs(service: "api" | "minio" | "postgres" | "source-gateway" | undefined, follow: boolean): Promise<void>;
-  pluginDisable(pluginId: string, reportActivity?: PluginActivityReporter): Promise<void>;
-  pluginEnable(pluginId: string, reportActivity?: PluginActivityReporter): Promise<void>;
+  pluginDisable(pluginId: string, reportActivity?: PluginActivityReporter): Promise<PluginOperationOutcome>;
+  pluginEnable(pluginId: string, reportActivity?: PluginActivityReporter): Promise<PluginOperationOutcome>;
   pluginLogs(pluginId: string, follow: boolean): Promise<void>;
   pluginStatuses(pluginId?: string): Promise<PluginDeploymentStatus[]>;
   resumeAfterCancellation(): void;
@@ -126,9 +129,10 @@ type Screen =
 
 type AppMode = "configure" | "menu" | "update";
 
-type OperationResult = {
+type OperationResult<T> = {
   cancelled: boolean;
   failure?: Error;
+  value?: T;
 };
 
 type PluginActivityEvent = PluginActivity & { elapsedMs: number };
@@ -138,6 +142,7 @@ type PluginActivityView = {
   completedAt?: number;
   error?: string;
   events: PluginActivityEvent[];
+  operationId: number;
   plugin: PluginDeploymentStatus;
   startedAt: number;
   status: "running" | "cancelling" | "success" | "failure" | "cancelled";
@@ -200,7 +205,9 @@ async function runInkApp(
 
 function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): ReactNode {
   const { exit, suspendTerminal, waitUntilRenderFlush } = useApp();
+  const activePluginOperation = useRef<number | undefined>(undefined);
   const pluginCancellationRequested = useRef(false);
+  const pluginOperationGeneration = useRef(0);
   const statusAbortController = useRef<AbortController | undefined>(undefined);
   const statusGeneration = useRef(0);
   const statusReadPending = useRef<Promise<StatusView> | undefined>(undefined);
@@ -305,13 +312,13 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
   }, [exit, input, operator]);
 
   const runVisibleOperation = useCallback(
-    async (label: string, operation: () => Promise<void>): Promise<OperationResult> => {
+    async (label: string, operation: () => Promise<void>): Promise<OperationResult<void>> => {
       setScreen({ kind: "busy", label: `${label}...` });
       await waitUntilRenderFlush();
-      let result: OperationResult = { cancelled: false };
+      let result: OperationResult<void> = { cancelled: false };
       await suspendTerminal(async () => {
         result = await runCancelableOperation(operator, operation);
-        if (result.cancelled || terminalLost.current) return;
+        if (terminalLost.current || (result.cancelled && !result.failure)) return;
         if (result.failure) output.write(`\n${result.failure.message}\n`);
         output.write("\nPress Enter to return to Atlas Core.");
         await waitForReturn(input);
@@ -387,6 +394,9 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
   const togglePlugin = useCallback(
     async (plugin: PluginDeploymentStatus) => {
       const action = plugin.enabled ? "Disable" : "Enable";
+      const operationId = pluginOperationGeneration.current + 1;
+      pluginOperationGeneration.current = operationId;
+      activePluginOperation.current = operationId;
       const startedAt = Date.now();
       pluginCancellationRequested.current = false;
       setScreen({
@@ -401,6 +411,7 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
               stage: "operation"
             }
           ],
+          operationId,
           plugin,
           startedAt,
           status: "running"
@@ -408,8 +419,9 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
       });
       await waitUntilRenderFlush();
       const reportActivity: PluginActivityReporter = (activity) => {
+        if (activePluginOperation.current !== operationId) return;
         setScreen((current) =>
-          current.kind === "plugin-activity"
+          current.kind === "plugin-activity" && current.view.operationId === operationId
             ? {
                 ...current,
                 view: {
@@ -421,23 +433,22 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
         );
       };
       const result = await runCancelableOperation(operator, async () => {
-        if (plugin.enabled) await operator.pluginDisable(plugin.pluginId, reportActivity);
-        else await operator.pluginEnable(plugin.pluginId, reportActivity);
+        return plugin.enabled
+          ? await operator.pluginDisable(plugin.pluginId, reportActivity)
+          : await operator.pluginEnable(plugin.pluginId, reportActivity);
       });
+      if (activePluginOperation.current === operationId) activePluginOperation.current = undefined;
       const cancellationRequested = pluginCancellationRequested.current || result.cancelled;
       if (cancellationRequested) operator.resumeAfterCancellation();
       setScreen((current) => {
-        if (current.kind !== "plugin-activity") return current;
-        const rollbackFailed = current.view.events.some(
-          (event) => event.stage === "rollback" && event.level === "failure"
-        );
-        const status = cancellationRequested
-          ? rollbackFailed
-            ? "failure"
-            : "cancelled"
-          : result.failure
-            ? "failure"
-            : "success";
+        if (current.kind !== "plugin-activity" || current.view.operationId !== operationId) return current;
+        const status = result.failure
+          ? "failure"
+          : result.value?.status === "success"
+            ? "success"
+            : result.value?.status === "cancelled" || result.cancelled
+              ? "cancelled"
+              : "success";
         return {
           ...current,
           view: {
@@ -453,11 +464,14 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
   );
 
   const cancelPluginActivity = useCallback(() => {
-    if (pluginCancellationRequested.current) return;
+    const operationId = activePluginOperation.current;
+    if (operationId === undefined || pluginCancellationRequested.current) return;
     pluginCancellationRequested.current = true;
     operator.cancelPending();
     setScreen((current) =>
-      current.kind === "plugin-activity" && current.view.status === "running"
+      current.kind === "plugin-activity" &&
+      current.view.operationId === operationId &&
+      current.view.status === "running"
         ? {
             ...current,
             view: {
@@ -511,7 +525,7 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
       const result = await runVisibleOperation("Changing admin password", async () => {
         await operator.configureAdminPassword(password);
       });
-      if (result.cancelled) {
+      if (result.cancelled && !result.failure) {
         setScreen({ kind: mode === "configure" ? "password" : "configure" });
         return;
       }
@@ -529,12 +543,12 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
     async (info: UpdateInfo, scope: UpdateScope) => {
       setScreen({ kind: "busy", label: "Applying reviewed update..." });
       await waitUntilRenderFlush();
-      let result: OperationResult = { cancelled: false };
+      let result: OperationResult<void> = { cancelled: false };
       await suspendTerminal(async () => {
         result = await runCancelableOperation(operator, async () => {
           await operator.update(scope, info.latestVersion, scope === "all");
         });
-        if (result.cancelled) return;
+        if (result.cancelled && !result.failure) return;
         if (result.failure) output.write(`\n${result.failure.message}\n`);
         output.write(
           result.failure
@@ -544,7 +558,7 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
         output.write("\nPress Enter to exit.");
         await waitForReturn(input);
       });
-      if (result.cancelled) exit();
+      if (result.cancelled && !result.failure) exit();
       else if (result.failure) exit(result.failure);
       else exit();
     },
@@ -1229,8 +1243,28 @@ function PluginActivityScreen({
     : view.status === "cancelling"
       ? "Cancelling safely. Waiting for cleanup..."
       : "Ctrl+C cancel safely";
-  const headerRows = wide ? 1 : 2;
-  const viewportRows = Math.max(1, rows - headerRows - wrappedRows(footer, columns) - 2);
+  const headerRows = 1 + (wide ? 0 : wrappedRows(detail, columns));
+  const viewportRows = rows - headerRows - wrappedRows(footer, columns) - 2;
+
+  if (viewportRows < 1) {
+    const compactFooter = view.status === "cancelling" ? "Waiting for safe cleanup..." : footer;
+    const compactHeader = `ACTIVITY ${formatActivityTime(elapsed)}`;
+    if (rows <= 1) return <Text>{compactHeader}</Text>;
+    const detailRows = Math.max(0, rows - 2);
+    const detailLines = activityMessageLines({ text: `${view.action} ${view.plugin.displayName}` }, columns).slice(
+      0,
+      detailRows
+    );
+    return (
+      <Box flexDirection="column" width={columns}>
+        <Header title={compactHeader} />
+        {detailLines.map((line, index) => (
+          <Text key={`${index}-${line.text}`}>{line.text}</Text>
+        ))}
+        <Text dimColor={view.status !== "failure"}>{compactFooter}</Text>
+      </Box>
+    );
+  }
   const lines = pluginActivityLines(view, columns).slice(-viewportRows);
 
   return (
@@ -1925,22 +1959,25 @@ async function waitForReturn(input: NodeJS.ReadStream): Promise<void> {
   });
 }
 
-async function runCancelableOperation(
+async function runCancelableOperation<T>(
   operator: AtlasCoreOperator,
-  operation: () => Promise<void>
-): Promise<OperationResult> {
+  operation: () => Promise<T>
+): Promise<OperationResult<T>> {
   // Ink pauses its input hooks while the terminal is suspended, so Ctrl-C arrives as SIGINT here.
   let cancelled = false;
   const onInterrupt = (): void => {
+    if (cancelled) return;
     cancelled = true;
     operator.cancelPending();
   };
-  process.once("SIGINT", onInterrupt);
+  process.on("SIGINT", onInterrupt);
   try {
-    await operation();
-    return { cancelled };
+    const value = await operation();
+    return { cancelled, value };
   } catch (error) {
-    return cancelled ? { cancelled } : { cancelled, failure: new Error(errorMessage(error)) };
+    return error instanceof CommandCancelledError
+      ? { cancelled: true }
+      : { cancelled, failure: new Error(errorMessage(error)) };
   } finally {
     process.off("SIGINT", onInterrupt);
   }

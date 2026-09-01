@@ -17,6 +17,7 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
+import { CommandCancelledError, OperationCleanupError } from "./operation-errors.js";
 import { PACKAGE_IMAGE, PACKAGE_NAME, PACKAGE_VERSION } from "./package-metadata.js";
 import { PLUGIN_CATALOG, type PluginCatalogEntry } from "./plugin-catalog.js";
 import {
@@ -29,6 +30,7 @@ import {
   type PluginActivity,
   type PluginActivityReporter,
   type PluginDeploymentStatus,
+  type PluginOperationOutcome,
   type UpdateInfo,
   type UpdateScope
 } from "./terminal-ui.js";
@@ -129,6 +131,7 @@ type RunOptions = {
 export type CommandRunner = {
   cancelAll?(): void;
   run(command: string, args: string[], options?: RunOptions): Promise<CommandResult>;
+  runCleanup?(command: string, args: string[], options?: RunOptions): Promise<CommandResult>;
 };
 
 export type CLIContext = {
@@ -226,21 +229,35 @@ class UsageError extends Error {
   }
 }
 
-class ProcessCommandRunner implements CommandRunner {
+export class ProcessCommandRunner implements CommandRunner {
   readonly #children = new Set<ReturnType<typeof spawn>>();
+  readonly #cleanupChildren = new Set<ReturnType<typeof spawn>>();
 
   cancelAll(): void {
     for (const child of this.#children) child.kill();
   }
 
   async run(command: string, args: string[], options: RunOptions = {}): Promise<CommandResult> {
+    return await this.#run(command, args, options, this.#children);
+  }
+
+  async runCleanup(command: string, args: string[], options: RunOptions = {}): Promise<CommandResult> {
+    return await this.#run(command, args, options, this.#cleanupChildren);
+  }
+
+  async #run(
+    command: string,
+    args: string[],
+    options: RunOptions,
+    children: Set<ReturnType<typeof spawn>>
+  ): Promise<CommandResult> {
     return await new Promise((resolve, reject) => {
       const child = spawn(command, args, {
         cwd: options.cwd,
         env: options.env,
         stdio: options.inherit ? "inherit" : ["ignore", "pipe", "pipe"]
       });
-      this.#children.add(child);
+      children.add(child);
       const cancel = (): void => {
         child.kill();
       };
@@ -258,12 +275,12 @@ class ProcessCommandRunner implements CommandRunner {
         stderr += chunk;
       });
       child.once("error", (error) => {
-        this.#children.delete(child);
+        children.delete(child);
         removeAbortListener();
         reject(error);
       });
       child.once("close", (status) => {
-        this.#children.delete(child);
+        children.delete(child);
         removeAbortListener();
         resolve({ status: status ?? 1, stdout, stderr });
       });
@@ -291,11 +308,14 @@ class CancellableCommandRunner implements CommandRunner {
   }
 
   async run(command: string, args: string[], options?: RunOptions): Promise<CommandResult> {
-    if (this.#cancelled || options?.signal?.aborted) throw new Error("Atlas Core command was cancelled.");
-    return await this.#runner.run(command, args, options);
+    if (this.#cancelled || options?.signal?.aborted) throw new CommandCancelledError();
+    const result = await this.#runner.run(command, args, options);
+    if (this.#cancelled || options?.signal?.aborted) throw new CommandCancelledError();
+    return result;
   }
 
   async runCleanup(command: string, args: string[], options?: RunOptions): Promise<CommandResult> {
+    if (this.#runner.runCleanup) return await this.#runner.runCleanup(command, args, options);
     return await this.#runner.run(command, args, options);
   }
 }
@@ -940,13 +960,22 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     if (result.status !== 0) throw commandFailure("docker compose logs", result);
   }
 
-  async pluginEnable(pluginId: string, reportActivity?: PluginActivityReporter): Promise<void> {
+  async pluginEnable(pluginId: string, reportActivity?: PluginActivityReporter): Promise<PluginOperationOutcome> {
     const plugin = this.#requireCatalogPlugin(pluginId, true);
     const report = this.#pluginReporter(reportActivity);
     report({ level: "working", message: "Checking Atlas Core and Docker", stage: "operation" });
-    await this.#withInitializedMutation(
-      async (state, dockerEngineId) => await this.#pluginEnable(plugin, state, dockerEngineId, report)
-    );
+    try {
+      const message = await this.#withInitializedMutation(
+        async (state, dockerEngineId) => await this.#pluginEnable(plugin, state, dockerEngineId, report)
+      );
+      report({ level: "success", message, stage: "operation" });
+      return { status: "success" };
+    } catch (error) {
+      if (error instanceof CommandCancelledError) {
+        return { previousDeploymentPreserved: true, status: "cancelled" };
+      }
+      throw error;
+    }
   }
 
   async #pluginEnable(
@@ -954,12 +983,11 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     state: DeploymentState,
     dockerEngineId: string,
     report: PluginActivityReporter
-  ): Promise<void> {
+  ): Promise<string> {
     const pluginId = plugin.pluginId;
     this.#assertStateMatchesRuntime(state, dockerEngineId);
     if (state.enabledPlugins.includes(pluginId)) {
-      report({ level: "success", message: `${plugin.displayName} is already enabled`, stage: "operation" });
-      return;
+      return `${plugin.displayName} is already enabled`;
     }
     const image = plugin.image;
     if (!image) throw new Error(`Plugin ${pluginId} has no image in this Atlas Core package.`);
@@ -1048,23 +1076,27 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       );
       throw transactionFailure(error, rollbackErrors);
     }
-    report({
-      level: "success",
-      message:
-        snapshot.status === "stopped"
-          ? `${plugin.displayName} enabled. It will start with Atlas Core`
-          : `${plugin.displayName} enabled and healthy`,
-      stage: "operation"
-    });
+    return snapshot.status === "stopped"
+      ? `${plugin.displayName} enabled. It will start with Atlas Core`
+      : `${plugin.displayName} enabled and healthy`;
   }
 
-  async pluginDisable(pluginId: string, reportActivity?: PluginActivityReporter): Promise<void> {
+  async pluginDisable(pluginId: string, reportActivity?: PluginActivityReporter): Promise<PluginOperationOutcome> {
     const plugin = this.#requireCatalogPlugin(pluginId, false);
     const report = this.#pluginReporter(reportActivity);
     report({ level: "working", message: "Checking Atlas Core and Docker", stage: "operation" });
-    await this.#withInitializedMutation(
-      async (state, dockerEngineId) => await this.#pluginDisable(plugin, state, dockerEngineId, report)
-    );
+    try {
+      const message = await this.#withInitializedMutation(
+        async (state, dockerEngineId) => await this.#pluginDisable(plugin, state, dockerEngineId, report)
+      );
+      report({ level: "success", message, stage: "operation" });
+      return { status: "success" };
+    } catch (error) {
+      if (error instanceof CommandCancelledError) {
+        return { previousDeploymentPreserved: true, status: "cancelled" };
+      }
+      throw error;
+    }
   }
 
   async #pluginDisable(
@@ -1072,12 +1104,11 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     state: DeploymentState,
     dockerEngineId: string,
     report: PluginActivityReporter
-  ): Promise<void> {
+  ): Promise<string> {
     const pluginId = plugin.pluginId;
     this.#assertStateMatchesRuntime(state, dockerEngineId);
     if (!state.enabledPlugins.includes(pluginId)) {
-      report({ level: "success", message: `${plugin.displayName} is already disabled`, stage: "operation" });
-      return;
+      return `${plugin.displayName} is already disabled`;
     }
     report({ level: "working", message: "Reading current deployment", stage: "operation" });
     const snapshot = await this.#deploymentSnapshot(state.enabledPlugins);
@@ -1155,14 +1186,9 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       throw transactionFailure(error, rollbackErrors);
     }
     rmSync(backup, { recursive: true, force: true });
-    report({
-      level: "success",
-      message:
-        snapshot.status === "stopped"
-          ? `${plugin.displayName} disabled. Atlas Core remains stopped`
-          : `${plugin.displayName} disabled. Core API and Source Gateway are healthy`,
-      stage: "operation"
-    });
+    return snapshot.status === "stopped"
+      ? `${plugin.displayName} disabled. Atlas Core remains stopped`
+      : `${plugin.displayName} disabled. Core API and Source Gateway are healthy`;
   }
 
   async doctor(): Promise<boolean> {
@@ -1315,7 +1341,9 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     try {
       unlinkSync(this.#mutationLockFile);
     } catch (error) {
-      if (!isNodeError(error) || error.code !== "ENOENT") throw error;
+      if (!isNodeError(error) || error.code !== "ENOENT") {
+        throw new OperationCleanupError(`Atlas Core could not remove its mutation lock: ${errorMessage(error)}`);
+      }
     }
   }
 
@@ -1349,7 +1377,9 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     const result = await this.#runner.runCleanup("docker", ["network", "rm", MUTATION_LOCK_NETWORK], {
       env: this.#env
     });
-    if (result.status !== 0) throw commandFailure(`docker network rm ${MUTATION_LOCK_NETWORK}`, result);
+    if (result.status !== 0) {
+      throw new OperationCleanupError(commandFailure(`docker network rm ${MUTATION_LOCK_NETWORK}`, result).message);
+    }
   }
 
   async #volumeExists(name: string): Promise<boolean> {
@@ -2621,8 +2651,10 @@ function commandFailure(command: string, result: CommandResult): Error {
 }
 
 function transactionFailure(error: unknown, rollbackErrors: readonly string[]): Error {
-  const rollback = rollbackErrors.length > 0 ? ` Rollback also reported: ${rollbackErrors.join("; ")}` : "";
-  return new Error(`${errorMessage(error)}${rollback}`);
+  if (rollbackErrors.length > 0) {
+    return new OperationCleanupError(`${errorMessage(error)} Rollback also reported: ${rollbackErrors.join("; ")}`);
+  }
+  return error instanceof CommandCancelledError ? error : new Error(errorMessage(error));
 }
 
 function oneLine(value: string): string {

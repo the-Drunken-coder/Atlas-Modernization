@@ -6,7 +6,8 @@ import {
   createInteractiveCLI,
   type DeploymentSnapshot,
   type PluginActivityReporter,
-  type PluginDeploymentStatus
+  type PluginDeploymentStatus,
+  type PluginOperationOutcome
 } from "../src/terminal-ui.js";
 
 class TestTerminal {
@@ -48,8 +49,8 @@ class TestTerminal {
     this.input.write(value);
   }
 
-  resize(columns: number): void {
-    Object.assign(this.output, { columns });
+  resize(columns: number, rows = this.output.rows): void {
+    Object.assign(this.output, { columns, rows });
     this.output.emit("resize");
   }
 
@@ -140,8 +141,16 @@ function operator(snapshot: DeploymentSnapshot = { status: "ready", detail: "Eve
     doctor: vi.fn(async () => true),
     init: vi.fn(async () => undefined),
     logs: vi.fn(async () => undefined),
-    pluginDisable: vi.fn(async (_pluginId: string, _reportActivity?: PluginActivityReporter): Promise<void> => {}),
-    pluginEnable: vi.fn(async (_pluginId: string, _reportActivity?: PluginActivityReporter): Promise<void> => {}),
+    pluginDisable: vi.fn(
+      async (_pluginId: string, _reportActivity?: PluginActivityReporter): Promise<PluginOperationOutcome> => ({
+        status: "success"
+      })
+    ),
+    pluginEnable: vi.fn(
+      async (_pluginId: string, _reportActivity?: PluginActivityReporter): Promise<PluginOperationOutcome> => ({
+        status: "success"
+      })
+    ),
     pluginLogs: vi.fn(async () => undefined),
     pluginStatuses: vi.fn(async (_pluginId?: string): Promise<PluginDeploymentStatus[]> => []),
     resumeAfterCancellation: vi.fn(),
@@ -226,9 +235,38 @@ describe("Atlas Core terminal UI", () => {
     await terminal.waitFor("Stop Atlas Core...");
     await vi.waitFor(() => expect(deployment.stop).toHaveBeenCalledOnce());
     process.emit("SIGINT", "SIGINT");
+    process.emit("SIGINT", "SIGINT");
     await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
     await terminal.waitFor("View status");
     expect(deployment.cancelPending).toHaveBeenCalledOnce();
+    expect(deployment.resumeAfterCancellation).toHaveBeenCalledOnce();
+    terminal.write("q");
+    await menu;
+  });
+
+  it("keeps a cleanup failure visible after cancelling an ordinary operation", async () => {
+    const terminal = new TestTerminal();
+    const deployment = operator();
+    let failCleanup: (() => void) | undefined;
+    deployment.stop.mockImplementation(
+      async () =>
+        await new Promise<void>((_resolve, reject) => {
+          failCleanup = () => reject(new Error("Docker mutation-lock cleanup failed"));
+        })
+    );
+    deployment.cancelPending.mockImplementation(() => failCleanup?.());
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("View status");
+    terminal.write("stop");
+    await terminal.waitFor("Filter: stop");
+    terminal.write("\r");
+    await terminal.waitFor("Stop Atlas Core...");
+    process.emit("SIGINT", "SIGINT");
+    await terminal.waitFor("Docker mutation-lock cleanup failed");
+    await terminal.waitFor("Press Enter to return to Atlas Core.");
+    terminal.write("\r");
+    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
     expect(deployment.resumeAfterCancellation).toHaveBeenCalledOnce();
     terminal.write("q");
     await menu;
@@ -625,12 +663,12 @@ describe("Atlas Core terminal UI", () => {
       .mockResolvedValueOnce([{ ...plugin, enabled: true, state: "running", health: "healthy" }]);
     deployment.pluginEnable.mockImplementation(
       async (_pluginId, reportActivity) =>
-        await new Promise<void>((resolve) => {
+        await new Promise<PluginOperationOutcome>((resolve) => {
           reportActivity?.({ level: "working", message: "Pulling Building Scan image", stage: "operation" });
           finishEnable = () => {
             reportActivity?.({ level: "success", message: "Plugin image ready", stage: "operation" });
             reportActivity?.({ level: "success", message: "Building Scan enabled and healthy", stage: "operation" });
-            resolve();
+            resolve({ status: "success" });
           };
         })
     );
@@ -712,7 +750,7 @@ describe("Atlas Core terminal UI", () => {
     deployment.pluginStatuses.mockResolvedValue([plugin]);
     deployment.pluginEnable.mockImplementation(
       async (_pluginId, reportActivity) =>
-        await new Promise<void>((_resolve, reject) => {
+        await new Promise<PluginOperationOutcome>((resolve) => {
           reportActivity?.({ level: "working", message: "Pulling Building Scan image", stage: "operation" });
           cancelEnable = () => {
             reportActivity?.({
@@ -722,7 +760,7 @@ describe("Atlas Core terminal UI", () => {
             });
             reportActivity?.({ level: "working", message: "Restoring previous deployment", stage: "rollback" });
             reportActivity?.({ level: "success", message: "Previous deployment restored", stage: "rollback" });
-            reject(new Error("Atlas Core command was cancelled"));
+            resolve({ previousDeploymentPreserved: true, status: "cancelled" });
           };
         })
     );
@@ -748,6 +786,131 @@ describe("Atlas Core terminal UI", () => {
     await menu;
 
     expect(deployment.cancelPending).toHaveBeenCalledOnce();
+  });
+
+  it("reports a committed Plugin change as success after a late cancellation request", async () => {
+    const terminal = new TestTerminal();
+    const deployment = operator();
+    const plugin = {
+      pluginId: "building_scan",
+      displayName: "Building Scan",
+      lifecycle: "query_only" as const,
+      enabled: false,
+      packaged: true
+    };
+    let finishLockCleanup: (() => void) | undefined;
+    deployment.pluginStatuses.mockResolvedValue([plugin]);
+    deployment.pluginEnable.mockImplementation(
+      async (_pluginId, reportActivity) =>
+        await new Promise<PluginOperationOutcome>((resolve) => {
+          reportActivity?.({ level: "success", message: "Core API and Building Scan are healthy", stage: "operation" });
+          finishLockCleanup = () => {
+            reportActivity?.({ level: "success", message: "Building Scan enabled and healthy", stage: "operation" });
+            resolve({ status: "success" });
+          };
+        })
+    );
+    deployment.cancelPending.mockImplementation(() => finishLockCleanup?.());
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("View status");
+    terminal.write("plugins");
+    await terminal.waitFor("Filter: plugins");
+    terminal.write("\r");
+    await terminal.waitFor("PLUGIN CATALOG");
+    terminal.write("\r");
+    await terminal.waitFor("Core API and Building Scan are healthy");
+    terminal.write("\u0003");
+    await terminal.waitFor("Building Scan enabled.");
+    expect(terminal.text).not.toContain("Enable cancelled. The previous deployment is preserved.");
+    expect(deployment.resumeAfterCancellation).toHaveBeenCalledOnce();
+    terminal.write("\r");
+    await vi.waitFor(() => expect(deployment.pluginStatuses).toHaveBeenCalledTimes(2));
+    terminal.write("q");
+    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
+    terminal.write("q");
+    await menu;
+  });
+
+  it("ignores Ctrl-C from the stale activity screen after the operation settles", async () => {
+    const terminal = new TestTerminal();
+    const deployment = operator();
+    const plugin = {
+      pluginId: "building_scan",
+      displayName: "Building Scan",
+      lifecycle: "query_only" as const,
+      enabled: false,
+      packaged: true
+    };
+    let finishEnable: (() => void) | undefined;
+    deployment.pluginStatuses.mockResolvedValue([plugin]);
+    deployment.pluginEnable.mockImplementation(
+      async () =>
+        await new Promise<PluginOperationOutcome>((resolve) => {
+          finishEnable = () => resolve({ status: "success" });
+        })
+    );
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("View status");
+    terminal.write("plugins");
+    await terminal.waitFor("Filter: plugins");
+    terminal.write("\r");
+    await terminal.waitFor("PLUGIN CATALOG");
+    terminal.write("\r");
+    await terminal.waitFor("Enable requested");
+    finishEnable?.();
+    await Promise.resolve();
+    terminal.write("\u0003");
+    await terminal.waitFor("Building Scan enabled.");
+    expect(deployment.cancelPending).not.toHaveBeenCalled();
+    if (deployment.pluginStatuses.mock.calls.length === 1) terminal.write("\r");
+    await vi.waitFor(() => expect(deployment.pluginStatuses).toHaveBeenCalledTimes(2));
+    terminal.write("q");
+    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
+    terminal.write("q");
+    await menu;
+  });
+
+  it("keeps Plugin activity controls visible in a four-row terminal", async () => {
+    const terminal = new TestTerminal(40, true, 24);
+    const deployment = operator();
+    const plugin = {
+      pluginId: "building_scan",
+      displayName: "Building Scan With A Deliberately Long Operator-Facing Name",
+      lifecycle: "query_only" as const,
+      enabled: false,
+      packaged: true
+    };
+    let cancelEnable: (() => void) | undefined;
+    deployment.pluginStatuses.mockResolvedValue([plugin]);
+    deployment.pluginEnable.mockImplementation(
+      async () =>
+        await new Promise<PluginOperationOutcome>((resolve) => {
+          cancelEnable = () => resolve({ previousDeploymentPreserved: true, status: "cancelled" });
+        })
+    );
+    deployment.cancelPending.mockImplementation(() => cancelEnable?.());
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("View status");
+    terminal.write("plugins");
+    await terminal.waitFor("Filter: plugins");
+    terminal.write("\r");
+    await terminal.waitFor("PLUGIN CATALOG");
+    terminal.write("\r");
+    await terminal.waitFor("ATLAS CORE > ACTIVITY");
+    terminal.resize(40, 4);
+    await terminal.waitFor("ACTIVITY 00:00.0");
+    await terminal.waitFor("Ctrl+C cancel safely");
+    terminal.write("\u0003");
+    await terminal.waitFor("Enter return to Plugins");
+    terminal.write("\r");
+    await vi.waitFor(() => expect(deployment.pluginStatuses).toHaveBeenCalledTimes(2));
+    terminal.write("q");
+    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
+    terminal.write("q");
+    await menu;
   });
 
   it("shows logs for all services from the log picker", async () => {
