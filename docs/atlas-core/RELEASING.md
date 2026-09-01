@@ -1,5 +1,22 @@
 # Releasing Atlas Core
 
+Implementation status: this guide describes the current v1 workflow, which still releases catalog Plugin images with
+Core. [`2026-09-01-plugins-release-independently-from-atlas-core.md`](../design-decisions/2026-09-01-plugins-release-independently-from-atlas-core.md)
+supersedes that coupling. Keep following this guide until the independent Plugin workflow and catalog are implemented;
+then this guide must remove every Plugin build, digest, visibility, and package-asset step. That first decoupled Core
+update must refuse to proceed while a bundled-v1 Plugin remains enabled; `docs/atlas-plugins/MANAGEMENT.md` defines the
+greenfield transition.
+
+After that transition, every immutable npm Core version must continue carrying its complete base deployment bundle,
+including the declarative templates and placeholder schema used to generate Plugin deployment files. The host manager may
+fetch `atlas-core@<installed Core version>` without installing or executing it to repair lost bundle bytes, and accepts
+the candidate only when its complete bundle hash matches deployment state.
+
+The first independent-release package must change every retained production base service and the Plugin generation
+template to Compose `restart: "no"`. Package validation rejects another policy. Its disposable-host acceptance test must
+restart the Docker daemon during a pending transaction, prove that no base or Plugin container starts automatically, then
+prove that `atlas-core start` recovers the journal before starting the verified composition.
+
 Atlas Core uses one version for the npm CLI, Core and catalog Plugin images, git tag, and GitHub Release. A normal
 release starts from `main` and finishes in an automatically queued run from the immutable release tag.
 

@@ -52,6 +52,26 @@ _Avoid_: Asset Host, Source Gateway
 An Atlas-managed extension that consumes External sources or Atlas data and may expose Operations, publish Datastreams, or request Atlas actions. A configured Plugin maps to one deployment-managed container and may optionally register one Tool Asset. Its availability may be `starting`, `available`, or `unavailable`.
 _Avoid_: Asset, External source, standalone API
 
+**Plugin release**:
+An immutable version of one Plugin that Atlas can install independently of an Atlas Core release.
+_Avoid_: Core release, running Plugin
+
+**Plugin catalog**:
+The signed Atlas-published index of trusted first-party Plugin releases.
+_Avoid_: marketplace, runtime Plugin discovery
+
+**Catalog entry**:
+A Plugin release listed in the Plugin catalog. It is not an Installed Plugin or a runtime availability state.
+_Avoid_: Installed Plugin, available Plugin
+
+**Installed Plugin**:
+A Plugin release retained by an Atlas deployment, whether or not that Plugin is enabled.
+_Avoid_: Enabled Plugin, available Plugin
+
+**Enabled Plugin**:
+An Installed Plugin selected to run with Atlas.
+_Avoid_: Installed Plugin, runtime availability
+
 **Operation**:
 A bounded request and response capability exposed by a Plugin through Atlas.
 _Avoid_: Datastream, arbitrary endpoint

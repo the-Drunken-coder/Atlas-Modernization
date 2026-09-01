@@ -1,5 +1,7 @@
 # The deployment orchestrator manages Plugin containers
 
+Status: Superseded in part by [`2026-09-01-plugins-release-independently-from-atlas-core.md`](2026-09-01-plugins-release-independently-from-atlas-core.md). Deployment-orchestrator ownership, one container per Enabled Plugin, and the prohibition on Core Docker access remain accepted. Treating deployment removal as the only uninstall path is historical v1 behavior; the independent lifecycle distinguishes disable from uninstall.
+
 1. **Time & Date:** 2026-08-25 10:43 EDT
 2. **Name:** Docker Compose or the deployment orchestrator starts one container per configured Plugin
 3. **Context:** Plugins must fail without taking down Atlas Core, but Atlas should remain one deployed system. Core could manage Docker directly, a shared host could run every Plugin, or the existing deployment orchestrator could manage isolated Plugin containers.

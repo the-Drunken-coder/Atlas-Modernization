@@ -1,5 +1,7 @@
 # Tool Assets use Protocol-owned Commands
 
+Status: Superseded in part by [`2026-09-01-plugins-release-independently-from-atlas-core.md`](2026-09-01-plugins-release-independently-from-atlas-core.md). Tool Asset identity, ownership, tasking, and deletion rules remain accepted. Treating deployment removal as the only uninstall path is historical v1 behavior; the independent lifecycle distinguishes disable from uninstall.
+
 1. **Time & Date:** 2026-08-25 11:05 EDT
 2. **Name:** Taskable Plugins appear as optional Tool Assets and use dedicated Atlas Commands
 3. **Context:** Some Plugins only answer Operations, while others need an operator to start or stop behavior through Atlas tasking. Current Atlas tasking targets Asset Entities, validates runtime manifests against the Protocol-owned production Command Catalog, and requires a purpose-built Command Interface input.

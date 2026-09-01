@@ -1,5 +1,7 @@
 # Core connects to explicitly configured Plugins over HTTP
 
+Status: Superseded in part by [`2026-09-01-plugins-release-independently-from-atlas-core.md`](2026-09-01-plugins-release-independently-from-atlas-core.md). Explicit deployment configuration, fixed private HTTP routes, and restart-based manifest replacement remain accepted. The versionless compatibility decision is historical v1 behavior.
+
 1. **Time & Date:** 2026-08-25 11:05 EDT
 2. **Name:** Deployment configuration and a fixed private HTTP/JSON protocol connect Core to Plugins
 3. **Context:** Core must locate Plugin containers and invoke them without gaining Docker control or depending on startup order. The options are explicit configuration, Plugin self-registration, network discovery, or inspecting the container runtime. Core and Plugins also need one private transport contract.
