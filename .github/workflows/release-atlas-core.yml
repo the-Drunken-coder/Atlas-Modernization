@@ -358,24 +358,24 @@ jobs:
           if [ "$RECOVERY" = "true" ]; then
             {
               printf '%s\n' '- Phase: recover an existing published release with the current workflow.'
-              printf -- '- Immutable release commit: `%s`\n' "$RELEASE_SHA"
-              printf -- '- Review artifact: `atlas-core-%s`\n' "$VERSION"
+              printf -- '- Immutable release commit: %s\n' "$RELEASE_SHA"
+              printf -- '- Review artifact: atlas-core-%s\n' "$VERSION"
               printf '%s\n' '- This approval may repair the GitHub Release. It cannot move the tag or publish a missing npm version.'
             } >> "$GITHUB_STEP_SUMMARY"
           elif [ "$MODE" = "prepare" ]; then
             {
-              printf '%s\n' '- Phase: prepare a new release from `main`.'
-              printf -- '- Source commit: `%s`\n' "$SOURCE_SHA"
-              printf -- '- Review artifact: `atlas-core-%s`\n' "$VERSION"
-              printf '%s\n' '- Review `release-artifacts/release.diff` and the generated release notes.'
+              printf '%s\n' '- Phase: prepare a new release from main.'
+              printf -- '- Source commit: %s\n' "$SOURCE_SHA"
+              printf -- '- Review artifact: atlas-core-%s\n' "$VERSION"
+              printf '%s\n' '- Review release-artifacts/release.diff and the generated release notes.'
               printf '%s\n' '- Approval 1 permits candidate image publication, disposable-host acceptance, and the atomic release commit and tag push.'
               printf '%s\n' '- The queued tag run will provide the immutable package for Approval 2 before public publication.'
             } >> "$GITHUB_STEP_SUMMARY"
           else
             {
-              printf -- '- Phase: publish immutable tag `%s`.\n' "$REF_NAME"
-              printf -- '- Release commit: `%s`\n' "$RELEASE_SHA"
-              printf -- '- Review final artifact: `atlas-core-%s`\n' "$VERSION"
+              printf -- '- Phase: publish immutable tag %s.\n' "$REF_NAME"
+              printf -- '- Release commit: %s\n' "$RELEASE_SHA"
+              printf -- '- Review final artifact: atlas-core-%s\n' "$VERSION"
               printf '%s\n' '- Approval 2 permits GHCR version-tag promotion, npm publication, and the public GitHub Release.'
             } >> "$GITHUB_STEP_SUMMARY"
           fi
@@ -663,7 +663,7 @@ jobs:
           echo "Queued Atlas Core $VERSION publication from $tag."
           {
             printf '## Atlas Core %s release commit created\n\n' "$VERSION"
-            printf -- '- Immutable tag: `%s`\n' "$tag"
+            printf -- '- Immutable tag: %s\n' "$tag"
             printf '%s\n' '- Next: open the automatically queued tag run, review its final package artifact, and grant Approval 2.'
           } >> "$GITHUB_STEP_SUMMARY"
 
