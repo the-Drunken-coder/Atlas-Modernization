@@ -372,31 +372,34 @@ describe("Atlas Core terminal UI", () => {
   });
 
   it("refreshes status automatically", async () => {
-    const terminal = new TestTerminal(80, true, 24);
-    const deployment = operator();
-    const baseDetails = await deployment.details();
-    deployment.details.mockClear();
-    deployment.details.mockResolvedValueOnce(baseDetails).mockResolvedValueOnce({
-      ...baseDetails,
-      services: baseDetails.services.map((service) =>
-        service.id === "api" ? { ...service, cpuPercent: "9.99%" } : service
-      )
-    });
-    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+    vi.useFakeTimers();
+    try {
+      const terminal = new TestTerminal(80, true, 24);
+      const deployment = operator();
+      const baseDetails = await deployment.details();
+      deployment.details.mockClear();
+      deployment.details.mockResolvedValueOnce(baseDetails).mockResolvedValueOnce({
+        ...baseDetails,
+        services: baseDetails.services.map((service) =>
+          service.id === "api" ? { ...service, cpuPercent: "9.99%" } : service
+        )
+      });
+      const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
 
-    await terminal.waitFor("View status");
-    terminal.write("\r");
-    await terminal.waitFor("CPU          1.00%");
-    await vi.waitFor(() => expect(deployment.details).toHaveBeenCalledTimes(2), {
-      interval: 50,
-      timeout: 6_500
-    });
-    await terminal.waitFor("CPU          9.99%");
-    terminal.write("\r");
-    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
-    terminal.write("q");
-    await menu;
-  }, 8_000);
+      await terminal.waitFor("View status");
+      terminal.write("\r");
+      await terminal.waitFor("CPU          1.00%");
+      await vi.advanceTimersByTimeAsync(5_000);
+      await vi.waitFor(() => expect(deployment.details).toHaveBeenCalledTimes(2));
+      await terminal.waitFor("CPU          9.99%");
+      terminal.write("\r");
+      await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
+      terminal.write("q");
+      await menu;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 
   it("coalesces manual status refreshes", async () => {
     const terminal = new TestTerminal(80, true, 24);
@@ -416,10 +419,10 @@ describe("Atlas Core terminal UI", () => {
     terminal.write("r");
     await vi.waitFor(() => expect(deployment.details).toHaveBeenCalledTimes(2));
     terminal.write("r");
-    await nextInputTurn();
+    terminal.write("\u001b[B");
+    await terminal.waitFor("↑/↓ 2-19/19");
     const callsWhileRefreshWasPending = deployment.details.mock.calls.length;
     finishRefresh?.(baseDetails);
-    await nextInputTurn();
     terminal.write("\r");
     await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
     terminal.write("q");
@@ -466,8 +469,11 @@ describe("Atlas Core terminal UI", () => {
     await vi.waitFor(() => expect(deployment.details).toHaveBeenCalledTimes(2));
     terminal.write("\r");
     await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
+    const beforeReopen = terminal.raw.length;
     terminal.write("\r");
-    await nextInputTurn();
+    await vi.waitFor(() =>
+      expect(stripAnsi(terminal.raw.slice(beforeReopen))).toContain("Loading deployment and Docker statistics...")
+    );
     expect(deployment.details).toHaveBeenCalledTimes(2);
 
     finishOldRefresh?.(staleDetails);
