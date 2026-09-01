@@ -36,9 +36,12 @@ switch (command) {
       args[3]
     );
     break;
+  case "validate-tag-ruleset":
+    validateTagRuleset(required(args[0], "tag ruleset path"));
+    break;
   default:
     throw new Error(
-      "usage: atlas-core-release.mjs validate-version|validate-next-version|existing-date|prepare-package|validate-changelog|validate-npm-attestation"
+      "usage: atlas-core-release.mjs validate-version|validate-next-version|existing-date|prepare-package|validate-changelog|validate-npm-attestation|validate-tag-ruleset"
     );
 }
 
@@ -105,6 +108,25 @@ function validateNpmAttestation({ version, integrity, bundlePath, repository, wo
   }
   if (statement.predicate?.runDetails?.builder?.id !== "https://github.com/actions/runner/github-hosted") {
     throw new Error("npm provenance does not identify a GitHub-hosted runner");
+  }
+}
+
+function validateTagRuleset(path) {
+  const ruleset = JSON.parse(readFileSync(path, "utf8"));
+  if (ruleset.name !== "Atlas Core release tags" || ruleset.target !== "tag" || ruleset.enforcement !== "active") {
+    throw new Error("Atlas Core release tags must be an active tag ruleset");
+  }
+  const include = ruleset.conditions?.ref_name?.include;
+  const exclude = ruleset.conditions?.ref_name?.exclude;
+  if (!Array.isArray(include) || !include.includes("refs/tags/atlas-core-v*") || !Array.isArray(exclude)) {
+    throw new Error("Atlas Core release tags must include refs/tags/atlas-core-v*");
+  }
+  if (exclude.length > 0) throw new Error("Atlas Core release tags must not exclude matching release tags");
+
+  if (!Array.isArray(ruleset.rules)) throw new Error("Atlas Core release tags must define tag restrictions");
+  const ruleTypes = new Set(ruleset.rules.map((rule) => rule?.type));
+  for (const type of ["creation", "update", "deletion"]) {
+    if (!ruleTypes.has(type)) throw new Error(`Atlas Core release tags must restrict ${type}`);
   }
 }
 

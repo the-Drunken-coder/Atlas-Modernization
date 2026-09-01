@@ -33,6 +33,29 @@ test("validates Atlas Core versions", () => {
   assert.notEqual(run(["validate-version", "1.2.3-beta.1"], process.cwd()).status, 0);
 });
 
+test("requires an active Atlas Core release tag ruleset", () => {
+  const directory = mkdtempSync(join(tmpdir(), "atlas-core-ruleset-"));
+  const rulesetPath = join(directory, "ruleset.json");
+  const ruleset = {
+    name: "Atlas Core release tags",
+    target: "tag",
+    enforcement: "active",
+    conditions: { ref_name: { include: ["refs/tags/atlas-core-v*"], exclude: [] } },
+    rules: [{ type: "creation" }, { type: "update" }, { type: "deletion" }]
+  };
+  try {
+    writeFileSync(rulesetPath, JSON.stringify(ruleset));
+    assert.equal(run(["validate-tag-ruleset", rulesetPath], directory).status, 0);
+
+    writeFileSync(rulesetPath, JSON.stringify({ ...ruleset, rules: [{ type: "creation" }, { type: "deletion" }] }));
+    const missingUpdate = run(["validate-tag-ruleset", rulesetPath], directory);
+    assert.notEqual(missingUpdate.status, 0);
+    assert.match(missingUpdate.stderr, /restrict update/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("publishes the npm archive as a local filesystem path", () => {
   const source = readFileSync(workflow, "utf8");
   assert.equal(source.match(/npm publish "\.\/release-artifacts\/atlas-core-\$VERSION\.tgz"/g)?.length, 2);
@@ -121,17 +144,40 @@ test("uses a cached fast path for immutable-tag publication", () => {
   assert.equal(source.match(/resolved to \$promoted_digest after promotion/g)?.length, 2);
 });
 
-test("uses GitHub concurrency without cancelling the active release", () => {
+test("lets the coordinator wait without blocking the tag publisher", () => {
   const source = readFileSync(workflow, "utf8");
-  assert.match(source, /concurrency:\n\s+group: release-atlas-core\n\s+cancel-in-progress: false/);
+  assert.match(
+    source,
+    /concurrency:\n\s+group: release-atlas-core-\$\{\{ github\.ref_type == 'tag' && github\.ref_name \|\| 'coordinator' \}\}\n\s+cancel-in-progress: false/
+  );
+  assert.match(source, /group: release-atlas-core-mutator\n\s+cancel-in-progress: false/);
 });
 
-test("labels release runs and explains both approvals", () => {
+test("coordinates automatic tag publication after one approval", () => {
   const source = readFileSync(workflow, "utf8");
-  assert.match(source, /run-name: Atlas Core \$\{\{ inputs\.version \}\} from \$\{\{ github\.ref_name \}\}/);
-  assert.match(source, /name: Summarize release approval/);
-  assert.match(source, /Approval 1 permits candidate image publication/);
-  assert.match(source, /Approval 2 permits GHCR version-tag promotion/);
+  assert.match(
+    source,
+    /run-name: Atlas Core \$\{\{ inputs\.version \}\} from \$\{\{ github\.ref_name \}\} \[coordinator \$\{\{ inputs\.coordinator_run_id \|\| github\.run_id \}\}\]/
+  );
+  assert.match(
+    source,
+    /name: \$\{\{ github\.ref_type == 'tag' && inputs\.coordinator_run_id != '' && 'release-publish' \|\| 'release' \}\}/
+  );
+  assert.match(source, /name: Summarize release gate/);
+  assert.match(source, /Approval permits candidate image publication/);
+  assert.doesNotMatch(source, /Approval 2/);
+  assert.match(source, /Leave the internal coordinator run ID empty when dispatching from main/);
+  assert.match(source, /name: Require protected Atlas Core release tags/);
+  assert.match(source, /validate-tag-ruleset "\$ruleset"/);
+  assert.match(source, /name: Upload approved publication/);
+  assert.match(source, /atlas-core-publication-authorization-\$\{\{ inputs\.version \}\}-\$\{\{ github\.run_id \}\}/);
+  assert.match(source, /name: Verify coordinator authorization/);
+  assert.match(source, /run-id: \$\{\{ inputs\.coordinator_run_id \}\}/);
+  assert.match(source, /--field coordinator_run_id="\$GITHUB_RUN_ID"/);
+  assert.match(source, /name: Await immutable tag publication/);
+  assert.match(source, /actions: read\n\s+checks: read\n\s+contents: read/);
+  assert.match(source, /gh run watch "\$CHILD_RUN_ID" --exit-status --interval 10/);
+  assert.match(source, /GHCR, npm, provenance, and the GitHub Release passed final verification/);
 });
 
 test("keeps the release-owned file contract narrow", () => {
