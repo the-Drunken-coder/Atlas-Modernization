@@ -85,6 +85,7 @@ const SUPPORTED_PLATFORMS = new Set<NodeJS.Platform>(["darwin", "linux"]);
 const SUPPORTED_ARCHITECTURES = new Set<NodeJS.Architecture>(["arm64", "x64"]);
 const CONFIG_SCHEMA = 2;
 const COMPOSE_WAIT_SECONDS = "120";
+const CLEANUP_CANCELLATION_GRACE_MS = (Number(COMPOSE_WAIT_SECONDS) + 10) * 1_000;
 const MINIMUM_COMPOSE_VERSION = [2, 17, 0] as const;
 const UNRELEASED_IMAGE = "ghcr.io/the-drunken-coder/atlas-core:unreleased";
 const SUPPORTED_DOCKER_ARCHITECTURES = new Set(["amd64", "arm64", "aarch64", "x86_64"]);
@@ -130,9 +131,9 @@ type RunOptions = {
 };
 
 export type CommandRunner = {
-  cancelAll?(): void;
+  cancelAll(): void;
   run(command: string, args: string[], options?: RunOptions): Promise<CommandResult>;
-  runCleanup?(command: string, args: string[], options?: RunOptions): Promise<CommandResult>;
+  runCleanup(command: string, args: string[], options?: RunOptions): Promise<CommandResult>;
 };
 
 export type CLIContext = {
@@ -298,7 +299,10 @@ export class ProcessCommandRunner implements CommandRunner {
 
 class CancellableCommandRunner implements CommandRunner {
   readonly #runner: CommandRunner;
+  readonly #cleanupControllers = new Set<AbortController>();
   #cancelled = false;
+  #cleanupDeadline: number | undefined;
+  #cleanupTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(runner: CommandRunner) {
     this.#runner = runner;
@@ -306,11 +310,21 @@ class CancellableCommandRunner implements CommandRunner {
 
   cancelAll(): void {
     this.#cancelled = true;
-    this.#runner.cancelAll?.();
+    this.#runner.cancelAll();
+    if (this.#cleanupDeadline !== undefined) return;
+    this.#cleanupDeadline = Date.now() + CLEANUP_CANCELLATION_GRACE_MS;
+    this.#cleanupTimer = setTimeout(() => {
+      this.#cleanupTimer = undefined;
+      for (const controller of this.#cleanupControllers) controller.abort();
+    }, CLEANUP_CANCELLATION_GRACE_MS);
+    this.#cleanupTimer.unref();
   }
 
   resume(): void {
     this.#cancelled = false;
+    this.#cleanupDeadline = undefined;
+    if (this.#cleanupTimer) clearTimeout(this.#cleanupTimer);
+    this.#cleanupTimer = undefined;
   }
 
   async run(command: string, args: string[], options?: RunOptions): Promise<CommandResult> {
@@ -321,8 +335,15 @@ class CancellableCommandRunner implements CommandRunner {
   }
 
   async runCleanup(command: string, args: string[], options?: RunOptions): Promise<CommandResult> {
-    if (this.#runner.runCleanup) return await this.#runner.runCleanup(command, args, options);
-    return await this.#runner.run(command, args, options);
+    const controller = new AbortController();
+    this.#cleanupControllers.add(controller);
+    if (this.#cleanupDeadline !== undefined && Date.now() >= this.#cleanupDeadline) controller.abort();
+    const signal = options?.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal;
+    try {
+      return await this.#runner.runCleanup(command, args, { ...options, signal });
+    } finally {
+      this.#cleanupControllers.delete(controller);
+    }
   }
 }
 
@@ -374,7 +395,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   }
 
   cancelPending(): void {
-    this.#runner.cancelAll?.();
+    this.#runner.cancelAll();
   }
 
   resumeAfterCancellation(): void {

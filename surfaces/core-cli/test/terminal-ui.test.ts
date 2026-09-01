@@ -832,7 +832,7 @@ describe("Atlas Core terminal UI", () => {
     await menu;
   });
 
-  it("ignores Ctrl-C from the stale activity screen after the operation settles", async () => {
+  it("treats Ctrl-C as back after the plugin operation settles", async () => {
     const terminal = new TestTerminal();
     const deployment = operator();
     const plugin = {
@@ -860,12 +860,10 @@ describe("Atlas Core terminal UI", () => {
     terminal.write("\r");
     await terminal.waitFor("Enable requested");
     finishEnable?.();
-    await Promise.resolve();
-    terminal.write("\u0003");
     await terminal.waitFor("Building Scan enabled.");
-    expect(deployment.cancelPending).not.toHaveBeenCalled();
-    if (deployment.pluginStatuses.mock.calls.length === 1) terminal.write("\r");
+    terminal.write("\u0003");
     await vi.waitFor(() => expect(deployment.pluginStatuses).toHaveBeenCalledTimes(2));
+    expect(deployment.cancelPending).not.toHaveBeenCalled();
     terminal.write("q");
     await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
     terminal.write("q");

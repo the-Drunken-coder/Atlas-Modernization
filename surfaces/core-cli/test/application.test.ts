@@ -12,7 +12,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { type CLIContext, type CommandRunner, ProcessCommandRunner, runCLI } from "../src/application.js";
 import { PACKAGE_NAME, PACKAGE_VERSION } from "../src/package-metadata.js";
 import type { PluginCatalogEntry } from "../src/plugin-catalog.js";
@@ -63,6 +63,8 @@ class FakeRunner implements CommandRunner {
   installedVersion = PACKAGE_VERSION;
   onRun: ((call: Call) => void) | undefined;
   afterSuccessfulNetworkCreate: (() => void) | undefined;
+  onCleanupStart: (() => void) | undefined;
+  hangCleanup = false;
   serviceStates = [
     { Service: "api", State: "running", Health: "healthy" },
     { Service: "source-gateway", State: "running", Health: "healthy" },
@@ -254,6 +256,20 @@ class FakeRunner implements CommandRunner {
     }
     return result(0);
   }
+
+  async runCleanup(
+    command: string,
+    args: string[],
+    options: { cwd?: string; env?: NodeJS.ProcessEnv; inherit?: boolean; signal?: AbortSignal } = {}
+  ): Promise<{ cancelled?: true; status: number; stdout: string; stderr: string }> {
+    if (!this.hangCleanup) return await this.run(command, args, options);
+    this.onCleanupStart?.();
+    return await new Promise((resolve) => {
+      const cancelled = (): void => resolve({ ...result(1), cancelled: true });
+      options.signal?.addEventListener("abort", cancelled, { once: true });
+      if (options.signal?.aborted) cancelled();
+    });
+  }
 }
 
 type TestRuntime = {
@@ -267,6 +283,7 @@ type TestRuntime = {
 const temporaryDirectories: string[] = [];
 
 afterEach(() => {
+  vi.useRealTimers();
   for (const directory of temporaryDirectories.splice(0)) rmSync(directory, { recursive: true, force: true });
 });
 
@@ -491,6 +508,30 @@ describe("atlas-core CLI", () => {
     expect(await runCLI([], test.context)).toBe(0);
     expect(test.runner.existingNetworks.has(MUTATION_LOCK_NETWORK)).toBe(false);
     expect(test.runner.calls.some((call) => call.args[0] === "network" && call.args[1] === "rm")).toBe(true);
+  });
+
+  it("bounds cleanup commands after cancellation", async () => {
+    vi.useFakeTimers();
+    const test = runtime();
+    test.runner.hangCleanup = true;
+    let cleanupStarted: (() => void) | undefined;
+    const cleanup = new Promise<void>((resolve) => {
+      cleanupStarted = resolve;
+    });
+    test.runner.onCleanupStart = cleanupStarted;
+    test.context.interactive = {
+      configureAdmin: async () => undefined,
+      runUpdate: async () => undefined,
+      runMenu: async (operator) => {
+        test.runner.afterSuccessfulNetworkCreate = () => operator.cancelPending();
+        const operation = expect(operator.init()).rejects.toThrow("docker network rm");
+        await cleanup;
+        await vi.advanceTimersByTimeAsync(130_000);
+        await operation;
+      }
+    };
+
+    expect(await runCLI([], test.context)).toBe(0);
   });
 
   it("does not terminate a pending cleanup process when ordinary commands are cancelled", async () => {
