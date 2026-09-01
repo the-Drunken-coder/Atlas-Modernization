@@ -26,6 +26,8 @@ import {
   type DeploymentService,
   type DeploymentSnapshot,
   type InteractiveCLI,
+  type PluginActivity,
+  type PluginActivityReporter,
   type PluginDeploymentStatus,
   type UpdateInfo,
   type UpdateScope
@@ -284,6 +286,10 @@ class CancellableCommandRunner implements CommandRunner {
     this.#runner.cancelAll?.();
   }
 
+  resume(): void {
+    this.#cancelled = false;
+  }
+
   async run(command: string, args: string[], options?: RunOptions): Promise<CommandResult> {
     if (this.#cancelled || options?.signal?.aborted) throw new Error("Atlas Core command was cancelled.");
     return await this.#runner.run(command, args, options);
@@ -343,6 +349,20 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
 
   cancelPending(): void {
     this.#runner.cancelAll?.();
+  }
+
+  resumeAfterCancellation(): void {
+    this.#runner.resume();
+  }
+
+  #pluginReporter(reportActivity?: PluginActivityReporter): PluginActivityReporter {
+    if (reportActivity) return reportActivity;
+    const labels: Record<PluginActivity["level"], string> = {
+      failure: "fail",
+      success: "done",
+      working: "work"
+    };
+    return (activity) => this.#stdout.write(`[${labels[activity.level]}] ${activity.message}\n`);
   }
 
   async init(): Promise<void> {
@@ -920,32 +940,49 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     if (result.status !== 0) throw commandFailure("docker compose logs", result);
   }
 
-  async pluginEnable(pluginId: string): Promise<void> {
+  async pluginEnable(pluginId: string, reportActivity?: PluginActivityReporter): Promise<void> {
     const plugin = this.#requireCatalogPlugin(pluginId, true);
+    const report = this.#pluginReporter(reportActivity);
+    report({ level: "working", message: "Checking Atlas Core and Docker", stage: "operation" });
     await this.#withInitializedMutation(
-      async (state, dockerEngineId) => await this.#pluginEnable(plugin, state, dockerEngineId)
+      async (state, dockerEngineId) => await this.#pluginEnable(plugin, state, dockerEngineId, report)
     );
   }
 
-  async #pluginEnable(plugin: PluginCatalogEntry, state: DeploymentState, dockerEngineId: string): Promise<void> {
+  async #pluginEnable(
+    plugin: PluginCatalogEntry,
+    state: DeploymentState,
+    dockerEngineId: string,
+    report: PluginActivityReporter
+  ): Promise<void> {
     const pluginId = plugin.pluginId;
     this.#assertStateMatchesRuntime(state, dockerEngineId);
     if (state.enabledPlugins.includes(pluginId)) {
-      this.#stdout.write(`Plugin ${plugin.displayName} is already enabled.\n`);
+      report({ level: "success", message: `${plugin.displayName} is already enabled`, stage: "operation" });
       return;
     }
     const image = plugin.image;
     if (!image) throw new Error(`Plugin ${pluginId} has no image in this Atlas Core package.`);
+    report({ level: "working", message: `Pulling ${plugin.displayName} image`, stage: "operation" });
     await this.#checkCommand("docker", ["pull", image]);
+    report({ level: "success", message: "Plugin image ready", stage: "operation" });
+    report({ level: "working", message: "Reading current deployment", stage: "operation" });
     const snapshot = await this.#deploymentSnapshot(state.enabledPlugins);
     const candidatePluginIds = [...state.enabledPlugins, pluginId].sort();
+    report({ level: "working", message: "Staging plugin deployment files", stage: "operation" });
     this.#stagePluginAssets(plugin);
     let stateCommitted = false;
     try {
       await this.#runComposeChecked(["config", "--quiet"], candidatePluginIds);
+      report({ level: "success", message: "Deployment configuration valid", stage: "operation" });
       this.#writeDeploymentState({ ...state, enabledPlugins: candidatePluginIds });
       stateCommitted = true;
       if (snapshot.status !== "stopped") {
+        report({
+          level: "working",
+          message: `Recreating Core API, Source Gateway, and ${plugin.displayName}`,
+          stage: "operation"
+        });
         await this.#runComposeChecked(
           [
             "up",
@@ -962,8 +999,15 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
           ],
           candidatePluginIds
         );
+        report({
+          level: "success",
+          message: `Core API, Source Gateway, and ${plugin.displayName} are healthy`,
+          stage: "operation"
+        });
       }
     } catch (error) {
+      report({ level: "failure", message: `Enable stopped: ${errorMessage(error)}`, stage: "operation" });
+      report({ level: "working", message: "Restoring previous deployment", stage: "rollback" });
       const rollbackErrors: string[] = [];
       if (stateCommitted) {
         await attemptRollback(rollbackErrors, async () => this.#writeDeploymentState(state));
@@ -993,41 +1037,66 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
           if (restore.status !== 0) throw commandFailure("restore Atlas Core", restore);
         });
       }
+      report(
+        rollbackErrors.length === 0
+          ? { level: "success", message: "Previous deployment restored", stage: "rollback" }
+          : {
+              level: "failure",
+              message: `Rollback incomplete: ${rollbackErrors.join("; ")}`,
+              stage: "rollback"
+            }
+      );
       throw transactionFailure(error, rollbackErrors);
     }
-    this.#stdout.write(
-      snapshot.status === "stopped"
-        ? `Plugin ${plugin.displayName} enabled. It will start with Atlas Core.\n`
-        : `Plugin ${plugin.displayName} enabled and healthy.\n`
-    );
+    report({
+      level: "success",
+      message:
+        snapshot.status === "stopped"
+          ? `${plugin.displayName} enabled. It will start with Atlas Core`
+          : `${plugin.displayName} enabled and healthy`,
+      stage: "operation"
+    });
   }
 
-  async pluginDisable(pluginId: string): Promise<void> {
+  async pluginDisable(pluginId: string, reportActivity?: PluginActivityReporter): Promise<void> {
     const plugin = this.#requireCatalogPlugin(pluginId, false);
+    const report = this.#pluginReporter(reportActivity);
+    report({ level: "working", message: "Checking Atlas Core and Docker", stage: "operation" });
     await this.#withInitializedMutation(
-      async (state, dockerEngineId) => await this.#pluginDisable(plugin, state, dockerEngineId)
+      async (state, dockerEngineId) => await this.#pluginDisable(plugin, state, dockerEngineId, report)
     );
   }
 
-  async #pluginDisable(plugin: PluginCatalogEntry, state: DeploymentState, dockerEngineId: string): Promise<void> {
+  async #pluginDisable(
+    plugin: PluginCatalogEntry,
+    state: DeploymentState,
+    dockerEngineId: string,
+    report: PluginActivityReporter
+  ): Promise<void> {
     const pluginId = plugin.pluginId;
     this.#assertStateMatchesRuntime(state, dockerEngineId);
     if (!state.enabledPlugins.includes(pluginId)) {
-      this.#stdout.write(`Plugin ${plugin.displayName} is already disabled.\n`);
+      report({ level: "success", message: `${plugin.displayName} is already disabled`, stage: "operation" });
       return;
     }
+    report({ level: "working", message: "Reading current deployment", stage: "operation" });
     const snapshot = await this.#deploymentSnapshot(state.enabledPlugins);
     const candidatePluginIds = state.enabledPlugins.filter((candidate) => candidate !== pluginId);
+    report({ level: "working", message: "Saving rollback copy", stage: "operation" });
     const backup = this.#copyPluginAssetsBackup(pluginId);
     let stateCommitted = false;
     try {
+      report({ level: "working", message: `Stopping ${plugin.displayName}`, stage: "operation" });
       const removeResult = await this.#runCompose(["rm", "-s", "-f", plugin.service], false, state.enabledPlugins);
       if (removeResult.status !== 0) throw commandFailure("docker compose rm", removeResult);
       this.#removePluginAssets(pluginId);
       this.#writeDeploymentState({ ...state, enabledPlugins: candidatePluginIds });
       stateCommitted = true;
+      report({ level: "success", message: "Plugin deployment files removed", stage: "operation" });
       await this.#runComposeChecked(["config", "--quiet"], candidatePluginIds);
+      report({ level: "success", message: "Deployment configuration valid", stage: "operation" });
       if (snapshot.status !== "stopped") {
+        report({ level: "working", message: "Recreating Core API and Source Gateway", stage: "operation" });
         await this.#runComposeChecked(
           [
             "up",
@@ -1043,8 +1112,11 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
           ],
           candidatePluginIds
         );
+        report({ level: "success", message: "Core API and Source Gateway are healthy", stage: "operation" });
       }
     } catch (error) {
+      report({ level: "failure", message: `Disable stopped: ${errorMessage(error)}`, stage: "operation" });
+      report({ level: "working", message: "Restoring previous deployment", stage: "rollback" });
       const rollbackErrors: string[] = [];
       if (stateCommitted) {
         await attemptRollback(rollbackErrors, async () => this.#writeDeploymentState(state));
@@ -1071,14 +1143,26 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
           if (restore.status !== 0) throw commandFailure("restore Atlas Core", restore);
         });
       }
+      report(
+        rollbackErrors.length === 0
+          ? { level: "success", message: "Previous deployment restored", stage: "rollback" }
+          : {
+              level: "failure",
+              message: `Rollback incomplete: ${rollbackErrors.join("; ")}`,
+              stage: "rollback"
+            }
+      );
       throw transactionFailure(error, rollbackErrors);
     }
     rmSync(backup, { recursive: true, force: true });
-    this.#stdout.write(
-      snapshot.status === "stopped"
-        ? `Plugin ${plugin.displayName} disabled. Atlas Core remains stopped.\n`
-        : `Plugin ${plugin.displayName} disabled. Core API and Source Gateway are healthy.\n`
-    );
+    report({
+      level: "success",
+      message:
+        snapshot.status === "stopped"
+          ? `${plugin.displayName} disabled. Atlas Core remains stopped`
+          : `${plugin.displayName} disabled. Core API and Source Gateway are healthy`,
+      stage: "operation"
+    });
   }
 
   async doctor(): Promise<boolean> {

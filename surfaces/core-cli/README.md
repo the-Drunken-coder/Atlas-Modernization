@@ -82,7 +82,8 @@ validates the complete Compose model, and then commits the new state. A running 
 restarts Core and Source Gateway with a health wait. A stopped deployment stays stopped. Failure restores the previous
 files, state, and running composition. Disabling removes the stateless Plugin container and its fragments but keeps the
 cached image. Plugin mutations require the CLI and deployment versions to match; status and logs remain available after
-a CLI-only update.
+a CLI-only update. Direct commands print each mutation stage. The Plugins menu keeps the operation in an activity view
+with elapsed timestamps, reports rollback status, and returns to the Plugin catalog after safe cancellation.
 
 The menu's `Configure` action opens a configuration menu. `Admin account` changes the password for the fixed `admin`
 username. The direct `config` command opens the same hidden password prompt. The password must contain at least 12

@@ -57,6 +57,14 @@ export type PluginDeploymentStatus = {
   health?: string;
 };
 
+export type PluginActivity = {
+  level: "working" | "success" | "failure";
+  message: string;
+  stage: "operation" | "rollback";
+};
+
+export type PluginActivityReporter = (activity: PluginActivity) => void;
+
 export type AtlasCoreOperator = {
   cancelPending(): void;
   checkForUpdates(): Promise<UpdateInfo>;
@@ -65,10 +73,11 @@ export type AtlasCoreOperator = {
   doctor(): Promise<boolean>;
   init(): Promise<void>;
   logs(service: "api" | "minio" | "postgres" | "source-gateway" | undefined, follow: boolean): Promise<void>;
-  pluginDisable(pluginId: string): Promise<void>;
-  pluginEnable(pluginId: string): Promise<void>;
+  pluginDisable(pluginId: string, reportActivity?: PluginActivityReporter): Promise<void>;
+  pluginEnable(pluginId: string, reportActivity?: PluginActivityReporter): Promise<void>;
   pluginLogs(pluginId: string, follow: boolean): Promise<void>;
   pluginStatuses(pluginId?: string): Promise<PluginDeploymentStatus[]>;
+  resumeAfterCancellation(): void;
   reset(): Promise<void>;
   restart(): Promise<void>;
   snapshot(): Promise<DeploymentSnapshot>;
@@ -108,6 +117,7 @@ type Screen =
   | { kind: "logs" }
   | { kind: "menu"; snapshot: DeploymentSnapshot }
   | { kind: "password" }
+  | { kind: "plugin-activity"; view: PluginActivityView }
   | { kind: "plugins"; view: PluginDeploymentStatus[] | Error }
   | { kind: "status"; view: DeploymentDetails | Error }
   | { kind: "update"; info: UpdateInfo }
@@ -119,6 +129,18 @@ type AppMode = "configure" | "menu" | "update";
 type OperationResult = {
   cancelled: boolean;
   failure?: Error;
+};
+
+type PluginActivityEvent = PluginActivity & { elapsedMs: number };
+
+type PluginActivityView = {
+  action: "Enable" | "Disable";
+  completedAt?: number;
+  error?: string;
+  events: PluginActivityEvent[];
+  plugin: PluginDeploymentStatus;
+  startedAt: number;
+  status: "running" | "cancelling" | "success" | "failure" | "cancelled";
 };
 
 type KeyValue = readonly [string, string];
@@ -178,6 +200,7 @@ async function runInkApp(
 
 function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): ReactNode {
   const { exit, suspendTerminal, waitUntilRenderFlush } = useApp();
+  const pluginCancellationRequested = useRef(false);
   const statusAbortController = useRef<AbortController | undefined>(undefined);
   const statusGeneration = useRef(0);
   const statusReadPending = useRef<Promise<StatusView> | undefined>(undefined);
@@ -293,10 +316,10 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
         output.write("\nPress Enter to return to Atlas Core.");
         await waitForReturn(input);
       });
-      if (result.cancelled) exit();
+      if (result.cancelled && !terminalLost.current) operator.resumeAfterCancellation();
       return result;
     },
-    [exit, input, operator, output, suspendTerminal, waitUntilRenderFlush]
+    [input, operator, output, suspendTerminal, waitUntilRenderFlush]
   );
 
   const runMainAction = useCallback(
@@ -326,7 +349,7 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
         return;
       }
 
-      const result = await runVisibleOperation(action.label, async () => {
+      await runVisibleOperation(action.label, async () => {
         switch (action.id) {
           case "doctor":
             await operator.doctor();
@@ -356,7 +379,6 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
             return;
         }
       });
-      if (result.cancelled) return;
       await loadMenu();
     },
     [exit, loadMenu, loadPlugins, loadStatus, loadUpdate, operator, runVisibleOperation]
@@ -364,31 +386,113 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
 
   const togglePlugin = useCallback(
     async (plugin: PluginDeploymentStatus) => {
-      const result = await runVisibleOperation(plugin.enabled ? "Disabling Plugin" : "Enabling Plugin", async () => {
-        if (plugin.enabled) await operator.pluginDisable(plugin.pluginId);
-        else await operator.pluginEnable(plugin.pluginId);
+      const action = plugin.enabled ? "Disable" : "Enable";
+      const startedAt = Date.now();
+      pluginCancellationRequested.current = false;
+      setScreen({
+        kind: "plugin-activity",
+        view: {
+          action,
+          events: [
+            {
+              elapsedMs: 0,
+              level: "working",
+              message: `${action} requested`,
+              stage: "operation"
+            }
+          ],
+          plugin,
+          startedAt,
+          status: "running"
+        }
       });
-      if (!result.cancelled) await loadPlugins();
+      await waitUntilRenderFlush();
+      const reportActivity: PluginActivityReporter = (activity) => {
+        setScreen((current) =>
+          current.kind === "plugin-activity"
+            ? {
+                ...current,
+                view: {
+                  ...current.view,
+                  events: [...current.view.events, { ...activity, elapsedMs: Date.now() - startedAt }]
+                }
+              }
+            : current
+        );
+      };
+      const result = await runCancelableOperation(operator, async () => {
+        if (plugin.enabled) await operator.pluginDisable(plugin.pluginId, reportActivity);
+        else await operator.pluginEnable(plugin.pluginId, reportActivity);
+      });
+      const cancellationRequested = pluginCancellationRequested.current || result.cancelled;
+      if (cancellationRequested) operator.resumeAfterCancellation();
+      setScreen((current) => {
+        if (current.kind !== "plugin-activity") return current;
+        const rollbackFailed = current.view.events.some(
+          (event) => event.stage === "rollback" && event.level === "failure"
+        );
+        const status = cancellationRequested
+          ? rollbackFailed
+            ? "failure"
+            : "cancelled"
+          : result.failure
+            ? "failure"
+            : "success";
+        return {
+          ...current,
+          view: {
+            ...current.view,
+            completedAt: Date.now(),
+            ...(status === "failure" && result.failure ? { error: result.failure.message } : {}),
+            status
+          }
+        };
+      });
     },
-    [loadPlugins, operator, runVisibleOperation]
+    [operator, waitUntilRenderFlush]
   );
+
+  const cancelPluginActivity = useCallback(() => {
+    if (pluginCancellationRequested.current) return;
+    pluginCancellationRequested.current = true;
+    operator.cancelPending();
+    setScreen((current) =>
+      current.kind === "plugin-activity" && current.view.status === "running"
+        ? {
+            ...current,
+            view: {
+              ...current.view,
+              events: [
+                ...current.view.events,
+                {
+                  elapsedMs: Date.now() - current.view.startedAt,
+                  level: "working",
+                  message: "Cancellation requested. Waiting for safe cleanup",
+                  stage: "operation"
+                }
+              ],
+              status: "cancelling"
+            }
+          }
+        : current
+    );
+  }, [operator]);
 
   const showPluginLogs = useCallback(
     async (plugin: PluginDeploymentStatus) => {
-      const result = await runVisibleOperation("Loading Plugin logs", async () => {
+      await runVisibleOperation("Loading Plugin logs", async () => {
         await operator.pluginLogs(plugin.pluginId, false);
       });
-      if (!result.cancelled) await loadPlugins();
+      await loadPlugins();
     },
     [loadPlugins, operator, runVisibleOperation]
   );
 
   const showLogs = useCallback(
     async (service: "api" | "minio" | "postgres" | "source-gateway" | undefined, returnTo: "menu" | "status") => {
-      const result = await runVisibleOperation("Loading logs", async () => {
+      await runVisibleOperation("Loading logs", async () => {
         await operator.logs(service, false);
       });
-      if (result.cancelled) return;
       if (returnTo === "status") await loadStatus();
       else await loadMenu();
     },
@@ -396,10 +500,9 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
   );
 
   const runStatusDoctor = useCallback(async () => {
-    const result = await runVisibleOperation("Running diagnostics", async () => {
+    await runVisibleOperation("Running diagnostics", async () => {
       await operator.doctor();
     });
-    if (result.cancelled) return;
     await loadStatus();
   }, [loadStatus, operator, runVisibleOperation]);
 
@@ -408,7 +511,10 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
       const result = await runVisibleOperation("Changing admin password", async () => {
         await operator.configureAdminPassword(password);
       });
-      if (result.cancelled) return;
+      if (result.cancelled) {
+        setScreen({ kind: mode === "configure" ? "password" : "configure" });
+        return;
+      }
       if (mode === "configure") {
         if (result.failure) exit(result.failure);
         else exit();
@@ -477,6 +583,11 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
         onToggle={(plugin) => void togglePlugin(plugin)}
         view={screen.view}
       />
+    );
+  }
+  if (screen.kind === "plugin-activity") {
+    return (
+      <PluginActivityScreen onBack={() => void loadPlugins()} onCancel={cancelPluginActivity} view={screen.view} />
     );
   }
   if (screen.kind === "status") {
@@ -1080,6 +1191,117 @@ function LogsMenu({
       title="View logs"
     />
   );
+}
+
+function PluginActivityScreen({
+  onBack,
+  onCancel,
+  view
+}: {
+  onBack(): void;
+  onCancel(): void;
+  view: PluginActivityView;
+}): ReactNode {
+  const { columns, rows } = useWindowSize();
+  const [now, setNow] = useState(Date.now());
+  const finished = view.status === "success" || view.status === "failure" || view.status === "cancelled";
+
+  useEffect(() => {
+    if (finished) return;
+    const timer = setInterval(() => setNow(Date.now()), 1_000);
+    return () => clearInterval(timer);
+  }, [finished]);
+
+  useInput((input, key) => {
+    if (!finished && key.ctrl && input === "c") {
+      onCancel();
+      return;
+    }
+    if (finished && (key.return || key.escape || (key.ctrl && input === "c"))) onBack();
+  });
+
+  if (columns < MINIMUM_TERMINAL_COLUMNS) return <NarrowTerminal />;
+  const elapsed = (view.completedAt ?? now) - view.startedAt;
+  const detail = `${view.action} ${view.plugin.displayName}  ${formatActivityTime(elapsed)}`;
+  const wide = columns >= 72;
+  const footer = finished
+    ? "Enter return to Plugins"
+    : view.status === "cancelling"
+      ? "Cancelling safely. Waiting for cleanup..."
+      : "Ctrl+C cancel safely";
+  const headerRows = wide ? 1 : 2;
+  const viewportRows = Math.max(1, rows - headerRows - wrappedRows(footer, columns) - 2);
+  const lines = pluginActivityLines(view, columns).slice(-viewportRows);
+
+  return (
+    <Box flexDirection="column" width={columns}>
+      {wide ? <Header right={detail} title="ATLAS CORE > ACTIVITY" /> : <Header title="ATLAS CORE > ACTIVITY" />}
+      {wide ? null : <Text dimColor>{detail}</Text>}
+      <Rule width={columns} />
+      <Box flexDirection="column" height={viewportRows} justifyContent="flex-end">
+        {lines.map((line, index) => (
+          <Text
+            {...(line.color ? { color: line.color } : {})}
+            {...(line.dim === undefined ? {} : { dimColor: line.dim })}
+            key={`${index}-${line.text}`}
+          >
+            {line.text || " "}
+          </Text>
+        ))}
+      </Box>
+      <Rule width={columns} />
+      <Text dimColor={view.status !== "failure"}>{footer}</Text>
+    </Box>
+  );
+}
+
+type ActivityLine = {
+  color?: "green" | "red" | "yellow" | undefined;
+  dim?: boolean | undefined;
+  text: string;
+};
+
+function pluginActivityLines(view: PluginActivityView, width: number): ActivityLine[] {
+  const lines = view.events.flatMap((event) => {
+    const marker = event.level === "working" ? "[work]" : event.level === "success" ? "[done]" : "[fail]";
+    const prefix = `${formatActivityTime(event.elapsedMs)} ${marker} `;
+    const wrapped = wrapAnsi(`${prefix}${event.message}`, width, { hard: true, trim: false }).split("\n");
+    const color: ActivityLine["color"] =
+      event.level === "success" ? "green" : event.level === "failure" ? "red" : undefined;
+    return wrapped.map((text) => ({ color, dim: event.level === "working", text }));
+  });
+  const summary = pluginActivitySummary(view);
+  if (!summary) return lines;
+  return [...lines, { text: "" }, ...activityMessageLines(summary, width)];
+}
+
+function pluginActivitySummary(view: PluginActivityView): ActivityLine | undefined {
+  if (view.status === "success") {
+    return {
+      color: "green",
+      text: `${view.plugin.displayName} ${view.action === "Enable" ? "enabled" : "disabled"}.`
+    };
+  }
+  if (view.status === "cancelled") {
+    return { color: "yellow", text: `${view.action} cancelled. The previous deployment is preserved.` };
+  }
+  if (view.status === "failure") {
+    return { color: "red", text: view.error ? `${view.action} failed: ${view.error}` : `${view.action} failed.` };
+  }
+  return undefined;
+}
+
+function activityMessageLines(line: ActivityLine, width: number): ActivityLine[] {
+  return wrapAnsi(line.text, width, { hard: true, trim: false })
+    .split("\n")
+    .map((text) => ({ ...line, text }));
+}
+
+function formatActivityTime(milliseconds: number): string {
+  const tenths = Math.max(0, Math.floor(milliseconds / 100));
+  const minutes = Math.floor(tenths / 600);
+  const seconds = Math.floor((tenths % 600) / 10);
+  return `${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}.${tenths % 10}`;
 }
 
 function PluginsMenu({

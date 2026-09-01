@@ -432,6 +432,24 @@ describe("atlas-core CLI", () => {
     expect(test.runner.calls).toHaveLength(0);
   });
 
+  it("allows later commands after the interface finishes cancellation cleanup", async () => {
+    const test = runtime();
+    test.context.interactive = {
+      configureAdmin: async () => undefined,
+      runMenu: async () => undefined,
+      runUpdate: async (operator) => {
+        operator.cancelPending();
+        await expect(operator.checkForUpdates()).rejects.toThrow("Atlas Core command was cancelled.");
+        operator.resumeAfterCancellation();
+        await expect(operator.checkForUpdates()).resolves.toMatchObject({ latestVersion: PACKAGE_VERSION });
+      }
+    };
+
+    expect(await runCLI(["update"], test.context)).toBe(0);
+    expect(test.runner.cancelAllCalls).toBe(1);
+    expect(test.runner.calls.some((call) => call.command === "npm" && call.args[0] === "view")).toBe(true);
+  });
+
   it("allows initialization cleanup commands after cancellation", async () => {
     const test = runtime();
     test.context.interactive = {
@@ -1500,6 +1518,9 @@ describe("atlas-core CLI", () => {
       "source-gateway",
       plugin.service
     ]);
+    expect(test.stdout.join("")).toContain("[work] Pulling Spatial Fixture image");
+    expect(test.stdout.join("")).toContain("[done] Deployment configuration valid");
+    expect(test.stdout.join("")).toContain("[done] Spatial Fixture enabled and healthy");
   });
 
   it("enables a Plugin without starting a stopped deployment", async () => {
@@ -1518,6 +1539,12 @@ describe("atlas-core CLI", () => {
     markInitialized(test);
     const plugin = installTestPluginCatalog(test);
     test.runner.failComposeUp = true;
+    let composeUpCalls = 0;
+    test.runner.onRun = (call) => {
+      if (composeCommand(call)[0] !== "up") return;
+      composeUpCalls++;
+      if (composeUpCalls === 2) test.runner.failComposeUp = false;
+    };
 
     expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(1);
     expect(JSON.parse(readFileSync(join(test.home, ".atlas", "core", "state.json"), "utf8"))).toMatchObject({
@@ -1525,6 +1552,8 @@ describe("atlas-core CLI", () => {
     });
     expect(existsSync(join(test.home, ".atlas", "core", "plugins", plugin.pluginId))).toBe(false);
     expect(test.stderr.join("")).toContain("injected compose up failure");
+    expect(test.stdout.join("")).toContain("[work] Restoring previous deployment");
+    expect(test.stdout.join("")).toContain("[done] Previous deployment restored");
   });
 
   it("completes Plugin enable rollback after cancellation", async () => {
