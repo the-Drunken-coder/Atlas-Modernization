@@ -10,8 +10,10 @@ const script = join(dirname(fileURLToPath(import.meta.url)), "atlas-core-release
 const phaseScript = join(dirname(fileURLToPath(import.meta.url)), "select-atlas-core-release-phase.sh");
 const releaseFilesScript = join(dirname(fileURLToPath(import.meta.url)), "atlas-core-release-files.sh");
 const tagRulesetScript = join(dirname(fileURLToPath(import.meta.url)), "require-atlas-core-tag-rulesets.sh");
+const releaseTagScript = join(dirname(fileURLToPath(import.meta.url)), "verify-atlas-core-release-tag.sh");
 const pluginsScript = join(dirname(fileURLToPath(import.meta.url)), "../../scripts/plugins.mjs");
 const workflow = join(dirname(fileURLToPath(import.meta.url)), "../workflows/release-atlas-core.yml");
+const releaseGuide = join(dirname(fileURLToPath(import.meta.url)), "../../docs/atlas-core/RELEASING.md");
 const dockerfile = join(dirname(fileURLToPath(import.meta.url)), "../../services/core/docker/Dockerfile");
 const coreCLIPackage = join(dirname(fileURLToPath(import.meta.url)), "../../surfaces/core-cli/package.json");
 
@@ -184,9 +186,17 @@ test("lets the coordinator wait without blocking the tag publisher", () => {
   const source = readFileSync(workflow, "utf8");
   assert.match(
     source,
-    /concurrency:\n\s+group: release-atlas-core-\$\{\{ github\.ref_type == 'tag' && github\.ref_name \|\| 'coordinator' \}\}\n\s+cancel-in-progress: false/
+    /concurrency:\n\s+group: release-atlas-core-\$\{\{ github\.ref_type == 'tag' && github\.ref_name \|\| 'coordinator' \}\}\n\s+cancel-in-progress: false\n\s+queue: max/
   );
-  assert.match(source, /group: release-atlas-core-mutator\n\s+cancel-in-progress: false/);
+  assert.match(source, /group: release-atlas-core-mutator\n\s+cancel-in-progress: false\n\s+queue: max/);
+});
+
+test("applies the monotonic version gate only before creating a missing tag", () => {
+  const source = readFileSync(workflow, "utf8");
+  assert.match(
+    source,
+    /tag="atlas-core-v\$VERSION"\n\s+if ! git rev-parse --verify --quiet "refs\/tags\/\$tag"[^\n]*; then[\s\S]*?validate-next-version "\$current_version" "\$VERSION"[\s\S]*?validate-next-version "\$\{latest_tag#atlas-core-v\}" "\$VERSION"[\s\S]*?\n\s+fi\n\s+bash \.github\/scripts\/select-atlas-core-release-phase\.sh/
+  );
 });
 
 test("coordinates automatic tag publication after one approval", () => {
@@ -214,6 +224,12 @@ test("coordinates automatic tag publication after one approval", () => {
   assert.match(source, /GH_TOKEN: \$\{\{ steps\.release-token\.outputs\.token \}\}/);
   assert.match(source, /name: Upload approved publication/);
   assert.match(source, /atlas-core-publication-authorization-\$\{\{ inputs\.version \}\}-\$\{\{ github\.run_id \}\}/);
+  const authorizationJob = source.slice(
+    source.indexOf("  authorize-tag-publication:"),
+    source.indexOf("  approve-manual-tag-recovery:")
+  );
+  assert.match(authorizationJob, /permissions:\n\s+actions: read\n\s+contents: read/);
+  assert.doesNotMatch(authorizationJob, /environment:|actions: write|contents: write|id-token:|packages:/);
   assert.match(source, /name: Verify coordinator authorization/);
   assert.match(
     source,
@@ -227,6 +243,8 @@ test("coordinates automatic tag publication after one approval", () => {
   assert.match(source, /\.path == "\.github\/workflows\/release-atlas-core\.yml"/);
   assert.match(source, /child_run_id=\$child_run_id/);
   assert.doesNotMatch(source, /expected_title=/);
+  assert.match(source, /needs: \[changelog, prepare, authorize-tag-publication, approve-manual-tag-recovery\]/);
+  assert.equal(source.match(/bash \.github\/scripts\/verify-atlas-core-release-tag\.sh/g)?.length, 2);
   assert.match(source, /name: Await immutable tag publication/);
   assert.match(source, /actions: read\n\s+checks: read\n\s+contents: read/);
   assert.match(
@@ -238,6 +256,49 @@ test("coordinates automatic tag publication after one approval", () => {
 
 test("keeps the tag-ruleset gate shell valid", () => {
   assert.equal(spawnSync("bash", ["-n", tagRulesetScript]).status, 0);
+  assert.equal(spawnSync("bash", ["-n", releaseTagScript]).status, 0);
+});
+
+test("verifies the remote release tag still peels to the reviewed commit", () => {
+  const directory = mkdtempSync(join(tmpdir(), "atlas-core-release-tag-"));
+  const remote = join(directory, "remote.git");
+  const checkout = join(directory, "checkout");
+  try {
+    mkdirSync(checkout);
+    git(["init", "--bare", remote], directory);
+    git(["init"], checkout);
+    git(["config", "user.name", "Atlas Core release test"], checkout);
+    git(["config", "user.email", "atlas-core@example.invalid"], checkout);
+    git(["remote", "add", "origin", remote], checkout);
+    writeFileSync(join(checkout, "release.txt"), "reviewed\n");
+    git(["add", "release.txt"], checkout);
+    git(["commit", "-m", "chore(release): atlas-core v1.2.3"], checkout);
+    const releaseSha = git(["rev-parse", "HEAD"], checkout);
+    git(["tag", "--annotate", "atlas-core-v1.2.3", "--message", "Atlas Core 1.2.3"], checkout);
+    git(["push", "origin", "refs/tags/atlas-core-v1.2.3"], checkout);
+
+    const valid = spawnSync("bash", [releaseTagScript, "1.2.3", releaseSha], {
+      cwd: checkout,
+      encoding: "utf8",
+      stdio: "pipe"
+    });
+    assert.equal(valid.status, 0, valid.stderr);
+
+    const mismatched = spawnSync("bash", [releaseTagScript, "1.2.3", "f".repeat(40)], {
+      cwd: checkout,
+      encoding: "utf8",
+      stdio: "pipe"
+    });
+    assert.notEqual(mismatched.status, 0);
+    assert.match(mismatched.stderr, /not f{40}/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("documents non-bypassable release environments", () => {
+  const source = readFileSync(releaseGuide, "utf8");
+  assert.match(source, /disable\nadministrator bypass for both environments/i);
 });
 
 test("keeps the release-owned file contract narrow", () => {

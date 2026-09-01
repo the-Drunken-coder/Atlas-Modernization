@@ -24,6 +24,7 @@ permissions: {}
 concurrency:
   group: release-atlas-core-${{ github.ref_type == 'tag' && github.ref_name || 'coordinator' }}
   cancel-in-progress: false
+  queue: max
 
 env:
   GO_VERSION_FILE: services/core/go.mod
@@ -73,13 +74,6 @@ jobs:
             echo "Leave the internal coordinator run ID empty when dispatching from main." >&2
             exit 1
           fi
-          current_version="$(node -p "require('./surfaces/core-cli/package.json').version")"
-          node .github/scripts/atlas-core-release.mjs validate-next-version "$current_version" "$VERSION"
-          latest_tag="$(git tag --list 'atlas-core-v*' --sort=-version:refname | head -n 1)"
-          if [ -n "$latest_tag" ]; then
-            node .github/scripts/atlas-core-release.mjs \
-              validate-next-version "${latest_tag#atlas-core-v}" "$VERSION"
-          fi
           expected_tag="refs/tags/atlas-core-v$VERSION"
           if [ "$GITHUB_REF" != "refs/heads/main" ] && [ "$GITHUB_REF" != "$expected_tag" ]; then
             echo "Dispatch Atlas Core releases from main or $expected_tag." >&2
@@ -90,10 +84,19 @@ jobs:
             exit 1
           fi
           git fetch origin main --tags
+          tag="atlas-core-v$VERSION"
+          if ! git rev-parse --verify --quiet "refs/tags/$tag" >/dev/null; then
+            current_version="$(node -p "require('./surfaces/core-cli/package.json').version")"
+            node .github/scripts/atlas-core-release.mjs validate-next-version "$current_version" "$VERSION"
+            latest_tag="$(git tag --list 'atlas-core-v*' --sort=-version:refname | head -n 1)"
+            if [ -n "$latest_tag" ]; then
+              node .github/scripts/atlas-core-release.mjs \
+                validate-next-version "${latest_tag#atlas-core-v}" "$VERSION"
+            fi
+          fi
           bash .github/scripts/select-atlas-core-release-phase.sh
 
       - name: Require protected Atlas Core release tags
-        if: steps.phase.outputs.mode == 'prepare' || inputs.coordinator_run_id != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -406,58 +409,17 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 
-  approve-manual-tag-recovery:
-    name: Approve manual tag recovery
-    if: github.ref_type == 'tag' && inputs.coordinator_run_id == ''
+  authorize-tag-publication:
+    name: Verify coordinator authorization
+    if: github.ref_type == 'tag' && inputs.coordinator_run_id != ''
     needs: [changelog, prepare]
     runs-on: ubuntu-latest
-    environment: release
-    permissions: {}
-    steps:
-      - name: Record recovery approval
-        env:
-          VERSION: ${{ inputs.version }}
-        run: printf 'Approved manual recovery for Atlas Core %s.\n' "$VERSION" >> "$GITHUB_STEP_SUMMARY"
-
-  publish:
-    name: Run approved release phase
-    if: >-
-      always() &&
-      needs.changelog.result == 'success' &&
-      needs.prepare.result == 'success' &&
-      (needs.approve-manual-tag-recovery.result == 'success' ||
-      needs.approve-manual-tag-recovery.result == 'skipped')
-    needs: [changelog, prepare, approve-manual-tag-recovery]
-    runs-on: ubuntu-latest
-    environment:
-      name: ${{ github.ref_type == 'tag' && 'release-publish' || 'release' }}
-    concurrency:
-      group: release-atlas-core-mutator
-      cancel-in-progress: false
+    timeout-minutes: 5
     permissions:
-      actions: write
-      contents: write
-      id-token: write
-      packages: write
-    outputs:
-      child_run_id: ${{ steps.dispatch.outputs.child_run_id }}
-      child_url: ${{ steps.dispatch.outputs.child_url }}
-      release_sha: ${{ steps.commit.outputs.release_sha }}
+      actions: read
+      contents: read
     steps:
-      - name: Checkout dispatched commit
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Download reviewed release
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: atlas-core-${{ inputs.version }}
-          path: .
-
       - name: Wait for coordinator authorization
-        if: github.ref_type == 'tag' && inputs.coordinator_run_id != ''
         env:
           COORDINATOR_RUN_ID: ${{ inputs.coordinator_run_id }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -476,7 +438,6 @@ jobs:
           exit 1
 
       - name: Download coordinator authorization
-        if: github.ref_type == 'tag' && inputs.coordinator_run_id != ''
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: atlas-core-publication-authorization-${{ inputs.version }}-${{ inputs.coordinator_run_id }}
@@ -486,7 +447,6 @@ jobs:
           run-id: ${{ inputs.coordinator_run_id }}
 
       - name: Verify coordinator authorization
-        if: github.ref_type == 'tag' && inputs.coordinator_run_id != ''
         env:
           CHILD_RUN_ID: ${{ github.run_id }}
           COORDINATOR_RUN_ID: ${{ inputs.coordinator_run_id }}
@@ -533,7 +493,59 @@ jobs:
              .path == ".github/workflows/release-atlas-core.yml" and
              .repository.full_name == $repository' \
             "$coordinator" >/dev/null
-          rm -rf coordinator-authorization
+
+  approve-manual-tag-recovery:
+    name: Approve manual tag recovery
+    if: github.ref_type == 'tag' && inputs.coordinator_run_id == ''
+    needs: [changelog, prepare]
+    runs-on: ubuntu-latest
+    environment: release
+    permissions: {}
+    steps:
+      - name: Record recovery approval
+        env:
+          VERSION: ${{ inputs.version }}
+        run: printf 'Approved manual recovery for Atlas Core %s.\n' "$VERSION" >> "$GITHUB_STEP_SUMMARY"
+
+  publish:
+    name: Run approved release phase
+    if: >-
+      always() &&
+      needs.changelog.result == 'success' &&
+      needs.prepare.result == 'success' &&
+      (needs.authorize-tag-publication.result == 'success' ||
+      needs.authorize-tag-publication.result == 'skipped') &&
+      (needs.approve-manual-tag-recovery.result == 'success' ||
+      needs.approve-manual-tag-recovery.result == 'skipped')
+    needs: [changelog, prepare, authorize-tag-publication, approve-manual-tag-recovery]
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ github.ref_type == 'tag' && 'release-publish' || 'release' }}
+    concurrency:
+      group: release-atlas-core-mutator
+      cancel-in-progress: false
+      queue: max
+    permissions:
+      actions: write
+      contents: write
+      id-token: write
+      packages: write
+    outputs:
+      child_run_id: ${{ steps.dispatch.outputs.child_run_id }}
+      child_url: ${{ steps.dispatch.outputs.child_url }}
+      release_sha: ${{ steps.commit.outputs.release_sha }}
+    steps:
+      - name: Checkout dispatched commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Download reviewed release
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: atlas-core-${{ inputs.version }}
+          path: .
 
       - name: Set up Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -763,12 +775,18 @@ jobs:
           bash .github/scripts/test-atlas-core-package.sh "$package" "$VERSION" "$IMAGE_REFERENCE"
 
       - name: Verify release tag authority
-        if: needs.changelog.outputs.mode == 'prepare'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           bash .github/scripts/require-atlas-core-tag-rulesets.sh \
             "Both Atlas Core release tag rulesets must remain active."
+
+      - name: Verify immutable release tag
+        if: needs.changelog.outputs.mode == 'publish'
+        env:
+          RELEASE_SHA: ${{ needs.changelog.outputs.release_sha }}
+          VERSION: ${{ inputs.version }}
+        run: bash .github/scripts/verify-atlas-core-release-tag.sh "$VERSION" "$RELEASE_SHA"
 
       - name: Mint protected release credential
         id: release-token
@@ -1136,9 +1154,11 @@ jobs:
         if: needs.changelog.outputs.mode == 'publish'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_SHA: ${{ needs.changelog.outputs.release_sha }}
           VERSION: ${{ inputs.version }}
         run: |
           tag="atlas-core-v$VERSION"
+          bash .github/scripts/verify-atlas-core-release-tag.sh "$VERSION" "$RELEASE_SHA"
           if [ "$(gh release view "$tag" --json isDraft --jq .isDraft)" = "true" ]; then
             gh release edit "$tag" --draft=false --latest
           fi

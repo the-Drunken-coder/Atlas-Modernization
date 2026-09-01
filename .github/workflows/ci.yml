@@ -49,6 +49,7 @@ jobs:
         run: |
           bash -n .github/scripts/test-atlas-core-package.sh
           bash -n .github/scripts/require-atlas-core-tag-rulesets.sh
+          bash -n .github/scripts/verify-atlas-core-release-tag.sh
 
   go-quality:
     name: go-quality
