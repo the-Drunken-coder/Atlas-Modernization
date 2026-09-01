@@ -344,7 +344,8 @@ Production restarts preserve durable Core storage.
 
 Operator configuration is separate from immutable Plugin releases. Update and disable preserve it. Uninstall preserves
 it for a later reinstall, while an explicit purge removes Atlas-managed Plugin configuration. Purge never deletes an
-external secret source. A release may declare required settings and secret names, but it never contains secret values.
+external secret source. A later package schema may declare required settings and secret names. Package schema 1 has no
+configuration declarations, and releases never contain secret values.
 
 The CLI embeds versioned Atlas Plugin catalog public keys and a minimum catalog checkpoint. Atlas signs the exact catalog
 bytes with Ed25519. A protected append-only ledger preserves release hashes and one-way revocations before GitHub Pages

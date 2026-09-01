@@ -1,5 +1,7 @@
 # Core owns the plugin HTTP interface
 
+Status: Superseded in part by [`2026-09-01-plugins-release-independently-from-atlas-core.md`](2026-09-01-plugins-release-independently-from-atlas-core.md). Fixed public routes, Core-owned request policy, and manifest-owned discovery remain accepted. Keeping private protocol versions outside the Plugin manifest is historical v1 behavior.
+
 1. **Time & Date:** 2026-08-24 22:57 EDT
 2. **Name:** Core owns fixed Plugin routes and reserves the Datastream namespace
 3. **Context:** Atlas needs to add different Plugin capabilities without deploying a new public API for each integration. Allowing each Plugin to register arbitrary routes would fragment authentication, errors, request policy, discovery, and SDK behavior.

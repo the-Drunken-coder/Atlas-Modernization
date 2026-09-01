@@ -66,6 +66,14 @@ Field rules:
   releases without inventing a generic setting or secret injection contract before a Plugin needs one. A non-empty
   configuration model requires a later package-schema major and a concrete Plugin forcing case.
 
+The repository's `atlas-plugin.json` file is authoring input, not part of the published release. The independent release
+workflow updates `scripts/plugins.mjs` so `source_connector` in that authoring file accepts `null` or one local filename.
+For a filename, the workflow loads the referenced JSON, validates it against the existing strict connector schema,
+requires its connector ID to equal `plugin_id`, rejects secret headers in package schema 1, and embeds the parsed policy
+object in the release document. A null authoring value produces a null release value. The published release never
+contains the filename or another repository path. The bundled-v1 generator keeps its current required-filename behavior
+until the independent workflow replaces it.
+
 The release document does not contain Operations, health status, credentials, secret values, executable hooks, Compose,
 host paths, container names, networks, mounts, restart policy, resource limits, or another Plugin dependency. The manager
 derives deployment details from fixed templates. Runtime Operations remain authoritative in the private Plugin manifest.
