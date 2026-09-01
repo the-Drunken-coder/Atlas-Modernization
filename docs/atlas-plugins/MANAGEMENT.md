@@ -69,7 +69,7 @@ Schema-3 initialization or upgrade provisions one full-access managed Core API k
 `ATLAS_PLUGIN_API_KEY` in the existing owner-only root `.env`. The generated service for an SDK-using Plugin receives that
 key as `ATLAS_API_AUTH_KEY` plus the fixed `ATLAS_CORE_ORIGIN=http://api:8000`. A release cannot supply or override either
 value. This root platform credential is the one concrete secret schema 1 needs; schema 1 has no per-Plugin setting or
-secret lifecycle.
+secret lifecycle. The manager owns its rotation as described below.
 
 `catalog-state.json` is one atomically replaced object. The encoded byte fields are abbreviated in this example:
 
@@ -154,6 +154,7 @@ atlas-core plugins disable <plugin_id>
 atlas-core plugins update <plugin_id|all>
 atlas-core plugins rollback <plugin_id>
 atlas-core plugins uninstall <plugin_id>
+atlas-core plugins rotate-core-key
 atlas-core plugins status [plugin_id]
 atlas-core plugins logs <plugin_id> [--follow]
 atlas-core plugins refresh
@@ -165,6 +166,18 @@ interactive menu may offer a second explicit "Enable now?" confirmation after in
 
 Uninstall requires the Plugin to be disabled. It removes installed release records and active deployment metadata but
 retains cached Docker layers. Package schema 1 has no separate Plugin configuration lifecycle.
+
+`rotate-core-key` replaces only the shared managed key used by SDK-backed Plugins. It is available without a fresh catalog
+and uses the root transaction plus the deployment-owned admin credential. Its journal records the old and candidate key
+IDs but no secret; the candidate secret exists only in the private staged `.env`. When Atlas is running, the manager asks
+the installed Core to create a new key, authenticates it, stages `.env` and regenerated active files, recreates only
+Enabled SDK-using Plugin containers with pulling disabled, waits for their health, and commits before revoking the old
+key. A pre-commit failure restores the old `.env` and containers and revokes the candidate key. Post-commit recovery
+finishes revoking the old key. Cleanup treats an old key that an administrator already revoked as absent.
+
+When Atlas is stopped, the command starts the exact retained base composition without Plugin fragments only long enough
+to create and authenticate the replacement key. It then stops the base composition, commits the new `.env`, and leaves
+Atlas stopped. The interactive menu explains that every SDK-using Plugin shares this credential and confirms rotation.
 
 ## Compatibility
 
@@ -233,13 +246,16 @@ must separately prove that the container uses the release's digest-pinned image 
 restores state, files, and the previous composition. A stopped Atlas deployment remains stopped; the next normal start
 performs the same image, manifest, and health checks.
 
-Update selects the greatest compatible, non-revoked stable version newer than the selected version. It reports that the
-Plugin is current when no such release exists. While disabled, update verifies, pulls, and stores the candidate, moves
-the prior selected release to `previous`, and does not restart Atlas. Updating an Enabled Plugin requires Atlas to be
-running; when Atlas is stopped, the command tells the operator to start Atlas or disable the Plugin first. While enabled,
-update stages candidate active files, validates Compose, pulls the candidate digest, recreates the affected services
-with pulling disabled, and waits for the same image, health, and discovery checks. Only then does it commit selected and
-previous release state. Failure restores the old release, active files, deployment state, and running composition.
+When the selected release is permitted, update selects the greatest compatible, non-revoked stable version newer than
+it and reports that the Plugin is current when none exists. When the selected release is revoked, update instead selects
+the greatest compatible, non-revoked stable release other than the selection, even when that replacement has a lower
+version. It labels that remediation as a downgrade. If no permitted replacement exists, it reports that condition rather
+than calling the revoked Plugin current. While disabled, update verifies, pulls, and stores the candidate, moves the prior
+selected release to `previous`, and does not restart Atlas. Updating an Enabled Plugin requires Atlas to be running; when
+Atlas is stopped, the command tells the operator to start Atlas or disable the Plugin first. While enabled, update stages
+candidate active files, validates Compose, pulls the candidate digest, recreates the affected services with pulling
+disabled, and waits for the same image, health, and discovery checks. Only then does it commit selected and previous
+release state. Failure restores the old release, active files, deployment state, and running composition.
 
 Rollback uses the update transaction with the retained previous release. The catalog must be fresh, and that release
 must remain compatible and non-revoked. After success, selected and previous swap, which permits an explicit return to
@@ -312,9 +328,9 @@ Catalog refresh verifies the new catalog completely, then atomically replaces `c
 the usable catalog from its anti-rollback state.
 
 After catalog expiry, install, enable, update, and manual rollback fail closed. Status, logs, disable, uninstall,
-Core start, and Core stop continue to work from local verified state. Core start may therefore restart an already
-Enabled Plugin, but it does not permit a disabled Installed Plugin to become Enabled. Automatic rollback inside an
-already-started update uses the before-state captured under the fresh catalog that admitted that update.
+`rotate-core-key`, Core start, and Core stop continue to work from local verified state. Core start may therefore restart
+an already Enabled Plugin, but it does not permit a disabled Installed Plugin to become Enabled. Automatic rollback
+inside an already-started update uses the before-state captured under the fresh catalog that admitted that update.
 
 Revoked Installed Plugins appear with the catalog reason and explicit update and disable actions. Atlas never updates,
 disables, or uninstalls them without operator approval.

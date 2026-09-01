@@ -244,7 +244,10 @@ Plugins may need to read Atlas data or request Atlas mutations. They never acces
 
 Plugin code uses the ordinary Atlas SDK with a full-access managed API credential. Core applies the same authentication, validation, and resource rules it applies to any SDK client, but it does not enforce Plugin-specific capabilities. Plugin code owns its own safety and limits which SDK methods it calls.
 
-Today's full-access managed API keys satisfy this contract. All Plugins share one full-access Plugin API key supplied through deployment configuration. Atlas does not currently persist an actor on Entities, Tasks, Objects, or feed events, so the Plugin architecture adds no Plugin-specific provenance or audit model.
+Today's full-access managed API keys satisfy this contract. All Plugins share one full-access Plugin API key supplied
+through deployment configuration. The host manager provisions and transactionally rotates that key. Atlas does not
+currently persist an actor on Entities, Tasks, Objects, or feed events, so the Plugin architecture adds no Plugin-specific
+provenance or audit model.
 
 ## Execution and failure isolation
 
@@ -326,7 +329,8 @@ The first architecture has no separate Plugin Definition and Plugin Instance con
 Package schema 1 has no Plugin setting or secret injection model. The manager supplies only fixed platform values: the
 private Source Gateway origin and, for SDK-using Plugins, the private Core origin plus one shared deployment-owned managed
 API key. A release cannot provide or override them. A later package-schema major may add Plugin settings when a concrete
-Plugin requires them. Runtime operator intent still uses Operations or Tasks.
+Plugin requires them. The menu can transactionally rotate the shared Core key, including after an administrator revokes
+it, without adding per-Plugin configuration. Runtime operator intent still uses Operations or Tasks.
 
 The host-side Atlas Core CLI manages Installed Plugins from one signed Atlas catalog. Each Plugin release has its own
 version and workflow. Its strict `.atlas-plugin` JSON document pins one multi-architecture image by digest and declares
@@ -351,6 +355,8 @@ publishes the signed bytes. Each signed catalog entry pins the exact `.atlas-plu
 pins the image digest. The manager atomically stores its accepted catalog and anti-rollback receipt. A catalog entry may
 revoke an immutable release. The manager refuses new installation, enablement, update, or manual rollback to a revoked
 release. It warns about an already Installed revoked release but does not stop it without operator approval.
+If the selected release is revoked, an approved update may choose the greatest compatible non-revoked release even when
+that requires a version downgrade. It never reports a revoked selection as current.
 
 Plugin versions are immutable Semantic Versions in one stable channel. A release workflow publishes and verifies the
 image and `.atlas-plugin` document before it appends the release to a newly signed catalog. A failed catalog publication
@@ -424,7 +430,7 @@ The building is not an Asset or Track. Source-provided height is advisory data a
 - Core communicates with Plugins through fixed private manifest, health, and Operation HTTP/JSON routes; Plugins do not self-register.
 - Atlas does not model multiple active instances of one Plugin.
 - Plugin code uses the ordinary Atlas SDK with full access; Core does not enforce Plugin-specific capabilities.
-- All Plugins share one full-access Plugin API key.
+- All Plugins share one full-access Plugin API key that the host manager can rotate transactionally.
 - A taskable Plugin may register a Tool Asset with `entity_type: "asset"` and `subtype: "tool"`; query-only Plugins need no Asset.
 - A taskable Plugin creates or ensures its own Tool Asset through the SDK during startup and records its Plugin ID as the strict `custom_plugin.plugin_id` ownership component.
 - A Tool Asset ID is `plugin_` plus the unpadded base64url encoding of the full SHA-256 digest of its Plugin ID; Core keeps its type, subtype, and ownership marker immutable across PATCH, check-in, and every other mutation path after runtime registration.

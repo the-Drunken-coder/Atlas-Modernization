@@ -86,10 +86,10 @@ not contain hyphens, so this conversion cannot collide. Core reaches the Plugin 
 `ATLAS_SOURCE_GATEWAY_ORIGIN=http://source-gateway:8080` environment variable.
 
 When `atlas_protocol_revision` is non-null, the service also receives
-`ATLAS_CORE_ORIGIN=http://api:8000` and `ATLAS_API_AUTH_KEY=${ATLAS_PLUGIN_API_KEY}`. The CLI provisions the shared
-full-access managed key once, stores it in the owner-only root deployment configuration, and supplies it to Compose. The
-release cannot provide or override either value. These fixed platform values are not a general Plugin configuration
-mechanism.
+`ATLAS_CORE_ORIGIN=http://api:8000` and `ATLAS_API_AUTH_KEY=${ATLAS_PLUGIN_API_KEY}`. The CLI owns the shared full-access
+managed key in the owner-only root deployment configuration, supplies it to Compose, and rotates it through the
+transaction defined in `MANAGEMENT.md`. The release cannot provide or override either value. These fixed platform values
+are not a general Plugin configuration mechanism.
 
 When `source_connector` is non-null, the manager writes the validated object to `active/source-connector.json` and mounts
 that file into Source Gateway. When it is null, the manager generates neither the file nor a Source Gateway mount for the
@@ -133,8 +133,10 @@ images remain GHCR artifacts. The catalog has this shape:
 }
 ```
 
-The catalog uses strict decoding and stable sorting by `plugin_id` and Semantic Version. `sequence` increases for every
-publication within one key epoch. Epoch 1, sequence 1 has a null `previous_catalog_sha256`; every later catalog, including
+The publisher and manager both reject duplicate `plugin_id` entries and duplicate Semantic Versions within one Plugin
+before sorting or selecting a release. The catalog otherwise uses strict decoding and stable sorting by `plugin_id` and
+Semantic Version. `sequence` increases for every publication within one key epoch. Epoch 1, sequence 1 has a null
+`previous_catalog_sha256`; every later catalog, including
 the first catalog in a newer epoch, pins the exact prior catalog bytes. A newer trusted epoch starts at the initial
 sequence floor embedded in the CLI and may use a lower sequence than the prior epoch's high-water mark. `issued_at` and
 `expires_at` use UTC RFC 3339 timestamps, and expiry is at most 30 days after issue. Issue time must increase with every
@@ -155,9 +157,10 @@ The signed catalog entry authenticates the exact release-document bytes, which a
 release-document signature would add another path without adding trust and is not used.
 
 The protected `plugin-catalog` branch is the canonical catalog ledger. Force pushes are forbidden. Each publication
-validates the transition against the current branch head, preserves every existing Plugin, version, release-document
-hash, and true revocation, then pushes the new catalog with a compare-and-swap on that head commit. A release may be
-added and a revocation may change only from false to true. Existing release identity and hashes never change. Ordinary
+rejects duplicate identities, validates the transition against the current branch head, preserves every existing Plugin,
+version, release-document hash, and true revocation, then pushes the new catalog with a compare-and-swap on that head
+commit. A release may be added and a revocation may change only from false to true. Existing release identity and hashes
+never change. Ordinary
 publication keeps the current key epoch and increments its sequence. An authorized key rotation increments the epoch
 and starts at that epoch's CLI-embedded sequence floor. A Pages deployment is built from that exact ledger commit, not
 by reading the mutable Pages endpoint.
