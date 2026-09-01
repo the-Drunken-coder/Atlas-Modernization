@@ -168,16 +168,24 @@ Uninstall requires the Plugin to be disabled. It removes installed release recor
 retains cached Docker layers. Package schema 1 has no separate Plugin configuration lifecycle.
 
 `rotate-core-key` replaces only the shared managed key used by SDK-backed Plugins. It is available without a fresh catalog
-and uses the root transaction plus the deployment-owned admin credential. Its journal records the old and candidate key
-IDs but no secret; the candidate secret exists only in the private staged `.env`. When Atlas is running, the manager asks
-the installed Core to create a new key, authenticates it, stages `.env` and regenerated active files, recreates only
-Enabled SDK-using Plugin containers with pulling disabled, waits for their health, and commits before revoking the old
-key. A pre-commit failure restores the old `.env` and containers and revokes the candidate key. Post-commit recovery
-finishes revoking the old key. Cleanup treats an old key that an administrator already revoked as absent.
+and uses the root transaction plus the deployment-owned admin credential. Before each key-creation request, the manager
+writes and fsyncs a unique `atlas-plugin-rotation-<transaction_id>-<attempt>` managed-key name in the journal. It never
+retries a request with an uncertain result. Recovery lists active keys by that exact name, revokes any match whose
+one-time secret was not durably staged, records a fresh attempt name, and only then tries again. After a successful
+response, the journal records the candidate key ID but no secret; the candidate secret exists only in the private staged
+`.env`.
 
-When Atlas is stopped, the command starts the exact retained base composition without Plugin fragments only long enough
-to create and authenticate the replacement key. It then stops the base composition, commits the new `.env`, and leaves
-Atlas stopped. The interactive menu explains that every SDK-using Plugin shares this credential and confirms rotation.
+When Atlas is running, the manager authenticates the candidate key, stages `.env` and regenerated active files, recreates
+only Enabled SDK-using Plugin containers with pulling disabled, and waits for their health. It then makes the new `.env`
+durable and revokes the old key before marking the transaction complete. A failure before the new key becomes durable
+restores the old `.env` and containers and revokes the candidate key. Recovery after that point must finish revoking the
+old key. Cleanup treats an old key that an administrator already revoked as absent.
+
+When Atlas is stopped, the command starts the exact retained base composition without Plugin fragments, creates and
+authenticates the replacement, makes the new `.env` durable, and revokes the old key while that temporary Core is still
+running. It then stops the base composition and marks the transaction complete. Recovery keeps or restarts that exact
+base composition until mandatory old-key revocation succeeds, then restores the prior stopped state. The interactive menu
+explains that every SDK-using Plugin shares this credential and confirms rotation.
 
 ## Compatibility
 
@@ -301,7 +309,16 @@ Normal `atlas-core start` acquires the mutation locks, regenerates every Enabled
 and validates the assembled Compose model before it starts a container. It verifies that the recorded Core and Enabled
 Plugin image IDs still exist locally, then uses the retained base bundle with Compose pulling disabled. It inspects every
 started container and waits for base health, Plugin manifests, and Plugin health before recording the deployment as
-started. A missing or changed retained file fails and names the installed Core package that must restore the bundle.
+started. A missing or changed retained file leaves the deployment stopped and instructs the operator to run
+`atlas-core start --repair-bundle`.
+
+The bundle-repair form holds the same locks and reads `state.packageVersion` plus the recorded `bundleSha256`. It uses
+matching assets from the current CLI package when available; otherwise it downloads the exact public
+`atlas-core@<state.packageVersion>` npm archive into a private temporary directory without installing it or executing
+package code. It rejects symlinks, path escapes, missing relative Compose assets, and size-limit violations, builds the
+complete candidate `base/`, and requires its deterministic hash to equal the recorded hash. It atomically replaces
+`base/`, then performs the normal start without changing the CLI, Core, or Plugin version. npm failure or a hash mismatch
+leaves the prior bundle and stopped deployment unchanged. `--repair-bundle` and `--repair-images` may be supplied together.
 
 If an exact recorded image is missing or its local ID no longer matches, normal start remains stopped and instructs the
 operator to run `atlas-core start --repair-images`. The repair form holds the same locks and re-pulls only the exact Core

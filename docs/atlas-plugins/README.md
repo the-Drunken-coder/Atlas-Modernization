@@ -340,6 +340,8 @@ private runtime manifest. The CLI regenerates deployment configuration from reta
 start, validates the complete Compose model, applies restart-based changes with the installed Core's retained base bundle
 and image, waits for health, verifies running image identity, and rolls back a failed Plugin transaction. It never passes
 arbitrary package-supplied Compose or executable installation hooks to the host.
+If retained bundle bytes or images are lost, explicit repair-start flags restore only the recorded Core package bundle
+and exact image digests. Repair never selects a newer Core or Plugin release.
 
 Installation, enablement, and runtime health are separate. Installing selects and retains a Plugin release. Enabling
 includes that Installed Plugin in the deployment. Disabling removes it from the active deployment without uninstalling

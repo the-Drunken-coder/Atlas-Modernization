@@ -7,6 +7,10 @@ then this guide must remove every Plugin build, digest, visibility, and package-
 update must refuse to proceed while a bundled-v1 Plugin remains enabled; `docs/atlas-plugins/MANAGEMENT.md` defines the
 greenfield transition.
 
+After that transition, every immutable npm Core version must continue carrying its complete base deployment bundle.
+The host manager may fetch `atlas-core@<installed Core version>` without installing or executing it to repair lost bundle
+bytes, and accepts the candidate only when its complete bundle hash matches deployment state.
+
 Atlas Core uses one version for the npm CLI, Core and catalog Plugin images, git tag, and GitHub Release. A normal
 release starts from `main` and finishes in an automatically queued run from the immutable release tag.
 
