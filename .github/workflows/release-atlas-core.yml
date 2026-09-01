@@ -489,7 +489,7 @@ jobs:
             fi
             sleep 2
           done
-          echo "The coordinator authorization artifact was not uploaded." >&2
+          echo "The coordinator authorization artifact was not uploaded after $attempt attempts." >&2
           exit 1
 
       - name: Download coordinator authorization
