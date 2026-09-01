@@ -61,7 +61,7 @@ export type AtlasCoreOperator = {
   cancelPending(): void;
   checkForUpdates(): Promise<UpdateInfo>;
   configureAdminPassword(password: string): Promise<void>;
-  details(): Promise<DeploymentDetails>;
+  details(signal?: AbortSignal): Promise<DeploymentDetails>;
   doctor(): Promise<boolean>;
   init(): Promise<void>;
   logs(service: "api" | "minio" | "postgres" | "source-gateway" | undefined, follow: boolean): Promise<void>;
@@ -178,6 +178,7 @@ async function runInkApp(
 
 function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): ReactNode {
   const { exit, suspendTerminal, waitUntilRenderFlush } = useApp();
+  const statusAbortController = useRef<AbortController | undefined>(undefined);
   const statusGeneration = useRef(0);
   const statusReadPending = useRef<Promise<StatusView> | undefined>(undefined);
   const terminalLost = useRef(false);
@@ -192,12 +193,12 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
   }, [operator]);
 
   const readStatus = useCallback(
-    async (fresh: boolean): Promise<StatusView> => {
+    async (fresh: boolean, signal: AbortSignal): Promise<StatusView> => {
       while (statusReadPending.current) {
         const view = await statusReadPending.current;
         if (!fresh) return view;
       }
-      const request = operator.details().catch((error: unknown) => new Error(errorMessage(error)));
+      const request = operator.details(signal).catch((error: unknown) => new Error(errorMessage(error)));
       statusReadPending.current = request;
       try {
         return await request;
@@ -209,25 +210,32 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
   );
 
   const loadStatus = useCallback(async () => {
+    statusAbortController.current?.abort();
+    const controller = new AbortController();
+    statusAbortController.current = controller;
     const generation = statusGeneration.current + 1;
     statusGeneration.current = generation;
     setScreen({ kind: "busy", label: "Loading deployment and Docker statistics..." });
-    const view = await readStatus(true);
-    if (statusGeneration.current === generation) {
+    const view = await readStatus(true, controller.signal);
+    if (statusGeneration.current === generation && statusAbortController.current === controller) {
       setScreen({ kind: "status", view });
     }
   }, [readStatus]);
 
   const refreshStatus = useCallback(async () => {
+    const controller = statusAbortController.current;
+    if (!controller) return;
     const generation = statusGeneration.current;
-    const view = await readStatus(false);
-    if (statusGeneration.current === generation) {
+    const view = await readStatus(false, controller.signal);
+    if (statusGeneration.current === generation && statusAbortController.current === controller) {
       setScreen((current) => (current.kind === "status" ? { kind: "status", view } : current));
     }
   }, [readStatus]);
 
   const invalidateStatus = useCallback(() => {
     statusGeneration.current += 1;
+    statusAbortController.current?.abort();
+    statusAbortController.current = undefined;
   }, []);
 
   const loadUpdate = useCallback(async () => {

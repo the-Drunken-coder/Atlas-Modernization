@@ -121,6 +121,7 @@ type RunOptions = {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
   inherit?: boolean;
+  signal?: AbortSignal;
 };
 
 export type CommandRunner = {
@@ -238,6 +239,12 @@ class ProcessCommandRunner implements CommandRunner {
         stdio: options.inherit ? "inherit" : ["ignore", "pipe", "pipe"]
       });
       this.#children.add(child);
+      const cancel = (): void => {
+        child.kill();
+      };
+      const removeAbortListener = (): void => {
+        options.signal?.removeEventListener("abort", cancel);
+      };
       let stdout = "";
       let stderr = "";
       child.stdout?.setEncoding("utf8");
@@ -250,12 +257,16 @@ class ProcessCommandRunner implements CommandRunner {
       });
       child.once("error", (error) => {
         this.#children.delete(child);
+        removeAbortListener();
         reject(error);
       });
       child.once("close", (status) => {
         this.#children.delete(child);
+        removeAbortListener();
         resolve({ status: status ?? 1, stdout, stderr });
       });
+      options.signal?.addEventListener("abort", cancel, { once: true });
+      if (options.signal?.aborted) cancel();
     });
   }
 }
@@ -274,7 +285,7 @@ class CancellableCommandRunner implements CommandRunner {
   }
 
   async run(command: string, args: string[], options?: RunOptions): Promise<CommandResult> {
-    if (this.#cancelled) throw new Error("Atlas Core command was cancelled.");
+    if (this.#cancelled || options?.signal?.aborted) throw new Error("Atlas Core command was cancelled.");
     return await this.#runner.run(command, args, options);
   }
 
@@ -751,13 +762,13 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     return await this.#deploymentSnapshot(state.enabledPlugins);
   }
 
-  async details(): Promise<DeploymentDetails> {
+  async details(signal?: AbortSignal): Promise<DeploymentDetails> {
     const state = this.#requireInitialized();
-    const dockerEngineId = await this.#preflight();
+    const dockerEngineId = await this.#preflight(signal);
     this.#assertStateMatchesEngine(state, dockerEngineId);
-    const serviceStates = await this.#composeServiceStates(state.enabledPlugins);
+    const serviceStates = await this.#composeServiceStates(state.enabledPlugins, signal);
     const snapshot = deploymentSnapshotFromServices(serviceStates);
-    const { services, error } = await this.#deploymentServices(serviceStates);
+    const { services, error } = await this.#deploymentServices(serviceStates, signal);
     const image = services.find((service) => service.id === "api")?.image;
     return {
       snapshot,
@@ -776,14 +787,15 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     return deploymentSnapshotFromServices(await this.#composeServiceStates(pluginIds));
   }
 
-  async #composeServiceStates(pluginIds: readonly string[]): Promise<ComposeServiceState[]> {
-    const result = await this.#runCompose(["ps", "--all", "--format", "json"], false, pluginIds);
+  async #composeServiceStates(pluginIds: readonly string[], signal?: AbortSignal): Promise<ComposeServiceState[]> {
+    const result = await this.#runCompose(["ps", "--all", "--format", "json"], false, pluginIds, undefined, signal);
     if (result.status !== 0) throw commandFailure("docker compose ps", result);
     return parseComposeServiceStates(result.stdout);
   }
 
   async #deploymentServices(
-    serviceStates: ComposeServiceState[]
+    serviceStates: ComposeServiceState[],
+    signal?: AbortSignal
   ): Promise<{ services: DeploymentService[]; error?: string }> {
     const runningContainers = SERVICES.filter(({ id }) =>
       serviceStates.some((service) => service.Service === id && service.State === "running")
@@ -794,7 +806,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       const result = await this.#runner.run(
         "docker",
         ["stats", "--no-stream", "--format", "{{json .}}", ...runningContainers],
-        { env: this.#env }
+        { env: this.#env, ...(signal ? { signal } : {}) }
       );
       if (result.status === 0) {
         try {
@@ -834,7 +846,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
             "{{json .Config.Image}}\t{{json .State.StartedAt}}\t{{.RestartCount}}",
             definition.container
           ],
-          { env: this.#env }
+          { env: this.#env, ...(signal ? { signal } : {}) }
         );
         if (inspection.status === 0) {
           try {
@@ -1131,7 +1143,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     return healthy;
   }
 
-  async #preflight(): Promise<string> {
+  async #preflight(signal?: AbortSignal): Promise<string> {
     if (!SUPPORTED_PLATFORMS.has(this.#platform)) {
       throw new Error(`Atlas Core supports macOS and Linux. Detected ${this.#platform}.`);
     }
@@ -1139,23 +1151,21 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       throw new Error(`Atlas Core supports arm64 and x64 hosts. Detected ${this.#architecture}.`);
     }
     assertNodeVersion(this.#nodeVersion);
-    await this.#checkCommand("docker", ["--version"]);
-    const composeVersion = oneLine(await this.#checkCommand("docker", ["compose", "version", "--short"]));
+    await this.#checkCommand("docker", ["--version"], signal);
+    const composeVersion = oneLine(await this.#checkCommand("docker", ["compose", "version", "--short"], signal));
     assertComposeVersion(composeVersion);
-    return (await this.#dockerRuntime()).engineId;
+    return (await this.#dockerRuntime(signal)).engineId;
   }
 
-  async #dockerRuntime(): Promise<DockerRuntime> {
-    const context = oneLine(await this.#checkCommand("docker", ["context", "show"]));
+  async #dockerRuntime(signal?: AbortSignal): Promise<DockerRuntime> {
+    const context = oneLine(await this.#checkCommand("docker", ["context", "show"], signal));
     if (!context) throw new Error("Docker did not report an active context.");
     const contextHost = oneLine(
-      await this.#checkCommand("docker", [
-        "context",
-        "inspect",
-        context,
-        "--format",
-        '{{(index .Endpoints "docker").Host}}'
-      ])
+      await this.#checkCommand(
+        "docker",
+        ["context", "inspect", context, "--format", '{{(index .Endpoints "docker").Host}}'],
+        signal
+      )
     );
     const configuredContext = this.#env.DOCKER_CONTEXT?.trim();
     const dockerHost = configuredContext ? contextHost : this.#env.DOCKER_HOST?.trim() || contextHost;
@@ -1165,7 +1175,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       );
     }
 
-    const raw = await this.#checkCommand("docker", ["info", "--format", "{{json .}}"]);
+    const raw = await this.#checkCommand("docker", ["info", "--format", "{{json .}}"], signal);
     let info: unknown;
     try {
       info = JSON.parse(raw);
@@ -1184,8 +1194,8 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     return { architecture: info.Architecture, engineId: info.ID, operatingSystem: info.OSType };
   }
 
-  async #checkCommand(command: string, args: string[]): Promise<string> {
-    const result = await this.#runner.run(command, args, { env: this.#env });
+  async #checkCommand(command: string, args: string[], signal?: AbortSignal): Promise<string> {
+    const result = await this.#runner.run(command, args, { env: this.#env, ...(signal ? { signal } : {}) });
     if (result.status !== 0) throw commandFailure([command, ...args].join(" "), result);
     return result.stdout || result.stderr;
   }
@@ -1927,9 +1937,10 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     args: string[],
     inherit: boolean,
     pluginIds: readonly string[],
-    imageReference = this.#imageReference ?? UNRELEASED_IMAGE
+    imageReference = this.#imageReference ?? UNRELEASED_IMAGE,
+    signal?: AbortSignal
   ): Promise<CommandResult> {
-    return await this.#runComposeFile(this.#composeFile, args, inherit, false, pluginIds, imageReference);
+    return await this.#runComposeFile(this.#composeFile, args, inherit, false, pluginIds, imageReference, signal);
   }
 
   async #runComposeCleanup(
@@ -1954,7 +1965,8 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     inherit: boolean,
     allowAfterCancellation: boolean,
     pluginIds: readonly string[],
-    imageReference = this.#imageReference ?? UNRELEASED_IMAGE
+    imageReference = this.#imageReference ?? UNRELEASED_IMAGE,
+    signal?: AbortSignal
   ): Promise<CommandResult> {
     const env = { ...this.#env };
     for (const variable of COMPOSE_VARIABLES) delete env[variable];
@@ -1968,7 +1980,8 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     const options = {
       cwd: this.#configDir,
       env,
-      inherit
+      inherit,
+      ...(signal ? { signal } : {})
     };
     return allowAfterCancellation
       ? await this.#runner.runCleanup("docker", this.#composeArgs(composeFile, args, pluginIds), options)

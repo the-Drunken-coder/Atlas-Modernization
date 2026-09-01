@@ -76,7 +76,7 @@ function operator(snapshot: DeploymentSnapshot = { status: "ready", detail: "Eve
       coreUpdateAvailable: false
     })),
     configureAdminPassword: vi.fn(async () => undefined),
-    details: vi.fn(async () => ({
+    details: vi.fn(async (_signal?: AbortSignal) => ({
       snapshot,
       cliVersion: "0.1.5",
       coreVersion: "0.1.5",
@@ -475,6 +475,43 @@ describe("Atlas Core terminal UI", () => {
     finishNewVisit?.(freshDetails);
     await terminal.waitFor("CPU          9.99%");
     expect(terminal.text).not.toContain("CPU          7.77%");
+    terminal.write("\r");
+    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(3));
+    terminal.write("q");
+    await menu;
+  });
+
+  it("aborts an abandoned refresh before starting a later status visit", async () => {
+    const terminal = new TestTerminal(80, true, 24);
+    const deployment = operator();
+    const baseDetails = await deployment.details();
+    let abandonedSignal: AbortSignal | undefined;
+    deployment.details.mockClear();
+    deployment.details
+      .mockResolvedValueOnce(baseDetails)
+      .mockImplementationOnce(
+        async (signal?: AbortSignal) =>
+          await new Promise<never>((_resolve, reject) => {
+            abandonedSignal = signal;
+            signal?.addEventListener("abort", () => reject(new Error("Status refresh was cancelled.")), {
+              once: true
+            });
+          })
+      )
+      .mockResolvedValueOnce(baseDetails);
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("View status");
+    terminal.write("\r");
+    await terminal.waitFor("CPU          1.00%");
+    terminal.write("r");
+    await vi.waitFor(() => expect(deployment.details).toHaveBeenCalledTimes(2));
+    terminal.write("\r");
+    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
+    terminal.write("\r");
+    await vi.waitFor(() => expect(deployment.details).toHaveBeenCalledTimes(3));
+    expect(abandonedSignal?.aborted).toBe(true);
+    await terminal.waitFor("CPU          1.00%");
     terminal.write("\r");
     await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(3));
     terminal.write("q");
