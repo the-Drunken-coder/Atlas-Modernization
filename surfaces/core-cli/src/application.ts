@@ -237,8 +237,7 @@ export class ProcessCommandRunner implements CommandRunner {
 
   cancelAll(): void {
     for (const [child, state] of this.#children) {
-      state.cancelled = true;
-      child.kill();
+      if (child.kill()) state.cancelled = true;
     }
   }
 
@@ -265,8 +264,7 @@ export class ProcessCommandRunner implements CommandRunner {
       const state = { cancelled: false };
       children.set(child, state);
       const cancel = (): void => {
-        state.cancelled = true;
-        child.kill();
+        if (child.kill()) state.cancelled = true;
       };
       const removeAbortListener = (): void => {
         options.signal?.removeEventListener("abort", cancel);

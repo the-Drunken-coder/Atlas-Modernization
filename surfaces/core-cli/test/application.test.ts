@@ -545,6 +545,29 @@ describe("atlas-core CLI", () => {
     await expect(cleanup).resolves.toMatchObject({ status: 0 });
   });
 
+  it("does not cancel a successful command waiting for inherited output to close", async () => {
+    const runner = new ProcessCommandRunner();
+    const directory = mkdtempSync(join(tmpdir(), "atlas-core-runner-test-"));
+    temporaryDirectories.push(directory);
+    const marker = join(directory, "pid");
+    const operation = runner.run(process.execPath, [
+      "-e",
+      `const child = require("node:child_process").spawn(process.execPath, ["-e", "setTimeout(() => {}, 500)"], {
+        stdio: ["ignore", "inherit", "inherit"]
+      });
+      child.unref();
+      require("node:fs").writeFileSync(${JSON.stringify(marker)}, String(process.pid));
+      process.exit(0);`
+    ]);
+
+    await vi.waitFor(() => expect(existsSync(marker)).toBe(true));
+    const childPid = Number(readFileSync(marker, "utf8"));
+    await vi.waitFor(() => expect(() => process.kill(childPid, 0)).toThrow());
+    runner.cancelAll();
+
+    await expect(operation).resolves.toEqual(result(0));
+  });
+
   it("rejects unknown update scopes", async () => {
     const test = runtime();
     expect(await runCLI(["update", "core"], test.context)).toBe(2);
