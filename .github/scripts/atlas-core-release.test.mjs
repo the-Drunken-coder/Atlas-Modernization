@@ -56,18 +56,34 @@ test("does not regenerate the Plugin catalog before release image digests are se
 test("formats immutable Plugin digests in the generated catalog", () => {
   const directory = mkdtempSync(join(tmpdir(), "atlas-core-plugin-catalog-"));
   const packageRoot = join(directory, "package");
-  const image = `ghcr.io/the-drunken-coder/atlas-building-scan@sha256:${"a".repeat(64)}`;
   try {
+    const releasePlan = spawnSync(process.execPath, [pluginsScript, "release-plan"], {
+      encoding: "utf8",
+      stdio: "pipe"
+    });
+    assert.equal(releasePlan.status, 0, releasePlan.stderr);
+    const publishedPlugins = JSON.parse(releasePlan.stdout);
+    assert.ok(publishedPlugins.length > 0);
+    const images = Object.fromEntries(
+      publishedPlugins.map((plugin, index) => [
+        plugin.plugin_id,
+        `${plugin.image_repository}@sha256:${(index + 1).toString(16).padStart(64, "0")}`
+      ])
+    );
     mkdirSync(join(packageRoot, "src"), { recursive: true });
     writeFileSync(join(packageRoot, "package.json"), `${JSON.stringify({ atlasPluginImages: {} })}\n`);
     const result = spawnSync(process.execPath, [pluginsScript, "record-release-images", "--package-root", packageRoot], {
       encoding: "utf8",
-      env: { ...process.env, ATLAS_PLUGIN_IMAGES_JSON: JSON.stringify({ building_scan: image }) },
+      env: { ...process.env, ATLAS_PLUGIN_IMAGES_JSON: JSON.stringify(images) },
       stdio: "pipe"
     });
     assert.equal(result.status, 0, result.stderr);
     const generated = readFileSync(join(packageRoot, "src", "plugin-catalog.generated.ts"), "utf8");
-    assert.ok(generated.includes(`    image:\n      "${image}",`));
+    for (const image of Object.values(images)) {
+      const inline = `    image: "${image}",`;
+      const expected = inline.length > 120 ? `    image:\n      "${image}",` : inline;
+      assert.ok(generated.includes(expected));
+    }
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
