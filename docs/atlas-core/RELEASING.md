@@ -123,7 +123,7 @@ digests, the release commit, and the tag remain unchanged.
 
 ## First-time setup
 
-1. Create and install the dedicated release GitHub App. Add the two repository variables and the private-key environment
+1. Create and install the dedicated release GitHub App. Add the repository variable and the private-key environment
    secret described above.
 2. Create both active Atlas Core release-tag rulesets described above.
 3. Create a GitHub environment named `release`. Restrict it to `main` and tags matching `atlas-core-v*`, then add a

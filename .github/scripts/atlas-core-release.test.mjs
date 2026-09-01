@@ -9,6 +9,7 @@ import assert from "node:assert/strict";
 const script = join(dirname(fileURLToPath(import.meta.url)), "atlas-core-release.mjs");
 const phaseScript = join(dirname(fileURLToPath(import.meta.url)), "select-atlas-core-release-phase.sh");
 const releaseFilesScript = join(dirname(fileURLToPath(import.meta.url)), "atlas-core-release-files.sh");
+const tagRulesetScript = join(dirname(fileURLToPath(import.meta.url)), "require-atlas-core-tag-rulesets.sh");
 const pluginsScript = join(dirname(fileURLToPath(import.meta.url)), "../../scripts/plugins.mjs");
 const workflow = join(dirname(fileURLToPath(import.meta.url)), "../workflows/release-atlas-core.yml");
 const dockerfile = join(dirname(fileURLToPath(import.meta.url)), "../../services/core/docker/Dockerfile");
@@ -67,6 +68,24 @@ test("requires split release-tag creation and immutability rulesets", () => {
     const blockedCreation = run(["validate-tag-rulesets", creationPath, immutabilityPath], directory);
     assert.notEqual(blockedCreation.status, 0);
     assert.match(blockedCreation.stderr, /immutability must not include creation/);
+
+    writeFileSync(immutabilityPath, JSON.stringify({ ...immutability, rules: [{ type: "update" }] }));
+    const missingDeletion = run(["validate-tag-rulesets", creationPath, immutabilityPath], directory);
+    assert.notEqual(missingDeletion.status, 0);
+    assert.match(missingDeletion.stderr, /immutability must restrict deletion/);
+
+    writeFileSync(immutabilityPath, JSON.stringify({ ...immutability, enforcement: "evaluate" }));
+    const inactive = run(["validate-tag-rulesets", creationPath, immutabilityPath], directory);
+    assert.notEqual(inactive.status, 0);
+    assert.match(inactive.stderr, /immutability must be an active tag ruleset/);
+
+    writeFileSync(
+      immutabilityPath,
+      JSON.stringify({ ...immutability, conditions: { ref_name: { include: ["refs/tags/*"], exclude: [] } } })
+    );
+    const wideTarget = run(["validate-tag-rulesets", creationPath, immutabilityPath], directory);
+    assert.notEqual(wideTarget.status, 0);
+    assert.match(wideTarget.stderr, /immutability must target only refs\/tags\/atlas-core-v\*/);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -187,16 +206,19 @@ test("coordinates automatic tag publication after one approval", () => {
   assert.doesNotMatch(source, /Approval 2/);
   assert.match(source, /Leave the internal coordinator run ID empty when dispatching from main/);
   assert.match(source, /name: Require protected Atlas Core release tags/);
-  assert.match(source, /validate-tag-rulesets "\$creation" "\$immutability"/);
+  assert.equal(source.match(/bash \.github\/scripts\/require-atlas-core-tag-rulesets\.sh/g)?.length, 2);
   assert.match(source, /name: Mint protected release credential/);
   assert.match(source, /actions\/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1/);
   assert.match(source, /permission-contents: write/);
   assert.doesNotMatch(source, /permission-administration/);
-  assert.equal(source.match(/validate-tag-rulesets "\$creation" "\$immutability"/g)?.length, 2);
   assert.match(source, /GH_TOKEN: \$\{\{ steps\.release-token\.outputs\.token \}\}/);
   assert.match(source, /name: Upload approved publication/);
   assert.match(source, /atlas-core-publication-authorization-\$\{\{ inputs\.version \}\}-\$\{\{ github\.run_id \}\}/);
   assert.match(source, /name: Verify coordinator authorization/);
+  assert.match(
+    source,
+    /name: Verify coordinator authorization[\s\S]*?COORDINATOR_RUN_ID: \$\{\{ inputs\.coordinator_run_id \}\}\n\s+GH_TOKEN: \$\{\{ secrets\.GITHUB_TOKEN \}\}/
+  );
   assert.match(source, /run-id: \$\{\{ inputs\.coordinator_run_id \}\}/);
   assert.match(source, /child_run_id: \$child_run_id/);
   assert.match(source, /--arg child_run_id "\$CHILD_RUN_ID"/);
@@ -212,6 +234,10 @@ test("coordinates automatic tag publication after one approval", () => {
     /gh run watch "\$CHILD_RUN_ID" --repo "\$GITHUB_REPOSITORY" --exit-status --interval 10/
   );
   assert.match(source, /GHCR, npm, provenance, and the GitHub Release passed final verification/);
+});
+
+test("keeps the tag-ruleset gate shell valid", () => {
+  assert.equal(spawnSync("bash", ["-n", tagRulesetScript]).status, 0);
 });
 
 test("keeps the release-owned file contract narrow", () => {

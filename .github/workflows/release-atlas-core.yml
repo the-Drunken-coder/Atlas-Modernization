@@ -97,25 +97,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          creation_id="$(
-            gh api "repos/$GITHUB_REPOSITORY/rulesets?targets=tag&per_page=100" \
-              --jq '.[] | select(.name == "Atlas Core release tag creation" and .enforcement == "active") | .id' |
-              head -n 1
-          )"
-          immutability_id="$(
-            gh api "repos/$GITHUB_REPOSITORY/rulesets?targets=tag&per_page=100" \
-              --jq '.[] | select(.name == "Atlas Core release tag immutability" and .enforcement == "active") | .id' |
-              head -n 1
-          )"
-          if [ -z "$creation_id" ] || [ -z "$immutability_id" ]; then
-            echo "Create both active Atlas Core release tag rulesets before releasing." >&2
-            exit 1
-          fi
-          creation="$(mktemp)"
-          immutability="$(mktemp)"
-          gh api "repos/$GITHUB_REPOSITORY/rulesets/$creation_id" > "$creation"
-          gh api "repos/$GITHUB_REPOSITORY/rulesets/$immutability_id" > "$immutability"
-          node .github/scripts/atlas-core-release.mjs validate-tag-rulesets "$creation" "$immutability"
+          bash .github/scripts/require-atlas-core-tag-rulesets.sh \
+            "Create both active Atlas Core release tag rulesets before releasing."
 
       - name: Select changelog date
         id: release
@@ -507,6 +490,7 @@ jobs:
         env:
           CHILD_RUN_ID: ${{ github.run_id }}
           COORDINATOR_RUN_ID: ${{ inputs.coordinator_run_id }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_SHA: ${{ needs.changelog.outputs.release_sha }}
           SOURCE_SHA: ${{ needs.changelog.outputs.source_sha }}
           VERSION: ${{ inputs.version }}
@@ -783,25 +767,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          creation_id="$(
-            gh api "repos/$GITHUB_REPOSITORY/rulesets?targets=tag&per_page=100" \
-              --jq '.[] | select(.name == "Atlas Core release tag creation" and .enforcement == "active") | .id' |
-              head -n 1
-          )"
-          immutability_id="$(
-            gh api "repos/$GITHUB_REPOSITORY/rulesets?targets=tag&per_page=100" \
-              --jq '.[] | select(.name == "Atlas Core release tag immutability" and .enforcement == "active") | .id' |
-              head -n 1
-          )"
-          if [ -z "$creation_id" ] || [ -z "$immutability_id" ]; then
-            echo "Both Atlas Core release tag rulesets must remain active." >&2
-            exit 1
-          fi
-          creation="$(mktemp)"
-          immutability="$(mktemp)"
-          gh api "repos/$GITHUB_REPOSITORY/rulesets/$creation_id" > "$creation"
-          gh api "repos/$GITHUB_REPOSITORY/rulesets/$immutability_id" > "$immutability"
-          node .github/scripts/atlas-core-release.mjs validate-tag-rulesets "$creation" "$immutability"
+          bash .github/scripts/require-atlas-core-tag-rulesets.sh \
+            "Both Atlas Core release tag rulesets must remain active."
 
       - name: Mint protected release credential
         id: release-token
