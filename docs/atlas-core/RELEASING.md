@@ -3,7 +3,9 @@
 Implementation status: this guide describes the current v1 workflow, which still releases catalog Plugin images with
 Core. [`2026-09-01-plugins-release-independently-from-atlas-core.md`](../design-decisions/2026-09-01-plugins-release-independently-from-atlas-core.md)
 supersedes that coupling. Keep following this guide until the independent Plugin workflow and catalog are implemented;
-then this guide must remove every Plugin build, digest, visibility, and package-asset step.
+then this guide must remove every Plugin build, digest, visibility, and package-asset step. That first decoupled Core
+update must refuse to proceed while a bundled-v1 Plugin remains enabled; `docs/atlas-plugins/MANAGEMENT.md` defines the
+greenfield transition.
 
 Atlas Core uses one version for the npm CLI, Core and catalog Plugin images, git tag, and GitHub Release. A normal
 release starts from `main` and finishes in an automatically queued run from the immutable release tag.

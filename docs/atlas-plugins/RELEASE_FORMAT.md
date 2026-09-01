@@ -33,6 +33,7 @@ Package schema 1 has exactly these top-level fields:
   "image": "ghcr.io/the-drunken-coder/atlas-building-scan@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
   "core_to_plugin_protocol_major": 1,
   "plugin_to_source_gateway_protocol_major": 1,
+  "atlas_protocol_revision": null,
   "interactions": ["map_area"],
   "source_connector": null,
   "configuration": []
@@ -46,12 +47,16 @@ bytes being authenticated.
 Field rules:
 
 - `schema` is the Plugin package contract major and is exactly `1`.
-- `plugin_id` uses the existing Plugin identifier grammar and has at most 64 characters.
+- `plugin_id` uses the existing Plugin identifier grammar and has at most 50 characters. This narrower package limit
+  keeps the generated `atlas-plugin-<normalized_id>` service name within the 63-byte DNS-label limit.
 - `version` is an immutable stable Semantic Version.
 - `display_name` is trimmed, non-empty, and at most 100 characters. The private runtime manifest must repeat it.
 - `lifecycle` is exactly `query_only` in package schema 1.
 - `image` is an immutable first-party GHCR image-index reference ending in one SHA-256 digest.
-- Both protocol majors are positive integers. Package schema 1 requires `1` for both.
+- Both protocol majors are positive integers within the JSON safe-integer range. Initial releases use `1`; changing a
+  private protocol major does not require changing the package schema.
+- `atlas_protocol_revision` is `null` when the Plugin never calls Core through the Atlas SDK. Otherwise it is the exact
+  `sha256:<64 lowercase hexadecimal characters>` revision required by that SDK build.
 - `interactions` is a sorted, duplicate-free array of fixed Command Interface interaction kinds. Every interaction
   advertised later by a runtime Operation must appear here. Package schema 1 accepts `map_area`; the array may be empty.
 - `source_connector` is either `null` or one strict Source Gateway connector policy using the existing connector schema.
@@ -76,6 +81,11 @@ not contain hyphens, so this conversion cannot collide. Core reaches the Plugin 
 `http://atlas-plugin-<normalized_id>:8080`. The Plugin listens on port `8080` and receives the fixed
 `ATLAS_SOURCE_GATEWAY_ORIGIN=http://source-gateway:8080` environment variable.
 
+After pulling the signed image-index reference, the manager records the selected platform-manifest digest and local
+Docker image ID. After starting a Plugin, it inspects the container and requires its configured image reference and
+resolved image ID to match those recorded values. Runtime discovery verifies the Plugin manifest; it is not proof of the
+running release identity.
+
 ## Catalog document
 
 Atlas publishes one signed stable catalog through the repository's GitHub Pages deployment. The CLI embeds that stable
@@ -86,16 +96,18 @@ images remain GHCR artifacts. The catalog has this shape:
 {
   "schema": 1,
   "sequence": 42,
+  "previous_catalog_sha256": "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
   "issued_at": "2026-09-01T16:00:00Z",
   "expires_at": "2026-10-01T16:00:00Z",
+  "key_epoch": 2,
   "key_id": "atlas-plugin-catalog-2026-01",
   "plugins": [
     {
       "plugin_id": "building_scan",
-      "display_name": "Building Scan",
       "releases": [
         {
           "version": "0.2.0",
+          "display_name": "Building Scan",
           "document_url": "https://github.com/the-Drunken-coder/Atlas-Modernization/releases/download/atlas-plugin-building_scan-v0.2.0/building_scan-0.2.0.atlas-plugin",
           "document_sha256": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
           "revoked": false,
@@ -108,18 +120,36 @@ images remain GHCR artifacts. The catalog has this shape:
 ```
 
 The catalog uses strict decoding and stable sorting by `plugin_id` and Semantic Version. `sequence` increases for every
-catalog publication. `issued_at` and `expires_at` use UTC RFC 3339 timestamps, and expiry is at most 30 days after issue.
-Each release document must repeat the catalog Plugin ID, display name, and version. The manager rejects a mismatch.
+catalog publication. Sequence 1 has a null `previous_catalog_sha256`; every later catalog pins the exact prior catalog
+bytes. `issued_at` and `expires_at` use UTC RFC 3339 timestamps, and expiry is at most 30 days after issue. Issue time
+must increase with sequence and cannot be more than five minutes ahead of the manager's clock. Each release document
+must repeat its catalog release's Plugin ID, display name, and version. The manager rejects a mismatch. Display names
+belong to releases, so renaming a later release does not invalidate retained history.
+
+The manager bounds the catalog response at 4 MiB and the detached signature response at 1 KiB before parsing or
+verification. Schema 1 permits at most 128 Plugins and 256 releases per Plugin. Plugin IDs, display names, versions,
+key IDs, URLs, hashes, and revocation reasons have explicit parser limits; no string may exceed 2,048 UTF-8 bytes. A
+release URL must exactly match the repository's HTTPS GitHub Release tag and asset pattern for that Plugin and version,
+with no credentials, query, or fragment. The downloader follows at most five HTTPS redirects to CLI-allowlisted GitHub
+release-asset hosts and never forwards credentials across a redirect.
 
 The detached `catalog.json.sig` document contains exactly `algorithm`, `key_id`, and a standard-base64 signature. The
 algorithm is `ed25519`; `key_id` must match the signed catalog; and the signature covers the exact `catalog.json` bytes.
 The signed catalog entry authenticates the exact release-document bytes, which authenticate the image digest. A second
 release-document signature would add another path without adding trust and is not used.
 
-The manager stores the greatest valid catalog sequence it has accepted. It rejects a lower sequence and rejects the same
-sequence with different bytes. It may use a cached catalog until `expires_at`. After expiry, installed Plugins continue
-to run and the operator may inspect, disable, uninstall, or purge them. Install, enable, update, and manual rollback
-require a fresh catalog. The menu checks when opened and exposes a manual refresh; no background updater runs.
+The protected `plugin-catalog` branch is the canonical catalog ledger. Force pushes are forbidden. Each publication
+validates the transition against the current branch head, preserves every existing Plugin, version, release-document
+hash, and true revocation, then pushes the new catalog with a compare-and-swap on that head commit. A release may be
+added and a revocation may change only from false to true. Existing release identity and hashes never change. A Pages
+deployment is built from that exact ledger commit, not by reading the mutable Pages endpoint.
+
+The manager atomically stores the accepted catalog bytes, signature bytes, sequence, catalog hash, key epoch, key ID,
+issue time, and expiry as described in `MANAGEMENT.md`. It rejects a lower sequence, the same sequence with different
+bytes, an older accepted key epoch, or a catalog below the minimum epoch and sequence checkpoint embedded in its CLI.
+It may use a cached catalog until `expires_at`. After expiry, installed Plugins continue to run and the operator may
+inspect, disable, uninstall, or purge them. Install, enable, update, and manual rollback require a fresh catalog. The menu
+checks when opened and exposes a manual refresh; no background updater runs.
 
 ## Revocation and key rotation
 
@@ -128,14 +158,23 @@ manager refuses a new install, enable, update, or manual rollback to that releas
 revoked release but does not stop or replace it without operator approval. Starting Atlas may continue an already
 Enabled revoked release from its locally verified state; it does not create a new enablement decision.
 
-The CLI may embed several trusted catalog keys. Rotation first publishes a CLI that trusts the old and new keys. Atlas
-then starts signing catalogs with the new key. A later CLI may remove the old key after supported installations have had
-time to update. Compromise of the only trusted signing key requires a CLI update; installed Plugins remain operable while
-catalog mutations fail closed.
+Each trusted public key has an ordered epoch and activation sequence embedded in the CLI. Rotation first publishes a CLI
+that trusts the new key and defines sequence N as its activation. That CLI rejects the old epoch at sequence N or later.
+The signed catalog's key epoch must match the embedded epoch for its `key_id`. Atlas then publishes sequence N with the
+new key. After accepting a newer epoch, a manager permanently rejects older epochs even when they carry a higher
+sequence. A later CLI may remove the old key. Older CLIs that do not trust the new key cannot mutate Plugin state after
+their last catalog expires and must update. Compromise of the only active signing key requires a CLI update; installed
+Plugins remain operable while catalog mutations fail closed.
+
+Every CLI release embeds the newest catalog epoch and sequence it verified while building. This checkpoint limits replay
+for a fresh installation or after an explicit Atlas reset. Existing installations retain their stronger local high-water
+mark. A fresh installation can still accept a replay between its embedded checkpoint and the current catalog for at most
+the catalog's 30-day lifetime; short expiry is the bound for that remaining case.
 
 ## Publication transaction
 
-The Plugin release workflow accepts one `plugin_id` and version, then:
+The Plugin release workflow acquires a non-cancelling concurrency group keyed by `plugin_id` and version before its first
+publication side effect. It pins one reviewed source commit for every build and generated byte, then:
 
 1. verifies the selected Plugin folder and confirms its package version matches the requested release;
 2. runs its focused lint, format, type, test, build, Docker, and contract checks;
@@ -143,20 +182,31 @@ The Plugin release workflow accepts one `plugin_id` and version, then:
 4. generates the exact release document from authored Plugin metadata and that digest;
 5. publishes the immutable tag and GitHub Release with the release document;
 6. downloads and rechecks the public release document and image digest;
-7. enters the single catalog-publication concurrency group, reloads the latest sequence, appends the immutable release,
-   signs the new catalog, and publishes one GitHub Pages artifact containing `catalog.json` and `catalog.json.sig`;
-8. verifies the stable catalog URL, signature, sequence, release-document hash, and public image.
+7. enters the global non-cancelling catalog-publication group, validates and appends to the protected canonical ledger,
+   signs the new catalog, and compare-and-swap pushes the ledger commit;
+8. publishes one GitHub Pages artifact containing `catalog.json` and `catalog.json.sig` from that exact ledger commit;
+9. verifies the stable catalog URL, signature, sequence, release-document hash, and public image.
 
-The catalog publication job never cancels an in-progress publication. A failure before step 7 leaves unlisted artifacts
-that no manager can install and that a retry may reuse after exact verification. A published version is never replaced.
-Revocation uses a separate catalog-only workflow and never rewrites release artifacts.
+Neither concurrency group cancels an in-progress publication. A failure before the ledger update leaves unlisted
+artifacts that no manager can install. A retry treats an existing tag, GitHub Release asset, image digest, release
+document, or catalog entry as success only when every byte, digest, and source commit matches. Any conflict is a hard
+failure. A published version is never replaced. Revocation uses a separate catalog-only workflow and never rewrites
+release artifacts.
 
 A scheduled catalog workflow runs weekly even when no Plugin release or revocation occurred. It enters the same
 non-cancelling concurrency group, increments the sequence, renews the issue and expiry timestamps, signs with the current
-key, and publishes one complete Pages artifact. The Ed25519 private key lives only in the protected GitHub `release`
-environment; trusted public keys are source-controlled in the CLI. The Pages deployment is replaced as one artifact so
-the catalog and detached signature cannot be published from different transactions.
+key, compare-and-swap updates the ledger, and publishes one complete Pages artifact. The Ed25519 private key lives in a
+dedicated `plugin-catalog` GitHub environment restricted to the default branch and narrowly scoped catalog workflow. It
+does not reuse the manually approved Core `release` environment, because a scheduled renewal must not wait for a human
+reviewer. Trusted public keys are source-controlled in the CLI. The Pages deployment is replaced as one artifact so the
+catalog and detached signature cannot be published from different transactions.
 
 Atlas Core's release workflow does not build Plugin images, write Plugin digests into the CLI package, copy Plugin
 deployment files, promote Plugin tags, or verify Plugin package visibility. It may continue running Plugin source and
 container checks in ordinary repository CI.
+
+The first Core release that removes bundled Plugin assets is an explicit greenfield transition. Its CLI refuses the Core
+update while any bundled-v1 Plugin remains enabled. The operator disables those Plugins with the matching v1 CLI,
+updates Core, then installs the independently published release from the signed catalog. Atlas does not manufacture an
+`installed.json` receipt for an old image whose independent release document was never verified. No compatibility bridge
+or automatic provenance migration is provided.
