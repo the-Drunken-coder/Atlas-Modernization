@@ -46,7 +46,10 @@ jobs:
           -ignore 'unexpected key "queue" for "concurrency" section'
 
       - name: Check Atlas Core release shell
-        run: bash -n .github/scripts/test-atlas-core-package.sh
+        run: |
+          bash -n .github/scripts/test-atlas-core-package.sh
+          bash -n .github/scripts/require-atlas-core-tag-rulesets.sh
+          bash -n .github/scripts/verify-atlas-core-release-tag.sh
 
   go-quality:
     name: go-quality
