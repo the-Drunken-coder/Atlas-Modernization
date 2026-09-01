@@ -26,6 +26,7 @@ export function SpatialResultsInspector({
 
   return (
     <MapWindow
+      id="spatial-results"
       title={spatial.target.operationName}
       meta={resultState ? `${resultLabel} · ${resultState}` : resultLabel}
       onClose={spatial.clear}

@@ -28,6 +28,7 @@ import { SidebarRail } from "../ui/layout/SidebarRail.js";
 import type { MapCameraCommand, MapTarget } from "../ui/map/interaction/map-camera.js";
 import { buildMapSources } from "../ui/map/rendering/map-sources.js";
 import type { MapReticleTarget } from "../ui/map/view/MapView.js";
+import { MapWindowWorkspace } from "../ui/map/view/MapWindowWorkspace.js";
 import { Button, IconButton } from "../ui/primitives/controls.js";
 import { WorldViewIcon } from "../ui/primitives/icons.js";
 import { ContextMenu, type MenuItemDef } from "../ui/primitives/Menu.js";
@@ -366,83 +367,85 @@ export function MapConsole() {
           <>
             <div className="map-world-frame">
               <div className="map-stage">
-                {selectedMapSource ? (
-                  <Suspense
-                    fallback={
-                      <div className="app-loading" role="status">
-                        <span>Loading map workspace…</span>
-                      </div>
-                    }
-                  >
-                    <MapView
-                      sources={sources}
-                      styleId={selectedMapSource.id}
-                      style={selectedMapSource.style}
-                      mapSourceOptions={atlas.config.mapSources}
-                      selectedId={selectedId}
-                      editing={
-                        edit
-                          ? {
-                              geometry: edit.draft,
-                              onChange: geometryEdit.changeDraft
-                            }
-                          : undefined
+                <MapWindowWorkspace>
+                  {selectedMapSource ? (
+                    <Suspense
+                      fallback={
+                        <div className="app-loading" role="status">
+                          <span>Loading map workspace…</span>
+                        </div>
                       }
-                      focusTarget={focusTarget}
-                      placeDetailTarget={placePreviewTarget}
-                      cameraCommand={cameraCommand}
-                      spatial={
-                        spatial.target
-                          ? {
-                              area: spatial.area,
-                              drawing: spatial.status === "drawing",
-                              features: spatial.result?.features ?? [],
-                              selectedFeatureId: spatial.selectedFeature?.id,
-                              onAreaChange: spatial.setArea,
-                              onDrawingComplete: spatial.cancelDrawing,
-                              onCancelDrawing: spatial.cancelDrawing,
-                              onViewportArea: spatial.setViewportArea,
-                              onSelectFeature: spatial.selectFeature
-                            }
-                          : undefined
-                      }
-                      onSelectEntity={selectEntityById}
-                      onMapContextMenu={commandFlow.onMapContextMenu}
-                      onBackgroundClick={() => {
-                        commandFlow.closeMapMenu();
-                        setPlacePreviewTarget(null);
-                        setCameraCommand(null);
-                        dispatch({ type: "clearSelection" });
-                      }}
-                      onStyleSwitchError={handleMapStyleSwitchError}
+                    >
+                      <MapView
+                        sources={sources}
+                        styleId={selectedMapSource.id}
+                        style={selectedMapSource.style}
+                        mapSourceOptions={atlas.config.mapSources}
+                        selectedId={selectedId}
+                        editing={
+                          edit
+                            ? {
+                                geometry: edit.draft,
+                                onChange: geometryEdit.changeDraft
+                              }
+                            : undefined
+                        }
+                        focusTarget={focusTarget}
+                        placeDetailTarget={placePreviewTarget}
+                        cameraCommand={cameraCommand}
+                        spatial={
+                          spatial.target
+                            ? {
+                                area: spatial.area,
+                                drawing: spatial.status === "drawing",
+                                features: spatial.result?.features ?? [],
+                                selectedFeatureId: spatial.selectedFeature?.id,
+                                onAreaChange: spatial.setArea,
+                                onDrawingComplete: spatial.cancelDrawing,
+                                onCancelDrawing: spatial.cancelDrawing,
+                                onViewportArea: spatial.setViewportArea,
+                                onSelectFeature: spatial.selectFeature
+                              }
+                            : undefined
+                        }
+                        onSelectEntity={selectEntityById}
+                        onMapContextMenu={commandFlow.onMapContextMenu}
+                        onBackgroundClick={() => {
+                          commandFlow.closeMapMenu();
+                          setPlacePreviewTarget(null);
+                          setCameraCommand(null);
+                          dispatch({ type: "clearSelection" });
+                        }}
+                        onStyleSwitchError={handleMapStyleSwitchError}
+                      />
+                    </Suspense>
+                  ) : (
+                    <Callout className="app-error" icon={null} role="alert">
+                      <span>The configured default map source is unavailable.</span>
+                    </Callout>
+                  )}
+                  <ConnectionBadge health={atlas.health} error={atlas.connectionError} onRetry={atlas.reconnect} />
+                  <Suspense fallback={null}>
+                    <MapSourcePicker
+                      sources={atlas.config.mapSources}
+                      defaultSourceId={atlas.config.defaultMapSourceId}
+                      value={mapSourcePickerValue}
+                      onChange={setSelectedMapSourceId}
                     />
                   </Suspense>
-                ) : (
-                  <Callout className="app-error" icon={null} role="alert">
-                    <span>The configured default map source is unavailable.</span>
-                  </Callout>
-                )}
-                <ConnectionBadge health={atlas.health} error={atlas.connectionError} onRetry={atlas.reconnect} />
-                <Suspense fallback={null}>
-                  <MapSourcePicker
-                    sources={atlas.config.mapSources}
-                    defaultSourceId={atlas.config.defaultMapSourceId}
-                    value={mapSourcePickerValue}
-                    onChange={setSelectedMapSourceId}
-                  />
-                </Suspense>
-                <Suspense fallback={null}>
-                  <SpatialResultsInspector
-                    spatial={spatial}
-                    onPreviewFeature={(feature) =>
-                      setSpatialPreviewTarget(feature ? spatialFeatureTarget(feature) : null)
-                    }
-                    onFocusFeature={(feature) => {
-                      setSpatialPreviewTarget(null);
-                      issueCameraCommand(spatialFeatureTarget(feature), "commit");
-                    }}
-                  />
-                </Suspense>
+                  <Suspense fallback={null}>
+                    <SpatialResultsInspector
+                      spatial={spatial}
+                      onPreviewFeature={(feature) =>
+                        setSpatialPreviewTarget(feature ? spatialFeatureTarget(feature) : null)
+                      }
+                      onFocusFeature={(feature) => {
+                        setSpatialPreviewTarget(null);
+                        issueCameraCommand(spatialFeatureTarget(feature), "commit");
+                      }}
+                    />
+                  </Suspense>
+                </MapWindowWorkspace>
               </div>
             </div>
           </>

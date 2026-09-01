@@ -2,14 +2,16 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { MapWindow } from "./MapWindow.js";
+import { MapWindowWorkspace } from "./MapWindowWorkspace.js";
 
 describe("MapWindow", () => {
   it("collapses without hiding its attribution footer and closes explicitly", async () => {
     const onClose = vi.fn();
     const user = userEvent.setup();
     render(
-      <div>
+      <MapWindowWorkspace>
         <MapWindow
+          id="fixture"
           title="Fixture results"
           meta="3 results"
           footer={<a href="https://example.test">Source</a>}
@@ -17,7 +19,7 @@ describe("MapWindow", () => {
         >
           <span>Window body</span>
         </MapWindow>
-      </div>
+      </MapWindowWorkspace>
     );
 
     await user.click(screen.getByRole("button", { name: "Collapse Fixture results window" }));
@@ -47,11 +49,11 @@ describe("MapWindow", () => {
     });
     try {
       const view = render(
-        <div>
-          <MapWindow title="Fixture results" onClose={() => undefined}>
+        <MapWindowWorkspace>
+          <MapWindow id="fixture" title="Fixture results" onClose={() => undefined}>
             Window body
           </MapWindow>
-        </div>
+        </MapWindowWorkspace>
       );
       const map = view.container.firstElementChild as HTMLElement;
       const windowElement = screen.getByRole("complementary", {
@@ -69,7 +71,7 @@ describe("MapWindow", () => {
       windowElement.getBoundingClientRect = () => rect(100, 50, 200, 150);
 
       const move = screen.getByRole("button", {
-        name: "Move Fixture results window. Use arrow keys."
+        name: "Move Fixture results window. Use arrow keys; use Alt plus an arrow to dock."
       });
       fireEvent.keyDown(move, { key: "ArrowRight" });
       expect(windowElement).toHaveStyle({ left: "108px", top: "50px" });
@@ -90,6 +92,115 @@ describe("MapWindow", () => {
       if (resizeObserverDescriptor) Object.defineProperty(globalThis, "ResizeObserver", resizeObserverDescriptor);
       else Reflect.deleteProperty(globalThis, "ResizeObserver");
     }
+  });
+
+  it("docks to all four rails and keeps one popout open per edge", () => {
+    render(
+      <MapWindowWorkspace>
+        <MapWindow id="first" title="First" onClose={() => undefined}>
+          First body
+        </MapWindow>
+        <MapWindow id="second" title="Second" onClose={() => undefined}>
+          Second body
+        </MapWindow>
+      </MapWindowWorkspace>
+    );
+
+    const firstMove = screen.getByRole("button", {
+      name: "Move First window. Use arrow keys; use Alt plus an arrow to dock."
+    });
+    const secondMove = screen.getByRole("button", {
+      name: "Move Second window. Use arrow keys; use Alt plus an arrow to dock."
+    });
+
+    fireEvent.keyDown(firstMove, { key: "ArrowLeft", altKey: true });
+    expect(screen.getByRole("complementary", { name: "First" })).toHaveAttribute("data-edge", "left");
+    fireEvent.keyDown(firstMove, { key: "ArrowRight", altKey: true });
+    expect(screen.getByRole("complementary", { name: "First" })).toHaveAttribute("data-edge", "right");
+    fireEvent.keyDown(firstMove, { key: "ArrowUp", altKey: true });
+    expect(screen.getByRole("button", { name: "First" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("complementary", { name: "First" })).toHaveAttribute("data-edge", "top");
+
+    fireEvent.keyDown(secondMove, { key: "ArrowDown", altKey: true });
+    expect(screen.getByRole("button", { name: "Second" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("complementary", { name: "Second" })).toHaveAttribute("data-edge", "bottom");
+    expect(screen.getByRole("complementary", { name: "First" })).toBeVisible();
+
+    fireEvent.keyDown(
+      screen.getByRole("button", {
+        name: "Move Second window. Use arrow keys; use Alt plus an arrow to dock."
+      }),
+      { key: "ArrowUp", altKey: true }
+    );
+    expect(screen.getByRole("button", { name: "First" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByRole("button", { name: "Second" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.queryByRole("complementary", { name: "First" })).not.toBeInTheDocument();
+  });
+
+  it("shows the insertion rail while a window is dragged to an edge", () => {
+    const view = render(
+      <MapWindowWorkspace>
+        <MapWindow id="fixture" title="Fixture" onClose={() => undefined}>
+          Window body
+        </MapWindow>
+      </MapWindowWorkspace>
+    );
+    const workspace = view.container.firstElementChild as HTMLElement;
+    const windowElement = screen.getByRole("complementary", { name: "Fixture" });
+    const bar = windowElement.querySelector<HTMLElement>(".map-window__bar");
+    if (!bar) throw new Error("Expected a map window bar.");
+    Object.defineProperties(workspace, {
+      clientWidth: { value: 800, configurable: true },
+      clientHeight: { value: 600, configurable: true }
+    });
+    Object.defineProperties(windowElement, {
+      offsetWidth: { value: 400, configurable: true },
+      offsetHeight: { value: 240, configurable: true }
+    });
+    workspace.getBoundingClientRect = () => rect(0, 0, 800, 600);
+    windowElement.getBoundingClientRect = () => rect(350, 200, 400, 240);
+
+    fireEvent.pointerDown(bar, { pointerId: 7, clientX: 500, clientY: 220 });
+    fireEvent.pointerMove(bar, { pointerId: 7, clientX: 500, clientY: 20 });
+    expect(view.container.querySelector('.map-window-dock-zone[data-edge="top"]')).toBeInTheDocument();
+    expect(view.container.querySelector(".map-window-rail--top .map-window-rail__slot")).toBeInTheDocument();
+
+    fireEvent.pointerUp(bar, { pointerId: 7, clientX: 500, clientY: 20 });
+    expect(screen.getByRole("button", { name: "Fixture" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("complementary", { name: "Fixture" })).toHaveAttribute("data-edge", "top");
+  });
+
+  it("moves a dock tab between ordered edge rails", () => {
+    const view = render(
+      <MapWindowWorkspace>
+        <MapWindow id="fixture" title="Fixture" onClose={() => undefined}>
+          Window body
+        </MapWindow>
+      </MapWindowWorkspace>
+    );
+    const workspace = view.container.firstElementChild as HTMLElement;
+    workspace.getBoundingClientRect = () => rect(0, 0, 800, 600);
+    Object.defineProperties(workspace, {
+      clientWidth: { value: 800, configurable: true },
+      clientHeight: { value: 600, configurable: true }
+    });
+    fireEvent.keyDown(
+      screen.getByRole("button", {
+        name: "Move Fixture window. Use arrow keys; use Alt plus an arrow to dock."
+      }),
+      { key: "ArrowDown", altKey: true }
+    );
+    const tab = screen.getByRole("button", { name: "Fixture" });
+
+    fireEvent.pointerDown(tab, { pointerId: 11, clientX: 400, clientY: 590 });
+    fireEvent.pointerMove(tab, { pointerId: 11, clientX: 300, clientY: 20 });
+    expect(view.container.querySelector('.map-window-dock-zone[data-edge="top"]')).toBeInTheDocument();
+    fireEvent.pointerUp(tab, { pointerId: 11, clientX: 300, clientY: 20 });
+
+    expect(screen.getByRole("button", { name: "Fixture" }).closest(".map-window-rail")).toHaveAttribute(
+      "data-edge",
+      "top"
+    );
   });
 });
 
