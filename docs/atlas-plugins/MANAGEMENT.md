@@ -17,6 +17,7 @@ base/
   docker-compose.yml               immutable files from the installed Core release
   docker-compose.init.yml
   source_gateway.production.json
+  plugin-templates/                declarative active-file templates and placeholder schema
 transaction/                       present only during one global mutation
   journal.json
   before/                          byte-for-byte restorable files
@@ -58,12 +59,13 @@ Core update from release metadata and exact package assets. The CLI does not inf
 active container. Schema 2 remains current-v1 state and cannot use independent Plugin commands.
 
 `base/` is copied from the exact installed Core package during initialization or Core update. It contains every relative
-file referenced by either retained Compose file. Package assembly rejects symlinks, path escapes, and a reference whose
+file referenced by either retained Compose file plus the declarative templates and strict placeholder schema used to
+generate `active/`. Package assembly rejects symlinks, path escapes, and a referenced or required generation file whose
 target is absent. `bundleSha256` hashes a deterministic archive of every retained relative path and its bytes, including
-`source_gateway.production.json`. Every restart-capable Plugin operation verifies that complete bundle and uses it with
-`baseDeployment.coreImage`, never the Compose file or Core image from a newer CLI package. It also verifies the local
-Core image ID before changing containers. This preserves the installed Core version while allowing a newer CLI to manage
-compatible Plugins.
+`source_gateway.production.json` and `plugin-templates/`. Every restart-capable Plugin operation verifies that complete
+bundle and uses it with `baseDeployment.coreImage`, never the Compose files, generation templates, or Core image from a
+newer CLI package. It also verifies the local Core image ID before changing containers. This preserves the installed Core
+version while allowing a newer CLI to manage compatible Plugins.
 
 Schema-3 initialization or upgrade provisions one full-access managed Core API key and stores its one-time value as
 `ATLAS_PLUGIN_API_KEY` in the existing owner-only root `.env`. The generated service for an SDK-using Plugin receives that
@@ -127,11 +129,12 @@ While enabled, `active/deployment.json` contains exactly:
 
 The manager regenerates this receipt when a selected release becomes active. The receipt and the other files under
 `active/` are disposable outputs, not trusted inputs. Before Compose reads them, the manager derives a complete temporary
-`active/` directory from root deployment state, `installed.json`, the exact retained release document, fixed templates,
-and root platform credentials. It omits `source-connector.json` and its Source Gateway mount when the release declares a
-null connector. It atomically replaces any missing, changed, or extra generated file and validates the full Compose model.
-Container inspection must match the regenerated receipt before an enable, enabled update, rollback, Core update, or
-normal start succeeds.
+`active/` directory from root deployment state, `installed.json`, the exact retained release document, the installed
+Core bundle's hash-verified templates, and root platform credentials. Templates are fixed declarative package assets; a
+Plugin release may fill only their documented placeholders and cannot provide or replace a template. The manager omits
+`source-connector.json` and its Source Gateway mount when the release declares a null connector. It atomically replaces
+any missing, changed, or extra generated file and validates the full Compose model. Container inspection must match the
+regenerated receipt before an enable, enabled update, rollback, Core update, or normal start succeeds.
 
 Every file and directory preserves the CLI's existing owner and mode checks. The manager writes private temporary files,
 flushes them, and uses atomic rename. It holds the existing Atlas mutation lock and Docker-engine network lock across
@@ -255,7 +258,8 @@ base bundle and exact Core image. It waits for base readiness, Plugin health, an
 match the release manifest fields and may advertise only interaction kinds declared by the release. Docker inspection
 must separately prove that the container uses the release's digest-pinned image and recorded local image ID. Failure
 restores state, files, and the previous composition. A stopped Atlas deployment remains stopped; the next normal start
-performs the same image, manifest, and health checks.
+regenerates and validates active files, verifies exact image identity, and relies on Core's asynchronous Plugin status
+checks instead of gating base startup on Plugin health.
 
 When the selected release is permitted, update selects the greatest compatible, non-revoked stable version newer than
 it and reports that the Plugin is current when none exists. When the selected release is revoked, update instead selects
@@ -311,9 +315,10 @@ store before completing the transaction. This follows the rollback rules in
 Normal `atlas-core start` acquires the mutation locks, regenerates every Enabled Plugin's complete `active/` directory,
 and validates the assembled Compose model before it starts a container. It verifies that the recorded Core and Enabled
 Plugin image IDs still exist locally, then uses the retained base bundle with Compose pulling disabled. It inspects every
-started container and waits for base health, Plugin manifests, and Plugin health before recording the deployment as
-started. A missing or changed retained file leaves the deployment stopped and instructs the operator to run
-`atlas-core start --repair-bundle`.
+started container to verify exact image identity and waits only for base Atlas health and readiness before recording the
+deployment as started. It does not wait for Plugin manifests or health. Core's retry loop reports each configured Plugin
+as `starting`, `available`, or `unavailable` asynchronously, and a Plugin outage never fails base startup. A missing or
+changed retained file leaves the deployment stopped and instructs the operator to run `atlas-core start --repair-bundle`.
 
 The bundle-repair form holds the same locks and reads `state.packageVersion` plus the recorded `bundleSha256`. It uses
 matching assets from the current CLI package when available; otherwise it downloads the exact public

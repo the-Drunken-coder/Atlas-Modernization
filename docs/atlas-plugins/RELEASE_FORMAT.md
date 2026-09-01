@@ -72,7 +72,9 @@ until the independent workflow replaces it.
 
 The release document does not contain Operations, health status, credentials, secret values, executable hooks, Compose,
 host paths, container names, networks, mounts, restart policy, resource limits, or another Plugin dependency. The manager
-derives deployment details from fixed templates. Runtime Operations remain authoritative in the private Plugin manifest.
+derives deployment details from the installed Core bundle's retained, hash-verified templates. A Plugin release may fill
+only the templates' documented placeholders and cannot provide or replace a template. Runtime Operations remain
+authoritative in the private Plugin manifest.
 
 ## Generated deployment
 
