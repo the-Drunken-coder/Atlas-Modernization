@@ -1,8 +1,54 @@
 # Atlas plugins
 
+Release and installation details:
+
+- [`RELEASE_FORMAT.md`](RELEASE_FORMAT.md) defines independent Plugin artifacts, catalog trust, and publication.
+- [`MANAGEMENT.md`](MANAGEMENT.md) defines local Installed Plugin state, compatibility, commands, and transactions.
+
 Status: Plugin platform v1 and the first-party query-only catalog are implemented. Datastream delivery, executable UI
 Plugins, third-party installation, hot upgrades, untrusted-Plugin isolation, scoped Plugin credentials, persistent
 Plugin storage, and taskable-Plugin lifecycle management remain deferred.
+
+## Independent Plugin releases
+
+The implemented v1 remains the current behavior until this design is implemented. Its Core-packaged catalog and
+matching Core and Plugin release versions are superseded as an architectural direction.
+
+The replacement design has these settled requirements:
+
+- Each Plugin has its own version and release workflow. First-party Plugin source remains in this repository unless a
+  later ownership need justifies moving it.
+- Updating a Plugin does not require publishing or installing a new Atlas Core version.
+- The host-side `atlas-core` terminal menu discovers, installs, updates, enables, disables, and uninstalls Plugins. Core
+  and the Command Interface do not receive container-runtime or host-filesystem authority.
+- The first catalog is one signed, Atlas-published catalog of trusted first-party Plugins. Arbitrary catalogs, bundles,
+  and image URLs remain unsupported.
+- One Plugin release consists of one strict UTF-8 JSON `.atlas-plugin` document and the immutable multi-architecture
+  container image that document identifies by digest. The document contains declarative installation metadata and never
+  supplies executable installation hooks or arbitrary Compose configuration.
+- A Plugin catalog entry is a release available to install. Catalog presence, installation, enablement, and runtime
+  health are separate states. Installation retains one selected Plugin release. Enablement includes that Installed
+  Plugin in the Atlas deployment. Runtime health continues to use `starting`, `available`, and `unavailable`; `available`
+  never means catalog presence.
+- Plugin compatibility follows major versions of the Plugin package, Core-to-Plugin, and Plugin-to-Source-Gateway
+  contracts, plus the fixed Command Interface interaction kinds a Plugin uses. Atlas Core SemVer is not the primary
+  compatibility check.
+- Plugin updates require explicit operator approval, either for one Plugin or for all compatible updates. Atlas does not
+  install unattended Plugin updates.
+- Enable, update, disable, rollback, and uninstall may restart the existing Core, Source Gateway, or Plugin containers.
+  They do not require an Atlas Core version change. Hot installation and hot upgrades remain deferred.
+- The first managed release supports trusted query-only Plugins. Taskable-Plugin installation, update, and uninstall
+  remain deferred until Atlas defines active Task and Tool Asset handling.
+- Plugin releases use immutable Semantic Versions in one stable channel. The manager offers the latest compatible,
+  non-revoked release. Plugins cannot depend on other Plugins.
+- Atlas Core continues to own public Plugin routes, authentication, limits, and durable Atlas actions.
+- The Command Interface continues to provide fixed shared interactions and renderers. Plugins use those tools through
+  declarative contracts rather than shipping executable browser code.
+- Plugin processes remain separate from Core and continue to run under the deployment orchestrator.
+
+The release format, catalog trust and publication, local state, transaction recovery, compatibility fields, and command
+behavior are specified in the linked design documents. The current wire and deployment sections below continue to
+describe implemented v1 until the replacement is built.
 
 Atlas plugins add bounded capabilities without deploying a new public API for every integration. Atlas remains the public control plane. Plugins run behind Core-owned routes, consume external data through Atlas-managed source connectors, and use normal Atlas resource and task systems when their results become durable or cause action.
 
@@ -56,7 +102,7 @@ POST /plugins/{plugin_id}/operations/{operation_id}
 
 `plugin_id` and `operation_id` are lowercase ASCII identifiers matching `^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$`. Core rejects an invalid configured Plugin ID and rejects a manifest containing an invalid Plugin ID, an invalid Operation ID, or duplicate Operation IDs. This grammar excludes path separators and percent encoding, so each advertised Operation maps to one public route.
 
-`GET /plugins` is the authenticated discovery and status endpoint. Core reserves the `/datastreams` namespace but exposes no Datastream discovery or delivery route until that contract defines transport, ordering, replay, latency, and persistence. A Plugin manifest contains only its Plugin ID, display name, Operation descriptors, and optional Tool Asset ID. A Tool Asset ID is `plugin_` followed by the unpadded RFC 4648 base64url encoding of the SHA-256 digest of the exact ASCII Plugin ID. The prefix and 43-character digest encoding produce a 50-character Entity ID without normalization or truncation. When present, the Tool Asset ID must equal that derived value; a mismatch invalidates the manifest. Each Operation descriptor declares the timeout Core enforces for that Operation. Commands remain in the Tool Asset's existing runtime manifest. Plugin manifests do not contain Datastream descriptors, configuration schemas, connector requests, permissions, protocol versions, or upgrade metadata.
+`GET /plugins` is the authenticated discovery and status endpoint. Core reserves the `/datastreams` namespace but exposes no Datastream discovery or delivery route until that contract defines transport, ordering, replay, latency, and persistence. A Plugin manifest contains only its Plugin ID, display name, private contract major, Operation descriptors, and optional Tool Asset ID. A Tool Asset ID is `plugin_` followed by the unpadded RFC 4648 base64url encoding of the SHA-256 digest of the exact ASCII Plugin ID. The prefix and 43-character digest encoding produce a 50-character Entity ID without normalization or truncation. When present, the Tool Asset ID must equal that derived value; a mismatch invalidates the manifest. Each Operation descriptor declares the timeout Core enforces for that Operation. Commands remain in the Tool Asset's existing runtime manifest. Plugin manifests do not contain Datastream descriptors, configuration schemas, connector requests, permissions, release versions, or upgrade metadata.
 
 ### Discovery response
 
@@ -123,6 +169,7 @@ The request uses `Content-Type: application/json` and `Accept: application/json`
 
 ```json
 {
+  "plugin_to_source_gateway_protocol_major": 1,
   "method": "GET",
   "path": "/v1/aircraft",
   "query": [["bbox", "42.0,-72.0,43.0,-71.0"]],
@@ -131,7 +178,18 @@ The request uses `Content-Type: application/json` and `Accept: application/json`
 }
 ```
 
-`method` is an uppercase HTTP method. `path` begins with `/` and contains no scheme, authority, query, or fragment. The path and query tuple strings are decoded UTF-8 text, never pre-encoded URL text. The Gateway evaluates connector policy against those decoded values, rejects NUL, backslash, and `.` or `..` path segments, then percent-encodes UTF-8 bytes exactly once. A literal `%` is data and becomes `%25`. The Gateway preserves slash boundaries, query tuple order, and repeated query names; it encodes query spaces as `%20`, not `+`. `query` and `headers` are arrays of two-string tuples so repeated names are preserved; the Gateway adds the configured origin and credentials itself. `body_base64` is `null` for an empty body or the standard padded base64 encoding of the request bytes. The connector body limit counts decoded request bytes, while a separate hard Gateway limit bounds the complete JSON request. The Gateway rejects unknown fields, malformed tuples or base64, disallowed methods, paths, queries, or headers, credential-header overrides, and requests over its configured header or body limits.
+`plugin_to_source_gateway_protocol_major` is a positive integer and is exactly `1` for the first independent-release
+contract. The implemented v1 request does not yet send this field. After migration, a missing or unsupported value is a
+malformed request and produces HTTP `400` with `request_rejected`. `method` is an uppercase HTTP method. `path` begins
+with `/` and contains no scheme, authority, query, or fragment. The path and query tuple strings are decoded UTF-8 text,
+never pre-encoded URL text. The Gateway evaluates connector policy against those decoded values, rejects NUL, backslash,
+and `.` or `..` path segments, then percent-encodes UTF-8 bytes exactly once. A literal `%` is data and becomes `%25`.
+The Gateway preserves slash boundaries, query tuple order, and repeated query names; it encodes query spaces as `%20`,
+not `+`. `query` and `headers` are arrays of two-string tuples so repeated names are preserved; the Gateway adds the
+configured origin and credentials itself. `body_base64` is `null` for an empty body or the standard padded base64
+encoding of the request bytes. The connector body limit counts decoded request bytes, while a separate hard Gateway
+limit bounds the complete JSON request. The Gateway rejects unknown fields, malformed tuples or base64, disallowed
+methods, paths, queries, or headers, credential-header overrides, and requests over its configured header or body limits.
 
 Each connector configuration contains request and response header-name allowlists. The Gateway compares HTTP header names case-insensitively and emits response names in lowercase. It preserves repeated values as separate tuples in their received order. It always rejects Plugin-supplied `host`, `content-length`, `authorization`, `proxy-authorization`, `cookie`, and every configured credential header. In both directions it removes `connection`, every header named by `Connection`, `content-length`, `keep-alive`, `proxy-authenticate`, `proxy-authorization`, `proxy-connection`, `te`, `trailer`, `transfer-encoding`, and `upgrade`. It also removes `authorization`, `cookie`, `set-cookie`, and every configured credential header from responses. The Gateway sets `Host` and `Content-Length`, injects connector credentials, and forwards only remaining allowlisted headers. Hard limits bound the tuple count and total decoded header-name and value bytes in each direction.
 
@@ -148,7 +206,7 @@ Gateway failures use `Content-Type: application/json` and a body containing only
 | `503` | `circuit_open` | The connector circuit breaker rejected the request. |
 | `504` | `upstream_timeout` | The bounded upstream attempt timed out. |
 
-The Gateway does not authenticate or identify individual Plugin callers. Compose limits the route to the private deployment network, and the trusted first deployment lets every Plugin use every connector. When a Plugin Operation or Task is cancelled, the Plugin cancels this private request; the Gateway cancels the outbound request, performs no later retry, and discards any response. Gateway and Plugin tests must exercise strict decoding, repeated query and header values, binary bodies, failure mapping, response bounds, and cancellation. The protocol has no version negotiation; changing it requires coordinated Plugin, Gateway, and deployment updates.
+The Gateway does not authenticate or identify individual Plugin callers. Compose limits the route to the private deployment network, and the trusted first deployment lets every Plugin use every connector. When a Plugin Operation or Task is cancelled, the Plugin cancels this private request; the Gateway cancels the outbound request, performs no later retry, and discards any response. Gateway and Plugin tests must exercise strict decoding, repeated query and header values, binary bodies, failure mapping, response bounds, and cancellation. The implemented v1 protocol has no version negotiation. An independent Plugin release declares the Plugin-to-Source-Gateway contract major it requires, and each private request repeats that major so the Gateway can reject an unsupported caller. The contract uses exact major support rather than negotiation.
 
 Source connectors centralize mechanics shared across external systems:
 
@@ -208,6 +266,7 @@ Core sends `Accept: application/json` on every call and `Content-Type: applicati
 {
   "plugin_id": "adsb",
   "display_name": "ADS-B",
+  "core_to_plugin_protocol_major": 1,
   "operations": [
     {
       "operation_id": "inspect_aircraft",
@@ -220,13 +279,16 @@ Core sends `Accept: application/json` on every call and `Content-Type: applicati
 }
 ```
 
-`plugin_id`, `display_name`, and `operations` are required, and each display name is a nonempty string. `tool_asset_id`
-is optional and omitted for a query-only Plugin. Each Operation requires `operation_id`, `display_name`, and a positive
-integer `timeout_ms`, measured in milliseconds and no greater than Core's hard maximum. An Operation may also declare
-the fixed, non-executable interaction descriptor `{ "kind": "map_area" }`. Core validates this descriptor and continues
-to proxy Operation bodies as opaque JSON. The operations array may be empty. Core rejects unknown fields in the
-manifest or an Operation descriptor, invalid identifiers, duplicate Operation IDs, invalid timeouts, identity
-mismatches, and any status other than `200`.
+`plugin_id`, `display_name`, `core_to_plugin_protocol_major`, and `operations` are required, and each display name is a
+nonempty string. The protocol major is exactly `1` for the first independent-release contract. The implemented v1
+manifest does not yet send this field. After migration, a missing or unsupported value invalidates the manifest and uses
+Core's existing `invalid_manifest` status reason. This private transport field stays outside the generated Atlas Protocol
+`PluginManifest` shape and revision token. `tool_asset_id` is optional and omitted for a query-only Plugin. Each
+Operation requires `operation_id`, `display_name`, and a positive integer `timeout_ms`, measured in milliseconds and no
+greater than Core's hard maximum. An Operation may also declare the fixed, non-executable interaction descriptor
+`{ "kind": "map_area" }`. Core validates this descriptor and continues to proxy Operation bodies as opaque JSON. The
+operations array may be empty. Core rejects unknown fields in the manifest or an Operation descriptor, invalid
+identifiers, duplicate Operation IDs, invalid timeouts, identity mismatches, and any status other than `200`.
 
 `GET /health` has two valid responses. HTTP `200` with `{"status":"ok"}` is healthy. HTTP `503` with `{"status":"unhealthy"}` is an application-level health failure. Any other status or body is an invalid private response and a transport failure. Health has no detail field; Plugin logs own private diagnostics.
 
@@ -242,9 +304,14 @@ A Plugin error object contains a required `code` matching `^[a-z][a-z0-9]*(?:_[a
 
 Core applies a hard response-size limit to every private Plugin call, including manifest, health, and Operation responses. An oversized response is invalid and makes the Plugin unavailable without Core buffering beyond the limit.
 
-Core fetches each configured Plugin manifest during startup. If the Plugin is unavailable, Core continues starting and retries until the first successful manifest response. Before caching it, Core requires the manifest's Plugin ID to match the configured Plugin ID exactly and any advertised Tool Asset ID to match the value derived from that Plugin ID. A mismatch is an invalid manifest and keeps the configured Plugin unavailable. Core caches a valid matching manifest in memory until Core restarts. A valid cached manifest is an independent availability prerequisite that health or Operation responses cannot replace. After caching the first valid manifest, Core immediately checks Plugin health. Core does not refresh manifests periodically or fetch one for every request. Plugin upgrades restart the whole deployment, so manifest changes do not need hot reload.
+Core fetches each configured Plugin manifest during startup. If the Plugin is unavailable, Core continues starting and retries until the first successful manifest response. Before caching it, Core requires the manifest's Plugin ID to match the configured Plugin ID exactly and any advertised Tool Asset ID to match the value derived from that Plugin ID. A mismatch is an invalid manifest and keeps the configured Plugin unavailable. Core caches a valid matching manifest in memory until Core restarts. A valid cached manifest is an independent availability prerequisite that health or Operation responses cannot replace. After caching the first valid manifest, Core immediately checks Plugin health. Core does not refresh manifests periodically or fetch one for every request. Plugin upgrades may restart the existing deployment, so manifest changes do not need hot reload.
 
-The private Plugin protocol has no revision field, version negotiation, or compatibility layer. Core and Plugin changes update the contract directly, and Plugin tests catch mismatches. Plugins still use the Atlas SDK's existing generated Atlas Protocol revision check when calling Core; the Plugin system does not add another version mechanism. A future Core-wide versioning rework may replace that existing check, but it stays outside the Plugin architecture.
+The implemented v1 private Plugin protocol has no revision field, version negotiation, or compatibility layer. The
+independent release design replaces that assumption with an exact supported contract major, without negotiation. The
+release document declares the required Core-to-Plugin major, and the private runtime manifest repeats it so Core rejects
+an unsupported Plugin even when deployment configuration bypasses the manager. The CLI also rejects an incompatible
+release before deployment. Plugins still use the Atlas SDK's existing generated Atlas Protocol revision check when
+calling Core.
 
 The first architecture has no separate Plugin Definition and Plugin Instance concepts. One configured Plugin ID maps to one deployment-managed container, whose Plugin may be `starting`, `available`, or `unavailable`. A Plugin may handle multiple concurrent requests or monitored areas internally, but Atlas does not schedule multiple active instances of the same Plugin.
 
@@ -252,12 +319,37 @@ The first architecture has no separate Plugin Definition and Plugin Instance con
 
 Plugin settings live in deployment files and environment variables mounted into the Plugin container. Atlas has no Plugin configuration API or Plugin configuration resources. Runtime operator intent still uses Operations or Tasks.
 
-The Atlas Core CLI manages a generated catalog of trusted first-party, query-only Plugins. It enables or disables them
-by staging the Plugin-owned Compose overlay, Core endpoint fragment, and Source Gateway connector fragment, validating
-the complete Compose model, and restarting the affected services. Catalog images are published with Atlas Core,
-multi-architecture, and pinned by digest in the CLI package. This is restart-based deployment management, not a Core
-installation API, hot installation, arbitrary bundle loading, or a marketplace. Operators may still supply equivalent
-deployment files outside the packaged CLI. Production restarts preserve durable Core storage.
+The host-side Atlas Core CLI manages Installed Plugins from one signed Atlas catalog. Each Plugin release has its own
+version and workflow. Its strict `.atlas-plugin` JSON document pins one multi-architecture image by digest and declares
+the contract versions and fixed Command Interface interactions it requires. Release metadata and runtime discovery stay
+separate: the release document does not duplicate Operations from the private runtime manifest. The CLI generates
+deployment configuration, validates the complete Compose model, applies restart-based changes, waits for health, and
+rolls back a failed transaction. It never passes arbitrary package-supplied Compose or executable installation hooks to
+the host.
+
+Installation, enablement, and runtime health are separate. Installing selects and retains a Plugin release. Enabling
+includes that Installed Plugin in the deployment. Disabling removes it from the active deployment without uninstalling
+the selected release. Uninstall requires the Plugin to be disabled and then removes its selected release. The manager
+retains the selected release and one previous release. A failed update restores the previous release automatically, and
+the operator may roll back explicitly to that previous release when it remains compatible and non-revoked. The first
+managed scope is trusted query-only Plugins, and every update requires operator approval. Production restarts preserve
+durable Core storage.
+
+Operator configuration is separate from immutable Plugin releases. Update and disable preserve it. Uninstall preserves
+it for a later reinstall, while an explicit purge removes Atlas-managed Plugin configuration. Purge never deletes an
+external secret source. A release may declare required settings and secret names, but it never contains secret values.
+
+The CLI embeds one or more Atlas Plugin catalog public keys. Atlas signs the exact catalog bytes with Ed25519. Each
+signed catalog entry pins the exact `.atlas-plugin` byte hash, and that release document pins the image digest. The
+catalog signature therefore authenticates both artifacts without a second bundle signature. A catalog entry may revoke
+an immutable release. The manager refuses new installation, enablement, update, or manual rollback to a revoked release.
+It warns about an already Installed revoked release but does not stop it without operator approval.
+
+Plugin versions are immutable Semantic Versions in one stable channel. A release workflow publishes and verifies the
+image and `.atlas-plugin` document before it appends the release to a newly signed catalog. A failed catalog publication
+may leave unlisted artifacts, which have no installation path and may be reused by a retry. A published version is never
+replaced. Plugins do not depend on other Plugins; every release depends only on declared Atlas contracts, fixed Command
+Interface interactions, and configured Source connectors.
 
 ## Health, readiness, and status
 
@@ -340,10 +432,29 @@ The building is not an Asset or Track. Source-provided height is advisory data a
 - Every installed Plugin may use every configured Source connector.
 - Plugin and Source Gateway configuration is deployment-owned; secrets come from environment variables or Compose secrets.
 - Plugin containers have no persistent private storage in the first architecture.
-- The private Core-to-Plugin contract has no Plugin protocol version or compatibility negotiation.
+- Independent Plugin releases declare major versions for their package, Core-to-Plugin, and Plugin-to-Source-Gateway
+  contracts, plus the fixed Command Interface interaction kinds they require. The CLI checks compatibility before
+  deployment, and runtime peers repeat and enforce their protocol majors without negotiation.
 - The existing Atlas Protocol revision check between the SDK and Core remains unchanged.
-- The Atlas Core CLI enables and disables digest-pinned first-party query-only Plugins from its generated catalog by staging Plugin-owned deployment fragments and restarting the Compose deployment.
-- A Plugin manifest contains Plugin and Operation discovery fields only; Datastreams, Commands, configuration, credentials, and compatibility metadata stay elsewhere.
+- Each trusted first-party Plugin has its own version and release workflow while its source remains in this repository.
+- The Atlas Core CLI manages Plugins from one signed Atlas-published catalog. Arbitrary catalogs, bundles, and images are
+  not supported in the first managed release.
+- A Plugin release is a strict UTF-8 JSON `.atlas-plugin` document that pins its multi-architecture container image by
+  digest. The document cannot provide executable installation hooks or arbitrary Compose configuration.
+- Installation, enablement, and runtime health are separate states. The existing `available` status remains a runtime
+  health term and does not mean catalog presence.
+- Plugin updates are operator-approved and may restart the existing deployment without changing the Atlas Core version.
+- The manager retains the selected and previous Plugin releases, restores failed updates, and supports explicit rollback
+  only to a compatible, non-revoked previous release.
+- Operator configuration survives update, disable, and uninstall until an explicit purge; Plugin releases never contain
+  secret values.
+- One Ed25519-signed Atlas catalog authenticates exact release-document hashes and image digests. Revocation prevents new
+  use of a release but does not stop an Installed Plugin without operator approval.
+- Plugin releases use immutable Semantic Versions in one stable channel and cannot depend on other Plugins.
+- Independent installation, update, and uninstall initially support trusted query-only Plugins. Taskable-Plugin
+  lifecycle management remains deferred.
+- A Plugin manifest contains Plugin and Operation discovery fields plus its private Core-to-Plugin contract major;
+  Datastreams, Commands, configuration, credentials, release versions, and upgrade metadata stay elsewhere.
 - The private Core-to-Plugin and Plugin-to-Gateway protocols fix endpoint paths, JSON or binary framing, bounds, cancellation, and error mapping.
 - Core fetches a Plugin manifest once, retrying until success, and caches it until Core restarts.
 - Core bounds every private Plugin response and rejects a manifest whose Plugin ID differs from deployment configuration or whose Tool Asset ID differs from the value derived from that Plugin ID.
@@ -367,7 +478,10 @@ The building is not an Asset or Track. Source-provided height is advisory data a
 
 ## Design status
 
-The Plugin platform architecture design tree is closed. The documents specify behavioral bounds but leave health cadence, timeout ceilings, response limits, the per-Plugin in-flight Operation limit, retry counts, cache durations, and circuit-breaker thresholds to implementation.
+The runtime Plugin platform, independent release format, catalog, installation lifecycle, compatibility checks, and
+failure recovery are settled. The design tree for independent trusted query-only Plugin management is closed. The
+documents specify behavioral bounds but leave health cadence, timeout ceilings, response limits, the per-Plugin
+in-flight Operation limit, retry counts, cache durations, and circuit-breaker thresholds to implementation.
 
 Datastream delivery, executable browser plugins, additional declarative interaction kinds, arbitrary third-party
 installation, taskable-Plugin lifecycle management, and ADS-B Track identity remain deliberately deferred. Each needs a

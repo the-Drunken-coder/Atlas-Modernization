@@ -67,6 +67,12 @@ atlas-core plugins logs <plugin_id> [--follow]
 
 ## Plugins
 
+Implementation status: the commands below describe the current Core-packaged Plugin catalog. The accepted independent
+release design is documented in
+[`../../docs/design-decisions/2026-09-01-plugins-release-independently-from-atlas-core.md`](../../docs/design-decisions/2026-09-01-plugins-release-independently-from-atlas-core.md).
+Until that design is implemented, the CLI does not yet install, update, roll back, uninstall, or purge independently
+versioned Plugins.
+
 The `Plugins` menu and matching commands manage trusted, query-only Plugins published in the installed Atlas Core
 catalog. Building Scan is available as an opt-in first-party Plugin; no Plugin is enabled by default. The CLI does not
 accept arbitrary paths, images, or third-party bundles.

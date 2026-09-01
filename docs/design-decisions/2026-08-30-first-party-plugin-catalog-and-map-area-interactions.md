@@ -1,5 +1,7 @@
 # First-party Plugin catalog and fixed map-area interactions
 
+Status: Superseded in part by [`2026-09-01-plugins-release-independently-from-atlas-core.md`](2026-09-01-plugins-release-independently-from-atlas-core.md). The Core-packaged catalog and matching Core and Plugin releases are historical v1 behavior. The fixed `map_area` interaction and generic Command Interface renderer remain accepted.
+
 1. **Time & Date:** 2026-08-30 23:55 EDT
 2. **Name:** Atlas Core CLI manages a first-party query-only Plugin catalog and the Command Interface renders fixed interaction metadata
 3. **Context:** Plugin v1 deliberately deferred install management and declarative browser integration until a real Plugin established the shared contract. Building Scan needs an operator to enable one trusted container, select a bounded rectangle, invoke a query-only Operation, and inspect spatial results without adding provider-specific deployment or UI code to shared systems.
