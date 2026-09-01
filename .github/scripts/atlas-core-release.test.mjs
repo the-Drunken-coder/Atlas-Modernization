@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 
 const script = join(dirname(fileURLToPath(import.meta.url)), "atlas-core-release.mjs");
 const phaseScript = join(dirname(fileURLToPath(import.meta.url)), "select-atlas-core-release-phase.sh");
+const releaseFilesScript = join(dirname(fileURLToPath(import.meta.url)), "atlas-core-release-files.sh");
 const workflow = join(dirname(fileURLToPath(import.meta.url)), "../workflows/release-atlas-core.yml");
 const dockerfile = join(dirname(fileURLToPath(import.meta.url)), "../../services/core/docker/Dockerfile");
 const coreCLIPackage = join(dirname(fileURLToPath(import.meta.url)), "../../surfaces/core-cli/package.json");
@@ -88,16 +89,55 @@ test("uses GitHub concurrency without cancelling the active release", () => {
   assert.match(source, /concurrency:\n\s+group: release-atlas-core\n\s+cancel-in-progress: false/);
 });
 
-test("recovers an existing immutable release only when explicitly requested", () => {
+test("labels release runs and explains both approvals", () => {
+  const source = readFileSync(workflow, "utf8");
+  assert.match(source, /run-name: Atlas Core \$\{\{ inputs\.version \}\} from \$\{\{ github\.ref_name \}\}/);
+  assert.match(source, /name: Summarize release approval/);
+  assert.match(source, /Approval 1 permits candidate image publication/);
+  assert.match(source, /Approval 2 permits GHCR version-tag promotion/);
+});
+
+test("keeps the release-owned file contract narrow", () => {
+  const validate = (paths) =>
+    spawnSync(
+      "bash",
+      ["-c", 'source "$1"; validate_atlas_core_release_paths "Unexpected release change"', "bash", releaseFilesScript],
+      { encoding: "utf8", input: `${paths.join("\n")}\n`, stdio: ["pipe", "pipe", "pipe"] }
+    );
+
+  const allowed = validate([
+    "CHANGELOG.md",
+    "package-lock.json",
+    "surfaces/core-cli/package.json",
+    "surfaces/core-cli/src/package-metadata.ts",
+    "surfaces/core-cli/src/plugin-catalog.generated.ts",
+    "surfaces/core-cli/assets/plugin-catalog.json",
+    "surfaces/core-cli/assets/plugins/building_scan/compose.yml"
+  ]);
+  assert.equal(allowed.status, 0, allowed.stderr);
+
+  const unexpected = validate(["README.md"]);
+  assert.notEqual(unexpected.status, 0);
+  assert.match(unexpected.stderr, /Unexpected release change: README\.md/);
+});
+
+test("recovers an existing immutable release and validates every release-owned file", () => {
   const directory = mkdtempSync(join(tmpdir(), "atlas-core-phase-"));
   const output = join(directory, "github-output");
   const packagePath = join(directory, "surfaces/core-cli/package.json");
+  const pluginCatalogPath = join(directory, "surfaces/core-cli/assets/plugin-catalog.json");
+  const pluginComposePath = join(directory, "surfaces/core-cli/assets/plugins/building_scan/compose.yml");
+  const generatedPluginCatalogPath = join(directory, "surfaces/core-cli/src/plugin-catalog.generated.ts");
   try {
     mkdirSync(join(directory, "surfaces/core-cli/src"), { recursive: true });
+    mkdirSync(dirname(pluginComposePath), { recursive: true });
     writeFileSync(join(directory, "CHANGELOG.md"), "# Changelog\n");
     writeFileSync(join(directory, "package-lock.json"), "{}\n");
     writeFileSync(packagePath, '{"version":"0.1.0","atlasCoreImage":null}\n');
     writeFileSync(join(directory, "surfaces/core-cli/src/package-metadata.ts"), "export const image = undefined;\n");
+    writeFileSync(pluginCatalogPath, '{"plugins":[]}\n');
+    writeFileSync(pluginComposePath, "image: @atlas/plugin-image@\n");
+    writeFileSync(generatedPluginCatalogPath, "export const PACKAGE_PLUGIN_CATALOG = [] as const;\n");
     git(["init"], directory);
     git(["config", "user.name", "Atlas Core release test"], directory);
     git(["config", "user.email", "atlas-core@example.invalid"], directory);
@@ -106,7 +146,13 @@ test("recovers an existing immutable release only when explicitly requested", ()
     const sourceSha = git(["rev-parse", "HEAD"], directory);
 
     writeFileSync(packagePath, '{"version":"0.1.0","atlasCoreImage":"ghcr.io/example/core@sha256:abc"}\n');
-    git(["add", packagePath], directory);
+    writeFileSync(pluginCatalogPath, '{"plugins":[{"plugin_id":"building_scan"}]}\n');
+    writeFileSync(pluginComposePath, "image: ghcr.io/example/building-scan@sha256:abc\n");
+    writeFileSync(
+      generatedPluginCatalogPath,
+      'export const PACKAGE_PLUGIN_CATALOG = [{ pluginId: "building_scan" }] as const;\n'
+    );
+    git(["add", packagePath, pluginCatalogPath, pluginComposePath, generatedPluginCatalogPath], directory);
     git(["commit", "-m", "chore(release): atlas-core v0.1.0"], directory);
     const releaseSha = git(["rev-parse", "HEAD"], directory);
     git(["tag", "--annotate", "atlas-core-v0.1.0", "--message", "Atlas Core 0.1.0"], directory);
@@ -147,6 +193,18 @@ test("recovers an existing immutable release only when explicitly requested", ()
       `mode=publish\nrecovery=true\nsource_sha=${sourceSha}\nrelease_sha=${releaseSha}\n`
     );
 
+    writeFileSync(pluginComposePath, "image: ghcr.io/example/building-scan@sha256:different\n");
+    writeFileSync(output, "");
+    const mismatchedPluginRecovery = spawnSync("bash", [phaseScript], {
+      cwd: directory,
+      encoding: "utf8",
+      env: { ...environment, RECOVER_EXISTING_RELEASE: "true" },
+      stdio: "pipe"
+    });
+    assert.notEqual(mismatchedPluginRecovery.status, 0);
+    assert.match(mismatchedPluginRecovery.stderr, /does not match/);
+
+    writeFileSync(pluginComposePath, "image: ghcr.io/example/building-scan@sha256:abc\n");
     writeFileSync(packagePath, '{"version":"0.1.0","atlasCoreImage":"different"}\n');
     writeFileSync(output, "");
     const mismatchedRecovery = spawnSync("bash", [phaseScript], {
