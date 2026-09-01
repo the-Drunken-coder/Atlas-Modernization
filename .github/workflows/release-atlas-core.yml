@@ -1,14 +1,15 @@
 name: Release Atlas Core
+run-name: Atlas Core ${{ inputs.version }} from ${{ github.ref_name }}
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: SemVer without a leading v, for example 0.1.0
+        description: New stable SemVer from main, without v, for example 0.1.7
         required: true
         type: string
       recover_existing_release:
-        description: Resume an existing exact release without moving its immutable tag
+        description: Advanced recovery only, when this exact npm version already exists
         required: false
         default: false
         type: boolean
@@ -28,7 +29,7 @@ env:
 
 jobs:
   changelog:
-    name: Plan and draft isolated changelog
+    name: Draft and validate changelog
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -210,7 +211,7 @@ jobs:
           retention-days: 7
 
   prepare:
-    name: Prepare and verify release
+    name: Build approval artifact
     needs: changelog
     runs-on: ubuntu-latest
     permissions:
@@ -326,22 +327,10 @@ jobs:
       - name: Validate release diff
         if: needs.changelog.outputs.mode == 'prepare'
         run: |
-          while IFS= read -r path; do
-            case "$path" in
-              CHANGELOG.md|package-lock.json|surfaces/core-cli/package.json|surfaces/core-cli/src/package-metadata.ts)
-                ;;
-              *)
-                echo "Unexpected release change: $path" >&2
-                exit 1
-                ;;
-            esac
-          done < <(git diff --name-only)
+          source .github/scripts/atlas-core-release-files.sh
+          validate_atlas_core_release_paths "Unexpected release change" < <(git diff --name-only)
           git diff --check
-          git diff -- \
-            CHANGELOG.md \
-            package-lock.json \
-            surfaces/core-cli/package.json \
-            surfaces/core-cli/src/package-metadata.ts | tee release-artifacts/release.diff
+          git diff -- "${atlas_core_release_paths[@]}" | tee release-artifacts/release.diff
 
       - name: Upload reviewed release
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -356,8 +345,43 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      - name: Summarize release approval
+        env:
+          MODE: ${{ needs.changelog.outputs.mode }}
+          RECOVERY: ${{ needs.changelog.outputs.recovery }}
+          REF_NAME: ${{ github.ref_name }}
+          RELEASE_SHA: ${{ needs.changelog.outputs.release_sha }}
+          SOURCE_SHA: ${{ needs.changelog.outputs.source_sha }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          printf '## Atlas Core %s approval\n\n' "$VERSION" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$RECOVERY" = "true" ]; then
+            {
+              printf '%s\n' '- Phase: recover an existing published release with the current workflow.'
+              printf -- '- Immutable release commit: `%s`\n' "$RELEASE_SHA"
+              printf -- '- Review artifact: `atlas-core-%s`\n' "$VERSION"
+              printf '%s\n' '- This approval may repair the GitHub Release. It cannot move the tag or publish a missing npm version.'
+            } >> "$GITHUB_STEP_SUMMARY"
+          elif [ "$MODE" = "prepare" ]; then
+            {
+              printf '%s\n' '- Phase: prepare a new release from `main`.'
+              printf -- '- Source commit: `%s`\n' "$SOURCE_SHA"
+              printf -- '- Review artifact: `atlas-core-%s`\n' "$VERSION"
+              printf '%s\n' '- Review `release-artifacts/release.diff` and the generated release notes.'
+              printf '%s\n' '- Approval 1 permits candidate image publication, disposable-host acceptance, and the atomic release commit and tag push.'
+              printf '%s\n' '- The queued tag run will provide the immutable package for Approval 2 before public publication.'
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              printf -- '- Phase: publish immutable tag `%s`.\n' "$REF_NAME"
+              printf -- '- Release commit: `%s`\n' "$RELEASE_SHA"
+              printf -- '- Review final artifact: `atlas-core-%s`\n' "$VERSION"
+              printf '%s\n' '- Approval 2 permits GHCR version-tag promotion, npm publication, and the public GitHub Release.'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
   publish:
-    name: Publish approved release
+    name: Run approved release phase
     needs: [changelog, prepare]
     runs-on: ubuntu-latest
     environment: release
@@ -613,26 +637,11 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ inputs.version }}
         run: |
-          while IFS= read -r path; do
-            case "$path" in
-              CHANGELOG.md|package-lock.json|surfaces/core-cli/package.json|surfaces/core-cli/src/package-metadata.ts|surfaces/core-cli/src/plugin-catalog.generated.ts|surfaces/core-cli/assets/plugin-catalog.json|surfaces/core-cli/assets/plugins/*)
-                ;;
-              *)
-                echo "Unexpected release change: $path" >&2
-                exit 1
-                ;;
-            esac
-          done < <(git diff --name-only)
+          source .github/scripts/atlas-core-release-files.sh
+          validate_atlas_core_release_paths "Unexpected release change" < <(git diff --name-only)
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add \
-            CHANGELOG.md \
-            package-lock.json \
-            surfaces/core-cli/package.json \
-            surfaces/core-cli/src/package-metadata.ts \
-            surfaces/core-cli/src/plugin-catalog.generated.ts \
-            surfaces/core-cli/assets/plugin-catalog.json \
-            surfaces/core-cli/assets/plugins
+          git add "${atlas_core_release_paths[@]}"
           git commit -m "chore(release): atlas-core v$VERSION"
           release_sha="$(git rev-parse HEAD)"
           tag="atlas-core-v$VERSION"
@@ -652,6 +661,11 @@ jobs:
             --ref "$tag" \
             --field version="$VERSION"
           echo "Queued Atlas Core $VERSION publication from $tag."
+          {
+            printf '## Atlas Core %s release commit created\n\n' "$VERSION"
+            printf -- '- Immutable tag: `%s`\n' "$tag"
+            printf '%s\n' '- Next: open the automatically queued tag run, review its final package artifact, and grant Approval 2.'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Promote the reviewed digest to the version tag
         if: needs.changelog.outputs.mode == 'publish'

@@ -2,6 +2,9 @@
 
 set -euo pipefail
 
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+source "$script_dir/atlas-core-release-files.sh"
+
 : "${VERSION:?VERSION is required}"
 : "${GITHUB_REF:?GITHUB_REF is required}"
 : "${GITHUB_SHA:?GITHUB_SHA is required}"
@@ -10,12 +13,6 @@ set -euo pipefail
 tag="atlas-core-v$VERSION"
 recover_existing_release="${RECOVER_EXISTING_RELEASE:-false}"
 recovery=false
-release_paths=(
-  CHANGELOG.md
-  package-lock.json
-  surfaces/core-cli/package.json
-  surfaces/core-cli/src/package-metadata.ts
-)
 
 validate_release_commit() {
   local release_sha="$1"
@@ -27,19 +24,11 @@ validate_release_commit() {
     echo "$tag does not identify the Atlas Core release commit." >&2
     exit 1
   fi
-  while IFS= read -r path; do
-    case "$path" in
-      CHANGELOG.md|package-lock.json|surfaces/core-cli/package.json|surfaces/core-cli/src/package-metadata.ts)
-        ;;
-      *)
-        echo "The release commit changed an unexpected file: $path" >&2
-        exit 1
-        ;;
-    esac
-  done < <(git diff --name-only "$release_sha^..$release_sha")
-  if ! git diff --quiet "$release_sha" -- "${release_paths[@]}"; then
+  validate_atlas_core_release_paths "The release commit changed an unexpected file" \
+    < <(git diff --name-only "$release_sha^..$release_sha")
+  if ! git diff --quiet "$release_sha" -- "${atlas_core_release_paths[@]}"; then
     echo "The reviewed release artifact does not match $tag." >&2
-    git diff --stat "$release_sha" -- "${release_paths[@]}" >&2
+    git diff --stat "$release_sha" -- "${atlas_core_release_paths[@]}" >&2
     exit 1
   fi
 }
