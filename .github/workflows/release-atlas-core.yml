@@ -547,9 +547,11 @@ jobs:
              .path == ".github/workflows/release-atlas-core.yml" and
              .repository.full_name == $repository' \
             "$coordinator" >/dev/null
-          echo "package_integrity=$package_integrity" >> "$GITHUB_OUTPUT"
-          echo "release_artifact_digest=$release_artifact_digest" >> "$GITHUB_OUTPUT"
-          echo "release_artifact_id=$release_artifact_id" >> "$GITHUB_OUTPUT"
+          {
+            echo "package_integrity=$package_integrity"
+            echo "release_artifact_digest=$release_artifact_digest"
+            echo "release_artifact_id=$release_artifact_id"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Verify exact coordinator package artifact
         env:
@@ -667,7 +669,7 @@ jobs:
           fi
           while IFS= read -r path; do
             case "$path" in
-              CHANGELOG.md|package-lock.json|surfaces/core-cli/package.json|surfaces/core-cli/src/package-metadata.ts|surfaces/core-cli/src/plugin-catalog.generated.ts|surfaces/core-cli/assets/plugin-catalog.json|surfaces/core-cli/assets/plugins/*|release-artifacts/atlas-core-$VERSION.tgz|release-artifacts/npm-pack.json|release-artifacts/SHA256SUMS|release-artifacts/release.diff|release-artifacts/release-notes.md)
+              CHANGELOG.md|package-lock.json|surfaces/core-cli/package.json|surfaces/core-cli/src/package-metadata.ts|surfaces/core-cli/src/plugin-catalog.generated.ts|surfaces/core-cli/assets/plugin-catalog.json|surfaces/core-cli/assets/plugins/*|release-artifacts/atlas-core-"$VERSION".tgz|release-artifacts/npm-pack.json|release-artifacts/SHA256SUMS|release-artifacts/release.diff|release-artifacts/release-notes.md)
                 ;;
               *)
                 echo "Unexpected coordinator release artifact file: $path" >&2
@@ -789,11 +791,13 @@ jobs:
               make_latest=false
             fi
           fi
-          echo "integrity=$local_integrity" >> "$GITHUB_OUTPUT"
-          echo "make_latest=$make_latest" >> "$GITHUB_OUTPUT"
-          echo "package_exists=$package_exists" >> "$GITHUB_OUTPUT"
-          echo "publish_tag=$publish_tag" >> "$GITHUB_OUTPUT"
-          echo "version_exists=$version_exists" >> "$GITHUB_OUTPUT"
+          {
+            echo "integrity=$local_integrity"
+            echo "make_latest=$make_latest"
+            echo "package_exists=$package_exists"
+            echo "publish_tag=$publish_tag"
+            echo "version_exists=$version_exists"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Require an existing npm version for main recovery
         if: needs.changelog.outputs.recovery == 'true' && steps.npm.outputs.version_exists != 'true'
@@ -1369,7 +1373,7 @@ jobs:
           fi
           while IFS= read -r path; do
             case "$path" in
-              CHANGELOG.md|package-lock.json|surfaces/core-cli/package.json|surfaces/core-cli/src/package-metadata.ts|surfaces/core-cli/src/plugin-catalog.generated.ts|surfaces/core-cli/assets/plugin-catalog.json|surfaces/core-cli/assets/plugins/*|release-artifacts/atlas-core-$VERSION.tgz|release-artifacts/npm-pack.json|release-artifacts/SHA256SUMS|release-artifacts/release.diff|release-artifacts/release-notes.md)
+              CHANGELOG.md|package-lock.json|surfaces/core-cli/package.json|surfaces/core-cli/src/package-metadata.ts|surfaces/core-cli/src/plugin-catalog.generated.ts|surfaces/core-cli/assets/plugin-catalog.json|surfaces/core-cli/assets/plugins/*|release-artifacts/atlas-core-"$VERSION".tgz|release-artifacts/npm-pack.json|release-artifacts/SHA256SUMS|release-artifacts/release.diff|release-artifacts/release-notes.md)
                 ;;
               *)
                 echo "Unexpected approved release artifact file: $path" >&2
@@ -1674,7 +1678,7 @@ jobs:
             exit 0
           fi
           gh run cancel "$CHILD_RUN_ID" || true
-          for attempt in $(seq 1 30); do
+          for _ in {1..30}; do
             state="$(gh run view "$CHILD_RUN_ID" --json status,conclusion)"
             status="$(jq -r .status <<< "$state")"
             conclusion="$(jq -r '.conclusion // ""' <<< "$state")"
@@ -1689,7 +1693,7 @@ jobs:
             sleep 2
           done
           gh api --method POST "repos/$GITHUB_REPOSITORY/actions/runs/$CHILD_RUN_ID/force-cancel"
-          for attempt in $(seq 1 30); do
+          for _ in {1..30}; do
             state="$(gh run view "$CHILD_RUN_ID" --json status,conclusion)"
             status="$(jq -r .status <<< "$state")"
             conclusion="$(jq -r '.conclusion // ""' <<< "$state")"
