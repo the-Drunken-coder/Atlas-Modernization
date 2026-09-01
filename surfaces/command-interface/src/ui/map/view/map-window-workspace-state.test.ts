@@ -73,4 +73,20 @@ describe("map window workspace state", () => {
     state = mapWindowWorkspaceReducer(state, { type: "dock-position", id: "scan", offset: -1 });
     expect(state.windows.scan?.dockOffset).toBe(0);
   });
+
+  it("reuses the first free cascade slot without covering an existing window", () => {
+    let state = initialMapWindowWorkspaceState;
+    for (const id of ["first", "second", "third"]) {
+      state = mapWindowWorkspaceReducer(state, { type: "register", id, title: id });
+    }
+    state = mapWindowWorkspaceReducer(state, { type: "unregister", id: "second" });
+    state = mapWindowWorkspaceReducer(state, { type: "register", id: "fourth", title: "fourth" });
+
+    expect(state.windows.first?.cascade).toBe(0);
+    expect(state.windows.third?.cascade).toBe(2);
+    expect(state.windows.fourth?.cascade).toBe(1);
+
+    const unchanged = mapWindowWorkspaceReducer(state, { type: "activate", id: "fourth" });
+    expect(unchanged).toBe(state);
+  });
 });

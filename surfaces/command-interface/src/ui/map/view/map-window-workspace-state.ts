@@ -49,7 +49,6 @@ export function mapWindowWorkspaceReducer(
         windows: { ...state.windows, [action.id]: { ...current, title: action.title } }
       };
     }
-    const floatingCount = Object.values(state.windows).filter((window) => window.placement === "floating").length;
     return {
       ...state,
       windows: {
@@ -59,7 +58,7 @@ export function mapWindowWorkspaceReducer(
           title: action.title,
           placement: "floating",
           collapsed: false,
-          cascade: floatingCount % 6,
+          cascade: firstAvailableCascade(state.windows),
           zIndex: state.nextZIndex
         }
       },
@@ -78,6 +77,7 @@ export function mapWindowWorkspaceReducer(
   if (!current) return state;
 
   if (action.type === "activate") {
+    if (current.zIndex === state.nextZIndex - 1) return state;
     return {
       ...state,
       windows: { ...state.windows, [action.id]: { ...current, zIndex: state.nextZIndex } },
@@ -186,6 +186,18 @@ export function edgeForArrow(key: string): MapWindowEdge | undefined {
   if (key === "ArrowDown") return "bottom";
   if (key === "ArrowLeft") return "left";
   return undefined;
+}
+
+function firstAvailableCascade(windows: Record<string, MapWindowLayout>): number {
+  const used = new Set(
+    Object.values(windows)
+      .filter((window) => window.placement === "floating" && !window.position)
+      .map((window) => window.cascade)
+  );
+  for (let cascade = 0; cascade < 6; cascade += 1) {
+    if (!used.has(cascade)) return cascade;
+  }
+  return 0;
 }
 
 function clamp(value: number, minimum: number, maximum: number): number {

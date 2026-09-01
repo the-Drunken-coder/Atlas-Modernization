@@ -132,9 +132,14 @@ export function MapWindow({
     return dockTargetAtPoint({ x: clientX, y: clientY }, bounds);
   };
 
+  const focusAfterRender = (selector: string) => {
+    requestAnimationFrame(() => windowRef.current?.querySelector<HTMLElement>(selector)?.focus());
+  };
+
   const startMove = (event: ReactPointerEvent<HTMLElement>) => {
     const target = event.target;
     if (target instanceof Element && target.closest("button:not([data-map-window-move])")) return;
+    if (dragRef.current || event.isPrimary === false || event.button > 0) return;
     const current = currentPosition();
     if (!current) return;
     dragRef.current = {
@@ -162,8 +167,8 @@ export function MapWindow({
       const parent = workspaceRef.current;
       if (drag.dockedEdge && !drag.detached && element && parent) {
         const horizontal = isHorizontalEdge(drag.dockedEdge);
-        const perpendicularDistance = Math.abs(horizontal ? deltaY : deltaX);
-        if (perpendicularDistance <= DOCK_DETACH_DISTANCE) {
+        const detachDistance = inwardDistance(drag.dockedEdge, deltaX, deltaY);
+        if (detachDistance <= DOCK_DETACH_DISTANCE) {
           const axisLength = horizontal ? parent.clientWidth : parent.clientHeight;
           const parallelDistance = horizontal ? deltaX : deltaY;
           const offset = clampDockOffset(
@@ -194,7 +199,13 @@ export function MapWindow({
       const drag = dragRef.current;
       if (!drag || drag.pointerId !== finishEvent.pointerId) return;
       dragRef.current = undefined;
-      if (layout.collapsed) suppressExpandRef.current = drag.moved && !drag.detached;
+      const suppressExpand = finishEvent.type === "pointerup" && layout.collapsed && drag.moved && !drag.detached;
+      suppressExpandRef.current = suppressExpand;
+      if (suppressExpand) {
+        requestAnimationFrame(() => {
+          suppressExpandRef.current = false;
+        });
+      }
       stopListeningRef.current?.();
       if (moveHandle.hasPointerCapture?.(finishEvent.pointerId)) {
         moveHandle.releasePointerCapture(finishEvent.pointerId);
@@ -220,6 +231,7 @@ export function MapWindow({
   const stopMoveOnLostPointerCapture = () => {
     if (!dragRef.current) return;
     dragRef.current = undefined;
+    suppressExpandRef.current = false;
     stopListeningRef.current?.();
     setDragPreview();
   };
@@ -250,6 +262,18 @@ export function MapWindow({
       const parent = workspaceRef.current;
       const element = windowRef.current;
       if (!parent || !element) return;
+      if (event.key === inwardArrow(layout.edge)) {
+        const current = currentPosition();
+        if (!current) return;
+        event.preventDefault();
+        dispatch({
+          type: "float",
+          id,
+          position: keyboardDetachPosition(layout.edge, current, parent, element)
+        });
+        focusAfterRender("[data-map-window-move]");
+        return;
+      }
       let nextOffset: number | undefined;
       if (event.key === "Home") nextOffset = clampDockOffset(layout.edge, 0, parent, element);
       else if (event.key === "End") nextOffset = clampDockOffset(layout.edge, 1, parent, element);
@@ -302,12 +326,13 @@ export function MapWindow({
       if (target) dispatch({ type: "dock", id, target });
     }
     dispatch({ type: "toggle-collapse", id });
+    focusAfterRender(".map-window__pull");
   };
 
   const handleMetaLabel = typeof meta === "string" || typeof meta === "number" ? `, ${meta}` : "";
   const handleLabel = `Expand ${title} window${handleMetaLabel}${
     handleStatus ? `, ${handleStatus}` : ""
-  }. Use arrow keys to move; use Alt plus an arrow to change edges.`;
+  }. Use parallel arrows to move; use the inward arrow to detach; use Alt plus an arrow to change edges.`;
   const peekAlign = (layout.dockOffset ?? 0.5) < 0.28 ? "start" : (layout.dockOffset ?? 0.5) > 0.72 ? "end" : "center";
 
   return (
@@ -318,6 +343,7 @@ export function MapWindow({
       aria-label={title}
       data-collapsed={layout.collapsed || undefined}
       data-placement={layout.placement}
+      data-positioned={layout.position ? true : undefined}
       data-edge={layout.edge}
       data-dock-offset={layout.dockOffset}
       data-handle-status={handleStatus}
@@ -325,6 +351,10 @@ export function MapWindow({
       data-map-window
       data-map-interaction-control
       style={style}
+      onFocusCapture={(event) => {
+        if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) return;
+        dispatch({ type: "activate", id });
+      }}
       onPointerDown={() => dispatch({ type: "activate", id })}
     >
       {layout.collapsed && docked ? (
@@ -341,6 +371,7 @@ export function MapWindow({
                 return;
               }
               dispatch({ type: "toggle-collapse", id });
+              focusAfterRender(".map-window__collapse");
             }}
             onKeyDown={moveWithKeyboard}
             onLostPointerCapture={stopMoveOnLostPointerCapture}
@@ -369,7 +400,7 @@ export function MapWindow({
           >
             <IconButton
               className="map-window__move"
-              label={`Move ${title} window. Use arrow keys to move; use Alt plus an arrow to attach to an edge.`}
+              label={`Move ${title} window. Use arrow keys to move; use the inward arrow to detach; use Alt plus an arrow to attach to an edge.`}
               data-map-window-move
               onKeyDown={moveWithKeyboard}
             >
@@ -411,6 +442,35 @@ function dockedWindowStyle(edge: MapWindowEdge, offset: number, zIndex: number):
     return { top: "auto", right: "auto", bottom: 0, left: position, transform: "translateX(-50%)", zIndex };
   }
   return { top: position, right: "auto", bottom: "auto", left: 0, transform: "translateY(-50%)", zIndex };
+}
+
+function inwardDistance(edge: MapWindowEdge, deltaX: number, deltaY: number): number {
+  if (edge === "top") return deltaY;
+  if (edge === "right") return -deltaX;
+  if (edge === "bottom") return -deltaY;
+  return deltaX;
+}
+
+function inwardArrow(edge: MapWindowEdge): string {
+  if (edge === "top") return "ArrowDown";
+  if (edge === "right") return "ArrowLeft";
+  if (edge === "bottom") return "ArrowUp";
+  return "ArrowRight";
+}
+
+function keyboardDetachPosition(
+  edge: MapWindowEdge,
+  current: MapWindowPosition,
+  parent: HTMLElement,
+  element: HTMLElement
+): MapWindowPosition {
+  const distance = DOCK_DETACH_DISTANCE + 8;
+  const next = { ...current };
+  if (edge === "top") next.top += distance;
+  else if (edge === "right") next.left -= distance;
+  else if (edge === "bottom") next.top -= distance;
+  else next.left += distance;
+  return clampPosition(next.left, next.top, parent, element);
 }
 
 function dockOffsetAtCurrentPosition(

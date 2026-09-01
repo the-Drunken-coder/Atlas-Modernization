@@ -572,7 +572,7 @@
 }
 
 @media (max-width: 720px) {
-  .map-window[data-placement="floating"] {
+  .map-window[data-placement="floating"]:not([data-positioned]) {
     top: auto !important;
     right: 8px !important;
     bottom: calc(8px + var(--map-window-offset, 0px)) !important;
