@@ -321,9 +321,12 @@ changing Plugin state.
 
 The first architecture has no separate Plugin Definition and Plugin Instance concepts. One configured Plugin ID maps to one deployment-managed container, whose Plugin may be `starting`, `available`, or `unavailable`. A Plugin may handle multiple concurrent requests or monitored areas internally, but Atlas does not schedule multiple active instances of the same Plugin.
 
-## Configuration and upgrades
+## Managed deployment and upgrades
 
-Plugin settings live in deployment files and environment variables mounted into the Plugin container. Atlas has no Plugin configuration API or Plugin configuration resources. Runtime operator intent still uses Operations or Tasks.
+Package schema 1 has no Plugin setting or secret injection model. The manager supplies only fixed platform values: the
+private Source Gateway origin and, for SDK-using Plugins, the private Core origin plus one shared deployment-owned managed
+API key. A release cannot provide or override them. A later package-schema major may add Plugin settings when a concrete
+Plugin requires them. Runtime operator intent still uses Operations or Tasks.
 
 The host-side Atlas Core CLI manages Installed Plugins from one signed Atlas catalog. Each Plugin release has its own
 version and workflow. Its strict `.atlas-plugin` JSON document pins one multi-architecture image by digest and declares
@@ -341,11 +344,6 @@ retains the selected release and one previous release. A failed Plugin update re
 automatically, and the operator may roll back explicitly to that previous release when it remains compatible and
 non-revoked. The first managed scope is trusted query-only Plugins, and every update requires operator approval.
 Production restarts preserve durable Core storage.
-
-Operator configuration is separate from immutable Plugin releases. Update and disable preserve it. Uninstall preserves
-it for a later reinstall, while an explicit purge removes Atlas-managed Plugin configuration. Purge never deletes an
-external secret source. A later package schema may declare required settings and secret names. Package schema 1 has no
-configuration declarations, and releases never contain secret values.
 
 The CLI embeds versioned Atlas Plugin catalog public keys and a minimum catalog checkpoint. Atlas signs the exact catalog
 bytes with Ed25519. A protected append-only ledger preserves release hashes and one-way revocations before GitHub Pages
@@ -439,7 +437,8 @@ The building is not an Asset or Track. Source-provided height is advisory data a
 - A private Source Gateway container hosts Source connectors for all Plugins.
 - Source connectors pin external origins, validate each selected address against connector egress policy, accept bounded relative requests through the fixed private Gateway protocol, apply configured header allowlists plus fixed forbidden headers, and do not follow upstream redirects.
 - Every installed Plugin may use every configured Source connector.
-- Plugin and Source Gateway configuration is deployment-owned; secrets come from environment variables or Compose secrets.
+- Core endpoint and Source Gateway configuration is deployment-owned; Source Gateway secrets come from environment
+  variables or Compose secrets.
 - Plugin containers have no persistent private storage in the first architecture.
 - Independent Plugin releases declare a package schema, required Core-to-Plugin and Plugin-to-Source-Gateway majors, an
   Atlas Protocol revision when they use the SDK, and fixed Command Interface interactions. The CLI checks compatibility
@@ -459,8 +458,8 @@ The building is not an Asset or Track. Source-provided height is advisory data a
   from a newer host CLI.
 - The manager retains the selected and previous Plugin releases, restores failed updates, and supports explicit rollback
   only to a compatible, non-revoked previous release.
-- Operator configuration survives update, disable, and uninstall until an explicit purge; Plugin releases never contain
-  secret values.
+- Package schema 1 has no general Plugin setting or secret lifecycle. The CLI owns the fixed Core and Source Gateway
+  connection values that managed Plugin containers need.
 - One Ed25519-signed Atlas catalog authenticates exact release-document hashes and image digests. Revocation prevents new
   use of a release but does not stop an Installed Plugin without operator approval.
 - The catalog comes from a protected append-only ledger, uses ordered key epochs with per-epoch sequence floors, and is

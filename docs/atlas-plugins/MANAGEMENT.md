@@ -14,8 +14,9 @@ The manager stores Plugin state under the existing private Atlas Core configurat
 ```text
 catalog-state.json                  accepted catalog receipt and anti-rollback state
 base/
-  docker-compose.yml               immutable bundle for the installed Core release
+  docker-compose.yml               immutable files from the installed Core release
   docker-compose.init.yml
+  source_gateway.production.json
 transaction/                       present only during one global mutation
   journal.json
   before/                          byte-for-byte restorable files
@@ -28,9 +29,8 @@ plugins/
     active/                          present only while enabled
       compose.yml
       core-endpoint.json
-      source-connector.json
+      source-connector.json          present only when the release declares one
       deployment.json
-    config/                          retained until explicit purge
 ```
 
 The existing root deployment state remains the only authority for enablement through its sorted `enabledPlugins` IDs.
@@ -57,10 +57,19 @@ IDs. The major arrays are sorted and duplicate-free. A schema-3 state is written
 Core update from release metadata and exact package assets. The CLI does not infer compatibility or base images from an
 active container. Schema 2 remains current-v1 state and cannot use independent Plugin commands.
 
-`base/` is copied from the exact installed Core package during initialization or Core update. Every restart-capable
-Plugin operation uses that retained Compose bundle and `baseDeployment.coreImage`, never the Compose file or Core image
-from a newer CLI package. It verifies the bundle hash and local Core image ID before changing containers. This preserves
-the installed Core version while allowing a newer CLI to manage compatible Plugins.
+`base/` is copied from the exact installed Core package during initialization or Core update. It contains every relative
+file referenced by either retained Compose file. Package assembly rejects symlinks, path escapes, and a reference whose
+target is absent. `bundleSha256` hashes a deterministic archive of every retained relative path and its bytes, including
+`source_gateway.production.json`. Every restart-capable Plugin operation verifies that complete bundle and uses it with
+`baseDeployment.coreImage`, never the Compose file or Core image from a newer CLI package. It also verifies the local
+Core image ID before changing containers. This preserves the installed Core version while allowing a newer CLI to manage
+compatible Plugins.
+
+Schema-3 initialization or upgrade provisions one full-access managed Core API key and stores its one-time value as
+`ATLAS_PLUGIN_API_KEY` in the existing owner-only root `.env`. The generated service for an SDK-using Plugin receives that
+key as `ATLAS_API_AUTH_KEY` plus the fixed `ATLAS_CORE_ORIGIN=http://api:8000`. A release cannot supply or override either
+value. This root platform credential is the one concrete secret schema 1 needs; schema 1 has no per-Plugin setting or
+secret lifecycle.
 
 `catalog-state.json` is one atomically replaced object. The encoded byte fields are abbreviated in this example:
 
@@ -98,7 +107,6 @@ warns that it clears that mark. The next initialization still enforces the minim
 
 Both previous fields are `null` before the first successful update. The manager retains only the selected and previous
 release documents. Release documents never change after installation. Active files are generated and disposable.
-Configuration is operator-owned and does not belong to either release.
 
 While enabled, `active/deployment.json` contains exactly:
 
@@ -117,9 +125,10 @@ While enabled, `active/deployment.json` contains exactly:
 The manager regenerates this receipt when a selected release becomes active. The receipt and the other files under
 `active/` are disposable outputs, not trusted inputs. Before Compose reads them, the manager derives a complete temporary
 `active/` directory from root deployment state, `installed.json`, the exact retained release document, fixed templates,
-and operator configuration. It atomically replaces any missing, changed, or extra generated file and validates the full
-Compose model. Container inspection must match the regenerated receipt before an enable, enabled update, rollback, Core
-update, or normal start succeeds.
+and root platform credentials. It omits `source-connector.json` and its Source Gateway mount when the release declares a
+null connector. It atomically replaces any missing, changed, or extra generated file and validates the full Compose model.
+Container inspection must match the regenerated receipt before an enable, enabled update, rollback, Core update, or
+normal start succeeds.
 
 Every file and directory preserves the CLI's existing owner and mode checks. The manager writes private temporary files,
 flushes them, and uses atomic rename. It holds the existing Atlas mutation lock and Docker-engine network lock across
@@ -145,7 +154,6 @@ atlas-core plugins disable <plugin_id>
 atlas-core plugins update <plugin_id|all>
 atlas-core plugins rollback <plugin_id>
 atlas-core plugins uninstall <plugin_id>
-atlas-core plugins purge <plugin_id>
 atlas-core plugins status [plugin_id]
 atlas-core plugins logs <plugin_id> [--follow]
 atlas-core plugins refresh
@@ -155,15 +163,14 @@ Omitting `version` installs the latest compatible, non-revoked stable release. I
 Installed; the operator uses update or rollback to change its selected release. `install` never enables implicitly. The
 interactive menu may offer a second explicit "Enable now?" confirmation after installation.
 
-Uninstall requires the Plugin to be disabled. It removes installed release records and active deployment metadata, but
-retains operator configuration and cached Docker layers. Purge requires the Plugin to be uninstalled and removes only
-Atlas-managed configuration. It never deletes an external environment variable, secret store entry, or source file.
+Uninstall requires the Plugin to be disabled. It removes installed release records and active deployment metadata but
+retains cached Docker layers. Package schema 1 has no separate Plugin configuration lifecycle.
 
 ## Compatibility
 
 Plugin management uses contract compatibility instead of exact CLI and Core package equality. Plugin commands still
-require the same Docker engine recorded by the deployment. Install, disabled-Plugin update, uninstall, purge, refresh,
-status, and logs do not recreate Core. Enable, disable, enabled-Plugin update, and enabled-Plugin rollback may recreate
+require the same Docker engine recorded by the deployment. Install, disabled-Plugin update, uninstall, refresh, status,
+and logs do not recreate Core. Enable, disable, enabled-Plugin update, and enabled-Plugin rollback may recreate
 Core or Source Gateway, so they must use the retained base bundle and exact image records above. Core deployment updates
 retain their exact package-version guard because they replace the Core stack itself.
 
@@ -205,8 +212,8 @@ Recovery for a transaction that did not start a different Core image restores `b
 composition when no durable commit marker exists. Core update recovery follows the storage-aware rules below and never
 blindly starts the prior image. After all target health and identity checks pass, the manager writes and fsyncs the
 commit marker. Recovery that sees that marker keeps the target state and only finishes cleanup. The manager removes the
-transaction directory and fsyncs its parent last. Because the journal sits outside every Plugin subtree, uninstall and
-purge cannot erase their own recovery data.
+transaction directory and fsyncs its parent last. Because the journal sits outside every Plugin subtree, uninstall
+cannot erase its own recovery data.
 
 Install performs these steps:
 
@@ -239,9 +246,9 @@ must remain compatible and non-revoked. After success, selected and previous swa
 the newer release if it also remains permitted. The manager pulls and verifies the retained image when it is missing
 locally. Rollback of an Enabled Plugin also requires Atlas to be running.
 
-Disable removes the Plugin container, active files, and deployment membership. It retains selected and previous releases,
-configuration, and Docker cache. A running deployment recreates Core and Source Gateway and waits for health. A stopped
-deployment stays stopped.
+Disable removes the Plugin container, active files, and deployment membership. It retains selected and previous releases
+and Docker cache. A running deployment recreates Core and Source Gateway and waits for health. A stopped deployment stays
+stopped.
 
 `update all` processes every Installed Plugin in sorted Plugin ID order. Each Plugin is its own transaction. The command
 stops at the first failure, reports already updated Plugins, and leaves the failed Plugin on its prior release. It does
@@ -278,9 +285,15 @@ Normal `atlas-core start` acquires the mutation locks, regenerates every Enabled
 and validates the assembled Compose model before it starts a container. It verifies that the recorded Core and Enabled
 Plugin image IDs still exist locally, then uses the retained base bundle with Compose pulling disabled. It inspects every
 started container and waits for base health, Plugin manifests, and Plugin health before recording the deployment as
-started. A missing or mismatched retained input or local image fails with an instruction to run an explicit update or
-recovery command. Catalog and registry availability are therefore not prerequisites for restarting an already installed
-deployment.
+started. A missing or changed retained file fails and names the installed Core package that must restore the bundle.
+
+If an exact recorded image is missing or its local ID no longer matches, normal start remains stopped and instructs the
+operator to run `atlas-core start --repair-images`. The repair form holds the same locks and re-pulls only the exact Core
+and base-image digests in the retained bundle plus the exact Enabled Plugin digests in retained release documents. It
+verifies every platform manifest and local image ID, atomically replaces the image receipts, then performs the normal
+pull-disabled start. It does not read the catalog, select a version, or alter Core or Plugin state. Registry failure leaves
+the deployment stopped and its prior receipts intact. A registry is not required to restart when all recorded images are
+still present.
 
 The first independent-release Core update does not migrate enabled bundled-v1 Plugins. If schema-2 state contains an
 enabled Plugin without a verified `installed.json`, the update stops without changing the deployment and tells the
@@ -298,7 +311,7 @@ Catalog refresh verifies the new catalog completely, then atomically replaces `c
 `(key_epoch, sequence)` pair and catalog hash advance with the cached bytes in that one write, so a crash cannot separate
 the usable catalog from its anti-rollback state.
 
-After catalog expiry, install, enable, update, and manual rollback fail closed. Status, logs, disable, uninstall, purge,
+After catalog expiry, install, enable, update, and manual rollback fail closed. Status, logs, disable, uninstall,
 Core start, and Core stop continue to work from local verified state. Core start may therefore restart an already
 Enabled Plugin, but it does not permit a disabled Installed Plugin to become Enabled. Automatic rollback inside an
 already-started update uses the before-state captured under the fresh catalog that admitted that update.

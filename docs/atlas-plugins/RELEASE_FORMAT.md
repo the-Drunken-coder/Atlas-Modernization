@@ -35,8 +35,7 @@ Package schema 1 has exactly these top-level fields:
   "plugin_to_source_gateway_protocol_major": 1,
   "atlas_protocol_revision": null,
   "interactions": ["map_area"],
-  "source_connector": null,
-  "configuration": []
+  "source_connector": null
 }
 ```
 
@@ -60,11 +59,8 @@ Field rules:
 - `interactions` is a sorted, duplicate-free array of fixed Command Interface interaction kinds. Every interaction
   advertised later by a runtime Operation must appear here. Package schema 1 accepts `map_area`; the array may be empty.
 - `source_connector` is either `null` or one strict Source Gateway connector policy using the existing connector schema.
-  A non-null connector ID must equal `plugin_id`. Package schema 1 rejects secret headers because it has no non-empty
-  configuration declaration yet.
-- `configuration` is an empty array in package schema 1. This records that configuration belongs outside immutable
-  releases without inventing a generic setting or secret injection contract before a Plugin needs one. A non-empty
-  configuration model requires a later package-schema major and a concrete Plugin forcing case.
+  A non-null connector ID must equal `plugin_id`. Package schema 1 rejects secret headers and defines no Plugin setting or
+  secret injection model. A later package-schema major may add one when a concrete Plugin requires it.
 
 The repository's `atlas-plugin.json` file is authoring input, not part of the published release. The independent release
 workflow updates `scripts/plugins.mjs` so `source_connector` in that authoring file accepts `null` or one local filename.
@@ -81,13 +77,23 @@ derives deployment details from fixed templates. Runtime Operations remain autho
 ## Generated deployment
 
 The manager derives one Compose service from `plugin_id`. It fixes the private network, port `8080`, `/health` check,
-restart policy, Source Gateway origin, Core endpoint fragment, connector fragment mount, and container filesystem access.
-The Plugin release can select only its image, declared contracts and interactions, and optional connector policy.
+restart policy, Source Gateway origin, Core endpoint fragment, optional connector fragment mount, and container filesystem
+access. The Plugin release can select only its image, declared contracts and interactions, and optional connector policy.
 
 The generated service name is `atlas-plugin-<plugin_id>` with underscores converted to hyphens. Plugin identifiers do
 not contain hyphens, so this conversion cannot collide. Core reaches the Plugin at
 `http://atlas-plugin-<normalized_id>:8080`. The Plugin listens on port `8080` and receives the fixed
 `ATLAS_SOURCE_GATEWAY_ORIGIN=http://source-gateway:8080` environment variable.
+
+When `atlas_protocol_revision` is non-null, the service also receives
+`ATLAS_CORE_ORIGIN=http://api:8000` and `ATLAS_API_AUTH_KEY=${ATLAS_PLUGIN_API_KEY}`. The CLI provisions the shared
+full-access managed key once, stores it in the owner-only root deployment configuration, and supplies it to Compose. The
+release cannot provide or override either value. These fixed platform values are not a general Plugin configuration
+mechanism.
+
+When `source_connector` is non-null, the manager writes the validated object to `active/source-connector.json` and mounts
+that file into Source Gateway. When it is null, the manager generates neither the file nor a Source Gateway mount for the
+Plugin. It never writes JSON `null` as a connector file.
 
 After pulling the signed image-index reference, the manager records the selected platform-manifest digest and local
 Docker image ID. After starting a Plugin, it inspects the container and requires its configured image reference and
@@ -161,7 +167,7 @@ issue time, and expiry as described in `MANAGEMENT.md`. It compares `(key_epoch,
 an older epoch, a lower sequence within the accepted epoch, the same pair with different bytes, or a pair below the
 minimum checkpoint embedded in its CLI. A higher trusted epoch supersedes every sequence from an older epoch. It may use
 a cached catalog until `expires_at`. After expiry, installed Plugins continue to run and the operator may inspect,
-disable, uninstall, or purge them. Install, enable, update, and manual rollback require a fresh catalog. The menu checks
+disable, or uninstall them. Install, enable, update, and manual rollback require a fresh catalog. The menu checks
 when opened and exposes a manual refresh; no background updater runs.
 
 ## Revocation and key rotation
