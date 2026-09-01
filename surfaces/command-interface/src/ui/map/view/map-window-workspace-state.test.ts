@@ -6,7 +6,7 @@ import {
 } from "./map-window-workspace-state.js";
 
 describe("map window workspace state", () => {
-  it("keeps ordered rails and only one open popout on each edge", () => {
+  it("keeps independent continuous positions for windows attached to the same edge", () => {
     let state = mapWindowWorkspaceReducer(initialMapWindowWorkspaceState, {
       type: "register",
       id: "scan",
@@ -16,48 +16,48 @@ describe("map window workspace state", () => {
     state = mapWindowWorkspaceReducer(state, {
       type: "dock",
       id: "scan",
-      target: { edge: "top", index: 0 }
+      target: { edge: "top", offset: 0.2 }
     });
     state = mapWindowWorkspaceReducer(state, {
       type: "dock",
       id: "tasks",
-      target: { edge: "top", index: 0 }
+      target: { edge: "top", offset: 0.8 }
     });
 
-    expect(state.rails.top).toEqual(["tasks", "scan"]);
-    expect(state.openByEdge.top).toBe("tasks");
+    expect(state.windows.scan).toMatchObject({ placement: "docked", edge: "top", dockOffset: 0.2 });
+    expect(state.windows.tasks).toMatchObject({ placement: "docked", edge: "top", dockOffset: 0.8 });
 
-    state = mapWindowWorkspaceReducer(state, {
-      type: "dock",
-      id: "scan",
-      target: { edge: "bottom", index: 0 }
-    });
-    expect(state.rails.top).toEqual(["tasks"]);
-    expect(state.rails.bottom).toEqual(["scan"]);
-    expect(state.openByEdge).toEqual({ top: "tasks", bottom: "scan" });
+    state = mapWindowWorkspaceReducer(state, { type: "dock-position", id: "scan", offset: 0.63 });
+    state = mapWindowWorkspaceReducer(state, { type: "toggle-collapse", id: "scan" });
+    expect(state.windows.scan).toMatchObject({ dockOffset: 0.63, collapsed: true });
 
     state = mapWindowWorkspaceReducer(state, {
       type: "float",
       id: "tasks",
       position: { left: 120, top: 80 }
     });
-    expect(state.rails.top).toEqual([]);
-    expect(state.openByEdge.top).toBeUndefined();
-    expect(state.windows.tasks).toMatchObject({ placement: "floating", position: { left: 120, top: 80 } });
+    expect(state.windows.tasks).toMatchObject({
+      placement: "floating",
+      edge: undefined,
+      dockOffset: undefined,
+      position: { left: 120, top: 80 }
+    });
   });
 
-  it("finds insertion positions on every map edge", () => {
+  it("finds continuous positions on every map edge", () => {
     const bounds = { left: 100, top: 50, right: 900, bottom: 650, width: 800, height: 600 };
-    const lengths = { top: 2, right: 2, bottom: 2, left: 2 };
 
-    expect(dockTargetAtPoint({ x: 500, y: 52 }, bounds, lengths)).toEqual({ edge: "top", index: 1 });
-    expect(dockTargetAtPoint({ x: 898, y: 500 }, bounds, lengths)).toEqual({ edge: "right", index: 2 });
-    expect(dockTargetAtPoint({ x: 300, y: 648 }, bounds, lengths)).toEqual({ edge: "bottom", index: 1 });
-    expect(dockTargetAtPoint({ x: 102, y: 100 }, bounds, lengths)).toEqual({ edge: "left", index: 0 });
-    expect(dockTargetAtPoint({ x: 500, y: 300 }, bounds, lengths)).toBeUndefined();
+    expect(dockTargetAtPoint({ x: 500, y: 52 }, bounds)).toEqual({ edge: "top", offset: 0.5 });
+    expect(dockTargetAtPoint({ x: 898, y: 500 }, bounds)).toEqual({ edge: "right", offset: 0.75 });
+    expect(dockTargetAtPoint({ x: 300, y: 648 }, bounds)).toEqual({ edge: "bottom", offset: 0.25 });
+    expect(dockTargetAtPoint({ x: 102, y: 100 }, bounds)).toEqual({
+      edge: "left",
+      offset: 1 / 12
+    });
+    expect(dockTargetAtPoint({ x: 500, y: 300 }, bounds)).toBeUndefined();
   });
 
-  it("does not pop open a closed tab when it is reordered", () => {
+  it("clamps stored edge positions to the normalized range", () => {
     let state = mapWindowWorkspaceReducer(initialMapWindowWorkspaceState, {
       type: "register",
       id: "scan",
@@ -66,17 +66,11 @@ describe("map window workspace state", () => {
     state = mapWindowWorkspaceReducer(state, {
       type: "dock",
       id: "scan",
-      target: { edge: "top", index: 0 }
+      target: { edge: "right", offset: 2 }
     });
-    state = mapWindowWorkspaceReducer(state, { type: "toggle-popout", id: "scan" });
-    state = mapWindowWorkspaceReducer(state, {
-      type: "dock",
-      id: "scan",
-      target: { edge: "bottom", index: 0 },
-      open: false
-    });
+    expect(state.windows.scan?.dockOffset).toBe(1);
 
-    expect(state.rails.bottom).toEqual(["scan"]);
-    expect(state.openByEdge).toEqual({});
+    state = mapWindowWorkspaceReducer(state, { type: "dock-position", id: "scan", offset: -1 });
+    expect(state.windows.scan?.dockOffset).toBe(0);
   });
 });

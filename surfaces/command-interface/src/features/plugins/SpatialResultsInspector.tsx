@@ -1,5 +1,6 @@
 import type { SpatialFeature } from "@the-drunken-coder/atlas-sdk";
 import { MapWindow } from "../../ui/map/view/MapWindow.js";
+import { SearchIcon } from "../../ui/primitives/icons.js";
 import { PanelListRow } from "../shared/PanelListRow.js";
 import { FieldGrid } from "../shared/panels.js";
 import { formatSpatialReason, formatSpatialRetrievalTime } from "./spatial-format.js";
@@ -29,6 +30,9 @@ export function SpatialResultsInspector({
       id="spatial-results"
       title={spatial.target.operationName}
       meta={resultState ? `${resultLabel} · ${resultState}` : resultLabel}
+      handleIcon={<SearchIcon size={15} />}
+      handleBadge={resultCount > 99 ? "99+" : resultCount}
+      handleStatus={spatial.error ? "error" : spatial.status === "loading" ? "loading" : undefined}
       onClose={spatial.clear}
       footer={
         <>

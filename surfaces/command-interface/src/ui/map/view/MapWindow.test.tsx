@@ -4,16 +4,20 @@ import { describe, expect, it, vi } from "vitest";
 import { MapWindow } from "./MapWindow.js";
 import { MapWindowWorkspace } from "./MapWindowWorkspace.js";
 
+const moveLabel = (title: string) =>
+  `Move ${title} window. Use arrow keys to move; use Alt plus an arrow to attach to an edge.`;
+
 describe("MapWindow", () => {
-  it("collapses without hiding its attribution footer and closes explicitly", async () => {
+  it("parks a floating window as a pull handle with reachable attribution and close actions", async () => {
     const onClose = vi.fn();
     const user = userEvent.setup();
-    render(
+    const view = render(
       <MapWindowWorkspace>
         <MapWindow
           id="fixture"
           title="Fixture results"
           meta="3 results"
+          handleBadge={3}
           footer={<a href="https://example.test">Source</a>}
           onClose={onClose}
         >
@@ -21,20 +25,30 @@ describe("MapWindow", () => {
         </MapWindow>
       </MapWindowWorkspace>
     );
+    const workspace = view.container.firstElementChild as HTMLElement;
+    const windowElement = screen.getByRole("complementary", { name: "Fixture results" });
+    workspace.getBoundingClientRect = () => rect(0, 0, 500, 400);
+    windowElement.getBoundingClientRect = () => rect(300, 120, 180, 200);
 
     await user.click(screen.getByRole("button", { name: "Collapse Fixture results window" }));
-    expect(screen.getByText("Window body")).not.toBeVisible();
-    expect(screen.getByRole("link", { name: "Source" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Expand Fixture results window" })).toHaveAttribute(
-      "aria-expanded",
-      "false"
-    );
+    expect(windowElement).toHaveAttribute("data-placement", "docked");
+    expect(windowElement).toHaveAttribute("data-edge", "right");
+    expect(windowElement).toHaveAttribute("data-collapsed", "true");
+    expect(windowElement).toHaveClass("map-window--handle");
+    expect(screen.queryByText("Window body")).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Source" })).toBeInTheDocument();
+    expect(windowElement.querySelector(".map-window__pull-badge")).toHaveTextContent("3");
 
+    await user.click(screen.getByRole("button", { name: /^Expand Fixture results window, 3 results/ }));
+    expect(screen.getByText("Window body")).toBeVisible();
+    expect(screen.getByRole("link", { name: "Source" })).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "Collapse Fixture results window" }));
     await user.click(screen.getByRole("button", { name: "Close Fixture results window" }));
     expect(onClose).toHaveBeenCalledOnce();
   });
 
-  it("moves with arrow keys and clamps the window to its map", () => {
+  it("moves with arrow keys and clamps the floating window to its map", () => {
     let notifyResize: (() => void) | undefined;
     const resizeObserverDescriptor = Object.getOwnPropertyDescriptor(globalThis, "ResizeObserver");
     Object.defineProperty(globalThis, "ResizeObserver", {
@@ -56,9 +70,7 @@ describe("MapWindow", () => {
         </MapWindowWorkspace>
       );
       const map = view.container.firstElementChild as HTMLElement;
-      const windowElement = screen.getByRole("complementary", {
-        name: "Fixture results"
-      });
+      const windowElement = screen.getByRole("complementary", { name: "Fixture results" });
       Object.defineProperties(map, {
         clientWidth: { value: 500, configurable: true },
         clientHeight: { value: 400, configurable: true }
@@ -70,9 +82,7 @@ describe("MapWindow", () => {
       map.getBoundingClientRect = () => rect(0, 0, 500, 400);
       windowElement.getBoundingClientRect = () => rect(100, 50, 200, 150);
 
-      const move = screen.getByRole("button", {
-        name: "Move Fixture results window. Use arrow keys; use Alt plus an arrow to dock."
-      });
+      const move = screen.getByRole("button", { name: moveLabel("Fixture results") });
       fireEvent.keyDown(move, { key: "ArrowRight" });
       expect(windowElement).toHaveStyle({ left: "108px", top: "50px" });
 
@@ -94,7 +104,8 @@ describe("MapWindow", () => {
     }
   });
 
-  it("docks to all four rails and keeps one popout open per edge", () => {
+  it("keeps independently attached windows visible on the same edge", async () => {
+    const user = userEvent.setup();
     render(
       <MapWindowWorkspace>
         <MapWindow id="first" title="First" onClose={() => undefined}>
@@ -106,38 +117,91 @@ describe("MapWindow", () => {
       </MapWindowWorkspace>
     );
 
-    const firstMove = screen.getByRole("button", {
-      name: "Move First window. Use arrow keys; use Alt plus an arrow to dock."
-    });
-    const secondMove = screen.getByRole("button", {
-      name: "Move Second window. Use arrow keys; use Alt plus an arrow to dock."
-    });
+    const firstMove = screen.getByRole("button", { name: moveLabel("First") });
+    const secondMove = screen.getByRole("button", { name: moveLabel("Second") });
 
     fireEvent.keyDown(firstMove, { key: "ArrowLeft", altKey: true });
     expect(screen.getByRole("complementary", { name: "First" })).toHaveAttribute("data-edge", "left");
     fireEvent.keyDown(firstMove, { key: "ArrowRight", altKey: true });
     expect(screen.getByRole("complementary", { name: "First" })).toHaveAttribute("data-edge", "right");
     fireEvent.keyDown(firstMove, { key: "ArrowUp", altKey: true });
-    expect(screen.getByRole("button", { name: "First" })).toHaveAttribute("aria-expanded", "true");
+    fireEvent.keyDown(secondMove, { key: "ArrowUp", altKey: true });
+
     expect(screen.getByRole("complementary", { name: "First" })).toHaveAttribute("data-edge", "top");
+    expect(screen.getByRole("complementary", { name: "Second" })).toHaveAttribute("data-edge", "top");
+    expect(screen.getByText("First body")).toBeVisible();
+    expect(screen.getByText("Second body")).toBeVisible();
 
-    fireEvent.keyDown(secondMove, { key: "ArrowDown", altKey: true });
-    expect(screen.getByRole("button", { name: "Second" })).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByRole("complementary", { name: "Second" })).toHaveAttribute("data-edge", "bottom");
-    expect(screen.getByRole("complementary", { name: "First" })).toBeVisible();
-
-    fireEvent.keyDown(
-      screen.getByRole("button", {
-        name: "Move Second window. Use arrow keys; use Alt plus an arrow to dock."
-      }),
-      { key: "ArrowUp", altKey: true }
-    );
-    expect(screen.getByRole("button", { name: "First" })).toHaveAttribute("aria-expanded", "false");
-    expect(screen.getByRole("button", { name: "Second" })).toHaveAttribute("aria-expanded", "true");
-    expect(screen.queryByRole("complementary", { name: "First" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Collapse First window" }));
+    expect(screen.getByRole("complementary", { name: "First" })).toHaveAttribute("data-placement", "docked");
+    expect(screen.queryByText("First body")).not.toBeInTheDocument();
+    expect(screen.getByText("Second body")).toBeVisible();
   });
 
-  it("shows the insertion rail while a window is dragged to an edge", () => {
+  it("slides a collapsed handle without reopening and expands when pulled away from its edge", () => {
+    const view = render(
+      <MapWindowWorkspace>
+        <MapWindow id="fixture" title="Fixture" handleBadge={12} onClose={() => undefined}>
+          Window body
+        </MapWindow>
+      </MapWindowWorkspace>
+    );
+    const workspace = view.container.firstElementChild as HTMLElement;
+    const windowElement = screen.getByRole("complementary", { name: "Fixture" });
+    Object.defineProperties(workspace, {
+      clientWidth: { value: 800, configurable: true },
+      clientHeight: { value: 600, configurable: true }
+    });
+    Object.defineProperties(windowElement, {
+      offsetWidth: { value: 200, configurable: true },
+      offsetHeight: { value: 150, configurable: true }
+    });
+    workspace.getBoundingClientRect = () => rect(0, 0, 800, 600);
+    windowElement.getBoundingClientRect = () => rect(600, 150, 200, 150);
+
+    fireEvent.keyDown(screen.getByRole("button", { name: moveLabel("Fixture") }), {
+      key: "ArrowRight",
+      altKey: true
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Collapse Fixture window" }));
+    Object.defineProperties(windowElement, {
+      offsetWidth: { value: 38 },
+      offsetHeight: { value: 48 }
+    });
+    windowElement.getBoundingClientRect = () => rect(762, 201, 38, 48);
+
+    let handle = screen.getByRole("button", { name: /^Expand Fixture window/ });
+    fireEvent.keyDown(handle, { key: "ArrowDown", altKey: true });
+    expect(windowElement).toHaveAttribute("data-edge", "bottom");
+    expect(windowElement).toHaveAttribute("data-collapsed", "true");
+    fireEvent.keyDown(handle, { key: "ArrowRight", altKey: true });
+    expect(windowElement).toHaveAttribute("data-edge", "right");
+    expect(windowElement).toHaveAttribute("data-collapsed", "true");
+    handle = screen.getByRole("button", { name: /^Expand Fixture window/ });
+    fireEvent.pointerDown(handle, { pointerId: 21, clientX: 780, clientY: 225 });
+    fireEvent.pointerMove(handle, { pointerId: 21, clientX: 784, clientY: 345 });
+    fireEvent.pointerUp(handle, { pointerId: 21, clientX: 784, clientY: 345 });
+
+    expect(windowElement).toHaveAttribute("data-collapsed", "true");
+    expect(Number(windowElement.getAttribute("data-dock-offset"))).toBeCloseTo(0.575);
+    fireEvent.click(handle);
+    expect(windowElement).toHaveAttribute("data-collapsed", "true");
+    fireEvent.click(handle);
+    expect(windowElement).not.toHaveAttribute("data-collapsed");
+
+    fireEvent.click(screen.getByRole("button", { name: "Collapse Fixture window" }));
+    const pulledHandle = screen.getByRole("button", { name: /^Expand Fixture window/ });
+    windowElement.getBoundingClientRect = () => rect(762, 321, 38, 48);
+    fireEvent.pointerDown(pulledHandle, { pointerId: 22, clientX: 780, clientY: 345 });
+    fireEvent.pointerMove(pulledHandle, { pointerId: 22, clientX: 715, clientY: 350 });
+    fireEvent.pointerUp(pulledHandle, { pointerId: 22, clientX: 715, clientY: 350 });
+
+    expect(windowElement).toHaveAttribute("data-placement", "floating");
+    expect(windowElement).not.toHaveAttribute("data-collapsed");
+    expect(screen.getByText("Window body")).toBeVisible();
+  });
+
+  it("previews and stores the continuous edge position used for pointer docking", () => {
     const view = render(
       <MapWindowWorkspace>
         <MapWindow id="fixture" title="Fixture" onClose={() => undefined}>
@@ -161,16 +225,18 @@ describe("MapWindow", () => {
     windowElement.getBoundingClientRect = () => rect(350, 200, 400, 240);
 
     fireEvent.pointerDown(bar, { pointerId: 7, clientX: 500, clientY: 220 });
-    fireEvent.pointerMove(bar, { pointerId: 7, clientX: 500, clientY: 20 });
-    expect(view.container.querySelector('.map-window-dock-zone[data-edge="top"]')).toBeInTheDocument();
-    expect(view.container.querySelector(".map-window-rail--top .map-window-rail__slot")).toBeInTheDocument();
+    fireEvent.pointerMove(bar, { pointerId: 7, clientX: 600, clientY: 20 });
+    const preview = view.container.querySelector<HTMLElement>('.map-window-dock-zone[data-edge="top"]');
+    expect(preview).toBeInTheDocument();
+    expect(preview?.style.getPropertyValue("--map-window-dock-offset")).toBe("75%");
 
-    fireEvent.pointerUp(bar, { pointerId: 7, clientX: 500, clientY: 20 });
-    expect(screen.getByRole("button", { name: "Fixture" })).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByRole("complementary", { name: "Fixture" })).toHaveAttribute("data-edge", "top");
+    fireEvent.pointerUp(bar, { pointerId: 7, clientX: 600, clientY: 20 });
+    expect(windowElement).toHaveAttribute("data-placement", "docked");
+    expect(windowElement).toHaveAttribute("data-edge", "top");
+    expect(Number(windowElement.getAttribute("data-dock-offset"))).toBeCloseTo(0.75);
   });
 
-  it("moves a dock tab between ordered edge rails", () => {
+  it("slides along an attached edge and detaches only after moving away from it", () => {
     const view = render(
       <MapWindowWorkspace>
         <MapWindow id="fixture" title="Fixture" onClose={() => undefined}>
@@ -179,28 +245,71 @@ describe("MapWindow", () => {
       </MapWindowWorkspace>
     );
     const workspace = view.container.firstElementChild as HTMLElement;
-    workspace.getBoundingClientRect = () => rect(0, 0, 800, 600);
+    const windowElement = screen.getByRole("complementary", { name: "Fixture" });
+    const bar = windowElement.querySelector<HTMLElement>(".map-window__bar");
+    if (!bar) throw new Error("Expected a map window bar.");
     Object.defineProperties(workspace, {
       clientWidth: { value: 800, configurable: true },
       clientHeight: { value: 600, configurable: true }
     });
-    fireEvent.keyDown(
-      screen.getByRole("button", {
-        name: "Move Fixture window. Use arrow keys; use Alt plus an arrow to dock."
-      }),
-      { key: "ArrowDown", altKey: true }
-    );
-    const tab = screen.getByRole("button", { name: "Fixture" });
+    Object.defineProperties(windowElement, {
+      offsetWidth: { value: 200, configurable: true },
+      offsetHeight: { value: 150, configurable: true }
+    });
+    workspace.getBoundingClientRect = () => rect(0, 0, 800, 600);
+    windowElement.getBoundingClientRect = () => rect(600, 150, 200, 150);
 
-    fireEvent.pointerDown(tab, { pointerId: 11, clientX: 400, clientY: 590 });
-    fireEvent.pointerMove(tab, { pointerId: 11, clientX: 300, clientY: 20 });
-    expect(view.container.querySelector('.map-window-dock-zone[data-edge="top"]')).toBeInTheDocument();
-    fireEvent.pointerUp(tab, { pointerId: 11, clientX: 300, clientY: 20 });
+    const move = screen.getByRole("button", { name: moveLabel("Fixture") });
+    fireEvent.keyDown(move, { key: "ArrowRight", altKey: true });
+    expect(Number(windowElement.getAttribute("data-dock-offset"))).toBeCloseTo(0.375);
 
-    expect(screen.getByRole("button", { name: "Fixture" }).closest(".map-window-rail")).toHaveAttribute(
-      "data-edge",
-      "top"
+    fireEvent.pointerDown(bar, { pointerId: 11, clientX: 700, clientY: 170 });
+    fireEvent.pointerMove(bar, { pointerId: 11, clientX: 705, clientY: 290 });
+    fireEvent.pointerUp(bar, { pointerId: 11, clientX: 705, clientY: 290 });
+
+    expect(windowElement).toHaveAttribute("data-placement", "docked");
+    expect(windowElement).toHaveAttribute("data-edge", "right");
+    expect(Number(windowElement.getAttribute("data-dock-offset"))).toBeCloseTo(0.575);
+
+    fireEvent.pointerDown(bar, { pointerId: 12, clientX: 705, clientY: 290 });
+    fireEvent.pointerMove(bar, { pointerId: 12, clientX: 640, clientY: 300 });
+    fireEvent.pointerUp(bar, { pointerId: 12, clientX: 640, clientY: 300 });
+    expect(windowElement).toHaveAttribute("data-placement", "floating");
+    expect(windowElement).not.toHaveAttribute("data-edge");
+  });
+
+  it("moves an attached window continuously with the keyboard", () => {
+    const view = render(
+      <MapWindowWorkspace>
+        <MapWindow id="fixture" title="Fixture" onClose={() => undefined}>
+          Window body
+        </MapWindow>
+      </MapWindowWorkspace>
     );
+    const workspace = view.container.firstElementChild as HTMLElement;
+    const windowElement = screen.getByRole("complementary", { name: "Fixture" });
+    Object.defineProperties(workspace, {
+      clientWidth: { value: 800, configurable: true },
+      clientHeight: { value: 600, configurable: true }
+    });
+    Object.defineProperties(windowElement, {
+      offsetWidth: { value: 200, configurable: true },
+      offsetHeight: { value: 150, configurable: true }
+    });
+    workspace.getBoundingClientRect = () => rect(0, 0, 800, 600);
+    windowElement.getBoundingClientRect = () => rect(100, 50, 200, 150);
+    const move = screen.getByRole("button", { name: moveLabel("Fixture") });
+
+    fireEvent.keyDown(move, { key: "ArrowUp", altKey: true });
+    expect(Number(windowElement.getAttribute("data-dock-offset"))).toBeCloseTo(0.25);
+    fireEvent.keyDown(move, { key: "ArrowRight" });
+    expect(Number(windowElement.getAttribute("data-dock-offset"))).toBeCloseTo(0.26);
+    fireEvent.keyDown(move, { key: "ArrowRight", shiftKey: true });
+    expect(Number(windowElement.getAttribute("data-dock-offset"))).toBeCloseTo(0.29);
+    fireEvent.keyDown(move, { key: "Home" });
+    expect(Number(windowElement.getAttribute("data-dock-offset"))).toBeCloseTo(0.125);
+    fireEvent.keyDown(move, { key: "End" });
+    expect(Number(windowElement.getAttribute("data-dock-offset"))).toBeCloseTo(0.875);
   });
 });
 
