@@ -69,7 +69,10 @@ Schema-3 initialization or upgrade provisions one full-access managed Core API k
 `ATLAS_PLUGIN_API_KEY` in the existing owner-only root `.env`. The generated service for an SDK-using Plugin receives that
 key as `ATLAS_API_AUTH_KEY` plus the fixed `ATLAS_CORE_ORIGIN=http://api:8000`. A release cannot supply or override either
 value. This root platform credential is the one concrete secret schema 1 needs; schema 1 has no per-Plugin setting or
-secret lifecycle. The manager owns its rotation as described below.
+secret lifecycle. Initial provisioning runs inside the root transaction and fsyncs a unique transaction-and-attempt key
+name before asking Core to create the key. It does not commit schema 3 until the returned secret is durably staged and
+authenticated. An uncertain result is never retried; recovery lists and revokes any key with that exact name before it
+records a fresh attempt. The manager owns later rotation as described below.
 
 `catalog-state.json` is one atomically replaced object. The encoded byte fields are abbreviated in this example:
 
