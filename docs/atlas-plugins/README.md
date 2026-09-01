@@ -251,7 +251,7 @@ provenance or audit model.
 
 ## Execution and failure isolation
 
-The deployment orchestrator starts one trusted container per configured Plugin. In the bundled Atlas deployment, Docker Compose owns startup, restart policy, resource limits, and shutdown. Core does not receive Docker socket access and does not create, upgrade, or delete containers.
+The deployment orchestrator starts one trusted container per configured Plugin. In the current bundled Atlas deployment, Docker Compose owns startup, restart policy, resource limits, and shutdown. The independent manager keeps Compose ownership but fixes every retained base service and generated Plugin service to `restart: "no"`. Docker daemon and host restarts leave Atlas stopped until `atlas-core start` performs transaction recovery and validation. Core does not receive Docker socket access and does not create, upgrade, or delete containers.
 
 Deployment configuration gives Core each Plugin's stable ID and private base URL. Core uses a fixed HTTP/JSON protocol to fetch its manifest and health, dispatch Operations, and report status. Plugins do not self-register, and Core does not scan Docker or the network for them. Either side may start first; Core keeps retryable Plugin failures out of base liveness and readiness.
 
@@ -338,10 +338,12 @@ the private contract majors, optional Atlas Protocol revision, and fixed Command
 Release metadata and runtime discovery stay separate: the release document does not duplicate Operations from the
 private runtime manifest. The CLI regenerates deployment configuration from retained release documents and the installed
 Core bundle's hash-verified generation templates before every start, validates the complete Compose model, and verifies
-running image identity. Enable, enabled-Plugin update, enabled-Plugin rollback, and Core update transactions wait for
-Plugin health before commit and roll back on failure. A normal start waits only for base Atlas readiness while Core
-reports Plugin status asynchronously. The manager never passes arbitrary Plugin-supplied Compose, templates, or
-executable installation hooks to the host.
+running image identity against durable selected and previous image receipts. Enable, enabled-Plugin update,
+enabled-Plugin rollback, and Core update transactions wait for Plugin health before commit and roll back on failure. A
+normal start waits only for base Atlas readiness while Core reports Plugin status asynchronously. Fresh initialization
+temporarily starts the exact base composition under its recovery journal to create the managed Plugin key, then returns
+Atlas to stopped state. The manager never passes arbitrary Plugin-supplied Compose, templates, or executable installation
+hooks to the host.
 If retained bundle bytes or images are lost, explicit repair-start flags restore only the recorded Core package bundle
 and exact image digests. Repair never selects a newer Core or Plugin release.
 
@@ -435,6 +437,9 @@ The building is not an Asset or Track. Source-provided height is advisory data a
 - Atlas does not model multiple active instances of one Plugin.
 - Plugin code uses the ordinary Atlas SDK with full access; Core does not enforce Plugin-specific capabilities.
 - All Plugins share one full-access Plugin API key that the host manager can rotate transactionally.
+- Fresh initialization temporarily starts the exact pull-disabled base composition under a finish-forward journal to create the managed Plugin key, then returns Atlas to stopped state.
+- Installed state retains selected and previous platform-manifest digests and local image IDs; disposable active files never define expected image identity.
+- Retained base services and generated Plugin services use `restart: "no"`; Docker daemon or host restart cannot bypass manager recovery.
 - A taskable Plugin may register a Tool Asset with `entity_type: "asset"` and `subtype: "tool"`; query-only Plugins need no Asset.
 - A taskable Plugin creates or ensures its own Tool Asset through the SDK during startup and records its Plugin ID as the strict `custom_plugin.plugin_id` ownership component.
 - A Tool Asset ID is `plugin_` plus the unpadded base64url encoding of the full SHA-256 digest of its Plugin ID; Core keeps its type, subtype, and ownership marker immutable across PATCH, check-in, and every other mutation path after runtime registration.

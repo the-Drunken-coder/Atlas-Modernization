@@ -12,6 +12,11 @@ including the declarative templates and placeholder schema used to generate Plug
 fetch `atlas-core@<installed Core version>` without installing or executing it to repair lost bundle bytes, and accepts
 the candidate only when its complete bundle hash matches deployment state.
 
+The first independent-release package must change every retained production base service and the Plugin generation
+template to Compose `restart: "no"`. Package validation rejects another policy. Its disposable-host acceptance test must
+restart the Docker daemon during a pending transaction, prove that no base or Plugin container starts automatically, then
+prove that `atlas-core start` recovers the journal before starting the verified composition.
+
 Atlas Core uses one version for the npm CLI, Core and catalog Plugin images, git tag, and GitHub Release. A normal
 release starts from `main` and finishes in an automatically queued run from the immutable release tag.
 

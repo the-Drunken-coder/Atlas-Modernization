@@ -79,8 +79,10 @@ authoritative in the private Plugin manifest.
 ## Generated deployment
 
 The manager derives one Compose service from `plugin_id`. It fixes the private network, port `8080`, `/health` check,
-restart policy, Source Gateway origin, Core endpoint fragment, optional connector fragment mount, and container filesystem
-access. The Plugin release can select only its image, declared contracts and interactions, and optional connector policy.
+`restart: "no"`, Source Gateway origin, Core endpoint fragment, optional connector fragment mount, and container
+filesystem access. The Plugin release can select only its image, declared contracts and interactions, and optional
+connector policy. Full-model validation rejects another restart policy so Docker cannot bypass manager recovery after a
+daemon or host restart.
 
 The generated service name is `atlas-plugin-<plugin_id>` with underscores converted to hyphens. Plugin identifiers do
 not contain hyphens, so this conversion cannot collide. Core reaches the Plugin at
@@ -97,10 +99,10 @@ When `source_connector` is non-null, the manager writes the validated object to 
 that file into Source Gateway. When it is null, the manager generates neither the file nor a Source Gateway mount for the
 Plugin. It never writes JSON `null` as a connector file.
 
-After pulling the signed image-index reference, the manager records the selected platform-manifest digest and local
-Docker image ID. After starting a Plugin, it inspects the container and requires its configured image reference and
-resolved image ID to match those recorded values. Runtime discovery verifies the Plugin manifest; it is not proof of the
-running release identity.
+After pulling a signed image-index reference for a selected or previous release, the manager records its platform-manifest
+digest and local Docker image ID in the matching durable `installed.json` record. After starting a Plugin, it inspects the
+container and requires its configured image reference and resolved image ID to match those recorded values. Runtime
+discovery verifies the Plugin manifest; it is not proof of the running release identity.
 
 ## Catalog document
 
@@ -160,9 +162,9 @@ release-document signature would add another path without adding trust and is no
 
 The protected `plugin-catalog` branch is the canonical catalog ledger. Force pushes are forbidden. Each publication
 rejects duplicate identities, validates the transition against the current branch head, preserves every existing Plugin,
-version, release-document hash, and true revocation, then pushes the new catalog with a compare-and-swap on that head
-commit. A release may be added and a revocation may change only from false to true. Existing release identity and hashes
-never change. Ordinary
+version, display name, release-document hash, and true revocation, then pushes the new catalog with a compare-and-swap on
+that head commit. A release may be added and a revocation may change only from false to true. Existing release identity,
+display name, and hash never change. Ordinary
 publication keeps the current key epoch and increments its sequence. An authorized key rotation increments the epoch
 and starts at that epoch's CLI-embedded sequence floor. A Pages deployment is built from that exact ledger commit, not
 by reading the mutable Pages endpoint.

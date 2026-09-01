@@ -67,14 +67,33 @@ bundle and uses it with `baseDeployment.coreImage`, never the Compose files, gen
 newer CLI package. It also verifies the local Core image ID before changing containers. This preserves the installed Core
 version while allowing a newer CLI to manage compatible Plugins.
 
+Every service in the retained production base bundle and every generated Plugin service uses Compose `restart: "no"`.
+Package assembly and full-model validation reject another restart policy. A Docker daemon or host restart therefore
+leaves Atlas stopped until `atlas-core start` reclaims any dead transaction owner, recovers its journal, verifies retained
+files and images, regenerates active files, and starts the composition. Any future operating-system auto-start integration
+must invoke that manager command; it cannot invoke Compose or Docker directly.
+
 Schema-3 initialization or upgrade provisions one full-access managed Core API key and stores its one-time value as
 `ATLAS_PLUGIN_API_KEY` in the existing owner-only root `.env`. The generated service for an SDK-using Plugin receives that
 key as `ATLAS_API_AUTH_KEY` plus the fixed `ATLAS_CORE_ORIGIN=http://api:8000`. A release cannot supply or override either
 value. This root platform credential is the one concrete secret schema 1 needs; schema 1 has no per-Plugin setting or
 secret lifecycle. Initial provisioning runs inside the root transaction and fsyncs a unique transaction-and-attempt key
-name before asking Core to create the key. It does not commit schema 3 until the returned secret is durably staged and
-authenticated. An uncertain result is never retried; recovery lists and revokes any key with that exact name before it
-records a fresh attempt. The manager owns later rotation as described below.
+name before asking Core to create the key. The manager signs in over Core's loopback endpoint with the generated
+deployment administrator password and keeps the resulting browser session only in memory; API-key credentials cannot
+administer managed keys.
+
+Fresh initialization first completes the existing MinIO provisioning, pulls and records the exact base image identities,
+then records a finish-forward phase and starts the exact retained base composition without Plugin fragments and with
+pulling disabled. This creates the PostgreSQL volume, runs the target Core's migrations, and makes the admin API available.
+The manager waits for base readiness, creates and authenticates the managed Plugin key, durably writes its secret to
+`.env`, commits schema 3, then stops the base composition so `atlas-core init` still returns with Atlas stopped. Once
+temporary Core startup begins, recovery never
+pretends the deployment is uninitialized or rolls storage backward. It keeps or restarts that same pull-disabled base,
+uses the journaled attempt name to revoke an uncertain creation before recording a new attempt, completes provisioning,
+and stops the composition. An unrecoverable API, storage, or image failure leaves Atlas stopped with the journal intact;
+the explicit destructive reset remains the only abandon path. An upgrade provisions through the already-running Core
+inside the Core-update transaction. The manager does not commit schema 3 until the returned secret is durably staged and
+authenticated. It owns later rotation as described below.
 
 `catalog-state.json` is one atomically replaced object. The encoded byte fields are abbreviated in this example:
 
@@ -103,15 +122,27 @@ warns that it clears that mark. The next initialization still enforces the minim
 {
   "schema": 1,
   "plugin_id": "building_scan",
-  "selected_version": "0.2.0",
-  "selected_document_sha256": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-  "previous_version": "0.1.0",
-  "previous_document_sha256": "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+  "selected": {
+    "version": "0.2.0",
+    "release_document_sha256": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "image_index": "ghcr.io/the-drunken-coder/atlas-building-scan@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "platform_manifest_sha256": "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+    "local_image_id": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  },
+  "previous": {
+    "version": "0.1.0",
+    "release_document_sha256": "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+    "image_index": "ghcr.io/the-drunken-coder/atlas-building-scan@sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+    "platform_manifest_sha256": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "local_image_id": "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+  }
 }
 ```
 
-Both previous fields are `null` before the first successful update. The manager retains only the selected and previous
-release documents. Release documents never change after installation. Active files are generated and disposable.
+`previous` is `null` before the first successful update. The manager retains only the selected and previous release
+documents and their image receipts. Each receipt's image index must equal its immutable release document. The platform
+manifest and local image ID are recorded from the verified pull before the selection is committed; neither is inferred
+from later Docker state. Release documents never change after installation. Active files are generated and disposable.
 
 While enabled, `active/deployment.json` contains exactly:
 
@@ -130,11 +161,12 @@ While enabled, `active/deployment.json` contains exactly:
 The manager regenerates this receipt when a selected release becomes active. The receipt and the other files under
 `active/` are disposable outputs, not trusted inputs. Before Compose reads them, the manager derives a complete temporary
 `active/` directory from root deployment state, `installed.json`, the exact retained release document, the installed
-Core bundle's hash-verified templates, and root platform credentials. Templates are fixed declarative package assets; a
-Plugin release may fill only their documented placeholders and cannot provide or replace a template. The manager omits
-`source-connector.json` and its Source Gateway mount when the release declares a null connector. It atomically replaces
-any missing, changed, or extra generated file and validates the full Compose model. Container inspection must match the
-regenerated receipt before an enable, enabled update, rollback, Core update, or normal start succeeds.
+Core bundle's hash-verified templates, the selected durable image receipt, and root platform credentials. Templates are
+fixed declarative package assets; a Plugin release may fill only their documented placeholders and cannot provide or
+replace a template. The manager omits `source-connector.json` and its Source Gateway mount when the release declares a
+null connector. It atomically replaces any missing, changed, or extra generated file and validates the full Compose model.
+Container inspection must match the regenerated receipt before an enable, enabled update, rollback, Core update, or
+normal start succeeds.
 
 Every file and directory preserves the CLI's existing owner and mode checks. The manager writes private temporary files,
 flushes them, and uses atomic rename. It holds the existing Atlas mutation lock and Docker-engine network lock across
@@ -174,12 +206,12 @@ Uninstall requires the Plugin to be disabled. It removes installed release recor
 retains cached Docker layers. Package schema 1 has no separate Plugin configuration lifecycle.
 
 `rotate-core-key` replaces only the shared managed key used by SDK-backed Plugins. It is available without a fresh catalog
-and uses the root transaction plus the deployment-owned admin credential. Before each key-creation request, the manager
-writes and fsyncs a unique `atlas-plugin-rotation-<transaction_id>-<attempt>` managed-key name in the journal. It never
-retries a request with an uncertain result. Recovery lists active keys by that exact name, revokes any match whose
-one-time secret was not durably staged, records a fresh attempt name, and only then tries again. After a successful
-response, the journal records the candidate key ID but no secret; the candidate secret exists only in the private staged
-`.env`.
+and uses the root transaction plus the generated deployment administrator password to obtain an in-memory loopback
+session. Before each key-creation request, the manager writes and fsyncs a unique
+`atlas-plugin-rotation-<transaction_id>-<attempt>` managed-key name in the journal. It never retries a request with an
+uncertain result. Recovery lists active keys by that exact name, revokes any match whose one-time secret was not durably
+staged, records a fresh attempt name, and only then tries again. After a successful response, the journal records the
+candidate key ID but no secret; the candidate secret exists only in the private staged `.env`.
 
 When Atlas is running, the manager authenticates the candidate key, stages `.env` and regenerated active files, recreates
 only Enabled SDK-using Plugin containers with pulling disabled, and waits for their health. It then makes the new `.env`
@@ -234,6 +266,8 @@ The local lock file and Docker network lock carry the same transaction and owner
 to reclaim a live or ambiguous owner. When boot and process-start evidence proves the owner is dead, it atomically
 reclaims both matching locks and recovers the transaction before ordinary deployment validation. It never tells an
 operator to remove only one lock while a journal exists.
+Compose restart policies are disabled, so a daemon restart cannot start either the prior or candidate composition around
+this recovery gate.
 
 Recovery for a transaction that did not start a different Core image restores `before/` and the prior running
 composition when no durable commit marker exists. Core update recovery follows the storage-aware rules below and never
@@ -248,7 +282,7 @@ Install performs these steps:
 2. fetch the release document and verify its exact hash and strict schema;
 3. verify Plugin identity, Semantic Version, lifecycle, contracts, interactions, connector policy, and image repository;
 4. pull the exact image digest and record its platform-manifest digest and local image ID;
-5. write the immutable release document and `installed.json` atomically.
+5. atomically write the immutable release document and `installed.json`, including that durable image receipt.
 
 Install does not change root deployment state and does not restart a stopped or running deployment.
 
@@ -270,12 +304,13 @@ selected release to `previous`, and does not restart Atlas. Updating an Enabled 
 Atlas is stopped, the command tells the operator to start Atlas or disable the Plugin first. While enabled, update stages
 candidate active files, validates Compose, pulls the candidate digest, recreates the affected services with pulling
 disabled, and waits for the same image, health, and discovery checks. Only then does it commit selected and previous
-release state. Failure restores the old release, active files, deployment state, and running composition.
+release state, including both durable image receipts. Failure restores the old release, active files, deployment state,
+and running composition.
 
 Rollback uses the update transaction with the retained previous release. The catalog must be fresh, and that release
-must remain compatible and non-revoked. After success, selected and previous swap, which permits an explicit return to
-the newer release if it also remains permitted. The manager pulls and verifies the retained image when it is missing
-locally. Rollback of an Enabled Plugin also requires Atlas to be running.
+must remain compatible and non-revoked. After success, selected and previous records swap, which permits an explicit
+return to the newer release if it also remains permitted. The manager pulls and verifies the retained image against the
+previous record when it is missing locally. Rollback of an Enabled Plugin also requires Atlas to be running.
 
 Disable removes the Plugin container, active files, and deployment membership. It retains selected and previous releases
 and Docker cache. A running deployment recreates Core and Source Gateway and waits for health. A stopped deployment stays
@@ -319,6 +354,7 @@ started container to verify exact image identity and waits only for base Atlas h
 deployment as started. It does not wait for Plugin manifests or health. Core's retry loop reports each configured Plugin
 as `starting`, `available`, or `unavailable` asynchronously, and a Plugin outage never fails base startup. A missing or
 changed retained file leaves the deployment stopped and instructs the operator to run `atlas-core start --repair-bundle`.
+After a Docker daemon or host restart, this same path is the only supported way to bring Atlas back up.
 
 The bundle-repair form holds the same locks and reads `state.packageVersion` plus the recorded `bundleSha256`. It uses
 matching assets from the current CLI package when available; otherwise it downloads the exact public
@@ -330,11 +366,12 @@ leaves the prior bundle and stopped deployment unchanged. `--repair-bundle` and 
 
 If an exact recorded image is missing or its local ID no longer matches, normal start remains stopped and instructs the
 operator to run `atlas-core start --repair-images`. The repair form holds the same locks and re-pulls only the exact Core
-and base-image digests in the retained bundle plus the exact Enabled Plugin digests in retained release documents. It
-verifies every platform manifest and local image ID, atomically replaces the image receipts, then performs the normal
-pull-disabled start. It does not read the catalog, select a version, or alter Core or Plugin state. Registry failure leaves
-the deployment stopped and its prior receipts intact. A registry is not required to restart when all recorded images are
-still present.
+and base-image digests in the retained bundle plus the exact Enabled Plugin digests in selected `installed.json` records.
+For each Plugin it requires the release document's index and freshly pulled platform manifest to match that durable
+record, verifies the local image ID, atomically refreshes the receipts, then performs the normal pull-disabled start. It
+does not read the catalog, select a version, or alter Core or Plugin selection. Registry failure or a receipt mismatch
+leaves the deployment stopped and its prior receipts intact. A registry is not required to restart when all recorded
+images are still present.
 
 The first independent-release Core update does not migrate enabled bundled-v1 Plugins. If schema-2 state contains an
 enabled Plugin without a verified `installed.json`, the update stops without changing the deployment and tells the
