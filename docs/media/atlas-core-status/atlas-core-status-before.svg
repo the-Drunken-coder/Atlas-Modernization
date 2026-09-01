@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#080d12"/>
+  <text x="70" y="48" fill="#f27d6f" font-family="SFMono-Regular, Menlo, monospace" font-size="20" font-weight="700">BEFORE · 80 × 24 BLOCKED</text>
+  <text x="70" y="78" fill="#9aa6b2" font-family="SFMono-Regular, Menlo, monospace" font-size="17">The status view refuses to open because it requires at least 30 rows.</text>
+  <rect x="70" y="104" width="1140" height="558" rx="8" fill="#101820" stroke="#2a3946" stroke-width="2"/>
+  <circle cx="98" cy="129" r="6" fill="#f27d6f"/>
+  <circle cx="120" cy="129" r="6" fill="#d6b45f"/>
+  <circle cx="142" cy="129" r="6" fill="#68c58a"/>
+  <text x="174" y="135" fill="#72808d" font-family="SFMono-Regular, Menlo, monospace" font-size="14">atlas-core · 80 × 24</text>
+  <line x1="70" y1="151" x2="1210" y2="151" stroke="#2a3946" stroke-width="2"/>
+  <g font-family="SFMono-Regular, Menlo, monospace" font-size="17">
+    <text x="100" y="184" fill="#56c7d9" font-weight="700">ATLAS CORE</text>
+    <text x="100" y="222" fill="#e4ebf1">Status needs at least 30 rows at this width.</text>
+    <text x="100" y="246" fill="#72808d">Resize the terminal or press Enter or Esc to go back.</text>
+  </g>
+</svg>

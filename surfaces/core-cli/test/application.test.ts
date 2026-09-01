@@ -37,6 +37,7 @@ type Call = {
   cwd: string | undefined;
   env: NodeJS.ProcessEnv;
   inherit: boolean;
+  signal?: AbortSignal;
 };
 
 class FakeRunner implements CommandRunner {
@@ -76,14 +77,15 @@ class FakeRunner implements CommandRunner {
   async run(
     command: string,
     args: string[],
-    options: { cwd?: string; env?: NodeJS.ProcessEnv; inherit?: boolean } = {}
+    options: { cwd?: string; env?: NodeJS.ProcessEnv; inherit?: boolean; signal?: AbortSignal } = {}
   ): Promise<{ status: number; stdout: string; stderr: string }> {
     const call = {
       command,
       args,
       cwd: options.cwd,
       env: { ...options.env },
-      inherit: options.inherit ?? false
+      inherit: options.inherit ?? false,
+      ...(options.signal ? { signal: options.signal } : {})
     };
     this.calls.push(call);
     this.onRun?.(call);
@@ -1380,6 +1382,23 @@ describe("atlas-core CLI", () => {
         { id: "minio", cpuPercent: "4.00%" }
       ]
     });
+  });
+
+  it("uses the status cancellation signal for every Docker details command", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const controller = new AbortController();
+    test.context.interactive = {
+      configureAdmin: async () => undefined,
+      runMenu: async (operator) => {
+        await operator.details(controller.signal);
+      },
+      runUpdate: async () => undefined
+    };
+
+    expect(await runCLI([], test.context)).toBe(0);
+    expect(test.runner.calls.length).toBeGreaterThan(0);
+    expect(test.runner.calls.every((call) => call.signal === controller.signal)).toBe(true);
   });
 
   it("keeps health available when Docker statistics fail", async () => {

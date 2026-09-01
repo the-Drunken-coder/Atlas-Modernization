@@ -18,8 +18,9 @@ atlas-core
 Running `atlas-core` without arguments opens an interactive action menu. It provides initialization, start and stop,
 service health and performance, configuration, updates, logs, diagnostics, and the confirmed reset flow. The status
 view reports CPU, memory, network and block I/O, process count, uptime, restart count, health, and image details from
-Docker. Arrow keys move through menus and services, typing filters the main menu, Enter selects an action, and Escape
-or `q` goes back.
+Docker. It refreshes every five seconds without overlapping Docker reads. Up and down scroll the status body, left and
+right select a service, and `r` refreshes immediately. Arrow keys move through other menus, typing filters the main
+menu, Enter selects an action, and Escape or `q` goes back.
 
 ### Preview the terminal UI
 

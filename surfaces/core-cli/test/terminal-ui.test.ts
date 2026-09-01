@@ -76,7 +76,7 @@ function operator(snapshot: DeploymentSnapshot = { status: "ready", detail: "Eve
       coreUpdateAvailable: false
     })),
     configureAdminPassword: vi.fn(async () => undefined),
-    details: vi.fn(async () => ({
+    details: vi.fn(async (_signal?: AbortSignal) => ({
       snapshot,
       cliVersion: "0.1.5",
       coreVersion: "0.1.5",
@@ -324,14 +324,18 @@ describe("Atlas Core terminal UI", () => {
     expect(detailsCallsAfterRepeatedEnter).toBe(1);
   });
 
-  it("shows a minimum-height state for status on a 24-row terminal", async () => {
+  it("shows a scrollable status viewport on a 24-row terminal", async () => {
     const terminal = new TestTerminal(80, true, 24);
     const deployment = operator();
     const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
 
     await terminal.waitFor("View status");
     terminal.write("\r");
-    await terminal.waitFor("Status needs at least 30 rows at this width.");
+    await terminal.waitFor("↑/↓ 1-18/19");
+    expect(terminal.text).not.toContain("Status needs at least");
+    terminal.write("\u001b[B");
+    await terminal.waitFor("↑/↓ 2-19/19");
+    await terminal.waitFor("Credentials and durable volumes preserved");
     terminal.write("\r");
     await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
     terminal.write("q");
@@ -340,7 +344,7 @@ describe("Atlas Core terminal UI", () => {
     expect(deployment.details).toHaveBeenCalledOnce();
   });
 
-  it("accounts for wrapped image values in the status height requirement", async () => {
+  it("keeps wrapped status values reachable through the viewport", async () => {
     const terminal = new TestTerminal(40, true, 30);
     const deployment = operator();
     const baseDetails = await deployment.details();
@@ -357,14 +361,217 @@ describe("Atlas Core terminal UI", () => {
     await terminal.waitFor("View status");
     terminal.write("\r");
     await vi.waitFor(() => expect(deployment.details).toHaveBeenCalledOnce());
-    await nextInputTurn();
+    await terminal.waitFor("r refresh");
+    expect(terminal.text).not.toContain("Status needs at least");
+    terminal.write("\u001b[B".repeat(20));
+    await terminal.waitFor("↑/↓ 9-28/28");
+    terminal.write("\r");
+    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
+    terminal.write("q");
+    await menu;
+  });
+
+  it("refreshes status automatically", async () => {
+    vi.useFakeTimers();
+    try {
+      const terminal = new TestTerminal(80, true, 24);
+      const deployment = operator();
+      const baseDetails = await deployment.details();
+      deployment.details.mockClear();
+      deployment.details.mockResolvedValueOnce(baseDetails).mockResolvedValueOnce({
+        ...baseDetails,
+        services: baseDetails.services.map((service) =>
+          service.id === "api" ? { ...service, cpuPercent: "9.99%" } : service
+        )
+      });
+      const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+      await terminal.waitFor("View status");
+      terminal.write("\r");
+      await terminal.waitFor("CPU          1.00%");
+      await vi.advanceTimersByTimeAsync(5_000);
+      await vi.waitFor(() => expect(deployment.details).toHaveBeenCalledTimes(2));
+      await terminal.waitFor("CPU          9.99%");
+      terminal.write("\r");
+      await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
+      terminal.write("q");
+      await menu;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("coalesces manual status refreshes", async () => {
+    const terminal = new TestTerminal(80, true, 24);
+    const deployment = operator();
+    const baseDetails = await deployment.details();
+    let finishRefresh: ((details: typeof baseDetails) => void) | undefined;
+    const pendingRefresh = new Promise<typeof baseDetails>((resolve) => {
+      finishRefresh = resolve;
+    });
+    deployment.details.mockClear();
+    deployment.details.mockResolvedValueOnce(baseDetails).mockImplementationOnce(() => pendingRefresh);
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("View status");
+    terminal.write("\r");
+    await terminal.waitFor("CPU          1.00%");
+    terminal.write("r");
+    await vi.waitFor(() => expect(deployment.details).toHaveBeenCalledTimes(2));
+    terminal.write("r");
+    terminal.write("\u001b[B");
+    await terminal.waitFor("↑/↓ 2-19/19");
+    const callsWhileRefreshWasPending = deployment.details.mock.calls.length;
+    finishRefresh?.(baseDetails);
     terminal.write("\r");
     await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
     terminal.write("q");
     await menu;
 
-    const requiredRows = terminal.text.match(/Status needs at least (\d+) rows/u)?.[1];
-    expect(Number(requiredRows)).toBeGreaterThan(30);
+    expect(callsWhileRefreshWasPending).toBe(2);
+  });
+
+  it("serializes status visits and discards a refresh from the previous visit", async () => {
+    const terminal = new TestTerminal(80, true, 24);
+    const deployment = operator();
+    const baseDetails = await deployment.details();
+    let finishOldRefresh: ((details: typeof baseDetails) => void) | undefined;
+    let finishNewVisit: ((details: typeof baseDetails) => void) | undefined;
+    const oldRefresh = new Promise<typeof baseDetails>((resolve) => {
+      finishOldRefresh = resolve;
+    });
+    const newVisit = new Promise<typeof baseDetails>((resolve) => {
+      finishNewVisit = resolve;
+    });
+    const staleDetails = {
+      ...baseDetails,
+      services: baseDetails.services.map((service) =>
+        service.id === "api" ? { ...service, cpuPercent: "7.77%" } : service
+      )
+    };
+    const freshDetails = {
+      ...baseDetails,
+      services: baseDetails.services.map((service) =>
+        service.id === "api" ? { ...service, cpuPercent: "9.99%" } : service
+      )
+    };
+    deployment.details.mockClear();
+    deployment.details
+      .mockResolvedValueOnce(baseDetails)
+      .mockImplementationOnce(() => oldRefresh)
+      .mockImplementationOnce(() => newVisit);
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("View status");
+    terminal.write("\r");
+    await terminal.waitFor("CPU          1.00%");
+    terminal.write("r");
+    await vi.waitFor(() => expect(deployment.details).toHaveBeenCalledTimes(2));
+    terminal.write("\r");
+    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
+    const beforeReopen = terminal.raw.length;
+    terminal.write("\r");
+    await vi.waitFor(() =>
+      expect(stripAnsi(terminal.raw.slice(beforeReopen))).toContain("Loading deployment and Docker statistics...")
+    );
+    expect(deployment.details).toHaveBeenCalledTimes(2);
+
+    finishOldRefresh?.(staleDetails);
+    await vi.waitFor(() => expect(deployment.details).toHaveBeenCalledTimes(3));
+    finishNewVisit?.(freshDetails);
+    await terminal.waitFor("CPU          9.99%");
+    expect(terminal.text).not.toContain("CPU          7.77%");
+    terminal.write("\r");
+    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(3));
+    terminal.write("q");
+    await menu;
+  });
+
+  it("aborts an abandoned refresh before starting a later status visit", async () => {
+    const terminal = new TestTerminal(80, true, 24);
+    const deployment = operator();
+    const baseDetails = await deployment.details();
+    let abandonedSignal: AbortSignal | undefined;
+    deployment.details.mockClear();
+    deployment.details
+      .mockResolvedValueOnce(baseDetails)
+      .mockImplementationOnce(
+        async (signal?: AbortSignal) =>
+          await new Promise<never>((_resolve, reject) => {
+            abandonedSignal = signal;
+            signal?.addEventListener("abort", () => reject(new Error("Status refresh was cancelled.")), {
+              once: true
+            });
+          })
+      )
+      .mockResolvedValueOnce(baseDetails);
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("View status");
+    terminal.write("\r");
+    await terminal.waitFor("CPU          1.00%");
+    terminal.write("r");
+    await vi.waitFor(() => expect(deployment.details).toHaveBeenCalledTimes(2));
+    terminal.write("\r");
+    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
+    terminal.write("\r");
+    await vi.waitFor(() => expect(deployment.details).toHaveBeenCalledTimes(3));
+    expect(abandonedSignal?.aborted).toBe(true);
+    await terminal.waitFor("CPU          1.00%");
+    terminal.write("\r");
+    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(3));
+    terminal.write("q");
+    await menu;
+  });
+
+  it.each([40, 80])("keeps a long status error scrollable at %i columns", async (columns) => {
+    const terminal = new TestTerminal(columns, true, 24);
+    const deployment = operator();
+    deployment.details.mockRejectedValueOnce(new Error(`Docker failed: ${"detail ".repeat(400)}END`));
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("View status");
+    terminal.write("\r");
+    await terminal.waitFor("r retry");
+    expect(terminal.text).not.toContain("END");
+    terminal.write("\u001b[B".repeat(100));
+    await terminal.waitFor("END");
+    await terminal.waitFor("r retry");
+    terminal.write("\r");
+    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
+    terminal.write("q");
+    await menu;
+  });
+
+  it("keeps the clamped status scroll position when content expands again", async () => {
+    const terminal = new TestTerminal(80, true, 24);
+    const deployment = operator();
+    const fullDetails = await deployment.details();
+    const shortDetails = { ...fullDetails, services: [] };
+    deployment.details.mockClear();
+    deployment.details
+      .mockResolvedValueOnce(fullDetails)
+      .mockResolvedValueOnce(shortDetails)
+      .mockResolvedValueOnce(fullDetails);
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("View status");
+    terminal.write("\r");
+    await terminal.waitFor("↑/↓ 1-18/19");
+    terminal.write("\u001b[B");
+    await terminal.waitFor("↑/↓ 2-19/19");
+    terminal.write("r");
+    await terminal.waitFor("No Atlas Core containers are running.");
+    await nextInputTurn();
+    const beforeExpansion = terminal.raw.length;
+    terminal.write("r");
+    await vi.waitFor(() => expect(deployment.details).toHaveBeenCalledTimes(3));
+    await terminal.waitForRawChange(beforeExpansion);
+    await vi.waitFor(() => expect(stripAnsi(terminal.raw.slice(beforeExpansion))).toContain("↑/↓ 1-18/19"));
+    terminal.write("\r");
+    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
+    terminal.write("q");
+    await menu;
   });
 
   it("shows logs for all services from the log picker", async () => {

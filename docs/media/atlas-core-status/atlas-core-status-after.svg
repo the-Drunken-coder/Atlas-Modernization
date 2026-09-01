@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#080d12"/>
+  <text x="70" y="48" fill="#56c7d9" font-family="SFMono-Regular, Menlo, monospace" font-size="20" font-weight="700">AFTER · 80 × 24 SCROLLING + LIVE</text>
+  <text x="70" y="78" fill="#9aa6b2" font-family="SFMono-Regular, Menlo, monospace" font-size="17">Fixed header and controls. The status body scrolls and refreshes every five seconds.</text>
+  <rect x="70" y="104" width="1140" height="558" rx="8" fill="#101820" stroke="#2a3946" stroke-width="2"/>
+  <circle cx="98" cy="129" r="6" fill="#f27d6f"/>
+  <circle cx="120" cy="129" r="6" fill="#d6b45f"/>
+  <circle cx="142" cy="129" r="6" fill="#68c58a"/>
+  <text x="174" y="135" fill="#72808d" font-family="SFMono-Regular, Menlo, monospace" font-size="14">atlas-core · 80 × 24</text>
+  <line x1="70" y1="151" x2="1210" y2="151" stroke="#2a3946" stroke-width="2"/>
+  <g font-family="SFMono-Regular, Menlo, monospace" font-size="15">
+    <text x="100" y="176" fill="#56c7d9" font-weight="700">ATLAS CORE &gt; STATUS</text>
+    <text x="760" y="176" fill="#9aa6b2">READY  Core v0.1.6  CLI v0.1.6</text>
+    <text x="100" y="196" fill="#e4ebf1">Everything is healthy.</text>
+    <text x="100" y="216" fill="#72808d">API http://127.0.0.1:8000   MinIO http://127.0.0.1:9001</text>
+    <text x="100" y="236" fill="#53616d">────────────────────────────────────────────────────────────────────────────────────────────</text>
+    <text x="100" y="256" fill="#e4ebf1" font-weight="700">SERVICES</text>
+    <rect x="96" y="263" width="84" height="20" fill="#d9e1e8"/>
+    <text x="100" y="278" fill="#101820"> Core API </text>
+    <text x="190" y="278" fill="#b9c4cd"> Source Gateway   PostgreSQL   MinIO</text>
+    <text x="100" y="318" fill="#e4ebf1" font-weight="700">Core API</text>
+    <text x="100" y="338" fill="#72808d">Status</text><text x="260" y="338" fill="#e4ebf1">running, healthy</text>
+    <text x="100" y="358" fill="#72808d">Container</text><text x="260" y="358" fill="#e4ebf1">atlas_core_production_api</text>
+    <text x="100" y="378" fill="#72808d">Uptime</text><text x="260" y="378" fill="#e4ebf1">4d 2h</text>
+    <text x="100" y="398" fill="#72808d">Restarts</text><text x="260" y="398" fill="#e4ebf1">0</text>
+    <text x="100" y="418" fill="#72808d">CPU</text><text x="260" y="418" fill="#e4ebf1">1.00%</text>
+    <text x="100" y="438" fill="#72808d">Memory</text><text x="260" y="438" fill="#e4ebf1">128MiB / 1GiB (12.50%)</text>
+    <text x="100" y="458" fill="#72808d">Network I/O</text><text x="260" y="458" fill="#e4ebf1">1MB / 2MB</text>
+    <text x="100" y="478" fill="#72808d">Block I/O</text><text x="260" y="478" fill="#e4ebf1">3MB / 4MB</text>
+    <text x="100" y="498" fill="#72808d">Processes</text><text x="260" y="498" fill="#e4ebf1">12</text>
+    <text x="100" y="518" fill="#72808d">Image</text><text x="260" y="518" fill="#e4ebf1">ghcr.io/the-drunken-coder/atlas-core@sha256:cfe582…</text>
+    <text x="100" y="558" fill="#e4ebf1" font-weight="700">DEPLOYMENT</text>
+    <text x="100" y="578" fill="#72808d">Initialized</text><text x="260" y="578" fill="#e4ebf1">2026-08-28T12:00:00.000Z</text>
+    <text x="100" y="598" fill="#72808d">Image</text><text x="260" y="598" fill="#e4ebf1">ghcr.io/the-drunken-coder/atlas-core@sha256:cfe582…</text>
+    <text x="100" y="618" fill="#53616d">────────────────────────────────────────────────────────────────────────────────────────────</text>
+    <text x="100" y="640" fill="#72808d">↑/↓ 1-18/19  ←/→ service  l logs  d diagnostics  r refresh  Enter back</text>
+    <text x="1010" y="640" fill="#68c58a" font-weight="700">LIVE 5s</text>
+  </g>
+</svg>
