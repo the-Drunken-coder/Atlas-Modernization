@@ -6,7 +6,7 @@
       "display_name": "Building Scan",
       "lifecycle": "query_only",
       "service": "building-scan-plugin",
-      "image": null,
+      "image": "ghcr.io/the-drunken-coder/atlas-building-scan@sha256:3bb8c7d7761c71fa1a9fb399b275a26686b2c7d39b9be2a2292797284f2f2b25",
       "assets": {
         "compose": "compose.yml",
         "core_endpoint": "core-endpoint.json",

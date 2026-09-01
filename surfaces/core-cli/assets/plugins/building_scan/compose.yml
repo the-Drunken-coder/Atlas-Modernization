@@ -12,7 +12,7 @@ services:
       - ${ATLAS_PLUGIN_CONFIG_ROOT:-../../../plugins}/building_scan/source-connector.json:/app/source-connectors/building_scan.json:ro
 
   building-scan-plugin:
-    image: "@atlas/plugin-image@"
+    image: "ghcr.io/the-drunken-coder/atlas-building-scan@sha256:3bb8c7d7761c71fa1a9fb399b275a26686b2c7d39b9be2a2292797284f2f2b25"
     container_name: atlas_building_scan_plugin
     restart: unless-stopped
     environment:

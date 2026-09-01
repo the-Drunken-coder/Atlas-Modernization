@@ -3,6 +3,17 @@
 Atlas Core release notes are listed newest first. The manual release workflow writes each new section from the
 verified commit history with OpenCode Go, then pauses for approval before publishing.
 
+## 0.1.7 - 2026-09-01
+
+### Added
+
+- The `atlas-core plugins` commands manage trusted, query-only Plugins from the installed catalog. Building Scan is available as an opt-in first-party Plugin.
+
+### Changed
+
+- Enabling a catalog Plugin stages its Compose and configuration fragments, validates the complete Compose model, and restarts the affected services; a stopped deployment stays stopped and a failed change restores the previous state.
+- Catalog Plugin images are released with Atlas Core for `linux/amd64` and `linux/arm64` and pinned by immutable digest in the CLI package. Plugin mutations require matching CLI and deployment versions.
+
 ## 0.1.6 - 2026-08-31
 
 ### Added
