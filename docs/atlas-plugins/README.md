@@ -329,18 +329,18 @@ The host-side Atlas Core CLI manages Installed Plugins from one signed Atlas cat
 version and workflow. Its strict `.atlas-plugin` JSON document pins one multi-architecture image by digest and declares
 the private contract majors, optional Atlas Protocol revision, and fixed Command Interface interactions it requires.
 Release metadata and runtime discovery stay separate: the release document does not duplicate Operations from the
-private runtime manifest. The CLI generates deployment configuration, validates the complete Compose model, applies
-restart-based changes with the installed Core's retained base bundle and image, waits for health, verifies running image
-identity, and rolls back a failed transaction. It never passes arbitrary package-supplied Compose or executable
-installation hooks to the host.
+private runtime manifest. The CLI regenerates deployment configuration from retained release documents before every
+start, validates the complete Compose model, applies restart-based changes with the installed Core's retained base bundle
+and image, waits for health, verifies running image identity, and rolls back a failed Plugin transaction. It never passes
+arbitrary package-supplied Compose or executable installation hooks to the host.
 
 Installation, enablement, and runtime health are separate. Installing selects and retains a Plugin release. Enabling
 includes that Installed Plugin in the deployment. Disabling removes it from the active deployment without uninstalling
 the selected release. Uninstall requires the Plugin to be disabled and then removes its selected release. The manager
-retains the selected release and one previous release. A failed update restores the previous release automatically, and
-the operator may roll back explicitly to that previous release when it remains compatible and non-revoked. The first
-managed scope is trusted query-only Plugins, and every update requires operator approval. Production restarts preserve
-durable Core storage.
+retains the selected release and one previous release. A failed Plugin update restores the previous release
+automatically, and the operator may roll back explicitly to that previous release when it remains compatible and
+non-revoked. The first managed scope is trusted query-only Plugins, and every update requires operator approval.
+Production restarts preserve durable Core storage.
 
 Operator configuration is separate from immutable Plugin releases. Update and disable preserve it. Uninstall preserves
 it for a later reinstall, while an explicit purge removes Atlas-managed Plugin configuration. Purge never deletes an
@@ -462,8 +462,8 @@ The building is not an Asset or Track. Source-provided height is advisory data a
   secret values.
 - One Ed25519-signed Atlas catalog authenticates exact release-document hashes and image digests. Revocation prevents new
   use of a release but does not stop an Installed Plugin without operator approval.
-- The catalog comes from a protected append-only ledger, uses key epochs and activation sequences, and is cached with one
-  atomic anti-rollback receipt.
+- The catalog comes from a protected append-only ledger, uses ordered key epochs with per-epoch sequence floors, and is
+  cached with one atomic anti-rollback receipt.
 - Plugin releases use immutable Semantic Versions in one stable channel and cannot depend on other Plugins.
 - Independent installation, update, and uninstall initially support trusted query-only Plugins. Taskable-Plugin
   lifecycle management remains deferred.

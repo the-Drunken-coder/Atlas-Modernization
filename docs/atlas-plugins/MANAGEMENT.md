@@ -79,9 +79,9 @@ the installed Core version while allowing a newer CLI to manage compatible Plugi
 ```
 
 The manager verifies that the decoded exact bytes match every repeated field before accepting the file. It writes and
-fsyncs this object and its parent directory before using a new catalog. The destructive `atlas-core reset` intentionally
-deletes this receipt and warns that it clears the deployment's local catalog high-water mark. The next initialization
-still enforces the minimum catalog checkpoint embedded in the CLI.
+fsyncs this object and its parent directory before using a new catalog. The accepted `(key_epoch, sequence)` pair is the
+deployment's local catalog high-water mark. The destructive `atlas-core reset` intentionally deletes this receipt and
+warns that it clears that mark. The next initialization still enforces the minimum pair embedded in the CLI.
 
 `installed.json` contains exactly:
 
@@ -114,8 +114,12 @@ While enabled, `active/deployment.json` contains exactly:
 }
 ```
 
-The manager regenerates this receipt when a selected release becomes active. Container inspection must match it before
-an enable, enabled update, rollback, Core update, or normal start succeeds.
+The manager regenerates this receipt when a selected release becomes active. The receipt and the other files under
+`active/` are disposable outputs, not trusted inputs. Before Compose reads them, the manager derives a complete temporary
+`active/` directory from root deployment state, `installed.json`, the exact retained release document, fixed templates,
+and operator configuration. It atomically replaces any missing, changed, or extra generated file and validates the full
+Compose model. Container inspection must match the regenerated receipt before an enable, enabled update, rollback, Core
+update, or normal start succeeds.
 
 Every file and directory preserves the CLI's existing owner and mode checks. The manager writes private temporary files,
 flushes them, and uses atomic rename. It holds the existing Atlas mutation lock and Docker-engine network lock across
@@ -170,7 +174,8 @@ interaction; a CLI-only update cannot add another interaction because Core, Atla
 must support it together. A Core update changes recorded contracts and base assets only after its transaction succeeds.
 No new Core capability-discovery endpoint is needed.
 
-Runtime checks remain authoritative after manual image or deployment-file changes:
+Generated deployment-file changes are discarded before Compose runs. Runtime checks remain authoritative after manual
+container or image changes:
 
 - The private Plugin `/manifest` response adds `core_to_plugin_protocol_major`. Core requires membership in its supported
   set before it accepts and caches the manifest. An unsupported major maps to the existing `invalid_manifest` status
@@ -196,10 +201,12 @@ to reclaim a live or ambiguous owner. When boot and process-start evidence prove
 reclaims both matching locks and recovers the transaction before ordinary deployment validation. It never tells an
 operator to remove only one lock while a journal exists.
 
-Recovery restores `before/` and the prior running composition when no durable commit marker exists. After all target
-health and identity checks pass, the manager writes and fsyncs the commit marker. Recovery that sees that marker keeps
-the target state and only finishes cleanup. The manager removes the transaction directory and fsyncs its parent last.
-Because the journal sits outside every Plugin subtree, uninstall and purge cannot erase their own recovery data.
+Recovery for a transaction that did not start a different Core image restores `before/` and the prior running
+composition when no durable commit marker exists. Core update recovery follows the storage-aware rules below and never
+blindly starts the prior image. After all target health and identity checks pass, the manager writes and fsyncs the
+commit marker. Recovery that sees that marker keeps the target state and only finishes cleanup. The manager removes the
+transaction directory and fsyncs its parent last. Because the journal sits outside every Plugin subtree, uninstall and
+purge cannot erase their own recovery data.
 
 Install performs these steps:
 
@@ -251,18 +258,29 @@ When an SDK-using Plugin blocks a Core revision change, the operator disables it
 Plugin to a release declaring the new revision, then enables it. Atlas does not pretend that one SDK build can use two
 exact generated Protocol revisions.
 
-The Core update uses the same durable root transaction. It stages the target Core image and base Compose bundle, records
-the prior image and complete state, starts the target with pulling disabled, and verifies the exact Core container image,
-base health, every Enabled Plugin container image, runtime manifest, and health. It commits the Core package version,
-base bundle hash, image records, supported-major sets, and Atlas Protocol revision together only after those checks pass.
-Failure or pre-commit crash restores the previous Core image, base bundle, Plugin active files, state, and running
-composition.
+The Core update uses the same durable root transaction and the existing paired-backup confirmation from the deployment
+runbook. Before changing containers, its journal records the prior migration version and checksums as well as the prior
+image and complete state. It stages the target Core image and base Compose bundle, starts the target with pulling
+disabled, and verifies the exact Core container image, base health, every Enabled Plugin container image, runtime
+manifest, and health. It commits the Core package version, base bundle hash, image records, supported-major sets, and
+Atlas Protocol revision together only after those checks pass.
 
-Normal `atlas-core start` verifies that the recorded Core and Enabled Plugin image IDs still exist locally, then uses the
-retained base bundle with Compose pulling disabled. It inspects every started container and waits for base health, Plugin
-manifests, and Plugin health before recording the deployment as started. A missing or mismatched local image fails with
-an instruction to run an explicit update or recovery command. Catalog and registry availability are therefore not
-prerequisites for restarting an already installed deployment.
+If failure occurs before the target Core starts, recovery may restore the prior files and composition automatically.
+Once the target Core has started, failure or a pre-commit crash stops the deployment and leaves the journal intact. The
+CLI records and inspects the migration ledger, but it never starts the prior Core image automatically. It permits that
+restart only after proving that migration rolled back before commit and that the target served no application traffic.
+If a migration committed, the target served traffic, or either fact is uncertain, the operator must restore the paired
+pre-deploy PostgreSQL and MinIO backup or fix forward with a compatible Core release. Recovery then verifies the durable
+store before completing the transaction. This follows the rollback rules in
+[`DEPLOYMENT_RUNBOOK.md`](../../services/core/docs/DEPLOYMENT_RUNBOOK.md).
+
+Normal `atlas-core start` acquires the mutation locks, regenerates every Enabled Plugin's complete `active/` directory,
+and validates the assembled Compose model before it starts a container. It verifies that the recorded Core and Enabled
+Plugin image IDs still exist locally, then uses the retained base bundle with Compose pulling disabled. It inspects every
+started container and waits for base health, Plugin manifests, and Plugin health before recording the deployment as
+started. A missing or mismatched retained input or local image fails with an instruction to run an explicit update or
+recovery command. Catalog and registry availability are therefore not prerequisites for restarting an already installed
+deployment.
 
 The first independent-release Core update does not migrate enabled bundled-v1 Plugins. If schema-2 state contains an
 enabled Plugin without a verified `installed.json`, the update stops without changing the deployment and tells the
@@ -276,9 +294,9 @@ compatibility bridge.
 Opening the Plugins menu checks the catalog once; `refresh` checks again. There is no background updater. A valid cached
 catalog may be used until its expiry. Catalog network or signature failure never stops Installed Plugins.
 
-Catalog refresh verifies the new catalog completely, then atomically replaces `catalog-state.json`. Sequence, hash, and
-key epoch advance with the cached bytes in that one write, so a crash cannot separate the usable catalog from its
-anti-rollback state.
+Catalog refresh verifies the new catalog completely, then atomically replaces `catalog-state.json`. The
+`(key_epoch, sequence)` pair and catalog hash advance with the cached bytes in that one write, so a crash cannot separate
+the usable catalog from its anti-rollback state.
 
 After catalog expiry, install, enable, update, and manual rollback fail closed. Status, logs, disable, uninstall, purge,
 Core start, and Core stop continue to work from local verified state. Core start may therefore restart an already

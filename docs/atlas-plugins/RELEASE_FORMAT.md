@@ -120,11 +120,13 @@ images remain GHCR artifacts. The catalog has this shape:
 ```
 
 The catalog uses strict decoding and stable sorting by `plugin_id` and Semantic Version. `sequence` increases for every
-catalog publication. Sequence 1 has a null `previous_catalog_sha256`; every later catalog pins the exact prior catalog
-bytes. `issued_at` and `expires_at` use UTC RFC 3339 timestamps, and expiry is at most 30 days after issue. Issue time
-must increase with sequence and cannot be more than five minutes ahead of the manager's clock. Each release document
-must repeat its catalog release's Plugin ID, display name, and version. The manager rejects a mismatch. Display names
-belong to releases, so renaming a later release does not invalidate retained history.
+publication within one key epoch. Epoch 1, sequence 1 has a null `previous_catalog_sha256`; every later catalog, including
+the first catalog in a newer epoch, pins the exact prior catalog bytes. A newer trusted epoch starts at the initial
+sequence floor embedded in the CLI and may use a lower sequence than the prior epoch's high-water mark. `issued_at` and
+`expires_at` use UTC RFC 3339 timestamps, and expiry is at most 30 days after issue. Issue time must increase with every
+publication, including across epoch transitions, and cannot be more than five minutes ahead of the manager's clock. Each
+release document must repeat its catalog release's Plugin ID, display name, and version. The manager rejects a mismatch.
+Display names belong to releases, so renaming a later release does not invalidate retained history.
 
 The manager bounds the catalog response at 4 MiB and the detached signature response at 1 KiB before parsing or
 verification. Schema 1 permits at most 128 Plugins and 256 releases per Plugin. Plugin IDs, display names, versions,
@@ -141,15 +143,18 @@ release-document signature would add another path without adding trust and is no
 The protected `plugin-catalog` branch is the canonical catalog ledger. Force pushes are forbidden. Each publication
 validates the transition against the current branch head, preserves every existing Plugin, version, release-document
 hash, and true revocation, then pushes the new catalog with a compare-and-swap on that head commit. A release may be
-added and a revocation may change only from false to true. Existing release identity and hashes never change. A Pages
-deployment is built from that exact ledger commit, not by reading the mutable Pages endpoint.
+added and a revocation may change only from false to true. Existing release identity and hashes never change. Ordinary
+publication keeps the current key epoch and increments its sequence. An authorized key rotation increments the epoch
+and starts at that epoch's CLI-embedded sequence floor. A Pages deployment is built from that exact ledger commit, not
+by reading the mutable Pages endpoint.
 
 The manager atomically stores the accepted catalog bytes, signature bytes, sequence, catalog hash, key epoch, key ID,
-issue time, and expiry as described in `MANAGEMENT.md`. It rejects a lower sequence, the same sequence with different
-bytes, an older accepted key epoch, or a catalog below the minimum epoch and sequence checkpoint embedded in its CLI.
-It may use a cached catalog until `expires_at`. After expiry, installed Plugins continue to run and the operator may
-inspect, disable, uninstall, or purge them. Install, enable, update, and manual rollback require a fresh catalog. The menu
-checks when opened and exposes a manual refresh; no background updater runs.
+issue time, and expiry as described in `MANAGEMENT.md`. It compares `(key_epoch, sequence)` lexicographically. It rejects
+an older epoch, a lower sequence within the accepted epoch, the same pair with different bytes, or a pair below the
+minimum checkpoint embedded in its CLI. A higher trusted epoch supersedes every sequence from an older epoch. It may use
+a cached catalog until `expires_at`. After expiry, installed Plugins continue to run and the operator may inspect,
+disable, uninstall, or purge them. Install, enable, update, and manual rollback require a fresh catalog. The menu checks
+when opened and exposes a manual refresh; no background updater runs.
 
 ## Revocation and key rotation
 
@@ -158,18 +163,19 @@ manager refuses a new install, enable, update, or manual rollback to that releas
 revoked release but does not stop or replace it without operator approval. Starting Atlas may continue an already
 Enabled revoked release from its locally verified state; it does not create a new enablement decision.
 
-Each trusted public key has an ordered epoch and activation sequence embedded in the CLI. Rotation first publishes a CLI
-that trusts the new key and defines sequence N as its activation. That CLI rejects the old epoch at sequence N or later.
-The signed catalog's key epoch must match the embedded epoch for its `key_id`. Atlas then publishes sequence N with the
-new key. After accepting a newer epoch, a manager permanently rejects older epochs even when they carry a higher
-sequence. A later CLI may remove the old key. Older CLIs that do not trust the new key cannot mutate Plugin state after
-their last catalog expires and must update. Compromise of the only active signing key requires a CLI update; installed
-Plugins remain operable while catalog mutations fail closed.
+Each trusted public key has an ordered epoch and initial sequence floor embedded in the CLI. Rotation first publishes a
+CLI that trusts the new key and its floor. The signed catalog's key epoch must match the embedded epoch for its `key_id`.
+Atlas then publishes the first catalog in that epoch at the floor. The higher authenticated epoch is accepted even when
+its sequence is lower than the prior epoch's accepted sequence. After accepting it, a manager permanently rejects older
+epochs even when they carry a higher sequence. A later CLI may remove the old key. Older CLIs that do not trust the new
+key cannot mutate Plugin state after their last catalog expires and must update. Compromise of the active signing key
+requires a CLI update that removes that key and trusts a newer epoch. An attacker-created high sequence in the
+compromised epoch cannot block the newer epoch. Installed Plugins remain operable while catalog mutations fail closed.
 
-Every CLI release embeds the newest catalog epoch and sequence it verified while building. This checkpoint limits replay
-for a fresh installation or after an explicit Atlas reset. Existing installations retain their stronger local high-water
-mark. A fresh installation can still accept a replay between its embedded checkpoint and the current catalog for at most
-the catalog's 30-day lifetime; short expiry is the bound for that remaining case.
+Every CLI release embeds the newest `(key_epoch, sequence)` pair it verified while building. This checkpoint limits replay
+for a fresh installation or after an explicit Atlas reset. Existing installations retain their stronger local pair. A
+fresh installation can still accept a replay between its embedded checkpoint and the current catalog for at most the
+catalog's 30-day lifetime; short expiry is the bound for that remaining case.
 
 ## Publication transaction
 
