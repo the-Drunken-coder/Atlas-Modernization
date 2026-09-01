@@ -197,6 +197,20 @@ describe("MapView region comparison", () => {
     expect(screen.queryByText("Drag a region. Shift-drag still zooms.")).not.toBeInTheDocument();
   });
 
+  it("lets Escape from a map window cancel the active draw", () => {
+    const { canvas } = renderMapView({ styleId: "base", style: style("base"), mapSourceOptions });
+    fireEvent.click(screen.getByRole("button", { name: "Compare map source inside a region" }));
+    const mapWindow = document.createElement("div");
+    mapWindow.dataset.mapWindow = "";
+    const windowControl = document.createElement("button");
+    mapWindow.append(windowControl);
+    canvas.append(mapWindow);
+
+    fireEvent.keyDown(windowControl, { key: "Escape" });
+
+    expect(screen.queryByText("Drag a region. Shift-drag still zooms.")).not.toBeInTheDocument();
+  });
+
   it("suppresses the release click after Escape cancels an active draw", () => {
     const { canvas, onBackgroundClick } = renderMapView({ styleId: "base", style: style("base"), mapSourceOptions });
     fireEvent.click(screen.getByRole("button", { name: "Compare map source inside a region" }));

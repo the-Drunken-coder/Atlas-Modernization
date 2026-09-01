@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { styleFixture } from "../../../test/fixtures.js";
 import { emptySnapshot } from "../../atlas/store.js";
 import { type AtlasContextValue, AtlasStaticProvider } from "../../state/atlas-context.js";
+import { MapWindowWorkspace } from "../../ui/map/view/MapWindowWorkspace.js";
 import { SpatialResultsInspector } from "../plugins/SpatialResultsInspector.js";
 import { type SpatialOperationExecutor, useSpatialOperationRunner } from "../plugins/use-spatial-operation-runner.js";
 import { type PluginSelection, PluginsPanel } from "./PluginsPanel.js";
@@ -392,7 +393,9 @@ function SpatialPanel({
   return (
     <>
       <PluginsPanel reader={reader} selection={selection} onSelectionChange={setSelection} spatial={spatial} />
-      <SpatialResultsInspector spatial={spatial} onPreviewFeature={() => {}} onFocusFeature={() => {}} />
+      <MapWindowWorkspace>
+        <SpatialResultsInspector spatial={spatial} onPreviewFeature={() => {}} onFocusFeature={() => {}} />
+      </MapWindowWorkspace>
     </>
   );
 }
