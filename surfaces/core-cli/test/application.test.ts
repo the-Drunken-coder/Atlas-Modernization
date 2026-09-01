@@ -62,6 +62,7 @@ class FakeRunner implements CommandRunner {
   runningCoreImage = TEST_IMAGE;
   installedVersion = PACKAGE_VERSION;
   onRun: ((call: Call) => void) | undefined;
+  afterSuccessfulNetworkCreate: (() => void) | undefined;
   serviceStates = [
     { Service: "api", State: "running", Health: "healthy" },
     { Service: "source-gateway", State: "running", Health: "healthy" },
@@ -78,7 +79,7 @@ class FakeRunner implements CommandRunner {
     command: string,
     args: string[],
     options: { cwd?: string; env?: NodeJS.ProcessEnv; inherit?: boolean; signal?: AbortSignal } = {}
-  ): Promise<{ status: number; stdout: string; stderr: string }> {
+  ): Promise<{ cancelled?: true; status: number; stdout: string; stderr: string }> {
     const call = {
       command,
       args,
@@ -88,7 +89,9 @@ class FakeRunner implements CommandRunner {
       ...(options.signal ? { signal: options.signal } : {})
     };
     this.calls.push(call);
+    const cancellationCount = this.cancelAllCalls;
     this.onRun?.(call);
+    if (this.cancelAllCalls > cancellationCount) return { ...result(1), cancelled: true };
     if (command === "npm" && args[0] === "view") {
       return result(0, JSON.stringify({ version: this.latestVersion, atlasCoreImage: this.latestImage }));
     }
@@ -109,6 +112,9 @@ class FakeRunner implements CommandRunner {
       const name = args.at(-1) ?? "";
       if (this.existingNetworks.has(name)) return result(1, "", `network with name ${name} already exists`);
       this.existingNetworks.add(name);
+      const afterSuccessfulNetworkCreate = this.afterSuccessfulNetworkCreate;
+      this.afterSuccessfulNetworkCreate = undefined;
+      if (afterSuccessfulNetworkCreate) queueMicrotask(afterSuccessfulNetworkCreate);
       return result(0, `${name}\n`);
     }
     if (args[0] === "network" && args[1] === "inspect") {
@@ -468,6 +474,22 @@ describe("atlas-core CLI", () => {
 
     expect(await runCLI([], test.context)).toBe(0);
     expect(test.runner.calls.map(composeCommand)).toContainEqual(["down"]);
+    expect(test.runner.calls.some((call) => call.args[0] === "network" && call.args[1] === "rm")).toBe(true);
+  });
+
+  it("releases the Docker mutation lock when cancellation races successful acquisition", async () => {
+    const test = runtime();
+    test.context.interactive = {
+      configureAdmin: async () => undefined,
+      runUpdate: async () => undefined,
+      runMenu: async (operator) => {
+        test.runner.afterSuccessfulNetworkCreate = () => operator.cancelPending();
+        await expect(operator.init()).rejects.toThrow("Atlas Core command was cancelled.");
+      }
+    };
+
+    expect(await runCLI([], test.context)).toBe(0);
+    expect(test.runner.existingNetworks.has(MUTATION_LOCK_NETWORK)).toBe(false);
     expect(test.runner.calls.some((call) => call.args[0] === "network" && call.args[1] === "rm")).toBe(true);
   });
 

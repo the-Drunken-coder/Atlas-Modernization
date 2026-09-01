@@ -116,6 +116,7 @@ Set ATLAS_CORE_HOME to use a different directory.
 `;
 
 type CommandResult = {
+  cancelled?: true;
   status: number;
   stdout: string;
   stderr: string;
@@ -230,11 +231,14 @@ class UsageError extends Error {
 }
 
 export class ProcessCommandRunner implements CommandRunner {
-  readonly #children = new Set<ReturnType<typeof spawn>>();
-  readonly #cleanupChildren = new Set<ReturnType<typeof spawn>>();
+  readonly #children = new Map<ReturnType<typeof spawn>, { cancelled: boolean }>();
+  readonly #cleanupChildren = new Map<ReturnType<typeof spawn>, { cancelled: boolean }>();
 
   cancelAll(): void {
-    for (const child of this.#children) child.kill();
+    for (const [child, state] of this.#children) {
+      state.cancelled = true;
+      child.kill();
+    }
   }
 
   async run(command: string, args: string[], options: RunOptions = {}): Promise<CommandResult> {
@@ -249,7 +253,7 @@ export class ProcessCommandRunner implements CommandRunner {
     command: string,
     args: string[],
     options: RunOptions,
-    children: Set<ReturnType<typeof spawn>>
+    children: Map<ReturnType<typeof spawn>, { cancelled: boolean }>
   ): Promise<CommandResult> {
     return await new Promise((resolve, reject) => {
       const child = spawn(command, args, {
@@ -257,8 +261,10 @@ export class ProcessCommandRunner implements CommandRunner {
         env: options.env,
         stdio: options.inherit ? "inherit" : ["ignore", "pipe", "pipe"]
       });
-      children.add(child);
+      const state = { cancelled: false };
+      children.set(child, state);
       const cancel = (): void => {
+        state.cancelled = true;
         child.kill();
       };
       const removeAbortListener = (): void => {
@@ -282,7 +288,7 @@ export class ProcessCommandRunner implements CommandRunner {
       child.once("close", (status) => {
         children.delete(child);
         removeAbortListener();
-        resolve({ status: status ?? 1, stdout, stderr });
+        resolve({ ...(state.cancelled ? { cancelled: true as const } : {}), status: status ?? 1, stdout, stderr });
       });
       options.signal?.addEventListener("abort", cancel, { once: true });
       if (options.signal?.aborted) cancel();
@@ -310,7 +316,7 @@ class CancellableCommandRunner implements CommandRunner {
   async run(command: string, args: string[], options?: RunOptions): Promise<CommandResult> {
     if (this.#cancelled || options?.signal?.aborted) throw new CommandCancelledError();
     const result = await this.#runner.run(command, args, options);
-    if (this.#cancelled || options?.signal?.aborted) throw new CommandCancelledError();
+    if (result.cancelled) throw new CommandCancelledError();
     return result;
   }
 
