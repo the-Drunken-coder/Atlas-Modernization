@@ -96,6 +96,9 @@ test("requires split release-tag creation and immutability rulesets", () => {
 test("publishes the npm archive as a local filesystem path", () => {
   const source = readFileSync(workflow, "utf8");
   assert.equal(source.match(/npm publish "\.\/release-artifacts\/atlas-core-\$VERSION\.tgz"/g)?.length, 2);
+  assert.equal(source.match(/--tag "\$PUBLISH_TAG"/g)?.length, 2);
+  assert.match(source, /publish_tag=recovered/);
+  assert.match(source, /gh release edit "\$tag" --draft=false --latest=false/);
 });
 
 test("installs the npm package before auditing its signatures", () => {
@@ -156,6 +159,15 @@ test("does not publish a missing npm version from main recovery", () => {
     /if: needs\.changelog\.outputs\.recovery == 'true' && steps\.npm\.outputs\.version_exists != 'true'/
   );
   assert.equal(source.match(/needs\.changelog\.outputs\.recovery != 'true'/g)?.length, 2);
+  const guard = source.indexOf("      - name: Require an existing npm version for main recovery");
+  assert.ok(guard > 0);
+  for (const mutation of [
+    "      - name: Sign in to GitHub Container Registry",
+    "      - name: Promote the reviewed digest to the version tag",
+    "      - name: Create or verify draft GitHub Release"
+  ]) {
+    assert.ok(guard < source.indexOf(mutation), `${mutation.trim()} must follow the recovery guard`);
+  }
 });
 
 test("cross-compiles release binaries on the native build platform", () => {
@@ -201,9 +213,9 @@ test("applies the monotonic version gate only before creating a missing tag", ()
 
 test("coordinates automatic tag publication after one approval", () => {
   const source = readFileSync(workflow, "utf8");
-  assert.match(
-    source,
-    /run-name: Atlas Core \$\{\{ inputs\.version \}\} from \$\{\{ github\.ref_name \}\} \[coordinator \$\{\{ inputs\.coordinator_run_id \|\| github\.run_id \}\}\]/
+    assert.match(
+      source,
+      /run-name: Atlas Core \$\{\{ inputs\.version \}\} from \$\{\{ github\.ref_name \}\} \[coordinator \$\{\{ inputs\.coordinator_run_id \|\| github\.run_id \}\}\/\$\{\{ inputs\.coordinator_run_attempt \|\| github\.run_attempt \}\}\]/
   );
   assert.match(
     source,
@@ -217,13 +229,26 @@ test("coordinates automatic tag publication after one approval", () => {
   assert.match(source, /Leave the internal coordinator run ID empty when dispatching from main/);
   assert.match(source, /name: Require protected Atlas Core release tags/);
   assert.equal(source.match(/bash \.github\/scripts\/require-atlas-core-tag-rulesets\.sh/g)?.length, 2);
-  assert.match(source, /name: Mint protected release credential/);
+    assert.match(source, /name: Mint protected release credential/);
   assert.match(source, /actions\/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1/);
   assert.match(source, /permission-contents: write/);
   assert.doesNotMatch(source, /permission-administration/);
-  assert.match(source, /GH_TOKEN: \$\{\{ steps\.release-token\.outputs\.token \}\}/);
-  assert.match(source, /name: Upload approved publication/);
-  assert.match(source, /atlas-core-publication-authorization-\$\{\{ inputs\.version \}\}-\$\{\{ github\.run_id \}\}/);
+    assert.match(source, /GH_TOKEN: \$\{\{ steps\.release-token\.outputs\.token \}\}/);
+    const publishJob = source.slice(source.indexOf("  publish:"), source.indexOf("  commit-release:"));
+    const commitJob = source.slice(source.indexOf("  commit-release:"), source.indexOf("  await-publication:"));
+    assert.doesNotMatch(publishJob, /ATLAS_CORE_RELEASE_APP_PRIVATE_KEY|actions\/create-github-app-token/);
+    assert.match(commitJob, /environment: release-commit/);
+    assert.doesNotMatch(commitJob, /npm ci|npm pack|test-atlas-core-package|node \.github|bash \.github/);
+    assert.match(commitJob, /git diff --cached --name-only/);
+    assert.match(commitJob, /git diff --cached --check/);
+    assert.match(commitJob, /cmp "\$artifact_root\/release-artifacts\/release\.diff" "\$actual_release_diff"/);
+    assert.match(commitJob, /git ls-files --others --exclude-standard/);
+    assert.equal(commitJob.match(/core\.hooksPath=\/dev\/null/g)?.length, 3);
+    assert.match(source, /name: Upload approved publication/);
+    assert.match(
+      source,
+      /atlas-core-publication-authorization-\$\{\{ inputs\.version \}\}-\$\{\{ github\.run_id \}\}-\$\{\{ github\.run_attempt \}\}/
+    );
   const authorizationJob = source.slice(
     source.indexOf("  authorize-tag-publication:"),
     source.indexOf("  approve-manual-tag-recovery:")
@@ -241,18 +266,42 @@ test("coordinates automatic tag publication after one approval", () => {
   assert.match(source, /actions\/runs\/\$COORDINATOR_RUN_ID/);
   assert.match(source, /\.head_branch == "main"/);
   assert.match(source, /\.path == "\.github\/workflows\/release-atlas-core\.yml"/);
-  assert.match(source, /child_run_id=\$child_run_id/);
+    assert.match(source, /child_run_id=\$child_run_id/);
+    assert.match(source, /coordinator_run_attempt: \$coordinator_run_attempt/);
+    assert.match(source, /coordinator_run_attempt: \$coordinator_run_attempt\n\s+}/);
+    assert.match(source, /EXPECTED_COORDINATOR_RUN_ATTEMPT: \$\{\{ inputs\.coordinator_run_attempt \}\}/);
+    assert.match(source, /release_artifact_id: \$release_artifact_id/);
+    assert.match(source, /release_artifact_digest: \$release_artifact_digest/);
+    assert.match(source, /package_integrity: \$package_integrity/);
+    assert.match(
+      source,
+      /release_artifact_digest: sha256:\$\{\{ steps\.final-artifact\.outputs\.artifact-digest \}\}/
+    );
+    assert.match(source, /\.status == "in_progress"/);
+    assert.equal(source.match(/\.status == "in_progress"/g)?.length, 3);
+    assert.match(source, /name: Verify exact coordinator package artifact/);
+    assert.match(source, /name: Download coordinator-approved release/);
+    assert.match(source, /Downloaded package integrity does not match the coordinator authorization/);
+    assert.doesNotMatch(source, /retention-days: 7/);
   assert.doesNotMatch(source, /expected_title=/);
   assert.match(source, /needs: \[changelog, prepare, authorize-tag-publication, approve-manual-tag-recovery\]/);
   assert.equal(source.match(/bash \.github\/scripts\/verify-atlas-core-release-tag\.sh/g)?.length, 2);
-  assert.match(source, /name: Await immutable tag publication/);
+    assert.match(source, /name: Await immutable tag publication/);
   assert.match(source, /actions: read\n\s+checks: read\n\s+contents: read/);
-  assert.match(
-    source,
-    /gh run watch "\$CHILD_RUN_ID" --repo "\$GITHUB_REPOSITORY" --exit-status --interval 10/
-  );
-  assert.match(source, /GHCR, npm, provenance, and the GitHub Release passed final verification/);
-});
+    assert.match(
+      source,
+      /gh run watch "\$CHILD_RUN_ID" --repo "\$GITHUB_REPOSITORY" --exit-status --interval 10/
+    );
+    assert.doesNotMatch(source, /timeout-minutes: 90/);
+    assert.match(source, /name: Stop publication after coordinator failure/);
+    assert.match(source, /gh run cancel "\$CHILD_RUN_ID"/);
+    assert.match(source, /actions\/runs\/\$CHILD_RUN_ID\/force-cancel/);
+    assert.match(
+      publishJob,
+      /name: Run approved release phase\n\s+if: >-\n\s+!cancelled\(\)/
+    );
+    assert.match(source, /GHCR, npm, provenance, and the GitHub Release passed final verification/);
+  });
 
 test("keeps the tag-ruleset gate shell valid", () => {
   assert.equal(spawnSync("bash", ["-n", tagRulesetScript]).status, 0);
@@ -296,9 +345,12 @@ test("verifies the remote release tag still peels to the reviewed commit", () =>
   }
 });
 
-test("documents non-bypassable release environments", () => {
+test("documents non-bypassable release environments and legacy recovery", () => {
   const source = readFileSync(releaseGuide, "utf8");
-  assert.match(source, /disable\nadministrator bypass for both environments/i);
+  assert.match(source, /Disable administrator bypass for all three environments/i);
+  assert.match(source, /`release-commit` environment secret `ATLAS_CORE_RELEASE_APP_PRIVATE_KEY`/);
+  assert.match(source, /pre-migration tag whose npm version is missing/i);
+  assert.match(source, /temporarily restore the npm trusted\npublisher's environment to `release`/i);
 });
 
 test("keeps the release-owned file contract narrow", () => {
