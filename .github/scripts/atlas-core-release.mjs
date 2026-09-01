@@ -36,12 +36,15 @@ switch (command) {
       args[3]
     );
     break;
-  case "validate-tag-ruleset":
-    validateTagRuleset(required(args[0], "tag ruleset path"));
+  case "validate-tag-rulesets":
+    validateTagRulesets(
+      required(args[0], "tag creation ruleset path"),
+      required(args[1], "tag immutability ruleset path")
+    );
     break;
   default:
     throw new Error(
-      "usage: atlas-core-release.mjs validate-version|validate-next-version|existing-date|prepare-package|validate-changelog|validate-npm-attestation|validate-tag-ruleset"
+      "usage: atlas-core-release.mjs validate-version|validate-next-version|existing-date|prepare-package|validate-changelog|validate-npm-attestation|validate-tag-rulesets"
     );
 }
 
@@ -111,22 +114,36 @@ function validateNpmAttestation({ version, integrity, bundlePath, repository, wo
   }
 }
 
-function validateTagRuleset(path) {
-  const ruleset = JSON.parse(readFileSync(path, "utf8"));
-  if (ruleset.name !== "Atlas Core release tags" || ruleset.target !== "tag" || ruleset.enforcement !== "active") {
-    throw new Error("Atlas Core release tags must be an active tag ruleset");
+function validateTagRulesets(creationPath, immutabilityPath) {
+  const creation = JSON.parse(readFileSync(creationPath, "utf8"));
+  const immutability = JSON.parse(readFileSync(immutabilityPath, "utf8"));
+  validateTagRuleset(creation, "Atlas Core release tag creation", ["creation"], ["update", "deletion"]);
+  validateTagRuleset(immutability, "Atlas Core release tag immutability", ["update", "deletion"], ["creation"]);
+}
+
+function validateTagRuleset(ruleset, name, requiredRules, forbiddenRules) {
+  if (ruleset.name !== name || ruleset.target !== "tag" || ruleset.enforcement !== "active") {
+    throw new Error(`${name} must be an active tag ruleset`);
   }
   const include = ruleset.conditions?.ref_name?.include;
   const exclude = ruleset.conditions?.ref_name?.exclude;
-  if (!Array.isArray(include) || !include.includes("refs/tags/atlas-core-v*") || !Array.isArray(exclude)) {
-    throw new Error("Atlas Core release tags must include refs/tags/atlas-core-v*");
+  if (
+    !Array.isArray(include) ||
+    include.length !== 1 ||
+    include[0] !== "refs/tags/atlas-core-v*" ||
+    !Array.isArray(exclude) ||
+    exclude.length !== 0
+  ) {
+    throw new Error(`${name} must target only refs/tags/atlas-core-v*`);
   }
-  if (exclude.length > 0) throw new Error("Atlas Core release tags must not exclude matching release tags");
 
-  if (!Array.isArray(ruleset.rules)) throw new Error("Atlas Core release tags must define tag restrictions");
+  if (!Array.isArray(ruleset.rules)) throw new Error(`${name} must define tag restrictions`);
   const ruleTypes = new Set(ruleset.rules.map((rule) => rule?.type));
-  for (const type of ["creation", "update", "deletion"]) {
-    if (!ruleTypes.has(type)) throw new Error(`Atlas Core release tags must restrict ${type}`);
+  for (const type of requiredRules) {
+    if (!ruleTypes.has(type)) throw new Error(`${name} must restrict ${type}`);
+  }
+  for (const type of forbiddenRules) {
+    if (ruleTypes.has(type)) throw new Error(`${name} must not include ${type}`);
   }
 }
 

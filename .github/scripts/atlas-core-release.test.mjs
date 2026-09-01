@@ -33,24 +33,40 @@ test("validates Atlas Core versions", () => {
   assert.notEqual(run(["validate-version", "1.2.3-beta.1"], process.cwd()).status, 0);
 });
 
-test("requires an active Atlas Core release tag ruleset", () => {
+test("requires split release-tag creation and immutability rulesets", () => {
   const directory = mkdtempSync(join(tmpdir(), "atlas-core-ruleset-"));
-  const rulesetPath = join(directory, "ruleset.json");
-  const ruleset = {
-    name: "Atlas Core release tags",
+  const creationPath = join(directory, "creation.json");
+  const immutabilityPath = join(directory, "immutability.json");
+  const base = {
     target: "tag",
     enforcement: "active",
-    conditions: { ref_name: { include: ["refs/tags/atlas-core-v*"], exclude: [] } },
-    rules: [{ type: "creation" }, { type: "update" }, { type: "deletion" }]
+    conditions: { ref_name: { include: ["refs/tags/atlas-core-v*"], exclude: [] } }
+  };
+  const creation = {
+    ...base,
+    name: "Atlas Core release tag creation",
+    rules: [{ type: "creation" }]
+  };
+  const immutability = {
+    ...base,
+    name: "Atlas Core release tag immutability",
+    rules: [{ type: "update" }, { type: "deletion" }]
   };
   try {
-    writeFileSync(rulesetPath, JSON.stringify(ruleset));
-    assert.equal(run(["validate-tag-ruleset", rulesetPath], directory).status, 0);
+    writeFileSync(creationPath, JSON.stringify(creation));
+    writeFileSync(immutabilityPath, JSON.stringify(immutability));
+    assert.equal(run(["validate-tag-rulesets", creationPath, immutabilityPath], directory).status, 0);
 
-    writeFileSync(rulesetPath, JSON.stringify({ ...ruleset, rules: [{ type: "creation" }, { type: "deletion" }] }));
-    const missingUpdate = run(["validate-tag-ruleset", rulesetPath], directory);
-    assert.notEqual(missingUpdate.status, 0);
-    assert.match(missingUpdate.stderr, /restrict update/);
+    writeFileSync(creationPath, JSON.stringify({ ...creation, rules: [{ type: "creation" }, { type: "update" }] }));
+    const mutableCreation = run(["validate-tag-rulesets", creationPath, immutabilityPath], directory);
+    assert.notEqual(mutableCreation.status, 0);
+    assert.match(mutableCreation.stderr, /creation must not include update/);
+
+    writeFileSync(creationPath, JSON.stringify(creation));
+    writeFileSync(immutabilityPath, JSON.stringify({ ...immutability, rules: [...immutability.rules, { type: "creation" }] }));
+    const blockedCreation = run(["validate-tag-rulesets", creationPath, immutabilityPath], directory);
+    assert.notEqual(blockedCreation.status, 0);
+    assert.match(blockedCreation.stderr, /immutability must not include creation/);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -139,7 +155,8 @@ test("uses a cached fast path for immutable-tag publication", () => {
   assert.match(source, /name: Install Atlas Core dependencies\n\s+if: needs\.changelog\.outputs\.mode == 'prepare'/);
   assert.equal(source.match(/npm ci --workspace atlas-core --ignore-scripts/g)?.length, 2);
   assert.match(source, /permissions:\n\s+actions: write\n\s+contents: write/);
-  assert.match(source, /gh workflow run release-atlas-core\.yml/);
+  assert.match(source, /return_run_details: true/);
+  assert.match(source, /actions\/workflows\/release-atlas-core\.yml\/dispatches/);
   assert.doesNotMatch(source, /Require a run from the immutable release tag/);
   assert.equal(source.match(/resolved to \$promoted_digest after promotion/g)?.length, 2);
 });
@@ -161,22 +178,39 @@ test("coordinates automatic tag publication after one approval", () => {
   );
   assert.match(
     source,
-    /name: \$\{\{ github\.ref_type == 'tag' && inputs\.coordinator_run_id != '' && 'release-publish' \|\| 'release' \}\}/
+    /name: \$\{\{ github\.ref_type == 'tag' && 'release-publish' \|\| 'release' \}\}/
   );
+  assert.match(source, /approve-manual-tag-recovery:\n\s+name: Approve manual tag recovery/);
+  assert.match(source, /if: github\.ref_type == 'tag' && inputs\.coordinator_run_id == ''/);
   assert.match(source, /name: Summarize release gate/);
   assert.match(source, /Approval permits candidate image publication/);
   assert.doesNotMatch(source, /Approval 2/);
   assert.match(source, /Leave the internal coordinator run ID empty when dispatching from main/);
   assert.match(source, /name: Require protected Atlas Core release tags/);
-  assert.match(source, /validate-tag-ruleset "\$ruleset"/);
+  assert.match(source, /validate-tag-rulesets "\$creation" "\$immutability"/);
+  assert.match(source, /name: Mint protected release credential/);
+  assert.match(source, /actions\/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1/);
+  assert.match(source, /permission-contents: write/);
+  assert.doesNotMatch(source, /permission-administration/);
+  assert.equal(source.match(/validate-tag-rulesets "\$creation" "\$immutability"/g)?.length, 2);
+  assert.match(source, /GH_TOKEN: \$\{\{ steps\.release-token\.outputs\.token \}\}/);
   assert.match(source, /name: Upload approved publication/);
   assert.match(source, /atlas-core-publication-authorization-\$\{\{ inputs\.version \}\}-\$\{\{ github\.run_id \}\}/);
   assert.match(source, /name: Verify coordinator authorization/);
   assert.match(source, /run-id: \$\{\{ inputs\.coordinator_run_id \}\}/);
-  assert.match(source, /--field coordinator_run_id="\$GITHUB_RUN_ID"/);
+  assert.match(source, /child_run_id: \$child_run_id/);
+  assert.match(source, /--arg child_run_id "\$CHILD_RUN_ID"/);
+  assert.match(source, /actions\/runs\/\$COORDINATOR_RUN_ID/);
+  assert.match(source, /\.head_branch == "main"/);
+  assert.match(source, /\.path == "\.github\/workflows\/release-atlas-core\.yml"/);
+  assert.match(source, /child_run_id=\$child_run_id/);
+  assert.doesNotMatch(source, /expected_title=/);
   assert.match(source, /name: Await immutable tag publication/);
   assert.match(source, /actions: read\n\s+checks: read\n\s+contents: read/);
-  assert.match(source, /gh run watch "\$CHILD_RUN_ID" --exit-status --interval 10/);
+  assert.match(
+    source,
+    /gh run watch "\$CHILD_RUN_ID" --repo "\$GITHUB_REPOSITORY" --exit-status --interval 10/
+  );
   assert.match(source, /GHCR, npm, provenance, and the GitHub Release passed final verification/);
 });
 

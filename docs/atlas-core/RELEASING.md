@@ -46,27 +46,39 @@ to the tag run that completed publication.
 
 Before the first release with this workflow:
 
-1. Add the required release-tag ruleset described below.
-2. Keep the existing `release` environment, its required reviewer, and its `main` and `atlas-core-v*` policies.
-3. Create `release-publish`, restrict it to tags matching `atlas-core-v*`, and do not add a required reviewer.
-4. After this workflow is on `main`, change the npm trusted publisher environment from `release` to `release-publish`.
-5. If the bootstrap `NPM_TOKEN` still exists, move it to `release-publish`.
+1. Create and install the dedicated Atlas Core release GitHub App described below.
+2. Add both required release-tag rulesets described below.
+3. Keep the existing `release` environment, its required reviewer, and its `main` and `atlas-core-v*` policies.
+4. Create `release-publish`, restrict it to tags matching `atlas-core-v*`, and do not add a required reviewer.
+5. After this workflow is on `main`, change the npm trusted publisher environment from `release` to `release-publish`.
+6. If the bootstrap `NPM_TOKEN` still exists, move it to `release-publish`.
 
 Do not remove the reviewer from `release`. The coordinator uses that environment for the only release approval.
 
-## Required release-tag ruleset
+## Required release-tag authority
 
-Create an active tag ruleset named `Atlas Core release tags` with these exact controls:
+Create a GitHub App dedicated to Atlas Core releases. Install it only on this repository and grant these repository
+permissions:
 
-- target `refs/tags/atlas-core-v*`;
-- restrict creations, updates, and deletions;
-- grant `always` bypass only to the GitHub Actions app.
+- Contents: read and write.
 
-The workflow confirms the active ruleset target and restrictions before preparing a release and again before coordinated
-tag publication. GitHub does not expose the bypass list to the workflow token, so verify that list in repository settings.
-The ruleset prevents a collaborator from creating or moving a release tag to enter the automatic `release-publish`
-environment. Do not grant a user, team, or repository role bypass. An administrator can edit the ruleset for emergency
-recovery.
+Record its client ID as the repository variable `ATLAS_CORE_RELEASE_APP_CLIENT_ID` and its private key as the `release`
+environment secret `ATLAS_CORE_RELEASE_APP_PRIVATE_KEY`. Do not grant the App Administration permission.
+
+Create two active tag rulesets targeting only `refs/tags/atlas-core-v*`:
+
+1. `Atlas Core release tag creation` restricts creation and grants `always` bypass only to the dedicated release App.
+   It must not restrict updates or deletions because its App bypass would apply to those rules too.
+2. `Atlas Core release tag immutability` restricts updates and deletions, does not restrict creation, and has an empty
+   bypass list.
+
+Do not grant the repository-wide GitHub Actions App, a user, a team, or a repository role bypass. Verify the two bypass
+lists in repository settings: the creation ruleset contains exactly the release App, and the immutability ruleset is
+empty. GitHub withholds bypass actors from API credentials that cannot edit the ruleset; granting that power to the
+release App would defeat this boundary. The workflow instead checks the active rule names, targets, and restrictions
+before preparation and again after approval. It then mints a short-lived App token that can write repository contents but
+cannot change rulesets. The push itself fails unless that App has creation authority, and no routine credential can move
+or delete an existing release tag.
 
 ## What the workflow checks
 
@@ -82,14 +94,16 @@ digests, records the immutable digests in the package, and exercises the packed 
 acceptance test covers refusal to adopt unknown containers, initialization, start, diagnostics, status, update, reset,
 and stop while confirming that ordinary stop preserves both durable volumes.
 
-The workflow refuses to push if `main` moved. It pushes the release commit and tag atomically, so neither moves without
-the other. After that push, the coordinator uploads an authorization record containing the coordinator run ID, version,
-tag, source commit, and release commit. The automatic tagged run must download that exact record from the approved
-coordinator before it can publish. It rebuilds the npm archive from the release commit, verifies anonymous access to
-every exact image, checks npm integrity, signatures, and provenance, then publishes the GitHub Release.
+The workflow refuses to push if `main` moved. The reviewed job checks both tag rulesets, mints the dedicated release App
+credential, then pushes the release commit and tag atomically. The coordinator dispatches the tagged run through GitHub's
+API and records the exact returned child run ID. Its authorization record binds the coordinator run ID, child run ID,
+version, tag, source commit, and release commit. The tagged run must download that exact record, match its own run ID, and
+verify the coordinator was the expected workflow dispatched from `main` at the source commit before it can publish. It
+rebuilds the npm archive from the release commit, verifies anonymous access to every exact image, checks npm integrity,
+signatures, and provenance, then publishes the GitHub Release.
 
-A tag run without a coordinator ID cannot use the automatic `release-publish` environment. It falls back to `release`
-and requires a reviewer. This keeps manual recovery possible without letting an ordinary tag dispatch bypass approval.
+A tag run without a coordinator ID first waits for reviewer approval in `release`. After that gate, all tag-bound npm
+publication runs in `release-publish`, so automatic and manual recovery share the one npm trusted-publisher identity.
 
 ## If the review needs changes
 
@@ -109,18 +123,20 @@ digests, the release commit, and the tag remain unchanged.
 
 ## First-time setup
 
-1. Create the active `Atlas Core release tags` ruleset described above.
-2. Create a GitHub environment named `release`. Restrict it to `main` and tags matching `atlas-core-v*`, then add a
+1. Create and install the dedicated release GitHub App. Add the two repository variables and the private-key environment
+   secret described above.
+2. Create both active Atlas Core release-tag rulesets described above.
+3. Create a GitHub environment named `release`. Restrict it to `main` and tags matching `atlas-core-v*`, then add a
    required reviewer.
-3. Create a GitHub environment named `release-publish`. Restrict it to tags matching `atlas-core-v*`. Do not add a
+4. Create a GitHub environment named `release-publish`. Restrict it to tags matching `atlas-core-v*`. Do not add a
    required reviewer. The workflow reaches this environment only through an immutable tag created by the approved
    coordinator.
-4. Add `OPENCODE_API_KEY` as a repository Actions secret. Use an OpenCode Go API key, not a copied local auth file.
-5. Create a short-lived npm granular access token with read/write package access and **Bypass 2FA**. Because
+5. Add `OPENCODE_API_KEY` as a repository Actions secret. Use an OpenCode Go API key, not a copied local auth file.
+6. Create a short-lived npm granular access token with read/write package access and **Bypass 2FA**. Because
    `atlas-core` does not exist yet, the first token may need access to all packages owned by the publishing account.
    Store it as an environment secret named `NPM_TOKEN` in `release-publish`.
-6. Give Actions the read and write workflow permission so the workflow can push the release commit, dispatch the tagged
-   run, and wait for its result. If a ruleset protects `main`, grant this workflow the narrow required bypass.
+7. Give Actions the read and write workflow permission so the workflow can dispatch the tagged run and wait for its
+   result. If a ruleset protects `main`, grant the dedicated release App the narrow bypass needed for the atomic push.
 
 npm cannot configure trusted publishing until the first publication creates the package. Keep the bootstrap token's
 expiration short and do not reuse it elsewhere. The first tagged run stops if a newly created GHCR package is private;
@@ -147,9 +163,9 @@ Later releases require no npm token.
 
 If automatic dispatch fails after the atomic push, dispatch **Release Atlas Core** manually from
 `atlas-core-v<version>`. Leave the internal coordinator run ID empty. Do not rerun the original main job after it has
-pushed the release commit and tag. Tagged-job reruns recognize the exact release commit, pinned digests, image
-visibility, npm integrity, provenance, release notes, and assets. They repair an incomplete draft release and reject
-mismatched published artifacts. Manual tagged recovery waits for approval in `release`.
+pushed the release commit and tag. Manual recovery waits for approval in `release`, then publishes from
+`release-publish`. Tagged-job reruns recognize the exact release commit, pinned digests, image visibility, npm integrity,
+provenance, release notes, and assets. They repair an incomplete draft release and reject mismatched published artifacts.
 
 Use advanced recovery only when npm already contains the exact version with matching integrity, but the immutable-tag
 workflow cannot finish because its tagged workflow contains a bug fixed later on `main`:

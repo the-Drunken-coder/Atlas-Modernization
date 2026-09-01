@@ -97,18 +97,25 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          ruleset_id="$(
+          creation_id="$(
             gh api "repos/$GITHUB_REPOSITORY/rulesets?targets=tag&per_page=100" \
-              --jq '.[] | select(.name == "Atlas Core release tags" and .enforcement == "active") | .id' |
+              --jq '.[] | select(.name == "Atlas Core release tag creation" and .enforcement == "active") | .id' |
               head -n 1
           )"
-          if [ -z "$ruleset_id" ]; then
-            echo "Create the active Atlas Core release tags ruleset before releasing." >&2
+          immutability_id="$(
+            gh api "repos/$GITHUB_REPOSITORY/rulesets?targets=tag&per_page=100" \
+              --jq '.[] | select(.name == "Atlas Core release tag immutability" and .enforcement == "active") | .id' |
+              head -n 1
+          )"
+          if [ -z "$creation_id" ] || [ -z "$immutability_id" ]; then
+            echo "Create both active Atlas Core release tag rulesets before releasing." >&2
             exit 1
           fi
-          ruleset="$(mktemp)"
-          gh api "repos/$GITHUB_REPOSITORY/rulesets/$ruleset_id" > "$ruleset"
-          node .github/scripts/atlas-core-release.mjs validate-tag-ruleset "$ruleset"
+          creation="$(mktemp)"
+          immutability="$(mktemp)"
+          gh api "repos/$GITHUB_REPOSITORY/rulesets/$creation_id" > "$creation"
+          gh api "repos/$GITHUB_REPOSITORY/rulesets/$immutability_id" > "$immutability"
+          node .github/scripts/atlas-core-release.mjs validate-tag-rulesets "$creation" "$immutability"
 
       - name: Select changelog date
         id: release
@@ -416,12 +423,31 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 
-  publish:
-    name: Run approved release phase
+  approve-manual-tag-recovery:
+    name: Approve manual tag recovery
+    if: github.ref_type == 'tag' && inputs.coordinator_run_id == ''
     needs: [changelog, prepare]
     runs-on: ubuntu-latest
+    environment: release
+    permissions: {}
+    steps:
+      - name: Record recovery approval
+        env:
+          VERSION: ${{ inputs.version }}
+        run: printf 'Approved manual recovery for Atlas Core %s.\n' "$VERSION" >> "$GITHUB_STEP_SUMMARY"
+
+  publish:
+    name: Run approved release phase
+    if: >-
+      always() &&
+      needs.changelog.result == 'success' &&
+      needs.prepare.result == 'success' &&
+      (needs.approve-manual-tag-recovery.result == 'success' ||
+      needs.approve-manual-tag-recovery.result == 'skipped')
+    needs: [changelog, prepare, approve-manual-tag-recovery]
+    runs-on: ubuntu-latest
     environment:
-      name: ${{ github.ref_type == 'tag' && inputs.coordinator_run_id != '' && 'release-publish' || 'release' }}
+      name: ${{ github.ref_type == 'tag' && 'release-publish' || 'release' }}
     concurrency:
       group: release-atlas-core-mutator
       cancel-in-progress: false
@@ -431,6 +457,8 @@ jobs:
       id-token: write
       packages: write
     outputs:
+      child_run_id: ${{ steps.dispatch.outputs.child_run_id }}
+      child_url: ${{ steps.dispatch.outputs.child_url }}
       release_sha: ${{ steps.commit.outputs.release_sha }}
     steps:
       - name: Checkout dispatched commit
@@ -445,6 +473,25 @@ jobs:
           name: atlas-core-${{ inputs.version }}
           path: .
 
+      - name: Wait for coordinator authorization
+        if: github.ref_type == 'tag' && inputs.coordinator_run_id != ''
+        env:
+          COORDINATOR_RUN_ID: ${{ inputs.coordinator_run_id }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          artifact_name="atlas-core-publication-authorization-$VERSION-$COORDINATOR_RUN_ID"
+          for attempt in $(seq 1 60); do
+            artifacts="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$COORDINATOR_RUN_ID/artifacts?per_page=100")"
+            if jq -e --arg name "$artifact_name" \
+              '.artifacts[] | select(.name == $name and .expired == false)' <<< "$artifacts" >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "The coordinator authorization artifact was not uploaded." >&2
+          exit 1
+
       - name: Download coordinator authorization
         if: github.ref_type == 'tag' && inputs.coordinator_run_id != ''
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -458,12 +505,15 @@ jobs:
       - name: Verify coordinator authorization
         if: github.ref_type == 'tag' && inputs.coordinator_run_id != ''
         env:
+          CHILD_RUN_ID: ${{ github.run_id }}
           COORDINATOR_RUN_ID: ${{ inputs.coordinator_run_id }}
           RELEASE_SHA: ${{ needs.changelog.outputs.release_sha }}
           SOURCE_SHA: ${{ needs.changelog.outputs.source_sha }}
           VERSION: ${{ inputs.version }}
         run: |
           authorization="coordinator-authorization/publication-authorization.json"
+          coordinator="$(mktemp)"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$COORDINATOR_RUN_ID" > "$coordinator"
           actual="$(find coordinator-authorization -type f -print)"
           if [ "$actual" != "$authorization" ]; then
             echo "The coordinator authorization artifact has unexpected files." >&2
@@ -471,6 +521,7 @@ jobs:
             exit 1
           fi
           jq -e \
+            --arg child_run_id "$CHILD_RUN_ID" \
             --arg coordinator_run_id "$COORDINATOR_RUN_ID" \
             --arg release_sha "$RELEASE_SHA" \
             --arg repository "$GITHUB_REPOSITORY" \
@@ -482,12 +533,22 @@ jobs:
               repository: $repository,
               workflow: "release-atlas-core.yml",
               coordinator_run_id: $coordinator_run_id,
+              child_run_id: $child_run_id,
               version: $version,
               tag: $tag,
               source_sha: $source_sha,
               release_sha: $release_sha
             }' \
             "$authorization" >/dev/null
+          jq -e \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg source_sha "$SOURCE_SHA" \
+            '.event == "workflow_dispatch" and
+             .head_branch == "main" and
+             .head_sha == $source_sha and
+             .path == ".github/workflows/release-atlas-core.yml" and
+             .repository.full_name == $repository' \
+            "$coordinator" >/dev/null
           rm -rf coordinator-authorization
 
       - name: Set up Node
@@ -717,11 +778,45 @@ jobs:
           test -f "$package"
           bash .github/scripts/test-atlas-core-package.sh "$package" "$VERSION" "$IMAGE_REFERENCE"
 
+      - name: Verify release tag authority
+        if: needs.changelog.outputs.mode == 'prepare'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          creation_id="$(
+            gh api "repos/$GITHUB_REPOSITORY/rulesets?targets=tag&per_page=100" \
+              --jq '.[] | select(.name == "Atlas Core release tag creation" and .enforcement == "active") | .id' |
+              head -n 1
+          )"
+          immutability_id="$(
+            gh api "repos/$GITHUB_REPOSITORY/rulesets?targets=tag&per_page=100" \
+              --jq '.[] | select(.name == "Atlas Core release tag immutability" and .enforcement == "active") | .id' |
+              head -n 1
+          )"
+          if [ -z "$creation_id" ] || [ -z "$immutability_id" ]; then
+            echo "Both Atlas Core release tag rulesets must remain active." >&2
+            exit 1
+          fi
+          creation="$(mktemp)"
+          immutability="$(mktemp)"
+          gh api "repos/$GITHUB_REPOSITORY/rulesets/$creation_id" > "$creation"
+          gh api "repos/$GITHUB_REPOSITORY/rulesets/$immutability_id" > "$immutability"
+          node .github/scripts/atlas-core-release.mjs validate-tag-rulesets "$creation" "$immutability"
+
+      - name: Mint protected release credential
+        id: release-token
+        if: needs.changelog.outputs.mode == 'prepare'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.ATLAS_CORE_RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.ATLAS_CORE_RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+
       - name: Commit and atomically tag release
         id: commit
         if: needs.changelog.outputs.mode == 'prepare'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.release-token.outputs.token }}
           VERSION: ${{ inputs.version }}
         run: |
           source .github/scripts/atlas-core-release-files.sh
@@ -737,14 +832,57 @@ jobs:
           git push --atomic origin HEAD:main "refs/tags/$tag:refs/tags/$tag"
           echo "release_sha=$release_sha" >> "$GITHUB_OUTPUT"
 
+      - name: Dispatch immutable tag publication
+        id: dispatch
+        if: needs.changelog.outputs.mode == 'prepare'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          tag="atlas-core-v$VERSION"
+          request="$(
+            jq -n \
+              --arg coordinator_run_id "$GITHUB_RUN_ID" \
+              --arg ref "$tag" \
+              --arg version "$VERSION" \
+              '{
+                ref: $ref,
+                inputs: {
+                  version: $version,
+                  coordinator_run_id: $coordinator_run_id
+                },
+                return_run_details: true
+              }'
+          )"
+          response="$(
+            gh api \
+              --method POST \
+              "repos/$GITHUB_REPOSITORY/actions/workflows/release-atlas-core.yml/dispatches" \
+              --input - <<< "$request"
+          )"
+          child_run_id="$(jq -er '.workflow_run_id | tostring | select(test("^[0-9]+$"))' <<< "$response")"
+          child_url="$(jq -er '.html_url | select(type == "string" and length > 0)' <<< "$response")"
+          echo "child_run_id=$child_run_id" >> "$GITHUB_OUTPUT"
+          echo "child_url=$child_url" >> "$GITHUB_OUTPUT"
+          echo "Queued Atlas Core $VERSION publication from $tag as run $child_run_id."
+          {
+            printf '## Atlas Core %s release commit created\n\n' "$VERSION"
+            printf -- '- Immutable tag: %s\n' "$tag"
+            printf -- '- Immutable tag run: %s\n' "$child_url"
+            printf '%s\n' '- The immutable tag run will publish automatically.'
+            printf '%s\n' '- This coordinator will wait for that exact run and report its result.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Record approved publication
         if: needs.changelog.outputs.mode == 'prepare'
         env:
+          CHILD_RUN_ID: ${{ steps.dispatch.outputs.child_run_id }}
           RELEASE_SHA: ${{ steps.commit.outputs.release_sha }}
           SOURCE_SHA: ${{ needs.changelog.outputs.source_sha }}
           VERSION: ${{ inputs.version }}
         run: |
           jq -n \
+            --arg child_run_id "$CHILD_RUN_ID" \
             --arg coordinator_run_id "$GITHUB_RUN_ID" \
             --arg release_sha "$RELEASE_SHA" \
             --arg repository "$GITHUB_REPOSITORY" \
@@ -756,6 +894,7 @@ jobs:
               repository: $repository,
               workflow: "release-atlas-core.yml",
               coordinator_run_id: $coordinator_run_id,
+              child_run_id: $child_run_id,
               version: $version,
               tag: $tag,
               source_sha: $source_sha,
@@ -770,25 +909,6 @@ jobs:
           path: release-artifacts/publication-authorization.json
           if-no-files-found: error
           retention-days: 7
-
-      - name: Dispatch immutable tag publication
-        if: needs.changelog.outputs.mode == 'prepare'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ inputs.version }}
-        run: |
-          tag="atlas-core-v$VERSION"
-          gh workflow run release-atlas-core.yml \
-            --ref "$tag" \
-            --field version="$VERSION" \
-            --field coordinator_run_id="$GITHUB_RUN_ID"
-          echo "Queued Atlas Core $VERSION publication from $tag."
-          {
-            printf '## Atlas Core %s release commit created\n\n' "$VERSION"
-            printf -- '- Immutable tag: %s\n' "$tag"
-            printf '%s\n' '- The immutable tag run will publish automatically.'
-            printf '%s\n' '- This coordinator will wait for that run and report its result.'
-          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Promote the reviewed digest to the version tag
         if: needs.changelog.outputs.mode == 'publish'
@@ -1067,52 +1187,17 @@ jobs:
       checks: read
       contents: read
     steps:
-      - name: Find coordinated tag run
-        id: child
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_SHA: ${{ needs.publish.outputs.release_sha }}
-          VERSION: ${{ inputs.version }}
-        run: |
-          tag="atlas-core-v$VERSION"
-          expected_title="Atlas Core $VERSION from $tag [coordinator $GITHUB_RUN_ID]"
-          for attempt in $(seq 1 60); do
-            response="$(
-              gh api \
-                "repos/$GITHUB_REPOSITORY/actions/workflows/release-atlas-core.yml/runs?event=workflow_dispatch&per_page=100"
-            )"
-            child="$(
-              jq -r \
-                --arg sha "$RELEASE_SHA" \
-                --arg title "$expected_title" \
-                '[.workflow_runs[] | select(.display_title == $title and .head_sha == $sha)]
-                 | sort_by(.created_at)
-                 | last
-                 | if . == null then "" else [.id, .html_url] | @tsv end' \
-                <<< "$response"
-            )"
-            if [ -n "$child" ]; then
-              IFS=$'\t' read -r child_id child_url <<< "$child"
-              echo "run_id=$child_id" >> "$GITHUB_OUTPUT"
-              echo "url=$child_url" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-            sleep 2
-          done
-          echo "Could not find the coordinated $tag publication run." >&2
-          exit 1
-
       - name: Wait for tag publication
         id: wait
         env:
-          CHILD_RUN_ID: ${{ steps.child.outputs.run_id }}
+          CHILD_RUN_ID: ${{ needs.publish.outputs.child_run_id }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh run watch "$CHILD_RUN_ID" --exit-status --interval 10
+        run: gh run watch "$CHILD_RUN_ID" --repo "$GITHUB_REPOSITORY" --exit-status --interval 10
 
       - name: Summarize coordinated publication
         if: always()
         env:
-          CHILD_URL: ${{ steps.child.outputs.url }}
+          CHILD_URL: ${{ needs.publish.outputs.child_url }}
           VERSION: ${{ inputs.version }}
           WAIT_OUTCOME: ${{ steps.wait.outcome }}
         run: |
