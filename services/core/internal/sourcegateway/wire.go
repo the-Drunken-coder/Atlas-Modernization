@@ -20,6 +20,7 @@ const (
 	FailureResponseTooLarge    FailureCode = "response_too_large"
 	FailureUpstreamUnreachable FailureCode = "upstream_unreachable"
 	FailureCircuitOpen         FailureCode = "circuit_open"
+	FailureAdmissionTimeout    FailureCode = "admission_timeout"
 	FailureUpstreamTimeout     FailureCode = "upstream_timeout"
 )
 

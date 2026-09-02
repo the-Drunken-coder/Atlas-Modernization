@@ -254,6 +254,7 @@ export type SourceGatewayFailureCode =
   | "response_too_large"
   | "upstream_unreachable"
   | "circuit_open"
+  | "admission_timeout"
   | "upstream_timeout";
 
 export class SourceGatewayError extends Error {
@@ -477,6 +478,7 @@ function readGatewayFailure(value: unknown): SourceGatewayFailureCode {
     "response_too_large",
     "upstream_unreachable",
     "circuit_open",
+    "admission_timeout",
     "upstream_timeout"
   ];
   if (typeof value.code !== "string" || !codes.includes(value.code as SourceGatewayFailureCode)) {
@@ -491,6 +493,7 @@ const gatewayFailureStatuses: Record<SourceGatewayFailureCode, number> = {
   response_too_large: 413,
   upstream_unreachable: 502,
   circuit_open: 503,
+  admission_timeout: 503,
   upstream_timeout: 504
 };
 

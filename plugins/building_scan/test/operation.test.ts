@@ -11,6 +11,11 @@ const area = { west: -71.01, south: 42, east: -71, north: 42.01 };
 const retrievedAt = new Date("2026-08-30T12:00:00Z");
 
 describe("Building Scan", () => {
+  it("disables Gateway caching because Overpass reports failures in HTTP 200 bodies", async () => {
+    const connector: unknown = JSON.parse(await readFile(new URL("../source-connector.json", import.meta.url), "utf8"));
+    expect(connector).toMatchObject({ routes: [{ cache: { ttl_ms: 0 } }] });
+  });
+
   it("builds the bounded query without clipping output geometry", () => {
     const query = overpassQuery(area);
     expect(query).toContain('way["building"](42,-71.01,42.01,-71)');
@@ -173,6 +178,7 @@ describe("Building Scan", () => {
   it.each([
     ["upstream_timeout", "source_timeout"],
     ["response_too_large", "source_response_too_large"],
+    ["admission_timeout", "source_busy"],
     ["circuit_open", "source_busy"],
     ["upstream_unreachable", "source_unavailable"],
     ["request_rejected", "source_configuration_error"],

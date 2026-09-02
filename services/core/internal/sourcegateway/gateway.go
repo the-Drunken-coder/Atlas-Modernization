@@ -62,6 +62,8 @@ type gatewayError struct {
 	err  error
 }
 
+const failureRequestCanceled FailureCode = "request_canceled"
+
 func (e *gatewayError) Error() string { return string(e.code) }
 func (e *gatewayError) Unwrap() error { return e.err }
 
@@ -253,6 +255,9 @@ func (g *Gateway) handleRequest(writer http.ResponseWriter, request *http.Reques
 	response, attempts, cacheResult, gatewayErr := g.execute(request.Context(), connector, input)
 	if gatewayErr != nil {
 		g.logRequest(connectorID, string(gatewayErr.code), 0, started, attempts, cacheResult)
+		if gatewayErr.code == failureRequestCanceled {
+			return
+		}
 		writeFailure(writer, gatewayErr)
 		return
 	}
@@ -284,39 +289,57 @@ func (g *Gateway) logRequest(connectorID, outcome string, upstreamStatus int, st
 }
 
 func (g *Gateway) execute(ctx context.Context, connector *connector, input ConnectorRequest) (ConnectorResponse, int, string, *gatewayError) {
+	if ctx.Err() != nil {
+		return ConnectorResponse{}, 0, "bypass", requestCanceled(ctx)
+	}
 	prepared, rule, err := connector.prepare(input)
 	if err != nil {
-		return ConnectorResponse{}, 1, "bypass", err
+		return ConnectorResponse{}, 0, "bypass", err
 	}
 	key := requestCacheKey(connector.config.ID, prepared)
 	if rule.Cache.TTLMS > 0 {
 		if cached, ok := g.cache.get(key, g.now()); ok {
-			return cached, 1, "hit", nil
+			if ctx.Err() != nil {
+				return ConnectorResponse{}, 0, "hit", requestCanceled(ctx)
+			}
+			return cached, 0, "hit", nil
 		}
 	}
 	if connector.circuitOpen(g.now()) {
-		return ConnectorResponse{}, 1, "miss", &gatewayError{code: FailureCircuitOpen}
+		if ctx.Err() != nil {
+			return ConnectorResponse{}, 0, "miss", requestCanceled(ctx)
+		}
+		return ConnectorResponse{}, 0, "miss", &gatewayError{code: FailureCircuitOpen}
 	}
 	requestContext, cancel := context.WithTimeout(ctx, time.Duration(connector.config.Limits.TimeoutMS)*time.Millisecond)
 	defer cancel()
 	if requestContext.Err() != nil {
-		return ConnectorResponse{}, 1, "miss", timeoutOrCancellation(requestContext)
+		return ConnectorResponse{}, 0, "miss", contextFailure(ctx, requestContext, false)
 	}
 	select {
 	case connector.semaphore <- struct{}{}:
 		defer func() { <-connector.semaphore }()
 	case <-requestContext.Done():
-		return ConnectorResponse{}, 1, "miss", timeoutOrCancellation(requestContext)
+		return ConnectorResponse{}, 0, "miss", contextFailure(ctx, requestContext, false)
+	}
+	if requestContext.Err() != nil {
+		return ConnectorResponse{}, 0, "miss", contextFailure(ctx, requestContext, false)
 	}
 	if connector.circuitOpen(g.now()) {
-		return ConnectorResponse{}, 1, "miss", &gatewayError{code: FailureCircuitOpen}
+		return ConnectorResponse{}, 0, "miss", &gatewayError{code: FailureCircuitOpen}
 	}
 	maxAttempts := rule.Retry.MaxRetries + 1
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		if err := connector.waitForRate(requestContext, g.now); err != nil {
-			return ConnectorResponse{}, attempt, "miss", timeoutOrCancellation(requestContext)
+			return ConnectorResponse{}, attempt - 1, "miss", contextFailure(ctx, requestContext, false)
+		}
+		if requestContext.Err() != nil {
+			return ConnectorResponse{}, attempt - 1, "miss", contextFailure(ctx, requestContext, false)
 		}
 		response, failure := connector.attempt(requestContext, prepared, rule)
+		if requestContext.Err() != nil {
+			return ConnectorResponse{}, attempt, "miss", contextFailure(ctx, requestContext, true)
+		}
 		if failure == nil {
 			connector.recordReachable()
 			retryable := retryStatus(rule.Retry.Statuses, response.Status)
@@ -331,9 +354,6 @@ func (g *Gateway) execute(ctx context.Context, connector *connector, input Conne
 				cacheResult = "miss"
 			}
 			return response, attempt, cacheResult, nil
-		}
-		if requestContext.Err() != nil {
-			return ConnectorResponse{}, attempt, "miss", timeoutOrCancellation(requestContext)
 		}
 		if attempt < maxAttempts && retryFailure(rule.Retry.Failures, failure.code) {
 			continue
@@ -510,7 +530,15 @@ func (c *connector) waitForRate(ctx context.Context, now func() time.Time) error
 	interval := time.Duration(float64(time.Second) / c.config.Rate.RequestsPerSecond)
 	for {
 		c.rateMu.Lock()
+		if err := ctx.Err(); err != nil {
+			c.rateMu.Unlock()
+			return err
+		}
 		current := now()
+		if err := ctx.Err(); err != nil {
+			c.rateMu.Unlock()
+			return err
+		}
 		waitUntil := c.nextRequest
 		if waitUntil.Before(current) {
 			waitUntil = current
@@ -527,6 +555,10 @@ func (c *connector) waitForRate(ctx context.Context, now func() time.Time) error
 		case <-timer.C:
 			c.rateMu.Lock()
 			if c.nextRequest.Equal(waitUntil) {
+				if err := ctx.Err(); err != nil {
+					c.rateMu.Unlock()
+					return err
+				}
 				c.nextRequest = waitUntil.Add(interval)
 				c.rateMu.Unlock()
 				return nil
@@ -569,8 +601,18 @@ func (c *connector) recordReachable() {
 
 func rejected(err error) *gatewayError { return &gatewayError{code: FailureRequestRejected, err: err} }
 
-func timeoutOrCancellation(ctx context.Context) *gatewayError {
-	return &gatewayError{code: FailureUpstreamTimeout, err: ctx.Err()}
+func contextFailure(parent, requestContext context.Context, attemptStarted bool) *gatewayError {
+	if parent.Err() != nil {
+		return requestCanceled(parent)
+	}
+	if attemptStarted {
+		return &gatewayError{code: FailureUpstreamTimeout, err: requestContext.Err()}
+	}
+	return &gatewayError{code: FailureAdmissionTimeout, err: requestContext.Err()}
+}
+
+func requestCanceled(ctx context.Context) *gatewayError {
+	return &gatewayError{code: failureRequestCanceled, err: ctx.Err()}
 }
 
 func retryStatus(statuses []int, status int) bool {
@@ -707,7 +749,8 @@ func writeFailure(writer http.ResponseWriter, failure *gatewayError) {
 	status := map[FailureCode]int{
 		FailureRequestRejected: http.StatusBadRequest, FailureUnknownConnector: http.StatusNotFound,
 		FailureResponseTooLarge: http.StatusRequestEntityTooLarge, FailureUpstreamUnreachable: http.StatusBadGateway,
-		FailureCircuitOpen: http.StatusServiceUnavailable, FailureUpstreamTimeout: http.StatusGatewayTimeout,
+		FailureCircuitOpen: http.StatusServiceUnavailable, FailureAdmissionTimeout: http.StatusServiceUnavailable,
+		FailureUpstreamTimeout: http.StatusGatewayTimeout,
 	}[failure.code]
 	writeJSON(writer, status, FailureResponse{Code: failure.code})
 }

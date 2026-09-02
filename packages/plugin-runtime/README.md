@@ -44,7 +44,7 @@ Throw `PluginInputError` for a handled input rejection and `PluginFailureError` 
 
 ## Source Gateway
 
-`SourceGatewayClient.request` preserves repeated query and header tuples and transports request and response bodies as `Uint8Array`. Pass the Operation or Task `AbortSignal`; cancellation stops the private Gateway request. Gateway failures throw `SourceGatewayError` with one of the six fixed failure codes from the Plugin architecture.
+`SourceGatewayClient.request` preserves repeated query and header tuples and transports request and response bodies as `Uint8Array`. Pass the Operation or Task `AbortSignal`; cancellation stops the private Gateway request. Gateway failures throw `SourceGatewayError` with one of the seven fixed failure codes from the Plugin architecture.
 
 ## Tool Assets
 

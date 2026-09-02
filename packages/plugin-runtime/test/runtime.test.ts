@@ -289,19 +289,22 @@ describe("Atlas Plugin runtime", () => {
     ]);
   });
 
-  it("exposes only fixed Source Gateway failure categories", async () => {
+  it.each([
+    ["circuit_open", 503],
+    ["admission_timeout", 503]
+  ] as const)("exposes fixed Source Gateway failure %s", async (failureCode, status) => {
     const client = new SourceGatewayClient(
       "http://gateway.test",
       vi.fn<typeof fetch>(
         async () =>
-          new Response('{"code":"circuit_open"}', {
-            status: 503,
+          new Response(JSON.stringify({ code: failureCode }), {
+            status,
             headers: { "Content-Type": "application/json" }
           })
       )
     );
     await expect(client.request("reference", { method: "GET", path: "/" })).rejects.toEqual(
-      new SourceGatewayError("circuit_open")
+      new SourceGatewayError(failureCode)
     );
   });
 
