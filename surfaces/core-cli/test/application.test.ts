@@ -72,6 +72,7 @@ class FakeRunner implements CommandRunner {
   installedVersion = PACKAGE_VERSION;
   missingNetworkError = (name: string): string => `Error: No such network: ${name}`;
   nextNetworkRemovalError: ((name: string) => string) | undefined;
+  retainNetworkOnRemovalError = false;
   onRun: ((call: Call) => void | Promise<void>) | undefined;
   afterSuccessfulNetworkCreate: (() => void) | undefined;
   failAfterNetworkCreate: string | undefined;
@@ -177,6 +178,9 @@ class FakeRunner implements CommandRunner {
         : ([...this.networkIds].find(([, id]) => id === requested)?.[0] ?? requested);
       const removalError = this.nextNetworkRemovalError;
       this.nextNetworkRemovalError = undefined;
+      const retainNetworkOnRemovalError = this.retainNetworkOnRemovalError;
+      this.retainNetworkOnRemovalError = false;
+      if (removalError && retainNetworkOnRemovalError) return result(1, "", removalError(requested));
       this.existingNetworks.delete(name);
       this.networkLabels.delete(name);
       this.networkIds.delete(name);
@@ -756,6 +760,68 @@ describe("atlas-core CLI", () => {
     expect(test.stderr.join("")).toContain("docker network rm");
     expect(test.stderr.join("")).toContain("permission denied");
     expect(existsSync(join(test.home, ".atlas", "core", ".mutation.lock"))).toBe(false);
+  });
+
+  it("retries retained Plugin-disable lock cleanup in the same interactive session", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const plugin = installTestPluginCatalog(test);
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
+    const lockPath = join(test.home, ".atlas", "core", ".mutation.lock");
+    let retryError: unknown;
+    test.context.interactive = {
+      configureAdmin: async () => undefined,
+      runUpdate: async () => undefined,
+      runMenu: async (operator) => {
+        test.runner.retainNetworkOnRemovalError = true;
+        test.runner.nextNetworkRemovalError = () => "permission denied";
+        await expect(operator.pluginDisable(plugin.pluginId)).rejects.toThrow("permission denied");
+        expect(existsSync(lockPath)).toBe(true);
+        try {
+          await operator.stop();
+        } catch (error) {
+          retryError = error;
+        }
+      }
+    };
+
+    expect(await runCLI([], test.context)).toBe(0);
+    expect(retryError).toBeUndefined();
+    expect(existsSync(lockPath)).toBe(false);
+    expect(test.runner.existingNetworks.has(MUTATION_LOCK_NETWORK)).toBe(false);
+  });
+
+  it("serializes overlapping mutations in one interactive session", async () => {
+    const test = runtime();
+    markInitialized(test);
+    let firstStarted: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => {
+      firstStarted = resolve;
+    });
+    let releaseFirst: (() => void) | undefined;
+    const holdFirst = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let held = false;
+    test.context.interactive = {
+      configureAdmin: async () => undefined,
+      runUpdate: async () => undefined,
+      runMenu: async (operator) => {
+        test.runner.onRun = async (call) => {
+          if (held || composeCommand(call)[0] !== "down") return;
+          held = true;
+          firstStarted?.();
+          await holdFirst;
+        };
+        const firstMutation = operator.stop();
+        await started;
+        await expect(operator.restart()).rejects.toThrow("deployment mutation is locked by PID");
+        releaseFirst?.();
+        await expect(firstMutation).resolves.toBeUndefined();
+      }
+    };
+
+    expect(await runCLI([], test.context)).toBe(0);
   });
 
   it("bounds cleanup commands after cancellation", async () => {

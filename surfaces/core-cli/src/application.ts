@@ -519,6 +519,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   readonly #confirmReset: (question: string) => Promise<boolean>;
   readonly #imageReference: string | undefined;
   #activeMutationLock: MutationLockOwner | undefined;
+  #idleRecoverableMutationLock: MutationLockOwner | undefined;
   #activeMutationRecoveryPath: string | undefined;
 
   constructor(context: RequiredRuntimeContext) {
@@ -589,8 +590,10 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   ): Promise<T> {
     this.#prepareConfigDirectory();
     const mutationLock = this.#acquireMutationLock();
+    this.#idleRecoverableMutationLock = undefined;
     let dockerLock: DockerMutationLock | undefined;
     let dockerLockReleased = false;
+    let idleRecoverableMutationLock: MutationLockOwner | undefined;
     try {
       this.#removeRetiredPluginDisableTransactions();
       dockerLock = await this.#acquireDockerMutationLock(dockerEngineId, mutationLock);
@@ -607,17 +610,21 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       }
     } finally {
       try {
-        const preserveRecoverableLocalLock = this.#activeMutationLock?.operation === "plugin-disable";
+        const localOwner = this.#activeMutationLock ?? mutationLock.owner;
+        const preserveRecoverableLocalLock = localOwner.operation === "plugin-disable";
         if (
           (dockerLock && (dockerLockReleased || !preserveRecoverableLocalLock)) ||
           (!dockerLock && !mutationLock.recovered)
         ) {
           this.#releaseMutationLock(dockerLock?.owner ?? mutationLock.owner);
+        } else if (preserveRecoverableLocalLock && localOwner.processGroupId === undefined) {
+          idleRecoverableMutationLock = localOwner;
         }
       } finally {
         try {
           this.#restoreMutationRecoveryLock();
         } finally {
+          this.#idleRecoverableMutationLock = idleRecoverableMutationLock;
           this.#activeMutationLock = undefined;
         }
       }
@@ -1603,13 +1610,16 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       if (
         isMutationLockOwner(existingOwner) &&
         this.#isRecoverablePluginDisableOwner(existingOwner) &&
-        !isMutationOwnerActive(existingOwner)
+        (!isMutationOwnerActive(existingOwner) || this.#isIdleRecoverableMutationOwner(existingOwner))
       ) {
         const claimPath = this.#claimMutationRecovery(this.#mutationLockFile);
         if (claimPath) {
           try {
             const claimedOwner = this.#readMutationLockOwner(claimPath);
-            if (this.#isRecoverablePluginDisableOwner(claimedOwner) && !isMutationOwnerActive(claimedOwner)) {
+            if (
+              this.#isRecoverablePluginDisableOwner(claimedOwner) &&
+              (!isMutationOwnerActive(claimedOwner) || this.#isIdleRecoverableMutationOwner(claimedOwner))
+            ) {
               return { owner: claimedOwner, recovered: true };
             }
           } catch (error) {
@@ -1700,6 +1710,16 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
 
   #isRecoverablePluginDisableOwner(owner: MutationLockOwner): boolean {
     return owner.operation === "plugin-disable" || this.#recoverablePluginDisableLockId() === owner.id;
+  }
+
+  #isIdleRecoverableMutationOwner(owner: MutationLockOwner): boolean {
+    return (
+      this.#activeMutationLock === undefined &&
+      owner.pid === process.pid &&
+      owner.processGroupId === undefined &&
+      this.#idleRecoverableMutationLock !== undefined &&
+      sameMutationLockOwner(owner, this.#idleRecoverableMutationLock)
+    );
   }
 
   #readMutationLockOwner(path: string): MutationLockOwner {
