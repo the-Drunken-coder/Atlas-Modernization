@@ -118,6 +118,12 @@ export function createPreviewOperator(
 
     const action = enabled ? "Enable" : "Disable";
     const previousEnabled = enabledPlugins.has(pluginId);
+    if (deploymentState === "degraded" && previousEnabled !== enabled) {
+      throw new Error(
+        "Plugin changes require the current deployment to be fully healthy: minio is unhealthy. " +
+          "Restore every Core and enabled Plugin service, or stop the deployment completely, before retrying."
+      );
+    }
     reportActivity?.({ level: "working", message: "Checking fixture Plugin state", stage: "operation" });
     await waitForPluginStep();
     if (cancellationRequested) return cancelPluginMutation(action, pluginId, previousEnabled, reportActivity);
@@ -198,8 +204,11 @@ export function createPreviewOperator(
       return await mutatePlugin(true, pluginId, reportActivity);
     },
     async pluginLogs(pluginId, _follow) {
-      const plugin = requirePreviewPlugin(pluginId);
+      if (deploymentState === "not-initialized") {
+        throw new Error("Atlas Core is not initialized. Run atlas-core init first.");
+      }
       if (!enabledPlugins.has(pluginId)) throw new Error(`Plugin ${pluginId} is not enabled.`);
+      const plugin = requirePreviewPlugin(pluginId);
       preview(`Showing fixture logs for ${plugin.displayName}.`);
       output.write(`2026-08-30T14:12:07Z ${plugin.service} fixture query ready\n`);
       output.write(`2026-08-30T14:12:08Z ${plugin.service} fixture index healthy\n`);
@@ -254,7 +263,7 @@ export function createPreviewOperator(
 
 function requirePreviewPlugin(pluginId: string): PluginCatalogEntry {
   const plugin = PLUGIN_CATALOG.find((candidate) => candidate.pluginId === pluginId);
-  if (!plugin) throw new Error(`Unknown Plugin: ${pluginId}`);
+  if (!plugin) throw new Error(`Unknown first-party Plugin: ${pluginId}`);
   return plugin;
 }
 

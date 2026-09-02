@@ -84,10 +84,26 @@ describe("Atlas Core TUI preview operator", () => {
     await expect(uninitialized.pluginEnable("building_scan")).rejects.toThrow(
       "Atlas Core is not initialized. Run atlas-core init first."
     );
+    await expect(uninitialized.pluginLogs("building_scan", false)).rejects.toThrow(
+      "Atlas Core is not initialized. Run atlas-core init first."
+    );
 
     const { operator } = fixture();
-    await expect(operator.pluginEnable("missing_plugin")).rejects.toThrow("Unknown Plugin: missing_plugin");
+    await expect(operator.pluginEnable("missing_plugin")).rejects.toThrow("Unknown first-party Plugin: missing_plugin");
     await expect(operator.pluginLogs("building_scan", false)).rejects.toThrow("Plugin building_scan is not enabled.");
+    await expect(operator.pluginLogs("missing_plugin", false)).rejects.toThrow("Plugin missing_plugin is not enabled.");
+  });
+
+  it("blocks state-changing Plugin operations while degraded", async () => {
+    const { operator } = fixture("degraded");
+
+    await expect(operator.pluginEnable("building_scan")).rejects.toThrow(
+      "Plugin changes require the current deployment to be fully healthy: minio is unhealthy."
+    );
+    await expect(operator.pluginStatuses()).resolves.toEqual([
+      expect.objectContaining({ pluginId: "building_scan", enabled: false })
+    ]);
+    await expect(operator.pluginDisable("building_scan")).resolves.toEqual({ status: "success" });
   });
 
   it("preserves the previous Plugin state when cancelled and works again after resume", async () => {
