@@ -285,6 +285,59 @@ func TestGatewayRecordsRetryFailureBeforeAdmissionTimeout(t *testing.T) {
 	}
 }
 
+func TestGatewayRecordsRetryFailureBeforeCircuitOpen(t *testing.T) {
+	var calls atomic.Int32
+	firstAttempt := make(chan struct{})
+	allowFailure := make(chan struct{})
+	config := testConnectorConfig()
+	config.Rate.RequestsPerSecond = 20
+	config.CircuitBreaker.Failures = 2
+	config.Routes[0].Retry = RetryRule{MaxRetries: 1, Failures: []string{string(FailureUpstreamUnreachable)}}
+	gateway, err := New(Config{Connectors: []ConnectorConfig{config}}, Options{
+		Client: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			calls.Add(1)
+			close(firstAttempt)
+			<-allowFailure
+			return nil, errors.New("offline")
+		})},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connector := gateway.connectors["reference"]
+	result := make(chan struct {
+		attempts int
+		failure  *gatewayError
+	}, 1)
+	go func() {
+		_, attempts, _, failure := gateway.execute(context.Background(), connector, ConnectorRequest{
+			Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{},
+		})
+		result <- struct {
+			attempts int
+			failure  *gatewayError
+		}{attempts: attempts, failure: failure}
+	}()
+	<-firstAttempt
+	connector.recordFailure(time.Now())
+	connector.recordFailure(time.Now())
+	close(allowFailure)
+	select {
+	case outcome := <-result:
+		if outcome.failure == nil || outcome.failure.code != FailureCircuitOpen || outcome.attempts != 1 || calls.Load() != 1 {
+			t.Fatalf("attempts=%d calls=%d failure=%v", outcome.attempts, calls.Load(), outcome.failure)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("retry did not observe the open circuit")
+	}
+	connector.stateMu.Lock()
+	failures := connector.failures
+	connector.stateMu.Unlock()
+	if failures != 1 {
+		t.Fatalf("pending retry failures=%d, want 1", failures)
+	}
+}
+
 func TestAddressPolicyRejectsPrivateLoopbackAndLinkLocalByDefault(t *testing.T) {
 	for _, address := range []string{
 		"127.0.0.1", "10.0.0.1", "169.254.1.1", "::1", "fe80::1",

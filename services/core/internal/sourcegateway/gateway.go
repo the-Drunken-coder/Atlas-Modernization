@@ -340,6 +340,10 @@ func (g *Gateway) execute(ctx context.Context, connector *connector, input Conne
 			connector.recordFailure(g.now())
 		}
 	}
+	finishBeforeAttempt := func(reservation rateReservation) {
+		recordPendingFailure()
+		connector.releaseRate(reservation)
+	}
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		reservation, err := connector.waitForRate(requestContext, g.now)
 		if err != nil {
@@ -347,18 +351,16 @@ func (g *Gateway) execute(ctx context.Context, connector *connector, input Conne
 			return ConnectorResponse{}, attempt - 1, "miss", contextFailure(ctx, requestContext, false)
 		}
 		if requestContext.Err() != nil {
-			connector.releaseRate(reservation)
-			recordPendingFailure()
+			finishBeforeAttempt(reservation)
 			return ConnectorResponse{}, attempt - 1, "miss", contextFailure(ctx, requestContext, false)
 		}
 		circuitOpen := connector.circuitOpen(g.now())
 		if requestContext.Err() != nil {
-			connector.releaseRate(reservation)
-			recordPendingFailure()
+			finishBeforeAttempt(reservation)
 			return ConnectorResponse{}, attempt - 1, "miss", contextFailure(ctx, requestContext, false)
 		}
 		if circuitOpen {
-			connector.releaseRate(reservation)
+			finishBeforeAttempt(reservation)
 			return ConnectorResponse{}, attempt - 1, "miss", &gatewayError{code: FailureCircuitOpen}
 		}
 		response, failure := connector.attempt(requestContext, prepared, rule)
