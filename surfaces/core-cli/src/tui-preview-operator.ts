@@ -11,8 +11,15 @@ type PreviewState = DeploymentSnapshot["status"];
 type PreviewOutput = { write(data: string): unknown };
 type PreviewOptions = { pluginStepDelayMs?: number };
 
+const previewStates = {
+  degraded: true,
+  "not-initialized": true,
+  ready: true,
+  stopped: true
+} satisfies Record<PreviewState, true>;
+
 export function isPreviewState(value: string | undefined): value is PreviewState {
-  return value === "ready" || value === "stopped" || value === "degraded" || value === "not-initialized";
+  return value !== undefined && Object.hasOwn(previewStates, value);
 }
 
 export function createPreviewOperator(

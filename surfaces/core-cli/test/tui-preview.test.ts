@@ -79,6 +79,17 @@ describe("Atlas Core TUI preview operator", () => {
     ]);
   });
 
+  it("reports invalid fixture Plugin operations", async () => {
+    const uninitialized = fixture("not-initialized").operator;
+    await expect(uninitialized.pluginEnable("building_scan")).rejects.toThrow(
+      "Atlas Core is not initialized. Run atlas-core init first."
+    );
+
+    const { operator } = fixture();
+    await expect(operator.pluginEnable("missing_plugin")).rejects.toThrow("Unknown Plugin: missing_plugin");
+    await expect(operator.pluginLogs("building_scan", false)).rejects.toThrow("Plugin building_scan is not enabled.");
+  });
+
   it("preserves the previous Plugin state when cancelled and works again after resume", async () => {
     const { operator } = fixture("ready", 25);
     const activity: PluginActivity[] = [];
