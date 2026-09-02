@@ -81,11 +81,13 @@ type breakerFailure struct {
 }
 
 type breakerCredit struct {
-	groups  int
-	through breakerOrder
+	groups    int
+	through   breakerOrder
+	expiredAt time.Time
 }
 
 // breakerHistoryLimit fails closed if an uncooperative transport prevents safe compaction.
+// Each unresolved attempt reserves one additional record for a possible expired-interval credit.
 const breakerHistoryLimit = 4_096
 
 type gatewayError struct {
@@ -763,8 +765,7 @@ func (c *connector) tryBeginAttempt(
 	if contextExpired(requestContext, admittedAt) {
 		return breakerAttempt{}, admissionFailureAt(parent, requestContext, admittedAt)
 	}
-	if breakerNow.Before(c.openUntil) ||
-		len(c.breakerAttempts)+len(c.breakerFailures)+len(c.breakerCredits) >= breakerHistoryLimit {
+	if breakerNow.Before(c.openUntil) || c.breakerHistoryCostLocked()+2 > breakerHistoryLimit {
 		return breakerAttempt{}, &gatewayError{code: FailureCircuitOpen}
 	}
 	c.breakerSerial++
@@ -837,8 +838,9 @@ func (c *connector) expireBreakerLocked(now time.Time) {
 	if groups > 0 {
 		lastCredited := credited + groups*threshold - 1
 		c.breakerCredits = append(c.breakerCredits, breakerCredit{
-			groups:  groups,
-			through: c.breakerFailures[lastCredited].order,
+			groups:    groups,
+			through:   c.breakerFailures[lastCredited].order,
+			expiredAt: now,
 		})
 	}
 	if len(c.breakerAttempts) != 0 {
@@ -865,19 +867,32 @@ func (c *connector) sortBreakerFailuresLocked() {
 
 func (c *connector) creditedFailureCountLocked() int {
 	threshold := c.config.CircuitBreaker.Failures
+	openDuration := time.Duration(c.config.CircuitBreaker.OpenMS) * time.Millisecond
 	credited := 0
 	for _, credit := range c.breakerCredits {
-		eligible := credited
-		for eligible < len(c.breakerFailures) {
-			if c.breakerFailures[eligible].order.after(credit.through) {
+		for group := 0; group < credit.groups && credited+threshold <= len(c.breakerFailures); group++ {
+			observedAt := c.breakerFailures[credited].observedAt
+			eligible := true
+			for _, failure := range c.breakerFailures[credited : credited+threshold] {
+				if failure.order.after(credit.through) {
+					eligible = false
+					break
+				}
+				if failure.observedAt.After(observedAt) {
+					observedAt = failure.observedAt
+				}
+			}
+			if !eligible || observedAt.Add(openDuration).After(credit.expiredAt) {
 				break
 			}
-			eligible++
+			credited += threshold
 		}
-		groups := min(credit.groups, (eligible-credited)/threshold)
-		credited += groups * threshold
 	}
 	return credited
+}
+
+func (c *connector) breakerHistoryCostLocked() int {
+	return len(c.breakerFailures) + len(c.breakerCredits) + 2*len(c.breakerAttempts)
 }
 
 func (c *connector) recomputeBreakerLocked() {

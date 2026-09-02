@@ -710,7 +710,7 @@ func TestBreakerCompactsSettledFailuresAfterOpenInterval(t *testing.T) {
 	}
 }
 
-func TestExpiredOpenIntervalDoesNotReuseFailuresWhenOlderAttemptFinishesLate(t *testing.T) {
+func TestLateObservedOlderFailureStartsNewOpenInterval(t *testing.T) {
 	config := testConnectorConfig()
 	config.CircuitBreaker.Failures = 2
 	config.CircuitBreaker.OpenMS = 10
@@ -729,14 +729,21 @@ func TestExpiredOpenIntervalDoesNotReuseFailuresWhenOlderAttemptFinishesLate(t *
 		t.Fatal("initial open interval did not expire")
 	}
 	connector.finishBreakerFailure(expiredAt, olderAttempt, recordTestCompletion(connector, base.Add(time.Nanosecond)))
-	if connector.circuitOpenWithClock(func() time.Time { return expiredAt }) {
-		t.Fatal("late older failure reused failures from an already-served open interval")
+	if !connector.circuitOpenWithClock(func() time.Time { return expiredAt }) {
+		t.Fatal("late-observed failure did not start a new open interval")
+	}
+	if !connector.circuitOpenWithClock(func() time.Time { return expiredAt.Add(9 * time.Millisecond) }) {
+		t.Fatal("late-observed failure did not retain its full open interval")
+	}
+	closedAt := expiredAt.Add(11 * time.Millisecond)
+	if connector.circuitOpenWithClock(func() time.Time { return closedAt }) {
+		t.Fatal("late-observed failure remained open after its full interval")
 	}
 	connector.stateMu.Lock()
 	retained := len(connector.breakerFailures)
 	connector.stateMu.Unlock()
 	if retained != 1 {
-		t.Fatalf("retained failures=%d, want only the late residual failure", retained)
+		t.Fatalf("retained failures=%d after settled interval, want one residual", retained)
 	}
 }
 
@@ -801,6 +808,37 @@ func TestExpiredGroupCreditDoesNotConsumeFailureAfterInterval(t *testing.T) {
 	connector.finishBreakerFailure(expiredAt, stillUnresolved, recordTestCompletion(connector, base.Add(4*time.Nanosecond)))
 	if !connector.circuitOpenWithClock(func() time.Time { return expiredAt }) {
 		t.Fatal("expired credit consumed a failure completed after its interval")
+	}
+}
+
+func TestExpiredCreditDoesNotConsumeLateObservedOlderFailure(t *testing.T) {
+	config := testConnectorConfig()
+	config.CircuitBreaker.Failures = 1
+	config.CircuitBreaker.OpenMS = 10
+	gateway, err := New(Config{Connectors: []ConnectorConfig{config}}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connector := gateway.connectors["reference"]
+	base := time.Now()
+	olderAttempt := beginTestAttempt(t, connector)
+	olderOrder := recordTestCompletion(connector, base.Add(time.Nanosecond))
+	newerOrder := recordTestCompletion(connector, base.Add(2*time.Nanosecond))
+	connector.finishBreakerFailure(base, beginTestAttempt(t, connector), newerOrder)
+
+	expiredAt := base.Add(20 * time.Millisecond)
+	if connector.circuitOpenWithClock(func() time.Time { return expiredAt }) {
+		t.Fatal("newer failure interval did not expire")
+	}
+	connector.finishBreakerFailure(expiredAt, olderAttempt, olderOrder)
+	if !connector.circuitOpenWithClock(func() time.Time { return expiredAt }) {
+		t.Fatal("expired credit consumed a late-observed failure with an older completion order")
+	}
+	if !connector.circuitOpenWithClock(func() time.Time { return expiredAt.Add(9 * time.Millisecond) }) {
+		t.Fatal("late-observed failure did not retain its full open interval")
+	}
+	if connector.circuitOpenWithClock(func() time.Time { return expiredAt.Add(11 * time.Millisecond) }) {
+		t.Fatal("late-observed failure remained open after its full interval")
 	}
 }
 
@@ -883,6 +921,35 @@ func TestBreakerHistoryLimitFailsClosed(t *testing.T) {
 	attempt, failure := connector.tryBeginAttempt(background, background, time.Now)
 	if failure == nil || failure.code != FailureCircuitOpen || attempt.id != 0 {
 		t.Fatalf("attempt=%+v failure=%v", attempt, failure)
+	}
+}
+
+func TestBreakerHistoryLimitReservesCreditForUnresolvedAttempt(t *testing.T) {
+	config := testConnectorConfig()
+	config.CircuitBreaker.Failures = 1
+	gateway, err := New(Config{Connectors: []ConnectorConfig{config}}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connector := gateway.connectors["reference"]
+	connector.stateMu.Lock()
+	connector.breakerSerial = 1
+	connector.breakerAttempts[1] = struct{}{}
+	connector.breakerFailures = make([]breakerFailure, 2_047)
+	connector.breakerCredits = make([]breakerCredit, 2_047)
+	connector.stateMu.Unlock()
+
+	background := context.Background()
+	attempt, failure := connector.tryBeginAttempt(background, background, time.Now)
+	if failure == nil || failure.code != FailureCircuitOpen || attempt.id != 0 {
+		t.Fatalf("attempt=%+v failure=%v", attempt, failure)
+	}
+	connector.stateMu.Lock()
+	records := len(connector.breakerAttempts) + len(connector.breakerFailures) + len(connector.breakerCredits)
+	cost := connector.breakerHistoryCostLocked()
+	connector.stateMu.Unlock()
+	if records != breakerHistoryLimit-1 || cost != breakerHistoryLimit {
+		t.Fatalf("records=%d cost=%d", records, cost)
 	}
 }
 
