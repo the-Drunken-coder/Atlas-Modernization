@@ -2,10 +2,14 @@ import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import {
   chmodSync,
+  closeSync,
   cpSync,
   existsSync,
+  fsyncSync,
   lstatSync,
   mkdirSync,
+  openSync,
+  readdirSync,
   readFileSync,
   renameSync,
   rmSync,
@@ -44,6 +48,7 @@ const POSTGRES_CONTAINER = `${PROJECT_NAME}_postgres`;
 const MINIO_CONTAINER = `${PROJECT_NAME}_minio`;
 const MINIO_INIT_CONTAINER = `${PROJECT_NAME}_minio_init`;
 const MUTATION_LOCK_NETWORK = `${PROJECT_NAME}_mutation_lock`;
+const MUTATION_RECOVERY_LOCK_PREFIX = ".mutation.lock.recovering.";
 const RESET_CONTAINERS = [
   API_CONTAINER,
   SOURCE_GATEWAY_CONTAINER,
@@ -183,6 +188,29 @@ type DeploymentState = {
   enabledPlugins: string[];
   startAttemptedAt?: string;
   startedAt?: string;
+};
+
+type MutationLockOwner = {
+  schema: 1;
+  id: string;
+  pid: number;
+  operation?: "plugin-disable";
+};
+
+type DockerMutationLock = {
+  networkId: string;
+  owner: MutationLockOwner;
+  labels: Record<string, string>;
+};
+
+type PluginDisableJournal = {
+  schema: 1;
+  coreImage: string;
+  operation: "plugin-disable";
+  phase: "preparing" | "prepared" | "committed";
+  lockId: string;
+  pluginId: string;
+  previousStatus: "ready" | "stopped";
 };
 
 type DeployedPluginMetadata = {
@@ -392,6 +420,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   readonly #envFile: string;
   readonly #stateFile: string;
   readonly #mutationLockFile: string;
+  readonly #transactionDir: string;
   readonly #composeFile: string;
   readonly #initComposeFile: string;
   readonly #packageRoot: string;
@@ -409,12 +438,15 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   readonly #confirmCoreUpdate: (question: string) => Promise<boolean>;
   readonly #confirmReset: (question: string) => Promise<boolean>;
   readonly #imageReference: string | undefined;
+  #activeMutationLock: MutationLockOwner | undefined;
+  #activeMutationRecoveryPath: string | undefined;
 
   constructor(context: RequiredRuntimeContext) {
     this.#configDir = resolveConfigDirectory(context.env.ATLAS_CORE_HOME, context.homeDir);
     this.#envFile = join(this.#configDir, ".env");
     this.#stateFile = join(this.#configDir, "state.json");
     this.#mutationLockFile = join(this.#configDir, ".mutation.lock");
+    this.#transactionDir = join(this.#configDir, "transaction");
     this.#composeFile = join(context.packageRoot, "assets", "docker-compose.yml");
     this.#initComposeFile = join(context.packageRoot, "assets", "docker-compose.init.yml");
     this.#packageRoot = context.packageRoot;
@@ -470,18 +502,41 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     });
   }
 
-  async #withMutationLock<T>(dockerEngineId: string, action: () => Promise<T>): Promise<T> {
+  async #withMutationLock<T>(
+    dockerEngineId: string,
+    action: () => Promise<T>,
+    recoverInterruptedDisable = true
+  ): Promise<T> {
     this.#prepareConfigDirectory();
-    this.#acquireMutationLock();
+    const mutationLock = this.#acquireMutationLock();
+    let dockerLock: DockerMutationLock | undefined;
+    let dockerLockReleased = false;
     try {
-      await this.#acquireDockerMutationLock(dockerEngineId);
+      dockerLock = await this.#acquireDockerMutationLock(dockerEngineId, mutationLock);
+      this.#activeMutationLock = dockerLock.owner;
       try {
+        if (recoverInterruptedDisable) await this.#recoverPluginDisableTransaction(dockerEngineId);
         return await action();
       } finally {
-        await this.#releaseDockerMutationLock();
+        await this.#releaseDockerMutationLock(dockerLock);
+        dockerLockReleased = true;
       }
     } finally {
-      this.#releaseMutationLock();
+      try {
+        const preserveRecoverableLocalLock = this.#activeMutationLock?.operation === "plugin-disable";
+        if (
+          (dockerLock && (dockerLockReleased || !preserveRecoverableLocalLock)) ||
+          (!dockerLock && !mutationLock.recovered)
+        ) {
+          this.#releaseMutationLock(dockerLock?.owner ?? mutationLock.owner);
+        }
+      } finally {
+        try {
+          this.#restoreMutationRecoveryLock();
+        } finally {
+          this.#activeMutationLock = undefined;
+        }
+      }
     }
   }
 
@@ -613,10 +668,14 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     const imageReference = this.#requirePublishedImage();
     const dockerEngineId = await this.#preflight();
     await this.#checkCommand("docker", ["pull", imageReference]);
-    await this.#withMutationLock(dockerEngineId, async () => {
-      this.#assertResetConfigurationMatchesRuntime(dockerEngineId);
-      await this.#reset(dockerEngineId);
-    });
+    await this.#withMutationLock(
+      dockerEngineId,
+      async () => {
+        this.#assertResetConfigurationMatchesRuntime(dockerEngineId);
+        await this.#reset(dockerEngineId);
+      },
+      false
+    );
   }
 
   async #reset(dockerEngineId: string): Promise<void> {
@@ -635,6 +694,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       previousState?.enabledPlugins.filter((pluginId) =>
         existsSync(join(this.#pluginConfigRoot, pluginId, "compose.yml"))
       ) ?? [];
+    this.#abandonPluginDisableTransaction();
     if (existsSync(this.#envFile)) {
       await this.#runComposeChecked(["down", "--remove-orphans"], resetPluginIds);
     }
@@ -1250,19 +1310,18 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     if (!state.enabledPlugins.includes(pluginId)) {
       return `${plugin.displayName} is already disabled`;
     }
+    this.#assertEnabledPluginDeployment(state);
     report({ level: "working", message: "Reading current deployment", stage: "operation" });
     const snapshot = await this.#fullyHealthyMutationSnapshot(state, "Plugin changes");
     const candidatePluginIds = state.enabledPlugins.filter((candidate) => candidate !== pluginId);
     report({ level: "working", message: "Saving rollback copy", stage: "operation" });
-    const backup = this.#copyPluginAssetsBackup(pluginId);
-    let stateCommitted = false;
+    const journal = this.#beginPluginDisableTransaction(pluginId, snapshot.status);
     try {
       report({ level: "working", message: `Stopping ${plugin.displayName}`, stage: "operation" });
       const removeResult = await this.#runCompose(["rm", "-s", "-f", plugin.service], false, state.enabledPlugins);
       if (removeResult.status !== 0) throw commandFailure("docker compose rm", removeResult);
       this.#removePluginAssets(pluginId);
       this.#writeDeploymentState({ ...state, enabledPlugins: candidatePluginIds });
-      stateCommitted = true;
       report({ level: "success", message: "Plugin deployment files removed", stage: "operation" });
       await this.#runComposeChecked(["config", "--quiet"], candidatePluginIds);
       report({ level: "success", message: "Deployment configuration valid", stage: "operation" });
@@ -1289,31 +1348,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       report({ level: "failure", message: `Disable stopped: ${errorMessage(error)}`, stage: "operation" });
       report({ level: "working", message: "Restoring previous deployment", stage: "rollback" });
       const rollbackErrors: string[] = [];
-      if (stateCommitted) {
-        await attemptRollback(rollbackErrors, async () => this.#writeDeploymentState(state));
-      }
-      await attemptRollback(rollbackErrors, async () => this.#restorePluginAssets(pluginId, backup));
-      if (snapshot.status !== "stopped") {
-        await attemptRollback(rollbackErrors, async () => {
-          const restore = await this.#runComposeCleanup(
-            [
-              "up",
-              "-d",
-              "--pull",
-              "never",
-              "--force-recreate",
-              "--wait",
-              "--wait-timeout",
-              COMPOSE_WAIT_SECONDS,
-              "api",
-              "source-gateway",
-              plugin.service
-            ],
-            state.enabledPlugins
-          );
-          if (restore.status !== 0) throw commandFailure("restore Atlas Core", restore);
-        });
-      }
+      rollbackErrors.push(...(await this.#rollbackPluginDisableTransaction(journal, true)));
       report(
         rollbackErrors.length === 0
           ? { level: "success", message: "Previous deployment restored", stage: "rollback" }
@@ -1325,7 +1360,8 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       );
       throw transactionFailure(error, rollbackErrors);
     }
-    rmSync(backup, { recursive: true, force: true });
+    this.#writePluginDisableJournal({ ...journal, phase: "committed" });
+    this.#removePluginDisableTransaction();
     return snapshot.status === "stopped"
       ? `${plugin.displayName} disabled. Atlas Core remains stopped`
       : `${plugin.displayName} disabled. Core API and Source Gateway are healthy`;
@@ -1450,51 +1486,205 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     return result.stdout || result.stderr;
   }
 
-  #acquireMutationLock(): void {
-    try {
-      writePrivateFile(
-        this.#mutationLockFile,
-        `${JSON.stringify({ pid: process.pid }, null, 2)}\n`,
-        this.#platform,
-        true
+  #acquireMutationLock(): { owner: MutationLockOwner; recovered: boolean } {
+    const owner: MutationLockOwner = {
+      schema: 1,
+      id: randomBytes(16).toString("hex"),
+      pid: process.pid,
+      ...(existsSync(this.#transactionDir) ? { operation: "plugin-disable" } : {})
+    };
+    for (;;) {
+      const claimedOwner = this.#claimAbandonedMutationRecovery();
+      if (claimedOwner) return { owner: claimedOwner, recovered: true };
+
+      try {
+        writePrivateFile(this.#mutationLockFile, `${JSON.stringify(owner, null, 2)}\n`, this.#platform, true);
+        if (this.#mutationRecoveryClaimNames().length > 0) {
+          this.#releaseMutationLock(owner);
+          continue;
+        }
+        return { owner, recovered: false };
+      } catch (error) {
+        if (!isNodeError(error) || error.code !== "EEXIST") throw error;
+      }
+
+      this.#assertPrivateFile(this.#mutationLockFile);
+      let existingOwner: unknown;
+      try {
+        existingOwner = JSON.parse(readFileSync(this.#mutationLockFile, "utf8"));
+      } catch {
+        existingOwner = undefined;
+      }
+      if (
+        isMutationLockOwner(existingOwner) &&
+        this.#isRecoverablePluginDisableOwner(existingOwner) &&
+        !isProcessAlive(existingOwner.pid)
+      ) {
+        if (this.#claimMutationRecovery(this.#mutationLockFile)) {
+          return { owner: existingOwner, recovered: true };
+        }
+        continue;
+      }
+      const ownerDescription = isInitLock(existingOwner) ? ` by PID ${existingOwner.pid}` : "";
+      throw new Error(
+        `Atlas Core deployment mutation is locked${ownerDescription} at ${this.#mutationLockFile}. ` +
+          "If no atlas-core process is changing the deployment, remove that file and retry."
       );
-      return;
-    } catch (error) {
-      if (!isNodeError(error) || error.code !== "EEXIST") throw error;
+    }
+  }
+
+  #claimAbandonedMutationRecovery(): MutationLockOwner | undefined {
+    const claims = this.#mutationRecoveryClaimNames();
+    if (claims.length === 0) return undefined;
+    if (claims.length > 1) {
+      throw new Error(`Atlas Core found multiple deployment recovery claims in ${this.#configDir}.`);
     }
 
-    this.#assertPrivateFile(this.#mutationLockFile);
+    const claimName = claims[0];
+    if (!claimName) return undefined;
+    const claimantPid = mutationRecoveryClaimPid(claimName);
+    const claimPath = join(this.#configDir, claimName);
+    const owner = this.#readMutationLockOwner(claimPath);
+    if (!this.#isRecoverablePluginDisableOwner(owner)) {
+      throw new Error(`Atlas Core found an invalid deployment recovery claim at ${claimPath}.`);
+    }
+    if (isProcessAlive(claimantPid)) {
+      throw new Error(`Atlas Core deployment recovery is locked by PID ${claimantPid} at ${claimPath}.`);
+    }
+    if (!this.#claimMutationRecovery(claimPath)) return undefined;
+    try {
+      if (existsSync(this.#mutationLockFile)) {
+        const currentOwner = this.#readMutationLockOwner(this.#mutationLockFile);
+        if (isProcessAlive(currentOwner.pid)) {
+          throw new Error("Atlas Core mutation lock changed ownership during deployment recovery.");
+        }
+        if (currentOwner.id !== owner.id && currentOwner.operation !== "plugin-disable") {
+          throw new Error("Atlas Core mutation lock changed ownership during deployment recovery.");
+        }
+        unlinkSync(this.#mutationLockFile);
+        syncDirectory(this.#configDir);
+      }
+      return owner;
+    } catch (error) {
+      const activeClaimPath = this.#activeMutationRecoveryPath;
+      if (activeClaimPath && existsSync(activeClaimPath) && !existsSync(claimPath)) {
+        renameSync(activeClaimPath, claimPath);
+        syncDirectory(this.#configDir);
+        this.#activeMutationRecoveryPath = undefined;
+      }
+      throw error;
+    }
+  }
+
+  #mutationRecoveryClaimNames(): string[] {
+    return readdirSync(this.#configDir)
+      .filter((entry) => entry.startsWith(MUTATION_RECOVERY_LOCK_PREFIX))
+      .sort();
+  }
+
+  #claimMutationRecovery(source: string): boolean {
+    const claimPath = join(
+      this.#configDir,
+      `${MUTATION_RECOVERY_LOCK_PREFIX}${process.pid}.${randomBytes(8).toString("hex")}`
+    );
+    try {
+      renameSync(source, claimPath);
+    } catch (error) {
+      if (isNodeError(error) && error.code === "ENOENT") return false;
+      throw error;
+    }
+    syncDirectory(this.#configDir);
+    this.#activeMutationRecoveryPath = claimPath;
+    return true;
+  }
+
+  #isRecoverablePluginDisableOwner(owner: MutationLockOwner): boolean {
+    const journalLockId = this.#recoverablePluginDisableLockId();
+    return journalLockId === owner.id || owner.operation === "plugin-disable";
+  }
+
+  #readMutationLockOwner(path: string): MutationLockOwner {
+    this.#assertPrivateFile(path);
     let owner: unknown;
     try {
-      owner = JSON.parse(readFileSync(this.#mutationLockFile, "utf8"));
+      owner = JSON.parse(readFileSync(path, "utf8"));
     } catch {
       owner = undefined;
     }
-    const ownerDescription = isInitLock(owner) ? ` by PID ${owner.pid}` : "";
-    throw new Error(
-      `Atlas Core deployment mutation is locked${ownerDescription} at ${this.#mutationLockFile}. ` +
-        "If no atlas-core process is changing the deployment, remove that file and retry."
-    );
+    if (!isMutationLockOwner(owner)) {
+      throw new Error(`Atlas Core found an invalid deployment mutation lock at ${path}.`);
+    }
+    return owner;
   }
 
-  #releaseMutationLock(): void {
+  #releaseMutationRecoveryLock(): void {
+    const claimPath = this.#activeMutationRecoveryPath;
+    if (!claimPath || !existsSync(claimPath)) return;
+    rmSync(claimPath, { force: true });
+    syncDirectory(this.#configDir);
+    this.#activeMutationRecoveryPath = undefined;
+  }
+
+  #restoreMutationRecoveryLock(): void {
+    const claimPath = this.#activeMutationRecoveryPath;
+    if (!claimPath) return;
+    if (!existsSync(claimPath)) {
+      this.#activeMutationRecoveryPath = undefined;
+      return;
+    }
+    const claimedOwner = this.#readMutationLockOwner(claimPath);
+    if (existsSync(this.#mutationLockFile)) {
+      const currentOwner = this.#readMutationLockOwner(this.#mutationLockFile);
+      if (currentOwner.id !== claimedOwner.id) {
+        throw new OperationCleanupError("Atlas Core mutation lock changed ownership during recovery cleanup.");
+      }
+      unlinkSync(this.#mutationLockFile);
+    }
+    renameSync(claimPath, this.#mutationLockFile);
+    syncDirectory(this.#configDir);
+    this.#activeMutationRecoveryPath = undefined;
+  }
+
+  #releaseMutationLock(owner: MutationLockOwner): void {
+    if (!existsSync(this.#mutationLockFile)) return;
+    let current: unknown;
+    try {
+      current = JSON.parse(readFileSync(this.#mutationLockFile, "utf8"));
+    } catch (error) {
+      throw new OperationCleanupError(`Atlas Core could not read its mutation lock: ${errorMessage(error)}`);
+    }
+    if (!isMutationLockOwner(current)) {
+      throw new OperationCleanupError("Atlas Core mutation lock changed to an invalid owner before cleanup.");
+    }
+    if (current.id !== owner.id || current.pid !== owner.pid) return;
     try {
       unlinkSync(this.#mutationLockFile);
+      syncDirectory(this.#configDir);
     } catch (error) {
-      if (!isNodeError(error) || error.code !== "ENOENT") {
-        throw new OperationCleanupError(`Atlas Core could not remove its mutation lock: ${errorMessage(error)}`);
-      }
+      throw new OperationCleanupError(`Atlas Core could not remove its mutation lock: ${errorMessage(error)}`);
     }
   }
 
-  async #acquireDockerMutationLock(dockerEngineId: string): Promise<void> {
+  async #acquireDockerMutationLock(
+    dockerEngineId: string,
+    mutationLock: { owner: MutationLockOwner; recovered: boolean }
+  ): Promise<DockerMutationLock> {
     const ownershipLabels = {
       "io.atlas.core.engine": dockerEngineId,
       "io.atlas.core.lock": "mutation",
       "io.atlas.core.project": PROJECT_NAME
     };
+    if (mutationLock.recovered) {
+      await this.#removeRecoveredDockerMutationLock(ownershipLabels, mutationLock.owner.id);
+    }
+    const owner: MutationLockOwner = {
+      ...mutationLock.owner,
+      pid: process.pid,
+      ...(mutationLock.recovered ? { operation: "plugin-disable" } : {})
+    };
     const attemptLabels = {
       ...ownershipLabels,
+      "io.atlas.core.lock-id": owner.id,
       "io.atlas.core.lock-attempt": randomBytes(16).toString("hex")
     };
     const args = ["network", "create"];
@@ -1510,7 +1700,23 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       }
       throw error;
     }
-    if (result.status === 0) return;
+    if (result.status === 0) {
+      const networkId = oneLine(result.stdout);
+      if (!networkId) {
+        await this.#removeAmbiguousDockerMutationLock(attemptLabels);
+        throw new Error("Docker did not report the deployment mutation lock network ID.");
+      }
+      if (mutationLock.recovered) {
+        try {
+          writePrivateFile(this.#mutationLockFile, `${JSON.stringify(owner, null, 2)}\n`, this.#platform, true);
+          this.#releaseMutationRecoveryLock();
+        } catch (error) {
+          await this.#removeAmbiguousDockerMutationLock(attemptLabels);
+          throw error;
+        }
+      }
+      return { networkId, owner, labels: attemptLabels };
+    }
 
     const inspection = await this.#runner.run(
       "docker",
@@ -1525,10 +1731,34 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     );
   }
 
+  async #removeRecoveredDockerMutationLock(
+    ownershipLabels: Record<string, string>,
+    recoveredLockId: string
+  ): Promise<void> {
+    const inspection = await this.#runner.run(
+      "docker",
+      ["network", "inspect", "--format", "{{json .Id}}\t{{json .Labels}}", MUTATION_LOCK_NETWORK],
+      { env: this.#env }
+    );
+    if (inspection.status !== 0) {
+      if (/no such network/i.test(inspection.stderr || inspection.stdout)) return;
+      throw commandFailure(`docker network inspect ${MUTATION_LOCK_NETWORK}`, inspection);
+    }
+    const network = dockerNetworkIdentity(inspection.stdout);
+    this.#assertResourceLabels("deployment mutation lock", MUTATION_LOCK_NETWORK, JSON.stringify(network.labels), {
+      ...ownershipLabels,
+      "io.atlas.core.lock-id": recoveredLockId
+    });
+    const removal = await this.#runner.run("docker", ["network", "rm", network.id], { env: this.#env });
+    if (removal.status !== 0) {
+      throw commandFailure(`docker network rm ${MUTATION_LOCK_NETWORK}`, removal);
+    }
+  }
+
   async #removeAmbiguousDockerMutationLock(attemptLabels: Record<string, string>): Promise<void> {
     const inspection = await this.#runner.runCleanup(
       "docker",
-      ["network", "inspect", "--format", "{{json .Labels}}", MUTATION_LOCK_NETWORK],
+      ["network", "inspect", "--format", "{{json .Id}}\t{{json .Labels}}", MUTATION_LOCK_NETWORK],
       { env: this.#env }
     );
     if (inspection.status !== 0) {
@@ -1537,8 +1767,9 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
         commandFailure(`docker network inspect ${MUTATION_LOCK_NETWORK}`, inspection).message
       );
     }
-    if (!this.#resourceLabelsMatch(inspection.stdout, attemptLabels)) return;
-    const removal = await this.#runner.runCleanup("docker", ["network", "rm", MUTATION_LOCK_NETWORK], {
+    const network = dockerNetworkIdentity(inspection.stdout);
+    if (!this.#resourceLabelsMatch(JSON.stringify(network.labels), attemptLabels)) return;
+    const removal = await this.#runner.runCleanup("docker", ["network", "rm", network.id], {
       env: this.#env
     });
     if (removal.status !== 0) {
@@ -1546,8 +1777,22 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     }
   }
 
-  async #releaseDockerMutationLock(): Promise<void> {
-    const result = await this.#runner.runCleanup("docker", ["network", "rm", MUTATION_LOCK_NETWORK], {
+  async #releaseDockerMutationLock(lock: DockerMutationLock): Promise<void> {
+    const inspection = await this.#runner.runCleanup(
+      "docker",
+      ["network", "inspect", "--format", "{{json .Id}}\t{{json .Labels}}", MUTATION_LOCK_NETWORK],
+      { env: this.#env }
+    );
+    if (inspection.status !== 0) {
+      throw new OperationCleanupError(
+        commandFailure(`docker network inspect ${MUTATION_LOCK_NETWORK}`, inspection).message
+      );
+    }
+    const network = dockerNetworkIdentity(inspection.stdout);
+    if (network.id !== lock.networkId || !this.#resourceLabelsMatch(JSON.stringify(network.labels), lock.labels)) {
+      throw new OperationCleanupError("Atlas Core deployment mutation lock changed ownership before cleanup.");
+    }
+    const result = await this.#runner.runCleanup("docker", ["network", "rm", lock.networkId], {
       env: this.#env
     });
     if (result.status !== 0) {
@@ -1902,8 +2147,314 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   }
 
   #removePluginAssets(pluginId: string): void {
+    this.#preparePluginConfigRoot();
+    const target = join(this.#pluginConfigRoot, pluginId);
+    if (!existsSync(target)) return;
+    rmSync(target, { recursive: true, force: true });
+    syncDirectory(this.#pluginConfigRoot);
+  }
+
+  #beginPluginDisableTransaction(pluginId: string, previousStatus: DeploymentSnapshot["status"]): PluginDisableJournal {
+    if (previousStatus !== "ready" && previousStatus !== "stopped") {
+      throw new Error(`Cannot record Plugin disable from deployment status ${previousStatus}.`);
+    }
+    if (existsSync(this.#transactionDir)) {
+      throw new Error(`Atlas Core found an unrecovered deployment transaction at ${this.#transactionDir}.`);
+    }
+    this.#preparePluginConfigRoot();
+    const lockOwner = this.#activeMutationLock;
+    if (!lockOwner) throw new Error("Plugin disable requires the deployment mutation lock.");
+    this.#markActivePluginDisableOperation();
+
+    const journal: PluginDisableJournal = {
+      schema: 1,
+      coreImage: this.#imageReference ?? UNRELEASED_IMAGE,
+      operation: "plugin-disable",
+      phase: "preparing",
+      lockId: lockOwner.id,
+      pluginId,
+      previousStatus
+    };
+    const beforeDir = join(this.#transactionDir, "before");
+    const baseDir = join(beforeDir, "base");
+    const pluginBackup = join(beforeDir, "plugin");
+    try {
+      mkdirSync(baseDir, { recursive: true, mode: 0o700 });
+      if (this.#platform !== "win32") {
+        chmodSync(this.#transactionDir, 0o700);
+        chmodSync(beforeDir, 0o700);
+        chmodSync(baseDir, 0o700);
+      }
+      this.#writePluginDisableJournal(journal);
+      const previousStateFile = join(beforeDir, "state.json");
+      cpSync(this.#stateFile, previousStateFile, { dereference: false, errorOnExist: true, force: false });
+      if (this.#platform !== "win32") chmodSync(previousStateFile, 0o600);
+      for (const name of ["docker-compose.yml", "source_gateway.production.json"]) {
+        const source = join(dirname(this.#composeFile), name);
+        if (!existsSync(source)) throw new Error(`Atlas Core package is missing deployment asset ${name}.`);
+        const target = join(baseDir, name);
+        cpSync(source, target, { dereference: false, errorOnExist: true, force: false });
+        if (this.#platform !== "win32") chmodSync(target, 0o600);
+      }
+      cpSync(join(this.#pluginConfigRoot, pluginId), pluginBackup, {
+        recursive: true,
+        dereference: false,
+        errorOnExist: true,
+        force: false
+      });
+      syncTree(this.#transactionDir);
+      syncDirectory(this.#configDir);
+      const prepared = { ...journal, phase: "prepared" } as const;
+      this.#writePluginDisableJournal(prepared);
+      return prepared;
+    } catch (error) {
+      rmSync(this.#transactionDir, { recursive: true, force: true });
+      syncDirectory(this.#configDir);
+      throw error;
+    }
+  }
+
+  #markActivePluginDisableOperation(): void {
+    const owner = this.#activeMutationLock;
+    if (!owner) throw new Error("Plugin disable requires the deployment mutation lock.");
+    const current = this.#readMutationLockOwner(this.#mutationLockFile);
+    if (current.id !== owner.id || current.pid !== owner.pid) {
+      throw new Error("Atlas Core mutation lock changed ownership before Plugin disable was prepared.");
+    }
+    const marked: MutationLockOwner = { ...owner, operation: "plugin-disable" };
+    writePrivateFile(this.#mutationLockFile, `${JSON.stringify(marked, null, 2)}\n`, this.#platform);
+    this.#activeMutationLock = marked;
+  }
+
+  #writePluginDisableJournal(journal: PluginDisableJournal): void {
+    writePrivateFile(
+      join(this.#transactionDir, "journal.json"),
+      `${JSON.stringify(journal, null, 2)}\n`,
+      this.#platform
+    );
+  }
+
+  #readPluginDisableJournal(): PluginDisableJournal {
+    const journalFile = join(this.#transactionDir, "journal.json");
+    this.#assertPrivateFile(journalFile);
+    let value: unknown;
+    try {
+      value = JSON.parse(readFileSync(journalFile, "utf8"));
+    } catch {
+      value = undefined;
+    }
+    if (!isPluginDisableJournal(value)) {
+      throw new Error(`Atlas Core found an invalid Plugin disable journal at ${journalFile}.`);
+    }
+    return value;
+  }
+
+  #recoverablePluginDisableLockId(): string | undefined {
+    if (!existsSync(join(this.#transactionDir, "journal.json"))) return undefined;
+    return this.#readPluginDisableJournal().lockId;
+  }
+
+  #readPluginDisablePreviousState(journal: PluginDisableJournal): DeploymentState {
+    const previousStateFile = join(this.#transactionDir, "before", "state.json");
+    this.#assertPrivateFile(previousStateFile);
+    let parsed: { state: DeploymentState; migrated: boolean } | undefined;
+    try {
+      parsed = deploymentStateFromValue(JSON.parse(readFileSync(previousStateFile, "utf8")) as unknown);
+    } catch {
+      parsed = undefined;
+    }
+    if (parsed?.migrated || !parsed?.state.enabledPlugins.includes(journal.pluginId)) {
+      throw new Error(`Atlas Core found invalid before-state for interrupted Plugin disable ${journal.pluginId}.`);
+    }
+    return parsed.state;
+  }
+
+  #pluginDisableComposeFile(): string {
+    const baseDir = join(this.#transactionDir, "before", "base");
+    const composeFile = join(baseDir, "docker-compose.yml");
+    this.#assertRegularFile(composeFile, 0o600);
+    this.#assertRegularFile(join(baseDir, "source_gateway.production.json"), 0o600);
+    return composeFile;
+  }
+
+  async #runPluginDisableCompose(
+    journal: PluginDisableJournal,
+    args: string[],
+    allowAfterCancellation: boolean,
+    pluginIds: readonly string[]
+  ): Promise<CommandResult> {
+    return await this.#runComposeFile(
+      this.#pluginDisableComposeFile(),
+      args,
+      false,
+      allowAfterCancellation,
+      pluginIds,
+      journal.coreImage
+    );
+  }
+
+  #restorePluginDisableAssets(pluginId: string): void {
+    this.#preparePluginConfigRoot();
+    const backup = join(this.#transactionDir, "before", "plugin");
+    const backupInfo = lstatSync(backup);
+    if (backupInfo.isSymbolicLink() || !backupInfo.isDirectory()) {
+      throw new Error(`Atlas Core found an invalid rollback copy for Plugin ${pluginId}.`);
+    }
     const target = join(this.#pluginConfigRoot, pluginId);
     if (existsSync(target)) rmSync(target, { recursive: true, force: true });
+    cpSync(backup, target, { recursive: true, dereference: false, errorOnExist: true, force: false });
+    syncTree(target);
+    syncDirectory(this.#pluginConfigRoot);
+  }
+
+  async #rollbackPluginDisableTransaction(
+    journal: PluginDisableJournal,
+    allowAfterCancellation: boolean
+  ): Promise<string[]> {
+    const rollbackErrors: string[] = [];
+    let previousState: DeploymentState;
+    try {
+      previousState = this.#readPluginDisablePreviousState(journal);
+      this.#restorePluginDisableAssets(journal.pluginId);
+      writePrivateFile(
+        this.#stateFile,
+        readFileSync(join(this.#transactionDir, "before", "state.json"), "utf8"),
+        this.#platform
+      );
+      this.#readDeployedPluginMetadata(journal.pluginId);
+    } catch (error) {
+      rollbackErrors.push(errorMessage(error));
+      return rollbackErrors;
+    }
+
+    try {
+      const config = await this.#runPluginDisableCompose(
+        journal,
+        ["config", "--quiet"],
+        allowAfterCancellation,
+        previousState.enabledPlugins
+      );
+      if (config.status !== 0) throw commandFailure("restore Plugin deployment configuration", config);
+      if (journal.previousStatus === "ready") {
+        const plugin = this.#readableDeployedPlugin(journal.pluginId);
+        const restore = await this.#runPluginDisableCompose(
+          journal,
+          [
+            "up",
+            "-d",
+            "--pull",
+            "never",
+            "--force-recreate",
+            "--wait",
+            "--wait-timeout",
+            COMPOSE_WAIT_SECONDS,
+            "api",
+            "source-gateway",
+            plugin.service
+          ],
+          allowAfterCancellation,
+          previousState.enabledPlugins
+        );
+        if (restore.status !== 0) throw commandFailure("restore Atlas Core", restore);
+      }
+    } catch (error) {
+      rollbackErrors.push(errorMessage(error));
+      return rollbackErrors;
+    }
+
+    this.#removePluginDisableTransaction();
+    return rollbackErrors;
+  }
+
+  async #finishPluginDisableTransaction(journal: PluginDisableJournal): Promise<void> {
+    const previousState = this.#readPluginDisablePreviousState(journal);
+    this.#restorePluginDisableAssets(journal.pluginId);
+    const plugin = this.#readableDeployedPlugin(journal.pluginId);
+    const remove = await this.#runPluginDisableCompose(
+      journal,
+      ["rm", "-s", "-f", plugin.service],
+      false,
+      previousState.enabledPlugins
+    );
+    if (remove.status !== 0) throw commandFailure("docker compose rm", remove);
+
+    const candidatePluginIds = previousState.enabledPlugins.filter((candidate) => candidate !== journal.pluginId);
+    this.#removePluginAssets(journal.pluginId);
+    this.#writeDeploymentState({ ...previousState, enabledPlugins: candidatePluginIds });
+    const config = await this.#runPluginDisableCompose(journal, ["config", "--quiet"], false, candidatePluginIds);
+    if (config.status !== 0) throw commandFailure("finish Plugin deployment configuration", config);
+    if (journal.previousStatus === "ready") {
+      const restore = await this.#runPluginDisableCompose(
+        journal,
+        [
+          "up",
+          "-d",
+          "--pull",
+          "never",
+          "--force-recreate",
+          "--wait",
+          "--wait-timeout",
+          COMPOSE_WAIT_SECONDS,
+          "api",
+          "source-gateway"
+        ],
+        false,
+        candidatePluginIds
+      );
+      if (restore.status !== 0) throw commandFailure("finish Plugin disable", restore);
+    }
+    this.#removePluginDisableTransaction();
+  }
+
+  async #recoverPluginDisableTransaction(dockerEngineId: string): Promise<void> {
+    if (!existsSync(this.#transactionDir)) return;
+    this.#markActivePluginDisableOperation();
+    const info = lstatSync(this.#transactionDir);
+    if (info.isSymbolicLink() || !info.isDirectory()) {
+      throw new Error(`${this.#transactionDir} must be a regular directory.`);
+    }
+    this.#assertPrivateOwnershipAndMode(this.#transactionDir, info, 0o700);
+
+    const journalFile = join(this.#transactionDir, "journal.json");
+    if (!existsSync(journalFile)) {
+      this.#removePluginDisableTransaction();
+      return;
+    }
+    const journal = this.#readPluginDisableJournal();
+    if (journal.phase === "preparing") {
+      this.#removePluginDisableTransaction();
+      return;
+    }
+
+    const previousState = this.#readPluginDisablePreviousState(journal);
+    this.#assertStateMatchesEngine(previousState, dockerEngineId);
+    this.#stdout.write(`Recovering interrupted disable for Plugin ${journal.pluginId}...\n`);
+    if (journal.phase === "committed") {
+      await this.#finishPluginDisableTransaction(journal);
+      this.#stdout.write(`Interrupted disable for Plugin ${journal.pluginId} completed.\n`);
+      return;
+    }
+
+    const rollbackErrors = await this.#rollbackPluginDisableTransaction(journal, false);
+    if (rollbackErrors.length > 0) {
+      throw new Error(`Interrupted Plugin disable rollback failed: ${rollbackErrors.join("; ")}`);
+    }
+    this.#stdout.write(`Interrupted disable for Plugin ${journal.pluginId} rolled back.\n`);
+  }
+
+  #abandonPluginDisableTransaction(): void {
+    if (!existsSync(this.#transactionDir)) return;
+    const info = lstatSync(this.#transactionDir);
+    if (info.isSymbolicLink() || !info.isDirectory()) {
+      throw new Error(`${this.#transactionDir} must be a regular directory.`);
+    }
+    this.#assertPrivateOwnershipAndMode(this.#transactionDir, info, 0o700);
+    this.#removePluginDisableTransaction();
+  }
+
+  #removePluginDisableTransaction(): void {
+    rmSync(this.#transactionDir, { recursive: true, force: true });
+    syncDirectory(this.#configDir);
   }
 
   #backupPluginAssets(pluginId: string): string {
@@ -1912,19 +2463,6 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     const backup = join(this.#pluginConfigRoot, `.${pluginId}.backup.${process.pid}.${randomBytes(6).toString("hex")}`);
     renameSync(target, backup);
     return backup;
-  }
-
-  #copyPluginAssetsBackup(pluginId: string): string {
-    const target = join(this.#pluginConfigRoot, pluginId);
-    if (!existsSync(target)) throw new Error(`Enabled Plugin ${pluginId} has no private deployment assets.`);
-    const backup = join(this.#pluginConfigRoot, `.${pluginId}.backup.${process.pid}.${randomBytes(6).toString("hex")}`);
-    try {
-      cpSync(target, backup, { recursive: true, dereference: false, errorOnExist: true, force: false });
-      return backup;
-    } catch (error) {
-      rmSync(backup, { recursive: true, force: true });
-      throw error;
-    }
   }
 
   #restorePluginAssets(pluginId: string, backup: string): void {
@@ -2562,15 +3100,46 @@ async function askForConfirmation(question: string): Promise<boolean> {
 }
 
 function writePrivateFile(path: string, contents: string, platform: NodeJS.Platform, exclusive = false): void {
-  if (exclusive) {
-    writeFileSync(path, contents, { encoding: "utf8", mode: 0o600, flag: "wx" });
-    if (platform !== "win32") chmodSync(path, 0o600);
+  const target = exclusive ? path : `${path}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
+  const descriptor = openSync(target, "wx", 0o600);
+  try {
+    writeFileSync(descriptor, contents, { encoding: "utf8" });
+    if (platform !== "win32") chmodSync(target, 0o600);
+    fsyncSync(descriptor);
+  } catch (error) {
+    closeSync(descriptor);
+    rmSync(target, { force: true });
+    throw error;
+  }
+  closeSync(descriptor);
+  if (!exclusive) renameSync(target, path);
+  syncDirectory(dirname(path));
+}
+
+function syncTree(path: string): void {
+  const info = lstatSync(path);
+  if (info.isSymbolicLink()) return;
+  if (info.isDirectory()) {
+    for (const entry of readdirSync(path)) syncTree(join(path, entry));
+    syncDirectory(path);
     return;
   }
-  const temporaryPath = `${path}.${process.pid}.tmp`;
-  writeFileSync(temporaryPath, contents, { encoding: "utf8", mode: 0o600, flag: "wx" });
-  renameSync(temporaryPath, path);
-  if (platform !== "win32") chmodSync(path, 0o600);
+  if (!info.isFile()) return;
+  const descriptor = openSync(path, "r");
+  try {
+    fsyncSync(descriptor);
+  } finally {
+    closeSync(descriptor);
+  }
+}
+
+function syncDirectory(path: string): void {
+  const descriptor = openSync(path, "r");
+  try {
+    fsyncSync(descriptor);
+  } finally {
+    closeSync(descriptor);
+  }
 }
 
 function deploymentStateFromValue(value: unknown): { state: DeploymentState; migrated: boolean } | undefined {
@@ -2623,6 +3192,86 @@ function isInitLock(value: unknown): value is { pid: number } {
   if (typeof value !== "object" || value === null) return false;
   const record = value as Record<string, unknown>;
   return typeof record.pid === "number" && Number.isInteger(record.pid) && record.pid > 0;
+}
+
+function isMutationLockOwner(value: unknown): value is MutationLockOwner {
+  if (!isInitLock(value)) return false;
+  const record = value as unknown as Record<string, unknown>;
+  const keys = Object.keys(record).sort();
+  const expectedKeys = record.operation === undefined ? ["id", "pid", "schema"] : ["id", "operation", "pid", "schema"];
+  return (
+    keys.length === expectedKeys.length &&
+    keys.every((key, index) => key === expectedKeys[index]) &&
+    record.schema === 1 &&
+    typeof record.id === "string" &&
+    /^[a-f0-9]{32}$/u.test(record.id) &&
+    (record.operation === undefined || record.operation === "plugin-disable")
+  );
+}
+
+function isPluginDisableJournal(value: unknown): value is PluginDisableJournal {
+  if (typeof value !== "object" || value === null) return false;
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record).sort();
+  const expectedKeys = ["coreImage", "lockId", "operation", "phase", "pluginId", "previousStatus", "schema"];
+  return (
+    keys.length === expectedKeys.length &&
+    keys.every((key, index) => key === expectedKeys[index]) &&
+    record.schema === 1 &&
+    typeof record.coreImage === "string" &&
+    record.coreImage.length > 0 &&
+    record.operation === "plugin-disable" &&
+    (record.phase === "preparing" || record.phase === "prepared" || record.phase === "committed") &&
+    typeof record.lockId === "string" &&
+    /^[a-f0-9]{32}$/u.test(record.lockId) &&
+    typeof record.pluginId === "string" &&
+    /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/u.test(record.pluginId) &&
+    (record.previousStatus === "ready" || record.previousStatus === "stopped")
+  );
+}
+
+function mutationRecoveryClaimPid(name: string): number {
+  const match = /^\.mutation\.lock\.recovering\.([1-9][0-9]*)\.[a-f0-9]{16}$/u.exec(name);
+  const pid = Number(match?.[1]);
+  if (!Number.isSafeInteger(pid) || pid <= 0) {
+    throw new Error(`Atlas Core found an invalid deployment recovery claim named ${name}.`);
+  }
+  return pid;
+}
+
+function dockerNetworkIdentity(stdout: string): { id: string; labels: Record<string, string> } {
+  const [rawId, rawLabels, ...extra] = stdout.trim().split("\t");
+  if (!rawId || !rawLabels || extra.length > 0) {
+    throw new OperationCleanupError("Docker returned invalid deployment mutation lock metadata.");
+  }
+  let id: unknown;
+  let labels: unknown;
+  try {
+    id = JSON.parse(rawId);
+    labels = JSON.parse(rawLabels);
+  } catch {
+    throw new OperationCleanupError("Docker returned invalid deployment mutation lock metadata.");
+  }
+  if (
+    typeof id !== "string" ||
+    id.length === 0 ||
+    typeof labels !== "object" ||
+    labels === null ||
+    Array.isArray(labels) ||
+    Object.values(labels).some((value) => typeof value !== "string")
+  ) {
+    throw new OperationCleanupError("Docker returned invalid deployment mutation lock metadata.");
+  }
+  return { id, labels: labels as Record<string, string> };
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return !isNodeError(error) || error.code !== "ESRCH";
+  }
 }
 
 function resolveConfigDirectory(configured: string | undefined, homeDir: string): string {

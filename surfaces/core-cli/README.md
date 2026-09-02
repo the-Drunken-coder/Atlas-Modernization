@@ -80,10 +80,14 @@ accept arbitrary paths, images, or third-party bundles.
 Enabling a Plugin pulls the catalog's immutable image digest, stages its private Compose and configuration fragments,
 validates the complete Compose model, and then commits the new state. A running deployment starts the Plugin and
 restarts Core and Source Gateway with a health wait. A stopped deployment stays stopped. Failure restores the previous
-files, state, and running composition. Disabling removes the stateless Plugin container and its fragments but keeps the
-cached image. Plugin mutations require the CLI and deployment versions to match; status and logs remain available after
-a CLI-only update. Direct commands print each mutation stage. The Plugins menu keeps the operation in an activity view
-with elapsed timestamps, reports rollback status, and returns to the Plugin catalog after safe cancellation.
+files, state, and running composition. Before disabling a Plugin, the CLI records the previous state and active files in
+the root transaction directory. If the process stops after destructive work begins, the next mutation reclaims only the
+matching dead-owner locks and restores or finishes that transaction from its captured Compose inputs before normal
+deployment validation. A confirmed destructive reset may abandon an unrecoverable transaction. Disabling removes the
+stateless Plugin container and its fragments but keeps the cached image. Plugin mutations require the CLI and deployment
+versions to match; status and logs remain available after a CLI-only update. Direct commands print each mutation stage.
+The Plugins menu keeps the operation in an activity view with elapsed timestamps, reports rollback status, and returns
+to the Plugin catalog after safe cancellation.
 
 The menu's `Configure` action opens a configuration menu. `Admin account` changes the password for the fixed `admin`
 username. The direct `config` command opens the same hidden password prompt. The password must contain at least 12

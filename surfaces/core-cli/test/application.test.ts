@@ -1,8 +1,10 @@
 import {
   chmodSync,
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   renameSync,
   rmSync,
@@ -46,6 +48,7 @@ class FakeRunner implements CommandRunner {
   readonly existingContainers = new Set<string>();
   readonly existingNetworks = new Set<string>();
   readonly networkLabels = new Map<string, Record<string, string>>();
+  readonly networkIds = new Map<string, string>();
   readonly mismatchedResources = new Set<string>();
   readonly volumeUsers = new Map<string, Set<string>>();
   inspectionError: { kind: "container" | "volume"; name: string } | undefined;
@@ -53,6 +56,7 @@ class FakeRunner implements CommandRunner {
   failComposeConfig = false;
   failComposePull = false;
   failComposeUp = false;
+  failComposeUpImage: string | undefined;
   failStats = false;
   failInstalledCoreUpdate = false;
   composeVersion = "5.1.2";
@@ -126,6 +130,8 @@ class FakeRunner implements CommandRunner {
         if (labelName) labels[labelName] = valueParts.join("=");
       }
       this.networkLabels.set(name, labels);
+      const networkId = `network-${this.networkIds.size + 1}`;
+      this.networkIds.set(name, networkId);
       const cancelAfterNetworkCreate = this.cancelAfterNetworkCreate;
       this.cancelAfterNetworkCreate = undefined;
       if (cancelAfterNetworkCreate) {
@@ -135,26 +141,35 @@ class FakeRunner implements CommandRunner {
       const afterSuccessfulNetworkCreate = this.afterSuccessfulNetworkCreate;
       this.afterSuccessfulNetworkCreate = undefined;
       if (afterSuccessfulNetworkCreate) queueMicrotask(afterSuccessfulNetworkCreate);
-      return result(0, `${name}\n`);
+      return result(0, `${networkId}\n`);
     }
     if (args[0] === "network" && args[1] === "inspect") {
-      const name = args.at(-1) ?? "";
+      const requested = args.at(-1) ?? "";
+      const name = this.existingNetworks.has(requested)
+        ? requested
+        : ([...this.networkIds].find(([, id]) => id === requested)?.[0] ?? requested);
       if (!this.existingNetworks.has(name)) return result(1, "", `Error: No such network: ${name}`);
-      return result(
-        0,
-        JSON.stringify(
-          this.networkLabels.get(name) ?? {
-            "io.atlas.core.engine": "test-engine-id",
-            "io.atlas.core.lock": "mutation",
-            "io.atlas.core.project": "atlas_core_production"
-          }
-        )
-      );
+      const labels = this.networkLabels.get(name) ?? {
+        "io.atlas.core.engine": "test-engine-id",
+        "io.atlas.core.lock": "mutation",
+        "io.atlas.core.project": "atlas_core_production"
+      };
+      const format = args[args.indexOf("--format") + 1];
+      if (format === "{{json .Id}}\t{{json .Labels}}") {
+        const networkId = this.networkIds.get(name) ?? `existing-${name}`;
+        this.networkIds.set(name, networkId);
+        return result(0, `${JSON.stringify(networkId)}\t${JSON.stringify(labels)}\n`);
+      }
+      return result(0, JSON.stringify(labels));
     }
     if (args[0] === "network" && args[1] === "rm") {
-      const name = args.at(-1) ?? "";
+      const requested = args.at(-1) ?? "";
+      const name = this.existingNetworks.has(requested)
+        ? requested
+        : ([...this.networkIds].find(([, id]) => id === requested)?.[0] ?? requested);
       this.existingNetworks.delete(name);
       this.networkLabels.delete(name);
+      this.networkIds.delete(name);
       return result(0);
     }
     if (args[0] === "volume" && args[1] === "create") {
@@ -277,7 +292,11 @@ class FakeRunner implements CommandRunner {
     if (this.failComposePull && compose[0] === "pull") {
       return result(1, "", "injected compose pull failure");
     }
-    if (this.failComposeUp && compose[0] === "up") {
+    if (
+      (this.failComposeUp ||
+        (this.failComposeUpImage !== undefined && this.failComposeUpImage === call.env.ATLAS_CORE_IMAGE)) &&
+      compose[0] === "up"
+    ) {
       return result(1, "", "injected compose up failure");
     }
     if (this.failComposeDown && compose[0] === "down") {
@@ -383,8 +402,11 @@ function composeCommand(call: Call): string[] {
 
 function installTestPluginCatalog(test: TestRuntime): PluginCatalogEntry {
   const packageRoot = join(test.home, "test-package");
+  const assetsRoot = join(packageRoot, "assets");
   const pluginRoot = join(packageRoot, "assets", "plugins", "spatial_fixture");
   mkdirSync(pluginRoot, { recursive: true });
+  writeFileSync(join(assetsRoot, "docker-compose.yml"), "services:\n  api:\n    image: ${ATLAS_CORE_IMAGE}\n");
+  writeFileSync(join(assetsRoot, "source_gateway.production.json"), "{}\n");
   writeFileSync(join(pluginRoot, "compose.yml"), "services:\n  spatial-fixture-plugin:\n    image: fixture\n");
   writeFileSync(
     join(pluginRoot, "core-endpoint.json"),
@@ -444,6 +466,64 @@ function setCoreVersion(test: TestRuntime, version: string): void {
   const statePath = join(test.home, ".atlas", "core", "state.json");
   const state = JSON.parse(readFileSync(statePath, "utf8"));
   writeFileSync(statePath, `${JSON.stringify({ ...state, packageVersion: version })}\n`, { mode: 0o600 });
+}
+
+function simulateInterruptedPluginDisable(
+  test: TestRuntime,
+  plugin: PluginCatalogEntry,
+  phase: "prepared" | "committed"
+): void {
+  const config = join(test.home, ".atlas", "core");
+  const statePath = join(config, "state.json");
+  const pluginPath = join(config, "plugins", plugin.pluginId);
+  const transaction = join(config, "transaction");
+  const before = join(transaction, "before");
+  const base = join(before, "base");
+  const lockId = "c".repeat(32);
+  mkdirSync(base, { recursive: true, mode: 0o700 });
+  cpSync(statePath, join(before, "state.json"));
+  cpSync(pluginPath, join(before, "plugin"), { recursive: true });
+  cpSync(join(test.context.packageRoot ?? "", "assets", "docker-compose.yml"), join(base, "docker-compose.yml"));
+  cpSync(
+    join(test.context.packageRoot ?? "", "assets", "source_gateway.production.json"),
+    join(base, "source_gateway.production.json")
+  );
+  chmodSync(join(base, "docker-compose.yml"), 0o600);
+  chmodSync(join(base, "source_gateway.production.json"), 0o600);
+  writeFileSync(
+    join(transaction, "journal.json"),
+    `${JSON.stringify({
+      schema: 1,
+      coreImage: TEST_IMAGE,
+      operation: "plugin-disable",
+      phase,
+      lockId,
+      pluginId: plugin.pluginId,
+      previousStatus: test.runner.serviceStates.length === 0 ? "stopped" : "ready"
+    })}\n`,
+    { mode: 0o600 }
+  );
+  rmSync(pluginPath, { recursive: true, force: true });
+  test.runner.serviceStates = test.runner.serviceStates.filter((service) => service.Service !== plugin.service);
+  if (phase === "committed") {
+    const state = JSON.parse(readFileSync(statePath, "utf8"));
+    writeFileSync(
+      statePath,
+      `${JSON.stringify({ ...state, enabledPlugins: state.enabledPlugins.filter((id: string) => id !== plugin.pluginId) })}\n`,
+      { mode: 0o600 }
+    );
+  }
+
+  writeFileSync(join(config, ".mutation.lock"), `${JSON.stringify({ schema: 1, id: lockId, pid: 2_147_483_647 })}\n`, {
+    mode: 0o600
+  });
+  test.runner.existingNetworks.add(MUTATION_LOCK_NETWORK);
+  test.runner.networkLabels.set(MUTATION_LOCK_NETWORK, {
+    "io.atlas.core.engine": "test-engine-id",
+    "io.atlas.core.lock": "mutation",
+    "io.atlas.core.project": "atlas_core_production",
+    "io.atlas.core.lock-id": lockId
+  });
 }
 
 describe("atlas-core CLI", () => {
@@ -630,7 +710,7 @@ describe("atlas-core CLI", () => {
           foregroundStarted?.();
           await foreground;
         };
-        const operation = expect(operator.init()).rejects.toThrow("docker network rm");
+        const operation = expect(operator.init()).rejects.toThrow("docker network inspect");
         await started;
         await vi.advanceTimersByTimeAsync(130_000);
         releaseForeground?.();
@@ -644,6 +724,27 @@ describe("atlas-core CLI", () => {
     };
 
     expect(await runCLI([], test.context)).toBe(0);
+  });
+
+  it("does not strand a local lock when ordinary Docker lock cleanup fails", async () => {
+    const test = runtime();
+    markInitialized(test);
+    test.runner.onRun = (call) => {
+      if (composeCommand(call)[0] !== "down") return;
+      test.runner.networkLabels.set(MUTATION_LOCK_NETWORK, {
+        "io.atlas.core.engine": "test-engine-id",
+        "io.atlas.core.lock": "mutation",
+        "io.atlas.core.project": "atlas_core_production",
+        "io.atlas.core.lock-id": "f".repeat(32)
+      });
+    };
+
+    expect(await runCLI(["stop"], test.context)).toBe(1);
+
+    const config = join(test.home, ".atlas", "core");
+    expect(test.stderr.join("")).toContain("changed ownership before cleanup");
+    expect(existsSync(join(config, ".mutation.lock"))).toBe(false);
+    expect(test.runner.existingNetworks.has(MUTATION_LOCK_NETWORK)).toBe(true);
   });
 
   it("does not terminate a pending cleanup process when ordinary commands are cancelled", async () => {
@@ -1066,6 +1167,32 @@ describe("atlas-core CLI", () => {
     expect(await runCLI(["reset"], test.context)).toBe(0);
     expect(test.runner.calls.some((call) => call.args.includes("missing_plugin/compose.yml"))).toBe(false);
     expect(test.runner.calls.map(composeCommand)).toContainEqual(["down", "--remove-orphans"]);
+  });
+
+  it("lets confirmed reset abandon an interrupted disable that cannot restore its captured image", async () => {
+    const test = runtime();
+    test.context.confirmReset = async () => true;
+    markInitialized(test);
+    const plugin = installTestPluginCatalog(test);
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
+    simulateInterruptedPluginDisable(test, plugin, "prepared");
+    const config = join(test.home, ".atlas", "core");
+    const journalPath = join(config, "transaction", "journal.json");
+    const oldImage = `ghcr.io/the-drunken-coder/atlas-core@sha256:${"f".repeat(64)}`;
+    const journal = JSON.parse(readFileSync(journalPath, "utf8"));
+    writeFileSync(journalPath, `${JSON.stringify({ ...journal, coreImage: oldImage })}\n`, { mode: 0o600 });
+    test.runner.failComposeUpImage = oldImage;
+    test.runner.calls.length = 0;
+
+    expect(await runCLI(["reset"], test.context)).toBe(0);
+
+    expect(existsSync(join(config, "transaction"))).toBe(false);
+    expect(test.runner.calls.some((call) => call.env.ATLAS_CORE_IMAGE === oldImage)).toBe(false);
+    expect(JSON.parse(readFileSync(join(config, "state.json"), "utf8"))).toMatchObject({
+      enabledPlugins: [],
+      packageVersion: PACKAGE_VERSION
+    });
+    expect(test.stdout.join("")).toContain(`Atlas Core ${PACKAGE_VERSION} reset is complete`);
   });
 
   it("removes project Plugin containers when reset configuration is incomplete", async () => {
@@ -2168,6 +2295,307 @@ describe("atlas-core CLI", () => {
       enabledPlugins: []
     });
     expect(existsSync(join(test.home, ".atlas", "core", "plugins", plugin.pluginId))).toBe(false);
+  });
+
+  it("refuses to disable through a symlinked Plugin root", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const plugin = installTestPluginCatalog(test);
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
+    const config = join(test.home, ".atlas", "core");
+    const pluginRoot = join(config, "plugins");
+    const externalRoot = join(test.home, "external-plugins");
+    renameSync(pluginRoot, externalRoot);
+    symlinkSync(externalRoot, pluginRoot);
+    test.runner.calls.length = 0;
+
+    expect(await runCLI(["plugins", "disable", plugin.pluginId], test.context)).toBe(1);
+
+    expect(test.stderr.join("")).toContain(`${pluginRoot} must be a regular directory`);
+    expect(existsSync(join(externalRoot, plugin.pluginId, "compose.yml"))).toBe(true);
+    expect(existsSync(join(config, "transaction"))).toBe(false);
+    expect(test.runner.calls.map(composeCommand)).not.toContainEqual(["rm", "-s", "-f", plugin.service]);
+  });
+
+  it("reclaims matching dead-owner locks, rolls back an interrupted disable, and completes the retry", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const plugin = installTestPluginCatalog(test);
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
+    simulateInterruptedPluginDisable(test, plugin, "prepared");
+    test.runner.calls.length = 0;
+
+    expect(await runCLI(["plugins", "disable", plugin.pluginId], test.context)).toBe(0);
+
+    const config = join(test.home, ".atlas", "core");
+    expect(JSON.parse(readFileSync(join(config, "state.json"), "utf8"))).toMatchObject({ enabledPlugins: [] });
+    expect(existsSync(join(config, "plugins", plugin.pluginId))).toBe(false);
+    expect(existsSync(join(config, "transaction"))).toBe(false);
+    expect(existsSync(join(config, ".mutation.lock"))).toBe(false);
+    expect(test.runner.existingNetworks.has(MUTATION_LOCK_NETWORK)).toBe(false);
+    expect(test.stdout.join("")).toContain(`Interrupted disable for Plugin ${plugin.pluginId} rolled back.`);
+    expect(test.runner.calls.map(composeCommand)).toContainEqual([
+      "up",
+      "-d",
+      "--pull",
+      "never",
+      "--force-recreate",
+      "--wait",
+      "--wait-timeout",
+      "120",
+      "api",
+      "source-gateway",
+      plugin.service
+    ]);
+    expect(test.runner.calls.map(composeCommand)).toContainEqual(["rm", "-s", "-f", plugin.service]);
+    expect(test.runner.calls.some((call) => call.args[0] === "image" && call.args[1] === "rm")).toBe(false);
+  });
+
+  it("allows only one live process to own interrupted-disable recovery", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const plugin = installTestPluginCatalog(test);
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
+    simulateInterruptedPluginDisable(test, plugin, "prepared");
+    const config = join(test.home, ".atlas", "core");
+    const recoveryClaim = join(config, `.mutation.lock.recovering.${process.pid}.${"d".repeat(16)}`);
+    renameSync(join(config, ".mutation.lock"), recoveryClaim);
+
+    expect(await runCLI(["plugins", "disable", plugin.pluginId], test.context)).toBe(1);
+
+    expect(test.stderr.join("")).toContain(`deployment recovery is locked by PID ${process.pid}`);
+    expect(existsSync(recoveryClaim)).toBe(true);
+    expect(test.runner.existingNetworks.has(MUTATION_LOCK_NETWORK)).toBe(true);
+  });
+
+  it("reclaims a recovery claim whose process also died", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const plugin = installTestPluginCatalog(test);
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
+    simulateInterruptedPluginDisable(test, plugin, "prepared");
+    const config = join(test.home, ".atlas", "core");
+    const abandonedClaim = join(config, `.mutation.lock.recovering.${2_147_483_647}.${"d".repeat(16)}`);
+    renameSync(join(config, ".mutation.lock"), abandonedClaim);
+
+    expect(await runCLI(["plugins", "disable", plugin.pluginId], test.context)).toBe(0);
+
+    expect(existsSync(abandonedClaim)).toBe(false);
+    expect(readdirSync(config).some((entry) => entry.startsWith(".mutation.lock.recovering."))).toBe(false);
+    expect(test.runner.existingNetworks.has(MUTATION_LOCK_NETWORK)).toBe(false);
+  });
+
+  it("reclaims a dead fresh owner left in the recovery-claim race", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const plugin = installTestPluginCatalog(test);
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
+    simulateInterruptedPluginDisable(test, plugin, "prepared");
+    const config = join(test.home, ".atlas", "core");
+    const abandonedClaim = join(config, `.mutation.lock.recovering.${2_147_483_647}.${"d".repeat(16)}`);
+    renameSync(join(config, ".mutation.lock"), abandonedClaim);
+    writeFileSync(
+      join(config, ".mutation.lock"),
+      `${JSON.stringify({
+        schema: 1,
+        id: "e".repeat(32),
+        pid: 2_147_483_646,
+        operation: "plugin-disable"
+      })}\n`,
+      { mode: 0o600 }
+    );
+
+    expect(await runCLI(["plugins", "disable", plugin.pluginId], test.context)).toBe(0);
+
+    expect(existsSync(abandonedClaim)).toBe(false);
+    expect(existsSync(join(config, ".mutation.lock"))).toBe(false);
+    expect(readdirSync(config).some((entry) => entry.startsWith(".mutation.lock.recovering."))).toBe(false);
+    expect(test.runner.existingNetworks.has(MUTATION_LOCK_NETWORK)).toBe(false);
+  });
+
+  it("preserves the local recovery marker when Docker lock ownership cannot be proven", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const plugin = installTestPluginCatalog(test);
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
+    simulateInterruptedPluginDisable(test, plugin, "prepared");
+    const config = join(test.home, ".atlas", "core");
+    test.runner.networkLabels.set(MUTATION_LOCK_NETWORK, {
+      "io.atlas.core.engine": "test-engine-id",
+      "io.atlas.core.lock": "mutation",
+      "io.atlas.core.project": "atlas_core_production",
+      "io.atlas.core.lock-id": "f".repeat(32)
+    });
+
+    expect(await runCLI(["plugins", "disable", plugin.pluginId], test.context)).toBe(1);
+
+    expect(test.stderr.join("")).toContain("expected io.atlas.core.lock-id");
+    expect(existsSync(join(config, ".mutation.lock"))).toBe(true);
+    expect(readdirSync(config).some((entry) => entry.startsWith(".mutation.lock.recovering."))).toBe(false);
+    expect(existsSync(join(config, "transaction"))).toBe(true);
+  });
+
+  it("recovers an interrupted disable after the CLI package version changes", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const plugin = installTestPluginCatalog(test);
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
+    setCoreVersion(test, NEXT_PACKAGE_VERSION);
+    simulateInterruptedPluginDisable(test, plugin, "prepared");
+    writeFileSync(
+      join(test.context.packageRoot ?? "", "assets", "docker-compose.yml"),
+      "services:\n  api:\n    image: changed-package\n"
+    );
+    test.runner.calls.length = 0;
+
+    expect(await runCLI(["stop"], test.context)).toBe(0);
+
+    const recoveryConfig = test.runner.calls.find((call) => composeCommand(call)[0] === "config");
+    expect(composeFile(recoveryConfig ?? test.runner.calls[0]!)).toBe(
+      join(test.home, ".atlas", "core", "transaction", "before", "base", "docker-compose.yml")
+    );
+    expect(recoveryConfig?.env.ATLAS_CORE_IMAGE).toBe(TEST_IMAGE);
+    expect(test.stdout.join("")).toContain(`Interrupted disable for Plugin ${plugin.pluginId} rolled back.`);
+    expect(test.stdout.join("")).toContain("Atlas Core stopped");
+  });
+
+  it("rolls back and retries an interrupted disable without starting a stopped deployment", async () => {
+    const test = runtime();
+    markInitialized(test, false);
+    const plugin = installTestPluginCatalog(test);
+    test.runner.serviceStates = [];
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
+    simulateInterruptedPluginDisable(test, plugin, "prepared");
+    test.runner.calls.length = 0;
+
+    expect(await runCLI(["plugins", "disable", plugin.pluginId], test.context)).toBe(0);
+
+    expect(test.runner.calls.map(composeCommand)).not.toContainEqual(expect.arrayContaining(["up"]));
+    expect(test.stdout.join("")).toContain("Atlas Core remains stopped");
+    expect(JSON.parse(readFileSync(join(test.home, ".atlas", "core", "state.json"), "utf8"))).toMatchObject({
+      enabledPlugins: []
+    });
+  });
+
+  it("finishes a committed interrupted disable before reporting the Plugin disabled", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const plugin = installTestPluginCatalog(test);
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
+    simulateInterruptedPluginDisable(test, plugin, "committed");
+    test.runner.calls.length = 0;
+
+    expect(await runCLI(["plugins", "disable", plugin.pluginId], test.context)).toBe(0);
+
+    const config = join(test.home, ".atlas", "core");
+    expect(test.stdout.join("")).toContain(`Interrupted disable for Plugin ${plugin.pluginId} completed.`);
+    expect(test.stdout.join("")).toContain(`${plugin.displayName} is already disabled`);
+    expect(existsSync(join(config, "plugins", plugin.pluginId))).toBe(false);
+    expect(existsSync(join(config, "transaction"))).toBe(false);
+    expect(test.runner.calls.map(composeCommand)).toContainEqual(["config", "--quiet"]);
+    expect(test.runner.calls.map(composeCommand)).toContainEqual([
+      "up",
+      "-d",
+      "--pull",
+      "never",
+      "--force-recreate",
+      "--wait",
+      "--wait-timeout",
+      "120",
+      "api",
+      "source-gateway"
+    ]);
+  });
+
+  it("reclaims a completed disable whose process died before releasing its locks", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const plugin = installTestPluginCatalog(test);
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
+    expect(await runCLI(["plugins", "disable", plugin.pluginId], test.context)).toBe(0);
+    const config = join(test.home, ".atlas", "core");
+    const lockId = "e".repeat(32);
+    writeFileSync(
+      join(config, ".mutation.lock"),
+      `${JSON.stringify({ schema: 1, id: lockId, pid: 2_147_483_647, operation: "plugin-disable" })}\n`,
+      { mode: 0o600 }
+    );
+    test.runner.existingNetworks.add(MUTATION_LOCK_NETWORK);
+    test.runner.networkLabels.set(MUTATION_LOCK_NETWORK, {
+      "io.atlas.core.engine": "test-engine-id",
+      "io.atlas.core.lock": "mutation",
+      "io.atlas.core.project": "atlas_core_production",
+      "io.atlas.core.lock-id": lockId
+    });
+
+    expect(await runCLI(["stop"], test.context)).toBe(0);
+
+    expect(existsSync(join(config, ".mutation.lock"))).toBe(false);
+    expect(test.runner.existingNetworks.has(MUTATION_LOCK_NETWORK)).toBe(false);
+    expect(test.stdout.join("")).toContain("Atlas Core stopped");
+  });
+
+  it("marks a fresh lock before recovering a transaction so a second interruption remains recoverable", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const plugin = installTestPluginCatalog(test);
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
+    simulateInterruptedPluginDisable(test, plugin, "prepared");
+    const config = join(test.home, ".atlas", "core");
+    rmSync(join(config, ".mutation.lock"));
+    test.runner.existingNetworks.delete(MUTATION_LOCK_NETWORK);
+    test.runner.networkLabels.delete(MUTATION_LOCK_NETWORK);
+    test.runner.onRun = (call) => {
+      if (composeCommand(call)[0] !== "down") return;
+      test.runner.networkLabels.set(MUTATION_LOCK_NETWORK, {
+        "io.atlas.core.engine": "test-engine-id",
+        "io.atlas.core.lock": "mutation",
+        "io.atlas.core.project": "atlas_core_production",
+        "io.atlas.core.lock-id": "f".repeat(32)
+      });
+    };
+
+    expect(await runCLI(["stop"], test.context)).toBe(1);
+
+    const lockPath = join(config, ".mutation.lock");
+    const interruptedRecoveryOwner = JSON.parse(readFileSync(lockPath, "utf8"));
+    expect(interruptedRecoveryOwner).toMatchObject({ operation: "plugin-disable" });
+    expect(existsSync(join(config, "transaction"))).toBe(false);
+
+    writeFileSync(lockPath, `${JSON.stringify({ ...interruptedRecoveryOwner, pid: 2_147_483_647 })}\n`, {
+      mode: 0o600
+    });
+    test.runner.networkLabels.set(MUTATION_LOCK_NETWORK, {
+      "io.atlas.core.engine": "test-engine-id",
+      "io.atlas.core.lock": "mutation",
+      "io.atlas.core.project": "atlas_core_production",
+      "io.atlas.core.lock-id": interruptedRecoveryOwner.id
+    });
+    test.runner.onRun = undefined;
+
+    expect(await runCLI(["stop"], test.context)).toBe(0);
+    expect(existsSync(lockPath)).toBe(false);
+    expect(test.runner.existingNetworks.has(MUTATION_LOCK_NETWORK)).toBe(false);
+  });
+
+  it("creates a fresh lock with its recovery operation already durable", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const plugin = installTestPluginCatalog(test);
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
+    simulateInterruptedPluginDisable(test, plugin, "prepared");
+    const config = join(test.home, ".atlas", "core");
+    rmSync(join(config, ".mutation.lock"));
+    test.runner.existingNetworks.delete(MUTATION_LOCK_NETWORK);
+    test.runner.networkLabels.delete(MUTATION_LOCK_NETWORK);
+    let ownerDuringDockerAcquisition: unknown;
+    test.runner.afterSuccessfulNetworkCreate = () => {
+      ownerDuringDockerAcquisition = JSON.parse(readFileSync(join(config, ".mutation.lock"), "utf8"));
+    };
+
+    expect(await runCLI(["stop"], test.context)).toBe(0);
+
+    expect(ownerDuringDockerAcquisition).toMatchObject({ operation: "plugin-disable" });
   });
 
   it("rejects Plugin disable while an enabled Plugin service is stopped", async () => {
