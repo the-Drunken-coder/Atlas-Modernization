@@ -100,6 +100,8 @@ const COMMAND_SUPERVISOR_SOURCE = `
 const { spawn } = require("node:child_process");
 const [command, ...args] = process.argv.slice(1);
 let started = false;
+// Keep the group leader alive until the command exits or the parent escalates to SIGKILL.
+process.on("SIGTERM", () => {});
 process.stdin.once("data", () => {
   started = true;
   const child = spawn(command, args, { stdio: ["ignore", "inherit", "inherit"] });

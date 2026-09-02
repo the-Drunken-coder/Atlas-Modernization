@@ -846,6 +846,53 @@ describe("atlas-core CLI", () => {
     expect(finishedProcessGroup).toBe(startedProcessGroup);
   });
 
+  it("does not clear a supervised process-group fence while a cancelled child is still alive", async () => {
+    const runner = new ProcessCommandRunner();
+    const directory = mkdtempSync(join(tmpdir(), "atlas-core-runner-test-"));
+    temporaryDirectories.push(directory);
+    const ready = join(directory, "ready");
+    const survived = join(directory, "survived");
+    let processGroupId: number | undefined;
+    const operation = runner.run(
+      process.execPath,
+      [
+        "-e",
+        `process.on("SIGTERM", () => {
+          setTimeout(() => require("node:fs").writeFileSync(${JSON.stringify(survived)}, "yes"), 2_100);
+        });
+        require("node:fs").closeSync(1);
+        require("node:fs").closeSync(2);
+        require("node:fs").writeFileSync(${JSON.stringify(ready)}, "yes");
+        setInterval(() => {}, 30_000);`
+      ],
+      {
+        processGroup: {
+          started: (groupId) => {
+            processGroupId = groupId;
+          },
+          finished: () => undefined
+        }
+      }
+    );
+
+    await vi.waitFor(() => expect(existsSync(ready)).toBe(true));
+    const cancelledAt = Date.now();
+    runner.cancelAll();
+
+    try {
+      await expect(operation).resolves.toMatchObject({ cancelled: true, status: 1 });
+      const remaining = Math.max(0, 2_300 - (Date.now() - cancelledAt));
+      if (remaining > 0) await new Promise((resolveWait) => setTimeout(resolveWait, remaining));
+      expect(existsSync(survived)).toBe(false);
+    } finally {
+      if (processGroupId !== undefined) {
+        try {
+          process.kill(-processGroupId, "SIGKILL");
+        } catch {}
+      }
+    }
+  });
+
   it("rejects unknown update scopes", async () => {
     const test = runtime();
     expect(await runCLI(["update", "core"], test.context)).toBe(2);
