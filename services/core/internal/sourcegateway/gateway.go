@@ -334,18 +334,27 @@ func (g *Gateway) execute(ctx context.Context, connector *connector, input Conne
 		return ConnectorResponse{}, 0, "miss", &gatewayError{code: FailureCircuitOpen}
 	}
 	maxAttempts := rule.Retry.MaxRetries + 1
+	retryFailurePending := false
+	recordPendingFailure := func() {
+		if retryFailurePending {
+			connector.recordFailure(g.now())
+		}
+	}
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		reservation, err := connector.waitForRate(requestContext, g.now)
 		if err != nil {
+			recordPendingFailure()
 			return ConnectorResponse{}, attempt - 1, "miss", contextFailure(ctx, requestContext, false)
 		}
 		if requestContext.Err() != nil {
 			connector.releaseRate(reservation)
+			recordPendingFailure()
 			return ConnectorResponse{}, attempt - 1, "miss", contextFailure(ctx, requestContext, false)
 		}
 		circuitOpen := connector.circuitOpen(g.now())
 		if requestContext.Err() != nil {
 			connector.releaseRate(reservation)
+			recordPendingFailure()
 			return ConnectorResponse{}, attempt - 1, "miss", contextFailure(ctx, requestContext, false)
 		}
 		if circuitOpen {
@@ -355,13 +364,14 @@ func (g *Gateway) execute(ctx context.Context, connector *connector, input Conne
 		response, failure := connector.attempt(requestContext, prepared, rule)
 		if requestContext.Err() != nil {
 			failure = contextFailure(ctx, requestContext, true)
-			if failure.code == FailureUpstreamTimeout {
+			if failure.code == FailureUpstreamTimeout || retryFailurePending {
 				connector.recordFailure(g.now())
 			}
 			return ConnectorResponse{}, attempt, "miss", failure
 		}
 		if failure == nil {
 			connector.recordReachable()
+			retryFailurePending = false
 			retryable := retryStatus(rule.Retry.Statuses, response.Status)
 			if attempt < maxAttempts && retryable {
 				continue
@@ -376,6 +386,7 @@ func (g *Gateway) execute(ctx context.Context, connector *connector, input Conne
 			return response, attempt, cacheResult, nil
 		}
 		if attempt < maxAttempts && retryFailure(rule.Retry.Failures, failure.code) {
+			retryFailurePending = true
 			continue
 		}
 		connector.recordFailure(g.now())
