@@ -5,7 +5,10 @@ import {
   closeSync,
   cpSync,
   existsSync,
+  constants as fileSystemConstants,
+  fstatSync,
   fsyncSync,
+  linkSync,
   lstatSync,
   mkdirSync,
   openSync,
@@ -49,6 +52,7 @@ const MINIO_CONTAINER = `${PROJECT_NAME}_minio`;
 const MINIO_INIT_CONTAINER = `${PROJECT_NAME}_minio_init`;
 const MUTATION_LOCK_NETWORK = `${PROJECT_NAME}_mutation_lock`;
 const MUTATION_RECOVERY_LOCK_PREFIX = ".mutation.lock.recovering.";
+const RETIRED_TRANSACTION_PREFIX = ".transaction.completed.";
 const RESET_CONTAINERS = [
   API_CONTAINER,
   SOURCE_GATEWAY_CONTAINER,
@@ -92,6 +96,23 @@ const CONFIG_SCHEMA = 2;
 const COMPOSE_WAIT_SECONDS = "120";
 const CLEANUP_CANCELLATION_GRACE_MS = (Number(COMPOSE_WAIT_SECONDS) + 10) * 1_000;
 const COMMAND_TERMINATION_GRACE_MS = 2_000;
+const COMMAND_SUPERVISOR_SOURCE = `
+const { spawn } = require("node:child_process");
+const [command, ...args] = process.argv.slice(1);
+let started = false;
+process.stdin.once("data", () => {
+  started = true;
+  const child = spawn(command, args, { stdio: ["ignore", "inherit", "inherit"] });
+  child.once("error", (error) => {
+    process.stderr.write(error.message + "\\n");
+    process.exit(127);
+  });
+  child.once("close", (status) => process.exit(status ?? 1));
+});
+process.stdin.once("end", () => {
+  if (!started) process.exit(125);
+});
+`;
 const MINIMUM_COMPOSE_VERSION = [2, 17, 0] as const;
 const UNRELEASED_IMAGE = "ghcr.io/the-drunken-coder/atlas-core:unreleased";
 const SUPPORTED_DOCKER_ARCHITECTURES = new Set(["amd64", "arm64", "aarch64", "x86_64"]);
@@ -134,6 +155,10 @@ type RunOptions = {
   env?: NodeJS.ProcessEnv;
   inherit?: boolean;
   signal?: AbortSignal;
+  processGroup?: {
+    started(processGroupId: number): void;
+    finished(processGroupId: number): void;
+  };
 };
 
 export type CommandRunner = {
@@ -195,6 +220,7 @@ type MutationLockOwner = {
   id: string;
   pid: number;
   operation?: "plugin-disable";
+  processGroupId?: number;
 };
 
 type DockerMutationLock = {
@@ -285,14 +311,26 @@ export class ProcessCommandRunner implements CommandRunner {
     children: Map<ReturnType<typeof spawn>, ChildProcessState>
   ): Promise<CommandResult> {
     return await new Promise((resolve, reject) => {
-      const child = spawn(command, args, {
-        cwd: options.cwd,
-        detached: process.platform !== "win32",
-        env: options.env,
-        stdio: options.inherit ? "inherit" : ["ignore", "pipe", "pipe"]
-      });
+      const supervised = process.platform !== "win32" && options.processGroup !== undefined;
+      const child = spawn(
+        supervised ? process.execPath : command,
+        supervised ? ["-e", COMMAND_SUPERVISOR_SOURCE, command, ...args] : args,
+        {
+          cwd: options.cwd,
+          detached: process.platform !== "win32",
+          env: options.env,
+          stdio: options.inherit
+            ? supervised
+              ? ["pipe", "inherit", "inherit"]
+              : "inherit"
+            : [supervised ? "pipe" : "ignore", "pipe", "pipe"]
+        }
+      );
       const state: ChildProcessState = { cancelled: false, exited: false };
       children.set(child, state);
+      const processGroupId = supervised ? child.pid : undefined;
+      let processGroupRecorded = false;
+      let setupError: unknown;
       const cancel = (): void => {
         this.#terminate(child, state);
       };
@@ -323,10 +361,37 @@ export class ProcessCommandRunner implements CommandRunner {
       });
       child.once("close", (status) => {
         finish();
+        if (setupError) {
+          reject(setupError);
+          return;
+        }
+        if (processGroupRecorded && processGroupId !== undefined) {
+          try {
+            options.processGroup?.finished(processGroupId);
+          } catch (error) {
+            reject(error);
+            return;
+          }
+        }
         resolve({ ...(state.cancelled ? { cancelled: true as const } : {}), status: status ?? 1, stdout, stderr });
       });
       options.signal?.addEventListener("abort", cancel, { once: true });
-      if (options.signal?.aborted) cancel();
+      if (options.signal?.aborted) {
+        cancel();
+        return;
+      }
+      if (processGroupId !== undefined) {
+        try {
+          options.processGroup?.started(processGroupId);
+          processGroupRecorded = true;
+          child.stdin?.once("error", () => undefined);
+          child.stdin?.end("start\n");
+        } catch (error) {
+          setupError = error;
+          child.stdin?.destroy();
+          signalChildProcess(child, "SIGKILL");
+        }
+      }
     });
   }
 
@@ -512,6 +577,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     let dockerLock: DockerMutationLock | undefined;
     let dockerLockReleased = false;
     try {
+      this.#removeRetiredPluginDisableTransactions();
       dockerLock = await this.#acquireDockerMutationLock(dockerEngineId, mutationLock);
       this.#activeMutationLock = dockerLock.owner;
       try {
@@ -1518,7 +1584,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       if (
         isMutationLockOwner(existingOwner) &&
         this.#isRecoverablePluginDisableOwner(existingOwner) &&
-        !isProcessAlive(existingOwner.pid)
+        !isMutationOwnerActive(existingOwner)
       ) {
         if (this.#claimMutationRecovery(this.#mutationLockFile)) {
           return { owner: existingOwner, recovered: true };
@@ -1548,14 +1614,14 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     if (!this.#isRecoverablePluginDisableOwner(owner)) {
       throw new Error(`Atlas Core found an invalid deployment recovery claim at ${claimPath}.`);
     }
-    if (isProcessAlive(claimantPid)) {
+    if (isProcessAlive(claimantPid) || isProcessGroupAlive(owner.processGroupId)) {
       throw new Error(`Atlas Core deployment recovery is locked by PID ${claimantPid} at ${claimPath}.`);
     }
     if (!this.#claimMutationRecovery(claimPath)) return undefined;
     try {
       if (existsSync(this.#mutationLockFile)) {
         const currentOwner = this.#readMutationLockOwner(this.#mutationLockFile);
-        if (isProcessAlive(currentOwner.pid)) {
+        if (isMutationOwnerActive(currentOwner)) {
           throw new Error("Atlas Core mutation lock changed ownership during deployment recovery.");
         }
         if (currentOwner.id !== owner.id && currentOwner.operation !== "plugin-disable") {
@@ -1615,6 +1681,48 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       throw new Error(`Atlas Core found an invalid deployment mutation lock at ${path}.`);
     }
     return owner;
+  }
+
+  #pluginDisableProcessGroup(): RunOptions["processGroup"] | undefined {
+    if (this.#activeMutationLock?.operation !== "plugin-disable" || !existsSync(this.#transactionDir)) {
+      return undefined;
+    }
+    return {
+      started: (processGroupId) => this.#recordPluginDisableProcessGroup(processGroupId),
+      finished: (processGroupId) => this.#clearPluginDisableProcessGroup(processGroupId)
+    };
+  }
+
+  #recordPluginDisableProcessGroup(processGroupId: number): void {
+    const activeOwner = this.#activeMutationLock;
+    if (!activeOwner) throw new Error("Plugin disable requires the deployment mutation lock.");
+    const currentOwner = this.#readMutationLockOwner(this.#mutationLockFile);
+    if (
+      currentOwner.id !== activeOwner.id ||
+      currentOwner.pid !== activeOwner.pid ||
+      currentOwner.processGroupId !== undefined
+    ) {
+      throw new Error("Atlas Core mutation lock changed ownership before starting Docker work.");
+    }
+    const updatedOwner = { ...currentOwner, processGroupId };
+    writePrivateFile(this.#mutationLockFile, `${JSON.stringify(updatedOwner, null, 2)}\n`, this.#platform);
+    this.#activeMutationLock = updatedOwner;
+  }
+
+  #clearPluginDisableProcessGroup(processGroupId: number): void {
+    const activeOwner = this.#activeMutationLock;
+    if (!activeOwner) throw new Error("Plugin disable requires the deployment mutation lock.");
+    const currentOwner = this.#readMutationLockOwner(this.#mutationLockFile);
+    if (
+      currentOwner.id !== activeOwner.id ||
+      currentOwner.pid !== activeOwner.pid ||
+      currentOwner.processGroupId !== processGroupId
+    ) {
+      throw new Error("Atlas Core mutation lock changed ownership while Docker work was running.");
+    }
+    const { processGroupId: _, ...updatedOwner } = currentOwner;
+    writePrivateFile(this.#mutationLockFile, `${JSON.stringify(updatedOwner, null, 2)}\n`, this.#platform);
+    this.#activeMutationLock = updatedOwner;
   }
 
   #releaseMutationRecoveryLock(): void {
@@ -1677,8 +1785,9 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     if (mutationLock.recovered) {
       await this.#removeRecoveredDockerMutationLock(ownershipLabels, mutationLock.owner.id);
     }
+    const { processGroupId: _, ...recoveredOwner } = mutationLock.owner;
     const owner: MutationLockOwner = {
-      ...mutationLock.owner,
+      ...recoveredOwner,
       pid: process.pid,
       ...(mutationLock.recovered ? { operation: "plugin-disable" } : {})
     };
@@ -2034,6 +2143,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   }
 
   #readDeployedPluginMetadata(pluginId: string): DeployedPluginMetadata {
+    this.#assertPluginConfigDirectory(pluginId);
     const path = join(this.#pluginConfigRoot, pluginId, "deployment.json");
     if (!existsSync(path)) throw new Error(`Enabled Plugin ${pluginId} is missing private file deployment.json.`);
     this.#assertRegularFile(path, 0o600);
@@ -2074,6 +2184,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
 
   #assertEnabledPluginDeployment(state: DeploymentState): void {
     for (const plugin of this.#catalogPluginsForState(state, true)) {
+      this.#assertPluginConfigDirectory(plugin.pluginId);
       for (const file of ["compose.yml", "core-endpoint.json", "source-connector.json"]) {
         const path = join(this.#pluginConfigRoot, plugin.pluginId, file);
         if (!existsSync(path)) throw new Error(`Enabled Plugin ${plugin.pluginId} is missing private file ${file}.`);
@@ -2090,6 +2201,16 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
         );
       }
     }
+  }
+
+  #assertPluginConfigDirectory(pluginId: string): void {
+    const path = join(this.#pluginConfigRoot, pluginId);
+    if (!existsSync(path)) throw new Error(`Enabled Plugin ${pluginId} is missing its private deployment directory.`);
+    const info = lstatSync(path);
+    if (info.isSymbolicLink() || !info.isDirectory()) {
+      throw new Error(`${path} must be a regular directory, not a symlink or another file type.`);
+    }
+    this.#assertPrivateOwnershipAndMode(path, info, 0o700);
   }
 
   #stagePluginAssets(plugin: PluginCatalogEntry): void {
@@ -2194,7 +2315,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
         if (!existsSync(source)) throw new Error(`Atlas Core package is missing deployment asset ${name}.`);
         const target = join(baseDir, name);
         cpSync(source, target, { dereference: false, errorOnExist: true, force: false });
-        if (this.#platform !== "win32") chmodSync(target, 0o600);
+        if (this.#platform !== "win32") chmodSync(target, name === "docker-compose.yml" ? 0o600 : 0o644);
       }
       cpSync(join(this.#pluginConfigRoot, pluginId), pluginBackup, {
         recursive: true,
@@ -2273,7 +2394,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     const baseDir = join(this.#transactionDir, "before", "base");
     const composeFile = join(baseDir, "docker-compose.yml");
     this.#assertRegularFile(composeFile, 0o600);
-    this.#assertRegularFile(join(baseDir, "source_gateway.production.json"), 0o600);
+    this.#assertRegularFile(join(baseDir, "source_gateway.production.json"), 0o644);
     return composeFile;
   }
 
@@ -2303,6 +2424,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     const target = join(this.#pluginConfigRoot, pluginId);
     if (existsSync(target)) rmSync(target, { recursive: true, force: true });
     cpSync(backup, target, { recursive: true, dereference: false, errorOnExist: true, force: false });
+    if (this.#platform !== "win32") chmodSync(target, 0o700);
     syncTree(target);
     syncDirectory(this.#pluginConfigRoot);
   }
@@ -2453,8 +2575,25 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   }
 
   #removePluginDisableTransaction(): void {
-    rmSync(this.#transactionDir, { recursive: true, force: true });
+    if (!existsSync(this.#transactionDir)) return;
+    const retired = join(
+      this.#configDir,
+      `${RETIRED_TRANSACTION_PREFIX}${process.pid}.${randomBytes(8).toString("hex")}`
+    );
+    renameSync(this.#transactionDir, retired);
     syncDirectory(this.#configDir);
+    rmSync(retired, { recursive: true, force: true });
+    syncDirectory(this.#configDir);
+  }
+
+  #removeRetiredPluginDisableTransactions(): void {
+    let removed = false;
+    for (const entry of readdirSync(this.#configDir)) {
+      if (!entry.startsWith(RETIRED_TRANSACTION_PREFIX)) continue;
+      rmSync(join(this.#configDir, entry), { recursive: true, force: true });
+      removed = true;
+    }
+    if (removed) syncDirectory(this.#configDir);
   }
 
   #backupPluginAssets(pluginId: string): string {
@@ -2818,11 +2957,13 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     env.COMPOSE_REMOVE_ORPHANS = "0";
     env.ATLAS_CORE_IMAGE = imageReference;
     env.ATLAS_PLUGIN_CONFIG_ROOT = this.#pluginConfigRoot;
+    const processGroup = this.#pluginDisableProcessGroup();
     const options = {
       cwd: this.#configDir,
       env,
       inherit,
-      ...(signal ? { signal } : {})
+      ...(signal ? { signal } : {}),
+      ...(processGroup ? { processGroup } : {})
     };
     return allowAfterCancellation
       ? await this.#runner.runCleanup("docker", this.#composeArgs(composeFile, args, pluginIds), options)
@@ -3100,7 +3241,7 @@ async function askForConfirmation(question: string): Promise<boolean> {
 }
 
 function writePrivateFile(path: string, contents: string, platform: NodeJS.Platform, exclusive = false): void {
-  const target = exclusive ? path : `${path}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
+  const target = `${path}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
   const descriptor = openSync(target, "wx", 0o600);
   try {
     writeFileSync(descriptor, contents, { encoding: "utf8" });
@@ -3112,8 +3253,17 @@ function writePrivateFile(path: string, contents: string, platform: NodeJS.Platf
     throw error;
   }
   closeSync(descriptor);
-  if (!exclusive) renameSync(target, path);
-  syncDirectory(dirname(path));
+  const directory = dirname(path);
+  try {
+    if (exclusive) linkSync(target, path);
+    else renameSync(target, path);
+    syncDirectory(directory);
+  } finally {
+    if (exclusive && existsSync(target)) {
+      rmSync(target, { force: true });
+      syncDirectory(directory);
+    }
+  }
 }
 
 function syncTree(path: string): void {
@@ -3125,8 +3275,15 @@ function syncTree(path: string): void {
     return;
   }
   if (!info.isFile()) return;
-  const descriptor = openSync(path, "r");
+  const descriptor = openSync(
+    path,
+    fileSystemConstants.O_RDONLY | fileSystemConstants.O_NOFOLLOW | fileSystemConstants.O_NONBLOCK
+  );
   try {
+    const openedInfo = fstatSync(descriptor);
+    if (!openedInfo.isFile() || openedInfo.dev !== info.dev || openedInfo.ino !== info.ino) {
+      throw new Error(`${path} changed while Atlas Core was making its rollback copy durable.`);
+    }
     fsyncSync(descriptor);
   } finally {
     closeSync(descriptor);
@@ -3198,14 +3355,25 @@ function isMutationLockOwner(value: unknown): value is MutationLockOwner {
   if (!isInitLock(value)) return false;
   const record = value as unknown as Record<string, unknown>;
   const keys = Object.keys(record).sort();
-  const expectedKeys = record.operation === undefined ? ["id", "pid", "schema"] : ["id", "operation", "pid", "schema"];
+  const expectedKeys = [
+    "id",
+    ...(record.operation === undefined ? [] : ["operation"]),
+    "pid",
+    ...(record.processGroupId === undefined ? [] : ["processGroupId"]),
+    "schema"
+  ];
   return (
     keys.length === expectedKeys.length &&
     keys.every((key, index) => key === expectedKeys[index]) &&
     record.schema === 1 &&
     typeof record.id === "string" &&
     /^[a-f0-9]{32}$/u.test(record.id) &&
-    (record.operation === undefined || record.operation === "plugin-disable")
+    (record.operation === undefined || record.operation === "plugin-disable") &&
+    (record.processGroupId === undefined ||
+      (record.operation === "plugin-disable" &&
+        typeof record.processGroupId === "number" &&
+        Number.isSafeInteger(record.processGroupId) &&
+        record.processGroupId > 0))
   );
 }
 
@@ -3272,6 +3440,20 @@ function isProcessAlive(pid: number): boolean {
   } catch (error) {
     return !isNodeError(error) || error.code !== "ESRCH";
   }
+}
+
+function isProcessGroupAlive(processGroupId: number | undefined): boolean {
+  if (processGroupId === undefined || process.platform === "win32") return false;
+  try {
+    process.kill(-processGroupId, 0);
+    return true;
+  } catch (error) {
+    return !isNodeError(error) || error.code !== "ESRCH";
+  }
+}
+
+function isMutationOwnerActive(owner: MutationLockOwner): boolean {
+  return isProcessAlive(owner.pid) || isProcessGroupAlive(owner.processGroupId);
 }
 
 function resolveConfigDirectory(configured: string | undefined, homeDir: string): string {

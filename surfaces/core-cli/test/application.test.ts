@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import {
   chmodSync,
   cpSync,
@@ -489,7 +490,7 @@ function simulateInterruptedPluginDisable(
     join(base, "source_gateway.production.json")
   );
   chmodSync(join(base, "docker-compose.yml"), 0o600);
-  chmodSync(join(base, "source_gateway.production.json"), 0o600);
+  chmodSync(join(base, "source_gateway.production.json"), 0o644);
   writeFileSync(
     join(transaction, "journal.json"),
     `${JSON.stringify({
@@ -797,6 +798,52 @@ describe("atlas-core CLI", () => {
     runner.cancelAll();
 
     await expect(operation).resolves.toEqual(result(0));
+  });
+
+  it("does not start a supervised command until its process group is durably recorded", async () => {
+    const runner = new ProcessCommandRunner();
+    const directory = mkdtempSync(join(tmpdir(), "atlas-core-runner-test-"));
+    temporaryDirectories.push(directory);
+    const marker = join(directory, "started");
+    let finished = false;
+
+    await expect(
+      runner.run(process.execPath, ["-e", `require("node:fs").writeFileSync(${JSON.stringify(marker)}, "yes")`], {
+        processGroup: {
+          started: () => {
+            throw new Error("injected durable lock failure");
+          },
+          finished: () => {
+            finished = true;
+          }
+        }
+      })
+    ).rejects.toThrow("injected durable lock failure");
+
+    expect(existsSync(marker)).toBe(false);
+    expect(finished).toBe(false);
+  });
+
+  it("runs a supervised command inside the recorded process group", async () => {
+    const runner = new ProcessCommandRunner();
+    let startedProcessGroup: number | undefined;
+    let finishedProcessGroup: number | undefined;
+
+    const command = await runner.run(process.execPath, ["-e", 'process.stdout.write("supervised")'], {
+      processGroup: {
+        started: (processGroupId) => {
+          startedProcessGroup = processGroupId;
+          expect(() => process.kill(-processGroupId, 0)).not.toThrow();
+        },
+        finished: (processGroupId) => {
+          finishedProcessGroup = processGroupId;
+        }
+      }
+    });
+
+    expect(command).toEqual(result(0, "supervised"));
+    expect(startedProcessGroup).toEqual(expect.any(Number));
+    expect(finishedProcessGroup).toBe(startedProcessGroup);
   });
 
   it("rejects unknown update scopes", async () => {
@@ -2297,6 +2344,24 @@ describe("atlas-core CLI", () => {
     expect(existsSync(join(test.home, ".atlas", "core", "plugins", plugin.pluginId))).toBe(false);
   });
 
+  it("keeps the captured Source Gateway bind mount readable by its non-root container", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const plugin = installTestPluginCatalog(test);
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
+    let capturedMode: number | undefined;
+    test.runner.onRun = (call) => {
+      if (composeCommand(call)[0] !== "rm") return;
+      capturedMode = statSync(
+        join(test.home, ".atlas", "core", "transaction", "before", "base", "source_gateway.production.json")
+      ).mode;
+    };
+
+    expect(await runCLI(["plugins", "disable", plugin.pluginId], test.context)).toBe(0);
+
+    expect((capturedMode ?? 0) & 0o777).toBe(0o644);
+  });
+
   it("refuses to disable through a symlinked Plugin root", async () => {
     const test = runtime();
     markInitialized(test);
@@ -2313,6 +2378,26 @@ describe("atlas-core CLI", () => {
 
     expect(test.stderr.join("")).toContain(`${pluginRoot} must be a regular directory`);
     expect(existsSync(join(externalRoot, plugin.pluginId, "compose.yml"))).toBe(true);
+    expect(existsSync(join(config, "transaction"))).toBe(false);
+    expect(test.runner.calls.map(composeCommand)).not.toContainEqual(["rm", "-s", "-f", plugin.service]);
+  });
+
+  it("refuses to disable through a symlinked per-Plugin deployment directory", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const plugin = installTestPluginCatalog(test);
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
+    const config = join(test.home, ".atlas", "core");
+    const pluginPath = join(config, "plugins", plugin.pluginId);
+    const externalPath = join(test.home, "external-plugin");
+    renameSync(pluginPath, externalPath);
+    symlinkSync(externalPath, pluginPath);
+    test.runner.calls.length = 0;
+
+    expect(await runCLI(["plugins", "disable", plugin.pluginId], test.context)).toBe(1);
+
+    expect(test.stderr.join("")).toContain(`${pluginPath} must be a regular directory`);
+    expect(existsSync(join(externalPath, "compose.yml"))).toBe(true);
     expect(existsSync(join(config, "transaction"))).toBe(false);
     expect(test.runner.calls.map(composeCommand)).not.toContainEqual(["rm", "-s", "-f", plugin.service]);
   });
@@ -2366,6 +2451,44 @@ describe("atlas-core CLI", () => {
     expect(test.stderr.join("")).toContain(`deployment recovery is locked by PID ${process.pid}`);
     expect(existsSync(recoveryClaim)).toBe(true);
     expect(test.runner.existingNetworks.has(MUTATION_LOCK_NETWORK)).toBe(true);
+  });
+
+  it("waits for an orphaned Docker process group before recovering an interrupted disable", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const plugin = installTestPluginCatalog(test);
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
+    simulateInterruptedPluginDisable(test, plugin, "prepared");
+    const config = join(test.home, ".atlas", "core");
+    const lockPath = join(config, ".mutation.lock");
+    const owner = JSON.parse(readFileSync(lockPath, "utf8"));
+    const orphan = spawn(process.execPath, ["-e", "setTimeout(() => {}, 30_000)"], {
+      detached: true,
+      stdio: "ignore"
+    });
+    if (orphan.pid === undefined) throw new Error("test process group did not start");
+    const processGroupId = orphan.pid;
+    writeFileSync(lockPath, `${JSON.stringify({ ...owner, operation: "plugin-disable", processGroupId })}\n`, {
+      mode: 0o600
+    });
+
+    try {
+      await vi.waitFor(() => expect(() => process.kill(-processGroupId, 0)).not.toThrow());
+
+      expect(await runCLI(["stop"], test.context)).toBe(1);
+
+      expect(test.stderr.join("")).toContain("deployment mutation is locked");
+      expect(existsSync(join(config, "transaction"))).toBe(true);
+      expect(test.runner.existingNetworks.has(MUTATION_LOCK_NETWORK)).toBe(true);
+    } finally {
+      process.kill(-processGroupId, "SIGKILL");
+      await new Promise<void>((resolveClose) => orphan.once("close", () => resolveClose()));
+    }
+
+    test.stderr.length = 0;
+    expect(await runCLI(["stop"], test.context)).toBe(0);
+    expect(existsSync(join(config, "transaction"))).toBe(false);
+    expect(test.runner.existingNetworks.has(MUTATION_LOCK_NETWORK)).toBe(false);
   });
 
   it("reclaims a recovery claim whose process also died", async () => {
@@ -2533,6 +2656,26 @@ describe("atlas-core CLI", () => {
     expect(existsSync(join(config, ".mutation.lock"))).toBe(false);
     expect(test.runner.existingNetworks.has(MUTATION_LOCK_NETWORK)).toBe(false);
     expect(test.stdout.join("")).toContain("Atlas Core stopped");
+  });
+
+  it("removes a transaction directory retired before an interrupted cleanup", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const plugin = installTestPluginCatalog(test);
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
+    simulateInterruptedPluginDisable(test, plugin, "committed");
+    const config = join(test.home, ".atlas", "core");
+    const retired = join(config, `.transaction.completed.${2_147_483_647}.${"d".repeat(16)}`);
+    renameSync(join(config, "transaction"), retired);
+    const lockPath = join(config, ".mutation.lock");
+    const owner = JSON.parse(readFileSync(lockPath, "utf8"));
+    writeFileSync(lockPath, `${JSON.stringify({ ...owner, operation: "plugin-disable" })}\n`, { mode: 0o600 });
+
+    expect(await runCLI(["stop"], test.context)).toBe(0);
+
+    expect(existsSync(retired)).toBe(false);
+    expect(existsSync(lockPath)).toBe(false);
+    expect(test.runner.existingNetworks.has(MUTATION_LOCK_NETWORK)).toBe(false);
   });
 
   it("marks a fresh lock before recovering a transaction so a second interruption remains recoverable", async () => {
