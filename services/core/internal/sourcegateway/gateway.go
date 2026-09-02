@@ -376,11 +376,12 @@ func (g *Gateway) execute(ctx context.Context, connector *connector, input Conne
 			attemptFailure := failure
 			failure = contextFailure(ctx, requestContext, true)
 			switch {
+			case errors.Is(context.Cause(requestContext), errConnectorDeadline):
+				connector.recordFailure(g.now())
 			case attemptFailure == nil:
 				connector.recordReachable()
 				retryFailurePending = false
-			case !errors.Is(context.Cause(requestContext), errConnectorDeadline) &&
-				ctx.Err() != nil &&
+			case ctx.Err() != nil &&
 				(errors.Is(attemptFailure.err, ctx.Err()) || errors.Is(attemptFailure.err, context.Cause(ctx))):
 				recordPendingFailure()
 			default:

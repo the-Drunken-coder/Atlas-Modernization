@@ -546,6 +546,33 @@ func TestConnectorDeadlineWinsLaterParentDeadlineForCircuitAccounting(t *testing
 	}
 }
 
+func TestConnectorDeadlineAccountsForLateResponse(t *testing.T) {
+	var calls atomic.Int32
+	config := testConnectorConfig()
+	config.Limits.TimeoutMS = 20
+	config.CircuitBreaker.Failures = 1
+	gateway, err := New(Config{Connectors: []ConnectorConfig{config}}, Options{
+		Client: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			calls.Add(1)
+			<-request.Context().Done()
+			return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: http.NoBody}, nil
+		})},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connector := gateway.connectors["reference"]
+	request := ConnectorRequest{Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{}}
+	_, attempts, _, failure := gateway.execute(context.Background(), connector, request)
+	if failure == nil || failure.code != FailureUpstreamTimeout || attempts != 1 || calls.Load() != 1 {
+		t.Fatalf("first attempts=%d calls=%d failure=%v", attempts, calls.Load(), failure)
+	}
+	_, attempts, _, failure = gateway.execute(context.Background(), connector, request)
+	if failure == nil || failure.code != FailureCircuitOpen || attempts != 0 || calls.Load() != 1 {
+		t.Fatalf("second attempts=%d calls=%d failure=%v", attempts, calls.Load(), failure)
+	}
+}
+
 func TestAddressPolicyRejectsPrivateLoopbackAndLinkLocalByDefault(t *testing.T) {
 	for _, address := range []string{
 		"127.0.0.1", "10.0.0.1", "169.254.1.1", "::1", "fe80::1",
