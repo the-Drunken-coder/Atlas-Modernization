@@ -2453,6 +2453,27 @@ describe("atlas-core CLI", () => {
     expect(test.runner.existingNetworks.has(MUTATION_LOCK_NETWORK)).toBe(true);
   });
 
+  it("does not reclaim a dead claimant's recovery file while its recorded owner is still alive", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const plugin = installTestPluginCatalog(test);
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
+    simulateInterruptedPluginDisable(test, plugin, "prepared");
+    const config = join(test.home, ".atlas", "core");
+    const lockPath = join(config, ".mutation.lock");
+    const recoveryClaim = join(config, `.mutation.lock.recovering.${2_147_483_647}.${"d".repeat(16)}`);
+    const owner = JSON.parse(readFileSync(lockPath, "utf8"));
+    renameSync(lockPath, recoveryClaim);
+    writeFileSync(recoveryClaim, `${JSON.stringify({ ...owner, pid: process.pid })}\n`, { mode: 0o600 });
+
+    expect(await runCLI(["stop"], test.context)).toBe(1);
+
+    expect(test.stderr.join("")).toContain(`deployment mutation is locked by PID ${process.pid}`);
+    expect(existsSync(recoveryClaim)).toBe(true);
+    expect(existsSync(join(config, "transaction"))).toBe(true);
+    expect(test.runner.existingNetworks.has(MUTATION_LOCK_NETWORK)).toBe(true);
+  });
+
   it("waits for an orphaned Docker process group before recovering an interrupted disable", async () => {
     const test = runtime();
     markInitialized(test);
@@ -2582,6 +2603,26 @@ describe("atlas-core CLI", () => {
     expect(test.stdout.join("")).toContain("Atlas Core stopped");
   });
 
+  it("drops recovery eligibility before starting the requested mutation", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const plugin = installTestPluginCatalog(test);
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
+    simulateInterruptedPluginDisable(test, plugin, "prepared");
+    const lockPath = join(test.home, ".atlas", "core", ".mutation.lock");
+    let ownerDuringStop: unknown;
+    test.runner.onRun = (call) => {
+      if (composeCommand(call)[0] === "down") {
+        ownerDuringStop = JSON.parse(readFileSync(lockPath, "utf8"));
+      }
+    };
+
+    expect(await runCLI(["stop"], test.context)).toBe(0);
+
+    expect(ownerDuringStop).toMatchObject({ schema: 1, pid: process.pid });
+    expect(ownerDuringStop).not.toHaveProperty("operation");
+  });
+
   it("rolls back and retries an interrupted disable without starting a stopped deployment", async () => {
     const test = runtime();
     markInitialized(test, false);
@@ -2674,49 +2715,6 @@ describe("atlas-core CLI", () => {
     expect(await runCLI(["stop"], test.context)).toBe(0);
 
     expect(existsSync(retired)).toBe(false);
-    expect(existsSync(lockPath)).toBe(false);
-    expect(test.runner.existingNetworks.has(MUTATION_LOCK_NETWORK)).toBe(false);
-  });
-
-  it("marks a fresh lock before recovering a transaction so a second interruption remains recoverable", async () => {
-    const test = runtime();
-    markInitialized(test);
-    const plugin = installTestPluginCatalog(test);
-    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
-    simulateInterruptedPluginDisable(test, plugin, "prepared");
-    const config = join(test.home, ".atlas", "core");
-    rmSync(join(config, ".mutation.lock"));
-    test.runner.existingNetworks.delete(MUTATION_LOCK_NETWORK);
-    test.runner.networkLabels.delete(MUTATION_LOCK_NETWORK);
-    test.runner.onRun = (call) => {
-      if (composeCommand(call)[0] !== "down") return;
-      test.runner.networkLabels.set(MUTATION_LOCK_NETWORK, {
-        "io.atlas.core.engine": "test-engine-id",
-        "io.atlas.core.lock": "mutation",
-        "io.atlas.core.project": "atlas_core_production",
-        "io.atlas.core.lock-id": "f".repeat(32)
-      });
-    };
-
-    expect(await runCLI(["stop"], test.context)).toBe(1);
-
-    const lockPath = join(config, ".mutation.lock");
-    const interruptedRecoveryOwner = JSON.parse(readFileSync(lockPath, "utf8"));
-    expect(interruptedRecoveryOwner).toMatchObject({ operation: "plugin-disable" });
-    expect(existsSync(join(config, "transaction"))).toBe(false);
-
-    writeFileSync(lockPath, `${JSON.stringify({ ...interruptedRecoveryOwner, pid: 2_147_483_647 })}\n`, {
-      mode: 0o600
-    });
-    test.runner.networkLabels.set(MUTATION_LOCK_NETWORK, {
-      "io.atlas.core.engine": "test-engine-id",
-      "io.atlas.core.lock": "mutation",
-      "io.atlas.core.project": "atlas_core_production",
-      "io.atlas.core.lock-id": interruptedRecoveryOwner.id
-    });
-    test.runner.onRun = undefined;
-
-    expect(await runCLI(["stop"], test.context)).toBe(0);
     expect(existsSync(lockPath)).toBe(false);
     expect(test.runner.existingNetworks.has(MUTATION_LOCK_NETWORK)).toBe(false);
   });

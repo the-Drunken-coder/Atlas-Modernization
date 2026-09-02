@@ -581,7 +581,10 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       dockerLock = await this.#acquireDockerMutationLock(dockerEngineId, mutationLock);
       this.#activeMutationLock = dockerLock.owner;
       try {
-        if (recoverInterruptedDisable) await this.#recoverPluginDisableTransaction(dockerEngineId);
+        if (recoverInterruptedDisable) {
+          await this.#recoverPluginDisableTransaction(dockerEngineId);
+          this.#completePluginDisableRecoveryLockHandoff();
+        }
         return await action();
       } finally {
         await this.#releaseDockerMutationLock(dockerLock);
@@ -1586,8 +1589,18 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
         this.#isRecoverablePluginDisableOwner(existingOwner) &&
         !isMutationOwnerActive(existingOwner)
       ) {
-        if (this.#claimMutationRecovery(this.#mutationLockFile)) {
-          return { owner: existingOwner, recovered: true };
+        const claimPath = this.#claimMutationRecovery(this.#mutationLockFile);
+        if (claimPath) {
+          try {
+            const claimedOwner = this.#readMutationLockOwner(claimPath);
+            if (this.#isRecoverablePluginDisableOwner(claimedOwner) && !isMutationOwnerActive(claimedOwner)) {
+              return { owner: claimedOwner, recovered: true };
+            }
+          } catch (error) {
+            this.#restoreMutationRecoveryLock();
+            throw error;
+          }
+          this.#restoreMutationRecoveryLock();
         }
         continue;
       }
@@ -1610,15 +1623,23 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     if (!claimName) return undefined;
     const claimantPid = mutationRecoveryClaimPid(claimName);
     const claimPath = join(this.#configDir, claimName);
-    const owner = this.#readMutationLockOwner(claimPath);
+    let owner = this.#readMutationLockOwner(claimPath);
     if (!this.#isRecoverablePluginDisableOwner(owner)) {
       throw new Error(`Atlas Core found an invalid deployment recovery claim at ${claimPath}.`);
     }
-    if (isProcessAlive(claimantPid) || isProcessGroupAlive(owner.processGroupId)) {
+    if (isProcessAlive(claimantPid)) {
       throw new Error(`Atlas Core deployment recovery is locked by PID ${claimantPid} at ${claimPath}.`);
     }
-    if (!this.#claimMutationRecovery(claimPath)) return undefined;
+    if (isMutationOwnerActive(owner)) {
+      throw new Error(`Atlas Core deployment mutation is locked by PID ${owner.pid} at ${claimPath}.`);
+    }
+    const activeClaimPath = this.#claimMutationRecovery(claimPath);
+    if (!activeClaimPath) return undefined;
     try {
+      owner = this.#readMutationLockOwner(activeClaimPath);
+      if (!this.#isRecoverablePluginDisableOwner(owner) || isMutationOwnerActive(owner)) {
+        throw new Error("Atlas Core mutation lock changed ownership during deployment recovery.");
+      }
       if (existsSync(this.#mutationLockFile)) {
         const currentOwner = this.#readMutationLockOwner(this.#mutationLockFile);
         if (isMutationOwnerActive(currentOwner)) {
@@ -1648,7 +1669,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       .sort();
   }
 
-  #claimMutationRecovery(source: string): boolean {
+  #claimMutationRecovery(source: string): string | undefined {
     const claimPath = join(
       this.#configDir,
       `${MUTATION_RECOVERY_LOCK_PREFIX}${process.pid}.${randomBytes(8).toString("hex")}`
@@ -1656,12 +1677,12 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     try {
       renameSync(source, claimPath);
     } catch (error) {
-      if (isNodeError(error) && error.code === "ENOENT") return false;
+      if (isNodeError(error) && error.code === "ENOENT") return undefined;
       throw error;
     }
     syncDirectory(this.#configDir);
     this.#activeMutationRecoveryPath = claimPath;
-    return true;
+    return claimPath;
   }
 
   #isRecoverablePluginDisableOwner(owner: MutationLockOwner): boolean {
@@ -1740,17 +1761,33 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       this.#activeMutationRecoveryPath = undefined;
       return;
     }
-    const claimedOwner = this.#readMutationLockOwner(claimPath);
-    if (existsSync(this.#mutationLockFile)) {
+    try {
+      linkSync(claimPath, this.#mutationLockFile);
+    } catch (error) {
+      if (!isNodeError(error) || error.code !== "EEXIST") {
+        throw new OperationCleanupError(`Atlas Core could not restore its mutation lock: ${errorMessage(error)}`);
+      }
+      const claimedOwner = this.#readMutationLockOwner(claimPath);
       const currentOwner = this.#readMutationLockOwner(this.#mutationLockFile);
-      if (currentOwner.id !== claimedOwner.id) {
+      if (!sameMutationLockOwner(currentOwner, claimedOwner)) {
         throw new OperationCleanupError("Atlas Core mutation lock changed ownership during recovery cleanup.");
       }
-      unlinkSync(this.#mutationLockFile);
     }
-    renameSync(claimPath, this.#mutationLockFile);
+    unlinkSync(claimPath);
     syncDirectory(this.#configDir);
     this.#activeMutationRecoveryPath = undefined;
+  }
+
+  #completePluginDisableRecoveryLockHandoff(): void {
+    const activeOwner = this.#activeMutationLock;
+    if (!activeOwner || activeOwner.operation !== "plugin-disable" || existsSync(this.#transactionDir)) return;
+    const currentOwner = this.#readMutationLockOwner(this.#mutationLockFile);
+    if (!sameMutationLockOwner(currentOwner, activeOwner) || currentOwner.processGroupId !== undefined) {
+      throw new Error("Atlas Core mutation lock changed ownership after Plugin disable recovery.");
+    }
+    const { operation: _, ...ordinaryOwner } = currentOwner;
+    writePrivateFile(this.#mutationLockFile, `${JSON.stringify(ordinaryOwner, null, 2)}\n`, this.#platform);
+    this.#activeMutationLock = ordinaryOwner;
   }
 
   #releaseMutationLock(owner: MutationLockOwner): void {
@@ -3454,6 +3491,15 @@ function isProcessGroupAlive(processGroupId: number | undefined): boolean {
 
 function isMutationOwnerActive(owner: MutationLockOwner): boolean {
   return isProcessAlive(owner.pid) || isProcessGroupAlive(owner.processGroupId);
+}
+
+function sameMutationLockOwner(left: MutationLockOwner, right: MutationLockOwner): boolean {
+  return (
+    left.id === right.id &&
+    left.pid === right.pid &&
+    left.operation === right.operation &&
+    left.processGroupId === right.processGroupId
+  );
 }
 
 function resolveConfigDirectory(configured: string | undefined, homeDir: string): string {
