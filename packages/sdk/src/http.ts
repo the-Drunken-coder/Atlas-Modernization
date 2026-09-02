@@ -222,8 +222,15 @@ export class HttpTransport {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.requestTimeoutMs);
     const requestSignal = signal ? AbortSignal.any([controller.signal, signal]) : controller.signal;
+    let rejectAbort: ((reason: unknown) => void) | undefined;
+    const abortRequest = new Promise<never>((_, reject) => {
+      rejectAbort = reject;
+    });
+    const onAbort = () => rejectAbort?.(requestSignal.reason);
+    requestSignal.addEventListener("abort", onAbort, { once: true });
+    if (requestSignal.aborted) onAbort();
     try {
-      const result = await operation(requestSignal);
+      const result = await Promise.race([operation(requestSignal), abortRequest]);
       requestSignal.throwIfAborted();
       return result;
     } catch (error) {
@@ -236,6 +243,7 @@ export class HttpTransport {
       throw error;
     } finally {
       clearTimeout(timeout);
+      requestSignal.removeEventListener("abort", onAbort);
     }
   }
 }
