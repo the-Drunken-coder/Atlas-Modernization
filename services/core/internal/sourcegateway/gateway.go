@@ -66,6 +66,8 @@ type gatewayError struct {
 
 const failureRequestCanceled FailureCode = "request_canceled"
 
+var errConnectorDeadline = errors.New("source gateway connector deadline")
+
 func (e *gatewayError) Error() string { return string(e.code) }
 func (e *gatewayError) Unwrap() error { return e.err }
 
@@ -314,7 +316,11 @@ func (g *Gateway) execute(ctx context.Context, connector *connector, input Conne
 		}
 		return ConnectorResponse{}, 0, "miss", &gatewayError{code: FailureCircuitOpen}
 	}
-	requestContext, cancel := context.WithTimeout(ctx, time.Duration(connector.config.Limits.TimeoutMS)*time.Millisecond)
+	requestContext, cancel := context.WithTimeoutCause(
+		ctx,
+		time.Duration(connector.config.Limits.TimeoutMS)*time.Millisecond,
+		errConnectorDeadline,
+	)
 	defer cancel()
 	if requestContext.Err() != nil {
 		return ConnectorResponse{}, 0, "miss", contextFailure(ctx, requestContext, false)
@@ -373,7 +379,8 @@ func (g *Gateway) execute(ctx context.Context, connector *connector, input Conne
 			case attemptFailure == nil:
 				connector.recordReachable()
 				retryFailurePending = false
-			case ctx.Err() != nil && errors.Is(attemptFailure.err, ctx.Err()):
+			case context.Cause(requestContext) != errConnectorDeadline &&
+				ctx.Err() != nil && errors.Is(attemptFailure.err, ctx.Err()):
 				recordPendingFailure()
 			default:
 				connector.recordFailure(g.now())
