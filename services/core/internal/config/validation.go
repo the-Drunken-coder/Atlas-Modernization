@@ -50,7 +50,12 @@ func (c *Config) validatePlugins() error {
 
 		plugin.BaseURL = strings.TrimRight(strings.TrimSpace(plugin.BaseURL), "/")
 		parsed, err := url.Parse(plugin.BaseURL)
-		if err != nil || parsed.Scheme != "http" || parsed.Hostname() == "" || parsed.User != nil || strings.HasSuffix(parsed.Host, ":") || strings.ContainsAny(plugin.BaseURL, "?#") || parsed.Path != "" {
+		if err != nil {
+			return fmt.Errorf("plugins[%d].base_url must be a plain HTTP origin", index)
+		}
+		hostname := parsed.Hostname()
+		invalidHostname := strings.ContainsAny(hostname, "[]<>\"") || (!strings.HasPrefix(parsed.Host, "[") && strings.Contains(hostname, ":"))
+		if parsed.Scheme != "http" || hostname == "" || invalidHostname || parsed.User != nil || strings.HasSuffix(parsed.Host, ":") || strings.ContainsAny(plugin.BaseURL, "?#") || parsed.Path != "" {
 			return fmt.Errorf("plugins[%d].base_url must be a plain HTTP origin", index)
 		}
 		if port := parsed.Port(); port != "" {

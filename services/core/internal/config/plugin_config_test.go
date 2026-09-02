@@ -1,6 +1,7 @@
 package config
 
 import (
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,9 +13,12 @@ func TestPluginConfigurationNormalizesAndRejectsInvalidEndpoints(t *testing.T) {
 		baseURL string
 		want    string
 	}{
+		{baseURL: "http://reference", want: "http://reference"},
+		{baseURL: "http://reference:0", want: "http://reference:0"},
 		{baseURL: "http://reference:8080", want: "http://reference:8080"},
 		{baseURL: " http://reference:8080/ ", want: "http://reference:8080"},
 		{baseURL: "http://reference:65535", want: "http://reference:65535"},
+		{baseURL: "http://[::1]", want: "http://[::1]"},
 		{baseURL: "http://[::1]:8080", want: "http://[::1]:8080"},
 	} {
 		cfg := Config{Plugins: []PluginConfig{{ID: " reference ", BaseURL: test.baseURL}}}
@@ -36,6 +40,7 @@ func TestPluginConfigurationNormalizesAndRejectsInvalidEndpoints(t *testing.T) {
 		{{ID: "reference", BaseURL: "http://reference:8080#fragment"}},
 		{{ID: "reference", BaseURL: "http://reference:8080#"}},
 		{{ID: "reference", BaseURL: "http://:8080"}},
+		{{ID: "reference", BaseURL: "http://reference]:8080"}},
 		{{ID: "reference", BaseURL: "http://reference:"}},
 		{{ID: "reference", BaseURL: "http://[::1]:"}},
 		{{ID: "reference", BaseURL: "http://reference:65536"}},
@@ -44,6 +49,18 @@ func TestPluginConfigurationNormalizesAndRejectsInvalidEndpoints(t *testing.T) {
 		if err := (&Config{Plugins: plugins}).validatePlugins(); err == nil {
 			t.Fatalf("validatePlugins accepted %#v", plugins)
 		}
+	}
+}
+
+func TestPluginConfigurationRejectsUnbracketedIPv6WithRelaxedURLParsing(t *testing.T) {
+	t.Setenv("GODEBUG", "urlstrictcolons=0")
+	const baseURL = "http://2001:db8::1:8080"
+	if _, err := url.Parse(baseURL); err != nil {
+		t.Fatalf("relaxed URL parsing is not active: %v", err)
+	}
+	cfg := Config{Plugins: []PluginConfig{{ID: "reference", BaseURL: baseURL}}}
+	if err := cfg.validatePlugins(); err == nil {
+		t.Fatal("validatePlugins accepted unbracketed IPv6")
 	}
 }
 
