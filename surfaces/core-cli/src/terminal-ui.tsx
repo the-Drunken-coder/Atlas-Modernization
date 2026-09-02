@@ -1248,18 +1248,26 @@ function PluginActivityScreen({
 
   if (viewportRows < 1) {
     const compactFooter = view.status === "cancelling" ? "Waiting for safe cleanup..." : footer;
-    const compactHeader = `ACTIVITY ${formatActivityTime(elapsed)}`;
+    const summary = pluginActivitySummary(view);
+    const compactHeader =
+      finished && rows <= 2 ? `ACTIVITY ${view.status.toUpperCase()}` : `ACTIVITY ${formatActivityTime(elapsed)}`;
     if (rows <= 1) return <Text>{compactHeader}</Text>;
     const detailRows = Math.max(0, rows - 2);
-    const detailLines = activityMessageLines({ text: `${view.action} ${view.plugin.displayName}` }, columns).slice(
-      0,
-      detailRows
-    );
+    const detailLines = activityMessageLines(
+      summary ?? { text: `${view.action} ${view.plugin.displayName}` },
+      columns
+    ).slice(0, detailRows);
     return (
       <Box flexDirection="column" width={columns}>
         <Header title={compactHeader} />
         {detailLines.map((line, index) => (
-          <Text key={`${index}-${line.text}`}>{line.text}</Text>
+          <Text
+            {...(line.color ? { color: line.color } : {})}
+            {...(line.dim === undefined ? {} : { dimColor: line.dim })}
+            key={`${index}-${line.text}`}
+          >
+            {line.text}
+          </Text>
         ))}
         <Text dimColor={view.status !== "failure"}>{compactFooter}</Text>
       </Box>

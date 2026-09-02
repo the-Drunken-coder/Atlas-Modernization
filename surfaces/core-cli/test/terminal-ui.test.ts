@@ -902,6 +902,86 @@ describe("Atlas Core terminal UI", () => {
     await terminal.waitFor("ACTIVITY 00:00.0");
     await terminal.waitFor("Ctrl+C cancel safely");
     terminal.write("\u0003");
+    await terminal.waitFor("Enable cancelled.");
+    await terminal.waitFor("Enter return to Plugins");
+    terminal.write("\r");
+    await vi.waitFor(() => expect(deployment.pluginStatuses).toHaveBeenCalledTimes(2));
+    terminal.write("q");
+    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
+    terminal.write("q");
+    await menu;
+  });
+
+  it("shows Plugin success in a four-row terminal and status in a two-row terminal", async () => {
+    const terminal = new TestTerminal(40, true, 24);
+    const deployment = operator();
+    const plugin = {
+      pluginId: "building_scan",
+      displayName: "Building Scan",
+      lifecycle: "query_only" as const,
+      enabled: false,
+      packaged: true
+    };
+    let finishEnable: (() => void) | undefined;
+    deployment.pluginStatuses.mockResolvedValue([plugin]);
+    deployment.pluginEnable.mockImplementation(
+      async () =>
+        await new Promise<PluginOperationOutcome>((resolve) => {
+          finishEnable = () => resolve({ status: "success" });
+        })
+    );
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("View status");
+    terminal.write("plugins");
+    await terminal.waitFor("Filter: plugins");
+    terminal.write("\r");
+    await terminal.waitFor("PLUGIN CATALOG");
+    terminal.write("\r");
+    await terminal.waitFor("ATLAS CORE > ACTIVITY");
+    terminal.resize(40, 4);
+    finishEnable?.();
+    await terminal.waitFor("Building Scan enabled.");
+    terminal.resize(40, 2);
+    await terminal.waitFor("ACTIVITY SUCCESS");
+    terminal.write("\r");
+    await vi.waitFor(() => expect(deployment.pluginStatuses).toHaveBeenCalledTimes(2));
+    terminal.write("q");
+    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
+    terminal.write("q");
+    await menu;
+  });
+
+  it("shows the Plugin failure reason in a four-row terminal", async () => {
+    const terminal = new TestTerminal(40, true, 24);
+    const deployment = operator();
+    const plugin = {
+      pluginId: "building_scan",
+      displayName: "Building Scan",
+      lifecycle: "query_only" as const,
+      enabled: false,
+      packaged: true
+    };
+    let failEnable: (() => void) | undefined;
+    deployment.pluginStatuses.mockResolvedValue([plugin]);
+    deployment.pluginEnable.mockImplementation(
+      async () =>
+        await new Promise<PluginOperationOutcome>((_resolve, reject) => {
+          failEnable = () => reject(new Error("health wait timed out"));
+        })
+    );
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("View status");
+    terminal.write("plugins");
+    await terminal.waitFor("Filter: plugins");
+    terminal.write("\r");
+    await terminal.waitFor("PLUGIN CATALOG");
+    terminal.write("\r");
+    await terminal.waitFor("ATLAS CORE > ACTIVITY");
+    terminal.resize(40, 4);
+    failEnable?.();
+    await terminal.waitFor("Enable failed: health wait timed out");
     await terminal.waitFor("Enter return to Plugins");
     terminal.write("\r");
     await vi.waitFor(() => expect(deployment.pluginStatuses).toHaveBeenCalledTimes(2));
