@@ -328,7 +328,7 @@ export class ProcessCommandRunner implements CommandRunner {
             : [supervised ? "pipe" : "ignore", "pipe", "pipe"]
         }
       );
-      const state: ChildProcessState = { cancelled: false, exited: false };
+      const state: ChildProcessState = { cancelled: false, exited: false, supervised };
       children.set(child, state);
       const processGroupId = supervised ? child.pid : undefined;
       let processGroupRecorded = false;
@@ -343,6 +343,7 @@ export class ProcessCommandRunner implements CommandRunner {
         children.delete(child);
         removeAbortListener();
         if (state.forceTimer) clearTimeout(state.forceTimer);
+        if (state.groupExitTimer) clearTimeout(state.groupExitTimer);
       };
       let stdout = "";
       let stderr = "";
@@ -361,7 +362,7 @@ export class ProcessCommandRunner implements CommandRunner {
         finish();
         reject(error);
       });
-      child.once("close", (status) => {
+      const complete = (status: number | null): void => {
         finish();
         if (setupError) {
           reject(setupError);
@@ -376,6 +377,16 @@ export class ProcessCommandRunner implements CommandRunner {
           }
         }
         resolve({ ...(state.cancelled ? { cancelled: true as const } : {}), status: status ?? 1, stdout, stderr });
+      };
+      const completeAfterGroupExit = (status: number | null): void => {
+        if (supervised && state.cancelled && processGroupId !== undefined && isProcessGroupAlive(processGroupId)) {
+          state.groupExitTimer = setTimeout(() => completeAfterGroupExit(status), 25);
+          return;
+        }
+        complete(status);
+      };
+      child.once("close", (status) => {
+        completeAfterGroupExit(status);
       });
       options.signal?.addEventListener("abort", cancel, { once: true });
       if (options.signal?.aborted) {
@@ -399,7 +410,7 @@ export class ProcessCommandRunner implements CommandRunner {
 
   #terminate(child: ReturnType<typeof spawn>, state: ChildProcessState): void {
     if (!signalChildProcess(child, "SIGTERM")) return;
-    if (!state.exited) state.cancelled = true;
+    if (!state.exited || state.supervised) state.cancelled = true;
     if (state.forceTimer) return;
     state.forceTimer = setTimeout(() => {
       delete state.forceTimer;
@@ -413,6 +424,8 @@ type ChildProcessState = {
   cancelled: boolean;
   exited: boolean;
   forceTimer?: ReturnType<typeof setTimeout>;
+  groupExitTimer?: ReturnType<typeof setTimeout>;
+  supervised: boolean;
 };
 
 function signalChildProcess(child: ReturnType<typeof spawn>, signal: NodeJS.Signals): boolean {
@@ -766,6 +779,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
         existsSync(join(this.#pluginConfigRoot, pluginId, "compose.yml"))
       ) ?? [];
     this.#abandonPluginDisableTransaction();
+    this.#completePluginDisableRecoveryLockHandoff();
     if (existsSync(this.#envFile)) {
       await this.#runComposeChecked(["down", "--remove-orphans"], resetPluginIds);
     }
