@@ -64,6 +64,7 @@ class FakeRunner implements CommandRunner {
   composeVersion = "5.1.2";
   contextHost = "unix:///var/run/docker.sock";
   dockerArchitecture = "arm64";
+  dockerEngineId = "test-engine-id";
   dockerOperatingSystem = "linux";
   globalRoot = "";
   latestVersion = PACKAGE_VERSION;
@@ -294,7 +295,7 @@ class FakeRunner implements CommandRunner {
       return result(
         0,
         JSON.stringify({
-          ID: "test-engine-id",
+          ID: this.dockerEngineId,
           OSType: this.dockerOperatingSystem,
           Architecture: this.dockerArchitecture
         })
@@ -3278,6 +3279,78 @@ describe("atlas-core CLI", () => {
     expect(await runCLI(["stop"], test.context)).toBe(0);
 
     expect(ownerDuringDockerAcquisition).toMatchObject({ operation: "plugin-disable" });
+  });
+
+  it("retries recovery after ambiguous Docker lock cleanup cannot remove the created network", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const plugin = installTestPluginCatalog(test);
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
+    simulateInterruptedPluginDisable(test, plugin, "prepared");
+    const config = join(test.home, ".atlas", "core");
+    const lockPath = join(config, ".mutation.lock");
+    rmSync(lockPath);
+    test.runner.existingNetworks.delete(MUTATION_LOCK_NETWORK);
+    test.runner.networkLabels.delete(MUTATION_LOCK_NETWORK);
+    let retainedOwner: { id: string; operation?: string } | undefined;
+    test.context.interactive = {
+      configureAdmin: async () => undefined,
+      runUpdate: async () => undefined,
+      runMenu: async (operator) => {
+        test.runner.failAfterNetworkCreate = "connection reset by peer";
+        test.runner.retainNetworkOnRemovalError = true;
+        test.runner.nextNetworkRemovalError = () => "permission denied";
+
+        await expect(operator.stop()).rejects.toThrow("permission denied");
+
+        retainedOwner = JSON.parse(readFileSync(lockPath, "utf8"));
+        expect(retainedOwner).toMatchObject({ operation: "plugin-disable" });
+        expect(test.runner.networkLabels.get(MUTATION_LOCK_NETWORK)).toMatchObject({
+          "io.atlas.core.lock-id": retainedOwner?.id
+        });
+        expect(existsSync(join(config, "transaction"))).toBe(true);
+
+        await expect(operator.stop()).resolves.toBeUndefined();
+      }
+    };
+
+    expect(await runCLI([], test.context)).toBe(0);
+    expect(existsSync(lockPath)).toBe(false);
+    expect(existsSync(join(config, "transaction"))).toBe(false);
+    expect(test.runner.existingNetworks.has(MUTATION_LOCK_NETWORK)).toBe(false);
+  });
+
+  it("rejects interrupted-disable recovery on another engine before touching Docker locks", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const plugin = installTestPluginCatalog(test);
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
+    simulateInterruptedPluginDisable(test, plugin, "prepared");
+    const config = join(test.home, ".atlas", "core");
+    const lockPath = join(config, ".mutation.lock");
+    const originalOwner = JSON.parse(readFileSync(lockPath, "utf8"));
+    const originalLabels = test.runner.networkLabels.get(MUTATION_LOCK_NETWORK);
+    test.runner.existingNetworks.delete(MUTATION_LOCK_NETWORK);
+    test.runner.networkLabels.delete(MUTATION_LOCK_NETWORK);
+    test.runner.dockerEngineId = "another-engine";
+    test.runner.calls.length = 0;
+
+    expect(await runCLI(["stop"], test.context)).toBe(1);
+
+    expect(test.stderr.join("")).toContain("Restore the original Docker context");
+    expect(test.runner.calls.some((call) => call.args[0] === "network")).toBe(false);
+    expect(JSON.parse(readFileSync(lockPath, "utf8"))).toEqual(originalOwner);
+    expect(existsSync(join(config, "transaction"))).toBe(true);
+
+    test.runner.dockerEngineId = "test-engine-id";
+    test.runner.existingNetworks.add(MUTATION_LOCK_NETWORK);
+    if (originalLabels) test.runner.networkLabels.set(MUTATION_LOCK_NETWORK, originalLabels);
+    test.stderr.length = 0;
+
+    expect(await runCLI(["stop"], test.context)).toBe(0);
+    expect(existsSync(lockPath)).toBe(false);
+    expect(existsSync(join(config, "transaction"))).toBe(false);
+    expect(test.runner.existingNetworks.has(MUTATION_LOCK_NETWORK)).toBe(false);
   });
 
   it("rejects Plugin disable while an enabled Plugin service is stopped", async () => {

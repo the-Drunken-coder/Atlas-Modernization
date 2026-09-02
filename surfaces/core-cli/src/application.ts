@@ -593,10 +593,17 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     this.#idleRecoverableMutationLock = undefined;
     let dockerLock: DockerMutationLock | undefined;
     let dockerLockReleased = false;
+    let dockerLockAcquisitionNeedsRecovery = false;
     let idleRecoverableMutationLock: MutationLockOwner | undefined;
     try {
       this.#removeRetiredPluginDisableTransactions();
-      dockerLock = await this.#acquireDockerMutationLock(dockerEngineId, mutationLock);
+      if (recoverInterruptedDisable) this.#assertPluginDisableRecoveryEngine(dockerEngineId);
+      try {
+        dockerLock = await this.#acquireDockerMutationLock(dockerEngineId, mutationLock);
+      } catch (error) {
+        dockerLockAcquisitionNeedsRecovery = error instanceof OperationCleanupError;
+        throw error;
+      }
       this.#activeMutationLock = dockerLock.owner;
       try {
         if (recoverInterruptedDisable) {
@@ -612,10 +619,11 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       try {
         const localOwner = this.#activeMutationLock ?? mutationLock.owner;
         const preserveRecoverableLocalLock = localOwner.operation === "plugin-disable";
-        if (
-          (dockerLock && (dockerLockReleased || !preserveRecoverableLocalLock)) ||
-          (!dockerLock && !mutationLock.recovered)
-        ) {
+        const shouldPreserveRecoverableLocalLock =
+          (dockerLock !== undefined && !dockerLockReleased && preserveRecoverableLocalLock) ||
+          (dockerLock === undefined &&
+            (mutationLock.recovered || (preserveRecoverableLocalLock && dockerLockAcquisitionNeedsRecovery)));
+        if (!shouldPreserveRecoverableLocalLock) {
           this.#releaseMutationLock(dockerLock?.owner ?? mutationLock.owner);
         } else if (preserveRecoverableLocalLock && localOwner.processGroupId === undefined) {
           idleRecoverableMutationLock = localOwner;
@@ -2610,11 +2618,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   async #recoverPluginDisableTransaction(dockerEngineId: string): Promise<void> {
     if (!existsSync(this.#transactionDir)) return;
     this.#markActivePluginDisableOperation();
-    const info = lstatSync(this.#transactionDir);
-    if (info.isSymbolicLink() || !info.isDirectory()) {
-      throw new Error(`${this.#transactionDir} must be a regular directory.`);
-    }
-    this.#assertPrivateOwnershipAndMode(this.#transactionDir, info, 0o700);
+    this.#assertPluginDisableTransactionDirectory();
 
     const journalFile = join(this.#transactionDir, "journal.json");
     if (!existsSync(journalFile)) {
@@ -2643,13 +2647,32 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     this.#stdout.write(`Interrupted disable for Plugin ${journal.pluginId} rolled back.\n`);
   }
 
-  #abandonPluginDisableTransaction(): void {
+  #assertPluginDisableRecoveryEngine(dockerEngineId: string): void {
     if (!existsSync(this.#transactionDir)) return;
+    this.#assertPluginDisableTransactionDirectory();
+
+    const journalFile = join(this.#transactionDir, "journal.json");
+    if (!existsSync(journalFile)) {
+      this.#assertStateMatchesEngine(this.#requireInitialized(), dockerEngineId);
+      return;
+    }
+    const journal = this.#readPluginDisableJournal();
+    const state =
+      journal.phase === "preparing" ? this.#requireInitialized() : this.#readPluginDisablePreviousState(journal);
+    this.#assertStateMatchesEngine(state, dockerEngineId);
+  }
+
+  #assertPluginDisableTransactionDirectory(): void {
     const info = lstatSync(this.#transactionDir);
     if (info.isSymbolicLink() || !info.isDirectory()) {
       throw new Error(`${this.#transactionDir} must be a regular directory.`);
     }
     this.#assertPrivateOwnershipAndMode(this.#transactionDir, info, 0o700);
+  }
+
+  #abandonPluginDisableTransaction(): void {
+    if (!existsSync(this.#transactionDir)) return;
+    this.#assertPluginDisableTransactionDirectory();
     this.#removePluginDisableTransaction();
   }
 
