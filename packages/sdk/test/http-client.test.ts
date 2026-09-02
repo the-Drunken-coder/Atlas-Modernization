@@ -122,12 +122,36 @@ describe("AtlasClient HTTP", () => {
     await expect(client.handshake()).rejects.toBeInstanceOf(ProtocolMismatchError);
   });
 
-  it("aborts stalled HTTP requests with a clear timeout error", async () => {
+  it("does not start a request for a pre-aborted signal", async () => {
+    const controller = new AbortController();
+    const reason = new Error("caller already canceled");
+    controller.abort(reason);
+    let serializationReads = 0;
+    const body = Object.defineProperty({}, "value", {
+      enumerable: true,
+      get() {
+        serializationReads += 1;
+        return "unused";
+      }
+    });
+    const fetchImpl: typeof fetch = vi.fn(() => new Promise<Response>(() => undefined));
+    const transport = new HttpTransport({
+      baseUrl: "http://atlas.test",
+      fetchImpl,
+      requestTimeoutMs: 1_000
+    });
+
+    await expect(
+      transport.json("POST", "/entities", (_value): _value is unknown => true, body, undefined, controller.signal)
+    ).rejects.toBe(reason);
+
+    expect(serializationReads).toBe(0);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("aborts stalled HTTP requests when fetch ignores the abort signal", async () => {
     vi.useFakeTimers();
-    const fetchImpl: typeof fetch = (_url, init) =>
-      new Promise((_resolve, reject) => {
-        init?.signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
-      });
+    const fetchImpl: typeof fetch = () => new Promise<Response>(() => undefined);
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, requestTimeoutMs: 50 });
 
     try {
@@ -139,51 +163,76 @@ describe("AtlasClient HTTP", () => {
     }
   });
 
-  it("keeps the request timeout active while reading a response body", async () => {
+  it("aborts stalled response bodies when the body reader ignores the abort signal", async () => {
     vi.useFakeTimers();
-    const fetchImpl: typeof fetch = async (_url, init) => {
-      const body = new ReadableStream<Uint8Array>({
-        start(controller) {
-          init?.signal?.addEventListener("abort", () => controller.error(init.signal?.reason), { once: true });
-        }
-      });
-      return new Response(body, { status: 200, headers: { "Content-Type": "application/json" } });
-    };
-    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, requestTimeoutMs: 50 });
-
-    try {
-      const handshake = expect(client.handshake()).rejects.toThrow("Atlas request timed out after 50ms");
-      await vi.advanceTimersByTimeAsync(50);
-      await handshake;
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("rejects a successful JSON body that resolves after the request timeout", async () => {
-    vi.useFakeTimers();
-    const response = Response.json([]);
-    vi.spyOn(response, "text").mockImplementationOnce(
-      () => new Promise((resolve) => setTimeout(() => resolve("[]"), 100))
-    );
+    const response = Response.json({ protocol_revision: "unused" });
+    vi.spyOn(response, "text").mockImplementationOnce(() => new Promise<string>(() => undefined));
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: async () => response, requestTimeoutMs: 50 });
 
     try {
-      const plugins = expect(client.plugins.list()).rejects.toThrow("Atlas request timed out after 50ms");
-      await vi.advanceTimersByTimeAsync(100);
-      await plugins;
+      const handshake = expect(client.handshake()).rejects.toThrow("Atlas request timed out after 50ms");
+      await vi.advanceTimersByTimeAsync(50);
+      await handshake;
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it("rejects a successful binary body that resolves after caller cancellation", async () => {
+  it("does not start reading a response body after the request times out", async () => {
+    vi.useFakeTimers();
+    let resolveFetch!: (response: Response) => void;
+    const response = Response.json({ protocol_revision: "unused" });
+    const readBody = vi.spyOn(response, "text").mockImplementation(() => new Promise<string>(() => undefined));
+    const fetchImpl: typeof fetch = () =>
+      new Promise<Response>((resolve) => {
+        resolveFetch = resolve;
+      });
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, requestTimeoutMs: 50 });
+
+    try {
+      const handshake = expect(client.handshake()).rejects.toThrow("Atlas request timed out after 50ms");
+      await vi.advanceTimersByTimeAsync(50);
+      await handshake;
+
+      resolveFetch(response);
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(readBody).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("classifies a stalled HTTP error body as a request timeout", async () => {
+    vi.useFakeTimers();
+    const response = Response.json({ message: "unavailable" }, { status: 503 });
+    vi.spyOn(response, "text").mockImplementationOnce(() => new Promise<string>(() => undefined));
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: async () => response, requestTimeoutMs: 50 });
+
+    try {
+      const handshake = expect(client.handshake()).rejects.toMatchObject({
+        name: "AtlasTransportError",
+        message: "Atlas request timed out after 50ms",
+        code: "ATLAS_TRANSPORT_ERROR"
+      });
+      await vi.advanceTimersByTimeAsync(50);
+      await handshake;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("preserves caller cancellation while a binary body reader ignores the abort signal", async () => {
     const controller = new AbortController();
     const reason = new Error("caller canceled download");
     const response = new Response(new Uint8Array([1, 2, 3]));
-    vi.spyOn(response, "arrayBuffer").mockImplementationOnce(async () => {
-      controller.abort(reason);
-      return new Uint8Array([1, 2, 3]).buffer;
+    let markReadStarted!: () => void;
+    const readStarted = new Promise<void>((resolve) => {
+      markReadStarted = resolve;
+    });
+    vi.spyOn(response, "arrayBuffer").mockImplementationOnce(() => {
+      markReadStarted();
+      return new Promise<ArrayBuffer>(() => undefined);
     });
     const transport = new HttpTransport({
       baseUrl: "http://atlas.test",
@@ -191,7 +240,54 @@ describe("AtlasClient HTTP", () => {
       requestTimeoutMs: 1_000
     });
 
-    await expect(transport.arrayBuffer("GET", "/binary", controller.signal)).rejects.toBe(reason);
+    const download = transport.arrayBuffer("GET", "/binary", controller.signal);
+    await readStarted;
+    controller.abort(reason);
+
+    await expect(download).rejects.toBe(reason);
+  });
+
+  it("does not validate a response body that resolves after caller cancellation", async () => {
+    const controller = new AbortController();
+    const reason = new Error("caller canceled response validation");
+    const response = Response.json({ protocol_revision: "unused" });
+    let resolveBody!: (body: string) => void;
+    let markReadStarted!: () => void;
+    const readStarted = new Promise<void>((resolve) => {
+      markReadStarted = resolve;
+    });
+    vi.spyOn(response, "text").mockImplementationOnce(() => {
+      markReadStarted();
+      return new Promise<string>((resolve) => {
+        resolveBody = resolve;
+      });
+    });
+    let validationCalls = 0;
+    const transport = new HttpTransport({
+      baseUrl: "http://atlas.test",
+      fetchImpl: async () => response,
+      requestTimeoutMs: 1_000
+    });
+
+    const request = transport.json(
+      "GET",
+      "/handshake",
+      (_value): _value is unknown => {
+        validationCalls += 1;
+        return true;
+      },
+      undefined,
+      undefined,
+      controller.signal
+    );
+    await readStarted;
+    controller.abort(reason);
+    await expect(request).rejects.toBe(reason);
+
+    resolveBody("{}");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(validationCalls).toBe(0);
   });
 
   it("labels fetch failures as transport errors", async () => {
@@ -211,6 +307,23 @@ describe("AtlasClient HTTP", () => {
     expect(isAtlasTransportError(failure)).toBe(true);
   });
 
+  it("preserves request-body serialization errors", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    const transport = new HttpTransport({
+      baseUrl: "http://atlas.test",
+      fetchImpl,
+      requestTimeoutMs: 1_000
+    });
+
+    const failure = await transport
+      .json("POST", "/entities", (_value): _value is unknown => true, { bad: 1n })
+      .catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(TypeError);
+    expect(failure).not.toBeInstanceOf(AtlasTransportError);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it("sanitizes transport errors constructed by consumers", () => {
     const secret = "transport-canary-secret";
     const failure = new AtlasTransportError(`failed https://user:${secret}@core.test?api_key=${secret}`);
@@ -220,10 +333,7 @@ describe("AtlasClient HTTP", () => {
   });
 
   it("preserves caller abort reasons for handshake, check-in, and fresh reads", async () => {
-    const fetchImpl: typeof fetch = (_url, init) =>
-      new Promise((_resolve, reject) => {
-        init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
-      });
+    const fetchImpl: typeof fetch = () => new Promise<Response>(() => undefined);
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl });
     const handshakeController = new AbortController();
     const checkInController = new AbortController();
