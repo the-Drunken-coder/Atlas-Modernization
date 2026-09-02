@@ -827,11 +827,16 @@ jobs:
         if: github.ref_type == 'tag' && inputs.coordinator_run_id != ''
         env:
           COORDINATOR_RUN_ID: ${{ inputs.coordinator_run_id }}
+          COORDINATOR_RUN_ATTEMPT: ${{ inputs.coordinator_run_attempt }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$COORDINATOR_RUN_ID" |
-            jq -e --arg run_id "$COORDINATOR_RUN_ID" \
-              '.id == ($run_id | tonumber) and .status == "in_progress"' >/dev/null
+            jq -e \
+              --arg run_attempt "$COORDINATOR_RUN_ATTEMPT" \
+              --arg run_id "$COORDINATOR_RUN_ID" \
+              '.id == ($run_id | tonumber) and
+               .run_attempt == ($run_attempt | tonumber) and
+               .status == "in_progress"' >/dev/null
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
@@ -1216,11 +1221,16 @@ jobs:
         if: github.ref_type == 'tag' && inputs.coordinator_run_id != ''
         env:
           COORDINATOR_RUN_ID: ${{ inputs.coordinator_run_id }}
+          COORDINATOR_RUN_ATTEMPT: ${{ inputs.coordinator_run_attempt }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$COORDINATOR_RUN_ID" |
-            jq -e --arg run_id "$COORDINATOR_RUN_ID" \
-              '.id == ($run_id | tonumber) and .status == "in_progress"' >/dev/null
+            jq -e \
+              --arg run_attempt "$COORDINATOR_RUN_ATTEMPT" \
+              --arg run_id "$COORDINATOR_RUN_ID" \
+              '.id == ($run_id | tonumber) and
+               .run_attempt == ($run_attempt | tonumber) and
+               .status == "in_progress"' >/dev/null
 
       - name: Bootstrap the npm package
         if: >-
@@ -1505,6 +1515,13 @@ jobs:
 
           if [ -z "$release_sha" ]; then
             echo "$tag is not the annotated Atlas Core release tag." >&2
+            exit 1
+          fi
+          tag_contents="$(git cat-file -p "$tag_object_sha")"
+          if [ "$(sed -n '1p' <<< "$tag_contents")" != "object $release_sha" ] || \
+             [ "$(sed -n '2p' <<< "$tag_contents")" != "type commit" ] || \
+             [ "$(sed -n '3p' <<< "$tag_contents")" != "tag $tag" ]; then
+            echo "$tag does not directly identify the Atlas Core release commit." >&2
             exit 1
           fi
           if ! git merge-base --is-ancestor "$release_sha" origin/main; then

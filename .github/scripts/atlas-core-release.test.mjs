@@ -291,6 +291,28 @@ test("reuses the exact release commit after an authorization upload failure", ()
     });
     assert.notEqual(mismatchedRetry.status, 0);
     assert.match(mismatchedRetry.stderr, /approved release artifact does not match/);
+
+    writeFileSync(changelog, approvedChangelog);
+    git(["add", "CHANGELOG.md"], checkout);
+    git(["tag", "--delete", `atlas-core-v${version}`], checkout);
+    git(["tag", "--annotate", "nested-release-target", "--message", "Nested target", releaseSha], checkout);
+    git([
+      "tag",
+      "--annotate",
+      `atlas-core-v${version}`,
+      "--message",
+      `Atlas Core ${version}`,
+      "nested-release-target"
+    ], checkout);
+    git(["push", "--force", "origin", `refs/tags/atlas-core-v${version}`], checkout);
+    writeFileSync(output, "");
+    const indirectTagRetry = runWorkflowStep("Select release commit state", checkout, {
+      GITHUB_OUTPUT: output,
+      SOURCE_SHA: sourceSha,
+      VERSION: version
+    });
+    assert.notEqual(indirectTagRetry.status, 0);
+    assert.match(indirectTagRetry.stderr, /does not directly identify/);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -364,7 +386,7 @@ test("coordinates automatic tag publication after one approval", () => {
   assert.match(source, /name: Verify coordinator authorization/);
   assert.match(
     source,
-    /name: Verify coordinator authorization[\s\S]*?COORDINATOR_RUN_ID: \$\{\{ inputs\.coordinator_run_id \}\}\n\s+GH_TOKEN: \$\{\{ secrets\.GITHUB_TOKEN \}\}/
+    /name: Verify coordinator authorization[\s\S]*?COORDINATOR_RUN_ID: \$\{\{ inputs\.coordinator_run_id \}\}\n\s+EXPECTED_COORDINATOR_RUN_ATTEMPT: \$\{\{ inputs\.coordinator_run_attempt \}\}\n\s+GH_TOKEN: \$\{\{ secrets\.GITHUB_TOKEN \}\}/
   );
   assert.match(source, /run-id: \$\{\{ inputs\.coordinator_run_id \}\}/);
   assert.match(source, /child_run_id: \$child_run_id/);
@@ -386,6 +408,7 @@ test("coordinates automatic tag publication after one approval", () => {
     );
     assert.match(source, /\.status == "in_progress"/);
     assert.equal(source.match(/\.status == "in_progress"/g)?.length, 3);
+    assert.equal(source.match(/\.run_attempt == \(\$run_attempt \| tonumber\)/g)?.length, 2);
     assert.match(source, /name: Verify exact coordinator package artifact/);
     assert.match(source, /name: Download coordinator-approved release/);
     assert.match(source, /Downloaded package integrity does not match the coordinator authorization/);
