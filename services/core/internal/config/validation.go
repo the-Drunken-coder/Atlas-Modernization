@@ -59,7 +59,8 @@ func (c *Config) validatePlugins() error {
 			return fmt.Errorf("plugins[%d].base_url must be a plain HTTP origin", index)
 		}
 		if port := parsed.Port(); port != "" {
-			if _, err := strconv.ParseUint(port, 10, 16); err != nil {
+			value, err := strconv.ParseUint(port, 10, 16)
+			if err != nil || value == 0 {
 				return fmt.Errorf("plugins[%d].base_url must be a plain HTTP origin", index)
 			}
 		}
