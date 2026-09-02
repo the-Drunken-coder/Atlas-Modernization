@@ -534,11 +534,11 @@ func TestExpiredDeadlineDetectedBeforeDone(t *testing.T) {
 	if !contextExpired(expired, now) {
 		t.Fatal("passed deadline was not detected before Done closed")
 	}
-	failure := contextFailure(context.Background(), expired, false)
+	failure := admissionFailure(context.Background(), expired)
 	if failure.code != FailureAdmissionTimeout || !errors.Is(failure.err, context.DeadlineExceeded) {
 		t.Fatalf("connector deadline failure=%v", failure)
 	}
-	failure = contextFailure(expired, expired, false)
+	failure = admissionFailure(expired, expired)
 	if failure.code != failureRequestCanceled || !errors.Is(failure.err, context.DeadlineExceeded) {
 		t.Fatalf("parent deadline failure=%v", failure)
 	}
@@ -586,6 +586,83 @@ func TestOlderReachabilityCannotOverwriteNewerFailure(t *testing.T) {
 	connector.recordReachable(failureAt.Add(-time.Nanosecond))
 	if !connector.circuitOpen(failureAt) {
 		t.Fatal("older reachability overwrote newer failure")
+	}
+}
+
+func TestOutOfOrderBreakerEventsPreserveIntermediateReachability(t *testing.T) {
+	config := testConnectorConfig()
+	config.CircuitBreaker.Failures = 2
+	gateway, err := New(Config{Connectors: []ConnectorConfig{config}}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connector := gateway.connectors["reference"]
+	firstFailureAt := time.Now()
+	reachableAt := firstFailureAt.Add(time.Nanosecond)
+	lastFailureAt := reachableAt.Add(time.Nanosecond)
+
+	connector.recordFailure(lastFailureAt, lastFailureAt)
+	connector.recordFailure(lastFailureAt, firstFailureAt)
+	connector.recordReachable(reachableAt)
+
+	if connector.circuitOpen(lastFailureAt) {
+		t.Fatal("failures separated by a reachable response opened the circuit")
+	}
+	connector.stateMu.Lock()
+	failures := connector.failures
+	connector.stateMu.Unlock()
+	if failures != 1 {
+		t.Fatalf("failures=%d, want 1", failures)
+	}
+}
+
+func TestConnectorDeadlineDoesNotOwnEarlierCompletion(t *testing.T) {
+	connectorDeadline := time.Now().Add(20 * time.Millisecond)
+	requestContext, cancel := context.WithDeadlineCause(
+		context.Background(),
+		connectorDeadline,
+		errConnectorDeadline,
+	)
+	defer cancel()
+	completedAt := connectorDeadline.Add(-time.Nanosecond)
+	<-requestContext.Done()
+
+	if connectorDeadlineWon(context.Background(), requestContext, connectorDeadline, completedAt) {
+		t.Fatal("connector deadline claimed an attempt that completed before it")
+	}
+}
+
+func TestNilParentCauseDoesNotHideIndependentFailure(t *testing.T) {
+	var calls atomic.Int32
+	parentDeadline := time.Now().Add(100 * time.Millisecond)
+	parent := deadlineBeforeDoneContext{Context: context.Background(), deadline: parentDeadline}
+	config := testConnectorConfig()
+	config.Limits.MaxResponseBytes = 1
+	config.Limits.TimeoutMS = 1_000
+	config.CircuitBreaker.Failures = 1
+	gateway, err := New(Config{Connectors: []ConnectorConfig{config}}, Options{
+		Client: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			calls.Add(1)
+			time.Sleep(time.Until(parentDeadline) + time.Millisecond)
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{},
+				Body:       io.NopCloser(strings.NewReader("xx")),
+			}, nil
+		})},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connector := gateway.connectors["reference"]
+	request := ConnectorRequest{Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{}}
+	_, attempts, _, failure := gateway.execute(parent, connector, request)
+	if failure == nil || failure.code != failureRequestCanceled || attempts != 1 || calls.Load() != 1 {
+		t.Fatalf("first attempts=%d calls=%d failure=%v", attempts, calls.Load(), failure)
+	}
+	_, attempts, _, failure = gateway.execute(context.Background(), connector, request)
+	if failure == nil || failure.code != FailureCircuitOpen || attempts != 0 || calls.Load() != 1 {
+		t.Fatalf("second attempts=%d calls=%d failure=%v", attempts, calls.Load(), failure)
 	}
 }
 
