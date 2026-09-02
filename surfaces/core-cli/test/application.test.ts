@@ -12,8 +12,8 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
-import { type CLIContext, type CommandRunner, runCLI } from "../src/application.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { type CLIContext, type CommandRunner, ProcessCommandRunner, runCLI } from "../src/application.js";
 import { PACKAGE_NAME, PACKAGE_VERSION } from "../src/package-metadata.js";
 import type { PluginCatalogEntry } from "../src/plugin-catalog.js";
 import type { DeploymentDetails } from "../src/terminal-ui.js";
@@ -45,10 +45,12 @@ class FakeRunner implements CommandRunner {
   readonly existingVolumes = new Set<string>();
   readonly existingContainers = new Set<string>();
   readonly existingNetworks = new Set<string>();
+  readonly networkLabels = new Map<string, Record<string, string>>();
   readonly mismatchedResources = new Set<string>();
   readonly volumeUsers = new Map<string, Set<string>>();
   inspectionError: { kind: "container" | "volume"; name: string } | undefined;
   failComposeDown = false;
+  failComposeConfig = false;
   failComposeUp = false;
   failStats = false;
   failInstalledCoreUpdate = false;
@@ -61,7 +63,11 @@ class FakeRunner implements CommandRunner {
   latestImage = TEST_IMAGE;
   runningCoreImage = TEST_IMAGE;
   installedVersion = PACKAGE_VERSION;
-  onRun: ((call: Call) => void) | undefined;
+  onRun: ((call: Call) => void | Promise<void>) | undefined;
+  afterSuccessfulNetworkCreate: (() => void) | undefined;
+  cancelAfterNetworkCreate: (() => void) | undefined;
+  onCleanupStart: ((signal: AbortSignal | undefined) => void) | undefined;
+  hangCleanup = false;
   serviceStates = [
     { Service: "api", State: "running", Health: "healthy" },
     { Service: "source-gateway", State: "running", Health: "healthy" },
@@ -78,7 +84,7 @@ class FakeRunner implements CommandRunner {
     command: string,
     args: string[],
     options: { cwd?: string; env?: NodeJS.ProcessEnv; inherit?: boolean; signal?: AbortSignal } = {}
-  ): Promise<{ status: number; stdout: string; stderr: string }> {
+  ): Promise<{ cancelled?: true; status: number; stdout: string; stderr: string }> {
     const call = {
       command,
       args,
@@ -88,7 +94,9 @@ class FakeRunner implements CommandRunner {
       ...(options.signal ? { signal: options.signal } : {})
     };
     this.calls.push(call);
-    this.onRun?.(call);
+    const cancellationCount = this.cancelAllCalls;
+    await this.onRun?.(call);
+    if (this.cancelAllCalls > cancellationCount) return { ...result(1), cancelled: true };
     if (command === "npm" && args[0] === "view") {
       return result(0, JSON.stringify({ version: this.latestVersion, atlasCoreImage: this.latestImage }));
     }
@@ -109,6 +117,22 @@ class FakeRunner implements CommandRunner {
       const name = args.at(-1) ?? "";
       if (this.existingNetworks.has(name)) return result(1, "", `network with name ${name} already exists`);
       this.existingNetworks.add(name);
+      const labels: Record<string, string> = {};
+      for (let index = 0; index < args.length; index++) {
+        if (args[index] !== "--label") continue;
+        const [labelName, ...valueParts] = args[index + 1]?.split("=") ?? [];
+        if (labelName) labels[labelName] = valueParts.join("=");
+      }
+      this.networkLabels.set(name, labels);
+      const cancelAfterNetworkCreate = this.cancelAfterNetworkCreate;
+      this.cancelAfterNetworkCreate = undefined;
+      if (cancelAfterNetworkCreate) {
+        cancelAfterNetworkCreate();
+        return { ...result(1), cancelled: true };
+      }
+      const afterSuccessfulNetworkCreate = this.afterSuccessfulNetworkCreate;
+      this.afterSuccessfulNetworkCreate = undefined;
+      if (afterSuccessfulNetworkCreate) queueMicrotask(afterSuccessfulNetworkCreate);
       return result(0, `${name}\n`);
     }
     if (args[0] === "network" && args[1] === "inspect") {
@@ -116,15 +140,19 @@ class FakeRunner implements CommandRunner {
       if (!this.existingNetworks.has(name)) return result(1, "", `Error: No such network: ${name}`);
       return result(
         0,
-        JSON.stringify({
-          "io.atlas.core.engine": "test-engine-id",
-          "io.atlas.core.lock": "mutation",
-          "io.atlas.core.project": "atlas_core_production"
-        })
+        JSON.stringify(
+          this.networkLabels.get(name) ?? {
+            "io.atlas.core.engine": "test-engine-id",
+            "io.atlas.core.lock": "mutation",
+            "io.atlas.core.project": "atlas_core_production"
+          }
+        )
       );
     }
     if (args[0] === "network" && args[1] === "rm") {
-      this.existingNetworks.delete(args.at(-1) ?? "");
+      const name = args.at(-1) ?? "";
+      this.existingNetworks.delete(name);
+      this.networkLabels.delete(name);
       return result(0);
     }
     if (args[0] === "volume" && args[1] === "create") {
@@ -240,13 +268,45 @@ class FakeRunner implements CommandRunner {
         })
       );
     }
-    if (this.failComposeUp && composeCommand(this.calls.at(-1) ?? this.calls[0]!)[0] === "up") {
+    const compose = composeCommand(call);
+    if (this.failComposeConfig && compose[0] === "config") {
+      return result(1, "", "injected compose config failure");
+    }
+    if (this.failComposeUp && compose[0] === "up") {
       return result(1, "", "injected compose up failure");
     }
-    if (this.failComposeDown && composeCommand(this.calls.at(-1) ?? this.calls[0]!)[0] === "down") {
+    if (this.failComposeDown && compose[0] === "down") {
       return result(1, "", "injected compose down failure");
     }
+    if (compose[0] === "rm") {
+      const removedService = compose.at(-1);
+      if (removedService)
+        this.serviceStates = this.serviceStates.filter((service) => service.Service !== removedService);
+    }
+    if (compose[0] === "up") {
+      const waitTimeout = compose.indexOf("--wait-timeout");
+      const requestedServices = waitTimeout === -1 ? [] : compose.slice(waitTimeout + 2);
+      for (const service of requestedServices) {
+        if (!this.serviceStates.some((candidate) => candidate.Service === service)) {
+          this.serviceStates.push({ Service: service, State: "running", Health: "healthy" });
+        }
+      }
+    }
     return result(0);
+  }
+
+  async runCleanup(
+    command: string,
+    args: string[],
+    options: { cwd?: string; env?: NodeJS.ProcessEnv; inherit?: boolean; signal?: AbortSignal } = {}
+  ): Promise<{ cancelled?: true; status: number; stdout: string; stderr: string }> {
+    if (!this.hangCleanup) return await this.run(command, args, options);
+    this.onCleanupStart?.(options.signal);
+    return await new Promise((resolve) => {
+      const cancelled = (): void => resolve({ ...result(1), cancelled: true });
+      options.signal?.addEventListener("abort", cancelled, { once: true });
+      if (options.signal?.aborted) cancelled();
+    });
   }
 }
 
@@ -261,6 +321,7 @@ type TestRuntime = {
 const temporaryDirectories: string[] = [];
 
 afterEach(() => {
+  vi.useRealTimers();
   for (const directory of temporaryDirectories.splice(0)) rmSync(directory, { recursive: true, force: true });
 });
 
@@ -432,6 +493,24 @@ describe("atlas-core CLI", () => {
     expect(test.runner.calls).toHaveLength(0);
   });
 
+  it("allows later commands after the interface finishes cancellation cleanup", async () => {
+    const test = runtime();
+    test.context.interactive = {
+      configureAdmin: async () => undefined,
+      runMenu: async () => undefined,
+      runUpdate: async (operator) => {
+        operator.cancelPending();
+        await expect(operator.checkForUpdates()).rejects.toThrow("Atlas Core command was cancelled.");
+        operator.resumeAfterCancellation();
+        await expect(operator.checkForUpdates()).resolves.toMatchObject({ latestVersion: PACKAGE_VERSION });
+      }
+    };
+
+    expect(await runCLI(["update"], test.context)).toBe(0);
+    expect(test.runner.cancelAllCalls).toBe(1);
+    expect(test.runner.calls.some((call) => call.command === "npm" && call.args[0] === "view")).toBe(true);
+  });
+
   it("allows initialization cleanup commands after cancellation", async () => {
     const test = runtime();
     test.context.interactive = {
@@ -451,6 +530,164 @@ describe("atlas-core CLI", () => {
     expect(await runCLI([], test.context)).toBe(0);
     expect(test.runner.calls.map(composeCommand)).toContainEqual(["down"]);
     expect(test.runner.calls.some((call) => call.args[0] === "network" && call.args[1] === "rm")).toBe(true);
+  });
+
+  it("releases the Docker mutation lock when cancellation races successful acquisition", async () => {
+    const test = runtime();
+    test.context.interactive = {
+      configureAdmin: async () => undefined,
+      runUpdate: async () => undefined,
+      runMenu: async (operator) => {
+        test.runner.afterSuccessfulNetworkCreate = () => operator.cancelPending();
+        await expect(operator.init()).rejects.toThrow("Atlas Core command was cancelled.");
+      }
+    };
+
+    expect(await runCLI([], test.context)).toBe(0);
+    expect(test.runner.existingNetworks.has(MUTATION_LOCK_NETWORK)).toBe(false);
+    expect(test.runner.calls.some((call) => call.args[0] === "network" && call.args[1] === "rm")).toBe(true);
+  });
+
+  it("removes its Docker mutation lock when create succeeds before reporting cancellation", async () => {
+    const test = runtime();
+    test.context.interactive = {
+      configureAdmin: async () => undefined,
+      runUpdate: async () => undefined,
+      runMenu: async (operator) => {
+        test.runner.cancelAfterNetworkCreate = () => operator.cancelPending();
+        await expect(operator.init()).rejects.toThrow("Atlas Core command was cancelled.");
+      }
+    };
+
+    expect(await runCLI([], test.context)).toBe(0);
+    expect(test.runner.existingNetworks.has(MUTATION_LOCK_NETWORK)).toBe(false);
+    expect(test.runner.calls.some((call) => call.args[0] === "network" && call.args[1] === "inspect")).toBe(true);
+    expect(test.runner.calls.some((call) => call.args[0] === "network" && call.args[1] === "rm")).toBe(true);
+  });
+
+  it("bounds cleanup commands after cancellation", async () => {
+    vi.useFakeTimers();
+    const test = runtime();
+    test.runner.hangCleanup = true;
+    let cleanupStarted: (() => void) | undefined;
+    const cleanup = new Promise<void>((resolve) => {
+      cleanupStarted = resolve;
+    });
+    test.runner.onCleanupStart = cleanupStarted;
+    test.context.interactive = {
+      configureAdmin: async () => undefined,
+      runUpdate: async () => undefined,
+      runMenu: async (operator) => {
+        test.runner.afterSuccessfulNetworkCreate = () => operator.cancelPending();
+        const operation = expect(operator.init()).rejects.toThrow("docker network rm");
+        await cleanup;
+        await vi.advanceTimersByTimeAsync(130_000);
+        await operation;
+      }
+    };
+
+    expect(await runCLI([], test.context)).toBe(0);
+  });
+
+  it("starts the cleanup deadline when rollback begins", async () => {
+    vi.useFakeTimers();
+    const test = runtime();
+    test.runner.hangCleanup = true;
+    let releaseForeground: (() => void) | undefined;
+    const foreground = new Promise<void>((resolve) => {
+      releaseForeground = resolve;
+    });
+    let foregroundStarted: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => {
+      foregroundStarted = resolve;
+    });
+    let cleanupStarted: (() => void) | undefined;
+    const cleanup = new Promise<void>((resolve) => {
+      cleanupStarted = resolve;
+    });
+    let cleanupSignal: AbortSignal | undefined;
+    test.runner.onCleanupStart = (signal) => {
+      cleanupSignal = signal;
+      cleanupStarted?.();
+    };
+    test.context.interactive = {
+      configureAdmin: async () => undefined,
+      runUpdate: async () => undefined,
+      runMenu: async (operator) => {
+        let held = false;
+        test.runner.onRun = async (call) => {
+          if (held || composeCommand(call)[0] !== "up") return;
+          held = true;
+          operator.cancelPending();
+          foregroundStarted?.();
+          await foreground;
+        };
+        const operation = expect(operator.init()).rejects.toThrow("docker network rm");
+        await started;
+        await vi.advanceTimersByTimeAsync(130_000);
+        releaseForeground?.();
+        await cleanup;
+        expect(cleanupSignal?.aborted).toBe(false);
+        await vi.advanceTimersByTimeAsync(129_999);
+        expect(cleanupSignal?.aborted).toBe(false);
+        await vi.advanceTimersByTimeAsync(1);
+        await operation;
+      }
+    };
+
+    expect(await runCLI([], test.context)).toBe(0);
+  });
+
+  it("does not terminate a pending cleanup process when ordinary commands are cancelled", async () => {
+    const runner = new ProcessCommandRunner();
+    const operation = runner.run(process.execPath, ["-e", "setTimeout(() => {}, 2_000)"]);
+    const cleanup = runner.runCleanup(process.execPath, ["-e", "setTimeout(() => {}, 100)"]);
+
+    runner.cancelAll();
+
+    await expect(operation).resolves.toMatchObject({ status: 1 });
+    await expect(cleanup).resolves.toMatchObject({ status: 0 });
+  });
+
+  it("force-terminates a command that ignores graceful cancellation", async () => {
+    const runner = new ProcessCommandRunner();
+    const directory = mkdtempSync(join(tmpdir(), "atlas-core-runner-test-"));
+    temporaryDirectories.push(directory);
+    const marker = join(directory, "ready");
+    const operation = runner.run(process.execPath, [
+      "-e",
+      `process.on("SIGTERM", () => {});
+      require("node:fs").writeFileSync(${JSON.stringify(marker)}, "ready");
+      setInterval(() => {}, 30_000);`
+    ]);
+
+    await vi.waitFor(() => expect(existsSync(marker)).toBe(true));
+    runner.cancelAll();
+
+    await expect(operation).resolves.toMatchObject({ cancelled: true, status: 1 });
+  });
+
+  it("does not cancel a successful command waiting for inherited output to close", async () => {
+    const runner = new ProcessCommandRunner();
+    const directory = mkdtempSync(join(tmpdir(), "atlas-core-runner-test-"));
+    temporaryDirectories.push(directory);
+    const marker = join(directory, "pid");
+    const operation = runner.run(process.execPath, [
+      "-e",
+      `const child = require("node:child_process").spawn(process.execPath, ["-e", "setTimeout(() => {}, 30000)"], {
+        stdio: ["ignore", "inherit", "inherit"]
+      });
+      child.unref();
+      require("node:fs").writeFileSync(${JSON.stringify(marker)}, String(process.pid));
+      process.exit(0);`
+    ]);
+
+    await vi.waitFor(() => expect(existsSync(marker)).toBe(true));
+    const childPid = Number(readFileSync(marker, "utf8"));
+    await vi.waitFor(() => expect(() => process.kill(childPid, 0)).toThrow());
+    runner.cancelAll();
+
+    await expect(operation).resolves.toEqual(result(0));
   });
 
   it("rejects unknown update scopes", async () => {
@@ -1500,6 +1737,9 @@ describe("atlas-core CLI", () => {
       "source-gateway",
       plugin.service
     ]);
+    expect(test.stdout.join("")).toContain("[work] Pulling Spatial Fixture image");
+    expect(test.stdout.join("")).toContain("[done] Deployment configuration valid");
+    expect(test.stdout.join("")).toContain("[done] Spatial Fixture enabled and healthy");
   });
 
   it("enables a Plugin without starting a stopped deployment", async () => {
@@ -1513,11 +1753,47 @@ describe("atlas-core CLI", () => {
     expect(test.stdout.join("")).toContain("It will start with Atlas Core");
   });
 
+  it("does not touch running services when Plugin configuration validation fails", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const plugin = installTestPluginCatalog(test);
+    test.runner.failComposeConfig = true;
+
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(1);
+    const composeCalls = test.runner.calls.map(composeCommand);
+    expect(composeCalls).not.toContainEqual(expect.arrayContaining(["rm"]));
+    expect(composeCalls).not.toContainEqual(expect.arrayContaining(["up"]));
+    expect(existsSync(join(test.home, ".atlas", "core", "plugins", plugin.pluginId))).toBe(false);
+    expect(JSON.parse(readFileSync(join(test.home, ".atlas", "core", "state.json"), "utf8"))).toMatchObject({
+      enabledPlugins: []
+    });
+  });
+
+  it("rejects Plugin enable while a required Core service is stopped", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const plugin = installTestPluginCatalog(test);
+    test.runner.serviceStates = test.runner.serviceStates.map((service) =>
+      service.Service === "api" ? { ...service, State: "exited" } : service
+    );
+
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(1);
+    expect(test.stderr.join("")).toContain("api is exited");
+    expect(test.runner.calls.map(composeCommand)).not.toContainEqual(expect.arrayContaining(["up"]));
+    expect(existsSync(join(test.home, ".atlas", "core", "plugins", plugin.pluginId))).toBe(false);
+  });
+
   it("rolls back Plugin state and private assets when a running enable fails", async () => {
     const test = runtime();
     markInitialized(test);
     const plugin = installTestPluginCatalog(test);
     test.runner.failComposeUp = true;
+    let composeUpCalls = 0;
+    test.runner.onRun = (call) => {
+      if (composeCommand(call)[0] !== "up") return;
+      composeUpCalls++;
+      if (composeUpCalls === 2) test.runner.failComposeUp = false;
+    };
 
     expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(1);
     expect(JSON.parse(readFileSync(join(test.home, ".atlas", "core", "state.json"), "utf8"))).toMatchObject({
@@ -1525,13 +1801,14 @@ describe("atlas-core CLI", () => {
     });
     expect(existsSync(join(test.home, ".atlas", "core", "plugins", plugin.pluginId))).toBe(false);
     expect(test.stderr.join("")).toContain("injected compose up failure");
+    expect(test.stdout.join("")).toContain("[work] Restoring previous deployment");
+    expect(test.stdout.join("")).toContain("[done] Previous deployment restored");
   });
 
   it("completes Plugin enable rollback after cancellation", async () => {
     const test = runtime();
     markInitialized(test);
     const plugin = installTestPluginCatalog(test);
-    test.runner.failComposeUp = true;
     test.context.interactive = {
       configureAdmin: async () => undefined,
       runUpdate: async () => undefined,
@@ -1542,7 +1819,10 @@ describe("atlas-core CLI", () => {
           cancelled = true;
           operator.cancelPending();
         };
-        await expect(operator.pluginEnable(plugin.pluginId)).rejects.toThrow("injected compose up failure");
+        await expect(operator.pluginEnable(plugin.pluginId)).resolves.toEqual({
+          previousDeploymentPreserved: true,
+          status: "cancelled"
+        });
       }
     };
 
@@ -1557,6 +1837,27 @@ describe("atlas-core CLI", () => {
         .map(composeCommand)
         .filter((args) => args[0] === "up" && args.includes("api") && !args.includes(plugin.service))
     ).toHaveLength(1);
+  });
+
+  it("handles SIGINT for direct Plugin changes and exits after rollback", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const plugin = installTestPluginCatalog(test);
+    const initialSignalListeners = process.listenerCount("SIGINT");
+    let interrupted = false;
+    test.runner.onRun = (call) => {
+      if (interrupted || composeCommand(call)[0] !== "up" || !composeCommand(call).includes(plugin.service)) return;
+      interrupted = true;
+      process.emit("SIGINT");
+    };
+
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(130);
+    expect(process.listenerCount("SIGINT")).toBe(initialSignalListeners);
+    expect(test.stdout.join("")).toContain("[cancel] Enable cancelled. The previous deployment is preserved.");
+    expect(JSON.parse(readFileSync(join(test.home, ".atlas", "core", "state.json"), "utf8"))).toMatchObject({
+      enabledPlugins: []
+    });
+    expect(existsSync(join(test.home, ".atlas", "core", "plugins", plugin.pluginId))).toBe(false);
   });
 
   it("serializes Plugin mutations with the deployment lock", async () => {
@@ -1586,6 +1887,24 @@ describe("atlas-core CLI", () => {
       enabledPlugins: []
     });
     expect(existsSync(join(test.home, ".atlas", "core", "plugins", plugin.pluginId))).toBe(false);
+  });
+
+  it("rejects Plugin disable while an enabled Plugin service is stopped", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const plugin = installTestPluginCatalog(test);
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
+    test.runner.serviceStates = test.runner.serviceStates.map((service) =>
+      service.Service === plugin.service ? { ...service, State: "exited" } : service
+    );
+    test.runner.calls.length = 0;
+
+    expect(await runCLI(["plugins", "disable", plugin.pluginId], test.context)).toBe(1);
+    expect(test.stderr.join("")).toContain(`${plugin.service} is exited`);
+    expect(test.runner.calls.map(composeCommand)).not.toContainEqual(["rm", "-s", "-f", plugin.service]);
+    expect(JSON.parse(readFileSync(join(test.home, ".atlas", "core", "state.json"), "utf8"))).toMatchObject({
+      enabledPlugins: [plugin.pluginId]
+    });
   });
 
   it("does not remove a Plugin container when its rollback backup cannot be created", async () => {
