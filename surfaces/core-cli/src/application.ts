@@ -369,7 +369,7 @@ class CancellableCommandRunner implements CommandRunner {
   async run(command: string, args: string[], options?: RunOptions): Promise<CommandResult> {
     if (this.#cancelled || options?.signal?.aborted) throw new CommandCancelledError();
     const result = await this.#runner.run(command, args, options);
-    if (result.cancelled) throw new CommandCancelledError();
+    if (this.#cancelled || options?.signal?.aborted || result.cancelled) throw new CommandCancelledError();
     return result;
   }
 
@@ -671,7 +671,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     assertAdminPassword(password);
     await this.#withInitializedMutation(async (state, dockerEngineId) => {
       this.#assertStateMatchesEngine(state, dockerEngineId);
-      const snapshot = await this.#deploymentSnapshot(state.enabledPlugins);
+      const snapshot = await this.#fullyHealthyMutationSnapshot(state, "Running admin password changes");
       if (snapshot.status === "stopped") {
         this.#replaceConfigValue("ATLAS_ADMIN_PASSWORD", quoteComposeValue(password));
         this.#stdout.write("Atlas Core admin password updated for username admin.\n");
@@ -704,21 +704,30 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
         this.#recordStarted(attemptedState);
       } catch (error) {
         const rollbackErrors: string[] = [];
+        let configurationRestored = false;
         await attemptRollback(rollbackErrors, () =>
           writePrivateFile(this.#envFile, previousConfiguration, this.#platform)
         );
+        await attemptRollback(rollbackErrors, () => {
+          if (readFileSync(this.#envFile, "utf8") !== previousConfiguration) {
+            throw new Error(`Restoring ${this.#envFile} did not preserve its previous contents.`);
+          }
+          configurationRestored = true;
+        });
         await attemptRollback(rollbackErrors, async () => {
           const cleanup = await this.#runComposeCleanup(["down"], state.enabledPlugins);
           if (cleanup.status !== 0) throw commandFailure("stop failed admin password replacement", cleanup);
         });
-        await attemptRollback(rollbackErrors, async () => {
-          const restore = await this.#runComposeCleanup(
-            ["up", "-d", "--pull", "never", "--wait", "--wait-timeout", COMPOSE_WAIT_SECONDS],
-            state.enabledPlugins
-          );
-          if (restore.status !== 0) throw commandFailure("restore previous Atlas Core deployment", restore);
-          this.#recordStarted(attemptedState);
-        });
+        if (configurationRestored) {
+          await attemptRollback(rollbackErrors, async () => {
+            const restore = await this.#runComposeCleanup(
+              ["up", "-d", "--pull", "never", "--wait", "--wait-timeout", COMPOSE_WAIT_SECONDS],
+              state.enabledPlugins
+            );
+            if (restore.status !== 0) throw commandFailure("restore previous Atlas Core deployment", restore);
+            this.#recordStarted(attemptedState);
+          });
+        }
         if (error instanceof CommandCancelledError || rollbackErrors.length > 0) {
           throw transactionFailure(error, rollbackErrors);
         }
@@ -937,7 +946,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     return deploymentSnapshotFromServices(await this.#composeServiceStates(pluginIds));
   }
 
-  async #pluginMutationSnapshot(state: DeploymentState): Promise<DeploymentSnapshot> {
+  async #fullyHealthyMutationSnapshot(state: DeploymentState, operation: string): Promise<DeploymentSnapshot> {
     const services = await this.#composeServiceStates(state.enabledPlugins);
     if (services.length === 0) return deploymentSnapshotFromServices(services);
     const expectedServices = [
@@ -947,7 +956,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     const failures = unhealthyServices(services, expectedServices);
     if (failures.length > 0) {
       throw new Error(
-        `Plugin changes require the current deployment to be fully healthy: ${failures.join(", ")}. ` +
+        `${operation} require the current deployment to be fully healthy: ${failures.join(", ")}. ` +
           "Restore every Core and enabled Plugin service, or stop the deployment completely, before retrying."
       );
     }
@@ -1122,7 +1131,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     await this.#checkCommand("docker", ["pull", image]);
     report({ level: "success", message: "Plugin image ready", stage: "operation" });
     report({ level: "working", message: "Reading current deployment", stage: "operation" });
-    const snapshot = await this.#pluginMutationSnapshot(state);
+    const snapshot = await this.#fullyHealthyMutationSnapshot(state, "Plugin changes");
     const candidatePluginIds = [...state.enabledPlugins, pluginId].sort();
     report({ level: "working", message: "Staging plugin deployment files", stage: "operation" });
     this.#stagePluginAssets(plugin);
@@ -1242,7 +1251,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       return `${plugin.displayName} is already disabled`;
     }
     report({ level: "working", message: "Reading current deployment", stage: "operation" });
-    const snapshot = await this.#pluginMutationSnapshot(state);
+    const snapshot = await this.#fullyHealthyMutationSnapshot(state, "Plugin changes");
     const candidatePluginIds = state.enabledPlugins.filter((candidate) => candidate !== pluginId);
     report({ level: "working", message: "Saving rollback copy", stage: "operation" });
     const backup = this.#copyPluginAssetsBackup(pluginId);

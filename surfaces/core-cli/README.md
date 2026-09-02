@@ -92,8 +92,9 @@ other deployment settings are exposed yet.
 
 When Core is running, `config` restarts it so the new password applies to subsequent logins. When Core is stopped, the
 new password applies on the next start. Existing browser sessions expire normally. The initial random password remains
-in `~/.atlas/core/.env` until the operator changes it. If a running password change fails after disruption begins, the
-CLI restores the previous configuration and attempts to start that deployment again before returning an error.
+in `~/.atlas/core/.env` until the operator changes it. A running password change requires every Core and enabled Plugin
+service to be healthy before disruption. If it then fails, the CLI verifies the previous configuration before starting
+that deployment again. If configuration restoration cannot be verified, Atlas Core stays stopped.
 
 ## Updates
 
