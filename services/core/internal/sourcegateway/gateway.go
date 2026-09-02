@@ -50,12 +50,13 @@ type connector struct {
 	secretHeaders map[string]string
 	semaphore     chan struct{}
 
-	rateMu      sync.Mutex
-	nextRequest time.Time
-	rateChanged chan struct{}
-	stateMu     sync.Mutex
-	failures    int
-	openUntil   time.Time
+	rateMu          sync.Mutex
+	nextRequest     time.Time
+	rateChanged     chan struct{}
+	stateMu         sync.Mutex
+	failures        int
+	openUntil       time.Time
+	resetGeneration uint64
 }
 
 type gatewayError struct {
@@ -335,9 +336,10 @@ func (g *Gateway) execute(ctx context.Context, connector *connector, input Conne
 	}
 	maxAttempts := rule.Retry.MaxRetries + 1
 	retryFailurePending := false
+	var retryFailureGeneration uint64
 	recordPendingFailure := func() {
 		if retryFailurePending {
-			connector.recordFailure(g.now())
+			connector.recordFailureIfUnreset(g.now(), retryFailureGeneration)
 		}
 	}
 	finishBeforeAttempt := func(reservation rateReservation) {
@@ -366,8 +368,10 @@ func (g *Gateway) execute(ctx context.Context, connector *connector, input Conne
 		response, failure := connector.attempt(requestContext, prepared, rule)
 		if requestContext.Err() != nil {
 			failure = contextFailure(ctx, requestContext, true)
-			if failure.code == FailureUpstreamTimeout || retryFailurePending {
+			if failure.code == FailureUpstreamTimeout {
 				connector.recordFailure(g.now())
+			} else {
+				recordPendingFailure()
 			}
 			return ConnectorResponse{}, attempt, "miss", failure
 		}
@@ -389,6 +393,7 @@ func (g *Gateway) execute(ctx context.Context, connector *connector, input Conne
 		}
 		if attempt < maxAttempts && retryFailure(rule.Retry.Failures, failure.code) {
 			retryFailurePending = true
+			retryFailureGeneration = connector.currentResetGeneration()
 			continue
 		}
 		connector.recordFailure(g.now())
@@ -646,6 +651,19 @@ func (c *connector) circuitOpen(now time.Time) bool {
 func (c *connector) recordFailure(now time.Time) {
 	c.stateMu.Lock()
 	defer c.stateMu.Unlock()
+	c.recordFailureLocked(now)
+}
+
+func (c *connector) recordFailureIfUnreset(now time.Time, resetGeneration uint64) {
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+	if c.resetGeneration != resetGeneration {
+		return
+	}
+	c.recordFailureLocked(now)
+}
+
+func (c *connector) recordFailureLocked(now time.Time) {
 	c.failures++
 	if c.failures >= c.config.CircuitBreaker.Failures {
 		c.openUntil = now.Add(time.Duration(c.config.CircuitBreaker.OpenMS) * time.Millisecond)
@@ -658,6 +676,13 @@ func (c *connector) recordReachable() {
 	defer c.stateMu.Unlock()
 	c.failures = 0
 	c.openUntil = time.Time{}
+	c.resetGeneration++
+}
+
+func (c *connector) currentResetGeneration() uint64 {
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+	return c.resetGeneration
 }
 
 func rejected(err error) *gatewayError { return &gatewayError{code: FailureRequestRejected, err: err} }

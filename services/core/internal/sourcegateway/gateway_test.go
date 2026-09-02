@@ -338,6 +338,62 @@ func TestGatewayRecordsRetryFailureBeforeCircuitOpen(t *testing.T) {
 	}
 }
 
+func TestReachableResponseClearsOlderPendingRetryFailure(t *testing.T) {
+	var calls atomic.Int32
+	retryWaiting := make(chan struct{})
+	var clockCalls atomic.Int32
+	config := testConnectorConfig()
+	config.Limits.TimeoutMS = 30
+	config.Rate.RequestsPerSecond = 1
+	config.CircuitBreaker.Failures = 1
+	config.Routes[0].Retry = RetryRule{MaxRetries: 1, Failures: []string{string(FailureUpstreamUnreachable)}}
+	gateway, err := New(Config{Connectors: []ConnectorConfig{config}}, Options{
+		Now: func() time.Time {
+			if clockCalls.Add(1) == 5 {
+				close(retryWaiting)
+			}
+			return time.Now()
+		},
+		Client: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			calls.Add(1)
+			return nil, errors.New("offline")
+		})},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connector := gateway.connectors["reference"]
+	request := ConnectorRequest{Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{}}
+	result := make(chan struct {
+		attempts int
+		failure  *gatewayError
+	}, 1)
+	go func() {
+		_, attempts, _, failure := gateway.execute(context.Background(), connector, request)
+		result <- struct {
+			attempts int
+			failure  *gatewayError
+		}{attempts: attempts, failure: failure}
+	}()
+	<-retryWaiting
+	connector.recordReachable()
+	select {
+	case outcome := <-result:
+		if outcome.failure == nil || outcome.failure.code != FailureAdmissionTimeout || outcome.attempts != 1 || calls.Load() != 1 {
+			t.Fatalf("first attempts=%d calls=%d failure=%v", outcome.attempts, calls.Load(), outcome.failure)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("retry admission did not expire")
+	}
+
+	connector.config.Rate.RequestsPerSecond = 0
+	connector.config.Routes[0].Retry = RetryRule{}
+	_, attempts, _, failure := gateway.execute(context.Background(), connector, request)
+	if failure == nil || failure.code != FailureUpstreamUnreachable || attempts != 1 || calls.Load() != 2 {
+		t.Fatalf("second attempts=%d calls=%d failure=%v", attempts, calls.Load(), failure)
+	}
+}
+
 func TestAddressPolicyRejectsPrivateLoopbackAndLinkLocalByDefault(t *testing.T) {
 	for _, address := range []string{
 		"127.0.0.1", "10.0.0.1", "169.254.1.1", "::1", "fe80::1",
