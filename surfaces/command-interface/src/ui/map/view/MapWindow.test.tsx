@@ -18,7 +18,12 @@ describe("MapWindow", () => {
           title="Fixture results"
           meta="3 results"
           handleBadge={3}
-          footer={<a href="https://example.test">Source</a>}
+          footer={
+            <>
+              <span className="spatial-map-window__source">Fixture source · 12:34:56 PM</span>
+              <a href="https://example.test">Attribution</a>
+            </>
+          }
           onClose={onClose}
         >
           <span>Window body</span>
@@ -36,14 +41,16 @@ describe("MapWindow", () => {
     expect(windowElement).toHaveAttribute("data-collapsed", "true");
     expect(windowElement).toHaveClass("map-window--handle");
     expect(screen.queryByText("Window body")).not.toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Source" })).toBeInTheDocument();
+    expect(screen.getByText("Fixture source · 12:34:56 PM")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Attribution" })).toBeInTheDocument();
     expect(windowElement.querySelector(".map-window__pull-badge")).toHaveTextContent("3");
 
     const handle = screen.getByRole("button", { name: /^Expand Fixture results window, 3 results/ });
     await waitFor(() => expect(handle).toHaveFocus());
     await user.click(handle);
     expect(screen.getByText("Window body")).toBeVisible();
-    expect(screen.getByRole("link", { name: "Source" })).toBeVisible();
+    expect(screen.getByText("Fixture source · 12:34:56 PM")).toBeVisible();
+    expect(screen.getByRole("link", { name: "Attribution" })).toBeVisible();
     await waitFor(() => expect(screen.getByRole("button", { name: "Collapse Fixture results window" })).toHaveFocus());
 
     await user.click(screen.getByRole("button", { name: "Collapse Fixture results window" }));
@@ -360,8 +367,10 @@ describe("MapWindow", () => {
     expect(Number(windowElement.getAttribute("data-dock-offset"))).toBeCloseTo(0.29);
     fireEvent.keyDown(move, { key: "Home" });
     expect(Number(windowElement.getAttribute("data-dock-offset"))).toBeCloseTo(0.125);
+    expect(windowElement.style.getPropertyValue("--map-window-dock-position")).toBe("12.5cqw");
     fireEvent.keyDown(move, { key: "End" });
     expect(Number(windowElement.getAttribute("data-dock-offset"))).toBeCloseTo(0.875);
+    expect(windowElement.style.getPropertyValue("--map-window-dock-position")).toBe("87.5cqw");
   });
 
   it("detaches expanded and collapsed windows with the inward keyboard arrow on every edge", async () => {
