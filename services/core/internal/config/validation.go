@@ -49,7 +49,7 @@ func (c *Config) validatePlugins() error {
 
 		plugin.BaseURL = strings.TrimRight(strings.TrimSpace(plugin.BaseURL), "/")
 		parsed, err := url.Parse(plugin.BaseURL)
-		if err != nil || parsed.Scheme != "http" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Path != "" {
+		if err != nil || parsed.Scheme != "http" || parsed.Host == "" || parsed.User != nil || strings.ContainsAny(plugin.BaseURL, "?#") || parsed.Path != "" {
 			return fmt.Errorf("plugins[%d].base_url must be a plain HTTP origin", index)
 		}
 	}

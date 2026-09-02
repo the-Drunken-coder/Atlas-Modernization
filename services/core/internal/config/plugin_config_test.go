@@ -8,18 +8,25 @@ import (
 )
 
 func TestPluginConfigurationNormalizesAndRejectsInvalidEndpoints(t *testing.T) {
-	cfg := Config{Plugins: []PluginConfig{{ID: " reference ", BaseURL: " http://reference:8080/ "}}}
-	if err := cfg.validatePlugins(); err != nil {
-		t.Fatalf("validatePlugins: %v", err)
-	}
-	if got := cfg.Plugins[0]; got.ID != "reference" || got.BaseURL != "http://reference:8080" {
-		t.Fatalf("normalized Plugin = %#v", got)
+	for _, baseURL := range []string{"http://reference:8080", " http://reference:8080/ "} {
+		cfg := Config{Plugins: []PluginConfig{{ID: " reference ", BaseURL: baseURL}}}
+		if err := cfg.validatePlugins(); err != nil {
+			t.Fatalf("validatePlugins(%q): %v", baseURL, err)
+		}
+		if got := cfg.Plugins[0]; got.ID != "reference" || got.BaseURL != "http://reference:8080" {
+			t.Fatalf("normalized Plugin = %#v", got)
+		}
 	}
 
 	for _, plugins := range [][]PluginConfig{
 		{{ID: "reference-plugin", BaseURL: "http://reference:8080"}},
 		{{ID: "reference", BaseURL: "https://reference:8080"}},
+		{{ID: "reference", BaseURL: "http://user:password@reference:8080"}},
 		{{ID: "reference", BaseURL: "http://reference:8080/path"}},
+		{{ID: "reference", BaseURL: "http://reference:8080?query"}},
+		{{ID: "reference", BaseURL: "http://reference:8080?"}},
+		{{ID: "reference", BaseURL: "http://reference:8080#fragment"}},
+		{{ID: "reference", BaseURL: "http://reference:8080#"}},
 		{{ID: "reference", BaseURL: "http://reference:8080"}, {ID: "reference", BaseURL: "http://other:8080"}},
 	} {
 		if err := (&Config{Plugins: plugins}).validatePlugins(); err == nil {
