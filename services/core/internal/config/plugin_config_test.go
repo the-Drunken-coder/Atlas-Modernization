@@ -15,6 +15,7 @@ func TestPluginConfigurationNormalizesAndRejectsInvalidEndpoints(t *testing.T) {
 		{baseURL: "http://reference:8080", want: "http://reference:8080"},
 		{baseURL: " http://reference:8080/ ", want: "http://reference:8080"},
 		{baseURL: "http://reference:65535", want: "http://reference:65535"},
+		{baseURL: "http://[::1]:8080", want: "http://[::1]:8080"},
 	} {
 		cfg := Config{Plugins: []PluginConfig{{ID: " reference ", BaseURL: test.baseURL}}}
 		if err := cfg.validatePlugins(); err != nil {
@@ -35,6 +36,8 @@ func TestPluginConfigurationNormalizesAndRejectsInvalidEndpoints(t *testing.T) {
 		{{ID: "reference", BaseURL: "http://reference:8080#fragment"}},
 		{{ID: "reference", BaseURL: "http://reference:8080#"}},
 		{{ID: "reference", BaseURL: "http://:8080"}},
+		{{ID: "reference", BaseURL: "http://reference:"}},
+		{{ID: "reference", BaseURL: "http://[::1]:"}},
 		{{ID: "reference", BaseURL: "http://reference:65536"}},
 		{{ID: "reference", BaseURL: "http://reference:8080"}, {ID: "reference", BaseURL: "http://other:8080"}},
 	} {
