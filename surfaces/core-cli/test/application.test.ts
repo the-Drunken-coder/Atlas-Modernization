@@ -2857,9 +2857,11 @@ describe("atlas-core CLI", () => {
       };
       syncBuiltinESMExports();
       if (canonicalExists) {
+        let canonicalPublished = false;
         test.runner.onRun = (call) => {
-          if (call.args[0] !== "network" || call.args[1] !== "inspect" || existsSync(lockPath)) return;
-          writeFileSync(lockPath, `${JSON.stringify(owner)}\n`, { mode: 0o600 });
+          if (call.args[0] !== "network" || call.args[1] !== "inspect" || canonicalPublished) return;
+          canonicalPublished = true;
+          writeFileSync(lockPath, `${JSON.stringify(owner)}\n`, { flag: "wx", mode: 0o600 });
           const lockDescriptor = mutableFs.openSync(lockPath, "r");
           originalFsync(lockDescriptor);
           mutableFs.closeSync(lockDescriptor);
