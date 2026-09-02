@@ -1,22 +1,15 @@
+import { PLUGIN_CATALOG, type PluginCatalogEntry } from "./plugin-catalog.js";
 import type {
   AtlasCoreOperator,
   DeploymentService,
   DeploymentSnapshot,
   PluginActivityReporter,
-  PluginDeploymentStatus,
   PluginOperationOutcome
 } from "./terminal-ui.js";
 
 type PreviewState = DeploymentSnapshot["status"];
 type PreviewOutput = { write(data: string): unknown };
 type PreviewOptions = { pluginStepDelayMs?: number };
-
-const previewPlugin = {
-  pluginId: "building_scan",
-  displayName: "Building Scan",
-  lifecycle: "query_only",
-  packaged: true
-} as const satisfies Omit<PluginDeploymentStatus, "enabled" | "health" | "state">;
 
 export function isPreviewState(value: string | undefined): value is PreviewState {
   return value === "ready" || value === "stopped" || value === "degraded" || value === "not-initialized";
@@ -28,7 +21,7 @@ export function createPreviewOperator(
   options: PreviewOptions = {}
 ): AtlasCoreOperator {
   let deploymentState = initialState;
-  let pluginEnabled = false;
+  const enabledPlugins = new Set<string>();
   let cancellationRequested = false;
   let cancelPendingPluginStep: (() => void) | undefined;
   const pluginStepDelayMs = options.pluginStepDelayMs ?? 1_500;
@@ -82,6 +75,7 @@ export function createPreviewOperator(
 
   const cancelPluginMutation = (
     action: "Enable" | "Disable",
+    pluginId: string,
     previousEnabled: boolean,
     reportActivity?: PluginActivityReporter
   ): PluginOperationOutcome => {
@@ -95,7 +89,8 @@ export function createPreviewOperator(
       message: "Restoring previous fixture Plugin state",
       stage: "rollback"
     });
-    pluginEnabled = previousEnabled;
+    if (previousEnabled) enabledPlugins.add(pluginId);
+    else enabledPlugins.delete(pluginId);
     reportActivity?.({
       level: "success",
       message: "Previous fixture Plugin state restored",
@@ -109,29 +104,30 @@ export function createPreviewOperator(
     pluginId: string,
     reportActivity?: PluginActivityReporter
   ): Promise<PluginOperationOutcome> => {
-    requirePreviewPlugin(pluginId);
+    const plugin = requirePreviewPlugin(pluginId);
     if (deploymentState === "not-initialized") {
       throw new Error("Atlas Core is not initialized. Run atlas-core init first.");
     }
 
     const action = enabled ? "Enable" : "Disable";
-    const previousEnabled = pluginEnabled;
+    const previousEnabled = enabledPlugins.has(pluginId);
     reportActivity?.({ level: "working", message: "Checking fixture Plugin state", stage: "operation" });
     await waitForPluginStep();
-    if (cancellationRequested) return cancelPluginMutation(action, previousEnabled, reportActivity);
+    if (cancellationRequested) return cancelPluginMutation(action, pluginId, previousEnabled, reportActivity);
 
     reportActivity?.({
       level: "working",
-      message: `${enabled ? "Enabling" : "Disabling"} ${previewPlugin.displayName} in memory`,
+      message: `${enabled ? "Enabling" : "Disabling"} ${plugin.displayName} in memory`,
       stage: "operation"
     });
     await waitForPluginStep();
-    if (cancellationRequested) return cancelPluginMutation(action, previousEnabled, reportActivity);
+    if (cancellationRequested) return cancelPluginMutation(action, pluginId, previousEnabled, reportActivity);
 
-    pluginEnabled = enabled;
+    if (enabled) enabledPlugins.add(pluginId);
+    else enabledPlugins.delete(pluginId);
     reportActivity?.({
       level: "success",
-      message: `${previewPlugin.displayName} ${enabled ? "enabled" : "disabled"} in the fixture`,
+      message: `${plugin.displayName} ${enabled ? "enabled" : "disabled"} in the fixture`,
       stage: "operation"
     });
     return { status: "success" };
@@ -178,7 +174,7 @@ export function createPreviewOperator(
     async init() {
       preview("Initialization simulated. No credentials, containers, or volumes were created.");
       deploymentState = "ready";
-      pluginEnabled = false;
+      enabledPlugins.clear();
     },
     async logs(serviceId, _follow) {
       const label = serviceId ?? "all services";
@@ -195,22 +191,26 @@ export function createPreviewOperator(
       return await mutatePlugin(true, pluginId, reportActivity);
     },
     async pluginLogs(pluginId, _follow) {
-      requirePreviewPlugin(pluginId);
-      if (!pluginEnabled) throw new Error(`Plugin ${pluginId} is not enabled.`);
-      preview(`Showing fixture logs for ${previewPlugin.displayName}.`);
-      output.write("2026-08-30T14:12:07Z building-scan-plugin fixture query ready\n");
-      output.write("2026-08-30T14:12:08Z building-scan-plugin fixture index healthy\n");
+      const plugin = requirePreviewPlugin(pluginId);
+      if (!enabledPlugins.has(pluginId)) throw new Error(`Plugin ${pluginId} is not enabled.`);
+      preview(`Showing fixture logs for ${plugin.displayName}.`);
+      output.write(`2026-08-30T14:12:07Z ${plugin.service} fixture query ready\n`);
+      output.write(`2026-08-30T14:12:08Z ${plugin.service} fixture index healthy\n`);
     },
     async pluginStatuses(pluginId) {
-      if (pluginId !== undefined) requirePreviewPlugin(pluginId);
-      const running = pluginEnabled && deploymentState !== "stopped" && deploymentState !== "not-initialized";
-      return [
-        {
-          ...previewPlugin,
-          enabled: pluginEnabled,
+      const plugins = pluginId === undefined ? PLUGIN_CATALOG : [requirePreviewPlugin(pluginId)];
+      return plugins.map((plugin) => {
+        const enabled = enabledPlugins.has(plugin.pluginId);
+        const running = enabled && deploymentState !== "stopped" && deploymentState !== "not-initialized";
+        return {
+          pluginId: plugin.pluginId,
+          displayName: plugin.displayName,
+          lifecycle: plugin.lifecycle,
+          enabled,
+          packaged: plugin.image !== null,
           ...(running ? { state: "running", health: "healthy" } : {})
-        }
-      ];
+        };
+      });
     },
     resumeAfterCancellation() {
       cancellationRequested = false;
@@ -218,7 +218,7 @@ export function createPreviewOperator(
     async reset() {
       preview("Reset simulated. No credentials, containers, or volumes were deleted.");
       deploymentState = "ready";
-      pluginEnabled = false;
+      enabledPlugins.clear();
     },
     async restart() {
       preview("Restart simulated. No images were pulled and no containers changed.");
@@ -245,8 +245,10 @@ export function createPreviewOperator(
   };
 }
 
-function requirePreviewPlugin(pluginId: string): void {
-  if (pluginId !== previewPlugin.pluginId) throw new Error(`Unknown Plugin: ${pluginId}`);
+function requirePreviewPlugin(pluginId: string): PluginCatalogEntry {
+  const plugin = PLUGIN_CATALOG.find((candidate) => candidate.pluginId === pluginId);
+  if (!plugin) throw new Error(`Unknown Plugin: ${pluginId}`);
+  return plugin;
 }
 
 function service(
