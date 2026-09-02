@@ -192,10 +192,14 @@ export function createPreviewOperator(
     async logs(serviceId, _follow) {
       const label = serviceId ?? "all services";
       preview(`Showing fixture logs for ${label}.`);
-      output.write("2026-08-30T14:12:03Z core-api ready on 127.0.0.1:8000\n");
-      output.write("2026-08-30T14:12:04Z source-gateway no connectors configured\n");
-      output.write("2026-08-30T14:12:05Z postgres accepting connections\n");
-      output.write("2026-08-30T14:12:06Z minio bucket atlas ready\n");
+      const logsByService = {
+        api: "2026-08-30T14:12:03Z core-api ready on 127.0.0.1:8000\n",
+        "source-gateway": "2026-08-30T14:12:04Z source-gateway no connectors configured\n",
+        postgres: "2026-08-30T14:12:05Z postgres accepting connections\n",
+        minio: "2026-08-30T14:12:06Z minio bucket atlas ready\n"
+      };
+      const logs = serviceId === undefined ? Object.values(logsByService) : [logsByService[serviceId]];
+      for (const log of logs) output.write(log);
     },
     async pluginDisable(pluginId, reportActivity) {
       return await mutatePlugin(false, pluginId, reportActivity);

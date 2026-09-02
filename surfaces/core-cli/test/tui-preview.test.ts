@@ -79,6 +79,25 @@ describe("Atlas Core TUI preview operator", () => {
     ]);
   });
 
+  it("filters fixture logs by service", async () => {
+    const { operator, output } = fixture();
+
+    await operator.logs("api", false);
+    const apiLogs = output.write.mock.calls.flat().join("");
+    expect(apiLogs).toContain("core-api ready");
+    expect(apiLogs).not.toContain("source-gateway no connectors configured");
+    expect(apiLogs).not.toContain("postgres accepting connections");
+    expect(apiLogs).not.toContain("minio bucket atlas ready");
+
+    output.write.mockClear();
+    await operator.logs(undefined, false);
+    const allLogs = output.write.mock.calls.flat().join("");
+    expect(allLogs).toContain("core-api ready");
+    expect(allLogs).toContain("source-gateway no connectors configured");
+    expect(allLogs).toContain("postgres accepting connections");
+    expect(allLogs).toContain("minio bucket atlas ready");
+  });
+
   it("reports invalid fixture Plugin operations", async () => {
     const uninitialized = fixture("not-initialized").operator;
     await expect(uninitialized.pluginEnable("building_scan")).rejects.toThrow(
