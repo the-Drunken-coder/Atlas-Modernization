@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -56,6 +57,7 @@ type connector struct {
 	stateMu       sync.Mutex
 	openUntil     time.Time
 	breakerSerial uint64
+	completionSeq atomic.Uint64
 	// Unresolved attempts block compaction. Completed failures remain ordered until the latest
 	// reachable response or a fully settled open interval makes older history irrelevant.
 	breakerAttempts map[uint64]struct{}
@@ -75,6 +77,7 @@ type breakerAttempt struct {
 type breakerFailure struct {
 	order      breakerOrder
 	observedAt time.Time
+	served     bool
 }
 
 // breakerHistoryLimit fails closed if an uncooperative transport prevents safe compaction.
@@ -345,6 +348,9 @@ func (g *Gateway) execute(ctx context.Context, connector *connector, input Conne
 		errConnectorDeadline,
 	)
 	defer cancel()
+	parentCanceledAt := make(chan time.Time, 1)
+	stopObservingParent := context.AfterFunc(ctx, func() { parentCanceledAt <- time.Now() })
+	defer stopObservingParent()
 	if contextExpired(requestContext, time.Now()) {
 		return ConnectorResponse{}, 0, "miss", admissionFailure(ctx, requestContext)
 	}
@@ -365,11 +371,11 @@ func (g *Gateway) execute(ctx context.Context, connector *connector, input Conne
 	}
 	maxAttempts := rule.Retry.MaxRetries + 1
 	var pendingRetryAttempt breakerAttempt
-	var pendingRetryCompletedAt time.Time
+	var pendingRetryOrder breakerOrder
 	retryFailurePending := false
 	recordPendingFailure := func() {
 		if retryFailurePending {
-			connector.finishBreakerFailure(g.now(), pendingRetryAttempt, pendingRetryCompletedAt)
+			connector.finishBreakerFailure(g.now(), pendingRetryAttempt, pendingRetryOrder)
 			retryFailurePending = false
 		}
 	}
@@ -398,10 +404,15 @@ func (g *Gateway) execute(ctx context.Context, connector *connector, input Conne
 			finishBeforeAttempt(reservation)
 			return ConnectorResponse{}, attempt - 1, "miss", startFailure
 		}
-		response, failure, attemptCompletedAt := connector.attempt(requestContext, prepared, rule)
+		response, failure, attemptOrder := connector.attempt(requestContext, prepared, rule)
 		attemptCheckedAt := time.Now()
 		parentContextError := contextError(ctx, attemptCheckedAt)
-		connectorTimedOut := connectorDeadlineWon(ctx, requestContext, connectorDeadline, attemptCompletedAt)
+		connectorTimedOut := connectorDeadlineWon(
+			ctx,
+			connectorDeadline,
+			attemptOrder.completedAt,
+			parentCanceledAt,
+		)
 		if parentContextError != nil || connectorTimedOut {
 			attemptFailure := failure
 			if parentContextError != nil {
@@ -413,23 +424,25 @@ func (g *Gateway) execute(ctx context.Context, connector *connector, input Conne
 			switch {
 			case connectorTimedOut:
 				discardPendingFailure()
-				connector.finishBreakerFailure(g.now(), breakerAttempt, connectorDeadline)
+				deadlineOrder := attemptOrder
+				deadlineOrder.completedAt = connectorDeadline
+				connector.finishBreakerFailure(g.now(), breakerAttempt, deadlineOrder)
 			case attemptFailure == nil:
 				discardPendingFailure()
-				connector.finishBreakerReachable(g.now(), breakerAttempt, attemptCompletedAt)
+				connector.finishBreakerReachable(g.now(), breakerAttempt, attemptOrder)
 			case errors.Is(attemptFailure.err, parentContextError) ||
 				(parentCause != nil && errors.Is(attemptFailure.err, parentCause)):
 				recordPendingFailure()
 				connector.discardBreakerAttempt(breakerAttempt)
 			default:
 				discardPendingFailure()
-				connector.finishBreakerFailure(g.now(), breakerAttempt, attemptCompletedAt)
+				connector.finishBreakerFailure(g.now(), breakerAttempt, attemptOrder)
 			}
 			return ConnectorResponse{}, attempt, "miss", failure
 		}
 		if failure == nil {
 			discardPendingFailure()
-			connector.finishBreakerReachable(g.now(), breakerAttempt, attemptCompletedAt)
+			connector.finishBreakerReachable(g.now(), breakerAttempt, attemptOrder)
 			retryable := retryStatus(rule.Retry.Statuses, response.Status)
 			if attempt < maxAttempts && retryable {
 				continue
@@ -446,12 +459,12 @@ func (g *Gateway) execute(ctx context.Context, connector *connector, input Conne
 		if attempt < maxAttempts && retryFailure(rule.Retry.Failures, failure.code) {
 			discardPendingFailure()
 			pendingRetryAttempt = breakerAttempt
-			pendingRetryCompletedAt = attemptCompletedAt
+			pendingRetryOrder = attemptOrder
 			retryFailurePending = true
 			continue
 		}
 		discardPendingFailure()
-		connector.finishBreakerFailure(g.now(), breakerAttempt, attemptCompletedAt)
+		connector.finishBreakerFailure(g.now(), breakerAttempt, attemptOrder)
 		return ConnectorResponse{}, attempt, "miss", failure
 	}
 	panic("unreachable")
@@ -536,7 +549,7 @@ func (c *connector) attempt(
 ) (
 	ConnectorResponse,
 	*gatewayError,
-	time.Time,
+	breakerOrder,
 ) {
 	target := *c.origin
 	target.Path = prepared.path
@@ -544,7 +557,7 @@ func (c *connector) attempt(
 	target.RawQuery = encodeQuery(prepared.query)
 	request, err := http.NewRequestWithContext(ctx, prepared.method, target.String(), bytes.NewReader(prepared.body))
 	if err != nil {
-		return ConnectorResponse{}, rejected(err), time.Now()
+		return ConnectorResponse{}, rejected(err), c.recordBreakerCompletion()
 	}
 	for _, tuple := range prepared.headers {
 		request.Header.Add(tuple[0], tuple[1])
@@ -558,29 +571,29 @@ func (c *connector) attempt(
 	request.ContentLength = int64(len(prepared.body))
 	response, err := c.client.Do(request)
 	if err != nil {
-		completedAt := time.Now()
+		order := c.recordBreakerCompletion()
 		if ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) {
-			return ConnectorResponse{}, &gatewayError{code: FailureUpstreamTimeout, err: err}, completedAt
+			return ConnectorResponse{}, &gatewayError{code: FailureUpstreamTimeout, err: err}, order
 		}
-		return ConnectorResponse{}, &gatewayError{code: FailureUpstreamUnreachable, err: err}, completedAt
+		return ConnectorResponse{}, &gatewayError{code: FailureUpstreamUnreachable, err: err}, order
 	}
 	defer func() { _ = response.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(response.Body, c.config.Limits.MaxResponseBytes+1))
-	completedAt := time.Now()
+	order := c.recordBreakerCompletion()
 	if err != nil {
 		if ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) {
-			return ConnectorResponse{}, &gatewayError{code: FailureUpstreamTimeout, err: err}, completedAt
+			return ConnectorResponse{}, &gatewayError{code: FailureUpstreamTimeout, err: err}, order
 		}
-		return ConnectorResponse{}, &gatewayError{code: FailureUpstreamUnreachable, err: err}, completedAt
+		return ConnectorResponse{}, &gatewayError{code: FailureUpstreamUnreachable, err: err}, order
 	}
 	if int64(len(body)) > c.config.Limits.MaxResponseBytes {
-		return ConnectorResponse{}, &gatewayError{code: FailureResponseTooLarge}, completedAt
+		return ConnectorResponse{}, &gatewayError{code: FailureResponseTooLarge}, order
 	}
 	headers, err := c.responseHeaders(response.Header, rule.AllowedResponseHeaders, c.config.Limits)
 	if err != nil {
-		return ConnectorResponse{}, &gatewayError{code: FailureResponseTooLarge, err: err}, completedAt
+		return ConnectorResponse{}, &gatewayError{code: FailureResponseTooLarge, err: err}, order
 	}
-	return ConnectorResponse{Status: response.StatusCode, Headers: headers, BodyBase64: base64.StdEncoding.EncodeToString(body)}, nil, completedAt
+	return ConnectorResponse{Status: response.StatusCode, Headers: headers, BodyBase64: base64.StdEncoding.EncodeToString(body)}, nil, order
 }
 
 func (c *connector) responseHeaders(headers http.Header, allowedNames []string, limits ConnectorLimits) ([]HeaderTuple, error) {
@@ -712,6 +725,11 @@ func (order breakerOrder) after(other breakerOrder) bool {
 		(order.completedAt.Equal(other.completedAt) && order.serial > other.serial)
 }
 
+func (c *connector) recordBreakerCompletion() breakerOrder {
+	serial := c.completionSeq.Add(1)
+	return breakerOrder{completedAt: time.Now(), serial: serial}
+}
+
 func (c *connector) circuitOpenWithClock(now func() time.Time) bool {
 	c.stateMu.Lock()
 	defer c.stateMu.Unlock()
@@ -733,6 +751,10 @@ func (c *connector) tryBeginAttempt(
 	}
 	breakerNow := now()
 	c.expireBreakerLocked(breakerNow)
+	admittedAt := time.Now()
+	if contextExpired(requestContext, admittedAt) {
+		return breakerAttempt{}, admissionFailureAt(parent, requestContext, admittedAt)
+	}
 	if breakerNow.Before(c.openUntil) || len(c.breakerAttempts)+len(c.breakerFailures) >= breakerHistoryLimit {
 		return breakerAttempt{}, &gatewayError{code: FailureCircuitOpen}
 	}
@@ -742,29 +764,26 @@ func (c *connector) tryBeginAttempt(
 	return attempt, nil
 }
 
-func (c *connector) finishBreakerFailure(observedAt time.Time, attempt breakerAttempt, completedAt time.Time) {
+func (c *connector) finishBreakerFailure(observedAt time.Time, attempt breakerAttempt, order breakerOrder) {
 	c.stateMu.Lock()
 	defer c.stateMu.Unlock()
 	if !c.takeBreakerAttemptLocked(attempt) {
 		return
 	}
-	c.breakerSerial++
-	order := breakerOrder{completedAt: completedAt, serial: c.breakerSerial}
 	if order.after(c.lastReachable) {
 		c.breakerFailures = append(c.breakerFailures, breakerFailure{order: order, observedAt: observedAt})
 	}
+	c.compactServedFailuresLocked()
 	c.recomputeBreakerLocked()
 	c.expireBreakerLocked(observedAt)
 }
 
-func (c *connector) finishBreakerReachable(observedAt time.Time, attempt breakerAttempt, completedAt time.Time) {
+func (c *connector) finishBreakerReachable(observedAt time.Time, attempt breakerAttempt, order breakerOrder) {
 	c.stateMu.Lock()
 	defer c.stateMu.Unlock()
 	if !c.takeBreakerAttemptLocked(attempt) {
 		return
 	}
-	c.breakerSerial++
-	order := breakerOrder{completedAt: completedAt, serial: c.breakerSerial}
 	if order.after(c.lastReachable) {
 		c.lastReachable = order
 		remaining := c.breakerFailures[:0]
@@ -775,6 +794,7 @@ func (c *connector) finishBreakerReachable(observedAt time.Time, attempt breaker
 		}
 		c.breakerFailures = remaining
 	}
+	c.compactServedFailuresLocked()
 	c.recomputeBreakerLocked()
 	c.expireBreakerLocked(observedAt)
 }
@@ -782,7 +802,9 @@ func (c *connector) finishBreakerReachable(observedAt time.Time, attempt breaker
 func (c *connector) discardBreakerAttempt(attempt breakerAttempt) {
 	c.stateMu.Lock()
 	defer c.stateMu.Unlock()
-	c.takeBreakerAttemptLocked(attempt)
+	if c.takeBreakerAttemptLocked(attempt) {
+		c.compactServedFailuresLocked()
+	}
 }
 
 func (c *connector) takeBreakerAttemptLocked(attempt breakerAttempt) bool {
@@ -794,19 +816,41 @@ func (c *connector) takeBreakerAttemptLocked(attempt breakerAttempt) bool {
 }
 
 func (c *connector) expireBreakerLocked(now time.Time) {
-	if now.Before(c.openUntil) {
+	if c.openUntil.IsZero() || now.Before(c.openUntil) {
 		return
 	}
 	c.openUntil = time.Time{}
+	threshold := c.config.CircuitBreaker.Failures
+	unserved := 0
+	for _, failure := range c.breakerFailures {
+		if !failure.served {
+			unserved++
+		}
+	}
+	mark := unserved / threshold * threshold
+	for index := range c.breakerFailures {
+		if !c.breakerFailures[index].served && mark > 0 {
+			c.breakerFailures[index].served = true
+			mark--
+		}
+	}
 	if len(c.breakerAttempts) != 0 {
 		return
 	}
-	threshold := c.config.CircuitBreaker.Failures
-	remove := len(c.breakerFailures) / threshold * threshold
-	if remove > 0 {
-		copy(c.breakerFailures, c.breakerFailures[remove:])
-		c.breakerFailures = c.breakerFailures[:len(c.breakerFailures)-remove]
+	c.compactServedFailuresLocked()
+}
+
+func (c *connector) compactServedFailuresLocked() {
+	if len(c.breakerAttempts) != 0 {
+		return
 	}
+	remaining := c.breakerFailures[:0]
+	for _, failure := range c.breakerFailures {
+		if !failure.served {
+			remaining = append(remaining, failure)
+		}
+	}
+	c.breakerFailures = remaining
 }
 
 func (c *connector) recomputeBreakerLocked() {
@@ -816,9 +860,15 @@ func (c *connector) recomputeBreakerLocked() {
 	threshold := c.config.CircuitBreaker.Failures
 	openDuration := time.Duration(c.config.CircuitBreaker.OpenMS) * time.Millisecond
 	c.openUntil = time.Time{}
-	for start := 0; start+threshold <= len(c.breakerFailures); start += threshold {
-		observedAt := c.breakerFailures[start].observedAt
-		for _, failure := range c.breakerFailures[start+1 : start+threshold] {
+	unserved := make([]breakerFailure, 0, len(c.breakerFailures))
+	for _, failure := range c.breakerFailures {
+		if !failure.served {
+			unserved = append(unserved, failure)
+		}
+	}
+	for start := 0; start+threshold <= len(unserved); start += threshold {
+		observedAt := unserved[start].observedAt
+		for _, failure := range unserved[start+1 : start+threshold] {
 			if failure.observedAt.After(observedAt) {
 				observedAt = failure.observedAt
 			}
@@ -845,18 +895,26 @@ func contextError(ctx context.Context, now time.Time) error {
 	return nil
 }
 
-func connectorDeadlineWon(parent, requestContext context.Context, connectorDeadline, now time.Time) bool {
-	if now.Before(connectorDeadline) {
+func connectorDeadlineWon(
+	parent context.Context,
+	connectorDeadline time.Time,
+	completedAt time.Time,
+	parentCanceledAt <-chan time.Time,
+) bool {
+	if completedAt.Before(connectorDeadline) {
 		return false
 	}
-	if cause := context.Cause(requestContext); cause != nil {
-		return errors.Is(cause, errConnectorDeadline)
-	}
-	if contextError(parent, now) == nil {
+	if parent.Err() == nil {
 		return true
 	}
 	parentDeadline, hasParentDeadline := parent.Deadline()
-	return hasParentDeadline && connectorDeadline.Before(parentDeadline)
+	if hasParentDeadline && !parentDeadline.After(connectorDeadline) {
+		return false
+	}
+	if observedAt := <-parentCanceledAt; observedAt.Before(connectorDeadline) {
+		return false
+	}
+	return true
 }
 
 func admissionFailure(parent, requestContext context.Context) *gatewayError {
