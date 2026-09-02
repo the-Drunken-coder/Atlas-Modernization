@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/the-drunken-coder/atlas/services/core/internal/pluginid"
@@ -49,8 +50,13 @@ func (c *Config) validatePlugins() error {
 
 		plugin.BaseURL = strings.TrimRight(strings.TrimSpace(plugin.BaseURL), "/")
 		parsed, err := url.Parse(plugin.BaseURL)
-		if err != nil || parsed.Scheme != "http" || parsed.Host == "" || parsed.User != nil || strings.ContainsAny(plugin.BaseURL, "?#") || parsed.Path != "" {
+		if err != nil || parsed.Scheme != "http" || parsed.Hostname() == "" || parsed.User != nil || strings.ContainsAny(plugin.BaseURL, "?#") || parsed.Path != "" {
 			return fmt.Errorf("plugins[%d].base_url must be a plain HTTP origin", index)
+		}
+		if port := parsed.Port(); port != "" {
+			if _, err := strconv.ParseUint(port, 10, 16); err != nil {
+				return fmt.Errorf("plugins[%d].base_url must be a plain HTTP origin", index)
+			}
 		}
 	}
 	return nil
