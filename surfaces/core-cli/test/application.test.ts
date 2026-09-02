@@ -846,6 +846,28 @@ describe("atlas-core CLI", () => {
     expect(finishedProcessGroup).toBe(startedProcessGroup);
   });
 
+  it("runs a supervised command when NODE_OPTIONS selects module eval", async () => {
+    const runner = new ProcessCommandRunner();
+    let startedProcessGroup: number | undefined;
+    let finishedProcessGroup: number | undefined;
+
+    const command = await runner.run(process.execPath, ["-e", 'process.stdout.write("supervised")'], {
+      env: { ...process.env, NODE_OPTIONS: "--input-type=module" },
+      processGroup: {
+        started: (processGroupId) => {
+          startedProcessGroup = processGroupId;
+        },
+        finished: (processGroupId) => {
+          finishedProcessGroup = processGroupId;
+        }
+      }
+    });
+
+    expect(command).toEqual(result(0, "supervised"));
+    expect(startedProcessGroup).toEqual(expect.any(Number));
+    expect(finishedProcessGroup).toBe(startedProcessGroup);
+  });
+
   it("does not clear a supervised process-group fence while a cancelled child is still alive", async () => {
     const runner = new ProcessCommandRunner();
     const directory = mkdtempSync(join(tmpdir(), "atlas-core-runner-test-"));
@@ -1344,6 +1366,30 @@ describe("atlas-core CLI", () => {
       packageVersion: PACKAGE_VERSION
     });
     expect(test.stdout.join("")).toContain(`Atlas Core ${PACKAGE_VERSION} reset is complete`);
+  });
+
+  it("lets confirmed reset abandon an interrupted disable with a malformed journal", async () => {
+    const test = runtime();
+    test.context.confirmReset = async () => true;
+    markInitialized(test);
+    const plugin = installTestPluginCatalog(test);
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
+    simulateInterruptedPluginDisable(test, plugin, "prepared");
+    const config = join(test.home, ".atlas", "core");
+    writeFileSync(join(config, "transaction", "journal.json"), "malformed\n", { mode: 0o600 });
+    writeFileSync(
+      join(config, ".mutation.lock"),
+      `${JSON.stringify({ schema: 1, id: "c".repeat(32), pid: 2_147_483_647, operation: "plugin-disable" })}\n`,
+      { mode: 0o600 }
+    );
+
+    expect(await runCLI(["reset"], test.context)).toBe(0);
+
+    expect(existsSync(join(config, "transaction"))).toBe(false);
+    expect(JSON.parse(readFileSync(join(config, "state.json"), "utf8"))).toMatchObject({
+      enabledPlugins: [],
+      packageVersion: PACKAGE_VERSION
+    });
   });
 
   it("removes project Plugin containers when reset configuration is incomplete", async () => {

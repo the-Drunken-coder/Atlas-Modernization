@@ -316,7 +316,7 @@ export class ProcessCommandRunner implements CommandRunner {
       const supervised = process.platform !== "win32" && options.processGroup !== undefined;
       const child = spawn(
         supervised ? process.execPath : command,
-        supervised ? ["-e", COMMAND_SUPERVISOR_SOURCE, command, ...args] : args,
+        supervised ? ["--input-type=commonjs", "-e", COMMAND_SUPERVISOR_SOURCE, command, ...args] : args,
         {
           cwd: options.cwd,
           detached: process.platform !== "win32",
@@ -1702,8 +1702,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   }
 
   #isRecoverablePluginDisableOwner(owner: MutationLockOwner): boolean {
-    const journalLockId = this.#recoverablePluginDisableLockId();
-    return journalLockId === owner.id || owner.operation === "plugin-disable";
+    return owner.operation === "plugin-disable" || this.#recoverablePluginDisableLockId() === owner.id;
   }
 
   #readMutationLockOwner(path: string): MutationLockOwner {
