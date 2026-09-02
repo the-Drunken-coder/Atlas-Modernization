@@ -840,6 +840,48 @@ describe("atlas-core CLI", () => {
     expect(test.runner.existingNetworks.has(MUTATION_LOCK_NETWORK)).toBe(false);
   });
 
+  it("rechecks the reset engine after pull before acquiring a retained Plugin-disable lock", async () => {
+    const test = runtime();
+    test.context.confirmReset = async () => true;
+    test.runner.dockerEngineId = "another-engine";
+    const config = join(test.home, ".atlas", "core");
+    const lockPath = join(config, ".mutation.lock");
+    const retainedOwner = {
+      schema: 1,
+      id: "a".repeat(32),
+      pid: 2_147_483_647,
+      operation: "plugin-disable"
+    } as const;
+    let injectedRetainedOwner = false;
+    test.runner.onRun = (call) => {
+      if (injectedRetainedOwner || call.command !== "docker" || call.args[0] !== "pull") return;
+      injectedRetainedOwner = true;
+      markInitialized(test);
+      writeFileSync(lockPath, `${JSON.stringify(retainedOwner)}\n`, { mode: 0o600 });
+    };
+
+    expect(await runCLI(["reset"], test.context)).toBe(1);
+
+    expect(test.stderr.join("")).toContain("Restore the original Docker context");
+    expect(test.runner.calls.some((call) => call.args[0] === "network")).toBe(false);
+    expect(JSON.parse(readFileSync(lockPath, "utf8"))).toEqual(retainedOwner);
+
+    test.runner.dockerEngineId = "test-engine-id";
+    test.runner.existingNetworks.add(MUTATION_LOCK_NETWORK);
+    test.runner.networkIds.set(MUTATION_LOCK_NETWORK, "retained-network");
+    test.runner.networkLabels.set(MUTATION_LOCK_NETWORK, {
+      "io.atlas.core.engine": "test-engine-id",
+      "io.atlas.core.lock": "mutation",
+      "io.atlas.core.project": "atlas_core_production",
+      "io.atlas.core.lock-id": retainedOwner.id
+    });
+    test.stderr.length = 0;
+
+    expect(await runCLI(["stop"], test.context)).toBe(0);
+    expect(existsSync(lockPath)).toBe(false);
+    expect(test.runner.existingNetworks.has(MUTATION_LOCK_NETWORK)).toBe(false);
+  });
+
   it("serializes overlapping mutations in one interactive session", async () => {
     const test = runtime();
     markInitialized(test);

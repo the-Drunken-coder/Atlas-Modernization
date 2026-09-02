@@ -597,7 +597,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     let idleRecoverableMutationLock: MutationLockOwner | undefined;
     try {
       this.#removeRetiredPluginDisableTransactions();
-      if (recoverInterruptedDisable) this.#assertPluginDisableRecoveryEngine(dockerEngineId, mutationLock);
+      this.#assertPluginDisableRecoveryEngine(dockerEngineId, mutationLock, recoverInterruptedDisable);
       try {
         dockerLock = await this.#acquireDockerMutationLock(dockerEngineId, mutationLock);
       } catch (error) {
@@ -2650,14 +2650,18 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
 
   #assertPluginDisableRecoveryEngine(
     dockerEngineId: string,
-    mutationLock: { owner: MutationLockOwner; recovered: boolean }
+    mutationLock: { owner: MutationLockOwner; recovered: boolean },
+    recoverInterruptedDisable: boolean
   ): void {
-    if (!existsSync(this.#transactionDir)) {
-      if (mutationLock.recovered && mutationLock.owner.operation === "plugin-disable") {
-        this.#assertStateMatchesEngine(this.#requireInitialized(), dockerEngineId);
-      }
-      return;
+    const hasTransaction = existsSync(this.#transactionDir);
+    if (
+      mutationLock.recovered &&
+      mutationLock.owner.operation === "plugin-disable" &&
+      (!recoverInterruptedDisable || !hasTransaction)
+    ) {
+      this.#assertStateMatchesEngine(this.#requireInitialized(), dockerEngineId);
     }
+    if (!recoverInterruptedDisable || !hasTransaction) return;
     this.#assertPluginDisableTransactionDirectory();
 
     const journalFile = join(this.#transactionDir, "journal.json");
