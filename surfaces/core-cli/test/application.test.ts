@@ -38,6 +38,10 @@ type Call = {
   cwd: string | undefined;
   env: NodeJS.ProcessEnv;
   inherit: boolean;
+  processGroup?: {
+    started(processGroupId: number): void;
+    finished(processGroupId: number): void;
+  };
   signal?: AbortSignal;
 };
 
@@ -55,6 +59,8 @@ class FakeRunner implements CommandRunner {
   failComposeConfig = false;
   failComposePull = false;
   failComposeUp = false;
+  failAfterComposeDown = false;
+  failDockerPullImage: string | undefined;
   failComposeUpImage: string | undefined;
   failStats = false;
   failInstalledCoreUpdate = false;
@@ -93,7 +99,13 @@ class FakeRunner implements CommandRunner {
   async run(
     command: string,
     args: string[],
-    options: { cwd?: string; env?: NodeJS.ProcessEnv; inherit?: boolean; signal?: AbortSignal } = {}
+    options: {
+      cwd?: string;
+      env?: NodeJS.ProcessEnv;
+      inherit?: boolean;
+      processGroup?: Call["processGroup"];
+      signal?: AbortSignal;
+    } = {}
   ): Promise<{ cancelled?: true; status: number; stdout: string; stderr: string }> {
     const call = {
       command,
@@ -101,6 +113,7 @@ class FakeRunner implements CommandRunner {
       cwd: options.cwd,
       env: { ...options.env },
       inherit: options.inherit ?? false,
+      ...(options.processGroup ? { processGroup: options.processGroup } : {}),
       ...(options.signal ? { signal: options.signal } : {})
     };
     this.calls.push(call);
@@ -149,6 +162,9 @@ class FakeRunner implements CommandRunner {
       this.afterSuccessfulNetworkCreate = undefined;
       if (afterSuccessfulNetworkCreate) queueMicrotask(afterSuccessfulNetworkCreate);
       return result(0, `${networkId}\n`);
+    }
+    if (args[0] === "pull" && args[1] === this.failDockerPullImage) {
+      return result(1, "", "injected Docker image pull failure");
     }
     if (args[0] === "network" && args[1] === "inspect") {
       const requested = args.at(-1) ?? "";
@@ -315,6 +331,11 @@ class FakeRunner implements CommandRunner {
     if (this.failComposeDown && compose[0] === "down") {
       return result(1, "", "injected compose down failure");
     }
+    if (this.failAfterComposeDown && compose[0] === "down") {
+      this.failAfterComposeDown = false;
+      this.serviceStates = [];
+      return result(1, "", "injected failure after compose down");
+    }
     if (compose[0] === "rm") {
       const removedService = compose.at(-1);
       if (removedService)
@@ -351,7 +372,13 @@ class FakeRunner implements CommandRunner {
   async runCleanup(
     command: string,
     args: string[],
-    options: { cwd?: string; env?: NodeJS.ProcessEnv; inherit?: boolean; signal?: AbortSignal } = {}
+    options: {
+      cwd?: string;
+      env?: NodeJS.ProcessEnv;
+      inherit?: boolean;
+      processGroup?: Call["processGroup"];
+      signal?: AbortSignal;
+    } = {}
   ): Promise<{ cancelled?: true; status: number; stdout: string; stderr: string }> {
     if (!this.hangCleanup) return await this.run(command, args, options);
     this.onCleanupStart?.(options.signal);
@@ -2965,6 +2992,138 @@ describe("atlas-core CLI", () => {
     expect(existsSync(join(config, "plugins", plugin.pluginId))).toBe(false);
   });
 
+  it("durably targets stopped and fences down before settling a pending disable", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const plugin = installTestPluginCatalog(test);
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
+    simulateInterruptedPluginDisable(test, plugin, true);
+    const config = join(test.home, ".atlas", "core");
+    const lockPath = join(config, ".mutation.lock");
+    rmSync(lockPath);
+    test.runner.existingNetworks.clear();
+    test.runner.networkIds.clear();
+    test.runner.networkLabels.clear();
+    test.runner.calls.length = 0;
+    test.runner.failAfterComposeDown = true;
+    let fencedAcquisition = false;
+    let fencedDown = false;
+    test.runner.onRun = (call) => {
+      if (call.args[0] === "network" && call.args[1] === "create") {
+        expect(call.processGroup).toBeDefined();
+        expect(JSON.parse(readFileSync(lockPath, "utf8"))).toMatchObject({ operation: "plugin-disable" });
+        fencedAcquisition = true;
+        return;
+      }
+      if (composeCommand(call)[0] !== "down") return;
+      const intent = JSON.parse(readFileSync(join(config, "plugins", plugin.pluginId, "disable.json"), "utf8"));
+      expect(intent).toMatchObject({ previousStatus: "stopped" });
+      expect(JSON.parse(readFileSync(lockPath, "utf8"))).toMatchObject({ operation: "plugin-disable" });
+      expect(call.processGroup).toBeDefined();
+      const processGroupId = 123_456;
+      call.processGroup?.started(processGroupId);
+      expect(JSON.parse(readFileSync(lockPath, "utf8"))).toMatchObject({ processGroupId });
+      call.processGroup?.finished(processGroupId);
+      fencedDown = true;
+    };
+
+    expect(await runCLI(["stop"], test.context)).toBe(1);
+
+    expect(fencedAcquisition).toBe(true);
+    expect(fencedDown).toBe(true);
+    expect(test.runner.serviceStates).toEqual([]);
+    expect(JSON.parse(readFileSync(join(config, "plugins", plugin.pluginId, "disable.json"), "utf8"))).toMatchObject({
+      previousStatus: "stopped"
+    });
+    expect(existsSync(lockPath)).toBe(false);
+
+    test.runner.onRun = undefined;
+    test.runner.calls.length = 0;
+    expect(await runCLI(["plugins", "disable", plugin.pluginId], test.context)).toBe(0);
+
+    expect(test.runner.calls.map(composeCommand).some((args) => args[0] === "up")).toBe(false);
+    expect(test.runner.calls.map(composeCommand)).toContainEqual(["down", "--remove-orphans"]);
+    expect(test.runner.serviceStates).toEqual([]);
+    expect(existsSync(join(config, "plugins", plugin.pluginId))).toBe(false);
+  });
+
+  it("supervises recovered Docker lock creation behind the durable Plugin-disable fence", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const plugin = installTestPluginCatalog(test);
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
+    simulateInterruptedPluginDisable(test, plugin, true);
+    const config = join(test.home, ".atlas", "core");
+    const lockPath = join(config, ".mutation.lock");
+    let supervisedCreate = false;
+    test.runner.onRun = (call) => {
+      if (call.args[0] !== "network" || call.args[1] !== "create") return;
+      expect(call.processGroup).toBeDefined();
+      expect(JSON.parse(readFileSync(lockPath, "utf8"))).toMatchObject({ operation: "plugin-disable" });
+      const processGroupId = 123_457;
+      call.processGroup?.started(processGroupId);
+      expect(JSON.parse(readFileSync(lockPath, "utf8"))).toMatchObject({ processGroupId });
+      call.processGroup?.finished(processGroupId);
+      supervisedCreate = true;
+    };
+
+    expect(await runCLI(["stop"], test.context)).toBe(0);
+
+    expect(supervisedCreate).toBe(true);
+    expect(existsSync(lockPath)).toBe(false);
+    expect(test.runner.existingNetworks.has(MUTATION_LOCK_NETWORK)).toBe(false);
+  });
+
+  it("pins the validated Docker socket across a Plugin-disable mutation", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const plugin = installTestPluginCatalog(test);
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
+    test.runner.calls.length = 0;
+    const validatedHost = test.runner.contextHost;
+    test.runner.onRun = (call) => {
+      if (call.args[0] !== "network" || call.args[1] !== "create") return;
+      test.runner.contextHost = "unix:///alternate-docker.sock";
+      test.runner.dockerEngineId = "alternate-engine";
+    };
+
+    expect(await runCLI(["plugins", "disable", plugin.pluginId], test.context)).toBe(0);
+
+    const createIndex = test.runner.calls.findIndex((call) => call.args[0] === "network" && call.args[1] === "create");
+    expect(createIndex).toBeGreaterThanOrEqual(0);
+    for (const call of test.runner.calls.slice(createIndex).filter((candidate) => candidate.command === "docker")) {
+      expect(call.env.DOCKER_HOST).toBe(validatedHost);
+      expect(call.env.DOCKER_CONTEXT).toBeUndefined();
+    }
+  });
+
+  it("retains the Plugin-disable fence when a missing lock belongs to another engine", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const plugin = installTestPluginCatalog(test);
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
+    const config = join(test.home, ".atlas", "core");
+    const lockPath = join(config, ".mutation.lock");
+    test.runner.afterSuccessfulComposeUp = () => {
+      test.runner.existingNetworks.clear();
+      test.runner.networkIds.clear();
+      test.runner.networkLabels.clear();
+      test.runner.dockerEngineId = "replacement-engine";
+    };
+
+    expect(await runCLI(["plugins", "disable", plugin.pluginId], test.context)).toBe(1);
+
+    expect(test.stderr.join("")).toContain("Docker engine changed during deployment mutation");
+    expect(JSON.parse(readFileSync(lockPath, "utf8"))).toMatchObject({ operation: "plugin-disable" });
+
+    test.runner.dockerEngineId = "test-engine-id";
+    const retainedOwner = JSON.parse(readFileSync(lockPath, "utf8"));
+    writeFileSync(lockPath, `${JSON.stringify({ ...retainedOwner, pid: 2_147_483_647 })}\n`, { mode: 0o600 });
+    test.stderr.length = 0;
+    expect(await runCLI(["stop"], test.context)).toBe(0);
+    expect(existsSync(lockPath)).toBe(false);
+  });
+
   it("finishes a pending disable before enabling the Plugin again", async () => {
     const test = runtime();
     markInitialized(test);
@@ -2980,6 +3139,30 @@ describe("atlas-core CLI", () => {
     });
     expect(test.stderr.join("")).not.toContain("has staged files");
     expect(test.runner.calls.map(composeCommand)).toContainEqual(["rm", "-s", "-f", plugin.service]);
+  });
+
+  it("leaves a coherent disabled deployment when re-enable pulling fails after pending recovery", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const plugin = installTestPluginCatalog(test);
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
+    simulateInterruptedPluginDisable(test, plugin, true);
+    const config = join(test.home, ".atlas", "core");
+    const pluginCompose = join(config, "plugins", plugin.pluginId, "compose.yml");
+    test.runner.calls.length = 0;
+    test.runner.failDockerPullImage = plugin.image ?? undefined;
+
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(1);
+
+    expect(JSON.parse(readFileSync(join(config, "state.json"), "utf8"))).toMatchObject({ enabledPlugins: [] });
+    expect(existsSync(join(config, "plugins", plugin.pluginId))).toBe(false);
+    expect(test.runner.serviceStates.some((service) => service.Service === plugin.service)).toBe(false);
+    const baseRecreation = test.runner.calls.find(
+      (call) => composeCommand(call)[0] === "up" && composeCommand(call).includes("api")
+    );
+    expect(baseRecreation).toBeDefined();
+    expect(baseRecreation?.args).not.toContain(pluginCompose);
+    expect(existsSync(join(config, ".mutation.lock"))).toBe(false);
   });
 
   it("reclaims a completed disable whose process died before releasing its locks", async () => {

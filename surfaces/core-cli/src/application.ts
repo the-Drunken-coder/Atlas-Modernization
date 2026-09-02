@@ -225,6 +225,7 @@ type MutationLockOwner = {
 };
 
 type DockerMutationLock = {
+  engineId: string;
   networkId: string;
   owner: MutationLockOwner;
   labels: Record<string, string>;
@@ -252,6 +253,7 @@ type ReadablePlugin = DeployedPluginMetadata & {
 type DockerRuntime = {
   architecture: string;
   engineId: string;
+  host: string;
   operatingSystem: string;
 };
 
@@ -513,6 +515,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   readonly #confirmCoreUpdate: (question: string) => Promise<boolean>;
   readonly #confirmReset: (question: string) => Promise<boolean>;
   readonly #imageReference: string | undefined;
+  #dockerHost: string | undefined;
   #activeMutationLock: MutationLockOwner | undefined;
   #idleRecoverableMutationLock: MutationLockOwner | undefined;
   #activeMutationRecoveryPath: string | undefined;
@@ -597,6 +600,12 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     try {
       this.#removeRetiredPluginAssets();
       this.#assertRecoveredPluginDisableEngine(dockerEngineId, mutationLock);
+      if (mutationLock.recovered) this.#activateRecoveredMutationLock(mutationLock);
+      if (keepRecoveredDisableFence && this.#pendingPluginDisableIds().length > 0) {
+        this.#activeMutationLock ??= mutationLock.owner;
+        this.#markActivePluginDisableOperation();
+        mutationLock.owner = this.#activeMutationLock;
+      }
       try {
         dockerLock = await this.#acquireDockerMutationLock(dockerEngineId, mutationLock);
       } catch (error) {
@@ -814,6 +823,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   async stop(): Promise<void> {
     await this.#withInitializedMutation(async (state, dockerEngineId) => {
       this.#assertStateMatchesEngine(state, dockerEngineId);
+      this.#preparePluginDisableIntentsForStop();
       await this.#runComposeChecked(["down", "--remove-orphans"], state.enabledPlugins);
       this.#settlePluginDisableIntentsAfterStop(state);
       this.#stdout.write("Atlas Core stopped. Durable volumes were preserved.\n");
@@ -1139,7 +1149,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       const result = await this.#runner.run(
         "docker",
         ["stats", "--no-stream", "--format", "{{json .}}", ...runningContainers],
-        { env: this.#env, ...(signal ? { signal } : {}) }
+        { env: this.#dockerEnvironment(), ...(signal ? { signal } : {}) }
       );
       if (result.status === 0) {
         try {
@@ -1179,7 +1189,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
             "{{json .Config.Image}}\t{{json .State.StartedAt}}\t{{.RestartCount}}",
             definition.container
           ],
-          { env: this.#env, ...(signal ? { signal } : {}) }
+          { env: this.#dockerEnvironment(), ...(signal ? { signal } : {}) }
         );
         if (inspection.status === 0) {
           try {
@@ -1286,7 +1296,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       this.#cancelPluginDisableIntent(pluginId);
       return `${plugin.displayName} is already enabled`;
     }
-    await this.#finishPendingPluginDisableBeforeEnable(pluginId, state);
+    await this.#finishPendingPluginDisableBeforeEnable(pluginId, state, report);
     const image = plugin.image;
     if (!image) throw new Error(`Plugin ${pluginId} has no image in this Atlas Core package.`);
     report({ level: "working", message: `Pulling ${plugin.displayName} image`, stage: "operation" });
@@ -1433,7 +1443,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
         schema: 1,
         operation: "plugin-disable",
         pluginId,
-        previousStatus: snapshot.status
+        previousStatus: existingIntent?.previousStatus === "stopped" ? "stopped" : snapshot.status
       };
       this.#writePluginDisableIntent(preparedIntent);
       intent = preparedIntent;
@@ -1445,12 +1455,28 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     }
 
     if (!intent) throw new Error(`Plugin ${pluginId} has no durable disable intent.`);
+    await this.#convergePluginDisable(plugin, candidatePluginIds, intent, report);
+    return intent.previousStatus === "stopped"
+      ? `${plugin.displayName} disabled. Atlas Core remains stopped`
+      : `${plugin.displayName} disabled. Core API and Source Gateway are healthy`;
+  }
+
+  async #convergePluginDisable(
+    plugin: ReadablePlugin,
+    candidatePluginIds: readonly string[],
+    intent: PluginDisableIntent,
+    report: PluginActivityReporter
+  ): Promise<void> {
+    const pluginId = plugin.pluginId;
     report({ level: "working", message: `Stopping ${plugin.displayName}`, stage: "operation" });
-    const removeResult = await this.#runComposeCleanup(
-      ["rm", "-s", "-f", plugin.service],
-      [...candidatePluginIds, pluginId]
-    );
-    if (removeResult.status !== 0) throw commandFailure("docker compose rm", removeResult);
+    const oldPluginIds = [...candidatePluginIds, pluginId].sort();
+    if (intent.previousStatus === "stopped") {
+      const downResult = await this.#runComposeCleanup(["down", "--remove-orphans"], oldPluginIds);
+      if (downResult.status !== 0) throw commandFailure("docker compose down", downResult);
+    } else {
+      const removeResult = await this.#runComposeCleanup(["rm", "-s", "-f", plugin.service], oldPluginIds);
+      if (removeResult.status !== 0) throw commandFailure("docker compose rm", removeResult);
+    }
     const configResult = await this.#runComposeCleanup(["config", "--quiet"], candidatePluginIds);
     if (configResult.status !== 0) throw commandFailure("docker compose config", configResult);
     if (intent.previousStatus === "ready") {
@@ -1476,9 +1502,6 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     }
     this.#removePluginAssets(pluginId);
     report({ level: "success", message: "Plugin deployment files removed", stage: "operation" });
-    return intent.previousStatus === "stopped"
-      ? `${plugin.displayName} disabled. Atlas Core remains stopped`
-      : `${plugin.displayName} disabled. Core API and Source Gateway are healthy`;
   }
 
   async doctor(): Promise<boolean> {
@@ -1544,6 +1567,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   }
 
   async #preflight(signal?: AbortSignal): Promise<string> {
+    this.#dockerHost = undefined;
     if (!SUPPORTED_PLATFORMS.has(this.#platform)) {
       throw new Error(`Atlas Core supports macOS and Linux. Detected ${this.#platform}.`);
     }
@@ -1554,17 +1578,20 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     await this.#checkCommand("docker", ["--version"], signal);
     const composeVersion = oneLine(await this.#checkCommand("docker", ["compose", "version", "--short"], signal));
     assertComposeVersion(composeVersion);
-    return (await this.#dockerRuntime(signal)).engineId;
+    const runtime = await this.#dockerRuntime(signal);
+    this.#dockerHost = runtime.host;
+    return runtime.engineId;
   }
 
   async #dockerRuntime(signal?: AbortSignal): Promise<DockerRuntime> {
-    const context = oneLine(await this.#checkCommand("docker", ["context", "show"], signal));
+    const context = oneLine(await this.#checkCommand("docker", ["context", "show"], signal, this.#env));
     if (!context) throw new Error("Docker did not report an active context.");
     const contextHost = oneLine(
       await this.#checkCommand(
         "docker",
         ["context", "inspect", context, "--format", '{{(index .Endpoints "docker").Host}}'],
-        signal
+        signal,
+        this.#env
       )
     );
     const configuredContext = this.#env.DOCKER_CONTEXT?.trim();
@@ -1575,7 +1602,12 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       );
     }
 
-    const raw = await this.#checkCommand("docker", ["info", "--format", "{{json .}}"], signal);
+    const raw = await this.#checkCommand(
+      "docker",
+      ["info", "--format", "{{json .}}"],
+      signal,
+      this.#dockerEnvironment(dockerHost)
+    );
     let info: unknown;
     try {
       info = JSON.parse(raw);
@@ -1591,13 +1623,27 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     if (!SUPPORTED_DOCKER_ARCHITECTURES.has(info.Architecture)) {
       throw new Error(`Atlas Core supports amd64 and arm64 Docker daemons. Detected ${info.Architecture}.`);
     }
-    return { architecture: info.Architecture, engineId: info.ID, operatingSystem: info.OSType };
+    return { architecture: info.Architecture, engineId: info.ID, host: dockerHost, operatingSystem: info.OSType };
   }
 
-  async #checkCommand(command: string, args: string[], signal?: AbortSignal): Promise<string> {
-    const result = await this.#runner.run(command, args, { env: this.#env, ...(signal ? { signal } : {}) });
+  async #checkCommand(
+    command: string,
+    args: string[],
+    signal?: AbortSignal,
+    environment = command === "docker" ? this.#dockerEnvironment() : this.#env
+  ): Promise<string> {
+    const result = await this.#runner.run(command, args, { env: environment, ...(signal ? { signal } : {}) });
     if (result.status !== 0) throw commandFailure([command, ...args].join(" "), result);
     return result.stdout || result.stderr;
+  }
+
+  #dockerEnvironment(host = this.#dockerHost): NodeJS.ProcessEnv {
+    const environment = { ...this.#env };
+    if (host) {
+      delete environment.DOCKER_CONTEXT;
+      environment.DOCKER_HOST = host;
+    }
+    return environment;
   }
 
   #acquireMutationLock(): { owner: MutationLockOwner; recovered: boolean } {
@@ -1729,6 +1775,27 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     return claimPath;
   }
 
+  #activateRecoveredMutationLock(mutationLock: { owner: MutationLockOwner; recovered: boolean }): void {
+    const claimPath = this.#activeMutationRecoveryPath;
+    if (!mutationLock.recovered || !claimPath) {
+      throw new Error("Atlas Core could not activate its recovered deployment mutation lock.");
+    }
+    const { processGroupId: _, ...recoveredOwner } = mutationLock.owner;
+    const owner: MutationLockOwner = { ...recoveredOwner, pid: process.pid, operation: "plugin-disable" };
+    writePrivateFile(claimPath, `${JSON.stringify(owner, null, 2)}\n`, this.#platform);
+    try {
+      linkSync(claimPath, this.#mutationLockFile);
+      syncDirectory(this.#configDir);
+    } catch (error) {
+      throw new OperationCleanupError(
+        `Atlas Core could not activate its recovered mutation lock: ${errorMessage(error)}`
+      );
+    }
+    this.#releaseMutationRecoveryLock();
+    mutationLock.owner = owner;
+    this.#activeMutationLock = owner;
+  }
+
   #isRecoverablePluginDisableOwner(owner: MutationLockOwner): boolean {
     return owner.operation === "plugin-disable";
   }
@@ -1762,6 +1829,14 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     return {
       started: (processGroupId) => this.#recordPluginDisableProcessGroup(processGroupId),
       finished: (processGroupId) => this.#clearPluginDisableProcessGroup(processGroupId)
+    };
+  }
+
+  #dockerRunOptions(): RunOptions {
+    const processGroup = this.#pluginDisableProcessGroup();
+    return {
+      env: this.#dockerEnvironment(),
+      ...(processGroup ? { processGroup } : {})
     };
   }
 
@@ -1891,7 +1966,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
 
     let result: CommandResult;
     try {
-      result = await this.#runner.run("docker", args, { env: this.#env });
+      result = await this.#runner.run("docker", args, this.#dockerRunOptions());
     } catch (error) {
       if (error instanceof CommandCancelledError) {
         await this.#removeAmbiguousDockerMutationLock(attemptLabels);
@@ -1904,16 +1979,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
         await this.#removeAmbiguousDockerMutationLock(attemptLabels);
         throw new Error("Docker did not report the deployment mutation lock network ID.");
       }
-      if (mutationLock.recovered) {
-        try {
-          writePrivateFile(this.#mutationLockFile, `${JSON.stringify(owner, null, 2)}\n`, this.#platform, true);
-          this.#releaseMutationRecoveryLock();
-        } catch (error) {
-          await this.#removeAmbiguousDockerMutationLock(attemptLabels);
-          throw error;
-        }
-      }
-      return { networkId, owner, labels: attemptLabels };
+      return { engineId: dockerEngineId, networkId, owner, labels: attemptLabels };
     }
 
     if (await this.#removeAmbiguousDockerMutationLock(attemptLabels)) {
@@ -1923,7 +1989,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     const inspection = await this.#runner.run(
       "docker",
       ["network", "inspect", "--format", "{{json .Labels}}", MUTATION_LOCK_NETWORK],
-      { env: this.#env }
+      this.#dockerRunOptions()
     );
     if (inspection.status !== 0) throw commandFailure(`docker ${args.join(" ")}`, result);
     this.#assertResourceLabels("deployment mutation lock", MUTATION_LOCK_NETWORK, inspection.stdout, ownershipLabels);
@@ -1940,7 +2006,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     const inspection = await this.#runner.run(
       "docker",
       ["network", "inspect", "--format", "{{json .Id}}\t{{json .Labels}}", MUTATION_LOCK_NETWORK],
-      { env: this.#env }
+      this.#dockerRunOptions()
     );
     if (inspection.status !== 0) {
       if (dockerNetworkMissing(inspection)) return;
@@ -1951,7 +2017,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       ...ownershipLabels,
       "io.atlas.core.lock-id": recoveredLockId
     });
-    const removal = await this.#runner.run("docker", ["network", "rm", network.id], { env: this.#env });
+    const removal = await this.#runner.run("docker", ["network", "rm", network.id], this.#dockerRunOptions());
     if (removal.status !== 0) {
       if (dockerNetworkMissing(removal)) return;
       throw commandFailure(`docker network rm ${MUTATION_LOCK_NETWORK}`, removal);
@@ -1962,7 +2028,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     const inspection = await this.#runner.runCleanup(
       "docker",
       ["network", "inspect", "--format", "{{json .Id}}\t{{json .Labels}}", MUTATION_LOCK_NETWORK],
-      { env: this.#env }
+      this.#dockerRunOptions()
     );
     if (inspection.status !== 0) {
       if (dockerNetworkMissing(inspection)) return true;
@@ -1972,9 +2038,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     }
     const network = dockerNetworkIdentity(inspection.stdout);
     if (!this.#resourceLabelsMatch(JSON.stringify(network.labels), attemptLabels)) return false;
-    const removal = await this.#runner.runCleanup("docker", ["network", "rm", network.id], {
-      env: this.#env
-    });
+    const removal = await this.#runner.runCleanup("docker", ["network", "rm", network.id], this.#dockerRunOptions());
     if (removal.status !== 0) {
       if (dockerNetworkMissing(removal)) return true;
       throw new OperationCleanupError(commandFailure(`docker network rm ${MUTATION_LOCK_NETWORK}`, removal).message);
@@ -1986,10 +2050,13 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     const inspection = await this.#runner.runCleanup(
       "docker",
       ["network", "inspect", "--format", "{{json .Id}}\t{{json .Labels}}", MUTATION_LOCK_NETWORK],
-      { env: this.#env }
+      this.#dockerRunOptions()
     );
     if (inspection.status !== 0) {
-      if (dockerNetworkMissing(inspection)) return;
+      if (dockerNetworkMissing(inspection)) {
+        await this.#assertPinnedDockerEngine(lock.engineId);
+        return;
+      }
       throw new OperationCleanupError(
         commandFailure(`docker network inspect ${MUTATION_LOCK_NETWORK}`, inspection).message
       );
@@ -1998,12 +2065,27 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     if (network.id !== lock.networkId || !this.#resourceLabelsMatch(JSON.stringify(network.labels), lock.labels)) {
       throw new OperationCleanupError("Atlas Core deployment mutation lock changed ownership before cleanup.");
     }
-    const result = await this.#runner.runCleanup("docker", ["network", "rm", lock.networkId], {
-      env: this.#env
-    });
+    const result = await this.#runner.runCleanup("docker", ["network", "rm", lock.networkId], this.#dockerRunOptions());
     if (result.status !== 0) {
-      if (dockerNetworkMissing(result)) return;
+      if (dockerNetworkMissing(result)) {
+        await this.#assertPinnedDockerEngine(lock.engineId);
+        return;
+      }
       throw new OperationCleanupError(commandFailure(`docker network rm ${MUTATION_LOCK_NETWORK}`, result).message);
+    }
+  }
+
+  async #assertPinnedDockerEngine(expectedEngineId: string): Promise<void> {
+    let info: unknown;
+    try {
+      info = JSON.parse(await this.#checkCommand("docker", ["info", "--format", "{{json .}}"]));
+    } catch (error) {
+      throw new OperationCleanupError(`Atlas Core could not verify Docker engine identity: ${errorMessage(error)}`);
+    }
+    if (!isDockerInfo(info) || info.ID !== expectedEngineId) {
+      throw new OperationCleanupError(
+        `Atlas Core Docker engine changed during deployment mutation. Restore engine ${expectedEngineId} before retrying.`
+      );
     }
   }
 
@@ -2127,7 +2209,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   ): Promise<boolean> {
     const labelsFormat = kind === "container" ? "{{json .Config.Labels}}" : "{{json .Labels}}";
     const result = await this.#runner.run("docker", [kind, "inspect", "--format", labelsFormat, name], {
-      env: this.#env
+      env: this.#dockerEnvironment()
     });
     if (result.status !== 0) {
       if (new RegExp(`no such ${kind}`, "i").test(result.stderr || result.stdout)) return false;
@@ -2448,18 +2530,29 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     syncDirectory(dirname(path));
   }
 
-  async #finishPendingPluginDisableBeforeEnable(pluginId: string, state: DeploymentState): Promise<void> {
+  async #finishPendingPluginDisableBeforeEnable(
+    pluginId: string,
+    state: DeploymentState,
+    report: PluginActivityReporter
+  ): Promise<void> {
     const intent = this.#readPluginDisableIntentIfPresent(pluginId);
     if (!intent) return;
     const deployed = this.#readableDeployedPlugin(pluginId);
     this.#markActivePluginDisableOperation();
-    const oldPluginIds = [...state.enabledPlugins, pluginId].sort();
-    const remove = await this.#runComposeCleanup(["rm", "-s", "-f", deployed.service], oldPluginIds);
-    if (remove.status !== 0) throw commandFailure("docker compose rm", remove);
-    const config = await this.#runComposeCleanup(["config", "--quiet"], state.enabledPlugins);
-    if (config.status !== 0) throw commandFailure("docker compose config", config);
-    this.#removePluginAssets(pluginId);
+    await this.#convergePluginDisable(deployed, state.enabledPlugins, intent, report);
     this.#completePluginDisableRecoveryLockHandoff();
+  }
+
+  #preparePluginDisableIntentsForStop(): void {
+    const pendingPluginIds = this.#pendingPluginDisableIds();
+    if (pendingPluginIds.length === 0) return;
+    this.#markActivePluginDisableOperation();
+    for (const pluginId of pendingPluginIds) {
+      const intent = this.#readPluginDisableIntentIfPresent(pluginId);
+      if (intent?.previousStatus === "ready") {
+        this.#writePluginDisableIntent({ ...intent, previousStatus: "stopped" });
+      }
+    }
   }
 
   #settlePluginDisableIntentsAfterStop(state: DeploymentState): void {
@@ -2843,7 +2936,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     imageReference = this.#imageReference ?? UNRELEASED_IMAGE,
     signal?: AbortSignal
   ): Promise<CommandResult> {
-    const env = { ...this.#env };
+    const env = this.#dockerEnvironment();
     for (const variable of COMPOSE_VARIABLES) delete env[variable];
     for (const variable of Object.keys(env)) {
       if (variable.startsWith("COMPOSE_") || variable.startsWith("ATLAS_")) delete env[variable];
