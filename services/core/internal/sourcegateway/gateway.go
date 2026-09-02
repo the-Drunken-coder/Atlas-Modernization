@@ -52,6 +52,7 @@ type connector struct {
 
 	rateMu      sync.Mutex
 	nextRequest time.Time
+	rateChanged chan struct{}
 	stateMu     sync.Mutex
 	failures    int
 	openUntil   time.Time
@@ -111,7 +112,8 @@ func New(cfg Config, options Options) (*Gateway, error) {
 		client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 		gateway.connectors[connectorConfig.ID] = &connector{
 			config: *connectorConfig, origin: origin, client: client, secretHeaders: secrets,
-			semaphore: make(chan struct{}, connectorConfig.Limits.MaxConcurrency),
+			semaphore:   make(chan struct{}, connectorConfig.Limits.MaxConcurrency),
+			rateChanged: make(chan struct{}),
 		}
 	}
 	return gateway, nil
@@ -341,6 +343,15 @@ func (g *Gateway) execute(ctx context.Context, connector *connector, input Conne
 			connector.releaseRate(reservation)
 			return ConnectorResponse{}, attempt - 1, "miss", contextFailure(ctx, requestContext, false)
 		}
+		circuitOpen := connector.circuitOpen(g.now())
+		if requestContext.Err() != nil {
+			connector.releaseRate(reservation)
+			return ConnectorResponse{}, attempt - 1, "miss", contextFailure(ctx, requestContext, false)
+		}
+		if circuitOpen {
+			connector.releaseRate(reservation)
+			return ConnectorResponse{}, attempt - 1, "miss", &gatewayError{code: FailureCircuitOpen}
+		}
 		response, failure := connector.attempt(requestContext, prepared, rule)
 		if requestContext.Err() != nil {
 			failure = contextFailure(ctx, requestContext, true)
@@ -563,6 +574,7 @@ func (c *connector) waitForRate(ctx context.Context, now func() time.Time) (rate
 			c.rateMu.Unlock()
 			return rateReservation{grantedAt: waitUntil, next: next}, nil
 		}
+		rateChanged := c.rateChanged
 		c.rateMu.Unlock()
 
 		timer := time.NewTimer(waitUntil.Sub(current))
@@ -580,6 +592,13 @@ func (c *connector) waitForRate(ctx context.Context, now func() time.Time) (rate
 				return rateReservation{grantedAt: waitUntil, next: next}, nil
 			}
 			c.rateMu.Unlock()
+		case <-rateChanged:
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
 		case <-ctx.Done():
 			if !timer.Stop() {
 				select {
@@ -600,6 +619,8 @@ func (c *connector) releaseRate(reservation rateReservation) {
 	defer c.rateMu.Unlock()
 	if c.nextRequest.Equal(reservation.next) {
 		c.nextRequest = reservation.grantedAt
+		close(c.rateChanged)
+		c.rateChanged = make(chan struct{})
 	}
 }
 

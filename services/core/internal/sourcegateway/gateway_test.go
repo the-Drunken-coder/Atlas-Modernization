@@ -356,6 +356,55 @@ func TestQueuedRequestRechecksCircuitAfterConcurrencyWait(t *testing.T) {
 	}
 }
 
+func TestQueuedRequestRechecksCircuitAfterRateWait(t *testing.T) {
+	var calls atomic.Int32
+	startedRateWait := make(chan struct{})
+	var clockCalls atomic.Int32
+	config := testConnectorConfig()
+	config.Rate.RequestsPerSecond = 10
+	config.CircuitBreaker.Failures = 1
+	gateway, err := New(Config{Connectors: []ConnectorConfig{config}}, Options{
+		Now: func() time.Time {
+			if clockCalls.Add(1) == 3 {
+				close(startedRateWait)
+			}
+			return time.Now()
+		},
+		Client: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			calls.Add(1)
+			return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: http.NoBody}, nil
+		})},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connector := gateway.connectors["reference"]
+	connector.nextRequest = time.Now().Add(100 * time.Millisecond)
+	result := make(chan struct {
+		attempts int
+		failure  *gatewayError
+	}, 1)
+	go func() {
+		_, attempts, _, failure := gateway.execute(context.Background(), connector, ConnectorRequest{
+			Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{},
+		})
+		result <- struct {
+			attempts int
+			failure  *gatewayError
+		}{attempts: attempts, failure: failure}
+	}()
+	<-startedRateWait
+	connector.recordFailure(time.Now())
+	select {
+	case outcome := <-result:
+		if outcome.failure == nil || outcome.failure.code != FailureCircuitOpen || outcome.attempts != 0 || calls.Load() != 0 {
+			t.Fatalf("attempts=%d calls=%d failure=%v", outcome.attempts, calls.Load(), outcome.failure)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("rate-limited request did not resume")
+	}
+}
+
 func TestCancellationWinsPostSemaphoreCircuitCheck(t *testing.T) {
 	var calls atomic.Int32
 	var clockCalls atomic.Int32
@@ -497,14 +546,37 @@ func TestRateLimitCountsRetriesAndCanceledWaitersDoNotReserveCapacity(t *testing
 		t.Fatalf("cancellation during rate admission reserved capacity until %s", connector.nextRequest)
 	}
 
+	connector.config.Rate.RequestsPerSecond = 1
 	connector.nextRequest = now
 	reservation, err := connector.waitForRate(context.Background(), func() time.Time { return now })
 	if err != nil {
 		t.Fatal(err)
 	}
+	waiterStarted := make(chan struct{})
+	waiterResult := make(chan error, 1)
+	waiterContext, cancelWaiter := context.WithCancel(context.Background())
+	defer cancelWaiter()
+	var waiterClockCalls atomic.Int32
+	go func() {
+		_, waitErr := connector.waitForRate(waiterContext, func() time.Time {
+			if waiterClockCalls.Add(1) == 1 {
+				close(waiterStarted)
+			}
+			return now
+		})
+		waiterResult <- waitErr
+	}()
+	<-waiterStarted
 	connector.releaseRate(reservation)
-	if !connector.nextRequest.Equal(now) {
-		t.Fatalf("released pre-attempt reservation kept capacity until %s", connector.nextRequest)
+	select {
+	case err := <-waiterResult:
+		if err != nil {
+			t.Fatalf("wait after released reservation = %v", err)
+		}
+	case <-time.After(100 * time.Millisecond):
+		cancelWaiter()
+		<-waiterResult
+		t.Fatal("released reservation did not wake existing rate waiter")
 	}
 }
 
