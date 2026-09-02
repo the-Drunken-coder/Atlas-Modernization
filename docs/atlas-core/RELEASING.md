@@ -130,6 +130,12 @@ After the release commit and tag exist, never move or replace the tag. Rerun a f
 artifacts still match. If the release itself is wrong after public publication, prepare a new patch release rather than
 rewriting the published version.
 
+If the coordinator fails while uploading its publication authorization after the atomic push, rerun only the failed
+jobs in that coordinator. The retry rebuilds the approved release tree, proves that the existing immutable tag is the
+exact release commit created from the approved source, and reuses the original release artifact by ID and digest. It does
+not mint the release credential or create another commit. The retry dispatches a new tag run and uploads authorization
+bound to that child and the new coordinator attempt. Do not rerun every job, which would restart the approval phase.
+
 ## New GHCR packages
 
 GitHub creates a new Core or catalog Plugin package as private. The tagged run stops before npm publication if any exact
@@ -179,14 +185,13 @@ Later releases require no npm token.
 
 ## Recovery after the tag exists
 
-If automatic dispatch fails after the atomic push, dispatch **Release Atlas Core** manually from
-`atlas-core-v<version>`. This path also recovers an older release after newer Atlas Core tags exist. Leave the internal
-coordinator run ID and attempt empty. Do not rerun the original main job after it has pushed the release commit and tag. Manual
-recovery waits for approval in `release`, then publishes from `release-publish`. Tagged-job reruns recognize the exact
-release commit, pinned digests, image visibility, npm integrity, provenance, release notes, and assets. They repair an
-incomplete draft release and reject mismatched published artifacts. When recovering a version older than the newest
-stable npm version, the workflow publishes it with the non-default `recovered` npm tag and explicitly leaves the newer
-GitHub Release marked latest.
+If the coordinator cannot retry because its approved artifacts expired or no longer match, dispatch **Release Atlas
+Core** manually from `atlas-core-v<version>`. This path also recovers an older release after newer Atlas Core tags exist.
+Leave the internal coordinator run ID and attempt empty. Manual recovery waits for approval in `release`, then publishes
+from `release-publish`. Tagged-job reruns recognize the exact release commit, pinned digests, image visibility, npm
+integrity, provenance, release notes, and assets. They repair an incomplete draft release and reject mismatched published
+artifacts. When recovering a version older than the newest stable npm version, the workflow publishes it with the
+non-default `recovered` npm tag and explicitly leaves the newer GitHub Release marked latest.
 
 This recovery path applies only to tags whose immutable workflow contains the coordinator authorization and
 `release-publish` identity. For a pre-migration tag whose npm version is missing, temporarily restore the npm trusted

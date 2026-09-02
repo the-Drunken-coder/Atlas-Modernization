@@ -27,6 +27,31 @@ function git(args, cwd) {
   return result.stdout.trim();
 }
 
+function workflowRunScript(stepName) {
+  const source = readFileSync(workflow, "utf8");
+  const stepStart = source.indexOf(`      - name: ${stepName}\n`);
+  assert.ok(stepStart >= 0, `Workflow step not found: ${stepName}`);
+  const runMarker = "        run: |\n";
+  const scriptStart = source.indexOf(runMarker, stepStart);
+  assert.ok(scriptStart >= 0, `Workflow run block not found: ${stepName}`);
+  const bodyStart = scriptStart + runMarker.length;
+  const nextStep = source.indexOf("\n      - name:", bodyStart);
+  const body = source.slice(bodyStart, nextStep >= 0 ? nextStep : source.length);
+  return body
+    .split("\n")
+    .map((line) => (line.startsWith("          ") ? line.slice(10) : line))
+    .join("\n");
+}
+
+function runWorkflowStep(stepName, cwd, environment) {
+  return spawnSync("bash", ["-c", `set -euo pipefail\n${workflowRunScript(stepName)}`], {
+    cwd,
+    encoding: "utf8",
+    env: { ...process.env, ...environment },
+    stdio: "pipe"
+  });
+}
+
 test("validates Atlas Core versions", () => {
   assert.equal(run(["validate-version", "1.2.3"], process.cwd()).status, 0);
   const invalid = run(["validate-version", "v1.2.3"], process.cwd());
@@ -203,6 +228,74 @@ test("lets the coordinator wait without blocking the tag publisher", () => {
   assert.match(source, /group: release-atlas-core-mutator\n\s+cancel-in-progress: false\n\s+queue: max/);
 });
 
+test("reuses the exact release commit after an authorization upload failure", () => {
+  const directory = mkdtempSync(join(tmpdir(), "atlas-core-release-retry-"));
+  const remote = join(directory, "remote.git");
+  const checkout = join(directory, "checkout");
+  const output = join(directory, "github-output");
+  const changelog = join(checkout, "CHANGELOG.md");
+  const version = "1.2.3";
+  try {
+    git(["init", "--bare", remote], directory);
+    mkdirSync(checkout);
+    git(["init"], checkout);
+    git(["config", "user.name", "Atlas Core release test"], checkout);
+    git(["config", "user.email", "atlas-core@example.invalid"], checkout);
+    git(["branch", "-M", "main"], checkout);
+    git(["remote", "add", "origin", remote], checkout);
+    writeFileSync(changelog, "# Changelog\n");
+    git(["add", "CHANGELOG.md"], checkout);
+    git(["commit", "-m", "feat: add Atlas Core package"], checkout);
+    const sourceSha = git(["rev-parse", "HEAD"], checkout);
+    git(["push", "--set-upstream", "origin", "main"], checkout);
+
+    const approvedChangelog = "# Changelog\n\n## 1.2.3 - 2026-09-02\n\n- Release.\n";
+    writeFileSync(changelog, approvedChangelog);
+    git(["add", "CHANGELOG.md"], checkout);
+    writeFileSync(output, "");
+    const initial = runWorkflowStep("Select release commit state", checkout, {
+      GITHUB_OUTPUT: output,
+      SOURCE_SHA: sourceSha,
+      VERSION: version
+    });
+    assert.equal(initial.status, 0, initial.stderr);
+    assert.equal(readFileSync(output, "utf8"), "release_sha=\n");
+
+    git(["commit", "-m", `chore(release): atlas-core v${version}`], checkout);
+    const releaseSha = git(["rev-parse", "HEAD"], checkout);
+    git(["tag", "--annotate", `atlas-core-v${version}`, "--message", `Atlas Core ${version}`], checkout);
+    git(["push", "--atomic", "origin", "HEAD:main", `refs/tags/atlas-core-v${version}`], checkout);
+
+    // The authorization upload fails here. A failed-job rerun starts again from the approved source.
+    git(["checkout", "--detach", sourceSha], checkout);
+    writeFileSync(changelog, approvedChangelog);
+    git(["add", "CHANGELOG.md"], checkout);
+    writeFileSync(output, "");
+    const retry = runWorkflowStep("Select release commit state", checkout, {
+      GITHUB_OUTPUT: output,
+      SOURCE_SHA: sourceSha,
+      VERSION: version
+    });
+    assert.equal(retry.status, 0, retry.stderr);
+    assert.match(retry.stdout, new RegExp(`Reusing exact release commit ${releaseSha}`));
+    assert.equal(readFileSync(output, "utf8"), `release_sha=${releaseSha}\n`);
+    assert.equal(git(["rev-parse", "HEAD"], checkout), sourceSha);
+
+    writeFileSync(changelog, `${approvedChangelog}\n- Different bytes.\n`);
+    git(["add", "CHANGELOG.md"], checkout);
+    writeFileSync(output, "");
+    const mismatchedRetry = runWorkflowStep("Select release commit state", checkout, {
+      GITHUB_OUTPUT: output,
+      SOURCE_SHA: sourceSha,
+      VERSION: version
+    });
+    assert.notEqual(mismatchedRetry.status, 0);
+    assert.match(mismatchedRetry.stderr, /approved release artifact does not match/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("applies the monotonic version gate only before creating a missing tag", () => {
   const source = readFileSync(workflow, "utf8");
   assert.match(
@@ -243,6 +336,19 @@ test("coordinates automatic tag publication after one approval", () => {
     assert.match(commitJob, /git diff --cached --check/);
     assert.match(commitJob, /cmp "\$artifact_root\/release-artifacts\/release\.diff" "\$actual_release_diff"/);
     assert.match(commitJob, /git ls-files --others --exclude-standard/);
+    assert.match(commitJob, /name: Select release commit state/);
+    assert.match(
+      commitJob,
+      /name: Mint protected release credential\n\s+id: release-token\n\s+if: steps\.release-state\.outputs\.release_sha == ''/
+    );
+    assert.match(
+      commitJob,
+      /name: Commit and atomically tag release\n\s+id: commit\n\s+if: steps\.release-state\.outputs\.release_sha == ''/
+    );
+    assert.match(
+      commitJob,
+      /release_sha: \$\{\{ steps\.release-state\.outputs\.release_sha \|\| steps\.commit\.outputs\.release_sha \}\}/
+    );
     assert.equal(commitJob.match(/core\.hooksPath=\/dev\/null/g)?.length, 3);
     assert.match(source, /name: Upload approved publication/);
     assert.match(
@@ -271,6 +377,7 @@ test("coordinates automatic tag publication after one approval", () => {
     assert.match(source, /coordinator_run_attempt: \$coordinator_run_attempt\n\s+}/);
     assert.match(source, /EXPECTED_COORDINATOR_RUN_ATTEMPT: \$\{\{ inputs\.coordinator_run_attempt \}\}/);
     assert.match(source, /release_artifact_id: \$release_artifact_id/);
+    assert.match(source, /release_artifact_name: \$release_artifact_name/);
     assert.match(source, /release_artifact_digest: \$release_artifact_digest/);
     assert.match(source, /package_integrity: \$package_integrity/);
     assert.match(
