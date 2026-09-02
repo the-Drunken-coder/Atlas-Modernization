@@ -56,6 +56,7 @@ type connector struct {
 	stateMu         sync.Mutex
 	failures        int
 	openUntil       time.Time
+	lastReachableAt time.Time
 	resetGeneration uint64
 }
 
@@ -377,7 +378,8 @@ func (g *Gateway) execute(ctx context.Context, connector *connector, input Conne
 			failure = contextFailure(ctx, requestContext, true)
 			switch {
 			case errors.Is(context.Cause(requestContext), errConnectorDeadline):
-				connector.recordFailure(g.now())
+				deadline, _ := requestContext.Deadline()
+				connector.recordDeadlineFailure(g.now(), deadline)
 			case attemptFailure == nil:
 				connector.recordReachable()
 				retryFailurePending = false
@@ -677,6 +679,15 @@ func (c *connector) recordFailureIfUnreset(now time.Time, resetGeneration uint64
 	c.recordFailureLocked(now)
 }
 
+func (c *connector) recordDeadlineFailure(now, deadline time.Time) {
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+	if c.lastReachableAt.After(deadline) {
+		return
+	}
+	c.recordFailureLocked(now)
+}
+
 func (c *connector) recordFailureLocked(now time.Time) {
 	c.failures++
 	if c.failures >= c.config.CircuitBreaker.Failures {
@@ -690,6 +701,7 @@ func (c *connector) recordReachable() {
 	defer c.stateMu.Unlock()
 	c.failures = 0
 	c.openUntil = time.Time{}
+	c.lastReachableAt = time.Now()
 	c.resetGeneration++
 }
 

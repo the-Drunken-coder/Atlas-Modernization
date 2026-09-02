@@ -573,6 +573,71 @@ func TestConnectorDeadlineAccountsForLateResponse(t *testing.T) {
 	}
 }
 
+func TestLateConnectorDeadlineCannotOverwriteNewerReachability(t *testing.T) {
+	var calls atomic.Int32
+	firstStarted := make(chan struct{})
+	secondStarted := make(chan struct{})
+	deadlineObserved := make(chan struct{})
+	allowFirstResponse := make(chan struct{})
+	allowSecondResponse := make(chan struct{})
+	config := testConnectorConfig()
+	config.Limits.TimeoutMS = 100
+	config.Limits.MaxConcurrency = 2
+	config.CircuitBreaker.Failures = 1
+	gateway, err := New(Config{Connectors: []ConnectorConfig{config}}, Options{
+		Client: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			switch calls.Add(1) {
+			case 1:
+				close(firstStarted)
+				<-request.Context().Done()
+				close(deadlineObserved)
+				<-allowFirstResponse
+			case 2:
+				close(secondStarted)
+				<-allowSecondResponse
+			}
+			return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: http.NoBody}, nil
+		})},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connector := gateway.connectors["reference"]
+	request := ConnectorRequest{Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{}}
+	type result struct {
+		attempts int
+		failure  *gatewayError
+	}
+	firstResult := make(chan result, 1)
+	go func() {
+		_, attempts, _, failure := gateway.execute(context.Background(), connector, request)
+		firstResult <- result{attempts: attempts, failure: failure}
+	}()
+	<-firstStarted
+	time.Sleep(50 * time.Millisecond)
+	secondResult := make(chan result, 1)
+	go func() {
+		_, attempts, _, failure := gateway.execute(context.Background(), connector, request)
+		secondResult <- result{attempts: attempts, failure: failure}
+	}()
+	<-secondStarted
+	<-deadlineObserved
+	close(allowSecondResponse)
+	second := <-secondResult
+	if second.failure != nil || second.attempts != 1 {
+		t.Fatalf("second attempts=%d failure=%v", second.attempts, second.failure)
+	}
+	close(allowFirstResponse)
+	first := <-firstResult
+	if first.failure == nil || first.failure.code != FailureUpstreamTimeout || first.attempts != 1 {
+		t.Fatalf("first attempts=%d failure=%v", first.attempts, first.failure)
+	}
+	_, attempts, _, failure := gateway.execute(context.Background(), connector, request)
+	if failure != nil || attempts != 1 || calls.Load() != 3 {
+		t.Fatalf("third attempts=%d calls=%d failure=%v", attempts, calls.Load(), failure)
+	}
+}
+
 func TestAddressPolicyRejectsPrivateLoopbackAndLinkLocalByDefault(t *testing.T) {
 	for _, address := range []string{
 		"127.0.0.1", "10.0.0.1", "169.254.1.1", "::1", "fe80::1",
