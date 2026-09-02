@@ -19,7 +19,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -55,14 +54,16 @@ type connector struct {
 	nextRequest   time.Time
 	rateChanged   chan struct{}
 	stateMu       sync.Mutex
+	completionMu  sync.Mutex
 	openUntil     time.Time
 	breakerSerial uint64
-	completionSeq atomic.Uint64
+	completionSeq uint64
 	// Unresolved attempts block compaction. Completed failures remain ordered until the latest
 	// reachable response or a fully settled open interval makes older history irrelevant.
-	breakerAttempts map[uint64]struct{}
-	breakerFailures []breakerFailure
-	lastReachable   breakerOrder
+	breakerAttempts      map[uint64]struct{}
+	breakerFailures      []breakerFailure
+	expiredBreakerGroups int
+	lastReachable        breakerOrder
 }
 
 type breakerOrder struct {
@@ -77,7 +78,6 @@ type breakerAttempt struct {
 type breakerFailure struct {
 	order      breakerOrder
 	observedAt time.Time
-	served     bool
 }
 
 // breakerHistoryLimit fails closed if an uncooperative transport prevents safe compaction.
@@ -348,9 +348,6 @@ func (g *Gateway) execute(ctx context.Context, connector *connector, input Conne
 		errConnectorDeadline,
 	)
 	defer cancel()
-	parentCanceledAt := make(chan time.Time, 1)
-	stopObservingParent := context.AfterFunc(ctx, func() { parentCanceledAt <- time.Now() })
-	defer stopObservingParent()
 	if contextExpired(requestContext, time.Now()) {
 		return ConnectorResponse{}, 0, "miss", admissionFailure(ctx, requestContext)
 	}
@@ -409,9 +406,9 @@ func (g *Gateway) execute(ctx context.Context, connector *connector, input Conne
 		parentContextError := contextError(ctx, attemptCheckedAt)
 		connectorTimedOut := connectorDeadlineWon(
 			ctx,
+			requestContext,
 			connectorDeadline,
 			attemptOrder.completedAt,
-			parentCanceledAt,
 		)
 		if parentContextError != nil || connectorTimedOut {
 			attemptFailure := failure
@@ -726,8 +723,14 @@ func (order breakerOrder) after(other breakerOrder) bool {
 }
 
 func (c *connector) recordBreakerCompletion() breakerOrder {
-	serial := c.completionSeq.Add(1)
-	return breakerOrder{completedAt: time.Now(), serial: serial}
+	return c.recordBreakerCompletionWithClock(time.Now)
+}
+
+func (c *connector) recordBreakerCompletionWithClock(now func() time.Time) breakerOrder {
+	c.completionMu.Lock()
+	defer c.completionMu.Unlock()
+	c.completionSeq++
+	return breakerOrder{completedAt: now(), serial: c.completionSeq}
 }
 
 func (c *connector) circuitOpenWithClock(now func() time.Time) bool {
@@ -773,7 +776,7 @@ func (c *connector) finishBreakerFailure(observedAt time.Time, attempt breakerAt
 	if order.after(c.lastReachable) {
 		c.breakerFailures = append(c.breakerFailures, breakerFailure{order: order, observedAt: observedAt})
 	}
-	c.compactServedFailuresLocked()
+	c.settleExpiredBreakerGroupsLocked()
 	c.recomputeBreakerLocked()
 	c.expireBreakerLocked(observedAt)
 }
@@ -794,7 +797,7 @@ func (c *connector) finishBreakerReachable(observedAt time.Time, attempt breaker
 		}
 		c.breakerFailures = remaining
 	}
-	c.compactServedFailuresLocked()
+	c.settleExpiredBreakerGroupsLocked()
 	c.recomputeBreakerLocked()
 	c.expireBreakerLocked(observedAt)
 }
@@ -803,7 +806,8 @@ func (c *connector) discardBreakerAttempt(attempt breakerAttempt) {
 	c.stateMu.Lock()
 	defer c.stateMu.Unlock()
 	if c.takeBreakerAttemptLocked(attempt) {
-		c.compactServedFailuresLocked()
+		c.settleExpiredBreakerGroupsLocked()
+		c.recomputeBreakerLocked()
 	}
 }
 
@@ -821,54 +825,47 @@ func (c *connector) expireBreakerLocked(now time.Time) {
 	}
 	c.openUntil = time.Time{}
 	threshold := c.config.CircuitBreaker.Failures
-	unserved := 0
-	for _, failure := range c.breakerFailures {
-		if !failure.served {
-			unserved++
-		}
-	}
-	mark := unserved / threshold * threshold
-	for index := range c.breakerFailures {
-		if !c.breakerFailures[index].served && mark > 0 {
-			c.breakerFailures[index].served = true
-			mark--
-		}
+	if groups := len(c.breakerFailures) / threshold; groups > c.expiredBreakerGroups {
+		c.expiredBreakerGroups = groups
 	}
 	if len(c.breakerAttempts) != 0 {
 		return
 	}
-	c.compactServedFailuresLocked()
+	c.settleExpiredBreakerGroupsLocked()
+	c.recomputeBreakerLocked()
 }
 
-func (c *connector) compactServedFailuresLocked() {
-	if len(c.breakerAttempts) != 0 {
+func (c *connector) settleExpiredBreakerGroupsLocked() {
+	if len(c.breakerAttempts) != 0 || c.expiredBreakerGroups == 0 {
 		return
 	}
-	remaining := c.breakerFailures[:0]
-	for _, failure := range c.breakerFailures {
-		if !failure.served {
-			remaining = append(remaining, failure)
-		}
-	}
-	c.breakerFailures = remaining
+	c.sortBreakerFailuresLocked()
+	threshold := c.config.CircuitBreaker.Failures
+	groups := min(c.expiredBreakerGroups, len(c.breakerFailures)/threshold)
+	c.breakerFailures = c.breakerFailures[groups*threshold:]
+	c.expiredBreakerGroups = 0
 }
 
-func (c *connector) recomputeBreakerLocked() {
+func (c *connector) sortBreakerFailuresLocked() {
 	sort.SliceStable(c.breakerFailures, func(left, right int) bool {
 		return c.breakerFailures[right].order.after(c.breakerFailures[left].order)
 	})
+}
+
+func (c *connector) creditedFailureCountLocked() int {
+	threshold := c.config.CircuitBreaker.Failures
+	groups := min(c.expiredBreakerGroups, len(c.breakerFailures)/threshold)
+	return groups * threshold
+}
+
+func (c *connector) recomputeBreakerLocked() {
+	c.sortBreakerFailuresLocked()
 	threshold := c.config.CircuitBreaker.Failures
 	openDuration := time.Duration(c.config.CircuitBreaker.OpenMS) * time.Millisecond
 	c.openUntil = time.Time{}
-	unserved := make([]breakerFailure, 0, len(c.breakerFailures))
-	for _, failure := range c.breakerFailures {
-		if !failure.served {
-			unserved = append(unserved, failure)
-		}
-	}
-	for start := 0; start+threshold <= len(unserved); start += threshold {
-		observedAt := unserved[start].observedAt
-		for _, failure := range unserved[start+1 : start+threshold] {
+	for start := c.creditedFailureCountLocked(); start+threshold <= len(c.breakerFailures); start += threshold {
+		observedAt := c.breakerFailures[start].observedAt
+		for _, failure := range c.breakerFailures[start+1 : start+threshold] {
 			if failure.observedAt.After(observedAt) {
 				observedAt = failure.observedAt
 			}
@@ -897,21 +894,24 @@ func contextError(ctx context.Context, now time.Time) error {
 
 func connectorDeadlineWon(
 	parent context.Context,
+	requestContext context.Context,
 	connectorDeadline time.Time,
 	completedAt time.Time,
-	parentCanceledAt <-chan time.Time,
 ) bool {
 	if completedAt.Before(connectorDeadline) {
 		return false
-	}
-	if parent.Err() == nil {
-		return true
 	}
 	parentDeadline, hasParentDeadline := parent.Deadline()
 	if hasParentDeadline && !parentDeadline.After(connectorDeadline) {
 		return false
 	}
-	if observedAt := <-parentCanceledAt; observedAt.Before(connectorDeadline) {
+	if errors.Is(context.Cause(requestContext), errConnectorDeadline) {
+		return true
+	}
+	if errors.Is(parent.Err(), context.DeadlineExceeded) {
+		return true
+	}
+	if parent.Err() != nil {
 		return false
 	}
 	return true
