@@ -484,6 +484,38 @@ func TestCanceledRequestAccountsForIndependentRetryFailure(t *testing.T) {
 	}
 }
 
+func TestCustomCanceledRequestDoesNotOpenCircuit(t *testing.T) {
+	var calls atomic.Int32
+	cancelCause := errors.New("caller stopped")
+	ctx, cancel := context.WithCancelCause(context.Background())
+	defer cancel(nil)
+	config := testConnectorConfig()
+	config.CircuitBreaker.Failures = 1
+	gateway, err := New(Config{Connectors: []ConnectorConfig{config}}, Options{
+		Client: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			if calls.Add(1) == 1 {
+				cancel(cancelCause)
+				<-request.Context().Done()
+				return nil, context.Cause(request.Context())
+			}
+			return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: http.NoBody}, nil
+		})},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connector := gateway.connectors["reference"]
+	request := ConnectorRequest{Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{}}
+	_, attempts, _, failure := gateway.execute(ctx, connector, request)
+	if failure == nil || failure.code != failureRequestCanceled || attempts != 1 || calls.Load() != 1 {
+		t.Fatalf("canceled attempts=%d calls=%d failure=%v", attempts, calls.Load(), failure)
+	}
+	_, attempts, _, failure = gateway.execute(context.Background(), connector, request)
+	if failure != nil || attempts != 1 || calls.Load() != 2 {
+		t.Fatalf("next attempts=%d calls=%d failure=%v", attempts, calls.Load(), failure)
+	}
+}
+
 func TestConnectorDeadlineWinsLaterParentDeadlineForCircuitAccounting(t *testing.T) {
 	var calls atomic.Int32
 	parent, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
