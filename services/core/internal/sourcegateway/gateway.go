@@ -379,7 +379,7 @@ func (g *Gateway) execute(ctx context.Context, connector *connector, input Conne
 			case attemptFailure == nil:
 				connector.recordReachable()
 				retryFailurePending = false
-			case context.Cause(requestContext) != errConnectorDeadline &&
+			case !errors.Is(context.Cause(requestContext), errConnectorDeadline) &&
 				ctx.Err() != nil && errors.Is(attemptFailure.err, ctx.Err()):
 				recordPendingFailure()
 			default:
