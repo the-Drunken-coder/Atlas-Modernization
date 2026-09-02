@@ -367,11 +367,16 @@ func (g *Gateway) execute(ctx context.Context, connector *connector, input Conne
 		}
 		response, failure := connector.attempt(requestContext, prepared, rule)
 		if requestContext.Err() != nil {
+			attemptFailure := failure
 			failure = contextFailure(ctx, requestContext, true)
-			if failure.code == FailureUpstreamTimeout {
-				connector.recordFailure(g.now())
-			} else {
+			switch {
+			case attemptFailure == nil:
+				connector.recordReachable()
+				retryFailurePending = false
+			case ctx.Err() != nil && errors.Is(attemptFailure.err, ctx.Err()):
 				recordPendingFailure()
+			default:
+				connector.recordFailure(g.now())
 			}
 			return ConnectorResponse{}, attempt, "miss", failure
 		}

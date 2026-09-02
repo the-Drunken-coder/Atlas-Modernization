@@ -394,6 +394,96 @@ func TestReachableResponseClearsOlderPendingRetryFailure(t *testing.T) {
 	}
 }
 
+func TestCanceledRequestAccountsForCompletedRetryResponse(t *testing.T) {
+	var calls atomic.Int32
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	config := testConnectorConfig()
+	config.CircuitBreaker.Failures = 1
+	config.Routes[0].Retry = RetryRule{MaxRetries: 1, Failures: []string{string(FailureUpstreamUnreachable)}}
+	gateway, err := New(Config{Connectors: []ConnectorConfig{config}}, Options{
+		Client: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			switch calls.Add(1) {
+			case 1:
+				return nil, errors.New("offline")
+			case 2:
+				cancel()
+			}
+			return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: http.NoBody}, nil
+		})},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connector := gateway.connectors["reference"]
+	request := ConnectorRequest{Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{}}
+	_, attempts, _, failure := gateway.execute(ctx, connector, request)
+	if failure == nil || failure.code != failureRequestCanceled || attempts != 2 || calls.Load() != 2 {
+		t.Fatalf("canceled attempts=%d calls=%d failure=%v", attempts, calls.Load(), failure)
+	}
+	_, attempts, _, failure = gateway.execute(context.Background(), connector, request)
+	if failure != nil || attempts != 1 || calls.Load() != 3 {
+		t.Fatalf("next attempts=%d calls=%d failure=%v", attempts, calls.Load(), failure)
+	}
+}
+
+func TestCanceledRequestAccountsForIndependentRetryFailure(t *testing.T) {
+	var calls atomic.Int32
+	secondAttempt := make(chan struct{})
+	allowSecondFailure := make(chan struct{})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	config := testConnectorConfig()
+	config.CircuitBreaker.Failures = 1
+	config.Routes[0].Retry = RetryRule{MaxRetries: 1, Failures: []string{string(FailureUpstreamUnreachable)}}
+	gateway, err := New(Config{Connectors: []ConnectorConfig{config}}, Options{
+		Client: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			switch calls.Add(1) {
+			case 1:
+				return nil, errors.New("offline")
+			case 2:
+				close(secondAttempt)
+				<-allowSecondFailure
+				return nil, errors.New("still offline")
+			default:
+				return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: http.NoBody}, nil
+			}
+		})},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connector := gateway.connectors["reference"]
+	request := ConnectorRequest{Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{}}
+	result := make(chan struct {
+		attempts int
+		failure  *gatewayError
+	}, 1)
+	go func() {
+		_, attempts, _, failure := gateway.execute(ctx, connector, request)
+		result <- struct {
+			attempts int
+			failure  *gatewayError
+		}{attempts: attempts, failure: failure}
+	}()
+	<-secondAttempt
+	connector.recordReachable()
+	cancel()
+	close(allowSecondFailure)
+	select {
+	case outcome := <-result:
+		if outcome.failure == nil || outcome.failure.code != failureRequestCanceled || outcome.attempts != 2 || calls.Load() != 2 {
+			t.Fatalf("canceled attempts=%d calls=%d failure=%v", outcome.attempts, calls.Load(), outcome.failure)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("canceled retry did not finish")
+	}
+	_, attempts, _, failure := gateway.execute(context.Background(), connector, request)
+	if failure == nil || failure.code != FailureCircuitOpen || attempts != 0 || calls.Load() != 2 {
+		t.Fatalf("next attempts=%d calls=%d failure=%v", attempts, calls.Load(), failure)
+	}
+}
+
 func TestAddressPolicyRejectsPrivateLoopbackAndLinkLocalByDefault(t *testing.T) {
 	for _, address := range []string{
 		"127.0.0.1", "10.0.0.1", "169.254.1.1", "::1", "fe80::1",
