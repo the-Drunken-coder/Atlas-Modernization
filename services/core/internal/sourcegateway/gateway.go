@@ -56,15 +56,26 @@ type connector struct {
 	stateMu         sync.Mutex
 	failures        int
 	openUntil       time.Time
-	openTriggeredAt time.Time
-	settledThrough  time.Time
-	// Failures stay ordered until a later reachable response or expired open interval settles them.
-	breakerFailures []breakerFailure
+	openTriggeredAt breakerOrder
+	settledThrough  breakerOrder
+	breakerSerial   uint64
+	// Pending completions keep later failures from passing an outcome that has not been classified yet.
+	breakerEvents []breakerEvent
 }
 
-type breakerFailure struct {
+type breakerOrder struct {
 	completedAt time.Time
-	observedAt  time.Time
+	serial      uint64
+}
+
+type breakerEvent struct {
+	order      breakerOrder
+	observedAt time.Time
+	pending    bool
+}
+
+type breakerCompletion struct {
+	order breakerOrder
 }
 
 type gatewayError struct {
@@ -350,11 +361,18 @@ func (g *Gateway) execute(ctx context.Context, connector *connector, input Conne
 		return ConnectorResponse{}, 0, "miss", &gatewayError{code: FailureCircuitOpen}
 	}
 	maxAttempts := rule.Retry.MaxRetries + 1
+	var pendingRetryFailure breakerCompletion
 	retryFailurePending := false
-	var retryFailureAt time.Time
 	recordPendingFailure := func() {
 		if retryFailurePending {
-			connector.recordFailure(g.now(), retryFailureAt)
+			connector.resolveBreakerFailure(g.now(), pendingRetryFailure, pendingRetryFailure.order.completedAt)
+			retryFailurePending = false
+		}
+	}
+	discardPendingFailure := func() {
+		if retryFailurePending {
+			connector.discardBreakerCompletion(pendingRetryFailure)
+			retryFailurePending = false
 		}
 	}
 	finishBeforeAttempt := func(reservation rateReservation) {
@@ -380,7 +398,8 @@ func (g *Gateway) execute(ctx context.Context, connector *connector, input Conne
 			finishBeforeAttempt(reservation)
 			return ConnectorResponse{}, attempt - 1, "miss", &gatewayError{code: FailureCircuitOpen}
 		}
-		response, failure, attemptCompletedAt := connector.attempt(requestContext, prepared, rule)
+		response, failure, attemptCompletion := connector.attempt(requestContext, prepared, rule)
+		attemptCompletedAt := attemptCompletion.order.completedAt
 		attemptCheckedAt := time.Now()
 		parentContextError := contextError(ctx, attemptCheckedAt)
 		connectorTimedOut := connectorDeadlineWon(ctx, requestContext, connectorDeadline, attemptCompletedAt)
@@ -394,21 +413,24 @@ func (g *Gateway) execute(ctx context.Context, connector *connector, input Conne
 			parentCause := context.Cause(ctx)
 			switch {
 			case connectorTimedOut:
-				connector.recordFailure(g.now(), connectorDeadline)
+				discardPendingFailure()
+				connector.resolveBreakerFailure(g.now(), attemptCompletion, connectorDeadline)
 			case attemptFailure == nil:
-				connector.recordReachable(attemptCompletedAt)
-				retryFailurePending = false
+				discardPendingFailure()
+				connector.resolveBreakerReachable(attemptCompletion)
 			case errors.Is(attemptFailure.err, parentContextError) ||
 				(parentCause != nil && errors.Is(attemptFailure.err, parentCause)):
 				recordPendingFailure()
+				connector.discardBreakerCompletion(attemptCompletion)
 			default:
-				connector.recordFailure(g.now(), attemptCompletedAt)
+				discardPendingFailure()
+				connector.resolveBreakerFailure(g.now(), attemptCompletion, attemptCompletedAt)
 			}
 			return ConnectorResponse{}, attempt, "miss", failure
 		}
 		if failure == nil {
-			connector.recordReachable(attemptCompletedAt)
-			retryFailurePending = false
+			discardPendingFailure()
+			connector.resolveBreakerReachable(attemptCompletion)
 			retryable := retryStatus(rule.Retry.Statuses, response.Status)
 			if attempt < maxAttempts && retryable {
 				continue
@@ -423,11 +445,13 @@ func (g *Gateway) execute(ctx context.Context, connector *connector, input Conne
 			return response, attempt, cacheResult, nil
 		}
 		if attempt < maxAttempts && retryFailure(rule.Retry.Failures, failure.code) {
+			discardPendingFailure()
+			pendingRetryFailure = attemptCompletion
 			retryFailurePending = true
-			retryFailureAt = attemptCompletedAt
 			continue
 		}
-		connector.recordFailure(g.now(), attemptCompletedAt)
+		discardPendingFailure()
+		connector.resolveBreakerFailure(g.now(), attemptCompletion, attemptCompletedAt)
 		return ConnectorResponse{}, attempt, "miss", failure
 	}
 	panic("unreachable")
@@ -508,16 +532,16 @@ func (c *connector) route(method, path string) (RouteRule, bool) {
 func (c *connector) attempt(ctx context.Context, prepared preparedRequest, rule RouteRule) (
 	responseResult ConnectorResponse,
 	failureResult *gatewayError,
-	completedAt time.Time,
+	completionResult breakerCompletion,
 ) {
-	defer func() { completedAt = time.Now() }()
+	defer func() { completionResult = c.registerBreakerCompletion() }()
 	target := *c.origin
 	target.Path = prepared.path
 	target.RawPath = ""
 	target.RawQuery = encodeQuery(prepared.query)
 	request, err := http.NewRequestWithContext(ctx, prepared.method, target.String(), bytes.NewReader(prepared.body))
 	if err != nil {
-		return ConnectorResponse{}, rejected(err), completedAt
+		return ConnectorResponse{}, rejected(err), completionResult
 	}
 	for _, tuple := range prepared.headers {
 		request.Header.Add(tuple[0], tuple[1])
@@ -532,26 +556,26 @@ func (c *connector) attempt(ctx context.Context, prepared preparedRequest, rule 
 	response, err := c.client.Do(request)
 	if err != nil {
 		if ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) {
-			return ConnectorResponse{}, &gatewayError{code: FailureUpstreamTimeout, err: err}, completedAt
+			return ConnectorResponse{}, &gatewayError{code: FailureUpstreamTimeout, err: err}, completionResult
 		}
-		return ConnectorResponse{}, &gatewayError{code: FailureUpstreamUnreachable, err: err}, completedAt
+		return ConnectorResponse{}, &gatewayError{code: FailureUpstreamUnreachable, err: err}, completionResult
 	}
 	defer func() { _ = response.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(response.Body, c.config.Limits.MaxResponseBytes+1))
 	if err != nil {
 		if ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) {
-			return ConnectorResponse{}, &gatewayError{code: FailureUpstreamTimeout, err: err}, completedAt
+			return ConnectorResponse{}, &gatewayError{code: FailureUpstreamTimeout, err: err}, completionResult
 		}
-		return ConnectorResponse{}, &gatewayError{code: FailureUpstreamUnreachable, err: err}, completedAt
+		return ConnectorResponse{}, &gatewayError{code: FailureUpstreamUnreachable, err: err}, completionResult
 	}
 	if int64(len(body)) > c.config.Limits.MaxResponseBytes {
-		return ConnectorResponse{}, &gatewayError{code: FailureResponseTooLarge}, completedAt
+		return ConnectorResponse{}, &gatewayError{code: FailureResponseTooLarge}, completionResult
 	}
 	headers, err := c.responseHeaders(response.Header, rule.AllowedResponseHeaders, c.config.Limits)
 	if err != nil {
-		return ConnectorResponse{}, &gatewayError{code: FailureResponseTooLarge, err: err}, completedAt
+		return ConnectorResponse{}, &gatewayError{code: FailureResponseTooLarge, err: err}, completionResult
 	}
-	return ConnectorResponse{Status: response.StatusCode, Headers: headers, BodyBase64: base64.StdEncoding.EncodeToString(body)}, nil, completedAt
+	return ConnectorResponse{Status: response.StatusCode, Headers: headers, BodyBase64: base64.StdEncoding.EncodeToString(body)}, nil, completionResult
 }
 
 func (c *connector) responseHeaders(headers http.Header, allowedNames []string, limits ConnectorLimits) ([]HeaderTuple, error) {
@@ -678,66 +702,152 @@ func (c *connector) releaseRate(reservation rateReservation) {
 	}
 }
 
+func (order breakerOrder) after(other breakerOrder) bool {
+	return order.completedAt.After(other.completedAt) ||
+		(order.completedAt.Equal(other.completedAt) && order.serial > other.serial)
+}
+
 func (c *connector) circuitOpen(now time.Time) bool {
 	c.stateMu.Lock()
 	defer c.stateMu.Unlock()
-	for !c.openUntil.IsZero() && !now.Before(c.openUntil) {
-		c.settleBreakerThroughLocked(c.openTriggeredAt)
+	c.expireBreakerLocked(now)
+	return now.Before(c.openUntil)
+}
+
+func (c *connector) registerBreakerCompletion() breakerCompletion {
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+	return c.registerBreakerCompletionLocked(time.Now())
+}
+
+func (c *connector) registerBreakerCompletionAt(completedAt time.Time) breakerCompletion {
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+	return c.registerBreakerCompletionLocked(completedAt)
+}
+
+func (c *connector) registerBreakerCompletionLocked(completedAt time.Time) breakerCompletion {
+	c.breakerSerial++
+	completion := breakerCompletion{order: breakerOrder{completedAt: completedAt, serial: c.breakerSerial}}
+	if completion.order.after(c.settledThrough) {
+		c.breakerEvents = append(c.breakerEvents, breakerEvent{order: completion.order, pending: true})
 		c.recomputeBreakerLocked()
 	}
-	return now.Before(c.openUntil)
+	return completion
 }
 
 func (c *connector) recordFailure(now, completedAt time.Time) {
 	c.stateMu.Lock()
 	defer c.stateMu.Unlock()
-	for !c.openUntil.IsZero() && !now.Before(c.openUntil) {
-		c.settleBreakerThroughLocked(c.openTriggeredAt)
-		c.recomputeBreakerLocked()
-	}
-	if !completedAt.After(c.settledThrough) {
+	c.expireBreakerLocked(now)
+	c.breakerSerial++
+	order := breakerOrder{completedAt: completedAt, serial: c.breakerSerial}
+	if !order.after(c.settledThrough) {
 		return
 	}
-	c.breakerFailures = append(c.breakerFailures, breakerFailure{completedAt: completedAt, observedAt: now})
+	c.breakerEvents = append(c.breakerEvents, breakerEvent{order: order, observedAt: now})
+	c.recomputeBreakerLocked()
+}
+
+func (c *connector) resolveBreakerFailure(now time.Time, completion breakerCompletion, completedAt time.Time) {
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+	c.expireBreakerLocked(now)
+	index := c.breakerEventIndexLocked(completion.order.serial)
+	if index < 0 {
+		return
+	}
+	c.breakerEvents[index].order.completedAt = completedAt
+	if !c.breakerEvents[index].order.after(c.settledThrough) {
+		c.removeBreakerEventLocked(index)
+		c.recomputeBreakerLocked()
+		return
+	}
+	c.breakerEvents[index].observedAt = now
+	c.breakerEvents[index].pending = false
 	c.recomputeBreakerLocked()
 }
 
 func (c *connector) recordReachable(completedAt time.Time) {
 	c.stateMu.Lock()
 	defer c.stateMu.Unlock()
-	if !completedAt.After(c.settledThrough) {
-		return
-	}
-	c.settleBreakerThroughLocked(completedAt)
+	c.breakerSerial++
+	c.settleBreakerThroughLocked(breakerOrder{completedAt: completedAt, serial: c.breakerSerial})
 	c.recomputeBreakerLocked()
 }
 
-func (c *connector) settleBreakerThroughLocked(completedAt time.Time) {
-	if completedAt.After(c.settledThrough) {
-		c.settledThrough = completedAt
+func (c *connector) resolveBreakerReachable(completion breakerCompletion) {
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+	index := c.breakerEventIndexLocked(completion.order.serial)
+	if index < 0 {
+		return
 	}
-	remaining := c.breakerFailures[:0]
-	for _, failure := range c.breakerFailures {
-		if failure.completedAt.After(c.settledThrough) {
-			remaining = append(remaining, failure)
+	c.settleBreakerThroughLocked(c.breakerEvents[index].order)
+	c.recomputeBreakerLocked()
+}
+
+func (c *connector) discardBreakerCompletion(completion breakerCompletion) {
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+	index := c.breakerEventIndexLocked(completion.order.serial)
+	if index < 0 {
+		return
+	}
+	c.removeBreakerEventLocked(index)
+	c.recomputeBreakerLocked()
+}
+
+func (c *connector) breakerEventIndexLocked(serial uint64) int {
+	for index := range c.breakerEvents {
+		if c.breakerEvents[index].order.serial == serial {
+			return index
 		}
 	}
-	c.breakerFailures = remaining
+	return -1
+}
+
+func (c *connector) removeBreakerEventLocked(index int) {
+	copy(c.breakerEvents[index:], c.breakerEvents[index+1:])
+	c.breakerEvents = c.breakerEvents[:len(c.breakerEvents)-1]
+}
+
+func (c *connector) expireBreakerLocked(now time.Time) {
+	for !c.openUntil.IsZero() && !now.Before(c.openUntil) {
+		c.settleBreakerThroughLocked(c.openTriggeredAt)
+		c.recomputeBreakerLocked()
+	}
+}
+
+func (c *connector) settleBreakerThroughLocked(order breakerOrder) {
+	if order.after(c.settledThrough) {
+		c.settledThrough = order
+	}
+	remaining := c.breakerEvents[:0]
+	for _, event := range c.breakerEvents {
+		if event.order.after(c.settledThrough) {
+			remaining = append(remaining, event)
+		}
+	}
+	c.breakerEvents = remaining
 }
 
 func (c *connector) recomputeBreakerLocked() {
-	sort.SliceStable(c.breakerFailures, func(left, right int) bool {
-		return c.breakerFailures[left].completedAt.Before(c.breakerFailures[right].completedAt)
+	sort.SliceStable(c.breakerEvents, func(left, right int) bool {
+		return c.breakerEvents[right].order.after(c.breakerEvents[left].order)
 	})
 	c.failures = 0
 	c.openUntil = time.Time{}
-	c.openTriggeredAt = time.Time{}
+	c.openTriggeredAt = breakerOrder{}
 	var observedAt time.Time
 	openDuration := time.Duration(c.config.CircuitBreaker.OpenMS) * time.Millisecond
-	for _, failure := range c.breakerFailures {
+	for _, event := range c.breakerEvents {
+		if event.pending {
+			break
+		}
 		c.failures++
-		if failure.observedAt.After(observedAt) {
-			observedAt = failure.observedAt
+		if event.observedAt.After(observedAt) {
+			observedAt = event.observedAt
 		}
 		if c.failures < c.config.CircuitBreaker.Failures {
 			continue
@@ -746,7 +856,7 @@ func (c *connector) recomputeBreakerLocked() {
 		if candidate.After(c.openUntil) {
 			c.openUntil = candidate
 		}
-		c.openTriggeredAt = failure.completedAt
+		c.openTriggeredAt = event.order
 		c.failures = 0
 		observedAt = time.Time{}
 	}

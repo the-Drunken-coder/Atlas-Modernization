@@ -562,10 +562,12 @@ func TestPendingRetryFailureCannotOverwriteNewerReachability(t *testing.T) {
 	if failure != nil {
 		t.Fatal(failure)
 	}
-	_, failure, failureAt := connector.attempt(context.Background(), prepared, rule)
+	_, failure, completion := connector.attempt(context.Background(), prepared, rule)
+	failureAt := completion.order.completedAt
 	if failure == nil || failure.code != FailureUpstreamUnreachable || failureAt.IsZero() {
 		t.Fatalf("attempt failure=%v completed_at=%s", failure, failureAt)
 	}
+	connector.discardBreakerCompletion(completion)
 	connector.recordReachable(failureAt.Add(time.Nanosecond))
 	connector.recordFailure(time.Now(), failureAt)
 	if connector.circuitOpen(time.Now()) {
@@ -613,6 +615,63 @@ func TestOutOfOrderBreakerEventsPreserveIntermediateReachability(t *testing.T) {
 	connector.stateMu.Unlock()
 	if failures != 1 {
 		t.Fatalf("failures=%d, want 1", failures)
+	}
+}
+
+func TestUnresolvedBreakerCompletionBlocksLaterFailures(t *testing.T) {
+	config := testConnectorConfig()
+	config.CircuitBreaker.Failures = 2
+	config.CircuitBreaker.OpenMS = 1
+	gateway, err := New(Config{Connectors: []ConnectorConfig{config}}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connector := gateway.connectors["reference"]
+	firstFailureAt := time.Now()
+	reachableAt := firstFailureAt.Add(time.Millisecond)
+	secondFailureAt := reachableAt.Add(time.Millisecond)
+	thirdFailureAt := secondFailureAt.Add(time.Millisecond)
+
+	connector.recordFailure(firstFailureAt, firstFailureAt)
+	pendingReachability := connector.registerBreakerCompletionAt(reachableAt)
+	connector.recordFailure(secondFailureAt, secondFailureAt)
+
+	if connector.circuitOpen(secondFailureAt) {
+		t.Fatal("later failures passed an unresolved intermediate completion")
+	}
+	if connector.circuitOpen(secondFailureAt.Add(2 * time.Millisecond)) {
+		t.Fatal("an apparent open interval compacted past an unresolved completion")
+	}
+
+	connector.resolveBreakerReachable(pendingReachability)
+	connector.recordFailure(thirdFailureAt, thirdFailureAt)
+	if !connector.circuitOpen(thirdFailureAt) {
+		t.Fatal("failures after the resolved reachability did not open the circuit")
+	}
+}
+
+func TestBreakerTimelineCompactsAfterOpenInterval(t *testing.T) {
+	config := testConnectorConfig()
+	config.CircuitBreaker.Failures = 1
+	config.CircuitBreaker.OpenMS = 1
+	gateway, err := New(Config{Connectors: []ConnectorConfig{config}}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connector := gateway.connectors["reference"]
+	failureAt := time.Now()
+	connector.recordFailure(failureAt, failureAt)
+	if !connector.circuitOpen(failureAt) {
+		t.Fatal("failure did not open the circuit")
+	}
+	if connector.circuitOpen(failureAt.Add(2 * time.Millisecond)) {
+		t.Fatal("circuit remained open after its interval")
+	}
+	connector.stateMu.Lock()
+	events := len(connector.breakerEvents)
+	connector.stateMu.Unlock()
+	if events != 0 {
+		t.Fatalf("breaker events=%d, want 0 after settled interval", events)
 	}
 }
 
