@@ -356,6 +356,41 @@ func TestQueuedRequestRechecksCircuitAfterConcurrencyWait(t *testing.T) {
 	}
 }
 
+func TestCancellationWinsPostSemaphoreCircuitCheck(t *testing.T) {
+	var calls atomic.Int32
+	var clockCalls atomic.Int32
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	config := testConnectorConfig()
+	config.CircuitBreaker.Failures = 1
+	var connector *connector
+	gateway, err := New(Config{Connectors: []ConnectorConfig{config}}, Options{
+		Now: func() time.Time {
+			now := time.Now()
+			if clockCalls.Add(1) == 2 {
+				connector.recordFailure(now)
+				cancel()
+			}
+			return now
+		},
+		Client: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			calls.Add(1)
+			return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: http.NoBody}, nil
+		})},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connector = gateway.connectors["reference"]
+
+	_, attempts, _, failure := gateway.execute(ctx, connector, ConnectorRequest{
+		Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{},
+	})
+	if failure == nil || failure.code != failureRequestCanceled || attempts != 0 || calls.Load() != 0 {
+		t.Fatalf("attempts=%d calls=%d failure=%v", attempts, calls.Load(), failure)
+	}
+}
+
 func TestGatewayAdmissionTimeoutMakesNoUpstreamAttempt(t *testing.T) {
 	for _, test := range []struct {
 		name  string
@@ -435,7 +470,7 @@ func TestRateLimitCountsRetriesAndCanceledWaitersDoNotReserveCapacity(t *testing
 	connector.nextRequest = reserved
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := connector.waitForRate(ctx, func() time.Time { return now }); !errors.Is(err, context.Canceled) {
+	if _, err := connector.waitForRate(ctx, func() time.Time { return now }); !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled wait = %v", err)
 	}
 	if !connector.nextRequest.Equal(reserved) {
@@ -443,7 +478,7 @@ func TestRateLimitCountsRetriesAndCanceledWaitersDoNotReserveCapacity(t *testing
 	}
 
 	connector.nextRequest = now
-	if err := connector.waitForRate(ctx, func() time.Time { return now }); !errors.Is(err, context.Canceled) {
+	if _, err := connector.waitForRate(ctx, func() time.Time { return now }); !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled immediate reservation = %v", err)
 	}
 	if !connector.nextRequest.Equal(now) {
@@ -452,7 +487,7 @@ func TestRateLimitCountsRetriesAndCanceledWaitersDoNotReserveCapacity(t *testing
 
 	duringClockContext, cancelDuringClock := context.WithCancel(context.Background())
 	connector.nextRequest = now
-	if err := connector.waitForRate(duringClockContext, func() time.Time {
+	if _, err := connector.waitForRate(duringClockContext, func() time.Time {
 		cancelDuringClock()
 		return now
 	}); !errors.Is(err, context.Canceled) {
@@ -460,6 +495,16 @@ func TestRateLimitCountsRetriesAndCanceledWaitersDoNotReserveCapacity(t *testing
 	}
 	if !connector.nextRequest.Equal(now) {
 		t.Fatalf("cancellation during rate admission reserved capacity until %s", connector.nextRequest)
+	}
+
+	connector.nextRequest = now
+	reservation, err := connector.waitForRate(context.Background(), func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	connector.releaseRate(reservation)
+	if !connector.nextRequest.Equal(now) {
+		t.Fatalf("released pre-attempt reservation kept capacity until %s", connector.nextRequest)
 	}
 }
 
@@ -476,6 +521,7 @@ func TestGatewayClassifiesBodyDeadlineAndDoesNotRetry(t *testing.T) {
 	var calls atomic.Int32
 	config := testConnectorConfig()
 	config.Limits.TimeoutMS = 20
+	config.CircuitBreaker.Failures = 1
 	config.Routes[0].Retry = RetryRule{MaxRetries: 3, Failures: []string{string(FailureUpstreamTimeout)}}
 	gateway, err := New(Config{Connectors: []ConnectorConfig{config}}, Options{Client: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		calls.Add(1)
@@ -489,6 +535,12 @@ func TestGatewayClassifiesBodyDeadlineAndDoesNotRetry(t *testing.T) {
 	})
 	if failure == nil || failure.code != FailureUpstreamTimeout || attempts != 1 || calls.Load() != 1 {
 		t.Fatalf("attempts=%d calls=%d failure=%v", attempts, calls.Load(), failure)
+	}
+	_, attempts, _, failure = gateway.execute(context.Background(), gateway.connectors["reference"], ConnectorRequest{
+		Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{},
+	})
+	if failure == nil || failure.code != FailureCircuitOpen || attempts != 0 || calls.Load() != 1 {
+		t.Fatalf("second attempts=%d calls=%d failure=%v", attempts, calls.Load(), failure)
 	}
 }
 

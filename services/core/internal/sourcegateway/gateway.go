@@ -326,19 +326,28 @@ func (g *Gateway) execute(ctx context.Context, connector *connector, input Conne
 		return ConnectorResponse{}, 0, "miss", contextFailure(ctx, requestContext, false)
 	}
 	if connector.circuitOpen(g.now()) {
+		if requestContext.Err() != nil {
+			return ConnectorResponse{}, 0, "miss", contextFailure(ctx, requestContext, false)
+		}
 		return ConnectorResponse{}, 0, "miss", &gatewayError{code: FailureCircuitOpen}
 	}
 	maxAttempts := rule.Retry.MaxRetries + 1
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		if err := connector.waitForRate(requestContext, g.now); err != nil {
+		reservation, err := connector.waitForRate(requestContext, g.now)
+		if err != nil {
 			return ConnectorResponse{}, attempt - 1, "miss", contextFailure(ctx, requestContext, false)
 		}
 		if requestContext.Err() != nil {
+			connector.releaseRate(reservation)
 			return ConnectorResponse{}, attempt - 1, "miss", contextFailure(ctx, requestContext, false)
 		}
 		response, failure := connector.attempt(requestContext, prepared, rule)
 		if requestContext.Err() != nil {
-			return ConnectorResponse{}, attempt, "miss", contextFailure(ctx, requestContext, true)
+			failure = contextFailure(ctx, requestContext, true)
+			if failure.code == FailureUpstreamTimeout {
+				connector.recordFailure(g.now())
+			}
+			return ConnectorResponse{}, attempt, "miss", failure
 		}
 		if failure == nil {
 			connector.recordReachable()
@@ -523,30 +532,36 @@ func encodeQuery(query []HeaderTuple) string {
 	return strings.Join(parts, "&")
 }
 
-func (c *connector) waitForRate(ctx context.Context, now func() time.Time) error {
+type rateReservation struct {
+	grantedAt time.Time
+	next      time.Time
+}
+
+func (c *connector) waitForRate(ctx context.Context, now func() time.Time) (rateReservation, error) {
 	if c.config.Rate.RequestsPerSecond == 0 {
-		return nil
+		return rateReservation{}, nil
 	}
 	interval := time.Duration(float64(time.Second) / c.config.Rate.RequestsPerSecond)
 	for {
 		c.rateMu.Lock()
 		if err := ctx.Err(); err != nil {
 			c.rateMu.Unlock()
-			return err
+			return rateReservation{}, err
 		}
 		current := now()
 		if err := ctx.Err(); err != nil {
 			c.rateMu.Unlock()
-			return err
+			return rateReservation{}, err
 		}
 		waitUntil := c.nextRequest
 		if waitUntil.Before(current) {
 			waitUntil = current
 		}
 		if !waitUntil.After(current) {
-			c.nextRequest = waitUntil.Add(interval)
+			next := waitUntil.Add(interval)
+			c.nextRequest = next
 			c.rateMu.Unlock()
-			return nil
+			return rateReservation{grantedAt: waitUntil, next: next}, nil
 		}
 		c.rateMu.Unlock()
 
@@ -557,11 +572,12 @@ func (c *connector) waitForRate(ctx context.Context, now func() time.Time) error
 			if c.nextRequest.Equal(waitUntil) {
 				if err := ctx.Err(); err != nil {
 					c.rateMu.Unlock()
-					return err
+					return rateReservation{}, err
 				}
-				c.nextRequest = waitUntil.Add(interval)
+				next := waitUntil.Add(interval)
+				c.nextRequest = next
 				c.rateMu.Unlock()
-				return nil
+				return rateReservation{grantedAt: waitUntil, next: next}, nil
 			}
 			c.rateMu.Unlock()
 		case <-ctx.Done():
@@ -571,8 +587,19 @@ func (c *connector) waitForRate(ctx context.Context, now func() time.Time) error
 				default:
 				}
 			}
-			return ctx.Err()
+			return rateReservation{}, ctx.Err()
 		}
+	}
+}
+
+func (c *connector) releaseRate(reservation rateReservation) {
+	if reservation.next.IsZero() {
+		return
+	}
+	c.rateMu.Lock()
+	defer c.rateMu.Unlock()
+	if c.nextRequest.Equal(reservation.next) {
+		c.nextRequest = reservation.grantedAt
 	}
 }
 
