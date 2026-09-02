@@ -60,10 +60,10 @@ type connector struct {
 	completionSeq uint64
 	// Unresolved attempts block compaction. Completed failures remain ordered until the latest
 	// reachable response or a fully settled open interval makes older history irrelevant.
-	breakerAttempts      map[uint64]struct{}
-	breakerFailures      []breakerFailure
-	expiredBreakerGroups int
-	lastReachable        breakerOrder
+	breakerAttempts map[uint64]struct{}
+	breakerFailures []breakerFailure
+	breakerCredits  []breakerCredit
+	lastReachable   breakerOrder
 }
 
 type breakerOrder struct {
@@ -78,6 +78,11 @@ type breakerAttempt struct {
 type breakerFailure struct {
 	order      breakerOrder
 	observedAt time.Time
+}
+
+type breakerCredit struct {
+	groups  int
+	through breakerOrder
 }
 
 // breakerHistoryLimit fails closed if an uncooperative transport prevents safe compaction.
@@ -758,7 +763,8 @@ func (c *connector) tryBeginAttempt(
 	if contextExpired(requestContext, admittedAt) {
 		return breakerAttempt{}, admissionFailureAt(parent, requestContext, admittedAt)
 	}
-	if breakerNow.Before(c.openUntil) || len(c.breakerAttempts)+len(c.breakerFailures) >= breakerHistoryLimit {
+	if breakerNow.Before(c.openUntil) ||
+		len(c.breakerAttempts)+len(c.breakerFailures)+len(c.breakerCredits) >= breakerHistoryLimit {
 		return breakerAttempt{}, &gatewayError{code: FailureCircuitOpen}
 	}
 	c.breakerSerial++
@@ -824,9 +830,16 @@ func (c *connector) expireBreakerLocked(now time.Time) {
 		return
 	}
 	c.openUntil = time.Time{}
+	c.sortBreakerFailuresLocked()
 	threshold := c.config.CircuitBreaker.Failures
-	if groups := len(c.breakerFailures) / threshold; groups > c.expiredBreakerGroups {
-		c.expiredBreakerGroups = groups
+	credited := c.creditedFailureCountLocked()
+	groups := (len(c.breakerFailures) - credited) / threshold
+	if groups > 0 {
+		lastCredited := credited + groups*threshold - 1
+		c.breakerCredits = append(c.breakerCredits, breakerCredit{
+			groups:  groups,
+			through: c.breakerFailures[lastCredited].order,
+		})
 	}
 	if len(c.breakerAttempts) != 0 {
 		return
@@ -836,14 +849,12 @@ func (c *connector) expireBreakerLocked(now time.Time) {
 }
 
 func (c *connector) settleExpiredBreakerGroupsLocked() {
-	if len(c.breakerAttempts) != 0 || c.expiredBreakerGroups == 0 {
+	if len(c.breakerAttempts) != 0 || len(c.breakerCredits) == 0 {
 		return
 	}
 	c.sortBreakerFailuresLocked()
-	threshold := c.config.CircuitBreaker.Failures
-	groups := min(c.expiredBreakerGroups, len(c.breakerFailures)/threshold)
-	c.breakerFailures = c.breakerFailures[groups*threshold:]
-	c.expiredBreakerGroups = 0
+	c.breakerFailures = c.breakerFailures[c.creditedFailureCountLocked():]
+	c.breakerCredits = nil
 }
 
 func (c *connector) sortBreakerFailuresLocked() {
@@ -854,8 +865,19 @@ func (c *connector) sortBreakerFailuresLocked() {
 
 func (c *connector) creditedFailureCountLocked() int {
 	threshold := c.config.CircuitBreaker.Failures
-	groups := min(c.expiredBreakerGroups, len(c.breakerFailures)/threshold)
-	return groups * threshold
+	credited := 0
+	for _, credit := range c.breakerCredits {
+		eligible := credited
+		for eligible < len(c.breakerFailures) {
+			if c.breakerFailures[eligible].order.after(credit.through) {
+				break
+			}
+			eligible++
+		}
+		groups := min(credit.groups, (eligible-credited)/threshold)
+		credited += groups * threshold
+	}
+	return credited
 }
 
 func (c *connector) recomputeBreakerLocked() {
@@ -908,13 +930,11 @@ func connectorDeadlineWon(
 	if errors.Is(context.Cause(requestContext), errConnectorDeadline) {
 		return true
 	}
-	if errors.Is(parent.Err(), context.DeadlineExceeded) {
+	parentErr := parent.Err()
+	if parentErr == nil || errors.Is(parentErr, context.DeadlineExceeded) {
 		return true
 	}
-	if parent.Err() != nil {
-		return false
-	}
-	return true
+	return errors.Is(context.Cause(requestContext), errConnectorDeadline)
 }
 
 func admissionFailure(parent, requestContext context.Context) *gatewayError {

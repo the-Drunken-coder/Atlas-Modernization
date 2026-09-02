@@ -601,6 +601,17 @@ type deadlineBeforeDoneContext struct {
 
 func (ctx deadlineBeforeDoneContext) Deadline() (time.Time, bool) { return ctx.deadline, true }
 
+type changingErrContext struct {
+	context.Context
+	deadline time.Time
+	err      func() error
+}
+
+func (ctx changingErrContext) Deadline() (time.Time, bool) {
+	return ctx.deadline, !ctx.deadline.IsZero()
+}
+func (ctx changingErrContext) Err() error { return ctx.err() }
+
 func TestExpiredDeadlineDetectedBeforeDone(t *testing.T) {
 	now := time.Now()
 	expired := deadlineBeforeDoneContext{Context: context.Background(), deadline: now.Add(-time.Millisecond)}
@@ -764,6 +775,35 @@ func TestExpiredOpenIntervalPreservesFailureNewerThanDelayedReachability(t *test
 	}
 }
 
+func TestExpiredGroupCreditDoesNotConsumeFailureAfterInterval(t *testing.T) {
+	config := testConnectorConfig()
+	config.CircuitBreaker.Failures = 2
+	config.CircuitBreaker.OpenMS = 10
+	gateway, err := New(Config{Connectors: []ConnectorConfig{config}}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connector := gateway.connectors["reference"]
+	base := time.Now()
+	reachableAttempt := beginTestAttempt(t, connector)
+	stillUnresolved := beginTestAttempt(t, connector)
+	failureOne := recordTestCompletion(connector, base.Add(time.Nanosecond))
+	reachable := recordTestCompletion(connector, base.Add(2*time.Nanosecond))
+	failureTwo := recordTestCompletion(connector, base.Add(3*time.Nanosecond))
+	connector.finishBreakerFailure(base, beginTestAttempt(t, connector), failureOne)
+	connector.finishBreakerFailure(base, beginTestAttempt(t, connector), failureTwo)
+
+	expiredAt := base.Add(20 * time.Millisecond)
+	if connector.circuitOpenWithClock(func() time.Time { return expiredAt }) {
+		t.Fatal("initial open interval did not expire")
+	}
+	connector.finishBreakerReachable(expiredAt, reachableAttempt, reachable)
+	connector.finishBreakerFailure(expiredAt, stillUnresolved, recordTestCompletion(connector, base.Add(4*time.Nanosecond)))
+	if !connector.circuitOpenWithClock(func() time.Time { return expiredAt }) {
+		t.Fatal("expired credit consumed a failure completed after its interval")
+	}
+}
+
 func TestEqualCompletionTimestampsUseCompletionOrder(t *testing.T) {
 	config := testConnectorConfig()
 	config.CircuitBreaker.Failures = 1
@@ -906,6 +946,42 @@ func TestEarlierManualParentCancellationOutranksConnectorDeadline(t *testing.T) 
 
 	if connectorDeadlineWon(parent, requestContext, connectorDeadline, time.Now()) {
 		t.Fatal("earlier caller cancellation was charged as a connector timeout")
+	}
+}
+
+func TestLaterParentDeadlineTransitionCannotHideConnectorTimeout(t *testing.T) {
+	connectorDeadline := time.Now().Add(-time.Millisecond)
+	var calls atomic.Int32
+	parent := changingErrContext{
+		Context:  context.Background(),
+		deadline: connectorDeadline.Add(time.Hour),
+		err: func() error {
+			if calls.Add(1) == 1 {
+				return nil
+			}
+			return context.DeadlineExceeded
+		},
+	}
+	if !connectorDeadlineWon(parent, context.Background(), connectorDeadline, time.Now()) {
+		t.Fatal("later parent deadline transition hid an expired connector timeout")
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("parent Err sampled %d times, want one consistent snapshot", calls.Load())
+	}
+}
+
+func TestConnectorCauseRecheckedAfterLaterManualParentCancellation(t *testing.T) {
+	connectorDeadline := time.Now().Add(-time.Millisecond)
+	requestContext, setRequestCause := context.WithCancelCause(context.Background())
+	parent := changingErrContext{
+		Context: context.Background(),
+		err: func() error {
+			setRequestCause(errConnectorDeadline)
+			return context.Canceled
+		},
+	}
+	if !connectorDeadlineWon(parent, requestContext, connectorDeadline, time.Now()) {
+		t.Fatal("later parent cancellation hid the connector-owned cancellation cause")
 	}
 }
 
