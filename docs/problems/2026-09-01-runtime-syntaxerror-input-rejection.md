@@ -1,0 +1,12 @@
+1. **Time & Date:** 2026-09-01T22:45:38-04:00
+2. **Name:** Plugin runtime classifies handler SyntaxError as input rejection
+3. **Issue:** `servePlugin` treats every handler-thrown `SyntaxError` as malformed operation input, even when the handler raises it while decoding a valid upstream response.
+4. **Severity:** S4 (Minor)
+5. **Location:** `packages/plugin-runtime/src/index.ts` (`servePlugin` operation dispatch and catch at lines 192-206), and `plugins/reference/src/index.ts` (`inspect_fixture` handler at lines 30-39)
+6. **Expected:** A `SyntaxError` from `readJSON` for malformed public input should produce the private `400` `invalid_input` response. A `SyntaxError` raised after dispatch by an Operation handler, such as `JSON.parse` of a non-JSON Source Gateway body, is an unexpected Plugin failure and should produce private `500` `operation_failed` (unless the handler explicitly throws `PluginInputError`).
+7. **Actual:** The shared catch maps both `readJSON` errors and handler-thrown `SyntaxError` values to HTTP `400` with `{ "code": "invalid_input" }`. The reference `inspect_fixture` handler directly parses Source Gateway response bytes, so a non-JSON HTTP 200 fixture body is reported as an input rejection.
+8. **Reproduction:**
+   1. Run a plugin using `servePlugin` with an `inspect_fixture` handler that accepts an input object such as `{ "key": "alpha" }`, obtains a Source Gateway response whose upstream status is `200` and whose decoded body is `not-json`, then calls `JSON.parse` on that body (the reference handler follows this path at `plugins/reference/src/index.ts:30-39`).
+   2. POST `{"key":"alpha"}` with `Content-Type: application/json` to `/operations/inspect_fixture`.
+   3. Observe the handler's `JSON.parse` throws `SyntaxError`, but `servePlugin` responds `400` with `{"code":"invalid_input"}`. A focused loopback smoke reproduction against the current built runtime returned exactly this status/body; the existing runtime test also verifies that an explicit `PluginFailureError` returns `500`.
+9. **Notes:** The private Plugin contract requires `400` error objects to map to input rejection and `500` error objects to map to Plugin failure (`docs/atlas-plugins/README.md:303-311`). The `readJSON` function is the only request-body parser and separately throws `SyntaxError` for malformed/non-JSON public bodies (`packages/plugin-runtime/src/index.ts:397-409`), so the catch needs an error-origin distinction rather than a global `SyntaxError` classification. No duplicate active report was found.

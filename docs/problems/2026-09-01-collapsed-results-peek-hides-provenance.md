@@ -1,0 +1,13 @@
+1. **Time & Date:** 2026-09-01T22:41:36-04:00
+2. **Name:** Collapsed spatial-results peek hides provenance and retrieval time
+3. **Issue:** The collapsed spatial-results handle peek hides the only rendered source-provenance and retrieval-time text, so a collapsed result window exposes attribution and dismissal but not where or when its data was retrieved.
+4. **Severity:** S3 (Moderate)
+5. **Location:** Atlas Command Interface, `surfaces/command-interface/src/features/plugins/SpatialResultsInspector.tsx:29-45` and `surfaces/command-interface/src/ui/styles/map.css:266-288`
+6. **Expected:** After a spatial search is collapsed, hovering the handle or moving keyboard focus to it reveals the result title and metadata, the source provenance and formatted retrieval time, attribution, and a close action. The provenance and retrieval time remain available in both interaction paths, as required by `docs/design-decisions/2026-08-31-map-window-workspace.md:6,8`.
+7. **Actual:** `SpatialResultsInspector` renders `result.provenance.source` and `formatSpatialRetrievalTime(result.retrieved_at)` only in `.spatial-map-window__source` inside the `MapWindow` footer. When collapsed, `MapWindow` puts that footer in `.map-window__peek-footer` (the same hover/focus peek), but `map.css:286-288` applies `display: none` to `.map-window__peek-footer .spatial-map-window__source`. The peek therefore shows the attribution link and close button without source provenance or retrieval time; the expanded window's footer is unaffected by this selector.
+8. **Reproduction:**
+   1. Run a spatial `map_area` search that returns a result with `provenance.source`, `retrieved_at`, and attribution (for example, the fixture data in `surfaces/command-interface/src/features/MapConsole.test.tsx:156-195`).
+   2. Collapse the resulting `spatial-results` window so it becomes a docked handle.
+   3. Hover the handle and observe the `.map-window__peek` footer, then move keyboard focus to the handle and inspect the same peek.
+   4. Observe that the attribution link and close action are present, while the source and formatted retrieval time are suppressed by the matching CSS rule. Expand the window to see that the same footer text is present when not inside the peek.
+9. **Notes:** The source trace is deterministic; `npm test --workspace @the-drunken-coder/atlas-command-interface -- src/ui/map/view/MapWindow.test.tsx` passed 9/9. The existing `MapWindow` test at `surfaces/command-interface/src/ui/map/view/MapWindow.test.tsx:11-52` checks a generic attribution link and close action but does not assert visibility of a provenance node under the collapsed-peek CSS.

@@ -1,0 +1,12 @@
+1. **Time & Date:** 2026-09-01T22:43:41-04:00
+2. **Name:** TUI preview cannot render Plugins
+3. **Issue:** The documented fixture-only TUI preview runs the real terminal UI, whose menu exposes Plugins, but its in-memory operator does not implement the plugin operations required by that view.
+4. **Severity:** S4 (Minor)
+5. **Location:** `surfaces/core-cli/scripts/tui-preview.mjs:44-116`, `surfaces/core-cli/src/terminal-ui.tsx:280-287`, `surfaces/core-cli/src/terminal-ui.tsx:346-348`, and `surfaces/core-cli/src/terminal-ui.tsx:1349-1429`
+6. **Expected:** Running `python3 scripts/preview_atlas_core_tui.py` and selecting Plugins renders `ATLAS CORE > PLUGINS` with fixture catalog data such as Building Scan, and its documented enable, disable, logs, and refresh controls remain usable in the preview.
+7. **Actual:** Selecting Plugins calls `operator.pluginStatuses()` from `loadPlugins`, but the preview operator has no `pluginStatuses` method. The rejected call is caught and the Plugins view displays the error instead of a catalog. The same operator also lacks `pluginEnable`, `pluginDisable`, `pluginLogs`, and `resumeAfterCancellation`, so plugin interactions would fail even if the initial view were populated.
+8. **Reproduction:**
+   1. From a repository checkout with the JavaScript dependencies installed, run `python3 scripts/preview_atlas_core_tui.py` in an interactive terminal.
+   2. Type `plugins` to filter the main action menu, then press Enter.
+   3. Observe the `ATLAS CORE > PLUGINS` view show `operator.pluginStatuses is not a function` rather than `PLUGIN CATALOG` and a fixture plugin.
+9. **Notes:** `surfaces/core-cli/README.md:25-36` documents this as the real terminal UI with an in-memory operator. `surfaces/core-cli/src/terminal-ui.tsx:71-90` requires all five missing plugin methods, while `surfaces/core-cli/src/application.ts:1004-1045` implements the production status and log paths. A source-level method check found all five methods absent from the preview operator. The initial safe `python3 scripts/preview_atlas_core_tui.py --no-build` attempt could not start because the built Core CLI output was absent. No interactive rerun was needed because the source-level interface call and five missing operator methods deterministically establish the failure. No product files were changed. This is limited to the local preview and does not block the installed CLI's production plugin path.
