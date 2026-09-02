@@ -846,6 +846,58 @@ describe("atlas-core CLI", () => {
     expect(finishedProcessGroup).toBe(startedProcessGroup);
   });
 
+  it("does not clear a supervised process-group fence while a successful descendant is still alive", async () => {
+    const runner = new ProcessCommandRunner();
+    const directory = mkdtempSync(join(tmpdir(), "atlas-core-runner-test-"));
+    temporaryDirectories.push(directory);
+    const ready = join(directory, "ready");
+    const descendantSource = `require("node:fs").writeFileSync(${JSON.stringify(ready)}, "yes");
+      setInterval(() => {}, 30_000);`;
+    let processGroupId: number | undefined;
+    let finished = false;
+    const operation = runner.run(
+      process.execPath,
+      [
+        "-e",
+        `const child = require("node:child_process").spawn(
+          process.execPath,
+          ["-e", ${JSON.stringify(descendantSource)}],
+          { stdio: "ignore" }
+        );
+        child.unref();`
+      ],
+      {
+        processGroup: {
+          started: (groupId) => {
+            processGroupId = groupId;
+          },
+          finished: () => {
+            finished = true;
+          }
+        }
+      }
+    );
+
+    await vi.waitFor(() => expect(existsSync(ready)).toBe(true));
+    try {
+      const state = await Promise.race([
+        operation.then(() => "resolved" as const),
+        new Promise<"waiting">((resolveWait) => setTimeout(() => resolveWait("waiting"), 200))
+      ]);
+      expect(state).toBe("waiting");
+      expect(finished).toBe(false);
+    } finally {
+      if (processGroupId !== undefined) {
+        try {
+          process.kill(-processGroupId, "SIGKILL");
+        } catch {}
+      }
+    }
+
+    await expect(operation).resolves.toEqual(result(0));
+    expect(finished).toBe(true);
+  });
+
   it("runs a supervised command when NODE_OPTIONS selects module eval", async () => {
     const runner = new ProcessCommandRunner();
     let startedProcessGroup: number | undefined;

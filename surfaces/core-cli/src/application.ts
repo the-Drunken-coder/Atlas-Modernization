@@ -379,7 +379,7 @@ export class ProcessCommandRunner implements CommandRunner {
         resolve({ ...(state.cancelled ? { cancelled: true as const } : {}), status: status ?? 1, stdout, stderr });
       };
       const completeAfterGroupExit = (status: number | null): void => {
-        if (supervised && state.cancelled && processGroupId !== undefined && isProcessGroupAlive(processGroupId)) {
+        if (processGroupRecorded && processGroupId !== undefined && isProcessGroupAlive(processGroupId)) {
           state.groupExitTimer = setTimeout(() => completeAfterGroupExit(status), 25);
           return;
         }
