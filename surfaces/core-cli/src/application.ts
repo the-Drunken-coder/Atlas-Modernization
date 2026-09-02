@@ -5,8 +5,6 @@ import {
   closeSync,
   cpSync,
   existsSync,
-  constants as fileSystemConstants,
-  fstatSync,
   fsyncSync,
   linkSync,
   lstatSync,
@@ -52,7 +50,8 @@ const MINIO_CONTAINER = `${PROJECT_NAME}_minio`;
 const MINIO_INIT_CONTAINER = `${PROJECT_NAME}_minio_init`;
 const MUTATION_LOCK_NETWORK = `${PROJECT_NAME}_mutation_lock`;
 const MUTATION_RECOVERY_LOCK_PREFIX = ".mutation.lock.recovering.";
-const RETIRED_TRANSACTION_PREFIX = ".transaction.completed.";
+const PLUGIN_DISABLE_INTENT_FILE = "disable.json";
+const RETIRED_PLUGIN_PREFIX = ".disabled.";
 const RESET_CONTAINERS = [
   API_CONTAINER,
   SOURCE_GATEWAY_CONTAINER,
@@ -231,12 +230,9 @@ type DockerMutationLock = {
   labels: Record<string, string>;
 };
 
-type PluginDisableJournal = {
+type PluginDisableIntent = {
   schema: 1;
-  coreImage: string;
   operation: "plugin-disable";
-  phase: "preparing" | "prepared" | "committed";
-  lockId: string;
   pluginId: string;
   previousStatus: "ready" | "stopped";
 };
@@ -500,7 +496,6 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   readonly #envFile: string;
   readonly #stateFile: string;
   readonly #mutationLockFile: string;
-  readonly #transactionDir: string;
   readonly #composeFile: string;
   readonly #initComposeFile: string;
   readonly #packageRoot: string;
@@ -527,7 +522,6 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     this.#envFile = join(this.#configDir, ".env");
     this.#stateFile = join(this.#configDir, "state.json");
     this.#mutationLockFile = join(this.#configDir, ".mutation.lock");
-    this.#transactionDir = join(this.#configDir, "transaction");
     this.#composeFile = join(context.packageRoot, "assets", "docker-compose.yml");
     this.#initComposeFile = join(context.packageRoot, "assets", "docker-compose.init.yml");
     this.#packageRoot = context.packageRoot;
@@ -571,22 +565,27 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   }
 
   async #withInitializedMutation<T>(
-    action: (state: DeploymentState, dockerEngineId: string) => Promise<T>
+    action: (state: DeploymentState, dockerEngineId: string) => Promise<T>,
+    keepRecoveredDisableFence = false
   ): Promise<T> {
     if (!existsSync(this.#configDir) || !existsSync(this.#envFile) || !existsSync(this.#stateFile)) {
       throw new Error("Atlas Core is not initialized. Run atlas-core init first.");
     }
     const dockerEngineId = await this.#preflight();
-    return await this.#withMutationLock(dockerEngineId, async () => {
-      const state = this.#requireInitialized();
-      return await action(state, dockerEngineId);
-    });
+    return await this.#withMutationLock(
+      dockerEngineId,
+      async () => {
+        const state = this.#requireInitialized();
+        return await action(state, dockerEngineId);
+      },
+      keepRecoveredDisableFence
+    );
   }
 
   async #withMutationLock<T>(
     dockerEngineId: string,
     action: () => Promise<T>,
-    recoverInterruptedDisable = true
+    keepRecoveredDisableFence = false
   ): Promise<T> {
     this.#prepareConfigDirectory();
     const mutationLock = this.#acquireMutationLock();
@@ -596,8 +595,8 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     let dockerLockAcquisitionNeedsRecovery = false;
     let idleRecoverableMutationLock: MutationLockOwner | undefined;
     try {
-      this.#removeRetiredPluginDisableTransactions();
-      this.#assertPluginDisableRecoveryEngine(dockerEngineId, mutationLock, recoverInterruptedDisable);
+      this.#removeRetiredPluginAssets();
+      this.#assertRecoveredPluginDisableEngine(dockerEngineId, mutationLock);
       try {
         dockerLock = await this.#acquireDockerMutationLock(dockerEngineId, mutationLock);
       } catch (error) {
@@ -606,10 +605,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       }
       this.#activeMutationLock = dockerLock.owner;
       try {
-        if (recoverInterruptedDisable) {
-          await this.#recoverPluginDisableTransaction(dockerEngineId);
-          this.#completePluginDisableRecoveryLockHandoff();
-        }
+        if (!keepRecoveredDisableFence) this.#completePluginDisableRecoveryLockHandoff();
         return await action();
       } finally {
         await this.#releaseDockerMutationLock(dockerLock);
@@ -747,7 +743,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     const attemptedState = this.#recordStartAttempt(state);
     this.#stdout.write(`Starting Atlas Core ${PACKAGE_VERSION}...\n`);
     await this.#runComposeChecked(
-      ["up", "-d", "--pull", "always", "--wait", "--wait-timeout", COMPOSE_WAIT_SECONDS],
+      ["up", "-d", "--pull", "always", "--remove-orphans", "--wait", "--wait-timeout", COMPOSE_WAIT_SECONDS],
       state.enabledPlugins
     );
     this.#recordStarted(attemptedState);
@@ -794,7 +790,6 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       previousState?.enabledPlugins.filter((pluginId) =>
         existsSync(join(this.#pluginConfigRoot, pluginId, "compose.yml"))
       ) ?? [];
-    this.#abandonPluginDisableTransaction();
     this.#completePluginDisableRecoveryLockHandoff();
     if (existsSync(this.#envFile)) {
       await this.#runComposeChecked(["down", "--remove-orphans"], resetPluginIds);
@@ -819,9 +814,10 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   async stop(): Promise<void> {
     await this.#withInitializedMutation(async (state, dockerEngineId) => {
       this.#assertStateMatchesEngine(state, dockerEngineId);
-      await this.#runComposeChecked(["down"], state.enabledPlugins);
+      await this.#runComposeChecked(["down", "--remove-orphans"], state.enabledPlugins);
+      this.#settlePluginDisableIntentsAfterStop(state);
       this.#stdout.write("Atlas Core stopped. Durable volumes were preserved.\n");
-    });
+    }, true);
   }
 
   async restart(): Promise<void> {
@@ -859,7 +855,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
         await this.#runComposeChecked(["down"], state.enabledPlugins);
         writePrivateFile(this.#envFile, nextConfiguration, this.#platform);
         await this.#runComposeChecked(
-          ["up", "-d", "--pull", "never", "--wait", "--wait-timeout", COMPOSE_WAIT_SECONDS],
+          ["up", "-d", "--pull", "never", "--remove-orphans", "--wait", "--wait-timeout", COMPOSE_WAIT_SECONDS],
           state.enabledPlugins
         );
         this.#recordStarted(attemptedState);
@@ -882,7 +878,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
         if (configurationRestored) {
           await attemptRollback(rollbackErrors, async () => {
             const restore = await this.#runComposeCleanup(
-              ["up", "-d", "--pull", "never", "--wait", "--wait-timeout", COMPOSE_WAIT_SECONDS],
+              ["up", "-d", "--pull", "never", "--remove-orphans", "--wait", "--wait-timeout", COMPOSE_WAIT_SECONDS],
               state.enabledPlugins
             );
             if (restore.status !== 0) throw commandFailure("restore previous Atlas Core deployment", restore);
@@ -1026,7 +1022,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
         deploymentChangeStarted = true;
         await this.#runComposeChecked(["down"], state.enabledPlugins);
         await this.#runComposeChecked(
-          ["up", "-d", "--pull", "never", "--wait", "--wait-timeout", COMPOSE_WAIT_SECONDS],
+          ["up", "-d", "--pull", "never", "--remove-orphans", "--wait", "--wait-timeout", COMPOSE_WAIT_SECONDS],
           state.enabledPlugins
         );
       }
@@ -1039,7 +1035,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       if (deploymentChangeStarted && previousImage) {
         await attemptRollback(rollbackErrors, async () => {
           const restore = await this.#runComposeCleanup(
-            ["up", "-d", "--pull", "never", "--wait", "--wait-timeout", COMPOSE_WAIT_SECONDS],
+            ["up", "-d", "--pull", "never", "--remove-orphans", "--wait", "--wait-timeout", COMPOSE_WAIT_SECONDS],
             state.enabledPlugins,
             previousImage
           );
@@ -1220,11 +1216,14 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     const requested = pluginId
       ? [this.#pluginForRead(pluginId, state)]
       : [
-          ...this.#pluginCatalog.map((plugin) => this.#pluginForRead(plugin.pluginId, state)),
-          ...(state?.enabledPlugins ?? [])
-            .filter((enabledPluginId) => !this.#pluginCatalog.some((plugin) => plugin.pluginId === enabledPluginId))
-            .map((enabledPluginId) => this.#readableDeployedPlugin(enabledPluginId))
-        ].sort((left, right) => left.pluginId.localeCompare(right.pluginId));
+          ...new Set([
+            ...this.#pluginCatalog.map((plugin) => plugin.pluginId),
+            ...(state?.enabledPlugins ?? []),
+            ...this.#pendingPluginDisableIds()
+          ])
+        ]
+          .map((candidate) => this.#pluginForRead(candidate, state))
+          .sort((left, right) => left.pluginId.localeCompare(right.pluginId));
     let serviceStates: ComposeServiceState[] = [];
     if (state) {
       const dockerEngineId = await this.#preflight();
@@ -1284,8 +1283,10 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     const pluginId = plugin.pluginId;
     this.#assertStateMatchesRuntime(state, dockerEngineId);
     if (state.enabledPlugins.includes(pluginId)) {
+      this.#cancelPluginDisableIntent(pluginId);
       return `${plugin.displayName} is already enabled`;
     }
+    await this.#finishPendingPluginDisableBeforeEnable(pluginId, state);
     const image = plugin.image;
     if (!image) throw new Error(`Plugin ${pluginId} has no image in this Atlas Core package.`);
     report({ level: "working", message: `Pulling ${plugin.displayName} image`, stage: "operation" });
@@ -1316,6 +1317,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
             "-d",
             "--pull",
             "never",
+            "--remove-orphans",
             "--force-recreate",
             "--wait",
             "--wait-timeout",
@@ -1354,6 +1356,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
               "-d",
               "--pull",
               "never",
+              "--remove-orphans",
               "--force-recreate",
               "--wait",
               "--wait-timeout",
@@ -1383,12 +1386,13 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   }
 
   async pluginDisable(pluginId: string, reportActivity?: PluginActivityReporter): Promise<PluginOperationOutcome> {
-    const plugin = this.#requireCatalogPlugin(pluginId, false);
     const report = this.#pluginReporter(reportActivity);
     report({ level: "working", message: "Checking Atlas Core and Docker", stage: "operation" });
     try {
       const message = await this.#withInitializedMutation(
-        async (state, dockerEngineId) => await this.#pluginDisable(plugin, state, dockerEngineId, report)
+        async (state, dockerEngineId) =>
+          await this.#pluginDisable(this.#pluginForDisable(pluginId, state), state, dockerEngineId, report),
+        true
       );
       report({ level: "success", message, stage: "operation" });
       return { status: "success" };
@@ -1401,69 +1405,78 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   }
 
   async #pluginDisable(
-    plugin: PluginCatalogEntry,
+    plugin: ReadablePlugin,
     state: DeploymentState,
     dockerEngineId: string,
     report: PluginActivityReporter
   ): Promise<string> {
     const pluginId = plugin.pluginId;
     this.#assertStateMatchesRuntime(state, dockerEngineId);
-    if (!state.enabledPlugins.includes(pluginId)) {
+    const existingIntent = this.#readPluginDisableIntentIfPresent(pluginId);
+    if (!state.enabledPlugins.includes(pluginId) && !existingIntent) {
       return `${plugin.displayName} is already disabled`;
     }
-    this.#assertEnabledPluginDeployment(state);
-    report({ level: "working", message: "Reading current deployment", stage: "operation" });
-    const snapshot = await this.#fullyHealthyMutationSnapshot(state, "Plugin changes");
     const candidatePluginIds = state.enabledPlugins.filter((candidate) => candidate !== pluginId);
-    report({ level: "working", message: "Saving rollback copy", stage: "operation" });
-    const journal = this.#beginPluginDisableTransaction(pluginId, snapshot.status);
-    try {
-      report({ level: "working", message: `Stopping ${plugin.displayName}`, stage: "operation" });
-      const removeResult = await this.#runCompose(["rm", "-s", "-f", plugin.service], false, state.enabledPlugins);
-      if (removeResult.status !== 0) throw commandFailure("docker compose rm", removeResult);
-      this.#removePluginAssets(pluginId);
-      this.#writeDeploymentState({ ...state, enabledPlugins: candidatePluginIds });
-      report({ level: "success", message: "Plugin deployment files removed", stage: "operation" });
+
+    let intent = existingIntent;
+    if (state.enabledPlugins.includes(pluginId)) {
+      this.#assertEnabledPluginDeployment(state);
+      report({ level: "working", message: "Reading current deployment", stage: "operation" });
+      const snapshot = await this.#fullyHealthyMutationSnapshot(state, "Plugin changes");
+      if (snapshot.status !== "ready" && snapshot.status !== "stopped") {
+        throw new Error(`Cannot disable a Plugin from deployment status ${snapshot.status}.`);
+      }
       await this.#runComposeChecked(["config", "--quiet"], candidatePluginIds);
       report({ level: "success", message: "Deployment configuration valid", stage: "operation" });
-      if (snapshot.status !== "stopped") {
-        report({ level: "working", message: "Recreating Core API and Source Gateway", stage: "operation" });
-        await this.#runComposeChecked(
-          [
-            "up",
-            "-d",
-            "--pull",
-            "never",
-            "--force-recreate",
-            "--wait",
-            "--wait-timeout",
-            COMPOSE_WAIT_SECONDS,
-            "api",
-            "source-gateway"
-          ],
-          candidatePluginIds
-        );
-        report({ level: "success", message: "Core API and Source Gateway are healthy", stage: "operation" });
-      }
-    } catch (error) {
-      report({ level: "failure", message: `Disable stopped: ${errorMessage(error)}`, stage: "operation" });
-      report({ level: "working", message: "Restoring previous deployment", stage: "rollback" });
-      const rollbackErrors: string[] = [];
-      rollbackErrors.push(...(await this.#rollbackPluginDisableTransaction(journal, true)));
-      report(
-        rollbackErrors.length === 0
-          ? { level: "success", message: "Previous deployment restored", stage: "rollback" }
-          : {
-              level: "failure",
-              message: `Rollback incomplete: ${rollbackErrors.join("; ")}`,
-              stage: "rollback"
-            }
-      );
-      throw transactionFailure(error, rollbackErrors);
+      this.#markActivePluginDisableOperation();
+      const preparedIntent: PluginDisableIntent = {
+        schema: 1,
+        operation: "plugin-disable",
+        pluginId,
+        previousStatus: snapshot.status
+      };
+      this.#writePluginDisableIntent(preparedIntent);
+      intent = preparedIntent;
+      // State is the durable commit boundary. Until this write succeeds, every live overlay and service remains intact.
+      this.#writeDeploymentState({ ...state, enabledPlugins: candidatePluginIds });
+      report({ level: "success", message: "Plugin disabled in deployment state", stage: "operation" });
+    } else {
+      this.#markActivePluginDisableOperation();
     }
-    this.#writePluginDisableJournal({ ...journal, phase: "committed" });
-    this.#removePluginDisableTransaction();
-    return snapshot.status === "stopped"
+
+    if (!intent) throw new Error(`Plugin ${pluginId} has no durable disable intent.`);
+    report({ level: "working", message: `Stopping ${plugin.displayName}`, stage: "operation" });
+    const removeResult = await this.#runComposeCleanup(
+      ["rm", "-s", "-f", plugin.service],
+      [...candidatePluginIds, pluginId]
+    );
+    if (removeResult.status !== 0) throw commandFailure("docker compose rm", removeResult);
+    const configResult = await this.#runComposeCleanup(["config", "--quiet"], candidatePluginIds);
+    if (configResult.status !== 0) throw commandFailure("docker compose config", configResult);
+    if (intent.previousStatus === "ready") {
+      report({ level: "working", message: "Recreating Core API and Source Gateway", stage: "operation" });
+      const upResult = await this.#runComposeCleanup(
+        [
+          "up",
+          "-d",
+          "--pull",
+          "never",
+          "--remove-orphans",
+          "--force-recreate",
+          "--wait",
+          "--wait-timeout",
+          COMPOSE_WAIT_SECONDS,
+          "api",
+          "source-gateway"
+        ],
+        candidatePluginIds
+      );
+      if (upResult.status !== 0) throw commandFailure("docker compose up", upResult);
+      report({ level: "success", message: "Core API and Source Gateway are healthy", stage: "operation" });
+    }
+    this.#removePluginAssets(pluginId);
+    report({ level: "success", message: "Plugin deployment files removed", stage: "operation" });
+    return intent.previousStatus === "stopped"
       ? `${plugin.displayName} disabled. Atlas Core remains stopped`
       : `${plugin.displayName} disabled. Core API and Source Gateway are healthy`;
   }
@@ -1591,8 +1604,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     const owner: MutationLockOwner = {
       schema: 1,
       id: randomBytes(16).toString("hex"),
-      pid: process.pid,
-      ...(existsSync(this.#transactionDir) ? { operation: "plugin-disable" } : {})
+      pid: process.pid
     };
     for (;;) {
       const claimedOwner = this.#claimAbandonedMutationRecovery();
@@ -1718,7 +1730,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   }
 
   #isRecoverablePluginDisableOwner(owner: MutationLockOwner): boolean {
-    return owner.operation === "plugin-disable" || this.#recoverablePluginDisableLockId() === owner.id;
+    return owner.operation === "plugin-disable";
   }
 
   #isIdleRecoverableMutationOwner(owner: MutationLockOwner): boolean {
@@ -1746,9 +1758,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   }
 
   #pluginDisableProcessGroup(): RunOptions["processGroup"] | undefined {
-    if (this.#activeMutationLock?.operation !== "plugin-disable" || !existsSync(this.#transactionDir)) {
-      return undefined;
-    }
+    if (this.#activeMutationLock?.operation !== "plugin-disable") return undefined;
     return {
       started: (processGroupId) => this.#recordPluginDisableProcessGroup(processGroupId),
       finished: (processGroupId) => this.#clearPluginDisableProcessGroup(processGroupId)
@@ -1822,7 +1832,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
 
   #completePluginDisableRecoveryLockHandoff(): void {
     const activeOwner = this.#activeMutationLock;
-    if (!activeOwner || activeOwner.operation !== "plugin-disable" || existsSync(this.#transactionDir)) return;
+    if (!activeOwner || activeOwner.operation !== "plugin-disable") return;
     const currentOwner = this.#readMutationLockOwner(this.#mutationLockFile);
     if (!sameMutationLockOwner(currentOwner, activeOwner) || currentOwner.processGroupId !== undefined) {
       throw new Error("Atlas Core mutation lock changed ownership after Plugin disable recovery.");
@@ -2182,7 +2192,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     await this.#runComposeChecked(["pull"], state.enabledPlugins);
     await this.#runComposeChecked(["down"], state.enabledPlugins);
     await this.#runComposeChecked(
-      ["up", "-d", "--pull", "never", "--wait", "--wait-timeout", COMPOSE_WAIT_SECONDS],
+      ["up", "-d", "--pull", "never", "--remove-orphans", "--wait", "--wait-timeout", COMPOSE_WAIT_SECONDS],
       state.enabledPlugins
     );
     this.#recordStarted(attemptedState);
@@ -2217,10 +2227,19 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   }
 
   #pluginForRead(pluginId: string, state: DeploymentState | undefined): ReadablePlugin {
-    if (state?.enabledPlugins.includes(pluginId)) return this.#readableDeployedPlugin(pluginId);
+    if (state?.enabledPlugins.includes(pluginId) || this.#readPluginDisableIntentIfPresent(pluginId)) {
+      return this.#readableDeployedPlugin(pluginId);
+    }
     const catalogPlugin = this.#pluginCatalog.find((plugin) => plugin.pluginId === pluginId);
     if (catalogPlugin) return this.#readableCatalogPlugin(catalogPlugin);
     throw new Error(`Unknown first-party Plugin: ${pluginId}`);
+  }
+
+  #pluginForDisable(pluginId: string, state: DeploymentState): ReadablePlugin {
+    if (state.enabledPlugins.includes(pluginId) || this.#readPluginDisableIntentIfPresent(pluginId)) {
+      return this.#readableDeployedPlugin(pluginId);
+    }
+    return this.#readableCatalogPlugin(this.#requireCatalogPlugin(pluginId, false));
   }
 
   #readableDeployedPlugin(pluginId: string): ReadablePlugin {
@@ -2336,6 +2355,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       };
       writePrivateFile(join(staging, "deployment.json"), `${JSON.stringify(deployment, null, 2)}\n`, this.#platform);
       renameSync(staging, target);
+      syncDirectory(this.#pluginConfigRoot);
     } catch (error) {
       rmSync(staging, { recursive: true, force: true });
       throw error;
@@ -2359,68 +2379,14 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     this.#preparePluginConfigRoot();
     const target = join(this.#pluginConfigRoot, pluginId);
     if (!existsSync(target)) return;
-    rmSync(target, { recursive: true, force: true });
+    const retired = join(
+      this.#pluginConfigRoot,
+      `${RETIRED_PLUGIN_PREFIX}${pluginId}.${process.pid}.${randomBytes(6).toString("hex")}`
+    );
+    renameSync(target, retired);
     syncDirectory(this.#pluginConfigRoot);
-  }
-
-  #beginPluginDisableTransaction(pluginId: string, previousStatus: DeploymentSnapshot["status"]): PluginDisableJournal {
-    if (previousStatus !== "ready" && previousStatus !== "stopped") {
-      throw new Error(`Cannot record Plugin disable from deployment status ${previousStatus}.`);
-    }
-    if (existsSync(this.#transactionDir)) {
-      throw new Error(`Atlas Core found an unrecovered deployment transaction at ${this.#transactionDir}.`);
-    }
-    this.#preparePluginConfigRoot();
-    const lockOwner = this.#activeMutationLock;
-    if (!lockOwner) throw new Error("Plugin disable requires the deployment mutation lock.");
-    this.#markActivePluginDisableOperation();
-
-    const journal: PluginDisableJournal = {
-      schema: 1,
-      coreImage: this.#imageReference ?? UNRELEASED_IMAGE,
-      operation: "plugin-disable",
-      phase: "preparing",
-      lockId: lockOwner.id,
-      pluginId,
-      previousStatus
-    };
-    const beforeDir = join(this.#transactionDir, "before");
-    const baseDir = join(beforeDir, "base");
-    const pluginBackup = join(beforeDir, "plugin");
-    try {
-      mkdirSync(baseDir, { recursive: true, mode: 0o700 });
-      if (this.#platform !== "win32") {
-        chmodSync(this.#transactionDir, 0o700);
-        chmodSync(beforeDir, 0o700);
-        chmodSync(baseDir, 0o700);
-      }
-      this.#writePluginDisableJournal(journal);
-      const previousStateFile = join(beforeDir, "state.json");
-      cpSync(this.#stateFile, previousStateFile, { dereference: false, errorOnExist: true, force: false });
-      if (this.#platform !== "win32") chmodSync(previousStateFile, 0o600);
-      for (const name of ["docker-compose.yml", "source_gateway.production.json"]) {
-        const source = join(dirname(this.#composeFile), name);
-        if (!existsSync(source)) throw new Error(`Atlas Core package is missing deployment asset ${name}.`);
-        const target = join(baseDir, name);
-        cpSync(source, target, { dereference: false, errorOnExist: true, force: false });
-        if (this.#platform !== "win32") chmodSync(target, name === "docker-compose.yml" ? 0o600 : 0o644);
-      }
-      cpSync(join(this.#pluginConfigRoot, pluginId), pluginBackup, {
-        recursive: true,
-        dereference: false,
-        errorOnExist: true,
-        force: false
-      });
-      syncTree(this.#transactionDir);
-      syncDirectory(this.#configDir);
-      const prepared = { ...journal, phase: "prepared" } as const;
-      this.#writePluginDisableJournal(prepared);
-      return prepared;
-    } catch (error) {
-      rmSync(this.#transactionDir, { recursive: true, force: true });
-      syncDirectory(this.#configDir);
-      throw error;
-    }
+    rmSync(retired, { recursive: true, force: true });
+    syncDirectory(this.#pluginConfigRoot);
   }
 
   #markActivePluginDisableOperation(): void {
@@ -2435,280 +2401,94 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     this.#activeMutationLock = marked;
   }
 
-  #writePluginDisableJournal(journal: PluginDisableJournal): void {
+  #pluginDisableIntentPath(pluginId: string): string {
+    return join(this.#pluginConfigRoot, pluginId, PLUGIN_DISABLE_INTENT_FILE);
+  }
+
+  #writePluginDisableIntent(intent: PluginDisableIntent): void {
+    this.#assertPluginConfigDirectory(intent.pluginId);
     writePrivateFile(
-      join(this.#transactionDir, "journal.json"),
-      `${JSON.stringify(journal, null, 2)}\n`,
+      this.#pluginDisableIntentPath(intent.pluginId),
+      `${JSON.stringify(intent, null, 2)}\n`,
       this.#platform
     );
   }
 
-  #readPluginDisableJournal(): PluginDisableJournal {
-    const journalFile = join(this.#transactionDir, "journal.json");
-    this.#assertPrivateFile(journalFile);
+  #readPluginDisableIntentIfPresent(pluginId: string): PluginDisableIntent | undefined {
+    const path = this.#pluginDisableIntentPath(pluginId);
+    if (!existsSync(path)) return undefined;
+    this.#assertPluginConfigDirectory(pluginId);
+    this.#assertRegularFile(path, 0o600);
     let value: unknown;
     try {
-      value = JSON.parse(readFileSync(journalFile, "utf8"));
+      value = JSON.parse(readFileSync(path, "utf8"));
     } catch {
       value = undefined;
     }
-    if (!isPluginDisableJournal(value)) {
-      throw new Error(`Atlas Core found an invalid Plugin disable journal at ${journalFile}.`);
+    if (!isPluginDisableIntent(value) || value.pluginId !== pluginId) {
+      throw new Error(`Plugin ${pluginId} has invalid disable intent at ${path}.`);
     }
     return value;
   }
 
-  #recoverablePluginDisableLockId(): string | undefined {
-    if (!existsSync(join(this.#transactionDir, "journal.json"))) return undefined;
-    return this.#readPluginDisableJournal().lockId;
-  }
-
-  #readPluginDisablePreviousState(journal: PluginDisableJournal): DeploymentState {
-    const previousStateFile = join(this.#transactionDir, "before", "state.json");
-    this.#assertPrivateFile(previousStateFile);
-    let parsed: { state: DeploymentState; migrated: boolean } | undefined;
-    try {
-      parsed = deploymentStateFromValue(JSON.parse(readFileSync(previousStateFile, "utf8")) as unknown);
-    } catch {
-      parsed = undefined;
-    }
-    if (parsed?.migrated || !parsed?.state.enabledPlugins.includes(journal.pluginId)) {
-      throw new Error(`Atlas Core found invalid before-state for interrupted Plugin disable ${journal.pluginId}.`);
-    }
-    return parsed.state;
-  }
-
-  #pluginDisableComposeFile(): string {
-    const baseDir = join(this.#transactionDir, "before", "base");
-    const composeFile = join(baseDir, "docker-compose.yml");
-    this.#assertRegularFile(composeFile, 0o600);
-    this.#assertRegularFile(join(baseDir, "source_gateway.production.json"), 0o644);
-    return composeFile;
-  }
-
-  async #runPluginDisableCompose(
-    journal: PluginDisableJournal,
-    args: string[],
-    allowAfterCancellation: boolean,
-    pluginIds: readonly string[]
-  ): Promise<CommandResult> {
-    return await this.#runComposeFile(
-      this.#pluginDisableComposeFile(),
-      args,
-      false,
-      allowAfterCancellation,
-      pluginIds,
-      journal.coreImage
-    );
-  }
-
-  #restorePluginDisableAssets(pluginId: string): void {
+  #pendingPluginDisableIds(): string[] {
+    if (!existsSync(this.#pluginConfigRoot)) return [];
     this.#preparePluginConfigRoot();
-    const backup = join(this.#transactionDir, "before", "plugin");
-    const backupInfo = lstatSync(backup);
-    if (backupInfo.isSymbolicLink() || !backupInfo.isDirectory()) {
-      throw new Error(`Atlas Core found an invalid rollback copy for Plugin ${pluginId}.`);
-    }
-    const target = join(this.#pluginConfigRoot, pluginId);
-    if (existsSync(target)) rmSync(target, { recursive: true, force: true });
-    cpSync(backup, target, { recursive: true, dereference: false, errorOnExist: true, force: false });
-    if (this.#platform !== "win32") chmodSync(target, 0o700);
-    syncTree(target);
-    syncDirectory(this.#pluginConfigRoot);
+    return readdirSync(this.#pluginConfigRoot)
+      .filter((entry) => /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/u.test(entry))
+      .filter((pluginId) => existsSync(this.#pluginDisableIntentPath(pluginId)))
+      .sort();
   }
 
-  async #rollbackPluginDisableTransaction(
-    journal: PluginDisableJournal,
-    allowAfterCancellation: boolean
-  ): Promise<string[]> {
-    const rollbackErrors: string[] = [];
-    let previousState: DeploymentState;
-    try {
-      previousState = this.#readPluginDisablePreviousState(journal);
-      this.#restorePluginDisableAssets(journal.pluginId);
-      writePrivateFile(
-        this.#stateFile,
-        readFileSync(join(this.#transactionDir, "before", "state.json"), "utf8"),
-        this.#platform
-      );
-      this.#readDeployedPluginMetadata(journal.pluginId);
-    } catch (error) {
-      rollbackErrors.push(errorMessage(error));
-      return rollbackErrors;
-    }
-
-    try {
-      const config = await this.#runPluginDisableCompose(
-        journal,
-        ["config", "--quiet"],
-        allowAfterCancellation,
-        previousState.enabledPlugins
-      );
-      if (config.status !== 0) throw commandFailure("restore Plugin deployment configuration", config);
-      if (journal.previousStatus === "ready") {
-        const plugin = this.#readableDeployedPlugin(journal.pluginId);
-        const restore = await this.#runPluginDisableCompose(
-          journal,
-          [
-            "up",
-            "-d",
-            "--pull",
-            "never",
-            "--force-recreate",
-            "--wait",
-            "--wait-timeout",
-            COMPOSE_WAIT_SECONDS,
-            "api",
-            "source-gateway",
-            plugin.service
-          ],
-          allowAfterCancellation,
-          previousState.enabledPlugins
-        );
-        if (restore.status !== 0) throw commandFailure("restore Atlas Core", restore);
-      }
-    } catch (error) {
-      rollbackErrors.push(errorMessage(error));
-      return rollbackErrors;
-    }
-
-    this.#removePluginDisableTransaction();
-    return rollbackErrors;
+  #cancelPluginDisableIntent(pluginId: string): void {
+    const path = this.#pluginDisableIntentPath(pluginId);
+    if (!existsSync(path)) return;
+    this.#readPluginDisableIntentIfPresent(pluginId);
+    unlinkSync(path);
+    syncDirectory(dirname(path));
   }
 
-  async #finishPluginDisableTransaction(journal: PluginDisableJournal): Promise<void> {
-    const previousState = this.#readPluginDisablePreviousState(journal);
-    this.#restorePluginDisableAssets(journal.pluginId);
-    const plugin = this.#readableDeployedPlugin(journal.pluginId);
-    const remove = await this.#runPluginDisableCompose(
-      journal,
-      ["rm", "-s", "-f", plugin.service],
-      false,
-      previousState.enabledPlugins
-    );
-    if (remove.status !== 0) throw commandFailure("docker compose rm", remove);
-
-    const candidatePluginIds = previousState.enabledPlugins.filter((candidate) => candidate !== journal.pluginId);
-    this.#removePluginAssets(journal.pluginId);
-    this.#writeDeploymentState({ ...previousState, enabledPlugins: candidatePluginIds });
-    const config = await this.#runPluginDisableCompose(journal, ["config", "--quiet"], false, candidatePluginIds);
-    if (config.status !== 0) throw commandFailure("finish Plugin deployment configuration", config);
-    if (journal.previousStatus === "ready") {
-      const restore = await this.#runPluginDisableCompose(
-        journal,
-        [
-          "up",
-          "-d",
-          "--pull",
-          "never",
-          "--force-recreate",
-          "--wait",
-          "--wait-timeout",
-          COMPOSE_WAIT_SECONDS,
-          "api",
-          "source-gateway"
-        ],
-        false,
-        candidatePluginIds
-      );
-      if (restore.status !== 0) throw commandFailure("finish Plugin disable", restore);
-    }
-    this.#removePluginDisableTransaction();
-  }
-
-  async #recoverPluginDisableTransaction(dockerEngineId: string): Promise<void> {
-    if (!existsSync(this.#transactionDir)) return;
+  async #finishPendingPluginDisableBeforeEnable(pluginId: string, state: DeploymentState): Promise<void> {
+    const intent = this.#readPluginDisableIntentIfPresent(pluginId);
+    if (!intent) return;
+    const deployed = this.#readableDeployedPlugin(pluginId);
     this.#markActivePluginDisableOperation();
-    this.#assertPluginDisableTransactionDirectory();
-
-    const journalFile = join(this.#transactionDir, "journal.json");
-    if (!existsSync(journalFile)) {
-      this.#removePluginDisableTransaction();
-      return;
-    }
-    const journal = this.#readPluginDisableJournal();
-    if (journal.phase === "preparing") {
-      this.#removePluginDisableTransaction();
-      return;
-    }
-
-    const previousState = this.#readPluginDisablePreviousState(journal);
-    this.#assertStateMatchesEngine(previousState, dockerEngineId);
-    this.#stdout.write(`Recovering interrupted disable for Plugin ${journal.pluginId}...\n`);
-    if (journal.phase === "committed") {
-      await this.#finishPluginDisableTransaction(journal);
-      this.#stdout.write(`Interrupted disable for Plugin ${journal.pluginId} completed.\n`);
-      return;
-    }
-
-    const rollbackErrors = await this.#rollbackPluginDisableTransaction(journal, false);
-    if (rollbackErrors.length > 0) {
-      throw new Error(`Interrupted Plugin disable rollback failed: ${rollbackErrors.join("; ")}`);
-    }
-    this.#stdout.write(`Interrupted disable for Plugin ${journal.pluginId} rolled back.\n`);
+    const oldPluginIds = [...state.enabledPlugins, pluginId].sort();
+    const remove = await this.#runComposeCleanup(["rm", "-s", "-f", deployed.service], oldPluginIds);
+    if (remove.status !== 0) throw commandFailure("docker compose rm", remove);
+    const config = await this.#runComposeCleanup(["config", "--quiet"], state.enabledPlugins);
+    if (config.status !== 0) throw commandFailure("docker compose config", config);
+    this.#removePluginAssets(pluginId);
+    this.#completePluginDisableRecoveryLockHandoff();
   }
 
-  #assertPluginDisableRecoveryEngine(
+  #settlePluginDisableIntentsAfterStop(state: DeploymentState): void {
+    const enabled = new Set(state.enabledPlugins);
+    for (const pluginId of this.#pendingPluginDisableIds()) {
+      if (enabled.has(pluginId)) this.#cancelPluginDisableIntent(pluginId);
+      else this.#removePluginAssets(pluginId);
+    }
+  }
+
+  #assertRecoveredPluginDisableEngine(
     dockerEngineId: string,
-    mutationLock: { owner: MutationLockOwner; recovered: boolean },
-    recoverInterruptedDisable: boolean
+    mutationLock: { owner: MutationLockOwner; recovered: boolean }
   ): void {
-    const hasTransaction = existsSync(this.#transactionDir);
-    if (
-      mutationLock.recovered &&
-      mutationLock.owner.operation === "plugin-disable" &&
-      (!recoverInterruptedDisable || !hasTransaction)
-    ) {
+    if (mutationLock.recovered && mutationLock.owner.operation === "plugin-disable") {
       this.#assertStateMatchesEngine(this.#requireInitialized(), dockerEngineId);
     }
-    if (!recoverInterruptedDisable || !hasTransaction) return;
-    this.#assertPluginDisableTransactionDirectory();
-
-    const journalFile = join(this.#transactionDir, "journal.json");
-    if (!existsSync(journalFile)) {
-      this.#assertStateMatchesEngine(this.#requireInitialized(), dockerEngineId);
-      return;
-    }
-    const journal = this.#readPluginDisableJournal();
-    const state =
-      journal.phase === "preparing" ? this.#requireInitialized() : this.#readPluginDisablePreviousState(journal);
-    this.#assertStateMatchesEngine(state, dockerEngineId);
   }
 
-  #assertPluginDisableTransactionDirectory(): void {
-    const info = lstatSync(this.#transactionDir);
-    if (info.isSymbolicLink() || !info.isDirectory()) {
-      throw new Error(`${this.#transactionDir} must be a regular directory.`);
-    }
-    this.#assertPrivateOwnershipAndMode(this.#transactionDir, info, 0o700);
-  }
-
-  #abandonPluginDisableTransaction(): void {
-    if (!existsSync(this.#transactionDir)) return;
-    this.#assertPluginDisableTransactionDirectory();
-    this.#removePluginDisableTransaction();
-  }
-
-  #removePluginDisableTransaction(): void {
-    if (!existsSync(this.#transactionDir)) return;
-    const retired = join(
-      this.#configDir,
-      `${RETIRED_TRANSACTION_PREFIX}${process.pid}.${randomBytes(8).toString("hex")}`
-    );
-    renameSync(this.#transactionDir, retired);
-    syncDirectory(this.#configDir);
-    rmSync(retired, { recursive: true, force: true });
-    syncDirectory(this.#configDir);
-  }
-
-  #removeRetiredPluginDisableTransactions(): void {
+  #removeRetiredPluginAssets(): void {
+    if (!existsSync(this.#pluginConfigRoot)) return;
+    this.#preparePluginConfigRoot();
     let removed = false;
-    for (const entry of readdirSync(this.#configDir)) {
-      if (!entry.startsWith(RETIRED_TRANSACTION_PREFIX)) continue;
-      rmSync(join(this.#configDir, entry), { recursive: true, force: true });
+    for (const entry of readdirSync(this.#pluginConfigRoot)) {
+      if (!entry.startsWith(RETIRED_PLUGIN_PREFIX)) continue;
+      rmSync(join(this.#pluginConfigRoot, entry), { recursive: true, force: true });
       removed = true;
     }
-    if (removed) syncDirectory(this.#configDir);
+    if (removed) syncDirectory(this.#pluginConfigRoot);
   }
 
   #backupPluginAssets(pluginId: string): string {
@@ -3381,30 +3161,6 @@ function writePrivateFile(path: string, contents: string, platform: NodeJS.Platf
   }
 }
 
-function syncTree(path: string): void {
-  const info = lstatSync(path);
-  if (info.isSymbolicLink()) return;
-  if (info.isDirectory()) {
-    for (const entry of readdirSync(path)) syncTree(join(path, entry));
-    syncDirectory(path);
-    return;
-  }
-  if (!info.isFile()) return;
-  const descriptor = openSync(
-    path,
-    fileSystemConstants.O_RDONLY | fileSystemConstants.O_NOFOLLOW | fileSystemConstants.O_NONBLOCK
-  );
-  try {
-    const openedInfo = fstatSync(descriptor);
-    if (!openedInfo.isFile() || openedInfo.dev !== info.dev || openedInfo.ino !== info.ino) {
-      throw new Error(`${path} changed while Atlas Core was making its rollback copy durable.`);
-    }
-    fsyncSync(descriptor);
-  } finally {
-    closeSync(descriptor);
-  }
-}
-
 function syncDirectory(path: string): void {
   const descriptor = openSync(path, "r");
   try {
@@ -3492,21 +3248,16 @@ function isMutationLockOwner(value: unknown): value is MutationLockOwner {
   );
 }
 
-function isPluginDisableJournal(value: unknown): value is PluginDisableJournal {
+function isPluginDisableIntent(value: unknown): value is PluginDisableIntent {
   if (typeof value !== "object" || value === null) return false;
   const record = value as Record<string, unknown>;
   const keys = Object.keys(record).sort();
-  const expectedKeys = ["coreImage", "lockId", "operation", "phase", "pluginId", "previousStatus", "schema"];
+  const expectedKeys = ["operation", "pluginId", "previousStatus", "schema"];
   return (
     keys.length === expectedKeys.length &&
     keys.every((key, index) => key === expectedKeys[index]) &&
     record.schema === 1 &&
-    typeof record.coreImage === "string" &&
-    record.coreImage.length > 0 &&
     record.operation === "plugin-disable" &&
-    (record.phase === "preparing" || record.phase === "prepared" || record.phase === "committed") &&
-    typeof record.lockId === "string" &&
-    /^[a-f0-9]{32}$/u.test(record.lockId) &&
     typeof record.pluginId === "string" &&
     /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/u.test(record.pluginId) &&
     (record.previousStatus === "ready" || record.previousStatus === "stopped")

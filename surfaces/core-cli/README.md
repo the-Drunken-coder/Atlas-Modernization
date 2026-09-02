@@ -80,13 +80,16 @@ accept arbitrary paths, images, or third-party bundles.
 Enabling a Plugin pulls the catalog's immutable image digest, stages its private Compose and configuration fragments,
 validates the complete Compose model, and then commits the new state. A running deployment starts the Plugin and
 restarts Core and Source Gateway with a health wait. A stopped deployment stays stopped. Failure restores the previous
-files, state, and running composition. Before disabling a Plugin, the CLI records the previous state and active files in
-the root transaction directory. If the process stops after destructive work begins, the next mutation reclaims only the
-matching dead-owner locks after any recorded Docker process group has exited, then restores or finishes that
-transaction from its captured Compose inputs before normal deployment validation. Recovery claims are revalidated
-after acquisition, and recovery-only lock eligibility is cleared before the requested mutation starts. A confirmed
-destructive reset may abandon an unrecoverable transaction. Disabling removes the stateless Plugin container and its
-fragments but keeps the cached image. Plugin mutations require the CLI and deployment versions to match; status and logs
+files, state, and running composition. Disabling first validates the candidate deployment, records a small durable intent
+with the deployed Plugin metadata, and commits the Plugin's disabled state before removing its container or files. An
+interrupted disable is retried idempotently from either side of that state commit. A later enable first finishes any
+pending disable, so stale deployment files do not require manual cleanup. `stop` never runs recovery that can start
+services: it runs Compose down with orphan removal, then settles pending disable files while Core remains stopped.
+Core status, details, and logs plus Plugin status use the committed state and staged deployment metadata, so they remain
+useful during the destructive part of a disable and after catalog drift. Dead-owner reclaim remains limited to
+Plugin-disable work,
+waits for its recorded Docker process group to exit, and verifies the exact Docker network lock ID before removal.
+Disabling keeps the cached image. Plugin mutations require the CLI and deployment versions to match; status and logs
 remain available after a CLI-only update. Direct commands print each mutation stage.
 The Plugins menu keeps the operation in an activity view with elapsed timestamps, reports rollback status, and returns
 to the Plugin catalog after safe cancellation.
