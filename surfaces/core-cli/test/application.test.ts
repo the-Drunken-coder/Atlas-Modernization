@@ -792,6 +792,54 @@ describe("atlas-core CLI", () => {
     expect(test.runner.existingNetworks.has(MUTATION_LOCK_NETWORK)).toBe(false);
   });
 
+  it("preserves a retained Plugin-disable lock when the engine changes in the same interactive session", async () => {
+    const test = runtime();
+    markInitialized(test);
+    test.context.confirmReset = async () => true;
+    const plugin = installTestPluginCatalog(test);
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
+    const config = join(test.home, ".atlas", "core");
+    const lockPath = join(config, ".mutation.lock");
+    test.context.interactive = {
+      configureAdmin: async () => undefined,
+      runUpdate: async () => undefined,
+      runMenu: async (operator) => {
+        test.runner.retainNetworkOnRemovalError = true;
+        test.runner.nextNetworkRemovalError = () => "permission denied";
+        await expect(operator.pluginDisable(plugin.pluginId)).rejects.toThrow("permission denied");
+        const retainedOwner = JSON.parse(readFileSync(lockPath, "utf8"));
+        const retainedLabels = test.runner.networkLabels.get(MUTATION_LOCK_NETWORK);
+        const retainedNetworkId = test.runner.networkIds.get(MUTATION_LOCK_NETWORK);
+
+        test.runner.existingNetworks.delete(MUTATION_LOCK_NETWORK);
+        test.runner.networkLabels.delete(MUTATION_LOCK_NETWORK);
+        test.runner.networkIds.delete(MUTATION_LOCK_NETWORK);
+        test.runner.dockerEngineId = "another-engine";
+        test.runner.calls.length = 0;
+
+        await expect(operator.stop()).rejects.toThrow("Restore the original Docker context");
+        expect(test.runner.calls.some((call) => call.args[0] === "network")).toBe(false);
+        expect(JSON.parse(readFileSync(lockPath, "utf8"))).toEqual(retainedOwner);
+
+        test.runner.calls.length = 0;
+        await expect(operator.reset()).rejects.toThrow("Restore the original Docker context before resetting");
+        expect(test.runner.calls.some((call) => call.args[0] === "pull" || call.args[0] === "network")).toBe(false);
+        expect(JSON.parse(readFileSync(lockPath, "utf8"))).toEqual(retainedOwner);
+
+        test.runner.dockerEngineId = "test-engine-id";
+        test.runner.existingNetworks.add(MUTATION_LOCK_NETWORK);
+        if (retainedLabels) test.runner.networkLabels.set(MUTATION_LOCK_NETWORK, retainedLabels);
+        if (retainedNetworkId) test.runner.networkIds.set(MUTATION_LOCK_NETWORK, retainedNetworkId);
+
+        await expect(operator.stop()).resolves.toBeUndefined();
+      }
+    };
+
+    expect(await runCLI([], test.context)).toBe(0);
+    expect(existsSync(lockPath)).toBe(false);
+    expect(test.runner.existingNetworks.has(MUTATION_LOCK_NETWORK)).toBe(false);
+  });
+
   it("serializes overlapping mutations in one interactive session", async () => {
     const test = runtime();
     markInitialized(test);
