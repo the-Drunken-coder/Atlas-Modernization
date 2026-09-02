@@ -319,8 +319,10 @@ func TestGatewayRecordsRetryFailureBeforeCircuitOpen(t *testing.T) {
 		}{attempts: attempts, failure: failure}
 	}()
 	<-firstAttempt
-	connector.recordFailure(time.Now())
-	connector.recordFailure(time.Now())
+	firstFailureAt := time.Now()
+	connector.recordFailure(firstFailureAt, firstFailureAt)
+	secondFailureAt := time.Now()
+	connector.recordFailure(secondFailureAt, secondFailureAt)
 	close(allowFailure)
 	select {
 	case outcome := <-result:
@@ -376,7 +378,7 @@ func TestReachableResponseClearsOlderPendingRetryFailure(t *testing.T) {
 		}{attempts: attempts, failure: failure}
 	}()
 	<-retryWaiting
-	connector.recordReachable()
+	connector.recordReachable(time.Now())
 	select {
 	case outcome := <-result:
 		if outcome.failure == nil || outcome.failure.code != FailureAdmissionTimeout || outcome.attempts != 1 || calls.Load() != 1 {
@@ -467,7 +469,7 @@ func TestCanceledRequestAccountsForIndependentRetryFailure(t *testing.T) {
 		}{attempts: attempts, failure: failure}
 	}()
 	<-secondAttempt
-	connector.recordReachable()
+	connector.recordReachable(time.Now())
 	cancel()
 	close(allowSecondFailure)
 	select {
@@ -513,6 +515,77 @@ func TestCustomCanceledRequestDoesNotOpenCircuit(t *testing.T) {
 	_, attempts, _, failure = gateway.execute(context.Background(), connector, request)
 	if failure != nil || attempts != 1 || calls.Load() != 2 {
 		t.Fatalf("next attempts=%d calls=%d failure=%v", attempts, calls.Load(), failure)
+	}
+}
+
+type deadlineBeforeDoneContext struct {
+	context.Context
+	deadline time.Time
+}
+
+func (ctx deadlineBeforeDoneContext) Deadline() (time.Time, bool) { return ctx.deadline, true }
+
+func TestExpiredDeadlineDetectedBeforeDone(t *testing.T) {
+	now := time.Now()
+	expired := deadlineBeforeDoneContext{Context: context.Background(), deadline: now.Add(-time.Millisecond)}
+	if expired.Err() != nil || expired.Done() != nil {
+		t.Fatal("test context unexpectedly reports cancellation")
+	}
+	if !contextExpired(expired, now) {
+		t.Fatal("passed deadline was not detected before Done closed")
+	}
+	failure := contextFailure(context.Background(), expired, false)
+	if failure.code != FailureAdmissionTimeout || !errors.Is(failure.err, context.DeadlineExceeded) {
+		t.Fatalf("connector deadline failure=%v", failure)
+	}
+	failure = contextFailure(expired, expired, false)
+	if failure.code != failureRequestCanceled || !errors.Is(failure.err, context.DeadlineExceeded) {
+		t.Fatalf("parent deadline failure=%v", failure)
+	}
+}
+
+func TestPendingRetryFailureCannotOverwriteNewerReachability(t *testing.T) {
+	config := testConnectorConfig()
+	config.CircuitBreaker.Failures = 1
+	gateway, err := New(Config{Connectors: []ConnectorConfig{config}}, Options{
+		Client: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return nil, errors.New("offline")
+		})},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connector := gateway.connectors["reference"]
+	prepared, rule, failure := connector.prepare(ConnectorRequest{
+		Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{},
+	})
+	if failure != nil {
+		t.Fatal(failure)
+	}
+	_, failure, failureAt := connector.attempt(context.Background(), prepared, rule)
+	if failure == nil || failure.code != FailureUpstreamUnreachable || failureAt.IsZero() {
+		t.Fatalf("attempt failure=%v completed_at=%s", failure, failureAt)
+	}
+	connector.recordReachable(failureAt.Add(time.Nanosecond))
+	connector.recordFailure(time.Now(), failureAt)
+	if connector.circuitOpen(time.Now()) {
+		t.Fatal("older retry failure overwrote newer reachability")
+	}
+}
+
+func TestOlderReachabilityCannotOverwriteNewerFailure(t *testing.T) {
+	config := testConnectorConfig()
+	config.CircuitBreaker.Failures = 1
+	gateway, err := New(Config{Connectors: []ConnectorConfig{config}}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connector := gateway.connectors["reference"]
+	failureAt := time.Now()
+	connector.recordFailure(failureAt, failureAt)
+	connector.recordReachable(failureAt.Add(-time.Nanosecond))
+	if !connector.circuitOpen(failureAt) {
+		t.Fatal("older reachability overwrote newer failure")
 	}
 }
 
@@ -728,7 +801,8 @@ func TestQueuedRequestRechecksCircuitAfterConcurrencyWait(t *testing.T) {
 		result <- failure
 	}()
 	<-passedInitialCircuitCheck
-	connector.recordFailure(time.Now())
+	circuitFailureAt := time.Now()
+	connector.recordFailure(circuitFailureAt, circuitFailureAt)
 	<-connector.semaphore
 	select {
 	case failure := <-result:
@@ -778,7 +852,8 @@ func TestQueuedRequestRechecksCircuitAfterRateWait(t *testing.T) {
 		}{attempts: attempts, failure: failure}
 	}()
 	<-startedRateWait
-	connector.recordFailure(time.Now())
+	circuitFailureAt := time.Now()
+	connector.recordFailure(circuitFailureAt, circuitFailureAt)
 	select {
 	case outcome := <-result:
 		if outcome.failure == nil || outcome.failure.code != FailureCircuitOpen || outcome.attempts != 0 || calls.Load() != 0 {
@@ -801,7 +876,7 @@ func TestCancellationWinsPostSemaphoreCircuitCheck(t *testing.T) {
 		Now: func() time.Time {
 			now := time.Now()
 			if clockCalls.Add(1) == 2 {
-				connector.recordFailure(now)
+				connector.recordFailure(now, now)
 				cancel()
 			}
 			return now

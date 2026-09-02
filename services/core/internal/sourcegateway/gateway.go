@@ -56,8 +56,8 @@ type connector struct {
 	stateMu         sync.Mutex
 	failures        int
 	openUntil       time.Time
+	lastFailureAt   time.Time
 	lastReachableAt time.Time
-	resetGeneration uint64
 }
 
 type gatewayError struct {
@@ -295,7 +295,7 @@ func (g *Gateway) logRequest(connectorID, outcome string, upstreamStatus int, st
 }
 
 func (g *Gateway) execute(ctx context.Context, connector *connector, input ConnectorRequest) (ConnectorResponse, int, string, *gatewayError) {
-	if ctx.Err() != nil {
+	if contextExpired(ctx, time.Now()) {
 		return ConnectorResponse{}, 0, "bypass", requestCanceled(ctx)
 	}
 	prepared, rule, err := connector.prepare(input)
@@ -305,25 +305,26 @@ func (g *Gateway) execute(ctx context.Context, connector *connector, input Conne
 	key := requestCacheKey(connector.config.ID, prepared)
 	if rule.Cache.TTLMS > 0 {
 		if cached, ok := g.cache.get(key, g.now()); ok {
-			if ctx.Err() != nil {
+			if contextExpired(ctx, time.Now()) {
 				return ConnectorResponse{}, 0, "hit", requestCanceled(ctx)
 			}
 			return cached, 0, "hit", nil
 		}
 	}
 	if connector.circuitOpen(g.now()) {
-		if ctx.Err() != nil {
+		if contextExpired(ctx, time.Now()) {
 			return ConnectorResponse{}, 0, "miss", requestCanceled(ctx)
 		}
 		return ConnectorResponse{}, 0, "miss", &gatewayError{code: FailureCircuitOpen}
 	}
-	requestContext, cancel := context.WithTimeoutCause(
+	connectorDeadline := time.Now().Add(time.Duration(connector.config.Limits.TimeoutMS) * time.Millisecond)
+	requestContext, cancel := context.WithDeadlineCause(
 		ctx,
-		time.Duration(connector.config.Limits.TimeoutMS)*time.Millisecond,
+		connectorDeadline,
 		errConnectorDeadline,
 	)
 	defer cancel()
-	if requestContext.Err() != nil {
+	if contextExpired(requestContext, time.Now()) {
 		return ConnectorResponse{}, 0, "miss", contextFailure(ctx, requestContext, false)
 	}
 	select {
@@ -332,21 +333,21 @@ func (g *Gateway) execute(ctx context.Context, connector *connector, input Conne
 	case <-requestContext.Done():
 		return ConnectorResponse{}, 0, "miss", contextFailure(ctx, requestContext, false)
 	}
-	if requestContext.Err() != nil {
+	if contextExpired(requestContext, time.Now()) {
 		return ConnectorResponse{}, 0, "miss", contextFailure(ctx, requestContext, false)
 	}
 	if connector.circuitOpen(g.now()) {
-		if requestContext.Err() != nil {
+		if contextExpired(requestContext, time.Now()) {
 			return ConnectorResponse{}, 0, "miss", contextFailure(ctx, requestContext, false)
 		}
 		return ConnectorResponse{}, 0, "miss", &gatewayError{code: FailureCircuitOpen}
 	}
 	maxAttempts := rule.Retry.MaxRetries + 1
 	retryFailurePending := false
-	var retryFailureGeneration uint64
+	var retryFailureAt time.Time
 	recordPendingFailure := func() {
 		if retryFailurePending {
-			connector.recordFailureIfUnreset(g.now(), retryFailureGeneration)
+			connector.recordFailure(g.now(), retryFailureAt)
 		}
 	}
 	finishBeforeAttempt := func(reservation rateReservation) {
@@ -359,12 +360,12 @@ func (g *Gateway) execute(ctx context.Context, connector *connector, input Conne
 			recordPendingFailure()
 			return ConnectorResponse{}, attempt - 1, "miss", contextFailure(ctx, requestContext, false)
 		}
-		if requestContext.Err() != nil {
+		if contextExpired(requestContext, time.Now()) {
 			finishBeforeAttempt(reservation)
 			return ConnectorResponse{}, attempt - 1, "miss", contextFailure(ctx, requestContext, false)
 		}
 		circuitOpen := connector.circuitOpen(g.now())
-		if requestContext.Err() != nil {
+		if contextExpired(requestContext, time.Now()) {
 			finishBeforeAttempt(reservation)
 			return ConnectorResponse{}, attempt - 1, "miss", contextFailure(ctx, requestContext, false)
 		}
@@ -372,27 +373,29 @@ func (g *Gateway) execute(ctx context.Context, connector *connector, input Conne
 			finishBeforeAttempt(reservation)
 			return ConnectorResponse{}, attempt - 1, "miss", &gatewayError{code: FailureCircuitOpen}
 		}
-		response, failure := connector.attempt(requestContext, prepared, rule)
-		if requestContext.Err() != nil {
+		response, failure, attemptCompletedAt := connector.attempt(requestContext, prepared, rule)
+		attemptCheckedAt := time.Now()
+		if contextExpired(requestContext, attemptCheckedAt) {
 			attemptFailure := failure
 			failure = contextFailure(ctx, requestContext, true)
+			parentContextError := contextError(ctx, attemptCheckedAt)
 			switch {
-			case errors.Is(context.Cause(requestContext), errConnectorDeadline):
-				deadline, _ := requestContext.Deadline()
-				connector.recordDeadlineFailure(g.now(), deadline)
+			case connectorDeadlineWon(ctx, requestContext, connectorDeadline, attemptCheckedAt):
+				connector.recordFailure(g.now(), connectorDeadline)
 			case attemptFailure == nil:
-				connector.recordReachable()
+				connector.recordReachable(attemptCompletedAt)
 				retryFailurePending = false
-			case ctx.Err() != nil &&
-				(errors.Is(attemptFailure.err, ctx.Err()) || errors.Is(attemptFailure.err, context.Cause(ctx))):
+			case parentContextError != nil &&
+				(errors.Is(attemptFailure.err, parentContextError) ||
+					errors.Is(attemptFailure.err, context.Cause(ctx))):
 				recordPendingFailure()
 			default:
-				connector.recordFailure(g.now())
+				connector.recordFailure(g.now(), attemptCompletedAt)
 			}
 			return ConnectorResponse{}, attempt, "miss", failure
 		}
 		if failure == nil {
-			connector.recordReachable()
+			connector.recordReachable(attemptCompletedAt)
 			retryFailurePending = false
 			retryable := retryStatus(rule.Retry.Statuses, response.Status)
 			if attempt < maxAttempts && retryable {
@@ -409,10 +412,10 @@ func (g *Gateway) execute(ctx context.Context, connector *connector, input Conne
 		}
 		if attempt < maxAttempts && retryFailure(rule.Retry.Failures, failure.code) {
 			retryFailurePending = true
-			retryFailureGeneration = connector.currentResetGeneration()
+			retryFailureAt = attemptCompletedAt
 			continue
 		}
-		connector.recordFailure(g.now())
+		connector.recordFailure(g.now(), attemptCompletedAt)
 		return ConnectorResponse{}, attempt, "miss", failure
 	}
 	panic("unreachable")
@@ -490,14 +493,19 @@ func (c *connector) route(method, path string) (RouteRule, bool) {
 	return selected, found
 }
 
-func (c *connector) attempt(ctx context.Context, prepared preparedRequest, rule RouteRule) (ConnectorResponse, *gatewayError) {
+func (c *connector) attempt(ctx context.Context, prepared preparedRequest, rule RouteRule) (
+	responseResult ConnectorResponse,
+	failureResult *gatewayError,
+	completedAt time.Time,
+) {
+	defer func() { completedAt = time.Now() }()
 	target := *c.origin
 	target.Path = prepared.path
 	target.RawPath = ""
 	target.RawQuery = encodeQuery(prepared.query)
 	request, err := http.NewRequestWithContext(ctx, prepared.method, target.String(), bytes.NewReader(prepared.body))
 	if err != nil {
-		return ConnectorResponse{}, rejected(err)
+		return ConnectorResponse{}, rejected(err), completedAt
 	}
 	for _, tuple := range prepared.headers {
 		request.Header.Add(tuple[0], tuple[1])
@@ -512,26 +520,26 @@ func (c *connector) attempt(ctx context.Context, prepared preparedRequest, rule 
 	response, err := c.client.Do(request)
 	if err != nil {
 		if ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) {
-			return ConnectorResponse{}, &gatewayError{code: FailureUpstreamTimeout, err: err}
+			return ConnectorResponse{}, &gatewayError{code: FailureUpstreamTimeout, err: err}, completedAt
 		}
-		return ConnectorResponse{}, &gatewayError{code: FailureUpstreamUnreachable, err: err}
+		return ConnectorResponse{}, &gatewayError{code: FailureUpstreamUnreachable, err: err}, completedAt
 	}
 	defer func() { _ = response.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(response.Body, c.config.Limits.MaxResponseBytes+1))
 	if err != nil {
 		if ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) {
-			return ConnectorResponse{}, &gatewayError{code: FailureUpstreamTimeout, err: err}
+			return ConnectorResponse{}, &gatewayError{code: FailureUpstreamTimeout, err: err}, completedAt
 		}
-		return ConnectorResponse{}, &gatewayError{code: FailureUpstreamUnreachable, err: err}
+		return ConnectorResponse{}, &gatewayError{code: FailureUpstreamUnreachable, err: err}, completedAt
 	}
 	if int64(len(body)) > c.config.Limits.MaxResponseBytes {
-		return ConnectorResponse{}, &gatewayError{code: FailureResponseTooLarge}
+		return ConnectorResponse{}, &gatewayError{code: FailureResponseTooLarge}, completedAt
 	}
 	headers, err := c.responseHeaders(response.Header, rule.AllowedResponseHeaders, c.config.Limits)
 	if err != nil {
-		return ConnectorResponse{}, &gatewayError{code: FailureResponseTooLarge, err: err}
+		return ConnectorResponse{}, &gatewayError{code: FailureResponseTooLarge, err: err}, completedAt
 	}
-	return ConnectorResponse{Status: response.StatusCode, Headers: headers, BodyBase64: base64.StdEncoding.EncodeToString(body)}, nil
+	return ConnectorResponse{Status: response.StatusCode, Headers: headers, BodyBase64: base64.StdEncoding.EncodeToString(body)}, nil, completedAt
 }
 
 func (c *connector) responseHeaders(headers http.Header, allowedNames []string, limits ConnectorLimits) ([]HeaderTuple, error) {
@@ -664,67 +672,82 @@ func (c *connector) circuitOpen(now time.Time) bool {
 	return now.Before(c.openUntil)
 }
 
-func (c *connector) recordFailure(now time.Time) {
+func (c *connector) recordFailure(now, completedAt time.Time) {
 	c.stateMu.Lock()
 	defer c.stateMu.Unlock()
-	c.recordFailureLocked(now)
-}
-
-func (c *connector) recordFailureIfUnreset(now time.Time, resetGeneration uint64) {
-	c.stateMu.Lock()
-	defer c.stateMu.Unlock()
-	if c.resetGeneration != resetGeneration {
+	// Event ordering uses real monotonic time; openUntil uses the injectable breaker clock.
+	if c.lastReachableAt.After(completedAt) {
 		return
 	}
-	c.recordFailureLocked(now)
+	c.recordFailureLocked(now, completedAt)
 }
 
-func (c *connector) recordDeadlineFailure(now, deadline time.Time) {
-	c.stateMu.Lock()
-	defer c.stateMu.Unlock()
-	if c.lastReachableAt.After(deadline) {
-		return
-	}
-	c.recordFailureLocked(now)
-}
-
-func (c *connector) recordFailureLocked(now time.Time) {
+func (c *connector) recordFailureLocked(now, completedAt time.Time) {
 	c.failures++
+	if completedAt.After(c.lastFailureAt) {
+		c.lastFailureAt = completedAt
+	}
 	if c.failures >= c.config.CircuitBreaker.Failures {
 		c.openUntil = now.Add(time.Duration(c.config.CircuitBreaker.OpenMS) * time.Millisecond)
 		c.failures = 0
 	}
 }
 
-func (c *connector) recordReachable() {
+func (c *connector) recordReachable(completedAt time.Time) {
 	c.stateMu.Lock()
 	defer c.stateMu.Unlock()
+	if c.lastFailureAt.After(completedAt) {
+		return
+	}
 	c.failures = 0
 	c.openUntil = time.Time{}
-	c.lastReachableAt = time.Now()
-	c.resetGeneration++
-}
-
-func (c *connector) currentResetGeneration() uint64 {
-	c.stateMu.Lock()
-	defer c.stateMu.Unlock()
-	return c.resetGeneration
+	c.lastReachableAt = completedAt
 }
 
 func rejected(err error) *gatewayError { return &gatewayError{code: FailureRequestRejected, err: err} }
 
+func contextExpired(ctx context.Context, now time.Time) bool {
+	return contextError(ctx, now) != nil
+}
+
+func contextError(ctx context.Context, now time.Time) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if deadline, ok := ctx.Deadline(); ok && !now.Before(deadline) {
+		return context.DeadlineExceeded
+	}
+	return nil
+}
+
+func connectorDeadlineWon(parent, requestContext context.Context, connectorDeadline, now time.Time) bool {
+	if errors.Is(context.Cause(requestContext), errConnectorDeadline) {
+		return true
+	}
+	if now.Before(connectorDeadline) {
+		return false
+	}
+	if contextError(parent, now) == nil {
+		return true
+	}
+	parentDeadline, hasParentDeadline := parent.Deadline()
+	return hasParentDeadline && connectorDeadline.Before(parentDeadline)
+}
+
 func contextFailure(parent, requestContext context.Context, attemptStarted bool) *gatewayError {
-	if parent.Err() != nil {
-		return requestCanceled(parent)
+	now := time.Now()
+	if err := contextError(parent, now); err != nil {
+		return &gatewayError{code: failureRequestCanceled, err: err}
 	}
+	err := contextError(requestContext, now)
 	if attemptStarted {
-		return &gatewayError{code: FailureUpstreamTimeout, err: requestContext.Err()}
+		return &gatewayError{code: FailureUpstreamTimeout, err: err}
 	}
-	return &gatewayError{code: FailureAdmissionTimeout, err: requestContext.Err()}
+	return &gatewayError{code: FailureAdmissionTimeout, err: err}
 }
 
 func requestCanceled(ctx context.Context) *gatewayError {
-	return &gatewayError{code: failureRequestCanceled, err: ctx.Err()}
+	return &gatewayError{code: failureRequestCanceled, err: contextError(ctx, time.Now())}
 }
 
 func retryStatus(statuses []int, status int) bool {
