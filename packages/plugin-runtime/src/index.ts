@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { createServer, type Server } from "node:http";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import type { Socket } from "node:net";
 import type {
   EntityCreateRequest,
   EntityResource,
@@ -9,10 +10,20 @@ import type {
   PluginOperationInteraction,
   SpatialOperationResult
 } from "@the-drunken-coder/atlas-sdk";
-import { isAtlasAPIError, isJSONValue, isMapArea, isSpatialOperationResult } from "@the-drunken-coder/atlas-sdk";
+import {
+  isAtlasAPIError,
+  isJSONValue,
+  isMapArea,
+  isSpatialOperationResult,
+  parseAtlasJSON,
+  stringifyAtlasJSON
+} from "@the-drunken-coder/atlas-sdk";
 
 const identifierPattern = /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/;
 const maxBodyBytes = 1 << 20;
+const earlyBodyDrainTimeoutMs = 25;
+
+class InvalidRequestBodyError extends Error {}
 
 type OperationHandler<Input extends JSONValue, Output extends JSONValue> = {
   bivarianceHack(input: Input, signal: AbortSignal): Output | Promise<Output>;
@@ -151,7 +162,13 @@ export async function servePlugin<Operations extends OperationMap>(
 ): Promise<Server> {
   options.signal?.throwIfAborted();
   const activeRequests = new Set<AbortController>();
+  const closingSockets = new WeakSet<Socket>();
   const server = createServer(async (request, response) => {
+    if (closingSockets.has(request.socket)) {
+      response.shouldKeepAlive = false;
+      response.end();
+      return;
+    }
     const requestController = new AbortController();
     activeRequests.add(requestController);
     const abort = () => requestController.abort();
@@ -162,12 +179,18 @@ export async function servePlugin<Operations extends OperationMap>(
       if (!response.writableEnded) abort();
     });
     try {
-      const requestUrl = new URL(request.url ?? "/", "http://plugin.invalid");
-      if (request.method === "GET" && requestUrl.pathname === "/manifest") {
-        writeJSON(response, 200, plugin.manifest);
+      const requestTarget = request.url ?? "/";
+      const requestPath = parseRequestPath(requestTarget);
+      if (requestPath === undefined) {
+        await writeEarlyJSON(request, response, closingSockets, 404, { code: "route_not_found" });
         return;
       }
-      if (request.method === "GET" && requestUrl.pathname === "/health") {
+      if (request.method === "GET" && requestPath === "/manifest") {
+        await writeEarlyJSON(request, response, closingSockets, 200, plugin.manifest);
+        return;
+      }
+      if (request.method === "GET" && requestPath === "/health") {
+        if (await requestBodyIsIncomplete(request, closingSockets)) response.shouldKeepAlive = false;
         let healthy: boolean;
         try {
           healthy = (await plugin.health?.(requestController.signal)) ?? true;
@@ -179,30 +202,39 @@ export async function servePlugin<Operations extends OperationMap>(
         });
         return;
       }
-      const match = /^\/operations\/([a-z][a-z0-9]*(?:_[a-z0-9]+)*)$/.exec(requestUrl.pathname);
+      const match = /^\/operations\/([a-z][a-z0-9]*(?:_[a-z0-9]+)*)$/.exec(requestPath);
       if (request.method !== "POST" || !match) {
-        writeJSON(response, 404, { code: "route_not_found" });
+        await writeEarlyJSON(request, response, closingSockets, 404, { code: "route_not_found" });
         return;
       }
-      const operation = plugin.operations[match[1]];
-      if (!operation) {
-        writeJSON(response, 404, { code: "operation_not_found" });
+      const operationId = match[1];
+      if (!Object.hasOwn(plugin.operations, operationId)) {
+        await writeEarlyJSON(request, response, closingSockets, 404, { code: "operation_not_found" });
         return;
       }
+      const operation = plugin.operations[operationId];
       const input = await readJSON(request, requestController.signal);
       const result = await operation.handler(input, requestController.signal);
       if (!isJSONValue(result)) throw new PluginFailureError("invalid_output");
       writeJSON(response, 200, result);
     } catch (error) {
       if (requestController.signal.aborted || response.headersSent) return;
-      if (error instanceof PluginInputError) {
-        const body = pluginErrorBody(error.pluginCode, error.details);
-        writeJSON(response, body ? 400 : 500, body ?? { code: "operation_failed" });
-      } else if (error instanceof PluginFailureError) {
-        writeJSON(response, 500, pluginErrorBody(error.pluginCode, error.details) ?? { code: "operation_failed" });
-      } else if (error instanceof SyntaxError || error instanceof RangeError) {
-        writeJSON(response, 400, { code: "invalid_input" });
-      } else {
+      try {
+        if (error instanceof PluginInputError) {
+          const body = pluginErrorBody(error.pluginCode, error.details);
+          writeJSON(response, body ? 400 : 500, body ?? { code: "operation_failed" });
+        } else if (error instanceof PluginFailureError) {
+          writeJSON(response, 500, pluginErrorBody(error.pluginCode, error.details) ?? { code: "operation_failed" });
+        } else if (error instanceof InvalidRequestBodyError) {
+          if (!request.complete) {
+            response.shouldKeepAlive = false;
+            closingSockets.add(request.socket);
+          }
+          writeJSON(response, 400, { code: "invalid_input" });
+        } else {
+          writeJSON(response, 500, { code: "operation_failed" });
+        }
+      } catch {
         writeJSON(response, 500, { code: "operation_failed" });
       }
     } finally {
@@ -211,6 +243,10 @@ export async function servePlugin<Operations extends OperationMap>(
       options.signal?.removeEventListener("abort", abortForShutdown);
     }
   });
+  // Node can omit late headers from IncomingMessage's collections while still
+  // using them for HTTP framing. Retain every header admitted by maxHeaderSize
+  // so Content-Length and Transfer-Encoding validation sees the parser's input.
+  server.maxHeadersCount = 0;
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
     server.listen(options.port ?? 8080, options.host ?? "0.0.0.0", () => {
@@ -395,26 +431,116 @@ function requireMatchingToolAsset(entity: EntityResource, pluginId: string): voi
   }
 }
 
-async function readJSON(request: NodeJS.ReadableStream, signal: AbortSignal): Promise<JSONValue> {
-  const chunks: Buffer[] = [];
+async function readJSON(request: IncomingMessage, signal: AbortSignal): Promise<JSONValue> {
+  if (declaredBodyExceedsLimit(request)) throw new InvalidRequestBodyError();
+  let body = Buffer.alloc(0);
   let size = 0;
-  for await (const chunk of request) {
+  for await (const chunk of request.iterator({ destroyOnReturn: false })) {
     if (signal.aborted) throw signal.reason;
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    size += buffer.length;
-    if (size > maxBodyBytes) throw new RangeError("request body exceeds limit");
-    chunks.push(buffer);
+    const nextSize = size + buffer.length;
+    if (nextSize > maxBodyBytes) throw new InvalidRequestBodyError();
+    if (nextSize > body.length) {
+      const capacity = Math.min(maxBodyBytes, Math.max(nextSize, body.length * 2));
+      const grown = Buffer.allocUnsafe(capacity);
+      body.copy(grown, 0, 0, size);
+      body = grown;
+    }
+    buffer.copy(body, size);
+    size = nextSize;
   }
-  const value: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-  if (!isJSONValue(value)) throw new SyntaxError("request body is not a JSON value");
+  let value: unknown;
+  try {
+    value = parseAtlasJSON(new TextDecoder("utf-8", { fatal: true }).decode(body.subarray(0, size)));
+  } catch {
+    throw new InvalidRequestBodyError();
+  }
+  if (!isJSONValue(value)) throw new InvalidRequestBodyError();
   return value;
 }
 
-function writeJSON(response: import("node:http").ServerResponse, status: number, value: JSONValue): void {
+function declaredBodyExceedsLimit(request: IncomingMessage): boolean {
+  const contentLengths = request.headersDistinct["content-length"];
+  if (request.headers["transfer-encoding"] !== undefined || contentLengths?.length !== 1) return false;
+  const contentLength = contentLengths[0];
+  if (!/^\d+$/.test(contentLength)) return false;
+  const normalizedLength = contentLength.replace(/^0+/, "");
+  const bodyLimit = String(maxBodyBytes);
+  return (
+    normalizedLength.length > bodyLimit.length ||
+    (normalizedLength.length === bodyLimit.length && normalizedLength > bodyLimit)
+  );
+}
+
+function parseRequestPath(requestTarget: string): string | undefined {
+  if (requestTarget.includes("\\") || requestTarget.includes("#")) return undefined;
+  if (requestTarget.startsWith("/")) {
+    const queryStart = requestTarget.indexOf("?");
+    const requestPath = queryStart === -1 ? requestTarget : requestTarget.slice(0, queryStart);
+    return requestPath.startsWith("//") ? undefined : requestPath;
+  }
+
+  const absoluteForm = /^http:\/\/[^/?#]+(\/[^?#]*)?(?:\?[^#]*)?$/i.exec(requestTarget);
+  if (!absoluteForm) return undefined;
+  // Validate absolute-form as a URL, but route on its raw path so URL
+  // normalization cannot turn dot segments into a private Plugin route.
+  try {
+    const requestUrl = new URL(requestTarget);
+    if (requestUrl.protocol !== "http:" || requestUrl.username || requestUrl.password) return undefined;
+    return absoluteForm[1] ?? "/";
+  } catch {
+    return undefined;
+  }
+}
+
+async function writeEarlyJSON(
+  request: IncomingMessage,
+  response: ServerResponse,
+  closingSockets: WeakSet<Socket>,
+  status: number,
+  value: JSONValue
+): Promise<void> {
+  if (await requestBodyIsIncomplete(request, closingSockets)) response.shouldKeepAlive = false;
+  writeJSON(response, status, value);
+}
+
+async function requestBodyIsIncomplete(request: IncomingMessage, closingSockets: WeakSet<Socket>): Promise<boolean> {
+  if (request.complete) return false;
+  if (request.headers["transfer-encoding"] !== undefined) {
+    closingSockets.add(request.socket);
+    return true;
+  }
+  const hasDeclaredBody = request.headersDistinct["content-length"]?.some((value) => !/^0+$/.test(value)) ?? false;
+  if (!hasDeclaredBody) return false;
+  if (declaredBodyExceedsLimit(request)) {
+    closingSockets.add(request.socket);
+    return true;
+  }
+
+  // The request event fires after headers, before Node finishes parsing body bytes.
+  // Discard at most the declared 1 MiB limit, but do not let a slow sender delay
+  // an early response for more than this small fixed window.
+  await new Promise<void>((resolve) => {
+    const done = () => {
+      clearTimeout(timeout);
+      request.off("end", done);
+      resolve();
+    };
+    const timeout = setTimeout(done, earlyBodyDrainTimeoutMs);
+    request.once("end", done);
+    request.resume();
+    if (request.complete) done();
+  });
+  if (request.complete) return false;
+  closingSockets.add(request.socket);
+  return true;
+}
+
+function writeJSON(response: ServerResponse, status: number, value: JSONValue): void {
   if (response.destroyed) return;
   let body: string;
   try {
-    body = JSON.stringify(value);
+    body = stringifyAtlasJSON(value);
   } catch {
     status = 500;
     body = '{"code":"operation_failed"}';
@@ -426,7 +552,8 @@ function writeJSON(response: import("node:http").ServerResponse, status: number,
   response.end(body);
 }
 
-function pluginErrorBody(code: string, details: JSONValue | undefined): JSONValue | undefined {
+function pluginErrorBody(code: unknown, details: unknown): JSONValue | undefined {
+  if (typeof code !== "string" || !identifierPattern.test(code) || code.length > 64) return undefined;
   if (details !== undefined && !isSafeJSONValue(details)) return undefined;
   return details === undefined ? { code } : { code, details };
 }

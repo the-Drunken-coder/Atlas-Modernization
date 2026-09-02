@@ -1,4 +1,6 @@
 import { once } from "node:events";
+import { Agent, request as httpRequest, type Server } from "node:http";
+import { createConnection, type Socket } from "node:net";
 import { AtlasAPIError, type EntityResource, type JSONValue } from "@the-drunken-coder/atlas-sdk";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -136,9 +138,25 @@ describe("Atlas Plugin runtime", () => {
     if (!address || typeof address === "string") throw new Error("missing server address");
     const origin = `http://127.0.0.1:${address.port}`;
     try {
-      await expect(fetch(`${origin}/manifest`).then((response) => response.json())).resolves.toEqual(plugin.manifest);
+      const manifest = await fetch(`${origin}/manifest?source=test`);
+      expect(manifest.headers.get("Connection")).toBe("keep-alive");
+      await expect(manifest.json()).resolves.toEqual(plugin.manifest);
+      const invalidTarget = await fetch(`${origin}//`);
+      expect(invalidTarget.headers.get("Connection")).toBe("keep-alive");
+      expect({ status: invalidTarget.status, body: await invalidTarget.json() }).toEqual({
+        status: 404,
+        body: { code: "route_not_found" }
+      });
       await expect(fetch(`${origin}/health`)).resolves.toMatchObject({
         status: 503
+      });
+      await expect(postJSON(`${origin}/operations/constructor`, null)).resolves.toEqual({
+        status: 404,
+        body: { code: "operation_not_found" }
+      });
+      await expect(postJSON(`${origin}/operations/missing`, null)).resolves.toEqual({
+        status: 404,
+        body: { code: "operation_not_found" }
       });
       await expect(postJSON(`${origin}/operations/inspect_fixture`, { key: "alpha" })).resolves.toEqual({
         status: 200,
@@ -156,6 +174,648 @@ describe("Atlas Plugin runtime", () => {
         status: 500,
         body: { code: "operation_failed" }
       });
+    } finally {
+      server.close();
+      await once(server, "close");
+    }
+  });
+
+  it("accepts absolute-form targets without aliasing malformed paths", async () => {
+    const handler = vi.fn(() => null);
+    const plugin = definePlugin({
+      pluginId: "reference",
+      displayName: "Reference",
+      operations: {
+        inspect: {
+          displayName: "Inspect",
+          timeoutMs: 1000,
+          handler
+        }
+      }
+    });
+    const server = await servePlugin(plugin, { host: "127.0.0.1", port: 0 });
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("missing server address");
+    try {
+      for (const [method, target, body] of [
+        ["GET", "//elsewhere/manifest", ""],
+        ["GET", "//elsewhere/health", ""],
+        ["POST", "//elsewhere/operations/inspect", "null"],
+        ["GET", "/\\elsewhere/manifest", ""],
+        ["GET", "/elsewhere/../manifest", ""],
+        ["GET", "/manifest#fragment", ""],
+        ["GET", "http://plugin.invalid/\\elsewhere/manifest", ""],
+        ["GET", "http://plugin.invalid/elsewhere/../manifest", ""],
+        ["GET", "http://plugin.invalid/%2e%2e/manifest", ""],
+        ["GET", "http://plugin.invalid/manifest#fragment", ""]
+      ] as const) {
+        await expect(
+          rawHTTPRequest(
+            address.port,
+            [
+              `${method} ${target} HTTP/1.1`,
+              "Host: plugin.invalid",
+              ...(body ? ["Content-Type: application/json", `Content-Length: ${Buffer.byteLength(body)}`] : []),
+              "Connection: close",
+              "",
+              body
+            ].join("\r\n")
+          )
+        ).resolves.toEqual({
+          status: 404,
+          connection: "close",
+          body: { code: "route_not_found" }
+        });
+      }
+      expect(handler).not.toHaveBeenCalled();
+
+      await expect(
+        rawHTTPRequest(
+          address.port,
+          "GET http://plugin.invalid/manifest?source=test HTTP/1.1\r\nHost: plugin.invalid\r\nConnection: close\r\n\r\n"
+        )
+      ).resolves.toEqual({ status: 200, connection: "close", body: plugin.manifest });
+      await expect(
+        rawHTTPRequest(
+          address.port,
+          "GET http://plugin.invalid/health HTTP/1.1\r\nHost: plugin.invalid\r\nConnection: close\r\n\r\n"
+        )
+      ).resolves.toEqual({ status: 200, connection: "close", body: { status: "ok" } });
+      await expect(
+        rawHTTPRequest(
+          address.port,
+          "POST http://plugin.invalid/operations/inspect HTTP/1.1\r\nHost: plugin.invalid\r\nContent-Type: application/json\r\nContent-Length: 4\r\nConnection: close\r\n\r\nnull"
+        )
+      ).resolves.toEqual({ status: 200, connection: "close", body: null });
+      expect(handler).toHaveBeenCalledOnce();
+    } finally {
+      server.close();
+      await once(server, "close");
+    }
+  });
+
+  it("retains framing headers beyond Node's default header collection ceiling", async () => {
+    const handler = vi.fn(() => null);
+    const plugin = definePlugin({
+      pluginId: "reference",
+      displayName: "Reference",
+      operations: {
+        inspect: {
+          displayName: "Inspect",
+          timeoutMs: 1000,
+          handler
+        }
+      }
+    });
+    const server = await servePlugin(plugin, { host: "127.0.0.1", port: 0 });
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("missing server address");
+    const padding = "X: a\r\n".repeat(999);
+    try {
+      const operationSocket = await connectTo(address.port);
+      try {
+        const closed = once(operationSocket, "close");
+        const response = readRawHTTPResponse(operationSocket);
+        operationSocket.write(
+          `POST /operations/inspect HTTP/1.1\r\nHost: plugin.invalid\r\n${padding}Content-Length: 1048577\r\nConnection: keep-alive\r\n\r\n`
+        );
+        await expect(response).resolves.toEqual({
+          status: 400,
+          connection: "close",
+          body: { code: "invalid_input" }
+        });
+        await closed;
+      } finally {
+        operationSocket.destroy();
+      }
+
+      const missingSocket = await connectTo(address.port);
+      try {
+        const closed = once(missingSocket, "close");
+        const response = readRawHTTPResponse(missingSocket);
+        missingSocket.write(
+          `POST /missing HTTP/1.1\r\nHost: plugin.invalid\r\n${padding}Content-Length: 2\r\nConnection: keep-alive\r\n\r\nx`
+        );
+        await expect(response).resolves.toEqual({
+          status: 404,
+          connection: "close",
+          body: { code: "route_not_found" }
+        });
+        await closed;
+      } finally {
+        missingSocket.destroy();
+      }
+      expect(handler).not.toHaveBeenCalled();
+    } finally {
+      server.close();
+      await once(server, "close");
+    }
+  });
+
+  it("returns pipelined responses when an early request body is already complete", async () => {
+    const handler = vi.fn(() => null);
+    const plugin = definePlugin({
+      pluginId: "reference",
+      displayName: "Reference",
+      operations: {
+        inspect: {
+          displayName: "Inspect",
+          timeoutMs: 1000,
+          handler
+        }
+      }
+    });
+    const server = await servePlugin(plugin, { host: "127.0.0.1", port: 0 });
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("missing server address");
+    const socket = await connectTo(address.port);
+    try {
+      const responses = readRawHTTPResponses(socket, 2);
+      const earlyBody = Buffer.alloc(1024 * 1024, "x");
+      socket.end(
+        Buffer.concat([
+          Buffer.from(
+            `POST /missing HTTP/1.1\r\nHost: plugin.invalid\r\nContent-Length: ${earlyBody.length}\r\nConnection: keep-alive\r\n\r\n`,
+            "latin1"
+          ),
+          earlyBody,
+          Buffer.from(
+            "POST /operations/inspect HTTP/1.1\r\nHost: plugin.invalid\r\nContent-Length: 4\r\nConnection: close\r\n\r\nnull",
+            "latin1"
+          )
+        ])
+      );
+      await expect(responses).resolves.toEqual([
+        {
+          status: 404,
+          connection: "keep-alive",
+          body: { code: "route_not_found" }
+        },
+        {
+          status: 200,
+          connection: "close",
+          body: null
+        }
+      ]);
+      expect(handler).toHaveBeenCalledOnce();
+    } finally {
+      socket.destroy();
+      server.close();
+      await once(server, "close");
+    }
+  });
+
+  it("returns pipelined responses after a fully consumed invalid operation body", async () => {
+    const handler = vi.fn(() => null);
+    const plugin = definePlugin({
+      pluginId: "reference",
+      displayName: "Reference",
+      operations: {
+        inspect: {
+          displayName: "Inspect",
+          timeoutMs: 1000,
+          handler
+        }
+      }
+    });
+    const server = await servePlugin(plugin, { host: "127.0.0.1", port: 0 });
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("missing server address");
+    const socket = await connectTo(address.port);
+    try {
+      const responses = readRawHTTPResponses(socket, 2);
+      socket.end(
+        "POST /operations/inspect HTTP/1.1\r\nHost: plugin.invalid\r\nContent-Length: 1\r\nConnection: keep-alive\r\n\r\n{" +
+          "POST /operations/inspect HTTP/1.1\r\nHost: plugin.invalid\r\nContent-Length: 4\r\nConnection: close\r\n\r\nnull"
+      );
+      await expect(responses).resolves.toEqual([
+        {
+          status: 400,
+          connection: "keep-alive",
+          body: { code: "invalid_input" }
+        },
+        {
+          status: 200,
+          connection: "close",
+          body: null
+        }
+      ]);
+      expect(handler).toHaveBeenCalledOnce();
+    } finally {
+      socket.destroy();
+      server.close();
+      await once(server, "close");
+    }
+  });
+
+  it("fences pipelined operations before awaiting health", async () => {
+    const handler = vi.fn(() => null);
+    const health = vi.fn(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      return true;
+    });
+    const plugin = definePlugin({
+      pluginId: "reference",
+      displayName: "Reference",
+      health,
+      operations: {
+        inspect: {
+          displayName: "Inspect",
+          timeoutMs: 1000,
+          handler
+        }
+      }
+    });
+    const server = await servePlugin(plugin, { host: "127.0.0.1", port: 0 });
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("missing server address");
+    const socket = await connectTo(address.port);
+    try {
+      const closed = once(socket, "close");
+      const response = readRawHTTPResponse(socket);
+      socket.write(
+        "GET /health HTTP/1.1\r\nHost: plugin.invalid\r\nTransfer-Encoding: chunked\r\nConnection: keep-alive\r\n\r\n1\r\nx\r\n0\r\n\r\n" +
+          "POST /operations/inspect HTTP/1.1\r\nHost: plugin.invalid\r\nContent-Length: 4\r\nConnection: close\r\n\r\nnull"
+      );
+      await expect(response).resolves.toEqual({
+        status: 200,
+        connection: "close",
+        body: { status: "ok" }
+      });
+      await closed;
+      expect(health).toHaveBeenCalledOnce();
+      expect(handler).not.toHaveBeenCalled();
+    } finally {
+      socket.destroy();
+      server.close();
+      await once(server, "close");
+    }
+  });
+
+  it.each(["chunked", "oversized content-length"] as const)(
+    "does not dispatch pipelined operations after committing a %s early response to close",
+    async (framing) => {
+      const handler = vi.fn(() => null);
+      const plugin = definePlugin({
+        pluginId: "reference",
+        displayName: "Reference",
+        operations: {
+          inspect: {
+            displayName: "Inspect",
+            timeoutMs: 1000,
+            handler
+          }
+        }
+      });
+      const server = await servePlugin(plugin, { host: "127.0.0.1", port: 0 });
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("missing server address");
+      const socket = await connectTo(address.port);
+      try {
+        const closed = once(socket, "close").catch((error: NodeJS.ErrnoException) => {
+          if (framing === "oversized content-length" && ["EPIPE", "ECONNRESET"].includes(error.code ?? "")) return [];
+          throw error;
+        });
+        if (framing === "oversized content-length") socket.on("error", () => undefined);
+        const response = readRawHTTPResponse(
+          socket,
+          framing === "oversized content-length" ? ["EPIPE", "ECONNRESET"] : []
+        );
+        const pipelinedOperation =
+          "POST /operations/inspect HTTP/1.1\r\nHost: plugin.invalid\r\nContent-Length: 4\r\nConnection: keep-alive\r\n\r\nnull";
+        const earlyRequest =
+          framing === "chunked"
+            ? "POST /missing HTTP/1.1\r\nHost: plugin.invalid\r\nTransfer-Encoding: chunked\r\nConnection: keep-alive\r\n\r\n1\r\nx\r\n0\r\n\r\n"
+            : "POST /missing HTTP/1.1\r\nHost: plugin.invalid\r\nContent-Length: 1048577\r\nConnection: keep-alive\r\n\r\n" +
+              "x".repeat(1_048_577);
+        socket.end(earlyRequest + pipelinedOperation);
+        await expect(response).resolves.toEqual({
+          status: 404,
+          connection: "close",
+          body: { code: "route_not_found" }
+        });
+        await closed;
+        expect(handler).not.toHaveBeenCalled();
+      } finally {
+        socket.destroy();
+        server.close();
+        await once(server, "close");
+      }
+    }
+  );
+
+  it("rejects lossy JSON integers before dispatch", async () => {
+    const handler = vi.fn((input: JSONValue) => input);
+    const plugin = definePlugin({
+      pluginId: "reference",
+      displayName: "Reference",
+      operations: {
+        inspect: {
+          displayName: "Inspect",
+          timeoutMs: 1000,
+          handler
+        }
+      }
+    });
+    const server = await servePlugin(plugin, { host: "127.0.0.1", port: 0 });
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("missing server address");
+    const operationURL = `http://127.0.0.1:${address.port}/operations/inspect`;
+    const postSerializedJSON = async (body: string) => {
+      const response = await fetch(operationURL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body
+      });
+      return { status: response.status, body: await response.json() };
+    };
+    try {
+      await expect(postSerializedJSON('{"value":9007199254740993}')).resolves.toEqual({
+        status: 400,
+        body: { code: "invalid_input" }
+      });
+      expect(handler).not.toHaveBeenCalled();
+
+      await expect(postSerializedJSON('{"value":9007199254740992}')).resolves.toEqual({
+        status: 200,
+        body: { value: 9007199254740992 }
+      });
+      await expect(postSerializedJSON('{"value":0.1}')).resolves.toEqual({
+        status: 200,
+        body: { value: 0.1 }
+      });
+      expect(handler).toHaveBeenCalledTimes(2);
+    } finally {
+      server.close();
+      await once(server, "close");
+    }
+  });
+
+  it("fails safely when an exact operation result cannot be serialized without changing its value", async () => {
+    const handler = vi.fn((input: JSONValue) => input);
+    const plugin = definePlugin({
+      pluginId: "reference",
+      displayName: "Reference",
+      operations: {
+        echo: {
+          displayName: "Echo",
+          timeoutMs: 1000,
+          handler
+        }
+      }
+    });
+    const server = await servePlugin(plugin, { host: "127.0.0.1", port: 0 });
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("missing server address");
+    const operationURL = `http://127.0.0.1:${address.port}/operations/echo`;
+    const postSerializedJSON = async (body: string) => {
+      const response = await fetch(operationURL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body
+      });
+      return { status: response.status, body: await response.text() };
+    };
+    try {
+      await expect(postSerializedJSON('{"value":18446744073709551616}')).resolves.toEqual({
+        status: 500,
+        body: '{"code":"operation_failed"}'
+      });
+      expect(handler).toHaveBeenCalledTimes(1);
+
+      await expect(postSerializedJSON('{"value":9007199254740992}')).resolves.toEqual({
+        status: 200,
+        body: '{"value":9007199254740992}'
+      });
+      await expect(postSerializedJSON('{"value":0.1}')).resolves.toEqual({
+        status: 200,
+        body: '{"value":0.1}'
+      });
+      await expect(postSerializedJSON('{"value":"ordinary"}')).resolves.toEqual({
+        status: 200,
+        body: '{"value":"ordinary"}'
+      });
+      expect(handler).toHaveBeenCalledTimes(4);
+    } finally {
+      server.close();
+      await once(server, "close");
+    }
+  });
+
+  it("distinguishes malformed request bodies from handler exceptions", async () => {
+    const handler = vi.fn((input: JSONValue) => {
+      if (input === "syntax") throw new SyntaxError("handler parse failed");
+      if (input === "range") throw new RangeError("handler range failed");
+      if (input === "revoked") {
+        const { proxy, revoke } = Proxy.revocable({}, {});
+        revoke();
+        throw proxy;
+      }
+      if (input === "spoofed_input") throw Object.create(PluginInputError.prototype);
+      if (input === "mutated_input") {
+        const error = new PluginInputError("bad_key");
+        Object.defineProperty(error, "pluginCode", { value: "INVALID" });
+        throw error;
+      }
+      if (input === "mutated_failure") {
+        const error = new PluginFailureError("source_failed");
+        Object.defineProperty(error, "pluginCode", { value: 1 });
+        throw error;
+      }
+      return null;
+    });
+    const plugin = definePlugin({
+      pluginId: "reference",
+      displayName: "Reference",
+      operations: {
+        inspect_fixture: {
+          displayName: "Inspect fixture",
+          timeoutMs: 1000,
+          handler
+        }
+      }
+    });
+    const server = await servePlugin(plugin, { host: "127.0.0.1", port: 0 });
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("missing server address");
+    const operationURL = `http://127.0.0.1:${address.port}/operations/inspect_fixture`;
+    const keepAliveAgent = new Agent({ keepAlive: true });
+    try {
+      const malformed = await fetch(operationURL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{"
+      });
+      expect({ status: malformed.status, body: await malformed.json() }).toEqual({
+        status: 400,
+        body: { code: "invalid_input" }
+      });
+      expect(handler).not.toHaveBeenCalled();
+
+      await expect(
+        incompleteJSONRequest(server, operationURL, {
+          method: "POST",
+          contentLength: 1024 * 1024 + 1
+        })
+      ).resolves.toEqual({
+        status: 400,
+        connection: "close",
+        body: { code: "invalid_input" },
+        connectionClosed: true
+      });
+      expect(handler).not.toHaveBeenCalled();
+
+      const connectionClosed = new Promise<void>((resolve) => {
+        server.once("connection", (socket) => socket.once("close", resolve));
+      });
+      const oversized = await new Promise<{
+        status: number | undefined;
+        connection: string | undefined;
+        body: unknown;
+      }>((resolve, reject) => {
+        const request = httpRequest(
+          operationURL,
+          {
+            method: "POST",
+            agent: keepAliveAgent,
+            headers: {
+              "Content-Type": "application/json",
+              Connection: "keep-alive"
+            },
+            signal: AbortSignal.timeout(2000)
+          },
+          (response) => {
+            const chunks: Buffer[] = [];
+            response.on("data", (chunk: Buffer) => chunks.push(chunk));
+            response.once("end", () => {
+              resolve({
+                status: response.statusCode,
+                connection: response.headers.connection,
+                body: JSON.parse(Buffer.concat(chunks).toString("utf8"))
+              });
+            });
+          }
+        );
+        request.once("error", reject);
+        request.write('"');
+        const fragment = Buffer.alloc(256, "a");
+        for (let index = 0; index < 4096; index += 1) request.write(fragment);
+      });
+      expect(oversized).toEqual({
+        status: 400,
+        connection: "close",
+        body: { code: "invalid_input" }
+      });
+      await expect(
+        Promise.race([
+          connectionClosed.then(() => true),
+          new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 500))
+        ])
+      ).resolves.toBe(true);
+      expect(handler).not.toHaveBeenCalled();
+
+      const invalidUTF8 = await fetch(operationURL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: Buffer.from([0x22, 0xc0, 0xaf, 0x22])
+      });
+      expect({ status: invalidUTF8.status, body: await invalidUTF8.json() }).toEqual({
+        status: 400,
+        body: { code: "invalid_input" }
+      });
+      expect(handler).not.toHaveBeenCalled();
+
+      await expect(postJSON(operationURL, "syntax")).resolves.toEqual({
+        status: 500,
+        body: { code: "operation_failed" }
+      });
+      await expect(postJSON(operationURL, "range")).resolves.toEqual({
+        status: 500,
+        body: { code: "operation_failed" }
+      });
+      await expect(postJSON(operationURL, "revoked")).resolves.toEqual({
+        status: 500,
+        body: { code: "operation_failed" }
+      });
+      for (const input of ["spoofed_input", "mutated_input", "mutated_failure"]) {
+        await expect(postJSON(operationURL, input)).resolves.toEqual({
+          status: 500,
+          body: { code: "operation_failed" }
+        });
+      }
+      await expect(fetch(`http://127.0.0.1:${address.port}/health`)).resolves.toMatchObject({ status: 200 });
+    } finally {
+      keepAliveAgent.destroy();
+      server.close();
+      await once(server, "close");
+    }
+  });
+
+  it("closes incomplete request bodies after early responses", async () => {
+    const plugin = definePlugin({
+      pluginId: "reference",
+      displayName: "Reference",
+      operations: {}
+    });
+    const server = await servePlugin(plugin, { host: "127.0.0.1", port: 0 });
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("missing server address");
+    const origin = `http://127.0.0.1:${address.port}`;
+    try {
+      await expect(
+        incompleteJSONRequest(server, `${origin}//`, {
+          method: "GET",
+          contentLength: 1
+        })
+      ).resolves.toEqual({
+        status: 404,
+        connection: "close",
+        body: { code: "route_not_found" },
+        connectionClosed: true
+      });
+
+      for (const [method, path, status, body] of [
+        ["POST", "/missing", 404, { code: "route_not_found" }],
+        ["POST", "/operations/missing", 404, { code: "operation_not_found" }],
+        ["GET", "/manifest", 200, plugin.manifest],
+        ["GET", "/health", 200, { status: "ok" }]
+      ] as const) {
+        await expect(
+          incompleteJSONRequest(server, `${origin}${path}`, {
+            method,
+            contentLength: 2,
+            partialBody: "x"
+          })
+        ).resolves.toEqual({ status, connection: "close", body, connectionClosed: true });
+      }
+    } finally {
+      server.close();
+      await once(server, "close");
+    }
+  });
+
+  it("dispatches a deliberately declared constructor operation", async () => {
+    const constructorHandler = vi.fn(() => "declared");
+    const withConstructor = definePlugin({
+      pluginId: "reference",
+      displayName: "Reference",
+      operations: {
+        constructor: {
+          displayName: "Constructor",
+          timeoutMs: 1000,
+          handler: constructorHandler
+        }
+      }
+    });
+    const server = await servePlugin(withConstructor, { host: "127.0.0.1", port: 0 });
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("missing server address");
+    try {
+      await expect(postJSON(`http://127.0.0.1:${address.port}/operations/constructor`, null)).resolves.toEqual({
+        status: 200,
+        body: "declared"
+      });
+      expect(constructorHandler).toHaveBeenCalledOnce();
     } finally {
       server.close();
       await once(server, "close");
@@ -395,6 +1055,139 @@ async function postJSON(url: string, body: unknown) {
     body: JSON.stringify(body)
   });
   return { status: response.status, body: await response.json() };
+}
+
+async function incompleteJSONRequest(
+  server: Server,
+  url: string,
+  options: { method: string; contentLength: number; partialBody?: string }
+) {
+  const agent = new Agent({ keepAlive: true });
+  let request: ReturnType<typeof httpRequest> | undefined;
+  const connectionClosed = new Promise<void>((resolve) => {
+    server.once("connection", (socket) => socket.once("close", resolve));
+  });
+  try {
+    const response = await new Promise<{ status: number | undefined; connection: string | undefined; body: unknown }>(
+      (resolve, reject) => {
+        request = httpRequest(
+          url,
+          {
+            method: options.method,
+            agent,
+            headers: {
+              "Content-Type": "application/json",
+              "Content-Length": options.contentLength,
+              Connection: "keep-alive"
+            },
+            signal: AbortSignal.timeout(2000)
+          },
+          (response) => {
+            const chunks: Buffer[] = [];
+            response.on("data", (chunk: Buffer) => chunks.push(chunk));
+            response.once("end", () => {
+              resolve({
+                status: response.statusCode,
+                connection: response.headers.connection,
+                body: JSON.parse(Buffer.concat(chunks).toString("utf8"))
+              });
+            });
+          }
+        );
+        request.once("error", reject);
+        if (options.partialBody === undefined) request.flushHeaders();
+        else request.write(options.partialBody);
+      }
+    );
+    const connectionClosedPromptly = await Promise.race([
+      connectionClosed.then(() => true),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 500))
+    ]);
+    return { ...response, connectionClosed: connectionClosedPromptly };
+  } finally {
+    request?.destroy();
+    agent.destroy();
+  }
+}
+
+async function connectTo(port: number): Promise<Socket> {
+  return new Promise((resolve, reject) => {
+    const socket = createConnection({ host: "127.0.0.1", port });
+    const fail = (error: Error) => reject(error);
+    socket.once("error", fail);
+    socket.once("connect", () => {
+      socket.off("error", fail);
+      resolve(socket);
+    });
+  });
+}
+
+async function rawHTTPRequest(port: number, request: string) {
+  const socket = await connectTo(port);
+  try {
+    const response = readRawHTTPResponse(socket);
+    socket.end(request);
+    return await response;
+  } finally {
+    socket.destroy();
+  }
+}
+
+type RawHTTPResponse = { status: number; connection: string | undefined; body: unknown };
+
+function readRawHTTPResponse(socket: Socket, ignoredSocketErrors: readonly string[] = []): Promise<RawHTTPResponse> {
+  return readRawHTTPResponses(socket, 1, ignoredSocketErrors).then(([response]) => {
+    if (!response) throw new Error("missing response");
+    return response;
+  });
+}
+
+function readRawHTTPResponses(
+  socket: Socket,
+  count: number,
+  ignoredSocketErrors: readonly string[] = []
+): Promise<RawHTTPResponse[]> {
+  return new Promise((resolve, reject) => {
+    let bytes = Buffer.alloc(0);
+    let offset = 0;
+    const responses: RawHTTPResponse[] = [];
+    const cleanup = () => {
+      socket.off("data", receive);
+      socket.off("error", fail);
+      socket.off("close", close);
+    };
+    const fail = (error: NodeJS.ErrnoException) => {
+      if (error.code && ignoredSocketErrors.includes(error.code)) return;
+      cleanup();
+      reject(error);
+    };
+    const close = () => fail(new Error("connection closed before the complete response"));
+    const receive = (chunk: Buffer) => {
+      bytes = Buffer.concat([bytes, chunk]);
+      while (responses.length < count) {
+        const headerEnd = bytes.indexOf("\r\n\r\n", offset);
+        if (headerEnd < 0) return;
+        const headers = bytes.subarray(offset, headerEnd).toString("latin1");
+        const status = Number(/^HTTP\/1\.1 (\d{3})/.exec(headers)?.[1]);
+        const contentLength = Number(/(?:^|\r\n)Content-Length: (\d+)/i.exec(headers)?.[1]);
+        if (!Number.isInteger(status) || !Number.isInteger(contentLength)) {
+          fail(new Error(`invalid response headers: ${headers}`));
+          return;
+        }
+        const bodyEnd = headerEnd + 4 + contentLength;
+        if (bytes.length < bodyEnd) return;
+        const connection = /(?:^|\r\n)Connection: ([^\r\n]+)/i.exec(headers)?.[1];
+        const body: unknown = JSON.parse(bytes.subarray(headerEnd + 4, bodyEnd).toString("utf8"));
+        responses.push({ status, connection, body });
+        offset = bodyEnd;
+      }
+      cleanup();
+      resolve(responses);
+    };
+    socket.on("data", receive);
+    socket.on("error", fail);
+    socket.once("close", close);
+  });
 }
 
 function toolAsset(pluginId: string): EntityResource {
