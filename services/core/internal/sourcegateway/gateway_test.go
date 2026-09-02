@@ -23,6 +23,16 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) { return f(request) }
 
+func beginTestAttempt(t *testing.T, connector *connector) breakerCompletion {
+	t.Helper()
+	background := context.Background()
+	completion, failure := connector.tryBeginAttempt(background, background, time.Now)
+	if failure != nil {
+		t.Fatalf("begin attempt: %v", failure)
+	}
+	return completion
+}
+
 func TestGatewayPreservesBinaryTuplesAndEncodesDecodedURLOnce(t *testing.T) {
 	var outbound *http.Request
 	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
@@ -544,6 +554,27 @@ func TestExpiredDeadlineDetectedBeforeDone(t *testing.T) {
 	}
 }
 
+func TestExpiredRequestCannotBeginAttempt(t *testing.T) {
+	config := testConnectorConfig()
+	gateway, err := New(Config{Connectors: []ConnectorConfig{config}}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connector := gateway.connectors["reference"]
+	now := time.Now()
+	expired := deadlineBeforeDoneContext{Context: context.Background(), deadline: now.Add(-time.Millisecond)}
+	completion, failure := connector.tryBeginAttempt(context.Background(), expired, func() time.Time { return now })
+	if failure == nil || failure.code != FailureAdmissionTimeout || completion.id != 0 {
+		t.Fatalf("completion=%+v failure=%v", completion, failure)
+	}
+	connector.stateMu.Lock()
+	events := len(connector.breakerEvents)
+	connector.stateMu.Unlock()
+	if events != 0 {
+		t.Fatalf("expired admission created %d breaker events", events)
+	}
+}
+
 func TestPendingRetryFailureCannotOverwriteNewerReachability(t *testing.T) {
 	config := testConnectorConfig()
 	config.CircuitBreaker.Failures = 1
@@ -562,7 +593,8 @@ func TestPendingRetryFailureCannotOverwriteNewerReachability(t *testing.T) {
 	if failure != nil {
 		t.Fatal(failure)
 	}
-	_, failure, completion := connector.attempt(context.Background(), prepared, rule)
+	active := beginTestAttempt(t, connector)
+	_, failure, completion := connector.attempt(context.Background(), time.Time{}, active, prepared, rule)
 	failureAt := completion.completedAt
 	if failure == nil || failure.code != FailureUpstreamUnreachable || failureAt.IsZero() {
 		t.Fatalf("attempt failure=%v completed_at=%s", failure, failureAt)
@@ -650,6 +682,179 @@ func TestUnresolvedBreakerCompletionBlocksLaterFailures(t *testing.T) {
 	}
 }
 
+func TestPendingCompletionDoesNotHideLaterFailureThreshold(t *testing.T) {
+	config := testConnectorConfig()
+	config.CircuitBreaker.Failures = 2
+	gateway, err := New(Config{Connectors: []ConnectorConfig{config}}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connector := gateway.connectors["reference"]
+	pendingAt := time.Now()
+	connector.registerBreakerCompletionAt(pendingAt, pendingAt)
+	firstFailureAt := pendingAt.Add(time.Millisecond)
+	secondFailureAt := firstFailureAt.Add(time.Millisecond)
+	connector.recordFailure(firstFailureAt, firstFailureAt)
+	connector.recordFailure(secondFailureAt, secondFailureAt)
+	if !connector.circuitOpen(secondFailureAt) {
+		t.Fatal("pending completion suppressed a known later failure threshold")
+	}
+}
+
+func TestAttemptStartMarkerSurvivesSettledTimeline(t *testing.T) {
+	config := testConnectorConfig()
+	config.CircuitBreaker.Failures = 1
+	gateway, err := New(Config{Connectors: []ConnectorConfig{config}}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connector := gateway.connectors["reference"]
+	startedAt := time.Now()
+	connector.recordReachable(startedAt.Add(time.Millisecond))
+	completion := beginTestAttempt(t, connector)
+	completedAt := startedAt.Add(2 * time.Millisecond)
+	completion = connector.finishBreakerCompletion(completion, completedAt, time.Time{})
+	connector.resolveBreakerFailure(completedAt, completion, completedAt)
+	if !connector.circuitOpen(completedAt) {
+		t.Fatal("attempt failure was lost after its start marker fell behind the settled timeline")
+	}
+}
+
+func TestActiveAttemptDoesNotSplitCompletedFailures(t *testing.T) {
+	config := testConnectorConfig()
+	config.CircuitBreaker.Failures = 2
+	gateway, err := New(Config{Connectors: []ConnectorConfig{config}}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connector := gateway.connectors["reference"]
+	firstFailureAt := time.Now()
+	connector.recordFailure(firstFailureAt, firstFailureAt)
+	completion := beginTestAttempt(t, connector)
+	secondFailureAt := firstFailureAt.Add(2 * time.Millisecond)
+	connector.recordFailure(secondFailureAt, secondFailureAt)
+	if !connector.circuitOpen(secondFailureAt) {
+		t.Fatal("active attempt split two completed failures")
+	}
+	completedAt := secondFailureAt.Add(time.Millisecond)
+	completion = connector.finishBreakerCompletion(completion, completedAt, time.Time{})
+	connector.resolveBreakerReachable(completion)
+	if connector.circuitOpen(completedAt) {
+		t.Fatal("later reachable completion did not reset the circuit")
+	}
+}
+
+func TestReachableCompletionClearsOpenSuffixAcrossOlderBarrier(t *testing.T) {
+	config := testConnectorConfig()
+	config.CircuitBreaker.Failures = 2
+	gateway, err := New(Config{Connectors: []ConnectorConfig{config}}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connector := gateway.connectors["reference"]
+	startedAt := time.Now()
+	older := beginTestAttempt(t, connector)
+	reachable := beginTestAttempt(t, connector)
+	firstFailureAt := startedAt.Add(2 * time.Millisecond)
+	secondFailureAt := startedAt.Add(3 * time.Millisecond)
+	connector.recordFailure(firstFailureAt, firstFailureAt)
+	connector.recordFailure(secondFailureAt, secondFailureAt)
+	if !connector.circuitOpen(secondFailureAt) {
+		t.Fatal("resolved failure suffix did not open the circuit")
+	}
+	reachableAt := startedAt.Add(4 * time.Millisecond)
+	reachable = connector.finishBreakerCompletion(reachable, reachableAt, time.Time{})
+	connector.resolveBreakerReachable(reachable)
+	if connector.circuitOpen(reachableAt) {
+		t.Fatal("later reachable completion did not clear the open circuit")
+	}
+	connector.discardBreakerCompletion(older)
+}
+
+func TestReachableEventClearsOpenCircuitAcrossUnresolvedBarrier(t *testing.T) {
+	config := testConnectorConfig()
+	config.CircuitBreaker.Failures = 2
+	gateway, err := New(Config{Connectors: []ConnectorConfig{config}}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connector := gateway.connectors["reference"]
+	now := time.Now()
+	firstFailureAt := now.Add(time.Millisecond)
+	secondFailureAt := now.Add(2 * time.Millisecond)
+	connector.recordFailure(firstFailureAt, firstFailureAt)
+	connector.recordFailure(secondFailureAt, secondFailureAt)
+	if !connector.circuitOpen(secondFailureAt) {
+		t.Fatal("failures did not open the circuit")
+	}
+	barrierAt := now.Add(3 * time.Millisecond)
+	barrier := connector.registerBreakerCompletionAt(barrierAt, barrierAt)
+	reachableAt := now.Add(4 * time.Millisecond)
+	connector.recordReachable(reachableAt)
+	if connector.circuitOpen(reachableAt) {
+		t.Fatal("reachable event did not clear failures across the unresolved barrier")
+	}
+	connector.discardBreakerCompletion(barrier)
+}
+
+func TestReachableHistoryStaysBoundedAcrossOlderBarrier(t *testing.T) {
+	config := testConnectorConfig()
+	gateway, err := New(Config{Connectors: []ConnectorConfig{config}}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connector := gateway.connectors["reference"]
+	startedAt := time.Now()
+	barrier := beginTestAttempt(t, connector)
+	for index := 1; index <= 10_000; index++ {
+		connector.recordReachable(startedAt.Add(time.Duration(index) * time.Nanosecond))
+	}
+	connector.stateMu.Lock()
+	events := len(connector.breakerEvents)
+	connector.stateMu.Unlock()
+	if events > 2 {
+		t.Fatalf("breaker events=%d behind one active barrier, want at most 2", events)
+	}
+	connector.discardBreakerCompletion(barrier)
+}
+
+func TestBreakerHistoryLimitFailsClosed(t *testing.T) {
+	config := testConnectorConfig()
+	gateway, err := New(Config{Connectors: []ConnectorConfig{config}}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connector := gateway.connectors["reference"]
+	connector.stateMu.Lock()
+	connector.breakerEvents = make([]breakerEvent, breakerEventLimit)
+	connector.stateMu.Unlock()
+	background := context.Background()
+	completion, failure := connector.tryBeginAttempt(background, background, time.Now)
+	if failure == nil || failure.code != FailureCircuitOpen || completion.id != 0 {
+		t.Fatalf("completion=%+v failure=%v", completion, failure)
+	}
+}
+
+func TestBreakerCompletionTieUsesFinishOrder(t *testing.T) {
+	config := testConnectorConfig()
+	config.CircuitBreaker.Failures = 1
+	gateway, err := New(Config{Connectors: []ConnectorConfig{config}}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connector := gateway.connectors["reference"]
+	first := beginTestAttempt(t, connector)
+	second := beginTestAttempt(t, connector)
+	completedAt := time.Now().Add(time.Millisecond)
+	second = connector.finishBreakerCompletion(second, completedAt, time.Time{})
+	connector.resolveBreakerFailure(completedAt, second, completedAt)
+	first = connector.finishBreakerCompletion(first, completedAt, time.Time{})
+	connector.resolveBreakerReachable(first)
+	if connector.circuitOpen(completedAt) {
+		t.Fatal("start order overrode the actual finish order for tied completions")
+	}
+}
+
 func TestBreakerTimelineCompactsAfterOpenInterval(t *testing.T) {
 	config := testConnectorConfig()
 	config.CircuitBreaker.Failures = 1
@@ -695,6 +900,187 @@ func TestRetryPendingFailureDoesNotBlockLaterFailureThreshold(t *testing.T) {
 	}
 }
 
+func TestExpiredOpenIntervalPreservesDeferredFailure(t *testing.T) {
+	config := testConnectorConfig()
+	config.CircuitBreaker.Failures = 2
+	config.CircuitBreaker.OpenMS = 1
+	gateway, err := New(Config{Connectors: []ConnectorConfig{config}}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connector := gateway.connectors["reference"]
+	deferredAt := time.Now()
+	deferredFailure := connector.registerBreakerCompletionAt(deferredAt, deferredAt)
+	connector.deferBreakerFailure(deferredFailure)
+	firstFailureAt := deferredAt.Add(time.Millisecond)
+	secondFailureAt := firstFailureAt.Add(time.Millisecond)
+	connector.recordFailure(firstFailureAt, firstFailureAt)
+	connector.recordFailure(secondFailureAt, secondFailureAt)
+	if !connector.circuitOpen(secondFailureAt) {
+		t.Fatal("independent failures did not open the circuit")
+	}
+	resolvedAt := secondFailureAt.Add(2 * time.Millisecond)
+	if connector.circuitOpen(resolvedAt) {
+		t.Fatal("independent failure circuit did not expire")
+	}
+	connector.resolveBreakerFailure(resolvedAt, deferredFailure, deferredAt)
+	if !connector.circuitOpen(resolvedAt) {
+		t.Fatal("expired interval discarded a subsequently promoted deferred failure")
+	}
+	nextIntervalAt := resolvedAt.Add(2 * time.Millisecond)
+	if connector.circuitOpen(nextIntervalAt) {
+		t.Fatal("promoted failure circuit did not expire")
+	}
+	thirdFailureAt := nextIntervalAt.Add(time.Millisecond)
+	connector.recordFailure(thirdFailureAt, thirdFailureAt)
+	if !connector.circuitOpen(thirdFailureAt) {
+		t.Fatal("compaction lost the failure residue after deferred promotion")
+	}
+	if connector.circuitOpen(thirdFailureAt.Add(2 * time.Millisecond)) {
+		t.Fatal("recomputed failure circuit did not expire")
+	}
+	connector.stateMu.Lock()
+	events := len(connector.breakerEvents)
+	connector.stateMu.Unlock()
+	if events != 0 {
+		t.Fatalf("breaker events=%d, want 0 after the barrier resolves", events)
+	}
+}
+
+func TestUnresolvedBreakerHistoryStaysBoundedAcrossExpiryCycles(t *testing.T) {
+	config := testConnectorConfig()
+	config.CircuitBreaker.Failures = 2
+	config.CircuitBreaker.OpenMS = 1
+	gateway, err := New(Config{Connectors: []ConnectorConfig{config}}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connector := gateway.connectors["reference"]
+	now := time.Now()
+	barrier := connector.registerBreakerCompletionAt(now, now)
+	connector.deferBreakerFailure(barrier)
+	for cycle := 0; cycle < 1_000; cycle++ {
+		firstFailureAt := now.Add(time.Millisecond)
+		secondFailureAt := firstFailureAt.Add(time.Millisecond)
+		connector.recordFailure(firstFailureAt, firstFailureAt)
+		connector.recordFailure(secondFailureAt, secondFailureAt)
+		if !connector.circuitOpen(secondFailureAt) {
+			t.Fatalf("cycle %d did not open the circuit", cycle)
+		}
+		now = secondFailureAt.Add(2 * time.Millisecond)
+		if connector.circuitOpen(now) {
+			t.Fatalf("cycle %d circuit did not expire", cycle)
+		}
+	}
+	connector.stateMu.Lock()
+	events := len(connector.breakerEvents)
+	connector.stateMu.Unlock()
+	if events > 3*config.CircuitBreaker.Failures {
+		t.Fatalf("breaker events=%d after repeated expiry cycles", events)
+	}
+	connector.discardBreakerCompletion(barrier)
+	if connector.circuitOpen(now) {
+		t.Fatal("discarded barrier recreated an expired circuit")
+	}
+}
+
+func TestExpiredOpenPreservesShortFailureRuns(t *testing.T) {
+	config := testConnectorConfig()
+	config.CircuitBreaker.Failures = 3
+	config.CircuitBreaker.OpenMS = 1
+	gateway, err := New(Config{Connectors: []ConnectorConfig{config}}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connector := gateway.connectors["reference"]
+	now := time.Now()
+	firstBarrier := connector.registerBreakerCompletionAt(now, now)
+	shortFailureAt := now.Add(time.Millisecond)
+	connector.recordFailure(shortFailureAt, shortFailureAt)
+	secondBarrierAt := now.Add(2 * time.Millisecond)
+	secondBarrier := connector.registerBreakerCompletionAt(secondBarrierAt, secondBarrierAt)
+	for index := 3; index <= 5; index++ {
+		failureAt := now.Add(time.Duration(index) * time.Millisecond)
+		connector.recordFailure(failureAt, failureAt)
+	}
+	openedAt := now.Add(5 * time.Millisecond)
+	if !connector.circuitOpen(openedAt) {
+		t.Fatal("resolved suffix did not open the circuit")
+	}
+	if connector.circuitOpen(openedAt.Add(2 * time.Millisecond)) {
+		t.Fatal("circuit remained open after its interval")
+	}
+	connector.discardBreakerCompletion(firstBarrier)
+	connector.discardBreakerCompletion(secondBarrier)
+	connector.stateMu.Lock()
+	failures := connector.failures
+	connector.stateMu.Unlock()
+	if failures != 1 {
+		t.Fatalf("failures=%d after compaction, want short run residue", failures)
+	}
+}
+
+func TestExpiredCompactionPreservesMovablePendingSplit(t *testing.T) {
+	config := testConnectorConfig()
+	config.CircuitBreaker.Failures = 2
+	config.CircuitBreaker.OpenMS = 1
+	gateway, err := New(Config{Connectors: []ConnectorConfig{config}}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connector := gateway.connectors["reference"]
+	now := time.Now()
+	actualCompletionAt := now.Add(4 * time.Millisecond)
+	pending := connector.registerBreakerCompletionAt(actualCompletionAt, now.Add(time.Millisecond))
+	for _, offset := range []time.Duration{2, 3, 5, 6} {
+		failureAt := now.Add(offset * time.Millisecond)
+		connector.recordFailure(failureAt, failureAt)
+	}
+	if !connector.circuitOpen(now.Add(6 * time.Millisecond)) {
+		t.Fatal("failure run did not open the circuit")
+	}
+	if connector.circuitOpen(now.Add(8 * time.Millisecond)) {
+		t.Fatal("failure run circuit did not expire")
+	}
+	connector.resolveBreakerReachable(pending)
+	lastFailureAt := now.Add(9 * time.Millisecond)
+	connector.recordFailure(lastFailureAt, lastFailureAt)
+	if connector.circuitOpen(lastFailureAt) {
+		t.Fatal("movable pending marker left false failure residue after expired compaction")
+	}
+}
+
+func TestAttemptAdmissionUsesClockAfterStateLock(t *testing.T) {
+	config := testConnectorConfig()
+	gateway, err := New(Config{Connectors: []ConnectorConfig{config}}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connector := gateway.connectors["reference"]
+	connector.stateMu.Lock()
+	connector.openUntil = time.Now().Add(20 * time.Millisecond)
+	sampled := make(chan struct{})
+	type result struct {
+		completion breakerCompletion
+		failure    *gatewayError
+	}
+	resultCh := make(chan result, 1)
+	go func() {
+		close(sampled)
+		background := context.Background()
+		completion, failure := connector.tryBeginAttempt(background, background, time.Now)
+		resultCh <- result{completion: completion, failure: failure}
+	}()
+	<-sampled
+	time.Sleep(time.Until(connector.openUntil) + time.Millisecond)
+	connector.stateMu.Unlock()
+	outcome := <-resultCh
+	if outcome.failure != nil || outcome.completion.id == 0 {
+		t.Fatalf("completion=%+v failure=%v", outcome.completion, outcome.failure)
+	}
+	connector.discardBreakerCompletion(outcome.completion)
+}
+
 func TestBackdatedDeadlineCannotCrossCompactedFrontier(t *testing.T) {
 	config := testConnectorConfig()
 	config.CircuitBreaker.Failures = 2
@@ -726,6 +1112,95 @@ func TestBackdatedDeadlineCannotCrossCompactedFrontier(t *testing.T) {
 	connector.recordFailure(thirdFailureAt, thirdFailureAt)
 	if !connector.circuitOpen(thirdFailureAt) {
 		t.Fatal("deadline backdating lost the failure after the corrected trigger")
+	}
+}
+
+func TestLateTimeoutRegistrationCannotCrossCompactedFrontier(t *testing.T) {
+	releaseAttempt := make(chan struct{})
+	config := testConnectorConfig()
+	config.Limits.TimeoutMS = 20
+	config.CircuitBreaker.Failures = 2
+	config.CircuitBreaker.OpenMS = 1
+	gateway, err := New(Config{Connectors: []ConnectorConfig{config}}, Options{
+		Client: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			<-releaseAttempt
+			return nil, request.Context().Err()
+		})},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connector := gateway.connectors["reference"]
+	prepared, rule, failure := connector.prepare(ConnectorRequest{
+		Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{},
+	})
+	if failure != nil {
+		t.Fatal(failure)
+	}
+	deadline := time.Now().Add(20 * time.Millisecond)
+	requestContext, cancel := context.WithDeadlineCause(context.Background(), deadline, errConnectorDeadline)
+	defer cancel()
+	type attemptResult struct {
+		failure    *gatewayError
+		completion breakerCompletion
+	}
+	result := make(chan attemptResult, 1)
+	go func() {
+		completion, startFailure := connector.tryBeginAttempt(context.Background(), requestContext, time.Now)
+		if startFailure != nil {
+			result <- attemptResult{failure: startFailure}
+			return
+		}
+		_, failure, completion := connector.attempt(requestContext, deadline, completion, prepared, rule)
+		result <- attemptResult{failure: failure, completion: completion}
+	}()
+	firstFailureAt := deadline.Add(-time.Millisecond)
+	connector.recordFailure(firstFailureAt, firstFailureAt)
+	<-requestContext.Done()
+	secondFailureAt := deadline.Add(time.Millisecond)
+	connector.recordFailure(secondFailureAt, secondFailureAt)
+	if !connector.circuitOpen(secondFailureAt) {
+		t.Fatal("independent failures did not open the circuit")
+	}
+	if connector.circuitOpen(secondFailureAt.Add(2 * time.Millisecond)) {
+		t.Fatal("independent failure circuit did not expire")
+	}
+	close(releaseAttempt)
+	attempt := <-result
+	if attempt.failure == nil || attempt.failure.code != FailureUpstreamTimeout {
+		t.Fatalf("attempt failure=%v", attempt.failure)
+	}
+	resolvedAt := secondFailureAt.Add(3 * time.Millisecond)
+	connector.resolveBreakerFailure(resolvedAt, attempt.completion, deadline)
+	thirdFailureAt := resolvedAt.Add(time.Millisecond)
+	connector.recordFailure(thirdFailureAt, thirdFailureAt)
+	if !connector.circuitOpen(thirdFailureAt) {
+		t.Fatal("late timeout registration was lost behind the compacted frontier")
+	}
+}
+
+func TestProvisionalDeadlineCannotDiscardLaterReachability(t *testing.T) {
+	config := testConnectorConfig()
+	config.CircuitBreaker.Failures = 1
+	gateway, err := New(Config{Connectors: []ConnectorConfig{config}}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connector := gateway.connectors["reference"]
+	parentDeadline := time.Now()
+	completion := beginTestAttempt(t, connector)
+	reachableAt := parentDeadline.Add(time.Millisecond)
+	connector.recordReachable(reachableAt)
+	failureAt := reachableAt.Add(time.Millisecond)
+	connector.recordFailure(failureAt, failureAt)
+	if !connector.circuitOpen(failureAt) {
+		t.Fatal("failure did not open the circuit")
+	}
+	completionAt := failureAt.Add(time.Millisecond)
+	completion = connector.finishBreakerCompletion(completion, completionAt, completionAt.Add(time.Second))
+	connector.resolveBreakerReachable(completion)
+	if connector.circuitOpen(completionAt) {
+		t.Fatal("parent-deadline marker discarded a later reachable outcome")
 	}
 }
 
@@ -1057,17 +1532,17 @@ func TestQueuedRequestRechecksCircuitAfterRateWait(t *testing.T) {
 func TestCancellationWinsPostSemaphoreCircuitCheck(t *testing.T) {
 	var calls atomic.Int32
 	var clockCalls atomic.Int32
+	passedInitialCircuitCheck := make(chan struct{})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	config := testConnectorConfig()
+	config.Limits.MaxConcurrency = 1
 	config.CircuitBreaker.Failures = 1
-	var connector *connector
 	gateway, err := New(Config{Connectors: []ConnectorConfig{config}}, Options{
 		Now: func() time.Time {
 			now := time.Now()
-			if clockCalls.Add(1) == 2 {
-				connector.recordFailure(now, now)
-				cancel()
+			if clockCalls.Add(1) == 1 {
+				close(passedInitialCircuitCheck)
 			}
 			return now
 		},
@@ -1079,13 +1554,27 @@ func TestCancellationWinsPostSemaphoreCircuitCheck(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	connector = gateway.connectors["reference"]
-
-	_, attempts, _, failure := gateway.execute(ctx, connector, ConnectorRequest{
-		Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{},
-	})
-	if failure == nil || failure.code != failureRequestCanceled || attempts != 0 || calls.Load() != 0 {
-		t.Fatalf("attempts=%d calls=%d failure=%v", attempts, calls.Load(), failure)
+	connector := gateway.connectors["reference"]
+	connector.semaphore <- struct{}{}
+	type result struct {
+		attempts int
+		failure  *gatewayError
+	}
+	resultCh := make(chan result, 1)
+	go func() {
+		_, attempts, _, failure := gateway.execute(ctx, connector, ConnectorRequest{
+			Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{},
+		})
+		resultCh <- result{attempts: attempts, failure: failure}
+	}()
+	<-passedInitialCircuitCheck
+	failureAt := time.Now()
+	connector.recordFailure(failureAt, failureAt)
+	cancel()
+	<-connector.semaphore
+	outcome := <-resultCh
+	if outcome.failure == nil || outcome.failure.code != failureRequestCanceled || outcome.attempts != 0 || calls.Load() != 0 {
+		t.Fatalf("attempts=%d calls=%d failure=%v", outcome.attempts, calls.Load(), outcome.failure)
 	}
 }
 
