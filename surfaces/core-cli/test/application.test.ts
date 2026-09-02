@@ -74,6 +74,7 @@ class FakeRunner implements CommandRunner {
   nextNetworkRemovalError: ((name: string) => string) | undefined;
   onRun: ((call: Call) => void | Promise<void>) | undefined;
   afterSuccessfulNetworkCreate: (() => void) | undefined;
+  failAfterNetworkCreate: string | undefined;
   afterSuccessfulComposeUp: (() => void) | undefined;
   cancelAfterNetworkCreate: (() => void) | undefined;
   onCleanupStart: ((signal: AbortSignal | undefined) => void) | undefined;
@@ -142,6 +143,9 @@ class FakeRunner implements CommandRunner {
         cancelAfterNetworkCreate();
         return { ...result(1), cancelled: true };
       }
+      const failAfterNetworkCreate = this.failAfterNetworkCreate;
+      this.failAfterNetworkCreate = undefined;
+      if (failAfterNetworkCreate) return result(1, "", failAfterNetworkCreate);
       const afterSuccessfulNetworkCreate = this.afterSuccessfulNetworkCreate;
       this.afterSuccessfulNetworkCreate = undefined;
       if (afterSuccessfulNetworkCreate) queueMicrotask(afterSuccessfulNetworkCreate);
@@ -658,6 +662,22 @@ describe("atlas-core CLI", () => {
     expect(test.runner.existingNetworks.has(MUTATION_LOCK_NETWORK)).toBe(false);
     expect(test.runner.calls.some((call) => call.args[0] === "network" && call.args[1] === "inspect")).toBe(true);
     expect(test.runner.calls.some((call) => call.args[0] === "network" && call.args[1] === "rm")).toBe(true);
+  });
+
+  it("removes its Docker mutation lock when create succeeds before a transport failure", async () => {
+    const test = runtime();
+    test.runner.failAfterNetworkCreate = "connection reset by peer";
+
+    expect(await runCLI(["init"], test.context)).toBe(1);
+    expect(test.stderr.join("")).toContain("connection reset by peer");
+    expect(test.runner.existingNetworks.has(MUTATION_LOCK_NETWORK)).toBe(false);
+    expect(test.runner.calls.some((call) => call.args[0] === "network" && call.args[1] === "inspect")).toBe(true);
+    expect(
+      test.runner.calls.some(
+        (call) => call.args[0] === "network" && call.args[1] === "rm" && call.args[2] === "network-1"
+      )
+    ).toBe(true);
+    expect(await runCLI(["init"], test.context)).toBe(0);
   });
 
   it("accepts Docker's missing-network response when ambiguous cleanup loses the inspect/remove race", async () => {

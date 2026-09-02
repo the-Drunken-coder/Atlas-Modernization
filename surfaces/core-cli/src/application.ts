@@ -1877,6 +1877,10 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       return { networkId, owner, labels: attemptLabels };
     }
 
+    if (await this.#removeAmbiguousDockerMutationLock(attemptLabels)) {
+      throw commandFailure(`docker ${args.join(" ")}`, result);
+    }
+
     const inspection = await this.#runner.run(
       "docker",
       ["network", "inspect", "--format", "{{json .Labels}}", MUTATION_LOCK_NETWORK],
@@ -1915,27 +1919,28 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     }
   }
 
-  async #removeAmbiguousDockerMutationLock(attemptLabels: Record<string, string>): Promise<void> {
+  async #removeAmbiguousDockerMutationLock(attemptLabels: Record<string, string>): Promise<boolean> {
     const inspection = await this.#runner.runCleanup(
       "docker",
       ["network", "inspect", "--format", "{{json .Id}}\t{{json .Labels}}", MUTATION_LOCK_NETWORK],
       { env: this.#env }
     );
     if (inspection.status !== 0) {
-      if (dockerNetworkMissing(inspection)) return;
+      if (dockerNetworkMissing(inspection)) return true;
       throw new OperationCleanupError(
         commandFailure(`docker network inspect ${MUTATION_LOCK_NETWORK}`, inspection).message
       );
     }
     const network = dockerNetworkIdentity(inspection.stdout);
-    if (!this.#resourceLabelsMatch(JSON.stringify(network.labels), attemptLabels)) return;
+    if (!this.#resourceLabelsMatch(JSON.stringify(network.labels), attemptLabels)) return false;
     const removal = await this.#runner.runCleanup("docker", ["network", "rm", network.id], {
       env: this.#env
     });
     if (removal.status !== 0) {
-      if (dockerNetworkMissing(removal)) return;
+      if (dockerNetworkMissing(removal)) return true;
       throw new OperationCleanupError(commandFailure(`docker network rm ${MUTATION_LOCK_NETWORK}`, removal).message);
     }
+    return true;
   }
 
   async #releaseDockerMutationLock(lock: DockerMutationLock): Promise<void> {
