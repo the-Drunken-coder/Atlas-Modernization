@@ -1775,6 +1775,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     }
     try {
       linkSync(claimPath, this.#mutationLockFile);
+      syncDirectory(this.#configDir);
     } catch (error) {
       if (!isNodeError(error) || error.code !== "EEXIST") {
         throw new OperationCleanupError(`Atlas Core could not restore its mutation lock: ${errorMessage(error)}`);
@@ -1909,6 +1910,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     });
     const removal = await this.#runner.run("docker", ["network", "rm", network.id], { env: this.#env });
     if (removal.status !== 0) {
+      if (dockerNetworkMissing(removal)) return;
       throw commandFailure(`docker network rm ${MUTATION_LOCK_NETWORK}`, removal);
     }
   }
@@ -1931,6 +1933,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       env: this.#env
     });
     if (removal.status !== 0) {
+      if (dockerNetworkMissing(removal)) return;
       throw new OperationCleanupError(commandFailure(`docker network rm ${MUTATION_LOCK_NETWORK}`, removal).message);
     }
   }
@@ -1955,6 +1958,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       env: this.#env
     });
     if (result.status !== 0) {
+      if (dockerNetworkMissing(result)) return;
       throw new OperationCleanupError(commandFailure(`docker network rm ${MUTATION_LOCK_NETWORK}`, result).message);
     }
   }

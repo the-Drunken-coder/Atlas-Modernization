@@ -13,6 +13,7 @@ import {
   symlinkSync,
   writeFileSync
 } from "node:fs";
+import { createRequire, syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -70,6 +71,7 @@ class FakeRunner implements CommandRunner {
   runningCoreImage = TEST_IMAGE;
   installedVersion = PACKAGE_VERSION;
   missingNetworkError = (name: string): string => `Error: No such network: ${name}`;
+  nextNetworkRemovalError: ((name: string) => string) | undefined;
   onRun: ((call: Call) => void | Promise<void>) | undefined;
   afterSuccessfulNetworkCreate: (() => void) | undefined;
   afterSuccessfulComposeUp: (() => void) | undefined;
@@ -169,9 +171,12 @@ class FakeRunner implements CommandRunner {
       const name = this.existingNetworks.has(requested)
         ? requested
         : ([...this.networkIds].find(([, id]) => id === requested)?.[0] ?? requested);
+      const removalError = this.nextNetworkRemovalError;
+      this.nextNetworkRemovalError = undefined;
       this.existingNetworks.delete(name);
       this.networkLabels.delete(name);
       this.networkIds.delete(name);
+      if (removalError) return result(1, "", removalError(requested));
       return result(0);
     }
     if (args[0] === "volume" && args[1] === "create") {
@@ -655,6 +660,22 @@ describe("atlas-core CLI", () => {
     expect(test.runner.calls.some((call) => call.args[0] === "network" && call.args[1] === "rm")).toBe(true);
   });
 
+  it("accepts Docker's missing-network response when ambiguous cleanup loses the inspect/remove race", async () => {
+    const test = runtime();
+    test.context.interactive = {
+      configureAdmin: async () => undefined,
+      runUpdate: async () => undefined,
+      runMenu: async (operator) => {
+        test.runner.nextNetworkRemovalError = (name) => `Error response from daemon: network ${name} not found`;
+        test.runner.cancelAfterNetworkCreate = () => operator.cancelPending();
+        await expect(operator.init()).rejects.toThrow("Atlas Core command was cancelled.");
+      }
+    };
+
+    expect(await runCLI([], test.context)).toBe(0);
+    expect(test.runner.existingNetworks.has(MUTATION_LOCK_NETWORK)).toBe(false);
+  });
+
   it("accepts Docker's canonical missing-network response during ambiguous acquisition cleanup", async () => {
     const test = runtime();
     test.runner.missingNetworkError = (name) => `Error response from daemon: network ${name} not found`;
@@ -691,6 +712,30 @@ describe("atlas-core CLI", () => {
 
     expect(existsSync(join(test.home, ".atlas", "core", ".mutation.lock"))).toBe(false);
     expect(test.stdout.join("")).toContain("Atlas Core stopped");
+  });
+
+  it("accepts Docker's missing-network response when release loses the inspect/remove race", async () => {
+    const test = runtime();
+    markInitialized(test);
+    test.runner.nextNetworkRemovalError = (name) => `Error response from daemon: network ${name} not found`;
+
+    expect(await runCLI(["stop"], test.context)).toBe(0);
+
+    expect(existsSync(join(test.home, ".atlas", "core", ".mutation.lock"))).toBe(false);
+    expect(test.runner.existingNetworks.has(MUTATION_LOCK_NETWORK)).toBe(false);
+    expect(test.stdout.join("")).toContain("Atlas Core stopped");
+  });
+
+  it("propagates non-missing Docker network removal failures", async () => {
+    const test = runtime();
+    markInitialized(test);
+    test.runner.nextNetworkRemovalError = () => "permission denied";
+
+    expect(await runCLI(["stop"], test.context)).toBe(1);
+
+    expect(test.stderr.join("")).toContain("docker network rm");
+    expect(test.stderr.join("")).toContain("permission denied");
+    expect(existsSync(join(test.home, ".atlas", "core", ".mutation.lock"))).toBe(false);
   });
 
   it("bounds cleanup commands after cancellation", async () => {
@@ -2770,6 +2815,79 @@ describe("atlas-core CLI", () => {
     expect(test.runner.existingNetworks.has(MUTATION_LOCK_NETWORK)).toBe(false);
   });
 
+  it.each([false, true])(
+    "orders recovery-marker restoration durably (canonical exists: %s)",
+    async (canonicalExists) => {
+      const test = runtime();
+      markInitialized(test);
+      const plugin = installTestPluginCatalog(test);
+      expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
+      simulateInterruptedPluginDisable(test, plugin, "prepared");
+      const config = join(test.home, ".atlas", "core");
+      const lockPath = join(config, ".mutation.lock");
+      const owner = JSON.parse(readFileSync(lockPath, "utf8"));
+      const abandonedClaim = join(config, `.mutation.lock.recovering.${2_147_483_647}.${"d".repeat(16)}`);
+      renameSync(lockPath, abandonedClaim);
+      test.runner.networkLabels.set(MUTATION_LOCK_NETWORK, {
+        "io.atlas.core.engine": "test-engine-id",
+        "io.atlas.core.lock": "mutation",
+        "io.atlas.core.project": "atlas_core_production",
+        "io.atlas.core.lock-id": "f".repeat(32)
+      });
+
+      const mutableFs = createRequire(import.meta.url)("node:fs") as Pick<
+        typeof import("node:fs"),
+        "closeSync" | "fsyncSync" | "linkSync" | "openSync" | "unlinkSync"
+      >;
+      const originalFsync = mutableFs.fsyncSync;
+      const originalLink = mutableFs.linkSync;
+      const originalUnlink = mutableFs.unlinkSync;
+      const calls: string[] = [];
+      mutableFs.fsyncSync = (fd) => {
+        calls.push("fsync");
+        originalFsync(fd);
+      };
+      mutableFs.linkSync = (existingPath, newPath) => {
+        calls.push("link");
+        originalLink(existingPath, newPath);
+      };
+      mutableFs.unlinkSync = (path) => {
+        calls.push("unlink");
+        originalUnlink(path);
+      };
+      syncBuiltinESMExports();
+      if (canonicalExists) {
+        test.runner.onRun = (call) => {
+          if (call.args[0] !== "network" || call.args[1] !== "inspect" || existsSync(lockPath)) return;
+          writeFileSync(lockPath, `${JSON.stringify(owner)}\n`, { mode: 0o600 });
+          const lockDescriptor = mutableFs.openSync(lockPath, "r");
+          originalFsync(lockDescriptor);
+          mutableFs.closeSync(lockDescriptor);
+          const directoryDescriptor = mutableFs.openSync(config, "r");
+          originalFsync(directoryDescriptor);
+          mutableFs.closeSync(directoryDescriptor);
+        };
+      }
+
+      try {
+        expect(await runCLI(["stop"], test.context)).toBe(1);
+      } finally {
+        mutableFs.fsyncSync = originalFsync;
+        mutableFs.linkSync = originalLink;
+        mutableFs.unlinkSync = originalUnlink;
+        syncBuiltinESMExports();
+      }
+
+      const linkIndex = calls.indexOf("link");
+      expect(linkIndex).toBeGreaterThanOrEqual(0);
+      expect(calls.slice(linkIndex)).toEqual(
+        canonicalExists ? ["link", "unlink", "fsync"] : ["link", "fsync", "unlink", "fsync"]
+      );
+      expect(existsSync(lockPath)).toBe(true);
+      expect(existsSync(abandonedClaim)).toBe(false);
+    }
+  );
+
   it("reclaims a dead fresh owner left in the recovery-claim race", async () => {
     const test = runtime();
     markInitialized(test);
@@ -2932,6 +3050,35 @@ describe("atlas-core CLI", () => {
       "io.atlas.core.project": "atlas_core_production",
       "io.atlas.core.lock-id": lockId
     });
+
+    expect(await runCLI(["stop"], test.context)).toBe(0);
+
+    expect(existsSync(join(config, ".mutation.lock"))).toBe(false);
+    expect(test.runner.existingNetworks.has(MUTATION_LOCK_NETWORK)).toBe(false);
+    expect(test.stdout.join("")).toContain("Atlas Core stopped");
+  });
+
+  it("reclaims a completed disable when Docker lock removal loses the inspect/remove race", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const plugin = installTestPluginCatalog(test);
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
+    expect(await runCLI(["plugins", "disable", plugin.pluginId], test.context)).toBe(0);
+    const config = join(test.home, ".atlas", "core");
+    const lockId = "e".repeat(32);
+    writeFileSync(
+      join(config, ".mutation.lock"),
+      `${JSON.stringify({ schema: 1, id: lockId, pid: 2_147_483_647, operation: "plugin-disable" })}\n`,
+      { mode: 0o600 }
+    );
+    test.runner.existingNetworks.add(MUTATION_LOCK_NETWORK);
+    test.runner.networkLabels.set(MUTATION_LOCK_NETWORK, {
+      "io.atlas.core.engine": "test-engine-id",
+      "io.atlas.core.lock": "mutation",
+      "io.atlas.core.project": "atlas_core_production",
+      "io.atlas.core.lock-id": lockId
+    });
+    test.runner.nextNetworkRemovalError = (name) => `Error response from daemon: network ${name} not found`;
 
     expect(await runCLI(["stop"], test.context)).toBe(0);
 
