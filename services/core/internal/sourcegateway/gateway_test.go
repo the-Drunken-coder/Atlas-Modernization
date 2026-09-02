@@ -563,7 +563,7 @@ func TestPendingRetryFailureCannotOverwriteNewerReachability(t *testing.T) {
 		t.Fatal(failure)
 	}
 	_, failure, completion := connector.attempt(context.Background(), prepared, rule)
-	failureAt := completion.order.completedAt
+	failureAt := completion.completedAt
 	if failure == nil || failure.code != FailureUpstreamUnreachable || failureAt.IsZero() {
 		t.Fatalf("attempt failure=%v completed_at=%s", failure, failureAt)
 	}
@@ -633,7 +633,7 @@ func TestUnresolvedBreakerCompletionBlocksLaterFailures(t *testing.T) {
 	thirdFailureAt := secondFailureAt.Add(time.Millisecond)
 
 	connector.recordFailure(firstFailureAt, firstFailureAt)
-	pendingReachability := connector.registerBreakerCompletionAt(reachableAt)
+	pendingReachability := connector.registerBreakerCompletionAt(reachableAt, reachableAt)
 	connector.recordFailure(secondFailureAt, secondFailureAt)
 
 	if connector.circuitOpen(secondFailureAt) {
@@ -672,6 +672,60 @@ func TestBreakerTimelineCompactsAfterOpenInterval(t *testing.T) {
 	connector.stateMu.Unlock()
 	if events != 0 {
 		t.Fatalf("breaker events=%d, want 0 after settled interval", events)
+	}
+}
+
+func TestRetryPendingFailureDoesNotBlockLaterFailureThreshold(t *testing.T) {
+	config := testConnectorConfig()
+	config.CircuitBreaker.Failures = 2
+	gateway, err := New(Config{Connectors: []ConnectorConfig{config}}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connector := gateway.connectors["reference"]
+	pendingAt := time.Now()
+	pendingFailure := connector.registerBreakerCompletionAt(pendingAt, pendingAt)
+	connector.deferBreakerFailure(pendingFailure)
+	firstFailureAt := pendingAt.Add(time.Millisecond)
+	secondFailureAt := firstFailureAt.Add(time.Millisecond)
+	connector.recordFailure(firstFailureAt, firstFailureAt)
+	connector.recordFailure(secondFailureAt, secondFailureAt)
+	if !connector.circuitOpen(secondFailureAt) {
+		t.Fatal("retry-pending outcome suppressed a later failure threshold")
+	}
+}
+
+func TestBackdatedDeadlineCannotCrossCompactedFrontier(t *testing.T) {
+	config := testConnectorConfig()
+	config.CircuitBreaker.Failures = 2
+	config.CircuitBreaker.OpenMS = 1
+	gateway, err := New(Config{Connectors: []ConnectorConfig{config}}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connector := gateway.connectors["reference"]
+	firstFailureAt := time.Now()
+	deadline := firstFailureAt.Add(time.Millisecond)
+	secondFailureAt := deadline.Add(time.Millisecond)
+	attemptCompletedAt := secondFailureAt.Add(time.Millisecond)
+	thirdFailureAt := attemptCompletedAt.Add(time.Millisecond)
+
+	connector.recordFailure(firstFailureAt, firstFailureAt)
+	pendingTimeout := connector.registerBreakerCompletionAt(attemptCompletedAt, deadline)
+	connector.recordFailure(secondFailureAt, secondFailureAt)
+	if connector.circuitOpen(secondFailureAt) {
+		t.Fatal("later failure passed an unresolved earlier deadline")
+	}
+	connector.resolveBreakerFailure(attemptCompletedAt, pendingTimeout, deadline)
+	if !connector.circuitOpen(attemptCompletedAt) {
+		t.Fatal("resolved timeout did not open the circuit")
+	}
+	if connector.circuitOpen(attemptCompletedAt.Add(2 * time.Millisecond)) {
+		t.Fatal("resolved timeout circuit did not expire")
+	}
+	connector.recordFailure(thirdFailureAt, thirdFailureAt)
+	if !connector.circuitOpen(thirdFailureAt) {
+		t.Fatal("deadline backdating lost the failure after the corrected trigger")
 	}
 }
 

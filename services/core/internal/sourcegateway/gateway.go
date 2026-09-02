@@ -71,12 +71,21 @@ type breakerOrder struct {
 type breakerEvent struct {
 	order      breakerOrder
 	observedAt time.Time
-	pending    bool
+	state      breakerEventState
 }
 
 type breakerCompletion struct {
-	order breakerOrder
+	order       breakerOrder
+	completedAt time.Time
 }
+
+type breakerEventState uint8
+
+const (
+	breakerEventPending breakerEventState = iota
+	breakerEventDeferred
+	breakerEventFailure
+)
 
 type gatewayError struct {
 	code FailureCode
@@ -365,7 +374,7 @@ func (g *Gateway) execute(ctx context.Context, connector *connector, input Conne
 	retryFailurePending := false
 	recordPendingFailure := func() {
 		if retryFailurePending {
-			connector.resolveBreakerFailure(g.now(), pendingRetryFailure, pendingRetryFailure.order.completedAt)
+			connector.resolveBreakerFailure(g.now(), pendingRetryFailure, pendingRetryFailure.completedAt)
 			retryFailurePending = false
 		}
 	}
@@ -399,7 +408,7 @@ func (g *Gateway) execute(ctx context.Context, connector *connector, input Conne
 			return ConnectorResponse{}, attempt - 1, "miss", &gatewayError{code: FailureCircuitOpen}
 		}
 		response, failure, attemptCompletion := connector.attempt(requestContext, prepared, rule)
-		attemptCompletedAt := attemptCompletion.order.completedAt
+		attemptCompletedAt := attemptCompletion.completedAt
 		attemptCheckedAt := time.Now()
 		parentContextError := contextError(ctx, attemptCheckedAt)
 		connectorTimedOut := connectorDeadlineWon(ctx, requestContext, connectorDeadline, attemptCompletedAt)
@@ -446,6 +455,7 @@ func (g *Gateway) execute(ctx context.Context, connector *connector, input Conne
 		}
 		if attempt < maxAttempts && retryFailure(rule.Retry.Failures, failure.code) {
 			discardPendingFailure()
+			connector.deferBreakerFailure(attemptCompletion)
 			pendingRetryFailure = attemptCompletion
 			retryFailurePending = true
 			continue
@@ -534,7 +544,8 @@ func (c *connector) attempt(ctx context.Context, prepared preparedRequest, rule 
 	failureResult *gatewayError,
 	completionResult breakerCompletion,
 ) {
-	defer func() { completionResult = c.registerBreakerCompletion() }()
+	deadline, _ := ctx.Deadline()
+	defer func() { completionResult = c.registerBreakerCompletion(deadline) }()
 	target := *c.origin
 	target.Path = prepared.path
 	target.RawPath = ""
@@ -714,23 +725,30 @@ func (c *connector) circuitOpen(now time.Time) bool {
 	return now.Before(c.openUntil)
 }
 
-func (c *connector) registerBreakerCompletion() breakerCompletion {
+func (c *connector) registerBreakerCompletion(notAfter time.Time) breakerCompletion {
 	c.stateMu.Lock()
 	defer c.stateMu.Unlock()
-	return c.registerBreakerCompletionLocked(time.Now())
+	return c.registerBreakerCompletionLocked(time.Now(), notAfter)
 }
 
-func (c *connector) registerBreakerCompletionAt(completedAt time.Time) breakerCompletion {
+func (c *connector) registerBreakerCompletionAt(completedAt, notAfter time.Time) breakerCompletion {
 	c.stateMu.Lock()
 	defer c.stateMu.Unlock()
-	return c.registerBreakerCompletionLocked(completedAt)
+	return c.registerBreakerCompletionLocked(completedAt, notAfter)
 }
 
-func (c *connector) registerBreakerCompletionLocked(completedAt time.Time) breakerCompletion {
+func (c *connector) registerBreakerCompletionLocked(completedAt, notAfter time.Time) breakerCompletion {
 	c.breakerSerial++
-	completion := breakerCompletion{order: breakerOrder{completedAt: completedAt, serial: c.breakerSerial}}
+	orderAt := completedAt
+	if !notAfter.IsZero() && notAfter.Before(orderAt) {
+		orderAt = notAfter
+	}
+	completion := breakerCompletion{
+		order:       breakerOrder{completedAt: orderAt, serial: c.breakerSerial},
+		completedAt: completedAt,
+	}
 	if completion.order.after(c.settledThrough) {
-		c.breakerEvents = append(c.breakerEvents, breakerEvent{order: completion.order, pending: true})
+		c.breakerEvents = append(c.breakerEvents, breakerEvent{order: completion.order, state: breakerEventPending})
 		c.recomputeBreakerLocked()
 	}
 	return completion
@@ -745,7 +763,7 @@ func (c *connector) recordFailure(now, completedAt time.Time) {
 	if !order.after(c.settledThrough) {
 		return
 	}
-	c.breakerEvents = append(c.breakerEvents, breakerEvent{order: order, observedAt: now})
+	c.breakerEvents = append(c.breakerEvents, breakerEvent{order: order, observedAt: now, state: breakerEventFailure})
 	c.recomputeBreakerLocked()
 }
 
@@ -764,7 +782,18 @@ func (c *connector) resolveBreakerFailure(now time.Time, completion breakerCompl
 		return
 	}
 	c.breakerEvents[index].observedAt = now
-	c.breakerEvents[index].pending = false
+	c.breakerEvents[index].state = breakerEventFailure
+	c.recomputeBreakerLocked()
+}
+
+func (c *connector) deferBreakerFailure(completion breakerCompletion) {
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+	index := c.breakerEventIndexLocked(completion.order.serial)
+	if index < 0 {
+		return
+	}
+	c.breakerEvents[index].state = breakerEventDeferred
 	c.recomputeBreakerLocked()
 }
 
@@ -783,7 +812,9 @@ func (c *connector) resolveBreakerReachable(completion breakerCompletion) {
 	if index < 0 {
 		return
 	}
-	c.settleBreakerThroughLocked(c.breakerEvents[index].order)
+	order := completion.order
+	order.completedAt = completion.completedAt
+	c.settleBreakerThroughLocked(order)
 	c.recomputeBreakerLocked()
 }
 
@@ -842,8 +873,11 @@ func (c *connector) recomputeBreakerLocked() {
 	var observedAt time.Time
 	openDuration := time.Duration(c.config.CircuitBreaker.OpenMS) * time.Millisecond
 	for _, event := range c.breakerEvents {
-		if event.pending {
+		if event.state == breakerEventPending {
 			break
+		}
+		if event.state == breakerEventDeferred {
+			continue
 		}
 		c.failures++
 		if event.observedAt.After(observedAt) {
