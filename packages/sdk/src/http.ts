@@ -118,6 +118,7 @@ export class HttpTransport {
     return this.withRequestTimeout(signal, async (requestSignal) => {
       const response = await this.raw(method, path, body, ifMatchVersion, requestSignal, requestHeaders);
       const value = await readSuccessfulJSON(response, requestSignal);
+      requestSignal.throwIfAborted();
       if (!validate(value)) {
         throw new TypeError(`Atlas response failed validation for ${method} ${path}`);
       }
@@ -136,6 +137,7 @@ export class HttpTransport {
     return this.withRequestTimeout(signal, async (requestSignal) => {
       const response = await this.raw(method, path, body, undefined, requestSignal, requestHeaders);
       const value = await readSuccessfulJSON(response, requestSignal);
+      requestSignal.throwIfAborted();
       if (!validate(value)) {
         throw new TypeError(`Atlas response failed validation for ${method} ${path}`);
       }
@@ -157,6 +159,7 @@ export class HttpTransport {
   ): Promise<void> {
     await this.withRequestTimeout(signal, async (requestSignal) => {
       const response = await this.raw(method, path, body, ifMatchVersion, requestSignal, requestHeaders);
+      requestSignal.throwIfAborted();
       if (response.status !== 204) {
         throw new TypeError(`Atlas response failed validation for ${method} ${path}`);
       }
@@ -167,7 +170,10 @@ export class HttpTransport {
     return this.withRequestTimeout(signal, async (requestSignal) => {
       const response = await this.raw(method, path, undefined, undefined, requestSignal);
       try {
-        return await response.arrayBuffer();
+        requestSignal.throwIfAborted();
+        const body = await response.arrayBuffer();
+        requestSignal.throwIfAborted();
+        return body;
       } catch (error) {
         throwTransportBodyError(error, requestSignal);
       }
@@ -193,8 +199,10 @@ export class HttpTransport {
       body: body === undefined ? undefined : stringifyAtlasJSON(body),
       signal
     });
+    signal?.throwIfAborted();
     if (!response.ok) {
       const payload = safeErrorPayload(await readErrorPayload(response, signal));
+      signal?.throwIfAborted();
       const message = errorMessage(response.status, payload);
       if (response.status === 409 || response.status === 412) {
         throw new ConflictError(message, response.status, payload);
@@ -206,7 +214,9 @@ export class HttpTransport {
 
   private async fetchRequest(url: string, init: RequestInit): Promise<Response> {
     try {
-      return await this.fetchImpl(url, init);
+      const response = await this.fetchImpl(url, init);
+      init.signal?.throwIfAborted();
+      return response;
     } catch (error) {
       if (init.signal?.aborted) throw init.signal.reason;
       const message = sanitizeErrorMessage(error);
@@ -219,6 +229,7 @@ export class HttpTransport {
     signal: AbortSignal | undefined,
     operation: (requestSignal: AbortSignal) => Promise<T>
   ): Promise<T> {
+    signal?.throwIfAborted();
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.requestTimeoutMs);
     const requestSignal = signal ? AbortSignal.any([controller.signal, signal]) : controller.signal;
@@ -251,7 +262,9 @@ export class HttpTransport {
 async function readSuccessfulJSON(response: Response, signal?: AbortSignal): Promise<unknown> {
   let serialized: string;
   try {
+    signal?.throwIfAborted();
     serialized = await response.text();
+    signal?.throwIfAborted();
   } catch (error) {
     throwTransportBodyError(error, signal);
   }
@@ -273,7 +286,10 @@ function strongETagVersion(etag: string | null): number | undefined {
 
 async function readErrorPayload(response: Response, signal?: AbortSignal): Promise<unknown> {
   try {
-    return parseAtlasJSON(await response.text());
+    signal?.throwIfAborted();
+    const serialized = await response.text();
+    signal?.throwIfAborted();
+    return parseAtlasJSON(serialized);
   } catch {
     if (signal?.aborted) throw signal.reason;
     return undefined;
