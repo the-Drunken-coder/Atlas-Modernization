@@ -1661,9 +1661,6 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
         if (isMutationOwnerActive(currentOwner)) {
           throw new Error("Atlas Core mutation lock changed ownership during deployment recovery.");
         }
-        if (currentOwner.id !== owner.id && currentOwner.operation !== "plugin-disable") {
-          throw new Error("Atlas Core mutation lock changed ownership during deployment recovery.");
-        }
         unlinkSync(this.#mutationLockFile);
         syncDirectory(this.#configDir);
       }
@@ -1902,7 +1899,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       { env: this.#env }
     );
     if (inspection.status !== 0) {
-      if (/no such network/i.test(inspection.stderr || inspection.stdout)) return;
+      if (dockerNetworkMissing(inspection)) return;
       throw commandFailure(`docker network inspect ${MUTATION_LOCK_NETWORK}`, inspection);
     }
     const network = dockerNetworkIdentity(inspection.stdout);
@@ -1923,7 +1920,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       { env: this.#env }
     );
     if (inspection.status !== 0) {
-      if (/no such network/i.test(inspection.stderr || inspection.stdout)) return;
+      if (dockerNetworkMissing(inspection)) return;
       throw new OperationCleanupError(
         commandFailure(`docker network inspect ${MUTATION_LOCK_NETWORK}`, inspection).message
       );
@@ -1945,6 +1942,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       { env: this.#env }
     );
     if (inspection.status !== 0) {
+      if (dockerNetworkMissing(inspection)) return;
       throw new OperationCleanupError(
         commandFailure(`docker network inspect ${MUTATION_LOCK_NETWORK}`, inspection).message
       );
@@ -3763,6 +3761,10 @@ function quoteComposeValue(value: string): string {
 function commandFailure(command: string, result: CommandResult): Error {
   const detail = oneLine(result.stderr || result.stdout);
   return new Error(`${command} failed with exit code ${result.status}${detail ? `: ${detail}` : ""}`);
+}
+
+function dockerNetworkMissing(result: CommandResult): boolean {
+  return /(?:no such network|network\s+\S+\s+not found)/i.test(`${result.stderr}\n${result.stdout}`);
 }
 
 function transactionFailure(error: unknown, rollbackErrors: readonly string[]): Error {

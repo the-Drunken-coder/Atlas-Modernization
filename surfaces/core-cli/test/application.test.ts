@@ -69,6 +69,7 @@ class FakeRunner implements CommandRunner {
   latestImage = TEST_IMAGE;
   runningCoreImage = TEST_IMAGE;
   installedVersion = PACKAGE_VERSION;
+  missingNetworkError = (name: string): string => `Error: No such network: ${name}`;
   onRun: ((call: Call) => void | Promise<void>) | undefined;
   afterSuccessfulNetworkCreate: (() => void) | undefined;
   afterSuccessfulComposeUp: (() => void) | undefined;
@@ -149,7 +150,7 @@ class FakeRunner implements CommandRunner {
       const name = this.existingNetworks.has(requested)
         ? requested
         : ([...this.networkIds].find(([, id]) => id === requested)?.[0] ?? requested);
-      if (!this.existingNetworks.has(name)) return result(1, "", `Error: No such network: ${name}`);
+      if (!this.existingNetworks.has(name)) return result(1, "", this.missingNetworkError(name));
       const labels = this.networkLabels.get(name) ?? {
         "io.atlas.core.engine": "test-engine-id",
         "io.atlas.core.lock": "mutation",
@@ -652,6 +653,44 @@ describe("atlas-core CLI", () => {
     expect(test.runner.existingNetworks.has(MUTATION_LOCK_NETWORK)).toBe(false);
     expect(test.runner.calls.some((call) => call.args[0] === "network" && call.args[1] === "inspect")).toBe(true);
     expect(test.runner.calls.some((call) => call.args[0] === "network" && call.args[1] === "rm")).toBe(true);
+  });
+
+  it("accepts Docker's canonical missing-network response during ambiguous acquisition cleanup", async () => {
+    const test = runtime();
+    test.runner.missingNetworkError = (name) => `Error response from daemon: network ${name} not found`;
+    test.context.interactive = {
+      configureAdmin: async () => undefined,
+      runUpdate: async () => undefined,
+      runMenu: async (operator) => {
+        let cancelled = false;
+        test.runner.onRun = (call) => {
+          if (cancelled || call.args[0] !== "network" || call.args[1] !== "create") return;
+          cancelled = true;
+          operator.cancelPending();
+        };
+        await expect(operator.init()).rejects.toThrow("Atlas Core command was cancelled.");
+      }
+    };
+
+    expect(await runCLI([], test.context)).toBe(0);
+    expect(test.runner.existingNetworks.has(MUTATION_LOCK_NETWORK)).toBe(false);
+    expect(test.runner.calls.some((call) => call.args[0] === "network" && call.args[1] === "inspect")).toBe(true);
+  });
+
+  it("accepts Docker's canonical missing-network response when releasing a completed mutation", async () => {
+    const test = runtime();
+    markInitialized(test);
+    test.runner.missingNetworkError = (name) => `Error response from daemon: network ${name} not found`;
+    test.runner.onRun = (call) => {
+      if (composeCommand(call)[0] !== "down") return;
+      test.runner.existingNetworks.delete(MUTATION_LOCK_NETWORK);
+      test.runner.networkLabels.delete(MUTATION_LOCK_NETWORK);
+    };
+
+    expect(await runCLI(["stop"], test.context)).toBe(0);
+
+    expect(existsSync(join(test.home, ".atlas", "core", ".mutation.lock"))).toBe(false);
+    expect(test.stdout.join("")).toContain("Atlas Core stopped");
   });
 
   it("bounds cleanup commands after cancellation", async () => {
@@ -2896,6 +2935,71 @@ describe("atlas-core CLI", () => {
 
     expect(await runCLI(["stop"], test.context)).toBe(0);
 
+    expect(existsSync(join(config, ".mutation.lock"))).toBe(false);
+    expect(test.runner.existingNetworks.has(MUTATION_LOCK_NETWORK)).toBe(false);
+    expect(test.stdout.join("")).toContain("Atlas Core stopped");
+  });
+
+  it("reclaims a completed disable when Docker reports its lock network as not found", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const plugin = installTestPluginCatalog(test);
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
+    expect(await runCLI(["plugins", "disable", plugin.pluginId], test.context)).toBe(0);
+    const config = join(test.home, ".atlas", "core");
+    writeFileSync(
+      join(config, ".mutation.lock"),
+      `${JSON.stringify({
+        schema: 1,
+        id: "e".repeat(32),
+        pid: 2_147_483_647,
+        operation: "plugin-disable"
+      })}\n`,
+      { mode: 0o600 }
+    );
+    test.runner.missingNetworkError = (name) => `Error response from daemon: network ${name} not found`;
+
+    expect(await runCLI(["stop"], test.context)).toBe(0);
+
+    expect(existsSync(join(config, ".mutation.lock"))).toBe(false);
+    expect(test.stdout.join("")).toContain("Atlas Core stopped");
+  });
+
+  it("reclaims a dead ordinary owner left by a completed-disable recovery-claim race", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const plugin = installTestPluginCatalog(test);
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
+    expect(await runCLI(["plugins", "disable", plugin.pluginId], test.context)).toBe(0);
+    const config = join(test.home, ".atlas", "core");
+    const recoveredLockId = "e".repeat(32);
+    const abandonedClaim = join(config, `.mutation.lock.recovering.${2_147_483_647}.${"d".repeat(16)}`);
+    writeFileSync(
+      abandonedClaim,
+      `${JSON.stringify({
+        schema: 1,
+        id: recoveredLockId,
+        pid: 2_147_483_646,
+        operation: "plugin-disable"
+      })}\n`,
+      { mode: 0o600 }
+    );
+    writeFileSync(
+      join(config, ".mutation.lock"),
+      `${JSON.stringify({ schema: 1, id: "f".repeat(32), pid: 2_147_483_645 })}\n`,
+      { mode: 0o600 }
+    );
+    test.runner.existingNetworks.add(MUTATION_LOCK_NETWORK);
+    test.runner.networkLabels.set(MUTATION_LOCK_NETWORK, {
+      "io.atlas.core.engine": "test-engine-id",
+      "io.atlas.core.lock": "mutation",
+      "io.atlas.core.project": "atlas_core_production",
+      "io.atlas.core.lock-id": recoveredLockId
+    });
+
+    expect(await runCLI(["stop"], test.context)).toBe(0);
+
+    expect(existsSync(abandonedClaim)).toBe(false);
     expect(existsSync(join(config, ".mutation.lock"))).toBe(false);
     expect(test.runner.existingNetworks.has(MUTATION_LOCK_NETWORK)).toBe(false);
     expect(test.stdout.join("")).toContain("Atlas Core stopped");
