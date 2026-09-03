@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { encodeCanonicalJSON } from "./canonical-json.js";
 import { type Clock, type TimerHandle, VirtualClock } from "./clock.js";
 import { serializeLinkMessage } from "./contract.js";
-import { type FrameIdentity, fragmentPayload, MAX_LINK_MESSAGE_BYTES } from "./frame.js";
+import { decodeFrame, type FrameIdentity, fragmentPayload, MAX_LINK_MESSAGE_BYTES } from "./frame.js";
 import { OrderedTaskDispatcher } from "./gateway.js";
 import { SharedPicture } from "./picture.js";
 import type { LinkRadio, RadioPacket, RadioSendOptions } from "./radio.js";
@@ -103,6 +103,39 @@ describe("Link transport", () => {
       reason: "confirmation deadline expired"
     });
     expect(isolated.metrics().retry_exhausted).toBe(1);
+  });
+
+  it("keeps a confirmed data request pending until its response deadline", async () => {
+    const { clock, gateway, asset } = directPair();
+    gateway.onEvent((event) => {
+      if (event.type === "message" && event.message.type === "data_request" && event.addressed_to_local) {
+        gateway.settleInbound(event.settlement_id, true);
+      }
+    });
+    asset.submit(
+      {
+        type: "data_request",
+        request_id: "request-without-response",
+        operation: "entity.get",
+        target_id: "asset-alpha"
+      },
+      { destination: { role: "gateway", id: "gateway" }, operationID: "request-without-response" }
+    );
+
+    for (
+      let attempt = 0;
+      attempt < 100 && asset.status("request-without-response")?.status !== "confirmed";
+      attempt++
+    ) {
+      await clock.advanceBy(100);
+    }
+    expect(asset.status("request-without-response")?.status).toBe("confirmed");
+
+    await clock.advanceTo(30_000);
+    expect(asset.status("request-without-response")).toMatchObject({
+      status: "failed",
+      reason: "response deadline expired"
+    });
   });
 
   it("reserves outbound capacity for an admitted inbound settlement", async () => {
@@ -353,14 +386,13 @@ describe("Link transport", () => {
     });
     const received: Array<{ source: string; settlement: string }> = [];
     gateway.onEvent((event) => {
-      if (event.type !== "message" || event.message.type !== "data_request" || !event.addressed_to_local) return;
+      if (event.type !== "message" || event.message.type !== "resource_operation" || !event.addressed_to_local) return;
       received.push({ source: event.source.id, settlement: event.settlement_id });
       gateway.settleInbound(event.settlement_id, true);
     });
     const request = {
-      type: "data_request",
-      request_id: "shared-operation",
-      operation: "entity.get",
+      type: "resource_operation",
+      operation: "entity.delete",
       target_id: "x"
     } as const;
     alpha.submit(request, { destination: { role: "gateway", id: "gateway" }, operationID: "shared-operation" });
@@ -382,6 +414,82 @@ describe("Link transport", () => {
     expect(gateway.status("position-2")?.status).toBe("sent");
     expect(assetPicture.snapshot().records[0]?.atlas_version).toBe(2);
     expect(gateway.metrics().best_effort_replaced).toBe(1);
+  });
+
+  it("does not let a failed low-priority send delay queued safety traffic", async () => {
+    const clock = new ControlledClock();
+    const radio = new FailingFirstSendRadio();
+    const transport = new LinkTransport({
+      node: { role: "gateway", id: "gateway" },
+      sourceGeneration: 1,
+      radio,
+      clock,
+      retryIntervalMs: 1_000
+    });
+    transport.submit(
+      {
+        type: "object_content",
+        object_id: "object-low-priority",
+        content_base64: Buffer.from("content").toString("base64"),
+        sha256: `sha256:${createHash("sha256").update("content").digest("hex")}`
+      },
+      { destination: { role: "asset", id: "asset-alpha" }, operationID: "low-priority" }
+    );
+    await Promise.all(clock.fireAt(0));
+    transport.submit(
+      {
+        type: "task_delivery",
+        delivery: "cancellation",
+        task: cancelledTask("task-urgent", "2026-09-02T12:00:00Z")
+      },
+      { destination: { role: "asset", id: "asset-alpha" }, operationID: "urgent" }
+    );
+
+    await Promise.all(clock.fireAt(0));
+
+    expect(radio.attemptedOperations.slice(0, 2)).toEqual(["low-priority", "urgent"]);
+    transport.stop();
+  });
+
+  it("rejects Asset state that claims Gateway-feed Core authority", () => {
+    const clock = new VirtualClock();
+    const network = new SimulatedPacketNetwork({ seed: 52, clock });
+    const receiverRadio = network.addRadio("receiver", 2);
+    const picture = new SharedPicture("receiver-picture");
+    new LinkTransport({
+      node: { role: "gateway", id: "gateway" },
+      sourceGeneration: 1,
+      radio: receiverRadio,
+      clock,
+      picture
+    });
+    const publication = {
+      ...positionPublication(1),
+      path: "gateway_feed",
+      confirmation: "core_confirmed"
+    } as const;
+    const identity: FrameIdentity = {
+      revision: 1,
+      message_type: "state",
+      source: { role: "asset", id: "asset-alpha" },
+      source_generation: 1,
+      service_session: "asset-session",
+      source_sequence: 1,
+      operation_id: "forged-authority",
+      message_id: "forged-authority-message",
+      priority: "live_state"
+    };
+    for (const frame of fragmentPayload(serializeLinkMessage(publication), identity)) {
+      receiverRadio.receive({
+        payload: frame,
+        received_at: 0,
+        radio_source: 1,
+        channel: 1,
+        public_key_encrypted: false
+      });
+    }
+
+    expect(picture.snapshot().records).toEqual([]);
   });
 
   it("returns a visible failure when Link metadata leaves no packet room", () => {
@@ -972,6 +1080,24 @@ class DeferredFirstSendRadio implements LinkRadio {
 
   receive(packet: RadioPacket): void {
     for (const handler of this.handlers) handler(packet);
+  }
+
+  async close(): Promise<void> {}
+}
+
+class FailingFirstSendRadio implements LinkRadio {
+  readonly max_payload_bytes = 233;
+  readonly attemptedOperations: string[] = [];
+  private readonly handlers = new Set<(packet: RadioPacket) => void>();
+
+  async send(payload: Uint8Array, _options: RadioSendOptions): Promise<void> {
+    this.attemptedOperations.push(decodeFrame(payload).operation_id);
+    if (this.attemptedOperations.length === 1) throw new Error("temporary serial failure");
+  }
+
+  onPacket(handler: (packet: RadioPacket) => void): () => void {
+    this.handlers.add(handler);
+    return () => this.handlers.delete(handler);
   }
 
   async close(): Promise<void> {}

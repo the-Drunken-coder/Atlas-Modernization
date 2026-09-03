@@ -1,4 +1,4 @@
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -94,6 +94,21 @@ describe("joining and Radio profile", () => {
     const persisted = JSON.parse(await readFile(path, "utf8"));
     expect(persisted.asset_generations["asset-alpha"]).toBe(2);
     expect(persisted.channel_key_base64).toBe(Buffer.alloc(32, 7).toString("base64"));
+  });
+
+  it("does not let a crash-persistent sentinel file block membership mutation", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "atlas-link-membership-stale-lock-"));
+    const path = join(directory, "membership.json");
+    const store = new GatewayMembershipStore(path);
+    await store.initialize({
+      gateway_node_id: "gateway",
+      channel_index: 1,
+      channel_name: "ATLAS",
+      channel_key_base64: Buffer.alloc(32, 8).toString("base64")
+    });
+    await writeFile(`${path}.lock`, "interrupted-owner\n", { mode: 0o600 });
+
+    await expect(store.activateGateway()).resolves.toMatchObject({ gateway_generation: 1 });
   });
 
   it("joins across one LOCAL_ONLY relay and assigns a new generation on restart", async () => {
@@ -207,6 +222,29 @@ describe("joining and Radio profile", () => {
       error: "radio rejected LoRa configuration",
       requested_changes: [expect.objectContaining({ path: "hop_limit", desired: 3, actual: 2 })]
     });
+  });
+
+  it("requires a restart before changing the live private-channel slot", () => {
+    const profile = createUSShortFastProfile(20, "2.7.15");
+    const manager = new RadioProfileManager(profile, new FakeConfigurationAdapter(profile));
+    const replacement = structuredClone(profile);
+    replacement.private_channel.index = 2;
+
+    expect(() => manager.replaceProfile(replacement)).toThrow(
+      "changing the private-channel slot requires a Link service restart"
+    );
+    expect(manager.profile().private_channel.index).toBe(1);
+  });
+
+  it("converges the private-channel layout during startup configuration", async () => {
+    const profile = createUSShortFastProfile(20, "2.7.15");
+    const adapter = new FakeConfigurationAdapter(profile);
+    adapter.configuration.private_channel.index = 2;
+
+    const evidence = await new RadioProfileManager(profile, adapter).apply();
+
+    expect(evidence.requested_changes).toContainEqual({ path: "private_channel.index", desired: 1, actual: 2 });
+    expect(evidence.verified).toBe(true);
   });
 
   it("verifies private membership installation and removal through radio readback", async () => {

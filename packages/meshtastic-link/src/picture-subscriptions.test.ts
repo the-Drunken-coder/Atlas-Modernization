@@ -93,6 +93,59 @@ describe("Shared Picture", () => {
     });
   });
 
+  it("lets authoritative Core rejection replace a newer provisional Task timestamp", () => {
+    const picture = new SharedPicture("picture-session");
+    const provisional = {
+      type: "state",
+      resource_type: "task",
+      resource: {
+        asset_id: "asset-alpha",
+        acknowledged_at: "2026-09-02T12:01:00Z",
+        command: "atlas.survey",
+        created_at: "2026-09-02T12:00:00Z",
+        input: {},
+        started_at: "2026-09-02T12:02:00Z",
+        status: "in_progress",
+        task_id: "task-1",
+        updated_at: "2026-09-02T12:10:00Z"
+      },
+      observation_time: "2026-09-02T12:10:00Z",
+      path: "field",
+      confirmation: "awaiting_core",
+      operation_id: "progress-1"
+    } as const;
+    const rejected = {
+      ...provisional,
+      resource: {
+        asset_id: "asset-alpha",
+        command: "atlas.survey",
+        created_at: "2026-09-02T12:00:00Z",
+        input: {},
+        status: "pending",
+        task_id: "task-1",
+        updated_at: "2026-09-02T12:05:00Z"
+      },
+      observation_time: "2026-09-02T12:05:00Z",
+      path: "gateway_feed",
+      confirmation: "core_rejected"
+    } as const;
+
+    expect(picture.apply(provisional, context(1))).toBe(true);
+    expect(
+      picture.apply(rejected, {
+        source: { role: "gateway", id: "gateway" },
+        source_generation: 1,
+        service_session: "gateway-session",
+        source_sequence: 1,
+        received_at: 1_000
+      })
+    ).toBe(true);
+    expect(picture.snapshot().records[0]).toMatchObject({
+      confirmation: "core_rejected",
+      state: { status: "pending", updated_at: "2026-09-02T12:05:00Z" }
+    });
+  });
+
   it("accepts a later field observation without a new Core version", () => {
     const picture = new SharedPicture("picture-session");
     const first = positionPublication(1);
@@ -154,6 +207,49 @@ describe("Shared Picture", () => {
 
     expect(picture.snapshot().records[0]).toMatchObject({
       freshness: "degraded",
+      source_asset_id: "asset-alpha"
+    });
+  });
+
+  it("degrades an active Task when its Asset state becomes stale", () => {
+    const picture = new SharedPicture("picture-session");
+    picture.apply(positionPublication(1), context(1));
+    picture.apply(
+      {
+        type: "state",
+        resource_type: "task",
+        resource: {
+          asset_id: "asset-alpha",
+          command: "atlas.survey",
+          created_at: "2026-09-02T12:00:00Z",
+          input: {},
+          status: "pending",
+          task_id: "task-1",
+          updated_at: "2026-09-02T12:00:00Z"
+        },
+        observation_time: "2026-09-02T12:00:00Z",
+        path: "gateway_feed",
+        confirmation: "core_confirmed"
+      },
+      {
+        source: { role: "gateway", id: "gateway" },
+        source_generation: 1,
+        service_session: "gateway-session",
+        source_sequence: 1,
+        received_at: 0
+      }
+    );
+
+    picture.refresh(5_001);
+
+    expect(picture.snapshot().records.find((record) => record.resource_type === "task")).toMatchObject({
+      freshness: "degraded",
+      source_asset_id: "asset-alpha"
+    });
+
+    picture.apply(positionPublication(2), { ...context(2), received_at: 6_000 });
+    expect(picture.snapshot().records.find((record) => record.resource_type === "task")).toMatchObject({
+      freshness: "fresh",
       source_asset_id: "asset-alpha"
     });
   });
