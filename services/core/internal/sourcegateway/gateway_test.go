@@ -33,6 +33,22 @@ func (body *deadlineCloseBody) Close() error {
 	return nil
 }
 
+type completionSignalBody struct {
+	io.Reader
+	completed chan struct{}
+}
+
+func (body *completionSignalBody) Read(buffer []byte) (int, error) {
+	read, err := body.Reader.Read(buffer)
+	if errors.Is(err, io.EOF) && body.completed != nil {
+		close(body.completed)
+		body.completed = nil
+	}
+	return read, err
+}
+
+func (*completionSignalBody) Close() error { return nil }
+
 func beginTestAttempt(t *testing.T, connector *connector) breakerAttempt {
 	t.Helper()
 	background := context.Background()
@@ -863,7 +879,7 @@ func TestEqualCompletionTimestampsUseCompletionOrder(t *testing.T) {
 	}
 }
 
-func TestBreakerCompletionOrderIsCapturedUnderOneLock(t *testing.T) {
+func TestBreakerCompletionTimeIsCapturedBeforeOrderingLock(t *testing.T) {
 	config := testConnectorConfig()
 	gateway, err := New(Config{Connectors: []ConnectorConfig{config}}, Options{})
 	if err != nil {
@@ -871,37 +887,31 @@ func TestBreakerCompletionOrderIsCapturedUnderOneLock(t *testing.T) {
 	}
 	connector := gateway.connectors["reference"]
 	base := time.Now()
-	firstClockEntered := make(chan struct{})
-	releaseFirstClock := make(chan struct{})
-	firstResult := make(chan breakerOrder, 1)
+	connector.completionMu.Lock()
+	locked := true
+	defer func() {
+		if locked {
+			connector.completionMu.Unlock()
+		}
+	}()
+
+	clockRead := make(chan struct{})
+	result := make(chan breakerOrder, 1)
 	go func() {
-		firstResult <- connector.recordBreakerCompletionWithClock(func() time.Time {
-			close(firstClockEntered)
-			<-releaseFirstClock
+		result <- connector.recordBreakerCompletionWithClock(func() time.Time {
+			close(clockRead)
 			return base
 		})
 	}()
-	<-firstClockEntered
-
-	secondStarted := make(chan struct{})
-	secondResult := make(chan breakerOrder, 1)
-	go func() {
-		close(secondStarted)
-		secondResult <- connector.recordBreakerCompletionWithClock(func() time.Time {
-			return base.Add(time.Nanosecond)
-		})
-	}()
-	<-secondStarted
 	select {
-	case order := <-secondResult:
-		t.Fatalf("second completion bypassed first order capture: %+v", order)
-	case <-time.After(time.Millisecond):
+	case <-clockRead:
+	case <-time.After(time.Second):
+		t.Fatal("completion timestamp was sampled while waiting for the ordering lock")
 	}
-	close(releaseFirstClock)
-	first := <-firstResult
-	second := <-secondResult
-	if !second.after(first) || second.serial != first.serial+1 {
-		t.Fatalf("first=%+v second=%+v", first, second)
+	connector.completionMu.Unlock()
+	locked = false
+	if order := <-result; order.completedAt != base || order.serial == 0 {
+		t.Fatalf("completion order=%+v", order)
 	}
 }
 
@@ -1200,6 +1210,80 @@ func TestGatewayReturnsBufferedResponseWhenLocalCleanupCrossesDeadline(t *testin
 	)
 	if failure != nil || attempts != 1 || response.Status != http.StatusOK || response.BodyBase64 != "b2s=" {
 		t.Fatalf("response=%+v attempts=%d failure=%v", response, attempts, failure)
+	}
+}
+
+func TestGatewayReturnsBufferedResponseWhenCompletionOrderingCrossesDeadline(t *testing.T) {
+	var calls atomic.Int32
+	deadlineObserved := make(chan time.Time, 1)
+	bodyBuffered := make(chan struct{})
+	config := testConnectorConfig()
+	config.Limits.TimeoutMS = 250
+	config.CircuitBreaker.Failures = 1
+	gateway, err := New(Config{Connectors: []ConnectorConfig{config}}, Options{
+		Client: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			if calls.Add(1) == 1 {
+				deadline, _ := request.Context().Deadline()
+				deadlineObserved <- deadline
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{},
+					Body: &completionSignalBody{
+						Reader:    strings.NewReader("ok"),
+						completed: bodyBuffered,
+					},
+				}, nil
+			}
+			return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: http.NoBody}, nil
+		})},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connector := gateway.connectors["reference"]
+	connector.completionMu.Lock()
+	locked := true
+	defer func() {
+		if locked {
+			connector.completionMu.Unlock()
+		}
+	}()
+
+	type result struct {
+		response ConnectorResponse
+		attempts int
+		failure  *gatewayError
+	}
+	request := ConnectorRequest{Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{}}
+	resultCh := make(chan result, 1)
+	go func() {
+		response, attempts, _, failure := gateway.execute(context.Background(), connector, request)
+		resultCh <- result{response: response, attempts: attempts, failure: failure}
+	}()
+
+	var deadline time.Time
+	select {
+	case deadline = <-deadlineObserved:
+	case <-time.After(time.Second):
+		t.Fatal("request did not reach the connector")
+	}
+	select {
+	case <-bodyBuffered:
+	case <-time.After(time.Second):
+		t.Fatal("response body was not buffered")
+	}
+	time.Sleep(50 * time.Millisecond)
+	time.Sleep(time.Until(deadline) + time.Millisecond)
+	connector.completionMu.Unlock()
+	locked = false
+
+	first := <-resultCh
+	if first.failure != nil || first.attempts != 1 || first.response.Status != http.StatusOK || first.response.BodyBase64 != "b2s=" {
+		t.Fatalf("first response=%+v attempts=%d failure=%v", first.response, first.attempts, first.failure)
+	}
+	second, attempts, _, failure := gateway.execute(context.Background(), connector, request)
+	if failure != nil || attempts != 1 || second.Status != http.StatusOK || calls.Load() != 2 {
+		t.Fatalf("second response=%+v attempts=%d calls=%d failure=%v", second, attempts, calls.Load(), failure)
 	}
 }
 

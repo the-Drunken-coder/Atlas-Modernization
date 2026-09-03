@@ -575,7 +575,8 @@ func (c *connector) attempt(
 	request.ContentLength = int64(len(prepared.body))
 	response, err := c.client.Do(request)
 	if err != nil {
-		order := c.recordBreakerCompletion()
+		completedAt := time.Now()
+		order := c.recordBreakerCompletionAt(completedAt)
 		if ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) {
 			return ConnectorResponse{}, &gatewayError{code: FailureUpstreamTimeout, err: err}, order
 		}
@@ -583,7 +584,8 @@ func (c *connector) attempt(
 	}
 	defer func() { _ = response.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(response.Body, c.config.Limits.MaxResponseBytes+1))
-	order := c.recordBreakerCompletion()
+	completedAt := time.Now()
+	order := c.recordBreakerCompletionAt(completedAt)
 	if err != nil {
 		if ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) {
 			return ConnectorResponse{}, &gatewayError{code: FailureUpstreamTimeout, err: err}, order
@@ -730,14 +732,18 @@ func (order breakerOrder) after(other breakerOrder) bool {
 }
 
 func (c *connector) recordBreakerCompletion() breakerOrder {
-	return c.recordBreakerCompletionWithClock(time.Now)
+	return c.recordBreakerCompletionAt(time.Now())
 }
 
 func (c *connector) recordBreakerCompletionWithClock(now func() time.Time) breakerOrder {
+	return c.recordBreakerCompletionAt(now())
+}
+
+func (c *connector) recordBreakerCompletionAt(completedAt time.Time) breakerOrder {
 	c.completionMu.Lock()
 	defer c.completionMu.Unlock()
 	c.completionSeq++
-	return breakerOrder{completedAt: now(), serial: c.completionSeq}
+	return breakerOrder{completedAt: completedAt, serial: c.completionSeq}
 }
 
 func (c *connector) circuitOpenWithClock(now func() time.Time) bool {
