@@ -4,23 +4,25 @@ Meshtastic Link manages the configuration of its attached Meshtastic radio. A co
 
 ## Startup convergence
 
-Before discovery or joining, the Runtime:
+Before discovery or Gateway bootstrap, the Link service:
 
 1. Connects to the local radio and reads firmware, hardware, local, module, security, and channel information.
-2. Loads the one desired Radio profile for this Atlas mesh.
+2. Loads the one desired static Radio profile for this Atlas mesh.
 3. Compares only Atlas-owned fields with the actual radio settings.
 4. Applies required changes in the fewest safe configuration writes.
 5. Reconnects if Meshtastic reboots after configuration.
 6. Reads the settings again and verifies convergence.
-7. Proceeds to discovery and joining only after required settings match.
+7. In Asset mode, clears or disables private-channel material left by an earlier service session.
+8. In Gateway mode, loads and verifies the Gateway's durable private-channel membership.
+9. Proceeds to Asset discovery or Gateway operation only after the applicable state matches.
 
 If the radio already matches, startup performs no configuration writes.
 
-If required settings cannot be applied and verified, the Runtime stops before discovery, joining, or Atlas transmission. Status and diagnostics identify the desired value, actual value, attempted change, and Meshtastic response.
+If required settings cannot be applied and verified, the Link service stops before discovery, Gateway bootstrap, or Atlas transmission. Status and diagnostics identify the desired value, actual value, attempted change, and Meshtastic response.
 
 ## Why Atlas owns the profile
 
-Every radio runs behind the same Meshtastic Link Runtime. Owning the profile allows the system to tune range, airtime, relay behavior, update cadence, and application capacity as one controlled mesh instead of inheriting unrelated defaults or manual app configuration.
+Every radio runs behind the same Meshtastic Link service. Owning the profile allows the system to tune range, airtime, relay behavior, and available application capacity as one controlled mesh instead of inheriting unrelated defaults or manual app configuration.
 
 Experiments must change a reviewable profile and retain before-and-after configuration evidence. Field results can then be associated with the exact settings that produced them.
 
@@ -54,23 +56,23 @@ The profile retains the same modem, channel, and application settings when the s
 
 ## Channel layout
 
-The common profile configures a known public Atlas rendezvous channel as primary. A new Asset broadcasts its custom Atlas discovery beacon there. The Gateway responds by direct message and runs authentication.
+The common static profile configures a known public Atlas rendezvous channel as primary. A new Asset broadcasts its custom Atlas discovery beacon there. The Gateway responds only through a public-key-encrypted direct message and runs authentication.
 
-Successful joining installs membership material for the private shared Atlas channel in a secondary slot. Normal Atlas traffic uses the private channel. The Asset stops its public discovery beacon after joining.
+The profile reserves a secondary slot for the private shared Atlas channel but does not contain its secret membership material. The Gateway deployment stores that material durably and installs it locally during Gateway bootstrap. Successful Asset joining installs the same material in the reserved slot. Normal Atlas traffic uses the private channel, and the Asset stops its public discovery beacon after joining.
 
-The rendezvous channel remains configured after joining so every Runtime restart can repeat discovery. Asset Runtimes ignore unrelated public traffic after joining. The Gateway listens continuously for new structured Atlas discovery beacons.
+The rendezvous channel remains configured after joining so every Asset-mode Link service restart can repeat discovery. Asset-mode services clear or disable prior private-channel material before joining again. The Gateway reloads its durable membership on restart and never joins through itself or silently rotates the channel key. Asset services ignore unrelated public traffic after joining, and the Gateway listens continuously for new structured Atlas discovery beacons.
 
 Meshtastic-native position, telemetry, MQTT, and other unnecessary periodic application traffic are disabled. Required routing and NodeInfo behavior remain enabled. The structured Atlas discovery beacon is the only intentional public application broadcast.
 
 ## One profile for every radio
 
-Every supported radio uses the same desired profile. There are no Gateway, Asset, or per-hardware overlays. Gateway and Asset behavior lives in the companion-computer software and does not change the radio's role or network settings.
+Every supported radio uses the same desired static profile. There are no Gateway, Asset, or per-hardware profile overlays. Gateway and Asset behavior lives in the companion-computer software and does not change the radio's role or relay behavior. Dynamic Link membership is a separate input, not a role-specific profile.
 
 A hardware model is supported only when it can satisfy the common profile. Hardware-specific identity, calibration, and GPIO values remain outside the profile rather than becoming overrides.
 
 ## Local ownership only
 
-Each Runtime configures only its physically attached radio through the local Meshtastic client interface. The Gateway does not send remote administrative changes over the mesh, and peer Assets never configure each other.
+Each Link service configures only its physically attached radio through the local Meshtastic client interface. The Gateway does not send remote administrative changes over the mesh, and peer Assets never configure each other.
 
 Remote configuration is an explicit non-goal. A management operation that can change the modem, channel, or serial behavior must not depend on the same potentially flaky mesh that it could disconnect.
 
@@ -79,9 +81,9 @@ Remote configuration is an explicit non-goal. A management operation that can ch
 The Meshtastic Link tool exposes the same validated configuration system through:
 
 - A command-line interface suitable for operators, scripts, and AI agents
-- The Runtime's loopback-only programmatic API
+- The Link service's loopback-only programmatic API
 
-The CLI is a thin client of the local Runtime. It does not open the serial port or mutate the radio behind the service's back.
+The CLI is a thin client of the local Link service. It does not open the serial port or mutate the radio behind the service's back.
 
 The logical operations are:
 
@@ -96,15 +98,15 @@ The logical operations are:
 
 Exact command names and API routes remain implementation details. Both surfaces use the same validation, apply, reboot recovery, verification, and evidence path.
 
-Changing a desired setting and applying it are separate operations. A caller may change the desired profile, inspect the resulting diff, and explicitly apply it. Runtime startup automatically applies its selected profile.
+Changing a desired setting and applying it are separate operations. A caller may change the desired profile, inspect the resulting diff, and explicitly apply it. Link service startup automatically applies its selected profile.
 
 The companion computer is the trust boundary. Local CLI and loopback API callers do not use a second authentication system, but every mutation remains validated and every apply produces evidence.
 
 ## Profile distribution
 
-The normal Radio profile is version-controlled deployment configuration distributed with the companion-computer software. Updating the fleet means deploying the same new profile to each computer and allowing each Runtime to converge its local radio.
+The normal Radio profile is version-controlled deployment configuration distributed with the companion-computer software. It contains no private-channel key. Updating the fleet means deploying the same new profile to each computer and allowing each Link service to converge its local radio.
 
-This is software and configuration distribution, not remote radio administration. A Runtime never reaches across the mesh to apply the profile elsewhere.
+This is software and configuration distribution, not remote radio administration. A Link service never reaches across the mesh to apply the profile elsewhere. The Gateway distributes dynamic membership only as part of authenticated joining.
 
 ## Experiments
 
@@ -125,9 +127,10 @@ Atlas owns:
 - LoRa preset or explicit modem parameters
 - Frequency slot and hop limit
 - Device role and rebroadcast behavior
-- Atlas rendezvous and shared channel layout
+- Public Atlas rendezvous and private-channel slot layout
+- Gateway-owned durable Link membership and explicit key rotation
 - Meshtastic-native position and telemetry behavior when it competes with Atlas publications
-- Serial API availability required by the Runtime
+- Serial API availability required by the Link service
 - Modules that create unintended radio traffic
 
 Atlas preserves by default:
@@ -139,11 +142,15 @@ Atlas preserves by default:
 
 ## Firmware boundary
 
-The current scope begins after compatible Meshtastic firmware is installed. The Runtime reads and validates the firmware version and hardware capabilities but does not yet flash or upgrade firmware.
+The current scope begins after compatible Meshtastic firmware is installed. The Link service requires Meshtastic 2.7.15 or newer, reads and validates the exact firmware version and hardware capabilities, and does not yet flash or upgrade firmware. A deployment pins and tests one supported patch release rather than accepting every newer build without evidence.
+
+Join messages that carry authentication or private-channel material must be public-key encrypted. The sender does not fall back to the public rendezvous channel key when a recipient public key is unavailable. The receiver rejects the join message unless Meshtastic reports it as public-key encrypted.
+
+The `LOCAL_ONLY` setting means a radio rebroadcasts traffic associated with its configured primary and secondary channels. It does not mean locally originated traffic only. Because an intermediate relay cannot decrypt a public-key direct message addressed to another node, a three-radio hardware test must prove that discovery and joining traverse an Atlas relay with the selected firmware and profile. Field use cannot rely on simulation alone for this behavior.
 
 ## Managed Mode
 
-Meshtastic Managed Mode blocks ordinary client applications from writing configuration and requires a remote-admin path. The local Runtime is itself the intended configuration owner, so the initial Radio profile keeps Managed Mode disabled.
+Meshtastic Managed Mode blocks ordinary client applications from writing configuration and requires a remote-admin path. The local Link service is itself the intended configuration owner, so the initial Radio profile keeps Managed Mode disabled.
 
 ## Lab-selected details
 

@@ -21,7 +21,7 @@ The Gateway submits supported field-originated Atlas activity to Core once. Init
 - Task acknowledgement, progress, cancellation handling, completion, and failure
 - Explicit Entity, Object, or Object-content operations supported by the link
 
-The Gateway validates the message, identifies its originating Asset and Runtime, deduplicates repeated radio delivery, and invokes the corresponding typed Atlas SDK operation. It never turns an arbitrary picture mutation into a generic Core write.
+The Gateway validates the message, identifies its role-tagged source Link node, binds an originating Asset and Atlas Runtime ID when applicable, deduplicates repeated radio delivery, and invokes the corresponding typed Atlas SDK operation. It never turns an arbitrary picture mutation into a generic Core write.
 
 ## Loop prevention
 
@@ -38,13 +38,19 @@ Every Field report therefore needs a stable operation or observation identity an
 
 Core is final for every Task. The Shared Picture may show a field report before Core responds so peers can see current activity without waiting on the internet path.
 
+The Gateway sends eligible Task assignments and cancellations to their addressed Asset through the confirmed Task path without requiring a Link subscription. A `tasks_for_asset` Link subscription is an observational feed for Shared Pictures. It cannot deliver executable work or acknowledge a Task.
+
+The Gateway may use Atlas Core's change feed as the signal that Task state changed for a joined Asset, then reconcile that state through the confirmed delivery path. That internal Core subscription is not a Link subscription and does not make Task delivery best effort.
+
+For each Asset, the Gateway dispatches confirmed Task assignments in Core's authoritative order. It waits for application acknowledgement, rejection, or terminal state before delivering the next assignment, but it does not wait for the earlier Task to finish. The Asset application owns its local Task queue and execution order.
+
 A Task record distinguishes:
 
 - Field-reported state awaiting Core confirmation
 - Core-confirmed authoritative state
 - A rejected field transition followed by the authoritative Core state
 
-When Core rejects a Task transition, the Gateway returns the rejection to the originating Asset. Every Runtime that receives the resulting authoritative Task state replaces its provisional view. The rejection remains available as bounded diagnostic evidence rather than as a permanent picture record.
+When Core rejects a Task transition, the Gateway returns the rejection to the originating Asset. Every Link service that receives the resulting authoritative Task state replaces its provisional view. The rejection remains available as bounded diagnostic evidence rather than as a permanent picture record.
 
 ## Other field-created resources
 

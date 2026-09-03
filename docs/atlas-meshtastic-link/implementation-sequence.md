@@ -1,6 +1,6 @@
 # Implementation boundary and sequence
 
-This document turns the accepted Meshtastic Link architecture into bounded implementation slices. It does not claim that the package or Runtime exists yet.
+This document turns the accepted Meshtastic Link architecture into bounded implementation slices. It does not claim that the package or Link service exists yet.
 
 ## Package ownership
 
@@ -9,28 +9,29 @@ Meshtastic Link is a new npm workspace at `packages/meshtastic-link`, implemente
 The package owns:
 
 - The generated Radio contract and radio-facing SDK
-- Link envelopes, fragmentation, reassembly, deduplication, confirmation, retry, priority, and congestion behavior
+- Link envelopes, source generations, fragmentation, reassembly, in-session deduplication, confirmation, retry, priority, and congestion behavior
 - The in-memory Shared Picture
-- The long-running Runtime, local JSON API, event stream, and CLI
+- The long-running Link service, local JSON API, event stream, and CLI
 - Declarative local Radio profile convergence and verification
+- Durable Gateway Link membership storage and Asset join state
 - The Meshtastic radio adapter
 - Reusable virtual clock, virtual radio, packet network, and benchmark engine
 
 The package does not own:
 
 - Atlas Protocol resources or operation semantics
-- Asset publication cadence, physical behavior, autonomy, or Command handlers
+- Asset publication cadence, physical behavior, autonomy, Command handlers, or durable Task-ID execution fences
 - Gateway Core credentials, Core writes, feed consumption, or durable Core reconciliation
 - MeshCore FieldLink behavior
 - Whole-system deployment policy
 
-## One Runtime, two modes
+## One Link service, two modes
 
-One Runtime implementation and executable supports explicit `asset` and `gateway` modes. The modes share the transport engine, Radio profile, local API, Shared Picture, queues, diagnostics, and simulation seams.
+One Link service implementation and executable supports explicit `asset` and `gateway` modes. The modes share the transport engine, Radio profile, local API, Shared Picture, queues, diagnostics, and simulation seams.
 
-Asset mode discovers and joins through the Gateway. Gateway mode listens for discovery, runs the selected authentication policy, admits members, and exposes field operations to the separate Gateway application. The Gateway application uses Atlas SDK and owns all Atlas Core access.
+Asset mode clears prior membership, then discovers and joins through the Gateway. Gateway mode loads durable membership, increments its source generation, listens for discovery, runs the selected authentication policy, admits members, and exposes field operations to the separate Gateway application. The Gateway never joins through itself. The Gateway application uses Atlas SDK and owns all Atlas Core access.
 
-There are no separate radio profiles or hardware requirements for these modes.
+There are no separate static Radio profiles or hardware requirements for these modes. Dynamic membership differs by acquisition path, not radio behavior.
 
 ## Generated contract
 
@@ -66,7 +67,7 @@ The first milestone is entirely simulated and deliberately narrow:
 2. Have one simulated Asset application submit a valid position resource through the radio-facing SDK.
 3. Envelope and fragment it using production transport code.
 4. Flood the chunks through the simulated packet network.
-5. Reassemble and validate it at the simulated Gateway and another Asset Runtime.
+5. Reassemble and validate it at the simulated Gateway and another Asset-mode Link service.
 6. Update both Shared Pictures only through the production receive path.
 7. Report exact application bytes, packets, transmitted bytes, modeled airtime, and delivery latency.
 8. Prove that a fixed scenario and seed produce repeatable semantic and metric results.
@@ -78,13 +79,14 @@ This slice contains no optimized encoding and no physical radio. It establishes 
 After the first slice is correct and repeatable:
 
 1. Add every generated Atlas Protocol resource and operation to the simulated Radio contract.
-2. Add addressing, confirmation, retries, deadlines, deduplication, fragmentation repair, priority preemption, congestion coalescing, subscriptions, and Object transfers.
-3. Add the Runtime's loopback API, event stream, CLI, and Shared Picture lifecycle.
-4. Add the USB serial adapter and local Radio profile convergence.
-5. Add public discovery, replaceable authentication, and private-channel joining.
-6. Integrate Asset and Gateway applications without moving their policy into the Link.
-7. Run the canonical five-radio scenarios and record the unoptimized baseline.
-8. Attach physical radios, calibrate the simulation, and validate provisional field targets.
-9. Introduce compact generated encodings only after measurements identify their value.
+2. Add role-tagged addressing, source generations, confirmation, retries, deadlines, in-session deduplication, fragmentation repair, priority preemption, congestion coalescing, subscriptions, and Object transfers.
+3. Add ordered confirmed Task delivery and keep `tasks_for_asset` feeds observational.
+4. Add the Link service's loopback API, gap-free snapshot and event stream, CLI, and Shared Picture lifecycle.
+5. Add the USB serial adapter, firmware gate, and local static Radio profile convergence.
+6. Add durable Gateway bootstrap, public discovery, public-key-encrypted replaceable authentication, and private-channel joining.
+7. Integrate Asset and Gateway applications without moving their policy into the Link.
+8. Run the canonical five-radio scenarios and record the unoptimized baseline.
+9. Attach physical radios, prove three-radio joining under `LOCAL_ONLY`, calibrate the simulation, and validate provisional field targets.
+10. Introduce compact generated encodings only after measurements identify their value.
 
 Each phase uses the narrow correctness and documentation checks relevant to that phase. A later phase does not require speculative infrastructure in an earlier one.

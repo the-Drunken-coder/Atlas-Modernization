@@ -6,16 +6,16 @@ The simulator is a protocol and network workbench, not a replacement for hardwar
 
 ## No-cheating rule
 
-A scenario must exercise the same application path used by a real Runtime:
+A scenario must exercise the same application path used by a real Link service:
 
-1. A Runtime client invokes the production radio-facing SDK.
+1. A Link client invokes the production radio-facing SDK.
 2. The production Radio contract serializer creates the payload.
 3. The production transport envelopes, fragments, queues, and prioritizes it.
 4. A simulated Meshtastic network applies configured modem airtime, transmission queues, flooding across hops, contention, collision, loss, duplication, retry, changing connectivity, and delay.
 5. The receiving production transport reassembles and validates the message.
 6. Only the normal receive path may update a Shared Picture or deliver an addressed operation.
 
-The simulation may advance a virtual clock faster than wall time. It may not inject final Atlas state into a destination, skip serialization, estimate a smaller payload than production emits, bypass fragments, grant acknowledgements without delivery, or use perfect global knowledge inside a Runtime.
+The simulation may advance a virtual clock faster than wall time. It may not inject final Atlas state into a destination, skip serialization, estimate a smaller payload than production emits, bypass fragments, grant acknowledgements without delivery, or use perfect global knowledge inside a Link service.
 
 ## Reproducible scenarios
 
@@ -29,7 +29,7 @@ Each scenario records:
 - Loss, duplication, collision, retry, and queue assumptions
 - Success criteria and measurement window
 
-The initial suite should include quiet convergence, simultaneous Asset reporting, a new Runtime joining, aggregate subscription demand, the known field-to-Core-to-field duplicate path, Task and cancellation under load, Gateway-to-Core loss, and a 32 KiB Object transfer interrupted by higher-priority traffic.
+The initial suite should include quiet convergence, simultaneous Asset reporting, a new Link service joining, Gateway restart without channel-key change, aggregate subscription demand, the known field-to-Core-to-field duplicate path, ordered Task delivery and cancellation under load, service restart with delayed old-generation traffic, snapshot-to-stream handoff, Gateway-to-Core loss, and a 32 KiB Object transfer interrupted by higher-priority traffic.
 
 Publication schedules are scenario inputs representing Asset application behavior. The simulated Link must not generate Asset position, Track, telemetry, health, or Task-progress schedules on its own.
 
@@ -76,10 +76,13 @@ At minimum, record:
 
 Throughput improvement is invalid if Atlas semantics, application confirmation, delivery success, or priority behavior regresses outside the scenario's accepted limits.
 
-Every implementation must prove:
+The production Link implementation and whole-system scenarios must prove:
 
-- A Task is never executed twice because of delivery duplication or retry.
-- Delayed or stale state never replaces newer accepted state from the same source.
+- The Link suppresses duplicate delivery during one service session, and the Asset application's durable Task-ID fence prevents duplicate physical execution across Link service restarts.
+- Confirmed Task assignments reach each Asset in ascending `created_at`, then `task_id`, even when radio delivery reorders packets.
+- A `tasks_for_asset` feed updates only the Shared Picture and never invokes the Asset's Task handler or acknowledges a Task.
+- Delayed state from an older source generation never replaces newer accepted state from that source.
+- Snapshot and live-stream handoff loses no accepted Shared Picture change.
 - Only the addressed application acts on a confirmed operation.
 - Multiple subscriptions for the same feed produce one Gateway publication stream.
 - Confirmation, rejection, timeout, and retry exhaustion produce the specified visible outcomes.
@@ -93,7 +96,7 @@ In the normal three-hop scenario, an optimized field candidate should meet these
 - An urgent cancellation reaches the assigned Asset application within two seconds.
 - A Task assignment reaches the assigned Asset within five seconds.
 - A small data request completes within ten seconds.
-- A newly joined Runtime develops a useful Shared Picture within thirty seconds.
+- A newly joined Link service develops a useful Shared Picture within thirty seconds.
 - A background Object transfer does not cause any of those targets to be missed.
 
 These are simulator goals until hardware trials validate them. The baseline is measured against them but is not rejected for missing them.
@@ -102,4 +105,6 @@ These are simulator goals until hardware trials validate them. The baseline is m
 
 The simulator operates at the packet level. It does not attempt to simulate electromagnetic waveforms, terrain propagation, or antenna physics. Exact serialized bytes, packet sizes, configured modem airtime, transmission queues, routing and flooding, hop limits, application scheduling, retries, and acknowledgements come from production configuration and code. Loss, collision, interference, and changing connectivity begin as explicit scenario assumptions.
 
-Hardware experiments record actual Radio profile, topology, environment, packet outcomes, and timing. Their results calibrate or bound the simulator. Uncalibrated assumptions remain labeled instead of being presented as field predictions.
+Hardware experiments record actual firmware, Radio profile, topology, environment, packet outcomes, and timing. Their results calibrate or bound the simulator. Uncalibrated assumptions remain labeled instead of being presented as field predictions.
+
+Before field use, three physical radios using the selected firmware and `LOCAL_ONLY` profile must prove that an Asset discovery beacon and the public-key-encrypted join exchange traverse one intermediate relay in both directions. This result cannot be inferred from the packet simulator.
