@@ -125,6 +125,8 @@ export type SubmitOptions = {
 
 type Outbound = {
   message: LinkMessage;
+  operationID: string;
+  trackingKey: string;
   identity: FrameIdentity;
   frames: Uint8Array[];
   pendingChunks: number[];
@@ -262,50 +264,54 @@ export class LinkTransport {
     options: SubmitOptions,
     useInboundReservation: boolean
   ): LinkOperationResult {
-    if (this.stopped) return this.failedResult(options.operationID ?? compactID(), "link service is stopped");
+    const operationID = options.operationID ?? operationIDFor(message);
+    const trackingKey = operationTrackingKey(message, options.destination, operationID);
+    if (this.stopped) return this.failedResult(operationID, "link service is stopped", trackingKey);
     if (!validStateSource(message, this.node)) {
       return this.failedResult(
-        options.operationID ?? operationIDFor(message),
-        "Asset state must use the field path without claiming Core authority"
+        operationID,
+        "Asset state must use the field path without claiming Core authority or publishing Task records",
+        trackingKey
       );
     }
     const delivery = deliveryClass(message);
     if (delivery === "confirmed" && options.destination === undefined) {
-      return this.failedResult(options.operationID ?? compactID(), "confirmed operations require a destination");
+      return this.failedResult(operationID, "confirmed operations require a destination", trackingKey);
     }
-    const operationID = options.operationID ?? operationIDFor(message);
     if (!operationID.trim()) throw new TypeError("operation ID must not be blank");
     if (message.type === "data_request" && operationID !== message.request_id) {
-      return this.failedResult(operationID, "Data request operation ID must match its request ID");
+      return this.failedResult(operationID, "Data request operation ID must match its request ID", trackingKey);
     }
-    if (message.type === "object_content" && operationID !== message.request_id) {
-      return this.failedResult(operationID, "Object content operation ID must match its request ID");
-    }
-    const existing = this.operationResults.get(operationID);
+    const existing = this.operationResults.get(trackingKey);
     if (existing) {
-      if (existing.status !== "failed" || this.committedOperationIDs.has(operationID)) return { ...existing };
-      this.operationResults.delete(operationID);
+      if (existing.status !== "failed" || this.committedOperationIDs.has(trackingKey)) return { ...existing };
+      this.operationResults.delete(trackingKey);
     }
-    if (this.committedOperationIDs.has(operationID)) {
-      return this.failedResult(operationID, "operation ID was already committed in this Link service session");
+    // Detailed results rotate; the separate session fence still blocks identities that were already transmitted.
+    if (this.committedOperationIDs.has(trackingKey)) {
+      return this.failedResult(
+        operationID,
+        "operation ID was already committed in this Link service session",
+        trackingKey
+      );
     }
     if (delivery === "confirmed" && this.committedOperationIDs.size >= COMMITTED_OPERATION_ID_LIMIT) {
       this.mutableMetrics.confirmed_rejected_overload++;
-      return this.failedResult(operationID, "confirmed operation identity capacity is exhausted");
+      return this.failedResult(operationID, "confirmed operation identity capacity is exhausted", trackingKey);
     }
     if (message.type === "data_request" && this.pendingDataRequests.has(message.request_id)) {
-      return this.failedResult(operationID, "data request ID is already pending");
+      return this.failedResult(operationID, "data request ID is already pending", trackingKey);
     }
     if (delivery === "confirmed" && this.confirmedCount() >= this.confirmedLimit) {
       this.mutableMetrics.confirmed_rejected_overload++;
-      return this.failedResult(operationID, "confirmed operation capacity is exhausted");
+      return this.failedResult(operationID, "confirmed operation capacity is exhausted", trackingKey);
     }
 
     let payload: Uint8Array;
     try {
       payload = serializeLinkMessage(message);
     } catch (error) {
-      return this.failedResult(operationID, `Radio contract encoding failed: ${asErrorMessage(error)}`);
+      return this.failedResult(operationID, `Radio contract encoding failed: ${asErrorMessage(error)}`, trackingKey);
     }
     const identity: FrameIdentity = {
       revision: 1,
@@ -315,7 +321,7 @@ export class LinkTransport {
       source_generation: this.sourceGeneration,
       service_session: this.serviceSession,
       source_sequence: ++this.sourceSequence,
-      operation_id: operationID,
+      operation_id: wireOperationIDFor(message, operationID),
       message_id: compactID(),
       priority: messagePriority(message)
     };
@@ -324,10 +330,12 @@ export class LinkTransport {
     try {
       frames = fragmentPayload(payload, identity, this.radio.max_payload_bytes);
     } catch (error) {
-      return this.failedResult(operationID, `Link framing failed: ${asErrorMessage(error)}`);
+      return this.failedResult(operationID, `Link framing failed: ${asErrorMessage(error)}`, trackingKey);
     }
     const outbound: Outbound = {
       message,
+      operationID,
+      trackingKey,
       identity,
       frames,
       pendingChunks: [],
@@ -346,19 +354,19 @@ export class LinkTransport {
     const capacityExhausted = useInboundReservation
       ? occupancy >= this.queueLimit + this.confirmedLimit
       : occupancy + this.pendingInbound.size >= this.queueLimit;
-    if (capacityExhausted) return this.failedResult(operationID, "outbound queue capacity is exhausted");
+    if (capacityExhausted) return this.failedResult(operationID, "outbound queue capacity is exhausted", trackingKey);
     this.queue.push(outbound);
-    if (delivery === "confirmed") this.committedOperationIDs.add(operationID);
+    if (delivery === "confirmed") this.committedOperationIDs.add(trackingKey);
     if (delivery === "confirmed") {
-      this.outboundByOperation.set(operationID, outbound);
+      this.outboundByOperation.set(trackingKey, outbound);
       if (message.type === "data_request") this.pendingDataRequests.set(message.request_id, outbound);
-      if (message.type === "resource_operation") this.responseOperations.set(operationID, outbound);
+      if (message.type === "resource_operation") this.responseOperations.set(trackingKey, outbound);
       outbound.deadlineTimer = this.clock.schedule(outboundDeadlineMs(message, identity.priority), () => {
-        const awaitingConfirmation = this.outboundByOperation.has(operationID);
+        const awaitingConfirmation = this.outboundByOperation.has(trackingKey);
         const requestID = dataRequestID(outbound);
         const awaitingResponse =
           (requestID !== undefined && this.pendingDataRequests.get(requestID) === outbound) ||
-          this.responseOperations.get(operationID) === outbound;
+          this.responseOperations.get(trackingKey) === outbound;
         if (!awaitingConfirmation && !awaitingResponse) return;
         this.mutableMetrics.retry_exhausted++;
         this.completeOutbound(
@@ -371,7 +379,7 @@ export class LinkTransport {
     this.mutableMetrics.application_bytes += payload.byteLength;
     this.mutableMetrics.peak_queue_depth = Math.max(this.mutableMetrics.peak_queue_depth, this.queue.length);
     const result: LinkOperationResult = { operation_id: operationID, status: "queued" };
-    this.recordOperation(result);
+    this.recordOperation(result, trackingKey);
     this.requestPump();
     return result;
   }
@@ -402,7 +410,9 @@ export class LinkTransport {
     const outbound =
       this.outboundByOperation.get(operationID) ??
       this.responseOperations.get(operationID) ??
-      [...this.pendingDataRequests.values()].find((candidate) => candidate.identity.operation_id === operationID);
+      [...this.outboundByOperation.values(), ...this.pendingDataRequests.values()].find(
+        (candidate) => candidate.operationID === operationID
+      );
     if (!outbound) return false;
     this.completeOutbound(outbound, "failed", reason);
     return true;
@@ -413,6 +423,9 @@ export class LinkTransport {
       throw new Error("only a Gateway may announce an Asset source activation");
     }
     const operationID = `source_active_${source.id}_${generation}`;
+    if (!this.activateSourceFence(source, generation, session)) {
+      return this.failedResult(operationID, "source activation is stale");
+    }
     return this.submit({
       type: "control",
       control: "source_active",
@@ -424,7 +437,9 @@ export class LinkTransport {
   }
 
   status(operationID: string): LinkOperationResult | undefined {
-    const result = this.operationResults.get(operationID);
+    const result =
+      this.operationResults.get(operationID) ??
+      [...this.operationResults.values()].reverse().find((candidate) => candidate.operation_id === operationID);
     return result === undefined ? undefined : structuredClone(result);
   }
 
@@ -515,7 +530,7 @@ export class LinkTransport {
         if (this.stopped) return;
         this.mutableMetrics.radio_send_failures++;
         if (outbound.delivery === "confirmed") {
-          if (this.outboundByOperation.has(outbound.identity.operation_id)) {
+          if (this.outboundByOperation.has(outbound.trackingKey)) {
             outbound.pendingChunks.unshift(chunkIndex);
             this.deferRadioSendRetry(outbound);
           }
@@ -525,7 +540,7 @@ export class LinkTransport {
         return;
       }
       if (this.stopped) return;
-      if (outbound.delivery === "confirmed" && !this.outboundByOperation.has(outbound.identity.operation_id)) return;
+      if (outbound.delivery === "confirmed" && !this.outboundByOperation.has(outbound.trackingKey)) return;
       nextDelayMs = this.radio.pacingDelayMs?.(frame) ?? 0;
       if ((outbound.chunkSendCounts[chunkIndex] ?? 0) > 0) this.mutableMetrics.retransmitted_packets++;
       outbound.chunkSendCounts[chunkIndex] = (outbound.chunkSendCounts[chunkIndex] ?? 0) + 1;
@@ -536,7 +551,7 @@ export class LinkTransport {
       this.emit({
         type: "packet_sent",
         message_id: outbound.identity.message_id,
-        operation_id: outbound.identity.operation_id,
+        operation_id: outbound.operationID,
         bytes: frame.byteLength,
         sent_at: this.clock.now()
       });
@@ -594,12 +609,12 @@ export class LinkTransport {
     }
     if (outbound.delivery === "best_effort") {
       const result: LinkOperationResult = {
-        operation_id: outbound.identity.operation_id,
+        operation_id: outbound.operationID,
         status: "sent",
         completed_at: this.clock.now()
       };
       this.recordOperationTiming(outbound);
-      this.recordOperation(result);
+      this.recordOperation(result, outbound.trackingKey);
       this.emit({ type: "operation", result });
       return;
     }
@@ -617,7 +632,7 @@ export class LinkTransport {
     if (outbound.retryTimer) this.clock.cancel(outbound.retryTimer);
     outbound.retryTimer = this.clock.schedule(this.retryIntervalMs ?? RETRY_MS[outbound.identity.priority], () => {
       delete outbound.retryTimer;
-      if (!this.outboundByOperation.has(outbound.identity.operation_id) || this.stopped) return;
+      if (!this.outboundByOperation.has(outbound.trackingKey) || this.stopped) return;
       outbound.order = this.nextOrder++;
       this.queue.push(outbound);
       this.requestPump();
@@ -625,7 +640,7 @@ export class LinkTransport {
   }
 
   private retryOutbound(outbound: Outbound): void {
-    if (!this.outboundByOperation.has(outbound.identity.operation_id) || this.stopped) return;
+    if (!this.outboundByOperation.has(outbound.trackingKey) || this.stopped) return;
     outbound.pendingChunks = outbound.frames.map((_, index) => index);
     outbound.order = this.nextOrder++;
     this.queue.push(outbound);
@@ -889,17 +904,17 @@ export class LinkTransport {
   private handleControl(message: ControlMessage, identity: FrameIdentity): void {
     if (message.control === "source_active") {
       if (identity.source.role !== "gateway") return;
-      const accepted = this.activateSourceFence(
-        message.active_source,
-        message.active_generation,
-        message.active_session
-      );
-      if (accepted)
-        this.picture?.activateSource(message.active_source, message.active_generation, message.active_session);
+      this.activateSourceFence(message.active_source, message.active_generation, message.active_session);
       return;
     }
     if (identity.destination === undefined || !sameNode(identity.destination, this.node)) return;
-    const outbound = this.outboundByOperation.get(message.operation_id);
+    const outbound = [...this.outboundByOperation.values()].find(
+      (candidate) =>
+        candidate.identity.operation_id === message.operation_id &&
+        candidate.identity.destination !== undefined &&
+        sameNode(candidate.identity.destination, identity.source) &&
+        message.message_id === candidate.identity.message_id
+    );
     if (
       !outbound ||
       outbound.identity.destination === undefined ||
@@ -1051,23 +1066,23 @@ export class LinkTransport {
   private completeOutbound(outbound: Outbound, status: "confirmed" | "rejected" | "failed", reason?: string): void {
     if (outbound.retryTimer) this.clock.cancel(outbound.retryTimer);
     if (outbound.deadlineTimer) this.clock.cancel(outbound.deadlineTimer);
-    this.outboundByOperation.delete(outbound.identity.operation_id);
+    this.outboundByOperation.delete(outbound.trackingKey);
     const requestID = dataRequestID(outbound);
     if (requestID !== undefined && this.pendingDataRequests.get(requestID) === outbound) {
       this.pendingDataRequests.delete(requestID);
     }
-    if (status !== "confirmed") this.responseOperations.delete(outbound.identity.operation_id);
+    if (status !== "confirmed") this.responseOperations.delete(outbound.trackingKey);
     removeAll(this.queue, outbound);
     const releasedObject = this.activeObjectMessageID === outbound.identity.message_id;
     if (releasedObject) this.activeObjectMessageID = undefined;
     const result: LinkOperationResult = {
-      operation_id: outbound.identity.operation_id,
+      operation_id: outbound.operationID,
       status,
       ...(reason === undefined ? {} : { reason }),
       completed_at: this.clock.now()
     };
     this.recordOperationTiming(outbound);
-    this.recordOperation(result);
+    this.recordOperation(result, outbound.trackingKey);
     this.emit({ type: "operation", result });
     if (releasedObject && this.hasEligibleOutbound()) this.requestPump();
   }
@@ -1075,14 +1090,14 @@ export class LinkTransport {
   private confirmAwaitingResponseTransport(outbound: Outbound): void {
     if (outbound.retryTimer) this.clock.cancel(outbound.retryTimer);
     delete outbound.retryTimer;
-    this.outboundByOperation.delete(outbound.identity.operation_id);
+    this.outboundByOperation.delete(outbound.trackingKey);
     removeAll(this.queue, outbound);
     const result: LinkOperationResult = {
-      operation_id: outbound.identity.operation_id,
+      operation_id: outbound.operationID,
       status: "confirmed"
     };
-    this.intermediateResponseConfirmations.add(outbound.identity.operation_id);
-    this.recordOperation(result);
+    this.intermediateResponseConfirmations.add(outbound.trackingKey);
+    this.recordOperation(result, outbound.trackingKey);
     this.emit({ type: "operation", result });
   }
 
@@ -1097,11 +1112,11 @@ export class LinkTransport {
     if (outbound.retryTimer) this.clock.cancel(outbound.retryTimer);
     if (outbound.deadlineTimer) this.clock.cancel(outbound.deadlineTimer);
     this.pendingDataRequests.delete(requestID);
-    this.responseOperations.delete(outbound.identity.operation_id);
-    this.outboundByOperation.delete(outbound.identity.operation_id);
+    this.responseOperations.delete(outbound.trackingKey);
+    this.outboundByOperation.delete(outbound.trackingKey);
     removeAll(this.queue, outbound);
     const result: LinkOperationResult = {
-      operation_id: outbound.identity.operation_id,
+      operation_id: outbound.operationID,
       status: "responded",
       ...(message.type === "data_response" && message.output !== undefined ? { output: message.output } : {}),
       ...(message.type === "data_response" && message.next_cursor !== undefined
@@ -1119,7 +1134,7 @@ export class LinkTransport {
       completed_at: this.clock.now()
     };
     this.recordOperationTiming(outbound);
-    this.recordOperation(result);
+    this.recordOperation(result, outbound.trackingKey);
     this.emit({ type: "operation", result });
   }
 
@@ -1155,13 +1170,13 @@ export class LinkTransport {
     removeAll(this.queue, outbound);
     if (this.activeObjectMessageID === outbound.identity.message_id) this.activeObjectMessageID = undefined;
     const result: LinkOperationResult = {
-      operation_id: outbound.identity.operation_id,
+      operation_id: outbound.operationID,
       status: "failed",
       reason,
       completed_at: this.clock.now()
     };
     this.recordOperationTiming(outbound);
-    this.recordOperation(result);
+    this.recordOperation(result, outbound.trackingKey);
     this.emit({ type: "operation", result });
   }
 
@@ -1172,12 +1187,12 @@ export class LinkTransport {
     if (!previous) return;
     removeAll(this.queue, previous);
     const result: LinkOperationResult = {
-      operation_id: previous.identity.operation_id,
+      operation_id: previous.operationID,
       status: "failed",
       reason: "replaced by newer unsent state",
       completed_at: this.clock.now()
     };
-    this.recordOperation(result);
+    this.recordOperation(result, previous.trackingKey);
     this.emit({ type: "operation", result });
     this.mutableMetrics.best_effort_replaced++;
   }
@@ -1209,37 +1224,37 @@ export class LinkTransport {
     ]).size;
   }
 
-  private failedResult(operationID: string, reason: string): LinkOperationResult {
+  private failedResult(operationID: string, reason: string, trackingKey = operationID): LinkOperationResult {
     const result: LinkOperationResult = {
       operation_id: operationID,
       status: "failed",
       reason,
       completed_at: this.clock.now()
     };
-    this.recordOperation(result);
+    this.recordOperation(result, trackingKey);
     this.emit({ type: "operation", result });
     return result;
   }
 
-  private recordOperation(result: LinkOperationResult): void {
-    const previous = this.operationResults.get(result.operation_id);
+  private recordOperation(result: LinkOperationResult, trackingKey: string): void {
+    const previous = this.operationResults.get(trackingKey);
     const previousWasIntermediateConfirmation =
-      previous?.status === "confirmed" && this.intermediateResponseConfirmations.has(result.operation_id);
+      previous?.status === "confirmed" && this.intermediateResponseConfirmations.has(trackingKey);
     if (
       isCountedOutcome(result.status) &&
       result.status !== "confirmed" &&
       (previous === undefined || !isCountedOutcome(previous.status) || previousWasIntermediateConfirmation)
     ) {
       this.mutableMetrics.operation_outcomes[result.status]++;
-      this.intermediateResponseConfirmations.delete(result.operation_id);
+      this.intermediateResponseConfirmations.delete(trackingKey);
     } else if (
       result.status === "confirmed" &&
-      !this.intermediateResponseConfirmations.has(result.operation_id) &&
+      !this.intermediateResponseConfirmations.has(trackingKey) &&
       (previous === undefined || !isCountedOutcome(previous.status))
     ) {
       this.mutableMetrics.operation_outcomes.confirmed++;
     }
-    this.operationResults.set(result.operation_id, result);
+    this.operationResults.set(trackingKey, result);
     while (this.operationResults.size > OPERATION_RESULT_LIMIT) {
       const removable = [...this.operationResults].find(
         ([operationID, candidate]) => candidate.status !== "queued" && !this.operationIsPending(operationID)
@@ -1253,7 +1268,7 @@ export class LinkTransport {
 
   private operationIsPending(operationID: string): boolean {
     if (this.outboundByOperation.has(operationID) || this.responseOperations.has(operationID)) return true;
-    return [...this.pendingDataRequests.values()].some((outbound) => outbound.identity.operation_id === operationID);
+    return [...this.pendingDataRequests.values()].some((outbound) => outbound.trackingKey === operationID);
   }
 
   private recordSettledInbound(settlementID: string, result: "confirmed" | "rejected"): void {
@@ -1625,6 +1640,16 @@ function operationIDFor(message: LinkMessage): string {
   return compactID();
 }
 
+function wireOperationIDFor(message: LinkMessage, operationID: string): string {
+  return message.type === "data_response" || message.type === "object_content" ? message.request_id : operationID;
+}
+
+function operationTrackingKey(message: LinkMessage, destination: LinkNode | undefined, operationID: string): string {
+  return (message.type === "data_response" || message.type === "object_content") && destination !== undefined
+    ? `${destination.role}:${destination.id}:${operationID}`
+    : operationID;
+}
+
 function dataRequestID(outbound: Outbound): string | undefined {
   return outbound.message.type === "data_request" ? outbound.message.request_id : undefined;
 }
@@ -1637,6 +1662,7 @@ function outboundDeadlineMs(message: LinkMessage, priority: MessagePriority): nu
 
 function validStateSource(message: LinkMessage, source: LinkNode): boolean {
   if (message.type !== "state" || source.role !== "asset") return true;
+  if (message.resource_type === "task") return false;
   return (
     message.path === "field" && (message.confirmation === "awaiting_core" || message.confirmation === "not_required")
   );
@@ -1730,6 +1756,8 @@ function responseMatchesRequest(
         isRuntimeTaskDeliveryResponse(response.output) &&
         response.output.tasks.every((task) => task.asset_id === request.target_id)
       );
+    case "object.content":
+      return false;
     default:
       return true;
   }

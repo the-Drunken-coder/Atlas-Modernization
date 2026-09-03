@@ -103,6 +103,8 @@ export class LinkService {
   }
 
   setLifecycle(lifecycle: LinkLifecycle, detail?: string): void {
+    if (this.lifecycle === "stopped") return;
+    if (this.lifecycle === "error" && lifecycle !== "error" && lifecycle !== "stopped") return;
     this.lifecycle = lifecycle;
     this.statusDetail = detail;
     this.emit({ type: "status", status: this.status() });

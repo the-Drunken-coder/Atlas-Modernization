@@ -354,6 +354,16 @@ describe("joining and Radio profile", () => {
 
     radio.receive({
       payload: encodeJoinMessage(discovery(256)),
+      received_at: 1,
+      radio_source: 101,
+      channel: 0,
+      public_key_encrypted: false
+    });
+    for (let attempt = 0; attempt < 10; attempt++) await Promise.resolve();
+    expect(network.metrics().radio_submissions).toBe(256);
+
+    radio.receive({
+      payload: encodeJoinMessage(discovery(256)),
       received_at: 2 * 60_000 + 1,
       radio_source: 101,
       channel: 0,

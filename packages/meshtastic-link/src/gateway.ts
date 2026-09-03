@@ -66,6 +66,10 @@ export type GatewayFeedTransition = {
   selector: SubscriptionTransition["selector"];
 };
 
+export type GatewayFeedDemandResult =
+  | GatewayFeedTransition
+  | { rejected: true; reason: "subscription transition capacity is exhausted" };
+
 export class GatewayFeedDemand {
   private readonly demand = new GatewaySubscriptionDemand();
   private readonly latestTransitions = new Map<
@@ -79,7 +83,7 @@ export class GatewayFeedDemand {
     }
   >();
 
-  apply(event: TransportMessageEvent, now: number): GatewayFeedTransition | undefined {
+  apply(event: TransportMessageEvent, now: number): GatewayFeedDemandResult | undefined {
     if (!event.addressed_to_local || event.source.role !== "asset" || event.message.type !== "subscription") {
       return undefined;
     }
@@ -95,7 +99,9 @@ export class GatewayFeedDemand {
         if (event.service_session !== previous.session || event.source_sequence <= previous.sequence) return undefined;
       }
     }
-    if (previous === undefined && !this.makeTransitionFenceRoom(now)) return undefined;
+    if (previous === undefined && !this.makeTransitionFenceRoom(now)) {
+      return { rejected: true, reason: "subscription transition capacity is exhausted" };
+    }
     this.latestTransitions.set(transitionKey, {
       generation: event.source_generation,
       session: event.service_session,
@@ -190,7 +196,12 @@ export class OrderedTaskDispatcher {
       this.pump(assetID);
       return;
     }
-    if (this.inFlight.get(assetID)?.task.task_id === task.task_id) return;
+    if (
+      this.inFlight.get(assetID)?.task.task_id === task.task_id ||
+      this.inFlightCancellations.get(assetID)?.task.task_id === task.task_id
+    ) {
+      return;
+    }
     const queue = this.queued.get(assetID) ?? [];
     const existing = queue.findIndex((item) => item.task.task_id === task.task_id);
     if (existing >= 0) queue[existing] = { task, delivery };
@@ -211,13 +222,19 @@ export class OrderedTaskDispatcher {
         .filter(
           (task) =>
             this.inFlight.get(assetID)?.task.task_id !== task.task_id &&
+            this.inFlightCancellations.get(assetID)?.task.task_id !== task.task_id &&
             !queue.some((item) => item.task.task_id === task.task_id)
         )
         .map((task) => task.task_id)
     );
     this.reserveQueueSlots(additions.size);
     for (const task of tasks) {
-      if (this.inFlight.get(assetID)?.task.task_id === task.task_id) continue;
+      if (
+        this.inFlight.get(assetID)?.task.task_id === task.task_id ||
+        this.inFlightCancellations.get(assetID)?.task.task_id === task.task_id
+      ) {
+        continue;
+      }
       const existing = queue.findIndex((item) => item.task.task_id === task.task_id);
       if (existing >= 0) queue[existing] = { task, delivery: "assignment" };
       else queue.push({ task, delivery: "assignment" });

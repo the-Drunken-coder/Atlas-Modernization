@@ -189,7 +189,12 @@ export async function runCanonicalBaseline(seed = 42): Promise<CanonicalBaseline
   gateway.onEvent((event) => {
     if (event.type !== "message") return;
     if (event.message.type === "subscription") {
-      const transition = feedDemand.apply(event, clock.now());
+      const result = feedDemand.apply(event, clock.now());
+      if (result && "rejected" in result) {
+        gateway.settleInbound(event.settlement_id, false, result.reason);
+        return;
+      }
+      const transition = result;
       if (transition?.active) aggregateFeedActivations++;
       gateway.settleInbound(event.settlement_id, true);
     } else if (event.message.type === "data_request" && event.addressed_to_local) {

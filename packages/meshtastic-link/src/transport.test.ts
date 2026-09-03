@@ -429,6 +429,38 @@ describe("Link transport", () => {
     });
   });
 
+  it("does not complete Object content with an empty generic response", async () => {
+    const { clock, gateway, asset } = directPair();
+    gateway.onEvent((event) => {
+      if (event.type !== "message" || event.message.type !== "data_request" || !event.addressed_to_local) return;
+      gateway.settleInbound(event.settlement_id, true);
+      gateway.submit(
+        {
+          type: "data_response",
+          request_id: event.message.request_id,
+          operation: "object.content"
+        },
+        { destination: event.source }
+      );
+    });
+
+    asset.submit(
+      {
+        type: "data_request",
+        request_id: "object-request",
+        operation: "object.content",
+        target_id: "object-requested"
+      },
+      { destination: { role: "gateway", id: "gateway" }, operationID: "object-request" }
+    );
+    await clock.runUntilIdle();
+
+    expect(asset.status("object-request")).toMatchObject({
+      status: "failed",
+      reason: "response deadline expired"
+    });
+  });
+
   it("reserves outbound capacity for an admitted inbound settlement", async () => {
     const clock = new VirtualClock();
     const network = new SimulatedPacketNetwork({ seed: 33, clock });
@@ -789,6 +821,65 @@ describe("Link transport", () => {
     expect(bravo.status("shared-operation")?.status).toBe("responded");
   });
 
+  it("sends responses with the same request ID to different Assets", async () => {
+    const clock = new VirtualClock();
+    const network = new SimulatedPacketNetwork({ seed: 93, clock });
+    const gatewayRadio = network.addRadio("gateway", 1);
+    const alphaRadio = network.addRadio("asset-alpha", 2);
+    const bravoRadio = network.addRadio("asset-bravo", 3);
+    network.connect("gateway", "asset-alpha");
+    network.connect("gateway", "asset-bravo");
+    const gateway = new LinkTransport({
+      node: { role: "gateway", id: "gateway" },
+      sourceGeneration: 1,
+      radio: gatewayRadio,
+      clock
+    });
+    const alpha = new LinkTransport({
+      node: { role: "asset", id: "asset-alpha" },
+      sourceGeneration: 1,
+      radio: alphaRadio,
+      clock
+    });
+    const bravo = new LinkTransport({
+      node: { role: "asset", id: "asset-bravo" },
+      sourceGeneration: 1,
+      radio: bravoRadio,
+      clock
+    });
+    const requests = [alpha, bravo];
+    let responses = 0;
+    gateway.onEvent((event) => {
+      if (event.type !== "message" || event.message.type !== "data_request" || !event.addressed_to_local) return;
+      gateway.settleInbound(event.settlement_id, true);
+      gateway.submit(
+        {
+          type: "data_response",
+          request_id: event.message.request_id,
+          operation: "entity.get",
+          output: positionPublication(1).resource
+        },
+        { destination: event.source }
+      );
+    });
+    for (const requester of requests) {
+      requester.onEvent((event) => {
+        if (event.type !== "message" || event.message.type !== "data_response" || !event.addressed_to_local) return;
+        responses++;
+        requester.settleInbound(event.settlement_id, true);
+      });
+      requester.submit(
+        { type: "data_request", request_id: "shared-request", operation: "entity.get", target_id: "asset-alpha" },
+        { destination: { role: "gateway", id: "gateway" }, operationID: "shared-request" }
+      );
+      await clock.runUntilIdle();
+    }
+
+    expect(responses).toBe(2);
+    expect(alpha.status("shared-request")?.status).toBe("responded");
+    expect(bravo.status("shared-request")?.status).toBe("responded");
+  });
+
   it("coalesces only unsent best-effort state", async () => {
     const { clock, gateway, assetPicture } = directPair();
     gateway.submit(positionPublication(1), { operationID: "position-1" });
@@ -893,6 +984,52 @@ describe("Link transport", () => {
       operation_id: "forged-authority",
       message_id: "forged-authority-message",
       priority: "live_state"
+    };
+    for (const frame of fragmentPayload(serializeLinkMessage(publication), identity)) {
+      receiverRadio.receive({
+        payload: frame,
+        received_at: 0,
+        radio_source: 1,
+        channel: 1,
+        public_key_encrypted: false
+      });
+    }
+
+    expect(picture.snapshot().records).toEqual([]);
+  });
+
+  it("rejects direct Task state from an Asset", () => {
+    const clock = new VirtualClock();
+    const network = new SimulatedPacketNetwork({ seed: 92, clock });
+    const receiverRadio = network.addRadio("receiver", 2);
+    const picture = new SharedPicture("receiver-picture");
+    new LinkTransport({
+      node: { role: "gateway", id: "gateway" },
+      sourceGeneration: 1,
+      radio: receiverRadio,
+      clock,
+      picture
+    });
+    const task = pendingTask("forged-task", "2026-09-02T12:00:00Z");
+    const publication = {
+      type: "state",
+      resource_type: "task",
+      resource: task,
+      observation_time: task.updated_at,
+      path: "field",
+      confirmation: "awaiting_core",
+      operation_id: "forged-task-state"
+    } as const;
+    const identity: FrameIdentity = {
+      revision: 1,
+      message_type: "state",
+      source: { role: "asset", id: "asset-alpha" },
+      source_generation: 1,
+      service_session: "asset-session",
+      source_sequence: 1,
+      operation_id: "forged-task-state",
+      message_id: "forged-task-state-message",
+      priority: "task"
     };
     for (const frame of fragmentPayload(serializeLinkMessage(publication), identity)) {
       receiverRadio.receive({
@@ -1039,13 +1176,16 @@ describe("Link transport", () => {
     const oldAssetRadio = network.addRadio("old-asset", 20);
     const receiverRadio = network.addRadio("receiver", 30);
     network.connect("gateway", "receiver");
+    network.connect("old-asset", "gateway");
     network.connect("old-asset", "receiver");
+    const gatewayPicture = new SharedPicture("gateway-picture");
     const gateway = new LinkTransport({
       node: { role: "gateway", id: "gateway" },
       sourceGeneration: 1,
       serviceSession: "gateway-session",
       radio: gatewayRadio,
-      clock
+      clock,
+      picture: gatewayPicture
     });
     const oldAsset = new LinkTransport({
       node: { role: "asset", id: "asset-alpha" },
@@ -1066,6 +1206,7 @@ describe("Link transport", () => {
     await clock.runUntilIdle();
     oldAsset.submit(positionPublication(1), { operationID: "delayed-old-state" });
     await clock.runUntilIdle();
+    expect(gatewayPicture.snapshot().records).toHaveLength(0);
     expect(picture.snapshot().records).toHaveLength(0);
     expect(receiver.metrics().stale_messages_rejected).toBeGreaterThan(0);
   });
@@ -1390,6 +1531,28 @@ describe("Link transport", () => {
     await clock.advanceBy(0);
     dispatcher.enqueue("asset-alpha", cancelledTask(assignment.task_id, assignment.created_at), "cancellation");
     await clock.runUntilIdle();
+    expect(delivered).toEqual(["cancellation"]);
+    dispatcher.close();
+  });
+
+  it("ignores stale assignments while the same Task cancellation is in flight", async () => {
+    const { clock, gateway, asset } = directPair();
+    const delivered: string[] = [];
+    asset.onEvent((event) => {
+      if (event.type === "message" && event.message.type === "task_delivery" && event.addressed_to_local) {
+        delivered.push(event.message.delivery);
+      }
+    });
+    const dispatcher = new OrderedTaskDispatcher(gateway);
+    const cancellation = cancelledTask("task-cancel-in-flight", "2026-09-02T12:00:00Z");
+    const assignment = pendingTask(cancellation.task_id, cancellation.created_at);
+
+    dispatcher.enqueue("asset-alpha", cancellation, "cancellation");
+    dispatcher.enqueue("asset-alpha", assignment);
+    dispatcher.enqueueAssignments("asset-alpha", [assignment]);
+    for (let attempt = 0; attempt < 28 && delivered.length === 0; attempt++) await clock.advanceBy(500);
+
+    expect(dispatcher.state("asset-alpha")).toEqual({ queued: [] });
     expect(delivered).toEqual(["cancellation"]);
     dispatcher.close();
   });
