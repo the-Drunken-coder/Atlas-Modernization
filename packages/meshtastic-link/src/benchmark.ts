@@ -248,6 +248,7 @@ export async function runCanonicalBaseline(seed = 42): Promise<CanonicalBaseline
           action: "acknowledge",
           task_id: event.message.task.task_id,
           runtime_id: "runtime-asset-delta",
+          observation_time: new Date(clock.now()).toISOString(),
           body: {}
         },
         gatewayNode,
@@ -259,6 +260,7 @@ export async function runCanonicalBaseline(seed = 42): Promise<CanonicalBaseline
           action: "start",
           task_id: event.message.task.task_id,
           runtime_id: "runtime-asset-delta",
+          observation_time: new Date(clock.now()).toISOString(),
           body: {}
         },
         gatewayNode,
@@ -270,6 +272,7 @@ export async function runCanonicalBaseline(seed = 42): Promise<CanonicalBaseline
           action: "progress",
           task_id: event.message.task.task_id,
           runtime_id: "runtime-asset-delta",
+          observation_time: new Date(clock.now()).toISOString(),
           body: { progress: 0.5 }
         },
         gatewayNode,
@@ -281,6 +284,7 @@ export async function runCanonicalBaseline(seed = 42): Promise<CanonicalBaseline
           action: "complete",
           task_id: event.message.task.task_id,
           runtime_id: "runtime-asset-delta",
+          observation_time: new Date(clock.now()).toISOString(),
           body: { output: { surveyed: true } }
         },
         gatewayNode,
@@ -441,11 +445,29 @@ export async function runStressBaseline(seed = 42): Promise<StressBaselineResult
   const sendOrder: string[] = [];
   gateway.onEvent((event) => {
     if (event.type === "packet_sent") sendOrder.push(event.operation_id);
+    if (
+      event.type === "message" &&
+      event.addressed_to_local &&
+      event.message.type === "data_request" &&
+      event.message.request_id === "stress-object-transfer"
+    ) {
+      gateway.settleInbound(event.settlement_id, true);
+    }
   });
   const content = Buffer.alloc(32 * 1024, 0x5a);
+  requiredMapValue(clients, "asset-delta").request(
+    {
+      type: "data_request",
+      request_id: "stress-object-transfer",
+      operation: "object.content",
+      target_id: "stress-object"
+    },
+    { role: "gateway", id: "gateway" }
+  );
   requiredMapValue(clients, "gateway").transferObject(
     {
       type: "object_content",
+      request_id: "stress-object-transfer",
       object_id: "stress-object",
       content_base64: content.toString("base64"),
       sha256: `sha256:${createHash("sha256").update(content).digest("hex")}`

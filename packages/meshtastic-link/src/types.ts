@@ -84,6 +84,7 @@ export type TaskReport = TaskReportBody & {
   type: "task_report";
   task_id: string;
   runtime_id: string;
+  observation_time: string;
 };
 
 export type FeedSelector =
@@ -140,7 +141,7 @@ export type SubscriptionOperation = {
 
 export type ObjectContent = {
   type: "object_content";
-  request_id?: string;
+  request_id: string;
   object_id: string;
   content_base64: string;
   sha256: string;

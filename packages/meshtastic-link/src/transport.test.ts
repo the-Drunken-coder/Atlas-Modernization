@@ -239,7 +239,7 @@ describe("Link transport", () => {
           content_base64: "Y29udGVudA==",
           sha256: `sha256:${createHash("sha256").update("content").digest("hex")}`
         },
-        { destination: event.source, operationID: "wrong-object-content" }
+        { destination: event.source, operationID: event.message.request_id }
       );
     });
 
@@ -357,6 +357,7 @@ describe("Link transport", () => {
     transport.submit(
       {
         type: "object_content",
+        request_id: "deadline-object",
         object_id: "object-deadline",
         content_base64: content.toString("base64"),
         sha256: `sha256:${createHash("sha256").update(content).digest("hex")}`
@@ -371,6 +372,62 @@ describe("Link transport", () => {
     await Promise.all(pumping);
     await Promise.all(clock.fireAt(5 * 60_000));
     expect(radio.sendCount).toBe(1);
+  });
+
+  it("keeps an Object-content request open for the documented transfer window", async () => {
+    const clock = new VirtualClock();
+    const network = new SimulatedPacketNetwork({ seed: 78, clock });
+    const transport = new LinkTransport({
+      node: { role: "asset", id: "asset-alpha" },
+      sourceGeneration: 1,
+      radio: network.addRadio("asset-alpha", 1),
+      clock
+    });
+    transport.submit(
+      {
+        type: "data_request",
+        request_id: "object-request-window",
+        operation: "object.content",
+        target_id: "object-1"
+      },
+      { destination: { role: "gateway", id: "gateway" }, operationID: "object-request-window" }
+    );
+
+    await clock.advanceBy(30_000);
+    expect(transport.status("object-request-window")?.status).not.toBe("failed");
+    await clock.advanceBy(270_000);
+    expect(transport.status("object-request-window")).toMatchObject({
+      status: "failed",
+      reason: "confirmation deadline expired"
+    });
+  });
+
+  it("fails pending work and reports a live radio disconnect", () => {
+    const clock = new VirtualClock();
+    const radio = new DisconnectingRadio();
+    const transport = new LinkTransport({
+      node: { role: "asset", id: "asset-alpha" },
+      sourceGeneration: 1,
+      radio,
+      clock
+    });
+    const events: string[] = [];
+    transport.onEvent((event) => {
+      if (event.type === "link_error") events.push(event.reason);
+    });
+    transport.submit(
+      { type: "resource_operation", operation: "entity.delete", target_id: "entity-1" },
+      { destination: { role: "gateway", id: "gateway" }, operationID: "pending-disconnect" }
+    );
+
+    radio.disconnect();
+
+    expect(transport.status("pending-disconnect")).toMatchObject({
+      status: "failed",
+      reason: "serial connection lost"
+    });
+    expect(events).toEqual(["serial connection lost"]);
+    expect(transport.diagnostics().stopped).toBe(true);
   });
 
   it("drops a fragmented message before reassembly exceeds its byte bound", () => {
@@ -388,7 +445,7 @@ describe("Link transport", () => {
     for (let index = 0; index < chunkCount; index++) {
       const frame = encodeCanonicalJSON({
         v: 1,
-        k: "b",
+        k: "o",
         s: "a:a",
         d: "g:g",
         g: 1,
@@ -396,7 +453,7 @@ describe("Link transport", () => {
         q: 1,
         o: "o",
         m: "m",
-        y: "o",
+        y: "r",
         i: index,
         n: chunkCount,
         p: chunk
@@ -551,6 +608,7 @@ describe("Link transport", () => {
     transport.submit(
       {
         type: "object_content",
+        request_id: "low-priority",
         object_id: "object-low-priority",
         content_base64: Buffer.from("content").toString("base64"),
         sha256: `sha256:${createHash("sha256").update("content").digest("hex")}`
@@ -587,6 +645,7 @@ describe("Link transport", () => {
       transport.submit(
         {
           type: "object_content",
+          request_id: operationID,
           object_id: operationID,
           content_base64: Buffer.from(operationID).toString("base64"),
           sha256: `sha256:${createHash("sha256").update(operationID).digest("hex")}`
@@ -806,6 +865,59 @@ describe("Link transport", () => {
     expect(receiver.metrics().stale_messages_rejected).toBeGreaterThan(0);
   });
 
+  it("binds a new source generation when its first valid fragment arrives", () => {
+    const clock = new VirtualClock();
+    const network = new SimulatedPacketNetwork({ seed: 73, clock });
+    const radio = network.addRadio("receiver", 1);
+    const picture = new SharedPicture("receiver-picture");
+    new LinkTransport({
+      node: { role: "gateway", id: "receiver" },
+      sourceGeneration: 1,
+      radio,
+      clock,
+      picture
+    });
+    const newFrames = fragmentPayload(
+      serializeLinkMessage(positionPublication(2)),
+      {
+        revision: 1,
+        message_type: "state",
+        source: { role: "asset", id: "asset-alpha" },
+        source_generation: 2,
+        service_session: "new-session",
+        source_sequence: 1,
+        operation_id: "new-state",
+        message_id: "new-message",
+        priority: "live_state"
+      },
+      160
+    );
+    expect(newFrames.length).toBeGreaterThan(1);
+    radio.receive({
+      payload: newFrames[0] as Uint8Array,
+      received_at: 0,
+      radio_source: 2,
+      channel: 1,
+      public_key_encrypted: false
+    });
+    const oldFrames = fragmentPayload(serializeLinkMessage(positionPublication(1)), {
+      revision: 1,
+      message_type: "state",
+      source: { role: "asset", id: "asset-alpha" },
+      source_generation: 1,
+      service_session: "old-session",
+      source_sequence: 1,
+      operation_id: "old-state",
+      message_id: "old-message",
+      priority: "live_state"
+    });
+    for (const payload of oldFrames) {
+      radio.receive({ payload, received_at: 1, radio_source: 2, channel: 1, public_key_encrypted: false });
+    }
+
+    expect(picture.snapshot().records).toEqual([]);
+  });
+
   it("schedules Task traffic ahead of queued Object chunks", async () => {
     const { clock, gateway, asset } = directPair();
     const sent: string[] = [];
@@ -813,9 +925,19 @@ describe("Link transport", () => {
     gateway.onEvent((event) => {
       if (event.type === "packet_sent") sent.push(event.operation_id);
     });
+    asset.submit(
+      {
+        type: "data_request",
+        request_id: "object",
+        operation: "object.content",
+        target_id: "object-1"
+      },
+      { destination: { role: "gateway", id: "gateway" }, operationID: "object" }
+    );
     gateway.submit(
       {
         type: "object_content",
+        request_id: "object",
         object_id: "object-1",
         content_base64: content.toString("base64"),
         sha256: `sha256:${createHash("sha256").update(content).digest("hex")}`
@@ -874,6 +996,46 @@ describe("Link transport", () => {
     const dispatcher = new OrderedTaskDispatcher(gateway);
     dispatcher.enqueueAssignments("asset-alpha", [pendingTask("task-retained", "2026-09-02T12:00:00Z")]);
     expect(dispatcher.state("asset-alpha")).toEqual({ queued: ["task-retained"] });
+    dispatcher.close();
+  });
+
+  it("bounds retained Task work when Link admission remains unavailable", () => {
+    const clock = new VirtualClock();
+    const network = new SimulatedPacketNetwork({ seed: 76, clock });
+    const gateway = new LinkTransport({
+      node: { role: "gateway", id: "gateway" },
+      sourceGeneration: 1,
+      radio: network.addRadio("gateway", 1),
+      clock,
+      queueLimit: 1
+    });
+    gateway.submit(positionPublication(1), { operationID: "occupy-queue" });
+    const dispatcher = new OrderedTaskDispatcher(gateway, 1);
+    dispatcher.enqueue("asset-alpha", pendingTask("task-one", "2026-09-02T12:00:00Z"));
+
+    expect(() => dispatcher.enqueue("asset-alpha", pendingTask("task-two", "2026-09-02T12:01:00Z"))).toThrow(
+      "Task delivery queue capacity is exhausted"
+    );
+    dispatcher.close();
+  });
+
+  it("drops permanently invalid Task work instead of wedging its Asset queue", async () => {
+    const clock = new VirtualClock();
+    const network = new SimulatedPacketNetwork({ seed: 77, clock });
+    const gateway = new LinkTransport({
+      node: { role: "gateway", id: "gateway" },
+      sourceGeneration: 1,
+      radio: network.addRadio("gateway", 1),
+      clock
+    });
+    const dispatcher = new OrderedTaskDispatcher(gateway);
+    dispatcher.enqueue("asset-alpha", {
+      ...pendingTask("oversized-task", "2026-09-02T12:00:00Z"),
+      input: { payload: "x".repeat(MAX_LINK_MESSAGE_BYTES) }
+    });
+    await Promise.resolve();
+
+    expect(dispatcher.state("asset-alpha")).toEqual({ queued: [] });
     dispatcher.close();
   });
 
@@ -970,7 +1132,10 @@ describe("Link transport", () => {
     dispatcher.enqueueAssignments("asset-alpha", [first, cancelled, terminal]);
     dispatcher.enqueue("asset-alpha", cancelled, "cancellation");
     dispatcher.observeAuthoritativeTask("asset-alpha", terminal);
-    expect(dispatcher.state("asset-alpha")).toEqual({ in_flight: "task-first", queued: [] });
+    expect(dispatcher.state("asset-alpha")).toEqual({
+      in_flight: "task-first",
+      queued: ["task-cancelled"]
+    });
 
     await clock.runUntilIdle();
 
@@ -1018,10 +1183,20 @@ describe("Link transport", () => {
     listener.onEvent((event) => {
       if (event.type === "message" && event.message.type === "object_content") receivedAtListener = true;
     });
+    destination.submit(
+      {
+        type: "data_request",
+        request_id: "object-private",
+        operation: "object.content",
+        target_id: "object-private"
+      },
+      { destination: { role: "gateway", id: "gateway" }, operationID: "object-private" }
+    );
     const content = Buffer.alloc(1_024, 2);
     gateway.submit(
       {
         type: "object_content",
+        request_id: "object-private",
         object_id: "object-private",
         content_base64: content.toString("base64"),
         sha256: `sha256:${createHash("sha256").update(content).digest("hex")}`
@@ -1033,6 +1208,28 @@ describe("Link transport", () => {
     expect(receivedAtListener).toBe(false);
     expect(listener.diagnostics().incomplete_reassemblies).toBe(0);
     expect(gateway.status("object-private")?.status).toBe("confirmed");
+  });
+
+  it("does not assemble addressed Object content without a matching request", async () => {
+    const { clock, gateway, asset } = directPair();
+    let received = false;
+    asset.onEvent((event) => {
+      if (event.type === "message" && event.message.type === "object_content") received = true;
+    });
+    gateway.submit(
+      {
+        type: "object_content",
+        request_id: "unsolicited-object",
+        object_id: "object-private",
+        content_base64: Buffer.from("private").toString("base64"),
+        sha256: `sha256:${createHash("sha256").update("private").digest("hex")}`
+      },
+      { destination: { role: "asset", id: "asset-alpha" }, operationID: "unsolicited-object" }
+    );
+    await clock.runUntilIdle();
+
+    expect(received).toBe(false);
+    expect(asset.diagnostics().incomplete_reassemblies).toBe(0);
   });
 
   it("puts a state-bearing response into every listening Shared Picture", async () => {
@@ -1107,7 +1304,16 @@ describe("Link transport", () => {
           request_id: event.message.request_id,
           operation: "query.changed_since",
           output: {
-            events: [{ event: "delete", id: "asset-alpha", resource_type: "entity", version: 2 }],
+            events: [
+              {
+                event: "update",
+                id: "asset-alpha",
+                resource_type: "entity",
+                version: 1,
+                resource: positionPublication(1).resource
+              },
+              { event: "delete", id: "asset-alpha", resource_type: "entity", version: 2 }
+            ],
             version: 2,
             has_more: false
           }
@@ -1132,6 +1338,84 @@ describe("Link transport", () => {
     await clock.runUntilIdle();
     expect(assetPicture.snapshot().records).toEqual([]);
     expect(gateway.status("changes-response")?.status).toBe("confirmed");
+  });
+
+  it("correlates a mutation response after transport confirmation", async () => {
+    const { clock, gateway, asset } = directPair();
+    gateway.onEvent((event) => {
+      if (event.type !== "message" || event.message.type !== "resource_operation" || !event.addressed_to_local) {
+        return;
+      }
+      gateway.settleInbound(event.settlement_id, true);
+      gateway.submit(
+        { type: "data_response", request_id: event.operation_id, operation: event.message.operation },
+        { destination: event.source, operationID: "mutation-response" }
+      );
+    });
+    asset.onEvent((event) => {
+      if (event.type === "message" && event.message.type === "data_response" && event.addressed_to_local) {
+        asset.settleInbound(event.settlement_id, true);
+      }
+    });
+
+    asset.submit(
+      { type: "resource_operation", operation: "entity.delete", target_id: "entity-1" },
+      { destination: { role: "gateway", id: "gateway" }, operationID: "mutation-1" }
+    );
+    await clock.runUntilIdle();
+
+    expect(asset.status("mutation-1")).toMatchObject({ status: "responded" });
+  });
+
+  it("retains an active request result while completed results rotate", async () => {
+    const { clock, gateway, asset } = directPair();
+    gateway.onEvent((event) => {
+      if (event.type === "message" && event.message.type === "data_request" && event.addressed_to_local) {
+        gateway.settleInbound(event.settlement_id, true);
+      }
+    });
+    asset.submit(
+      { type: "data_request", request_id: "long-request", operation: "entity.get", target_id: "asset-alpha" },
+      { destination: { role: "gateway", id: "gateway" }, operationID: "long-request" }
+    );
+    for (let attempt = 0; attempt < 60 && asset.status("long-request")?.status !== "confirmed"; attempt++) {
+      await clock.advanceBy(500);
+    }
+    expect(asset.status("long-request")?.status).toBe("confirmed");
+    for (let index = 0; index < 4_200; index++) {
+      asset.submit(
+        { type: "resource_operation", operation: "entity.delete", target_id: `entity-${index}` },
+        { operationID: `rejected-${index}` }
+      );
+    }
+
+    expect(asset.status("long-request")?.status).toBe("confirmed");
+  });
+
+  it("does not reuse an operation identity after any packet was transmitted", async () => {
+    const clock = new VirtualClock();
+    const network = new SimulatedPacketNetwork({ seed: 74, clock });
+    const transport = new LinkTransport({
+      node: { role: "asset", id: "asset-alpha" },
+      sourceGeneration: 1,
+      radio: network.addRadio("asset-alpha", 1),
+      clock
+    });
+    const mutation = { type: "resource_operation", operation: "entity.delete", target_id: "entity-1" } as const;
+    transport.submit(mutation, {
+      destination: { role: "gateway", id: "gateway" },
+      operationID: "stable-mutation"
+    });
+    await clock.runUntilIdle();
+    const failed = transport.status("stable-mutation");
+    expect(failed).toMatchObject({ status: "failed", reason: "confirmation deadline expired" });
+
+    expect(
+      transport.submit(mutation, {
+        destination: { role: "gateway", id: "gateway" },
+        operationID: "stable-mutation"
+      })
+    ).toEqual(failed);
   });
 
   it("projects visible Task lifecycle reports into a peer Shared Picture", async () => {
@@ -1172,6 +1456,7 @@ describe("Link transport", () => {
           action: "complete",
           task_id: event.message.task.task_id,
           runtime_id: "runtime-alpha",
+          observation_time: new Date(clock.now()).toISOString(),
           body: { output: { surveyed: true } }
         },
         { destination: { role: "gateway", id: "gateway" }, operationID: "complete-task-visible" }
@@ -1196,6 +1481,77 @@ describe("Link transport", () => {
       })
     );
     expect(peer.diagnostics().inbound_awaiting_settlement).toBe(0);
+  });
+
+  it("rejects cross-Asset and delayed Task reports from the Shared Picture", async () => {
+    const clock = new VirtualClock(Date.parse("2026-09-02T12:15:00Z"));
+    const network = new SimulatedPacketNetwork({ seed: 75, clock });
+    const gatewayRadio = network.addRadio("gateway", 1);
+    const assetRadio = network.addRadio("asset-alpha", 2);
+    network.connect("gateway", "asset-alpha");
+    const gatewayPicture = new SharedPicture("gateway-picture");
+    const gateway = new LinkTransport({
+      node: { role: "gateway", id: "gateway" },
+      sourceGeneration: 1,
+      radio: gatewayRadio,
+      clock,
+      picture: gatewayPicture
+    });
+    const asset = new LinkTransport({
+      node: { role: "asset", id: "asset-alpha" },
+      sourceGeneration: 1,
+      radio: assetRadio,
+      clock
+    });
+    const tasks = [
+      { ...pendingTask("task-other", "2026-09-02T12:00:00Z"), asset_id: "asset-bravo" },
+      { ...pendingTask("task-old", "2026-09-02T12:00:00Z"), updated_at: "2026-09-02T12:10:00Z" }
+    ];
+    for (const [index, task] of tasks.entries()) {
+      gatewayPicture.apply(
+        {
+          type: "state",
+          resource_type: "task",
+          resource: task,
+          observation_time: task.updated_at,
+          path: "gateway_feed",
+          confirmation: "core_confirmed"
+        },
+        {
+          source: { role: "gateway", id: "gateway" },
+          source_generation: 1,
+          service_session: gateway.serviceSession,
+          source_sequence: index + 1,
+          received_at: clock.now()
+        }
+      );
+    }
+    gateway.onEvent((event) => {
+      if (event.type === "message" && event.message.type === "task_report" && event.addressed_to_local) {
+        gateway.settleInbound(event.settlement_id, true);
+      }
+    });
+    for (const taskID of ["task-other", "task-old"]) {
+      asset.submit(
+        {
+          type: "task_report",
+          action: "progress",
+          task_id: taskID,
+          runtime_id: "runtime-alpha",
+          observation_time: "2026-09-02T12:05:00Z",
+          body: { progress: 0.5 }
+        },
+        { destination: { role: "gateway", id: "gateway" }, operationID: `report-${taskID}` }
+      );
+    }
+    await clock.runUntilIdle();
+
+    expect(gatewayPicture.snapshot().records.map((record) => record.state)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ task_id: "task-other", status: "pending" }),
+        expect.objectContaining({ task_id: "task-old", status: "pending", updated_at: "2026-09-02T12:10:00Z" })
+      ])
+    );
   });
 });
 
@@ -1328,6 +1684,30 @@ class FailingFirstSendRadio implements LinkRadio {
   onPacket(handler: (packet: RadioPacket) => void): () => void {
     this.handlers.add(handler);
     return () => this.handlers.delete(handler);
+  }
+
+  async close(): Promise<void> {}
+}
+
+class DisconnectingRadio implements LinkRadio {
+  readonly max_payload_bytes = 233;
+  private readonly packetHandlers = new Set<(packet: RadioPacket) => void>();
+  private readonly disconnectHandlers = new Set<(reason: Error) => void>();
+
+  async send(_payload: Uint8Array, _options: RadioSendOptions): Promise<void> {}
+
+  onPacket(handler: (packet: RadioPacket) => void): () => void {
+    this.packetHandlers.add(handler);
+    return () => this.packetHandlers.delete(handler);
+  }
+
+  onDisconnect(handler: (reason: Error) => void): () => void {
+    this.disconnectHandlers.add(handler);
+    return () => this.disconnectHandlers.delete(handler);
+  }
+
+  disconnect(): void {
+    for (const handler of this.disconnectHandlers) handler(new Error("serial connection lost"));
   }
 
   async close(): Promise<void> {}

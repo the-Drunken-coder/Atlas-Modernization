@@ -112,6 +112,20 @@ describe("joining and Radio profile", () => {
     await expect(store.activateGateway()).resolves.toMatchObject({ gateway_generation: 1 });
   });
 
+  it("treats prototype-shaped Asset IDs as ordinary membership keys", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "atlas-link-membership-prototype-"));
+    const store = new GatewayMembershipStore(join(directory, "membership.json"));
+    await store.initialize({
+      gateway_node_id: "gateway",
+      channel_index: 1,
+      channel_name: "ATLAS",
+      channel_key_base64: Buffer.alloc(32, 8).toString("base64")
+    });
+
+    await expect(store.admitAsset("constructor")).resolves.toMatchObject({ source_generation: 1 });
+    expect((await store.load()).asset_generations).toEqual({ constructor: 1 });
+  });
+
   it("joins across one LOCAL_ONLY relay and assigns a new generation on restart", async () => {
     const directory = await mkdtemp(join(tmpdir(), "atlas-link-join-"));
     const store = new GatewayMembershipStore(join(directory, "membership.json"));
@@ -218,7 +232,7 @@ describe("joining and Radio profile", () => {
     releaseMembership();
     await new Promise<void>((resolve) => setTimeout(resolve, 1));
     expect(stopping.status()).toEqual({ state: "stopped" });
-    gateway.close();
+    await gateway.close();
   });
 
   it("does not admit an Asset after the Gateway join service closes", async () => {
@@ -268,9 +282,9 @@ describe("joining and Radio profile", () => {
       public_key_encrypted: false
     });
     expect(challengeStarted).toBe(true);
-    gateway.close();
+    const closing = gateway.close();
     releaseChallenge();
-    await new Promise<void>((resolve) => setTimeout(resolve, 1));
+    await closing;
 
     expect((await store.load()).asset_generations).toEqual({});
     expect(errors).toEqual([]);
@@ -398,7 +412,7 @@ describe("deterministic baseline", () => {
       cancellation_received: false,
       priority_preempted_object: true
     });
-    expect(result.transport_metrics.retry_exhausted).toBe(2);
+    expect(result.transport_metrics.retry_exhausted).toBe(3);
   });
 });
 

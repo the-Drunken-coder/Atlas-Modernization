@@ -6,6 +6,7 @@ import {
   deserializeLinkMessage,
   isLinkMessage,
   MAX_OBJECT_CONTENT_BYTES,
+  messagePriority,
   serializeLinkMessage
 } from "./contract.js";
 import { decodeFrame, type FrameIdentity, fragmentPayload } from "./frame.js";
@@ -70,14 +71,41 @@ describe("generated Radio contract", () => {
     const content = Buffer.alloc(MAX_OBJECT_CONTENT_BYTES);
     const accepted = {
       type: "object_content",
+      request_id: "object-request-1",
       object_id: "object-1",
       content_base64: content.toString("base64"),
       sha256: `sha256:${createHash("sha256").update(content).digest("hex")}`
     } as const;
     expect(isLinkMessage(accepted)).toBe(true);
+    expect(isLinkMessage({ ...accepted, request_id: undefined })).toBe(false);
     expect(
       isLinkMessage({ ...accepted, content_base64: Buffer.alloc(MAX_OBJECT_CONTENT_BYTES + 1).toString("base64") })
     ).toBe(false);
+  });
+
+  it("does not treat inherited object properties as message or operation names", () => {
+    expect(isLinkMessage({ type: "toString" })).toBe(false);
+    expect(isLinkMessage({ type: "data_response", request_id: "request", operation: "constructor" })).toBe(false);
+  });
+
+  it("prioritizes Task mutations with the Task delivery they control", () => {
+    expect(
+      messagePriority({
+        type: "resource_operation",
+        operation: "task.progress",
+        target_id: "task-1",
+        runtime_id: "runtime-1",
+        input: { progress: 0.5 }
+      })
+    ).toBe("task");
+    expect(
+      messagePriority({
+        type: "resource_operation",
+        operation: "task.cancel",
+        target_id: "task-1",
+        input: { cancellation: { code: "requested", message: "return" } }
+      })
+    ).toBe("safety");
   });
 
   it("validates operation-specific inputs and addressing context", () => {

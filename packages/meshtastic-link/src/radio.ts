@@ -27,12 +27,14 @@ export interface LinkRadio {
   pacingDelayMs?(payload: Uint8Array): number;
   send(payload: Uint8Array, options: RadioSendOptions): Promise<void>;
   onPacket(handler: (packet: RadioPacket) => void): () => void;
+  onDisconnect?(handler: (reason: Error) => void): () => void;
   close(): Promise<void>;
 }
 
 export class MeshtasticSerialRadio implements LinkRadio, RadioConfigurationAdapter {
   readonly max_payload_bytes = 233;
   private readonly handlers = new Set<(packet: RadioPacket) => void>();
+  private readonly disconnectHandlers = new Set<(reason: Error) => void>();
   private readonly knownPublicKeys = new Set<number>();
   private readonly configs = new Map<string, Protobuf.Config.Config>();
   private readonly moduleConfigs = new Map<string, Protobuf.ModuleConfig.ModuleConfig>();
@@ -73,6 +75,11 @@ export class MeshtasticSerialRadio implements LinkRadio, RadioConfigurationAdapt
         public_key_encrypted: packet.pkiEncrypted
       };
       for (const handler of this.handlers) handler(received);
+    });
+    device.events.onDeviceStatus.subscribe((status: Types.DeviceStatusEnum) => {
+      if (status !== Types.DeviceStatusEnum.DeviceDisconnected) return;
+      const reason = new Error("Meshtastic radio disconnected");
+      for (const handler of this.disconnectHandlers) handler(reason);
     });
   }
 
@@ -117,6 +124,11 @@ export class MeshtasticSerialRadio implements LinkRadio, RadioConfigurationAdapt
   onPacket(handler: (packet: RadioPacket) => void): () => void {
     this.handlers.add(handler);
     return () => this.handlers.delete(handler);
+  }
+
+  onDisconnect(handler: (reason: Error) => void): () => void {
+    this.disconnectHandlers.add(handler);
+    return () => this.disconnectHandlers.delete(handler);
   }
 
   nodeNumber(): number {
@@ -353,6 +365,7 @@ export class MeshtasticSerialRadio implements LinkRadio, RadioConfigurationAdapt
 
   async close(): Promise<void> {
     this.handlers.clear();
+    this.disconnectHandlers.clear();
     await this.device.disconnect();
   }
 

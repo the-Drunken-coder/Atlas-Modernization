@@ -25,7 +25,7 @@ describe("Shared Picture", () => {
     picture.apply(positionPublication(1), context(1));
     picture.refresh(5_001);
     expect(picture.snapshot().records[0]?.freshness).toBe("stale");
-    picture.refresh(30_001);
+    picture.refresh(31_001);
     expect(picture.snapshot().records).toHaveLength(0);
   });
 
@@ -37,6 +37,41 @@ describe("Shared Picture", () => {
     expect(picture.apply(alpha, context(2))).toBe(true);
     expect(picture.apply(bravo, context(1))).toBe(true);
     expect(picture.snapshot().records.map((record) => record.id)).toEqual(["asset-alpha", "asset-bravo"]);
+  });
+
+  it("retains a source sequence fence after another source replaces the record", () => {
+    const picture = new SharedPicture("picture-session");
+    const field = positionPublication(1);
+    const confirmed = { ...positionPublication(2), path: "gateway_feed", confirmation: "core_confirmed" } as const;
+    const delayed = structuredClone(field);
+    delayed.operation_id = "delayed-field";
+    delayed.observation_time = "2026-09-02T12:00:10Z";
+
+    expect(picture.apply(field, context(10))).toBe(true);
+    expect(
+      picture.apply(confirmed, {
+        source: { role: "gateway", id: "gateway" },
+        source_generation: 1,
+        service_session: "gateway-session",
+        source_sequence: 1,
+        received_at: 1_000
+      })
+    ).toBe(true);
+    expect(picture.apply(delayed, context(9))).toBe(false);
+    expect(picture.snapshot().records[0]).toMatchObject({
+      atlas_version: 2,
+      source: { role: "gateway", id: "gateway" }
+    });
+  });
+
+  it("retains a source sequence fence after an expiring record leaves the picture", () => {
+    const picture = new SharedPicture("picture-session");
+    expect(picture.apply(positionPublication(2), context(10))).toBe(true);
+    picture.refresh(31_001);
+    expect(picture.snapshot().records).toEqual([]);
+
+    expect(picture.apply(positionPublication(1), { ...context(9), received_at: 31_000 })).toBe(false);
+    expect(picture.snapshot().records).toEqual([]);
   });
 
   it("applies an explicit deletion at its changed-since feed version", () => {

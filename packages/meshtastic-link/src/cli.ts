@@ -190,7 +190,7 @@ async function serve(argv: string[]): Promise<void> {
   const cleanupErrors: unknown[] = [];
   for (const cleanup of [() => assetJoin?.stop(), () => gatewayJoin?.close(), () => service.stop()]) {
     try {
-      cleanup();
+      await cleanup();
     } catch (error) {
       cleanupErrors.push(error);
     }

@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import {
+  type ChangedSinceResponse,
   type EntityResource,
   isChangedSinceResponse,
   isEntityCheckInResponse,
@@ -24,6 +25,7 @@ import { decodeFrame, type FrameIdentity, fragmentPayload, type LinkFrame, MAX_L
 import type { PictureApplyContext, SharedPicture } from "./picture.js";
 import type { LinkRadio, RadioPacket } from "./radio.js";
 import type {
+  ConfirmationState,
   ControlMessage,
   DataRequest,
   DataResponse,
@@ -34,6 +36,7 @@ import type {
   LinkOperationResult,
   LinkOperationStatus,
   MessagePriority,
+  PublicationPath,
   StatePublication,
   TaskDelivery,
   TaskReport
@@ -87,6 +90,7 @@ export type TransportMessageEvent = {
 export type TransportEvent =
   | TransportMessageEvent
   | { type: "operation"; result: LinkOperationResult }
+  | { type: "link_error"; reason: string }
   | { type: "packet_sent"; message_id: string; operation_id: string; bytes: number; sent_at: number };
 
 export type TransportDiagnostics = {
@@ -171,16 +175,19 @@ export class LinkTransport {
   private readonly queue: Outbound[] = [];
   private readonly outboundByOperation = new Map<string, Outbound>();
   private readonly pendingDataRequests = new Map<string, Outbound>();
+  private readonly responseOperations = new Map<string, Outbound>();
   private readonly reassemblies = new Map<string, Reassembly>();
   private readonly sourceFences = new Map<string, SourceFence>();
   private readonly pendingInbound = new Map<string, PendingInbound>();
   private readonly settledInbound = new Map<string, "confirmed" | "rejected">();
   private readonly operationResults = new Map<string, LinkOperationResult>();
+  private readonly committedOperationIDs = new Set<string>();
   private readonly intermediateDataConfirmations = new Set<string>();
   private readonly taskDeliverySequences = new Map<string, number>();
   private readonly listeners = new Set<(event: TransportEvent) => void>();
   private readonly capacityListeners = new Set<() => void>();
   private readonly unsubscribeRadio: () => void;
+  private readonly unsubscribeRadioDisconnect: () => void;
   private sourceSequence = 0;
   private nextOrder = 0;
   private pumping = false;
@@ -239,6 +246,8 @@ export class LinkTransport {
         ? undefined
         : positiveBoundedInteger(options.retryIntervalMs, 1, 60_000, "retry interval");
     this.unsubscribeRadio = this.radio.onPacket((packet) => this.receive(packet));
+    this.unsubscribeRadioDisconnect =
+      this.radio.onDisconnect?.((reason) => this.handleRadioDisconnect(reason)) ?? (() => undefined);
   }
 
   submit(message: LinkMessage, options: SubmitOptions = {}): LinkOperationResult {
@@ -263,9 +272,15 @@ export class LinkTransport {
     }
     const operationID = options.operationID ?? operationIDFor(message);
     if (!operationID.trim()) throw new TypeError("operation ID must not be blank");
+    if (message.type === "data_request" && operationID !== message.request_id) {
+      return this.failedResult(operationID, "Data request operation ID must match its request ID");
+    }
+    if (message.type === "object_content" && operationID !== message.request_id) {
+      return this.failedResult(operationID, "Object content operation ID must match its request ID");
+    }
     const existing = this.operationResults.get(operationID);
     if (existing) {
-      if (existing.status !== "failed") return { ...existing };
+      if (existing.status !== "failed" || this.committedOperationIDs.has(operationID)) return { ...existing };
       this.operationResults.delete(operationID);
     }
     if (message.type === "data_request" && this.pendingDataRequests.has(message.request_id)) {
@@ -323,10 +338,12 @@ export class LinkTransport {
       : occupancy + this.pendingInbound.size >= this.queueLimit;
     if (capacityExhausted) return this.failedResult(operationID, "outbound queue capacity is exhausted");
     this.queue.push(outbound);
+    this.committedOperationIDs.add(operationID);
     if (delivery === "confirmed") {
       this.outboundByOperation.set(operationID, outbound);
       if (message.type === "data_request") this.pendingDataRequests.set(message.request_id, outbound);
-      outbound.deadlineTimer = this.clock.schedule(DEADLINE_MS[identity.priority], () => {
+      if (message.type === "resource_operation") this.responseOperations.set(operationID, outbound);
+      outbound.deadlineTimer = this.clock.schedule(outboundDeadlineMs(message, identity.priority), () => {
         const awaitingConfirmation = this.outboundByOperation.has(operationID);
         const requestID = dataRequestID(outbound);
         const awaitingResponse = requestID !== undefined && this.pendingDataRequests.get(requestID) === outbound;
@@ -426,6 +443,7 @@ export class LinkTransport {
     if (this.stopped) return;
     this.stopped = true;
     this.unsubscribeRadio();
+    this.unsubscribeRadioDisconnect();
     for (const reassembly of this.reassemblies.values()) this.clock.cancel(reassembly.timer);
     this.reassemblies.clear();
     const pending = new Set(this.queue);
@@ -439,6 +457,13 @@ export class LinkTransport {
     this.queue.length = 0;
     for (const pending of this.pendingInbound.values()) this.clock.cancel(pending.timer);
     this.pendingInbound.clear();
+    this.responseOperations.clear();
+  }
+
+  private handleRadioDisconnect(reason: Error): void {
+    if (this.stopped) return;
+    this.stop(reason.message);
+    this.emit({ type: "link_error", reason: reason.message });
   }
 
   private requestPump(delayMs = 0): void {
@@ -602,14 +627,12 @@ export class LinkTransport {
     } catch {
       return;
     }
-    if (sameNode(frame.source, this.node) || !this.acceptFrameSource(frame)) return;
     if (
-      frame.message_type === "object_content" &&
-      frame.destination !== undefined &&
-      !sameNode(frame.destination, this.node)
-    ) {
+      sameNode(frame.source, this.node) ||
+      !this.activateSourceFence(frame.source, frame.source_generation, frame.service_session)
+    )
       return;
-    }
+    if (frame.message_type === "object_content" && !this.expectsObjectContent(frame)) return;
     const key = `${frame.source.role}:${frame.source.id}:${frame.source_generation}:${frame.service_session}:${frame.message_id}`;
     let reassembly = this.reassemblies.get(key);
     if (!reassembly) {
@@ -647,16 +670,6 @@ export class LinkTransport {
     }
     this.reassemblies.delete(key);
     this.handleCompleteMessage(reassembly.identity, joinChunks(reassembly));
-  }
-
-  private acceptFrameSource(frame: LinkFrame): boolean {
-    const current = this.sourceFences.get(`${frame.source.role}:${frame.source.id}`);
-    const accepted =
-      current === undefined ||
-      frame.source_generation > current.generation ||
-      (frame.source_generation === current.generation && frame.service_session === current.session);
-    if (!accepted) this.mutableMetrics.stale_messages_rejected++;
-    return accepted;
   }
 
   private handleCompleteMessage(identity: FrameIdentity, bytes: Uint8Array): void {
@@ -698,6 +711,19 @@ export class LinkTransport {
       this.rejectAddressedMessage(identity, "Task is assigned to a different Asset");
       return;
     }
+    if (message.type === "task_report") {
+      if (identity.source.role !== "asset") {
+        if (addressed) this.rejectAddressedMessage(identity, "Task reports must originate from an Asset");
+        return;
+      }
+      const assignedAsset = this.picture
+        ?.snapshot()
+        .records.find((record) => record.resource_type === "task" && record.id === message.task_id)?.source_asset_id;
+      if (assignedAsset !== undefined && assignedAsset !== identity.source.id) {
+        if (addressed) this.rejectAddressedMessage(identity, "Task report source is not the assigned Asset");
+        return;
+      }
+    }
     const taskDeliveryOrder = this.acceptTaskDeliverySequence(message, identity);
     if (taskDeliveryOrder === "stale") {
       this.mutableMetrics.stale_messages_rejected++;
@@ -711,7 +737,7 @@ export class LinkTransport {
     if (
       addressed &&
       (message.type === "data_response" || (message.type === "object_content" && message.request_id !== undefined)) &&
-      !this.matchingDataRequest(message, identity)
+      !this.matchingResponseOperation(message, identity)
     ) {
       return;
     }
@@ -817,15 +843,16 @@ export class LinkTransport {
     if (message.type === "state") publications = [message];
     else if (message.type === "task_delivery") publications = [taskDeliveryPublication(message)];
     else if (message.type === "task_report") {
-      const publication = taskReportPublication(
-        message,
-        this.picture,
-        new Date(this.clock.now()).toISOString(),
-        identity
-      );
+      const publication = taskReportPublication(message, this.picture, identity);
       if (publication) publications = [publication];
     } else if (message.type === "data_response") {
-      publications = responsePublications(message, new Date(this.clock.now()).toISOString());
+      publications = responsePublications(
+        message,
+        new Date(this.clock.now()).toISOString(),
+        identity.source.role === "gateway"
+          ? { path: "gateway_feed", confirmation: "core_confirmed" }
+          : { path: "field", confirmation: "not_required" }
+      );
     }
     if (publications.length === 0) return;
     const context: PictureApplyContext = {
@@ -893,8 +920,33 @@ export class LinkTransport {
       this.mutableMetrics.stale_messages_rejected++;
       return false;
     }
+    const changed = current === undefined || generation > current.generation;
     this.sourceFences.set(key, { generation, session });
+    if (changed) {
+      for (const [reassemblyKey, reassembly] of this.reassemblies) {
+        if (!sameNode(reassembly.identity.source, source)) continue;
+        if (reassembly.identity.source_generation === generation && reassembly.identity.service_session === session) {
+          continue;
+        }
+        this.clock.cancel(reassembly.timer);
+        this.reassemblies.delete(reassemblyKey);
+        this.mutableMetrics.incomplete_reassemblies++;
+      }
+      this.picture?.activateSource(source, generation, session);
+    }
     return true;
+  }
+
+  private expectsObjectContent(frame: LinkFrame): boolean {
+    if (frame.destination === undefined || !sameNode(frame.destination, this.node)) return false;
+    const request = this.pendingDataRequests.get(frame.operation_id);
+    return (
+      request?.message.type === "data_request" &&
+      request.message.operation === "object.content" &&
+      request.message.request_id === frame.operation_id &&
+      request.identity.destination !== undefined &&
+      sameNode(request.identity.destination, frame.source)
+    );
   }
 
   private expireReassembly(key: string): void {
@@ -980,6 +1032,7 @@ export class LinkTransport {
     if (requestID !== undefined && this.pendingDataRequests.get(requestID) === outbound) {
       this.pendingDataRequests.delete(requestID);
     }
+    if (status !== "confirmed") this.responseOperations.delete(outbound.identity.operation_id);
     removeAll(this.queue, outbound);
     const releasedObject = this.activeObjectMessageID === outbound.identity.message_id;
     if (releasedObject) this.activeObjectMessageID = undefined;
@@ -1015,11 +1068,12 @@ export class LinkTransport {
   ): void {
     const requestID = message.request_id;
     if (requestID === undefined) return;
-    const outbound = this.matchingDataRequest(message, identity);
+    const outbound = this.matchingResponseOperation(message, identity);
     if (!outbound) return;
     if (outbound.retryTimer) this.clock.cancel(outbound.retryTimer);
     if (outbound.deadlineTimer) this.clock.cancel(outbound.deadlineTimer);
     this.pendingDataRequests.delete(requestID);
+    this.responseOperations.delete(outbound.identity.operation_id);
     this.outboundByOperation.delete(outbound.identity.operation_id);
     removeAll(this.queue, outbound);
     const result: LinkOperationResult = {
@@ -1045,19 +1099,28 @@ export class LinkTransport {
     this.emit({ type: "operation", result });
   }
 
-  private matchingDataRequest(
+  private matchingResponseOperation(
     message: DataResponse | (LinkMessage & { type: "object_content" }),
     identity: FrameIdentity
   ): Outbound | undefined {
     const requestID = message.request_id;
     if (requestID === undefined) return undefined;
-    const outbound = this.pendingDataRequests.get(requestID);
+    const outbound =
+      this.pendingDataRequests.get(requestID) ??
+      (message.type === "data_response" ? this.responseOperations.get(requestID) : undefined);
     if (
       !outbound ||
-      outbound.message.type !== "data_request" ||
       outbound.identity.destination === undefined ||
-      !sameNode(outbound.identity.destination, identity.source) ||
-      !responseMatchesRequest(outbound.message, message)
+      !sameNode(outbound.identity.destination, identity.source)
+    ) {
+      return undefined;
+    }
+    if (outbound.message.type === "data_request") {
+      if (!responseMatchesRequest(outbound.message, message)) return undefined;
+    } else if (
+      message.type !== "data_response" ||
+      outbound.message.type !== "resource_operation" ||
+      outbound.message.operation !== message.operation
     ) {
       return undefined;
     }
@@ -1146,11 +1209,20 @@ export class LinkTransport {
     }
     this.operationResults.set(result.operation_id, result);
     while (this.operationResults.size > OPERATION_RESULT_LIMIT) {
-      const removable = [...this.operationResults].find(([, candidate]) => candidate.status !== "queued");
+      const removable = [...this.operationResults].find(
+        ([operationID, candidate]) => candidate.status !== "queued" && !this.operationIsPending(operationID)
+      );
       if (!removable) return;
       this.operationResults.delete(removable[0]);
       this.intermediateDataConfirmations.delete(removable[0]);
+      this.responseOperations.delete(removable[0]);
+      this.committedOperationIDs.delete(removable[0]);
     }
+  }
+
+  private operationIsPending(operationID: string): boolean {
+    if (this.outboundByOperation.has(operationID)) return true;
+    return [...this.pendingDataRequests.values()].some((outbound) => outbound.identity.operation_id === operationID);
   }
 
   private recordSettledInbound(settlementID: string, result: "confirmed" | "rejected"): void {
@@ -1258,15 +1330,34 @@ function taskDeliveryPublication(message: TaskDelivery): StatePublication {
   };
 }
 
-function responsePublications(response: DataResponse, observedAt: string): StatePublication[] {
+type ResponseProvenance = {
+  path: PublicationPath;
+  confirmation: ConfirmationState;
+};
+
+function collapseChangedSinceEvents(events: ChangedSinceResponse["events"]): ChangedSinceResponse["events"] {
+  const latest = new Map<string, ChangedSinceResponse["events"][number]>();
+  for (const event of events) {
+    const key = `${event.resource_type}:${event.id}`;
+    const current = latest.get(key);
+    if (current === undefined || event.version >= current.version) latest.set(key, event);
+  }
+  return [...latest.values()];
+}
+
+function responsePublications(
+  response: DataResponse,
+  observedAt: string,
+  provenance: ResponseProvenance
+): StatePublication[] {
   const { operation, output, request_id: operationID } = response;
   switch (operation) {
     case "entity.get":
     case "entity.create":
     case "entity.update":
-      return isEntityResource(output) ? [entityPublication(output, operationID)] : [];
+      return isEntityResource(output) ? [entityPublication(output, operationID, provenance)] : [];
     case "entity.check_in":
-      return isEntityCheckInResponse(output) ? [entityPublication(output.entity, operationID)] : [];
+      return isEntityCheckInResponse(output) ? [entityPublication(output.entity, operationID, provenance)] : [];
     case "task.get":
     case "task.create":
     case "task.acknowledge":
@@ -1275,37 +1366,39 @@ function responsePublications(response: DataResponse, observedAt: string): State
     case "task.complete":
     case "task.fail":
     case "task.cancel":
-      return isTaskResource(output) ? [taskPublication(output, operationID)] : [];
+      return isTaskResource(output) ? [taskPublication(output, operationID, provenance)] : [];
     case "runtime.tasks":
       return isRuntimeTaskDeliveryResponse(output)
-        ? output.tasks.map((task) => taskPublication(task, operationID))
+        ? output.tasks.map((task) => taskPublication(task, operationID, provenance))
         : [];
     case "object.get":
     case "object.create":
     case "object.update":
-      return isObjectDetailResource(output) ? [objectPublication(objectSummary(output), operationID)] : [];
+      return isObjectDetailResource(output) ? [objectPublication(objectSummary(output), operationID, provenance)] : [];
     case "query.full":
       return isFullDatasetResponse(output)
         ? [
-            ...output.entities.map((entity) => entityPublication(entity, operationID)),
-            ...output.tasks.map((task) => taskPublication(task, operationID)),
-            ...output.objects.map((object) => objectPublication(objectSummary(object), operationID))
+            ...output.entities.map((entity) => entityPublication(entity, operationID, provenance)),
+            ...output.tasks.map((task) => taskPublication(task, operationID, provenance)),
+            ...output.objects.map((object) => objectPublication(objectSummary(object), operationID, provenance))
           ]
         : [];
     case "query.changed_since":
       return isChangedSinceResponse(output)
-        ? output.events.flatMap((event) => {
+        ? collapseChangedSinceEvents(output.events).flatMap((event) => {
             if (event.event !== "delete") {
               switch (event.resource_type) {
                 case "entity":
-                  return [entityPublication(event.resource, operationID)];
+                  return [entityPublication(event.resource, operationID, provenance)];
                 case "task":
-                  return [taskPublication(event.resource, operationID)];
+                  return [taskPublication(event.resource, operationID, provenance)];
                 case "object":
-                  return [objectPublication(event.resource, operationID)];
+                  return [objectPublication(event.resource, operationID, provenance)];
               }
             }
-            return [deletedPublication(event.resource_type, event.id, event.version, operationID, observedAt)];
+            return [
+              deletedPublication(event.resource_type, event.id, event.version, operationID, observedAt, provenance)
+            ];
           })
         : [];
     case "object.content":
@@ -1322,38 +1415,47 @@ function responsePublications(response: DataResponse, observedAt: string): State
   }
 }
 
-function entityPublication(resource: EntityResource, operationID: string): StatePublication {
+function entityPublication(
+  resource: EntityResource,
+  operationID: string,
+  provenance: ResponseProvenance
+): StatePublication {
   return {
     type: "state",
     resource_type: "entity",
     resource,
     observation_time: resource.metadata.updated_at,
-    path: "gateway_feed",
-    confirmation: "core_confirmed",
+    ...provenance,
     operation_id: operationID
   };
 }
 
-function taskPublication(resource: TaskResource, operationID: string): StatePublication {
+function taskPublication(
+  resource: TaskResource,
+  operationID: string,
+  provenance: ResponseProvenance
+): StatePublication {
   return {
     type: "state",
     resource_type: "task",
     resource,
     observation_time: resource.updated_at,
-    path: "gateway_feed",
-    confirmation: "core_confirmed",
+    ...provenance,
     operation_id: operationID
   };
 }
 
-function objectPublication(resource: ObjectResource, operationID: string): StatePublication {
+function objectPublication(
+  resource: ObjectResource,
+  operationID: string,
+  provenance: ResponseProvenance
+): StatePublication {
   return {
     type: "state",
     resource_type: "object",
     resource,
     observation_time: resource.metadata.updated_at,
-    path: "gateway_feed",
-    confirmation: "core_confirmed",
+    ...provenance,
     operation_id: operationID
   };
 }
@@ -1363,7 +1465,8 @@ function deletedPublication(
   resourceIDValue: string,
   atlasVersion: number,
   operationID: string,
-  observedAt: string
+  observedAt: string,
+  provenance: ResponseProvenance
 ): StatePublication {
   return {
     type: "state",
@@ -1372,8 +1475,7 @@ function deletedPublication(
     deleted: true,
     atlas_version: atlasVersion,
     observation_time: observedAt,
-    path: "gateway_feed",
-    confirmation: "core_confirmed",
+    ...provenance,
     operation_id: operationID
   };
 }
@@ -1395,7 +1497,6 @@ function objectSummary(resource: ObjectDetailResource): ObjectResource {
 function taskReportPublication(
   message: TaskReport,
   picture: SharedPicture,
-  observedAt: string,
   identity: FrameIdentity
 ): StatePublication | undefined {
   const current = picture
@@ -1403,9 +1504,17 @@ function taskReportPublication(
     .records.find((record) => record.resource_type === "task" && record.id === message.task_id)?.state as
     | TaskResource
     | undefined;
-  if (!current || current.status === "completed" || current.status === "failed" || current.status === "cancelled") {
+  if (
+    !current ||
+    identity.source.role !== "asset" ||
+    current.asset_id !== identity.source.id ||
+    current.status === "completed" ||
+    current.status === "failed" ||
+    current.status === "cancelled"
+  ) {
     return undefined;
   }
+  const observedAt = message.observation_time;
   const acknowledgedAt = current.acknowledged_at ?? observedAt;
   const startedAt = current.started_at ?? observedAt;
   const common = {
@@ -1479,6 +1588,7 @@ function taskReportPublication(
 
 function operationIDFor(message: LinkMessage): string {
   if (message.type === "data_request" || message.type === "data_response") return message.request_id;
+  if (message.type === "object_content") return message.request_id;
   if (message.type === "control") return message.operation_id;
   if (message.type === "state" && message.operation_id) return message.operation_id;
   return compactID();
@@ -1486,6 +1596,12 @@ function operationIDFor(message: LinkMessage): string {
 
 function dataRequestID(outbound: Outbound): string | undefined {
   return outbound.message.type === "data_request" ? outbound.message.request_id : undefined;
+}
+
+function outboundDeadlineMs(message: LinkMessage, priority: MessagePriority): number {
+  return message.type === "data_request" && message.operation === "object.content"
+    ? DEADLINE_MS.object_content
+    : DEADLINE_MS[priority];
 }
 
 function validStateSource(message: LinkMessage, source: LinkNode): boolean {

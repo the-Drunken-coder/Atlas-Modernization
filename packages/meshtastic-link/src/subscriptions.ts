@@ -54,6 +54,12 @@ export class LocalSubscriptionDemand {
     return this.byClient.has(clientID);
   }
 
+  clear(): SubscriptionTransition[] {
+    const transitions = [...this.aggregate().values()].map((selector) => ({ action: "remove" as const, selector }));
+    this.byClient.clear();
+    return transitions;
+  }
+
   private hasKey(key: string): boolean {
     return [...this.byClient.values()].some((subscriptions) => subscriptions.has(key));
   }
@@ -100,6 +106,10 @@ export class GatewaySubscriptionDemand {
       for (const [key, lease] of source) if (lease.expiresAt > now) result.set(key, lease.selector);
     }
     return result;
+  }
+
+  has(sourceNodeID: string, selector: FeedSelector, now: number): boolean {
+    return (this.bySource.get(sourceNodeID)?.get(selectorKey(selector))?.expiresAt ?? 0) > now;
   }
 
   private isDemanded(key: string, now: number): boolean {
