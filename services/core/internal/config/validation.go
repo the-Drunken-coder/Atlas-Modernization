@@ -10,6 +10,11 @@ import (
 	"golang.org/x/net/idna"
 )
 
+var (
+	pluginHostnameLookup  = idna.New(idna.MapForLookup(), idna.BidiRule(), idna.CheckHyphens(false), idna.VerifyDNSLength(true))
+	pluginHostnameLiteral = idna.New(idna.ValidateLabels(true), idna.StrictDomainName(true), idna.BidiRule(), idna.CheckHyphens(false), idna.VerifyDNSLength(true))
+)
+
 func (c *Config) validate() error {
 	if err := validateCORSOrigins(c.CORSOrigins); err != nil {
 		return err
@@ -54,10 +59,7 @@ func (c *Config) validatePlugins() error {
 		if err != nil {
 			return fmt.Errorf("plugins[%d].base_url must be a plain HTTP origin", index)
 		}
-		hostname := parsed.Hostname()
-		_, hostnameErr := idna.Lookup.ToASCII(hostname)
-		invalidHostname := !strings.HasPrefix(parsed.Host, "[") && hostnameErr != nil
-		if parsed.Scheme != "http" || hostname == "" || invalidHostname || parsed.User != nil || strings.HasSuffix(parsed.Host, ":") || strings.ContainsAny(plugin.BaseURL, "?#") || parsed.Path != "" {
+		if parsed.Scheme != "http" || !validPluginHostname(plugin.BaseURL, parsed) || parsed.User != nil || strings.HasSuffix(parsed.Host, ":") || strings.ContainsAny(plugin.BaseURL, "?#") || parsed.Path != "" {
 			return fmt.Errorf("plugins[%d].base_url must be a plain HTTP origin", index)
 		}
 		if port := parsed.Port(); port != "" {
@@ -68,4 +70,32 @@ func (c *Config) validatePlugins() error {
 		}
 	}
 	return nil
+}
+
+// validPluginHostname rejects names that DNS cannot resolve or that IDNA would
+// silently map to a different hostname before dialing.
+func validPluginHostname(baseURL string, parsed *url.URL) bool {
+	hostname := parsed.Hostname()
+	if hostname == "" {
+		return false
+	}
+	if strings.HasPrefix(parsed.Host, "[") {
+		return true
+	}
+	if strings.Contains(baseURL, "%") {
+		return false
+	}
+
+	hostname = strings.TrimSuffix(hostname, ".")
+	lookup, lookupErr := pluginHostnameLookup.ToASCII(hostname)
+	literal, literalErr := pluginHostnameLiteral.ToASCII(strings.ToLower(hostname))
+	if lookupErr != nil || literalErr != nil || lookup != literal {
+		return false
+	}
+	for _, label := range strings.Split(lookup, ".") {
+		if label == "" || strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
+			return false
+		}
+	}
+	return true
 }
