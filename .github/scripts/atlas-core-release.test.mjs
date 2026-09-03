@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -25,6 +25,40 @@ function git(args, cwd) {
   const result = spawnSync("git", args, { cwd, encoding: "utf8", stdio: "pipe" });
   assert.equal(result.status, 0, result.stderr);
   return result.stdout.trim();
+}
+
+function workflowRunScript(stepName) {
+  const source = readFileSync(workflow, "utf8");
+  const stepStart = source.indexOf(`      - name: ${stepName}\n`);
+  assert.ok(stepStart >= 0, `Workflow step not found: ${stepName}`);
+  const runMarker = "        run: |\n";
+  const scriptStart = source.indexOf(runMarker, stepStart);
+  assert.ok(scriptStart >= 0, `Workflow run block not found: ${stepName}`);
+  const bodyStart = scriptStart + runMarker.length;
+  const nextStep = source.indexOf("\n      - name:", bodyStart);
+  const body = source.slice(bodyStart, nextStep >= 0 ? nextStep : source.length);
+  return body
+    .split("\n")
+    .map((line) => (line.startsWith("          ") ? line.slice(10) : line))
+    .join("\n");
+}
+
+function runWorkflowStep(stepName, cwd, environment) {
+  return spawnSync("bash", ["-c", `set -euo pipefail\n${workflowRunScript(stepName)}`], {
+    cwd,
+    encoding: "utf8",
+    env: { ...process.env, ...environment },
+    stdio: "pipe"
+  });
+}
+
+function workflowOutput(path, name) {
+  const prefix = `${name}=`;
+  const output = readFileSync(path, "utf8")
+    .split("\n")
+    .find((line) => line.startsWith(prefix));
+  assert.ok(output, `Workflow output not found: ${name}`);
+  return output.slice(prefix.length);
 }
 
 test("validates Atlas Core versions", () => {
@@ -203,6 +237,268 @@ test("lets the coordinator wait without blocking the tag publisher", () => {
   assert.match(source, /group: release-atlas-core-mutator\n\s+cancel-in-progress: false\n\s+queue: max/);
 });
 
+test("reuses the exact release commit after an authorization upload failure", () => {
+  const directory = mkdtempSync(join(tmpdir(), "atlas-core-release-retry-"));
+  const remote = join(directory, "remote.git");
+  const checkout = join(directory, "checkout");
+  const runnerTemp = join(directory, "runner-temp");
+  const verification = join(directory, "verification");
+  const bin = join(directory, "bin");
+  const gh = join(bin, "gh");
+  const ghLog = join(directory, "gh.log");
+  const output = join(directory, "github-output");
+  const changelog = join(checkout, "CHANGELOG.md");
+  const version = "1.2.3";
+  const repository = "the-Drunken-coder/Atlas-Modernization";
+  const coordinatorRunId = "6000";
+  const releaseArtifactId = "1234";
+  const releaseArtifactName = `atlas-core-final-${version}-${coordinatorRunId}-1`;
+  const releaseArtifactDigest = `sha256:${"a".repeat(64)}`;
+  const packageIntegrity = `sha512-${Buffer.from("approved package").toString("base64")}`;
+
+  try {
+    git(["init", "--bare", remote], directory);
+    mkdirSync(checkout);
+    mkdirSync(runnerTemp);
+    mkdirSync(verification);
+    mkdirSync(bin);
+    writeFileSync(
+      gh,
+      `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "$MOCK_GH_LOG"
+if [ "$1" = "auth" ] && [ "$2" = "setup-git" ]; then
+  exit 0
+fi
+if [ "$1" = "api" ] && [ "\${2:-}" = "--method" ]; then
+  cat >/dev/null
+  printf '%s\\n' "$MOCK_DISPATCH_RESPONSE"
+  exit 0
+fi
+if [ "$1" = "api" ]; then
+  printf '%s\\n' "$MOCK_COORDINATOR_RESPONSE"
+  exit 0
+fi
+exit 1
+`
+    );
+    chmodSync(gh, 0o755);
+    writeFileSync(ghLog, "");
+
+    git(["init"], checkout);
+    git(["config", "user.name", "Atlas Core release test"], checkout);
+    git(["config", "user.email", "atlas-core@example.invalid"], checkout);
+    git(["branch", "-M", "main"], checkout);
+    git(["remote", "add", "origin", remote], checkout);
+    writeFileSync(changelog, "# Changelog\n");
+    git(["add", "CHANGELOG.md"], checkout);
+    git(["commit", "-m", "feat: add Atlas Core package"], checkout);
+    const sourceSha = git(["rev-parse", "HEAD"], checkout);
+    git(["push", "--set-upstream", "origin", "main"], checkout);
+
+    const approvedChangelog = "# Changelog\n\n## 1.2.3 - 2026-09-02\n\n- Release.\n";
+    const releaseMutations = [];
+    const authorizations = new Map();
+    const uploadAttempts = [];
+    const commonEnvironment = {
+      GITHUB_REPOSITORY: repository,
+      GITHUB_RUN_ID: coordinatorRunId,
+      GITHUB_STEP_SUMMARY: join(directory, "github-summary"),
+      GH_TOKEN: "test-token",
+      MOCK_GH_LOG: ghLog,
+      PATH: `${bin}:${process.env.PATH}`,
+      RUNNER_TEMP: runnerTemp,
+      VERSION: version
+    };
+
+    const runAttempt = (runAttempt, childRunId, failUpload) => {
+      git(["checkout", "--detach", sourceSha], checkout);
+      writeFileSync(changelog, approvedChangelog);
+      git(["add", "CHANGELOG.md"], checkout);
+
+      writeFileSync(output, "");
+      const selected = runWorkflowStep("Select release commit state", checkout, {
+        ...commonEnvironment,
+        GITHUB_OUTPUT: output,
+        SOURCE_SHA: sourceSha
+      });
+      assert.equal(selected.status, 0, selected.stderr);
+      let releaseSha = workflowOutput(output, "release_sha");
+
+      if (releaseSha === "") {
+        releaseMutations.push("mint-credential", "commit-and-tag");
+        writeFileSync(output, "");
+        const committed = runWorkflowStep("Commit and atomically tag release", checkout, {
+          ...commonEnvironment,
+          GITHUB_OUTPUT: output
+        });
+        assert.equal(committed.status, 0, committed.stderr);
+        releaseSha = workflowOutput(output, "release_sha");
+      } else {
+        assert.match(selected.stdout, new RegExp(`Reusing exact release commit ${releaseSha}`));
+      }
+
+      writeFileSync(output, "");
+      const dispatched = runWorkflowStep("Dispatch immutable tag publication", checkout, {
+        ...commonEnvironment,
+        GITHUB_OUTPUT: output,
+        GITHUB_RUN_ATTEMPT: String(runAttempt),
+        MOCK_DISPATCH_RESPONSE: JSON.stringify({
+          workflow_run_id: Number(childRunId),
+          html_url: `https://github.com/${repository}/actions/runs/${childRunId}`
+        })
+      });
+      assert.equal(dispatched.status, 0, dispatched.stderr);
+      assert.equal(workflowOutput(output, "child_run_id"), childRunId);
+
+      const recorded = runWorkflowStep("Record approved publication", checkout, {
+        ...commonEnvironment,
+        CHILD_RUN_ID: childRunId,
+        GITHUB_RUN_ATTEMPT: String(runAttempt),
+        PACKAGE_INTEGRITY: packageIntegrity,
+        RELEASE_ARTIFACT_DIGEST: releaseArtifactDigest,
+        RELEASE_ARTIFACT_ID: releaseArtifactId,
+        RELEASE_ARTIFACT_NAME: releaseArtifactName,
+        RELEASE_SHA: releaseSha,
+        SOURCE_SHA: sourceSha
+      });
+      assert.equal(recorded.status, 0, recorded.stderr);
+      const authorization = JSON.parse(
+        readFileSync(join(runnerTemp, "publication-authorization/publication-authorization.json"), "utf8")
+      );
+      authorizations.set(runAttempt, authorization);
+
+      const uploadName = `atlas-core-publication-authorization-${version}-${coordinatorRunId}-${runAttempt}`;
+      uploadAttempts.push(uploadName);
+      if (failUpload) {
+        throw new Error("simulated authorization upload failure");
+      }
+      return { authorization, releaseSha };
+    };
+
+    assert.throws(() => runAttempt(1, "7001", true), /simulated authorization upload failure/);
+    const releaseSha = authorizations.get(1).release_sha;
+    const tagObjectSha = git(["ls-remote", remote, `refs/tags/atlas-core-v${version}`], checkout).split("\t")[0];
+
+    const retry = runAttempt(2, "7002", false);
+    assert.equal(retry.releaseSha, releaseSha);
+    assert.equal(git(["rev-parse", "HEAD"], checkout), sourceSha);
+    assert.equal(git(["rev-parse", "origin/main"], checkout), releaseSha);
+    assert.equal(git(["rev-list", "--count", `${sourceSha}..origin/main`], checkout), "1");
+    assert.equal(
+      git(["ls-remote", remote, `refs/tags/atlas-core-v${version}`], checkout).split("\t")[0],
+      tagObjectSha
+    );
+    assert.deepEqual(releaseMutations, ["mint-credential", "commit-and-tag"]);
+    assert.deepEqual(uploadAttempts, [
+      `atlas-core-publication-authorization-${version}-${coordinatorRunId}-1`,
+      `atlas-core-publication-authorization-${version}-${coordinatorRunId}-2`
+    ]);
+
+    const firstAuthorization = authorizations.get(1);
+    const secondAuthorization = retry.authorization;
+    assert.deepEqual(
+      {
+        ...firstAuthorization,
+        coordinator_run_attempt: secondAuthorization.coordinator_run_attempt,
+        child_run_id: secondAuthorization.child_run_id
+      },
+      secondAuthorization
+    );
+    assert.equal(firstAuthorization.coordinator_run_attempt, "1");
+    assert.equal(firstAuthorization.child_run_id, "7001");
+    assert.equal(secondAuthorization.coordinator_run_attempt, "2");
+    assert.equal(secondAuthorization.child_run_id, "7002");
+    assert.equal(secondAuthorization.release_artifact_id, releaseArtifactId);
+    assert.equal(secondAuthorization.release_artifact_name, releaseArtifactName);
+    assert.equal(secondAuthorization.release_artifact_digest, releaseArtifactDigest);
+    assert.equal(secondAuthorization.source_sha, sourceSha);
+    assert.equal(secondAuthorization.release_sha, releaseSha);
+
+    const verifyAuthorization = (authorization, childRunId, expectedAttempt) => {
+      rmSync(join(verification, "coordinator-authorization"), { recursive: true, force: true });
+      mkdirSync(join(verification, "coordinator-authorization"));
+      writeFileSync(
+        join(verification, "coordinator-authorization/publication-authorization.json"),
+        JSON.stringify(authorization)
+      );
+      writeFileSync(output, "");
+      return runWorkflowStep("Verify coordinator authorization", verification, {
+        ...commonEnvironment,
+        CHILD_RUN_ID: childRunId,
+        COORDINATOR_RUN_ID: coordinatorRunId,
+        EXPECTED_COORDINATOR_RUN_ATTEMPT: expectedAttempt,
+        GITHUB_OUTPUT: output,
+        MOCK_COORDINATOR_RESPONSE: JSON.stringify({
+          event: "workflow_dispatch",
+          head_branch: "main",
+          head_sha: sourceSha,
+          path: ".github/workflows/release-atlas-core.yml",
+          repository: { full_name: repository },
+          run_attempt: 2,
+          status: "in_progress"
+        }),
+        RELEASE_SHA: releaseSha,
+        SOURCE_SHA: sourceSha
+      });
+    };
+
+    const verified = verifyAuthorization(secondAuthorization, "7002", "2");
+    assert.equal(verified.status, 0, verified.stderr);
+    assert.equal(workflowOutput(output, "release_artifact_id"), releaseArtifactId);
+    assert.equal(workflowOutput(output, "release_artifact_name"), releaseArtifactName);
+
+    const staleAttempt = verifyAuthorization(firstAuthorization, "7002", "2");
+    assert.notEqual(staleAttempt.status, 0);
+    assert.match(staleAttempt.stderr, /identifies a different run attempt/);
+
+    const staleChild = verifyAuthorization(secondAuthorization, "7001", "2");
+    assert.notEqual(staleChild.status, 0);
+
+    writeFileSync(changelog, `${approvedChangelog}\n- Different bytes.\n`);
+    git(["add", "CHANGELOG.md"], checkout);
+    writeFileSync(output, "");
+    const mismatchedRetry = runWorkflowStep("Select release commit state", checkout, {
+      GITHUB_OUTPUT: output,
+      SOURCE_SHA: sourceSha,
+      VERSION: version
+    });
+    assert.notEqual(mismatchedRetry.status, 0);
+    assert.match(mismatchedRetry.stderr, /approved release artifact does not match/);
+
+    writeFileSync(changelog, approvedChangelog);
+    git(["add", "CHANGELOG.md"], checkout);
+    git(["tag", "--delete", `atlas-core-v${version}`], checkout);
+    git(["tag", "--annotate", "nested-release-target", "--message", "Nested target", releaseSha], checkout);
+    git([
+      "tag",
+      "--annotate",
+      `atlas-core-v${version}`,
+      "--message",
+      `Atlas Core ${version}`,
+      "nested-release-target"
+    ], checkout);
+    git(["push", "--force", "origin", `refs/tags/atlas-core-v${version}`], checkout);
+    writeFileSync(output, "");
+    const indirectTagRetry = runWorkflowStep("Select release commit state", checkout, {
+      GITHUB_OUTPUT: output,
+      SOURCE_SHA: sourceSha,
+      VERSION: version
+    });
+    assert.notEqual(indirectTagRetry.status, 0);
+    assert.match(indirectTagRetry.stderr, /does not directly identify/);
+
+    const ghCalls = readFileSync(ghLog, "utf8").trim().split("\n");
+    assert.equal(ghCalls.filter((call) => call === "auth setup-git").length, 1);
+    assert.equal(
+      ghCalls.filter((call) => call.includes("actions/workflows/release-atlas-core.yml/dispatches")).length,
+      2
+    );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("applies the monotonic version gate only before creating a missing tag", () => {
   const source = readFileSync(workflow, "utf8");
   assert.match(
@@ -243,6 +539,19 @@ test("coordinates automatic tag publication after one approval", () => {
     assert.match(commitJob, /git diff --cached --check/);
     assert.match(commitJob, /cmp "\$artifact_root\/release-artifacts\/release\.diff" "\$actual_release_diff"/);
     assert.match(commitJob, /git ls-files --others --exclude-standard/);
+    assert.match(commitJob, /name: Select release commit state/);
+    assert.match(
+      commitJob,
+      /name: Mint protected release credential\n\s+id: release-token\n\s+if: steps\.release-state\.outputs\.release_sha == ''/
+    );
+    assert.match(
+      commitJob,
+      /name: Commit and atomically tag release\n\s+id: commit\n\s+if: steps\.release-state\.outputs\.release_sha == ''/
+    );
+    assert.match(
+      commitJob,
+      /release_sha: \$\{\{ steps\.release-state\.outputs\.release_sha \|\| steps\.commit\.outputs\.release_sha \}\}/
+    );
     assert.equal(commitJob.match(/core\.hooksPath=\/dev\/null/g)?.length, 3);
     assert.match(source, /name: Upload approved publication/);
     assert.match(
@@ -258,7 +567,7 @@ test("coordinates automatic tag publication after one approval", () => {
   assert.match(source, /name: Verify coordinator authorization/);
   assert.match(
     source,
-    /name: Verify coordinator authorization[\s\S]*?COORDINATOR_RUN_ID: \$\{\{ inputs\.coordinator_run_id \}\}\n\s+GH_TOKEN: \$\{\{ secrets\.GITHUB_TOKEN \}\}/
+    /name: Verify coordinator authorization[\s\S]*?COORDINATOR_RUN_ID: \$\{\{ inputs\.coordinator_run_id \}\}\n\s+EXPECTED_COORDINATOR_RUN_ATTEMPT: \$\{\{ inputs\.coordinator_run_attempt \}\}\n\s+GH_TOKEN: \$\{\{ secrets\.GITHUB_TOKEN \}\}/
   );
   assert.match(source, /run-id: \$\{\{ inputs\.coordinator_run_id \}\}/);
   assert.match(source, /child_run_id: \$child_run_id/);
@@ -271,6 +580,7 @@ test("coordinates automatic tag publication after one approval", () => {
     assert.match(source, /coordinator_run_attempt: \$coordinator_run_attempt\n\s+}/);
     assert.match(source, /EXPECTED_COORDINATOR_RUN_ATTEMPT: \$\{\{ inputs\.coordinator_run_attempt \}\}/);
     assert.match(source, /release_artifact_id: \$release_artifact_id/);
+    assert.match(source, /release_artifact_name: \$release_artifact_name/);
     assert.match(source, /release_artifact_digest: \$release_artifact_digest/);
     assert.match(source, /package_integrity: \$package_integrity/);
     assert.match(
@@ -279,6 +589,7 @@ test("coordinates automatic tag publication after one approval", () => {
     );
     assert.match(source, /\.status == "in_progress"/);
     assert.equal(source.match(/\.status == "in_progress"/g)?.length, 3);
+    assert.equal(source.match(/\.run_attempt == \(\$run_attempt \| tonumber\)/g)?.length, 2);
     assert.match(source, /name: Verify exact coordinator package artifact/);
     assert.match(source, /name: Download coordinator-approved release/);
     assert.match(source, /Downloaded package integrity does not match the coordinator authorization/);
