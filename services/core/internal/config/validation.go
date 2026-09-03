@@ -88,6 +88,17 @@ func validPluginHostname(baseURL string, parsed *url.URL) bool {
 	}
 
 	hostname = strings.TrimSuffix(hostname, ".")
+	for _, label := range strings.Split(hostname, ".") {
+		if label == "" || strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
+			return false
+		}
+		if strings.IndexFunc(label, func(r rune) bool { return r > unicode.MaxASCII }) != -1 {
+			runes := []rune(label)
+			if len(runes) > 3 && runes[2] == '-' && runes[3] == '-' {
+				return false
+			}
+		}
+	}
 	lookup, lookupErr := pluginHostnameLookup.ToASCII(hostname)
 	if strings.IndexFunc(hostname, func(r rune) bool { return r > unicode.MaxASCII }) != -1 {
 		normalized, err := pluginHostnameLiteral.ToUnicode(hostname)
