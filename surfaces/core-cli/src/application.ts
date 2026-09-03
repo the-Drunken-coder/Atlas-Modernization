@@ -42,7 +42,6 @@ import {
 } from "./terminal-ui.js";
 
 const PROJECT_NAME_PREFIX = "atlas_core_production";
-const MUTATION_LOCK_NETWORK = `${PROJECT_NAME_PREFIX}_mutation_lock`;
 const MUTATION_RECOVERY_LOCK_PREFIX = ".mutation.lock.recovering.";
 const PLUGIN_DISABLE_INTENT_FILE = "disable.json";
 const RETIRED_PLUGIN_PREFIX = ".disabled.";
@@ -212,6 +211,7 @@ type MutationLockOwner = {
 type DockerMutationLock = {
   engineId: string;
   networkId: string;
+  networkName: string;
   owner: MutationLockOwner;
   labels: Record<string, string>;
 };
@@ -247,6 +247,7 @@ type DockerRuntime = {
 
 type DockerDeploymentIdentity = {
   projectName: string;
+  mutationLockNetwork: string;
   postgresVolume: string;
   minioVolume: string;
   apiContainer: string;
@@ -261,6 +262,7 @@ function dockerDeploymentIdentity(engineId: string): DockerDeploymentIdentity {
   const projectName = `${PROJECT_NAME_PREFIX}_${engineKey}`;
   return {
     projectName,
+    mutationLockNetwork: `${projectName}_mutation_lock`,
     postgresVolume: `${projectName}_postgres_data`,
     minioVolume: `${projectName}_minio_data`,
     apiContainer: `${projectName}_api`,
@@ -655,7 +657,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       }
       const keepRecoveredDisableFence =
         recoveryMode === "plugin-disable" ||
-        recoveryMode === "stop" ||
+        (recoveryMode === "stop" && pendingPluginIds.length > 0) ||
         (recoveryMode === "start" && pendingPluginIds.length > 0) ||
         (recoveryMode === "plugin-enable" && pendingPluginIds.length > 0);
       const runDockerMutation = async (): Promise<T> => {
@@ -679,7 +681,18 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
         : await runDockerMutation();
     } finally {
       try {
-        const localOwner = this.#activeMutationLock ?? mutationLock.owner;
+        let localOwner = this.#activeMutationLock ?? mutationLock.owner;
+        if (existsSync(this.#mutationLockFile)) {
+          const canonicalOwner = this.#readMutationLockOwner(this.#mutationLockFile);
+          if (
+            canonicalOwner.id === localOwner.id &&
+            canonicalOwner.pid === localOwner.pid &&
+            this.#isRecoverableMutationOwner(canonicalOwner)
+          ) {
+            localOwner = canonicalOwner;
+            this.#activeMutationLock = canonicalOwner;
+          }
+        }
         const preserveRecoverableLocalLock = this.#isRecoverableMutationOwner(localOwner);
         const shouldPreserveRecoverableLocalLock =
           (dockerLock !== undefined && !dockerLockReleased && preserveRecoverableLocalLock) ||
@@ -2098,9 +2111,10 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       "io.atlas.core.lock-id": owner.id,
       "io.atlas.core.lock-attempt": randomBytes(16).toString("hex")
     };
+    const mutationLockNetwork = dockerDeploymentIdentity(dockerEngineId).mutationLockNetwork;
     const args = ["network", "create"];
     for (const [name, value] of Object.entries(attemptLabels)) args.push("--label", `${name}=${value}`);
-    args.push(MUTATION_LOCK_NETWORK);
+    args.push(mutationLockNetwork);
 
     let result: CommandResult;
     try {
@@ -2108,34 +2122,34 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       await this.#assertPinnedDockerEngine(dockerEngineId);
     } catch (error) {
       if (error instanceof CommandCancelledError) {
-        await this.#removeAmbiguousDockerMutationLock(attemptLabels);
+        await this.#removeAmbiguousDockerMutationLock(attemptLabels, mutationLockNetwork);
       }
       throw error;
     }
     if (result.status === 0) {
       const networkId = oneLine(result.stdout);
       if (!networkId) {
-        await this.#removeAmbiguousDockerMutationLock(attemptLabels);
+        await this.#removeAmbiguousDockerMutationLock(attemptLabels, mutationLockNetwork);
         throw new Error("Docker did not report the deployment mutation lock network ID.");
       }
-      return { engineId: dockerEngineId, networkId, owner, labels: attemptLabels };
+      return { engineId: dockerEngineId, networkId, networkName: mutationLockNetwork, owner, labels: attemptLabels };
     }
 
-    if (await this.#removeAmbiguousDockerMutationLock(attemptLabels)) {
+    if (await this.#removeAmbiguousDockerMutationLock(attemptLabels, mutationLockNetwork)) {
       throw commandFailure(`docker ${args.join(" ")}`, result);
     }
 
     const inspection = await this.#runner.run(
       "docker",
-      ["network", "inspect", "--format", "{{json .Labels}}", MUTATION_LOCK_NETWORK],
+      ["network", "inspect", "--format", "{{json .Labels}}", mutationLockNetwork],
       this.#dockerRunOptions()
     );
     await this.#assertPinnedDockerEngine(dockerEngineId);
     if (inspection.status !== 0) throw commandFailure(`docker ${args.join(" ")}`, result);
-    this.#assertResourceLabels("deployment mutation lock", MUTATION_LOCK_NETWORK, inspection.stdout, ownershipLabels);
+    this.#assertResourceLabels("deployment mutation lock", mutationLockNetwork, inspection.stdout, ownershipLabels);
     throw new Error(
       `Atlas Core deployment mutation is already locked on Docker engine ${dockerEngineId}. ` +
-        `If no atlas-core process is changing the deployment, remove ${MUTATION_LOCK_NETWORK} with docker network rm and retry.`
+        `If no atlas-core process is changing the deployment, remove ${mutationLockNetwork} with docker network rm and retry.`
     );
   }
 
@@ -2144,9 +2158,10 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     recoveredLockId: string,
     expectedEngineId: string
   ): Promise<void> {
+    const mutationLockNetwork = dockerDeploymentIdentity(expectedEngineId).mutationLockNetwork;
     const inspection = await this.#runner.run(
       "docker",
-      ["network", "inspect", "--format", "{{json .Id}}\t{{json .Labels}}", MUTATION_LOCK_NETWORK],
+      ["network", "inspect", "--format", "{{json .Id}}\t{{json .Labels}}", mutationLockNetwork],
       this.#dockerRunOptions()
     );
     await this.#assertPinnedDockerEngine(expectedEngineId);
@@ -2154,10 +2169,10 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       if (dockerNetworkMissing(inspection)) {
         return;
       }
-      throw commandFailure(`docker network inspect ${MUTATION_LOCK_NETWORK}`, inspection);
+      throw commandFailure(`docker network inspect ${mutationLockNetwork}`, inspection);
     }
     const network = dockerNetworkIdentity(inspection.stdout);
-    this.#assertResourceLabels("deployment mutation lock", MUTATION_LOCK_NETWORK, JSON.stringify(network.labels), {
+    this.#assertResourceLabels("deployment mutation lock", mutationLockNetwork, JSON.stringify(network.labels), {
       ...ownershipLabels,
       "io.atlas.core.lock-id": recoveredLockId
     });
@@ -2167,16 +2182,19 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       if (dockerNetworkMissing(removal)) {
         return;
       }
-      throw commandFailure(`docker network rm ${MUTATION_LOCK_NETWORK}`, removal);
+      throw commandFailure(`docker network rm ${mutationLockNetwork}`, removal);
     }
   }
 
-  async #removeAmbiguousDockerMutationLock(attemptLabels: Record<string, string>): Promise<boolean> {
+  async #removeAmbiguousDockerMutationLock(
+    attemptLabels: Record<string, string>,
+    mutationLockNetwork: string
+  ): Promise<boolean> {
     const expectedEngineId = attemptLabels["io.atlas.core.engine"];
     if (!expectedEngineId) throw new OperationCleanupError("Atlas Core deployment mutation lock has no engine ID.");
     const inspection = await this.#runner.runCleanup(
       "docker",
-      ["network", "inspect", "--format", "{{json .Id}}\t{{json .Labels}}", MUTATION_LOCK_NETWORK],
+      ["network", "inspect", "--format", "{{json .Id}}\t{{json .Labels}}", mutationLockNetwork],
       this.#dockerRunOptions()
     );
     await this.#assertPinnedDockerEngine(expectedEngineId, true);
@@ -2185,7 +2203,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
         return true;
       }
       throw new OperationCleanupError(
-        commandFailure(`docker network inspect ${MUTATION_LOCK_NETWORK}`, inspection).message
+        commandFailure(`docker network inspect ${mutationLockNetwork}`, inspection).message
       );
     }
     const network = dockerNetworkIdentity(inspection.stdout);
@@ -2196,7 +2214,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       if (dockerNetworkMissing(removal)) {
         return true;
       }
-      throw new OperationCleanupError(commandFailure(`docker network rm ${MUTATION_LOCK_NETWORK}`, removal).message);
+      throw new OperationCleanupError(commandFailure(`docker network rm ${mutationLockNetwork}`, removal).message);
     }
     return true;
   }
@@ -2204,7 +2222,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   async #releaseDockerMutationLock(lock: DockerMutationLock): Promise<void> {
     const inspection = await this.#runner.runCleanup(
       "docker",
-      ["network", "inspect", "--format", "{{json .Id}}\t{{json .Labels}}", MUTATION_LOCK_NETWORK],
+      ["network", "inspect", "--format", "{{json .Id}}\t{{json .Labels}}", lock.networkName],
       this.#dockerRunOptions()
     );
     await this.#assertPinnedDockerEngine(lock.engineId, true);
@@ -2212,9 +2230,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       if (dockerNetworkMissing(inspection)) {
         return;
       }
-      throw new OperationCleanupError(
-        commandFailure(`docker network inspect ${MUTATION_LOCK_NETWORK}`, inspection).message
-      );
+      throw new OperationCleanupError(commandFailure(`docker network inspect ${lock.networkName}`, inspection).message);
     }
     const network = dockerNetworkIdentity(inspection.stdout);
     if (network.id !== lock.networkId || !this.#resourceLabelsMatch(JSON.stringify(network.labels), lock.labels)) {
@@ -2226,7 +2242,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       if (dockerNetworkMissing(result)) {
         return;
       }
-      throw new OperationCleanupError(commandFailure(`docker network rm ${MUTATION_LOCK_NETWORK}`, result).message);
+      throw new OperationCleanupError(commandFailure(`docker network rm ${lock.networkName}`, result).message);
     }
   }
 
@@ -2286,7 +2302,17 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       operation: "engine-recovery",
       dockerEngineId: expectedEngineId
     };
-    writePrivateFile(this.#mutationLockFile, `${JSON.stringify(marked, null, 2)}\n`, this.#platform);
+    try {
+      writePrivateFile(this.#mutationLockFile, `${JSON.stringify(marked, null, 2)}\n`, this.#platform);
+    } catch (error) {
+      try {
+        const canonical = this.#readMutationLockOwner(this.#mutationLockFile);
+        if (sameMutationLockOwner(canonical, marked)) this.#activeMutationLock = canonical;
+      } catch {
+        // Preserve the publication error. The finalizer will handle any readable canonical owner.
+      }
+      throw error;
+    }
     this.#activeMutationLock = marked;
   }
 
@@ -2702,8 +2728,9 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     if (current.id !== owner.id || current.pid !== owner.pid) {
       throw new Error("Atlas Core mutation lock changed ownership before Plugin disable was prepared.");
     }
+    const { dockerEngineId: _, ...pluginDisableOwner } = owner;
     const marked: MutationLockOwner = {
-      ...owner,
+      ...pluginDisableOwner,
       operation: "plugin-disable",
       ...(target ? { pluginDisableTarget: target } : {})
     };

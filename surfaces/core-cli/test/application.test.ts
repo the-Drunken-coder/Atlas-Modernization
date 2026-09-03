@@ -34,7 +34,8 @@ const MINIO_CONTAINER = `${PROJECT_NAME}_minio`;
 const MINIO_INIT_CONTAINER = `${PROJECT_NAME}_minio_init`;
 const POSTGRES_VOLUME = `${PROJECT_NAME}_postgres_data`;
 const MINIO_VOLUME = `${PROJECT_NAME}_minio_data`;
-const MUTATION_LOCK_NETWORK = "atlas_core_production_mutation_lock";
+const mutationLockNetwork = (engineId: string): string => `${projectName(engineId)}_mutation_lock`;
+const MUTATION_LOCK_NETWORK = mutationLockNetwork(TEST_ENGINE_ID);
 
 function nextPatchVersion(version: string): string {
   const [major, minor, patch, ...extra] = version.split(".");
@@ -3562,6 +3563,7 @@ describe("atlas-core CLI", () => {
     expect(test.stderr.join("")).toContain("Docker engine changed during deployment mutation");
     expect(test.runner.calls.map(composeCommand).some((args) => args[0] === "down")).toBe(false);
     expect(test.runner.existingNetworks.has(MUTATION_LOCK_NETWORK)).toBe(true);
+    expect(test.runner.existingNetworks.has(mutationLockNetwork("replacement-engine"))).toBe(false);
     expect(JSON.parse(readFileSync(lockPath, "utf8"))).toMatchObject({
       operation: "engine-recovery",
       dockerEngineId: TEST_ENGINE_ID
@@ -3578,6 +3580,118 @@ describe("atlas-core CLI", () => {
     test.runner.dockerEngineId = TEST_ENGINE_ID;
     test.stderr.length = 0;
     expect(await runCLI(["stop"], test.context)).toBe(0);
+    expect(existsSync(lockPath)).toBe(false);
+    expect(test.runner.existingNetworks.has(MUTATION_LOCK_NETWORK)).toBe(false);
+  });
+
+  it("preserves a canonically published engine-recovery owner after a durability error", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const lockPath = join(test.home, ".atlas", "core", ".mutation.lock");
+    test.runner.afterNetworkCreateEffect = () => {
+      const owner = JSON.parse(readFileSync(lockPath, "utf8"));
+      writeFileSync(
+        lockPath,
+        `${JSON.stringify({ ...owner, operation: "engine-recovery", dockerEngineId: TEST_ENGINE_ID })}\n`,
+        { mode: 0o600 }
+      );
+      throw new OperationCleanupError("injected post-publication durability failure");
+    };
+
+    expect(await runCLI(["stop"], test.context)).toBe(1);
+
+    expect(test.stderr.join("")).toContain("injected post-publication durability failure");
+    const retainedOwner = JSON.parse(readFileSync(lockPath, "utf8"));
+    expect(retainedOwner).toMatchObject({ operation: "engine-recovery", dockerEngineId: TEST_ENGINE_ID });
+    expect(test.runner.existingNetworks.has(MUTATION_LOCK_NETWORK)).toBe(true);
+
+    writeFileSync(lockPath, `${JSON.stringify({ ...retainedOwner, pid: 2_147_483_647 })}\n`, { mode: 0o600 });
+    test.stderr.length = 0;
+    expect(await runCLI(["stop"], test.context)).toBe(0);
+    expect(existsSync(lockPath)).toBe(false);
+    expect(test.runner.existingNetworks.has(MUTATION_LOCK_NETWORK)).toBe(false);
+  });
+
+  it("converts engine recovery to a valid supervised Plugin-disable owner", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const plugin = installTestPluginCatalog(test);
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
+    const config = join(test.home, ".atlas", "core");
+    const lockPath = join(config, ".mutation.lock");
+    const lockId = "c".repeat(32);
+    writeFileSync(
+      lockPath,
+      `${JSON.stringify({
+        schema: 1,
+        id: lockId,
+        pid: 2_147_483_647,
+        operation: "engine-recovery",
+        dockerEngineId: TEST_ENGINE_ID
+      })}\n`,
+      { mode: 0o600 }
+    );
+    test.runner.existingNetworks.add(MUTATION_LOCK_NETWORK);
+    test.runner.networkIds.set(MUTATION_LOCK_NETWORK, "retained-network");
+    test.runner.networkLabels.set(MUTATION_LOCK_NETWORK, {
+      "io.atlas.core.engine": TEST_ENGINE_ID,
+      "io.atlas.core.lock": "mutation",
+      "io.atlas.core.project": "atlas_core_production",
+      "io.atlas.core.lock-id": lockId
+    });
+    let exercisedProcessGroup = false;
+    test.runner.onRun = (call) => {
+      if (exercisedProcessGroup || call.args[0] !== "network" || call.args[1] !== "inspect") return;
+      const processGroup = call.processGroup;
+      if (!processGroup) return;
+      exercisedProcessGroup = true;
+      processGroup.started(123_459);
+      processGroup.finished(123_459);
+    };
+
+    expect(await runCLI(["plugins", "disable", plugin.pluginId], test.context)).toBe(0);
+
+    expect(exercisedProcessGroup).toBe(true);
+    expect(existsSync(lockPath)).toBe(false);
+    expect(test.runner.existingNetworks.has(MUTATION_LOCK_NETWORK)).toBe(false);
+  });
+
+  it("makes recovered stop fail closed before unsupervised Compose work", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const config = join(test.home, ".atlas", "core");
+    const lockPath = join(config, ".mutation.lock");
+    const lockId = "d".repeat(32);
+    writeFileSync(
+      lockPath,
+      `${JSON.stringify({
+        schema: 1,
+        id: lockId,
+        pid: 2_147_483_647,
+        operation: "engine-recovery",
+        dockerEngineId: TEST_ENGINE_ID
+      })}\n`,
+      { mode: 0o600 }
+    );
+    test.runner.existingNetworks.add(MUTATION_LOCK_NETWORK);
+    test.runner.networkIds.set(MUTATION_LOCK_NETWORK, "retained-network");
+    test.runner.networkLabels.set(MUTATION_LOCK_NETWORK, {
+      "io.atlas.core.engine": TEST_ENGINE_ID,
+      "io.atlas.core.lock": "mutation",
+      "io.atlas.core.project": "atlas_core_production",
+      "io.atlas.core.lock-id": lockId
+    });
+    let inspectedStopOwner = false;
+    test.runner.onRun = (call) => {
+      if (composeCommand(call)[0] !== "down") return;
+      inspectedStopOwner = true;
+      expect(JSON.parse(readFileSync(lockPath, "utf8"))).not.toHaveProperty("operation");
+      expect(call.processGroup).toBeUndefined();
+    };
+
+    expect(await runCLI(["stop"], test.context)).toBe(0);
+
+    expect(inspectedStopOwner).toBe(true);
     expect(existsSync(lockPath)).toBe(false);
     expect(test.runner.existingNetworks.has(MUTATION_LOCK_NETWORK)).toBe(false);
   });
