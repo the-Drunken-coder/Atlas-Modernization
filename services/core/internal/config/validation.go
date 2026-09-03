@@ -10,6 +10,8 @@ import (
 
 	"github.com/the-drunken-coder/atlas/services/core/internal/pluginid"
 	"golang.org/x/net/idna"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 )
 
 var (
@@ -64,11 +66,24 @@ func (c *Config) validatePlugins() error {
 		if parsed.Scheme != "http" || !validPluginHostname(plugin.BaseURL, parsed) || parsed.User != nil || strings.HasSuffix(parsed.Host, ":") || strings.ContainsAny(plugin.BaseURL, "?#") || parsed.Path != "" {
 			return fmt.Errorf("plugins[%d].base_url must be a plain HTTP origin", index)
 		}
-		if port := parsed.Port(); port != "" {
+		port := parsed.Port()
+		if port != "" {
 			value, err := strconv.ParseUint(port, 10, 16)
 			if err != nil || value == 0 {
 				return fmt.Errorf("plugins[%d].base_url must be a plain HTTP origin", index)
 			}
+		}
+		if strings.IndexFunc(parsed.Hostname(), func(r rune) bool { return r > unicode.MaxASCII }) != -1 {
+			hostname, err := pluginHostnameLookup.ToASCII(parsed.Hostname())
+			if err != nil {
+				return fmt.Errorf("plugins[%d].base_url must be a plain HTTP origin", index)
+			}
+			// Store the lookup A-label so Go cannot derive different DNS and Host names.
+			parsed.Host = hostname
+			if port != "" {
+				parsed.Host = net.JoinHostPort(hostname, port)
+			}
+			plugin.BaseURL = parsed.String()
 		}
 	}
 	return nil
@@ -136,7 +151,8 @@ func validPluginHostname(baseURL string, parsed *url.URL) bool {
 		return false
 	}
 	lookup, lookupErr := pluginHostnameLookup.ToASCII(hostname)
-	literal, literalErr := pluginHostnameLiteral.ToASCII(strings.ToLower(hostname))
+	// UTS #46 lowercasing includes multi-code-point mappings such as U+0130 to i + U+0307.
+	literal, literalErr := pluginHostnameLiteral.ToASCII(cases.Lower(language.Und).String(hostname))
 	if lookupErr != nil || literalErr != nil || lookup != literal {
 		return false
 	}
