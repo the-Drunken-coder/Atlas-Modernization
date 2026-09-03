@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"mime"
+	"net"
 	"net/http"
 	"strings"
 
@@ -167,6 +168,14 @@ func (c *httpClient) request(ctx context.Context, method, target string, body io
 	request, err := http.NewRequestWithContext(ctx, method, target, body)
 	if err != nil {
 		return nil, invalidResponse(err)
+	}
+	if strings.HasPrefix(request.URL.Host, "[") {
+		if hostname, _, hasZone := strings.Cut(request.URL.Hostname(), "%"); hasZone {
+			request.Host = "[" + hostname + "]"
+			if port := request.URL.Port(); port != "" {
+				request.Host = net.JoinHostPort(hostname, port)
+			}
+		}
 	}
 	request.Header.Set("Accept", "application/json")
 	if body != nil {
