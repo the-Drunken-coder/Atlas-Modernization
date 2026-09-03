@@ -217,11 +217,14 @@ type DeploymentState = {
   startedAt?: string;
 };
 
+type PluginDisableTarget = "ready" | "stopped";
+
 type MutationLockOwner = {
   schema: 1;
   id: string;
   pid: number;
   operation?: "plugin-disable";
+  pluginDisableTarget?: PluginDisableTarget;
   processGroupId?: number;
 };
 
@@ -236,7 +239,7 @@ type PluginDisableIntent = {
   schema: 1;
   operation: "plugin-disable";
   pluginId: string;
-  previousStatus: "ready" | "stopped";
+  previousStatus: PluginDisableTarget;
 };
 
 type MutationRecoveryMode = "default" | "plugin-disable" | "plugin-enable" | "start" | "stop";
@@ -519,6 +522,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   readonly #confirmReset: (question: string) => Promise<boolean>;
   readonly #imageReference: string | undefined;
   readonly #dockerRuntimeScope = new AsyncLocalStorage<DockerRuntime>();
+  readonly #pluginDisableScope = new AsyncLocalStorage<string>();
   #activeMutationLock: MutationLockOwner | undefined;
   #idleRecoverableMutationLock: MutationLockOwner | undefined;
   #activeMutationRecoveryPath: string | undefined;
@@ -609,6 +613,10 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       this.#assertRecoveredPluginDisableEngine(dockerEngineId, mutationLock);
       if (mutationLock.recovered) this.#activateRecoveredMutationLock(mutationLock);
       const pendingPluginIds = recoveryMode === "default" ? [] : this.#pendingPluginDisableIds();
+      const recoveredTarget = mutationLock.owner.pluginDisableTarget;
+      if (recoveredTarget && pendingPluginIds.length > 0) {
+        this.#retargetPluginDisableIntents(pendingPluginIds, recoveredTarget);
+      }
       if (recoveryMode === "plugin-disable") {
         this.#activeMutationLock ??= mutationLock.owner;
         this.#markActivePluginDisableOperation();
@@ -631,20 +639,25 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
         recoveryMode === "stop" ||
         (recoveryMode === "start" && pendingPluginIds.length > 0) ||
         (recoveryMode === "plugin-enable" && pendingPluginIds.length > 0);
-      try {
-        dockerLock = await this.#acquireDockerMutationLock(dockerEngineId, mutationLock);
-      } catch (error) {
-        dockerLockAcquisitionNeedsRecovery = error instanceof OperationCleanupError;
-        throw error;
-      }
-      this.#activeMutationLock = dockerLock.owner;
-      try {
-        if (!keepRecoveredDisableFence) this.#completePluginDisableRecoveryLockHandoff();
-        return await action();
-      } finally {
-        await this.#releaseDockerMutationLock(dockerLock);
-        dockerLockReleased = true;
-      }
+      const runDockerMutation = async (): Promise<T> => {
+        try {
+          dockerLock = await this.#acquireDockerMutationLock(dockerEngineId, mutationLock);
+        } catch (error) {
+          dockerLockAcquisitionNeedsRecovery = error instanceof OperationCleanupError;
+          throw error;
+        }
+        this.#activeMutationLock = dockerLock.owner;
+        try {
+          if (!keepRecoveredDisableFence) this.#completePluginDisableRecoveryLockHandoff();
+          return await action();
+        } finally {
+          await this.#releaseDockerMutationLock(dockerLock);
+          dockerLockReleased = true;
+        }
+      };
+      return mutationLock.owner.operation === "plugin-disable"
+        ? await this.#pluginDisableScope.run(mutationLock.owner.id, runDockerMutation)
+        : await runDockerMutation();
     } finally {
       try {
         const localOwner = this.#activeMutationLock ?? mutationLock.owner;
@@ -1478,7 +1491,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       }
       await this.#runComposeChecked(["config", "--quiet"], candidatePluginIds);
       report({ level: "success", message: "Deployment configuration valid", stage: "operation" });
-      this.#markActivePluginDisableOperation();
+      this.#markActivePluginDisableOperation(snapshot.status);
       const preparedIntent: PluginDisableIntent = {
         schema: 1,
         operation: "plugin-disable",
@@ -1864,7 +1877,10 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   }
 
   #pluginDisableProcessGroup(): RunOptions["processGroup"] | undefined {
-    if (this.#activeMutationLock?.operation !== "plugin-disable") return undefined;
+    const activeOwner = this.#activeMutationLock;
+    if (activeOwner?.operation !== "plugin-disable" || this.#pluginDisableScope.getStore() !== activeOwner.id) {
+      return undefined;
+    }
     return {
       started: (processGroupId) => this.#recordPluginDisableProcessGroup(processGroupId),
       finished: (processGroupId) => this.#clearPluginDisableProcessGroup(processGroupId)
@@ -1951,7 +1967,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     if (!sameMutationLockOwner(currentOwner, activeOwner) || currentOwner.processGroupId !== undefined) {
       throw new Error("Atlas Core mutation lock changed ownership after Plugin disable recovery.");
     }
-    const { operation: _, ...ordinaryOwner } = currentOwner;
+    const { operation: _, pluginDisableTarget: __, ...ordinaryOwner } = currentOwner;
     writePrivateFile(this.#mutationLockFile, `${JSON.stringify(ordinaryOwner, null, 2)}\n`, this.#platform);
     this.#activeMutationLock = ordinaryOwner;
   }
@@ -2017,6 +2033,16 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       if (!networkId) {
         await this.#removeAmbiguousDockerMutationLock(attemptLabels);
         throw new Error("Docker did not report the deployment mutation lock network ID.");
+      }
+      try {
+        await this.#assertPinnedDockerEngine(dockerEngineId);
+      } catch (error) {
+        try {
+          await this.#removeAmbiguousDockerMutationLock(attemptLabels);
+        } catch (cleanupError) {
+          throw new OperationCleanupError(`${errorMessage(error)} Cleanup also failed: ${errorMessage(cleanupError)}`);
+        }
+        throw error;
       }
       return { engineId: dockerEngineId, networkId, owner, labels: attemptLabels };
     }
@@ -2306,10 +2332,8 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   }
 
   async #assertStartIsSafe(state: DeploymentState): Promise<boolean> {
-    const [hasPostgres, hasMinio] = await Promise.all([
-      this.#volumeExists(POSTGRES_VOLUME),
-      this.#volumeExists(MINIO_VOLUME)
-    ]);
+    const hasPostgres = await this.#volumeExists(POSTGRES_VOLUME);
+    const hasMinio = await this.#volumeExists(MINIO_VOLUME);
     if (!hasMinio || ((state.startAttemptedAt !== undefined || state.startedAt !== undefined) && !hasPostgres)) {
       throw new Error(
         "Atlas Core durable storage is missing. Start stopped so Docker Compose cannot replace it with an empty volume."
@@ -2526,14 +2550,18 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     syncDirectory(this.#pluginConfigRoot);
   }
 
-  #markActivePluginDisableOperation(): void {
+  #markActivePluginDisableOperation(target?: PluginDisableTarget): void {
     const owner = this.#activeMutationLock;
     if (!owner) throw new Error("Plugin disable requires the deployment mutation lock.");
     const current = this.#readMutationLockOwner(this.#mutationLockFile);
     if (current.id !== owner.id || current.pid !== owner.pid) {
       throw new Error("Atlas Core mutation lock changed ownership before Plugin disable was prepared.");
     }
-    const marked: MutationLockOwner = { ...owner, operation: "plugin-disable" };
+    const marked: MutationLockOwner = {
+      ...owner,
+      operation: "plugin-disable",
+      ...(target ? { pluginDisableTarget: target } : {})
+    };
     writePrivateFile(this.#mutationLockFile, `${JSON.stringify(marked, null, 2)}\n`, this.#platform);
     this.#activeMutationLock = marked;
   }
@@ -2599,21 +2627,20 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   }
 
   #preparePluginDisableIntentsForStart(pendingPluginIds: readonly string[]): void {
-    this.#markActivePluginDisableOperation();
-    for (const pluginId of pendingPluginIds) {
-      const intent = this.#readPluginDisableIntentIfPresent(pluginId);
-      if (intent?.previousStatus === "stopped") {
-        this.#writePluginDisableIntent({ ...intent, previousStatus: "ready" });
-      }
-    }
+    this.#markActivePluginDisableOperation("ready");
+    this.#retargetPluginDisableIntents(pendingPluginIds, "ready");
   }
 
   #preparePluginDisableIntentsForStop(pendingPluginIds: readonly string[]): void {
-    this.#markActivePluginDisableOperation();
+    this.#markActivePluginDisableOperation("stopped");
+    this.#retargetPluginDisableIntents(pendingPluginIds, "stopped");
+  }
+
+  #retargetPluginDisableIntents(pendingPluginIds: readonly string[], target: PluginDisableTarget): void {
     for (const pluginId of pendingPluginIds) {
       const intent = this.#readPluginDisableIntentIfPresent(pluginId);
-      if (intent?.previousStatus === "ready") {
-        this.#writePluginDisableIntent({ ...intent, previousStatus: "stopped" });
+      if (intent && intent.previousStatus !== target) {
+        this.#writePluginDisableIntent({ ...intent, previousStatus: target });
       }
     }
   }
@@ -3386,6 +3413,7 @@ function isMutationLockOwner(value: unknown): value is MutationLockOwner {
     "id",
     ...(record.operation === undefined ? [] : ["operation"]),
     "pid",
+    ...(record.pluginDisableTarget === undefined ? [] : ["pluginDisableTarget"]),
     ...(record.processGroupId === undefined ? [] : ["processGroupId"]),
     "schema"
   ];
@@ -3396,6 +3424,9 @@ function isMutationLockOwner(value: unknown): value is MutationLockOwner {
     typeof record.id === "string" &&
     /^[a-f0-9]{32}$/u.test(record.id) &&
     (record.operation === undefined || record.operation === "plugin-disable") &&
+    (record.pluginDisableTarget === undefined ||
+      (record.operation === "plugin-disable" &&
+        (record.pluginDisableTarget === "ready" || record.pluginDisableTarget === "stopped"))) &&
     (record.processGroupId === undefined ||
       (record.operation === "plugin-disable" &&
         typeof record.processGroupId === "number" &&
@@ -3483,6 +3514,7 @@ function sameMutationLockOwner(left: MutationLockOwner, right: MutationLockOwner
     left.id === right.id &&
     left.pid === right.pid &&
     left.operation === right.operation &&
+    left.pluginDisableTarget === right.pluginDisableTarget &&
     left.processGroupId === right.processGroupId
   );
 }

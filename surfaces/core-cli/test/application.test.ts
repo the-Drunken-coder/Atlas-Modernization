@@ -954,6 +954,45 @@ describe("atlas-core CLI", () => {
     }
   });
 
+  it("does not share a Plugin-disable process-group fence with concurrent logs", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const plugin = installTestPluginCatalog(test);
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
+    let lockCreateStarted: (() => void) | undefined;
+    const creatingLock = new Promise<void>((resolve) => {
+      lockCreateStarted = resolve;
+    });
+    let releaseLockCreate: (() => void) | undefined;
+    const holdLockCreate = new Promise<void>((resolve) => {
+      releaseLockCreate = resolve;
+    });
+    let held = false;
+    test.context.interactive = {
+      configureAdmin: async () => undefined,
+      runUpdate: async () => undefined,
+      runMenu: async (operator) => {
+        test.runner.onRun = async (call) => {
+          if (held || call.args[0] !== "network" || call.args[1] !== "create") return;
+          held = true;
+          lockCreateStarted?.();
+          await holdLockCreate;
+        };
+        const disable = operator.pluginDisable(plugin.pluginId);
+        await creatingLock;
+
+        await operator.logs(undefined, true);
+        const logs = test.runner.calls.find((call) => composeCommand(call)[0] === "logs");
+        expect(logs?.processGroup).toBeUndefined();
+
+        releaseLockCreate?.();
+        await expect(disable).resolves.toMatchObject({ status: "success" });
+      }
+    };
+
+    expect(await runCLI([], test.context)).toBe(0);
+  });
+
   it("serializes overlapping mutations in one interactive session", async () => {
     const test = runtime();
     markInitialized(test);
@@ -3216,6 +3255,32 @@ describe("atlas-core CLI", () => {
     expect(test.runner.calls.map(composeCommand).some((args) => args[0] === "down")).toBe(false);
   });
 
+  it("reapplies a recovered stop target before generic disable convergence", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const plugin = installTestPluginCatalog(test);
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
+    simulateInterruptedPluginDisable(test, plugin, true);
+    const config = join(test.home, ".atlas", "core");
+    const lockPath = join(config, ".mutation.lock");
+    const intentPath = join(config, "plugins", plugin.pluginId, "disable.json");
+    const owner = JSON.parse(readFileSync(lockPath, "utf8"));
+    writeFileSync(lockPath, `${JSON.stringify({ ...owner, pluginDisableTarget: "stopped" })}\n`, { mode: 0o600 });
+    test.runner.calls.length = 0;
+    let retargetedBeforeAcquisition = false;
+    test.runner.onRun = (call) => {
+      if (call.args[0] !== "network" || call.args[1] !== "create") return;
+      expect(JSON.parse(readFileSync(intentPath, "utf8"))).toMatchObject({ previousStatus: "stopped" });
+      retargetedBeforeAcquisition = true;
+    };
+
+    expect(await runCLI(["plugins", "disable", plugin.pluginId], test.context)).toBe(0);
+
+    expect(retargetedBeforeAcquisition).toBe(true);
+    expect(test.runner.calls.map(composeCommand)).toContainEqual(["down", "--remove-orphans"]);
+    expect(test.runner.calls.map(composeCommand).some((args) => args[0] === "up")).toBe(false);
+  });
+
   it("pins the validated Docker socket across a Plugin-disable mutation", async () => {
     const test = runtime();
     markInitialized(test);
@@ -3226,7 +3291,6 @@ describe("atlas-core CLI", () => {
     test.runner.onRun = (call) => {
       if (call.args[0] !== "network" || call.args[1] !== "create") return;
       test.runner.contextHost = "unix:///alternate-docker.sock";
-      test.runner.dockerEngineId = "alternate-engine";
     };
 
     expect(await runCLI(["plugins", "disable", plugin.pluginId], test.context)).toBe(0);
@@ -3291,6 +3355,26 @@ describe("atlas-core CLI", () => {
     expect(JSON.parse(readFileSync(lockPath, "utf8"))).toMatchObject({ operation: "plugin-disable" });
     expect(test.runner.calls.some((call) => call.args[0] === "network" && call.args[1] === "create")).toBe(false);
     expect(test.runner.calls.map(composeCommand).some((args) => args[0] === "down")).toBe(false);
+  });
+
+  it("rejects a replacement Docker engine immediately after creating its mutation lock", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const lockPath = join(test.home, ".atlas", "core", ".mutation.lock");
+    let replacedEngine = false;
+    test.runner.onRun = (call) => {
+      if (replacedEngine || call.args[0] !== "network" || call.args[1] !== "create") return;
+      replacedEngine = true;
+      test.runner.dockerEngineId = "replacement-engine";
+    };
+
+    expect(await runCLI(["stop"], test.context)).toBe(1);
+
+    expect(replacedEngine).toBe(true);
+    expect(test.stderr.join("")).toContain("Docker engine changed during deployment mutation");
+    expect(test.runner.calls.map(composeCommand).some((args) => args[0] === "down")).toBe(false);
+    expect(test.runner.existingNetworks.has(MUTATION_LOCK_NETWORK)).toBe(false);
+    expect(existsSync(lockPath)).toBe(false);
   });
 
   it("finishes a pending disable before enabling the Plugin again", async () => {
