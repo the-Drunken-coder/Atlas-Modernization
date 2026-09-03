@@ -7,6 +7,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const DEFAULT_TIMEOUT_MS = 60_000;
+const PACKAGE_INSTALL_TIMEOUT_MS = 180_000;
 const KILL_GRACE_MS = 2_000;
 const testDir = dirname(fileURLToPath(import.meta.url));
 const packageRoot = dirname(testDir);
@@ -214,7 +215,10 @@ try {
     run(npmCommand, ["init", "-y", "--silent"], { cwd: projectDir })
   );
   runStep(`Failed to install SDK tarball ${tarball} into ${projectDir}`, () =>
-    run(npmCommand, ["install", tarball, "--silent"], { cwd: projectDir })
+    run(npmCommand, ["install", tarball, "--silent", "--no-audit", "--no-fund"], {
+      cwd: projectDir,
+      timeout: PACKAGE_INSTALL_TIMEOUT_MS
+    })
   );
   const installedPackageRoot = join(projectDir, "node_modules/@the-drunken-coder/atlas-sdk");
   if (existsSync(join(installedPackageRoot, "dist/stale-package-output.txt"))) {

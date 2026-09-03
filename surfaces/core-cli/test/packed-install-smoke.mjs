@@ -8,14 +8,16 @@ const packageRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
 const temporaryDirectory = mkdtempSync(join(tmpdir(), "atlas-core-package-"));
 const npmCache = join(temporaryDirectory, "npm-cache");
+const DEFAULT_TIMEOUT_MS = 60_000;
+const PACKAGE_INSTALL_TIMEOUT_MS = 180_000;
 
-function run(command, args, cwd) {
+function run(command, args, cwd, timeout = DEFAULT_TIMEOUT_MS) {
   const result = spawnSync(command, args, {
     cwd,
     encoding: "utf8",
     env: { ...process.env, npm_config_cache: npmCache },
     stdio: "pipe",
-    timeout: 60_000
+    timeout
   });
   if (result.error) {
     throw new Error(`${command} ${args.join(" ")} failed: ${result.error.message}`);
@@ -44,7 +46,12 @@ try {
   const project = join(temporaryDirectory, "consumer");
   mkdirSync(project);
   run(npmCommand, ["init", "-y", "--silent"], project);
-  run(npmCommand, ["install", join(temporaryDirectory, filename), "--silent"], project);
+  run(
+    npmCommand,
+    ["install", join(temporaryDirectory, filename), "--silent", "--no-audit", "--no-fund"],
+    project,
+    PACKAGE_INSTALL_TIMEOUT_MS
+  );
 
   const installed = join(project, "node_modules", "atlas-core");
   for (const path of [
