@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { RealClock, VirtualClock } from "./clock.js";
+import type { LinkRadio } from "./radio.js";
 import { LinkHTTPServer, LinkService } from "./service.js";
 import { SimulatedPacketNetwork } from "./simulation.js";
 import { SUBSCRIPTION_LEASE_MS } from "./subscriptions.js";
@@ -19,9 +20,13 @@ describe("loopback Link service", () => {
       const submission = await fetch(`${base}/v1/messages`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ message: positionPublication(1) })
+        body: JSON.stringify({ message: positionPublication(1), operation_id: "caller-stable-operation" })
       }).then((response) => response.json());
-      expect(submission).toMatchObject({ status: "failed", reason: "Link transport is unavailable" });
+      expect(submission).toMatchObject({
+        operation_id: "caller-stable-operation",
+        status: "failed",
+        reason: "Link transport is unavailable"
+      });
       if (!isRecord(submission) || typeof submission.operation_id !== "string") {
         throw new Error("submission did not return an operation ID");
       }
@@ -161,6 +166,33 @@ describe("loopback Link service", () => {
     expect(service.operation("pending-request")).toMatchObject({ status: "failed", reason: "link service stopped" });
   });
 
+  it("moves to an error lifecycle when the live radio disconnects", () => {
+    const clock = new VirtualClock();
+    let disconnect: ((reason: Error) => void) | undefined;
+    const radio: LinkRadio = {
+      max_payload_bytes: 233,
+      send: async () => undefined,
+      onPacket: () => () => undefined,
+      onDisconnect: (handler) => {
+        disconnect = handler;
+        return () => {
+          disconnect = undefined;
+        };
+      },
+      close: async () => undefined
+    };
+    const service = new LinkService({ mode: "asset", nodeID: "asset-alpha", clock });
+    service.attachTransport(new LinkTransport({ node: service.node, sourceGeneration: 1, radio, clock }), {
+      role: "gateway",
+      id: "gateway"
+    });
+
+    disconnect?.(new Error("serial connection lost"));
+
+    expect(service.status()).toMatchObject({ lifecycle: "error", detail: "serial connection lost" });
+    service.stop();
+  });
+
   it("expires local subscription demand when a client stops renewing", async () => {
     const clock = new VirtualClock();
     const transitions: string[] = [];
@@ -189,6 +221,44 @@ describe("loopback Link service", () => {
       active: 0,
       reason: "Gateway feed bridge is unavailable"
     });
+    service.stop();
+  });
+
+  it("rolls back local demand when the Gateway feed bridge rejects a transition", () => {
+    const service = new LinkService({
+      mode: "gateway",
+      nodeID: "gateway",
+      clock: new VirtualClock(),
+      onGatewaySubscriptionTransition: () => {
+        throw new Error("Core feed is unavailable");
+      }
+    });
+    const selector = { kind: "resource_type", resource_type: "entity" } as const;
+
+    expect(service.updateLocalSubscription("client-a", "add", selector)).toEqual({
+      changed: false,
+      active: 0,
+      reason: "Core feed is unavailable"
+    });
+    service.stop();
+  });
+
+  it("keeps the aggregate renewal cadence when a client renews its local lease", async () => {
+    const clock = new VirtualClock();
+    const transitions: string[] = [];
+    const service = new LinkService({
+      mode: "gateway",
+      nodeID: "gateway",
+      clock,
+      onGatewaySubscriptionTransition: (transition) => transitions.push(transition.action)
+    });
+    const selector = { kind: "resource_type", resource_type: "entity" } as const;
+    service.updateLocalSubscription("client-a", "add", selector);
+    await clock.advanceBy(20_000);
+    service.updateLocalSubscription("client-a", "renew", selector);
+    await clock.advanceBy(10_000);
+
+    expect(transitions).toEqual(["add", "renew"]);
     service.stop();
   });
 });

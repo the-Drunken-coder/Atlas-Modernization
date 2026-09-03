@@ -11,6 +11,9 @@ import type {
   TaskReport
 } from "./types.js";
 
+const TASK_QUEUE_LIMIT = 4_096;
+const FEED_TRANSITION_FENCE_LIMIT = 4_096;
+
 export type IntentionalFieldMessage = StatePublication | TaskReport | ResourceOperation | DataRequest | ObjectContent;
 
 export type GatewayFieldOperation = {
@@ -65,7 +68,10 @@ export type GatewayFeedTransition = {
 
 export class GatewayFeedDemand {
   private readonly demand = new GatewaySubscriptionDemand();
-  private readonly latestTransitions = new Map<string, number>();
+  private readonly latestTransitions = new Map<
+    string,
+    { sequence: number; sourceNodeID: string; selector: SubscriptionTransition["selector"] }
+  >();
 
   apply(event: TransportMessageEvent, now: number): GatewayFeedTransition | undefined {
     if (!event.addressed_to_local || event.source.role !== "asset" || event.message.type !== "subscription") {
@@ -76,25 +82,49 @@ export class GatewayFeedDemand {
       selector: event.message.selector
     };
     const transitionKey = `${event.source.id}:${event.source_generation}:${event.service_session}:${selectorKey(event.message.selector)}`;
-    const previousSequence = this.latestTransitions.get(transitionKey);
-    if (previousSequence !== undefined && event.source_sequence <= previousSequence) return undefined;
-    this.latestTransitions.set(transitionKey, event.source_sequence);
-    while (this.latestTransitions.size > 4_096) {
-      const oldest = this.latestTransitions.keys().next().value as string | undefined;
-      if (oldest === undefined) break;
-      this.latestTransitions.delete(oldest);
-    }
+    const previous = this.latestTransitions.get(transitionKey);
+    if (previous !== undefined && event.source_sequence <= previous.sequence) return undefined;
+    if (previous === undefined && !this.makeTransitionFenceRoom(now)) return undefined;
+    this.latestTransitions.set(transitionKey, {
+      sequence: event.source_sequence,
+      sourceNodeID: event.source.id,
+      selector: event.message.selector
+    });
     const changed = this.demand.apply(event.source.id, transition, now);
+    this.pruneTransitionFences(now);
     if (!changed) return undefined;
     return { active: event.message.action !== "remove", selector: event.message.selector };
   }
 
   expire(now: number): GatewayFeedTransition[] {
-    return this.demand.expire(now).map((selector) => ({ active: false, selector }));
+    const expired = this.demand.expire(now).map((selector) => ({ active: false, selector }));
+    this.pruneTransitionFences(now);
+    return expired;
   }
 
   active(now: number): readonly SubscriptionTransition["selector"][] {
     return [...this.demand.aggregate(now).values()];
+  }
+
+  private pruneTransitionFences(now: number): void {
+    while (this.latestTransitions.size > FEED_TRANSITION_FENCE_LIMIT) {
+      const removable = [...this.latestTransitions].find(
+        ([, transition]) => !this.demand.has(transition.sourceNodeID, transition.selector, now)
+      );
+      if (removable === undefined) return;
+      this.latestTransitions.delete(removable[0]);
+    }
+  }
+
+  private makeTransitionFenceRoom(now: number): boolean {
+    while (this.latestTransitions.size >= FEED_TRANSITION_FENCE_LIMIT) {
+      const removable = [...this.latestTransitions].find(
+        ([, transition]) => !this.demand.has(transition.sourceNodeID, transition.selector, now)
+      );
+      if (removable === undefined) return false;
+      this.latestTransitions.delete(removable[0]);
+    }
+    return true;
   }
 }
 
@@ -116,8 +146,12 @@ export class OrderedTaskDispatcher {
   private readonly retiringAssets = new Set<string>();
   private dispatchSequence = 0;
 
-  constructor(private readonly transport: LinkTransport) {
+  constructor(
+    private readonly transport: LinkTransport,
+    private readonly queueLimit = TASK_QUEUE_LIMIT
+  ) {
     if (transport.node.role !== "gateway") throw new Error("ordered Task dispatcher requires a Gateway transport");
+    if (!Number.isSafeInteger(queueLimit) || queueLimit < 1) throw new RangeError("Task queue limit must be positive");
     this.unsubscribe = transport.onEvent((event) => this.handleTransportEvent(event));
     this.unsubscribeCapacity = transport.onCapacityAvailable(() => {
       for (const assetID of this.queued.keys()) this.pump(assetID);
@@ -130,19 +164,21 @@ export class OrderedTaskDispatcher {
       this.removeQueuedTask(assetID, task.task_id);
       const active = this.inFlight.get(assetID);
       if (active?.task.task_id === task.task_id) this.retireInFlight(assetID, active, "superseded by cancellation");
-      if (this.send(assetID, { task, delivery }) === undefined) {
-        const queue = this.queued.get(assetID) ?? [];
-        queue.unshift({ task, delivery });
-        this.queued.set(assetID, queue);
-        this.pump(assetID);
-      }
+      this.reserveQueueSlots(1);
+      const queue = this.queued.get(assetID) ?? [];
+      queue.unshift({ task, delivery });
+      this.queued.set(assetID, queue);
+      this.pump(assetID);
       return;
     }
     if (this.inFlight.get(assetID)?.task.task_id === task.task_id) return;
     const queue = this.queued.get(assetID) ?? [];
     const existing = queue.findIndex((item) => item.task.task_id === task.task_id);
     if (existing >= 0) queue[existing] = { task, delivery };
-    else queue.push({ task, delivery });
+    else {
+      this.reserveQueueSlots(1);
+      queue.push({ task, delivery });
+    }
     queue.sort(compareTasks);
     this.queued.set(assetID, queue);
     this.pump(assetID);
@@ -151,6 +187,16 @@ export class OrderedTaskDispatcher {
   enqueueAssignments(assetID: string, tasks: readonly TaskResource[]): void {
     if (!assetID) throw new TypeError("Task delivery requires an Asset ID");
     const queue = this.queued.get(assetID) ?? [];
+    const additions = new Set(
+      tasks
+        .filter(
+          (task) =>
+            this.inFlight.get(assetID)?.task.task_id !== task.task_id &&
+            !queue.some((item) => item.task.task_id === task.task_id)
+        )
+        .map((task) => task.task_id)
+    );
+    this.reserveQueueSlots(additions.size);
     for (const task of tasks) {
       if (this.inFlight.get(assetID)?.task.task_id === task.task_id) continue;
       const existing = queue.findIndex((item) => item.task.task_id === task.task_id);
@@ -197,11 +243,17 @@ export class OrderedTaskDispatcher {
         this.queued.delete(assetID);
         return;
       }
-      const operationID = this.send(assetID, next);
-      if (operationID === undefined) return;
+      const result = this.send(assetID, next);
+      if (result.status === "failed") {
+        if (isCapacityFailure(result.reason)) return;
+        queue.shift();
+        if (queue.length === 0) this.queued.delete(assetID);
+        queueMicrotask(() => this.pump(assetID));
+        return;
+      }
       queue.shift();
       if (queue.length === 0) this.queued.delete(assetID);
-      this.inFlight.set(assetID, { ...next, operationID });
+      this.inFlight.set(assetID, { ...next, operationID: result.operation_id });
     } finally {
       this.pumpingAssets.delete(assetID);
     }
@@ -215,13 +267,18 @@ export class OrderedTaskDispatcher {
     else if (remaining.length !== queue.length) this.queued.set(assetID, remaining);
   }
 
-  private send(assetID: string, queued: QueuedTask): string | undefined {
+  private send(assetID: string, queued: QueuedTask) {
     const operationID = `task_${queued.task.task_id}_${queued.delivery}_${++this.dispatchSequence}`;
-    const result = this.transport.submit(
+    return this.transport.submit(
       { type: "task_delivery", delivery: queued.delivery, task: queued.task },
       { destination: { role: "asset", id: assetID }, operationID }
     );
-    return result.status === "failed" ? undefined : operationID;
+  }
+
+  private reserveQueueSlots(count: number): void {
+    if (count === 0) return;
+    const queued = [...this.queued.values()].reduce((total, tasks) => total + tasks.length, 0);
+    if (queued + count > this.queueLimit) throw new RangeError("Task delivery queue capacity is exhausted");
   }
 
   private handleTransportEvent(event: TransportEvent): void {
@@ -245,6 +302,10 @@ export class OrderedTaskDispatcher {
       this.retiringAssets.delete(assetID);
     }
   }
+}
+
+function isCapacityFailure(reason: string | undefined): boolean {
+  return reason === "confirmed operation capacity is exhausted" || reason === "outbound queue capacity is exhausted";
 }
 
 function isIntentionalFieldMessage(message: TransportMessageEvent["message"]): message is IntentionalFieldMessage {

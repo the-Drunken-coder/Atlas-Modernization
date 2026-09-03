@@ -91,6 +91,8 @@ The service binds `127.0.0.1:7331` by default. Its normal interface is:
 
 Task delivery events include `addressed_to_local`, `requires_settlement`, and an opaque source-scoped `settlement_id`. Only the addressed Asset application settles executable Task work using that settlement ID. A `tasks_for_asset` state feed updates the Shared Picture and never invokes this delivery path.
 
+`POST /v1/messages` accepts `{ message, destination?, operation_id? }`. A client retrying a confirmed write supplies the same `operation_id`; data requests and requested Object-content responses use their `request_id` as that stable identity. Task reports carry the Asset application's original `observation_time`, so radio delay does not make an old lifecycle report appear newer.
+
 Gateway applications consume `GatewayFieldOperationInbox`, `GatewayFeedDemand`, and `OrderedTaskDispatcher`. These expose intentional field reports, aggregate feed demand, and ordered confirmed Tasks without moving Core credentials or durable Core reconciliation into this package.
 
 Radio configuration commands are thin clients of the running loopback service. They never open the serial device independently:

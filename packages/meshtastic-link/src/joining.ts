@@ -147,6 +147,7 @@ export class GatewayJoinService {
   private readonly completed = new Map<string, CompletedJoin>();
   private readonly processing = new Set<string>();
   private readonly pendingChallenges = new Set<string>();
+  private readonly activeOperations = new Set<Promise<void>>();
   private readonly unsubscribe: () => void;
   private closed = false;
 
@@ -161,14 +162,16 @@ export class GatewayJoinService {
     this.unsubscribe = radio.onPacket((packet) => this.run(() => this.receive(packet)));
   }
 
-  close(): void {
-    if (this.closed) return;
-    this.closed = true;
-    this.unsubscribe();
-    this.pending.clear();
-    this.completed.clear();
+  async close(): Promise<void> {
+    if (!this.closed) {
+      this.closed = true;
+      this.unsubscribe();
+      this.pending.clear();
+      this.completed.clear();
+      this.pendingChallenges.clear();
+    }
+    await Promise.allSettled([...this.activeOperations]);
     this.processing.clear();
-    this.pendingChallenges.clear();
   }
 
   private async receive(packet: RadioPacket): Promise<void> {
@@ -198,6 +201,7 @@ export class GatewayJoinService {
         return;
       }
       if (this.pendingChallenges.has(message.join_attempt_id)) return;
+      if (this.pending.size + this.pendingChallenges.size >= MAX_PENDING_JOINS) return;
       this.pendingChallenges.add(message.join_attempt_id);
       let challenge: string;
       let gatewayProof: string;
@@ -308,9 +312,12 @@ export class GatewayJoinService {
   }
 
   private run(operation: () => Promise<void>): void {
-    void operation().catch((error: unknown) => {
-      if (!this.closed) this.onError?.(asError(error));
-    });
+    const active = operation()
+      .catch((error: unknown) => {
+        if (!this.closed) this.onError?.(asError(error));
+      })
+      .finally(() => this.activeOperations.delete(active));
+    this.activeOperations.add(active);
   }
 }
 
@@ -438,9 +445,11 @@ export class AssetJoinService {
     if (!message || message.join_attempt_id !== this.joinAttemptID) return;
     if (message.type === "challenge") {
       if (!(await this.authentication.verifyGateway(this.beacon(), message.challenge, message.gateway_proof))) return;
+      if (this.isStopped()) return;
       this.gatewayRadioNodeID = packet.radio_source;
       this.updateStatus({ state: "authenticating", join_attempt_id: this.joinAttemptID });
       const response = await this.authentication.answer(message.challenge);
+      if (this.isStopped()) return;
       await this.radio.send(
         encodeJoinMessage(
           { type: "response", join_attempt_id: this.joinAttemptID, response },
@@ -482,8 +491,14 @@ export class AssetJoinService {
     this.onStatus?.(this.status());
   }
 
+  private isStopped(): boolean {
+    return this.currentStatus.state === "stopped";
+  }
+
   private run(operation: () => Promise<void>): void {
-    void operation().catch((error: unknown) => this.onError?.(asError(error)));
+    void operation().catch((error: unknown) => {
+      if (this.currentStatus.state !== "stopped") this.onError?.(asError(error));
+    });
   }
 }
 

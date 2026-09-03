@@ -137,14 +137,18 @@ export class LinkService {
     return this.transport?.metrics();
   }
 
-  submit(message: LinkMessage, destination?: LinkNode): LinkOperationResult {
+  submit(message: LinkMessage, destination?: LinkNode, operationIDValue?: string): LinkOperationResult {
     if (!isLinkMessage(message)) throw new TypeError("invalid Radio contract message");
-    if (!this.transport) return this.failLocal(operationID(message), "Link transport is unavailable");
+    const stableOperationID = operationIDValue ?? operationID(message);
+    if (!this.transport) return this.failLocal(stableOperationID, "Link transport is unavailable");
     const target = destination ?? this.defaultDestination(message);
     if (requiresGateway(message) && target === undefined && this.node.role === "asset") {
-      return this.failLocal(operationID(message), "Gateway is unavailable");
+      return this.failLocal(stableOperationID, "Gateway is unavailable");
     }
-    return this.transport.submit(message, target === undefined ? {} : { destination: target });
+    return this.transport.submit(message, {
+      ...(target === undefined ? {} : { destination: target }),
+      operationID: stableOperationID
+    });
   }
 
   settleInbound(settlementID: string, accepted: boolean, reason?: string): boolean {
@@ -177,7 +181,14 @@ export class LinkService {
     }
     const transition =
       action === "remove" ? this.subscriptions.remove(clientID, selector) : this.subscriptions.add(clientID, selector);
-    if (transition) this.dispatchSubscription(transition.action, transition.selector);
+    if (transition) {
+      const failure = this.dispatchSubscription(transition.action, transition.selector);
+      if (failure !== undefined) {
+        if (transition.action === "add") this.subscriptions.remove(clientID, selector);
+        else this.subscriptions.add(clientID, selector);
+        return { changed: false, active: this.subscriptions.aggregate().size, reason: failure };
+      }
+    }
     if (action === "remove") {
       if (!this.subscriptions.hasClient(clientID)) this.cancelClientLease(clientID);
     } else {
@@ -234,6 +245,13 @@ export class LinkService {
     if (this.pictureRefreshTimer) this.clock.cancel(this.pictureRefreshTimer);
     for (const timer of this.clientLeaseTimers.values()) this.clock.cancel(timer);
     this.clientLeaseTimers.clear();
+    if (this.node.role === "gateway") {
+      for (const transition of this.subscriptions.clear()) {
+        this.dispatchSubscription(transition.action, transition.selector);
+      }
+    } else {
+      this.subscriptions.clear();
+    }
     this.transport?.stop();
     this.unsubscribeTransport?.();
     this.setLifecycle("stopped");
@@ -246,13 +264,18 @@ export class LinkService {
     return undefined;
   }
 
-  private dispatchSubscription(action: "add" | "renew" | "remove", selector: FeedSelector): void {
+  private dispatchSubscription(action: "add" | "renew" | "remove", selector: FeedSelector): string | undefined {
     if (this.node.role === "gateway") {
-      this.options.onGatewaySubscriptionTransition?.({ action, selector });
-      return;
+      try {
+        this.options.onGatewaySubscriptionTransition?.({ action, selector });
+        return undefined;
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
     }
-    if (!this.transport || !this.gatewayNode) return;
-    this.transport.submit({ type: "subscription", action, selector }, { destination: this.gatewayNode });
+    if (!this.transport || !this.gatewayNode) return "Gateway is unavailable";
+    const result = this.transport.submit({ type: "subscription", action, selector }, { destination: this.gatewayNode });
+    return result.status === "failed" ? (result.reason ?? "subscription delivery failed") : undefined;
   }
 
   private renewClientLease(clientID: string): void {
@@ -273,15 +296,16 @@ export class LinkService {
   }
 
   private scheduleRenewalIfNeeded(): void {
-    if (this.renewalTimer) {
-      this.clock.cancel(this.renewalTimer);
-      this.renewalTimer = undefined;
-    }
     const canDispatch =
       this.node.role === "gateway"
         ? this.options.onGatewaySubscriptionTransition !== undefined
         : this.transport !== undefined && this.gatewayNode !== undefined;
-    if (!canDispatch || this.subscriptions.aggregate().size === 0) return;
+    if (!canDispatch || this.subscriptions.aggregate().size === 0) {
+      if (this.renewalTimer) this.clock.cancel(this.renewalTimer);
+      this.renewalTimer = undefined;
+      return;
+    }
+    if (this.renewalTimer) return;
     this.renewalTimer = this.clock.schedule(SUBSCRIPTION_RENEWAL_MS, () => {
       this.renewalTimer = undefined;
       for (const transition of this.subscriptions.renewals()) {
@@ -300,6 +324,7 @@ export class LinkService {
   }
 
   private handleTransportEvent(event: TransportEvent): void {
+    if (event.type === "link_error") this.setLifecycle("error", event.reason);
     if (event.type === "message" && event.message.type === "task_delivery" && !event.addressed_to_local) return;
     if (
       event.type === "message" &&
@@ -435,10 +460,19 @@ export class LinkHTTPServer {
       }
       if (request.method === "POST" && url.pathname === "/v1/messages") {
         const body = await readJSONObject(request);
-        if (!isLinkMessage(body.message) || (body.destination !== undefined && !isLinkNode(body.destination))) {
+        if (
+          !isLinkMessage(body.message) ||
+          (body.destination !== undefined && !isLinkNode(body.destination)) ||
+          (body.operation_id !== undefined &&
+            (typeof body.operation_id !== "string" || body.operation_id.trim().length === 0))
+        ) {
           return json(response, 400, { error: "invalid Link message request" });
         }
-        return json(response, 202, this.service.submit(body.message, body.destination));
+        return json(
+          response,
+          202,
+          this.service.submit(body.message, body.destination, body.operation_id as string | undefined)
+        );
       }
       const settleMatch = /^\/v1\/inbound\/([^/]+)\/settle$/.exec(url.pathname);
       if (request.method === "POST" && settleMatch?.[1]) {
@@ -549,6 +583,7 @@ function requiresGateway(message: LinkMessage): boolean {
 
 function operationID(message: LinkMessage): string {
   if (message.type === "data_request" || message.type === "data_response") return message.request_id;
+  if (message.type === "object_content") return message.request_id;
   if (message.type === "control") return message.operation_id;
   if (message.type === "state" && message.operation_id) return message.operation_id;
   return randomUUID().replaceAll("-", "");

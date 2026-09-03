@@ -91,7 +91,10 @@ export function messagePriority(message: LinkMessage): MessagePriority {
     return "request";
   }
   if (message.type === "object_content") return "object_content";
-  if (message.type === "resource_operation") return "resource";
+  if (message.type === "resource_operation") {
+    if (message.operation === "task.cancel") return "safety";
+    return message.operation.startsWith("task.") ? "task" : "resource";
+  }
   if (
     message.deleted !== true &&
     message.resource_type === "entity" &&
@@ -131,7 +134,7 @@ export function isLinkMessage(value: unknown): value is LinkMessage {
     object_content: isObjectContent,
     control: isControlMessage
   };
-  return value.type in validators && validators[value.type as LinkMessageType](value);
+  return Object.hasOwn(validators, value.type) && validators[value.type as LinkMessageType](value);
 }
 
 function isStatePublication(value: Record<string, unknown>): value is StatePublication {
@@ -171,7 +174,14 @@ function isTaskDelivery(value: Record<string, unknown>): value is TaskDelivery {
 }
 
 function isTaskReport(value: Record<string, unknown>): value is TaskReport {
-  if (!isNonEmptyString(value.task_id) || !isNonEmptyString(value.runtime_id) || !isRecord(value.body)) return false;
+  if (
+    !isNonEmptyString(value.task_id) ||
+    !isNonEmptyString(value.runtime_id) ||
+    !isRFC3339(value.observation_time) ||
+    !isRecord(value.body)
+  ) {
+    return false;
+  }
   switch (value.action) {
     case "acknowledge":
       return isTaskAcknowledgeRequest(value.body);
@@ -257,7 +267,7 @@ export function isFeedSelector(value: unknown): value is FeedSelector {
 function isObjectContent(value: Record<string, unknown>): value is ObjectContent {
   if (
     !isNonEmptyString(value.object_id) ||
-    !optionalString(value.request_id) ||
+    !isNonEmptyString(value.request_id) ||
     typeof value.content_base64 !== "string" ||
     !isSha256(value.sha256)
   ) {
@@ -286,7 +296,7 @@ function isMutationOperation(value: string): value is AtlasRadioOperationName {
 }
 
 function isOperation(value: string): value is AtlasRadioOperationName {
-  return value in ATLAS_RADIO_OPERATIONS;
+  return Object.hasOwn(ATLAS_RADIO_OPERATIONS, value);
 }
 
 function validOperationContext(operation: AtlasRadioOperationName, value: Record<string, unknown>): boolean {

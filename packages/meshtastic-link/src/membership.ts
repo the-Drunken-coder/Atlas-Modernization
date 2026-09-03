@@ -68,7 +68,10 @@ export class GatewayMembershipStore {
     if (!assetID.trim()) throw new TypeError("Asset ID must not be empty");
     return this.mutate(async () => {
       const membership = await this.load();
-      const sourceGeneration = (membership.asset_generations[assetID] ?? 0) + 1;
+      const previousGeneration = Object.hasOwn(membership.asset_generations, assetID)
+        ? membership.asset_generations[assetID]
+        : 0;
+      const sourceGeneration = (previousGeneration ?? 0) + 1;
       membership.asset_generations[assetID] = sourceGeneration;
       await this.write(membership);
       return { membership, source_generation: sourceGeneration };

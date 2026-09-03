@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { GatewayFeedDemand, GatewayFieldOperationInbox } from "./gateway.js";
 import { positionPublication } from "./test-fixtures.js";
 import type { TransportMessageEvent } from "./transport.js";
+import type { FeedSelector } from "./types.js";
 
 describe("Gateway application seams", () => {
   it("deduplicates intentional Field reports and rejects Gateway feed loops", () => {
@@ -56,6 +57,22 @@ describe("Gateway application seams", () => {
     ).toBeUndefined();
     expect(demand.active(2)).toEqual([]);
   });
+
+  it("does not evict a transition fence while its lease is active", () => {
+    const demand = new GatewayFeedDemand();
+    const active = { kind: "resource_type", resource_type: "entity" } as const;
+    demand.apply({ ...subscriptionEvent("asset-alpha", "add", active), source_sequence: 2 }, 0);
+    for (let index = 0; index < 4_096; index++) {
+      const selector = { kind: "record", resource_type: "entity", id: `entity-${index}` } as const;
+      demand.apply({ ...subscriptionEvent(`asset-${index}`, "add", selector), source_sequence: 1 }, 1);
+      demand.apply({ ...subscriptionEvent(`asset-${index}`, "remove", selector), source_sequence: 2 }, 2);
+    }
+
+    expect(
+      demand.apply({ ...subscriptionEvent("asset-alpha", "remove", active), source_sequence: 1 }, 3)
+    ).toBeUndefined();
+    expect(demand.active(3)).toEqual([active]);
+  });
 });
 
 function messageEvent(message: ReturnType<typeof positionPublication>): TransportMessageEvent {
@@ -74,11 +91,7 @@ function messageEvent(message: ReturnType<typeof positionPublication>): Transpor
   };
 }
 
-function subscriptionEvent(
-  assetID: string,
-  action: "add" | "remove",
-  selector: { kind: "resource_type"; resource_type: "entity" }
-): TransportMessageEvent {
+function subscriptionEvent(assetID: string, action: "add" | "remove", selector: FeedSelector): TransportMessageEvent {
   return {
     type: "message",
     message: { type: "subscription", action, selector },

@@ -52,6 +52,13 @@ type PictureTombstone = {
   sourceSequence: number;
 };
 
+type RecordSourceSequence = {
+  sourceKey: string;
+  generation: number;
+  session: string;
+  sequence: number;
+};
+
 export type PictureApplyContext = {
   source: LinkNode;
   source_generation: number;
@@ -68,6 +75,7 @@ export class SharedPicture {
   private readonly records = new Map<string, PictureRecord>();
   private readonly tombstones = new Map<string, PictureTombstone>();
   private readonly sources = new Map<string, SourcePosition>();
+  private readonly recordSourceSequences = new Map<string, RecordSourceSequence>();
   private readonly events: PictureEvent[] = [];
   private readonly listeners = new Set<(event: PictureEvent) => void>();
 
@@ -85,6 +93,22 @@ export class SharedPicture {
     if (!this.acceptSource(context)) return false;
     const id = resourceID(publication);
     const key = `${publication.resource_type}:${id}`;
+    const sourceKey = `${context.source.role}:${context.source.id}`;
+    const recordSourceKey = `${key}\0${sourceKey}`;
+    const sourceSequence = this.recordSourceSequences.get(recordSourceKey);
+    if (
+      sourceSequence?.generation === context.source_generation &&
+      sourceSequence.session === context.service_session &&
+      context.source_sequence <= sourceSequence.sequence
+    ) {
+      return false;
+    }
+    this.recordSourceSequences.set(recordSourceKey, {
+      sourceKey,
+      generation: context.source_generation,
+      session: context.service_session,
+      sequence: context.source_sequence
+    });
     const current = this.records.get(key);
     const tombstone = this.tombstones.get(key);
     if (
@@ -222,7 +246,12 @@ export class SharedPicture {
     ) {
       return false;
     }
-    if (current && generation > current.generation) this.markSourceConnectivity(source, false);
+    if (current && generation > current.generation) {
+      this.markSourceConnectivity(source, false);
+      for (const [recordSourceKey, position] of this.recordSourceSequences) {
+        if (position.sourceKey === key) this.recordSourceSequences.delete(recordSourceKey);
+      }
+    }
     this.sources.set(key, { generation, session });
     return true;
   }
