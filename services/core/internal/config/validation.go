@@ -93,6 +93,10 @@ func validPluginHostname(baseURL string, parsed *url.URL) bool {
 			return false
 		}
 		if strings.IndexFunc(label, func(r rune) bool { return r > unicode.MaxASCII }) != -1 {
+			normalized, err := pluginHostnameLiteral.ToUnicode(label)
+			if err != nil || normalized != label {
+				return false
+			}
 			runes := []rune(label)
 			if len(runes) > 3 && runes[2] == '-' && runes[3] == '-' {
 				return false
@@ -100,12 +104,6 @@ func validPluginHostname(baseURL string, parsed *url.URL) bool {
 		}
 	}
 	lookup, lookupErr := pluginHostnameLookup.ToASCII(hostname)
-	if strings.IndexFunc(hostname, func(r rune) bool { return r > unicode.MaxASCII }) != -1 {
-		normalized, err := pluginHostnameLiteral.ToUnicode(hostname)
-		if err != nil || normalized != hostname {
-			return false
-		}
-	}
 	literal, literalErr := pluginHostnameLiteral.ToASCII(strings.ToLower(hostname))
 	if lookupErr != nil || literalErr != nil || lookup != literal {
 		return false
