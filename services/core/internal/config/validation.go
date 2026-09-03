@@ -89,11 +89,13 @@ func validPluginHostname(baseURL string, parsed *url.URL) bool {
 
 	hostname = strings.TrimSuffix(hostname, ".")
 	lookup, lookupErr := pluginHostnameLookup.ToASCII(hostname)
-	literalHostname := hostname
-	if strings.IndexFunc(hostname, func(r rune) bool { return r > unicode.MaxASCII }) == -1 {
-		literalHostname = strings.ToLower(hostname)
+	if strings.IndexFunc(hostname, func(r rune) bool { return r > unicode.MaxASCII }) != -1 {
+		normalized, err := pluginHostnameLiteral.ToUnicode(hostname)
+		if err != nil || normalized != hostname {
+			return false
+		}
 	}
-	literal, literalErr := pluginHostnameLiteral.ToASCII(literalHostname)
+	literal, literalErr := pluginHostnameLiteral.ToASCII(strings.ToLower(hostname))
 	if lookupErr != nil || literalErr != nil || lookup != literal {
 		return false
 	}
