@@ -25,6 +25,7 @@ import type { PictureApplyContext, SharedPicture } from "./picture.js";
 import type { LinkRadio, RadioPacket } from "./radio.js";
 import type {
   ControlMessage,
+  DataRequest,
   DataResponse,
   DeliveryClass,
   LinkMessage,
@@ -174,6 +175,7 @@ export class LinkTransport {
   private readonly pendingInbound = new Map<string, PendingInbound>();
   private readonly settledInbound = new Map<string, "confirmed" | "rejected">();
   private readonly operationResults = new Map<string, LinkOperationResult>();
+  private readonly intermediateDataConfirmations = new Set<string>();
   private readonly listeners = new Set<(event: TransportEvent) => void>();
   private readonly capacityListeners = new Set<() => void>();
   private readonly unsubscribeRadio: () => void;
@@ -205,7 +207,7 @@ export class LinkTransport {
     transmitted_bytes_by_priority: emptyPriorityCounter(),
     queue_wait_ms_by_priority: emptyPriorityTimings(),
     operation_latency_ms_by_priority: emptyPriorityTimings(),
-    operation_outcomes: { sent: 0, confirmed: 0, rejected: 0, failed: 0 }
+    operation_outcomes: { sent: 0, confirmed: 0, responded: 0, rejected: 0, failed: 0 }
   };
 
   constructor(options: TransportOptions) {
@@ -681,6 +683,13 @@ export class LinkTransport {
       }
       return;
     }
+    if (
+      addressed &&
+      (message.type === "data_response" || (message.type === "object_content" && message.request_id !== undefined)) &&
+      !this.matchingDataRequest(message, identity)
+    ) {
+      return;
+    }
     this.updatePicture(message, identity);
     const requiresSettlement = deliveryClass(message) === "confirmed" && addressed;
     const settlementID = inboundSettlementID(identity);
@@ -928,6 +937,7 @@ export class LinkTransport {
       operation_id: outbound.identity.operation_id,
       status: "confirmed"
     };
+    this.intermediateDataConfirmations.add(outbound.identity.operation_id);
     this.recordOperation(result);
     this.emit({ type: "operation", result });
   }
@@ -938,17 +948,8 @@ export class LinkTransport {
   ): void {
     const requestID = message.request_id;
     if (requestID === undefined) return;
-    const outbound = this.pendingDataRequests.get(requestID);
-    if (
-      !outbound ||
-      outbound.message.type !== "data_request" ||
-      outbound.identity.destination === undefined ||
-      !sameNode(outbound.identity.destination, identity.source) ||
-      (message.type === "data_response" && message.operation !== outbound.message.operation) ||
-      (message.type === "object_content" && outbound.message.operation !== "object.content")
-    ) {
-      return;
-    }
+    const outbound = this.matchingDataRequest(message, identity);
+    if (!outbound) return;
     if (outbound.retryTimer) this.clock.cancel(outbound.retryTimer);
     if (outbound.deadlineTimer) this.clock.cancel(outbound.deadlineTimer);
     this.pendingDataRequests.delete(requestID);
@@ -975,6 +976,25 @@ export class LinkTransport {
     this.recordOperationTiming(outbound);
     this.recordOperation(result);
     this.emit({ type: "operation", result });
+  }
+
+  private matchingDataRequest(
+    message: DataResponse | (LinkMessage & { type: "object_content" }),
+    identity: FrameIdentity
+  ): Outbound | undefined {
+    const requestID = message.request_id;
+    if (requestID === undefined) return undefined;
+    const outbound = this.pendingDataRequests.get(requestID);
+    if (
+      !outbound ||
+      outbound.message.type !== "data_request" ||
+      outbound.identity.destination === undefined ||
+      !sameNode(outbound.identity.destination, identity.source) ||
+      !responseMatchesRequest(outbound.message, message)
+    ) {
+      return undefined;
+    }
+    return outbound;
   }
 
   private failBestEffort(outbound: Outbound, reason: string): void {
@@ -1041,14 +1061,28 @@ export class LinkTransport {
 
   private recordOperation(result: LinkOperationResult): void {
     const previous = this.operationResults.get(result.operation_id);
-    if (isCountedOutcome(result.status) && (previous === undefined || !isCountedOutcome(previous.status))) {
+    const previousWasIntermediateConfirmation =
+      previous?.status === "confirmed" && this.intermediateDataConfirmations.has(result.operation_id);
+    if (
+      isCountedOutcome(result.status) &&
+      result.status !== "confirmed" &&
+      (previous === undefined || !isCountedOutcome(previous.status) || previousWasIntermediateConfirmation)
+    ) {
       this.mutableMetrics.operation_outcomes[result.status]++;
+      this.intermediateDataConfirmations.delete(result.operation_id);
+    } else if (
+      result.status === "confirmed" &&
+      !this.intermediateDataConfirmations.has(result.operation_id) &&
+      (previous === undefined || !isCountedOutcome(previous.status))
+    ) {
+      this.mutableMetrics.operation_outcomes.confirmed++;
     }
     this.operationResults.set(result.operation_id, result);
     while (this.operationResults.size > OPERATION_RESULT_LIMIT) {
       const removable = [...this.operationResults].find(([, candidate]) => candidate.status !== "queued");
       if (!removable) return;
       this.operationResults.delete(removable[0]);
+      this.intermediateDataConfirmations.delete(removable[0]);
     }
   }
 
@@ -1462,8 +1496,41 @@ function observeTiming(metric: { samples: number; total_ms: number; maximum_ms: 
   metric.maximum_ms = Math.max(metric.maximum_ms, durationMs);
 }
 
-function isCountedOutcome(status: LinkOperationStatus): status is "sent" | "confirmed" | "rejected" | "failed" {
-  return status === "sent" || status === "confirmed" || status === "rejected" || status === "failed";
+function responseMatchesRequest(
+  request: DataRequest,
+  response: DataResponse | (LinkMessage & { type: "object_content" })
+): boolean {
+  if (response.type === "object_content") {
+    return request.operation === "object.content" && response.object_id === request.target_id;
+  }
+  if (response.operation !== request.operation) return false;
+  switch (request.operation) {
+    case "entity.get":
+      return isEntityResource(response.output) && response.output.entity_id === request.target_id;
+    case "task.get":
+      return isTaskResource(response.output) && response.output.task_id === request.target_id;
+    case "object.get":
+      return isObjectDetailResource(response.output) && response.output.object_id === request.target_id;
+    case "runtime.tasks":
+      return (
+        isRuntimeTaskDeliveryResponse(response.output) &&
+        response.output.tasks.every((task) => task.asset_id === request.target_id)
+      );
+    default:
+      return true;
+  }
+}
+
+function isCountedOutcome(
+  status: LinkOperationStatus
+): status is "sent" | "confirmed" | "responded" | "rejected" | "failed" {
+  return (
+    status === "sent" ||
+    status === "confirmed" ||
+    status === "responded" ||
+    status === "rejected" ||
+    status === "failed"
+  );
 }
 
 function asErrorMessage(error: unknown): string {

@@ -228,5 +228,5 @@ export type LinkMetrics = {
   transmitted_bytes_by_priority: Record<MessagePriority, number>;
   queue_wait_ms_by_priority: Record<MessagePriority, LinkTimingMetric>;
   operation_latency_ms_by_priority: Record<MessagePriority, LinkTimingMetric>;
-  operation_outcomes: Record<"sent" | "confirmed" | "rejected" | "failed", number>;
+  operation_outcomes: Record<"sent" | "confirmed" | "responded" | "rejected" | "failed", number>;
 };

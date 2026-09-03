@@ -73,6 +73,52 @@ describe("Shared Picture", () => {
     expect(picture.snapshot().records).toEqual([]);
   });
 
+  it("lets authoritative Core state reverse an equal-version provisional deletion", () => {
+    const picture = new SharedPicture("picture-session");
+    const confirmed = {
+      ...positionPublication(2),
+      path: "gateway_feed",
+      confirmation: "core_confirmed"
+    } as const;
+    const provisionalDeletion = {
+      type: "state",
+      resource_type: "entity",
+      resource_id: "asset-alpha",
+      deleted: true,
+      atlas_version: 2,
+      observation_time: "2026-09-02T12:00:03Z",
+      path: "field",
+      confirmation: "awaiting_core"
+    } as const;
+    const restored = { ...confirmed, confirmation: "core_rejected" } as const;
+
+    expect(
+      picture.apply(confirmed, {
+        source: { role: "gateway", id: "gateway" },
+        source_generation: 1,
+        service_session: "gateway-session",
+        source_sequence: 1,
+        received_at: 0
+      })
+    ).toBe(true);
+    expect(picture.apply(provisionalDeletion, context(1))).toBe(true);
+    expect(picture.snapshot().records).toEqual([]);
+    expect(
+      picture.apply(restored, {
+        source: { role: "gateway", id: "gateway" },
+        source_generation: 1,
+        service_session: "gateway-session",
+        source_sequence: 2,
+        received_at: 2_000
+      })
+    ).toBe(true);
+    expect(picture.snapshot().records[0]).toMatchObject({
+      id: "asset-alpha",
+      confirmation: "core_rejected",
+      atlas_version: 2
+    });
+  });
+
   it("lets equal-version Core state replace provisional field state", () => {
     const picture = new SharedPicture("picture-session");
     const provisional = positionPublication(1);
@@ -160,6 +206,36 @@ describe("Shared Picture", () => {
     expect(picture.apply(second, context(2))).toBe(true);
     expect(picture.snapshot().records[0]?.state).toMatchObject({
       components: { geometry: { coordinates: [-71.8, 42.2, 150] } }
+    });
+  });
+
+  it("accepts a later field observation after a Core snapshot at the same version", () => {
+    const picture = new SharedPicture("picture-session");
+    const confirmed = {
+      ...positionPublication(1),
+      path: "gateway_feed",
+      confirmation: "core_confirmed"
+    } as const;
+    const later = positionPublication(1);
+    later.observation_time = "2026-09-02T12:00:02Z";
+    const geometry = later.resource.components.geometry;
+    if (!geometry || geometry.type !== "Point") throw new Error("position fixture must contain point geometry");
+    geometry.coordinates = [-71.8, 42.2, 151];
+
+    expect(
+      picture.apply(confirmed, {
+        source: { role: "gateway", id: "gateway" },
+        source_generation: 1,
+        service_session: "gateway-session",
+        source_sequence: 1,
+        received_at: 0
+      })
+    ).toBe(true);
+    expect(picture.apply(later, context(2))).toBe(true);
+    expect(picture.snapshot().records[0]).toMatchObject({
+      source: { role: "asset", id: "asset-alpha" },
+      confirmation: "awaiting_core",
+      state: { components: { geometry: { coordinates: [-71.8, 42.2, 151] } } }
     });
   });
 

@@ -113,6 +113,7 @@
     "operation_outcomes": {
       "sent": 35,
       "confirmed": 0,
+      "responded": 0,
       "rejected": 0,
       "failed": 547
     }

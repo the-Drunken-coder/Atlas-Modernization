@@ -187,6 +187,36 @@ describe("joining and Radio profile", () => {
       }
     ]);
     second.stop();
+
+    let releaseMembership!: () => void;
+    const membershipInstalled = new Promise<void>((resolve) => {
+      releaseMembership = resolve;
+    });
+    let installationStarted = false;
+    const stopping = new AssetJoinService({
+      radio: assetRadio,
+      clock,
+      assetID: "asset-alpha",
+      radioNodeID: 101,
+      serviceSession: "session-stopping",
+      authentication,
+      installMembership: async () => {
+        installationStarted = true;
+        await membershipInstalled;
+      },
+      random: () => 0.5,
+      onError: (error) => joinErrors.push(error.message)
+    });
+    stopping.start();
+    for (let attempt = 0; attempt < 100 && !installationStarted; attempt++) {
+      await clock.advanceBy(500);
+      await new Promise<void>((resolve) => setTimeout(resolve, 1));
+    }
+    expect(installationStarted).toBe(true);
+    stopping.stop();
+    releaseMembership();
+    await new Promise<void>((resolve) => setTimeout(resolve, 1));
+    expect(stopping.status()).toEqual({ state: "stopped" });
     gateway.close();
   });
 
@@ -236,14 +266,14 @@ describe("joining and Radio profile", () => {
     expect(manager.profile().private_channel.index).toBe(1);
   });
 
-  it("converges the private-channel layout during startup configuration", async () => {
+  it("converges the static profile before dynamic private membership exists", async () => {
     const profile = createUSShortFastProfile(20, "2.7.15");
     const adapter = new FakeConfigurationAdapter(profile);
-    adapter.configuration.private_channel.index = 2;
+    adapter.configuration.private_channel = { index: -1, name: "" };
 
     const evidence = await new RadioProfileManager(profile, adapter).apply();
 
-    expect(evidence.requested_changes).toContainEqual({ path: "private_channel.index", desired: 1, actual: 2 });
+    expect(evidence.requested_changes.map((difference) => difference.path)).not.toContain("private_channel.index");
     expect(evidence.verified).toBe(true);
   });
 

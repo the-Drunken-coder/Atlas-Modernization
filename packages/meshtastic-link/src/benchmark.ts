@@ -626,7 +626,7 @@ function aggregateTransportMetrics(transports: readonly LinkTransport[]): LinkMe
     },
     queue_wait_ms_by_priority: emptyPriorityTimings(),
     operation_latency_ms_by_priority: emptyPriorityTimings(),
-    operation_outcomes: { sent: 0, confirmed: 0, rejected: 0, failed: 0 }
+    operation_outcomes: { sent: 0, confirmed: 0, responded: 0, rejected: 0, failed: 0 }
   };
   for (const transport of transports) {
     const metrics = transport.metrics();
