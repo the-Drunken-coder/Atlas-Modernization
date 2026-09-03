@@ -99,6 +99,11 @@ func validPluginHostname(baseURL string, parsed *url.URL) bool {
 		if label == "" || strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
 			return false
 		}
+		if strings.HasPrefix(strings.ToLower(label), "xn--") {
+			if _, err := idna.Lookup.ToUnicode(label); err != nil {
+				return false
+			}
+		}
 		if strings.IndexFunc(label, func(r rune) bool { return r > unicode.MaxASCII }) != -1 {
 			normalized, err := pluginHostnameLiteral.ToUnicode(label)
 			if err != nil || normalized != label {
