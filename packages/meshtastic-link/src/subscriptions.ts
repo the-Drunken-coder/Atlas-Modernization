@@ -50,6 +50,10 @@ export class LocalSubscriptionDemand {
     return result;
   }
 
+  hasClient(clientID: string): boolean {
+    return this.byClient.has(clientID);
+  }
+
   private hasKey(key: string): boolean {
     return [...this.byClient.values()].some((subscriptions) => subscriptions.has(key));
   }

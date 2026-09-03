@@ -92,7 +92,11 @@ export function messagePriority(message: LinkMessage): MessagePriority {
   }
   if (message.type === "object_content") return "object_content";
   if (message.type === "resource_operation") return "resource";
-  if (message.resource_type === "entity" && ["asset", "track"].includes(message.resource.entity_type)) {
+  if (
+    message.deleted !== true &&
+    message.resource_type === "entity" &&
+    ["asset", "track"].includes(message.resource.entity_type)
+  ) {
     return "live_state";
   }
   return message.resource_type === "task" ? "task" : "resource";
@@ -108,6 +112,7 @@ export function coalescingKey(message: LinkMessage): string | undefined {
 }
 
 export function resourceID(message: StatePublication): string {
+  if (message.deleted === true) return message.resource_id;
   if (message.resource_type === "entity") return message.resource.entity_id;
   if (message.resource_type === "task") return message.resource.task_id;
   return message.resource.object_id;
@@ -144,7 +149,15 @@ function isStatePublication(value: Record<string, unknown>): value is StatePubli
   if (value.path === "field" && value.confirmation === "awaiting_core" && !isNonEmptyString(value.operation_id)) {
     return false;
   }
-  if (value.atlas_version !== undefined && value.deleted !== true) return false;
+  if (value.deleted === true) {
+    return (
+      (value.resource_type === "entity" || value.resource_type === "object") &&
+      isNonEmptyString(value.resource_id) &&
+      value.resource === undefined &&
+      isNonNegativeInteger(value.atlas_version)
+    );
+  }
+  if (value.resource_id !== undefined || value.atlas_version !== undefined) return false;
   if (value.resource_type === "entity") return isEntityResource(value.resource);
   if (value.resource_type === "task") {
     return value.deleted !== true && value.atlas_version === undefined && isTaskResource(value.resource);
@@ -264,46 +277,12 @@ function isObjectContent(value: Record<string, unknown>): value is ObjectContent
   }
 }
 
-const REQUEST_OPERATIONS = new Set<AtlasRadioOperationName>([
-  "entity.get",
-  "task.get",
-  "runtime.tasks",
-  "object.get",
-  "object.content",
-  "query.full",
-  "query.changed_since",
-  "command_catalog.get",
-  "plugin.list",
-  "plugin.invoke",
-  "plugin.invoke_spatial"
-]);
-
-const MUTATION_OPERATIONS = new Set<AtlasRadioOperationName>([
-  "entity.create",
-  "entity.update",
-  "entity.delete",
-  "entity.check_in",
-  "task.create",
-  "task.acknowledge",
-  "task.start",
-  "task.progress",
-  "task.complete",
-  "task.fail",
-  "task.cancel",
-  "runtime.begin",
-  "runtime.stop",
-  "runtime.ready",
-  "object.create",
-  "object.update",
-  "object.delete"
-]);
-
 function isRequestOperation(value: string): value is AtlasRadioOperationName {
-  return value in ATLAS_RADIO_OPERATIONS && REQUEST_OPERATIONS.has(value as AtlasRadioOperationName);
+  return isOperation(value) && ATLAS_RADIO_OPERATIONS[value].kind === "request";
 }
 
 function isMutationOperation(value: string): value is AtlasRadioOperationName {
-  return value in ATLAS_RADIO_OPERATIONS && MUTATION_OPERATIONS.has(value as AtlasRadioOperationName);
+  return isOperation(value) && ATLAS_RADIO_OPERATIONS[value].kind === "mutation";
 }
 
 function isOperation(value: string): value is AtlasRadioOperationName {

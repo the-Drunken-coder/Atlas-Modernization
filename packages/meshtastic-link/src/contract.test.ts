@@ -117,6 +117,21 @@ describe("generated Radio contract", () => {
     expect(isLinkMessage(publication)).toBe(true);
     expect(isLinkMessage({ ...publication, deleted: true, atlas_version: 2 })).toBe(false);
   });
+
+  it("carries versioned Entity deletion fences without a stale resource body", () => {
+    expect(
+      isLinkMessage({
+        type: "state",
+        resource_type: "entity",
+        resource_id: "asset-alpha",
+        deleted: true,
+        atlas_version: 2,
+        observation_time: "2026-09-02T12:00:02Z",
+        path: "gateway_feed",
+        confirmation: "core_confirmed"
+      })
+    ).toBe(true);
+  });
 });
 
 function frameIdentity(): FrameIdentity {

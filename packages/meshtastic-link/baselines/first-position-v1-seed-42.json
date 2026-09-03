@@ -117,8 +117,8 @@
       },
       "live_state": {
         "samples": 1,
-        "total_ms": 3848.192626953125,
-        "maximum_ms": 3848.192626953125
+        "total_ms": 6327.928955078125,
+        "maximum_ms": 6327.928955078125
       },
       "resource": {
         "samples": 0,
@@ -140,15 +140,15 @@
   },
   "network_metrics": {
     "radio_submissions": 9,
-    "mesh_transmissions": 27,
-    "transmitted_bytes": 6201,
-    "modeled_airtime_ms": 5533.056,
+    "mesh_transmissions": 18,
+    "transmitted_bytes": 4134,
+    "modeled_airtime_ms": 3688.703999999999,
     "delivered_packets": 18,
     "lost_packets": 0,
     "collided_packets": 0,
     "duplicate_deliveries": 0,
     "modeled_airtime_ms_by_message_type": {
-      "state": 5533.056,
+      "state": 3688.703999999999,
       "task_delivery": 0,
       "task_report": 0,
       "data_request": 0,
@@ -163,11 +163,11 @@
       "safety": 0,
       "task": 0,
       "request": 0,
-      "live_state": 5533.056,
+      "live_state": 3688.703999999999,
       "resource": 0,
       "object_content": 0,
       "non_link": 0
     }
   },
-  "delivery_latency_ms": 4456.842041015625
+  "delivery_latency_ms": 8090.36962890625
 }

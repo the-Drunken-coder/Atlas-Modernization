@@ -26,7 +26,7 @@ The route names and wire shapes remain open, but the interface must support:
 
 Raw Meshtastic packets, transfer fragments, and radio-management commands are not part of the normal client interface.
 
-The same loopback interface also exposes validated Radio profile inspection, mutation, apply, and verification operations. The CLI uses these operations rather than opening the radio independently. The companion computer is the trust boundary; the local interface does not add a separate configuration credential system.
+The same loopback interface also exposes validated Radio profile inspection, mutation, apply, and verification operations. The CLI uses these operations rather than opening the radio independently. The companion computer is the trust boundary; the local interface does not add a separate configuration credential system. Mutation routes reject browser-originated requests so an unrelated web page cannot drive the loopback service through cross-origin form or fetch requests.
 
 ## Snapshot and live changes
 
@@ -65,7 +65,7 @@ Pending Link operations and transmission queues do not survive a Link service st
 
 The Link service tracks demand from each connected local client and sends only one Link subscription for each canonical feed selector. One client's unsubscribe removes only that client's demand. The Link service removes its Link subscription after no local client still wants the feed.
 
-Unexpected client disconnection removes that client's local demand after a short cleanup interval. Exact connection and lease timing remains an implementation choice.
+Local clients renew their demand at least every thirty seconds. The Link service expires all demand for a client after ninety seconds without an add or renewal, while a detected event-stream disconnect starts the shorter connection cleanup interval. A client using only request-response calls or the picture stream therefore still releases demand after it vanishes.
 
 ## Diagnostics
 

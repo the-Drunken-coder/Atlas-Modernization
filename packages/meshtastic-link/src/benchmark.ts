@@ -174,7 +174,7 @@ export async function runCanonicalBaseline(seed = 42): Promise<CanonicalBaseline
     if (index > 0) {
       transport.onEvent((event) => {
         if (event.type === "message" && event.requires_settlement && event.addressed_to_local) {
-          transport.settleInbound(event.operation_id, true);
+          transport.settleInbound(event.settlement_id, true);
         }
       });
     }
@@ -191,7 +191,7 @@ export async function runCanonicalBaseline(seed = 42): Promise<CanonicalBaseline
     if (event.message.type === "subscription") {
       const transition = feedDemand.apply(event, clock.now());
       if (transition?.active) aggregateFeedActivations++;
-      gateway.settleInbound(event.operation_id, true);
+      gateway.settleInbound(event.settlement_id, true);
     } else if (event.message.type === "data_request" && event.addressed_to_local) {
       requiredMapValue(clients, "gateway").respond(
         {
@@ -203,10 +203,10 @@ export async function runCanonicalBaseline(seed = 42): Promise<CanonicalBaseline
         event.source,
         `response_${event.message.request_id}`
       );
-      gateway.settleInbound(event.operation_id, true);
+      gateway.settleInbound(event.settlement_id, true);
     } else if (event.message.type === "task_report" && event.addressed_to_local) {
       taskReportsReceived++;
-      gateway.settleInbound(event.operation_id, true);
+      gateway.settleInbound(event.settlement_id, true);
     }
   });
   requiredMapValue(transports, "asset-bravo").onEvent((event) => {
@@ -374,8 +374,8 @@ export async function runCanonicalBaseline(seed = 42): Promise<CanonicalBaseline
     scenario_revision: 1,
     seed,
     semantic_result: {
-      gateway_field_records: at60Seconds.gateway_records,
-      minimum_asset_picture_records: at60Seconds.minimum_asset_records,
+      gateway_field_records: finalPicture.gateway_records,
+      minimum_asset_picture_records: finalPicture.minimum_asset_records,
       aggregate_subscription_feeds: aggregateFeedActivations,
       task_delivery_order: taskOrder,
       data_request_completed: dataRequestsCompleted === 2,
@@ -430,11 +430,11 @@ export async function runStressBaseline(seed = 42): Promise<StressBaselineResult
     if (event.message.type === "object_content") {
       objectCompleted = Buffer.from(event.message.content_base64, "base64").byteLength === 32 * 1024;
       if (objectCompleted) objectCompletedAt = clock.now();
-      delta.settleInbound(event.operation_id, objectCompleted, objectCompleted ? undefined : "Object length mismatch");
+      delta.settleInbound(event.settlement_id, objectCompleted, objectCompleted ? undefined : "Object length mismatch");
     } else if (event.message.type === "task_delivery" && event.message.delivery === "cancellation") {
       cancellationReceived = true;
       cancellationReceivedAt = clock.now();
-      delta.settleInbound(event.operation_id, true);
+      delta.settleInbound(event.settlement_id, true);
     }
   });
 

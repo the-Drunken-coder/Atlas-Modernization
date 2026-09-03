@@ -6,7 +6,7 @@ import { isFeedSelector, isLinkMessage } from "./contract.js";
 import type { AssetJoinStatus } from "./joining.js";
 import { PictureCursorError, type PictureEvent, type PictureSnapshot, SharedPicture } from "./picture.js";
 import { type RadioProfile, type RadioProfileManager, validateRadioProfile } from "./profile.js";
-import { LocalSubscriptionDemand, SUBSCRIPTION_RENEWAL_MS } from "./subscriptions.js";
+import { LocalSubscriptionDemand, SUBSCRIPTION_LEASE_MS, SUBSCRIPTION_RENEWAL_MS } from "./subscriptions.js";
 import {
   LinkTransport,
   type TransportDiagnostics,
@@ -62,6 +62,7 @@ export class LinkService {
   private readonly eventListeners = new Set<(event: LinkServiceEvent) => void>();
   private readonly eventBuffer: LinkServiceEvent[] = [];
   private readonly localOperations = new Map<string, LinkOperationResult>();
+  private readonly clientLeaseTimers = new Map<string, TimerHandle>();
   private transport: LinkTransport | undefined;
   private unsubscribeTransport: (() => void) | undefined;
   private gatewayNode: LinkNode | undefined;
@@ -140,8 +141,8 @@ export class LinkService {
     return this.transport.submit(message, target === undefined ? {} : { destination: target });
   }
 
-  settleInbound(operationID: string, accepted: boolean, reason?: string): boolean {
-    return this.transport?.settleInbound(operationID, accepted, reason) ?? false;
+  settleInbound(settlementID: string, accepted: boolean, reason?: string): boolean {
+    return this.transport?.settleInbound(settlementID, accepted, reason) ?? false;
   }
 
   operation(operationID: string): LinkOperationResult | undefined {
@@ -161,11 +162,17 @@ export class LinkService {
     const transition =
       action === "remove" ? this.subscriptions.remove(clientID, selector) : this.subscriptions.add(clientID, selector);
     if (transition) this.sendSubscription(transition.action, transition.selector);
+    if (action === "remove") {
+      if (!this.subscriptions.hasClient(clientID)) this.cancelClientLease(clientID);
+    } else {
+      this.renewClientLease(clientID);
+    }
     this.scheduleRenewalIfNeeded();
     return { changed: transition !== undefined, active: this.subscriptions.aggregate().size };
   }
 
   disconnectClient(clientID: string): void {
+    this.cancelClientLease(clientID);
     for (const transition of this.subscriptions.disconnect(clientID)) {
       this.sendSubscription(transition.action, transition.selector);
     }
@@ -209,6 +216,8 @@ export class LinkService {
     if (this.lifecycle === "stopped") return;
     if (this.renewalTimer) this.clock.cancel(this.renewalTimer);
     if (this.pictureRefreshTimer) this.clock.cancel(this.pictureRefreshTimer);
+    for (const timer of this.clientLeaseTimers.values()) this.clock.cancel(timer);
+    this.clientLeaseTimers.clear();
     this.transport?.stop();
     this.unsubscribeTransport?.();
     this.setLifecycle("stopped");
@@ -224,6 +233,23 @@ export class LinkService {
   private sendSubscription(action: "add" | "renew" | "remove", selector: FeedSelector): void {
     if (!this.transport || !this.gatewayNode) return;
     this.transport.submit({ type: "subscription", action, selector }, { destination: this.gatewayNode });
+  }
+
+  private renewClientLease(clientID: string): void {
+    this.cancelClientLease(clientID);
+    this.clientLeaseTimers.set(
+      clientID,
+      this.clock.schedule(SUBSCRIPTION_LEASE_MS, () => {
+        this.clientLeaseTimers.delete(clientID);
+        this.disconnectClient(clientID);
+      })
+    );
+  }
+
+  private cancelClientLease(clientID: string): void {
+    const timer = this.clientLeaseTimers.get(clientID);
+    if (timer) this.clock.cancel(timer);
+    this.clientLeaseTimers.delete(clientID);
   }
 
   private scheduleRenewalIfNeeded(): void {
@@ -262,7 +288,7 @@ export class LinkService {
         ...(event.message.next_cursor === undefined ? {} : { next_cursor: event.message.next_cursor }),
         completed_at: this.clock.now()
       });
-      this.transport?.settleInbound(event.operation_id, true);
+      this.transport?.settleInbound(event.settlement_id, true);
     }
     if (
       event.type === "message" &&
@@ -282,7 +308,7 @@ export class LinkService {
           completed_at: this.clock.now()
         });
       }
-      this.transport?.settleInbound(event.operation_id, true);
+      this.transport?.settleInbound(event.settlement_id, true);
     }
     this.emit({ type: "transport", event });
   }
@@ -350,6 +376,9 @@ export class LinkHTTPServer {
 
   private async handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
     try {
+      if (isCrossOriginMutation(request)) {
+        return json(response, 403, { error: "browser-originated mutations are not allowed" });
+      }
       const url = new URL(request.url ?? "/", "http://127.0.0.1");
       if (request.method === "GET" && url.pathname === "/v1/status") return json(response, 200, this.service.status());
       if (request.method === "GET" && url.pathname === "/v1/picture")
@@ -540,6 +569,11 @@ function sendSSE(response: ServerResponse, event: PictureEvent | LinkServiceEven
 
 function isLoopbackHost(host: string): boolean {
   return host === "127.0.0.1" || host === "::1" || host === "localhost";
+}
+
+function isCrossOriginMutation(request: IncomingMessage): boolean {
+  if (request.method === "GET" || request.method === "HEAD" || request.method === "OPTIONS") return false;
+  return request.headers.origin !== undefined || request.headers["sec-fetch-site"] === "cross-site";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

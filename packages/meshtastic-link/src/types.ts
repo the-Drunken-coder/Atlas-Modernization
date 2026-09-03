@@ -44,16 +44,27 @@ export type PublishedResource =
   | { resource_type: "task"; resource: TaskResource }
   | { resource_type: "object"; resource: ObjectResource };
 
-export type StatePublication = PublishedResource & {
+type PublicationContext = {
   type: "state";
   observation_time: string;
   path: PublicationPath;
   confirmation: ConfirmationState;
   operation_id?: string;
   runtime_id?: string;
-  deleted?: boolean;
-  atlas_version?: number;
 };
+
+export type ResourceStatePublication = PublicationContext &
+  PublishedResource & { deleted?: false; atlas_version?: never; resource_id?: never };
+
+export type DeletedStatePublication = PublicationContext & {
+  resource_type: "entity" | "object";
+  resource_id: string;
+  resource?: never;
+  deleted: true;
+  atlas_version: number;
+};
+
+export type StatePublication = ResourceStatePublication | DeletedStatePublication;
 
 export type TaskDelivery = {
   type: "task_delivery";

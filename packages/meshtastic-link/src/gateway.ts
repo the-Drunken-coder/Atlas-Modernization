@@ -111,6 +111,7 @@ export class OrderedTaskDispatcher {
   enqueue(assetID: string, task: TaskResource, delivery: TaskDelivery["delivery"] = "assignment"): void {
     if (!assetID) throw new TypeError("Task delivery requires an Asset ID");
     if (delivery === "cancellation") {
+      this.removeQueuedTask(assetID, task.task_id);
       this.send(assetID, { task, delivery });
       return;
     }
@@ -140,6 +141,7 @@ export class OrderedTaskDispatcher {
 
   observeAuthoritativeTask(assetID: string, task: TaskResource): void {
     if (!isTerminalTask(task)) return;
+    this.removeQueuedTask(assetID, task.task_id);
     const active = this.inFlight.get(assetID);
     if (active?.task.task_id === task.task_id) {
       this.inFlight.delete(assetID);
@@ -164,14 +166,23 @@ export class OrderedTaskDispatcher {
   private pump(assetID: string): void {
     if (this.inFlight.has(assetID)) return;
     const queue = this.queued.get(assetID);
-    const next = queue?.shift();
+    const next = queue?.[0];
     if (!next) {
       this.queued.delete(assetID);
       return;
     }
-    if (queue?.length === 0) this.queued.delete(assetID);
     const operationID = this.send(assetID, next);
+    queue.shift();
+    if (queue.length === 0) this.queued.delete(assetID);
     this.inFlight.set(assetID, { ...next, operationID });
+  }
+
+  private removeQueuedTask(assetID: string, taskID: string): void {
+    const queue = this.queued.get(assetID);
+    if (!queue) return;
+    const remaining = queue.filter((item) => item.task.task_id !== taskID);
+    if (remaining.length === 0) this.queued.delete(assetID);
+    else if (remaining.length !== queue.length) this.queued.set(assetID, remaining);
   }
 
   private send(assetID: string, queued: QueuedTask): string {

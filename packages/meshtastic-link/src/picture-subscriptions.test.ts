@@ -41,9 +41,84 @@ describe("Shared Picture", () => {
 
   it("applies an explicit deletion at its changed-since feed version", () => {
     const picture = new SharedPicture("picture-session");
-    const deletion = { ...positionPublication(1), deleted: true, atlas_version: 2 } as const;
+    const deletion = {
+      type: "state",
+      resource_type: "entity",
+      resource_id: "asset-alpha",
+      deleted: true,
+      atlas_version: 2,
+      observation_time: "2026-09-02T12:00:02Z",
+      path: "gateway_feed",
+      confirmation: "core_confirmed"
+    } as const;
     expect(picture.apply(positionPublication(1), context(1))).toBe(true);
     expect(picture.apply(deletion, context(2))).toBe(true);
+    expect(picture.snapshot().records).toEqual([]);
+  });
+
+  it("keeps a versioned deletion fence when the record was absent", () => {
+    const picture = new SharedPicture("picture-session");
+    const deletion = {
+      type: "state",
+      resource_type: "entity",
+      resource_id: "asset-alpha",
+      deleted: true,
+      atlas_version: 2,
+      observation_time: "2026-09-02T12:00:02Z",
+      path: "gateway_feed",
+      confirmation: "core_confirmed"
+    } as const;
+    expect(picture.apply(deletion, context(2))).toBe(true);
+    expect(picture.apply(positionPublication(1), context(3))).toBe(false);
+    expect(picture.snapshot().records).toEqual([]);
+  });
+
+  it("lets equal-version Core state replace provisional field state", () => {
+    const picture = new SharedPicture("picture-session");
+    const provisional = positionPublication(1);
+    const confirmed = { ...provisional, path: "gateway_feed", confirmation: "core_confirmed" } as const;
+    expect(picture.apply(provisional, context(1))).toBe(true);
+    expect(
+      picture.apply(confirmed, {
+        source: { role: "gateway", id: "gateway" },
+        source_generation: 1,
+        service_session: "gateway-session",
+        source_sequence: 1,
+        received_at: 2_000
+      })
+    ).toBe(true);
+    expect(picture.snapshot().records[0]).toMatchObject({
+      source: { role: "gateway", id: "gateway" },
+      confirmation: "core_confirmed"
+    });
+  });
+
+  it("accepts a later field observation without a new Core version", () => {
+    const picture = new SharedPicture("picture-session");
+    const first = positionPublication(1);
+    const second = structuredClone(first);
+    second.operation_id = "position-later";
+    second.observation_time = "2026-09-02T12:00:02Z";
+    const geometry = second.resource.components.geometry;
+    if (!geometry || geometry.type !== "Point") throw new Error("position fixture must contain point geometry");
+    geometry.coordinates = [-71.8, 42.2, 150];
+
+    expect(picture.apply(first, context(1))).toBe(true);
+    expect(picture.apply(second, context(2))).toBe(true);
+    expect(picture.snapshot().records[0]?.state).toMatchObject({
+      components: { geometry: { coordinates: [-71.8, 42.2, 150] } }
+    });
+  });
+
+  it("retains mixed position and telemetry records for the telemetry interval", () => {
+    const picture = new SharedPicture("picture-session");
+    const mixed = positionPublication(1);
+    mixed.resource.components.telemetry = { speed_m_s: 4 };
+    picture.apply(mixed, context(1));
+
+    picture.refresh(30_001);
+    expect(picture.snapshot().records[0]?.freshness).toBe("stale");
+    picture.refresh(120_001);
     expect(picture.snapshot().records).toEqual([]);
   });
 

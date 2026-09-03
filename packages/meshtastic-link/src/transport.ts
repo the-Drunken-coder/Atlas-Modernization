@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import {
   type EntityResource,
   isChangedSinceResponse,
@@ -6,7 +6,6 @@ import {
   isEntityResource,
   isFullDatasetResponse,
   isObjectDetailResource,
-  isObjectResource,
   isRuntimeTaskDeliveryResponse,
   isTaskResource,
   type ObjectDetailResource,
@@ -21,7 +20,7 @@ import {
   messagePriority,
   serializeLinkMessage
 } from "./contract.js";
-import { decodeFrame, type FrameIdentity, fragmentPayload, type LinkFrame } from "./frame.js";
+import { decodeFrame, type FrameIdentity, fragmentPayload, type LinkFrame, MAX_LINK_MESSAGE_BYTES } from "./frame.js";
 import type { PictureApplyContext, SharedPicture } from "./picture.js";
 import type { LinkRadio, RadioPacket } from "./radio.js";
 import type {
@@ -66,11 +65,13 @@ const RETRY_MS: Record<MessagePriority, number> = {
   object_content: 15_000
 };
 const OPERATION_RESULT_LIMIT = 4_096;
+const SETTLED_INBOUND_LIMIT = 4_096;
 
 export type TransportMessageEvent = {
   type: "message";
   message: LinkMessage;
   operation_id: string;
+  settlement_id: string;
   source: LinkNode;
   destination?: LinkNode;
   source_generation: number;
@@ -134,6 +135,7 @@ type Reassembly = {
   identity: FrameIdentity;
   chunks: Map<number, Uint8Array>;
   chunkCount: number;
+  byteLength: number;
   expiresAt: number;
   lastReceivedAt: number;
   timer: TimerHandle;
@@ -233,6 +235,14 @@ export class LinkTransport {
   }
 
   submit(message: LinkMessage, options: SubmitOptions = {}): LinkOperationResult {
+    return this.submitWithCapacity(message, options, false);
+  }
+
+  private submitWithCapacity(
+    message: LinkMessage,
+    options: SubmitOptions,
+    useInboundReservation: boolean
+  ): LinkOperationResult {
     if (this.stopped) return this.failedResult(options.operationID ?? compactID(), "link service is stopped");
     const delivery = deliveryClass(message);
     if (delivery === "confirmed" && options.destination === undefined) {
@@ -287,7 +297,7 @@ export class LinkTransport {
     outbound.chunkSendCounts = outbound.frames.map(() => 0);
 
     if (delivery === "best_effort" && outbound.coalescingKey !== undefined) this.replaceQueuedBestEffort(outbound);
-    if (this.queue.length >= this.queueLimit)
+    if (this.queue.length + (useInboundReservation ? 0 : this.pendingInbound.size) >= this.queueLimit)
       return this.failedResult(operationID, "outbound queue capacity is exhausted");
     this.queue.push(outbound);
     if (delivery === "confirmed") {
@@ -306,20 +316,25 @@ export class LinkTransport {
     return result;
   }
 
-  settleInbound(operationID: string, accepted: boolean, reason?: string): boolean {
-    const pending = this.pendingInbound.get(operationID);
+  settleInbound(settlementID: string, accepted: boolean, reason?: string): boolean {
+    const pending = this.pendingInbound.get(settlementID);
     if (!pending) return false;
-    this.pendingInbound.delete(operationID);
-    this.clock.cancel(pending.timer);
     const control = accepted ? "confirmed" : "rejected";
-    this.settledInbound.set(operationID, control);
-    this.sendControl(pending.source, {
-      type: "control",
-      control,
-      operation_id: operationID,
-      message_id: pending.messageID,
-      ...(reason === undefined ? {} : { reason })
-    });
+    const result = this.sendControl(
+      pending.source,
+      {
+        type: "control",
+        control,
+        operation_id: pending.operationID,
+        message_id: pending.messageID,
+        ...(reason === undefined ? {} : { reason })
+      },
+      true
+    );
+    if (result.status === "failed") return false;
+    this.pendingInbound.delete(settlementID);
+    this.clock.cancel(pending.timer);
+    this.recordSettledInbound(settlementID, control);
     return true;
   }
 
@@ -432,6 +447,7 @@ export class LinkTransport {
         return;
       }
       if (this.stopped) return;
+      if (outbound.delivery === "confirmed" && !this.outboundByOperation.has(outbound.identity.operation_id)) return;
       nextDelayMs = this.radio.pacingDelayMs?.(frame) ?? 0;
       if ((outbound.chunkSendCounts[chunkIndex] ?? 0) > 0) this.mutableMetrics.retransmitted_packets++;
       outbound.chunkSendCounts[chunkIndex] = (outbound.chunkSendCounts[chunkIndex] ?? 0) + 1;
@@ -537,6 +553,7 @@ export class LinkTransport {
         identity: frameIdentity(frame),
         chunks: new Map(),
         chunkCount: frame.chunk_count,
+        byteLength: 0,
         expiresAt: this.clock.now() + DEADLINE_MS[frame.priority],
         lastReceivedAt: packet.received_at,
         timer
@@ -548,7 +565,14 @@ export class LinkTransport {
       this.mutableMetrics.duplicate_packets_suppressed++;
       return;
     }
+    if (reassembly.byteLength + frame.payload.byteLength > MAX_LINK_MESSAGE_BYTES) {
+      this.clock.cancel(reassembly.timer);
+      this.reassemblies.delete(key);
+      this.mutableMetrics.incomplete_reassemblies++;
+      return;
+    }
     reassembly.chunks.set(frame.chunk_index, frame.payload);
+    reassembly.byteLength += frame.payload.byteLength;
     reassembly.lastReceivedAt = packet.received_at;
     this.clock.cancel(reassembly.timer);
     if (reassembly.chunks.size !== reassembly.chunkCount) {
@@ -580,8 +604,9 @@ export class LinkTransport {
     this.updatePicture(message, identity);
     const addressed = identity.destination !== undefined && sameNode(identity.destination, this.node);
     const requiresSettlement = deliveryClass(message) === "confirmed" && addressed;
+    const settlementID = inboundSettlementID(identity);
     if (requiresSettlement) {
-      const settled = this.settledInbound.get(identity.operation_id);
+      const settled = this.settledInbound.get(settlementID);
       if (settled) {
         this.mutableMetrics.duplicate_packets_suppressed++;
         this.sendControl(identity.source, {
@@ -592,27 +617,29 @@ export class LinkTransport {
         });
         return;
       }
-      if (this.pendingInbound.has(identity.operation_id)) {
+      if (this.pendingInbound.has(settlementID)) {
         this.mutableMetrics.duplicate_packets_suppressed++;
         return;
       }
-      if (this.pendingInbound.size >= this.confirmedLimit) {
-        this.rejectInboundCapacity(identity);
+      if (
+        this.pendingInbound.size >= this.confirmedLimit ||
+        this.queue.length + this.pendingInbound.size >= this.queueLimit
+      ) {
+        this.rejectInboundCapacity(identity, settlementID);
         return;
       }
-      this.pendingInbound.set(identity.operation_id, {
+      this.pendingInbound.set(settlementID, {
         source: identity.source,
         operationID: identity.operation_id,
         messageID: identity.message_id,
-        timer: this.clock.schedule(DEADLINE_MS[identity.priority], () =>
-          this.expirePendingInbound(identity.operation_id)
-        )
+        timer: this.clock.schedule(DEADLINE_MS[identity.priority], () => this.expirePendingInbound(settlementID))
       });
     }
     this.emit({
       type: "message",
       message,
       operation_id: identity.operation_id,
+      settlement_id: settlementID,
       source: identity.source,
       ...(identity.destination === undefined ? {} : { destination: identity.destination }),
       source_generation: identity.source_generation,
@@ -638,7 +665,7 @@ export class LinkTransport {
       );
       if (publication) publications = [publication];
     } else if (message.type === "data_response") {
-      publications = responsePublications(message, this.picture, new Date(this.clock.now()).toISOString());
+      publications = responsePublications(message, new Date(this.clock.now()).toISOString());
     }
     if (publications.length === 0) return;
     const context: PictureApplyContext = {
@@ -732,13 +759,21 @@ export class LinkTransport {
     this.mutableMetrics.incomplete_reassemblies++;
   }
 
-  private sendControl(destination: LinkNode, message: ControlMessage): void {
-    this.submit(message, { destination, operationID: `control_${compactID()}` });
+  private sendControl(
+    destination: LinkNode,
+    message: ControlMessage,
+    useInboundReservation = false
+  ): LinkOperationResult {
+    return this.submitWithCapacity(
+      message,
+      { destination, operationID: `control_${compactID()}` },
+      useInboundReservation
+    );
   }
 
-  private rejectInboundCapacity(identity: FrameIdentity): void {
+  private rejectInboundCapacity(identity: FrameIdentity, settlementID: string): void {
     this.mutableMetrics.confirmed_rejected_overload++;
-    this.settledInbound.set(identity.operation_id, "rejected");
+    this.recordSettledInbound(settlementID, "rejected");
     this.sendControl(identity.source, {
       type: "control",
       control: "rejected",
@@ -748,19 +783,23 @@ export class LinkTransport {
     });
   }
 
-  private expirePendingInbound(operationID: string): void {
-    const pending = this.pendingInbound.get(operationID);
+  private expirePendingInbound(settlementID: string): void {
+    const pending = this.pendingInbound.get(settlementID);
     if (!pending) return;
-    this.pendingInbound.delete(operationID);
+    this.sendControl(
+      pending.source,
+      {
+        type: "control",
+        control: "rejected",
+        operation_id: pending.operationID,
+        message_id: pending.messageID,
+        reason: "application settlement deadline expired"
+      },
+      true
+    );
+    this.pendingInbound.delete(settlementID);
     this.mutableMetrics.inbound_settlement_expired++;
-    this.settledInbound.set(operationID, "rejected");
-    this.sendControl(pending.source, {
-      type: "control",
-      control: "rejected",
-      operation_id: operationID,
-      message_id: pending.messageID,
-      reason: "application settlement deadline expired"
-    });
+    this.recordSettledInbound(settlementID, "rejected");
   }
 
   private completeOutbound(outbound: Outbound, status: "confirmed" | "rejected" | "failed", reason?: string): void {
@@ -851,6 +890,15 @@ export class LinkTransport {
     }
   }
 
+  private recordSettledInbound(settlementID: string, result: "confirmed" | "rejected"): void {
+    this.settledInbound.set(settlementID, result);
+    while (this.settledInbound.size > SETTLED_INBOUND_LIMIT) {
+      const oldest = this.settledInbound.keys().next().value as string | undefined;
+      if (oldest === undefined) return;
+      this.settledInbound.delete(oldest);
+    }
+  }
+
   private recordOperationTiming(outbound: Outbound): void {
     observeTiming(
       this.mutableMetrics.operation_latency_ms_by_priority[outbound.identity.priority],
@@ -876,6 +924,20 @@ function frameIdentity(frame: LinkFrame): FrameIdentity {
     message_id: frame.message_id,
     priority: frame.priority
   };
+}
+
+function inboundSettlementID(identity: FrameIdentity): string {
+  return createHash("sha256")
+    .update(identity.source.role)
+    .update("\0")
+    .update(identity.source.id)
+    .update("\0")
+    .update(String(identity.source_generation))
+    .update("\0")
+    .update(identity.service_session)
+    .update("\0")
+    .update(identity.operation_id)
+    .digest("base64url");
 }
 
 function sameFrameSet(reassembly: Reassembly, frame: LinkFrame): boolean {
@@ -917,7 +979,7 @@ function taskDeliveryPublication(message: TaskDelivery): StatePublication {
   };
 }
 
-function responsePublications(response: DataResponse, picture: SharedPicture, observedAt: string): StatePublication[] {
+function responsePublications(response: DataResponse, observedAt: string): StatePublication[] {
   const { operation, output, request_id: operationID } = response;
   switch (operation) {
     case "entity.get":
@@ -964,12 +1026,7 @@ function responsePublications(response: DataResponse, picture: SharedPicture, ob
                   return [objectPublication(event.resource, operationID)];
               }
             }
-            const current = picture
-              .snapshot()
-              .records.find((record) => record.resource_type === event.resource_type && record.id === event.id);
-            return current
-              ? [deletedPublication(current.state, event.resource_type, event.version, operationID, observedAt)]
-              : [];
+            return [deletedPublication(event.resource_type, event.id, event.version, operationID, observedAt)];
           })
         : [];
     case "object.content":
@@ -1023,29 +1080,23 @@ function objectPublication(resource: ObjectResource, operationID: string): State
 }
 
 function deletedPublication(
-  resource: EntityResource | TaskResource | ObjectResource,
   resourceType: "entity" | "object",
+  resourceIDValue: string,
   atlasVersion: number,
   operationID: string,
   observedAt: string
 ): StatePublication {
-  if (resourceType === "entity" && isEntityResource(resource)) {
-    return {
-      ...entityPublication(resource, operationID),
-      deleted: true,
-      atlas_version: atlasVersion,
-      observation_time: observedAt
-    };
-  }
-  if (resourceType === "object" && isObjectResource(resource)) {
-    return {
-      ...objectPublication(resource, operationID),
-      deleted: true,
-      atlas_version: atlasVersion,
-      observation_time: observedAt
-    };
-  }
-  throw new TypeError("changed-since deletion did not match the current Shared Picture resource");
+  return {
+    type: "state",
+    resource_type: resourceType,
+    resource_id: resourceIDValue,
+    deleted: true,
+    atlas_version: atlasVersion,
+    observation_time: observedAt,
+    path: "gateway_feed",
+    confirmation: "core_confirmed",
+    operation_id: operationID
+  };
 }
 
 function objectSummary(resource: ObjectDetailResource): ObjectResource {

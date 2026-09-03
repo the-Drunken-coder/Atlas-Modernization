@@ -79,14 +79,14 @@ The service binds `127.0.0.1:7331` by default. Its normal interface is:
 | `GET /v1/events?after=...&client_id=...` | Link operation and addressed-message SSE stream |
 | `POST /v1/messages` | Submit a validated Radio contract message |
 | `GET /v1/operations/:id` | Read a queued, sent, confirmed, responded, rejected, or failed outcome |
-| `POST /v1/inbound/:id/settle` | Application acceptance or rejection of confirmed inbound work |
+| `POST /v1/inbound/:settlement-id/settle` | Application acceptance or rejection of one source-scoped confirmed inbound delivery |
 | `POST /v1/subscriptions` | Add, renew, or remove one local client's feed demand |
 | `DELETE /v1/clients/:id` | Release all demand for a disconnected local client |
 | `GET /v1/metrics` | Bounded transport counters |
 | `GET`, `PUT /v1/radio/profile` | Inspect or replace the desired validated profile |
 | `POST /v1/radio/profile/apply` | Apply and verify Atlas-owned radio settings |
 
-Task delivery events include `addressed_to_local` and `requires_settlement`. Only the addressed Asset application settles executable Task work. A `tasks_for_asset` state feed updates the Shared Picture and never invokes this delivery path.
+Task delivery events include `addressed_to_local`, `requires_settlement`, and an opaque source-scoped `settlement_id`. Only the addressed Asset application settles executable Task work using that settlement ID. A `tasks_for_asset` state feed updates the Shared Picture and never invokes this delivery path.
 
 Gateway applications consume `GatewayFieldOperationInbox`, `GatewayFeedDemand`, and `OrderedTaskDispatcher`. These expose intentional field reports, aggregate feed demand, and ordered confirmed Tasks without moving Core credentials or durable Core reconciliation into this package.
 

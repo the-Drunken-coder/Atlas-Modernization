@@ -4,6 +4,8 @@ Meshtastic Link uses a faster-than-real-time deterministic packet-level simulati
 
 The simulator is a protocol and network workbench, not a replacement for hardware testing. Its job is to make architectural comparisons repeatable before consuming field time.
 
+The packet network models each source and relay transmission separately. Carrier sensing reserves only the transmitting radio's audible neighborhood, so disconnected neighborhoods may transmit concurrently and hidden transmitters may collide at a shared receiver. The deterministic baseline uses a four-airtime contention window, treats an earlier overlapping reception as captured, loses equal-start collisions, and suppresses destructive overlap between copies of the same flooded packet. These are explicit uncalibrated assumptions for comparison, not RF claims.
+
 ## No-cheating rule
 
 A scenario must exercise the same application path used by a real Link service:
@@ -57,7 +59,7 @@ Atlas semantics are checked at both ends. A successful delivery must decode into
 
 The first named baseline uses the generated Atlas Protocol Radio contract as ordinary compact UTF-8 JSON without compression or radio-specific field selection. Its fragmentation is part of the result.
 
-The checked-in seed-42 position, canonical five-radio normal, and canonical stress baseline results live in `packages/meshtastic-link/baselines`. Package tests rerun all three through the production transport and fail if their semantics or exact measurements drift without an intentional baseline update.
+The checked-in seed-42 position, canonical five-radio normal, and canonical stress baseline results live in `packages/meshtastic-link/baselines`. Package tests rerun all three through the production transport and fail if their semantics or exact measurements drift without an intentional baseline update. The canonical picture snapshots preserve the exact 30-second and 60-second observations; its semantic record-count gate uses the final post-drain picture so slow delivery remains visible without turning a performance miss into a correctness failure.
 
 The ordinary JSON baseline is not a field candidate. At the documented publication rates, the checked-in normal and stress runs truthfully record deadline failures and incomplete convergence instead of manufacturing successful delivery. Focused quiet-link tests separately prove confirmation, rejection, retry exhaustion, ordered Task delivery, priority interruption, joining, and snapshot handoff. A later encoding or scheduling optimization must rerun the unchanged load and improve those recorded outcomes.
 
