@@ -204,6 +204,7 @@ export class LinkTransport {
     packets_received: 0,
     duplicate_packets_suppressed: 0,
     stale_messages_rejected: 0,
+    picture_rejected_capacity: 0,
     incomplete_reassemblies: 0,
     best_effort_replaced: 0,
     confirmed_rejected_overload: 0,
@@ -878,7 +879,10 @@ export class LinkTransport {
       received_at: this.clock.now()
     };
     for (const publication of publications) {
-      if (!this.picture.apply(publication, context)) this.mutableMetrics.stale_messages_rejected++;
+      const result = this.picture.apply(publication, context);
+      if (result.status !== "rejected") continue;
+      if (result.reason === "capacity") this.mutableMetrics.picture_rejected_capacity++;
+      else this.mutableMetrics.stale_messages_rejected++;
     }
   }
 

@@ -17,6 +17,7 @@
     "packets_received": 738,
     "duplicate_packets_suppressed": 10,
     "stale_messages_rejected": 0,
+    "picture_rejected_capacity": 0,
     "incomplete_reassemblies": 148,
     "best_effort_replaced": 538,
     "confirmed_rejected_overload": 0,

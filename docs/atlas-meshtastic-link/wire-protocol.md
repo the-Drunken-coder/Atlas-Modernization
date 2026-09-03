@@ -39,7 +39,7 @@ The transport wraps a generated Atlas payload with only the information needed t
 
 These are Link fields, not Atlas resource fields. Atlas Protocol remains unaware of Meshtastic packet boundaries. Link node identity is independent of the attached radio's Meshtastic identity so replacing a radio does not rename an Asset or Gateway.
 
-The Gateway assigns increasing source generations when an Asset joins and increments its own durable generation when the Gateway service starts. Once a receiver accepts a generation for one source Link node, it rejects every lower generation. Source sequence orders messages only within the accepted generation and service session.
+The Gateway assigns increasing source generations when an Asset joins and increments its own durable generation when the Gateway service starts. Once a receiver accepts a generation for one source Link node, it rejects every lower generation. Source sequence orders updates to the same record within the accepted generation and service session; unrelated records may still arrive out of order over the radio.
 
 ## Fragmentation and reassembly
 

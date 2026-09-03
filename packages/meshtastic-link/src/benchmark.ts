@@ -624,6 +624,7 @@ function aggregateTransportMetrics(transports: readonly LinkTransport[]): LinkMe
     packets_received: 0,
     duplicate_packets_suppressed: 0,
     stale_messages_rejected: 0,
+    picture_rejected_capacity: 0,
     incomplete_reassemblies: 0,
     best_effort_replaced: 0,
     confirmed_rejected_overload: 0,
@@ -665,6 +666,7 @@ function aggregateTransportMetrics(transports: readonly LinkTransport[]): LinkMe
     aggregate.packets_received += metrics.packets_received;
     aggregate.duplicate_packets_suppressed += metrics.duplicate_packets_suppressed;
     aggregate.stale_messages_rejected += metrics.stale_messages_rejected;
+    aggregate.picture_rejected_capacity += metrics.picture_rejected_capacity;
     aggregate.incomplete_reassemblies += metrics.incomplete_reassemblies;
     aggregate.best_effort_replaced += metrics.best_effort_replaced;
     aggregate.confirmed_rejected_overload += metrics.confirmed_rejected_overload;
