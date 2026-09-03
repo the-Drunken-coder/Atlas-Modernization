@@ -235,7 +235,7 @@ describe("joining and Radio profile", () => {
     await gateway.close();
   });
 
-  it("does not admit an Asset after the Gateway join service closes", async () => {
+  it("drains an active durable admission before Gateway shutdown completes", async () => {
     const directory = await mkdtemp(join(tmpdir(), "atlas-link-join-close-"));
     const store = new GatewayMembershipStore(join(directory, "membership.json"));
     await store.initialize({
@@ -244,17 +244,19 @@ describe("joining and Radio profile", () => {
       channel_name: "ATLAS",
       channel_key_base64: Buffer.alloc(32, 9).toString("base64")
     });
-    let releaseChallenge!: () => void;
-    const challengeReleased = new Promise<void>((resolve) => {
-      releaseChallenge = resolve;
+    let releaseAdmission!: () => void;
+    const admissionReleased = new Promise<void>((resolve) => {
+      releaseAdmission = resolve;
     });
-    let challengeStarted = false;
+    let admissionStarted = false;
+    const admitAsset = store.admitAsset.bind(store);
+    store.admitAsset = async (assetID) => {
+      admissionStarted = true;
+      await admissionReleased;
+      return admitAsset(assetID);
+    };
     const authentication: GatewayAuthenticationPolicy = {
-      challenge: async () => {
-        challengeStarted = true;
-        await challengeReleased;
-        return "challenge";
-      },
+      challenge: async () => "challenge",
       prove: async () => "proof",
       verify: async () => true
     };
@@ -281,12 +283,27 @@ describe("joining and Radio profile", () => {
       channel: 0,
       public_key_encrypted: false
     });
-    expect(challengeStarted).toBe(true);
+    for (let attempt = 0; attempt < 5; attempt++) await Promise.resolve();
+    radio.receive({
+      payload: encodeJoinMessage({ type: "response", join_attempt_id: beacon.join_attempt_id, response: "response" }),
+      received_at: 1,
+      radio_source: 101,
+      channel: 0,
+      public_key_encrypted: true
+    });
+    for (let attempt = 0; attempt < 5 && !admissionStarted; attempt++) await Promise.resolve();
+    expect(admissionStarted).toBe(true);
     const closing = gateway.close();
-    releaseChallenge();
+    let closed = false;
+    void closing.then(() => {
+      closed = true;
+    });
+    await Promise.resolve();
+    expect(closed).toBe(false);
+    releaseAdmission();
     await closing;
 
-    expect((await store.load()).asset_generations).toEqual({});
+    expect((await store.load()).asset_generations).toEqual({ "asset-alpha": 1 });
     expect(errors).toEqual([]);
   });
 
