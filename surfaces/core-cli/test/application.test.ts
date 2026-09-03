@@ -529,11 +529,13 @@ function markInitialized(test: TestRuntime, started = true): void {
   writeFileSync(
     join(config, "state.json"),
     `${JSON.stringify({
-      schema: 1,
+      schema: 3,
+      resourceLayout: "engine-scoped-v1",
       phase: "ready",
       initializedAt: "2026-08-28T12:00:00.000Z",
       packageVersion: PACKAGE_VERSION,
       dockerEngineId: "test-engine-id",
+      enabledPlugins: [],
       ...(started
         ? {
             startAttemptedAt: "2026-08-28T12:04:00.000Z",
@@ -1135,7 +1137,7 @@ describe("atlas-core CLI", () => {
       runUpdate: async () => undefined,
       runMenu: async (operator) => {
         test.runner.afterSuccessfulNetworkCreate = () => operator.cancelPending();
-        const operation = expect(operator.init()).rejects.toThrow("docker network inspect");
+        const operation = expect(operator.init()).rejects.toThrow("could not verify Docker engine identity");
         await cleanup;
         await vi.advanceTimersByTimeAsync(130_000);
         await operation;
@@ -1178,7 +1180,7 @@ describe("atlas-core CLI", () => {
           foregroundStarted?.();
           await foreground;
         };
-        const operation = expect(operator.init()).rejects.toThrow("docker network inspect");
+        const operation = expect(operator.init()).rejects.toThrow("could not verify Docker engine identity");
         await started;
         await vi.advanceTimersByTimeAsync(130_000);
         releaseForeground?.();
@@ -1586,7 +1588,8 @@ describe("atlas-core CLI", () => {
     expect(env).toContain("API_AUTH_KEY=secret-3-");
     expect(env).toContain("ATLAS_ADMIN_PASSWORD=secret-4-");
     expect(JSON.parse(readFileSync(join(config, "state.json"), "utf8"))).toEqual({
-      schema: 2,
+      schema: 3,
+      resourceLayout: "engine-scoped-v1",
       phase: "ready",
       initializedAt: "2026-08-28T12:00:00.000Z",
       packageVersion: PACKAGE_VERSION,
@@ -1697,11 +1700,13 @@ describe("atlas-core CLI", () => {
     writeFileSync(
       join(config, "state.json"),
       `${JSON.stringify({
-        schema: 1,
+        schema: 3,
+        resourceLayout: "engine-scoped-v1",
         phase: "initializing",
         initializedAt: "2026-08-28T12:00:00.000Z",
         packageVersion: PACKAGE_VERSION,
-        dockerEngineId: "test-engine-id"
+        dockerEngineId: "test-engine-id",
+        enabledPlugins: []
       })}\n`,
       { mode: 0o600 }
     );
@@ -1718,11 +1723,13 @@ describe("atlas-core CLI", () => {
     writeFileSync(
       join(config, "state.json"),
       `${JSON.stringify({
-        schema: 1,
+        schema: 3,
+        resourceLayout: "engine-scoped-v1",
         phase: "initializing",
         initializedAt: "2026-08-28T12:00:00.000Z",
         packageVersion: PACKAGE_VERSION,
-        dockerEngineId: "test-engine-id"
+        dockerEngineId: "test-engine-id",
+        enabledPlugins: []
       })}\n`,
       { mode: 0o600 }
     );
@@ -1837,7 +1844,7 @@ describe("atlas-core CLI", () => {
     expect(test.stdout.join("")).toContain(`Atlas Core ${PACKAGE_VERSION} reset is complete`);
   });
 
-  it("allows an installed release to reset a deployment initialized by an older CLI", async () => {
+  it("allows an installed release to reset an older Core package in the current resource layout", async () => {
     const test = runtime();
     test.context.confirmReset = async () => true;
     markInitialized(test);
@@ -1853,13 +1860,32 @@ describe("atlas-core CLI", () => {
     expect(JSON.parse(readFileSync(statePath, "utf8"))).toMatchObject({ packageVersion: PACKAGE_VERSION });
   });
 
+  it("refuses to reset a retired fixed-name deployment with engine-scoped resource names", async () => {
+    const test = runtime();
+    test.context.confirmReset = async () => true;
+    markInitialized(test);
+    const statePath = join(test.home, ".atlas", "core", "state.json");
+    const state = JSON.parse(readFileSync(statePath, "utf8"));
+    const { resourceLayout: _, ...legacyState } = state;
+    writeFileSync(statePath, `${JSON.stringify({ ...legacyState, schema: 2 })}\n`, { mode: 0o600 });
+
+    expect(await runCLI(["reset"], test.context)).toBe(1);
+
+    expect(test.stderr.join("")).toContain("state schema 2 uses the retired fixed-name Docker layout");
+    expect(test.runner.calls.some((call) => call.args[0] === "pull")).toBe(false);
+    expect(test.runner.calls.map(composeCommand).some((args) => args[0] === "down")).toBe(false);
+    expect(test.runner.existingVolumes).toContain(POSTGRES_VOLUME);
+    expect(test.runner.existingVolumes).toContain(MINIO_VOLUME);
+    expect(existsSync(statePath)).toBe(true);
+  });
+
   it("resets when recorded Plugin Compose fragments are already missing", async () => {
     const test = runtime();
     test.context.confirmReset = async () => true;
     markInitialized(test);
     const statePath = join(test.home, ".atlas", "core", "state.json");
     const state = JSON.parse(readFileSync(statePath, "utf8"));
-    writeFileSync(statePath, `${JSON.stringify({ ...state, schema: 2, enabledPlugins: ["missing_plugin"] })}\n`, {
+    writeFileSync(statePath, `${JSON.stringify({ ...state, enabledPlugins: ["missing_plugin"] })}\n`, {
       mode: 0o600
     });
 
@@ -2779,16 +2805,19 @@ describe("atlas-core CLI", () => {
     expect(test.stderr.join("")).toContain("api is unhealthy");
   });
 
-  it("migrates schema 1 state and lists catalog Plugins without changing deployment versions", async () => {
+  it("rejects the retired fixed-name deployment layout instead of adopting it", async () => {
     const test = runtime();
     markInitialized(test);
     installTestPluginCatalog(test);
-    setCoreVersion(test, "0.1.2");
+    const statePath = join(test.home, ".atlas", "core", "state.json");
+    const state = JSON.parse(readFileSync(statePath, "utf8"));
+    const { resourceLayout: _, ...legacyState } = state;
+    writeFileSync(statePath, `${JSON.stringify({ ...legacyState, schema: 2 })}\n`, { mode: 0o600 });
 
-    expect(await runCLI(["plugins"], test.context)).toBe(0);
-    expect(test.stdout.join("")).toContain("spatial_fixture\tSpatial Fixture\tdisabled");
-    const state = JSON.parse(readFileSync(join(test.home, ".atlas", "core", "state.json"), "utf8"));
-    expect(state).toMatchObject({ schema: 2, enabledPlugins: [], packageVersion: "0.1.2" });
+    expect(await runCLI(["plugins"], test.context)).toBe(1);
+    expect(test.stderr.join("")).toContain("state schema 2 uses the retired fixed-name Docker layout");
+    expect(test.stderr.join("")).toContain("does not migrate experimental deployments");
+    expect(test.runner.calls).toHaveLength(0);
   });
 
   it("enables a pinned query-only Plugin transactionally and includes its overlay", async () => {
@@ -2799,7 +2828,7 @@ describe("atlas-core CLI", () => {
     expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
     const configRoot = join(test.home, ".atlas", "core", "plugins", plugin.pluginId);
     expect(JSON.parse(readFileSync(join(test.home, ".atlas", "core", "state.json"), "utf8"))).toMatchObject({
-      schema: 2,
+      schema: 3,
       enabledPlugins: [plugin.pluginId]
     });
     for (const file of ["compose.yml", "core-endpoint.json", "source-connector.json", "deployment.json"]) {
@@ -3532,26 +3561,85 @@ describe("atlas-core CLI", () => {
     expect(replacedEngine).toBe(true);
     expect(test.stderr.join("")).toContain("Docker engine changed during deployment mutation");
     expect(test.runner.calls.map(composeCommand).some((args) => args[0] === "down")).toBe(false);
-    expect(test.runner.existingNetworks.has(MUTATION_LOCK_NETWORK)).toBe(false);
+    expect(test.runner.existingNetworks.has(MUTATION_LOCK_NETWORK)).toBe(true);
+    expect(JSON.parse(readFileSync(lockPath, "utf8"))).toMatchObject({
+      operation: "engine-recovery",
+      dockerEngineId: TEST_ENGINE_ID
+    });
+
+    const retainedOwner = JSON.parse(readFileSync(lockPath, "utf8"));
+    writeFileSync(lockPath, `${JSON.stringify({ ...retainedOwner, pid: 2_147_483_647 })}\n`, { mode: 0o600 });
+    test.runner.calls.length = 0;
+    test.stderr.length = 0;
+    expect(await runCLI(["stop"], test.context)).toBe(1);
+    expect(test.stderr.join("")).toContain("deployment recovery belongs to Docker engine test-engine-id");
+    expect(test.runner.calls.some((call) => call.args[0] === "network" && call.args[1] === "create")).toBe(false);
+
+    test.runner.dockerEngineId = TEST_ENGINE_ID;
+    test.stderr.length = 0;
+    expect(await runCLI(["stop"], test.context)).toBe(0);
     expect(existsSync(lockPath)).toBe(false);
+    expect(test.runner.existingNetworks.has(MUTATION_LOCK_NETWORK)).toBe(false);
   });
 
-  it("keeps destructive Compose work in the pinned engine namespace after a same-socket swap", async () => {
+  it("does not commit Plugin disable on a replacement engine and automatically recovers the original lock", async () => {
     const test = runtime();
     markInitialized(test);
+    const plugin = installTestPluginCatalog(test);
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
+    test.runner.calls.length = 0;
+    const config = join(test.home, ".atlas", "core");
+    const statePath = join(config, "state.json");
+    const intentPath = join(config, "plugins", plugin.pluginId, "disable.json");
+    const lockPath = join(config, ".mutation.lock");
+    let originalNetworks: Set<string> | undefined;
+    let originalNetworkIds: Map<string, string> | undefined;
+    let originalNetworkLabels: Map<string, Record<string, string>> | undefined;
+    let originalServiceStates: typeof test.runner.serviceStates | undefined;
     test.runner.afterSuccessfulNetworkCreate = () => {
       test.runner.afterDockerInfo = () => {
+        originalNetworks = new Set(test.runner.existingNetworks);
+        originalNetworkIds = new Map(test.runner.networkIds);
+        originalNetworkLabels = new Map([...test.runner.networkLabels].map(([name, labels]) => [name, { ...labels }]));
+        originalServiceStates = test.runner.serviceStates.map((service) => ({ ...service }));
+        test.runner.existingNetworks.clear();
+        test.runner.networkIds.clear();
+        test.runner.networkLabels.clear();
+        test.runner.serviceStates = [];
         test.runner.dockerEngineId = "replacement-engine";
       };
     };
 
-    expect(await runCLI(["stop"], test.context)).toBe(0);
+    expect(await runCLI(["plugins", "disable", plugin.pluginId], test.context)).toBe(1);
 
-    const down = test.runner.calls.find((call) => composeCommand(call)[0] === "down");
-    expect(down).toBeDefined();
-    expect(down?.args).toContain(PROJECT_NAME);
-    expect(down?.args).not.toContain(projectName("replacement-engine"));
-    expect(down?.env).toMatchObject({ ATLAS_CORE_ENGINE_ID: TEST_ENGINE_ID, ATLAS_CORE_PROJECT: PROJECT_NAME });
+    expect(test.stderr.join("")).toContain("Docker engine changed during deployment mutation");
+    expect(JSON.parse(readFileSync(statePath, "utf8"))).toMatchObject({ enabledPlugins: [plugin.pluginId] });
+    expect(existsSync(intentPath)).toBe(false);
+    expect(JSON.parse(readFileSync(lockPath, "utf8"))).toMatchObject({ operation: "plugin-disable" });
+    const replacementCompose = test.runner.calls.find((call) => composeCommand(call)[0] === "ps");
+    expect(replacementCompose?.args).toContain(PROJECT_NAME);
+    expect(replacementCompose?.args).not.toContain(projectName("replacement-engine"));
+
+    expect(originalNetworks).toBeDefined();
+    expect(originalNetworkIds).toBeDefined();
+    expect(originalNetworkLabels).toBeDefined();
+    expect(originalServiceStates).toBeDefined();
+    test.runner.existingNetworks.clear();
+    for (const name of originalNetworks ?? []) test.runner.existingNetworks.add(name);
+    test.runner.networkIds.clear();
+    for (const [name, id] of originalNetworkIds ?? []) test.runner.networkIds.set(name, id);
+    test.runner.networkLabels.clear();
+    for (const [name, labels] of originalNetworkLabels ?? []) test.runner.networkLabels.set(name, labels);
+    test.runner.serviceStates = originalServiceStates ?? [];
+    test.runner.dockerEngineId = TEST_ENGINE_ID;
+    const retainedOwner = JSON.parse(readFileSync(lockPath, "utf8"));
+    writeFileSync(lockPath, `${JSON.stringify({ ...retainedOwner, pid: 2_147_483_647 })}\n`, { mode: 0o600 });
+    test.stderr.length = 0;
+
+    expect(await runCLI(["plugins", "disable", plugin.pluginId], test.context)).toBe(0);
+    expect(JSON.parse(readFileSync(statePath, "utf8"))).toMatchObject({ enabledPlugins: [] });
+    expect(existsSync(lockPath)).toBe(false);
+    expect(test.runner.existingNetworks.has(MUTATION_LOCK_NETWORK)).toBe(false);
   });
 
   it("finishes a pending disable before enabling the Plugin again", async () => {
