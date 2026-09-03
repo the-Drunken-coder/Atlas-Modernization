@@ -35,12 +35,15 @@ The values above are examples, not field selections. Do not deploy them without 
 Create one join-key file and provision the same file to each authorized companion computer. Then initialize the Gateway membership once:
 
 ```sh
+umask 077
 openssl rand 32 > atlas-join.key
 npm run meshtastic-link -- gateway-init \
   --membership /var/lib/atlas/meshtastic-membership.json \
   --gateway-id gateway-main \
   --channel-index 1
 ```
+
+The service rejects join-key and membership files that are symlinks, are not owned by the service user, or grant any group or other permissions.
 
 Ordinary Gateway starts load this record. They never replace its channel key. Key rotation is intentionally not hidden inside startup.
 

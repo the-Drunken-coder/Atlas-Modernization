@@ -31,7 +31,7 @@ import type {
 } from "@the-drunken-coder/atlas-sdk";
 
 export const ATLAS_PROTOCOL_REVISION = "sha256:1c0493ca007d0555baac6e1958350e3efada4397c392bbf69b9038d75d9b90f6" as const;
-export const RADIO_CONTRACT_REVISION = "sha256:320469f8eed52a60868e1332fce4f6d9dfc88b1430c546225beef9f6241c5dc0" as const;
+export const RADIO_CONTRACT_REVISION = "sha256:0b5b718f08bd7241f3ebc8ab87654d0a180e8cb3ea6dc36dd4377cda6d027108" as const;
 
 export const ATLAS_PROTOCOL_DEFINITIONS = [
   "AbsoluteHttpURL",
@@ -159,13 +159,25 @@ export const ATLAS_PROTOCOL_DEFINITIONS = [
 ] as const;
 
 export const ATLAS_RADIO_OPERATIONS = {
-  "entity.get": {
+  "command_catalog.get": {
     "kind": "request",
-    "output": "EntityResource"
+    "output": "CommandCatalog"
+  },
+  "entity.check_in": {
+    "kind": "mutation",
+    "input": "EntityCheckInRequest",
+    "output": "EntityCheckInResponse"
   },
   "entity.create": {
     "kind": "mutation",
     "input": "EntityCreateRequest",
+    "output": "EntityResource"
+  },
+  "entity.delete": {
+    "kind": "mutation"
+  },
+  "entity.get": {
+    "kind": "request",
     "output": "EntityResource"
   },
   "entity.update": {
@@ -173,104 +185,25 @@ export const ATLAS_RADIO_OPERATIONS = {
     "input": "EntityUpdateRequest",
     "output": "EntityResource"
   },
-  "entity.delete": {
-    "kind": "mutation"
-  },
-  "entity.check_in": {
-    "kind": "mutation",
-    "input": "EntityCheckInRequest",
-    "output": "EntityCheckInResponse"
-  },
-  "task.get": {
-    "kind": "request",
-    "output": "TaskResource"
-  },
-  "task.create": {
-    "kind": "mutation",
-    "input": "TaskCreateRequest",
-    "output": "TaskResource"
-  },
-  "task.acknowledge": {
-    "kind": "mutation",
-    "input": "TaskAcknowledgeRequest",
-    "output": "TaskResource"
-  },
-  "task.start": {
-    "kind": "mutation",
-    "input": "TaskStartRequest",
-    "output": "TaskResource"
-  },
-  "task.progress": {
-    "kind": "mutation",
-    "input": "TaskProgressRequest",
-    "output": "TaskResource"
-  },
-  "task.complete": {
-    "kind": "mutation",
-    "input": "TaskCompleteRequest",
-    "output": "TaskResource"
-  },
-  "task.fail": {
-    "kind": "mutation",
-    "input": "TaskFailRequest",
-    "output": "TaskResource"
-  },
-  "task.cancel": {
-    "kind": "mutation",
-    "input": "TaskCancelRequest",
-    "output": "TaskResource"
-  },
-  "runtime.begin": {
-    "kind": "mutation",
-    "input": "RuntimeRegistrationRequest"
-  },
-  "runtime.stop": {
-    "kind": "mutation",
-    "input": "RuntimeStopRequest"
-  },
-  "runtime.ready": {
-    "kind": "mutation",
-    "input": "RuntimeReadyRequest"
-  },
-  "runtime.tasks": {
-    "kind": "request",
-    "output": "RuntimeTaskDeliveryResponse"
-  },
-  "object.get": {
-    "kind": "request",
-    "output": "ObjectDetailResource"
+  "object.content": {
+    "kind": "request"
   },
   "object.create": {
     "kind": "mutation",
     "input": "ObjectCreateRequest",
     "output": "ObjectDetailResource"
   },
+  "object.delete": {
+    "kind": "mutation"
+  },
+  "object.get": {
+    "kind": "request",
+    "output": "ObjectDetailResource"
+  },
   "object.update": {
     "kind": "mutation",
     "input": "ObjectUpdateRequest",
     "output": "ObjectDetailResource"
-  },
-  "object.delete": {
-    "kind": "mutation"
-  },
-  "object.content": {
-    "kind": "request"
-  },
-  "query.full": {
-    "kind": "request",
-    "output": "FullDatasetResponse"
-  },
-  "query.changed_since": {
-    "kind": "request",
-    "output": "ChangedSinceResponse"
-  },
-  "command_catalog.get": {
-    "kind": "request",
-    "output": "CommandCatalog"
-  },
-  "plugin.list": {
-    "kind": "request",
-    "output": "PluginDiscoveryResponse"
   },
   "plugin.invoke": {
     "kind": "request",
@@ -281,6 +214,73 @@ export const ATLAS_RADIO_OPERATIONS = {
     "kind": "request",
     "input": "MapArea",
     "output": "SpatialOperationResult"
+  },
+  "plugin.list": {
+    "kind": "request",
+    "output": "PluginDiscoveryResponse"
+  },
+  "query.changed_since": {
+    "kind": "request",
+    "output": "ChangedSinceResponse"
+  },
+  "query.full": {
+    "kind": "request",
+    "output": "FullDatasetResponse"
+  },
+  "runtime.begin": {
+    "kind": "mutation",
+    "input": "RuntimeRegistrationRequest"
+  },
+  "runtime.ready": {
+    "kind": "mutation",
+    "input": "RuntimeReadyRequest"
+  },
+  "runtime.stop": {
+    "kind": "mutation",
+    "input": "RuntimeStopRequest"
+  },
+  "runtime.tasks": {
+    "kind": "request",
+    "output": "RuntimeTaskDeliveryResponse"
+  },
+  "task.acknowledge": {
+    "kind": "mutation",
+    "input": "TaskAcknowledgeRequest",
+    "output": "TaskResource"
+  },
+  "task.cancel": {
+    "kind": "mutation",
+    "input": "TaskCancelRequest",
+    "output": "TaskResource"
+  },
+  "task.complete": {
+    "kind": "mutation",
+    "input": "TaskCompleteRequest",
+    "output": "TaskResource"
+  },
+  "task.create": {
+    "kind": "mutation",
+    "input": "TaskCreateRequest",
+    "output": "TaskResource"
+  },
+  "task.fail": {
+    "kind": "mutation",
+    "input": "TaskFailRequest",
+    "output": "TaskResource"
+  },
+  "task.get": {
+    "kind": "request",
+    "output": "TaskResource"
+  },
+  "task.progress": {
+    "kind": "mutation",
+    "input": "TaskProgressRequest",
+    "output": "TaskResource"
+  },
+  "task.start": {
+    "kind": "mutation",
+    "input": "TaskStartRequest",
+    "output": "TaskResource"
   }
 } as const;
 
@@ -291,62 +291,62 @@ export type AtlasRadioRequestOperation = {
 }[AtlasRadioOperationName];
 export type AtlasRadioMutationOperation = Exclude<AtlasRadioOperationName, AtlasRadioRequestOperation>;
 export type AtlasRadioInputByOperation = {
-  "entity.get": undefined;
-  "entity.create": EntityCreateRequest;
-  "entity.update": EntityUpdateRequest;
-  "entity.delete": undefined;
-  "entity.check_in": EntityCheckInRequest;
-  "task.get": undefined;
-  "task.create": TaskCreateRequest;
-  "task.acknowledge": TaskAcknowledgeRequest;
-  "task.start": TaskStartRequest;
-  "task.progress": TaskProgressRequest;
-  "task.complete": TaskCompleteRequest;
-  "task.fail": TaskFailRequest;
-  "task.cancel": TaskCancelRequest;
-  "runtime.begin": RuntimeRegistrationRequest;
-  "runtime.stop": RuntimeStopRequest;
-  "runtime.ready": RuntimeReadyRequest;
-  "runtime.tasks": undefined;
-  "object.get": undefined;
-  "object.create": ObjectCreateRequest;
-  "object.update": ObjectUpdateRequest;
-  "object.delete": undefined;
-  "object.content": undefined;
-  "query.full": undefined;
-  "query.changed_since": undefined;
   "command_catalog.get": undefined;
-  "plugin.list": undefined;
+  "entity.check_in": EntityCheckInRequest;
+  "entity.create": EntityCreateRequest;
+  "entity.delete": undefined;
+  "entity.get": undefined;
+  "entity.update": EntityUpdateRequest;
+  "object.content": undefined;
+  "object.create": ObjectCreateRequest;
+  "object.delete": undefined;
+  "object.get": undefined;
+  "object.update": ObjectUpdateRequest;
   "plugin.invoke": JSONValue;
   "plugin.invoke_spatial": MapArea;
+  "plugin.list": undefined;
+  "query.changed_since": undefined;
+  "query.full": undefined;
+  "runtime.begin": RuntimeRegistrationRequest;
+  "runtime.ready": RuntimeReadyRequest;
+  "runtime.stop": RuntimeStopRequest;
+  "runtime.tasks": undefined;
+  "task.acknowledge": TaskAcknowledgeRequest;
+  "task.cancel": TaskCancelRequest;
+  "task.complete": TaskCompleteRequest;
+  "task.create": TaskCreateRequest;
+  "task.fail": TaskFailRequest;
+  "task.get": undefined;
+  "task.progress": TaskProgressRequest;
+  "task.start": TaskStartRequest;
 };
 export type AtlasRadioOutputByOperation = {
-  "entity.get": EntityResource;
-  "entity.create": EntityResource;
-  "entity.update": EntityResource;
-  "entity.delete": undefined;
-  "entity.check_in": EntityCheckInResponse;
-  "task.get": TaskResource;
-  "task.create": TaskResource;
-  "task.acknowledge": TaskResource;
-  "task.start": TaskResource;
-  "task.progress": TaskResource;
-  "task.complete": TaskResource;
-  "task.fail": TaskResource;
-  "task.cancel": TaskResource;
-  "runtime.begin": undefined;
-  "runtime.stop": undefined;
-  "runtime.ready": undefined;
-  "runtime.tasks": RuntimeTaskDeliveryResponse;
-  "object.get": ObjectDetailResource;
-  "object.create": ObjectDetailResource;
-  "object.update": ObjectDetailResource;
-  "object.delete": undefined;
-  "object.content": undefined;
-  "query.full": FullDatasetResponse;
-  "query.changed_since": ChangedSinceResponse;
   "command_catalog.get": CommandCatalog;
-  "plugin.list": PluginDiscoveryResponse;
+  "entity.check_in": EntityCheckInResponse;
+  "entity.create": EntityResource;
+  "entity.delete": undefined;
+  "entity.get": EntityResource;
+  "entity.update": EntityResource;
+  "object.content": undefined;
+  "object.create": ObjectDetailResource;
+  "object.delete": undefined;
+  "object.get": ObjectDetailResource;
+  "object.update": ObjectDetailResource;
   "plugin.invoke": JSONValue;
   "plugin.invoke_spatial": SpatialOperationResult;
+  "plugin.list": PluginDiscoveryResponse;
+  "query.changed_since": ChangedSinceResponse;
+  "query.full": FullDatasetResponse;
+  "runtime.begin": undefined;
+  "runtime.ready": undefined;
+  "runtime.stop": undefined;
+  "runtime.tasks": RuntimeTaskDeliveryResponse;
+  "task.acknowledge": TaskResource;
+  "task.cancel": TaskResource;
+  "task.complete": TaskResource;
+  "task.create": TaskResource;
+  "task.fail": TaskResource;
+  "task.get": TaskResource;
+  "task.progress": TaskResource;
+  "task.start": TaskResource;
 };

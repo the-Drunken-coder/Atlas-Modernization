@@ -3,6 +3,12 @@ import { VirtualClock } from "./clock.js";
 import { SimulatedPacketNetwork } from "./simulation.js";
 
 describe("simulated packet network", () => {
+  it("rejects duplicate numeric radio identities", () => {
+    const network = new SimulatedPacketNetwork({ seed: 1, clock: new VirtualClock() });
+    network.addRadio("alpha", 2);
+    expect(() => network.addRadio("bravo")).toThrow("node number 2 already exists");
+  });
+
   it("allows simultaneous transmissions in disconnected radio neighborhoods", async () => {
     const clock = new VirtualClock();
     const network = new SimulatedPacketNetwork({

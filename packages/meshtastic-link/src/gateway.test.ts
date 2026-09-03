@@ -13,6 +13,10 @@ describe("Gateway application seams", () => {
       runtime_id: "runtime-alpha"
     });
     expect(inbox.accept(field)).toBeUndefined();
+    expect(inbox.accept({ ...field, service_session: "asset-restarted" })).toMatchObject({
+      operation_id: "position-1",
+      service_session: "asset-restarted"
+    });
     expect(
       inbox.accept(
         messageEvent({
@@ -34,6 +38,23 @@ describe("Gateway application seams", () => {
     expect(demand.apply(subscriptionEvent("asset-bravo", "add", selector), 1)).toBeUndefined();
     expect(demand.apply(subscriptionEvent("asset-alpha", "remove", selector), 2)).toBeUndefined();
     expect(demand.expire(90_002)).toEqual([{ active: false, selector }]);
+  });
+
+  it("does not let a delayed subscription transition reverse a newer removal", () => {
+    const demand = new GatewayFeedDemand();
+    const selector = { kind: "resource_type", resource_type: "entity" } as const;
+    expect(demand.apply({ ...subscriptionEvent("asset-alpha", "add", selector), source_sequence: 1 }, 0)).toEqual({
+      active: true,
+      selector
+    });
+    expect(demand.apply({ ...subscriptionEvent("asset-alpha", "remove", selector), source_sequence: 2 }, 1)).toEqual({
+      active: false,
+      selector
+    });
+    expect(
+      demand.apply({ ...subscriptionEvent("asset-alpha", "add", selector), source_sequence: 1 }, 2)
+    ).toBeUndefined();
+    expect(demand.active(2)).toEqual([]);
   });
 });
 

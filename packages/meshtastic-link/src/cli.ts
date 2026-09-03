@@ -6,6 +6,7 @@ import { runCanonicalBaseline, runFirstVerticalSlice, runStressBaseline } from "
 import { RealClock } from "./clock.js";
 import { AssetJoinService, GatewayJoinService, PreSharedKeyAuthenticationPolicy } from "./joining.js";
 import { GatewayMembershipStore } from "./membership.js";
+import { readPrivateFile } from "./private-file.js";
 import { createUSShortFastProfile, type RadioProfile, RadioProfileManager, validateRadioProfile } from "./profile.js";
 import { MeshtasticSerialRadio } from "./radio.js";
 import { LinkHTTPServer, LinkService } from "./service.js";
@@ -18,6 +19,9 @@ export async function main(argv = args): Promise<void> {
   if (command === "benchmark") {
     const seed = integerOption(argv, "--seed", 42);
     const scenario = option(argv, "--scenario") ?? "canonical";
+    if (scenario !== "canonical" && scenario !== "vertical-slice" && scenario !== "stress") {
+      throw new Error("--scenario must be canonical, stress, or vertical-slice");
+    }
     const result =
       scenario === "vertical-slice"
         ? await runFirstVerticalSlice(seed)
@@ -77,6 +81,7 @@ async function localJSON(baseURL: URL, path: string, method = "GET", body?: unkn
   const url = new URL(path, baseURL);
   const response = await fetch(url, {
     method,
+    signal: AbortSignal.timeout(30_000),
     ...(body === undefined ? {} : { headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
   });
   const result: unknown = await response.json();
@@ -93,7 +98,8 @@ async function serve(argv: string[]): Promise<void> {
   const nodeID = requiredOption(argv, "--node-id");
   if (nodeID.includes(":")) throw new Error("--node-id must not contain ':'");
   const profile = await readProfile(requiredOption(argv, "--profile"));
-  const joinKey = (await readFile(requiredOption(argv, "--join-key-file"))).subarray(0);
+  const joinKey = await readPrivateFile(requiredOption(argv, "--join-key-file"), "join authentication key");
+  const port = integerOption(argv, "--port", 7331);
   const authentication = new PreSharedKeyAuthenticationPolicy(joinKey);
   const clock = new RealClock();
   const radio = await MeshtasticSerialRadio.open(requiredOption(argv, "--serial"));
@@ -103,9 +109,10 @@ async function serve(argv: string[]): Promise<void> {
   let listening = false;
   let gatewayJoin: GatewayJoinService | undefined;
   let assetJoin: AssetJoinService | undefined;
+  let primaryError: unknown;
 
   try {
-    const address = await http.listen(integerOption(argv, "--port", 7331));
+    const address = await http.listen(port);
     listening = true;
     if (mode === "gateway") {
       const store = new GatewayMembershipStore(requiredOption(argv, "--membership"));
@@ -172,15 +179,36 @@ async function serve(argv: string[]): Promise<void> {
     console.log(JSON.stringify({ listening: `http://${address.host}:${address.port}`, mode, node_id: nodeID }));
     await waitForShutdown();
   } catch (error) {
-    service.setLifecycle("error", error instanceof Error ? error.message : String(error));
-    throw error;
-  } finally {
-    assetJoin?.stop();
-    gatewayJoin?.close();
-    service.stop();
-    if (listening) await http.close();
-    await radio.close();
+    primaryError = error;
+    try {
+      service.setLifecycle("error", error instanceof Error ? error.message : String(error));
+    } catch {
+      // Preserve the operation failure even if a local event listener is faulty.
+    }
   }
+
+  const cleanupErrors: unknown[] = [];
+  for (const cleanup of [() => assetJoin?.stop(), () => gatewayJoin?.close(), () => service.stop()]) {
+    try {
+      cleanup();
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+  }
+  if (listening) {
+    try {
+      await http.close();
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+  }
+  try {
+    await radio.close();
+  } catch (error) {
+    cleanupErrors.push(error);
+  }
+  if (primaryError !== undefined) throw primaryError;
+  if (cleanupErrors.length > 0) throw new AggregateError(cleanupErrors, "Link service cleanup failed");
 }
 
 async function readProfile(path: string): Promise<RadioProfile> {
@@ -220,7 +248,9 @@ function option(argv: string[], name: string): string | undefined {
 function integerOption(argv: string[], name: string, fallback: number): number {
   const index = argv.indexOf(name);
   if (index < 0) return fallback;
-  const value = Number(argv[index + 1]);
+  const raw = argv[index + 1];
+  if (raw === undefined || raw.trim() === "" || raw.startsWith("--")) throw new Error(`${name} must be an integer`);
+  const value = Number(raw);
   if (!Number.isSafeInteger(value)) throw new Error(`${name} must be an integer`);
   return value;
 }

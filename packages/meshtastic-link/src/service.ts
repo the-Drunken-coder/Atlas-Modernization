@@ -147,7 +147,10 @@ export class LinkService {
 
   operation(operationID: string): LinkOperationResult | undefined {
     const local = this.localOperations.get(operationID);
-    return local === undefined ? this.transport?.status(operationID) : structuredClone(local);
+    if (local !== undefined && local.status !== "failed") return structuredClone(local);
+    const transport = this.transport?.status(operationID);
+    if (transport !== undefined) return transport;
+    return local === undefined ? undefined : structuredClone(local);
   }
 
   updateLocalSubscription(
@@ -338,7 +341,13 @@ export class LinkService {
     const complete = { ...event, sequence: ++this.eventSequence } as LinkServiceEvent;
     this.eventBuffer.push(complete);
     if (this.eventBuffer.length > SERVICE_EVENT_LIMIT) this.eventBuffer.shift();
-    for (const listener of this.eventListeners) listener(complete);
+    for (const listener of this.eventListeners) {
+      try {
+        listener(complete);
+      } catch {
+        this.eventListeners.delete(listener);
+      }
+    }
   }
 }
 
@@ -346,6 +355,7 @@ export class LinkHTTPServer {
   private readonly server: Server;
   private readonly clientStreams = new Map<string, number>();
   private readonly cleanupTimers = new Map<string, NodeJS.Timeout>();
+  private closed = false;
 
   constructor(private readonly service: LinkService) {
     this.server = createServer((request, response) => void this.handle(request, response));
@@ -366,7 +376,10 @@ export class LinkHTTPServer {
   }
 
   async close(): Promise<void> {
+    if (this.closed) return;
+    this.closed = true;
     for (const timer of this.cleanupTimers.values()) clearTimeout(timer);
+    this.cleanupTimers.clear();
     const closed = new Promise<void>((resolve, reject) =>
       this.server.close((error) => (error ? reject(error) : resolve()))
     );
@@ -483,6 +496,7 @@ export class LinkHTTPServer {
   }
 
   private connectClient(clientID: string): void {
+    if (this.closed) return;
     const timer = this.cleanupTimers.get(clientID);
     if (timer) clearTimeout(timer);
     this.cleanupTimers.delete(clientID);
@@ -490,6 +504,7 @@ export class LinkHTTPServer {
   }
 
   private releaseClient(clientID: string): void {
+    if (this.closed) return;
     const remaining = (this.clientStreams.get(clientID) ?? 1) - 1;
     if (remaining > 0) {
       this.clientStreams.set(clientID, remaining);
@@ -500,6 +515,7 @@ export class LinkHTTPServer {
       this.cleanupTimers.delete(clientID);
       if (!this.clientStreams.has(clientID)) this.service.disconnectClient(clientID);
     }, CLIENT_CLEANUP_MS);
+    timer.unref();
     this.cleanupTimers.set(clientID, timer);
   }
 }

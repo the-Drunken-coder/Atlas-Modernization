@@ -62,8 +62,9 @@ if (revision !== schemaDigest) {
   throw new Error(`Atlas Protocol revision ${revision} does not match schema ${schemaDigest}`);
 }
 
+const sortedOperations = [...operations].sort(([left], [right]) => left.localeCompare(right));
 const operationEntries = Object.fromEntries(
-  operations.map(([name, kind, input, output]) => [
+  sortedOperations.map(([name, kind, input, output]) => [
     name,
     { kind, ...(input === undefined ? {} : { input }), ...(output === undefined ? {} : { output }) }
   ])
@@ -75,9 +76,13 @@ const radioRevision = `sha256:${createHash("sha256")
   .update("\0")
   .update(JSON.stringify(operationEntries))
   .digest("hex")}`;
-const importedTypes = [...new Set(operations.flatMap(([, , input, output]) => [input, output]).filter(Boolean))].sort();
-const inputMap = operations.map(([name, , input]) => `  ${JSON.stringify(name)}: ${input ?? "undefined"};`).join("\n");
-const outputMap = operations
+const importedTypes = [
+  ...new Set(sortedOperations.flatMap(([, , input, output]) => [input, output]).filter(Boolean))
+].sort();
+const inputMap = sortedOperations
+  .map(([name, , input]) => `  ${JSON.stringify(name)}: ${input ?? "undefined"};`)
+  .join("\n");
+const outputMap = sortedOperations
   .map(([name, , , output]) => `  ${JSON.stringify(name)}: ${output ?? "undefined"};`)
   .join("\n");
 

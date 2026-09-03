@@ -41,6 +41,7 @@ describe("joining and Radio profile", () => {
     const encoded = encodeJoinMessage(beacon);
     expect(encoded.byteLength).toBeLessThanOrEqual(233);
     expect(decodeJoinMessage(encoded)).toEqual(beacon);
+    expect(() => encodeJoinMessage(beacon, encoded.byteLength - 1)).toThrow("exceeds one Meshtastic packet");
   });
 
   it("mutually authenticates the Gateway and Asset through the replaceable join policy", async () => {
@@ -84,7 +85,8 @@ describe("joining and Radio profile", () => {
       channel_name: "ATLAS",
       channel_key_base64: Buffer.alloc(32, 7).toString("base64")
     });
-    const [first, second] = await Promise.all([store.admitAsset("asset-alpha"), store.admitAsset("asset-alpha")]);
+    const secondStore = new GatewayMembershipStore(path);
+    const [first, second] = await Promise.all([store.admitAsset("asset-alpha"), secondStore.admitAsset("asset-alpha")]);
     expect([first.source_generation, second.source_generation].sort()).toEqual([1, 2]);
     const firstActivation = await store.activateGateway();
     const secondActivation = await store.activateGateway();
@@ -105,7 +107,7 @@ describe("joining and Radio profile", () => {
       channel_key_base64: channelKey
     });
     const clock = new VirtualClock();
-    const network = new SimulatedPacketNetwork({ seed: 11, clock });
+    const network = new SimulatedPacketNetwork({ seed: 11, clock, duplicateChance: 1 });
     const assetRadio = network.addRadio("asset-radio", 101);
     network.addRadio("relay-radio", 150);
     const gatewayRadio = network.addRadio("gateway-radio", 201);
@@ -180,6 +182,10 @@ describe("joining and Radio profile", () => {
     adapter.configuration.public_channel.key_base64 = "";
     const manager = new RadioProfileManager(profile, adapter);
     const evidence = await manager.apply();
+    expect(adapter.applied.map((difference) => difference.path).sort()).toEqual([
+      "hop_limit",
+      "public_channel.key_base64"
+    ]);
     expect(adapter.applied).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ path: "hop_limit", desired: 3, actual: 2 }),
@@ -216,6 +222,18 @@ describe("joining and Radio profile", () => {
     expect(await adapter.readPrivateMembership(1)).toEqual(membership);
     await manager.prepareAssetForJoin();
     expect(await adapter.readPrivateMembership(1)).toBeUndefined();
+  });
+
+  it("clears Atlas memberships from every secondary channel before joining", async () => {
+    const profile = createUSShortFastProfile(20, "2.7.15");
+    const adapter = new FakeConfigurationAdapter(profile);
+    adapter.privateMembership.set(2, {
+      channel_index: 2,
+      channel_name: "ATLAS",
+      channel_key_base64: Buffer.alloc(32, 4).toString("base64")
+    });
+    await new RadioProfileManager(profile, adapter).prepareAssetForJoin();
+    expect(adapter.privateMembership.size).toBe(0);
   });
 });
 
@@ -263,7 +281,7 @@ describe("deterministic baseline", () => {
 class FakeConfigurationAdapter implements RadioConfigurationAdapter {
   configuration: ActualRadioConfiguration;
   applied: ConfigurationDifference[] = [];
-  privateMembership: PrivateChannelMembership | undefined;
+  privateMembership = new Map<number, PrivateChannelMembership>();
   applyError: Error | undefined;
 
   constructor(profile: RadioProfile) {
@@ -278,8 +296,9 @@ class FakeConfigurationAdapter implements RadioConfigurationAdapter {
     return structuredClone(this.configuration);
   }
 
-  async readPrivateMembership(_privateChannelIndex: number): Promise<PrivateChannelMembership | undefined> {
-    return this.privateMembership === undefined ? undefined : structuredClone(this.privateMembership);
+  async readPrivateMembership(privateChannelIndex: number): Promise<PrivateChannelMembership | undefined> {
+    const membership = this.privateMembership.get(privateChannelIndex);
+    return membership === undefined ? undefined : structuredClone(membership);
   }
 
   async applyConfiguration(profile: RadioProfile, differences: readonly ConfigurationDifference[]): Promise<void> {
@@ -292,12 +311,12 @@ class FakeConfigurationAdapter implements RadioConfigurationAdapter {
     };
   }
 
-  async clearPrivateMembership(_privateChannelIndex: number): Promise<void> {
-    this.privateMembership = undefined;
+  async clearPrivateMembership(privateChannelIndex: number): Promise<void> {
+    this.privateMembership.delete(privateChannelIndex);
   }
 
   async installPrivateMembership(membership: PrivateChannelMembership): Promise<void> {
-    this.privateMembership = structuredClone(membership);
+    this.privateMembership.set(membership.channel_index, structuredClone(membership));
   }
 }
 

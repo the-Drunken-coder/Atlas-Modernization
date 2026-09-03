@@ -82,9 +82,7 @@ export class MeshtasticSerialRadio implements LinkRadio, RadioConfigurationAdapt
     const device = new MeshDevice(transport);
     const radio = new MeshtasticSerialRadio(device);
     device.setHeartbeatInterval(20_000);
-    const configured = radio.waitForConfigured();
-    await device.configure();
-    await configured;
+    await radio.configureAndWait(() => device.configure());
     return radio;
   }
 
@@ -368,13 +366,25 @@ export class MeshtasticSerialRadio implements LinkRadio, RadioConfigurationAdapt
   }
 
   private async commitAndRefresh(): Promise<void> {
-    const configured = this.waitForConfigured();
-    await this.device.commitEditSettings();
-    await configured;
+    await this.configureAndWait(() => this.device.commitEditSettings());
   }
 
-  private waitForConfigured(timeoutMs = 45_000): Promise<void> {
-    return new Promise((resolve, reject) => {
+  private async configureAndWait<Result>(operation: () => Promise<Result>): Promise<Result> {
+    const configured = this.waitForConfigured();
+    void configured.promise.catch(() => undefined);
+    try {
+      const result = await operation();
+      await configured.promise;
+      return result;
+    } catch (error) {
+      configured.cancel();
+      throw error;
+    }
+  }
+
+  private waitForConfigured(timeoutMs = 45_000): { promise: Promise<void>; cancel: () => void } {
+    let cancel = (): void => undefined;
+    const promise = new Promise<void>((resolve, reject) => {
       let finished = false;
       const finish = (error?: Error): void => {
         if (finished) return;
@@ -391,7 +401,9 @@ export class MeshtasticSerialRadio implements LinkRadio, RadioConfigurationAdapt
       };
       const timeout = setTimeout(() => finish(new Error("timed out waiting for Meshtastic configuration")), timeoutMs);
       this.device.events.onDeviceStatus.subscribe(onStatus);
+      cancel = () => finish();
     });
+    return { promise, cancel };
   }
 }
 
