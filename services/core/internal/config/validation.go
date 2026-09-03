@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"net/url"
 	"strconv"
 	"strings"
@@ -86,8 +87,14 @@ func validPluginHostname(baseURL string, parsed *url.URL) bool {
 	if strings.Contains(baseURL, "%") {
 		return false
 	}
+	if strings.IndexFunc(hostname, func(r rune) bool {
+		return r != '.' && (r < '0' || r > '9')
+	}) == -1 && net.ParseIP(hostname) == nil {
+		return false
+	}
 
 	hostname = strings.TrimSuffix(hostname, ".")
+	hasUnicode := strings.IndexFunc(hostname, func(r rune) bool { return r > unicode.MaxASCII }) != -1
 	for _, label := range strings.Split(hostname, ".") {
 		if label == "" || strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
 			return false
@@ -101,6 +108,11 @@ func validPluginHostname(baseURL string, parsed *url.URL) bool {
 			if len(runes) > 3 && runes[2] == '-' && runes[3] == '-' {
 				return false
 			}
+		}
+	}
+	if hasUnicode {
+		if _, err := idna.Lookup.ToASCII(hostname); err != nil {
+			return false
 		}
 	}
 	lookup, lookupErr := pluginHostnameLookup.ToASCII(hostname)
