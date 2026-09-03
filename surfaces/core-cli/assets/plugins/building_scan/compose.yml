@@ -13,7 +13,9 @@ services:
 
   building-scan-plugin:
     image: "ghcr.io/the-drunken-coder/atlas-building-scan@sha256:3bb8c7d7761c71fa1a9fb399b275a26686b2c7d39b9be2a2292797284f2f2b25"
-    container_name: atlas_building_scan_plugin
+    container_name: ${ATLAS_CORE_PROJECT:-atlas_core_production}_building_scan_plugin
+    labels:
+      io.atlas.core.engine: ${ATLAS_CORE_ENGINE_ID:-direct-compose}
     restart: unless-stopped
     environment:
       ATLAS_SOURCE_GATEWAY_ORIGIN: http://source-gateway:8080

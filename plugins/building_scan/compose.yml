@@ -13,7 +13,9 @@ services:
 
   building-scan-plugin:
     image: "@atlas/plugin-image@"
-    container_name: atlas_building_scan_plugin
+    container_name: ${ATLAS_CORE_PROJECT:-atlas_core_production}_building_scan_plugin
+    labels:
+      io.atlas.core.engine: ${ATLAS_CORE_ENGINE_ID:-direct-compose}
     restart: unless-stopped
     environment:
       ATLAS_SOURCE_GATEWAY_ORIGIN: http://source-gateway:8080

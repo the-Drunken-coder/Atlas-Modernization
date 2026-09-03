@@ -260,9 +260,11 @@ jobs:
           trap 'rm -rf -- "$config_dir"' EXIT
           cp surfaces/core-cli/test/compose.env "$config_dir/.env"
           image="ghcr.io/the-drunken-coder/atlas-core:$(node -p "require('./surfaces/core-cli/package.json').version")"
+          project="atlas_core_production_test"
+          engine="test-engine"
           config_json="$(
-            ATLAS_CORE_IMAGE="$image" docker compose \
-              --project-name atlas_core_production \
+            ATLAS_CORE_ENGINE_ID="$engine" ATLAS_CORE_PROJECT="$project" ATLAS_CORE_IMAGE="$image" docker compose \
+              --project-name "$project" \
               --env-file "$config_dir/.env" \
               --file surfaces/core-cli/assets/docker-compose.yml \
               config --format json
@@ -286,8 +288,9 @@ jobs:
                 all(.services.minio.ports[]; .host_ip == "127.0.0.1")
               ' <<< "$config_json"
           empty_cors_config="$(
-            CORS_ORIGINS='' CORS_ORIGIN_PATTERNS='' ATLAS_CORE_IMAGE="$image" docker compose \
-              --project-name atlas_core_production \
+            CORS_ORIGINS='' CORS_ORIGIN_PATTERNS='' ATLAS_CORE_ENGINE_ID="$engine" \
+              ATLAS_CORE_PROJECT="$project" ATLAS_CORE_IMAGE="$image" docker compose \
+              --project-name "$project" \
               --env-file "$config_dir/.env" \
               --file surfaces/core-cli/assets/docker-compose.yml \
               config --format json
@@ -297,17 +300,17 @@ jobs:
             .services.api.environment.CORS_ORIGIN_PATTERNS == ""
           ' <<< "$empty_cors_config"
           init_config_json="$(
-            ATLAS_CORE_IMAGE="$image" docker compose \
-              --project-name atlas_core_production \
+            ATLAS_CORE_ENGINE_ID="$engine" ATLAS_CORE_PROJECT="$project" ATLAS_CORE_IMAGE="$image" docker compose \
+              --project-name "$project" \
               --env-file "$config_dir/.env" \
               --file surfaces/core-cli/assets/docker-compose.init.yml \
               config --format json
           )"
-          jq -e '
+          jq -e --arg volume "${project}_minio_data" '
             (.services | keys) == ["minio"] and
             (.volumes | keys) == ["minio_data"] and
             .volumes.minio_data.external == true and
-            .volumes.minio_data.name == "atlas_core_production_minio_data"
+            .volumes.minio_data.name == $volume
           ' <<< "$init_config_json"
 
       - name: Exercise packaged initialization against Docker
@@ -318,16 +321,19 @@ jobs:
           config_dir="$test_root/core-home"
           package_dir="$test_root/package"
           consumer="$test_root/consumer"
-          minio_volume=atlas_core_production_minio_data
-          postgres_volume=atlas_core_production_postgres_data
+          engine_id="$(docker info --format '{{.ID}}')"
+          engine_key="$(printf '%s' "$engine_id" | sha256sum | cut -c1-64)"
+          project="atlas_core_production_${engine_key}"
+          minio_volume="${project}_minio_data"
+          postgres_volume="${project}_postgres_data"
           cleanup() {
             docker container rm --force \
-              atlas_core_production_api \
-              atlas_core_production_source_gateway \
-              atlas_core_production_postgres \
-              atlas_core_production_minio \
-              atlas_core_production_minio_init >/dev/null 2>&1 || true
-            docker network rm atlas_core_production_default atlas_core_production_mutation_lock >/dev/null 2>&1 || true
+              "${project}_api" \
+              "${project}_source_gateway" \
+              "${project}_postgres" \
+              "${project}_minio" \
+              "${project}_minio_init" >/dev/null 2>&1 || true
+            docker network rm "${project}_default" atlas_core_production_mutation_lock >/dev/null 2>&1 || true
             docker volume rm --force "$minio_volume" "$postgres_volume" >/dev/null 2>&1 || true
             rm -rf "$test_root"
           }
@@ -349,7 +355,10 @@ jobs:
           ATLAS_CORE_HOME="$config_dir" "$consumer/node_modules/.bin/atlas-core" init
           jq -e '.phase == "ready" and .dockerEngineId != ""' "$config_dir/state.json"
           docker volume inspect "$minio_volume" --format '{{json .Labels}}' |
-            jq -e '."com.docker.compose.project" == "atlas_core_production" and ."com.docker.compose.volume" == "minio_data"'
+            jq -e --arg project "$project" --arg engine "$engine_id" \
+              '."com.docker.compose.project" == $project and
+               ."com.docker.compose.volume" == "minio_data" and
+               ."io.atlas.core.engine" == $engine'
           if docker volume inspect "$postgres_volume" >/dev/null 2>&1; then
             echo "atlas-core init created PostgreSQL storage before the first start." >&2
             exit 1

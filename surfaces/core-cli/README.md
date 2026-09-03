@@ -7,8 +7,7 @@ The npm package is the operator interface. Atlas Core itself runs from the match
 ## Install
 
 Install Node.js 24 or newer and Docker with Compose 2.17.0 or newer, then install the CLI globally. The CLI requires a
-local Linux Docker daemon over a Unix socket; it refuses remote Docker contexts because the fixed deployment names and
-durable volumes belong to one host.
+local Linux Docker daemon over a Unix socket so its deployment and durable storage remain bound to one host.
 
 ```bash
 npm install --global atlas-core
@@ -80,10 +79,23 @@ accept arbitrary paths, images, or third-party bundles.
 Enabling a Plugin pulls the catalog's immutable image digest, stages its private Compose and configuration fragments,
 validates the complete Compose model, and then commits the new state. A running deployment starts the Plugin and
 restarts Core and Source Gateway with a health wait. A stopped deployment stays stopped. Failure restores the previous
-files, state, and running composition. Disabling removes the stateless Plugin container and its fragments but keeps the
-cached image. Plugin mutations require the CLI and deployment versions to match; status and logs remain available after
-a CLI-only update. Direct commands print each mutation stage. The Plugins menu keeps the operation in an activity view
-with elapsed timestamps, reports rollback status, and returns to the Plugin catalog after safe cancellation.
+files, state, and running composition. Disabling first validates the candidate deployment, records a small durable intent
+with the deployed Plugin metadata, and commits the Plugin's disabled state before removing its container or files. An
+interrupted disable is retried idempotently from either side of that state commit. A later enable first finishes the
+Plugin-free runtime and pending disable before pulling or staging the Plugin again. `stop` durably changes every pending
+disable target to stopped before it runs Compose down with orphan removal, then settles the files while Core remains
+stopped. A retry cannot restart a deployment after a stop attempt.
+Core status, details, and logs plus Plugin status use the committed state and staged deployment metadata, so they remain
+useful during the destructive part of a disable and after catalog drift. Dead-owner reclaim covers Plugin-disable work
+and Docker engine-transition recovery. Plugin disable waits for its recorded Docker process group to exit. Both paths
+verify the exact Docker network lock ID before removal. The CLI pins the validated local Docker socket for every command
+in a mutation and verifies the daemon ID again after every Docker or Compose command. If the socket starts serving a
+different daemon, the CLI retains an engine-bound recovery owner and refuses local state changes. Restore the original
+daemon and retry the command to remove its lock and continue.
+Disabling keeps the cached image. Plugin mutations require the CLI and deployment versions to match; status and logs
+remain available after a CLI-only update. Direct commands print each mutation stage.
+The Plugins menu keeps the operation in an activity view with elapsed timestamps, reports rollback status, and returns
+to the Plugin catalog after safe cancellation.
 
 The menu's `Configure` action opens a configuration menu. `Admin account` changes the password for the fixed `admin`
 username. The direct `config` command opens the same hidden password prompt. The password must contain at least 12
@@ -115,7 +127,14 @@ CLI-only updates do not require a deployment backup because they do not change t
 
 CLI-only updates may leave the CLI newer than the running Core. Status, logs, diagnostics, stop, reset, and the explicit
 update flow remain available in that state. Start and restart refuse to change Core implicitly and direct the operator
-to `atlas-core update all`.
+to `atlas-core update all`. This applies only when both releases use the current engine-scoped resource layout.
+
+State schemas 1 and 2 belong to the retired fixed-name experimental layout. This CLI accepts only state schema 3 with
+the `engine-scoped-v1` layout. It does not migrate the old layout, and even `reset` refuses old state so it cannot delete
+the wrong namespace. Before replacing a CLI that wrote schema 1 or 2, stop and remove that experiment's fixed-name
+containers and paired volumes with the old package's Compose assets, then remove its matching `ATLAS_CORE_HOME`.
+That cleanup permanently deletes the old PostgreSQL and MinIO data. Install this CLI and run `atlas-core init` only
+after the old deployment and configuration are gone.
 
 For a running deployment, the CLI records the new Core version only after Docker reports the updated services healthy.
 For a stopped deployment, it records the version after pulling the reviewed image and leaves Core stopped. If an update
@@ -155,9 +174,12 @@ for CORS, command-interface configuration, readiness checks, and trusted-proxy b
 PostgreSQL and the configured MinIO bucket are one durable store. Back them up and restore them together. The CLI
 never enables Core's destructive development startup mode and never passes `--volumes` to `docker compose down`.
 After the first full-stack start attempt, it refuses to recreate either durable volume if one goes missing. It also
-binds the state directory to the Docker engine that initialized it and verifies Docker Compose ownership labels before
-using an existing container or volume. Initialization also takes a Docker-engine-scoped project lock, so different
-configuration directories cannot initialize the same fixed deployment concurrently.
+binds the state directory to the Docker engine that initialized it, derives the Compose project and resource names from
+that immutable engine ID, and verifies Docker Compose and engine ownership labels before using an existing container or
+volume. The engine-derived namespace prevents a same-socket daemon replacement from redirecting a destructive command
+into the replacement daemon's live Atlas deployment. A post-command daemon check prevents the CLI from committing local
+state based on a command that reached a replacement engine. Initialization also takes a daemon-wide project lock, so
+different configuration directories cannot initialize the same deployment concurrently.
 
 If `init` finds existing Atlas volumes without its matching configuration, it stops. Recover the credentials and paired
 storage unless you intend to discard the deployment. Use the confirmed `reset` command only when permanent deletion is

@@ -1,4 +1,4 @@
-name: atlas_core_production
+name: ${ATLAS_CORE_PROJECT:-atlas_core_production}
 
 services:
   minio:
@@ -9,7 +9,7 @@ services:
 volumes:
   minio_data:
     external: true
-    name: atlas_core_production_minio_data
+    name: ${ATLAS_CORE_PROJECT:-atlas_core_production}_minio_data
 
 networks:
   atlas_core_network:
