@@ -1,6 +1,6 @@
-import type { StatePublication } from "./types.js";
+import type { ResourceStatePublication } from "./types.js";
 
-export function positionPublication(version: number): StatePublication {
+export function positionPublication(version: number): Extract<ResourceStatePublication, { resource_type: "entity" }> {
   const timestamp = `2026-09-02T12:00:0${version}Z`;
   return {
     type: "state",

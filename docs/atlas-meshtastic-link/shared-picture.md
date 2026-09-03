@@ -60,7 +60,7 @@ Freshness depends on the kind of record:
 
 - Asset position, telemetry, and Track state become stale quickly when expected publications stop. They later leave active query results.
 - Active Tasks remain through their terminal outcome and then age out of the Shared Picture.
-- Geofeatures and Object metadata remain until a newer version or explicit deletion replaces them.
+- Geofeatures and Object metadata remain until a newer version or explicit deletion replaces them. A versioned deletion leaves a hidden in-memory fence so delayed older state cannot recreate the record.
 
 Initial freshness intervals are:
 
@@ -69,6 +69,8 @@ Initial freshness intervals are:
 - A terminal Task remains visible for ten minutes.
 - An active Task remains visible if its Asset disappears, but its record reports degraded source connectivity.
 - Geofeatures and Object metadata remain until a newer version or explicit deletion replaces them.
+
+An Entity record that carries components with different freshness intervals uses the longest applicable record interval, so expiring position does not discard telemetry or health that is still within its retention window. Component timestamps remain available when a client needs a finer-grained freshness decision.
 
 These intervals are Link defaults and may later be tuned from scenario and field evidence. They do not define how often Asset software publishes. Every returned record exposes its freshness so local software does not have to infer it from payload contents.
 

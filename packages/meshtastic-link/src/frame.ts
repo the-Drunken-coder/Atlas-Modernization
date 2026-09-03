@@ -3,6 +3,7 @@ import { LINK_PROTOCOL_REVISION } from "./contract.js";
 import type { LinkMessageType, LinkNode, MessagePriority } from "./types.js";
 
 export const MESHTASTIC_APPLICATION_PAYLOAD_BYTES = 233;
+export const MAX_LINK_MESSAGE_BYTES = 128 * 1024;
 const MAX_FRAGMENTS = 4096;
 
 export type LinkFrame = {
@@ -69,6 +70,7 @@ export function fragmentPayload(
   maxFrameBytes = MESHTASTIC_APPLICATION_PAYLOAD_BYTES
 ): Uint8Array[] {
   if (payload.byteLength === 0) throw new TypeError("Link payload must not be empty");
+  if (payload.byteLength > MAX_LINK_MESSAGE_BYTES) throw new RangeError("Link payload exceeds 128 KiB");
   if (!Number.isSafeInteger(maxFrameBytes) || maxFrameBytes < 64) throw new RangeError("maxFrameBytes is too small");
 
   let low = 1;
@@ -89,6 +91,9 @@ export function fragmentPayload(
 }
 
 export function decodeFrame(bytes: Uint8Array): LinkFrame {
+  if (bytes.byteLength > MESHTASTIC_APPLICATION_PAYLOAD_BYTES) {
+    throw new RangeError("Meshtastic Link frame exceeds 233 bytes");
+  }
   const value = decodeJSON(bytes);
   if (!isCompactFrame(value)) throw new TypeError("Invalid Meshtastic Link frame");
   const source = decodeNode(value.s);

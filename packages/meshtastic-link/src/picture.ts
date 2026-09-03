@@ -43,6 +43,14 @@ type SourcePosition = {
   session: string;
 };
 
+type PictureTombstone = {
+  atlasVersion: number;
+  source: LinkNode;
+  sourceGeneration: number;
+  serviceSession: string;
+  sourceSequence: number;
+};
+
 export type PictureApplyContext = {
   source: LinkNode;
   source_generation: number;
@@ -57,6 +65,7 @@ export class SharedPicture {
   readonly session: string;
   private revision = 0;
   private readonly records = new Map<string, PictureRecord>();
+  private readonly tombstones = new Map<string, PictureTombstone>();
   private readonly sources = new Map<string, SourcePosition>();
   private readonly events: PictureEvent[] = [];
   private readonly listeners = new Set<(event: PictureEvent) => void>();
@@ -76,6 +85,7 @@ export class SharedPicture {
     const id = resourceID(publication);
     const key = `${publication.resource_type}:${id}`;
     const current = this.records.get(key);
+    const tombstone = this.tombstones.get(key);
     if (
       current &&
       sameNode(current.source, context.source) &&
@@ -85,16 +95,35 @@ export class SharedPicture {
     ) {
       return false;
     }
-    if (current && !isNewer(publication, current)) return false;
+    if (
+      tombstone &&
+      sameNode(tombstone.source, context.source) &&
+      tombstone.sourceGeneration === context.source_generation &&
+      tombstone.serviceSession === context.service_session &&
+      context.source_sequence <= tombstone.sourceSequence
+    ) {
+      return false;
+    }
+    if (current && !isNewer(publication, current, context)) return false;
     if (publication.deleted === true) {
+      if (tombstone && publication.atlas_version <= tombstone.atlasVersion) return false;
+      this.tombstones.set(key, {
+        atlasVersion: publication.atlas_version,
+        source: context.source,
+        sourceGeneration: context.source_generation,
+        serviceSession: context.service_session,
+        sourceSequence: context.source_sequence
+      });
       if (current) {
         this.records.delete(key);
         this.emit({ type: "remove", key });
       }
-      return current !== undefined;
+      return true;
     }
 
     const version = resourceVersion(publication);
+    if (tombstone && (version === undefined || version <= tombstone.atlasVersion)) return false;
+    this.tombstones.delete(key);
     const sourceAsset = sourceAssetID(publication, context.source);
     const record: PictureRecord = {
       resource_type: publication.resource_type,
@@ -215,29 +244,50 @@ export class SharedPicture {
   }
 }
 
-function isNewer(publication: StatePublication, current: PictureRecord): boolean {
-  if (publication.deleted === true && publication.atlas_version === undefined) return true;
+function isNewer(publication: StatePublication, current: PictureRecord, context: PictureApplyContext): boolean {
   const nextVersion = resourceVersion(publication);
-  if (nextVersion !== undefined && current.atlas_version !== undefined) return nextVersion > current.atlas_version;
+  if (nextVersion !== undefined && current.atlas_version !== undefined) {
+    if (nextVersion !== current.atlas_version) return nextVersion > current.atlas_version;
+    const nextRank = confirmationRank(publication.confirmation);
+    const currentRank = confirmationRank(current.confirmation);
+    if (nextRank !== currentRank) return nextRank > currentRank;
+    if (
+      sameNode(current.source, context.source) &&
+      current.source_generation === context.source_generation &&
+      current.service_session === context.service_session
+    ) {
+      return context.source_sequence > current.source_sequence;
+    }
+    return Date.parse(publication.observation_time) > Date.parse(current.observation_time);
+  }
   if (publication.resource_type === "task" && current.resource_type === "task") {
-    return Date.parse(publication.resource.updated_at) > Date.parse((current.state as TaskResource).updated_at);
+    const nextUpdatedAt = Date.parse(publication.resource.updated_at);
+    const currentUpdatedAt = Date.parse((current.state as TaskResource).updated_at);
+    if (nextUpdatedAt !== currentUpdatedAt) return nextUpdatedAt > currentUpdatedAt;
+    return confirmationRank(publication.confirmation) > confirmationRank(current.confirmation);
   }
   return true;
 }
 
 function resourceVersion(publication: StatePublication): number | undefined {
+  if (publication.deleted === true) return publication.atlas_version;
   return publication.resource_type === "task"
     ? undefined
     : (publication.atlas_version ?? publication.resource.metadata.version);
 }
 
 function sourceAssetID(publication: StatePublication, source: LinkNode): string | undefined {
+  if (publication.deleted === true) return undefined;
   if (source.role === "asset") return source.id;
   if (publication.resource_type === "task") return publication.resource.asset_id;
   if (publication.resource_type === "entity" && publication.resource.entity_type === "asset") {
     return publication.resource.entity_id;
   }
   return undefined;
+}
+
+function confirmationRank(confirmation: ConfirmationState): number {
+  return confirmation === "core_confirmed" || confirmation === "core_rejected" ? 2 : 1;
 }
 
 function freshnessThresholds(record: PictureRecord): { staleAfterMs?: number; removeAfterMs?: number } {
@@ -247,10 +297,10 @@ function freshnessThresholds(record: PictureRecord): { staleAfterMs?: number; re
   if (record.resource_type === "entity") {
     const entity = record.state as EntityResource;
     if (entity.entity_type === "asset" || entity.entity_type === "track") {
-      if (entity.components.geometry) return { staleAfterMs: 5_000, removeAfterMs: 30_000 };
       if (entity.components.telemetry || entity.components.health) {
         return { staleAfterMs: 30_000, removeAfterMs: 120_000 };
       }
+      if (entity.components.geometry) return { staleAfterMs: 5_000, removeAfterMs: 30_000 };
     }
   }
   return {};

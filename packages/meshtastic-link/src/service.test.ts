@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { RealClock, VirtualClock } from "./clock.js";
 import { LinkHTTPServer, LinkService } from "./service.js";
 import { SimulatedPacketNetwork } from "./simulation.js";
+import { SUBSCRIPTION_LEASE_MS } from "./subscriptions.js";
 import { positionPublication } from "./test-fixtures.js";
 import { LinkTransport } from "./transport.js";
 
@@ -42,6 +43,24 @@ describe("loopback Link service", () => {
     await expect(server.listen(0, "0.0.0.0")).rejects.toThrow("must bind to loopback");
   });
 
+  it("rejects browser-originated mutations against the loopback interface", async () => {
+    const service = new LinkService({ mode: "asset", nodeID: "asset-alpha", clock: new RealClock() });
+    const server = new LinkHTTPServer(service);
+    const address = await server.listen(0);
+    try {
+      const response = await fetch(`http://${address.host}:${address.port}/v1/messages`, {
+        method: "POST",
+        headers: { "content-type": "text/plain", origin: "https://example.test" },
+        body: JSON.stringify({ message: positionPublication(1) })
+      });
+      expect(response.status).toBe(403);
+      await expect(response.json()).resolves.toEqual({ error: "browser-originated mutations are not allowed" });
+    } finally {
+      await server.close();
+      service.stop();
+    }
+  });
+
   it("retains an asynchronous radio response under the originating request ID", async () => {
     const clock = new VirtualClock();
     const network = new SimulatedPacketNetwork({ seed: 41, clock });
@@ -66,7 +85,7 @@ describe("loopback Link service", () => {
     service.attachTransport(asset, { role: "gateway", id: "gateway" });
     gateway.onEvent((event) => {
       if (event.type !== "message" || event.message.type !== "data_request" || !event.addressed_to_local) return;
-      gateway.settleInbound(event.operation_id, true);
+      gateway.settleInbound(event.settlement_id, true);
       const state = positionPublication(4);
       gateway.submit(
         {
@@ -136,6 +155,18 @@ describe("loopback Link service", () => {
     expect(failures).toEqual(["pending-request", "position-1"]);
     expect(service.operation("position-1")).toMatchObject({ status: "failed", reason: "link service stopped" });
     expect(service.operation("pending-request")).toMatchObject({ status: "failed", reason: "link service stopped" });
+  });
+
+  it("expires local subscription demand when a client stops renewing", async () => {
+    const clock = new VirtualClock();
+    const service = new LinkService({ mode: "gateway", nodeID: "gateway", clock });
+    const selector = { kind: "resource_type", resource_type: "entity" } as const;
+    expect(service.updateLocalSubscription("client-a", "add", selector)).toMatchObject({ active: 1 });
+
+    await clock.advanceBy(SUBSCRIPTION_LEASE_MS);
+
+    expect(service.updateLocalSubscription("client-a", "remove", selector)).toEqual({ changed: false, active: 0 });
+    service.stop();
   });
 });
 

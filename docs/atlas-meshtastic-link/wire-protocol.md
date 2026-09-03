@@ -45,7 +45,7 @@ The Gateway assigns increasing source generations when an Asset joins and increm
 
 Every supported message may be fragmented. Common messages should eventually fit in one packet, but packet count does not determine whether an Atlas operation is valid.
 
-The sender serializes once, assigns one logical message identity, and divides the bytes into bounded chunks. The receiver reassembles and validates the complete payload before exposing it to the application or Shared Picture. Partial messages expire from bounded transport state and remain visible only in diagnostics.
+The sender serializes once, assigns one logical message identity, and divides the bytes into bounded chunks. One encoded Link message is limited to 128 KiB. The receiver enforces both the 233-byte Meshtastic application-frame limit and the aggregate message limit while reassembling, then validates the complete payload before exposing it to the application or Shared Picture. Partial messages expire from bounded transport state and remain visible only in diagnostics.
 
 Confirmed messages can repair missing chunks without retransmitting a completed prefix. A best-effort fragmented publication that remains incomplete at its reassembly timeout is discarded without a missing-chunk request. It is recovered by a later current-state publication or focused request. The exact repair exchange, chunk size, reassembly timeout, and non-Object concurrency bound remain implementation choices for simulation and hardware measurement.
 

@@ -51,6 +51,25 @@ type ReceiveWindow = {
   start: number;
   end: number;
   collided: boolean;
+  packetID: number;
+};
+
+type MediumWindow = {
+  start: number;
+  end: number;
+  packetID?: number;
+};
+
+type MeshPacket = {
+  id: number;
+  source: SimulatedRadio;
+  payload: Uint8Array;
+  channel: number;
+  destinationRadioNode?: number;
+  publicKeyEncrypted: boolean;
+  airtime: number;
+  forwarded: Set<string>;
+  delivered: Set<string>;
 };
 
 export class SimulatedPacketNetwork {
@@ -67,9 +86,10 @@ export class SimulatedPacketNetwork {
   private readonly radios = new Map<string, SimulatedRadio>();
   private readonly edges = new Map<string, Set<string>>();
   private readonly radioFreeAt = new Map<string, number>();
-  private readonly sourceDestinationFreeAt = new Map<string, number>();
+  private readonly carrierWindows = new Map<string, MediumWindow[]>();
+  private readonly transmitWindows = new Map<string, MediumWindow[]>();
   private readonly receiveWindows = new Map<string, ReceiveWindow[]>();
-  private mediumFreeAt = 0;
+  private nextPacketID = 0;
   private readonly mutableMetrics: PacketNetworkMetrics = {
     radio_submissions: 0,
     mesh_transmissions: 0,
@@ -91,7 +111,7 @@ export class SimulatedPacketNetwork {
     this.duplicateChance = probability(options.duplicateChance ?? 0, "duplicate chance");
     this.propagationDelayMs = nonNegative(options.propagationDelayMs ?? 2, "propagation delay");
     this.relayDelayMs = nonNegative(options.relayDelayMs ?? 20, "relay delay");
-    this.contentionWindowAirtimes = nonNegative(options.contentionWindowAirtimes ?? 0.25, "contention window airtimes");
+    this.contentionWindowAirtimes = nonNegative(options.contentionWindowAirtimes ?? 4, "contention window airtimes");
     this.carrierSense = options.carrierSense ?? true;
     this.random = seededRandom(options.seed);
   }
@@ -130,90 +150,100 @@ export class SimulatedPacketNetwork {
     const source = this.radios.get(sourceID);
     if (!source) throw new Error(`unknown simulated source radio ${sourceID}`);
     const airtime = this.airtimeMs(payload.byteLength);
-    const hopsByRadio = shortestHopCounts(this.edges, sourceID, this.hopLimit);
-    const maximumHops = Math.max(...hopsByRadio.values());
-    const availableAt = Math.max(
-      this.clock.now(),
-      this.radioFreeAt.get(sourceID) ?? 0,
-      this.carrierSense ? this.mediumFreeAt : 0
-    );
-    const start = availableAt + this.random() * airtime * this.contentionWindowAirtimes;
-    this.radioFreeAt.set(sourceID, start + airtime);
-    if (this.carrierSense) {
-      this.mediumFreeAt = start + Math.max(1, maximumHops) * (airtime + this.propagationDelayMs + this.relayDelayMs);
-    }
     this.mutableMetrics.radio_submissions++;
-
-    const transmitters = [...hopsByRadio.values()].filter((hops) => hops < this.hopLimit).length;
-    this.mutableMetrics.mesh_transmissions += transmitters;
-    this.mutableMetrics.transmitted_bytes += payload.byteLength * transmitters;
-    this.mutableMetrics.modeled_airtime_ms += airtime * transmitters;
-    const traffic = classifyTraffic(payload);
-    this.mutableMetrics.modeled_airtime_ms_by_message_type[traffic.messageType] += airtime * transmitters;
-    this.mutableMetrics.modeled_airtime_ms_by_priority[traffic.priority] += airtime * transmitters;
-    const destinations =
-      options.destination_radio_node === undefined
-        ? [...this.radios.values()].filter((radio) => radio.id !== sourceID && hopsByRadio.has(radio.id))
-        : [...this.radios.values()].filter((radio) => radio.radioNodeNumber === options.destination_radio_node);
-    for (const destination of destinations) {
-      const hops = hopsByRadio.get(destination.id);
-      if (hops === undefined) continue;
-      const modeledArrival = start + hops * (this.propagationDelayMs + this.relayDelayMs + airtime);
-      const deliveryStart = this.reserveSourceDestination(sourceID, destination.id, modeledArrival, airtime);
-      this.scheduleDelivery(
-        source,
-        destination,
-        payload,
-        options.channel,
-        deliveryStart,
-        airtime,
-        false,
-        options.require_public_key === true
-      );
-      if (this.random() < this.duplicateChance) {
-        this.scheduleDelivery(
-          source,
-          destination,
-          payload,
-          options.channel,
-          this.reserveSourceDestination(sourceID, destination.id, deliveryStart + this.propagationDelayMs, airtime),
-          airtime,
-          true,
-          options.require_public_key === true
-        );
-      }
-    }
-    return (this.carrierSense ? this.mediumFreeAt : start + airtime) - this.clock.now();
+    const packet: MeshPacket = {
+      id: this.nextPacketID++,
+      source,
+      payload: payload.slice(),
+      channel: options.channel,
+      ...(options.destination_radio_node === undefined ? {} : { destinationRadioNode: options.destination_radio_node }),
+      publicKeyEncrypted: options.require_public_key === true,
+      airtime,
+      forwarded: new Set([sourceID]),
+      delivered: new Set([sourceID])
+    };
+    const start = this.reserveTransmission(sourceID, this.clock.now(), airtime, packet.id);
+    this.clock.schedule(start - this.clock.now(), () => this.transmitHop(packet, source, 0, start));
+    return start + airtime + this.propagationDelayMs - this.clock.now();
   }
 
-  private reserveSourceDestination(sourceID: string, destinationID: string, earliest: number, airtime: number): number {
-    const key = `${sourceID}->${destinationID}`;
-    const start = Math.max(earliest, this.sourceDestinationFreeAt.get(key) ?? 0);
-    this.sourceDestinationFreeAt.set(key, start + airtime + this.propagationDelayMs);
+  private reserveTransmission(radioID: string, earliest: number, airtime: number, packetID: number): number {
+    let start = Math.max(earliest, this.radioFreeAt.get(radioID) ?? 0);
+    if (this.carrierSense) start = this.nextCarrierFreeStart(radioID, start, airtime);
+    start += this.random() * airtime * this.contentionWindowAirtimes;
+    if (this.carrierSense) start = this.nextCarrierFreeStart(radioID, start, airtime);
+    const window = { start, end: start + airtime, packetID };
+    this.radioFreeAt.set(radioID, window.end);
+    this.addMediumWindow(this.transmitWindows, radioID, window);
+    this.addMediumWindow(this.carrierWindows, radioID, window);
+    for (const neighbor of this.edges.get(radioID) ?? []) {
+      this.addMediumWindow(this.carrierWindows, neighbor, {
+        start: window.start + this.propagationDelayMs,
+        end: window.end + this.propagationDelayMs
+      });
+    }
+    for (const receive of this.receiveWindows.get(radioID) ?? []) {
+      if (overlaps(window, receive)) receive.collided = true;
+    }
     return start;
   }
 
-  private scheduleDelivery(
-    source: SimulatedRadio,
-    destination: SimulatedRadio,
-    payload: Uint8Array,
-    channel: number,
-    start: number,
-    airtime: number,
-    duplicate: boolean,
-    publicKeyEncrypted: boolean
-  ): void {
+  private nextCarrierFreeStart(radioID: string, earliest: number, airtime: number): number {
+    const windows = (this.carrierWindows.get(radioID) ?? []).filter((window) => window.end > this.clock.now());
+    this.carrierWindows.set(radioID, windows);
+    let start = earliest;
+    for (const window of windows.sort((left, right) => left.start - right.start || left.end - right.end)) {
+      if (window.start >= start + airtime) break;
+      if (window.end > start) start = window.end;
+    }
+    return start;
+  }
+
+  private addMediumWindow(target: Map<string, MediumWindow[]>, radioID: string, window: MediumWindow): void {
+    const windows = (target.get(radioID) ?? []).filter((candidate) => candidate.end > this.clock.now());
+    windows.push(window);
+    target.set(radioID, windows);
+  }
+
+  private transmitHop(packet: MeshPacket, transmitter: SimulatedRadio, hops: number, start: number): void {
+    this.mutableMetrics.mesh_transmissions++;
+    this.mutableMetrics.transmitted_bytes += packet.payload.byteLength;
+    this.mutableMetrics.modeled_airtime_ms += packet.airtime;
+    const traffic = classifyTraffic(packet.payload);
+    this.mutableMetrics.modeled_airtime_ms_by_message_type[traffic.messageType] += packet.airtime;
+    this.mutableMetrics.modeled_airtime_ms_by_priority[traffic.priority] += packet.airtime;
+    for (const neighborID of [...(this.edges.get(transmitter.id) ?? [])].sort()) {
+      const neighbor = this.radios.get(neighborID);
+      if (!neighbor) continue;
+      this.scheduleReception(packet, neighbor, hops + 1, start + this.propagationDelayMs);
+    }
+  }
+
+  private scheduleReception(packet: MeshPacket, destination: SimulatedRadio, hops: number, start: number): void {
     if (this.random() < this.packetLoss) {
       this.mutableMetrics.lost_packets++;
       return;
     }
-    const window: ReceiveWindow = { start, end: start + airtime, collided: false };
+    const window: ReceiveWindow = { start, end: start + packet.airtime, collided: false, packetID: packet.id };
     const windows = this.receiveWindows.get(destination.id) ?? [];
     for (const current of windows) {
-      if (current.start < window.end && window.start < current.end) {
-        current.collided = true;
-        window.collided = true;
+      if (current.packetID !== window.packetID && overlaps(current, window)) {
+        if (current.start === window.start) {
+          current.collided = true;
+          window.collided = true;
+        } else if (current.start < window.start) {
+          window.collided = true;
+        } else {
+          current.collided = true;
+        }
       }
+    }
+    if (
+      (this.transmitWindows.get(destination.id) ?? []).some(
+        (transmit) => transmit.packetID !== window.packetID && overlaps(transmit, window)
+      )
+    ) {
+      window.collided = true;
     }
     windows.push(window);
     this.receiveWindows.set(destination.id, windows);
@@ -227,15 +257,49 @@ export class SimulatedPacketNetwork {
         this.mutableMetrics.collided_packets++;
         return;
       }
-      if (duplicate) this.mutableMetrics.duplicate_deliveries++;
-      this.mutableMetrics.delivered_packets++;
-      destination.receive({
-        payload: payload.slice(),
-        received_at: this.clock.now(),
-        radio_source: source.radioNodeNumber,
-        channel,
-        public_key_encrypted: publicKeyEncrypted
-      });
+      if (!packet.delivered.has(destination.id) && this.shouldDeliver(packet, destination)) {
+        packet.delivered.add(destination.id);
+        this.deliver(packet, destination, false);
+        if (this.random() < this.duplicateChance) {
+          this.clock.schedule(this.propagationDelayMs, () => this.deliver(packet, destination, true));
+        }
+      }
+      if (!this.shouldForward(packet, destination, hops)) return;
+      packet.forwarded.add(destination.id);
+      const relayStart = this.reserveTransmission(
+        destination.id,
+        this.clock.now() + this.relayDelayMs,
+        packet.airtime,
+        packet.id
+      );
+      this.clock.schedule(relayStart - this.clock.now(), () => this.transmitHop(packet, destination, hops, relayStart));
+    });
+  }
+
+  private shouldDeliver(packet: MeshPacket, destination: SimulatedRadio): boolean {
+    return packet.destinationRadioNode === undefined || packet.destinationRadioNode === destination.radioNodeNumber;
+  }
+
+  private shouldForward(packet: MeshPacket, destination: SimulatedRadio, hops: number): boolean {
+    if (
+      hops >= this.hopLimit ||
+      packet.forwarded.has(destination.id) ||
+      packet.destinationRadioNode === destination.radioNodeNumber
+    ) {
+      return false;
+    }
+    return [...(this.edges.get(destination.id) ?? [])].some((neighbor) => !packet.forwarded.has(neighbor));
+  }
+
+  private deliver(packet: MeshPacket, destination: SimulatedRadio, duplicate: boolean): void {
+    if (duplicate) this.mutableMetrics.duplicate_deliveries++;
+    this.mutableMetrics.delivered_packets++;
+    destination.receive({
+      payload: packet.payload.slice(),
+      received_at: this.clock.now(),
+      radio_source: packet.source.radioNodeNumber,
+      channel: packet.channel,
+      public_key_encrypted: packet.publicKeyEncrypted
     });
   }
 }
@@ -291,25 +355,8 @@ export function loraAirtimeMs(payloadBytes: number, profile: ModemProfile = SHOR
   return (profile.preamble_symbols + 4.25 + payloadSymbols) * symbolSeconds * 1000;
 }
 
-function shortestHopCounts(
-  edges: ReadonlyMap<string, ReadonlySet<string>>,
-  source: string,
-  maxHops: number
-): Map<string, number> {
-  const hops = new Map([[source, 0]]);
-  const queue = [source];
-  while (queue.length > 0) {
-    const current = queue.shift();
-    if (!current) continue;
-    const currentHops = hops.get(current) ?? 0;
-    if (currentHops >= maxHops) continue;
-    for (const neighbor of [...(edges.get(current) ?? [])].sort()) {
-      if (hops.has(neighbor)) continue;
-      hops.set(neighbor, currentHops + 1);
-      queue.push(neighbor);
-    }
-  }
-  return hops;
+function overlaps(left: MediumWindow, right: MediumWindow): boolean {
+  return left.start < right.end && right.start < left.end;
 }
 
 function seededRandom(seed: number): () => number {
