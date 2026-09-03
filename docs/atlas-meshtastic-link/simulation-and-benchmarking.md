@@ -57,6 +57,10 @@ Atlas semantics are checked at both ends. A successful delivery must decode into
 
 The first named baseline uses the generated Atlas Protocol Radio contract as ordinary compact UTF-8 JSON without compression or radio-specific field selection. Its fragmentation is part of the result.
 
+The checked-in seed-42 position, canonical five-radio normal, and canonical stress baseline results live in `packages/meshtastic-link/baselines`. Package tests rerun all three through the production transport and fail if their semantics or exact measurements drift without an intentional baseline update.
+
+The ordinary JSON baseline is not a field candidate. At the documented publication rates, the checked-in normal and stress runs truthfully record deadline failures and incomplete convergence instead of manufacturing successful delivery. Focused quiet-link tests separately prove confirmation, rejection, retry exhaustion, ordered Task delivery, priority interruption, joining, and snapshot handoff. A later encoding or scheduling optimization must rerun the unchanged load and improve those recorded outcomes.
+
 The baseline has correctness gates but no performance gate. It succeeds as a baseline when it faithfully exercises Atlas semantics and reports its cost, even if its latency, fragmentation, or airtime is unsuitable for field use. Field-ready optimized implementations inherit both correctness and performance targets.
 
 An optimization is compared by changing only the declared protocol implementation while retaining the scenario, inputs, topology, seed, Radio profile, and success criteria. Every comparison reports both absolute results and change from the generated baseline.

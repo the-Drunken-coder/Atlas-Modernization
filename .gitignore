@@ -54,6 +54,7 @@ coverage/
 /packages/sdk/dist/
 /packages/plugin-runtime/dist/
 /packages/fieldlink/dist/
+/packages/meshtastic-link/dist/
 /surfaces/core-cli/dist/
 /plugins/*/dist/
 /surfaces/command-interface/dist/

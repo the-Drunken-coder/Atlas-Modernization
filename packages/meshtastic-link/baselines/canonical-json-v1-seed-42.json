@@ -1,0 +1,178 @@
+{
+  "scenario": "canonical_five_radio_normal",
+  "scenario_revision": 1,
+  "seed": 42,
+  "semantic_result": {
+    "gateway_field_records": 3,
+    "minimum_asset_picture_records": 2,
+    "aggregate_subscription_feeds": 1,
+    "task_delivery_order": [],
+    "data_request_completed": false,
+    "task_reports_received": 0
+  },
+  "transport_metrics": {
+    "application_bytes": 346977,
+    "packets_sent": 243,
+    "transmitted_bytes": 55169,
+    "packets_received": 958,
+    "duplicate_packets_suppressed": 0,
+    "stale_messages_rejected": 0,
+    "incomplete_reassemblies": 44,
+    "best_effort_replaced": 545,
+    "confirmed_rejected_overload": 0,
+    "retry_exhausted": 5,
+    "retransmitted_packets": 2,
+    "fragment_repair_requests_sent": 2,
+    "fragment_repair_requests_received": 0,
+    "radio_send_failures": 0,
+    "inbound_settlement_expired": 0,
+    "peak_queue_depth": 5,
+    "packets_sent_by_message_type": {
+      "state": 184,
+      "task_delivery": 8,
+      "task_report": 0,
+      "data_request": 10,
+      "data_response": 8,
+      "resource_operation": 0,
+      "subscription": 8,
+      "object_content": 0,
+      "control": 25
+    },
+    "transmitted_bytes_by_priority": {
+      "safety": 5583,
+      "task": 1864,
+      "request": 5930,
+      "live_state": 41792,
+      "resource": 0,
+      "object_content": 0
+    },
+    "queue_wait_ms_by_priority": {
+      "safety": {
+        "samples": 6,
+        "total_ms": 5382.39599609375,
+        "maximum_ms": 3264.1220703125
+      },
+      "task": {
+        "samples": 2,
+        "total_ms": 8524.517822265625,
+        "maximum_ms": 8524.517822265625
+      },
+      "request": {
+        "samples": 6,
+        "total_ms": 35681.104248046875,
+        "maximum_ms": 21602.262451171875
+      },
+      "live_state": {
+        "samples": 19,
+        "total_ms": 284569.45654296875,
+        "maximum_ms": 61079.04541015625
+      },
+      "resource": {
+        "samples": 0,
+        "total_ms": 0,
+        "maximum_ms": 0
+      },
+      "object_content": {
+        "samples": 0,
+        "total_ms": 0,
+        "maximum_ms": 0
+      }
+    },
+    "operation_latency_ms_by_priority": {
+      "safety": {
+        "samples": 6,
+        "total_ms": 46455.6435546875,
+        "maximum_ms": 14405.085205078125
+      },
+      "task": {
+        "samples": 2,
+        "total_ms": 30000,
+        "maximum_ms": 15000
+      },
+      "request": {
+        "samples": 6,
+        "total_ms": 122023.78198242188,
+        "maximum_ms": 30000
+      },
+      "live_state": {
+        "samples": 19,
+        "total_ms": 706769.7197265625,
+        "maximum_ms": 64998.987060546875
+      },
+      "resource": {
+        "samples": 0,
+        "total_ms": 0,
+        "maximum_ms": 0
+      },
+      "object_content": {
+        "samples": 0,
+        "total_ms": 0,
+        "maximum_ms": 0
+      }
+    },
+    "operation_outcomes": {
+      "sent": 25,
+      "confirmed": 3,
+      "rejected": 0,
+      "failed": 550
+    }
+  },
+  "network_metrics": {
+    "radio_submissions": 243,
+    "mesh_transmissions": 1132,
+    "transmitted_bytes": 257092,
+    "modeled_airtime_ms": 229441.5360000002,
+    "delivered_packets": 958,
+    "lost_packets": 0,
+    "collided_packets": 14,
+    "duplicate_deliveries": 0,
+    "modeled_airtime_ms_by_message_type": {
+      "state": 177092.22400000028,
+      "task_delivery": 6639.616,
+      "task_report": 0,
+      "data_request": 10156.8,
+      "data_response": 6639.616,
+      "resource_operation": 0,
+      "subscription": 7992.319999999999,
+      "object_content": 0,
+      "control": 20920.959999999992,
+      "non_link": 0
+    },
+    "modeled_airtime_ms_by_priority": {
+      "safety": 20920.959999999992,
+      "task": 6639.616,
+      "request": 24788.736,
+      "live_state": 177092.22400000028,
+      "resource": 0,
+      "object_content": 0,
+      "non_link": 0
+    }
+  },
+  "picture_metrics": {
+    "at_30_seconds": {
+      "total_records": 10,
+      "gateway_records": 3,
+      "minimum_asset_records": 1,
+      "fresh_records": 9,
+      "stale_records": 1,
+      "degraded_records": 0
+    },
+    "at_60_seconds": {
+      "total_records": 11,
+      "gateway_records": 3,
+      "minimum_asset_records": 2,
+      "fresh_records": 1,
+      "stale_records": 10,
+      "degraded_records": 0
+    },
+    "final": {
+      "total_records": 18,
+      "gateway_records": 4,
+      "minimum_asset_records": 3,
+      "fresh_records": 0,
+      "stale_records": 18,
+      "degraded_records": 0
+    }
+  },
+  "elapsed_ms": 130235.33349609375
+}
