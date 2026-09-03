@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/the-drunken-coder/atlas/services/core/internal/pluginid"
 	"golang.org/x/net/idna"
@@ -88,7 +89,11 @@ func validPluginHostname(baseURL string, parsed *url.URL) bool {
 
 	hostname = strings.TrimSuffix(hostname, ".")
 	lookup, lookupErr := pluginHostnameLookup.ToASCII(hostname)
-	literal, literalErr := pluginHostnameLiteral.ToASCII(strings.ToLower(hostname))
+	literalHostname := hostname
+	if strings.IndexFunc(hostname, func(r rune) bool { return r > unicode.MaxASCII }) == -1 {
+		literalHostname = strings.ToLower(hostname)
+	}
+	literal, literalErr := pluginHostnameLiteral.ToASCII(literalHostname)
 	if lookupErr != nil || literalErr != nil || lookup != literal {
 		return false
 	}

@@ -18,12 +18,14 @@ func TestPluginConfigurationNormalizesAndRejectsInvalidEndpoints(t *testing.T) {
 		{baseURL: "http://reference:8080", want: "http://reference:8080"},
 		{baseURL: " http://reference:8080/ ", want: "http://reference:8080"},
 		{baseURL: "http://reference:65535", want: "http://reference:65535"},
+		{baseURL: "http://REFERENCE.example", want: "http://REFERENCE.example"},
 		{baseURL: "http://ab--cd.example", want: "http://ab--cd.example"},
 		{baseURL: "http://bücher.example", want: "http://bücher.example"},
 		{baseURL: "http://reference.", want: "http://reference."},
 		{baseURL: "http://127.0.0.1", want: "http://127.0.0.1"},
 		{baseURL: "http://[::1]", want: "http://[::1]"},
 		{baseURL: "http://[::1]:8080", want: "http://[::1]:8080"},
+		{baseURL: "http://[fe80::1%25eth0]", want: "http://[fe80::1%25eth0]"},
 	} {
 		cfg := Config{Plugins: []PluginConfig{{ID: " reference ", BaseURL: test.baseURL}}}
 		if err := cfg.validatePlugins(); err != nil {
@@ -50,6 +52,8 @@ func TestPluginConfigurationNormalizesAndRejectsInvalidEndpoints(t *testing.T) {
 		{{ID: "reference", BaseURL: "http://b%C3%BCcher.example"}},
 		{{ID: "reference", BaseURL: "http://foo\u00adbar.example"}},
 		{{ID: "reference", BaseURL: "http://ｅｘａｍｐｌｅ.com"}},
+		{{ID: "reference", BaseURL: "http://K.example"}},
+		{{ID: "reference", BaseURL: "http://BÜCHER.example"}},
 		{{ID: "reference", BaseURL: "http://a..example"}},
 		{{ID: "reference", BaseURL: "http://-reference.example"}},
 		{{ID: "reference", BaseURL: "http://reference-.example"}},
