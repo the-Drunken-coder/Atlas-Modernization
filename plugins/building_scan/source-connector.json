@@ -9,7 +9,7 @@
       "allowed_request_headers": ["content-type", "user-agent"],
       "allowed_response_headers": ["content-type"],
       "read_only": true,
-      "cache": { "ttl_ms": 60000 },
+      "cache": { "ttl_ms": 0 },
       "retry": { "max_retries": 0, "statuses": [], "failures": [], "idempotency_header": "" }
     }
   ],

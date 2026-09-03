@@ -101,6 +101,7 @@ async function requestSource(gateway: Gateway, area: MapArea, signal: AbortSigna
         throw new PluginFailureError("source_timeout");
       case "response_too_large":
         throw new PluginFailureError("source_response_too_large");
+      case "admission_timeout":
       case "circuit_open":
         throw new PluginFailureError("source_busy");
       case "request_rejected":
