@@ -44,6 +44,38 @@ _Avoid_: External source, data normalizer
 A way an Asset Host or Edge Gateway exchanges Atlas data with another Atlas node. FieldLink, IP, and future radio protocols are communication methods, not Asset capabilities.
 _Avoid_: FieldLink as the generic transport, Asset behavior
 
+**Meshtastic Link**:
+The proposed Atlas communication method that exchanges Atlas data through a shared Meshtastic radio mesh.
+_Avoid_: FieldLink, generic Meshtastic chat
+
+**Meshtastic Link Runtime**:
+The long-running local service that operates one Meshtastic Link, fulfills data requests, and exposes the node's Shared Picture to local software.
+_Avoid_: radio firmware, Asset application
+
+**Runtime client**:
+A local program that reads the Shared Picture or asks the Meshtastic Link Runtime to publish state, request data, or maintain a Link subscription.
+_Avoid_: radio node, remote mesh member
+
+**Shared Picture**:
+The ephemeral, continuously updated latest-known view of shared Atlas state maintained by a Meshtastic Link Runtime. It includes useful traffic whether passively heard or explicitly requested, and each node's copy may temporarily differ.
+_Avoid_: central database, `world_state.json`
+
+**Link subscription**:
+A request for the Gateway to publish and refresh selected Atlas data on the shared channel. Link subscriptions from all Runtimes are combined into publication demand and do not restrict who may receive the data.
+_Avoid_: Core change-feed subscription, access grant, per-Asset transmission
+
+**Field report**:
+A valid Atlas state report or operation that originates from an Asset and is eligible for the Gateway to submit to Atlas Core once.
+_Avoid_: every Shared Picture change, passive duplicate
+
+**Radio profile**:
+The single declarative set of Meshtastic settings that every supported Atlas radio must match before joining.
+_Avoid_: undocumented operator setup, firmware image
+
+**Radio contract**:
+The generated communication-method binding that carries Atlas Protocol resources and operations through Meshtastic Link. Atlas Protocol remains its source of truth; transport envelopes and fragmentation do not create a second Atlas data model.
+_Avoid_: independent radio domain model, manually copied Atlas schema
+
 **Edge Gateway**:
 A field-deployed Atlas system that connects one or more communication methods to Atlas Core without representing an Asset.
 _Avoid_: Asset Host, Source Gateway
