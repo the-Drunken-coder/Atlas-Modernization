@@ -376,7 +376,11 @@ export class ProcessCommandRunner implements CommandRunner {
           try {
             options.processGroup?.finished(processGroupId);
           } catch (error) {
-            reject(error);
+            reject(
+              new OperationCleanupError(
+                `Atlas Core could not clear its durable Docker process-group fence: ${errorMessage(error)}`
+              )
+            );
             return;
           }
         }
@@ -668,7 +672,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
             (mutationLock.recovered || (preserveRecoverableLocalLock && dockerLockAcquisitionNeedsRecovery)));
         if (!shouldPreserveRecoverableLocalLock) {
           this.#releaseMutationLock(dockerLock?.owner ?? mutationLock.owner);
-        } else if (preserveRecoverableLocalLock && localOwner.processGroupId === undefined) {
+        } else if (preserveRecoverableLocalLock && !isProcessGroupAlive(localOwner.processGroupId)) {
           idleRecoverableMutationLock = localOwner;
         }
       } finally {
@@ -1856,7 +1860,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     return (
       this.#activeMutationLock === undefined &&
       owner.pid === process.pid &&
-      owner.processGroupId === undefined &&
+      !isProcessGroupAlive(owner.processGroupId) &&
       this.#idleRecoverableMutationLock !== undefined &&
       sameMutationLockOwner(owner, this.#idleRecoverableMutationLock)
     );

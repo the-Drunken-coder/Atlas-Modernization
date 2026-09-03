@@ -15,6 +15,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type CLIContext, type CommandRunner, ProcessCommandRunner, runCLI } from "../src/application.js";
+import { OperationCleanupError } from "../src/operation-errors.js";
 import { PACKAGE_NAME, PACKAGE_VERSION } from "../src/package-metadata.js";
 import type { PluginCatalogEntry } from "../src/plugin-catalog.js";
 import type { DeploymentDetails } from "../src/terminal-ui.js";
@@ -80,6 +81,7 @@ class FakeRunner implements CommandRunner {
   onRun: ((call: Call) => void | Promise<void>) | undefined;
   afterSuccessfulNetworkCreate: (() => void) | undefined;
   failAfterNetworkCreate: string | undefined;
+  failProcessGroupClearAfterNetworkCreate = false;
   afterSuccessfulComposeUp: (() => void) | undefined;
   cancelAfterNetworkCreate: (() => void) | undefined;
   onCleanupStart: ((signal: AbortSignal | undefined) => void) | undefined;
@@ -149,6 +151,11 @@ class FakeRunner implements CommandRunner {
       this.networkLabels.set(name, labels);
       const networkId = `network-${this.networkIds.size + 1}`;
       this.networkIds.set(name, networkId);
+      if (this.failProcessGroupClearAfterNetworkCreate) {
+        this.failProcessGroupClearAfterNetworkCreate = false;
+        options.processGroup?.started(2_000_000_000);
+        throw new OperationCleanupError("injected durable process-group clear failure");
+      }
       const cancelAfterNetworkCreate = this.cancelAfterNetworkCreate;
       this.cancelAfterNetworkCreate = undefined;
       if (cancelAfterNetworkCreate) {
@@ -813,6 +820,38 @@ describe("atlas-core CLI", () => {
     expect(test.runner.existingNetworks.has(MUTATION_LOCK_NETWORK)).toBe(false);
   });
 
+  it("recovers a Docker lock after its durable process-group clear fails", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const plugin = installTestPluginCatalog(test);
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
+    const config = join(test.home, ".atlas", "core");
+    const lockPath = join(config, ".mutation.lock");
+    test.context.interactive = {
+      configureAdmin: async () => undefined,
+      runUpdate: async () => undefined,
+      runMenu: async (operator) => {
+        test.runner.failProcessGroupClearAfterNetworkCreate = true;
+        await expect(operator.pluginDisable(plugin.pluginId)).rejects.toThrow(
+          "injected durable process-group clear failure"
+        );
+
+        const retainedOwner = JSON.parse(readFileSync(lockPath, "utf8"));
+        expect(retainedOwner).toMatchObject({ operation: "plugin-disable", processGroupId: 2_000_000_000 });
+        expect(test.runner.networkLabels.get(MUTATION_LOCK_NETWORK)).toMatchObject({
+          "io.atlas.core.lock-id": retainedOwner.id
+        });
+
+        await expect(operator.pluginDisable(plugin.pluginId)).resolves.toMatchObject({ status: "success" });
+      }
+    };
+
+    expect(await runCLI([], test.context)).toBe(0);
+    expect(existsSync(lockPath)).toBe(false);
+    expect(test.runner.existingNetworks.has(MUTATION_LOCK_NETWORK)).toBe(false);
+    expect(existsSync(join(config, "plugins", plugin.pluginId))).toBe(false);
+  });
+
   it("preserves a retained Plugin-disable lock when the engine changes in the same interactive session", async () => {
     const test = runtime();
     markInitialized(test);
@@ -1216,6 +1255,21 @@ describe("atlas-core CLI", () => {
     expect(command).toEqual(result(0, "supervised"));
     expect(startedProcessGroup).toEqual(expect.any(Number));
     expect(finishedProcessGroup).toBe(startedProcessGroup);
+  });
+
+  it("reports a failed supervised process-group clear as recovery work", async () => {
+    const runner = new ProcessCommandRunner();
+
+    await expect(
+      runner.run(process.execPath, ["-e", "process.exit(0)"], {
+        processGroup: {
+          started: () => undefined,
+          finished: () => {
+            throw new Error("injected durable process-group clear failure");
+          }
+        }
+      })
+    ).rejects.toBeInstanceOf(OperationCleanupError);
   });
 
   it("does not clear a supervised process-group fence while a successful descendant is still alive", async () => {
