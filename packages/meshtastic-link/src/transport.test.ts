@@ -1,0 +1,521 @@
+import { createHash } from "node:crypto";
+import type { TaskResource } from "@the-drunken-coder/atlas-sdk";
+import { describe, expect, it } from "vitest";
+import { VirtualClock } from "./clock.js";
+import { OrderedTaskDispatcher } from "./gateway.js";
+import { SharedPicture } from "./picture.js";
+import { SimulatedPacketNetwork } from "./simulation.js";
+import { positionPublication } from "./test-fixtures.js";
+import { LinkTransport } from "./transport.js";
+
+describe("Link transport", () => {
+  it("requires application settlement before confirming addressed work", async () => {
+    const { clock, gateway, asset } = directPair();
+    const received: string[] = [];
+    asset.onEvent((event) => {
+      if (event.type === "message" && event.addressed_to_local && event.message.type === "task_delivery") {
+        received.push(event.message.task.task_id);
+        expect(event.requires_settlement).toBe(true);
+        asset.settleInbound(event.operation_id, true);
+      }
+    });
+    const result = gateway.submit(
+      { type: "task_delivery", delivery: "assignment", task: pendingTask("task-1", "2026-09-02T12:00:00Z") },
+      { destination: { role: "asset", id: "asset-alpha" }, operationID: "deliver-task-1" }
+    );
+    expect(result.status).toBe("queued");
+    await clock.runUntilIdle();
+    expect(received).toEqual(["task-1"]);
+    expect(gateway.status("deliver-task-1")?.status).toBe("confirmed");
+  });
+
+  it("surfaces application rejection and bounded retry exhaustion", async () => {
+    const rejectedPair = directPair();
+    rejectedPair.asset.onEvent((event) => {
+      if (event.type === "message" && event.requires_settlement) {
+        rejectedPair.asset.settleInbound(event.operation_id, false, "Asset cannot accept Task");
+      }
+    });
+    rejectedPair.gateway.submit(
+      { type: "task_delivery", delivery: "assignment", task: pendingTask("task-rejected", "2026-09-02T12:00:00Z") },
+      { destination: { role: "asset", id: "asset-alpha" }, operationID: "reject-task" }
+    );
+    await rejectedPair.clock.runUntilIdle();
+    expect(rejectedPair.gateway.status("reject-task")).toMatchObject({
+      status: "rejected",
+      reason: "Asset cannot accept Task"
+    });
+
+    const clock = new VirtualClock();
+    const network = new SimulatedPacketNetwork({ seed: 18, clock });
+    const isolated = new LinkTransport({
+      node: { role: "gateway", id: "gateway" },
+      sourceGeneration: 1,
+      radio: network.addRadio("isolated", 30),
+      clock,
+      retryIntervalMs: 1_000
+    });
+    isolated.submit(
+      { type: "task_delivery", delivery: "assignment", task: pendingTask("task-timeout", "2026-09-02T12:00:00Z") },
+      { destination: { role: "asset", id: "missing" }, operationID: "timeout-task" }
+    );
+    await clock.runUntilIdle();
+    expect(isolated.status("timeout-task")).toMatchObject({
+      status: "failed",
+      reason: "confirmation deadline expired"
+    });
+    expect(isolated.metrics().retry_exhausted).toBe(1);
+  });
+
+  it("accepts settlement only from the addressed application", async () => {
+    const clock = new VirtualClock();
+    const network = new SimulatedPacketNetwork({ seed: 19, clock });
+    const gatewayRadio = network.addRadio("gateway", 1);
+    const assetRadio = network.addRadio("asset-alpha", 2);
+    const peerRadio = network.addRadio("asset-bravo", 3);
+    network.connect("gateway", "asset-alpha");
+    network.connect("gateway", "asset-bravo");
+    const gateway = new LinkTransport({
+      node: { role: "gateway", id: "gateway" },
+      sourceGeneration: 1,
+      radio: gatewayRadio,
+      clock
+    });
+    const asset = new LinkTransport({
+      node: { role: "asset", id: "asset-alpha" },
+      sourceGeneration: 1,
+      radio: assetRadio,
+      clock
+    });
+    const peer = new LinkTransport({
+      node: { role: "asset", id: "asset-bravo" },
+      sourceGeneration: 1,
+      radio: peerRadio,
+      clock
+    });
+    let messageID: string | undefined;
+    let receivedOperation: string | undefined;
+    gateway.onEvent((event) => {
+      if (event.type === "packet_sent" && event.operation_id === "addressed-task") messageID = event.message_id;
+    });
+    asset.onEvent((event) => {
+      if (event.type === "message" && event.message.type === "task_delivery" && event.addressed_to_local) {
+        receivedOperation = event.operation_id;
+      }
+    });
+    gateway.submit(
+      { type: "task_delivery", delivery: "assignment", task: pendingTask("task-addressed", "2026-09-02T12:00:00Z") },
+      { destination: { role: "asset", id: "asset-alpha" }, operationID: "addressed-task" }
+    );
+    await clock.advanceBy(0);
+    expect(messageID).toBeDefined();
+    if (!messageID) throw new Error("task did not emit a transport message identity");
+    peer.submit(
+      { type: "control", control: "confirmed", operation_id: "addressed-task", message_id: messageID },
+      { destination: { role: "gateway", id: "gateway" }, operationID: "forged-confirmation" }
+    );
+    await clock.advanceBy(10_000);
+    expect(receivedOperation).toBe("addressed-task");
+    expect(gateway.status("addressed-task")?.status).toBe("queued");
+    if (!receivedOperation) throw new Error("addressed Asset did not receive the Task");
+    asset.settleInbound(receivedOperation, true);
+    await clock.runUntilIdle();
+    expect(gateway.status("addressed-task")?.status).toBe("confirmed");
+  });
+
+  it("expires unhandled inbound work instead of retaining it indefinitely", async () => {
+    const { clock, gateway, asset } = directPair();
+    gateway.submit(
+      { type: "task_delivery", delivery: "assignment", task: pendingTask("task-unhandled", "2026-09-02T12:00:00Z") },
+      { destination: { role: "asset", id: "asset-alpha" }, operationID: "unhandled-task" }
+    );
+    await clock.runUntilIdle();
+    expect(asset.diagnostics().inbound_awaiting_settlement).toBe(0);
+    expect(asset.metrics().inbound_settlement_expired).toBe(1);
+    expect(gateway.status("unhandled-task")?.status).toBe("failed");
+  });
+
+  it("coalesces only unsent best-effort state", async () => {
+    const { clock, gateway, assetPicture } = directPair();
+    gateway.submit(positionPublication(1), { operationID: "position-1" });
+    gateway.submit(positionPublication(2), { operationID: "position-2" });
+    expect(gateway.status("position-1")).toMatchObject({ status: "failed", reason: "replaced by newer unsent state" });
+    await clock.runUntilIdle();
+    expect(gateway.status("position-2")?.status).toBe("sent");
+    expect(assetPicture.snapshot().records[0]?.atlas_version).toBe(2);
+    expect(gateway.metrics().best_effort_replaced).toBe(1);
+  });
+
+  it("returns a visible failure when Link metadata leaves no packet room", () => {
+    const { gateway } = directPair();
+    expect(gateway.submit(positionPublication(1), { operationID: "x".repeat(512) })).toMatchObject({
+      status: "failed",
+      reason: expect.stringContaining("Link framing failed")
+    });
+  });
+
+  it("recovers current state after a temporary partition", async () => {
+    const clock = new VirtualClock();
+    const network = new SimulatedPacketNetwork({ seed: 5, clock });
+    const sourceRadio = network.addRadio("source", 1);
+    const receiverRadio = network.addRadio("receiver", 2);
+    const picture = new SharedPicture("receiver-picture");
+    const source = new LinkTransport({
+      node: { role: "asset", id: "asset-alpha" },
+      sourceGeneration: 1,
+      radio: sourceRadio,
+      clock
+    });
+    new LinkTransport({
+      node: { role: "gateway", id: "gateway" },
+      sourceGeneration: 1,
+      radio: receiverRadio,
+      clock,
+      picture
+    });
+    source.submit(positionPublication(1), { operationID: "partitioned-state" });
+    await clock.runUntilIdle();
+    expect(picture.snapshot().records).toHaveLength(0);
+    network.connect("source", "receiver");
+    source.submit(positionPublication(2), { operationID: "reconnected-state" });
+    await clock.runUntilIdle();
+    expect(picture.snapshot().records[0]?.atlas_version).toBe(2);
+  });
+
+  it("lets a higher source generation retire delayed old state", async () => {
+    const clock = new VirtualClock();
+    const network = new SimulatedPacketNetwork({ seed: 7, clock });
+    const sourceRadio = network.addRadio("source", 10);
+    const receiverRadio = network.addRadio("receiver", 20);
+    network.connect("source", "receiver");
+    const picture = new SharedPicture("receiver-picture");
+    const oldSource = new LinkTransport({
+      node: { role: "asset", id: "asset-alpha" },
+      sourceGeneration: 1,
+      serviceSession: "old-session",
+      radio: sourceRadio,
+      clock
+    });
+    const newSource = new LinkTransport({
+      node: { role: "asset", id: "asset-alpha" },
+      sourceGeneration: 2,
+      serviceSession: "new-session",
+      radio: sourceRadio,
+      clock
+    });
+    const receiver = new LinkTransport({
+      node: { role: "gateway", id: "gateway" },
+      sourceGeneration: 1,
+      radio: receiverRadio,
+      clock,
+      picture
+    });
+    newSource.submit(positionPublication(2), { operationID: "new-state" });
+    await clock.runUntilIdle();
+    oldSource.submit(positionPublication(1), { operationID: "old-state" });
+    await clock.runUntilIdle();
+    expect(picture.snapshot().records[0]?.atlas_version).toBe(2);
+    expect(receiver.metrics().stale_messages_rejected).toBeGreaterThan(0);
+  });
+
+  it("uses a Gateway activation announcement to fence delayed Asset traffic", async () => {
+    const clock = new VirtualClock();
+    const network = new SimulatedPacketNetwork({ seed: 9, clock });
+    const gatewayRadio = network.addRadio("gateway", 10);
+    const oldAssetRadio = network.addRadio("old-asset", 20);
+    const receiverRadio = network.addRadio("receiver", 30);
+    network.connect("gateway", "receiver");
+    network.connect("old-asset", "receiver");
+    const gateway = new LinkTransport({
+      node: { role: "gateway", id: "gateway" },
+      sourceGeneration: 1,
+      serviceSession: "gateway-session",
+      radio: gatewayRadio,
+      clock
+    });
+    const oldAsset = new LinkTransport({
+      node: { role: "asset", id: "asset-alpha" },
+      sourceGeneration: 1,
+      serviceSession: "old-session",
+      radio: oldAssetRadio,
+      clock
+    });
+    const picture = new SharedPicture("receiver-picture");
+    const receiver = new LinkTransport({
+      node: { role: "asset", id: "asset-bravo" },
+      sourceGeneration: 1,
+      radio: receiverRadio,
+      clock,
+      picture
+    });
+    gateway.announceSourceActivation({ role: "asset", id: "asset-alpha" }, 2, "new-session");
+    await clock.runUntilIdle();
+    oldAsset.submit(positionPublication(1), { operationID: "delayed-old-state" });
+    await clock.runUntilIdle();
+    expect(picture.snapshot().records).toHaveLength(0);
+    expect(receiver.metrics().stale_messages_rejected).toBeGreaterThan(0);
+  });
+
+  it("schedules Task traffic ahead of queued Object chunks", async () => {
+    const { clock, gateway, asset } = directPair();
+    const sent: string[] = [];
+    const content = Buffer.alloc(512, 1);
+    gateway.onEvent((event) => {
+      if (event.type === "packet_sent") sent.push(event.operation_id);
+    });
+    gateway.submit(
+      {
+        type: "object_content",
+        object_id: "object-1",
+        content_base64: content.toString("base64"),
+        sha256: `sha256:${createHash("sha256").update(content).digest("hex")}`
+      },
+      { destination: { role: "asset", id: "asset-alpha" }, operationID: "object" }
+    );
+    await clock.advanceBy(0);
+    gateway.submit(
+      { type: "task_delivery", delivery: "assignment", task: pendingTask("task-urgent", "2026-09-02T12:00:00Z") },
+      { destination: { role: "asset", id: "asset-alpha" }, operationID: "task" }
+    );
+    asset.onEvent((event) => {
+      if (event.type === "message" && event.requires_settlement) asset.settleInbound(event.operation_id, true);
+    });
+    await clock.runUntilIdle();
+    const taskIndex = sent.indexOf("task");
+    expect(sent[0]).toBe("object");
+    expect(taskIndex).toBeGreaterThan(0);
+    expect(taskIndex).toBeLessThan(sent.lastIndexOf("object"));
+    expect(gateway.status("task")?.status).toBe("confirmed");
+    expect(gateway.status("object")?.status).toBe("confirmed");
+  });
+
+  it("dispatches confirmed assignments in Atlas Task order", async () => {
+    const { clock, gateway, asset } = directPair();
+    const delivered: string[] = [];
+    asset.onEvent((event) => {
+      if (event.type === "message" && event.addressed_to_local && event.message.type === "task_delivery") {
+        delivered.push(event.message.task.task_id);
+        asset.settleInbound(event.operation_id, true);
+      }
+    });
+    const dispatcher = new OrderedTaskDispatcher(gateway);
+    dispatcher.enqueueAssignments("asset-alpha", [
+      pendingTask("task-z", "2026-09-02T12:01:00Z"),
+      pendingTask("task-b", "2026-09-02T12:00:00Z"),
+      pendingTask("task-a", "2026-09-02T12:00:00Z")
+    ]);
+    await clock.runUntilIdle();
+    expect(delivered).toEqual(["task-a", "task-b", "task-z"]);
+    expect(dispatcher.state("asset-alpha")).toEqual({ queued: [] });
+    dispatcher.close();
+  });
+
+  it("does not assemble Object content at an unaddressed listener", async () => {
+    const clock = new VirtualClock();
+    const network = new SimulatedPacketNetwork({ seed: 24, clock });
+    const gatewayRadio = network.addRadio("gateway", 1);
+    const destinationRadio = network.addRadio("asset-alpha", 2);
+    const listenerRadio = network.addRadio("asset-bravo", 3);
+    network.connect("gateway", "asset-alpha");
+    network.connect("gateway", "asset-bravo");
+    const gateway = new LinkTransport({
+      node: { role: "gateway", id: "gateway" },
+      sourceGeneration: 1,
+      radio: gatewayRadio,
+      clock
+    });
+    const destination = new LinkTransport({
+      node: { role: "asset", id: "asset-alpha" },
+      sourceGeneration: 1,
+      radio: destinationRadio,
+      clock
+    });
+    const listener = new LinkTransport({
+      node: { role: "asset", id: "asset-bravo" },
+      sourceGeneration: 1,
+      radio: listenerRadio,
+      clock
+    });
+    let receivedAtDestination = false;
+    let receivedAtListener = false;
+    destination.onEvent((event) => {
+      if (event.type === "message" && event.message.type === "object_content") {
+        receivedAtDestination = true;
+        destination.settleInbound(event.operation_id, true);
+      }
+    });
+    listener.onEvent((event) => {
+      if (event.type === "message" && event.message.type === "object_content") receivedAtListener = true;
+    });
+    const content = Buffer.alloc(1_024, 2);
+    gateway.submit(
+      {
+        type: "object_content",
+        object_id: "object-private",
+        content_base64: content.toString("base64"),
+        sha256: `sha256:${createHash("sha256").update(content).digest("hex")}`
+      },
+      { destination: { role: "asset", id: "asset-alpha" }, operationID: "object-private" }
+    );
+    await clock.runUntilIdle();
+    expect(receivedAtDestination).toBe(true);
+    expect(receivedAtListener).toBe(false);
+    expect(listener.diagnostics().incomplete_reassemblies).toBe(0);
+    expect(gateway.status("object-private")?.status).toBe("confirmed");
+  });
+
+  it("puts a state-bearing response into every listening Shared Picture", async () => {
+    const clock = new VirtualClock();
+    const network = new SimulatedPacketNetwork({ seed: 27, clock });
+    const gatewayRadio = network.addRadio("gateway", 1);
+    const requesterRadio = network.addRadio("asset-alpha", 2);
+    const peerRadio = network.addRadio("asset-bravo", 3);
+    network.connect("gateway", "asset-alpha");
+    network.connect("gateway", "asset-bravo");
+    const requesterPicture = new SharedPicture("requester-picture");
+    const peerPicture = new SharedPicture("peer-picture");
+    const gateway = new LinkTransport({
+      node: { role: "gateway", id: "gateway" },
+      sourceGeneration: 1,
+      radio: gatewayRadio,
+      clock
+    });
+    const requester = new LinkTransport({
+      node: { role: "asset", id: "asset-alpha" },
+      sourceGeneration: 1,
+      radio: requesterRadio,
+      clock,
+      picture: requesterPicture
+    });
+    const peer = new LinkTransport({
+      node: { role: "asset", id: "asset-bravo" },
+      sourceGeneration: 1,
+      radio: peerRadio,
+      clock,
+      picture: peerPicture
+    });
+    requester.onEvent((event) => {
+      if (event.type === "message" && event.message.type === "data_response" && event.addressed_to_local) {
+        requester.settleInbound(event.operation_id, true);
+      }
+    });
+    const state = positionPublication(7);
+    if (state.resource_type !== "entity") throw new Error("position fixture must be an Entity");
+    gateway.submit(
+      { type: "data_response", request_id: "entity-request", operation: "entity.get", output: state.resource },
+      { destination: { role: "asset", id: "asset-alpha" }, operationID: "entity-response" }
+    );
+    await clock.runUntilIdle();
+    expect(requesterPicture.snapshot().records[0]).toMatchObject({ id: "asset-alpha", atlas_version: 7 });
+    expect(peerPicture.snapshot().records[0]).toMatchObject({ id: "asset-alpha", atlas_version: 7 });
+    expect(peer.diagnostics().inbound_awaiting_settlement).toBe(0);
+    expect(gateway.status("entity-response")?.status).toBe("confirmed");
+  });
+
+  it("projects visible Task lifecycle reports into a peer Shared Picture", async () => {
+    const clock = new VirtualClock(Date.parse("2026-09-02T12:00:00Z"));
+    const network = new SimulatedPacketNetwork({ seed: 31, clock });
+    const gatewayRadio = network.addRadio("gateway", 1);
+    const assetRadio = network.addRadio("asset-alpha", 2);
+    const peerRadio = network.addRadio("asset-bravo", 3);
+    network.connect("gateway", "asset-alpha");
+    network.connect("gateway", "asset-bravo");
+    network.connect("asset-alpha", "asset-bravo");
+    const gateway = new LinkTransport({
+      node: { role: "gateway", id: "gateway" },
+      sourceGeneration: 1,
+      radio: gatewayRadio,
+      clock
+    });
+    const asset = new LinkTransport({
+      node: { role: "asset", id: "asset-alpha" },
+      sourceGeneration: 1,
+      radio: assetRadio,
+      clock
+    });
+    const peerPicture = new SharedPicture("peer-picture");
+    const peer = new LinkTransport({
+      node: { role: "asset", id: "asset-bravo" },
+      sourceGeneration: 1,
+      radio: peerRadio,
+      clock,
+      picture: peerPicture
+    });
+    asset.onEvent((event) => {
+      if (event.type !== "message" || event.message.type !== "task_delivery" || !event.addressed_to_local) return;
+      asset.settleInbound(event.operation_id, true);
+      asset.submit(
+        {
+          type: "task_report",
+          action: "complete",
+          task_id: event.message.task.task_id,
+          runtime_id: "runtime-alpha",
+          body: { output: { surveyed: true } }
+        },
+        { destination: { role: "gateway", id: "gateway" }, operationID: "complete-task-visible" }
+      );
+    });
+    gateway.onEvent((event) => {
+      if (event.type === "message" && event.message.type === "task_report" && event.addressed_to_local) {
+        gateway.settleInbound(event.operation_id, true);
+      }
+    });
+    gateway.submit(
+      { type: "task_delivery", delivery: "assignment", task: pendingTask("task-visible", "2026-09-02T12:00:00Z") },
+      { destination: { role: "asset", id: "asset-alpha" }, operationID: "deliver-task-visible" }
+    );
+    await clock.runUntilIdle();
+    expect(peerPicture.snapshot().records).toContainEqual(
+      expect.objectContaining({
+        id: "task-visible",
+        source: { role: "asset", id: "asset-alpha" },
+        confirmation: "awaiting_core",
+        state: expect.objectContaining({ status: "completed", output: { surveyed: true } })
+      })
+    );
+    expect(peer.diagnostics().inbound_awaiting_settlement).toBe(0);
+  });
+});
+
+function directPair(): {
+  clock: VirtualClock;
+  gateway: LinkTransport;
+  asset: LinkTransport;
+  assetPicture: SharedPicture;
+} {
+  const clock = new VirtualClock();
+  const network = new SimulatedPacketNetwork({ seed: 42, clock });
+  const gatewayRadio = network.addRadio("gateway", 1);
+  const assetRadio = network.addRadio("asset-alpha", 2);
+  network.connect("gateway", "asset-alpha");
+  const assetPicture = new SharedPicture("asset-picture");
+  return {
+    clock,
+    gateway: new LinkTransport({
+      node: { role: "gateway", id: "gateway" },
+      sourceGeneration: 1,
+      radio: gatewayRadio,
+      clock
+    }),
+    asset: new LinkTransport({
+      node: { role: "asset", id: "asset-alpha" },
+      sourceGeneration: 1,
+      radio: assetRadio,
+      clock,
+      picture: assetPicture
+    }),
+    assetPicture
+  };
+}
+
+function pendingTask(taskID: string, createdAt: string): TaskResource {
+  return {
+    asset_id: "asset-alpha",
+    command: "atlas.survey",
+    created_at: createdAt,
+    input: {},
+    status: "pending",
+    task_id: taskID,
+    updated_at: createdAt
+  };
+}

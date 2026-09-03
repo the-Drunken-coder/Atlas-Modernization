@@ -1,6 +1,6 @@
 # Atlas Meshtastic Link
 
-This document is the completed discovery record for a new Atlas communication method built on Meshtastic. It captures confirmed intent, inherited Atlas constraints, and the accepted target architecture. It is not an implementation claim.
+This document is the completed discovery record and governing architecture for the Atlas communication method implemented in [`packages/meshtastic-link`](../../packages/meshtastic-link/README.md). Hardware calibration and the separate Gateway and Asset application integrations remain distinct follow-on work where noted.
 
 ## Confirmed starting point
 
@@ -224,7 +224,7 @@ Each Link service maintains its own Shared Picture from state it receives. The G
 
 ## Implementation boundary
 
-Meshtastic Link will be a separate TypeScript and Node 24 workspace at `packages/meshtastic-link`. It is not part of the MeshCore-specific FieldLink package. One Link service implementation and executable supports explicit `asset` and `gateway` modes while sharing configuration, framing, queues, Shared Picture behavior, simulation, and its local API. Core access remains in the Gateway application outside the package.
+Meshtastic Link is a separate TypeScript and Node 24 workspace at `packages/meshtastic-link`. It is not part of the MeshCore-specific FieldLink package. One Link service implementation and executable supports explicit `asset` and `gateway` modes while sharing configuration, framing, queues, Shared Picture behavior, simulation, and its local API. Core access remains in the Gateway application outside the package.
 
 The package initially connects to Meshtastic radios only through USB serial. The official Meshtastic Node serial dependency remains behind an Atlas-owned adapter so the Link service and simulator do not depend directly on one client library throughout their code.
 
