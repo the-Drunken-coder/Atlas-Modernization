@@ -1,8 +1,10 @@
 package plugins
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -234,6 +236,49 @@ func TestDefaultHTTPClientBypassesEnvironmentProxies(t *testing.T) {
 	transport, ok := client.client.Transport.(*http.Transport)
 	if !ok || transport.Proxy != nil {
 		t.Fatalf("private transport = %#v, want proxy disabled", client.client.Transport)
+	}
+}
+
+func TestHTTPClientOmitsIPv6ZoneFromHostHeader(t *testing.T) {
+	type requestResult struct {
+		host string
+		err  error
+	}
+	dialed := make(chan string, 1)
+	requestRead := make(chan requestResult, 1)
+	transport := &http.Transport{
+		Proxy: nil,
+		DialContext: func(_ context.Context, _, address string) (net.Conn, error) {
+			dialed <- address
+			client, server := net.Pipe()
+			go func() {
+				defer func() { _ = server.Close() }()
+				request, err := http.ReadRequest(bufio.NewReader(server))
+				if err != nil {
+					requestRead <- requestResult{err: err}
+					return
+				}
+				requestRead <- requestResult{host: request.Host}
+				_, _ = server.Write([]byte("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 15\r\n\r\n{\"status\":\"ok\"}"))
+			}()
+			return client, nil
+		},
+	}
+	t.Cleanup(transport.CloseIdleConnections)
+	client := newHTTPClient(&http.Client{Transport: transport, Timeout: time.Second})
+	healthy, clientErr := client.health(context.Background(), "http://[fe80::1%25Windows%20Loves%20Spaces]:8080")
+	if clientErr != nil || !healthy {
+		t.Fatalf("health = %t, error = %v", healthy, clientErr)
+	}
+	if got, want := <-dialed, "[fe80::1%Windows Loves Spaces]:8080"; got != want {
+		t.Fatalf("dial address = %q, want %q", got, want)
+	}
+	result := <-requestRead
+	if result.err != nil {
+		t.Fatal(result.err)
+	}
+	if got, want := result.host, "[fe80::1]:8080"; got != want {
+		t.Fatalf("Host = %q, want %q", got, want)
 	}
 }
 
