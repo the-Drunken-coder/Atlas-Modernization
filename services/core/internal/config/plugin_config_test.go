@@ -41,6 +41,8 @@ func TestPluginConfigurationNormalizesAndRejectsInvalidEndpoints(t *testing.T) {
 		{{ID: "reference", BaseURL: "http://reference:8080#"}},
 		{{ID: "reference", BaseURL: "http://:8080"}},
 		{{ID: "reference", BaseURL: "http://reference]:8080"}},
+		{{ID: "reference", BaseURL: "http://foo;bar"}},
+		{{ID: "reference", BaseURL: "http://foo%25bar"}},
 		{{ID: "reference", BaseURL: "http://reference:"}},
 		{{ID: "reference", BaseURL: "http://[::1]:"}},
 		{{ID: "reference", BaseURL: "http://reference:0"}},

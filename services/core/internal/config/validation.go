@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/the-drunken-coder/atlas/services/core/internal/pluginid"
+	"golang.org/x/net/idna"
 )
 
 func (c *Config) validate() error {
@@ -54,7 +55,8 @@ func (c *Config) validatePlugins() error {
 			return fmt.Errorf("plugins[%d].base_url must be a plain HTTP origin", index)
 		}
 		hostname := parsed.Hostname()
-		invalidHostname := strings.ContainsAny(hostname, "[]<>\"") || (!strings.HasPrefix(parsed.Host, "[") && strings.Contains(hostname, ":"))
+		_, hostnameErr := idna.Lookup.ToASCII(hostname)
+		invalidHostname := !strings.HasPrefix(parsed.Host, "[") && hostnameErr != nil
 		if parsed.Scheme != "http" || hostname == "" || invalidHostname || parsed.User != nil || strings.HasSuffix(parsed.Host, ":") || strings.ContainsAny(plugin.BaseURL, "?#") || parsed.Path != "" {
 			return fmt.Errorf("plugins[%d].base_url must be a plain HTTP origin", index)
 		}
