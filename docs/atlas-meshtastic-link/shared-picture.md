@@ -1,18 +1,18 @@
 # Shared Picture
 
-The Shared Picture is the ephemeral latest-known view exposed by each Meshtastic Link Runtime. It lets local software inspect current Atlas state without waiting on a radio request.
+The Shared Picture is the ephemeral latest-known view exposed by each Meshtastic Link service. It lets local software inspect current Atlas state without waiting on a radio request.
 
 ## Accepted behavior
 
-- Every Runtime has its own Shared Picture.
-- It starts empty whenever the Runtime starts and is not restored from disk.
+- Every Link service has its own Shared Picture.
+- It starts empty whenever the Link service starts and is not restored from disk.
 - It learns primarily from useful channel traffic that the local Asset did not request.
 - State returned for a local request enters the same picture when it represents a supported Atlas record.
 - It keeps the latest accepted state for each record rather than a history of updates.
 - It may be incomplete and may temporarily differ from the pictures on other nodes.
 - In the initial five-radio network, routine publication should normally produce a useful current picture within thirty seconds.
 
-The thirty-second target does not make the picture globally synchronized. The Runtime becomes ready when its link and local interface are operational, and the picture warms in the background.
+The thirty-second target does not make the picture globally synchronized. The Link service becomes ready when its link and local interface are operational, and the picture warms in the background.
 
 ## Required record context
 
@@ -20,9 +20,11 @@ Each record must retain enough context for local software to judge it and for th
 
 - Atlas resource type and stable ID
 - Latest accepted Atlas state or observation
-- Source Asset and Runtime when known
+- Role-tagged source Link node
+- Source Asset and Atlas Runtime ID when the Atlas payload provides them
+- Source generation, Link service session, and source sequence
 - Observation time and local receive time
-- Atlas version or source sequence when available
+- Atlas version when available
 - Freshness state
 - Whether the record arrived directly from a field publisher or through a Gateway feed
 
@@ -40,6 +42,8 @@ The Shared Picture contains the latest accepted state for:
 
 A Task acknowledgement is eligible when it changes the current Task state. Transport-level acknowledgements are not.
 
+An observational `tasks_for_asset` feed may update Task state in the Shared Picture. It does not deliver work to the Asset application. Only the separate addressed and confirmed Task path may invoke the Task handler.
+
 The following remain available only as diagnostic evidence:
 
 - Discovery, joining, and authentication exchanges
@@ -49,6 +53,8 @@ The following remain available only as diagnostic evidence:
 - Malformed, rejected, or unsupported messages
 
 ## Staleness and removal
+
+Before applying state, the Link service rejects traffic from a source generation older than the newest generation accepted for that Link node. Within the active generation and service session, a lower source sequence cannot replace a higher one. Atlas resource versions still determine order when Core provides them.
 
 Freshness depends on the kind of record:
 
@@ -68,8 +74,8 @@ These intervals are Link defaults and may later be tuned from scenario and field
 
 ## Not operational history
 
-Replacing a record removes the older value from the Shared Picture. Atlas Core may retain durable history, and the Runtime may emit bounded diagnostic evidence, but neither is part of the Shared Picture interface.
+Replacing a record removes the older value from the Shared Picture. Atlas Core may retain durable history, and the Link service may emit bounded diagnostic evidence, but neither is part of the Shared Picture interface.
 
 ## Implementation detail
 
-Exact HTTP routes and event names remain implementation details. [`runtime-interface.md`](runtime-interface.md) fixes the logical snapshot and live-update behavior.
+Exact HTTP routes and event names remain implementation details. [`service-interface.md`](service-interface.md) fixes the logical snapshot and live-update behavior.

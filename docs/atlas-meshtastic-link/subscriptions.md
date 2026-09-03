@@ -4,20 +4,20 @@ A Link subscription asks the Gateway to publish and refresh selected Atlas data 
 
 ## Combined demand
 
-The Gateway combines subscriptions from every joined Runtime:
+The Gateway combines subscriptions from every joined Link service:
 
 1. The first subscription for a feed creates publication demand.
 2. Additional subscriptions for the same feed do not create additional radio transmissions.
 3. An update for an in-demand feed is broadcast once on the shared channel.
-4. Every Runtime may add the update to its Shared Picture, including Runtimes that did not subscribe.
-5. One Runtime unsubscribing removes only its demand.
-6. Publication stops only after no Runtime still subscribes to the feed.
+4. Every Link service may add the update to its Shared Picture, including Link services that did not subscribe.
+5. One Link service unsubscribing removes only its demand.
+6. Publication stops only after no Link service still subscribes to the feed.
 
 ## Feed selectors
 
 The initial system supports:
 
-- One exact Atlas record by ID
+- One exact Atlas record by resource type and ID
 - All records of one supported Atlas resource type
 - Tasks assigned to one Asset
 
@@ -25,15 +25,17 @@ The link does not add an arbitrary query language or geographic filtering. A new
 
 ## Subscription lifetime
 
-Link subscriptions are renewable leases. A Runtime renews its active subscriptions while joined. If it disappears without unsubscribing, its leases expire and stop contributing publication demand.
+Link subscriptions are renewable leases. A Link service renews its active subscriptions while joined. If it disappears without unsubscribing, its leases expire and stop contributing publication demand.
 
-A Runtime renews each active Link subscription every thirty seconds. The Gateway lease expires after ninety seconds without a renewal. One or two lost renewals therefore do not stop the feed, while demand from a vanished Runtime disappears within roughly a minute and a half. An explicit unsubscribe removes that Runtime's demand immediately.
+A Link service renews each active Link subscription every thirty seconds. The Gateway lease expires after ninety seconds without a renewal. One or two lost renewals therefore do not stop the feed, while demand from a vanished Link service disappears within roughly a minute and a half. An explicit unsubscribe removes that Link service's demand immediately.
 
 ## Feed update behavior
 
-The Gateway coalesces superseded state while it waits for radio capacity. If several position or Track updates accumulate for the same feed, it keeps the newest one and does not replay the obsolete intermediate values.
+The Gateway coalesces superseded state while it waits for radio capacity. If several position, Track, or observational Task updates accumulate for the same feed, it keeps the newest state for each record and does not replay obsolete intermediate values.
 
-When the first Runtime subscribes to a feed, the Gateway broadcasts the current value once and then publishes subsequent updates. Additional subscribers reuse the active feed and do not trigger another initial broadcast unless the current value has not yet been published.
+When the first Link service subscribes to a feed, the Gateway broadcasts the current value once and then publishes subsequent updates. Additional subscribers reuse the active feed and do not trigger another initial broadcast unless the current value has not yet been published.
+
+`tasks_for_asset` is an observational Shared Picture feed. It does not deliver work. The Gateway sends eligible Task assignments and cancellations to their addressed Asset through the confirmed Task path without requiring a Link subscription. A Task received only through the feed never invokes the Asset's Task handler and never counts as Task acknowledgement.
 
 ## Duplicate-path airtime concern
 

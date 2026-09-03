@@ -29,14 +29,17 @@ The transport wraps a generated Atlas payload with only the information needed t
 
 - Meshtastic Link protocol revision
 - Message family
-- Stable source Asset identity
-- Optional destination Asset or Gateway identity
-- Fresh Runtime session identity
+- Stable, role-tagged source Link node identity for either an Asset or Gateway
+- Optional role-tagged destination Link node identity
+- Gateway-issued source generation
+- Fresh Link service session identity
 - Increasing source sequence
-- Stable request or operation identity when applicable
+- Stable request, Task, or operation identity when applicable
 - Fragmentation identity and chunk position when fragmented
 
-These are Link fields, not Atlas resource fields. Atlas Protocol remains unaware of Meshtastic packet boundaries.
+These are Link fields, not Atlas resource fields. Atlas Protocol remains unaware of Meshtastic packet boundaries. Link node identity is independent of the attached radio's Meshtastic identity so replacing a radio does not rename an Asset or Gateway.
+
+The Gateway assigns increasing source generations when an Asset joins and increments its own durable generation when the Gateway service starts. Once a receiver accepts a generation for one source Link node, it rejects every lower generation. Source sequence orders messages only within the accepted generation and service session.
 
 ## Fragmentation and reassembly
 
@@ -48,7 +51,7 @@ Confirmed messages can repair missing chunks without retransmitting a completed 
 
 The scheduler reconsiders priority after every chunk. Higher-priority logical messages may interrupt a lower-priority fragmented transfer and the lower-priority transfer resumes afterward. Fragmentation must not allow a large Object to block cancellation or Task traffic.
 
-One Runtime emits chunks for at most one Object-content transfer at a time. Other Object transfers remain queued, while routine messages and confirmed operations may proceed between its chunks.
+One Link service emits chunks for at most one Object-content transfer at a time. Other Object transfers remain queued, while routine messages and confirmed operations may proceed between its chunks.
 
 ## Radio-suitable Commands
 
@@ -56,16 +59,20 @@ Every Command offered through Meshtastic Link needs a generated radio representa
 
 This is a semantic authoring constraint, not a one-packet guarantee. The unoptimized generated baseline may fragment an otherwise small Task. Measurements then show which representations deserve compact generated forms.
 
+## Task delivery order
+
+Task execution order remains an Atlas application rule, but the radio adapter must preserve enough delivery order for the Asset application to obey it. The Gateway dispatches confirmed Task assignments per Asset in ascending `created_at`, then `task_id`, and waits for application acknowledgement, rejection, or terminal state before delivering the next assignment. A best-effort `tasks_for_asset` feed is picture state and never substitutes for this confirmed ordered path.
+
 ## Compatibility
 
-Discovery advertises the Meshtastic Link revision and capabilities. A Gateway rejects a Runtime that cannot exchange the required Radio contract instead of allowing it to misinterpret operations.
+Discovery advertises the Meshtastic Link revision and capabilities. A Gateway rejects a Link service that cannot exchange the required Radio contract instead of allowing it to misinterpret operations.
 
 Compatibility versioning initially belongs only to Meshtastic Link software. A future communications manager that selects Wi-Fi, Meshtastic, or other methods and updates local packages is outside this system's scope.
 
-An operational mesh uses one selected encoding revision. The simulator may compare several encodings, but field Runtimes do not mix baseline and optimized representations within one joined fleet.
+An operational mesh uses one selected encoding revision. The simulator may compare several encodings, but field Link services do not mix baseline and optimized representations within one joined fleet.
 
 ## Object content
 
-Object metadata may be ordinary shared state. Object content is transferred only on request, addressed to that requester, sent at the lowest priority, and repaired by missing chunk. Other Runtimes do not assemble or retain content they did not request.
+Object metadata may be ordinary shared state. Object content is transferred only on request, addressed to that requester, sent at the lowest priority, and repaired by missing chunk. Other Link services do not assemble or retain content they did not request.
 
 The initial maximum content transfer is 32 KiB. Larger Objects require another communication method.
