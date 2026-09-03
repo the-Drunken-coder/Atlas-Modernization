@@ -38,9 +38,11 @@ export async function main(argv = args): Promise<void> {
     return;
   }
   if (command === "gateway-init") {
+    const gatewayID = requiredOption(argv, "--gateway-id");
+    if (gatewayID.includes(":")) throw new Error("--gateway-id must not contain ':'");
     const store = new GatewayMembershipStore(requiredOption(argv, "--membership"));
     await store.initialize({
-      gateway_node_id: requiredOption(argv, "--gateway-id"),
+      gateway_node_id: gatewayID,
       channel_index: requiredIntegerOption(argv, "--channel-index"),
       channel_name: "ATLAS",
       channel_key_base64: randomBytes(32).toString("base64")

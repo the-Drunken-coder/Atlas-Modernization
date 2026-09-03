@@ -432,7 +432,13 @@ function isNewer(publication: StatePublication, current: PictureRecord, context:
     const currentUpdatedAt = Date.parse((current.state as TaskResource).updated_at);
     if (nextUpdatedAt !== currentUpdatedAt) return nextUpdatedAt > currentUpdatedAt;
     if (newerSourceGeneration) return true;
-    return nextRank > currentRank;
+    if (nextRank < currentRank) return false;
+    return (
+      sameNode(current.source, context.source) &&
+      current.source_generation === context.source_generation &&
+      current.service_session === context.service_session &&
+      context.source_sequence > current.source_sequence
+    );
   }
   return true;
 }

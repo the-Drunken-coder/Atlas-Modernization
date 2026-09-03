@@ -284,6 +284,45 @@ describe("Shared Picture", () => {
     });
   });
 
+  it("applies a later Task transition when its source timestamp is unchanged", () => {
+    const picture = new SharedPicture("picture-session");
+    const pending = {
+      type: "state",
+      resource_type: "task",
+      resource: {
+        asset_id: "asset-alpha",
+        command: "atlas.survey",
+        created_at: "2026-09-02T12:00:00Z",
+        input: {},
+        status: "pending",
+        task_id: "task-equal-time",
+        updated_at: "2026-09-02T12:00:00Z"
+      },
+      observation_time: "2026-09-02T12:00:00Z",
+      path: "gateway_feed",
+      confirmation: "core_confirmed"
+    } as const;
+    const acknowledged = {
+      ...pending,
+      resource: {
+        ...pending.resource,
+        acknowledged_at: "2026-09-02T12:00:00Z",
+        status: "acknowledged"
+      }
+    } as const;
+    const gatewayContext = {
+      source: { role: "gateway", id: "gateway" } as const,
+      source_generation: 1,
+      service_session: "gateway-session",
+      source_sequence: 1,
+      received_at: 0
+    };
+
+    expect(picture.apply(pending, gatewayContext)).toEqual({ status: "applied" });
+    expect(picture.apply(acknowledged, { ...gatewayContext, source_sequence: 2 })).toEqual({ status: "applied" });
+    expect(picture.snapshot().records[0]?.state).toMatchObject({ status: "acknowledged" });
+  });
+
   it("accepts a later field observation without a new Core version", () => {
     const picture = new SharedPicture("picture-session");
     const first = positionPublication(1);

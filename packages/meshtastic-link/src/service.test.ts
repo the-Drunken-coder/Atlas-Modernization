@@ -247,6 +247,17 @@ describe("loopback Link service", () => {
     service.stop();
   });
 
+  it("does not let a deferred callback overwrite a terminal lifecycle", () => {
+    const service = new LinkService({ mode: "gateway", nodeID: "gateway", clock: new VirtualClock() });
+    service.setLifecycle("error", "serial connection lost");
+
+    service.setLifecycle("active", "join attempt deferred: radio send failed");
+
+    expect(service.status()).toMatchObject({ lifecycle: "error", detail: "serial connection lost" });
+    service.stop();
+    expect(service.status().lifecycle).toBe("stopped");
+  });
+
   it("expires local subscription demand when a client stops renewing", async () => {
     const clock = new VirtualClock();
     const transitions: string[] = [];

@@ -41,26 +41,44 @@ export class MeshtasticSerialRadio implements LinkRadio, RadioConfigurationAdapt
   private readonly channels = new Map<number, Protobuf.Channel.Channel>();
   private metadata: Protobuf.Mesh.DeviceMetadata | undefined;
   private localRadioNodeNumber: number | undefined;
-  private constructor(private readonly device: MeshDevice) {
+  private recoveringConfiguration = false;
+  private closed = false;
+
+  private constructor(
+    private readonly path: string,
+    private device: MeshDevice
+  ) {
+    this.bindDevice(device);
+  }
+
+  private bindDevice(device: MeshDevice): void {
+    const current = (): boolean => this.device === device;
     device.events.onMyNodeInfo.subscribe((node: Protobuf.Mesh.MyNodeInfo) => {
+      if (!current()) return;
       this.localRadioNodeNumber = node.myNodeNum;
     });
     device.events.onConfigPacket.subscribe((config: Protobuf.Config.Config) => {
+      if (!current()) return;
       if (config.payloadVariant.case) this.configs.set(config.payloadVariant.case, config);
     });
     device.events.onModuleConfigPacket.subscribe((config: Protobuf.ModuleConfig.ModuleConfig) => {
+      if (!current()) return;
       if (config.payloadVariant.case) this.moduleConfigs.set(config.payloadVariant.case, config);
     });
     device.events.onChannelPacket.subscribe((channel: Protobuf.Channel.Channel) => {
+      if (!current()) return;
       this.channels.set(channel.index, channel);
     });
     device.events.onDeviceMetadataPacket.subscribe((packet: { data: Protobuf.Mesh.DeviceMetadata }) => {
+      if (!current()) return;
       this.metadata = packet.data;
     });
     device.events.onNodeInfoPacket.subscribe((node: Protobuf.Mesh.NodeInfo) => {
+      if (!current()) return;
       if (node.user?.publicKey && node.user.publicKey.byteLength > 0) this.knownPublicKeys.add(node.num);
     });
     device.events.onMeshPacket.subscribe((packet: Protobuf.Mesh.MeshPacket) => {
+      if (!current()) return;
       if (
         packet.decoded?.portnum !== Protobuf.Portnums.PortNum.PRIVATE_APP ||
         packet.decoded.payload.byteLength === 0
@@ -77,7 +95,14 @@ export class MeshtasticSerialRadio implements LinkRadio, RadioConfigurationAdapt
       for (const handler of this.handlers) handler(received);
     });
     device.events.onDeviceStatus.subscribe((status: Types.DeviceStatusEnum) => {
-      if (status !== Types.DeviceStatusEnum.DeviceDisconnected) return;
+      if (
+        !current() ||
+        status !== Types.DeviceStatusEnum.DeviceDisconnected ||
+        this.recoveringConfiguration ||
+        this.closed
+      ) {
+        return;
+      }
       const reason = new Error("Meshtastic radio disconnected");
       for (const handler of this.disconnectHandlers) handler(reason);
     });
@@ -85,12 +110,11 @@ export class MeshtasticSerialRadio implements LinkRadio, RadioConfigurationAdapt
 
   static async open(path: string): Promise<MeshtasticSerialRadio> {
     if (!path.startsWith("/dev/cu.")) throw new TypeError("Meshtastic serial paths must be macOS /dev/cu.* devices");
-    const transport = await TransportNodeSerial.create(path, 115_200);
-    const device = new MeshDevice(transport);
-    const radio = new MeshtasticSerialRadio(device);
+    const device = await MeshtasticSerialRadio.createDevice(path);
+    const radio = new MeshtasticSerialRadio(path, device);
     device.setHeartbeatInterval(20_000);
     try {
-      await radio.configureAndWait(() => device.configure());
+      await radio.configureAndWait(() => device.configure(), device);
       return radio;
     } catch (error) {
       try {
@@ -364,6 +388,7 @@ export class MeshtasticSerialRadio implements LinkRadio, RadioConfigurationAdapt
   }
 
   async close(): Promise<void> {
+    this.closed = true;
     this.handlers.clear();
     this.disconnectHandlers.clear();
     await this.device.disconnect();
@@ -388,11 +413,82 @@ export class MeshtasticSerialRadio implements LinkRadio, RadioConfigurationAdapt
   }
 
   private async commitAndRefresh(): Promise<void> {
-    await this.configureAndWait(() => this.device.commitEditSettings());
+    this.recoveringConfiguration = true;
+    const device = this.device;
+    const configured = this.waitForConfigured(device);
+    const commit = device.commitEditSettings();
+    void commit.catch(() => undefined);
+    try {
+      const first = await Promise.race([
+        commit.then(() => "commit" as const),
+        configured.promise.then(() => "configured" as const)
+      ]);
+      if (first === "configured") await commit;
+      else await configured.promise;
+    } catch (error) {
+      configured.cancel();
+      if (!configured.disconnected() && !isDisconnectError(error)) throw error;
+      await this.reconnectAndConfigure();
+    } finally {
+      this.recoveringConfiguration = false;
+    }
   }
 
-  private async configureAndWait<Result>(operation: () => Promise<Result>): Promise<Result> {
-    const configured = this.waitForConfigured();
+  private async reconnectAndConfigure(timeoutMs = 45_000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    let lastError: unknown = new Error("Meshtastic radio did not reconnect");
+    while (Date.now() < deadline) {
+      let device: MeshDevice | undefined;
+      try {
+        device = await MeshtasticSerialRadio.createDevice(this.path);
+        this.device = device;
+        this.resetSnapshot();
+        this.bindDevice(device);
+        device.setHeartbeatInterval(20_000);
+        const connectedDevice = device;
+        await this.configureAndWait(
+          () => connectedDevice.configure(),
+          connectedDevice,
+          Math.max(1, deadline - Date.now())
+        );
+        return;
+      } catch (error) {
+        lastError = error;
+        if (device !== undefined) {
+          try {
+            await device.disconnect();
+          } catch {
+            // Preserve the reconnect failure.
+          }
+          if (!isDisconnectError(error)) throw error;
+        }
+        const remaining = deadline - Date.now();
+        if (remaining > 0) await delay(Math.min(250, remaining));
+      }
+    }
+    throw new Error(`Meshtastic radio did not reconnect after configuration: ${errorMessage(lastError)}`);
+  }
+
+  private resetSnapshot(): void {
+    this.knownPublicKeys.clear();
+    this.configs.clear();
+    this.moduleConfigs.clear();
+    this.channels.clear();
+    this.metadata = undefined;
+    this.localRadioNodeNumber = undefined;
+  }
+
+  private static async createDevice(path: string): Promise<MeshDevice> {
+    const transport = await TransportNodeSerial.create(path, 115_200);
+    return new MeshDevice(transport);
+  }
+
+  private async configureAndWait<Result>(
+    operation: () => Promise<Result>,
+    device: MeshDevice,
+    timeoutMs = 45_000
+  ): Promise<Result> {
+    const configured = this.waitForConfigured(device, timeoutMs);
     void configured.promise.catch(() => undefined);
     try {
       const result = await operation();
@@ -404,29 +500,47 @@ export class MeshtasticSerialRadio implements LinkRadio, RadioConfigurationAdapt
     }
   }
 
-  private waitForConfigured(timeoutMs = 45_000): { promise: Promise<void>; cancel: () => void } {
+  private waitForConfigured(
+    device: MeshDevice,
+    timeoutMs = 45_000
+  ): { promise: Promise<void>; cancel: () => void; disconnected: () => boolean } {
     let cancel = (): void => undefined;
+    let disconnected = false;
     const promise = new Promise<void>((resolve, reject) => {
       let finished = false;
       const finish = (error?: Error): void => {
         if (finished) return;
         finished = true;
         clearTimeout(timeout);
-        this.device.events.onDeviceStatus.unsubscribe(onStatus);
+        device.events.onDeviceStatus.unsubscribe(onStatus);
         if (error) reject(error);
         else resolve();
       };
       const onStatus = (status: Types.DeviceStatusEnum): void => {
         if (status === Types.DeviceStatusEnum.DeviceConfigured) finish();
-        else if (status === Types.DeviceStatusEnum.DeviceDisconnected)
+        else if (status === Types.DeviceStatusEnum.DeviceDisconnected) {
+          disconnected = true;
           finish(new Error("Meshtastic radio disconnected"));
+        }
       };
       const timeout = setTimeout(() => finish(new Error("timed out waiting for Meshtastic configuration")), timeoutMs);
-      this.device.events.onDeviceStatus.subscribe(onStatus);
+      device.events.onDeviceStatus.subscribe(onStatus);
       cancel = () => finish();
     });
-    return { promise, cancel };
+    return { promise, cancel, disconnected: () => disconnected };
   }
+}
+
+function isDisconnectError(error: unknown): boolean {
+  return /disconnect|connection lost|port.+clos/i.test(errorMessage(error));
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 function channelNumber(index: number): Types.ChannelNumber {

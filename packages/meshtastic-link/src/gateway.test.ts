@@ -94,6 +94,21 @@ describe("Gateway application seams", () => {
       selector: another
     });
   });
+
+  it("reports when active leases exhaust transition-fence capacity", () => {
+    const demand = new GatewayFeedDemand();
+    for (let index = 0; index < 4_096; index++) {
+      const selector = { kind: "record", resource_type: "entity", id: `entity-${index}` } as const;
+      demand.apply(subscriptionEvent(`asset-${index}`, "add", selector), 0);
+    }
+    const overflow = { kind: "record", resource_type: "entity", id: "entity-overflow" } as const;
+
+    expect(demand.apply(subscriptionEvent("asset-overflow", "add", overflow), 1)).toEqual({
+      rejected: true,
+      reason: "subscription transition capacity is exhausted"
+    });
+    expect(demand.active(1)).toHaveLength(4_096);
+  });
 });
 
 function messageEvent(message: ReturnType<typeof positionPublication>): TransportMessageEvent {
