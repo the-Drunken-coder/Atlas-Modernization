@@ -163,13 +163,32 @@ describe("loopback Link service", () => {
 
   it("expires local subscription demand when a client stops renewing", async () => {
     const clock = new VirtualClock();
-    const service = new LinkService({ mode: "gateway", nodeID: "gateway", clock });
+    const transitions: string[] = [];
+    const service = new LinkService({
+      mode: "gateway",
+      nodeID: "gateway",
+      clock,
+      onGatewaySubscriptionTransition: (transition) => transitions.push(transition.action)
+    });
     const selector = { kind: "resource_type", resource_type: "entity" } as const;
     expect(service.updateLocalSubscription("client-a", "add", selector)).toMatchObject({ active: 1 });
 
     await clock.advanceBy(SUBSCRIPTION_LEASE_MS);
 
+    expect(transitions).toEqual(["add", "renew", "renew", "remove"]);
     expect(service.updateLocalSubscription("client-a", "remove", selector)).toEqual({ changed: false, active: 0 });
+    service.stop();
+  });
+
+  it("rejects Gateway subscription demand when no feed bridge is attached", () => {
+    const service = new LinkService({ mode: "gateway", nodeID: "gateway", clock: new VirtualClock() });
+    const selector = { kind: "resource_type", resource_type: "entity" } as const;
+
+    expect(service.updateLocalSubscription("client-a", "add", selector)).toEqual({
+      changed: false,
+      active: 0,
+      reason: "Gateway feed bridge is unavailable"
+    });
     service.stop();
   });
 });

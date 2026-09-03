@@ -6,7 +6,12 @@ import { isFeedSelector, isLinkMessage } from "./contract.js";
 import type { AssetJoinStatus } from "./joining.js";
 import { PictureCursorError, type PictureEvent, type PictureSnapshot, SharedPicture } from "./picture.js";
 import { type RadioProfile, type RadioProfileManager, validateRadioProfile } from "./profile.js";
-import { LocalSubscriptionDemand, SUBSCRIPTION_LEASE_MS, SUBSCRIPTION_RENEWAL_MS } from "./subscriptions.js";
+import {
+  LocalSubscriptionDemand,
+  SUBSCRIPTION_LEASE_MS,
+  SUBSCRIPTION_RENEWAL_MS,
+  type SubscriptionTransition
+} from "./subscriptions.js";
 import {
   LinkTransport,
   type TransportDiagnostics,
@@ -50,6 +55,7 @@ export type LinkServiceOptions = {
   picture?: SharedPicture;
   profileManager?: RadioProfileManager;
   gatewayNode?: LinkNode;
+  onGatewaySubscriptionTransition?: (transition: SubscriptionTransition) => void;
 };
 
 export class LinkService {
@@ -92,7 +98,7 @@ export class LinkService {
     if (gatewayNode) this.gatewayNode = gatewayNode;
     this.unsubscribeTransport = transport.onEvent((event) => this.handleTransportEvent(event));
     this.setLifecycle("active");
-    for (const selector of this.subscriptions.aggregate().values()) this.sendSubscription("add", selector);
+    for (const selector of this.subscriptions.aggregate().values()) this.dispatchSubscription("add", selector);
     this.scheduleRenewalIfNeeded();
   }
 
@@ -162,9 +168,16 @@ export class LinkService {
     if (this.node.role === "asset" && (!this.transport || !this.gatewayNode)) {
       return { changed: false, active: this.subscriptions.aggregate().size, reason: "Gateway is unavailable" };
     }
+    if (this.node.role === "gateway" && !this.options.onGatewaySubscriptionTransition) {
+      return {
+        changed: false,
+        active: this.subscriptions.aggregate().size,
+        reason: "Gateway feed bridge is unavailable"
+      };
+    }
     const transition =
       action === "remove" ? this.subscriptions.remove(clientID, selector) : this.subscriptions.add(clientID, selector);
-    if (transition) this.sendSubscription(transition.action, transition.selector);
+    if (transition) this.dispatchSubscription(transition.action, transition.selector);
     if (action === "remove") {
       if (!this.subscriptions.hasClient(clientID)) this.cancelClientLease(clientID);
     } else {
@@ -177,7 +190,7 @@ export class LinkService {
   disconnectClient(clientID: string): void {
     this.cancelClientLease(clientID);
     for (const transition of this.subscriptions.disconnect(clientID)) {
-      this.sendSubscription(transition.action, transition.selector);
+      this.dispatchSubscription(transition.action, transition.selector);
     }
     this.scheduleRenewalIfNeeded();
   }
@@ -233,7 +246,11 @@ export class LinkService {
     return undefined;
   }
 
-  private sendSubscription(action: "add" | "renew" | "remove", selector: FeedSelector): void {
+  private dispatchSubscription(action: "add" | "renew" | "remove", selector: FeedSelector): void {
+    if (this.node.role === "gateway") {
+      this.options.onGatewaySubscriptionTransition?.({ action, selector });
+      return;
+    }
     if (!this.transport || !this.gatewayNode) return;
     this.transport.submit({ type: "subscription", action, selector }, { destination: this.gatewayNode });
   }
@@ -260,10 +277,16 @@ export class LinkService {
       this.clock.cancel(this.renewalTimer);
       this.renewalTimer = undefined;
     }
-    if (!this.transport || !this.gatewayNode || this.subscriptions.aggregate().size === 0) return;
+    const canDispatch =
+      this.node.role === "gateway"
+        ? this.options.onGatewaySubscriptionTransition !== undefined
+        : this.transport !== undefined && this.gatewayNode !== undefined;
+    if (!canDispatch || this.subscriptions.aggregate().size === 0) return;
     this.renewalTimer = this.clock.schedule(SUBSCRIPTION_RENEWAL_MS, () => {
       this.renewalTimer = undefined;
-      for (const transition of this.subscriptions.renewals()) this.sendSubscription("renew", transition.selector);
+      for (const transition of this.subscriptions.renewals()) {
+        this.dispatchSubscription("renew", transition.selector);
+      }
       this.scheduleRenewalIfNeeded();
     });
   }
