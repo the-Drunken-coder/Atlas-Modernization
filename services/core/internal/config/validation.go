@@ -105,8 +105,13 @@ func validPluginHostname(baseURL string, parsed *url.URL) bool {
 			}
 		}
 		if strings.IndexFunc(label, func(r rune) bool { return r > unicode.MaxASCII }) != -1 {
-			normalized, err := pluginHostnameLiteral.ToUnicode(label)
-			if err != nil || normalized != label {
+			normalized, _ := pluginHostnameLiteral.ToUnicode(label)
+			if normalized != label {
+				return false
+			}
+			lowerLabel := strings.ToLower(label)
+			lowerNormalized, err := pluginHostnameLiteral.ToUnicode(lowerLabel)
+			if err != nil || lowerNormalized != lowerLabel {
 				return false
 			}
 			runes := []rune(label)
