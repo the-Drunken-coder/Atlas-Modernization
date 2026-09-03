@@ -10,6 +10,7 @@ import {
   type DiscoveryBeacon,
   decodeJoinMessage,
   encodeJoinMessage,
+  type GatewayAuthenticationPolicy,
   GatewayJoinService,
   PreSharedKeyAuthenticationPolicy,
   type SourceAdmission
@@ -218,6 +219,61 @@ describe("joining and Radio profile", () => {
     await new Promise<void>((resolve) => setTimeout(resolve, 1));
     expect(stopping.status()).toEqual({ state: "stopped" });
     gateway.close();
+  });
+
+  it("does not admit an Asset after the Gateway join service closes", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "atlas-link-join-close-"));
+    const store = new GatewayMembershipStore(join(directory, "membership.json"));
+    await store.initialize({
+      gateway_node_id: "gateway",
+      channel_index: 1,
+      channel_name: "ATLAS",
+      channel_key_base64: Buffer.alloc(32, 9).toString("base64")
+    });
+    let releaseChallenge!: () => void;
+    const challengeReleased = new Promise<void>((resolve) => {
+      releaseChallenge = resolve;
+    });
+    let challengeStarted = false;
+    const authentication: GatewayAuthenticationPolicy = {
+      challenge: async () => {
+        challengeStarted = true;
+        await challengeReleased;
+        return "challenge";
+      },
+      prove: async () => "proof",
+      verify: async () => true
+    };
+    const clock = new VirtualClock();
+    const network = new SimulatedPacketNetwork({ seed: 55, clock });
+    const radio = network.addRadio("gateway", 201);
+    const errors: string[] = [];
+    const gateway = new GatewayJoinService(radio, 0, store, authentication, (error) => errors.push(error.message));
+    const beacon: DiscoveryBeacon = {
+      type: "discovery",
+      join_attempt_id: "closing-join",
+      radio_node_id: 101,
+      asset_id: "asset-alpha",
+      service_session: "asset-session",
+      link_revision: LINK_PROTOCOL_REVISION,
+      radio_contract_revision: RADIO_CONTRACT_REVISION,
+      capabilities: ["json", "fragmentation", "confirmation"]
+    };
+
+    radio.receive({
+      payload: encodeJoinMessage(beacon),
+      received_at: 0,
+      radio_source: 101,
+      channel: 0,
+      public_key_encrypted: false
+    });
+    expect(challengeStarted).toBe(true);
+    gateway.close();
+    releaseChallenge();
+    await new Promise<void>((resolve) => setTimeout(resolve, 1));
+
+    expect((await store.load()).asset_generations).toEqual({});
+    expect(errors).toEqual([]);
   });
 
   it("applies only owned profile differences and verifies the readback", async () => {

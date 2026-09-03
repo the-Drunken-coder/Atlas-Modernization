@@ -67,6 +67,7 @@ const RETRY_MS: Record<MessagePriority, number> = {
 };
 const OPERATION_RESULT_LIMIT = 4_096;
 const SETTLED_INBOUND_LIMIT = 4_096;
+const TASK_DELIVERY_FENCE_LIMIT = 4_096;
 
 export type TransportMessageEvent = {
   type: "message";
@@ -176,6 +177,7 @@ export class LinkTransport {
   private readonly settledInbound = new Map<string, "confirmed" | "rejected">();
   private readonly operationResults = new Map<string, LinkOperationResult>();
   private readonly intermediateDataConfirmations = new Set<string>();
+  private readonly taskDeliverySequences = new Map<string, number>();
   private readonly listeners = new Set<(event: TransportEvent) => void>();
   private readonly capacityListeners = new Set<() => void>();
   private readonly unsubscribeRadio: () => void;
@@ -510,7 +512,7 @@ export class LinkTransport {
       if (this.outboundOccupancy() + this.pendingInbound.size < this.queueLimit) {
         this.emitCapacityAvailable();
       }
-      if (this.queue.length > 0) this.requestPump(nextDelayMs);
+      if (this.hasEligibleOutbound()) this.requestPump(nextDelayMs);
     }
   }
 
@@ -536,6 +538,15 @@ export class LinkTransport {
     if (outbound.message.type !== "object_content") return true;
     if (this.activeObjectMessageID === undefined) this.activeObjectMessageID = outbound.identity.message_id;
     return this.activeObjectMessageID === outbound.identity.message_id;
+  }
+
+  private hasEligibleOutbound(): boolean {
+    return this.queue.some(
+      (outbound) =>
+        outbound.message.type !== "object_content" ||
+        this.activeObjectMessageID === undefined ||
+        outbound.identity.message_id === this.activeObjectMessageID
+    );
   }
 
   private afterAllChunksSent(outbound: Outbound): void {
@@ -683,6 +694,20 @@ export class LinkTransport {
       }
       return;
     }
+    if (message.type === "task_delivery" && addressed && message.task.asset_id !== this.node.id) {
+      this.rejectAddressedMessage(identity, "Task is assigned to a different Asset");
+      return;
+    }
+    const taskDeliveryOrder = this.acceptTaskDeliverySequence(message, identity);
+    if (taskDeliveryOrder === "stale") {
+      this.mutableMetrics.stale_messages_rejected++;
+      if (addressed) this.rejectAddressedMessage(identity, "Task delivery source sequence is stale");
+      return;
+    }
+    if (taskDeliveryOrder === "duplicate" && !addressed) {
+      this.mutableMetrics.duplicate_packets_suppressed++;
+      return;
+    }
     if (
       addressed &&
       (message.type === "data_response" || (message.type === "object_content" && message.request_id !== undefined)) &&
@@ -690,7 +715,7 @@ export class LinkTransport {
     ) {
       return;
     }
-    this.updatePicture(message, identity);
+    if (taskDeliveryOrder !== "duplicate") this.updatePicture(message, identity);
     const requiresSettlement = deliveryClass(message) === "confirmed" && addressed;
     const settlementID = inboundSettlementID(identity);
     if (requiresSettlement) {
@@ -710,6 +735,10 @@ export class LinkTransport {
         return;
       }
       if (this.pendingInbound.has(settlementID)) {
+        this.mutableMetrics.duplicate_packets_suppressed++;
+        return;
+      }
+      if (taskDeliveryOrder === "duplicate") {
         this.mutableMetrics.duplicate_packets_suppressed++;
         return;
       }
@@ -744,6 +773,42 @@ export class LinkTransport {
       addressed_to_local: addressed,
       requires_settlement: requiresSettlement
     });
+  }
+
+  private acceptTaskDeliverySequence(
+    message: LinkMessage,
+    identity: FrameIdentity
+  ): "new" | "duplicate" | "stale" | undefined {
+    if (message.type !== "task_delivery") return undefined;
+    const key = `${identity.source.role}:${identity.source.id}:${identity.source_generation}:${identity.service_session}:${message.task.task_id}`;
+    const current = this.taskDeliverySequences.get(key);
+    if (current !== undefined) {
+      if (identity.source_sequence < current) return "stale";
+      if (identity.source_sequence === current) return "duplicate";
+    }
+    this.taskDeliverySequences.set(key, identity.source_sequence);
+    while (this.taskDeliverySequences.size > TASK_DELIVERY_FENCE_LIMIT) {
+      const oldest = this.taskDeliverySequences.keys().next().value as string | undefined;
+      if (oldest === undefined) break;
+      this.taskDeliverySequences.delete(oldest);
+    }
+    return "new";
+  }
+
+  private rejectAddressedMessage(identity: FrameIdentity, reason: string): void {
+    const settlementID = inboundSettlementID(identity);
+    this.recordSettledInbound(settlementID, "rejected");
+    this.sendControl(
+      identity.source,
+      {
+        type: "control",
+        control: "rejected",
+        operation_id: identity.operation_id,
+        message_id: identity.message_id,
+        reason
+      },
+      true
+    );
   }
 
   private updatePicture(message: LinkMessage, identity: FrameIdentity): void {
@@ -916,7 +981,8 @@ export class LinkTransport {
       this.pendingDataRequests.delete(requestID);
     }
     removeAll(this.queue, outbound);
-    if (this.activeObjectMessageID === outbound.identity.message_id) this.activeObjectMessageID = undefined;
+    const releasedObject = this.activeObjectMessageID === outbound.identity.message_id;
+    if (releasedObject) this.activeObjectMessageID = undefined;
     const result: LinkOperationResult = {
       operation_id: outbound.identity.operation_id,
       status,
@@ -926,6 +992,7 @@ export class LinkTransport {
     this.recordOperationTiming(outbound);
     this.recordOperation(result);
     this.emit({ type: "operation", result });
+    if (releasedObject && this.hasEligibleOutbound()) this.requestPump();
   }
 
   private confirmDataRequestTransport(outbound: Outbound): void {

@@ -148,6 +148,7 @@ export class GatewayJoinService {
   private readonly processing = new Set<string>();
   private readonly pendingChallenges = new Set<string>();
   private readonly unsubscribe: () => void;
+  private closed = false;
 
   constructor(
     private readonly radio: LinkRadio,
@@ -161,6 +162,8 @@ export class GatewayJoinService {
   }
 
   close(): void {
+    if (this.closed) return;
+    this.closed = true;
     this.unsubscribe();
     this.pending.clear();
     this.completed.clear();
@@ -169,7 +172,7 @@ export class GatewayJoinService {
   }
 
   private async receive(packet: RadioPacket): Promise<void> {
-    if (packet.channel !== this.rendezvousChannel || packet.radio_source === undefined) return;
+    if (this.closed || packet.channel !== this.rendezvousChannel || packet.radio_source === undefined) return;
     const message = decodeJoinMessage(packet.payload);
     if (!message) return;
     if (message.type === "discovery") {
@@ -200,7 +203,9 @@ export class GatewayJoinService {
       let gatewayProof: string;
       try {
         challenge = await this.authentication.challenge(message);
+        if (this.closed) return;
         gatewayProof = await this.authentication.prove(message, challenge);
+        if (this.closed) return;
         this.pending.set(message.join_attempt_id, {
           beacon: message,
           challenge,
@@ -224,8 +229,9 @@ export class GatewayJoinService {
     this.processing.add(message.join_attempt_id);
     try {
       const accepted = await this.authentication.verify(pending.beacon, pending.challenge, message.response);
-      if (!accepted) return;
+      if (!accepted || this.closed) return;
       const admitted = await this.membershipStore.admitAsset(pending.beacon.asset_id);
+      if (this.closed) return;
       const acceptance: JoinAcceptance = {
         type: "accept",
         join_attempt_id: message.join_attempt_id,
@@ -244,6 +250,7 @@ export class GatewayJoinService {
       });
       this.pruneCompleted();
       await this.sendAcceptance(acceptance, packet.radio_source);
+      if (this.closed) return;
       await this.onAdmitted?.({
         source: { role: "asset", id: pending.beacon.asset_id },
         source_generation: admitted.source_generation,
@@ -261,6 +268,7 @@ export class GatewayJoinService {
     gatewayProof: string,
     destination: number
   ): Promise<void> {
+    if (this.closed) return;
     await this.radio.send(
       encodeJoinMessage(
         {
@@ -280,6 +288,7 @@ export class GatewayJoinService {
   }
 
   private async sendAcceptance(acceptance: JoinAcceptance, destination: number): Promise<void> {
+    if (this.closed) return;
     await this.radio.send(encodeJoinMessage(acceptance, this.radio.max_payload_bytes), {
       channel: this.rendezvousChannel,
       destination_radio_node: destination,
@@ -299,7 +308,9 @@ export class GatewayJoinService {
   }
 
   private run(operation: () => Promise<void>): void {
-    void operation().catch((error: unknown) => this.onError?.(asError(error)));
+    void operation().catch((error: unknown) => {
+      if (!this.closed) this.onError?.(asError(error));
+    });
   }
 }
 

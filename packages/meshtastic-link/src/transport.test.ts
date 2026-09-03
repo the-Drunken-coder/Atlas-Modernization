@@ -67,6 +67,28 @@ describe("Link transport", () => {
     });
   });
 
+  it("rejects a Task addressed to a different Asset than its assignment", async () => {
+    const { clock, gateway, asset } = directPair();
+    const task = pendingTask("task-wrong-asset", "2026-09-02T12:00:00Z");
+    task.asset_id = "asset-bravo";
+    let delivered = false;
+    asset.onEvent((event) => {
+      if (event.type === "message" && event.message.type === "task_delivery") delivered = true;
+    });
+
+    gateway.submit(
+      { type: "task_delivery", delivery: "assignment", task },
+      { destination: { role: "asset", id: "asset-alpha" }, operationID: "wrong-asset-task" }
+    );
+    await clock.runUntilIdle();
+
+    expect(delivered).toBe(false);
+    expect(gateway.status("wrong-asset-task")).toMatchObject({
+      status: "rejected",
+      reason: "Task is assigned to a different Asset"
+    });
+  });
+
   it("surfaces application rejection and bounded retry exhaustion", async () => {
     const rejectedPair = directPair();
     rejectedPair.asset.onEvent((event) => {
@@ -551,6 +573,35 @@ describe("Link transport", () => {
     transport.stop();
   });
 
+  it("does not spin while a failed Object transfer holds the Object lane", async () => {
+    const clock = new ControlledClock();
+    const radio = new FailingFirstSendRadio();
+    const transport = new LinkTransport({
+      node: { role: "gateway", id: "gateway" },
+      sourceGeneration: 1,
+      radio,
+      clock,
+      retryIntervalMs: 1_000
+    });
+    for (const operationID of ["object-first", "object-second"]) {
+      transport.submit(
+        {
+          type: "object_content",
+          object_id: operationID,
+          content_base64: Buffer.from(operationID).toString("base64"),
+          sha256: `sha256:${createHash("sha256").update(operationID).digest("hex")}`
+        },
+        { destination: { role: "asset", id: "asset-alpha" }, operationID }
+      );
+    }
+
+    await Promise.all(clock.fireAt(0));
+
+    expect(radio.attemptedOperations).toEqual(["object-first"]);
+    expect(clock.fireAt(0)).toEqual([]);
+    transport.stop();
+  });
+
   it("rejects Asset state that claims Gateway-feed Core authority", () => {
     const clock = new VirtualClock();
     const network = new SimulatedPacketNetwork({ seed: 52, clock });
@@ -662,6 +713,59 @@ describe("Link transport", () => {
     await clock.runUntilIdle();
     expect(picture.snapshot().records[0]?.atlas_version).toBe(2);
     expect(receiver.metrics().stale_messages_rejected).toBeGreaterThan(0);
+  });
+
+  it("does not deliver an assignment that completes after its later cancellation", () => {
+    const clock = new VirtualClock();
+    const network = new SimulatedPacketNetwork({ seed: 54, clock });
+    const radio = network.addRadio("asset-alpha", 2);
+    const receiver = new LinkTransport({
+      node: { role: "asset", id: "asset-alpha" },
+      sourceGeneration: 1,
+      radio,
+      clock
+    });
+    const deliveries: string[] = [];
+    receiver.onEvent((event) => {
+      if (event.type !== "message" || event.message.type !== "task_delivery") return;
+      deliveries.push(event.message.delivery);
+      receiver.settleInbound(event.settlement_id, true);
+    });
+    const deliver = (delivery: "assignment" | "cancellation", sourceSequence: number): void => {
+      const task =
+        delivery === "assignment"
+          ? pendingTask("task-reordered", "2026-09-02T12:00:00Z")
+          : cancelledTask("task-reordered", "2026-09-02T12:00:00Z");
+      const identity: FrameIdentity = {
+        revision: 1,
+        message_type: "task_delivery",
+        source: { role: "gateway", id: "gateway" },
+        destination: { role: "asset", id: "asset-alpha" },
+        source_generation: 1,
+        service_session: "gateway-session",
+        source_sequence: sourceSequence,
+        operation_id: `${delivery}-operation`,
+        message_id: `${delivery}-message`,
+        priority: delivery === "cancellation" ? "safety" : "task"
+      };
+      const message = { type: "task_delivery", delivery, task } as const;
+      for (const frame of fragmentPayload(serializeLinkMessage(message), identity)) {
+        radio.receive({
+          payload: frame,
+          received_at: 0,
+          radio_source: 1,
+          channel: 1,
+          public_key_encrypted: false
+        });
+      }
+    };
+
+    deliver("cancellation", 2);
+    deliver("assignment", 1);
+
+    expect(deliveries).toEqual(["cancellation"]);
+    expect(receiver.metrics().stale_messages_rejected).toBe(1);
+    receiver.stop();
   });
 
   it("uses a Gateway activation announcement to fence delayed Asset traffic", async () => {
