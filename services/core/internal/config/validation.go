@@ -106,8 +106,8 @@ func validPluginHostname(baseURL string, parsed *url.URL) bool {
 		}
 		if !hasUnicode {
 			if len(label) > 63 || strings.IndexFunc(label, func(r rune) bool {
-				return !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
-					(r >= '0' && r <= '9') || r == '-' || r == '_')
+				return (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') &&
+					(r < '0' || r > '9') && r != '-' && r != '_'
 			}) != -1 {
 				return false
 			}
