@@ -7,8 +7,7 @@ The npm package is the operator interface. Atlas Core itself runs from the match
 ## Install
 
 Install Node.js 24 or newer and Docker with Compose 2.17.0 or newer, then install the CLI globally. The CLI requires a
-local Linux Docker daemon over a Unix socket; it refuses remote Docker contexts because the fixed deployment names and
-durable volumes belong to one host.
+local Linux Docker daemon over a Unix socket so its deployment and durable storage remain bound to one host.
 
 ```bash
 npm install --global atlas-core
@@ -167,9 +166,11 @@ for CORS, command-interface configuration, readiness checks, and trusted-proxy b
 PostgreSQL and the configured MinIO bucket are one durable store. Back them up and restore them together. The CLI
 never enables Core's destructive development startup mode and never passes `--volumes` to `docker compose down`.
 After the first full-stack start attempt, it refuses to recreate either durable volume if one goes missing. It also
-binds the state directory to the Docker engine that initialized it and verifies Docker Compose ownership labels before
-using an existing container or volume. Initialization also takes a Docker-engine-scoped project lock, so different
-configuration directories cannot initialize the same fixed deployment concurrently.
+binds the state directory to the Docker engine that initialized it, derives the Compose project and resource names from
+that immutable engine ID, and verifies Docker Compose and engine ownership labels before using an existing container or
+volume. The engine-derived namespace prevents a same-socket daemon replacement from redirecting a destructive command
+into the replacement daemon's live Atlas deployment. Initialization also takes a daemon-wide project lock, so different
+configuration directories cannot initialize the same deployment concurrently.
 
 If `init` finds existing Atlas volumes without its matching configuration, it stops. Recover the credentials and paired
 storage unless you intend to discard the deployment. Use the confirmed `reset` command only when permanent deletion is

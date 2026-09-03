@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { spawn } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import {
   chmodSync,
   closeSync,
@@ -41,34 +41,12 @@ import {
   type UpdateScope
 } from "./terminal-ui.js";
 
-const PROJECT_NAME = "atlas_core_production";
-const POSTGRES_VOLUME = `${PROJECT_NAME}_postgres_data`;
-const MINIO_VOLUME = `${PROJECT_NAME}_minio_data`;
-const API_CONTAINER = `${PROJECT_NAME}_api`;
-const SOURCE_GATEWAY_CONTAINER = `${PROJECT_NAME}_source_gateway`;
-const POSTGRES_CONTAINER = `${PROJECT_NAME}_postgres`;
-const MINIO_CONTAINER = `${PROJECT_NAME}_minio`;
-const MINIO_INIT_CONTAINER = `${PROJECT_NAME}_minio_init`;
-const MUTATION_LOCK_NETWORK = `${PROJECT_NAME}_mutation_lock`;
+const PROJECT_NAME_PREFIX = "atlas_core_production";
+const MUTATION_LOCK_NETWORK = `${PROJECT_NAME_PREFIX}_mutation_lock`;
 const MUTATION_RECOVERY_LOCK_PREFIX = ".mutation.lock.recovering.";
 const PLUGIN_DISABLE_INTENT_FILE = "disable.json";
 const RETIRED_PLUGIN_PREFIX = ".disabled.";
-const RESET_CONTAINERS = [
-  API_CONTAINER,
-  SOURCE_GATEWAY_CONTAINER,
-  POSTGRES_CONTAINER,
-  MINIO_CONTAINER,
-  MINIO_INIT_CONTAINER
-] as const;
-const RESET_VOLUMES = [POSTGRES_VOLUME, MINIO_VOLUME] as const;
-const RESET_CONTAINER_NAMES = new Set<string>(RESET_CONTAINERS);
 const REQUIRED_SERVICES = new Set(["api", "source-gateway", "minio", "postgres"]);
-const SERVICES = [
-  { id: "api", label: "Core API", container: API_CONTAINER },
-  { id: "source-gateway", label: "Source Gateway", container: SOURCE_GATEWAY_CONTAINER },
-  { id: "postgres", label: "PostgreSQL", container: POSTGRES_CONTAINER },
-  { id: "minio", label: "MinIO", container: MINIO_CONTAINER }
-] as const;
 const COMPOSE_VARIABLES = [
   "API_AUTH_KEY",
   "ATLAS_ADMIN_PASSWORD",
@@ -242,7 +220,7 @@ type PluginDisableIntent = {
   previousStatus: PluginDisableTarget;
 };
 
-type MutationRecoveryMode = "default" | "plugin-disable" | "plugin-enable" | "start" | "stop";
+type MutationRecoveryMode = "default" | "plugin-disable" | "plugin-enable" | "reset" | "start" | "stop";
 
 type DeployedPluginMetadata = {
   schema: 1;
@@ -258,10 +236,37 @@ type ReadablePlugin = DeployedPluginMetadata & {
 
 type DockerRuntime = {
   architecture: string;
+  deployment: DockerDeploymentIdentity;
   engineId: string;
   host: string;
   operatingSystem: string;
 };
+
+type DockerDeploymentIdentity = {
+  projectName: string;
+  postgresVolume: string;
+  minioVolume: string;
+  apiContainer: string;
+  sourceGatewayContainer: string;
+  postgresContainer: string;
+  minioContainer: string;
+  minioInitContainer: string;
+};
+
+function dockerDeploymentIdentity(engineId: string): DockerDeploymentIdentity {
+  const engineKey = createHash("sha256").update(engineId).digest("hex");
+  const projectName = `${PROJECT_NAME_PREFIX}_${engineKey}`;
+  return {
+    projectName,
+    postgresVolume: `${projectName}_postgres_data`,
+    minioVolume: `${projectName}_minio_data`,
+    apiContainer: `${projectName}_api`,
+    sourceGatewayContainer: `${projectName}_source_gateway`,
+    postgresContainer: `${projectName}_postgres`,
+    minioContainer: `${projectName}_minio`,
+    minioInitContainer: `${projectName}_minio_init`
+  };
+}
 
 type ComposeServiceState = {
   Service: string;
@@ -616,7 +621,13 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       this.#removeRetiredPluginAssets();
       this.#assertRecoveredPluginDisableEngine(dockerEngineId, mutationLock);
       if (mutationLock.recovered) this.#activateRecoveredMutationLock(mutationLock);
-      const pendingPluginIds = recoveryMode === "default" ? [] : this.#pendingPluginDisableIds();
+      const pendingPluginIds = recoveryMode === "reset" ? [] : this.#pendingPluginDisableIds();
+      if (recoveryMode === "default" && pendingPluginIds.length > 0) {
+        throw new Error(
+          `Atlas Core must finish disabling ${pendingPluginIds.join(", ")} before this deployment change can run. ` +
+            "Retry that Plugin disable, or use reset to permanently replace the deployment."
+        );
+      }
       const recoveredTarget = mutationLock.owner.pluginDisableTarget;
       if (recoveredTarget && pendingPluginIds.length > 0) {
         this.#retargetPluginDisableIntents(pendingPluginIds, recoveredTarget);
@@ -672,8 +683,8 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
             (mutationLock.recovered || (preserveRecoverableLocalLock && dockerLockAcquisitionNeedsRecovery)));
         if (!shouldPreserveRecoverableLocalLock) {
           this.#releaseMutationLock(dockerLock?.owner ?? mutationLock.owner);
-        } else if (preserveRecoverableLocalLock && !isProcessGroupAlive(localOwner.processGroupId)) {
-          idleRecoverableMutationLock = localOwner;
+        } else if (preserveRecoverableLocalLock) {
+          idleRecoverableMutationLock = this.#canonicalRecoverableMutationOwner(localOwner);
         }
       } finally {
         try {
@@ -687,6 +698,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   }
 
   async #initialize(dockerEngineId: string): Promise<void> {
+    const deployment = this.#deploymentIdentity();
     const hasEnv = existsSync(this.#envFile);
     const hasState = existsSync(this.#stateFile);
     if (hasEnv) this.#assertPrivateFile(this.#envFile);
@@ -718,12 +730,12 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
 
     const [hasPostgres, hasMinio, hasApiContainer, hasPostgresContainer, hasMinioContainer, hasMinioInitContainer] =
       await Promise.all([
-        this.#volumeExists(POSTGRES_VOLUME),
-        this.#volumeExists(MINIO_VOLUME),
-        this.#containerExists(API_CONTAINER),
-        this.#containerExists(POSTGRES_CONTAINER),
-        this.#containerExists(MINIO_CONTAINER),
-        this.#containerExists(MINIO_INIT_CONTAINER)
+        this.#volumeExists(deployment.postgresVolume),
+        this.#volumeExists(deployment.minioVolume),
+        this.#containerExists(deployment.apiContainer),
+        this.#containerExists(deployment.postgresContainer),
+        this.#containerExists(deployment.minioContainer),
+        this.#containerExists(deployment.minioInitContainer)
       ]);
     if (
       !hasEnv &&
@@ -743,7 +755,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
 
     const initializingState = this.#writeInitializingState(dockerEngineId, existingState);
     if (!hasEnv) this.#writeConfiguration();
-    if (!hasMinio) await this.#createVolume(MINIO_VOLUME, "minio_data");
+    if (!hasMinio) await this.#createVolume(deployment.minioVolume, "minio_data");
 
     let startedMinio = false;
     try {
@@ -793,7 +805,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     this.#requirePublishedImage();
     this.#assertEnabledPluginDeployment(state);
     const needsPostgresVolume = await this.#assertStartIsSafe(state);
-    if (needsPostgresVolume) await this.#createVolume(POSTGRES_VOLUME, "postgres_data");
+    if (needsPostgresVolume) await this.#createVolume(this.#deploymentIdentity().postgresVolume, "postgres_data");
     const attemptedState = this.#recordStartAttempt(state);
     this.#stdout.write(`Starting Atlas Core ${PACKAGE_VERSION}...\n`);
     await this.#runComposeChecked(
@@ -820,21 +832,34 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     await this.#dockerRuntimeScope.run(runtime, async () => {
       if (existsSync(this.#configDir)) this.#assertResetConfigurationMatchesRuntime(runtime.engineId);
       await this.#checkCommand("docker", ["pull", imageReference]);
-      await this.#withMutationLock(runtime.engineId, async () => {
-        this.#assertResetConfigurationMatchesRuntime(runtime.engineId);
-        await this.#reset(runtime.engineId);
-      });
+      await this.#withMutationLock(
+        runtime.engineId,
+        async () => {
+          this.#assertResetConfigurationMatchesRuntime(runtime.engineId);
+          await this.#reset(runtime.engineId);
+        },
+        "reset"
+      );
     });
   }
 
   async #reset(dockerEngineId: string): Promise<void> {
+    const deployment = this.#deploymentIdentity();
+    const resetContainers = [
+      deployment.apiContainer,
+      deployment.sourceGatewayContainer,
+      deployment.postgresContainer,
+      deployment.minioContainer,
+      deployment.minioInitContainer
+    ];
+    const resetVolumes = [deployment.postgresVolume, deployment.minioVolume];
     const previousState = this.#readState();
     const existingContainers = new Set(await this.#projectContainerNames());
-    for (const name of RESET_CONTAINERS) {
+    for (const name of resetContainers) {
       if (await this.#containerExists(name)) existingContainers.add(name);
     }
     const existingVolumes: string[] = [];
-    for (const name of RESET_VOLUMES) {
+    for (const name of resetVolumes) {
       if (await this.#volumeExists(name)) existingVolumes.push(name);
     }
     await this.#assertResetVolumesHaveNoUnknownUsers(existingVolumes);
@@ -896,7 +921,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       this.#requirePublishedImage();
       this.#assertEnabledPluginDeployment(state);
       const needsPostgresVolume = await this.#assertStartIsSafe(state);
-      if (needsPostgresVolume) await this.#createVolume(POSTGRES_VOLUME, "postgres_data");
+      if (needsPostgresVolume) await this.#createVolume(this.#deploymentIdentity().postgresVolume, "postgres_data");
       const previousConfiguration = readFileSync(this.#envFile, "utf8");
       const nextConfiguration = this.#configurationWithValue(
         previousConfiguration,
@@ -1059,9 +1084,11 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     const enabledPlugins = this.#catalogPluginsForState(state, true);
     const snapshot = await this.#deploymentSnapshot(state.enabledPlugins);
     const previousImage =
-      snapshot.status === "stopped" ? undefined : await this.#containerImageReference(API_CONTAINER);
+      snapshot.status === "stopped"
+        ? undefined
+        : await this.#containerImageReference(this.#deploymentIdentity().apiContainer);
     const needsPostgresVolume = await this.#assertStartIsSafe(state);
-    if (needsPostgresVolume) await this.#createVolume(POSTGRES_VOLUME, "postgres_data");
+    if (needsPostgresVolume) await this.#createVolume(this.#deploymentIdentity().postgresVolume, "postgres_data");
 
     this.#stdout.write(`Updating Atlas Core ${fromVersion} to ${PACKAGE_VERSION}...\n`);
     await this.#checkCommand("docker", ["pull", imageReference]);
@@ -1190,9 +1217,16 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     serviceStates: ComposeServiceState[],
     signal?: AbortSignal
   ): Promise<{ services: DeploymentService[]; error?: string }> {
-    const runningContainers = SERVICES.filter(({ id }) =>
-      serviceStates.some((service) => service.Service === id && service.State === "running")
-    ).map(({ container }) => container);
+    const deployment = this.#deploymentIdentity();
+    const serviceDefinitions = [
+      { id: "api", label: "Core API", container: deployment.apiContainer },
+      { id: "source-gateway", label: "Source Gateway", container: deployment.sourceGatewayContainer },
+      { id: "postgres", label: "PostgreSQL", container: deployment.postgresContainer },
+      { id: "minio", label: "MinIO", container: deployment.minioContainer }
+    ] as const;
+    const runningContainers = serviceDefinitions
+      .filter(({ id }) => serviceStates.some((service) => service.Service === id && service.State === "running"))
+      .map(({ container }) => container);
     const stats = new Map<string, DockerStats>();
     const errors: string[] = [];
     if (runningContainers.length > 0) {
@@ -1213,7 +1247,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     }
 
     const services: DeploymentService[] = [];
-    for (const definition of SERVICES) {
+    for (const definition of serviceDefinitions) {
       const state = serviceStates.find((candidate) => candidate.Service === definition.id);
       const service: DeploymentService = {
         ...definition,
@@ -1495,12 +1529,13 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       }
       await this.#runComposeChecked(["config", "--quiet"], candidatePluginIds);
       report({ level: "success", message: "Deployment configuration valid", stage: "operation" });
-      this.#markActivePluginDisableOperation(snapshot.status);
+      const target = existingIntent?.previousStatus === "stopped" ? "stopped" : snapshot.status;
+      this.#markActivePluginDisableOperation(target);
       const preparedIntent: PluginDisableIntent = {
         schema: 1,
         operation: "plugin-disable",
         pluginId,
-        previousStatus: existingIntent?.previousStatus === "stopped" ? "stopped" : snapshot.status
+        previousStatus: target
       };
       this.#writePluginDisableIntent(preparedIntent);
       intent = preparedIntent;
@@ -1679,7 +1714,13 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     if (!SUPPORTED_DOCKER_ARCHITECTURES.has(info.Architecture)) {
       throw new Error(`Atlas Core supports amd64 and arm64 Docker daemons. Detected ${info.Architecture}.`);
     }
-    return { architecture: info.Architecture, engineId: info.ID, host: dockerHost, operatingSystem: info.OSType };
+    return {
+      architecture: info.Architecture,
+      deployment: dockerDeploymentIdentity(info.ID),
+      engineId: info.ID,
+      host: dockerHost,
+      operatingSystem: info.OSType
+    };
   }
 
   async #checkCommand(
@@ -1700,6 +1741,12 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       environment.DOCKER_HOST = host;
     }
     return environment;
+  }
+
+  #deploymentIdentity(): DockerDeploymentIdentity {
+    const identity = this.#dockerRuntimeScope.getStore()?.deployment;
+    if (!identity) throw new Error("Atlas Core Docker deployment identity is unavailable outside runtime preflight.");
+    return identity;
   }
 
   #acquireMutationLock(): { owner: MutationLockOwner; recovered: boolean } {
@@ -1866,6 +1913,25 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     );
   }
 
+  #canonicalRecoverableMutationOwner(expectedOwner: MutationLockOwner): MutationLockOwner {
+    let currentOwner: MutationLockOwner;
+    try {
+      currentOwner = this.#readMutationLockOwner(this.#activeMutationRecoveryPath ?? this.#mutationLockFile);
+    } catch (error) {
+      throw new OperationCleanupError(
+        `Atlas Core could not preserve its recoverable mutation lock: ${errorMessage(error)}`
+      );
+    }
+    if (
+      currentOwner.id !== expectedOwner.id ||
+      currentOwner.pid !== expectedOwner.pid ||
+      currentOwner.operation !== "plugin-disable"
+    ) {
+      throw new OperationCleanupError("Atlas Core mutation lock changed ownership before recovery could be retained.");
+    }
+    return currentOwner;
+  }
+
   #readMutationLockOwner(path: string): MutationLockOwner {
     this.#assertPrivateFile(path);
     let owner: unknown;
@@ -2003,7 +2069,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     const ownershipLabels = {
       "io.atlas.core.engine": dockerEngineId,
       "io.atlas.core.lock": "mutation",
-      "io.atlas.core.project": PROJECT_NAME
+      "io.atlas.core.project": PROJECT_NAME_PREFIX
     };
     if (mutationLock.recovered) {
       await this.#removeRecoveredDockerMutationLock(ownershipLabels, mutationLock.owner.id, dockerEngineId);
@@ -2174,21 +2240,29 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   }
 
   async #volumeExists(name: string): Promise<boolean> {
-    const volume = name === POSTGRES_VOLUME ? "postgres_data" : "minio_data";
+    const runtime = this.#dockerRuntimeScope.getStore();
+    if (!runtime) throw new Error("Atlas Core Docker runtime is unavailable while inspecting storage.");
+    const deployment = runtime.deployment;
+    const volume = name === deployment.postgresVolume ? "postgres_data" : "minio_data";
     return await this.#ownedResourceExists("volume", name, {
-      "com.docker.compose.project": PROJECT_NAME,
-      "com.docker.compose.volume": volume
+      "com.docker.compose.project": deployment.projectName,
+      "com.docker.compose.volume": volume,
+      "io.atlas.core.engine": runtime.engineId
     });
   }
 
   async #createVolume(name: string, volume: "minio_data" | "postgres_data"): Promise<void> {
+    const runtime = this.#dockerRuntimeScope.getStore();
+    if (!runtime) throw new Error("Atlas Core Docker runtime is unavailable while creating storage.");
     await this.#checkCommand("docker", [
       "volume",
       "create",
       "--label",
-      `com.docker.compose.project=${PROJECT_NAME}`,
+      `com.docker.compose.project=${runtime.deployment.projectName}`,
       "--label",
       `com.docker.compose.volume=${volume}`,
+      "--label",
+      `io.atlas.core.engine=${runtime.engineId}`,
       name
     ]);
     if (!(await this.#volumeExists(name))) {
@@ -2197,19 +2271,23 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   }
 
   async #containerExists(name: string): Promise<boolean> {
+    const runtime = this.#dockerRuntimeScope.getStore();
+    if (!runtime) throw new Error("Atlas Core Docker runtime is unavailable while inspecting containers.");
+    const deployment = runtime.deployment;
     const service =
-      name === API_CONTAINER
+      name === deployment.apiContainer
         ? "api"
-        : name === SOURCE_GATEWAY_CONTAINER
+        : name === deployment.sourceGatewayContainer
           ? "source-gateway"
-          : name === POSTGRES_CONTAINER
+          : name === deployment.postgresContainer
             ? "postgres"
-            : name === MINIO_INIT_CONTAINER
+            : name === deployment.minioInitContainer
               ? "minio-init"
               : "minio";
     return await this.#ownedResourceExists("container", name, {
-      "com.docker.compose.project": PROJECT_NAME,
-      "com.docker.compose.service": service
+      "com.docker.compose.project": deployment.projectName,
+      "com.docker.compose.service": service,
+      "io.atlas.core.engine": runtime.engineId
     });
   }
 
@@ -2234,12 +2312,14 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   }
 
   async #projectContainerNames(): Promise<string[]> {
+    const runtime = this.#dockerRuntimeScope.getStore();
+    if (!runtime) throw new Error("Atlas Core Docker runtime is unavailable while inspecting containers.");
     const output = await this.#checkCommand("docker", [
       "container",
       "ls",
       "--all",
       "--filter",
-      `label=com.docker.compose.project=${PROJECT_NAME}`,
+      `label=com.docker.compose.project=${runtime.deployment.projectName}`,
       "--format",
       "{{.Names}}"
     ]);
@@ -2254,7 +2334,8 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     for (const name of names) {
       if (
         !(await this.#ownedResourceExists("container", name, {
-          "com.docker.compose.project": PROJECT_NAME
+          "com.docker.compose.project": runtime.deployment.projectName,
+          "io.atlas.core.engine": runtime.engineId
         }))
       ) {
         throw new Error(`Docker listed Atlas Core container ${name}, but it disappeared before reset could verify it.`);
@@ -2264,6 +2345,14 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   }
 
   async #assertResetVolumesHaveNoUnknownUsers(volumes: string[]): Promise<void> {
+    const deployment = this.#deploymentIdentity();
+    const resetContainerNames = new Set([
+      deployment.apiContainer,
+      deployment.sourceGatewayContainer,
+      deployment.postgresContainer,
+      deployment.minioContainer,
+      deployment.minioInitContainer
+    ]);
     for (const volume of volumes) {
       const output = await this.#checkCommand("docker", [
         "container",
@@ -2277,7 +2366,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       const unexpected = output
         .split(/\r?\n/)
         .map((name) => name.trim())
-        .filter((name) => name && !RESET_CONTAINER_NAMES.has(name));
+        .filter((name) => name && !resetContainerNames.has(name));
       if (unexpected.length > 0) {
         throw new Error(
           `Atlas Core volume ${volume} is also used by ${unexpected.join(", ")}. Reset stopped before deleting anything.`
@@ -2336,8 +2425,9 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   }
 
   async #assertStartIsSafe(state: DeploymentState): Promise<boolean> {
-    const hasPostgres = await this.#volumeExists(POSTGRES_VOLUME);
-    const hasMinio = await this.#volumeExists(MINIO_VOLUME);
+    const deployment = this.#deploymentIdentity();
+    const hasPostgres = await this.#volumeExists(deployment.postgresVolume);
+    const hasMinio = await this.#volumeExists(deployment.minioVolume);
     if (!hasMinio || ((state.startAttemptedAt !== undefined || state.startedAt !== undefined) && !hasPostgres)) {
       throw new Error(
         "Atlas Core durable storage is missing. Start stopped so Docker Compose cannot replace it with an empty volume."
@@ -2351,7 +2441,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     this.#requirePublishedImage();
     this.#assertEnabledPluginDeployment(state);
     const needsPostgresVolume = await this.#assertStartIsSafe(state);
-    if (needsPostgresVolume) await this.#createVolume(POSTGRES_VOLUME, "postgres_data");
+    if (needsPostgresVolume) await this.#createVolume(this.#deploymentIdentity().postgresVolume, "postgres_data");
     const attemptedState = this.#recordStartAttempt(state);
     await this.#runComposeChecked(["pull"], state.enabledPlugins);
     await this.#runComposeChecked(["down"], state.enabledPlugins);
@@ -3035,9 +3125,13 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     for (const variable of Object.keys(env)) {
       if (variable.startsWith("COMPOSE_") || variable.startsWith("ATLAS_")) delete env[variable];
     }
+    const runtime = this.#dockerRuntimeScope.getStore();
+    if (!runtime) throw new Error("Atlas Core Docker runtime is unavailable while running Compose.");
     env.COMPOSE_IGNORE_ORPHANS = "0";
     env.COMPOSE_REMOVE_ORPHANS = "0";
     env.ATLAS_CORE_IMAGE = imageReference;
+    env.ATLAS_CORE_ENGINE_ID = runtime.engineId;
+    env.ATLAS_CORE_PROJECT = runtime.deployment.projectName;
     env.ATLAS_PLUGIN_CONFIG_ROOT = this.#pluginConfigRoot;
     const processGroup = this.#pluginDisableProcessGroup();
     const options = {
@@ -3066,7 +3160,15 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   }
 
   #composeArgs(composeFile: string, args: string[], pluginIds: readonly string[]): string[] {
-    const composeArgs = ["compose", "--project-name", PROJECT_NAME, "--env-file", this.#envFile, "--file", composeFile];
+    const composeArgs = [
+      "compose",
+      "--project-name",
+      this.#deploymentIdentity().projectName,
+      "--env-file",
+      this.#envFile,
+      "--file",
+      composeFile
+    ];
     for (const pluginId of [...pluginIds].sort()) {
       composeArgs.push("--file", join(this.#pluginConfigRoot, pluginId, "compose.yml"));
     }
