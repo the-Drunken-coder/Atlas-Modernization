@@ -118,7 +118,11 @@ export class SimulatedPacketNetwork {
 
   addRadio(id: string, radioNodeNumber?: number): SimulatedRadio {
     if (!id || this.radios.has(id)) throw new Error(`simulated radio ${id || "<empty>"} already exists or is invalid`);
-    const radio = new SimulatedRadio(this, id, radioNodeNumber ?? this.radios.size + 1);
+    const nodeNumber = radioNodeNumber ?? this.radios.size + 1;
+    if ([...this.radios.values()].some((radio) => radio.radioNodeNumber === nodeNumber)) {
+      throw new Error(`simulated radio node number ${nodeNumber} already exists`);
+    }
+    const radio = new SimulatedRadio(this, id, nodeNumber);
     this.radios.set(id, radio);
     this.edges.set(id, new Set());
     return radio;

@@ -40,7 +40,11 @@ describe("loopback Link service", () => {
   it("refuses non-loopback binds", async () => {
     const service = new LinkService({ mode: "gateway", nodeID: "gateway", clock: new RealClock() });
     const server = new LinkHTTPServer(service);
-    await expect(server.listen(0, "0.0.0.0")).rejects.toThrow("must bind to loopback");
+    try {
+      await expect(server.listen(0, "0.0.0.0")).rejects.toThrow("must bind to loopback");
+    } finally {
+      service.stop();
+    }
   });
 
   it("rejects browser-originated mutations against the loopback interface", async () => {

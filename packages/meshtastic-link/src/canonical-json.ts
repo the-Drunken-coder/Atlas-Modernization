@@ -20,6 +20,10 @@ function sortJSON(value: unknown): JSONValue {
     return value;
   }
   if (typeof value !== "object") throw new TypeError("Radio messages must contain only JSON values");
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new TypeError("Radio messages must contain only plain JSON objects");
+  }
 
   const sorted: Record<string, JSONValue> = Object.create(null);
   for (const key of Object.keys(value).sort()) {

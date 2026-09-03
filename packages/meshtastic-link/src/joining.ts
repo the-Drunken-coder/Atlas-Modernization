@@ -2,6 +2,7 @@ import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { decodeJSON, encodeCanonicalJSON } from "./canonical-json.js";
 import type { Clock, TimerHandle } from "./clock.js";
 import { LINK_PROTOCOL_REVISION, RADIO_CONTRACT_REVISION } from "./contract.js";
+import { MESHTASTIC_APPLICATION_PAYLOAD_BYTES } from "./frame.js";
 import type { GatewayMembershipStore } from "./membership.js";
 import type { PrivateChannelMembership } from "./profile.js";
 import type { LinkRadio, RadioPacket } from "./radio.js";
@@ -9,6 +10,8 @@ import type { LinkRadio, RadioPacket } from "./radio.js";
 const JOIN_MARKER = "AJ1";
 const REQUIRED_CAPABILITIES = 0b111;
 const MAX_PENDING_JOINS = 256;
+const MAX_COMPLETED_JOINS = 256;
+const COMPLETED_JOIN_RETENTION_MS = 5 * 60_000;
 
 export type DiscoveryBeacon = {
   type: "discovery";
@@ -136,12 +139,14 @@ type CompletedJoin = {
   beacon: DiscoveryBeacon;
   radioNodeID: number;
   acceptance: JoinAcceptance;
+  expiresAt: number;
 };
 
 export class GatewayJoinService {
   private readonly pending = new Map<string, PendingJoin>();
   private readonly completed = new Map<string, CompletedJoin>();
   private readonly processing = new Set<string>();
+  private readonly pendingChallenges = new Set<string>();
   private readonly unsubscribe: () => void;
 
   constructor(
@@ -160,6 +165,7 @@ export class GatewayJoinService {
     this.pending.clear();
     this.completed.clear();
     this.processing.clear();
+    this.pendingChallenges.clear();
   }
 
   private async receive(packet: RadioPacket): Promise<void> {
@@ -167,6 +173,7 @@ export class GatewayJoinService {
     const message = decodeJoinMessage(packet.payload);
     if (!message) return;
     if (message.type === "discovery") {
+      this.pruneCompleted();
       if (message.radio_node_id !== packet.radio_source) return;
       const completed = this.completed.get(message.join_attempt_id);
       if (completed) {
@@ -187,14 +194,22 @@ export class GatewayJoinService {
         }
         return;
       }
-      const challenge = await this.authentication.challenge(message);
-      const gatewayProof = await this.authentication.prove(message, challenge);
-      this.pending.set(message.join_attempt_id, {
-        beacon: message,
-        challenge,
-        gatewayProof,
-        radioNodeID: packet.radio_source
-      });
+      if (this.pendingChallenges.has(message.join_attempt_id)) return;
+      this.pendingChallenges.add(message.join_attempt_id);
+      let challenge: string;
+      let gatewayProof: string;
+      try {
+        challenge = await this.authentication.challenge(message);
+        gatewayProof = await this.authentication.prove(message, challenge);
+        this.pending.set(message.join_attempt_id, {
+          beacon: message,
+          challenge,
+          gatewayProof,
+          radioNodeID: packet.radio_source
+        });
+      } finally {
+        this.pendingChallenges.delete(message.join_attempt_id);
+      }
       while (this.pending.size > MAX_PENDING_JOINS) {
         const oldest = this.pending.keys().next().value as string | undefined;
         if (!oldest) break;
@@ -224,8 +239,10 @@ export class GatewayJoinService {
       this.completed.set(message.join_attempt_id, {
         beacon: pending.beacon,
         radioNodeID: pending.radioNodeID,
-        acceptance
+        acceptance,
+        expiresAt: Date.now() + COMPLETED_JOIN_RETENTION_MS
       });
+      this.pruneCompleted();
       await this.sendAcceptance(acceptance, packet.radio_source);
       await this.onAdmitted?.({
         source: { role: "asset", id: pending.beacon.asset_id },
@@ -245,12 +262,15 @@ export class GatewayJoinService {
     destination: number
   ): Promise<void> {
     await this.radio.send(
-      encodeJoinMessage({
-        type: "challenge",
-        join_attempt_id: joinAttemptID,
-        challenge,
-        gateway_proof: gatewayProof
-      }),
+      encodeJoinMessage(
+        {
+          type: "challenge",
+          join_attempt_id: joinAttemptID,
+          challenge,
+          gateway_proof: gatewayProof
+        },
+        this.radio.max_payload_bytes
+      ),
       {
         channel: this.rendezvousChannel,
         destination_radio_node: destination,
@@ -260,11 +280,22 @@ export class GatewayJoinService {
   }
 
   private async sendAcceptance(acceptance: JoinAcceptance, destination: number): Promise<void> {
-    await this.radio.send(encodeJoinMessage(acceptance), {
+    await this.radio.send(encodeJoinMessage(acceptance, this.radio.max_payload_bytes), {
       channel: this.rendezvousChannel,
       destination_radio_node: destination,
       require_public_key: true
     });
+  }
+
+  private pruneCompleted(now = Date.now()): void {
+    for (const [attemptID, completed] of this.completed) {
+      if (completed.expiresAt <= now) this.completed.delete(attemptID);
+    }
+    while (this.completed.size > MAX_COMPLETED_JOINS) {
+      const oldest = this.completed.keys().next().value as string | undefined;
+      if (oldest === undefined) return;
+      this.completed.delete(oldest);
+    }
   }
 
   private run(operation: () => Promise<void>): void {
@@ -355,7 +386,9 @@ export class AssetJoinService {
     const baseDelay = elapsed < 30_000 ? 5_000 : 30_000;
     const jitter = elapsed < 30_000 ? Math.round((this.random() - 0.5) * 1_000) : 0;
     try {
-      await this.radio.send(encodeJoinMessage(beacon), { channel: this.rendezvousChannel });
+      await this.radio.send(encodeJoinMessage(beacon, this.radio.max_payload_bytes), {
+        channel: this.rendezvousChannel
+      });
     } finally {
       if (this.isWaitingToJoin()) {
         this.retryTimer = this.clock.schedule(baseDelay + jitter, () => this.run(() => this.sendDiscovery()));
@@ -397,11 +430,17 @@ export class AssetJoinService {
       this.gatewayRadioNodeID = packet.radio_source;
       this.updateStatus({ state: "authenticating", join_attempt_id: this.joinAttemptID });
       const response = await this.authentication.answer(message.challenge);
-      await this.radio.send(encodeJoinMessage({ type: "response", join_attempt_id: this.joinAttemptID, response }), {
-        channel: this.rendezvousChannel,
-        destination_radio_node: packet.radio_source,
-        require_public_key: true
-      });
+      await this.radio.send(
+        encodeJoinMessage(
+          { type: "response", join_attempt_id: this.joinAttemptID, response },
+          this.radio.max_payload_bytes
+        ),
+        {
+          channel: this.rendezvousChannel,
+          destination_radio_node: packet.radio_source,
+          require_public_key: true
+        }
+      );
       return;
     }
     if (message.type !== "accept" || packet.radio_source !== this.gatewayRadioNodeID) return;
@@ -436,10 +475,16 @@ export class AssetJoinService {
   }
 }
 
-export function encodeJoinMessage(message: JoinWireMessage): Uint8Array {
+export function encodeJoinMessage(
+  message: JoinWireMessage,
+  maxPayloadBytes = MESHTASTIC_APPLICATION_PAYLOAD_BYTES
+): Uint8Array {
   const compact = compactJoinMessage(message);
   const encoded = encodeCanonicalJSON(compact);
-  if (encoded.byteLength > 233) throw new RangeError("join message exceeds one Meshtastic packet");
+  if (!Number.isSafeInteger(maxPayloadBytes) || maxPayloadBytes < 1) {
+    throw new RangeError("join message payload budget must be a positive integer");
+  }
+  if (encoded.byteLength > maxPayloadBytes) throw new RangeError("join message exceeds one Meshtastic packet");
   return encoded;
 }
 

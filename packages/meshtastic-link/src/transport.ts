@@ -174,6 +174,7 @@ export class LinkTransport {
   private readonly settledInbound = new Map<string, "confirmed" | "rejected">();
   private readonly operationResults = new Map<string, LinkOperationResult>();
   private readonly listeners = new Set<(event: TransportEvent) => void>();
+  private readonly capacityListeners = new Set<() => void>();
   private readonly unsubscribeRadio: () => void;
   private sourceSequence = 0;
   private nextOrder = 0;
@@ -214,6 +215,7 @@ export class LinkTransport {
     this.node = options.node;
     this.sourceGeneration = options.sourceGeneration;
     this.serviceSession = options.serviceSession ?? compactID();
+    if (!this.serviceSession.trim()) throw new TypeError("service session must not be blank");
     this.radio = options.radio;
     this.clock = options.clock;
     this.picture = options.picture;
@@ -249,8 +251,12 @@ export class LinkTransport {
       return this.failedResult(options.operationID ?? compactID(), "confirmed operations require a destination");
     }
     const operationID = options.operationID ?? operationIDFor(message);
+    if (!operationID.trim()) throw new TypeError("operation ID must not be blank");
     const existing = this.operationResults.get(operationID);
-    if (existing) return { ...existing };
+    if (existing) {
+      if (existing.status !== "failed") return { ...existing };
+      this.operationResults.delete(operationID);
+    }
     if (delivery === "confirmed" && this.confirmedCount() >= this.confirmedLimit) {
       this.mutableMetrics.confirmed_rejected_overload++;
       return this.failedResult(operationID, "confirmed operation capacity is exhausted");
@@ -297,8 +303,11 @@ export class LinkTransport {
     outbound.chunkSendCounts = outbound.frames.map(() => 0);
 
     if (delivery === "best_effort" && outbound.coalescingKey !== undefined) this.replaceQueuedBestEffort(outbound);
-    if (this.queue.length + (useInboundReservation ? 0 : this.pendingInbound.size) >= this.queueLimit)
-      return this.failedResult(operationID, "outbound queue capacity is exhausted");
+    const occupancy = this.outboundOccupancy();
+    const capacityExhausted = useInboundReservation
+      ? occupancy >= this.queueLimit + this.confirmedLimit
+      : occupancy + this.pendingInbound.size >= this.queueLimit;
+    if (capacityExhausted) return this.failedResult(operationID, "outbound queue capacity is exhausted");
     this.queue.push(outbound);
     if (delivery === "confirmed") {
       this.outboundByOperation.set(operationID, outbound);
@@ -335,6 +344,13 @@ export class LinkTransport {
     this.pendingInbound.delete(settlementID);
     this.clock.cancel(pending.timer);
     this.recordSettledInbound(settlementID, control);
+    return true;
+  }
+
+  cancel(operationID: string, reason = "operation cancelled locally"): boolean {
+    const outbound = this.outboundByOperation.get(operationID);
+    if (!outbound) return false;
+    this.completeOutbound(outbound, "failed", reason);
     return true;
   }
 
@@ -375,6 +391,11 @@ export class LinkTransport {
   onEvent(listener: (event: TransportEvent) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  onCapacityAvailable(listener: () => void): () => void {
+    this.capacityListeners.add(listener);
+    return () => this.capacityListeners.delete(listener);
   }
 
   stop(reason = "link service stopped"): void {
@@ -429,21 +450,15 @@ export class LinkTransport {
       } catch (error) {
         if (this.stopped) return;
         this.mutableMetrics.radio_send_failures++;
-        if (outbound.delivery === "confirmed" && this.outboundByOperation.has(outbound.identity.operation_id)) {
-          outbound.pendingChunks.unshift(chunkIndex);
-          this.queue.push(outbound);
-          nextDelayMs = this.retryIntervalMs ?? RETRY_MS[outbound.identity.priority];
-        } else {
-          const result: LinkOperationResult = {
-            operation_id: outbound.identity.operation_id,
-            status: "failed",
-            reason: `radio send failed: ${error instanceof Error ? error.message : String(error)}`,
-            completed_at: this.clock.now()
-          };
-          this.recordOperationTiming(outbound);
-          this.recordOperation(result);
-          this.emit({ type: "operation", result });
+        if (outbound.delivery === "confirmed") {
+          if (this.outboundByOperation.has(outbound.identity.operation_id)) {
+            outbound.pendingChunks.unshift(chunkIndex);
+            this.queue.push(outbound);
+            nextDelayMs = this.retryIntervalMs ?? RETRY_MS[outbound.identity.priority];
+          }
+          return;
         }
+        this.failBestEffort(outbound, `radio send failed: ${error instanceof Error ? error.message : String(error)}`);
         return;
       }
       if (this.stopped) return;
@@ -470,6 +485,9 @@ export class LinkTransport {
     } finally {
       this.activeOutbound = undefined;
       this.pumping = false;
+      if (this.outboundOccupancy() + this.pendingInbound.size < this.queueLimit) {
+        this.emitCapacityAvailable();
+      }
       if (this.queue.length > 0) this.requestPump(nextDelayMs);
     }
   }
@@ -513,6 +531,10 @@ export class LinkTransport {
       this.emit({ type: "operation", result });
       return;
     }
+    this.scheduleRetry(outbound);
+  }
+
+  private scheduleRetry(outbound: Outbound): void {
     if (outbound.retryTimer) this.clock.cancel(outbound.retryTimer);
     outbound.retryTimer = this.clock.schedule(this.retryIntervalMs ?? RETRY_MS[outbound.identity.priority], () =>
       this.retryOutbound(outbound)
@@ -584,7 +606,13 @@ export class LinkTransport {
   }
 
   private acceptFrameSource(frame: LinkFrame): boolean {
-    return this.activateSourceFence(frame.source, frame.source_generation, frame.service_session);
+    const current = this.sourceFences.get(`${frame.source.role}:${frame.source.id}`);
+    const accepted =
+      current === undefined ||
+      frame.source_generation > current.generation ||
+      (frame.source_generation === current.generation && frame.service_session === current.session);
+    if (!accepted) this.mutableMetrics.stale_messages_rejected++;
+    return accepted;
   }
 
   private handleCompleteMessage(identity: FrameIdentity, bytes: Uint8Array): void {
@@ -595,26 +623,49 @@ export class LinkTransport {
       return;
     }
     if (message.type !== identity.message_type || messagePriority(message) !== identity.priority) return;
+    if (!this.activateSourceFence(identity.source, identity.source_generation, identity.service_session)) return;
     if (message.type === "control") {
       if (identity.destination !== undefined && !sameNode(identity.destination, this.node)) return;
       this.handleControl(message, identity);
       return;
     }
     if (deliveryClass(message) === "confirmed" && identity.destination === undefined) return;
-    this.updatePicture(message, identity);
     const addressed = identity.destination !== undefined && sameNode(identity.destination, this.node);
+    if (message.type === "task_delivery" && identity.source.role !== "gateway") {
+      if (addressed) {
+        const settlementID = inboundSettlementID(identity);
+        this.recordSettledInbound(settlementID, "rejected");
+        this.sendControl(
+          identity.source,
+          {
+            type: "control",
+            control: "rejected",
+            operation_id: identity.operation_id,
+            message_id: identity.message_id,
+            reason: "Task delivery source is not the Gateway"
+          },
+          true
+        );
+      }
+      return;
+    }
+    this.updatePicture(message, identity);
     const requiresSettlement = deliveryClass(message) === "confirmed" && addressed;
     const settlementID = inboundSettlementID(identity);
     if (requiresSettlement) {
       const settled = this.settledInbound.get(settlementID);
       if (settled) {
         this.mutableMetrics.duplicate_packets_suppressed++;
-        this.sendControl(identity.source, {
-          type: "control",
-          control: settled,
-          operation_id: identity.operation_id,
-          message_id: identity.message_id
-        });
+        this.sendControl(
+          identity.source,
+          {
+            type: "control",
+            control: settled,
+            operation_id: identity.operation_id,
+            message_id: identity.message_id
+          },
+          true
+        );
         return;
       }
       if (this.pendingInbound.has(settlementID)) {
@@ -623,7 +674,7 @@ export class LinkTransport {
       }
       if (
         this.pendingInbound.size >= this.confirmedLimit ||
-        this.queue.length + this.pendingInbound.size >= this.queueLimit
+        this.outboundOccupancy() + this.pendingInbound.size >= this.queueLimit
       ) {
         this.rejectInboundCapacity(identity, settlementID);
         return;
@@ -711,6 +762,8 @@ export class LinkTransport {
         removeAll(this.queue, outbound);
         this.queue.push(outbound);
         this.requestPump();
+      } else {
+        this.scheduleRetry(outbound);
       }
       return;
     }
@@ -774,13 +827,17 @@ export class LinkTransport {
   private rejectInboundCapacity(identity: FrameIdentity, settlementID: string): void {
     this.mutableMetrics.confirmed_rejected_overload++;
     this.recordSettledInbound(settlementID, "rejected");
-    this.sendControl(identity.source, {
-      type: "control",
-      control: "rejected",
-      operation_id: identity.operation_id,
-      message_id: identity.message_id,
-      reason: "inbound confirmed operation capacity is exhausted"
-    });
+    this.sendControl(
+      identity.source,
+      {
+        type: "control",
+        control: "rejected",
+        operation_id: identity.operation_id,
+        message_id: identity.message_id,
+        reason: "inbound confirmed operation capacity is exhausted"
+      },
+      true
+    );
   }
 
   private expirePendingInbound(settlementID: string): void {
@@ -865,6 +922,10 @@ export class LinkTransport {
     return this.outboundByOperation.size;
   }
 
+  private outboundOccupancy(): number {
+    return this.queue.length + (this.activeOutbound && !this.queue.includes(this.activeOutbound) ? 1 : 0);
+  }
+
   private failedResult(operationID: string, reason: string): LinkOperationResult {
     const result: LinkOperationResult = {
       operation_id: operationID,
@@ -907,7 +968,23 @@ export class LinkTransport {
   }
 
   private emit(event: TransportEvent): void {
-    for (const listener of this.listeners) listener(event);
+    for (const listener of this.listeners) {
+      try {
+        listener(event);
+      } catch {
+        this.listeners.delete(listener);
+      }
+    }
+  }
+
+  private emitCapacityAvailable(): void {
+    for (const listener of this.capacityListeners) {
+      try {
+        listener();
+      } catch {
+        this.capacityListeners.delete(listener);
+      }
+    }
   }
 }
 
@@ -1210,7 +1287,7 @@ function compactID(): string {
 }
 
 function validateNode(node: LinkNode): void {
-  if ((node.role !== "asset" && node.role !== "gateway") || !node.id || node.id.includes(":")) {
+  if ((node.role !== "asset" && node.role !== "gateway") || !node.id.trim() || node.id.includes(":")) {
     throw new TypeError("invalid Link node");
   }
 }

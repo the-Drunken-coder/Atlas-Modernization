@@ -137,8 +137,8 @@ export function isLinkMessage(value: unknown): value is LinkMessage {
 function isStatePublication(value: Record<string, unknown>): value is StatePublication {
   if (
     !isRFC3339(value.observation_time) ||
-    !["field", "gateway_feed"].includes(String(value.path)) ||
-    !["not_required", "awaiting_core", "core_confirmed", "core_rejected"].includes(String(value.confirmation)) ||
+    !isOneOf(value.path, ["field", "gateway_feed"]) ||
+    !isOneOf(value.confirmation, ["not_required", "awaiting_core", "core_confirmed", "core_rejected"]) ||
     !optionalString(value.operation_id) ||
     !optionalString(value.runtime_id) ||
     !optionalBoolean(value.deleted) ||
@@ -167,7 +167,7 @@ function isStatePublication(value: Record<string, unknown>): value is StatePubli
 }
 
 function isTaskDelivery(value: Record<string, unknown>): value is TaskDelivery {
-  return ["assignment", "cancellation"].includes(String(value.delivery)) && isTaskResource(value.task);
+  return isOneOf(value.delivery, ["assignment", "cancellation"]) && isTaskResource(value.task);
 }
 
 function isTaskReport(value: Record<string, unknown>): value is TaskReport {
@@ -242,7 +242,7 @@ function isResourceOperation(value: Record<string, unknown>): value is ResourceO
 }
 
 function isSubscriptionOperation(value: Record<string, unknown>): value is SubscriptionOperation {
-  return ["add", "renew", "remove"].includes(String(value.action)) && isFeedSelector(value.selector);
+  return isOneOf(value.action, ["add", "renew", "remove"]) && isFeedSelector(value.selector);
 }
 
 export function isFeedSelector(value: unknown): value is FeedSelector {
@@ -290,44 +290,43 @@ function isOperation(value: string): value is AtlasRadioOperationName {
 }
 
 function validOperationContext(operation: AtlasRadioOperationName, value: Record<string, unknown>): boolean {
-  if (
-    [
-      "entity.get",
-      "entity.update",
-      "entity.delete",
-      "entity.check_in",
-      "task.get",
-      "task.acknowledge",
-      "task.start",
-      "task.progress",
-      "task.complete",
-      "task.fail",
-      "task.cancel",
-      "runtime.begin",
-      "runtime.stop",
-      "runtime.ready",
-      "runtime.tasks",
-      "object.get",
-      "object.update",
-      "object.delete",
-      "object.content"
-    ].includes(operation)
-  ) {
-    if (!isNonEmptyString(value.target_id)) return false;
+  switch (operation) {
+    case "task.acknowledge":
+    case "task.start":
+    case "task.progress":
+    case "task.complete":
+    case "task.fail":
+    case "runtime.tasks":
+      return isNonEmptyString(value.target_id) && isNonEmptyString(value.runtime_id);
+    case "entity.get":
+    case "entity.update":
+    case "entity.delete":
+    case "entity.check_in":
+    case "task.get":
+    case "task.cancel":
+    case "runtime.begin":
+    case "runtime.stop":
+    case "runtime.ready":
+    case "object.get":
+    case "object.update":
+    case "object.delete":
+    case "object.content":
+      return isNonEmptyString(value.target_id);
+    case "task.create":
+      return isNonEmptyString(value.idempotency_key);
+    case "query.changed_since":
+      return isNonNegativeInteger(value.since_version);
+    case "plugin.invoke":
+    case "plugin.invoke_spatial":
+      return isNonEmptyString(value.plugin_id) && isNonEmptyString(value.plugin_operation_id);
+    case "entity.create":
+    case "object.create":
+    case "query.full":
+    case "command_catalog.get":
+    case "plugin.list":
+      return true;
   }
-  if (
-    ["task.acknowledge", "task.start", "task.progress", "task.complete", "task.fail", "runtime.tasks"].includes(
-      operation
-    )
-  ) {
-    if (!isNonEmptyString(value.runtime_id)) return false;
-  }
-  if (operation === "task.create" && !isNonEmptyString(value.idempotency_key)) return false;
-  if (operation === "query.changed_since" && !isNonNegativeInteger(value.since_version)) return false;
-  if (operation === "plugin.invoke" || operation === "plugin.invoke_spatial") {
-    return isNonEmptyString(value.plugin_id) && isNonEmptyString(value.plugin_operation_id);
-  }
-  return true;
+  return assertNever(operation);
 }
 
 function validOperationInput(operation: AtlasRadioOperationName, input: unknown): boolean {
@@ -366,9 +365,20 @@ function validOperationInput(operation: AtlasRadioOperationName, input: unknown)
       return isJSONValue(input);
     case "plugin.invoke_spatial":
       return isMapArea(input);
-    default:
+    case "entity.get":
+    case "entity.delete":
+    case "task.get":
+    case "runtime.tasks":
+    case "object.get":
+    case "object.delete":
+    case "object.content":
+    case "query.full":
+    case "query.changed_since":
+    case "command_catalog.get":
+    case "plugin.list":
       return input === undefined;
   }
+  return assertNever(operation);
 }
 
 function validOperationOutput(operation: AtlasRadioOperationName, output: unknown): boolean {
@@ -427,7 +437,7 @@ function isControlMessage(value: Record<string, unknown>): value is ControlMessa
     );
   }
   return (
-    ["confirmed", "rejected", "missing_chunks"].includes(String(value.control)) &&
+    isOneOf(value.control, ["confirmed", "rejected", "missing_chunks"]) &&
     isNonEmptyString(value.operation_id) &&
     optionalString(value.message_id) &&
     optionalString(value.reason) &&
@@ -475,7 +485,33 @@ function isResourceType(value: unknown): boolean {
 }
 
 function isRFC3339(value: unknown): boolean {
-  return typeof value === "string" && Number.isFinite(Date.parse(value));
+  if (typeof value !== "string") return false;
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|[+-]\d{2}:\d{2})$/.exec(value);
+  if (!match || !Number.isFinite(Date.parse(value))) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+  const second = Number(match[6]);
+  if (month < 1 || month > 12 || day < 1 || day > daysInMonth(year, month)) return false;
+  if (hour > 23 || minute > 59 || second > 59) return false;
+  const zone = match[7];
+  if (zone !== "Z" && (Number(zone?.slice(1, 3)) > 23 || Number(zone?.slice(4, 6)) > 59)) return false;
+  return true;
+}
+
+function daysInMonth(year: number, month: number): number {
+  if (month === 2) return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0) ? 29 : 28;
+  return [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1] ?? 0;
+}
+
+function isOneOf<const Value extends string>(value: unknown, allowed: readonly Value[]): value is Value {
+  return typeof value === "string" && (allowed as readonly string[]).includes(value);
+}
+
+function assertNever(value: never): never {
+  throw new TypeError(`unhandled Atlas Radio operation: ${String(value)}`);
 }
 
 function isSha256(value: unknown): boolean {

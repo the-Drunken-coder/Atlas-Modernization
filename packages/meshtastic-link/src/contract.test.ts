@@ -13,7 +13,9 @@ import { positionPublication } from "./test-fixtures.js";
 
 describe("generated Radio contract", () => {
   it("exposes every current Atlas operation family", () => {
-    expect(Object.keys(ATLAS_RADIO_OPERATIONS)).toEqual(
+    const operationNames = Object.keys(ATLAS_RADIO_OPERATIONS);
+    expect(operationNames).toEqual([...operationNames].sort());
+    expect(operationNames).toEqual(
       expect.arrayContaining([
         "entity.get",
         "entity.create",
@@ -39,6 +41,29 @@ describe("generated Radio contract", () => {
     expect(frames.every((frame) => frame.byteLength <= 233)).toBe(true);
     const chunks = frames.map(decodeFrame).sort((left, right) => left.chunk_index - right.chunk_index);
     expect(Buffer.concat(chunks.map((frame) => frame.payload))).toEqual(Buffer.from(payload));
+  });
+
+  it("finds a feasible fragment size across non-monotone envelope boundaries", () => {
+    const frames = fragmentPayload(
+      Uint8Array.from({ length: 11 }, (_, index) => index + 1),
+      {
+        ...frameIdentity(),
+        source: { role: "asset", id: "a" },
+        service_session: "s",
+        operation_id: "oooo",
+        message_id: "mmmmmmmmmmmm"
+      },
+      105
+    );
+    expect(frames).toHaveLength(6);
+    expect(frames.map(decodeFrame).map((frame) => frame.payload.byteLength)).toEqual([2, 2, 2, 2, 2, 1]);
+  });
+
+  it("rejects malformed frame identities before transport fencing", () => {
+    const invalid = encodeCanonicalFrame({ x: " " });
+    expect(() => decodeFrame(invalid)).toThrow("Invalid Meshtastic Link frame");
+    const missingSeparator = encodeCanonicalFrame({ s: "ax" });
+    expect(() => decodeFrame(missingSeparator)).toThrow("Invalid Link node identity");
   });
 
   it("enforces the documented 32 KiB Object content limit", () => {
@@ -97,6 +122,19 @@ describe("generated Radio contract", () => {
     ).toBe(true);
   });
 
+  it("rejects enum-shaped arrays and non-RFC3339 observation times", () => {
+    const publication = positionPublication(1);
+    expect(isLinkMessage({ ...publication, path: ["field"] })).toBe(false);
+    expect(isLinkMessage({ ...publication, confirmation: ["awaiting_core"] })).toBe(false);
+    expect(isLinkMessage({ ...publication, observation_time: "Jan 1 2024" })).toBe(false);
+    expect(isLinkMessage({ ...publication, observation_time: "2024-02-30T12:00:00Z" })).toBe(false);
+  });
+
+  it("rejects non-plain objects instead of silently canonicalizing them", () => {
+    expect(() => canonicalJSON(new Date("2026-09-02T12:00:00Z"))).toThrow("plain JSON objects");
+    expect(() => canonicalJSON(new Map([["key", "value"]]))).toThrow("plain JSON objects");
+  });
+
   it("does not invent Task deletion semantics", () => {
     const publication = {
       type: "state",
@@ -146,4 +184,24 @@ function frameIdentity(): FrameIdentity {
     message_id: "message-1",
     priority: "live_state"
   };
+}
+
+function encodeCanonicalFrame(overrides: Record<string, unknown>): Uint8Array {
+  return new TextEncoder().encode(
+    canonicalJSON({
+      v: 1,
+      k: "s",
+      s: "a:a",
+      g: 1,
+      x: "session",
+      q: 1,
+      o: "operation",
+      m: "message",
+      y: "l",
+      i: 0,
+      n: 1,
+      p: "AQ",
+      ...overrides
+    })
+  );
 }

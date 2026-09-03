@@ -1,5 +1,6 @@
-import { mkdir, open, readFile, rename } from "node:fs/promises";
+import { mkdir, open, rename, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { readPrivateFile } from "./private-file.js";
 import type { PrivateChannelMembership } from "./profile.js";
 
 export type GatewayMembership = PrivateChannelMembership & {
@@ -37,7 +38,7 @@ export class GatewayMembershipStore {
   async load(): Promise<GatewayMembership> {
     let text: string;
     try {
-      text = await readFile(this.path, "utf8");
+      text = (await readPrivateFile(this.path, "Gateway membership")).toString("utf8");
     } catch (error) {
       throw new Error(`Gateway membership is missing or unreadable at ${this.path}`, { cause: error });
     }
@@ -72,12 +73,28 @@ export class GatewayMembershipStore {
   }
 
   private mutate<T>(operation: () => Promise<T>): Promise<T> {
-    const result = this.pendingMutation.then(operation, operation);
+    const lockedOperation = (): Promise<T> => this.withFileLock(operation);
+    const result = this.pendingMutation.then(lockedOperation, lockedOperation);
     this.pendingMutation = result.then(
       () => undefined,
       () => undefined
     );
     return result;
+  }
+
+  private async withFileLock<T>(operation: () => Promise<T>): Promise<T> {
+    const lockPath = `${this.path}.lock`;
+    const handle = await acquireLock(lockPath);
+    try {
+      await handle.writeFile(`${process.pid}\n`, "utf8");
+      return await operation();
+    } finally {
+      try {
+        await unlink(lockPath);
+      } finally {
+        await handle.close();
+      }
+    }
   }
 
   private async write(membership: GatewayMembership): Promise<void> {
@@ -94,6 +111,18 @@ export class GatewayMembershipStore {
     await rename(temporary, this.path);
     await syncDirectory(dirname(this.path));
   }
+}
+
+async function acquireLock(path: string): Promise<Awaited<ReturnType<typeof open>>> {
+  for (let attempt = 0; attempt < 1_000; attempt++) {
+    try {
+      return await open(path, "wx", 0o600);
+    } catch (error) {
+      if (!isNodeError(error) || error.code !== "EEXIST") throw error;
+      await new Promise<void>((resolve) => setTimeout(resolve, 10));
+    }
+  }
+  throw new Error(`Gateway membership is locked by another process at ${path}`);
 }
 
 async function syncDirectory(path: string): Promise<void> {

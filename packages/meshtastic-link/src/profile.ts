@@ -188,9 +188,14 @@ export class RadioProfileManager {
 
   async prepareAssetForJoin(): Promise<void> {
     await this.apply();
-    await this.adapter.clearPrivateMembership(this.desired.private_channel.index);
-    const remaining = await this.adapter.readPrivateMembership(this.desired.private_channel.index);
-    if (remaining !== undefined) throw new Error("Asset radio retained prior private-channel membership");
+    for (let index = 1; index <= 7; index++) {
+      if (await this.adapter.readPrivateMembership(index)) await this.adapter.clearPrivateMembership(index);
+    }
+    for (let index = 1; index <= 7; index++) {
+      if (await this.adapter.readPrivateMembership(index)) {
+        throw new Error(`Asset radio retained prior private-channel membership in slot ${index}`);
+      }
+    }
   }
 
   async prepareGateway(membership: PrivateChannelMembership): Promise<void> {

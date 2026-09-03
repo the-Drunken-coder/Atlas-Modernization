@@ -3,7 +3,8 @@ import type { TaskResource } from "@the-drunken-coder/atlas-sdk";
 import { describe, expect, it } from "vitest";
 import { encodeCanonicalJSON } from "./canonical-json.js";
 import { type Clock, type TimerHandle, VirtualClock } from "./clock.js";
-import { MAX_LINK_MESSAGE_BYTES } from "./frame.js";
+import { serializeLinkMessage } from "./contract.js";
+import { type FrameIdentity, fragmentPayload, MAX_LINK_MESSAGE_BYTES } from "./frame.js";
 import { OrderedTaskDispatcher } from "./gateway.js";
 import { SharedPicture } from "./picture.js";
 import type { LinkRadio, RadioPacket, RadioSendOptions } from "./radio.js";
@@ -30,6 +31,40 @@ describe("Link transport", () => {
     await clock.runUntilIdle();
     expect(received).toEqual(["task-1"]);
     expect(gateway.status("deliver-task-1")?.status).toBe("confirmed");
+  });
+
+  it("rejects Task delivery from an Asset source", async () => {
+    const clock = new VirtualClock();
+    const network = new SimulatedPacketNetwork({ seed: 51, clock });
+    const senderRadio = network.addRadio("asset-sender", 1);
+    const receiverRadio = network.addRadio("asset-receiver", 2);
+    network.connect("asset-sender", "asset-receiver");
+    const sender = new LinkTransport({
+      node: { role: "asset", id: "asset-sender" },
+      sourceGeneration: 1,
+      radio: senderRadio,
+      clock
+    });
+    const receiver = new LinkTransport({
+      node: { role: "asset", id: "asset-receiver" },
+      sourceGeneration: 1,
+      radio: receiverRadio,
+      clock
+    });
+    let delivered = false;
+    receiver.onEvent((event) => {
+      if (event.type === "message" && event.message.type === "task_delivery") delivered = true;
+    });
+    sender.submit(
+      { type: "task_delivery", delivery: "assignment", task: pendingTask("task-forged", "2026-09-02T12:00:00Z") },
+      { destination: { role: "asset", id: "asset-receiver" }, operationID: "forged-task" }
+    );
+    await clock.runUntilIdle();
+    expect(delivered).toBe(false);
+    expect(sender.status("forged-task")).toMatchObject({
+      status: "rejected",
+      reason: "Task delivery source is not the Gateway"
+    });
   });
 
   it("surfaces application rejection and bounded retry exhaustion", async () => {
@@ -106,6 +141,52 @@ describe("Link transport", () => {
     expect(asset.settleInbound(settlementID ?? "", true)).toBe(true);
     await clock.runUntilIdle();
     expect(gateway.status("deliver-task-1")?.status).toBe("confirmed");
+  });
+
+  it("counts an active fragment before admitting inbound confirmed work", async () => {
+    const clock = new ControlledClock();
+    const radio = new DeferredFirstSendRadio();
+    const receiver = new LinkTransport({
+      node: { role: "asset", id: "asset-alpha" },
+      sourceGeneration: 1,
+      radio,
+      clock,
+      queueLimit: 1
+    });
+    let delivered = false;
+    receiver.onEvent((event) => {
+      if (event.type === "message" && event.message.type === "task_delivery") delivered = true;
+    });
+    receiver.submit(positionPublication(1), { operationID: "active-state" });
+    const activeSend = clock.fireAt(0);
+    const task = {
+      type: "task_delivery",
+      delivery: "assignment",
+      task: pendingTask("task-overload", "2026-09-02T12:00:00Z")
+    } as const;
+    const identity: FrameIdentity = {
+      revision: 1,
+      message_type: "task_delivery",
+      source: { role: "gateway", id: "gateway" },
+      destination: { role: "asset", id: "asset-alpha" },
+      source_generation: 1,
+      service_session: "gateway-session",
+      source_sequence: 1,
+      operation_id: "inbound-task",
+      message_id: "inbound-message",
+      priority: "task"
+    };
+    for (const frame of fragmentPayload(serializeLinkMessage(task), identity)) {
+      radio.receive({ payload: frame, received_at: 0, radio_source: 2, channel: 1, public_key_encrypted: false });
+    }
+    expect(delivered).toBe(false);
+    expect(receiver.diagnostics().inbound_awaiting_settlement).toBe(0);
+    expect(receiver.metrics().confirmed_rejected_overload).toBe(1);
+    radio.resolveFirstSend();
+    await Promise.all(activeSend);
+    await Promise.all(clock.fireAt(0));
+    expect(radio.sendCount).toBeGreaterThan(1);
+    receiver.stop();
   });
 
   it("does not continue a fragmented transmission after its deadline", async () => {
@@ -479,10 +560,86 @@ describe("Link transport", () => {
     });
     gateway.submit(positionPublication(1), { operationID: "occupy-queue" });
     const dispatcher = new OrderedTaskDispatcher(gateway);
-    expect(() =>
-      dispatcher.enqueueAssignments("asset-alpha", [pendingTask("task-retained", "2026-09-02T12:00:00Z")])
-    ).toThrow("outbound queue capacity is exhausted");
+    dispatcher.enqueueAssignments("asset-alpha", [pendingTask("task-retained", "2026-09-02T12:00:00Z")]);
     expect(dispatcher.state("asset-alpha")).toEqual({ queued: ["task-retained"] });
+    dispatcher.close();
+  });
+
+  it("retries retained Task admission when transport capacity becomes available", async () => {
+    const clock = new VirtualClock();
+    const network = new SimulatedPacketNetwork({ seed: 53, clock });
+    const gatewayRadio = network.addRadio("gateway", 1);
+    const assetRadio = network.addRadio("asset-alpha", 2);
+    network.connect("gateway", "asset-alpha");
+    const gateway = new LinkTransport({
+      node: { role: "gateway", id: "gateway" },
+      sourceGeneration: 1,
+      radio: gatewayRadio,
+      clock,
+      queueLimit: 1
+    });
+    const asset = new LinkTransport({
+      node: { role: "asset", id: "asset-alpha" },
+      sourceGeneration: 1,
+      radio: assetRadio,
+      clock
+    });
+    const delivered: string[] = [];
+    asset.onEvent((event) => {
+      if (event.type !== "message" || event.message.type !== "task_delivery") return;
+      delivered.push(event.message.task.task_id);
+      asset.settleInbound(event.settlement_id, true);
+    });
+    gateway.submit(positionPublication(1), { operationID: "occupy-capacity" });
+    const dispatcher = new OrderedTaskDispatcher(gateway);
+    dispatcher.enqueueAssignments("asset-alpha", [pendingTask("task-retained", "2026-09-02T12:00:00Z")]);
+    await clock.runUntilIdle();
+    expect(delivered).toEqual(["task-retained"]);
+    expect(dispatcher.state("asset-alpha")).toEqual({ queued: [] });
+    dispatcher.close();
+  });
+
+  it("retries a stable operation ID after a transient local admission failure", async () => {
+    const clock = new VirtualClock();
+    const network = new SimulatedPacketNetwork({ seed: 52, clock });
+    const transport = new LinkTransport({
+      node: { role: "gateway", id: "gateway" },
+      sourceGeneration: 1,
+      radio: network.addRadio("gateway", 1),
+      clock,
+      queueLimit: 1
+    });
+    transport.submit(positionPublication(1), { operationID: "occupy" });
+    const task = {
+      type: "task_delivery",
+      delivery: "assignment",
+      task: pendingTask("task-retry", "2026-09-02T12:00:00Z")
+    } as const;
+    expect(
+      transport.submit(task, { destination: { role: "asset", id: "asset-alpha" }, operationID: "stable-retry" })
+    ).toMatchObject({ status: "failed", reason: "outbound queue capacity is exhausted" });
+    await clock.advanceBy(10_000);
+    expect(
+      transport.submit(task, { destination: { role: "asset", id: "asset-alpha" }, operationID: "stable-retry" })
+    ).toMatchObject({ status: "queued" });
+    transport.stop();
+  });
+
+  it("retires an in-flight assignment before sending its cancellation", async () => {
+    const { clock, gateway, asset } = directPair();
+    const delivered: string[] = [];
+    asset.onEvent((event) => {
+      if (event.type !== "message" || event.message.type !== "task_delivery" || !event.addressed_to_local) return;
+      delivered.push(event.message.delivery);
+      asset.settleInbound(event.settlement_id, true);
+    });
+    const dispatcher = new OrderedTaskDispatcher(gateway);
+    const assignment = pendingTask("task-cancel-in-flight", "2026-09-02T12:00:00Z");
+    dispatcher.enqueue("asset-alpha", assignment);
+    await clock.advanceBy(0);
+    dispatcher.enqueue("asset-alpha", cancelledTask(assignment.task_id, assignment.created_at), "cancellation");
+    await clock.runUntilIdle();
+    expect(delivered).toEqual(["cancellation"]);
     dispatcher.close();
   });
 
@@ -794,6 +951,7 @@ class DeferredFirstSendRadio implements LinkRadio {
   readonly max_payload_bytes = 233;
   sendCount = 0;
   private firstSendResolution: (() => void) | undefined;
+  private readonly handlers = new Set<(packet: RadioPacket) => void>();
 
   send(_payload: Uint8Array, _options: RadioSendOptions): Promise<void> {
     this.sendCount++;
@@ -807,8 +965,13 @@ class DeferredFirstSendRadio implements LinkRadio {
     this.firstSendResolution?.();
   }
 
-  onPacket(_handler: (packet: RadioPacket) => void): () => void {
-    return () => undefined;
+  onPacket(handler: (packet: RadioPacket) => void): () => void {
+    this.handlers.add(handler);
+    return () => this.handlers.delete(handler);
+  }
+
+  receive(packet: RadioPacket): void {
+    for (const handler of this.handlers) handler(packet);
   }
 
   async close(): Promise<void> {}

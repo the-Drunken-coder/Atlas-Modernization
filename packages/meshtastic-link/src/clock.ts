@@ -7,12 +7,24 @@ export interface Clock {
 }
 
 export class RealClock implements Clock {
+  constructor(
+    private readonly onError: (error: unknown) => void = (error) => {
+      console.error("scheduled Link callback failed", error);
+    }
+  ) {}
+
   now(): number {
     return Date.now();
   }
 
   schedule(delayMs: number, callback: () => void | Promise<void>): TimerHandle {
-    return setTimeout(() => void callback(), delayMs);
+    return setTimeout(() => {
+      try {
+        void Promise.resolve(callback()).catch(this.onError);
+      } catch (error) {
+        this.onError(error);
+      }
+    }, delayMs);
   }
 
   cancel(handle: TimerHandle): void {
