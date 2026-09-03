@@ -577,7 +577,7 @@ func (c *connector) attempt(
 	if err != nil {
 		completedAt := time.Now()
 		order := c.recordBreakerCompletionAt(completedAt)
-		if ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) {
+		if errors.Is(err, context.DeadlineExceeded) {
 			return ConnectorResponse{}, &gatewayError{code: FailureUpstreamTimeout, err: err}, order
 		}
 		return ConnectorResponse{}, &gatewayError{code: FailureUpstreamUnreachable, err: err}, order
@@ -587,7 +587,7 @@ func (c *connector) attempt(
 	completedAt := time.Now()
 	order := c.recordBreakerCompletionAt(completedAt)
 	if err != nil {
-		if ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) {
+		if errors.Is(err, context.DeadlineExceeded) {
 			return ConnectorResponse{}, &gatewayError{code: FailureUpstreamTimeout, err: err}, order
 		}
 		return ConnectorResponse{}, &gatewayError{code: FailureUpstreamUnreachable, err: err}, order

@@ -49,6 +49,20 @@ func (body *completionSignalBody) Read(buffer []byte) (int, error) {
 
 func (*completionSignalBody) Close() error { return nil }
 
+type failureSignalBody struct {
+	failed chan struct{}
+}
+
+func (body *failureSignalBody) Read([]byte) (int, error) {
+	if body.failed != nil {
+		close(body.failed)
+		body.failed = nil
+	}
+	return 0, io.ErrUnexpectedEOF
+}
+
+func (*failureSignalBody) Close() error { return nil }
+
 func beginTestAttempt(t *testing.T, connector *connector) breakerAttempt {
 	t.Helper()
 	background := context.Background()
@@ -1284,6 +1298,97 @@ func TestGatewayReturnsBufferedResponseWhenCompletionOrderingCrossesDeadline(t *
 	second, attempts, _, failure := gateway.execute(context.Background(), connector, request)
 	if failure != nil || attempts != 1 || second.Status != http.StatusOK || calls.Load() != 2 {
 		t.Fatalf("second response=%+v attempts=%d calls=%d failure=%v", second, attempts, calls.Load(), failure)
+	}
+}
+
+func TestGatewayPreservesUpstreamFailureWhenCompletionOrderingCrossesDeadline(t *testing.T) {
+	tests := []struct {
+		name      string
+		transport func(chan<- time.Time, chan struct{}) http.RoundTripper
+	}{
+		{
+			name: "transport error",
+			transport: func(deadlineObserved chan<- time.Time, failed chan struct{}) http.RoundTripper {
+				return roundTripFunc(func(request *http.Request) (*http.Response, error) {
+					deadline, _ := request.Context().Deadline()
+					deadlineObserved <- deadline
+					close(failed)
+					return nil, errors.New("connection reset")
+				})
+			},
+		},
+		{
+			name: "body read error",
+			transport: func(deadlineObserved chan<- time.Time, failed chan struct{}) http.RoundTripper {
+				return roundTripFunc(func(request *http.Request) (*http.Response, error) {
+					deadline, _ := request.Context().Deadline()
+					deadlineObserved <- deadline
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Header:     http.Header{},
+						Body:       &failureSignalBody{failed: failed},
+					}, nil
+				})
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			deadlineObserved := make(chan time.Time, 1)
+			failed := make(chan struct{})
+			config := testConnectorConfig()
+			config.Limits.TimeoutMS = 250
+			gateway, err := New(Config{Connectors: []ConnectorConfig{config}}, Options{
+				Client: &http.Client{Transport: test.transport(deadlineObserved, failed)},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			connector := gateway.connectors["reference"]
+			connector.completionMu.Lock()
+			locked := true
+			defer func() {
+				if locked {
+					connector.completionMu.Unlock()
+				}
+			}()
+
+			type result struct {
+				attempts int
+				failure  *gatewayError
+			}
+			resultCh := make(chan result, 1)
+			go func() {
+				_, attempts, _, failure := gateway.execute(
+					context.Background(),
+					connector,
+					ConnectorRequest{Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{}},
+				)
+				resultCh <- result{attempts: attempts, failure: failure}
+			}()
+
+			var deadline time.Time
+			select {
+			case deadline = <-deadlineObserved:
+			case <-time.After(time.Second):
+				t.Fatal("request did not reach the connector")
+			}
+			select {
+			case <-failed:
+			case <-time.After(time.Second):
+				t.Fatal("upstream failure was not observed")
+			}
+			time.Sleep(50 * time.Millisecond)
+			time.Sleep(time.Until(deadline) + time.Millisecond)
+			connector.completionMu.Unlock()
+			locked = false
+
+			got := <-resultCh
+			if got.failure == nil || got.failure.code != FailureUpstreamUnreachable || got.attempts != 1 {
+				t.Fatalf("attempts=%d failure=%v", got.attempts, got.failure)
+			}
+		})
 	}
 }
 
