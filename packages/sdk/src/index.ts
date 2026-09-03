@@ -31,6 +31,7 @@ export {
   type ErrorMessageSanitizerOptions,
   sanitizeErrorMessage
 } from "./error-sanitizer.js";
+export { parseAtlasJSON, stringifyAtlasJSON } from "./json.js";
 export type {
   ChangedSinceResponse,
   Classification,
