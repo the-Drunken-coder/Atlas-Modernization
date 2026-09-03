@@ -215,6 +215,7 @@ export type LinkMetrics = {
   packets_received: number;
   duplicate_packets_suppressed: number;
   stale_messages_rejected: number;
+  picture_rejected_capacity: number;
   incomplete_reassemblies: number;
   best_effort_replaced: number;
   confirmed_rejected_overload: number;

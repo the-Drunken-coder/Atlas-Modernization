@@ -38,6 +38,13 @@ export type PictureSnapshot = {
   records: PictureRecord[];
 };
 
+export type PictureApplyResult =
+  | { status: "applied" }
+  | {
+      status: "rejected";
+      reason: "stale_source" | "stale_sequence" | "stale_record" | "capacity";
+    };
+
 type SourcePosition = {
   generation: number;
   session: string;
@@ -62,6 +69,12 @@ type RecordSourceSequence = {
 
 const RECORD_SOURCE_SEQUENCE_REPLAY_MS = 10 * 60_000;
 const RECORD_SOURCE_SEQUENCE_LIMIT = 4_096;
+const PICTURE_ENTRY_LIMIT = 4_096;
+const PICTURE_RETAINED_BYTES_LIMIT = 16 * 1024 * 1024;
+const PICTURE_SOURCE_LIMIT = 4_096;
+const PICTURE_LISTENER_LIMIT = 1_024;
+const PICTURE_EVENT_BYTES_LIMIT = 8 * 1024 * 1024;
+const APPLIED = { status: "applied" } as const satisfies PictureApplyResult;
 
 export type PictureApplyContext = {
   source: LinkNode;
@@ -80,8 +93,14 @@ export class SharedPicture {
   private readonly tombstones = new Map<string, PictureTombstone>();
   private readonly sources = new Map<string, SourcePosition>();
   private readonly recordSourceSequences = new Map<string, RecordSourceSequence>();
+  private readonly entryBytes = new Map<string, number>();
   private readonly events: PictureEvent[] = [];
+  private readonly eventBytes: number[] = [];
   private readonly listeners = new Set<(event: PictureEvent) => void>();
+  private readonly pendingEvents: PictureEvent[] = [];
+  private retainedEntryBytes = 0;
+  private retainedEventBytes = 0;
+  private dispatchingEvents = false;
 
   constructor(
     session: string = randomUUID(),
@@ -93,8 +112,9 @@ export class SharedPicture {
     this.session = session;
   }
 
-  apply(publication: StatePublication, context: PictureApplyContext): boolean {
-    if (!this.acceptSource(context)) return false;
+  apply(publication: StatePublication, context: PictureApplyContext): PictureApplyResult {
+    const sourceRejection = this.acceptSource(context);
+    if (sourceRejection) return rejected(sourceRejection);
     this.pruneRecordSourceSequences(context.received_at);
     const id = resourceID(publication);
     const key = `${publication.resource_type}:${id}`;
@@ -106,9 +126,11 @@ export class SharedPicture {
       sourceSequence.session === context.service_session &&
       context.source_sequence <= sourceSequence.sequence
     ) {
-      return false;
+      return rejected("stale_sequence");
     }
-    if (sourceSequence === undefined && this.recordSourceSequences.size >= RECORD_SOURCE_SEQUENCE_LIMIT) return false;
+    if (sourceSequence === undefined && this.recordSourceSequences.size >= RECORD_SOURCE_SEQUENCE_LIMIT) {
+      return rejected("capacity");
+    }
     this.recordSourceSequences.set(recordSourceKey, {
       sourceKey,
       generation: context.source_generation,
@@ -125,7 +147,7 @@ export class SharedPicture {
       current.service_session === context.service_session &&
       context.source_sequence <= current.source_sequence
     ) {
-      return false;
+      return rejected("stale_sequence");
     }
     if (
       tombstone &&
@@ -134,29 +156,32 @@ export class SharedPicture {
       tombstone.serviceSession === context.service_session &&
       context.source_sequence <= tombstone.sourceSequence
     ) {
-      return false;
+      return rejected("stale_sequence");
     }
-    if (current && !isNewer(publication, current, context)) return false;
+    if (current && !isNewer(publication, current, context)) return rejected("stale_record");
     if (publication.deleted === true) {
-      if (tombstone && !canReplaceTombstone(publication, tombstone)) return false;
-      this.tombstones.set(key, {
+      if (tombstone && !canReplaceTombstone(publication, tombstone)) return rejected("stale_record");
+      const nextTombstone: PictureTombstone = {
         atlasVersion: publication.atlas_version,
         confirmation: publication.confirmation,
         source: context.source,
         sourceGeneration: context.source_generation,
         serviceSession: context.service_session,
         sourceSequence: context.source_sequence
-      });
+      };
+      if (!this.canRetain(key, retainedEntryBytes(nextTombstone))) return rejected("capacity");
+      if (current) this.degradeTasksForExpiredAsset(current);
+      this.retainTombstone(key, nextTombstone);
       if (current) {
-        this.records.delete(key);
         this.emit({ type: "remove", key });
       }
-      return true;
+      return APPLIED;
     }
 
     const version = resourceVersion(publication);
-    if (tombstone && (version === undefined || !canReplaceTombstone(publication, tombstone))) return false;
-    this.tombstones.delete(key);
+    if (tombstone && (version === undefined || !canReplaceTombstone(publication, tombstone))) {
+      return rejected("stale_record");
+    }
     const sourceAsset = sourceAssetID(publication, context.source);
     const record: PictureRecord = {
       resource_type: publication.resource_type,
@@ -176,10 +201,11 @@ export class SharedPicture {
       path: publication.path,
       confirmation: publication.confirmation
     };
-    this.records.set(key, record);
+    if (!this.canRetain(key, retainedEntryBytes(record))) return rejected("capacity");
+    this.retainRecord(key, record);
     this.emit({ type: "upsert", key, record });
     if (context.source.role === "asset") this.markSourceConnectivity(context.source, true);
-    return true;
+    return APPLIED;
   }
 
   markSourceConnectivity(source: LinkNode, connected: boolean): void {
@@ -192,7 +218,7 @@ export class SharedPicture {
         record.freshness !== freshness
       ) {
         const updated = { ...record, freshness };
-        this.records.set(key, updated);
+        this.retainRecord(key, updated);
         this.emit({ type: connected ? "upsert" : "stale", key, record: updated });
       }
     }
@@ -205,7 +231,7 @@ export class SharedPicture {
       const thresholds = freshnessThresholds(record);
       if (thresholds.removeAfterMs !== undefined && age >= thresholds.removeAfterMs) {
         this.degradeTasksForExpiredAsset(record);
-        this.records.delete(key);
+        this.removeRecord(key);
         this.emit({ type: "remove", key });
       } else if (
         thresholds.staleAfterMs !== undefined &&
@@ -214,7 +240,7 @@ export class SharedPicture {
       ) {
         this.degradeTasksForExpiredAsset(record);
         const stale = { ...record, freshness: "stale" as const };
-        this.records.set(key, stale);
+        this.retainRecord(key, stale);
         this.emit({ type: "stale", key, record: stale });
       }
     }
@@ -238,7 +264,7 @@ export class SharedPicture {
   }
 
   subscribe(listener: (event: PictureEvent) => void): () => void {
-    this.listeners.add(listener);
+    this.addListener(listener);
     return () => this.listeners.delete(listener);
   }
 
@@ -248,6 +274,7 @@ export class SharedPicture {
     }
     const key = `${source.role}:${source.id}`;
     const current = this.sources.get(key);
+    if (!current && this.sources.size >= PICTURE_SOURCE_LIMIT) return false;
     if (
       current &&
       (generation < current.generation || (generation === current.generation && session !== current.session))
@@ -270,12 +297,24 @@ export class SharedPicture {
     listener: (event: PictureEvent) => void
   ): { replay: PictureEvent[]; unsubscribe: () => void } {
     const replay = this.eventsAfter(session, revision);
-    this.listeners.add(listener);
+    this.addListener(listener);
     return { replay, unsubscribe: () => this.listeners.delete(listener) };
   }
 
-  private acceptSource(context: PictureApplyContext): boolean {
-    return this.activateSource(context.source, context.source_generation, context.service_session);
+  private addListener(listener: (event: PictureEvent) => void): void {
+    if (!this.listeners.has(listener) && this.listeners.size >= PICTURE_LISTENER_LIMIT) {
+      throw new RangeError("picture subscriber capacity exhausted");
+    }
+    this.listeners.add(listener);
+  }
+
+  private acceptSource(context: PictureApplyContext): "stale_source" | "capacity" | undefined {
+    const key = `${context.source.role}:${context.source.id}`;
+    const current = this.sources.get(key);
+    if (!current && this.sources.size >= PICTURE_SOURCE_LIMIT) return "capacity";
+    return this.activateSource(context.source, context.source_generation, context.service_session)
+      ? undefined
+      : "stale_source";
   }
 
   private degradeTasksForExpiredAsset(record: PictureRecord): void {
@@ -292,16 +331,79 @@ export class SharedPicture {
     }
   }
 
+  private canRetain(key: string, bytes: number): boolean {
+    const currentBytes = this.entryBytes.get(key) ?? 0;
+    if (currentBytes === 0 && this.entryBytes.size >= PICTURE_ENTRY_LIMIT) return false;
+    return this.retainedEntryBytes - currentBytes + bytes <= PICTURE_RETAINED_BYTES_LIMIT;
+  }
+
+  private retainRecord(key: string, record: PictureRecord): void {
+    this.retainEntrySize(key, retainedEntryBytes(record));
+    this.tombstones.delete(key);
+    this.records.set(key, record);
+  }
+
+  private retainTombstone(key: string, tombstone: PictureTombstone): void {
+    this.retainEntrySize(key, retainedEntryBytes(tombstone));
+    this.records.delete(key);
+    this.tombstones.set(key, tombstone);
+  }
+
+  private retainEntrySize(key: string, bytes: number): void {
+    this.retainedEntryBytes -= this.entryBytes.get(key) ?? 0;
+    this.entryBytes.set(key, bytes);
+    this.retainedEntryBytes += bytes;
+  }
+
+  private removeRecord(key: string): void {
+    this.records.delete(key);
+    this.retainedEntryBytes -= this.entryBytes.get(key) ?? 0;
+    this.entryBytes.delete(key);
+  }
+
   private emit(event: Omit<PictureEvent, "session" | "revision">): void {
     const complete: PictureEvent = { ...event, session: this.session, revision: ++this.revision };
-    this.events.push(structuredClone(complete));
-    if (this.events.length > this.eventBufferLimit) this.events.shift();
-    for (const listener of this.listeners) listener(structuredClone(complete));
+    const stored = structuredClone(complete);
+    const bytes = retainedBytes(stored);
+    if (bytes > PICTURE_EVENT_BYTES_LIMIT) {
+      this.events.length = 0;
+      this.eventBytes.length = 0;
+      this.retainedEventBytes = 0;
+    } else {
+      this.events.push(stored);
+      this.eventBytes.push(bytes);
+      this.retainedEventBytes += bytes;
+      while (this.events.length > this.eventBufferLimit || this.retainedEventBytes > PICTURE_EVENT_BYTES_LIMIT) {
+        this.events.shift();
+        this.retainedEventBytes -= this.eventBytes.shift() ?? 0;
+      }
+    }
+    this.pendingEvents.push(complete);
+    if (this.dispatchingEvents) return;
+    this.dispatchingEvents = true;
+    try {
+      while (this.pendingEvents.length > 0) {
+        const pending = this.pendingEvents.shift();
+        if (!pending) continue;
+        for (const listener of [...this.listeners]) {
+          if (!this.listeners.has(listener)) continue;
+          try {
+            listener(structuredClone(pending));
+          } catch {
+            this.listeners.delete(listener);
+          }
+        }
+      }
+    } finally {
+      this.dispatchingEvents = false;
+    }
   }
 }
 
 function isNewer(publication: StatePublication, current: PictureRecord, context: PictureApplyContext): boolean {
   const nextVersion = resourceVersion(publication);
+  const newerSourceGeneration =
+    sameNode(current.source, context.source) && context.source_generation > current.source_generation;
   if (nextVersion !== undefined && current.atlas_version !== undefined) {
     if (nextVersion !== current.atlas_version) return nextVersion > current.atlas_version;
     const nextRank = confirmationRank(publication.confirmation);
@@ -309,6 +411,9 @@ function isNewer(publication: StatePublication, current: PictureRecord, context:
     if (nextRank > currentRank) return true;
     if (nextRank < currentRank) {
       return Date.parse(publication.observation_time) > Date.parse(current.observation_time);
+    }
+    if (newerSourceGeneration) {
+      return Date.parse(publication.observation_time) >= Date.parse(current.observation_time);
     }
     if (
       sameNode(current.source, context.source) &&
@@ -326,6 +431,7 @@ function isNewer(publication: StatePublication, current: PictureRecord, context:
     const nextUpdatedAt = Date.parse(publication.resource.updated_at);
     const currentUpdatedAt = Date.parse((current.state as TaskResource).updated_at);
     if (nextUpdatedAt !== currentUpdatedAt) return nextUpdatedAt > currentUpdatedAt;
+    if (newerSourceGeneration) return true;
     return nextRank > currentRank;
   }
   return true;
@@ -385,4 +491,16 @@ function sameNode(left: LinkNode, right: LinkNode): boolean {
 
 function comparePictureRecords(left: PictureRecord, right: PictureRecord): number {
   return left.resource_type.localeCompare(right.resource_type) || left.id.localeCompare(right.id);
+}
+
+function rejected(reason: Extract<PictureApplyResult, { status: "rejected" }>["reason"]): PictureApplyResult {
+  return { status: "rejected", reason };
+}
+
+function retainedBytes(value: object): number {
+  return Buffer.byteLength(JSON.stringify(value));
+}
+
+function retainedEntryBytes(value: PictureRecord | PictureTombstone): number {
+  return "freshness" in value ? retainedBytes({ ...value, freshness: "degraded" }) : retainedBytes(value);
 }

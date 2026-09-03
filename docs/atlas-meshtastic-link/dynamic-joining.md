@@ -69,7 +69,7 @@ The public rendezvous channel stays configured after joining. Joined Asset-mode 
 
 Every Link service start creates a fresh service session identity and resets its source sequence. The Gateway also assigns a durable, increasing source generation to that service instance. Every normal Link envelope carries the role-tagged source Link node, source generation, service session, and source sequence.
 
-A receiver tracks the greatest accepted generation for each source Link node. Accepting a higher generation retires every lower generation and its service sessions. A packet from a retired generation cannot replace newer accepted state. For a previously unseen generation, the first valid private-channel packet binds its service session; a Gateway activation announcement may bind it first. Once bound, a different service session at the same generation is rejected. Source sequence rejects duplicates and reordered stale state within the bound session.
+A receiver tracks the greatest accepted generation for each source Link node. Accepting a higher generation retires every lower generation and its service sessions. A packet from a retired generation cannot replace newer accepted state. For a previously unseen generation, the first valid private-channel packet binds its service session; a Gateway activation announcement may bind it first. Once bound, a different service session at the same generation is rejected. Source sequence rejects duplicate and reordered stale updates to the same record within the bound session without discarding unrelated records that arrive out of order.
 
 ## Startup picture behavior
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { SharedPicture } from "./picture.js";
 import { GatewaySubscriptionDemand, LocalSubscriptionDemand } from "./subscriptions.js";
 import { positionPublication } from "./test-fixtures.js";
+import type { ResourceStatePublication } from "./types.js";
 
 describe("Shared Picture", () => {
   it("provides a gap-free snapshot cursor and bounded replay", () => {
@@ -34,8 +35,8 @@ describe("Shared Picture", () => {
     const alpha = positionPublication(1);
     const bravo = positionPublication(1);
     bravo.resource = { ...bravo.resource, alias: "Bravo", entity_id: "asset-bravo" };
-    expect(picture.apply(alpha, context(2))).toBe(true);
-    expect(picture.apply(bravo, context(1))).toBe(true);
+    expect(picture.apply(alpha, context(2))).toEqual({ status: "applied" });
+    expect(picture.apply(bravo, context(1))).toEqual({ status: "applied" });
     expect(picture.snapshot().records.map((record) => record.id)).toEqual(["asset-alpha", "asset-bravo"]);
   });
 
@@ -47,7 +48,7 @@ describe("Shared Picture", () => {
     delayed.operation_id = "delayed-field";
     delayed.observation_time = "2026-09-02T12:00:10Z";
 
-    expect(picture.apply(field, context(10))).toBe(true);
+    expect(picture.apply(field, context(10))).toEqual({ status: "applied" });
     expect(
       picture.apply(confirmed, {
         source: { role: "gateway", id: "gateway" },
@@ -56,8 +57,8 @@ describe("Shared Picture", () => {
         source_sequence: 1,
         received_at: 1_000
       })
-    ).toBe(true);
-    expect(picture.apply(delayed, context(9))).toBe(false);
+    ).toEqual({ status: "applied" });
+    expect(picture.apply(delayed, context(9))).toEqual({ status: "rejected", reason: "stale_sequence" });
     expect(picture.snapshot().records[0]).toMatchObject({
       atlas_version: 2,
       source: { role: "gateway", id: "gateway" }
@@ -66,34 +67,65 @@ describe("Shared Picture", () => {
 
   it("retains a source sequence fence after an expiring record leaves the picture", () => {
     const picture = new SharedPicture("picture-session");
-    expect(picture.apply(positionPublication(2), context(10))).toBe(true);
+    expect(picture.apply(positionPublication(2), context(10))).toEqual({ status: "applied" });
     picture.refresh(31_001);
     expect(picture.snapshot().records).toEqual([]);
 
-    expect(picture.apply(positionPublication(1), { ...context(9), received_at: 31_000 })).toBe(false);
+    expect(picture.apply(positionPublication(1), { ...context(9), received_at: 31_000 })).toEqual({
+      status: "rejected",
+      reason: "stale_sequence"
+    });
     expect(picture.snapshot().records).toEqual([]);
   });
 
   it("expires source sequence fences after the bounded replay window", () => {
     const picture = new SharedPicture("picture-session");
-    expect(picture.apply(positionPublication(2), context(10))).toBe(true);
+    expect(picture.apply(positionPublication(2), context(10))).toEqual({ status: "applied" });
     picture.refresh(10 * 60_000 + 1_000);
 
-    expect(picture.apply(positionPublication(1), { ...context(9), received_at: 10 * 60_000 + 1_000 })).toBe(true);
+    expect(picture.apply(positionPublication(1), { ...context(9), received_at: 10 * 60_000 + 1_000 })).toEqual({
+      status: "applied"
+    });
   });
 
-  it("bounds source sequence fences without evicting the replay window", () => {
+  it("bounds retained picture entries after replay fences expire", () => {
     const picture = new SharedPicture("picture-session");
     for (let index = 0; index < 4_096; index++) {
-      const publication = positionPublication(1);
-      publication.resource.entity_id = `asset-${index}`;
-      publication.operation_id = `position-${index}`;
-      expect(picture.apply(publication, { ...context(index + 1), received_at: index })).toBe(true);
+      expect(picture.apply(objectPublication(index), { ...context(index + 1), received_at: index })).toEqual({
+        status: "applied"
+      });
     }
-    const overflow = positionPublication(1);
-    overflow.resource.entity_id = "asset-overflow";
+    picture.refresh(10 * 60_000 + 5_000);
+    expect(picture.apply(objectPublication(4_096), { ...context(4_097), received_at: 10 * 60_000 + 5_000 })).toEqual({
+      status: "rejected",
+      reason: "capacity"
+    });
+  });
 
-    expect(picture.apply(overflow, { ...context(4_097), received_at: 4_097 })).toBe(false);
+  it("bounds retained picture bytes", () => {
+    const picture = new SharedPicture("picture-session");
+    const largeHint = "x".repeat(100_000);
+    let result = picture.apply(objectPublication(0, largeHint), context(1));
+    for (let index = 1; index < 200 && result.status === "applied"; index++) {
+      result = picture.apply(objectPublication(index, largeHint), context(index + 1));
+    }
+    expect(result).toEqual({ status: "rejected", reason: "capacity" });
+  });
+
+  it("bounds remembered source identities", () => {
+    const picture = new SharedPicture("picture-session");
+    for (let index = 0; index < 4_096; index++) {
+      expect(picture.activateSource({ role: "asset", id: `asset-${index}` }, 1, `session-${index}`)).toBe(true);
+    }
+    expect(picture.activateSource({ role: "asset", id: "asset-overflow" }, 1, "overflow-session")).toBe(false);
+  });
+
+  it("bounds subscriber registrations", () => {
+    const picture = new SharedPicture("picture-session");
+    const subscriptions = Array.from({ length: 1_024 }, () => picture.subscribe(() => undefined));
+    expect(() => picture.subscribe(() => undefined)).toThrowError("picture subscriber capacity exhausted");
+    subscriptions[0]?.();
+    expect(() => picture.subscribe(() => undefined)).not.toThrow();
   });
 
   it("applies an explicit deletion at its changed-since feed version", () => {
@@ -108,8 +140,8 @@ describe("Shared Picture", () => {
       path: "gateway_feed",
       confirmation: "core_confirmed"
     } as const;
-    expect(picture.apply(positionPublication(1), context(1))).toBe(true);
-    expect(picture.apply(deletion, context(2))).toBe(true);
+    expect(picture.apply(positionPublication(1), context(1))).toEqual({ status: "applied" });
+    expect(picture.apply(deletion, context(2))).toEqual({ status: "applied" });
     expect(picture.snapshot().records).toEqual([]);
   });
 
@@ -125,8 +157,11 @@ describe("Shared Picture", () => {
       path: "gateway_feed",
       confirmation: "core_confirmed"
     } as const;
-    expect(picture.apply(deletion, context(2))).toBe(true);
-    expect(picture.apply(positionPublication(1), context(3))).toBe(false);
+    expect(picture.apply(deletion, context(2))).toEqual({ status: "applied" });
+    expect(picture.apply(positionPublication(1), context(3))).toEqual({
+      status: "rejected",
+      reason: "stale_record"
+    });
     expect(picture.snapshot().records).toEqual([]);
   });
 
@@ -157,8 +192,8 @@ describe("Shared Picture", () => {
         source_sequence: 1,
         received_at: 0
       })
-    ).toBe(true);
-    expect(picture.apply(provisionalDeletion, context(1))).toBe(true);
+    ).toEqual({ status: "applied" });
+    expect(picture.apply(provisionalDeletion, context(1))).toEqual({ status: "applied" });
     expect(picture.snapshot().records).toEqual([]);
     expect(
       picture.apply(restored, {
@@ -168,7 +203,7 @@ describe("Shared Picture", () => {
         source_sequence: 2,
         received_at: 2_000
       })
-    ).toBe(true);
+    ).toEqual({ status: "applied" });
     expect(picture.snapshot().records[0]).toMatchObject({
       id: "asset-alpha",
       confirmation: "core_rejected",
@@ -180,7 +215,7 @@ describe("Shared Picture", () => {
     const picture = new SharedPicture("picture-session");
     const provisional = positionPublication(1);
     const confirmed = { ...provisional, path: "gateway_feed", confirmation: "core_confirmed" } as const;
-    expect(picture.apply(provisional, context(1))).toBe(true);
+    expect(picture.apply(provisional, context(1))).toEqual({ status: "applied" });
     expect(
       picture.apply(confirmed, {
         source: { role: "gateway", id: "gateway" },
@@ -189,7 +224,7 @@ describe("Shared Picture", () => {
         source_sequence: 1,
         received_at: 2_000
       })
-    ).toBe(true);
+    ).toEqual({ status: "applied" });
     expect(picture.snapshot().records[0]).toMatchObject({
       source: { role: "gateway", id: "gateway" },
       confirmation: "core_confirmed"
@@ -233,7 +268,7 @@ describe("Shared Picture", () => {
       confirmation: "core_rejected"
     } as const;
 
-    expect(picture.apply(provisional, context(1))).toBe(true);
+    expect(picture.apply(provisional, context(1))).toEqual({ status: "applied" });
     expect(
       picture.apply(rejected, {
         source: { role: "gateway", id: "gateway" },
@@ -242,7 +277,7 @@ describe("Shared Picture", () => {
         source_sequence: 1,
         received_at: 1_000
       })
-    ).toBe(true);
+    ).toEqual({ status: "applied" });
     expect(picture.snapshot().records[0]).toMatchObject({
       confirmation: "core_rejected",
       state: { status: "pending", updated_at: "2026-09-02T12:05:00Z" }
@@ -259,8 +294,8 @@ describe("Shared Picture", () => {
     if (!geometry || geometry.type !== "Point") throw new Error("position fixture must contain point geometry");
     geometry.coordinates = [-71.8, 42.2, 150];
 
-    expect(picture.apply(first, context(1))).toBe(true);
-    expect(picture.apply(second, context(2))).toBe(true);
+    expect(picture.apply(first, context(1))).toEqual({ status: "applied" });
+    expect(picture.apply(second, context(2))).toEqual({ status: "applied" });
     expect(picture.snapshot().records[0]?.state).toMatchObject({
       components: { geometry: { coordinates: [-71.8, 42.2, 150] } }
     });
@@ -287,13 +322,53 @@ describe("Shared Picture", () => {
         source_sequence: 1,
         received_at: 0
       })
-    ).toBe(true);
-    expect(picture.apply(later, context(2))).toBe(true);
+    ).toEqual({ status: "applied" });
+    expect(picture.apply(later, context(2))).toEqual({ status: "applied" });
     expect(picture.snapshot().records[0]).toMatchObject({
       source: { role: "asset", id: "asset-alpha" },
       confirmation: "awaiting_core",
       state: { components: { geometry: { coordinates: [-71.8, 42.2, 151] } } }
     });
+  });
+
+  it("refreshes equal state from a newer source generation", () => {
+    const picture = new SharedPicture("picture-session");
+    const publication = positionPublication(1);
+    expect(picture.apply(publication, context(1))).toEqual({ status: "applied" });
+    expect(picture.activateSource({ role: "asset", id: "asset-alpha" }, 2, "asset-session-2")).toBe(true);
+    expect(
+      picture.apply(publication, {
+        source: { role: "asset", id: "asset-alpha" },
+        source_generation: 2,
+        service_session: "asset-session-2",
+        source_sequence: 1,
+        received_at: 6_000
+      })
+    ).toEqual({ status: "applied" });
+    expect(picture.snapshot().records[0]).toMatchObject({
+      source_generation: 2,
+      service_session: "asset-session-2",
+      received_at: 6_000,
+      freshness: "fresh"
+    });
+  });
+
+  it("isolates throwing subscribers and serializes reentrant events", () => {
+    const picture = new SharedPicture("picture-session");
+    let throwingCalls = 0;
+    const observed: number[] = [];
+    picture.subscribe(() => {
+      throwingCalls++;
+      throw new Error("subscriber failed");
+    });
+    picture.subscribe((event) => {
+      if (event.revision === 1) picture.apply(positionPublication(2), context(2));
+    });
+    picture.subscribe((event) => observed.push(event.revision));
+
+    expect(picture.apply(positionPublication(1), context(1))).toEqual({ status: "applied" });
+    expect(throwingCalls).toBe(1);
+    expect(observed).toEqual([1, 2]);
   });
 
   it("retains mixed position and telemetry records for the telemetry interval", () => {
@@ -386,6 +461,61 @@ describe("Shared Picture", () => {
       source_asset_id: "asset-alpha"
     });
   });
+
+  it("degrades an active Task when its Asset is deleted", () => {
+    const picture = new SharedPicture("picture-session");
+    picture.apply(positionPublication(1), context(1));
+    picture.apply(
+      {
+        type: "state",
+        resource_type: "task",
+        resource: {
+          asset_id: "asset-alpha",
+          command: "atlas.survey",
+          created_at: "2026-09-02T12:00:00Z",
+          input: {},
+          status: "pending",
+          task_id: "task-1",
+          updated_at: "2026-09-02T12:00:00Z"
+        },
+        observation_time: "2026-09-02T12:00:00Z",
+        path: "gateway_feed",
+        confirmation: "core_confirmed"
+      },
+      {
+        source: { role: "gateway", id: "gateway" },
+        source_generation: 1,
+        service_session: "gateway-session",
+        source_sequence: 1,
+        received_at: 0
+      }
+    );
+    expect(
+      picture.apply(
+        {
+          type: "state",
+          resource_type: "entity",
+          resource_id: "asset-alpha",
+          deleted: true,
+          atlas_version: 2,
+          observation_time: "2026-09-02T12:00:02Z",
+          path: "gateway_feed",
+          confirmation: "core_confirmed"
+        },
+        {
+          source: { role: "gateway", id: "gateway" },
+          source_generation: 1,
+          service_session: "gateway-session",
+          source_sequence: 2,
+          received_at: 2_000
+        }
+      )
+    ).toEqual({ status: "applied" });
+    expect(picture.snapshot().records.find((record) => record.resource_type === "task")).toMatchObject({
+      freshness: "degraded",
+      source_asset_id: "asset-alpha"
+    });
+  });
 });
 
 describe("subscription aggregation", () => {
@@ -417,5 +547,30 @@ function context(sequence: number) {
     service_session: "asset-session",
     source_sequence: sequence,
     received_at: sequence === 1 ? 0 : 1_000
+  };
+}
+
+function objectPublication(
+  index: number,
+  usageHint = "map"
+): Extract<ResourceStatePublication, { resource_type: "object" }> {
+  const timestamp = "2026-09-02T12:00:00Z";
+  return {
+    type: "state",
+    resource_type: "object",
+    resource: {
+      bucket: null,
+      content_type: null,
+      metadata: { created_at: timestamp, updated_at: timestamp, version: index + 1 },
+      object_id: `object-${index}`,
+      path: null,
+      size_bytes: 0,
+      type: "test",
+      usage_hints: [usageHint]
+    },
+    observation_time: timestamp,
+    path: "field",
+    confirmation: "awaiting_core",
+    operation_id: `object-${index}`
   };
 }
