@@ -3,69 +3,69 @@
   "scenario_revision": 1,
   "seed": 42,
   "semantic_result": {
-    "gateway_field_records": 1,
-    "minimum_asset_picture_records": 1,
+    "gateway_field_records": 0,
+    "minimum_asset_picture_records": 0,
     "aggregate_subscription_feeds": 1,
     "task_delivery_order": [],
     "data_request_completed": false,
     "task_reports_received": 0
   },
   "transport_metrics": {
-    "application_bytes": 347507,
-    "packets_sent": 336,
-    "transmitted_bytes": 76007,
-    "packets_received": 750,
-    "duplicate_packets_suppressed": 9,
+    "application_bytes": 346013,
+    "packets_sent": 330,
+    "transmitted_bytes": 74603,
+    "packets_received": 738,
+    "duplicate_packets_suppressed": 10,
     "stale_messages_rejected": 0,
-    "incomplete_reassemblies": 164,
-    "best_effort_replaced": 540,
+    "incomplete_reassemblies": 148,
+    "best_effort_replaced": 538,
     "confirmed_rejected_overload": 0,
-    "retry_exhausted": 7,
-    "retransmitted_packets": 27,
-    "fragment_repair_requests_sent": 4,
+    "retry_exhausted": 5,
+    "retransmitted_packets": 28,
+    "fragment_repair_requests_sent": 2,
     "fragment_repair_requests_received": 1,
     "radio_send_failures": 0,
     "inbound_settlement_expired": 0,
     "peak_queue_depth": 4,
     "packets_sent_by_message_type": {
-      "state": 229,
-      "task_delivery": 17,
+      "state": 247,
+      "task_delivery": 10,
       "task_report": 0,
-      "data_request": 16,
-      "data_response": 5,
+      "data_request": 17,
+      "data_response": 0,
       "resource_operation": 0,
       "subscription": 24,
       "object_content": 0,
-      "control": 45
+      "control": 32
     },
     "transmitted_bytes_by_priority": {
-      "safety": 10090,
-      "task": 3926,
-      "request": 10144,
-      "live_state": 51847,
+      "safety": 7134,
+      "task": 2323,
+      "request": 9217,
+      "live_state": 55929,
       "resource": 0,
       "object_content": 0
     },
     "queue_wait_ms_by_priority": {
       "safety": {
-        "samples": 11,
-        "total_ms": 9446.789794921875,
-        "maximum_ms": 7218.564453125
+        "samples": 8,
+        "total_ms": 0,
+        "maximum_ms": 0
       },
       "task": {
-        "samples": 2,
-        "total_ms": 1805.0283203125,
-        "maximum_ms": 1805.0283203125
+        "samples": 1,
+        "total_ms": 0,
+        "maximum_ms": 0
       },
       "request": {
-        "samples": 5,
-        "total_ms": 21234.357421875,
-        "maximum_ms": 20509.948974609375
+        "samples": 4,
+        "total_ms": 602.90625,
+        "maximum_ms": 602.90625
       },
       "live_state": {
-        "samples": 24,
-        "total_ms": 239136.75634765625,
-        "maximum_ms": 59462.950927734375
+        "samples": 26,
+        "total_ms": 259201.2626953125,
+        "maximum_ms": 51035.111328125
       },
       "resource": {
         "samples": 0,
@@ -80,24 +80,24 @@
     },
     "operation_latency_ms_by_priority": {
       "safety": {
-        "samples": 11,
-        "total_ms": 52524.616943359375,
-        "maximum_ms": 12800.765380859375
+        "samples": 8,
+        "total_ms": 24274.1396484375,
+        "maximum_ms": 4086.487548828125
       },
       "task": {
-        "samples": 2,
-        "total_ms": 30000,
+        "samples": 1,
+        "total_ms": 15000,
         "maximum_ms": 15000
       },
       "request": {
-        "samples": 5,
-        "total_ms": 150000,
+        "samples": 4,
+        "total_ms": 120000,
         "maximum_ms": 30000
       },
       "live_state": {
-        "samples": 24,
-        "total_ms": 639539.8039550781,
-        "maximum_ms": 66538.39672851562
+        "samples": 26,
+        "total_ms": 660984.1606445312,
+        "maximum_ms": 65739.08227539062
       },
       "resource": {
         "samples": 0,
@@ -111,39 +111,39 @@
       }
     },
     "operation_outcomes": {
-      "sent": 35,
+      "sent": 34,
       "confirmed": 0,
       "responded": 0,
       "rejected": 0,
-      "failed": 547
+      "failed": 543
     }
   },
   "network_metrics": {
-    "radio_submissions": 336,
-    "mesh_transmissions": 795,
-    "transmitted_bytes": 179847,
-    "modeled_airtime_ms": 160513.92000000092,
-    "delivered_packets": 750,
+    "radio_submissions": 330,
+    "mesh_transmissions": 778,
+    "transmitted_bytes": 175370,
+    "modeled_airtime_ms": 156617.98400000072,
+    "delivered_packets": 738,
     "lost_packets": 0,
-    "collided_packets": 432,
+    "collided_packets": 435,
     "duplicate_deliveries": 0,
     "modeled_airtime_ms_by_message_type": {
-      "state": 98253.56799999946,
-      "task_delivery": 9923.583999999999,
+      "state": 107621.63199999937,
+      "task_delivery": 7661.696000000004,
       "task_report": 0,
-      "data_request": 6898.432000000002,
-      "data_response": 3278.8479999999986,
+      "data_request": 6667.904000000001,
+      "data_response": 0,
       "resource_operation": 0,
       "subscription": 14386.175999999989,
       "object_content": 0,
-      "control": 27773.312000000024,
+      "control": 20280.57599999998,
       "non_link": 0
     },
     "modeled_airtime_ms_by_priority": {
-      "safety": 27773.312000000024,
-      "task": 9923.583999999999,
-      "request": 24563.45599999999,
-      "live_state": 98253.56799999946,
+      "safety": 20280.57599999998,
+      "task": 7661.696000000004,
+      "request": 21054.079999999987,
+      "live_state": 107621.63199999937,
       "resource": 0,
       "object_content": 0,
       "non_link": 0
@@ -151,10 +151,10 @@
   },
   "picture_metrics": {
     "at_30_seconds": {
-      "total_records": 2,
+      "total_records": 3,
       "gateway_records": 0,
       "minimum_asset_records": 0,
-      "fresh_records": 2,
+      "fresh_records": 3,
       "stale_records": 0,
       "degraded_records": 0
     },
@@ -167,13 +167,13 @@
       "degraded_records": 0
     },
     "final": {
-      "total_records": 8,
-      "gateway_records": 1,
-      "minimum_asset_records": 1,
-      "fresh_records": 7,
+      "total_records": 4,
+      "gateway_records": 0,
+      "minimum_asset_records": 0,
+      "fresh_records": 3,
       "stale_records": 1,
       "degraded_records": 0
     }
   },
-  "elapsed_ms": 129169.10034179688
+  "elapsed_ms": 136943.39111328125
 }

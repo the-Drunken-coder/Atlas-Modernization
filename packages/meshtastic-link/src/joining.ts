@@ -10,6 +10,7 @@ import type { LinkRadio, RadioPacket } from "./radio.js";
 const JOIN_MARKER = "AJ1";
 const REQUIRED_CAPABILITIES = 0b111;
 const MAX_PENDING_JOINS = 256;
+const PENDING_JOIN_RETENTION_MS = 2 * 60_000;
 const MAX_COMPLETED_JOINS = 256;
 const COMPLETED_JOIN_RETENTION_MS = 5 * 60_000;
 
@@ -133,6 +134,7 @@ type PendingJoin = {
   challenge: string;
   gatewayProof: string;
   radioNodeID: number;
+  expiresAt: number;
 };
 
 type CompletedJoin = {
@@ -178,8 +180,9 @@ export class GatewayJoinService {
     if (this.closed || packet.channel !== this.rendezvousChannel || packet.radio_source === undefined) return;
     const message = decodeJoinMessage(packet.payload);
     if (!message) return;
+    this.prunePending(packet.received_at);
     if (message.type === "discovery") {
-      this.pruneCompleted();
+      this.pruneCompleted(packet.received_at);
       if (message.radio_node_id !== packet.radio_source) return;
       const completed = this.completed.get(message.join_attempt_id);
       if (completed) {
@@ -214,7 +217,8 @@ export class GatewayJoinService {
           beacon: message,
           challenge,
           gatewayProof,
-          radioNodeID: packet.radio_source
+          radioNodeID: packet.radio_source,
+          expiresAt: packet.received_at + PENDING_JOIN_RETENTION_MS
         });
       } finally {
         this.pendingChallenges.delete(message.join_attempt_id);
@@ -250,9 +254,9 @@ export class GatewayJoinService {
         beacon: pending.beacon,
         radioNodeID: pending.radioNodeID,
         acceptance,
-        expiresAt: Date.now() + COMPLETED_JOIN_RETENTION_MS
+        expiresAt: packet.received_at + COMPLETED_JOIN_RETENTION_MS
       });
-      this.pruneCompleted();
+      this.pruneCompleted(packet.received_at);
       await this.sendAcceptance(acceptance, packet.radio_source);
       if (this.closed) return;
       await this.onAdmitted?.({
@@ -311,6 +315,12 @@ export class GatewayJoinService {
     }
   }
 
+  private prunePending(now: number): void {
+    for (const [attemptID, pending] of this.pending) {
+      if (pending.expiresAt <= now && !this.processing.has(attemptID)) this.pending.delete(attemptID);
+    }
+  }
+
   private run(operation: () => Promise<void>): void {
     const active = operation()
       .catch((error: unknown) => {
@@ -353,6 +363,7 @@ export class AssetJoinService {
   private readonly random: () => number;
   private readonly onStatus: ((status: AssetJoinStatus) => void) | undefined;
   private readonly onError: ((error: Error) => void) | undefined;
+  private readonly activeOperations = new Set<Promise<void>>();
   private readonly startedAt: number;
   private readonly joinAttemptID = compactID();
   private readonly unsubscribe: () => void;
@@ -392,9 +403,15 @@ export class AssetJoinService {
   }
 
   stop(): void {
+    if (this.currentStatus.state === "stopped") return;
     if (this.retryTimer) this.clock.cancel(this.retryTimer);
     this.unsubscribe();
     this.updateStatus({ state: "stopped" });
+  }
+
+  async close(): Promise<void> {
+    this.stop();
+    await Promise.allSettled([...this.activeOperations]);
   }
 
   private async sendDiscovery(): Promise<void> {
@@ -496,9 +513,12 @@ export class AssetJoinService {
   }
 
   private run(operation: () => Promise<void>): void {
-    void operation().catch((error: unknown) => {
-      if (this.currentStatus.state !== "stopped") this.onError?.(asError(error));
-    });
+    const active = operation()
+      .catch((error: unknown) => {
+        if (this.currentStatus.state !== "stopped") this.onError?.(asError(error));
+      })
+      .finally(() => this.activeOperations.delete(active));
+    this.activeOperations.add(active);
   }
 }
 

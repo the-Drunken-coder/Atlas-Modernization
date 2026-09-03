@@ -37,6 +37,7 @@ import type {
   LinkOperationStatus,
   MessagePriority,
   PublicationPath,
+  ResourceOperation,
   StatePublication,
   TaskDelivery,
   TaskReport
@@ -69,6 +70,7 @@ const RETRY_MS: Record<MessagePriority, number> = {
   object_content: 15_000
 };
 const OPERATION_RESULT_LIMIT = 4_096;
+const COMMITTED_OPERATION_ID_LIMIT = 4_096;
 const SETTLED_INBOUND_LIMIT = 4_096;
 const TASK_DELIVERY_FENCE_LIMIT = 4_096;
 
@@ -182,7 +184,7 @@ export class LinkTransport {
   private readonly settledInbound = new Map<string, "confirmed" | "rejected">();
   private readonly operationResults = new Map<string, LinkOperationResult>();
   private readonly committedOperationIDs = new Set<string>();
-  private readonly intermediateDataConfirmations = new Set<string>();
+  private readonly intermediateResponseConfirmations = new Set<string>();
   private readonly taskDeliverySequences = new Map<string, number>();
   private readonly listeners = new Set<(event: TransportEvent) => void>();
   private readonly capacityListeners = new Set<() => void>();
@@ -283,6 +285,13 @@ export class LinkTransport {
       if (existing.status !== "failed" || this.committedOperationIDs.has(operationID)) return { ...existing };
       this.operationResults.delete(operationID);
     }
+    if (this.committedOperationIDs.has(operationID)) {
+      return this.failedResult(operationID, "operation ID was already committed in this Link service session");
+    }
+    if (delivery === "confirmed" && this.committedOperationIDs.size >= COMMITTED_OPERATION_ID_LIMIT) {
+      this.mutableMetrics.confirmed_rejected_overload++;
+      return this.failedResult(operationID, "confirmed operation identity capacity is exhausted");
+    }
     if (message.type === "data_request" && this.pendingDataRequests.has(message.request_id)) {
       return this.failedResult(operationID, "data request ID is already pending");
     }
@@ -338,7 +347,7 @@ export class LinkTransport {
       : occupancy + this.pendingInbound.size >= this.queueLimit;
     if (capacityExhausted) return this.failedResult(operationID, "outbound queue capacity is exhausted");
     this.queue.push(outbound);
-    this.committedOperationIDs.add(operationID);
+    if (delivery === "confirmed") this.committedOperationIDs.add(operationID);
     if (delivery === "confirmed") {
       this.outboundByOperation.set(operationID, outbound);
       if (message.type === "data_request") this.pendingDataRequests.set(message.request_id, outbound);
@@ -346,7 +355,9 @@ export class LinkTransport {
       outbound.deadlineTimer = this.clock.schedule(outboundDeadlineMs(message, identity.priority), () => {
         const awaitingConfirmation = this.outboundByOperation.has(operationID);
         const requestID = dataRequestID(outbound);
-        const awaitingResponse = requestID !== undefined && this.pendingDataRequests.get(requestID) === outbound;
+        const awaitingResponse =
+          (requestID !== undefined && this.pendingDataRequests.get(requestID) === outbound) ||
+          this.responseOperations.get(operationID) === outbound;
         if (!awaitingConfirmation && !awaitingResponse) return;
         this.mutableMetrics.retry_exhausted++;
         this.completeOutbound(
@@ -389,6 +400,7 @@ export class LinkTransport {
   cancel(operationID: string, reason = "operation cancelled locally"): boolean {
     const outbound =
       this.outboundByOperation.get(operationID) ??
+      this.responseOperations.get(operationID) ??
       [...this.pendingDataRequests.values()].find((candidate) => candidate.identity.operation_id === operationID);
     if (!outbound) return false;
     this.completeOutbound(outbound, "failed", reason);
@@ -449,6 +461,7 @@ export class LinkTransport {
     const pending = new Set(this.queue);
     for (const outbound of this.outboundByOperation.values()) pending.add(outbound);
     for (const outbound of this.pendingDataRequests.values()) pending.add(outbound);
+    for (const outbound of this.responseOperations.values()) pending.add(outbound);
     if (this.activeOutbound) pending.add(this.activeOutbound);
     for (const outbound of pending) {
       if (outbound.delivery === "confirmed") this.completeOutbound(outbound, "failed", reason);
@@ -734,14 +747,6 @@ export class LinkTransport {
       this.mutableMetrics.duplicate_packets_suppressed++;
       return;
     }
-    if (
-      addressed &&
-      (message.type === "data_response" || (message.type === "object_content" && message.request_id !== undefined)) &&
-      !this.matchingResponseOperation(message, identity)
-    ) {
-      return;
-    }
-    if (taskDeliveryOrder !== "duplicate") this.updatePicture(message, identity);
     const requiresSettlement = deliveryClass(message) === "confirmed" && addressed;
     const settlementID = inboundSettlementID(identity);
     if (requiresSettlement) {
@@ -764,6 +769,15 @@ export class LinkTransport {
         this.mutableMetrics.duplicate_packets_suppressed++;
         return;
       }
+    }
+    if (
+      addressed &&
+      (message.type === "data_response" || (message.type === "object_content" && message.request_id !== undefined)) &&
+      !this.matchingResponseOperation(message, identity)
+    ) {
+      return;
+    }
+    if (requiresSettlement) {
       if (taskDeliveryOrder === "duplicate") {
         this.mutableMetrics.duplicate_packets_suppressed++;
         return;
@@ -782,6 +796,7 @@ export class LinkTransport {
         timer: this.clock.schedule(DEADLINE_MS[identity.priority], () => this.expirePendingInbound(settlementID))
       });
     }
+    if (taskDeliveryOrder !== "duplicate") this.updatePicture(message, identity);
     if (addressed && (message.type === "data_response" || message.type === "object_content")) {
       this.completeDataRequest(message, identity);
     }
@@ -903,8 +918,11 @@ export class LinkTransport {
       }
       return;
     }
-    if (message.control === "confirmed" && outbound.message.type === "data_request") {
-      this.confirmDataRequestTransport(outbound);
+    if (
+      message.control === "confirmed" &&
+      (outbound.message.type === "data_request" || outbound.message.type === "resource_operation")
+    ) {
+      this.confirmAwaitingResponseTransport(outbound);
     } else {
       this.completeOutbound(outbound, message.control === "confirmed" ? "confirmed" : "rejected", message.reason);
     }
@@ -939,6 +957,8 @@ export class LinkTransport {
 
   private expectsObjectContent(frame: LinkFrame): boolean {
     if (frame.destination === undefined || !sameNode(frame.destination, this.node)) return false;
+    const settlementID = inboundSettlementID(frameIdentity(frame));
+    if (this.pendingInbound.has(settlementID) || this.settledInbound.has(settlementID)) return true;
     const request = this.pendingDataRequests.get(frame.operation_id);
     return (
       request?.message.type === "data_request" &&
@@ -1048,7 +1068,7 @@ export class LinkTransport {
     if (releasedObject && this.hasEligibleOutbound()) this.requestPump();
   }
 
-  private confirmDataRequestTransport(outbound: Outbound): void {
+  private confirmAwaitingResponseTransport(outbound: Outbound): void {
     if (outbound.retryTimer) this.clock.cancel(outbound.retryTimer);
     delete outbound.retryTimer;
     this.outboundByOperation.delete(outbound.identity.operation_id);
@@ -1057,7 +1077,7 @@ export class LinkTransport {
       operation_id: outbound.identity.operation_id,
       status: "confirmed"
     };
-    this.intermediateDataConfirmations.add(outbound.identity.operation_id);
+    this.intermediateResponseConfirmations.add(outbound.identity.operation_id);
     this.recordOperation(result);
     this.emit({ type: "operation", result });
   }
@@ -1120,7 +1140,7 @@ export class LinkTransport {
     } else if (
       message.type !== "data_response" ||
       outbound.message.type !== "resource_operation" ||
-      outbound.message.operation !== message.operation
+      !responseMatchesMutation(outbound.message, message)
     ) {
       return undefined;
     }
@@ -1170,11 +1190,19 @@ export class LinkTransport {
   }
 
   private confirmedCount(): number {
-    return new Set([...this.outboundByOperation.values(), ...this.pendingDataRequests.values()]).size;
+    return new Set([
+      ...this.outboundByOperation.values(),
+      ...this.pendingDataRequests.values(),
+      ...this.responseOperations.values()
+    ]).size;
   }
 
   private outboundOccupancy(): number {
-    return this.queue.length + (this.activeOutbound && !this.queue.includes(this.activeOutbound) ? 1 : 0);
+    return new Set([
+      ...this.queue,
+      ...this.outboundByOperation.values(),
+      ...(this.activeOutbound === undefined ? [] : [this.activeOutbound])
+    ]).size;
   }
 
   private failedResult(operationID: string, reason: string): LinkOperationResult {
@@ -1192,17 +1220,17 @@ export class LinkTransport {
   private recordOperation(result: LinkOperationResult): void {
     const previous = this.operationResults.get(result.operation_id);
     const previousWasIntermediateConfirmation =
-      previous?.status === "confirmed" && this.intermediateDataConfirmations.has(result.operation_id);
+      previous?.status === "confirmed" && this.intermediateResponseConfirmations.has(result.operation_id);
     if (
       isCountedOutcome(result.status) &&
       result.status !== "confirmed" &&
       (previous === undefined || !isCountedOutcome(previous.status) || previousWasIntermediateConfirmation)
     ) {
       this.mutableMetrics.operation_outcomes[result.status]++;
-      this.intermediateDataConfirmations.delete(result.operation_id);
+      this.intermediateResponseConfirmations.delete(result.operation_id);
     } else if (
       result.status === "confirmed" &&
-      !this.intermediateDataConfirmations.has(result.operation_id) &&
+      !this.intermediateResponseConfirmations.has(result.operation_id) &&
       (previous === undefined || !isCountedOutcome(previous.status))
     ) {
       this.mutableMetrics.operation_outcomes.confirmed++;
@@ -1214,14 +1242,13 @@ export class LinkTransport {
       );
       if (!removable) return;
       this.operationResults.delete(removable[0]);
-      this.intermediateDataConfirmations.delete(removable[0]);
+      this.intermediateResponseConfirmations.delete(removable[0]);
       this.responseOperations.delete(removable[0]);
-      this.committedOperationIDs.delete(removable[0]);
     }
   }
 
   private operationIsPending(operationID: string): boolean {
-    if (this.outboundByOperation.has(operationID)) return true;
+    if (this.outboundByOperation.has(operationID) || this.responseOperations.has(operationID)) return true;
     return [...this.pendingDataRequests.values()].some((outbound) => outbound.identity.operation_id === operationID);
   }
 
@@ -1699,6 +1726,27 @@ function responseMatchesRequest(
         isRuntimeTaskDeliveryResponse(response.output) &&
         response.output.tasks.every((task) => task.asset_id === request.target_id)
       );
+    default:
+      return true;
+  }
+}
+
+function responseMatchesMutation(request: ResourceOperation, response: DataResponse): boolean {
+  if (response.operation !== request.operation) return false;
+  switch (request.operation) {
+    case "entity.update":
+      return isEntityResource(response.output) && response.output.entity_id === request.target_id;
+    case "entity.check_in":
+      return isEntityCheckInResponse(response.output) && response.output.entity.entity_id === request.target_id;
+    case "task.acknowledge":
+    case "task.start":
+    case "task.progress":
+    case "task.complete":
+    case "task.fail":
+    case "task.cancel":
+      return isTaskResource(response.output) && response.output.task_id === request.target_id;
+    case "object.update":
+      return isObjectDetailResource(response.output) && response.output.object_id === request.target_id;
     default:
       return true;
   }

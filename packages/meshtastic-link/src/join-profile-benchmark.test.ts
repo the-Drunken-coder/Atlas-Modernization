@@ -123,7 +123,12 @@ describe("joining and Radio profile", () => {
     });
 
     await expect(store.admitAsset("constructor")).resolves.toMatchObject({ source_generation: 1 });
-    expect((await store.load()).asset_generations).toEqual({ constructor: 1 });
+    await expect(store.admitAsset("__proto__")).resolves.toMatchObject({ source_generation: 1 });
+    await expect(store.admitAsset("__proto__")).resolves.toMatchObject({ source_generation: 2 });
+    expect(Object.entries((await store.load()).asset_generations)).toEqual([
+      ["constructor", 1],
+      ["__proto__", 2]
+    ]);
   });
 
   it("joins across one LOCAL_ONLY relay and assigns a new generation on restart", async () => {
@@ -228,9 +233,14 @@ describe("joining and Radio profile", () => {
       await new Promise<void>((resolve) => setTimeout(resolve, 1));
     }
     expect(installationStarted).toBe(true);
-    stopping.stop();
+    let closeResolved = false;
+    const close = stopping.close().then(() => {
+      closeResolved = true;
+    });
+    await Promise.resolve();
+    expect(closeResolved).toBe(false);
     releaseMembership();
-    await new Promise<void>((resolve) => setTimeout(resolve, 1));
+    await close;
     expect(stopping.status()).toEqual({ state: "stopped" });
     await gateway.close();
   });
@@ -305,6 +315,54 @@ describe("joining and Radio profile", () => {
 
     expect((await store.load()).asset_generations).toEqual({ "asset-alpha": 1 });
     expect(errors).toEqual([]);
+  });
+
+  it("expires abandoned join challenges before they exhaust admission capacity", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "atlas-link-join-expiry-"));
+    const store = new GatewayMembershipStore(join(directory, "membership.json"));
+    await store.initialize({
+      gateway_node_id: "gateway",
+      channel_index: 1,
+      channel_name: "ATLAS",
+      channel_key_base64: Buffer.alloc(32, 9).toString("base64")
+    });
+    const clock = new VirtualClock();
+    const network = new SimulatedPacketNetwork({ seed: 83, clock });
+    const radio = network.addRadio("gateway", 201);
+    const gateway = new GatewayJoinService(radio, 0, store, new PreSharedKeyAuthenticationPolicy("j".repeat(32)));
+    const discovery = (attempt: number): DiscoveryBeacon => ({
+      type: "discovery",
+      join_attempt_id: `abandoned-${attempt}`,
+      radio_node_id: 101,
+      asset_id: `asset-${attempt}`,
+      service_session: `session-${attempt}`,
+      link_revision: LINK_PROTOCOL_REVISION,
+      radio_contract_revision: RADIO_CONTRACT_REVISION,
+      capabilities: ["json", "fragmentation", "confirmation"]
+    });
+    for (let attempt = 0; attempt < 256; attempt++) {
+      radio.receive({
+        payload: encodeJoinMessage(discovery(attempt)),
+        received_at: 0,
+        radio_source: 101,
+        channel: 0,
+        public_key_encrypted: false
+      });
+    }
+    for (let attempt = 0; attempt < 10; attempt++) await Promise.resolve();
+    expect(network.metrics().radio_submissions).toBe(256);
+
+    radio.receive({
+      payload: encodeJoinMessage(discovery(256)),
+      received_at: 2 * 60_000 + 1,
+      radio_source: 101,
+      channel: 0,
+      public_key_encrypted: false
+    });
+    for (let attempt = 0; attempt < 10; attempt++) await Promise.resolve();
+
+    expect(network.metrics().radio_submissions).toBe(257);
+    await gateway.close();
   });
 
   it("applies only owned profile differences and verifies the readback", async () => {
@@ -414,8 +472,8 @@ describe("deterministic baseline", () => {
       data_request_completed: false,
       task_reports_received: 0
     });
-    expect(result.semantic_result.gateway_field_records).toBeGreaterThan(0);
-    expect(result.semantic_result.minimum_asset_picture_records).toBeGreaterThan(0);
+    expect(result.picture_metrics.at_30_seconds.total_records).toBeGreaterThan(0);
+    expect(result.picture_metrics.at_60_seconds.total_records).toBeGreaterThan(0);
     expect(result.network_metrics.radio_submissions).toBeGreaterThan(0);
   });
 

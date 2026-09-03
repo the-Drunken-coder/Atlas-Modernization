@@ -43,7 +43,7 @@ describe("Shared Picture", () => {
     const picture = new SharedPicture("picture-session");
     const field = positionPublication(1);
     const confirmed = { ...positionPublication(2), path: "gateway_feed", confirmation: "core_confirmed" } as const;
-    const delayed = structuredClone(field);
+    const delayed = structuredClone(positionPublication(3));
     delayed.operation_id = "delayed-field";
     delayed.observation_time = "2026-09-02T12:00:10Z";
 
@@ -72,6 +72,28 @@ describe("Shared Picture", () => {
 
     expect(picture.apply(positionPublication(1), { ...context(9), received_at: 31_000 })).toBe(false);
     expect(picture.snapshot().records).toEqual([]);
+  });
+
+  it("expires source sequence fences after the bounded replay window", () => {
+    const picture = new SharedPicture("picture-session");
+    expect(picture.apply(positionPublication(2), context(10))).toBe(true);
+    picture.refresh(10 * 60_000 + 1_000);
+
+    expect(picture.apply(positionPublication(1), { ...context(9), received_at: 10 * 60_000 + 1_000 })).toBe(true);
+  });
+
+  it("bounds source sequence fences without evicting the replay window", () => {
+    const picture = new SharedPicture("picture-session");
+    for (let index = 0; index < 4_096; index++) {
+      const publication = positionPublication(1);
+      publication.resource.entity_id = `asset-${index}`;
+      publication.operation_id = `position-${index}`;
+      expect(picture.apply(publication, { ...context(index + 1), received_at: index })).toBe(true);
+    }
+    const overflow = positionPublication(1);
+    overflow.resource.entity_id = "asset-overflow";
+
+    expect(picture.apply(overflow, { ...context(4_097), received_at: 4_097 })).toBe(false);
   });
 
   it("applies an explicit deletion at its changed-since feed version", () => {

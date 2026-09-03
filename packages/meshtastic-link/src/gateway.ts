@@ -70,7 +70,13 @@ export class GatewayFeedDemand {
   private readonly demand = new GatewaySubscriptionDemand();
   private readonly latestTransitions = new Map<
     string,
-    { sequence: number; sourceNodeID: string; selector: SubscriptionTransition["selector"] }
+    {
+      generation: number;
+      session: string;
+      sequence: number;
+      sourceNodeID: string;
+      selector: SubscriptionTransition["selector"];
+    }
   >();
 
   apply(event: TransportMessageEvent, now: number): GatewayFeedTransition | undefined {
@@ -81,11 +87,18 @@ export class GatewayFeedDemand {
       action: event.message.action,
       selector: event.message.selector
     };
-    const transitionKey = `${event.source.id}:${event.source_generation}:${event.service_session}:${selectorKey(event.message.selector)}`;
+    const transitionKey = `${event.source.id}:${selectorKey(event.message.selector)}`;
     const previous = this.latestTransitions.get(transitionKey);
-    if (previous !== undefined && event.source_sequence <= previous.sequence) return undefined;
+    if (previous !== undefined) {
+      if (event.source_generation < previous.generation) return undefined;
+      if (event.source_generation === previous.generation) {
+        if (event.service_session !== previous.session || event.source_sequence <= previous.sequence) return undefined;
+      }
+    }
     if (previous === undefined && !this.makeTransitionFenceRoom(now)) return undefined;
     this.latestTransitions.set(transitionKey, {
+      generation: event.source_generation,
+      session: event.service_session,
       sequence: event.source_sequence,
       sourceNodeID: event.source.id,
       selector: event.message.selector
@@ -140,6 +153,7 @@ type InFlightTask = QueuedTask & {
 export class OrderedTaskDispatcher {
   private readonly queued = new Map<string, QueuedTask[]>();
   private readonly inFlight = new Map<string, InFlightTask>();
+  private readonly inFlightCancellations = new Map<string, InFlightTask>();
   private readonly unsubscribe: () => void;
   private readonly unsubscribeCapacity: () => void;
   private readonly pumpingAssets = new Set<string>();
@@ -161,10 +175,15 @@ export class OrderedTaskDispatcher {
   enqueue(assetID: string, task: TaskResource, delivery: TaskDelivery["delivery"] = "assignment"): void {
     if (!assetID) throw new TypeError("Task delivery requires an Asset ID");
     if (delivery === "cancellation") {
+      const replacesQueued = (this.queued.get(assetID) ?? []).some((item) => item.task.task_id === task.task_id);
+      this.reserveQueueSlots(replacesQueued ? 0 : 1);
       this.removeQueuedTask(assetID, task.task_id);
       const active = this.inFlight.get(assetID);
       if (active?.task.task_id === task.task_id) this.retireInFlight(assetID, active, "superseded by cancellation");
-      this.reserveQueueSlots(1);
+      const activeCancellation = this.inFlightCancellations.get(assetID);
+      if (activeCancellation?.task.task_id === task.task_id) {
+        this.retireInFlightCancellation(assetID, activeCancellation, "superseded by newer cancellation");
+      }
       const queue = this.queued.get(assetID) ?? [];
       queue.unshift({ task, delivery });
       this.queued.set(assetID, queue);
@@ -214,8 +233,12 @@ export class OrderedTaskDispatcher {
     const active = this.inFlight.get(assetID);
     if (active?.task.task_id === task.task_id) {
       this.retireInFlight(assetID, active, "superseded by authoritative terminal Task state");
-      this.pump(assetID);
     }
+    const cancellation = this.inFlightCancellations.get(assetID);
+    if (cancellation?.task.task_id === task.task_id) {
+      this.retireInFlightCancellation(assetID, cancellation, "superseded by authoritative terminal Task state");
+    }
+    this.pump(assetID);
   }
 
   state(assetID: string): { in_flight?: string; queued: string[] } {
@@ -231,16 +254,22 @@ export class OrderedTaskDispatcher {
     this.unsubscribeCapacity();
     this.queued.clear();
     this.inFlight.clear();
+    this.inFlightCancellations.clear();
   }
 
   private pump(assetID: string): void {
-    if (this.inFlight.has(assetID) || this.pumpingAssets.has(assetID)) return;
+    if (this.pumpingAssets.has(assetID)) return;
     this.pumpingAssets.add(assetID);
     try {
       const queue = this.queued.get(assetID);
       const next = queue?.[0];
       if (!next) {
         this.queued.delete(assetID);
+        return;
+      }
+      if (next.delivery === "cancellation") {
+        if (this.inFlightCancellations.has(assetID)) return;
+      } else if (this.inFlight.has(assetID) || this.inFlightCancellations.has(assetID)) {
         return;
       }
       const result = this.send(assetID, next);
@@ -253,7 +282,9 @@ export class OrderedTaskDispatcher {
       }
       queue.shift();
       if (queue.length === 0) this.queued.delete(assetID);
-      this.inFlight.set(assetID, { ...next, operationID: result.operation_id });
+      const inFlight = { ...next, operationID: result.operation_id };
+      if (next.delivery === "cancellation") this.inFlightCancellations.set(assetID, inFlight);
+      else this.inFlight.set(assetID, inFlight);
     } finally {
       this.pumpingAssets.delete(assetID);
     }
@@ -284,8 +315,16 @@ export class OrderedTaskDispatcher {
   private handleTransportEvent(event: TransportEvent): void {
     if (event.type === "packet_sent") return;
     if (event.type !== "operation" || event.result.status === "queued") return;
+    for (const [assetID, task] of this.inFlightCancellations) {
+      if (task.operationID !== event.result.operation_id) continue;
+      if (event.result.status === "failed") return;
+      this.inFlightCancellations.delete(assetID);
+      if (!this.retiringAssets.has(assetID)) this.pump(assetID);
+      return;
+    }
     for (const [assetID, task] of this.inFlight) {
       if (task.operationID !== event.result.operation_id) continue;
+      if (event.result.status === "failed") return;
       this.inFlight.delete(assetID);
       if (!this.retiringAssets.has(assetID)) this.pump(assetID);
       return;
@@ -298,6 +337,16 @@ export class OrderedTaskDispatcher {
     try {
       this.transport.cancel(task.operationID, reason);
       this.inFlight.delete(assetID);
+    } finally {
+      this.retiringAssets.delete(assetID);
+    }
+  }
+
+  private retireInFlightCancellation(assetID: string, task: InFlightTask, reason: string): void {
+    this.retiringAssets.add(assetID);
+    try {
+      this.transport.cancel(task.operationID, reason);
+      this.inFlightCancellations.delete(assetID);
     } finally {
       this.retiringAssets.delete(assetID);
     }
