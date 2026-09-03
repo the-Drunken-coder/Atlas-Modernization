@@ -453,6 +453,7 @@ export class AssetJoinService {
         channel_name: message.channel_name,
         channel_key_base64: message.channel_key_base64
       });
+      if (this.status().state === "stopped") return;
       if (this.retryTimer) this.clock.cancel(this.retryTimer);
       this.updateStatus({
         state: "joined",

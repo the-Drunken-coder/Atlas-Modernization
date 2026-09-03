@@ -340,8 +340,6 @@ export function profileDifferences(desired: RadioProfile, actual: ActualRadioCon
   );
   compareOwned(differences, "public_channel.uplink", desired.public_channel.uplink, actual.public_channel.uplink);
   compareOwned(differences, "public_channel.downlink", desired.public_channel.downlink, actual.public_channel.downlink);
-  compareOwned(differences, "private_channel.index", desired.private_channel.index, actual.private_channel.index);
-  compareOwned(differences, "private_channel.name", desired.private_channel.name, actual.private_channel.name);
   return differences;
 }
 

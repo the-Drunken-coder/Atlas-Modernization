@@ -45,6 +45,7 @@ type SourcePosition = {
 
 type PictureTombstone = {
   atlasVersion: number;
+  confirmation: ConfirmationState;
   source: LinkNode;
   sourceGeneration: number;
   serviceSession: string;
@@ -106,9 +107,10 @@ export class SharedPicture {
     }
     if (current && !isNewer(publication, current, context)) return false;
     if (publication.deleted === true) {
-      if (tombstone && publication.atlas_version <= tombstone.atlasVersion) return false;
+      if (tombstone && !canReplaceTombstone(publication, tombstone)) return false;
       this.tombstones.set(key, {
         atlasVersion: publication.atlas_version,
+        confirmation: publication.confirmation,
         source: context.source,
         sourceGeneration: context.source_generation,
         serviceSession: context.service_session,
@@ -122,7 +124,7 @@ export class SharedPicture {
     }
 
     const version = resourceVersion(publication);
-    if (tombstone && (version === undefined || version <= tombstone.atlasVersion)) return false;
+    if (tombstone && (version === undefined || !canReplaceTombstone(publication, tombstone))) return false;
     this.tombstones.delete(key);
     const sourceAsset = sourceAssetID(publication, context.source);
     const record: PictureRecord = {
@@ -259,7 +261,10 @@ function isNewer(publication: StatePublication, current: PictureRecord, context:
     if (nextVersion !== current.atlas_version) return nextVersion > current.atlas_version;
     const nextRank = confirmationRank(publication.confirmation);
     const currentRank = confirmationRank(current.confirmation);
-    if (nextRank !== currentRank) return nextRank > currentRank;
+    if (nextRank > currentRank) return true;
+    if (nextRank < currentRank) {
+      return Date.parse(publication.observation_time) > Date.parse(current.observation_time);
+    }
     if (
       sameNode(current.source, context.source) &&
       current.source_generation === context.source_generation &&
@@ -279,6 +284,13 @@ function isNewer(publication: StatePublication, current: PictureRecord, context:
     return nextRank > currentRank;
   }
   return true;
+}
+
+function canReplaceTombstone(publication: StatePublication, tombstone: PictureTombstone): boolean {
+  const version = resourceVersion(publication);
+  if (version === undefined || version !== tombstone.atlasVersion)
+    return version !== undefined && version > tombstone.atlasVersion;
+  return confirmationRank(publication.confirmation) > confirmationRank(tombstone.confirmation);
 }
 
 function resourceVersion(publication: StatePublication): number | undefined {

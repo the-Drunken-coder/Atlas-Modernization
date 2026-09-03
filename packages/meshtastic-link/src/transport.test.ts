@@ -130,9 +130,109 @@ describe("Link transport", () => {
       await clock.advanceBy(100);
     }
     expect(asset.status("request-without-response")?.status).toBe("confirmed");
+    expect(asset.metrics().operation_outcomes).toMatchObject({ confirmed: 0, responded: 0, failed: 0 });
 
     await clock.advanceTo(30_000);
     expect(asset.status("request-without-response")).toMatchObject({
+      status: "failed",
+      reason: "response deadline expired"
+    });
+    expect(asset.metrics().operation_outcomes).toMatchObject({ confirmed: 0, responded: 0, failed: 1 });
+  });
+
+  it("counts the final response rather than a data request transport receipt", async () => {
+    const { clock, gateway, asset } = directPair();
+    gateway.onEvent((event) => {
+      if (event.type !== "message" || event.message.type !== "data_request" || !event.addressed_to_local) return;
+      gateway.settleInbound(event.settlement_id, true);
+      const publication = positionPublication(1);
+      gateway.submit(
+        {
+          type: "data_response",
+          request_id: event.message.request_id,
+          operation: "entity.get",
+          output: publication.resource
+        },
+        { destination: event.source, operationID: "entity-response" }
+      );
+    });
+    asset.onEvent((event) => {
+      if (event.type === "message" && event.message.type === "data_response" && event.addressed_to_local) {
+        asset.settleInbound(event.settlement_id, true);
+      }
+    });
+
+    asset.submit(
+      { type: "data_request", request_id: "entity-request", operation: "entity.get", target_id: "asset-alpha" },
+      { destination: { role: "gateway", id: "gateway" }, operationID: "entity-request" }
+    );
+    await clock.runUntilIdle();
+
+    expect(asset.status("entity-request")?.status).toBe("responded");
+    expect(asset.metrics().operation_outcomes).toMatchObject({ confirmed: 0, responded: 1, failed: 0 });
+  });
+
+  it("does not complete a targeted request with another resource", async () => {
+    const { clock, gateway, asset, assetPicture } = directPair();
+    gateway.onEvent((event) => {
+      if (event.type !== "message" || event.message.type !== "data_request" || !event.addressed_to_local) return;
+      gateway.settleInbound(event.settlement_id, true);
+      const wrong = positionPublication(1).resource;
+      wrong.entity_id = "asset-bravo";
+      wrong.alias = "Bravo";
+      gateway.submit(
+        {
+          type: "data_response",
+          request_id: event.message.request_id,
+          operation: "entity.get",
+          output: wrong
+        },
+        { destination: event.source, operationID: "wrong-entity-response" }
+      );
+    });
+
+    asset.submit(
+      { type: "data_request", request_id: "entity-request", operation: "entity.get", target_id: "asset-alpha" },
+      { destination: { role: "gateway", id: "gateway" }, operationID: "entity-request" }
+    );
+    await clock.runUntilIdle();
+
+    expect(asset.status("entity-request")).toMatchObject({
+      status: "failed",
+      reason: "response deadline expired"
+    });
+    expect(assetPicture.snapshot().records).toEqual([]);
+  });
+
+  it("does not complete Object content with another Object identity", async () => {
+    const { clock, gateway, asset } = directPair();
+    gateway.onEvent((event) => {
+      if (event.type !== "message" || event.message.type !== "data_request" || !event.addressed_to_local) return;
+      gateway.settleInbound(event.settlement_id, true);
+      gateway.submit(
+        {
+          type: "object_content",
+          request_id: event.message.request_id,
+          object_id: "object-other",
+          content_base64: "Y29udGVudA==",
+          sha256: `sha256:${createHash("sha256").update("content").digest("hex")}`
+        },
+        { destination: event.source, operationID: "wrong-object-content" }
+      );
+    });
+
+    asset.submit(
+      {
+        type: "data_request",
+        request_id: "object-request",
+        operation: "object.content",
+        target_id: "object-requested"
+      },
+      { destination: { role: "gateway", id: "gateway" }, operationID: "object-request" }
+    );
+    await clock.runUntilIdle();
+
+    expect(asset.status("object-request")).toMatchObject({
       status: "failed",
       reason: "response deadline expired"
     });
@@ -861,16 +961,29 @@ describe("Link transport", () => {
       clock,
       picture: peerPicture
     });
+    const state = positionPublication(7);
+    if (state.resource_type !== "entity") throw new Error("position fixture must be an Entity");
+    gateway.onEvent((event) => {
+      if (event.type !== "message" || event.message.type !== "data_request" || !event.addressed_to_local) return;
+      gateway.settleInbound(event.settlement_id, true);
+      gateway.submit(
+        {
+          type: "data_response",
+          request_id: event.message.request_id,
+          operation: "entity.get",
+          output: state.resource
+        },
+        { destination: event.source, operationID: "entity-response" }
+      );
+    });
     requester.onEvent((event) => {
       if (event.type === "message" && event.message.type === "data_response" && event.addressed_to_local) {
         requester.settleInbound(event.settlement_id, true);
       }
     });
-    const state = positionPublication(7);
-    if (state.resource_type !== "entity") throw new Error("position fixture must be an Entity");
-    gateway.submit(
-      { type: "data_response", request_id: "entity-request", operation: "entity.get", output: state.resource },
-      { destination: { role: "asset", id: "asset-alpha" }, operationID: "entity-response" }
+    requester.submit(
+      { type: "data_request", request_id: "entity-request", operation: "entity.get", target_id: "asset-alpha" },
+      { destination: { role: "gateway", id: "gateway" }, operationID: "entity-request" }
     );
     await clock.runUntilIdle();
     expect(requesterPicture.snapshot().records[0]).toMatchObject({ id: "asset-alpha", atlas_version: 7 });
@@ -881,21 +994,34 @@ describe("Link transport", () => {
 
   it("retains a changed-since deletion fence even when the record was absent", async () => {
     const { clock, gateway, asset, assetPicture } = directPair();
+    gateway.onEvent((event) => {
+      if (event.type !== "message" || event.message.type !== "data_request" || !event.addressed_to_local) return;
+      gateway.settleInbound(event.settlement_id, true);
+      gateway.submit(
+        {
+          type: "data_response",
+          request_id: event.message.request_id,
+          operation: "query.changed_since",
+          output: {
+            events: [{ event: "delete", id: "asset-alpha", resource_type: "entity", version: 2 }],
+            version: 2,
+            has_more: false
+          }
+        },
+        { destination: event.source, operationID: "changes-response" }
+      );
+    });
     asset.onEvent((event) => {
       if (event.type === "message" && event.requires_settlement) asset.settleInbound(event.settlement_id, true);
     });
-    gateway.submit(
+    asset.submit(
       {
-        type: "data_response",
+        type: "data_request",
         request_id: "changes",
         operation: "query.changed_since",
-        output: {
-          events: [{ event: "delete", id: "asset-alpha", resource_type: "entity", version: 2 }],
-          version: 2,
-          has_more: false
-        }
+        since_version: 0
       },
-      { destination: { role: "asset", id: "asset-alpha" }, operationID: "changes-response" }
+      { destination: { role: "gateway", id: "gateway" }, operationID: "changes" }
     );
     await clock.runUntilIdle();
     gateway.submit(positionPublication(1), { operationID: "stale-after-delete" });
