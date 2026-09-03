@@ -70,18 +70,24 @@ async function radioCommand(argv: string[]): Promise<void> {
     const profile = await readProfile(requiredOption(argv, "--profile"));
     result = await localJSON(baseURL, "/v1/radio/profile", "PUT", profile);
   } else if (action === "apply") {
-    result = await localJSON(baseURL, "/v1/radio/profile/apply", "POST");
+    result = await localJSON(baseURL, "/v1/radio/profile/apply", "POST", undefined, 90_000);
   } else {
     throw new Error("radio action must be show, set, or apply");
   }
   console.log(JSON.stringify(result, null, 2));
 }
 
-async function localJSON(baseURL: URL, path: string, method = "GET", body?: unknown): Promise<unknown> {
+async function localJSON(
+  baseURL: URL,
+  path: string,
+  method = "GET",
+  body?: unknown,
+  timeoutMs = 30_000
+): Promise<unknown> {
   const url = new URL(path, baseURL);
   const response = await fetch(url, {
     method,
-    signal: AbortSignal.timeout(30_000),
+    signal: AbortSignal.timeout(timeoutMs),
     ...(body === undefined ? {} : { headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
   });
   const result: unknown = await response.json();
@@ -188,7 +194,7 @@ async function serve(argv: string[]): Promise<void> {
   }
 
   const cleanupErrors: unknown[] = [];
-  for (const cleanup of [() => assetJoin?.stop(), () => gatewayJoin?.close(), () => service.stop()]) {
+  for (const cleanup of [() => assetJoin?.close(), () => gatewayJoin?.close(), () => service.stop()]) {
     try {
       await cleanup();
     } catch (error) {

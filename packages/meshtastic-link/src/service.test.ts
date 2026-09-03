@@ -70,6 +70,32 @@ describe("loopback Link service", () => {
     }
   });
 
+  it("removes subscriptions owned by active streams when the HTTP server closes", async () => {
+    const transitions: string[] = [];
+    const service = new LinkService({
+      mode: "gateway",
+      nodeID: "gateway",
+      clock: new RealClock(),
+      onGatewaySubscriptionTransition: (transition) => transitions.push(transition.action)
+    });
+    const server = new LinkHTTPServer(service);
+    const address = await server.listen(0);
+    const base = `http://${address.host}:${address.port}`;
+    const selector = { kind: "resource_type", resource_type: "entity" } as const;
+    await fetch(`${base}/v1/subscriptions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ client_id: "client-a", action: "add", selector })
+    });
+    const stream = await fetch(`${base}/v1/events?client_id=client-a`);
+
+    await server.close();
+
+    expect(stream.ok).toBe(true);
+    expect(transitions).toEqual(["add", "remove"]);
+    service.stop();
+  });
+
   it("retains an asynchronous radio response under the originating request ID", async () => {
     const clock = new VirtualClock();
     const network = new SimulatedPacketNetwork({ seed: 41, clock });
@@ -164,6 +190,34 @@ describe("loopback Link service", () => {
     expect(failures).toEqual(["pending-request", "position-1"]);
     expect(service.operation("position-1")).toMatchObject({ status: "failed", reason: "link service stopped" });
     expect(service.operation("pending-request")).toMatchObject({ status: "failed", reason: "link service stopped" });
+  });
+
+  it("rejects Gateway-required messages explicitly addressed to another Asset", () => {
+    const clock = new VirtualClock();
+    const network = new SimulatedPacketNetwork({ seed: 58, clock });
+    const service = new LinkService({
+      mode: "asset",
+      nodeID: "asset-alpha",
+      clock,
+      gatewayNode: { role: "gateway", id: "gateway" }
+    });
+    service.attachTransport(
+      new LinkTransport({
+        node: service.node,
+        sourceGeneration: 1,
+        serviceSession: service.serviceSession,
+        radio: network.addRadio("asset-alpha", 2),
+        clock
+      })
+    );
+
+    expect(
+      service.submit(
+        { type: "data_request", request_id: "misrouted", operation: "entity.get", target_id: "asset-bravo" },
+        { role: "asset", id: "asset-bravo" }
+      )
+    ).toMatchObject({ status: "failed", reason: "Gateway-required message must target the active Gateway" });
+    service.stop();
   });
 
   it("moves to an error lifecycle when the live radio disconnects", () => {

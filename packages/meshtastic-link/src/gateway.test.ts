@@ -73,6 +73,27 @@ describe("Gateway application seams", () => {
     ).toBeUndefined();
     expect(demand.active(3)).toEqual([active]);
   });
+
+  it("replaces obsolete session fences for the same source and selector", () => {
+    const demand = new GatewayFeedDemand();
+    const selector = { kind: "resource_type", resource_type: "entity" } as const;
+    for (let generation = 1; generation <= 4_096; generation++) {
+      demand.apply(
+        {
+          ...subscriptionEvent("asset-alpha", "add", selector),
+          source_generation: generation,
+          service_session: `asset-session-${generation}`
+        },
+        generation
+      );
+    }
+    const another = { kind: "resource_type", resource_type: "task" } as const;
+
+    expect(demand.apply(subscriptionEvent("asset-bravo", "add", another), 4_097)).toEqual({
+      active: true,
+      selector: another
+    });
+  });
 });
 
 function messageEvent(message: ReturnType<typeof positionPublication>): TransportMessageEvent {

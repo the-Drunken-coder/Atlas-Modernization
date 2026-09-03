@@ -57,7 +57,11 @@ type RecordSourceSequence = {
   generation: number;
   session: string;
   sequence: number;
+  receivedAt: number;
 };
+
+const RECORD_SOURCE_SEQUENCE_REPLAY_MS = 10 * 60_000;
+const RECORD_SOURCE_SEQUENCE_LIMIT = 4_096;
 
 export type PictureApplyContext = {
   source: LinkNode;
@@ -91,6 +95,7 @@ export class SharedPicture {
 
   apply(publication: StatePublication, context: PictureApplyContext): boolean {
     if (!this.acceptSource(context)) return false;
+    this.pruneRecordSourceSequences(context.received_at);
     const id = resourceID(publication);
     const key = `${publication.resource_type}:${id}`;
     const sourceKey = `${context.source.role}:${context.source.id}`;
@@ -103,11 +108,13 @@ export class SharedPicture {
     ) {
       return false;
     }
+    if (sourceSequence === undefined && this.recordSourceSequences.size >= RECORD_SOURCE_SEQUENCE_LIMIT) return false;
     this.recordSourceSequences.set(recordSourceKey, {
       sourceKey,
       generation: context.source_generation,
       session: context.service_session,
-      sequence: context.source_sequence
+      sequence: context.source_sequence,
+      receivedAt: context.received_at
     });
     const current = this.records.get(key);
     const tombstone = this.tombstones.get(key);
@@ -192,6 +199,7 @@ export class SharedPicture {
   }
 
   refresh(now: number): void {
+    this.pruneRecordSourceSequences(now);
     for (const [key, record] of this.records) {
       const age = now - record.received_at;
       const thresholds = freshnessThresholds(record);
@@ -274,6 +282,14 @@ export class SharedPicture {
     if (record.resource_type !== "entity") return;
     const entity = record.state as EntityResource;
     if (entity.entity_type === "asset") this.markSourceConnectivity({ role: "asset", id: entity.entity_id }, false);
+  }
+
+  private pruneRecordSourceSequences(now: number): void {
+    for (const [key, position] of this.recordSourceSequences) {
+      if (now - position.receivedAt >= RECORD_SOURCE_SEQUENCE_REPLAY_MS) {
+        this.recordSourceSequences.delete(key);
+      }
+    }
   }
 
   private emit(event: Omit<PictureEvent, "session" | "revision">): void {

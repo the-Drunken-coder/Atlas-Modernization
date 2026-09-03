@@ -72,7 +72,12 @@ export class GatewayMembershipStore {
         ? membership.asset_generations[assetID]
         : 0;
       const sourceGeneration = (previousGeneration ?? 0) + 1;
-      membership.asset_generations[assetID] = sourceGeneration;
+      Object.defineProperty(membership.asset_generations, assetID, {
+        value: sourceGeneration,
+        enumerable: true,
+        configurable: true,
+        writable: true
+      });
       await this.write(membership);
       return { membership, source_generation: sourceGeneration };
     });

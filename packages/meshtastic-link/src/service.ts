@@ -142,8 +142,13 @@ export class LinkService {
     const stableOperationID = operationIDValue ?? operationID(message);
     if (!this.transport) return this.failLocal(stableOperationID, "Link transport is unavailable");
     const target = destination ?? this.defaultDestination(message);
-    if (requiresGateway(message) && target === undefined && this.node.role === "asset") {
-      return this.failLocal(stableOperationID, "Gateway is unavailable");
+    if (this.node.role === "asset" && requiresGateway(message)) {
+      if (target === undefined || this.gatewayNode === undefined) {
+        return this.failLocal(stableOperationID, "Gateway is unavailable");
+      }
+      if (!sameNode(target, this.gatewayNode)) {
+        return this.failLocal(stableOperationID, "Gateway-required message must target the active Gateway");
+      }
     }
     return this.transport.submit(message, {
       ...(target === undefined ? {} : { destination: target }),
@@ -426,8 +431,11 @@ export class LinkHTTPServer {
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
+    const clients = new Set([...this.clientStreams.keys(), ...this.cleanupTimers.keys()]);
     for (const timer of this.cleanupTimers.values()) clearTimeout(timer);
     this.cleanupTimers.clear();
+    this.clientStreams.clear();
+    for (const clientID of clients) this.service.disconnectClient(clientID);
     const closed = new Promise<void>((resolve, reject) =>
       this.server.close((error) => (error ? reject(error) : resolve()))
     );
@@ -579,6 +587,10 @@ export class LinkHTTPServer {
 
 function requiresGateway(message: LinkMessage): boolean {
   return message.type !== "state" && message.type !== "control";
+}
+
+function sameNode(left: LinkNode, right: LinkNode): boolean {
+  return left.role === right.role && left.id === right.id;
 }
 
 function operationID(message: LinkMessage): string {

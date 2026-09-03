@@ -429,6 +429,9 @@ export async function runStressBaseline(seed = 42): Promise<StressBaselineResult
   let objectCompletedAt: number | undefined;
   let cancellationSubmittedAt: number | undefined;
   let cancellationReceivedAt: number | undefined;
+  let cancellationScheduled = false;
+  let objectTransferStarted = false;
+  const content = Buffer.alloc(32 * 1024, 0x5a);
   delta.onEvent((event) => {
     if (event.type !== "message" || !event.addressed_to_local) return;
     if (event.message.type === "object_content") {
@@ -444,17 +447,42 @@ export async function runStressBaseline(seed = 42): Promise<StressBaselineResult
 
   const sendOrder: string[] = [];
   gateway.onEvent((event) => {
-    if (event.type === "packet_sent") sendOrder.push(event.operation_id);
+    if (event.type === "packet_sent") {
+      sendOrder.push(event.operation_id);
+      if (event.operation_id === "stress-object-transfer" && !cancellationScheduled) {
+        cancellationScheduled = true;
+        clock.schedule(500, () => {
+          cancellationSubmittedAt = clock.now();
+          requiredMapValue(clients, "gateway").deliverTask(
+            { type: "task_delivery", delivery: "cancellation", task: cancelledTaskFixture() },
+            { role: "asset", id: "asset-delta" },
+            "stress-cancellation"
+          );
+        });
+      }
+    }
     if (
       event.type === "message" &&
       event.addressed_to_local &&
       event.message.type === "data_request" &&
       event.message.request_id === "stress-object-transfer"
     ) {
-      gateway.settleInbound(event.settlement_id, true);
+      if (gateway.settleInbound(event.settlement_id, true) && !objectTransferStarted) {
+        objectTransferStarted = true;
+        requiredMapValue(clients, "gateway").transferObject(
+          {
+            type: "object_content",
+            request_id: "stress-object-transfer",
+            object_id: "stress-object",
+            content_base64: content.toString("base64"),
+            sha256: `sha256:${createHash("sha256").update(content).digest("hex")}`
+          },
+          { role: "asset", id: "asset-delta" },
+          "stress-object-transfer"
+        );
+      }
     }
   });
-  const content = Buffer.alloc(32 * 1024, 0x5a);
   requiredMapValue(clients, "asset-delta").request(
     {
       type: "data_request",
@@ -464,18 +492,6 @@ export async function runStressBaseline(seed = 42): Promise<StressBaselineResult
     },
     { role: "gateway", id: "gateway" }
   );
-  requiredMapValue(clients, "gateway").transferObject(
-    {
-      type: "object_content",
-      request_id: "stress-object-transfer",
-      object_id: "stress-object",
-      content_base64: content.toString("base64"),
-      sha256: `sha256:${createHash("sha256").update(content).digest("hex")}`
-    },
-    { role: "asset", id: "asset-delta" },
-    "stress-object-transfer"
-  );
-
   const assets = radioIDs.filter((id) => id !== "gateway");
   for (let index = 0; index < 20; index++) {
     const publisher = assets[index % assets.length] ?? "asset-alpha";
@@ -496,15 +512,6 @@ export async function runStressBaseline(seed = 42): Promise<StressBaselineResult
       );
     });
   }
-  clock.schedule(500, () => {
-    cancellationSubmittedAt = clock.now();
-    requiredMapValue(clients, "gateway").deliverTask(
-      { type: "task_delivery", delivery: "cancellation", task: cancelledTaskFixture() },
-      { role: "asset", id: "asset-delta" },
-      "stress-cancellation"
-    );
-  });
-
   const startedAt = clock.now();
   await clock.runUntilIdle(250_000);
   const firstObjectChunk = sendOrder.indexOf("stress-object-transfer");
