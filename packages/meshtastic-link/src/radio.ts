@@ -82,8 +82,17 @@ export class MeshtasticSerialRadio implements LinkRadio, RadioConfigurationAdapt
     const device = new MeshDevice(transport);
     const radio = new MeshtasticSerialRadio(device);
     device.setHeartbeatInterval(20_000);
-    await radio.configureAndWait(() => device.configure());
-    return radio;
+    try {
+      await radio.configureAndWait(() => device.configure());
+      return radio;
+    } catch (error) {
+      try {
+        await device.disconnect();
+      } catch {
+        // Preserve the configuration failure that prevented the radio from opening.
+      }
+      throw error;
+    }
   }
 
   async send(payload: Uint8Array, options: RadioSendOptions): Promise<void> {

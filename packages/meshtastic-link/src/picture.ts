@@ -145,21 +145,22 @@ export class SharedPicture {
     };
     this.records.set(key, record);
     this.emit({ type: "upsert", key, record });
+    if (context.source.role === "asset") this.markSourceConnectivity(context.source, true);
     return true;
   }
 
   markSourceConnectivity(source: LinkNode, connected: boolean): void {
-    if (connected) return;
+    const freshness: PictureFreshness = connected ? "fresh" : "degraded";
     for (const [key, record] of this.records) {
       if (
         record.resource_type === "task" &&
         !isTerminalTask(record.state as TaskResource) &&
         (record.state as TaskResource).asset_id === source.id &&
-        record.freshness !== "degraded"
+        record.freshness !== freshness
       ) {
-        const degraded = { ...record, freshness: "degraded" as const };
-        this.records.set(key, degraded);
-        this.emit({ type: "stale", key, record: degraded });
+        const updated = { ...record, freshness };
+        this.records.set(key, updated);
+        this.emit({ type: connected ? "upsert" : "stale", key, record: updated });
       }
     }
   }
@@ -169,6 +170,7 @@ export class SharedPicture {
       const age = now - record.received_at;
       const thresholds = freshnessThresholds(record);
       if (thresholds.removeAfterMs !== undefined && age >= thresholds.removeAfterMs) {
+        this.degradeTasksForExpiredAsset(record);
         this.records.delete(key);
         this.emit({ type: "remove", key });
       } else if (
@@ -176,6 +178,7 @@ export class SharedPicture {
         age >= thresholds.staleAfterMs &&
         record.freshness === "fresh"
       ) {
+        this.degradeTasksForExpiredAsset(record);
         const stale = { ...record, freshness: "stale" as const };
         this.records.set(key, stale);
         this.emit({ type: "stale", key, record: stale });
@@ -236,6 +239,12 @@ export class SharedPicture {
     return this.activateSource(context.source, context.source_generation, context.service_session);
   }
 
+  private degradeTasksForExpiredAsset(record: PictureRecord): void {
+    if (record.resource_type !== "entity") return;
+    const entity = record.state as EntityResource;
+    if (entity.entity_type === "asset") this.markSourceConnectivity({ role: "asset", id: entity.entity_id }, false);
+  }
+
   private emit(event: Omit<PictureEvent, "session" | "revision">): void {
     const complete: PictureEvent = { ...event, session: this.session, revision: ++this.revision };
     this.events.push(structuredClone(complete));
@@ -261,10 +270,13 @@ function isNewer(publication: StatePublication, current: PictureRecord, context:
     return Date.parse(publication.observation_time) > Date.parse(current.observation_time);
   }
   if (publication.resource_type === "task" && current.resource_type === "task") {
+    const nextRank = confirmationRank(publication.confirmation);
+    const currentRank = confirmationRank(current.confirmation);
+    if (nextRank > currentRank) return true;
     const nextUpdatedAt = Date.parse(publication.resource.updated_at);
     const currentUpdatedAt = Date.parse((current.state as TaskResource).updated_at);
     if (nextUpdatedAt !== currentUpdatedAt) return nextUpdatedAt > currentUpdatedAt;
-    return confirmationRank(publication.confirmation) > confirmationRank(current.confirmation);
+    return nextRank > currentRank;
   }
   return true;
 }

@@ -45,7 +45,7 @@ npm run meshtastic-link -- gateway-init \
 
 The service rejects join-key and membership files that are symlinks, are not owned by the service user, or grant any group or other permissions.
 
-Ordinary Gateway starts load this record. They never replace its channel key. Key rotation is intentionally not hidden inside startup.
+Ordinary Gateway starts load this record. They never replace its channel key. Key rotation is intentionally not hidden inside startup. Run only the documented single Gateway-mode service against a membership record; concurrent Gateway processes are not a supported deployment.
 
 ## Service
 

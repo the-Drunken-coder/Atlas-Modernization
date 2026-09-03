@@ -1,7 +1,9 @@
-import { mkdir, open, rename, unlink } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { mkdir, open, rename } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 import { readPrivateFile } from "./private-file.js";
 import type { PrivateChannelMembership } from "./profile.js";
+
+const membershipMutationTails = new Map<string, Promise<void>>();
 
 export type GatewayMembership = PrivateChannelMembership & {
   gateway_node_id: string;
@@ -10,10 +12,11 @@ export type GatewayMembership = PrivateChannelMembership & {
 };
 
 export class GatewayMembershipStore {
-  private pendingMutation: Promise<void> = Promise.resolve();
+  private readonly path: string;
 
-  constructor(private readonly path: string) {
+  constructor(path: string) {
     if (!path) throw new TypeError("Gateway membership path must not be empty");
+    this.path = resolve(path);
   }
 
   async initialize(input: Omit<GatewayMembership, "gateway_generation" | "asset_generations">): Promise<void> {
@@ -73,28 +76,17 @@ export class GatewayMembershipStore {
   }
 
   private mutate<T>(operation: () => Promise<T>): Promise<T> {
-    const lockedOperation = (): Promise<T> => this.withFileLock(operation);
-    const result = this.pendingMutation.then(lockedOperation, lockedOperation);
-    this.pendingMutation = result.then(
+    const previous = membershipMutationTails.get(this.path) ?? Promise.resolve();
+    const result = previous.then(operation, operation);
+    const tail = result.then(
       () => undefined,
       () => undefined
     );
+    membershipMutationTails.set(this.path, tail);
+    void tail.then(() => {
+      if (membershipMutationTails.get(this.path) === tail) membershipMutationTails.delete(this.path);
+    });
     return result;
-  }
-
-  private async withFileLock<T>(operation: () => Promise<T>): Promise<T> {
-    const lockPath = `${this.path}.lock`;
-    const handle = await acquireLock(lockPath);
-    try {
-      await handle.writeFile(`${process.pid}\n`, "utf8");
-      return await operation();
-    } finally {
-      try {
-        await unlink(lockPath);
-      } finally {
-        await handle.close();
-      }
-    }
   }
 
   private async write(membership: GatewayMembership): Promise<void> {
@@ -111,18 +103,6 @@ export class GatewayMembershipStore {
     await rename(temporary, this.path);
     await syncDirectory(dirname(this.path));
   }
-}
-
-async function acquireLock(path: string): Promise<Awaited<ReturnType<typeof open>>> {
-  for (let attempt = 0; attempt < 1_000; attempt++) {
-    try {
-      return await open(path, "wx", 0o600);
-    } catch (error) {
-      if (!isNodeError(error) || error.code !== "EEXIST") throw error;
-      await new Promise<void>((resolve) => setTimeout(resolve, 10));
-    }
-  }
-  throw new Error(`Gateway membership is locked by another process at ${path}`);
 }
 
 async function syncDirectory(path: string): Promise<void> {
