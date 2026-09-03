@@ -104,6 +104,15 @@ func validPluginHostname(baseURL string, parsed *url.URL) bool {
 				return false
 			}
 		}
+		if !hasUnicode {
+			if len(label) > 63 || strings.IndexFunc(label, func(r rune) bool {
+				return !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+					(r >= '0' && r <= '9') || r == '-' || r == '_')
+			}) != -1 {
+				return false
+			}
+			continue
+		}
 		if strings.IndexFunc(label, func(r rune) bool { return r > unicode.MaxASCII }) != -1 {
 			normalized, _ := pluginHostnameLiteral.ToUnicode(label)
 			if normalized != label {
@@ -120,10 +129,11 @@ func validPluginHostname(baseURL string, parsed *url.URL) bool {
 			}
 		}
 	}
-	if hasUnicode {
-		if _, err := idna.Lookup.ToASCII(hostname); err != nil {
-			return false
-		}
+	if !hasUnicode {
+		return len(hostname) <= 253
+	}
+	if _, err := idna.Lookup.ToASCII(hostname); err != nil {
+		return false
 	}
 	lookup, lookupErr := pluginHostnameLookup.ToASCII(hostname)
 	literal, literalErr := pluginHostnameLiteral.ToASCII(strings.ToLower(hostname))

@@ -19,6 +19,7 @@ func TestPluginConfigurationNormalizesAndRejectsInvalidEndpoints(t *testing.T) {
 		{baseURL: " http://reference:8080/ ", want: "http://reference:8080"},
 		{baseURL: "http://reference:65535", want: "http://reference:65535"},
 		{baseURL: "http://REFERENCE.example", want: "http://REFERENCE.example"},
+		{baseURL: "http://reference_plugin:8080", want: "http://reference_plugin:8080"},
 		{baseURL: "http://ab--cd.example", want: "http://ab--cd.example"},
 		{baseURL: "http://bücher.example", want: "http://bücher.example"},
 		{baseURL: "http://BÜCHER.example", want: "http://BÜCHER.example"},
