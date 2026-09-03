@@ -31,7 +31,10 @@ type DragState = MapWindowPosition & {
   detached: boolean;
 };
 
-type MapWindowStyle = CSSProperties & { "--map-window-offset"?: string };
+type MapWindowStyle = CSSProperties & {
+  "--map-window-dock-position"?: string;
+  "--map-window-offset"?: string;
+};
 type MapWindowHandleStatus = "loading" | "error";
 
 /** A workspace-owned window with one interface for movement, edge attachment, collapse, and dismissal. */
@@ -333,8 +336,6 @@ export function MapWindow({
   const handleLabel = `Expand ${title} window${handleMetaLabel}${
     handleStatus ? `, ${handleStatus}` : ""
   }. Use parallel arrows to move; use the inward arrow to detach; use Alt plus an arrow to change edges.`;
-  const peekAlign = (layout.dockOffset ?? 0.5) < 0.28 ? "start" : (layout.dockOffset ?? 0.5) > 0.72 ? "end" : "center";
-
   return (
     <aside
       id={`map-window-${id}`}
@@ -347,7 +348,6 @@ export function MapWindow({
       data-edge={layout.edge}
       data-dock-offset={layout.dockOffset}
       data-handle-status={handleStatus}
-      data-peek-align={peekAlign}
       data-map-window
       data-map-interaction-control
       style={style}
@@ -432,16 +432,18 @@ export function MapWindow({
 
 function dockedWindowStyle(edge: MapWindowEdge, offset: number, zIndex: number): MapWindowStyle {
   const position = `${offset * 100}%`;
+  const peekPosition = `${offset * 100}${isHorizontalEdge(edge) ? "cqw" : "cqh"}`;
+  const shared = { "--map-window-dock-position": peekPosition, zIndex };
   if (edge === "top") {
-    return { top: 0, right: "auto", bottom: "auto", left: position, transform: "translateX(-50%)", zIndex };
+    return { ...shared, top: 0, right: "auto", bottom: "auto", left: position, transform: "translateX(-50%)" };
   }
   if (edge === "right") {
-    return { top: position, right: 0, bottom: "auto", left: "auto", transform: "translateY(-50%)", zIndex };
+    return { ...shared, top: position, right: 0, bottom: "auto", left: "auto", transform: "translateY(-50%)" };
   }
   if (edge === "bottom") {
-    return { top: "auto", right: "auto", bottom: 0, left: position, transform: "translateX(-50%)", zIndex };
+    return { ...shared, top: "auto", right: "auto", bottom: 0, left: position, transform: "translateX(-50%)" };
   }
-  return { top: position, right: "auto", bottom: "auto", left: 0, transform: "translateY(-50%)", zIndex };
+  return { ...shared, top: position, right: "auto", bottom: "auto", left: 0, transform: "translateY(-50%)" };
 }
 
 function inwardDistance(edge: MapWindowEdge, deltaX: number, deltaY: number): number {
