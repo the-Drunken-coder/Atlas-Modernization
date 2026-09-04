@@ -1,8 +1,9 @@
 import { ATLAS_PROTOCOL_REVISION } from "@the-drunken-coder/atlas-sdk";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { appConfigFromEnv, coreConfigFromEnv, fetchAppConfig } from "./config.js";
+import { appConfigFromEnv, coreConfigFromEnv, fetchAppConfig, GOOGLE_MAPS_TILE_SESSION_TIMEOUT_MS } from "./config.js";
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -355,5 +356,28 @@ describe("fetchAppConfig", () => {
       unavailableReason: "missing key"
     });
     expect(warn).toHaveBeenCalled();
+  });
+
+  it("keeps Google unavailable when the tile-session request hangs", async () => {
+    vi.useFakeTimers();
+    vi.stubEnv("VITE_GOOGLE_MAPS_API_KEY", "google-key");
+    vi.stubGlobal("location", { origin: "http://127.0.0.1:5173" });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const fetch = vi.fn((_input: string, _init?: RequestInit) => new Promise<Response>(() => {}));
+    vi.stubGlobal("fetch", fetch);
+
+    const configPromise = fetchAppConfig();
+    await vi.advanceTimersByTimeAsync(GOOGLE_MAPS_TILE_SESSION_TIMEOUT_MS);
+    const config = await configPromise;
+
+    expect(config.defaultMapSourceId).toBe("maptiler-osm-dark");
+    expect(config.mapSources.find((source) => source.id === "google-satellite")).toMatchObject({
+      id: "google-satellite",
+      unavailableReason: "session unavailable"
+    });
+    expect(fetch.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
+    expect(warn).toHaveBeenCalledWith(
+      `Google Maps satellite session request timed out after ${GOOGLE_MAPS_TILE_SESSION_TIMEOUT_MS}ms`
+    );
   });
 });

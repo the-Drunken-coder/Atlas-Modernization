@@ -1,5 +1,4 @@
 import {
-  AtlasClient,
   isMapArea,
   type MapArea,
   type SpatialFeature,
@@ -7,6 +6,7 @@ import {
 } from "@the-drunken-coder/atlas-sdk";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { sanitizeConnectionError } from "../../atlas/connection-error.js";
+import { createAuthenticatedAtlasClient } from "../../auth/atlas.js";
 import { foregroundEscapeOwner } from "../../ui/map/interaction/foreground-escape-owner.js";
 
 export type SpatialOperationTarget = {
@@ -40,13 +40,14 @@ export type SpatialOperationRunner = {
   beginDrawing(): void;
   cancelDrawing(): void;
   setArea(area: MapArea): void;
-  setViewportArea(area: MapArea): void;
+  setViewportArea(area: MapArea | null): void;
   useCurrentView(): void;
   search(): Promise<void>;
   retry(): Promise<void>;
   cancel(): void;
   clear(): void;
   selectFeature(id: string): void;
+  setMapBoxZoomActive(active: boolean): void;
 };
 
 export function useSpatialOperationRunner({
@@ -60,7 +61,7 @@ export function useSpatialOperationRunner({
     () =>
       suppliedExecutor ??
       (baseUrl
-        ? new AtlasClient({ baseUrl, credentials: "include", sync: false, requestTimeoutMs: 25_000 }).plugins
+        ? createAuthenticatedAtlasClient(baseUrl, { sync: false, requestTimeoutMs: 25_000 }).plugins
         : undefined),
     [baseUrl, suppliedExecutor]
   );
@@ -73,6 +74,7 @@ export function useSpatialOperationRunner({
   const [stale, setStale] = useState(false);
   const [error, setError] = useState<string>();
   const requestRef = useRef<AbortController | undefined>(undefined);
+  const mapBoxZoomActiveRef = useRef(false);
 
   const abortRequest = useCallback(() => {
     requestRef.current?.abort();
@@ -213,10 +215,15 @@ export function useSpatialOperationRunner({
     setError(undefined);
   }, [abortRequest]);
 
+  const setMapBoxZoomActive = useCallback((active: boolean) => {
+    mapBoxZoomActiveRef.current = active;
+  }, []);
+
   useEffect(() => {
     if (status !== "drawing" && status !== "loading") return;
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || event.defaultPrevented) return;
+      if (status === "drawing" && mapBoxZoomActiveRef.current) return;
       const owner = foregroundEscapeOwner(event.target);
       if (owner && !owner.matches("[data-spatial-operation]")) return;
       event.preventDefault();
@@ -249,6 +256,7 @@ export function useSpatialOperationRunner({
     retry: search,
     cancel,
     clear,
-    selectFeature: setSelectedFeatureId
+    selectFeature: setSelectedFeatureId,
+    setMapBoxZoomActive
   };
 }

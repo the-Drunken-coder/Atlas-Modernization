@@ -1,7 +1,7 @@
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import type { MapTarget } from "../interaction/map-camera.js";
-import { renderMapView } from "./MapView.test-harness.js";
+import { renderMapView, setNextDetailMapStyleLoaded } from "./MapView.test-harness.js";
 
 const worcester: MapTarget = {
   type: "point",
@@ -47,7 +47,47 @@ const russia: MapTarget = {
   }
 };
 
+const pacificCrossing: MapTarget = {
+  type: "geometry",
+  id: "place:pacific-crossing",
+  label: "Pacific crossing",
+  geometry: {
+    type: "Polygon",
+    coordinates: [
+      [
+        [179, 10],
+        [-179, 10],
+        [-179, 12],
+        [179, 10]
+      ]
+    ]
+  }
+};
+
 describe("MapView place detail lens", () => {
+  it("surfaces a style failure and retries the local detail map", async () => {
+    setNextDetailMapStyleLoaded(false);
+    const rendered = renderMapView({ placeDetailTarget: worcester });
+    const detailMap = rendered.maps().find((map) => map.options.interactive === false)!;
+
+    act(() => detailMap.fire("error", { error: new Error("detail style failed") }));
+
+    expect(await screen.findByText("Place detail unavailable")).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+    await waitFor(() => expect(rendered.maps()).toHaveLength(3));
+    const retriedDetailMap = rendered.maps().at(-1);
+    expect(retriedDetailMap?.options.interactive).toBe(false);
+    await waitFor(() =>
+      expect(retriedDetailMap?.jumpTo).toHaveBeenCalledWith(
+        { center: worcester.coordinates, zoom: 13 },
+        expect.any(Object)
+      )
+    );
+    act(() => detailMap.fire("error", { error: new Error("stale detail style failed") }));
+    expect(screen.queryByText("Place detail unavailable")).not.toBeInTheDocument();
+  });
+
   it("frames changing place targets without moving the main map", async () => {
     const rendered = renderMapView({ placeDetailTarget: worcester });
     rendered.map.fitBounds.mockClear();
@@ -105,6 +145,26 @@ describe("MapView place detail lens", () => {
       ],
       expect.objectContaining({ duration: 0, maxZoom: 14, padding: 28 }),
       expect.any(Object)
+    );
+
+    detailMap.project.mockImplementation(([longitude, latitude]) => ({ x: longitude, y: latitude }));
+    rendered.rerenderMap({ placeDetailTarget: pacificCrossing });
+
+    expect(detailMap.fitBounds).toHaveBeenLastCalledWith(
+      [
+        [179, 10],
+        [181, 12]
+      ],
+      expect.objectContaining({ duration: 0, maxZoom: 14, padding: 28 }),
+      expect.any(Object)
+    );
+    await waitFor(() =>
+      expect(
+        screen
+          .getByRole("region", { name: "Local detail for Pacific crossing" })
+          .querySelector<HTMLElement>(".map-reticle")
+          ?.style.getPropertyValue("--map-reticle-x")
+      ).toBe("180px")
     );
 
     rendered.rerenderMap({ placeDetailTarget: null });

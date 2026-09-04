@@ -50,4 +50,42 @@ describe("MapView style switching", () => {
     await waitFor(() => expect(map.sources.has("geofeatures")).toBe(true));
     expect(canvas.querySelector(".map-symbol-marker")).toBe(marker);
   });
+
+  it("does not report a source error as a failed pending style switch", async () => {
+    const onStyleSwitchError = vi.fn();
+    const { map, rerenderMap } = renderMapView({
+      styleId: "a",
+      style: style("a"),
+      onStyleSwitchError
+    });
+    const nextStyle = style("b");
+
+    rerenderMap({ styleId: "b", style: nextStyle });
+    await waitFor(() => expect(map.setStyle).toHaveBeenCalledWith(nextStyle));
+
+    act(() => map.fire("error", { error: new Error("tile failed"), sourceId: "basemap" }));
+
+    expect(onStyleSwitchError).not.toHaveBeenCalled();
+    expect(map.setStyle).toHaveBeenCalledTimes(1);
+    act(() => map.fire("style.load"));
+    expect(onStyleSwitchError).not.toHaveBeenCalled();
+  });
+
+  it("reapplies the last successful style after an asynchronous style failure", async () => {
+    const onStyleSwitchError = vi.fn();
+    const { map, rerenderMap } = renderMapView({
+      styleId: "a",
+      style: style("a"),
+      onStyleSwitchError
+    });
+
+    rerenderMap({ styleId: "b", style: style("b") });
+    await waitFor(() => expect(map.setStyle).toHaveBeenCalledTimes(1));
+
+    act(() => map.fire("error", { error: new Error("style failed") }));
+
+    expect(onStyleSwitchError).toHaveBeenCalledWith({ failedStyleId: "b", activeStyleId: "a" });
+    expect(map.setStyle).toHaveBeenCalledTimes(2);
+    expect(map.setStyle).toHaveBeenNthCalledWith(2, style("a"));
+  });
 });

@@ -191,7 +191,7 @@ export function edgeForArrow(key: string): MapWindowEdge | undefined {
 function firstAvailableCascade(windows: Record<string, MapWindowLayout>): number {
   const used = new Set(
     Object.values(windows)
-      .filter((window) => window.placement === "floating" && !window.position)
+      .filter((window) => window.placement === "floating")
       .map((window) => window.cascade)
   );
   for (let cascade = 0; cascade < 6; cascade += 1) {

@@ -1,13 +1,77 @@
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { MapArea } from "@the-drunken-coder/atlas-sdk";
+import type { Map as MlMap } from "maplibre-gl";
 import { act } from "react";
 import { describe, expect, it, vi } from "vitest";
+import { useSpatialOperationRunner } from "../../../features/plugins/use-spatial-operation-runner.js";
+import { MapAreaSelection } from "./MapAreaSelection.js";
 import type { MapSpatialInteraction } from "./MapView.js";
-import { renderMapView } from "./MapView.test-harness.js";
+import { rect, renderMapView } from "./MapView.test-harness.js";
 
 const selectedArea: MapArea = { west: 40, south: 50, east: 140, north: 120 };
 
 describe("MapAreaSelection", () => {
+  it("notifies before drawing mode and pointer geometry begin", () => {
+    const mapCanvas = document.createElement("div");
+    document.body.append(mapCanvas);
+    vi.spyOn(mapCanvas, "getBoundingClientRect").mockReturnValue(rect(0, 0, 400, 200));
+    const map = areaMap();
+    const onBeginRegionInteraction = vi.fn();
+
+    render(
+      <MapAreaSelection
+        mapCanvas={mapCanvas}
+        map={map}
+        mapReady
+        area={null}
+        drawing
+        onAreaChange={vi.fn()}
+        onDrawingComplete={vi.fn()}
+        onCancelDrawing={vi.fn()}
+        onBeginRegionInteraction={onBeginRegionInteraction}
+        onViewportArea={vi.fn()}
+        onBoxZoomActiveChange={vi.fn()}
+        suppressNextClick={vi.fn()}
+      />
+    );
+
+    expect(onBeginRegionInteraction).toHaveBeenCalledOnce();
+    fireEvent.pointerDown(mapCanvas, { pointerId: 1, button: 0, clientX: 40, clientY: 40 });
+    expect(onBeginRegionInteraction).toHaveBeenCalledTimes(2);
+  });
+
+  it("notifies before a keyboard transform that is rejected at the date line", async () => {
+    const mapCanvas = document.createElement("div");
+    document.body.append(mapCanvas);
+    vi.spyOn(mapCanvas, "getBoundingClientRect").mockReturnValue(rect(0, 0, 400, 200));
+    const map = areaMap();
+    vi.mocked(map.unproject).mockImplementation((point: [number, number] | { x: number; y: number }) => {
+      const [x, y] = Array.isArray(point) ? point : [point.x, point.y];
+      return { lng: x < 100 ? 179.8 : -179.8, lat: y } as unknown as ReturnType<MlMap["unproject"]>;
+    });
+    const onBeginRegionInteraction = vi.fn();
+
+    render(
+      <MapAreaSelection
+        mapCanvas={mapCanvas}
+        map={map}
+        mapReady
+        area={selectedArea}
+        drawing={false}
+        onAreaChange={vi.fn()}
+        onDrawingComplete={vi.fn()}
+        onCancelDrawing={vi.fn()}
+        onBeginRegionInteraction={onBeginRegionInteraction}
+        onViewportArea={vi.fn()}
+        onBoxZoomActiveChange={vi.fn()}
+        suppressNextClick={vi.fn()}
+      />
+    );
+
+    fireEvent.keyDown(await screen.findByRole("button", { name: "Move selected area" }), { key: "ArrowRight" });
+    expect(onBeginRegionInteraction).toHaveBeenCalledOnce();
+  });
+
   it("publishes the viewport and draws a map area with pointer input", async () => {
     const spatial = interaction({ area: null, drawing: true });
     const { canvas, map, rerenderMap } = renderMapView({ spatial });
@@ -23,6 +87,14 @@ describe("MapAreaSelection", () => {
     vi.mocked(spatial.onViewportArea).mockClear();
     act(() => map.fire("moveend"));
     expect(spatial.onViewportArea).toHaveBeenCalledOnce();
+    map.getBounds.mockReturnValue({
+      getWest: () => 179.8,
+      getSouth: () => -10,
+      getEast: () => -179.8,
+      getNorth: () => 10
+    });
+    act(() => map.fire("moveend"));
+    expect(spatial.onViewportArea).toHaveBeenLastCalledWith(null);
 
     await waitFor(() => expect(canvas).toHaveClass("map-canvas--region-drawing"));
     fireEvent.pointerDown(canvas, {
@@ -76,6 +148,111 @@ describe("MapAreaSelection", () => {
     });
     fireEvent.keyDown(window, { key: "Escape" });
     expect(spatial.onCancelDrawing).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects a date-line crossing instead of publishing a near-worldwide area", async () => {
+    const spatial = interaction({ area: null, drawing: true });
+    const { map } = renderMapView({ spatial });
+    map.unproject.mockImplementation((point: [number, number] | { x: number; y: number }) => {
+      const [x, y] = Array.isArray(point) ? point : [point.x, point.y];
+      return { lng: x < 160 ? 179.8 : -179.8, lat: y };
+    });
+
+    const prompt = await screen.findByText("Drag an area. Press Escape to cancel.");
+    const surface = prompt.parentElement;
+    if (!surface) throw new Error("Drawing surface is missing");
+    fireEvent.pointerDown(surface, { pointerId: 13, button: 0, clientX: 60, clientY: 70 });
+    fireEvent.pointerMove(window, { pointerId: 13, clientX: 200, clientY: 140 });
+    fireEvent.pointerUp(window, { pointerId: 13, clientX: 200, clientY: 140 });
+
+    expect(spatial.onAreaChange).not.toHaveBeenCalled();
+    expect(spatial.onDrawingComplete).not.toHaveBeenCalled();
+    expect(await screen.findByRole("status")).toHaveTextContent(/date-line crossings are not supported/i);
+    expect(screen.getByText(/date-line crossings are not supported/i)).toBeInTheDocument();
+
+    map.unproject.mockImplementation((point: [number, number] | { x: number; y: number }) => {
+      const [x, y] = Array.isArray(point) ? point : [point.x, point.y];
+      return { lng: x, lat: y };
+    });
+    fireEvent.pointerDown(surface, { pointerId: 14, button: 0, clientX: 60, clientY: 20 });
+    fireEvent.pointerMove(window, { pointerId: 14, clientX: 100, clientY: 60 });
+    fireEvent.pointerUp(window, { pointerId: 14, clientX: 100, clientY: 60 });
+
+    expect(spatial.onAreaChange).toHaveBeenLastCalledWith({ west: 50, south: 0, east: 90, north: 40 });
+    expect(spatial.onDrawingComplete).toHaveBeenCalledOnce();
+  });
+
+  it("leaves Shift-drag box zoom responsible for Escape while drawing is armed", async () => {
+    const spatial = interaction({ area: null, drawing: true });
+    const { canvas } = renderMapView({ spatial });
+    const primaryHost = canvas.querySelector<HTMLElement>(".maplibre-host");
+    if (!primaryHost) throw new Error("Primary map host is missing");
+
+    await waitFor(() => expect(canvas).toHaveClass("map-canvas--region-drawing"));
+    fireEvent.pointerDown(primaryHost, {
+      pointerId: 1,
+      pointerType: "mouse",
+      button: 0,
+      clientX: 80,
+      clientY: 80,
+      shiftKey: true
+    });
+    fireEvent.mouseDown(primaryHost, { button: 0, clientX: 80, clientY: 80, shiftKey: true });
+
+    expect(canvas.querySelector(".map-reticle--zoom")).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "Escape" });
+
+    expect(canvas.querySelector(".map-reticle--zoom")).not.toBeInTheDocument();
+    expect(spatial.onCancelDrawing).not.toHaveBeenCalled();
+  });
+
+  it("keeps the real spatial runner armed when Escape cancels box zoom", async () => {
+    const mapCanvas = document.createElement("div");
+    document.body.append(mapCanvas);
+    vi.spyOn(mapCanvas, "getBoundingClientRect").mockReturnValue(rect(0, 0, 400, 200));
+    const map = areaMap();
+    const boxZoomEscape = vi.fn();
+    mapCanvas.addEventListener("keydown", boxZoomEscape);
+
+    render(<IntegratedSpatialSelection mapCanvas={mapCanvas} map={map} />);
+    fireEvent.click(screen.getByRole("button", { name: "Begin integrated drawing" }));
+    await waitFor(() => expect(mapCanvas).toHaveClass("map-canvas--region-drawing"));
+    fireEvent.pointerDown(mapCanvas, {
+      pointerId: 1,
+      pointerType: "mouse",
+      button: 0,
+      clientX: 80,
+      clientY: 80,
+      shiftKey: true
+    });
+    fireEvent.keyDown(mapCanvas, { key: "Escape" });
+
+    expect(boxZoomEscape).toHaveBeenCalledOnce();
+    expect(screen.getByLabelText("Spatial status")).toHaveTextContent("drawing");
+  });
+
+  it("releases a captured pointer and suppresses its click when drawing is canceled externally", async () => {
+    const spatial = interaction({ area: null, drawing: true });
+    const { canvas, onBackgroundClick, rerenderMap } = renderMapView({ spatial });
+    let captured = false;
+    const setPointerCapture = vi.fn(() => {
+      captured = true;
+    });
+    const hasPointerCapture = vi.fn(() => captured);
+    const releasePointerCapture = vi.fn(() => {
+      captured = false;
+    });
+    Object.assign(canvas, { setPointerCapture, hasPointerCapture, releasePointerCapture });
+
+    await waitFor(() => expect(canvas).toHaveClass("map-canvas--region-drawing"));
+    fireEvent.pointerDown(canvas, { pointerId: 15, button: 0, clientX: 80, clientY: 70 });
+    expect(setPointerCapture).toHaveBeenCalledWith(15);
+
+    rerenderMap({ spatial: { ...spatial, drawing: false } });
+
+    expect(releasePointerCapture).toHaveBeenCalledWith(15);
+    fireEvent.click(canvas);
+    expect(onBackgroundClick).not.toHaveBeenCalled();
   });
 
   it("moves and resizes an existing area with pointer and keyboard input", async () => {
@@ -152,6 +329,24 @@ describe("MapAreaSelection", () => {
     expect(spatial.onAreaChange).toHaveBeenLastCalledWith(selectedArea);
   });
 
+  it("does not suppress the next map click after pointer cancellation", async () => {
+    const spatial = interaction({ area: selectedArea, drawing: false });
+    const { canvas, map, onBackgroundClick } = renderMapView({ spatial });
+    act(() => map.fire("resize"));
+
+    const move = await screen.findByRole("button", { name: "Move selected area" });
+    fireEvent.pointerDown(move, {
+      button: 0,
+      pointerId: 13,
+      clientX: 50,
+      clientY: 60
+    });
+    fireEvent.pointerCancel(window, { pointerId: 13 });
+    fireEvent.click(canvas);
+
+    expect(onBackgroundClick).toHaveBeenCalledOnce();
+  });
+
   it("skips spatial hit testing while result layers are absent", () => {
     const spatial = interaction({ area: null, drawing: false });
     const { canvas, map, onBackgroundClick } = renderMapView({ spatial });
@@ -180,6 +375,52 @@ function interaction(overrides: Partial<MapSpatialInteraction>): MapSpatialInter
     onCancelDrawing: vi.fn(),
     onViewportArea: vi.fn(),
     onSelectFeature: vi.fn(),
+    onBoxZoomActiveChange: vi.fn(),
     ...overrides
   };
+}
+
+function IntegratedSpatialSelection({ mapCanvas, map }: { mapCanvas: HTMLDivElement; map: MlMap }) {
+  const spatial = useSpatialOperationRunner({ executor: { invokeSpatial: vi.fn() } });
+  return (
+    <>
+      <button type="button" onClick={spatial.beginDrawing}>
+        Begin integrated drawing
+      </button>
+      <output aria-label="Spatial status">{spatial.status}</output>
+      <MapAreaSelection
+        mapCanvas={mapCanvas}
+        map={map}
+        mapReady
+        area={spatial.area}
+        drawing={spatial.status === "drawing"}
+        onAreaChange={spatial.setArea}
+        onDrawingComplete={spatial.cancelDrawing}
+        onCancelDrawing={spatial.cancelDrawing}
+        onBeginRegionInteraction={() => {}}
+        onViewportArea={spatial.setViewportArea}
+        onBoxZoomActiveChange={spatial.setMapBoxZoomActive}
+        suppressNextClick={() => {}}
+      />
+    </>
+  );
+}
+
+function areaMap(): MlMap {
+  return {
+    on: vi.fn(),
+    off: vi.fn(),
+    stop: vi.fn(),
+    project: vi.fn(([longitude, latitude]: [number, number]) => ({ x: longitude, y: latitude })),
+    unproject: vi.fn((point: [number, number] | { x: number; y: number }) => {
+      const [x, y] = Array.isArray(point) ? point : [point.x, point.y];
+      return { lng: x, lat: y };
+    }),
+    getBounds: vi.fn(() => ({
+      getWest: () => -20,
+      getSouth: () => -10,
+      getEast: () => 20,
+      getNorth: () => 10
+    }))
+  } as unknown as MlMap;
 }

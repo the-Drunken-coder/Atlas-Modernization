@@ -19,13 +19,13 @@ describe("AppShell", () => {
   it("renders the assets panel at a fixed default width", () => {
     renderShell();
     expect(screen.getByText("rail").parentElement).toHaveStyle("--panel-width: 300px");
-    expect(screen.getByRole("separator", { name: "Resize assets panel" })).toHaveAttribute("aria-valuenow", "300");
+    expect(screen.getByRole("separator", { name: "Resize sidebar panel" })).toHaveAttribute("aria-valuenow", "300");
   });
 
   it("shrinks the assets panel with keyboard and drag input", async () => {
     renderShell();
     const sidebar = screen.getByText("rail").parentElement;
-    const resizer = screen.getByRole("separator", { name: "Resize assets panel" });
+    const resizer = screen.getByRole("separator", { name: "Resize sidebar panel" });
 
     fireEvent.keyDown(resizer, { key: "ArrowLeft" });
     expect(sidebar).toHaveStyle("--panel-width: 276px");
@@ -39,7 +39,7 @@ describe("AppShell", () => {
 
   it("hides the resizer when the sidebar is collapsed", () => {
     renderShell(true);
-    expect(screen.queryByRole("separator", { name: "Resize assets panel" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("separator", { name: "Resize sidebar panel" })).not.toBeInTheDocument();
   });
 
   it("keeps the map workspace mounted and accessible when the sidebar collapses", () => {

@@ -1,4 +1,5 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import react from "@vitejs/plugin-react";
 import { defineConfig, loadEnv } from "vite";
@@ -9,6 +10,49 @@ const milsymbolRuntimePath = fileURLToPath(new URL("../../node_modules/milsymbol
 const runtimeSourceMaps = [{ path: `${milsymbolRuntimePath}.map`, fileName: "assets/milsymbol.js.map" }];
 const milsymbolAssetPattern = /^assets\/milsymbol-[^/]+\.js$/;
 let emitRuntimeMaps = false;
+
+export function sanitizeManifestPaths(manifest: Record<string, unknown>, root: string): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(manifest).map(([key, value]) => [
+      toRelativeManifestPath(key, root),
+      value && typeof value === "object" && !Array.isArray(value)
+        ? Object.fromEntries(
+            Object.entries(value).map(([entryKey, entryValue]) => [
+              entryKey,
+              entryKey === "src" && typeof entryValue === "string"
+                ? toRelativeManifestPath(entryValue, root)
+                : entryValue
+            ])
+          )
+        : value
+    ])
+  );
+}
+
+function toRelativeManifestPath(value: string, root: string): string {
+  if (!isAbsolute(value)) return value;
+  return relative(root, value).replaceAll("\\", "/") || ".";
+}
+
+export function relocateAnalysisManifest() {
+  return {
+    name: "atlas-analysis-manifest",
+    apply: "build" as const,
+    writeBundle(options: { dir?: string }) {
+      if (!options.dir) throw new Error("Atlas analysis manifest requires a directory build output");
+      const deployedManifestPath = resolve(options.dir, "manifest.json");
+      if (!existsSync(deployedManifestPath)) throw new Error("Vite did not emit the expected analysis manifest");
+      const analysisManifestPath = resolve(options.dir, "..", "bundle-manifest.json");
+      const manifest = JSON.parse(readFileSync(deployedManifestPath, "utf8")) as Record<string, unknown>;
+      mkdirSync(dirname(analysisManifestPath), { recursive: true });
+      writeFileSync(
+        analysisManifestPath,
+        `${JSON.stringify(sanitizeManifestPaths(manifest, fileURLToPath(new URL(".", import.meta.url))), null, 2)}\n`
+      );
+      rmSync(deployedManifestPath);
+    }
+  };
+}
 
 export function appendMilsymbolSourceMapReference(source: string, fileName: string): string {
   if (!milsymbolAssetPattern.test(fileName) || source.includes("sourceMappingURL=")) return source;
@@ -52,7 +96,8 @@ export default defineConfig(({ mode }) => ({
           output.source = appendMilsymbolSourceMapReference(source, output.fileName);
         }
       }
-    }
+    },
+    relocateAnalysisManifest()
   ],
   build: {
     manifest: "manifest.json",

@@ -43,7 +43,7 @@ import { MapReticle } from "./MapReticle.js";
 import { cloneStyle, fitWorldOnce, webglAvailable } from "./map-view-utils.js";
 import { PlaceDetailLens } from "./PlaceDetailLens.js";
 
-export type MapContextMenuInfo = { lng: number; lat: number; x: number; y: number };
+export type MapContextMenuInfo = { lng: number; lat: number; x: number; y: number; entityId?: string };
 export type { MapReticleTarget } from "../interaction/map-targets.js";
 export type { MapEditing } from "../rendering/map-editing.js";
 export { buildMapSources } from "../rendering/map-sources.js";
@@ -72,8 +72,9 @@ export type MapSpatialInteraction = SpatialMapOverlay & {
   onAreaChange(area: MapArea): void;
   onDrawingComplete(): void;
   onCancelDrawing(): void;
-  onViewportArea(area: MapArea): void;
+  onViewportArea(area: MapArea | null): void;
   onSelectFeature(id: string): void;
+  onBoxZoomActiveChange(active: boolean): void;
 };
 
 type SymbolMarkerEntry = {
@@ -108,6 +109,7 @@ export function MapView({
   const spatialRef = useRef(spatial);
   const initialMapRef = useRef({ initialCenter, style, styleId });
   const currentStyleIdRef = useRef<string | undefined>(undefined);
+  const currentStyleRef = useRef<{ id: string; style: StyleSpecification } | undefined>(undefined);
   const pendingStyleIdRef = useRef<string | undefined>(undefined);
   const readyRef = useRef(false);
   const eventsRegisteredRef = useRef(false);
@@ -121,6 +123,7 @@ export function MapView({
   const [appliedCameraCommand, setAppliedCameraCommand] = useState<MapCameraCommand | null | undefined>(() =>
     cameraCommand?.intent === "commit" ? null : cameraCommand
   );
+  const canceledCameraSeqRef = useRef(0);
   const [reticleFlashing, setReticleFlashing] = useState(false);
   const pendingCommitTimeoutRef = useRef<number | undefined>(undefined);
   handlersRef.current = { onSelectEntity, onMapContextMenu };
@@ -158,9 +161,21 @@ export function MapView({
   });
   const mapActionsRef = useRef(reticleInteraction.mapActions);
   mapActionsRef.current = reticleInteraction.mapActions;
+  const beginRegionInteraction = useCallback(() => {
+    if (cameraCommand) canceledCameraSeqRef.current = Math.max(canceledCameraSeqRef.current, cameraCommand.seq);
+    mapRef.current?.stop();
+    notifyUserGesture();
+    releaseCameraOwnership();
+    setAppliedCameraCommand((current) => (current == null ? current : null));
+  }, [cameraCommand, notifyUserGesture, releaseCameraOwnership]);
 
   useEffect(() => {
     clearPendingCommit();
+    if (cameraCommand && cameraCommand.seq <= canceledCameraSeqRef.current) {
+      setReticleFlashing(false);
+      setAppliedCameraCommand(null);
+      return;
+    }
     if (cameraCommand?.intent !== "commit") {
       setReticleFlashing(false);
       setAppliedCameraCommand(cameraCommand);
@@ -230,6 +245,7 @@ export function MapView({
       const mapInstance = map;
       mapRef.current = mapInstance;
       currentStyleIdRef.current = initialMap.styleId;
+      currentStyleRef.current = { id: initialMap.styleId, style: cloneStyle(initialMap.style) };
       mapInstance.touchZoomRotate.disableRotation();
       mapInstance.addControl(new maplibre.NavigationControl({ showCompass: false }), "top-right");
 
@@ -264,12 +280,29 @@ export function MapView({
       if (mapInstance.isStyleLoaded()) initializeLayers();
       mapInstance.on("boxzoomcancel", () => mapActionsRef.current.cancelBoxZoom());
       mapInstance.on("error", (event) => {
-        // Tile/style errors should not blank the operator picture. Keep overlays
-        // alive and surface the details in devtools.
+        // Keep render errors nonfatal once the map is usable, and surface the
+        // details in devtools.
         console.warn("Map render warning", sanitizeConnectionError(event.error));
+
+        // Source/tile errors bubble through the map while a style is loading,
+        // but they do not mean that the style switch itself failed.
+        if ("sourceId" in event) return;
+
         const failedStyleId = pendingStyleIdRef.current;
         if (failedStyleId) {
           pendingStyleIdRef.current = undefined;
+
+          // A style can fail asynchronously after setStyle has replaced the
+          // previous style. Reapply the last known-good style before notifying
+          // the parent, which may only restore the selected source in React.
+          const currentStyle = currentStyleRef.current;
+          if (currentStyle && currentStyle.id !== failedStyleId) {
+            try {
+              mapInstance.setStyle(cloneStyle(currentStyle.style));
+            } catch (restoreError) {
+              console.warn("Map style recovery failed", sanitizeConnectionError(restoreError));
+            }
+          }
           if (readyRef.current && mapInstance.isStyleLoaded()) {
             registerSourcesAndLayers(mapInstance);
             pushSources(mapInstance, sourcesRef.current);
@@ -278,6 +311,11 @@ export function MapView({
           }
           styleSwitchErrorRef.current?.({ failedStyleId, activeStyleId: currentStyleIdRef.current ?? failedStyleId });
         }
+        // A source/tile error includes sourceId in MapLibre's bubbled event.
+        // Before the first style.load, an error without one means the initial
+        // style itself failed and the map cannot become usable without retrying.
+        if (!cancelled && !readyRef.current && !("sourceId" in event))
+          setMapError(sanitizeConnectionError(event.error));
       });
     };
 
@@ -337,6 +375,7 @@ export function MapView({
       map.once("style.load", () => {
         if (pendingStyleIdRef.current !== styleId) return;
         currentStyleIdRef.current = styleId;
+        currentStyleRef.current = { id: styleId, style: cloneStyle(style) };
         pendingStyleIdRef.current = undefined;
       });
       map.setStyle(cloneStyle(style));
@@ -393,7 +432,8 @@ export function MapView({
           lng: current.geometry.coordinates[0],
           lat: current.geometry.coordinates[1],
           x: event.clientX,
-          y: event.clientY
+          y: event.clientY,
+          entityId: current.properties.entityId
         });
       });
       markers.set(entityId, entry);
@@ -474,8 +514,8 @@ export function MapView({
           sources={sources}
           editing={editing}
           exclusiveDrawingActive={spatial?.drawing ?? false}
+          onBeginRegionInteraction={beginRegionInteraction}
           onBeginDrawing={() => spatial?.onCancelDrawing()}
-          notifyUserGesture={notifyUserGesture}
           suppressNextClick={reticleInteraction.mapActions.suppressNextClick}
         />
         {spatial ? (
@@ -488,7 +528,9 @@ export function MapView({
             onAreaChange={spatial.onAreaChange}
             onDrawingComplete={spatial.onDrawingComplete}
             onCancelDrawing={spatial.onCancelDrawing}
+            onBeginRegionInteraction={beginRegionInteraction}
             onViewportArea={spatial.onViewportArea}
+            onBoxZoomActiveChange={spatial.onBoxZoomActiveChange}
             suppressNextClick={reticleInteraction.mapActions.suppressNextClick}
           />
         ) : null}

@@ -162,8 +162,21 @@
   pointer-events: none;
 }
 
+.map-region-selection__status {
+  position: absolute;
+  z-index: 23;
+  top: 50px;
+  left: 104px;
+  margin: 0;
+  color: var(--error-text);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  pointer-events: none;
+}
+
 @container map-comparison (max-width: 520px) {
-  .map-region-selection__drawing-prompt {
+  .map-region-selection__drawing-prompt,
+  .map-region-selection__status {
     top: 88px;
     left: 10px;
   }

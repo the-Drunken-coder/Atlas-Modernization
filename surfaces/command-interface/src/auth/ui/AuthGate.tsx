@@ -1,10 +1,16 @@
 import { Callout } from "@blueprintjs/core";
 import { AtlasAPIError } from "@the-drunken-coder/atlas-sdk";
-import { AtlasAdminClient } from "@the-drunken-coder/atlas-sdk/admin";
 import { Component, type FormEvent, lazy, type ReactNode, Suspense, useEffect, useRef, useState } from "react";
 import { sanitizeConnectionError } from "../../atlas/connection-error.js";
 import { ConnectionBadge } from "../../ui/ConnectionBadge.js";
 import { Button, TextField } from "../../ui/primitives/controls.js";
+import {
+  ATLAS_AUTH_EXPIRED_EVENT,
+  createAuthenticatedAtlasAdminClient,
+  createUnauthenticatedAtlasAdminClient,
+  expireAuthSession,
+  rotateAuthSession
+} from "../atlas.js";
 
 const AccountMenu = lazy(() => import("./AccountMenu.js"));
 
@@ -29,8 +35,10 @@ export function AuthGate({ baseUrl, children }: { baseUrl: string; children: Rea
         const data = await loadSession(baseUrl);
         if (cancelled) return;
         if (data.authenticated) {
+          rotateAuthSession();
           setState({ status: "authenticated", username: data.user.username });
         } else {
+          rotateAuthSession();
           setState({ status: "unauthenticated" });
         }
       } catch (error) {
@@ -39,14 +47,17 @@ export function AuthGate({ baseUrl, children }: { baseUrl: string; children: Rea
         }
       }
     };
-    const expireSession = () =>
+    const expireSession = (event: Event) => {
+      const session = (event as CustomEvent<{ session?: unknown } | undefined>).detail?.session;
+      if (typeof session !== "number" || !expireAuthSession(session)) return;
       setState({ status: "unauthenticated", error: "Your session has expired. Please sign in again." });
+    };
 
+    window.addEventListener(ATLAS_AUTH_EXPIRED_EVENT, expireSession);
     void checkSession();
-    window.addEventListener("atlas-auth-expired", expireSession);
     return () => {
       cancelled = true;
-      window.removeEventListener("atlas-auth-expired", expireSession);
+      window.removeEventListener(ATLAS_AUTH_EXPIRED_EVENT, expireSession);
     };
   }, [baseUrl, sessionAttempt]);
 
@@ -63,7 +74,10 @@ export function AuthGate({ baseUrl, children }: { baseUrl: string; children: Rea
       <AuthenticatedShell
         baseUrl={baseUrl}
         username={state.username}
-        onLoggedOut={() => setState({ status: "unauthenticated" })}
+        onLoggedOut={() => {
+          rotateAuthSession();
+          setState({ status: "unauthenticated" });
+        }}
       >
         {children}
       </AuthenticatedShell>
@@ -98,7 +112,10 @@ export function AuthGate({ baseUrl, children }: { baseUrl: string; children: Rea
     <LoginPanel
       baseUrl={baseUrl}
       initialError={state.error}
-      onAuthenticated={(username) => setState({ status: "authenticated", username })}
+      onAuthenticated={(username) => {
+        rotateAuthSession();
+        setState({ status: "authenticated", username });
+      }}
     />
   );
 }
@@ -121,7 +138,7 @@ function AuthenticatedShell({
     setLoggingOut(true);
     setError(undefined);
     try {
-      await new AtlasAdminClient({ baseUrl, credentials: "include" }).auth.logout();
+      await createAuthenticatedAtlasAdminClient(baseUrl).auth.logout();
       onLoggedOut();
     } catch (cause) {
       setError(sanitizeConnectionError(cause));
@@ -177,7 +194,7 @@ export class WorkspaceErrorBoundary extends Component<
 
 async function loadSession(baseUrl: string): Promise<SessionResponse> {
   try {
-    const data = await new AtlasAdminClient({ baseUrl, credentials: "include" }).auth.me();
+    const data = await createUnauthenticatedAtlasAdminClient(baseUrl).auth.me();
     return { authenticated: true, user: { username: data.user.username } };
   } catch (error) {
     if (error instanceof AtlasAPIError && error.status === 401) return { authenticated: false };
@@ -208,7 +225,7 @@ function LoginPanel({
     setSubmitting(true);
     setError(undefined);
     try {
-      const data = await new AtlasAdminClient({ baseUrl, credentials: "include" }).auth.login({ username, password });
+      const data = await createUnauthenticatedAtlasAdminClient(baseUrl).auth.login({ username, password });
       onAuthenticated(data.user.username);
     } catch (cause) {
       setError(sanitizeConnectionError(cause));

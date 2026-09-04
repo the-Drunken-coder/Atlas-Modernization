@@ -57,6 +57,15 @@ function GeometryActionProbe() {
   );
 }
 
+function EntityDetailsProbe({ signal }: { signal: AbortSignal }) {
+  const atlas = useAtlas();
+  return (
+    <button type="button" onClick={() => void atlas.loadEntityDetails?.("asset-1", signal)}>
+      load details
+    </button>
+  );
+}
+
 const config: AppConfig = {
   atlasBaseUrl: "/atlas",
   protocolRevision: "rev",
@@ -115,6 +124,25 @@ function catalogDataSource(loadCommandCatalog: () => Promise<CommandCatalog>) {
 }
 
 describe("AtlasProvider", () => {
+  it("forwards an Entity detail abort signal to the data source", async () => {
+    const controller = new AbortController();
+    const loadEntityDetails = vi.fn(async () => entity("Loaded", 2));
+    const dataSource = {
+      ...catalogDataSource(async () => catalog("Commands")).dataSource,
+      loadEntityDetails
+    };
+
+    render(
+      <AtlasProvider config={config} createDataSource={() => dataSource}>
+        <EntityDetailsProbe signal={controller.signal} />
+      </AtlasProvider>
+    );
+
+    await screen.findByText("load details");
+    fireEvent.click(screen.getByRole("button", { name: "load details" }));
+    await waitFor(() => expect(loadEntityDetails).toHaveBeenCalledWith("asset-1", controller.signal));
+  });
+
   it("does not advertise Entity detail loading when the data source omits it", async () => {
     const { dataSource } = catalogDataSource(async () => catalog("Commands"));
 
