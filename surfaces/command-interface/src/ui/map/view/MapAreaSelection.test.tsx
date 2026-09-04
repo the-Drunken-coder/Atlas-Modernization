@@ -3,6 +3,7 @@ import type { MapArea } from "@the-drunken-coder/atlas-sdk";
 import type { Map as MlMap } from "maplibre-gl";
 import { act } from "react";
 import { describe, expect, it, vi } from "vitest";
+import { useSpatialOperationRunner } from "../../../features/plugins/use-spatial-operation-runner.js";
 import { MapAreaSelection } from "./MapAreaSelection.js";
 import type { MapSpatialInteraction } from "./MapView.js";
 import { rect, renderMapView } from "./MapView.test-harness.js";
@@ -29,6 +30,7 @@ describe("MapAreaSelection", () => {
         onCancelDrawing={vi.fn()}
         onBeginRegionInteraction={onBeginRegionInteraction}
         onViewportArea={vi.fn()}
+        onBoxZoomActiveChange={vi.fn()}
         suppressNextClick={vi.fn()}
       />
     );
@@ -61,6 +63,7 @@ describe("MapAreaSelection", () => {
         onCancelDrawing={vi.fn()}
         onBeginRegionInteraction={onBeginRegionInteraction}
         onViewportArea={vi.fn()}
+        onBoxZoomActiveChange={vi.fn()}
         suppressNextClick={vi.fn()}
       />
     );
@@ -203,6 +206,31 @@ describe("MapAreaSelection", () => {
     expect(spatial.onCancelDrawing).not.toHaveBeenCalled();
   });
 
+  it("keeps the real spatial runner armed when Escape cancels box zoom", async () => {
+    const mapCanvas = document.createElement("div");
+    document.body.append(mapCanvas);
+    vi.spyOn(mapCanvas, "getBoundingClientRect").mockReturnValue(rect(0, 0, 400, 200));
+    const map = areaMap();
+    const boxZoomEscape = vi.fn();
+    mapCanvas.addEventListener("keydown", boxZoomEscape);
+
+    render(<IntegratedSpatialSelection mapCanvas={mapCanvas} map={map} />);
+    fireEvent.click(screen.getByRole("button", { name: "Begin integrated drawing" }));
+    await waitFor(() => expect(mapCanvas).toHaveClass("map-canvas--region-drawing"));
+    fireEvent.pointerDown(mapCanvas, {
+      pointerId: 1,
+      pointerType: "mouse",
+      button: 0,
+      clientX: 80,
+      clientY: 80,
+      shiftKey: true
+    });
+    fireEvent.keyDown(mapCanvas, { key: "Escape" });
+
+    expect(boxZoomEscape).toHaveBeenCalledOnce();
+    expect(screen.getByLabelText("Spatial status")).toHaveTextContent("drawing");
+  });
+
   it("releases a captured pointer and suppresses its click when drawing is canceled externally", async () => {
     const spatial = interaction({ area: null, drawing: true });
     const { canvas, onBackgroundClick, rerenderMap } = renderMapView({ spatial });
@@ -329,8 +357,35 @@ function interaction(overrides: Partial<MapSpatialInteraction>): MapSpatialInter
     onCancelDrawing: vi.fn(),
     onViewportArea: vi.fn(),
     onSelectFeature: vi.fn(),
+    onBoxZoomActiveChange: vi.fn(),
     ...overrides
   };
+}
+
+function IntegratedSpatialSelection({ mapCanvas, map }: { mapCanvas: HTMLDivElement; map: MlMap }) {
+  const spatial = useSpatialOperationRunner({ executor: { invokeSpatial: vi.fn() } });
+  return (
+    <>
+      <button type="button" onClick={spatial.beginDrawing}>
+        Begin integrated drawing
+      </button>
+      <output aria-label="Spatial status">{spatial.status}</output>
+      <MapAreaSelection
+        mapCanvas={mapCanvas}
+        map={map}
+        mapReady
+        area={spatial.area}
+        drawing={spatial.status === "drawing"}
+        onAreaChange={spatial.setArea}
+        onDrawingComplete={spatial.cancelDrawing}
+        onCancelDrawing={spatial.cancelDrawing}
+        onBeginRegionInteraction={() => {}}
+        onViewportArea={spatial.setViewportArea}
+        onBoxZoomActiveChange={spatial.setMapBoxZoomActive}
+        suppressNextClick={() => {}}
+      />
+    </>
+  );
 }
 
 function areaMap(): MlMap {

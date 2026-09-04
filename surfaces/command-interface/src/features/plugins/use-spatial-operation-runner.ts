@@ -47,6 +47,7 @@ export type SpatialOperationRunner = {
   cancel(): void;
   clear(): void;
   selectFeature(id: string): void;
+  setMapBoxZoomActive(active: boolean): void;
 };
 
 export function useSpatialOperationRunner({
@@ -73,6 +74,7 @@ export function useSpatialOperationRunner({
   const [stale, setStale] = useState(false);
   const [error, setError] = useState<string>();
   const requestRef = useRef<AbortController | undefined>(undefined);
+  const mapBoxZoomActiveRef = useRef(false);
 
   const abortRequest = useCallback(() => {
     requestRef.current?.abort();
@@ -213,10 +215,15 @@ export function useSpatialOperationRunner({
     setError(undefined);
   }, [abortRequest]);
 
+  const setMapBoxZoomActive = useCallback((active: boolean) => {
+    mapBoxZoomActiveRef.current = active;
+  }, []);
+
   useEffect(() => {
     if (status !== "drawing" && status !== "loading") return;
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || event.defaultPrevented) return;
+      if (status === "drawing" && mapBoxZoomActiveRef.current) return;
       const owner = foregroundEscapeOwner(event.target);
       if (owner && !owner.matches("[data-spatial-operation]")) return;
       event.preventDefault();
@@ -249,6 +256,7 @@ export function useSpatialOperationRunner({
     retry: search,
     cancel,
     clear,
-    selectFeature: setSelectedFeatureId
+    selectFeature: setSelectedFeatureId,
+    setMapBoxZoomActive
   };
 }

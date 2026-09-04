@@ -154,18 +154,23 @@ describe("PluginsPanel", () => {
         .mockRejectedValueOnce(new Error("gateway offline"))
     };
     const executor: SpatialOperationExecutor = {
-      invokeSpatial: vi.fn(async () => spatialResponse())
+      invokeSpatial: vi.fn().mockRejectedValue(new Error("fixture source offline"))
     };
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
 
     renderSpatialPanel(reader, executor);
     await openSpatialOperation(user, available.display_name ?? available.plugin_id, "Inspect fixture");
+    await user.click(screen.getByRole("button", { name: "Search" }));
+    expect(await screen.findByText("Source error")).toBeInTheDocument();
+    expect(executor.invokeSpatial).toHaveBeenCalledOnce();
     await vi.advanceTimersByTimeAsync(10_000);
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("gateway offline");
+    expect(await screen.findByText("Refresh failed. Showing the last check.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Search" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeDisabled();
     await user.click(screen.getByRole("button", { name: "Search" }));
-    expect(executor.invokeSpatial).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    expect(executor.invokeSpatial).toHaveBeenCalledOnce();
   });
 
   it("dispatches auth expiry and supports roving keyboard focus", async () => {

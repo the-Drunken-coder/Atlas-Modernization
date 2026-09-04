@@ -534,7 +534,8 @@ export function MapConsole() {
                                 onDrawingComplete: spatial.cancelDrawing,
                                 onCancelDrawing: spatial.cancelDrawing,
                                 onViewportArea: spatial.setViewportArea,
-                                onSelectFeature: spatial.selectFeature
+                                onSelectFeature: spatial.selectFeature,
+                                onBoxZoomActiveChange: spatial.setMapBoxZoomActive
                               }
                             : undefined
                         }

@@ -705,6 +705,7 @@ function spatialInteraction(drawing: boolean): MapSpatialInteraction {
     onDrawingComplete: vi.fn(),
     onCancelDrawing: vi.fn(),
     onViewportArea: vi.fn(),
-    onSelectFeature: vi.fn()
+    onSelectFeature: vi.fn(),
+    onBoxZoomActiveChange: vi.fn()
   };
 }

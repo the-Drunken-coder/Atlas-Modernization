@@ -341,7 +341,7 @@ function SpatialOperationControls({
             <strong>Source error</strong> {spatial.error}
           </span>
           {area ? (
-            <Button variant="ghost" onClick={() => void spatial.retry()}>
+            <Button variant="ghost" disabled={busy || statusUnknown} onClick={() => void spatial.retry()}>
               Retry
             </Button>
           ) : null}

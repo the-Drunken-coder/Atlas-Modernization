@@ -74,6 +74,7 @@ export type MapSpatialInteraction = SpatialMapOverlay & {
   onCancelDrawing(): void;
   onViewportArea(area: MapArea | null): void;
   onSelectFeature(id: string): void;
+  onBoxZoomActiveChange(active: boolean): void;
 };
 
 type SymbolMarkerEntry = {
@@ -529,6 +530,7 @@ export function MapView({
             onCancelDrawing={spatial.onCancelDrawing}
             onBeginRegionInteraction={beginRegionInteraction}
             onViewportArea={spatial.onViewportArea}
+            onBoxZoomActiveChange={spatial.onBoxZoomActiveChange}
             suppressNextClick={reticleInteraction.mapActions.suppressNextClick}
           />
         ) : null}
