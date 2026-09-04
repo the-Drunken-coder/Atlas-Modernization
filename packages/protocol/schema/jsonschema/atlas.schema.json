@@ -494,6 +494,9 @@
     "EntityUpdateEvent": {
       "additionalProperties": false,
       "properties": {
+        "change_reason": {
+          "const": "runtime_manifest_changed"
+        },
         "event": {
           "const": "update"
         },

@@ -234,7 +234,7 @@ func (value *FeedEvent) UnmarshalJSON(data []byte) error {
 		return nil
 	}
 	type alias FeedEvent
-	raw, err := atlasProtocolCanonicalizeIntegerFields(data, map[string]struct{}{"event": {}, "id": {}, "resource": {}, "resource_type": {}, "version": {}}, map[string]bool{"version": false})
+	raw, err := atlasProtocolCanonicalizeIntegerFields(data, map[string]struct{}{"change_reason": {}, "event": {}, "id": {}, "resource": {}, "resource_type": {}, "version": {}}, map[string]bool{"version": false})
 	if err != nil {
 		return err
 	}

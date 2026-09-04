@@ -252,6 +252,79 @@ func TestTaskLifecycleIdempotencyOrderingAndRuntimeFencing(t *testing.T) {
 	}
 }
 
+func TestRuntimeManifestEventsCarryReasonAndEntityUpdatesDoNot(t *testing.T) {
+	pool := openActionsTestPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	assetID := fmt.Sprintf("runtime-event-reason-%d", time.Now().UnixNano())
+	defer cleanupFinalBlobValidationRowsWithTimeout(t, pool, assetID, "")
+
+	entities := NewEntityActions(pool)
+	if _, err := entities.Create(ctx, CreateEntityParams{EntityID: assetID, EntityType: "asset"}); err != nil {
+		t.Fatalf("create Asset: %v", err)
+	}
+	tasks := NewTaskActionsWithCatalog(pool, fixtureTaskCatalog(t))
+	if err := tasks.BeginRuntimeRegistration(ctx, assetID, "runtime-1"); err != nil {
+		t.Fatalf("begin runtime: %v", err)
+	}
+	registeringEntity, err := entities.Get(ctx, assetID)
+	if err != nil {
+		t.Fatalf("read registering Entity: %v", err)
+	}
+	assertEntityChangeReason(t, ctx, pool, assetID, registeringEntity.Version, string(protocol.EntityChangeReasonRuntimeManifestChanged))
+
+	if err := tasks.CompleteRuntimeRegistration(ctx, assetID, "runtime-1", fixtureTaskManifest(t)); err != nil {
+		t.Fatalf("complete runtime registration: %v", err)
+	}
+	readyEntity, err := entities.Get(ctx, assetID)
+	if err != nil {
+		t.Fatalf("read ready Entity: %v", err)
+	}
+	assertEntityChangeReason(t, ctx, pool, assetID, readyEntity.Version, string(protocol.EntityChangeReasonRuntimeManifestChanged))
+
+	note := "operator update"
+	updatedEntity, err := entities.Update(ctx, assetID, UpdateEntityParams{Alias: &note})
+	if err != nil {
+		t.Fatalf("ordinary Entity update: %v", err)
+	}
+	assertEntityChangeReason(t, ctx, pool, assetID, updatedEntity.Version, "")
+
+	checkin, err := NewEntityCheckinActions(entities).CheckIn(ctx, EntityCheckinParams{
+		EntityID:   assetID,
+		Components: map[string]interface{}{"status": map[string]interface{}{"value": "online"}},
+	})
+	if err != nil {
+		t.Fatalf("Entity check-in: %v", err)
+	}
+	assertEntityChangeReason(t, ctx, pool, assetID, checkin.Entity.Version, "")
+
+	if err := tasks.StopRuntime(ctx, assetID, "runtime-1"); err != nil {
+		t.Fatalf("stop runtime: %v", err)
+	}
+	stoppedEntity, err := entities.Get(ctx, assetID)
+	if err != nil {
+		t.Fatalf("read stopped Entity: %v", err)
+	}
+	assertEntityChangeReason(t, ctx, pool, assetID, stoppedEntity.Version, string(protocol.EntityChangeReasonRuntimeManifestChanged))
+}
+
+func assertEntityChangeReason(t *testing.T, ctx context.Context, pool interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}, entityID string, version int64, want string) {
+	t.Helper()
+	var reason string
+	if err := pool.QueryRow(ctx, `
+		SELECT COALESCE(event->>'change_reason', '')
+		FROM atlas_change_events
+		WHERE event->>'resource_type' = 'entity' AND event->>'id' = $1 AND version = $2
+	`, entityID, version).Scan(&reason); err != nil {
+		t.Fatalf("read Entity change reason for version %d: %v", version, err)
+	}
+	if reason != want {
+		t.Fatalf("Entity change reason for version %d = %q, want %q", version, reason, want)
+	}
+}
+
 func TestDeliverableHoldsRuntimeFenceDuringTaskSelection(t *testing.T) {
 	pool := openActionsTestPool(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)

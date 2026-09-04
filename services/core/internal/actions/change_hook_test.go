@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	protocol "github.com/the-drunken-coder/atlas/packages/protocol/generated/go/atlasprotocol"
 	"github.com/the-drunken-coder/atlas/services/core/internal/models"
 )
 
@@ -166,6 +167,35 @@ func TestResourceChangeRecordBuildsEntityDelete(t *testing.T) {
 	}
 	if record.Event.Event != ChangeEventDelete || record.Event.ID != "entity-1" || record.Event.Resource != nil {
 		t.Fatalf("entity delete event = %#v", record.Event)
+	}
+}
+
+func TestResourceChangeRecordCarriesEntityChangeReason(t *testing.T) {
+	record, err := resourceChangeRecord(ResourceChange{
+		Event:        ChangeEventUpdate,
+		ResourceType: ChangeResourceEntity,
+		ID:           "entity-1",
+		Version:      8,
+		ChangeReason: protocol.EntityChangeReasonRuntimeManifestChanged,
+		AfterEntity:  &models.Entity{EntityID: "entity-1", Type: "asset", JSON: json.RawMessage(`{}`), Version: 8},
+	})
+	if err != nil {
+		t.Fatalf("resourceChangeRecord: %v", err)
+	}
+	if record.Event.ChangeReason != protocol.EntityChangeReasonRuntimeManifestChanged {
+		t.Fatalf("change reason = %#v, want %q", record.Event.ChangeReason, protocol.EntityChangeReasonRuntimeManifestChanged)
+	}
+}
+
+func TestResourceChangeRecordRejectsChangeReasonOutsideEntityUpdate(t *testing.T) {
+	for _, change := range []ResourceChange{
+		{Event: ChangeEventCreate, ResourceType: ChangeResourceEntity, ID: "entity-1", Version: 1, ChangeReason: protocol.EntityChangeReasonRuntimeManifestChanged},
+		{Event: ChangeEventUpdate, ResourceType: ChangeResourceTask, ID: "task-1", Version: 1, ChangeReason: protocol.EntityChangeReasonRuntimeManifestChanged},
+		{Event: ChangeEventDelete, ResourceType: ChangeResourceEntity, ID: "entity-1", Version: 1, ChangeReason: protocol.EntityChangeReasonRuntimeManifestChanged},
+	} {
+		if _, err := resourceChangeRecord(change); err == nil {
+			t.Fatalf("resourceChangeRecord accepted invalid change reason for %#v", change)
+		}
 	}
 }
 

@@ -114,6 +114,7 @@ type goEnumContract struct {
 var goEnumContracts = []goEnumContract{
 	{goType: "ResourceType", aliasedFields: []string{"resource_type"}},
 	{goType: "FeedEventName", definitions: []string{"FeedEvent"}, property: "event", aliasedFields: []string{"event"}, constantPrefix: "FeedEvent"},
+	{goType: "EntityChangeReason", definitions: []string{"EntityUpdateEvent"}, property: "change_reason", aliasedFields: []string{"change_reason"}, constantPrefix: "EntityChangeReason"},
 	{goType: "ErrorCode"},
 	{goType: "PluginStatusState"},
 	{goType: "PluginUnavailableReason"},

@@ -167,6 +167,58 @@ func TestFeedEventExamplesValidate(t *testing.T) {
 	assertExamplesValidate(t, filepath.Join(root, "examples", "feed", "events"), protocol.ValidateFeedEvent)
 }
 
+func TestEntityUpdateFeedEventChangeReasonIsExplicitAndScoped(t *testing.T) {
+	valid := map[string]any{
+		"event":         "update",
+		"resource_type": "entity",
+		"id":            "asset-1",
+		"version":       2,
+		"change_reason": "runtime_manifest_changed",
+		"resource": map[string]any{
+			"entity_id":   "asset-1",
+			"entity_type": "asset",
+			"subtype":     nil,
+			"alias":       nil,
+			"components":  map[string]any{},
+			"metadata": map[string]any{
+				"created_at": "2026-06-12T12:00:00Z",
+				"updated_at": "2026-06-12T12:01:00Z",
+				"version":    2,
+			},
+		},
+	}
+	if errors := protocol.ValidateFeedEvent(valid); len(errors) > 0 {
+		t.Fatalf("entity update with runtime manifest reason rejected: %v", errors)
+	}
+
+	for name, reason := range map[string]any{
+		"unknown reason":    "other",
+		"non-string reason": 42,
+	} {
+		t.Run(name, func(t *testing.T) {
+			invalid := make(map[string]any, len(valid))
+			for key, value := range valid {
+				invalid[key] = value
+			}
+			invalid["change_reason"] = reason
+			if errors := protocol.ValidateFeedEvent(invalid); len(errors) == 0 {
+				t.Fatalf("entity update with change_reason=%v unexpectedly validated", reason)
+			}
+		})
+	}
+
+	deleteEvent := map[string]any{
+		"event":         "delete",
+		"resource_type": "entity",
+		"id":            "asset-1",
+		"version":       2,
+		"change_reason": "runtime_manifest_changed",
+	}
+	if errors := protocol.ValidateFeedEvent(deleteEvent); len(errors) == 0 {
+		t.Fatal("entity delete accepted entity-update-only change_reason")
+	}
+}
+
 func TestFeedClientMessageExamplesValidate(t *testing.T) {
 	root := moduleRoot(t)
 	assertExamplesValidate(t, filepath.Join(root, "examples", "feed", "messages"), protocol.ValidateFeedClientMessage)

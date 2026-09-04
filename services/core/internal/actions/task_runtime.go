@@ -325,6 +325,7 @@ func recordRuntimeManifestEntityChange(ctx context.Context, tx pgx.Tx, before *m
 		ResourceType: ChangeResourceEntity,
 		ID:           updated.EntityID,
 		Version:      updated.Version,
+		ChangeReason: protocol.EntityChangeReasonRuntimeManifestChanged,
 		AfterEntity:  cloneEntityModel(updated),
 	}); err != nil {
 		return err

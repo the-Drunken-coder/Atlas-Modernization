@@ -471,7 +471,11 @@ describe("MapConsole", () => {
   it("keeps one Asset detail request alive across telemetry updates", async () => {
     const user = userEvent.setup();
     const pending = deferred<EntityResource>();
-    const loadEntityDetails = vi.fn(() => pending.promise);
+    const signals: AbortSignal[] = [];
+    const loadEntityDetails = vi.fn((_entityId: string, signal?: AbortSignal) => {
+      if (signal) signals.push(signal);
+      return pending.promise;
+    });
     const baseValue: AtlasContextValue = {
       status: "ready",
       config: appConfig(),
@@ -518,6 +522,29 @@ describe("MapConsole", () => {
       </AtlasStaticProvider>
     );
     expect(loadEntityDetails).toHaveBeenCalledOnce();
+    expect(signals[0]?.aborted).toBe(false);
+
+    view.rerender(
+      <AtlasStaticProvider
+        value={{
+          ...baseValue,
+          snapshot: {
+            entities: {
+              [rover.entity_id]: {
+                ...rover,
+                components: { telemetry: { latitude: 40.1, longitude: -74.1 } },
+                metadata: { ...rover.metadata, version: 3 }
+              }
+            },
+            tasks: {}
+          }
+        }}
+      >
+        <MapConsole />
+      </AtlasStaticProvider>
+    );
+    expect(loadEntityDetails).toHaveBeenCalledOnce();
+    expect(signals[0]?.aborted).toBe(false);
 
     pending.resolve({ ...rover, command_manifest: [] });
     expect(await screen.findByText("This Asset has no Commands")).toBeInTheDocument();
@@ -589,7 +616,11 @@ describe("MapConsole", () => {
     const baseValue: AtlasContextValue = {
       status: "ready",
       config: appConfig(),
-      snapshot: { entities: { [rover.entity_id]: rover }, tasks: {} },
+      snapshot: {
+        entities: { [rover.entity_id]: rover },
+        tasks: {},
+        runtimeManifestVersions: { [rover.entity_id]: 1 }
+      },
       catalog: taskingCatalog,
       health: healthyConnection,
       reconnect: vi.fn(),
@@ -617,7 +648,8 @@ describe("MapConsole", () => {
           ...baseValue,
           snapshot: {
             entities: { [rover.entity_id]: { ...rover, metadata: { ...rover.metadata, version: 2 } } },
-            tasks: {}
+            tasks: {},
+            runtimeManifestVersions: { [rover.entity_id]: 2 }
           }
         }}
       >
@@ -638,7 +670,11 @@ describe("MapConsole", () => {
     const baseValue: AtlasContextValue = {
       status: "ready",
       config: appConfig(),
-      snapshot: { entities: { [rover.entity_id]: rover }, tasks: {} },
+      snapshot: {
+        entities: { [rover.entity_id]: rover },
+        tasks: {},
+        runtimeManifestVersions: { [rover.entity_id]: 1 }
+      },
       catalog: taskingCatalog,
       health: healthyConnection,
       reconnect: vi.fn(),
@@ -666,7 +702,8 @@ describe("MapConsole", () => {
           ...baseValue,
           snapshot: {
             entities: { [rover.entity_id]: { ...rover, metadata: { ...rover.metadata, version: 2 } } },
-            tasks: {}
+            tasks: {},
+            runtimeManifestVersions: { [rover.entity_id]: 2 }
           }
         }}
       >
@@ -688,7 +725,11 @@ describe("MapConsole", () => {
     const baseValue: AtlasContextValue = {
       status: "ready",
       config: appConfig(),
-      snapshot: { entities: { [rover.entity_id]: rover }, tasks: {} },
+      snapshot: {
+        entities: { [rover.entity_id]: rover },
+        tasks: {},
+        runtimeManifestVersions: { [rover.entity_id]: 1 }
+      },
       catalog: taskingCatalog,
       health: healthyConnection,
       reconnect: vi.fn(),
@@ -716,7 +757,8 @@ describe("MapConsole", () => {
           ...baseValue,
           snapshot: {
             entities: { [rover.entity_id]: { ...rover, metadata: { ...rover.metadata, version: 2 } } },
-            tasks: {}
+            tasks: {},
+            runtimeManifestVersions: { [rover.entity_id]: 2 }
           }
         }}
       >

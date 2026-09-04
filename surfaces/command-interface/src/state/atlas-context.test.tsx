@@ -16,6 +16,7 @@ function StatusProbe() {
     <div>
       <span>{atlas.status}</span>
       <span data-testid="entity-names">{entityNames}</span>
+      <span data-testid="runtime-manifest-version">{atlas.snapshot.runtimeManifestVersions?.["asset-1"] ?? ""}</span>
       <span data-testid="catalog-name">{atlas.catalog?.[0]?.name}</span>
       <span data-testid="entity-details-capability">{atlas.loadEntityDetails ? "available" : "unavailable"}</span>
       {atlas.health.error ? (
@@ -289,7 +290,11 @@ describe("AtlasProvider", () => {
       },
       async start() {
         calls.push("start");
-        current = { entities: { "asset-1": entity("Newer", 2) }, tasks: {} };
+        current = {
+          entities: { "asset-1": entity("Newer", 2) },
+          tasks: {},
+          runtimeManifestVersions: { "asset-1": 2 }
+        };
         emit?.(current);
       },
       async submitCommand() {
@@ -310,6 +315,7 @@ describe("AtlasProvider", () => {
     expect(await screen.findByText("ready")).toBeInTheDocument();
     expect(calls.slice(0, 3)).toEqual(["watch", "start", "snapshot"]);
     expect(screen.getByTestId("entity-names")).toHaveTextContent("Newer");
+    expect(screen.getByTestId("runtime-manifest-version")).toHaveTextContent("2");
   });
 
   it("disposes a failed startup and creates a fresh data source for a one-shot retry", async () => {

@@ -63,7 +63,7 @@ export function AuthGate({ baseUrl, children }: { baseUrl: string; children: Rea
       <AuthenticatedShell
         baseUrl={baseUrl}
         username={state.username}
-        onLoggedOut={() => setState({ status: "unauthenticated" })}
+        onLoggedOut={(error) => setState({ status: "unauthenticated", ...(error ? { error } : {}) })}
       >
         {children}
       </AuthenticatedShell>
@@ -111,7 +111,7 @@ function AuthenticatedShell({
   baseUrl: string;
   username: string;
   children: ReactNode;
-  onLoggedOut: () => void;
+  onLoggedOut: (error?: string) => void;
 }) {
   const [loggingOut, setLoggingOut] = useState(false);
   const [error, setError] = useState<string>();
@@ -123,7 +123,14 @@ function AuthenticatedShell({
       await new AtlasAdminClient({ baseUrl, credentials: "include" }).auth.logout();
       onLoggedOut();
     } catch (cause) {
-      setError(sanitizeConnectionError(cause));
+      const logoutError = sanitizeConnectionError(cause);
+      // Core clears the cookie before returning its 500 revocation error. Do
+      // not leave the shell mounted with a browser session that no longer exists.
+      if (cause instanceof AtlasAPIError && cause.status === 500) {
+        onLoggedOut(logoutError);
+        return;
+      }
+      setError(logoutError);
       setLoggingOut(false);
     }
   };
