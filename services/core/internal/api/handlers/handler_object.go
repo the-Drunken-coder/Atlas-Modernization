@@ -5,6 +5,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	protocol "github.com/the-drunken-coder/atlas/packages/protocol/generated/go/atlasprotocol"
+	"github.com/the-drunken-coder/atlas/services/core/internal/actions"
 	"github.com/the-drunken-coder/atlas/services/core/internal/serializers"
 )
 
@@ -37,7 +38,15 @@ func (h *Handler) CreateObject(w http.ResponseWriter, r *http.Request) {
 	if !h.decodeProtocolRequestBody(w, r, &req, false, protocol.ValidateObjectCreateRequest) {
 		return
 	}
-	obj, err := h.objectActions.Create(r.Context(), req.actionParams())
+	instanceToken, ok := h.parseResourceInstanceToken(w, r)
+	if !ok {
+		return
+	}
+	params := req.actionParams()
+	if instanceToken != nil {
+		params.InstanceToken = *instanceToken
+	}
+	obj, err := h.objectActions.Create(r.Context(), params)
 	if err != nil {
 		h.handleActionError(w, r, err)
 		return
@@ -90,8 +99,12 @@ func (h *Handler) UpdateObject(w http.ResponseWriter, r *http.Request) {
 // DeleteObject handles DELETE /objects/{object_id}.
 func (h *Handler) DeleteObject(w http.ResponseWriter, r *http.Request) {
 	objectID := chi.URLParam(r, "object_id")
+	instanceToken, ok := h.parseResourceInstanceToken(w, r)
+	if !ok {
+		return
+	}
 
-	if err := h.objectActions.Delete(r.Context(), objectID); err != nil {
+	if err := h.objectActions.Delete(r.Context(), objectID, actions.ObjectDeleteOptions{InstanceToken: instanceToken}); err != nil {
 		h.handleActionError(w, r, err)
 		return
 	}

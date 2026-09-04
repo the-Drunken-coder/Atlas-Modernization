@@ -299,7 +299,6 @@ async function fetchGoogleMapsTileSession(apiKey: string): Promise<string | unde
     if (timeoutId !== undefined) clearTimeout(timeoutId);
   }
 }
-
 function envValue(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed || undefined;

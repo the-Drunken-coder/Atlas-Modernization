@@ -1,6 +1,6 @@
 import { ObjectContentCache, ResourceCache } from "./cache.js";
 import { FeedConnectionManager } from "./feed-connection.js";
-import { HttpTransport } from "./http.js";
+import { HttpTransport, resourceInstanceTokenHeaders } from "./http.js";
 import type {
   CommandCatalog,
   EntityCheckInFullResponse,
@@ -26,6 +26,7 @@ import type {
   TaskResource
 } from "./protocol.js";
 import { isJSONValue, isMapArea, isPluginDiscoveryResponse, isSpatialOperationResult } from "./protocol.js";
+import { normalizeResourceID } from "./resource-id.js";
 import { SyncEngine } from "./sync-engine.js";
 import type {
   AtlasSubscription,
@@ -35,6 +36,8 @@ import type {
   FetchLike,
   FullDatasetQueryOptions,
   ReadOptions,
+  ResourceCreateOptions,
+  ResourceDeleteOptions,
   ResourceForSubscription,
   RuntimeContextOptions,
   SyncSnapshot,
@@ -79,6 +82,8 @@ export type {
   EntityCheckInTelemetry,
   FullDatasetQueryOptions,
   ReadOptions,
+  ResourceCreateOptions,
+  ResourceDeleteOptions,
   ResourceForSubscription,
   RuntimeContextOptions,
   SyncSnapshot,
@@ -107,150 +112,201 @@ export class AtlasClient {
   private readonly checkInEntity = createEntityCheckIn(() => this.engine);
 
   readonly entities = {
-    get: (id: string, options?: ReadOptions) => this.engine.readEntity(id, options),
-    create: (entity: EntityCreateRequest, options?: { signal?: AbortSignal }) =>
-      this.engine.writeResource(
+    get: (id: string, options?: ReadOptions) => this.engine.readEntity(normalizeEntityID(id), options),
+    create: (entity: EntityCreateRequest, options?: ResourceCreateOptions) => {
+      const entityID = typeof entity.entity_id === "string" ? normalizeEntityID(entity.entity_id) : entity.entity_id;
+      return this.engine.writeResource(
         "POST",
         "/entities",
-        entity,
+        { ...entity, entity_id: entityID },
         "entity",
-        entity.entity_id,
+        entityID,
         isEntityResource,
         undefined,
         undefined,
-        options?.signal
-      ),
-    update: (id: string, patch: EntityUpdateRequest, options?: { ifMatchVersion?: number }) =>
-      this.engine.writeResource(
+        options?.signal,
+        resourceInstanceTokenHeaders(options?.instanceToken)
+      );
+    },
+    update: (id: string, patch: EntityUpdateRequest, options?: { ifMatchVersion?: number }) => {
+      const entityID = normalizeEntityID(id);
+      return this.engine.writeResource(
         "PATCH",
-        `/entities/${encodeURIComponent(id)}`,
+        `/entities/${encodeURIComponent(entityID)}`,
         patch,
         "entity",
-        id,
+        entityID,
         isEntityResource,
         options?.ifMatchVersion
-      ),
-    delete: (id: string) => this.engine.deleteResource("entity", id, `/entities/${encodeURIComponent(id)}`),
+      );
+    },
+    delete: (id: string, options?: ResourceDeleteOptions) => {
+      const entityID = normalizeEntityID(id);
+      return this.engine.deleteResource("entity", entityID, `/entities/${encodeURIComponent(entityID)}`, options);
+    },
     checkIn: this.checkInEntity,
     watch: (id: string, callback: WatchCallback<EntityResource>) =>
-      this.engine.watch({ filter: "id", resource_type: "entity", id }, callback)
+      this.engine.watch({ filter: "id", resource_type: "entity", id: normalizeEntityID(id) }, callback)
   };
 
   readonly tasks = {
-    get: (id: string, options?: ReadOptions) => this.engine.readTask(id, options),
-    create: (task: TaskCreateRequest, options: TaskCreateOptions) =>
-      this.engine.writeTask("POST", "/tasks", task, {
-        requestHeaders: { "Idempotency-Key": normalizeOpaqueIdentifier("idempotencyKey", options.idempotencyKey) },
-        signal: options.signal,
-        eventName: "create"
-      }),
-    acknowledge: (id: string, options: RuntimeContextOptions) =>
-      this.engine.writeTask(
+    get: (id: string, options?: ReadOptions) => this.engine.readTask(normalizeTaskID(id), options),
+    create: (task: TaskCreateRequest, options: TaskCreateOptions) => {
+      const assetID = typeof task.asset_id === "string" ? normalizeAssetID(task.asset_id) : task.asset_id;
+      return this.engine.writeTask(
         "POST",
-        `/tasks/${encodeURIComponent(id)}/acknowledge`,
-        {},
-        { requestHeaders: runtimeHeaders(options.runtimeId), signal: options.signal, expectedID: id }
-      ),
-    start: (id: string, options: RuntimeContextOptions) =>
-      this.engine.writeTask(
+        "/tasks",
+        { ...task, asset_id: assetID },
+        {
+          requestHeaders: { "Idempotency-Key": normalizeOpaqueIdentifier("idempotencyKey", options.idempotencyKey) },
+          signal: options.signal,
+          eventName: "create"
+        }
+      );
+    },
+    acknowledge: (id: string, options: RuntimeContextOptions) => {
+      const taskID = normalizeTaskID(id);
+      return this.engine.writeTask(
         "POST",
-        `/tasks/${encodeURIComponent(id)}/start`,
+        `/tasks/${encodeURIComponent(taskID)}/acknowledge`,
         {},
-        { requestHeaders: runtimeHeaders(options.runtimeId), signal: options.signal, expectedID: id }
-      ),
-    progress: (id: string, request: TaskProgressRequest, options: RuntimeContextOptions) =>
-      this.engine.writeTask("POST", `/tasks/${encodeURIComponent(id)}/progress`, request, {
+        { requestHeaders: runtimeHeaders(options.runtimeId), signal: options.signal, expectedID: taskID }
+      );
+    },
+    start: (id: string, options: RuntimeContextOptions) => {
+      const taskID = normalizeTaskID(id);
+      return this.engine.writeTask(
+        "POST",
+        `/tasks/${encodeURIComponent(taskID)}/start`,
+        {},
+        { requestHeaders: runtimeHeaders(options.runtimeId), signal: options.signal, expectedID: taskID }
+      );
+    },
+    progress: (id: string, request: TaskProgressRequest, options: RuntimeContextOptions) => {
+      const taskID = normalizeTaskID(id);
+      return this.engine.writeTask("POST", `/tasks/${encodeURIComponent(taskID)}/progress`, request, {
         requestHeaders: runtimeHeaders(options.runtimeId),
         signal: options.signal,
-        expectedID: id
-      }),
+        expectedID: taskID
+      });
+    },
     complete: (id: string, options: TaskCompleteOptions) => {
+      const taskID = normalizeTaskID(id);
       const request = options.output === undefined ? {} : { output: options.output };
       Object.setPrototypeOf(request, null);
-      return this.engine.writeTask("POST", `/tasks/${encodeURIComponent(id)}/complete`, request, {
+      return this.engine.writeTask("POST", `/tasks/${encodeURIComponent(taskID)}/complete`, request, {
         requestHeaders: runtimeHeaders(options.runtimeId),
         signal: options.signal,
-        expectedID: id
+        expectedID: taskID
       });
     },
     fail: (id: string, options: TaskFailOptions) => {
+      const taskID = normalizeTaskID(id);
       const failure = { code: options.failure.code, message: options.failure.message };
       Object.setPrototypeOf(failure, null);
       const request = { failure };
       Object.setPrototypeOf(request, null);
-      return this.engine.writeTask("POST", `/tasks/${encodeURIComponent(id)}/fail`, request, {
+      return this.engine.writeTask("POST", `/tasks/${encodeURIComponent(taskID)}/fail`, request, {
         requestHeaders: runtimeHeaders(options.runtimeId),
         signal: options.signal,
-        expectedID: id
+        expectedID: taskID
       });
     },
-    cancel: (id: string, options: TaskCancelOptions) =>
-      this.engine.writeTask(
+    cancel: (id: string, options: TaskCancelOptions) => {
+      const taskID = normalizeTaskID(id);
+      return this.engine.writeTask(
         "POST",
-        `/tasks/${encodeURIComponent(id)}/cancel`,
+        `/tasks/${encodeURIComponent(taskID)}/cancel`,
         { cancellation: options.cancellation },
-        { signal: options.signal, expectedID: id }
-      ),
+        { signal: options.signal, expectedID: taskID }
+      );
+    },
     watch: (id: string, callback: WatchCallback<TaskResource>) =>
-      this.engine.watch({ filter: "id", resource_type: "task", id }, callback)
+      this.engine.watch({ filter: "id", resource_type: "task", id: normalizeTaskID(id) }, callback)
   };
 
   readonly runtime = {
-    begin: (assetId: string, request: RuntimeRegistrationRequest, options?: { signal?: AbortSignal }) =>
-      this.transport.empty(
+    begin: (assetId: string, request: RuntimeRegistrationRequest, options?: { signal?: AbortSignal }) => {
+      const normalizedAssetID = normalizeAssetID(assetId);
+      return this.transport.empty(
         "POST",
-        `/entities/${encodeURIComponent(assetId)}/runtime`,
+        `/entities/${encodeURIComponent(normalizedAssetID)}/runtime`,
         { ...request, runtime_id: normalizeOpaqueIdentifier("runtimeId", request.runtime_id) },
         undefined,
         options?.signal
-      ),
-    stop: (assetId: string, request: RuntimeStopRequest, options?: { signal?: AbortSignal }) =>
-      this.transport.empty(
+      );
+    },
+    stop: (assetId: string, request: RuntimeStopRequest, options?: { signal?: AbortSignal }) => {
+      const normalizedAssetID = normalizeAssetID(assetId);
+      return this.transport.empty(
         "POST",
-        `/entities/${encodeURIComponent(assetId)}/runtime/stop`,
+        `/entities/${encodeURIComponent(normalizedAssetID)}/runtime/stop`,
         { ...request, runtime_id: normalizeOpaqueIdentifier("runtimeId", request.runtime_id) },
         undefined,
         options?.signal
-      ),
-    ready: (assetId: string, request: RuntimeReadyRequest, options?: { signal?: AbortSignal }) =>
-      this.transport.empty(
+      );
+    },
+    ready: (assetId: string, request: RuntimeReadyRequest, options?: { signal?: AbortSignal }) => {
+      const normalizedAssetID = normalizeAssetID(assetId);
+      return this.transport.empty(
         "POST",
-        `/entities/${encodeURIComponent(assetId)}/runtime/ready`,
+        `/entities/${encodeURIComponent(normalizedAssetID)}/runtime/ready`,
         { ...request, runtime_id: normalizeOpaqueIdentifier("runtimeId", request.runtime_id) },
         undefined,
         options?.signal
-      ),
-    tasks: (assetId: string, options: RuntimeContextOptions) =>
-      this.transport.json(
+      );
+    },
+    tasks: (assetId: string, options: RuntimeContextOptions) => {
+      const normalizedAssetID = normalizeAssetID(assetId);
+      return this.transport.json(
         "GET",
-        `/entities/${encodeURIComponent(assetId)}/runtime/tasks`,
+        `/entities/${encodeURIComponent(normalizedAssetID)}/runtime/tasks`,
         (value): value is RuntimeTaskDeliveryResponse =>
-          isRuntimeTaskDeliveryResponse(value) && value.tasks.every((task) => task.asset_id === assetId),
+          isRuntimeTaskDeliveryResponse(value) && value.tasks.every((task) => task.asset_id === normalizedAssetID),
         undefined,
         undefined,
         options.signal,
         runtimeHeaders(options.runtimeId)
-      )
+      );
+    }
   };
 
   readonly objects = {
-    get: (id: string, options?: ReadOptions) => this.engine.readObject(id, options),
-    create: async (object: ObjectCreateRequest) =>
-      this.engine.writeResource("POST", "/objects", object, "object", object.object_id, isObjectDetailResource),
-    update: async (id: string, patch: ObjectUpdateRequest, options?: { ifMatchVersion?: number }) =>
-      this.engine.writeResource(
+    get: (id: string, options?: ReadOptions) => this.engine.readObject(normalizeObjectID(id), options),
+    create: (object: ObjectCreateRequest, options?: ResourceCreateOptions) => {
+      const objectID = typeof object.object_id === "string" ? normalizeObjectID(object.object_id) : object.object_id;
+      return this.engine.writeResource(
+        "POST",
+        "/objects",
+        { ...object, object_id: objectID },
+        "object",
+        objectID,
+        isObjectDetailResource,
+        undefined,
+        undefined,
+        options?.signal,
+        resourceInstanceTokenHeaders(options?.instanceToken)
+      );
+    },
+    update: (id: string, patch: ObjectUpdateRequest, options?: { ifMatchVersion?: number }) => {
+      const objectID = normalizeObjectID(id);
+      return this.engine.writeResource(
         "PATCH",
-        `/objects/${encodeURIComponent(id)}`,
+        `/objects/${encodeURIComponent(objectID)}`,
         patch,
         "object",
-        id,
+        objectID,
         isObjectDetailResource,
         options?.ifMatchVersion
-      ),
-    delete: (id: string) => this.engine.deleteResource("object", id, `/objects/${encodeURIComponent(id)}`),
-    content: (id: string) => this.objectContent(id),
+      );
+    },
+    delete: (id: string, options?: ResourceDeleteOptions) => {
+      const objectID = normalizeObjectID(id);
+      return this.engine.deleteResource("object", objectID, `/objects/${encodeURIComponent(objectID)}`, options);
+    },
+    content: (id: string) => this.objectContent(normalizeObjectID(id)),
     watch: (id: string, callback: WatchCallback<ObjectResource>) =>
-      this.engine.watch({ filter: "id", resource_type: "object", id }, callback)
+      this.engine.watch({ filter: "id", resource_type: "object", id: normalizeObjectID(id) }, callback)
   };
 
   readonly queries = {
@@ -397,6 +453,7 @@ export class AtlasClient {
 }
 
 function checkInRequest(id: string, options?: EntityCheckInOptions): { path: string; body: EntityCheckInRequest } {
+  const normalizedID = normalizeEntityID(id);
   const body: EntityCheckInRequest = {};
   if (options?.status !== undefined) body.status = options.status;
   if (options?.components !== undefined) body.components = options.components;
@@ -409,7 +466,7 @@ function checkInRequest(id: string, options?: EntityCheckInOptions): { path: str
     if (heading_deg !== undefined) body.heading_deg = heading_deg;
   }
   const fields = options?.fields === "minimal" ? "minimal" : undefined;
-  const path = pathWithQuery(`/entities/${encodeURIComponent(id)}/checkin`, {
+  const path = pathWithQuery(`/entities/${encodeURIComponent(normalizedID)}/checkin`, {
     fields
   });
   return { path, body };
@@ -450,6 +507,22 @@ function createEntityCheckIn(engine: () => SyncEngine): EntityCheckInMethod {
 
 function runtimeHeaders(runtimeId: string): HeadersInit {
   return { "Atlas-Runtime-ID": normalizeOpaqueIdentifier("runtimeId", runtimeId) };
+}
+
+function normalizeEntityID(value: string): string {
+  return normalizeResourceID("entity_id", value);
+}
+
+function normalizeTaskID(value: string): string {
+  return normalizeResourceID("task_id", value);
+}
+
+function normalizeObjectID(value: string): string {
+  return normalizeResourceID("object_id", value);
+}
+
+function normalizeAssetID(value: string): string {
+  return normalizeResourceID("asset_id", value);
 }
 
 function normalizeOpaqueIdentifier(name: string, value: string): string {

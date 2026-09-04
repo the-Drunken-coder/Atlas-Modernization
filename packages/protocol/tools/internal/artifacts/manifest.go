@@ -39,11 +39,19 @@ func BuildArtifacts(root string) ([]Artifact, error) {
 	if err != nil {
 		return nil, err
 	}
+	typescriptRevision, err := typeScriptRevisionSource(revision)
+	if err != nil {
+		return nil, err
+	}
 	goRevision, err := goRevisionSource(revision)
 	if err != nil {
 		return nil, err
 	}
 	goValidators, err := goValidatorsSource(defs)
+	if err != nil {
+		return nil, err
+	}
+	goIntegerUnmarshal, err := goIntegerUnmarshalSource(root)
 	if err != nil {
 		return nil, err
 	}
@@ -64,8 +72,10 @@ func BuildArtifacts(root string) ([]Artifact, error) {
 		{Path: "generated/revision.txt", Content: revisionTextSource(revision)},
 		{Path: "generated/go/atlasprotocol/revision.go", Content: goRevision},
 		{Path: "generated/go/atlasprotocol/command_catalog.go", Content: goCommandCatalog},
+		{Path: "generated/go/atlasprotocol/json_integer_unmarshal.go", Content: goIntegerUnmarshal},
 		{Path: "generated/go/atlasprotocol/validators.go", Content: goValidators},
 		{Path: "generated/typescript/index.ts", Content: typescriptSource},
+		{Path: "generated/typescript/revision.ts", Content: typescriptRevision},
 	}
 	sort.Slice(artifacts, func(i, j int) bool {
 		return artifacts[i].Path < artifacts[j].Path

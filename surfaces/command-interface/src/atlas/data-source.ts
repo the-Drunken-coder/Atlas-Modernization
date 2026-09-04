@@ -1,4 +1,5 @@
 import {
+  type AtlasWatchEvent,
   type CommandCatalog,
   type CommandDefinition,
   type EntityResource,
@@ -40,9 +41,15 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
     sync: "all",
     WebSocket: globalThis.WebSocket
   });
+  let runtimeManifestVersions: Readonly<Record<string, number>> | undefined;
+  let started = false;
   const snapshot = (): AtlasSnapshot => {
     const { entities, tasks } = client.sync.snapshot();
-    return { entities, tasks };
+    return {
+      entities,
+      tasks,
+      ...(runtimeManifestVersions ? { runtimeManifestVersions } : {})
+    };
   };
   let startupGeneration = 0;
   let startupError: ConnectionError | undefined;
@@ -56,18 +63,60 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
 
     watch(onSnapshot) {
       let previous = client.sync.snapshot();
-      return client.sync.watchSnapshot((next) => {
+      let previousSyncVersion = client.sync.status().lastVersion;
+      let rawEntityEventObserved = false;
+      // SyncEngine delivers raw event watchers before snapshot watchers. Keep
+      // that ordering so a runtime signal is part of the snapshot that carries
+      // the corresponding Entity update.
+      const unsubscribeRuntimeManifestEvents = client.watch(
+        { filter: "type", resource_type: "entity" },
+        (_resource, event) => {
+          rawEntityEventObserved = true;
+          const runtimeManifestChange = runtimeManifestChangeVersion(event);
+          if (runtimeManifestChange) {
+            runtimeManifestVersions = {
+              ...runtimeManifestVersions,
+              [runtimeManifestChange.id]: runtimeManifestChange.version
+            };
+            return;
+          }
+          if (event.event === "delete" && event.resource_type === "entity") {
+            runtimeManifestVersions = removeRuntimeManifestVersion(event.id, runtimeManifestVersions);
+          }
+        }
+      );
+      const unsubscribeSnapshot = client.sync.watchSnapshot((next) => {
+        const syncVersion = client.sync.status().lastVersion;
+        if (started && syncVersion > previousSyncVersion && !rawEntityEventObserved) {
+          runtimeManifestVersions = runtimeManifestVersionsAfterHydration(
+            previous.entities,
+            next.entities,
+            runtimeManifestVersions
+          );
+        }
+        previousSyncVersion = syncVersion;
+        rawEntityEventObserved = false;
         if (next.entities === previous.entities && next.tasks === previous.tasks) return;
         previous = next;
-        onSnapshot({ entities: next.entities, tasks: next.tasks });
+        onSnapshot({
+          entities: next.entities,
+          tasks: next.tasks,
+          ...(runtimeManifestVersions ? { runtimeManifestVersions } : {})
+        });
       });
+      return () => {
+        unsubscribeRuntimeManifestEvents();
+        unsubscribeSnapshot();
+      };
     },
 
     async start() {
       const generation = ++startupGeneration;
       startupError = undefined;
+      runtimeManifestVersions = undefined;
       try {
         await client.sync.start();
+        started = true;
       } catch (cause) {
         if (generation === startupGeneration) {
           startupError = { source: "startup", message: sanitizeConnectionError(cause) };
@@ -109,8 +158,38 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
 
     dispose() {
       startupGeneration++;
+      started = false;
+      runtimeManifestVersions = undefined;
       client.sync.stop();
       startupError = undefined;
     }
+  };
+}
+function runtimeManifestChangeVersion(event: AtlasWatchEvent): { id: string; version: number } | undefined {
+  if (event.event !== "update" || event.resource_type !== "entity") return undefined;
+  return event.change_reason === "runtime_manifest_changed" ? { id: event.id, version: event.version } : undefined;
+}
+
+function removeRuntimeManifestVersion(
+  id: string,
+  current: Readonly<Record<string, number>> | undefined
+): Readonly<Record<string, number>> | undefined {
+  if (!current || !Object.hasOwn(current, id)) return current;
+  const { [id]: _removed, ...remaining } = current;
+  return Object.keys(remaining).length === 0 ? undefined : remaining;
+}
+
+function runtimeManifestVersionsAfterHydration(
+  previousEntities: Readonly<Record<string, EntityResource>>,
+  hydratedEntities: Readonly<Record<string, EntityResource>>,
+  current: Readonly<Record<string, number>> | undefined
+): Readonly<Record<string, number>> | undefined {
+  const changedEntities = Object.entries(hydratedEntities).filter(
+    ([id, entity]) => previousEntities[id]?.metadata.version !== entity.metadata.version
+  );
+  if (changedEntities.length === 0) return current;
+  return {
+    ...current,
+    ...Object.fromEntries(changedEntities.map(([id, entity]) => [id, entity.metadata.version]))
   };
 }

@@ -1,12 +1,7 @@
-import {
-  isMapArea,
-  type MapArea,
-  type SpatialFeature,
-  type SpatialOperationResult
-} from "@the-drunken-coder/atlas-sdk";
+import { type MapArea, type SpatialFeature, type SpatialOperationResult } from "@the-drunken-coder/atlas-sdk";
+import { mapAreaSquareMeters } from "@the-drunken-coder/atlas-sdk/spatial";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { sanitizeConnectionError } from "../../atlas/connection-error.js";
-import { createAuthenticatedAtlasClient } from "../../auth/atlas.js";
 import { foregroundEscapeOwner } from "../../ui/map/interaction/foreground-escape-owner.js";
 
 export type SpatialOperationTarget = {
@@ -58,11 +53,7 @@ export function useSpatialOperationRunner({
   executor?: SpatialOperationExecutor;
 }): SpatialOperationRunner {
   const executor = useMemo<SpatialOperationExecutor | undefined>(
-    () =>
-      suppliedExecutor ??
-      (baseUrl
-        ? createAuthenticatedAtlasClient(baseUrl, { sync: false, requestTimeoutMs: 25_000 }).plugins
-        : undefined),
+    () => suppliedExecutor ?? (baseUrl ? lazySpatialExecutor(baseUrl) : undefined),
     [baseUrl, suppliedExecutor]
   );
   const [target, setTarget] = useState<SpatialOperationTarget>();
@@ -119,7 +110,7 @@ export function useSpatialOperationRunner({
   const setArea = useCallback(
     (next: MapArea) => {
       abortRequest();
-      if (!isMapArea(next)) {
+      if (!isUsableMapArea(next)) {
         setStatus("error");
         setStale(result !== null);
         setError("Select a non-crossing area no larger than 5 km².");
@@ -149,7 +140,7 @@ export function useSpatialOperationRunner({
       setStatus("error");
       return;
     }
-    if (!isMapArea(viewportArea)) {
+    if (!isUsableMapArea(viewportArea)) {
       setError("Zoom in until the current view is a non-crossing area no larger than 5 km².");
       setStatus("error");
       return;
@@ -163,7 +154,7 @@ export function useSpatialOperationRunner({
       setStatus("error");
       return;
     }
-    if (!area || !isMapArea(area)) {
+    if (!area || !isUsableMapArea(area)) {
       setError("Select a non-crossing area no larger than 5 km².");
       setStatus("error");
       return;
@@ -259,4 +250,32 @@ export function useSpatialOperationRunner({
     selectFeature: setSelectedFeatureId,
     setMapBoxZoomActive
   };
+}
+
+function lazySpatialExecutor(baseUrl: string): SpatialOperationExecutor {
+  let executorPromise: Promise<SpatialOperationExecutor> | undefined;
+  const executor = () =>
+    (executorPromise ??= import("../../auth/atlas.js").then(
+      ({ createAuthenticatedAtlasClient }) =>
+        createAuthenticatedAtlasClient(baseUrl, { sync: false, requestTimeoutMs: 25_000 }).plugins
+    ));
+  return {
+    async invokeSpatial(pluginId, operationId, area, options) {
+      return (await executor()).invokeSpatial(pluginId, operationId, area, options);
+    }
+  };
+}
+
+function isUsableMapArea(area: MapArea): boolean {
+  const { west, south, east, north } = area;
+  return (
+    [west, south, east, north].every(Number.isFinite) &&
+    west >= -180 &&
+    east <= 180 &&
+    south >= -90 &&
+    north <= 90 &&
+    west < east &&
+    south < north &&
+    mapAreaSquareMeters(area) <= 5_000_000
+  );
 }

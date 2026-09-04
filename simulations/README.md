@@ -36,6 +36,14 @@ Keep normal simulation work pointed at a local Atlas Core (`ATLAS_LOCAL_BASE_URL
 
 Core generates every Task ID. Simulations record those Tasks in the run summary but never add them to the cleanup ledger because Task deletion is not part of Atlas. Local scratch databases may be reset as a whole; deployed runs retain terminal Tasks as execution history while guarded cleanup removes only run-owned Entities and Objects.
 
+For run-owned Entity/Object creates, the workbench generates a fresh opaque
+`Atlas-Resource-Instance-Token`, records it in the owner-only cleanup ledger
+before the POST, and sends it again for conditional cleanup DELETE. Tokens are
+not part of resource JSON or browser-facing run summaries. A missing resource
+or a token mismatch means that owned instance is already gone, so cleanup does
+not delete a replacement with the same ID. Legacy ledger files without tokens
+fail closed and require manual review.
+
 Configured API keys, including the launcher-generated local key, are read-only server configuration that only the local Node server reads. Browser code calls same-origin simulation routes and never receives configured keys; a key pasted into the UI necessarily remains in that browser tab's memory.
 
 ## Development

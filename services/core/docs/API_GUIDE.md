@@ -58,7 +58,7 @@ Common statuses:
 | `401` | API key is missing/wrong, or the browser session is missing/invalid. |
 | `404` | Entity, alias, task, object, bucket, or route was not found. |
 | `409` | Duplicate resource or unique constraint conflict. |
-| `412` | `If-Match` expected an older resource version than the server has. |
+| `412` | `If-Match` expected an older resource version, or a resource-instance token does not identify the current Entity/Object instance. |
 | `413` | Request body or file upload is too large. |
 | `503` | Storage, feed, or another dependency is unavailable. |
 
@@ -79,6 +79,14 @@ If-Match: "v12"
 `PATCH /entities/{entity_id}`, `PATCH /objects/{object_id}`, and
 `POST /entities/{entity_id}/checkin` accept this header. If the header is
 omitted, the server applies the write without a version precondition.
+
+Entity/Object create and delete also accept the optional
+`Atlas-Resource-Instance-Token` header. Clients should generate a fresh opaque
+token for each resource instance and retain it until cleanup. Core stores only
+the token's SHA-256 hash, never includes the token in resource JSON, and rejects
+reuse after an instance is deleted. A token-bearing delete returns `412` when
+the current row is a different instance; an ordinary delete without the header
+keeps its existing behavior.
 
 ### Pagination
 

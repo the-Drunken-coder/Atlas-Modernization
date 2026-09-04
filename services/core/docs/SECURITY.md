@@ -4,6 +4,11 @@ _Revision: 2026-07-10_
 
 ## Cross-Origin Resource Sharing (CORS)
 
+Browser clients that use the resource-instance cleanup contract must include
+`Atlas-Resource-Instance-Token` in preflight requests. Core accepts this header
+only for Entity/Object create and delete operations; it stores only a SHA-256
+hash and never exposes the raw token in resource JSON.
+
 CORS is configured in:
 
 - `internal/config/config.go` (origin list loading)
@@ -51,8 +56,8 @@ Broad credentialed-CORS wildcards such as `*`, `https://*`, `https://*.pages.dev
 ### Current Middleware Behavior
 
 - `AllowCredentials` is enabled so trusted browser origins can send Core-owned session cookies.
-- Allowed methods: `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS`
-- Allowed request headers: `Accept`, `Authorization`, `Content-Type`, `If-Match`, `X-API-Key`, `X-Request-ID` (structured-log correlation)
+- Allowed methods: `GET`, `POST`, `PATCH`, `DELETE`, `OPTIONS`
+- Allowed request headers: `Accept`, `Authorization`, `Content-Type`, `Idempotency-Key`, `Atlas-Runtime-ID`, `Atlas-Resource-Instance-Token`, `If-Match`, `If-None-Match`, `X-API-Key`, `X-Request-ID` (structured-log correlation)
 - Exposed headers: `ETag`, `X-Has-More`, `X-Next-Cursor`, `X-Limit`, `X-Returned-Count`, `Content-Length`
 
 Operators should prefer exact trusted origins. Use constrained origin patterns only for deployment systems that generate per-branch hostnames. Unsafe cookie-authenticated browser methods are rejected unless the `Origin` header matches configured CORS origins or constrained origin patterns.

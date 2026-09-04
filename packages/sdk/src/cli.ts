@@ -8,8 +8,10 @@ import {
   type ResourceType,
   type TaskCreateRequest
 } from "./index.js";
+import { parseAtlasJSON } from "./json.js";
 import { PACKAGE_BIN, PACKAGE_NAME } from "./package-metadata.js";
 import { isResourceType as isProtocolResourceType, RESOURCE_TYPE_VALUES } from "./protocol.js";
+import { normalizeResourceID } from "./resource-id.js";
 
 export { PACKAGE_BIN, PACKAGE_NAME, RESOURCE_TYPE_VALUES };
 
@@ -153,7 +155,7 @@ function parseArgs(argv: string[], env: Record<string, string | undefined>): CLI
   if (resource === "tasks" && action === "create" && rest.length > 0) {
     const raw = rest.join(" ");
     try {
-      return { kind: "tasks.create", options, body: parseTaskCreateBody(JSON.parse(raw)) };
+      return { kind: "tasks.create", options, body: parseTaskCreateBody(parseAtlasJSON(raw)) };
     } catch {
       throw new UsageError("invalid task JSON");
     }
@@ -187,11 +189,23 @@ export function parseFilter(raw: string): AtlasSubscription {
     return { filter: "type", resource_type: secondPart };
   if (kind === "id" && isResourceType(secondPart) && parts.length >= 3) {
     const id = parts.slice(2).join(":");
-    if (id) return { filter: "id", resource_type: secondPart, id };
+    if (id) {
+      try {
+        return { filter: "id", resource_type: secondPart, id: normalizeResourceID(`${secondPart}_id`, id) };
+      } catch {
+        // Fall through to the standard usage error below.
+      }
+    }
   }
   if (kind === "tasks_for_asset" && parts.length >= 2) {
     const assetId = parts.slice(1).join(":");
-    if (assetId) return { filter: "tasks_for_asset", asset_id: assetId };
+    if (assetId) {
+      try {
+        return { filter: "tasks_for_asset", asset_id: normalizeResourceID("asset_id", assetId) };
+      } catch {
+        // Fall through to the standard usage error below.
+      }
+    }
   }
   throw new UsageError(`invalid subscription filter: ${raw}`);
 }

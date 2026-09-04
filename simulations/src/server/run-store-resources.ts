@@ -1,9 +1,9 @@
 import type { CreatedResource } from "../shared/types.js";
 import type { AtlasClientLike } from "./atlas.js";
 import { CLEANUP_DELETE_TIMEOUT_MS } from "./run-store-limits.js";
-import type { RunRecord } from "./run-store-types.js";
+import type { CleanupResource, RunRecord } from "./run-store-types.js";
 
-export function cleanupResourcesForRun(run: RunRecord): CreatedResource[] {
+export function cleanupResourcesForRun(run: RunRecord): CleanupResource[] {
   const resources = run.overflowCleanupResource
     ? [...run.cleanupResources, run.overflowCleanupResource]
     : run.cleanupResources;
@@ -40,7 +40,7 @@ export async function withCleanupTimeout(
   }
 }
 
-export function cleanupOrder(resources: CreatedResource[]): CreatedResource[] {
+export function cleanupOrder(resources: CleanupResource[]): CleanupResource[] {
   const order: Record<CreatedResource["type"], number> = { object: 0, entity: 1, task: 2 };
   return resources
     .map((resource, index) => ({ resource, index }))

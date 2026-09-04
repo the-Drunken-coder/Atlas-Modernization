@@ -244,6 +244,36 @@ class FakeConnection implements CompanionConnection {
   }
 }
 
+class StuckCloseConnection extends FakeConnection {
+  readonly closeStarted: Promise<void>;
+  #reportCloseStarted: () => void = () => undefined;
+  #releaseClose: () => void = () => undefined;
+
+  constructor() {
+    super();
+    this.closeStarted = new Promise<void>((resolve) => {
+      this.#reportCloseStarted = resolve;
+    });
+  }
+
+  override close(): Promise<void> {
+    this.#reportCloseStarted();
+    return new Promise<void>((resolve) => {
+      this.#releaseClose = resolve;
+    });
+  }
+
+  releaseClose(): void {
+    this.#releaseClose();
+  }
+}
+
+class FailedOpenConnection extends StuckCloseConnection {
+  override connect(): Promise<void> {
+    return Promise.reject(new Error("connect failed"));
+  }
+}
+
 describe("MeshCore transport", () => {
   it("uses MeshCore's all-channel read without transmitting", async () => {
     const connection = new FakeConnection();
@@ -274,6 +304,53 @@ describe("MeshCore transport", () => {
 
     await expect(transport.getChannels()).resolves.toHaveLength(4);
     await transport.close();
+  });
+
+  it("bounds a companion close that never settles", async () => {
+    const connection = new StuckCloseConnection();
+    const transport = new MeshCoreTransport("/dev/cu.test", {
+      channel: 2,
+      closeTimeoutMs: 10,
+      connection,
+    });
+    await transport.open();
+
+    const closing = transport.close();
+    await connection.closeStarted;
+    await expect(closing).rejects.toThrow("Could not cleanly close");
+    connection.releaseClose();
+  });
+
+  it("bounds failed-open companion cleanup", async () => {
+    const connection = new FailedOpenConnection();
+    const transport = new MeshCoreTransport("/dev/cu.test", {
+      channel: 2,
+      closeTimeoutMs: 10,
+      connection,
+    });
+
+    const opening = transport.open();
+    await connection.closeStarted;
+    await expect(opening).rejects.toThrow("Could not open and clean up");
+    connection.releaseClose();
+  });
+
+  it("returns the same promise to concurrent transport close callers", async () => {
+    const connection = new StuckCloseConnection();
+    const transport = new MeshCoreTransport("/dev/cu.test", {
+      channel: 2,
+      closeTimeoutMs: 10,
+      connection,
+    });
+    await transport.open();
+
+    const first = transport.close();
+    await connection.closeStarted;
+    const second = transport.close();
+
+    expect(second).toBe(first);
+    connection.releaseClose();
+    await Promise.all([first, second]);
   });
 
   it("rejects channel slots returned out of order or with gaps", async () => {
@@ -530,16 +607,40 @@ describe("MeshCore transport", () => {
       null,
     );
     const onInbox = vi.fn().mockRejectedValueOnce(new Error("disk full"));
+    let releaseFatal = (): void => undefined;
+    const fatalReleased = new Promise<void>((resolve) => {
+      releaseFatal = resolve;
+    });
+    const onFatalError = vi.fn(() => fatalReleased);
     const transport = new MeshCoreTransport("/dev/cu.test", {
       channel: 2,
       connection,
       onInboxMessage: onInbox,
+      onFatalError,
     });
     await transport.open();
-    await expect(transport.startInbox()).rejects.toThrow("disk full");
+    let settled = false;
+    const starting = transport.startInbox();
+    void starting.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      },
+    );
+    await vi.waitFor(() => {
+      expect(onFatalError).toHaveBeenCalledOnce();
+    });
+    expect(settled).toBe(true);
+    releaseFatal();
+    await expect(starting).rejects.toThrow("disk full");
     expect(onInbox).toHaveBeenCalledTimes(1);
+    await new Promise<void>((resolve) => setTimeout(resolve, 550));
+    expect(onInbox).toHaveBeenCalledTimes(1);
+    expect(onFatalError).toHaveBeenCalledOnce();
     expect(connection.messages).toHaveLength(2);
-    await transport.close();
+    await expect(transport.close()).rejects.toThrow("Could not cleanly close");
   });
 
   it("disables background drains and reports fatal evidence failures", async () => {

@@ -114,6 +114,7 @@ export class RunStore {
       assert: this.assert.bind(this),
       track: this.track.bind(this),
       trackCleanupCandidate: this.trackCleanupCandidate.bind(this),
+      untrackCleanupCandidate: this.untrackCleanupCandidate.bind(this),
       finish: this.finish.bind(this),
       prune: this.pruneRuns.bind(this)
     });
@@ -176,9 +177,12 @@ export class RunStore {
     run.subscribers.clear();
   }
 
-  private track(run: RunRecord, resource: CreatedResource): void {
+  private track(run: RunRecord, resource: CreatedResource, instanceToken?: string): void {
     if (run.cleanupStarted || run.cleaned) return;
-    this.trackCleanupCandidate(run, resource);
+    if (resource.type !== "task") {
+      if (!instanceToken) throw new Error(`${resource.type} tracking requires an instance token`);
+      this.trackCleanupCandidate(run, { ...resource, instanceToken });
+    }
     const tracked = cloneValue(resource);
     if (!hasResource(run.createdResources, tracked)) {
       if (run.createdResources.length >= MAX_CREATED_RESOURCES_PER_RUN) return;
@@ -187,22 +191,44 @@ export class RunStore {
     }
   }
 
-  private trackCleanupCandidate(run: RunRecord, resource: CreatedResource): void {
+  private trackCleanupCandidate(run: RunRecord, resource: RunRecord["cleanupResources"][number]): void {
     if (run.cleanupStarted || run.cleaned) return;
     const tracked = cloneValue(resource);
     if (!hasResource(run.cleanupResources, tracked) && !sameResource(run.overflowCleanupResource, tracked)) {
       if (run.cleanupResources.length >= MAX_CREATED_RESOURCES_PER_RUN) {
         if (!run.overflowCleanupResource) {
-          run.overflowCleanupResource = cloneValue(tracked);
-          persistRun(run, this.options);
+          const overflowCleanupResource = cloneValue(tracked);
+          persistRun({ ...run, overflowCleanupResource }, this.options);
+          run.overflowCleanupResource = overflowCleanupResource;
         }
         const message = `Simulation can track at most ${MAX_CREATED_RESOURCES_PER_RUN} created resources`;
         run.trackingError = message;
         run.lastError = message;
         throw new Error(message);
       }
-      run.cleanupResources.push(cloneValue(tracked));
-      persistRun(run, this.options);
+      const cleanupResources = [...run.cleanupResources, cloneValue(tracked)];
+      persistRun({ ...run, cleanupResources }, this.options);
+      run.cleanupResources = cleanupResources;
+    }
+  }
+
+  private untrackCleanupCandidate(run: RunRecord, resource: CreatedResource): void {
+    if (run.cleanupStarted || run.cleaned) return;
+    const index = run.cleanupResources.findIndex((candidate) => sameResource(candidate, resource));
+    let changed = index !== -1;
+    const cleanupResources = changed
+      ? run.cleanupResources.filter((_, candidateIndex) => candidateIndex !== index)
+      : run.cleanupResources;
+    const overflowCleanupResource = sameResource(run.overflowCleanupResource, resource)
+      ? undefined
+      : run.overflowCleanupResource;
+    if (overflowCleanupResource !== run.overflowCleanupResource) {
+      changed = true;
+    }
+    if (changed) {
+      persistRun({ ...run, cleanupResources, overflowCleanupResource }, this.options);
+      run.cleanupResources = cleanupResources;
+      run.overflowCleanupResource = overflowCleanupResource;
     }
   }
 

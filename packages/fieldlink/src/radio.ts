@@ -15,6 +15,7 @@ const FLOOD_PATH_LENGTH = 0xff;
 const INBOX_POLL_INTERVAL_MS = 500;
 const DEFAULT_COMMAND_TIMEOUT_MS = 10_000;
 const DEFAULT_CONNECT_TIMEOUT_MS = 15_000;
+const DEFAULT_CLOSE_TIMEOUT_MS = 15_000;
 const DEFAULT_IDLE_TIMEOUT_MS = 60_000;
 const MIN_CHANNEL_DATAGRAM_FIRMWARE_CODE = 12;
 
@@ -91,6 +92,7 @@ export type CompanionConnection = Pick<
 export interface MeshCoreTransportOptions {
   readonly channel: number;
   readonly commandTimeoutMs?: number;
+  readonly closeTimeoutMs?: number;
   readonly connection?: CompanionConnection;
   readonly onInboxMessage?: (message: InboxMessage) => void | Promise<void>;
   readonly onListenerError?: (error: Error) => void | Promise<void>;
@@ -172,6 +174,7 @@ export class MeshCoreTransport implements FieldLinkTransport {
   readonly #path: string;
   readonly #channel: number;
   readonly #commandTimeoutMs: number;
+  readonly #closeTimeoutMs: number;
   readonly #onInboxMessage: MeshCoreTransportOptions["onInboxMessage"];
   readonly #onListenerError: MeshCoreTransportOptions["onListenerError"];
   readonly #onFatalError: MeshCoreTransportOptions["onFatalError"];
@@ -185,6 +188,7 @@ export class MeshCoreTransport implements FieldLinkTransport {
   #inboxActive = false;
   #datagramDeliveryEnabled = true;
   #closing = false;
+  #closePromise: Promise<void> | undefined;
   #lifecycleGeneration = 0;
   #pollTimer: ReturnType<typeof setInterval> | undefined;
   #fatalError: Error | undefined;
@@ -194,6 +198,7 @@ export class MeshCoreTransport implements FieldLinkTransport {
     this.#channel = options.channel;
     this.#commandTimeoutMs =
       options.commandTimeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS;
+    this.#closeTimeoutMs = options.closeTimeoutMs ?? DEFAULT_CLOSE_TIMEOUT_MS;
     this.#connection =
       options.connection ?? new FieldLinkSerialConnection(path);
     this.#onInboxMessage = options.onInboxMessage;
@@ -229,7 +234,7 @@ export class MeshCoreTransport implements FieldLinkTransport {
     } catch (error: unknown) {
       const openError = asError(error);
       try {
-        await this.#connection.close();
+        await this.#closeConnection();
       } catch (closeError: unknown) {
         throw new AggregateError(
           [openError, asError(closeError)],
@@ -260,7 +265,13 @@ export class MeshCoreTransport implements FieldLinkTransport {
       this.#requestDrain();
     }, INBOX_POLL_INTERVAL_MS);
     this.#pollTimer.unref();
-    await this.flushInbox();
+    try {
+      await this.flushInbox();
+    } catch (error: unknown) {
+      const failure = asError(error);
+      this.#reportFatal(failure);
+      throw failure;
+    }
   }
 
   async enableDatagramDelivery(): Promise<void> {
@@ -272,10 +283,12 @@ export class MeshCoreTransport implements FieldLinkTransport {
     this.#datagramDeliveryEnabled = true;
   }
 
-  async close(): Promise<void> {
-    if (this.#closing) {
-      return;
-    }
+  close(): Promise<void> {
+    this.#closePromise ??= this.#close();
+    return this.#closePromise;
+  }
+
+  async #close(): Promise<void> {
     this.#closing = true;
     this.#lifecycleGeneration += 1;
     this.#open = false;
@@ -289,19 +302,24 @@ export class MeshCoreTransport implements FieldLinkTransport {
     this.#connection.off("error", this.#transportErrorListener);
     const errors: Error[] = [];
     try {
-      await this.waitUntilIdle();
-    } catch (error: unknown) {
-      errors.push(asError(error));
-    }
-    try {
-      await this.#connection.close();
-    } catch (error: unknown) {
-      errors.push(asError(error));
+      try {
+        await this.waitUntilIdle();
+      } catch (error: unknown) {
+        errors.push(asError(error));
+      }
+      try {
+        await this.#closeConnection();
+      } catch (error: unknown) {
+        errors.push(asError(error));
+      }
+      if (errors.length > 0) {
+        throw new AggregateError(
+          errors,
+          `Could not cleanly close ${this.#path}`,
+        );
+      }
     } finally {
       this.#closing = false;
-    }
-    if (errors.length > 0) {
-      throw new AggregateError(errors, `Could not cleanly close ${this.#path}`);
     }
   }
 
@@ -588,6 +606,14 @@ export class MeshCoreTransport implements FieldLinkTransport {
       clearInterval(this.#pollTimer);
       this.#pollTimer = undefined;
     }
+  }
+
+  async #closeConnection(): Promise<void> {
+    await withTimeout(
+      Promise.resolve().then(() => this.#connection.close()),
+      this.#closeTimeoutMs,
+      `closing ${this.#path}`,
+    );
   }
 
   #throwIfUnavailable(): void {

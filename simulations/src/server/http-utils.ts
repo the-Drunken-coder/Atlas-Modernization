@@ -1,6 +1,7 @@
 import { type IncomingMessage, type ServerResponse } from "node:http";
 import { sanitizeErrorMessage } from "@the-drunken-coder/atlas-sdk";
 import type { StartRunRequest } from "../shared/types.js";
+import { isLoopbackHostname } from "./loopback.js";
 
 const MUTATION_HEADER = "x-atlas-simulations-request";
 const TARGET_API_KEY_HEADER = "x-atlas-target-api-key";
@@ -150,9 +151,4 @@ function urlForHost(host: string | undefined): URL | undefined {
   } catch {
     return undefined;
   }
-}
-
-function isLoopbackHostname(hostname: string): boolean {
-  const normalized = hostname.replace(/^\[|\]$/g, "").toLowerCase();
-  return normalized === "127.0.0.1" || normalized === "localhost" || normalized === "::1";
 }

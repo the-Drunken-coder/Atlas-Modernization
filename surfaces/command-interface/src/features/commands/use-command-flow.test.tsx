@@ -109,6 +109,137 @@ describe("useCommandFlow", () => {
     expect(submitCommand.mock.calls[2]?.[0].idempotencyKey).toBe("00000000-0000-4000-8000-000000000002");
   });
 
+  it("clears menus and forms when the command generation changes", () => {
+    const submitCommand = vi.fn();
+    const { result, rerender } = renderHook(
+      ({ generation }: { generation: string }) =>
+        useCommandFlow({
+          catalog: commandCatalog,
+          selectedEntity: asset,
+          selectedId: asset.entity_id,
+          generation,
+          submitCommand
+        }),
+      { initialProps: { generation: "asset-1:1" } }
+    );
+
+    act(() => {
+      result.current.onMapContextMenu({ entityId: asset.entity_id, x: 10, y: 20, lat: 40, lng: -74 });
+    });
+    expect(result.current.mapMenu).not.toBeNull();
+
+    rerender({ generation: "asset-1:2" });
+    expect(result.current.mapMenu).toBeNull();
+
+    act(() => {
+      result.current.pickSidebarCommand(formAvailability);
+    });
+    expect(result.current.commandForm).not.toBeNull();
+
+    rerender({ generation: "asset-1:3" });
+    expect(result.current.commandForm).toBeNull();
+  });
+
+  it("does not reuse a pending idempotency key after the command generation changes", async () => {
+    vi.spyOn(crypto, "randomUUID")
+      .mockReturnValueOnce("00000000-0000-4000-8000-000000000001")
+      .mockReturnValueOnce("00000000-0000-4000-8000-000000000002");
+    const submitCommand = vi.fn().mockRejectedValueOnce(new Error("response lost")).mockResolvedValue(task);
+    const { result, rerender } = renderHook(
+      ({ generation }: { generation: string }) =>
+        useCommandFlow({
+          catalog: commandCatalog,
+          selectedEntity: asset,
+          selectedId: asset.entity_id,
+          generation,
+          submitCommand
+        }),
+      { initialProps: { generation: "asset-1:1" } }
+    );
+
+    await act(async () => result.current.submit(availability, { value: "same" }));
+    rerender({ generation: "asset-1:2" });
+    await act(async () => result.current.submit(availability, { value: "same" }));
+
+    expect(submitCommand).toHaveBeenCalledTimes(2);
+    expect(submitCommand.mock.calls[0]?.[0].idempotencyKey).toBe("00000000-0000-4000-8000-000000000001");
+    expect(submitCommand.mock.calls[1]?.[0].idempotencyKey).toBe("00000000-0000-4000-8000-000000000002");
+  });
+
+  it("ignores a late submission failure after the command generation changes", async () => {
+    let rejectSubmission: ((reason: Error) => void) | undefined;
+    const submitCommand = vi.fn(
+      () =>
+        new Promise<TaskResource>((_resolve, reject) => {
+          rejectSubmission = reject;
+        })
+    );
+    const { result, rerender } = renderHook(
+      ({ generation }: { generation: string }) =>
+        useCommandFlow({
+          catalog: commandCatalog,
+          selectedEntity: asset,
+          selectedId: asset.entity_id,
+          generation,
+          submitCommand
+        }),
+      { initialProps: { generation: "asset-1:1" } }
+    );
+    let submission: Promise<void> | undefined;
+
+    act(() => {
+      submission = result.current.submit(availability, { value: "same" });
+    });
+    rerender({ generation: "asset-1:2" });
+    await act(async () => {
+      rejectSubmission?.(new Error("late failure"));
+      await submission;
+    });
+
+    expect(result.current.submitError).toBeUndefined();
+  });
+
+  it("unblocks the refreshed generation when the prior submission hangs", async () => {
+    let resolveSubmission: ((value: TaskResource) => void) | undefined;
+    const submitCommand = vi.fn(
+      () =>
+        new Promise<TaskResource>((resolve) => {
+          resolveSubmission = resolve;
+        })
+    );
+    const { result, rerender } = renderHook(
+      ({ generation }: { generation: string }) =>
+        useCommandFlow({
+          catalog: commandCatalog,
+          selectedEntity: asset,
+          selectedId: asset.entity_id,
+          generation,
+          submitCommand
+        }),
+      { initialProps: { generation: "asset-1:1" } }
+    );
+    let submission: Promise<void> | undefined;
+
+    act(() => {
+      submission = result.current.submit(availability, { value: "same" });
+    });
+    expect(result.current.submitting).toBe(true);
+
+    rerender({ generation: "asset-1:2" });
+    expect(result.current.submitting).toBe(false);
+
+    act(() => {
+      result.current.pickSidebarCommand(formAvailability);
+    });
+    expect(result.current.commandForm).not.toBeNull();
+
+    await act(async () => {
+      resolveSubmission?.(task);
+      await submission;
+    });
+    expect(result.current.commandForm).not.toBeNull();
+  });
+
   it("starts a new attempt when the failed submission data changes", async () => {
     vi.spyOn(crypto, "randomUUID")
       .mockReturnValueOnce("00000000-0000-4000-8000-000000000001")
@@ -150,7 +281,7 @@ describe("useCommandFlow", () => {
     expect(result.current.submitError).toBeUndefined();
   });
 
-  it("preserves an uncertain form submission across a manifest refresh", async () => {
+  it("resets an uncertain form submission across a manifest refresh", async () => {
     vi.spyOn(crypto, "randomUUID")
       .mockReturnValueOnce("00000000-0000-4000-8000-000000000001")
       .mockReturnValueOnce("00000000-0000-4000-8000-000000000002");
@@ -187,7 +318,7 @@ describe("useCommandFlow", () => {
       rejectSubmission?.(new Error("response lost"));
       await submission;
     });
-    expect(result.current.submitError).toBeDefined();
+    expect(result.current.submitError).toBeUndefined();
 
     rerender({ commandManifestStatus: "ready", commandManifestGeneration: 2 });
     act(() => result.current.pickSidebarCommand(formAvailability));
@@ -195,7 +326,7 @@ describe("useCommandFlow", () => {
 
     expect(submitCommand).toHaveBeenCalledTimes(2);
     expect(submitCommand.mock.calls[0]?.[0].idempotencyKey).toBe("00000000-0000-4000-8000-000000000001");
-    expect(submitCommand.mock.calls[1]?.[0].idempotencyKey).toBe("00000000-0000-4000-8000-000000000001");
+    expect(submitCommand.mock.calls[1]?.[0].idempotencyKey).toBe("00000000-0000-4000-8000-000000000002");
   });
 
   it("closes an open map command menu while the manifest refreshes", () => {

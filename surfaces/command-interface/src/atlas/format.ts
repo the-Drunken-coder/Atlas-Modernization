@@ -1,7 +1,7 @@
 export function formatRelativeTime(iso: string | undefined, now: number = Date.now()): string {
-  if (!iso) return "—";
+  if (!iso) return "N/A";
   const timestamp = Date.parse(iso);
-  if (!Number.isFinite(timestamp)) return "—";
+  if (!Number.isFinite(timestamp)) return "N/A";
   const seconds = Math.round((now - timestamp) / 1000);
   if (seconds < 0) return "in the future";
   if (seconds < 5) return "just now";
@@ -15,12 +15,12 @@ export function formatRelativeTime(iso: string | undefined, now: number = Date.n
 }
 
 export function formatNumber(value: number | undefined, options: { unit?: string; digits?: number } = {}): string {
-  if (value === undefined || !Number.isFinite(value)) return "—";
+  if (value === undefined || !Number.isFinite(value)) return "N/A";
   const rounded = options.digits === undefined ? value : Number(value.toFixed(options.digits));
   return options.unit ? `${rounded} ${options.unit}` : `${rounded}`;
 }
 
 export function formatPercent(value: number | undefined): string {
-  if (value === undefined || !Number.isFinite(value)) return "—";
+  if (value === undefined || !Number.isFinite(value)) return "N/A";
   return `${Math.round(value)}%`;
 }

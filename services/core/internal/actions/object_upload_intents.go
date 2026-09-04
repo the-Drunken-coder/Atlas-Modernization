@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/the-drunken-coder/atlas/services/core/internal/storage"
 )
 
 const (
@@ -18,6 +19,33 @@ const (
 
 type objectStoragePathQueryer interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
+func objectStoragePathIsLive(ctx context.Context, db objectStoragePathQueryer, path, bucket string) (bool, error) {
+	var live, invalidBucket bool
+	if err := db.QueryRow(ctx, `
+		SELECT
+			EXISTS (
+				SELECT 1 FROM objects
+				WHERE path = $1
+					AND jsonb_typeof(json->'bucket') = 'string'
+					AND NULLIF(BTRIM(json->>'bucket'), '') = $2
+			),
+			EXISTS (
+				SELECT 1 FROM objects
+				WHERE path = $1
+					AND (
+						jsonb_typeof(json->'bucket') IS DISTINCT FROM 'string'
+						OR NULLIF(BTRIM(json->>'bucket'), '') IS NULL
+					)
+			)
+	`, strings.TrimSpace(path), strings.TrimSpace(bucket)).Scan(&live, &invalidBucket); err != nil {
+		return false, fmt.Errorf("failed to inspect object storage path: %w", err)
+	}
+	if invalidBucket {
+		return false, &storage.StorageError{Message: "stored object is missing bucket metadata"}
+	}
+	return live, nil
 }
 
 func ensureObjectStoragePathAvailable(ctx context.Context, db objectStoragePathQueryer, path, objectID string) error {
@@ -212,8 +240,8 @@ func (a *ObjectActions) recoverStorageUploadIntents(ctx context.Context, limit i
 			if err != nil {
 				return false, fmt.Errorf("lock storage upload intent for recovery: %w", err)
 			}
-			var live bool
-			if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM objects WHERE path = $1)`, item.path).Scan(&live); err != nil {
+			live, err := objectStoragePathIsLive(ctx, tx, item.path, item.bucket)
+			if err != nil {
 				return false, fmt.Errorf("check storage upload intent live reference: %w", err)
 			}
 			if !live {

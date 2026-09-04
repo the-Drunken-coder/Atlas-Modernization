@@ -61,7 +61,8 @@ after `POST /objects/upload` via a follow-up `PATCH`.
 `path`, `content_type`, `size_bytes`, and `bucket` are returned as storage metadata, but clients must
 not send them in `POST /objects` or `PATCH /objects/{object_id}`. `POST /objects/upload` derives these
 blob facts from the stored file and Atlas Core's configured storage bucket. Downloads use the stored
-path and bucket.
+path and bucket. A path-bearing row without a non-empty persisted bucket is invalid: download,
+replacement, and deletion fail with a storage error instead of guessing from the current configuration.
 
 When `DELETE /objects/{object_id}` removes metadata for an object with a stored
 blob path, Atlas Core also records that blob path in `storage_deletion_outbox`

@@ -5,6 +5,7 @@ import {
   isResourceType,
   type ResourceType
 } from "./protocol.js";
+import { normalizeResourceID } from "./resource-id.js";
 import type {
   AtlasLocalDeleteWatchEvent,
   AtlasSubscription,
@@ -15,23 +16,39 @@ import type {
   ResourceValue
 } from "./types.js";
 
+export function normalizeSubscription(filter: AtlasSubscription): AtlasSubscription {
+  switch (filter.filter) {
+    case "all":
+    case "type":
+      return filter;
+    case "id":
+      return {
+        ...filter,
+        id: normalizeResourceID(`${filter.resource_type}_id`, filter.id)
+      };
+    case "tasks_for_asset":
+      return { ...filter, asset_id: normalizeResourceID("asset_id", filter.asset_id) };
+  }
+}
+
 export function subscriptionMessage(
   action: "subscribe" | "unsubscribe",
   filter: AtlasSubscription
 ): FeedSubscribeMessage | FeedUnsubscribeMessage {
-  return { action, ...filter } as FeedSubscribeMessage | FeedUnsubscribeMessage;
+  return { action, ...normalizeSubscription(filter) } as FeedSubscribeMessage | FeedUnsubscribeMessage;
 }
 
 export function subscriptionKey(filter: AtlasSubscription): string {
-  switch (filter.filter) {
+  const normalized = normalizeSubscription(filter);
+  switch (normalized.filter) {
     case "all":
       return JSON.stringify(["all"]);
     case "id":
-      return JSON.stringify(["id", filter.resource_type, filter.id]);
+      return JSON.stringify(["id", normalized.resource_type, normalized.id]);
     case "type":
-      return JSON.stringify(["type", filter.resource_type]);
+      return JSON.stringify(["type", normalized.resource_type]);
     case "tasks_for_asset":
-      return JSON.stringify(["tasks_for_asset", filter.asset_id]);
+      return JSON.stringify(["tasks_for_asset", normalized.asset_id]);
   }
 }
 
@@ -47,14 +64,22 @@ export function parseSubscriptionKey(key: string): AtlasSubscription {
   }
   const [kind, resourceType, id] = parsed;
   if (kind === "all" && parsed.length === 1) return { filter: "all" };
-  if (kind === "id" && parsed.length === 3 && isResourceType(resourceType) && isNonEmptyString(id)) {
-    return { filter: "id", resource_type: resourceType, id };
+  if (kind === "id" && parsed.length === 3 && isResourceType(resourceType) && typeof id === "string") {
+    try {
+      return normalizeSubscription({ filter: "id", resource_type: resourceType, id });
+    } catch {
+      throw new Error("invalid subscription key");
+    }
   }
   if (kind === "type" && parsed.length === 2 && isResourceType(resourceType)) {
     return { filter: "type", resource_type: resourceType };
   }
-  if (kind === "tasks_for_asset" && parsed.length === 2 && isNonEmptyString(resourceType)) {
-    return { filter: "tasks_for_asset", asset_id: resourceType };
+  if (kind === "tasks_for_asset" && parsed.length === 2 && typeof resourceType === "string") {
+    try {
+      return normalizeSubscription({ filter: "tasks_for_asset", asset_id: resourceType });
+    } catch {
+      throw new Error("invalid subscription key");
+    }
   }
   throw new Error("invalid subscription key");
 }
@@ -66,18 +91,19 @@ export function covers(covering: AtlasSubscription, wanted: AtlasSubscription): 
 }
 
 export function matchesSubscription(filter: AtlasSubscription, event: AtlasWatchEvent): boolean {
-  switch (filter.filter) {
+  const normalized = normalizeSubscription(filter);
+  switch (normalized.filter) {
     case "all":
       return true;
     case "id":
-      return event.resource_type === filter.resource_type && event.id === filter.id;
+      return event.resource_type === normalized.resource_type && event.id === normalized.id;
     case "type":
-      return event.resource_type === filter.resource_type;
+      return event.resource_type === normalized.resource_type;
     case "tasks_for_asset":
       if (event.resource_type !== "task") {
         return false;
       }
-      return event.resource.asset_id === filter.asset_id;
+      return event.resource.asset_id === normalized.asset_id;
   }
 }
 
@@ -97,6 +123,9 @@ export function resourceID(type: ResourceType, resource: ResourceValue): string 
 }
 
 export function resourceCacheKey(type: ResourceType, id: string): string {
+  if (!id || id.trim() !== id) {
+    throw new TypeError(`Atlas ${type}_id must be canonical`);
+  }
   return JSON.stringify([type, id]);
 }
 
@@ -184,10 +213,6 @@ export function assertResourceMatchesSubscription<TFilter extends AtlasSubscript
     case "type":
       assertResourceMatchesType(filter.resource_type, resource);
   }
-}
-
-function isNonEmptyString(value: string | undefined): value is string {
-  return typeof value === "string" && value.length > 0;
 }
 
 function resourceTypeName(resource: ResourceValue): ResourceType {

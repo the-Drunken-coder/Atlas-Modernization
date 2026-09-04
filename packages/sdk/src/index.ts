@@ -17,6 +17,8 @@ export {
   isAtlasTransportError,
   ProtocolMismatchError,
   type ReadOptions,
+  type ResourceCreateOptions,
+  type ResourceDeleteOptions,
   type ResourceForSubscription,
   type RuntimeContextOptions,
   type SyncSnapshot,

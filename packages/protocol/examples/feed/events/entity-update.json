@@ -3,6 +3,7 @@
   "resource_type": "entity",
   "id": "asset-1",
   "version": 2,
+  "change_reason": "runtime_manifest_changed",
   "resource": {
     "entity_id": "asset-1",
     "entity_type": "asset",

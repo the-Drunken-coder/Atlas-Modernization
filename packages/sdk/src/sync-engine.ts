@@ -1,7 +1,7 @@
 import { type CacheResourceOptions, ResourceCache } from "./cache.js";
 import { sanitizeErrorMessage } from "./error-sanitizer.js";
 import { assertRevision, FeedConnectionManager } from "./feed-connection.js";
-import { AtlasAPIError, type HttpTransport, type ResponseValidator } from "./http.js";
+import { AtlasAPIError, type HttpTransport, type ResponseValidator, resourceInstanceTokenHeaders } from "./http.js";
 import type {
   EntityCheckInRequest,
   EntityCheckInResponse,
@@ -12,11 +12,13 @@ import type {
   ResourceType,
   TaskResource
 } from "./protocol.js";
+import { normalizeResourceID } from "./resource-id.js";
 import {
   assertResourceMatchesSubscription,
   covers,
   localDeleteEvent,
   matchesSubscription,
+  normalizeSubscription,
   parseSubscriptionKey,
   resourceCacheKey,
   resourceID,
@@ -33,6 +35,7 @@ import type {
   DeletableResourceType,
   FullDatasetCursors,
   ReadOptions,
+  ResourceDeleteOptions,
   ResourceForSubscription,
   ResourceOf,
   ResourceValue,
@@ -224,26 +227,29 @@ export class SyncEngine {
   }
 
   async subscribe(filter: AtlasSubscription): Promise<void> {
-    if (!this.subscriptions.some((existing) => subscriptionKey(existing) === subscriptionKey(filter))) {
-      this.subscriptions.push(filter);
+    const normalizedFilter = normalizeSubscription(filter);
+    if (!this.subscriptions.some((existing) => subscriptionKey(existing) === subscriptionKey(normalizedFilter))) {
+      this.subscriptions.push(normalizedFilter);
     }
-    this.feed.sendSubscription("subscribe", filter);
+    this.feed.sendSubscription("subscribe", normalizedFilter);
   }
 
   async unsubscribe(filter: AtlasSubscription): Promise<void> {
-    const key = subscriptionKey(filter);
+    const normalizedFilter = normalizeSubscription(filter);
+    const key = subscriptionKey(normalizedFilter);
     const index = this.subscriptions.findIndex((existing) => subscriptionKey(existing) === key);
     if (index >= 0) {
       this.subscriptions.splice(index, 1);
     }
-    this.feed.sendSubscription("unsubscribe", filter);
+    this.feed.sendSubscription("unsubscribe", normalizedFilter);
   }
 
   watch<TFilter extends AtlasSubscription>(
     filter: TFilter,
     callback: WatchCallback<ResourceForSubscription<TFilter>>
   ): () => void {
-    const key = subscriptionKey(filter);
+    const normalizedFilter = normalizeSubscription(filter);
+    const key = subscriptionKey(normalizedFilter);
     let callbacks = this.watchers.get(key);
     if (!callbacks) {
       callbacks = new Set();
@@ -398,6 +404,7 @@ export class SyncEngine {
     ) {
       return cached.value;
     }
+    const generation = this.cache.generation("entity", id);
     const entity = await this.transport.json(
       "GET",
       `/entities/${encodeURIComponent(id)}`,
@@ -407,7 +414,7 @@ export class SyncEngine {
       options?.signal
     );
     assertExpectedResourceID("entity", id, entity);
-    if (this.cache.cacheResource("entity", id, entity, { advanceCursor: false })) this.notifySnapshot();
+    if (this.cache.cacheResource("entity", id, entity, { advanceCursor: false, generation })) this.notifySnapshot();
     return entity;
   }
 
@@ -442,6 +449,7 @@ export class SyncEngine {
   }
 
   async writeTask(method: "POST", path: string, body: unknown, options: TaskWriteOptions = {}): Promise<TaskResource> {
+    const expectedID = options.expectedID;
     const { value: task, version } = await this.transport.versionedJSON(
       method,
       path,
@@ -450,7 +458,7 @@ export class SyncEngine {
       options.signal,
       options.requestHeaders
     );
-    if (options.expectedID !== undefined) assertExpectedResourceID("task", options.expectedID, task);
+    if (expectedID !== undefined) assertExpectedResourceID("task", expectedID, task);
     if (
       this.cache.cacheResource("task", task.task_id, task, {
         advanceCursor: false,
@@ -472,6 +480,7 @@ export class SyncEngine {
     if (!options?.fresh && this.canServeFromCache({ filter: "id", resource_type: "object", id }) && cached) {
       return cached;
     }
+    const generation = this.cache.generation("object", id);
     const object = await this.transport.json(
       "GET",
       `/objects/${encodeURIComponent(id)}`,
@@ -481,7 +490,8 @@ export class SyncEngine {
       options?.signal
     );
     assertExpectedResourceID("object", id, object);
-    if (this.cache.cacheResource("object", id, object, { detail: true, advanceCursor: false })) this.notifySnapshot();
+    if (this.cache.cacheResource("object", id, object, { detail: true, advanceCursor: false, generation }))
+      this.notifySnapshot();
     return object;
   }
 
@@ -494,9 +504,10 @@ export class SyncEngine {
     validate: ResponseValidator<TResource>,
     ifMatchVersion?: number,
     eventName?: "create" | "update",
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    requestHeaders?: HeadersInit
   ): Promise<TResource> {
-    const resource = await this.transport.json(method, path, validate, body, ifMatchVersion, signal);
+    const resource = await this.transport.json(method, path, validate, body, ifMatchVersion, signal, requestHeaders);
     const id = resourceID(type, resource);
     if (expectedID !== undefined && id !== expectedID) {
       throw new TypeError(`Atlas ${type} response id ${id} does not match requested id ${expectedID}`);
@@ -517,10 +528,11 @@ export class SyncEngine {
     ifMatchVersion?: number,
     signal?: AbortSignal
   ): Promise<EntityCheckInResponse> {
+    const normalizedID = normalizeResourceID("entity_id", id);
     const response = await this.transport.json(
       "POST",
       path,
-      entityCheckInResponseValidator(id, fields),
+      entityCheckInResponseValidator(normalizedID, fields),
       body,
       ifMatchVersion,
       signal
@@ -538,9 +550,28 @@ export class SyncEngine {
     return response;
   }
 
-  async deleteResource(type: DeletableResourceType, id: string, path: string): Promise<void> {
-    await this.transport.empty("DELETE", path);
-    const previousVersion = this.cache.markLocalDelete(type, id);
+  async deleteResource(
+    type: DeletableResourceType,
+    id: string,
+    path: string,
+    options?: ResourceDeleteOptions
+  ): Promise<void> {
+    const localDelete = this.cache.beginLocalDelete(type, id);
+    try {
+      await this.transport.empty(
+        "DELETE",
+        path,
+        undefined,
+        undefined,
+        undefined,
+        resourceInstanceTokenHeaders(options?.instanceToken)
+      );
+    } catch (error) {
+      this.cache.cancelLocalDelete(localDelete);
+      throw error;
+    }
+    const previousVersion = this.cache.finishLocalDelete(localDelete);
+    if (previousVersion === undefined) return;
     this.notify(localDeleteEvent(type, id, previousVersion), undefined);
     this.notifySnapshot();
   }
@@ -829,17 +860,6 @@ export class SyncEngine {
     const pendingDelete = this.cache.pendingDeletes.has(key);
     if (event.version <= this.cache.versionFor(event.resource_type, event.id)) {
       this.advanceCursor(event, advanceCursor);
-      return;
-    }
-    if (pendingDelete && event.event === "delete") {
-      this.cache.pendingDeletes.delete(key);
-      this.cache.markRemoteDelete(event.resource_type, event.id, event.version);
-      this.advanceCursor(event, advanceCursor);
-      const alreadyNotified = this.cache.locallyNotifiedDeletes.delete(key);
-      if (!alreadyNotified) {
-        this.notify(event, undefined);
-        this.notifySnapshot();
-      }
       return;
     }
     if (pendingDelete && event.event === "update") {

@@ -283,11 +283,34 @@ try {
     throw new Error("installed package did not expose ./admin AtlasAdminClient through package exports");
   }
 
+  const focusedImportOutput = runCombined(
+    "node",
+    [
+      "--input-type=module",
+      "-e",
+      "Promise.all([import('@the-drunken-coder/atlas-sdk/config'), import('@the-drunken-coder/atlas-sdk/errors'), import('@the-drunken-coder/atlas-sdk/spatial')]).then(([config, errors, spatial]) => console.log(JSON.stringify({ revision: config.ATLAS_PROTOCOL_REVISION, url: config.normalizeAtlasBaseUrl('https://core.test/'), error: typeof errors.AtlasAPIError, sanitized: errors.sanitizeErrorMessage('safe'), area: spatial.mapAreaSquareMeters({ west: 0, south: 0, east: 1, north: 1 }) })))"
+    ],
+    { cwd: projectDir }
+  );
+  const focusedImport = JSON.parse(focusedImportOutput);
+  if (
+    focusedImport.revision !== protocolRevision ||
+    focusedImport.url !== "https://core.test" ||
+    focusedImport.error !== "function" ||
+    focusedImport.sanitized !== "safe" ||
+    typeof focusedImport.area !== "number"
+  ) {
+    throw new Error(`installed focused SDK exports are invalid: ${focusedImportOutput}`);
+  }
+
   const typeConsumer = join(projectDir, "consumer.mts");
   writeFileSync(
     typeConsumer,
     `import { AtlasClient, ATLAS_PROTOCOL_REVISION, isTaskCreateRequest, type EntityResource } from "@the-drunken-coder/atlas-sdk";
 import { AtlasAdminClient, type AdminAPIKey } from "@the-drunken-coder/atlas-sdk/admin";
+import { normalizeAtlasBaseUrl } from "@the-drunken-coder/atlas-sdk/config";
+import { AtlasAPIError, sanitizeErrorMessage } from "@the-drunken-coder/atlas-sdk/errors";
+import { mapAreaSquareMeters } from "@the-drunken-coder/atlas-sdk/spatial";
 
 const clientConstructor: typeof AtlasClient = AtlasClient;
 const adminConstructor: typeof AtlasAdminClient = AtlasAdminClient;
@@ -295,7 +318,10 @@ const revision: string = ATLAS_PROTOCOL_REVISION;
 const entity: EntityResource | undefined = undefined;
 const apiKey: AdminAPIKey | undefined = undefined;
 const validTask: boolean = isTaskCreateRequest({ asset_id: "asset-smoke", command: "smoke.inspect", input: {} });
-void [clientConstructor, adminConstructor, revision, entity, apiKey, validTask];
+const normalizedUrl: string = normalizeAtlasBaseUrl("https://core.test/");
+const sanitizedError: string = sanitizeErrorMessage(new AtlasAPIError("safe", 500, {}));
+const area: number = mapAreaSquareMeters({ west: 0, south: 0, east: 1, north: 1 });
+void [clientConstructor, adminConstructor, revision, entity, apiKey, validTask, normalizedUrl, sanitizedError, area];
 `
   );
   runStep("Installed package TypeScript declarations did not compile", () =>

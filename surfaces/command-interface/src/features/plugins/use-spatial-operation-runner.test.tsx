@@ -31,12 +31,37 @@ const response: SpatialOperationResult = {
   truncation: null
 };
 
-afterEach(() => {
-  vi.unstubAllGlobals();
-  vi.restoreAllMocks();
-});
-
 describe("useSpatialOperationRunner", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("loads the SDK client when the first spatial search runs", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify(response), {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const hook = renderHook(() => useSpatialOperationRunner({ baseUrl: "https://core.test" }));
+
+    act(() => {
+      hook.result.current.selectTarget({
+        pluginId: "fixture",
+        pluginName: "Fixture",
+        operationId: "inspect",
+        operationName: "Inspect"
+      });
+      hook.result.current.setArea(area);
+    });
+    await act(async () => hook.result.current.search());
+
+    expect(hook.result.current.result).toEqual(response);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://core.test/plugins/fixture/operations/inspect",
+      expect.objectContaining({ method: "POST", credentials: "include" })
+    );
+  });
+
   it("rejects invalid areas without replacing the last valid selection", () => {
     const hook = renderHook(() => useSpatialOperationRunner({ executor: { invokeSpatial: vi.fn() } }));
 

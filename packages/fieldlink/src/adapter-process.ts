@@ -1,4 +1,6 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { performance } from "node:perf_hooks";
 import { extname } from "node:path";
 import { createInterface } from "node:readline";
 import type { Readable, Writable } from "node:stream";
@@ -35,6 +37,7 @@ import {
 
 const REQUEST_TIMEOUT_MS = 31 * 60 * 1000;
 const EXIT_TIMEOUT_MS = 5_000;
+const ADAPTER_TEARDOWN_TIMEOUT_MS = EXIT_TIMEOUT_MS;
 const STDOUT_EXIT_GRACE_MS = 25;
 const BYTES_MARKER = "$fieldlinkBytes";
 const CONTROLLER_OPTIONS_WITH_VALUES = new Set([
@@ -154,6 +157,7 @@ export interface ServeAdapterOptions {
   readonly output: Writable;
   readonly processId?: number;
   readonly signal?: AbortSignal;
+  readonly teardownTimeoutMs?: number;
   readonly createRuntime?: RuntimeFactory;
   readonly onInboxMessage?: (message: InboxMessage) => void | Promise<void>;
   readonly parentManagesEvidence?: boolean;
@@ -191,13 +195,12 @@ export async function serveAdapter(
       },
       onListenerError: (error) =>
         writer.write({ type: "listener-error", error: error.message }),
-      onFatalError: async (error) => {
+      onFatalError: (error) => {
         runtimeFailure ??= error;
-        try {
-          await writer.write({ type: "listener-error", error: error.message });
-        } finally {
-          stopForRuntimeFailure();
-        }
+        stopForRuntimeFailure();
+        void writer
+          .write({ type: "listener-error", error: error.message })
+          .catch(() => undefined);
       },
     });
   } catch (error: unknown) {
@@ -207,7 +210,11 @@ export async function serveAdapter(
   if (isAborted(signal)) {
     const abort = abortError(signal);
     try {
-      await runtime.node.close();
+      await withTimeout(
+        runtime.node.close(),
+        options.teardownTimeoutMs ?? ADAPTER_TEARDOWN_TIMEOUT_MS,
+        "adapter node close",
+      );
     } catch (error: unknown) {
       throw new AggregateError(
         [abort, asError(error)],
@@ -220,11 +227,84 @@ export async function serveAdapter(
   const activeOperations = new Map<number, Promise<void>>();
   let activated = false;
   let closing = false;
+  let teardownPromise: Promise<void> | undefined;
+  let teardownDeadline = 0;
+  let teardownFailure: Error | undefined;
+  const teardownTimeoutMs =
+    options.teardownTimeoutMs ?? ADAPTER_TEARDOWN_TIMEOUT_MS;
+  let rejectServingWait: (error: Error) => void = () => undefined;
+  const servingTermination = new Promise<never>((_resolve, reject) => {
+    rejectServingWait = reject;
+  });
+  void servingTermination.catch(() => undefined);
+  const servingTerminationError = (): Error =>
+    runtimeFailure ??
+    (isAborted(signal) ? abortError(signal) : new Error("Adapter is closing"));
+  const waitForServingOperation = async <Result>(
+    operation: () => Promise<Result>,
+  ): Promise<Result> => {
+    const started = Promise.resolve().then(() => {
+      if (closing) {
+        throw servingTerminationError();
+      }
+      return operation();
+    });
+    return Promise.race([started, servingTermination]);
+  };
+  const writeServingMessage = (message: AdapterMessage): Promise<void> =>
+    waitForServingOperation(() => writer.write(message));
+  const waitForTeardownStep = async <Result>(
+    operation: () => Promise<Result>,
+    description: string,
+  ): Promise<Result | undefined> => {
+    const remainingMs = teardownDeadline - performance.now();
+    if (remainingMs <= 0) {
+      teardownFailure ??= new Error(
+        `Timed out waiting for ${description} after ${teardownTimeoutMs} ms`,
+      );
+      return undefined;
+    }
+    try {
+      return await withTimeout(operation(), remainingMs, description);
+    } catch (error: unknown) {
+      teardownFailure ??= asError(error);
+      return undefined;
+    }
+  };
+  const beginTeardown = (): Promise<void> => {
+    if (teardownPromise !== undefined) {
+      return teardownPromise;
+    }
+    closing = true;
+    teardownDeadline = performance.now() + teardownTimeoutMs;
+    rejectServingWait(servingTerminationError());
+    for (const controller of active.values()) {
+      controller.abort(new Error("Adapter is closing"));
+    }
+    let nodeClose: Promise<void>;
+    try {
+      nodeClose = runtime.node.close();
+    } catch (error: unknown) {
+      nodeClose = Promise.reject(asError(error));
+    }
+    void nodeClose.catch(() => undefined);
+    teardownPromise = (async () => {
+      await waitForTeardownStep(
+        () =>
+          Promise.allSettled(activeOperations.values()).then(() => undefined),
+        "adapter active operations",
+      );
+      await waitForTeardownStep(
+        () => runtime.dispose?.() ?? Promise.resolve(),
+        "adapter runtime disposal",
+      );
+      await waitForTeardownStep(() => nodeClose, "adapter node close");
+    })();
+    return teardownPromise;
+  };
   const stopReading = (): void => {
     requestPump.close();
-    if (isAborted(signal)) {
-      void runtime.node.close().catch(() => undefined);
-    }
+    void beginTeardown();
   };
   stopForRuntimeFailure = stopReading;
   if (runtimeFailure !== undefined) {
@@ -252,17 +332,17 @@ export async function serveAdapter(
       throw abortError(options.signal);
     }
     if (options.parentManagesEvidence) {
-      await writer.write({ type: "parent-ready-required" });
+      await writeServingMessage({ type: "parent-ready-required" });
       const parentReady = await requestPump.next();
       if (parentReady?.type !== "parent-ready") {
         throw new Error("Adapter parent evidence handshake was not completed");
       }
     }
-    await runtime.start?.();
+    await waitForServingOperation(() => runtime.start?.() ?? Promise.resolve());
     if (isAborted(signal)) {
       throw abortError(signal);
     }
-    await writer.write({ type: "ready", ...runtime.ready });
+    await writeServingMessage({ type: "ready", ...runtime.ready });
     for (;;) {
       const request = await requestPump.next();
       if (request === undefined) {
@@ -273,14 +353,20 @@ export async function serveAdapter(
       }
       if (request.type === "activate") {
         try {
-          await runtime.activate?.();
+          await waitForServingOperation(
+            () => runtime.activate?.() ?? Promise.resolve(),
+          );
           if (isAborted(signal)) {
             throw abortError(signal);
           }
           activated = true;
-          await writer.write({ type: "response", id: request.id, ok: true });
+          await writeServingMessage({
+            type: "response",
+            id: request.id,
+            ok: true,
+          });
         } catch (error: unknown) {
-          await writer.write({
+          await writeServingMessage({
             type: "response",
             id: request.id,
             ok: false,
@@ -293,22 +379,23 @@ export async function serveAdapter(
         active
           .get(request.targetId)
           ?.abort(new Error(`Adapter request ${request.targetId} aborted`));
-        await writer.write({ type: "response", id: request.id, ok: true });
+        await writeServingMessage({
+          type: "response",
+          id: request.id,
+          ok: true,
+        });
         continue;
       }
       if (request.type === "close") {
-        closing = true;
-        for (const controller of active.values()) {
-          controller.abort(new Error("Adapter is closing"));
-        }
-        await Promise.allSettled(activeOperations.values());
-        await runtime.dispose?.();
-        await runtime.node.close();
-        await writer.write({ type: "response", id: request.id, ok: true });
+        await beginTeardown();
+        await waitForTeardownStep(
+          () => writer.write({ type: "response", id: request.id, ok: true }),
+          "adapter close response",
+        );
         break;
       }
       if (!activated) {
-        await writer.write({
+        await writeServingMessage({
           type: "response",
           id: request.id,
           ok: false,
@@ -319,15 +406,17 @@ export async function serveAdapter(
 
       if (request.type === "congestion") {
         try {
-          const result = await runtime.node.congestion();
-          await writer.write({
+          const result = await waitForServingOperation(() =>
+            runtime.node.congestion(),
+          );
+          await writeServingMessage({
             type: "response",
             id: request.id,
             ok: true,
             result,
           });
         } catch (error: unknown) {
-          await writer.write({
+          await writeServingMessage({
             type: "response",
             id: request.id,
             ok: false,
@@ -359,20 +448,28 @@ export async function serveAdapter(
             })
       )
         .then(
-          (result) =>
-            writer.write({
+          (result) => {
+            if (closing) {
+              return;
+            }
+            return writer.write({
               type: "response",
               id: request.id,
               ok: true,
               result,
-            }),
-          (error: unknown) =>
-            writer.write({
+            });
+          },
+          (error: unknown) => {
+            if (closing) {
+              return;
+            }
+            return writer.write({
               type: "response",
               id: request.id,
               ok: false,
               error: asError(error).message,
-            }),
+            });
+          },
         )
         .finally(() => {
           active.delete(request.id);
@@ -380,24 +477,20 @@ export async function serveAdapter(
         });
       activeOperations.set(request.id, operation);
     }
-    if (runtimeFailure !== undefined) {
-      throw runtimeFailure;
-    }
   } finally {
     options.signal?.removeEventListener("abort", stopReading);
     unsubscribeMessage();
     unsubscribePassiveMessage();
     unsubscribeEvent();
     requestPump.close();
-    for (const controller of active.values()) {
-      controller.abort(new Error("Adapter input closed"));
-    }
-    await Promise.allSettled(activeOperations.values());
-    if (!closing) {
-      await runtime.dispose?.();
-      await runtime.node.close();
-    }
-    await writer.flush();
+    await beginTeardown();
+    await waitForTeardownStep(() => writer.flush(), "adapter output drain");
+  }
+  if (runtimeFailure !== undefined) {
+    throw runtimeFailure;
+  }
+  if (teardownFailure !== undefined) {
+    throw teardownFailure;
   }
 }
 
@@ -534,6 +627,13 @@ interface PendingRequest {
   readonly cleanup: () => void;
 }
 
+interface ActiveCallback {
+  promise: Promise<void>;
+  awaitingClose: boolean;
+  readonly releaseFromDrain: () => void;
+  readonly releasedFromDrain: Promise<void>;
+}
+
 interface AdapterExit {
   readonly code: number | null;
   readonly signal: NodeJS.Signals | null;
@@ -561,6 +661,8 @@ export class AdapterProcessNode {
   readonly #eventListeners = new Set<
     (event: FieldLinkEvent) => void | Promise<void>
   >();
+  readonly #activeCallbacks = new Set<ActiveCallback>();
+  readonly #callbackContext = new AsyncLocalStorage<ActiveCallback>();
   #nextRequestId = 1;
   #failure: Error | undefined;
   #activation: Promise<void> | undefined;
@@ -854,6 +956,11 @@ export class AdapterProcessNode {
   }
 
   close(): Promise<void> {
+    const callback = this.#callbackContext.getStore();
+    if (callback !== undefined && !callback.awaitingClose) {
+      callback.awaitingClose = true;
+      callback.releaseFromDrain();
+    }
     this.#closePromise ??= this.#close();
     return this.#closePromise;
   }
@@ -896,6 +1003,15 @@ export class AdapterProcessNode {
           `Adapter exited (${exitResult.signal ?? `code ${exitResult.code ?? "unknown"}`})`,
         ),
       );
+    }
+    try {
+      await withTimeout(
+        this.#drainCallbacks(),
+        this.#exitTimeoutMs,
+        "adapter listener callbacks",
+      );
+    } catch (error: unknown) {
+      closeErrors.push(asError(error));
     }
     const [closeError] = closeErrors;
     if (closeError !== undefined && closeErrors.length === 1) {
@@ -1035,11 +1151,13 @@ export class AdapterProcessNode {
                 receivedAt: new Date(message.message.receivedAt),
               };
               for (const listener of this.#messageListeners) {
-                void Promise.resolve()
-                  .then(() => listener(received))
-                  .catch(async (error: unknown) => {
-                    await options.onListenerError?.(asError(error));
-                  });
+                this.#trackCallback(() =>
+                  Promise.resolve()
+                    .then(() => listener(received))
+                    .catch(async (error: unknown) => {
+                      await options.onListenerError?.(asError(error));
+                    }),
+                );
               }
               break;
             }
@@ -1049,21 +1167,25 @@ export class AdapterProcessNode {
                 receivedAt: new Date(message.message.receivedAt),
               };
               for (const listener of this.#passiveMessageListeners) {
-                void Promise.resolve()
-                  .then(() => listener(received))
-                  .catch(async (error: unknown) => {
-                    await options.onListenerError?.(asError(error));
-                  });
+                this.#trackCallback(() =>
+                  Promise.resolve()
+                    .then(() => listener(received))
+                    .catch(async (error: unknown) => {
+                      await options.onListenerError?.(asError(error));
+                    }),
+                );
               }
               break;
             }
             case "event":
               for (const listener of this.#eventListeners) {
-                void Promise.resolve()
-                  .then(() => listener(message.event))
-                  .catch(async (error: unknown) => {
-                    await options.onListenerError?.(asError(error));
-                  });
+                this.#trackCallback(() =>
+                  Promise.resolve()
+                    .then(() => listener(message.event))
+                    .catch(async (error: unknown) => {
+                      await options.onListenerError?.(asError(error));
+                    }),
+                );
               }
               break;
             case "inbox-message":
@@ -1090,6 +1212,43 @@ export class AdapterProcessNode {
         lines.close();
       }
     })();
+  }
+
+  #trackCallback(operation: () => void | Promise<void>): void {
+    let releaseFromDrain = (): void => undefined;
+    const releasedFromDrain = new Promise<void>((resolve) => {
+      releaseFromDrain = resolve;
+    });
+    const callback: ActiveCallback = {
+      promise: Promise.resolve(),
+      awaitingClose: false,
+      releaseFromDrain,
+      releasedFromDrain,
+    };
+    callback.promise = this.#callbackContext.run(callback, async () =>
+      operation(),
+    );
+    this.#activeCallbacks.add(callback);
+    const clear = (): void => {
+      this.#activeCallbacks.delete(callback);
+    };
+    void callback.promise.then(clear, clear);
+  }
+
+  async #drainCallbacks(): Promise<void> {
+    for (;;) {
+      const pending = [...this.#activeCallbacks].filter(
+        (callback) => !callback.awaitingClose,
+      );
+      if (pending.length === 0) {
+        return;
+      }
+      await Promise.allSettled(
+        pending.map((callback) =>
+          Promise.race([callback.promise, callback.releasedFromDrain]),
+        ),
+      );
+    }
   }
 
   #write(request: AdapterRequest): Promise<void> {

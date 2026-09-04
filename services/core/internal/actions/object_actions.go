@@ -33,11 +33,12 @@ func NewObjectActions(pool *pgxpool.Pool, storageClient objectStorage) *ObjectAc
 
 // CreateObjectParams holds parameters for creating an object.
 type CreateObjectParams struct {
-	ObjectID     string
-	Type         *string
-	UsageHints   []string
-	ReferencedBy []map[string]interface{}
-	Extra        map[string]interface{}
+	ObjectID      string
+	Type          *string
+	UsageHints    []string
+	ReferencedBy  []map[string]interface{}
+	Extra         map[string]interface{}
+	InstanceToken string
 }
 
 // Create creates a new object record.
@@ -76,11 +77,22 @@ func (a *ObjectActions) Create(ctx context.Context, params CreateObjectParams) (
 	if err != nil {
 		return nil, err
 	}
+	var instanceTokenHash *string
+	if params.InstanceToken != "" {
+		hash, err := resourceInstanceTokenHash(params.InstanceToken)
+		if err != nil {
+			return nil, NewValidationError(err.Error())
+		}
+		if err := reserveResourceInstanceToken(ctx, tx, hash); err != nil {
+			return nil, err
+		}
+		instanceTokenHash = &hash
+	}
 	obj, err := scanObject(tx.QueryRow(ctx, `
-		INSERT INTO objects (object_id, type, json, version)
-		VALUES ($1, $2, $3, $4)
+		INSERT INTO objects (object_id, type, json, version, instance_token_hash)
+		VALUES ($1, $2, $3, $4, $5)
 		RETURNING object_id, path, content_type, type, json, created_at, updated_at, version
-	`, objectID, normalizedType, jsonBytes, version))
+	`, objectID, normalizedType, jsonBytes, version, instanceTokenHash))
 	if err != nil {
 		if isUniqueViolation(err) {
 			return nil, NewObjectConflictError(objectID)
@@ -112,6 +124,18 @@ func normalizeOptionalObjectString(value *string) *string {
 		return nil
 	}
 	return &trimmed
+}
+
+// persistedObjectBucket returns the bucket recorded with a persisted blob.
+func persistedObjectBucket(object *models.MediaObject) (string, error) {
+	if object != nil {
+		if bucket := object.GetBucket(); bucket != nil {
+			if trimmed := strings.TrimSpace(*bucket); trimmed != "" {
+				return trimmed, nil
+			}
+		}
+	}
+	return "", &storage.StorageError{Message: "stored object is missing bucket metadata"}
 }
 
 // Get retrieves an object by ID.
@@ -161,6 +185,11 @@ type UpdateObjectParams struct {
 	Extra           map[string]interface{}
 	RemoveExtraKeys []string
 	ExpectedVersion *int64
+}
+
+// ObjectDeleteOptions controls optional identity preconditions on deletion.
+type ObjectDeleteOptions struct {
+	InstanceToken *string
 }
 
 // Update updates an object.
@@ -289,9 +318,16 @@ func (a *ObjectActions) lockObjectAndCheckExpectedVersion(ctx context.Context, o
 }
 
 // Delete removes an object and its storage.
-func (a *ObjectActions) Delete(ctx context.Context, objectID string) error {
+func (a *ObjectActions) Delete(ctx context.Context, objectID string, options ...ObjectDeleteOptions) error {
 	if err := ValidateObjectID(objectID); err != nil {
 		return err
+	}
+	if len(options) > 1 {
+		return NewValidationError("object delete accepts at most one options value")
+	}
+	var deleteOptions ObjectDeleteOptions
+	if len(options) == 1 {
+		deleteOptions = options[0]
 	}
 	objectID = SanitizeID(objectID)
 
@@ -304,8 +340,9 @@ func (a *ObjectActions) Delete(ctx context.Context, objectID string) error {
 	}()
 
 	object, err := scanObject(tx.QueryRow(ctx, `
-		DELETE FROM objects WHERE object_id = $1
-		RETURNING object_id, path, content_type, type, json, created_at, updated_at, version
+		SELECT object_id, path, content_type, type, json, created_at, updated_at, version
+		FROM objects WHERE object_id = $1
+		FOR UPDATE
 	`, objectID))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -313,11 +350,38 @@ func (a *ObjectActions) Delete(ctx context.Context, objectID string) error {
 		}
 		return fmt.Errorf("failed to delete object: %w", err)
 	}
+	if deleteOptions.InstanceToken != nil {
+		var storedHash *string
+		if err := tx.QueryRow(ctx, `
+			SELECT instance_token_hash FROM objects WHERE object_id = $1
+		`, objectID).Scan(&storedHash); err != nil {
+			return fmt.Errorf("failed to get object instance identity for deletion: %w", err)
+		}
+		if err := checkResourceInstanceToken(deleteOptions.InstanceToken, storedHash, "object"); err != nil {
+			return err
+		}
+	}
 
 	var queuedBucket, queuedPath string
-	if a.storage != nil && object.Path != nil && strings.TrimSpace(*object.Path) != "" {
-		queuedBucket = strings.TrimSpace(a.storage.Bucket())
+	if object.Path != nil && strings.TrimSpace(*object.Path) != "" {
+		if a.storage == nil {
+			return &storage.StorageError{Message: "storage not configured"}
+		}
 		queuedPath = strings.TrimSpace(*object.Path)
+		queuedBucket, err = persistedObjectBucket(object)
+		if err != nil {
+			return err
+		}
+	}
+	result, err := tx.Exec(ctx, "DELETE FROM objects WHERE object_id = $1", objectID)
+	if err != nil {
+		return fmt.Errorf("failed to delete object: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return NewObjectNotFoundError(objectID)
+	}
+
+	if queuedPath != "" {
 		if err := a.queueStorageDeletionTx(ctx, tx, queuedBucket, queuedPath, objectID); err != nil {
 			return err
 		}
@@ -343,7 +407,7 @@ func (a *ObjectActions) Delete(ctx context.Context, objectID string) error {
 	}
 
 	if queuedPath != "" {
-		if err := a.storage.DeleteObjectPath(ctx, queuedPath); err != nil {
+		if err := a.storage.DeleteObjectPath(ctx, queuedBucket, queuedPath); err != nil {
 			if recordErr := a.recordQueuedStorageDeletionFailure(ctx, queuedBucket, queuedPath, err); recordErr != nil {
 				log.Error().Err(recordErr).Str("object_id", objectID).Str("path", queuedPath).Msg("Storage deletion failed and retry metadata could not be updated")
 			}
@@ -375,7 +439,11 @@ func (a *ObjectActions) Download(ctx context.Context, objectID string) (io.ReadC
 		return nil, "", 0, &storage.ObjectNotFoundError{Bucket: a.storage.Bucket(), ObjectName: objectID}
 	}
 
-	reader, info, err := a.storage.StreamObjectPath(ctx, objectID, *obj.Path)
+	bucket, err := persistedObjectBucket(obj)
+	if err != nil {
+		return nil, "", 0, err
+	}
+	reader, info, err := a.storage.StreamObjectPath(ctx, objectID, bucket, *obj.Path)
 	if err != nil {
 		return nil, "", 0, err
 	}

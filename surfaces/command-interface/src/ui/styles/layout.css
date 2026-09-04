@@ -76,15 +76,6 @@
   font-weight: 650;
 }
 
-.login-panel__eyebrow {
-  color: var(--accent-strong);
-  font-family: var(--font-mono);
-  font-size: 10px;
-  font-weight: 650;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
 /* ---------- Sidebar ---------- */
 .sidebar {
   display: grid;

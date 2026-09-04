@@ -1,6 +1,6 @@
 import type { RunEventDetails, RunSummary } from "../shared/types.js";
 import type { AtlasClientFactory, AtlasClientLike } from "./atlas.js";
-import { isNotFoundError } from "./atlas.js";
+import { isNotFoundError, isResourceInstanceTokenPreconditionFailure } from "./atlas.js";
 import type { CleanupLedgerRecord, CleanupLedgerStore, CleanupLedgerTarget } from "./cleanup-ledger.js";
 import { errorMessage } from "./run-store-events.js";
 import {
@@ -44,6 +44,7 @@ export async function cleanupRun(
   let cleanupFailure: unknown;
   const cleanupDeadline = Date.now() + CLEANUP_TOTAL_TIMEOUT_MS;
   for (const resource of cleanupOrder(cleanupResources)) {
+    const publicResource = { type: resource.type, id: resource.id } satisfies RunRecord["createdResources"][number];
     try {
       const remainingCleanupMs = cleanupDeadline - Date.now();
       if (remainingCleanupMs <= 0) {
@@ -51,17 +52,42 @@ export async function cleanupRun(
       }
       const timeoutMs = Math.min(CLEANUP_DELETE_TIMEOUT_MS, remainingCleanupMs);
       const resourceType = resource.type as string;
+      if (!resource.instanceToken) {
+        throw new Error(`Cleanup resource ${resource.type} ${resource.id} has no instance token`);
+      }
       if (resourceType === "object") {
-        await withCleanupTimeout(client.objects.delete(resource.id), cleanupController, resource, timeoutMs);
+        await withCleanupTimeout(
+          client.objects.delete(resource.id, { instanceToken: resource.instanceToken }),
+          cleanupController,
+          resource,
+          timeoutMs
+        );
       } else if (resourceType === "entity") {
-        await withCleanupTimeout(client.entities.delete(resource.id), cleanupController, resource, timeoutMs);
+        await withCleanupTimeout(
+          client.entities.delete(resource.id, { instanceToken: resource.instanceToken }),
+          cleanupController,
+          resource,
+          timeoutMs
+        );
       } else {
         throw new Error(`Unsupported cleanup resource type: ${resourceType}`);
       }
-      emit(run, { type: "cleanup", resource, message: `Deleted ${resource.type} ${resource.id}` });
+      emit(run, { type: "cleanup", resource: publicResource, message: `Deleted ${resource.type} ${resource.id}` });
     } catch (error) {
       if (isNotFoundError(error)) {
-        emit(run, { type: "cleanup", resource, message: `${resource.type} ${resource.id} was already gone` });
+        emit(run, {
+          type: "cleanup",
+          resource: publicResource,
+          message: `${resource.type} ${resource.id} was already gone`
+        });
+        continue;
+      }
+      if (isResourceInstanceTokenPreconditionFailure(error)) {
+        emit(run, {
+          type: "cleanup",
+          resource: publicResource,
+          message: `${resource.type} ${resource.id} owned instance is no longer present`
+        });
         continue;
       }
       run.cleanupError = errorMessage(error);
@@ -124,7 +150,7 @@ export function recoverRun(record: CleanupLedgerRecord, resolveTarget?: RunStore
     startedAt: record.startedAt,
     finishedAt: now,
     inputs: {},
-    createdResources: cloneValue(cleanupResources),
+    createdResources: cleanupResources.map(({ type, id }) => ({ type, id })),
     cleanupResources,
     ...(overflowCleanupResource ? { overflowCleanupResource: cloneValue(overflowCleanupResource) } : {}),
     assertions: [],

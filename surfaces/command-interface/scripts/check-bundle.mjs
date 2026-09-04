@@ -15,9 +15,9 @@ const outputDir = resolve(packageRoot, outputArgIndex === -1 ? defaultOutputDir 
 const budgets = {
   // Blueprint Core is a deliberate shell dependency. These limits include its
   // shared component styles and icon-path chunks. Map budgets remain scoped separately.
-  // gzip output varies slightly between Node's platform zlib builds: this
-  // bundle is 126,996 bytes on macOS and 127,330 bytes in CI's Linux image.
-  initialJavaScript: { raw: 415_000, gzip: 127_500 },
+  // SDK point-read generations and local-delete guards add 3.54 kB raw to the
+  // initial graph. Keep enough gzip margin for Node's platform zlib variance.
+  initialJavaScript: { raw: 418_000, gzip: 128_000 },
   initialCss: { raw: 510_000, gzip: 55_000 },
   // MapWindowWorkspace coordinates four ordered edge rails for the map shell.
   shellJavaScript: { raw: 142_500, gzip: 47_500 },
@@ -27,9 +27,9 @@ const budgets = {
   milsymbolJavaScript: { raw: 900_000, gzip: 240_000 },
   mapLibreCss: { raw: 85_000, gzip: 11_000 },
   mapRoute: { raw: 2_100_000, gzip: 550_000 },
-  // Camera and manifest lifecycle guards add 1.02 kB raw while remaining
-  // within the existing aggregate gzip ceiling.
-  allJavaScript: { raw: 3_611_500, gzip: 1_000_000 },
+  // SDK point-read generations and local-delete guards add 4.13 kB raw while
+  // remaining within the existing aggregate gzip ceiling.
+  allJavaScript: { raw: 3_617_000, gzip: 1_000_000 },
   allCss: { raw: 600_000, gzip: 66_000 }
 };
 

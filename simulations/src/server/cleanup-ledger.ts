@@ -17,11 +17,12 @@ import {
   writeFileSync
 } from "node:fs";
 import path from "node:path";
-import { type CreatedResource, isCreatedResource } from "../shared/types.js";
+import { isCreatedResource } from "../shared/types.js";
 import { isDeployedAtlasUrl } from "./config.js";
 import { MAX_CREATED_RESOURCES_PER_RUN } from "./run-store-limits.js";
+import type { CleanupResource } from "./run-store-types.js";
 
-const LEDGER_VERSION = 1;
+const LEDGER_VERSION = 2;
 const MAX_LEDGER_BYTES = 16_000_000;
 
 export type CleanupLedgerTarget = {
@@ -36,7 +37,7 @@ export type CleanupLedgerRecord = {
   scenarioName: string;
   startedAt: string;
   target: CleanupLedgerTarget;
-  resources: CreatedResource[];
+  resources: CleanupResource[];
 };
 
 type CleanupLedgerFile = {
@@ -167,16 +168,25 @@ function validateRecord(value: unknown): CleanupLedgerRecord {
   if (value.resources.length > MAX_CREATED_RESOURCES_PER_RUN + 1) {
     throw new Error(`Cleanup ledger run ${value.runId} contains too many resources`);
   }
-  const resources: CreatedResource[] = [];
+  const resources: CleanupResource[] = [];
   const seen = new Set<string>();
+  const seenTokens = new Set<string>();
   for (const resource of value.resources) {
-    if (!isCreatedResource(resource) || !resource.id.startsWith(`${value.runId}-`)) {
+    if (
+      !isCleanupResource(resource) ||
+      !validInstanceToken(resource.instanceToken) ||
+      !resource.id.startsWith(`${value.runId}-`)
+    ) {
       throw new Error(`Cleanup ledger run ${value.runId} contains a resource outside its run ID prefix`);
     }
     const key = `${resource.type}\0${resource.id}`;
     if (seen.has(key)) throw new Error(`Cleanup ledger run ${value.runId} contains duplicate resources`);
+    if (seenTokens.has(resource.instanceToken)) {
+      throw new Error(`Cleanup ledger run ${value.runId} contains duplicate instance tokens`);
+    }
     seen.add(key);
-    resources.push({ type: resource.type, id: resource.id });
+    seenTokens.add(resource.instanceToken);
+    resources.push({ type: resource.type, id: resource.id, instanceToken: resource.instanceToken });
   }
   return {
     runId: value.runId,
@@ -190,6 +200,20 @@ function validateRecord(value: unknown): CleanupLedgerRecord {
     },
     resources
   };
+}
+
+function isCleanupResource(value: unknown): value is CleanupResource {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["type", "id", "instanceToken"]) &&
+    isCreatedResource(value) &&
+    typeof (value as { instanceToken?: unknown }).instanceToken === "string"
+  );
+}
+
+function validInstanceToken(value: string): boolean {
+  if (value.length === 0 || Buffer.byteLength(value, "utf8") > 256 || value.trim() !== value) return false;
+  return [...value].every((character) => !/\p{C}/u.test(character));
 }
 
 function validTarget(value: unknown): value is CleanupLedgerTarget {

@@ -15,10 +15,7 @@ export function SimulationTargetControls({ target }: { target: SimulationTargetC
   return (
     <>
       <header className="topbar">
-        <div>
-          <h1>Atlas Simulations</h1>
-          <div className="subtle">Atlas Core</div>
-        </div>
+        <h1>Atlas Simulations</h1>
         <div className="topbar-controls">
           <label className="target-menu">
             <span>API</span>

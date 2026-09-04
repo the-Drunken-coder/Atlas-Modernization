@@ -93,6 +93,9 @@ func TestRecoveryFloorMigrationExpiresUnrepresentedLegacyCursor(t *testing.T) {
 		{`DROP TABLE tasks`, nil},
 		{`DROP TABLE asset_runtimes`, nil},
 		{`DROP TABLE asset_runtime_generations`, nil},
+		{`DROP TABLE resource_instance_tokens`, nil},
+		{`ALTER TABLE entities DROP COLUMN instance_token_hash`, nil},
+		{`ALTER TABLE objects DROP COLUMN instance_token_hash`, nil},
 		{`CREATE TABLE tasks (
 			task_id VARCHAR(50) PRIMARY KEY,
 			status VARCHAR(50) NOT NULL DEFAULT 'pending',

@@ -1,5 +1,6 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { AtlasAPIError } from "@the-drunken-coder/atlas-sdk/errors";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { styleFixture } from "../../../test/fixtures.js";
 import { emptySnapshot } from "../../atlas/store.js";
@@ -254,6 +255,38 @@ describe("APIKeysPanel", () => {
     try {
       renderPanel();
       await waitFor(() => expect(expired).toHaveBeenCalledTimes(1));
+    } finally {
+      window.removeEventListener("atlas-auth-expired", expired);
+    }
+  });
+
+  it("does not expire a newer session when an old key mutation rejects", async () => {
+    const user = userEvent.setup();
+    const expired = vi.fn();
+    let rejectCreate!: (cause: unknown) => void;
+    const pendingCreate = new Promise<Response>((_resolve, reject) => {
+      rejectCreate = reject;
+    });
+    window.addEventListener("atlas-auth-expired", expired);
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(jsonResponse([]))
+        .mockImplementationOnce(() => pendingCreate)
+    );
+
+    try {
+      renderPanel();
+      await user.type(await screen.findByLabelText("Name"), "old session key");
+      await user.click(screen.getByRole("button", { name: /Create/ }));
+      await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+
+      window.dispatchEvent(new Event("atlas-auth-session-changed"));
+      rejectCreate(new AtlasAPIError("unauthorized", 401, {}));
+
+      await waitFor(() => expect(screen.getByText("unauthorized")).toBeInTheDocument());
+      expect(expired).not.toHaveBeenCalled();
     } finally {
       window.removeEventListener("atlas-auth-expired", expired);
     }

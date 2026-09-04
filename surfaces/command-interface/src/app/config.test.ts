@@ -380,4 +380,36 @@ describe("fetchAppConfig", () => {
       `Google Maps satellite session request timed out after ${GOOGLE_MAPS_TILE_SESSION_TIMEOUT_MS}ms`
     );
   });
+
+  it("keeps configuration loading bounded when the Google session response body never ends", async () => {
+    vi.useFakeTimers();
+    vi.stubEnv("VITE_GOOGLE_MAPS_API_KEY", "google-key");
+    vi.stubGlobal("location", { origin: "http://127.0.0.1:5173" });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const fetch = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode("{"));
+            }
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" }
+          }
+        )
+    );
+    vi.stubGlobal("fetch", fetch);
+
+    const configPromise = fetchAppConfig();
+    await vi.advanceTimersByTimeAsync(GOOGLE_MAPS_TILE_SESSION_TIMEOUT_MS);
+    const config = await configPromise;
+
+    expect(config.defaultMapSourceId).toBe("maptiler-osm-dark");
+    expect(fetch.mock.calls[0]?.[1]?.signal).toHaveProperty("aborted", true);
+    expect(warn).toHaveBeenCalledWith(
+      `Google Maps satellite session request timed out after ${GOOGLE_MAPS_TILE_SESSION_TIMEOUT_MS}ms`
+    );
+  });
 });

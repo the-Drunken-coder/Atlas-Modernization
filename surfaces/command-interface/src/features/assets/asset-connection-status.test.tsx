@@ -36,7 +36,7 @@ describe("asset connection status", () => {
     [
       "stale",
       "2026-06-20T00:09:00Z",
-      "Reported connected — stale heartbeat",
+      "Reported connected: stale heartbeat",
       "var(--heartbeat-stale)",
       "1m ago",
       "var(--heartbeat-stale)"
@@ -44,7 +44,7 @@ describe("asset connection status", () => {
     [
       "offline",
       "2026-06-20T00:00:00Z",
-      "Reported connected — offline",
+      "Reported connected: offline",
       "var(--heartbeat-offline)",
       "10m ago",
       "var(--heartbeat-offline)"
@@ -52,12 +52,12 @@ describe("asset connection status", () => {
     [
       "clock error",
       "2026-06-20T00:10:31Z",
-      "Reported connected — clock error",
+      "Reported connected: clock error",
       "var(--text-3)",
       "Clock error",
       "var(--text-3)"
     ],
-    ["missing", undefined, "Reported connected — never checked in", "var(--text-3)", undefined, undefined]
+    ["missing", undefined, "Reported connected: never checked in", "var(--text-3)", undefined, undefined]
   ] as const)(
     "shows %s heartbeat qualification consistently",
     (_case, lastSeen, label, color, heartbeatLabel, heartbeatColor) => {
@@ -77,7 +77,7 @@ describe("asset connection status", () => {
         expect(heartbeat).toHaveTextContent(heartbeatLabel);
         expect(heartbeat.querySelector(".pill")).toHaveStyle(`--pill-accent: ${heartbeatColor}`);
       } else {
-        expect(heartbeat).toHaveTextContent("—");
+        expect(heartbeat).toHaveTextContent("N/A");
         expect(heartbeat.querySelector(".pill")).toBeNull();
       }
     }
@@ -97,7 +97,7 @@ describe("asset connection status", () => {
 
     act(() => vi.advanceTimersByTime(21_000));
 
-    expect(screen.getByText(/Reported connected — stale heartbeat/)).toBeInTheDocument();
+    expect(screen.getByText(/Reported connected: stale heartbeat/)).toBeInTheDocument();
   });
 
   it("updates the inspector through stale and offline thresholds without a snapshot change", () => {
@@ -107,10 +107,10 @@ describe("asset connection status", () => {
     expect(screen.getByText("Connected")).toBeInTheDocument();
 
     act(() => vi.advanceTimersByTime(21_000));
-    expect(screen.getByText("Reported connected — stale heartbeat")).toBeInTheDocument();
+    expect(screen.getByText("Reported connected: stale heartbeat")).toBeInTheDocument();
 
     act(() => vi.advanceTimersByTime(90_000));
-    expect(screen.getByText("Reported connected — offline")).toBeInTheDocument();
+    expect(screen.getByText("Reported connected: offline")).toBeInTheDocument();
   });
 
   it("does not color a no-link asset from telemetry-only recency", () => {

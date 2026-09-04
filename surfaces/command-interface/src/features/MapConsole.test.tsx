@@ -20,6 +20,7 @@ import { MapConsole } from "./MapConsole.js";
 type MockMapViewProps = {
   styleId: string;
   mapSourceOptions: AppConfig["mapSources"];
+  selectedId?: string;
   editing?: unknown;
   focusTarget?: { id: string } | null;
   placeDetailTarget?: { id: string } | null;
@@ -27,7 +28,7 @@ type MockMapViewProps = {
     | { seq: number; intent: "world" }
     | { seq: number; target: { id: string }; intent?: "focus" | "preview" | "commit" }
     | null;
-  onMapContextMenu?: (info: { lat: number; lng: number; x: number; y: number }) => void;
+  onMapContextMenu?: (info: { lat: number; lng: number; x: number; y: number; entityId?: string }) => void;
   onBackgroundClick?: () => void;
   onSelectEntity?: (id: string) => void;
   onStyleSwitchError?: (error: { failedStyleId: string; activeStyleId: string }) => void;
@@ -65,6 +66,24 @@ vi.mock("../ui/map/view/MapView.js", async () => {
             onClick={(event) => {
               event.stopPropagation();
               props.onSelectEntity?.("asset-1");
+            }}
+          />
+          <button
+            type="button"
+            data-testid="map-marker-context-menu"
+            onContextMenu={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              props.onSelectEntity?.("asset-1");
+              props.onMapContextMenu?.({ lat: 47.61, lng: -122.33, x: 10, y: 20, entityId: "asset-1" });
+            }}
+          />
+          <button
+            type="button"
+            data-testid="map-select-other-marker"
+            onClick={(event) => {
+              event.stopPropagation();
+              props.onSelectEntity?.("asset-2");
             }}
           />
           <button
@@ -332,6 +351,42 @@ function renderStaticConsole(overrides: Partial<AtlasContextValue> = {}) {
 }
 
 describe("MapConsole", () => {
+  it("selects and opens a marker menu from the first context gesture", async () => {
+    const loadEntityDetails = vi.fn(async (entityId: string) => ({
+      ...(entityId === scout.entity_id ? scout : rover),
+      command_manifest: []
+    }));
+    renderStaticConsole({
+      snapshot: { entities: { [rover.entity_id]: rover, [scout.entity_id]: scout, [area.entity_id]: area }, tasks: {} },
+      catalog: taskingCatalog,
+      loadEntityDetails
+    });
+
+    fireEvent.contextMenu(await screen.findByTestId("map-marker-context-menu"));
+
+    expect(await screen.findByText("Commands · 47.6100, -122.3300")).toBeInTheDocument();
+    expect(mapViewMock.lastProps?.selectedId).toBe("asset-1");
+  });
+
+  it("moves selection before opening a marker menu when another asset was selected", async () => {
+    const user = userEvent.setup();
+    const loadEntityDetails = vi.fn(async (entityId: string) => ({
+      ...(entityId === scout.entity_id ? scout : rover),
+      command_manifest: []
+    }));
+    renderStaticConsole({
+      snapshot: { entities: { [rover.entity_id]: rover, [scout.entity_id]: scout, [area.entity_id]: area }, tasks: {} },
+      catalog: taskingCatalog,
+      loadEntityDetails
+    });
+
+    await user.click(screen.getByRole("button", { name: /Scout/ }));
+    fireEvent.contextMenu(await screen.findByTestId("map-marker-context-menu"));
+
+    expect(await screen.findByText("Commands · 47.6100, -122.3300")).toBeInTheDocument();
+    expect(mapViewMock.lastProps?.selectedId).toBe("asset-1");
+  });
+
   it("uses the standard sidebar header for Plugin and operation navigation", async () => {
     vi.stubGlobal(
       "fetch",
@@ -416,7 +471,11 @@ describe("MapConsole", () => {
   it("keeps one Asset detail request alive across same-version snapshot replacements", async () => {
     const user = userEvent.setup();
     const pending = deferred<EntityResource>();
-    const loadEntityDetails = vi.fn(() => pending.promise);
+    const signals: AbortSignal[] = [];
+    const loadEntityDetails = vi.fn((_entityId: string, signal?: AbortSignal) => {
+      if (signal) signals.push(signal);
+      return pending.promise;
+    });
     const baseValue: AtlasContextValue = {
       status: "ready",
       config: appConfig(),
@@ -463,6 +522,7 @@ describe("MapConsole", () => {
       </AtlasStaticProvider>
     );
     expect(loadEntityDetails).toHaveBeenCalledOnce();
+    expect(signals[0]?.aborted).toBe(false);
 
     pending.resolve({ ...rover, command_manifest: [] });
     expect(await screen.findByText("This Asset has no Commands")).toBeInTheDocument();
@@ -575,8 +635,9 @@ describe("MapConsole", () => {
         value={{
           ...baseValue,
           snapshot: {
-            entities: { [rover.entity_id]: { ...rover, metadata: { ...rover.metadata, version: 2 } } },
-            tasks: {}
+            entities: { [rover.entity_id]: rover },
+            tasks: {},
+            runtimeManifestVersions: { [rover.entity_id]: 2 }
           }
         }}
       >
@@ -852,7 +913,6 @@ describe("MapConsole", () => {
     await user.click(await screen.findByText("Rover"));
     await user.click(screen.getByRole("button", { name: /Commands/ }));
     expect(await screen.findByText("This Asset has no Commands")).toBeInTheDocument();
-
     view.rerender(
       <AtlasStaticProvider
         value={{
@@ -917,6 +977,68 @@ describe("MapConsole", () => {
     );
 
     await waitFor(() => expect(loadEntityDetails).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText("This Asset has no Commands")).toBeInTheDocument();
+  });
+
+  it("hides loaded Asset commands while refreshing runtime details", async () => {
+    const user = userEvent.setup();
+    const pending = deferred<EntityResource>();
+    const loadEntityDetails = vi
+      .fn()
+      .mockResolvedValueOnce({ ...rover, command_manifest: [queuedManifest] })
+      .mockImplementationOnce(() => pending.promise);
+    const baseValue: AtlasContextValue = {
+      status: "ready",
+      config: appConfig(),
+      snapshot: {
+        entities: { [rover.entity_id]: rover },
+        tasks: {},
+        runtimeManifestVersions: { [rover.entity_id]: 1 }
+      },
+      catalog: taskingCatalog,
+      health: healthyConnection,
+      reconnect: vi.fn(),
+      loadEntityDetails,
+      submitCommand: async () => {
+        throw new Error("not used");
+      },
+      updateGeometry: async () => {
+        throw new Error("not used");
+      }
+    };
+    const view = render(
+      <AtlasStaticProvider value={baseValue}>
+        <MapConsole />
+      </AtlasStaticProvider>
+    );
+
+    await user.click(await screen.findByText("Rover"));
+    await user.click(screen.getByRole("button", { name: /Commands/ }));
+    expect(await screen.findByText("No operator inputs are available for this Asset's Commands")).toBeInTheDocument();
+    fireEvent.contextMenu(screen.getByTestId("map-marker-context-menu"));
+    expect(await screen.findByText("Commands · 47.6100, -122.3300")).toBeInTheDocument();
+
+    view.rerender(
+      <AtlasStaticProvider
+        value={{
+          ...baseValue,
+          snapshot: {
+            entities: { [rover.entity_id]: rover },
+            tasks: {},
+            runtimeManifestVersions: { [rover.entity_id]: 2 }
+          }
+        }}
+      >
+        <MapConsole />
+      </AtlasStaticProvider>
+    );
+
+    await waitFor(() => expect(loadEntityDetails).toHaveBeenCalledTimes(2));
+    await user.click(screen.getByRole("button", { name: "Commands" }));
+    expect(screen.getByText("Loading Asset Commands")).toBeInTheDocument();
+    expect(screen.queryByText("Commands · 47.6100, -122.3300")).not.toBeInTheDocument();
+
+    pending.resolve({ ...rover, metadata: { ...rover.metadata, version: 2 }, command_manifest: [] });
     expect(await screen.findByText("This Asset has no Commands")).toBeInTheDocument();
   });
 

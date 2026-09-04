@@ -961,10 +961,14 @@ describe("atlas-core CLI", () => {
 
   it("rechecks the reset engine after pull before acquiring a retained Plugin-disable lock", async () => {
     const test = runtime();
+    markInitialized(test);
     test.context.confirmReset = async () => true;
     test.runner.dockerEngineId = "another-engine";
     const config = join(test.home, ".atlas", "core");
     const lockPath = join(config, ".mutation.lock");
+    const statePath = join(config, "state.json");
+    const state = JSON.parse(readFileSync(statePath, "utf8"));
+    writeFileSync(statePath, `${JSON.stringify({ ...state, dockerEngineId: "another-engine" })}\n`, { mode: 0o600 });
     const retainedOwner = {
       schema: 1,
       id: "a".repeat(32),
@@ -1811,8 +1815,80 @@ describe("atlas-core CLI", () => {
     expect(test.runner.existingVolumes).toContain(POSTGRES_VOLUME);
   });
 
+  it("refuses to reset a missing home before touching another deployment", async () => {
+    const test = runtime();
+    test.context.confirmReset = async () => true;
+    for (const container of [
+      API_CONTAINER,
+      SOURCE_GATEWAY_CONTAINER,
+      POSTGRES_CONTAINER,
+      MINIO_CONTAINER,
+      MINIO_INIT_CONTAINER
+    ]) {
+      test.runner.existingContainers.add(container);
+    }
+    test.runner.existingVolumes.add(POSTGRES_VOLUME);
+    test.runner.existingVolumes.add(MINIO_VOLUME);
+    test.runner.volumeUsers.set(POSTGRES_VOLUME, new Set([POSTGRES_CONTAINER]));
+    test.runner.volumeUsers.set(MINIO_VOLUME, new Set([MINIO_CONTAINER]));
+
+    expect(await runCLI(["reset"], test.context)).toBe(1);
+
+    expect(test.stderr.join("")).toContain("Run atlas-core init first");
+    expect(test.runner.calls.some((call) => call.args[0] === "pull")).toBe(false);
+    expect(
+      test.runner.calls.some(
+        (call) =>
+          (call.args[0] === "network" && call.args[1] === "create") ||
+          (call.args[0] === "container" && call.args[1] === "rm") ||
+          (call.args[0] === "volume" && call.args[1] === "rm")
+      )
+    ).toBe(false);
+    expect(existsSync(join(test.home, ".atlas", "core"))).toBe(false);
+    expect(test.runner.existingContainers).toEqual(
+      new Set([API_CONTAINER, SOURCE_GATEWAY_CONTAINER, POSTGRES_CONTAINER, MINIO_CONTAINER, MINIO_INIT_CONTAINER])
+    );
+    expect(test.runner.existingVolumes).toEqual(new Set([POSTGRES_VOLUME, MINIO_VOLUME]));
+  });
+
+  it("refuses to reset malformed state before touching Docker", async () => {
+    const test = runtime();
+    test.context.confirmReset = async () => true;
+    const config = join(test.home, ".atlas", "core");
+    mkdirSync(config, { recursive: true, mode: 0o700 });
+    writeFileSync(join(config, ".env"), "POSTGRES_PASSWORD=original\n", { mode: 0o600 });
+    writeFileSync(join(config, "state.json"), "not-json\n", { mode: 0o600 });
+    test.runner.existingVolumes.add(POSTGRES_VOLUME);
+    test.runner.existingVolumes.add(MINIO_VOLUME);
+
+    expect(await runCLI(["reset"], test.context)).toBe(1);
+
+    expect(test.stderr.join("")).toContain("Run atlas-core init first");
+    expect(test.runner.calls.some((call) => call.args[0] === "pull")).toBe(false);
+    expect(test.runner.calls.some((call) => call.args[0] === "network" && call.args[1] === "create")).toBe(false);
+    expect(test.runner.existingVolumes).toEqual(new Set([POSTGRES_VOLUME, MINIO_VOLUME]));
+    expect(readFileSync(join(config, "state.json"), "utf8")).toBe("not-json\n");
+  });
+
+  it("refuses to reset an initializing state before touching Docker", async () => {
+    const test = runtime();
+    test.context.confirmReset = async () => true;
+    markInitialized(test);
+    const statePath = join(test.home, ".atlas", "core", "state.json");
+    const state = JSON.parse(readFileSync(statePath, "utf8"));
+    writeFileSync(statePath, `${JSON.stringify({ ...state, phase: "initializing" })}\n`, { mode: 0o600 });
+
+    expect(await runCLI(["reset"], test.context)).toBe(1);
+
+    expect(test.stderr.join("")).toContain("Run atlas-core init first");
+    expect(test.runner.calls.some((call) => call.args[0] === "pull")).toBe(false);
+    expect(test.runner.calls.some((call) => call.args[0] === "network" && call.args[1] === "create")).toBe(false);
+    expect(JSON.parse(readFileSync(statePath, "utf8"))).toMatchObject({ phase: "initializing" });
+  });
+
   it("deletes an existing deployment and starts fresh with the installed release", async () => {
     const test = runtime();
+    markInitialized(test);
     test.context.confirmReset = async (question) => question === "Continue? [y/N] ";
     const containers = [
       API_CONTAINER,
@@ -1915,6 +1991,7 @@ describe("atlas-core CLI", () => {
 
   it("refuses to reset a same-name resource without matching ownership labels", async () => {
     const test = runtime();
+    markInitialized(test);
     test.context.confirmReset = async () => true;
     const container = API_CONTAINER;
     test.runner.existingContainers.add(container);
@@ -1932,6 +2009,7 @@ describe("atlas-core CLI", () => {
 
   it("refuses to reset a volume used by an unknown container", async () => {
     const test = runtime();
+    markInitialized(test);
     test.context.confirmReset = async () => true;
     const volume = POSTGRES_VOLUME;
     test.runner.existingVolumes.add(volume);

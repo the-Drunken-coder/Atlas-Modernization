@@ -67,6 +67,7 @@ describe("App startup and forms", () => {
     vi.mocked(loadRuns).mockResolvedValueOnce([]).mockResolvedValue([cloneRun()]);
     render(<App />);
     expect(await screen.findByRole("heading", { name: "Atlas Simulations" })).toBeInTheDocument();
+    expect(screen.queryByText("Atlas Core")).not.toBeInTheDocument();
     expect((await screen.findAllByText("Moving assets")).length).toBeGreaterThan(0);
     const assetCount = screen.getByLabelText("Asset count");
     const jsonInput = screen.getByLabelText("JSON input");

@@ -78,14 +78,15 @@ func (a *EntityActions) GetDetail(ctx context.Context, entityID string) (*Entity
 
 // CreateEntityParams holds parameters for creating an entity.
 type CreateEntityParams struct {
-	EntityID    string
-	EntityType  string
-	Subtype     string
-	Alias       *string
-	Components  map[string]interface{}
-	PublishedAt *time.Time
-	UpdatedAt   *time.Time
-	Extra       map[string]interface{}
+	EntityID      string
+	EntityType    string
+	Subtype       string
+	Alias         *string
+	Components    map[string]interface{}
+	PublishedAt   *time.Time
+	UpdatedAt     *time.Time
+	Extra         map[string]interface{}
+	InstanceToken string
 }
 
 // Create creates a new entity.
@@ -159,11 +160,22 @@ func (a *EntityActions) Create(ctx context.Context, params CreateEntityParams) (
 	if err != nil {
 		return nil, err
 	}
+	var instanceTokenHash *string
+	if params.InstanceToken != "" {
+		hash, err := resourceInstanceTokenHash(params.InstanceToken)
+		if err != nil {
+			return nil, NewValidationError(err.Error())
+		}
+		if err := reserveResourceInstanceToken(ctx, tx, hash); err != nil {
+			return nil, err
+		}
+		instanceTokenHash = &hash
+	}
 	entity, err := scanEntity(tx.QueryRow(ctx, `
-		INSERT INTO entities (entity_id, type, subtype, alias, json, version)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		INSERT INTO entities (entity_id, type, subtype, alias, json, version, instance_token_hash)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		RETURNING entity_id, type, subtype, alias, json, created_at, updated_at, version
-	`, entityID, entityType, subtype, alias, jsonBytes, version))
+	`, entityID, entityType, subtype, alias, jsonBytes, version, instanceTokenHash))
 	if err != nil {
 		if isUniqueViolation(err) {
 			var pgErr *pgconn.PgError
@@ -279,11 +291,29 @@ type UpdateEntityParams struct {
 	ExpectedVersion *int64
 }
 
+// EntityDeleteOptions controls optional identity preconditions on deletion.
+type EntityDeleteOptions struct {
+	InstanceToken *string
+}
+
 // IsEmpty reports whether the PATCH carries no updatable fields.
 func (p UpdateEntityParams) IsEmpty() bool {
 	componentsEmpty := len(p.Components) == 0
 	extraEmpty := len(p.Extra) == 0
 	return p.EntityType == nil && p.Subtype == nil && p.Alias == nil && componentsEmpty && extraEmpty
+}
+
+func patchEntityJSON(rawMessage json.RawMessage, params UpdateEntityParams) ([]byte, error) {
+	return patchValidatedJSONBlob(jsonBlobPatch{
+		rawMessage:      rawMessage,
+		decodeMode:      jsonBlobDecodeUseNumber,
+		decodeError:     "existing entity json is corrupt or invalid",
+		components:      params.Components,
+		mergeComponents: mergeEntityComponents,
+		extra:           params.Extra,
+		promotedFields:  entityPromotedBlobFields,
+		validate:        ValidateEntityBlob,
+	})
 }
 
 // Update updates an entity.
@@ -375,16 +405,7 @@ func (a *EntityActions) Update(ctx context.Context, entityID string, params Upda
 		}
 	}
 
-	jsonBytes, err := patchValidatedJSONBlob(jsonBlobPatch{
-		rawMessage:      entity.JSON,
-		decodeMode:      jsonBlobDecodeDefault,
-		decodeError:     "existing entity json is corrupt or invalid",
-		components:      params.Components,
-		mergeComponents: mergeEntityComponents,
-		extra:           params.Extra,
-		promotedFields:  entityPromotedBlobFields,
-		validate:        ValidateEntityBlob,
-	})
+	jsonBytes, err := patchEntityJSON(entity.JSON, params)
 	if err != nil {
 		return nil, err
 	}
@@ -446,9 +467,16 @@ func (a *EntityActions) Update(ctx context.Context, entityID string, params Upda
 }
 
 // Delete removes an entity.
-func (a *EntityActions) Delete(ctx context.Context, entityID string) error {
+func (a *EntityActions) Delete(ctx context.Context, entityID string, options ...EntityDeleteOptions) error {
 	if err := ValidateEntityID(entityID); err != nil {
 		return err
+	}
+	if len(options) > 1 {
+		return NewValidationError("entity delete accepts at most one options value")
+	}
+	var deleteOptions EntityDeleteOptions
+	if len(options) == 1 {
+		deleteOptions = options[0]
 	}
 	entityID = SanitizeID(entityID)
 
@@ -470,6 +498,17 @@ func (a *EntityActions) Delete(ctx context.Context, entityID string) error {
 			return NewEntityNotFoundError(entityID)
 		}
 		return fmt.Errorf("failed to get entity for deletion: %w", err)
+	}
+	if deleteOptions.InstanceToken != nil {
+		var storedHash *string
+		if err := tx.QueryRow(ctx, `
+			SELECT instance_token_hash FROM entities WHERE entity_id = $1
+		`, entityID).Scan(&storedHash); err != nil {
+			return fmt.Errorf("failed to get entity instance identity for deletion: %w", err)
+		}
+		if err := checkResourceInstanceToken(deleteOptions.InstanceToken, storedHash, "entity"); err != nil {
+			return err
+		}
 	}
 	configuredPluginID := a.pluginAssets[entityID]
 	if err := validateToolAsset(entity, configuredPluginID); err != nil {

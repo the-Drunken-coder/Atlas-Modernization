@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   AtlasAPIError,
   type AtlasSubscription,
@@ -29,6 +29,8 @@ type FakeCoreState = {
   tasks: ResourceHistory<TaskResource>;
   objects: ResourceHistory<ObjectDetailResource>;
   tombstones: Map<string, number[]>;
+  instanceTokenHashes: Map<string, string | undefined>;
+  usedInstanceTokenHashes: Set<string>;
   deleted: string[];
   clients: FakeClientState[];
   taskingAttempts: Map<string, { request: string; task: TaskResource }>;
@@ -54,6 +56,8 @@ export function createFakeAtlasCore() {
     tasks: new Map(),
     objects: new Map(),
     tombstones: new Map(),
+    instanceTokenHashes: new Map(),
+    usedInstanceTokenHashes: new Set(),
     deleted: [],
     clients: [],
     taskingAttempts: new Map(),
@@ -69,10 +73,13 @@ function createClient(state: FakeCoreState, sync: ClientMode): AtlasClientLike {
   return {
     entities: {
       get: async (id) => visibleValue(state, clientState, state.entities, id, "entity"),
-      create: async (request) => {
+      create: async (request, options) => {
         assertCanCreateEntity(state, request.entity_id, request.alias);
+        const tokenHash = reserveInstanceToken(state, options?.instanceToken);
         const version = commitVersion(state, clientState);
-        return saveValue(state.entities, request.entity_id, entityFromCreate(request, version), version);
+        const created = saveValue(state.entities, request.entity_id, entityFromCreate(request, version), version);
+        state.instanceTokenHashes.set(resourceKey("entity", request.entity_id), tokenHash);
+        return created;
       },
       update: async (id, patch) => {
         const current = requireActiveValue(state, state.entities, id, "entity").value;
@@ -89,7 +96,8 @@ function createClient(state: FakeCoreState, sync: ClientMode): AtlasClientLike {
         };
         return saveValue(state.entities, id, updated, version);
       },
-      delete: async (id) => deleteValue(state, clientState, state.entities, id, "entity"),
+      delete: async (id, options) =>
+        deleteValue(state, clientState, state.entities, id, "entity", options?.instanceToken),
       checkIn: (async (id: string, options?: EntityCheckInOptions) => {
         const current = requireActiveValue(state, state.entities, id, "entity").value;
         const version = commitVersion(state, clientState);
@@ -213,12 +221,16 @@ function createClient(state: FakeCoreState, sync: ClientMode): AtlasClientLike {
     },
     objects: {
       get: async (id) => visibleValue(state, clientState, state.objects, id, "object"),
-      create: async (request) => {
+      create: async (request, options) => {
         assertCanCreate(state, state.objects, request.object_id, "object");
+        const tokenHash = reserveInstanceToken(state, options?.instanceToken);
         const version = commitVersion(state, clientState);
-        return saveValue(state.objects, request.object_id, objectFromCreate(request, version), version);
+        const created = saveValue(state.objects, request.object_id, objectFromCreate(request, version), version);
+        state.instanceTokenHashes.set(resourceKey("object", request.object_id), tokenHash);
+        return created;
       },
-      delete: async (id) => deleteValue(state, clientState, state.objects, id, "object")
+      delete: async (id, options) =>
+        deleteValue(state, clientState, state.objects, id, "object", options?.instanceToken)
     },
     queries: {
       full: async () => ({
@@ -524,14 +536,36 @@ function deleteValue<T>(
   clientState: FakeClientState,
   values: ResourceHistory<T>,
   id: string,
-  type: "entity" | "object"
+  type: "entity" | "object",
+  instanceToken?: string
 ): void {
   const stored = requireActiveValue(state, values, id, type);
+  if (
+    instanceToken !== undefined &&
+    state.instanceTokenHashes.get(resourceKey(type, id)) !== tokenHash(instanceToken)
+  ) {
+    throw precondition(type, id);
+  }
   const version = commitVersion(state, clientState);
   const key = resourceKey(type, id);
   state.tombstones.set(key, [...(state.tombstones.get(key) ?? []), version]);
   state.deleted.push(`${type}:${id}`);
   void stored;
+}
+
+function reserveInstanceToken(state: FakeCoreState, instanceToken: string | undefined): string | undefined {
+  if (instanceToken === undefined) return undefined;
+  const hash = tokenHash(instanceToken);
+  if (state.usedInstanceTokenHashes.has(hash)) throw validation("resource instance token has already been used");
+  state.usedInstanceTokenHashes.add(hash);
+  return hash;
+}
+
+function tokenHash(instanceToken: string): string {
+  if (!instanceToken || instanceToken.trim() !== instanceToken) {
+    throw validation("resource instance token must be non-empty and must not have surrounding whitespace");
+  }
+  return createHash("sha256").update(instanceToken).digest("hex");
 }
 
 function commitVersion(state: FakeCoreState, clientState: FakeClientState): number {
@@ -548,6 +582,15 @@ function notFound(type: string, id: string): AtlasAPIError {
 function conflict(type: string, id: string): AtlasAPIError {
   const message = `${type} ${id} already exists`;
   return new AtlasAPIError(message, 409, { message });
+}
+
+function precondition(type: string, id: string): AtlasAPIError {
+  const message = `Resource instance token precondition failed for ${type} ${id}`;
+  return new AtlasAPIError(message, 412, { message, error_code: "PRECONDITION_FAILED" });
+}
+
+function validation(message: string): AtlasAPIError {
+  return new AtlasAPIError(message, 400, { message, error_code: "VALIDATION_ERROR" });
 }
 
 function saveValue<T>(values: ResourceHistory<T>, id: string, value: T, version: number): T {
