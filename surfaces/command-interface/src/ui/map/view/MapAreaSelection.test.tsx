@@ -329,6 +329,24 @@ describe("MapAreaSelection", () => {
     expect(spatial.onAreaChange).toHaveBeenLastCalledWith(selectedArea);
   });
 
+  it("does not suppress the next map click after pointer cancellation", async () => {
+    const spatial = interaction({ area: selectedArea, drawing: false });
+    const { canvas, map, onBackgroundClick } = renderMapView({ spatial });
+    act(() => map.fire("resize"));
+
+    const move = await screen.findByRole("button", { name: "Move selected area" });
+    fireEvent.pointerDown(move, {
+      button: 0,
+      pointerId: 13,
+      clientX: 50,
+      clientY: 60
+    });
+    fireEvent.pointerCancel(window, { pointerId: 13 });
+    fireEvent.click(canvas);
+
+    expect(onBackgroundClick).toHaveBeenCalledOnce();
+  });
+
   it("skips spatial hit testing while result layers are absent", () => {
     const spatial = interaction({ area: null, drawing: false });
     const { canvas, map, onBackgroundClick } = renderMapView({ spatial });

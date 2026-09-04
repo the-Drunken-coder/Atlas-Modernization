@@ -244,7 +244,7 @@ export function MapAreaSelection({
         if (drag.pointerId === null) setBoxZoomActive(false);
         return;
       }
-      releasePointerCapture(mapCanvas, drag.pointerId, suppressNextClick, true);
+      releasePointerCapture(mapCanvas, drag.pointerId, suppressNextClick, false);
       if (drag.kind === "transform") callbacksRef.current.onAreaChange(drag.initialArea);
       else callbacksRef.current.onCancelDrawing();
       setSelectionError(null);
