@@ -1,4 +1,4 @@
-import { sanitizeErrorMessage } from "@the-drunken-coder/atlas-sdk";
+import { sanitizeErrorMessage } from "@the-drunken-coder/atlas-sdk/errors";
 
 const SAFE_FALLBACK = "Atlas Core returned an unsafe error message.";
 

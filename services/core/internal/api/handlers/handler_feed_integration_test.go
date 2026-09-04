@@ -276,7 +276,7 @@ func assertEntityCreateFeedEventIntegration(t *testing.T, event protocol.FeedEve
 	if !ok {
 		t.Fatalf("feed event resource metadata = %T, want object", resource["metadata"])
 	}
-	if metadata["version"] != float64(created.Metadata.Version) {
+	if metadata["version"] != json.Number(fmt.Sprint(created.Metadata.Version)) {
 		t.Fatalf("feed event resource metadata = %#v, want version %d", metadata, created.Metadata.Version)
 	}
 }

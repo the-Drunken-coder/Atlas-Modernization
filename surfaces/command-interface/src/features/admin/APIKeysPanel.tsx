@@ -1,6 +1,6 @@
 import { Alert, Callout } from "@blueprintjs/core";
-import { AtlasAPIError } from "@the-drunken-coder/atlas-sdk";
 import { type AdminAPIKey, type AdminCreatedAPIKey, AtlasAdminClient } from "@the-drunken-coder/atlas-sdk/admin";
+import { AtlasAPIError } from "@the-drunken-coder/atlas-sdk/errors";
 import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { sanitizeConnectionError } from "../../atlas/connection-error.js";
 import { useAtlas } from "../../state/atlas-context.js";

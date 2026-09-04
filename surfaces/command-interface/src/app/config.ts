@@ -1,4 +1,4 @@
-import { ATLAS_PROTOCOL_REVISION, normalizeAtlasBaseUrl } from "@the-drunken-coder/atlas-sdk";
+import { ATLAS_PROTOCOL_REVISION, normalizeAtlasBaseUrl } from "@the-drunken-coder/atlas-sdk/config";
 import type { StyleSpecification } from "maplibre-gl";
 
 export type MapSourceConfig = {
