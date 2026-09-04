@@ -349,6 +349,20 @@ describe("sdk data source", () => {
     );
   });
 
+  it("forwards an Entity detail abort signal through the SDK transport", async () => {
+    const detailed = entity("asset-1", 3);
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => Response.json(detailed));
+    vi.stubGlobal("fetch", fetchMock);
+    const dataSource = createSdkDataSource(config);
+    const controller = new AbortController();
+
+    await expect(dataSource.loadEntityDetails?.("asset-1", controller.signal)).resolves.toEqual(detailed);
+    const requestSignal = fetchMock.mock.calls[0]?.[1]?.signal;
+    expect(requestSignal).toBeInstanceOf(AbortSignal);
+    controller.abort();
+    expect(requestSignal).toHaveProperty("aborted", true);
+  });
+
   it("routes command and geometry writes through SDK cache notifications", async () => {
     const calls: Array<{ input: unknown; init: RequestInit }> = [];
     const createdTask = task("task-created", "asset-1", 2);

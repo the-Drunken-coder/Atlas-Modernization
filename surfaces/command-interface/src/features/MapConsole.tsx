@@ -34,7 +34,7 @@ import { WorldViewIcon } from "../ui/primitives/icons.js";
 import { ContextMenu, type MenuItemDef } from "../ui/primitives/Menu.js";
 import { APIKeysPanel } from "./admin/APIKeysPanel.js";
 import type { PluginSelection } from "./admin/PluginsPanel.js";
-import { AssetInspector } from "./assets/AssetInspector.js";
+import { AssetInspector, type CommandManifestStatus } from "./assets/AssetInspector.js";
 import { CommandList } from "./commands/CommandList.js";
 import { type CommandFormState, useCommandFlow } from "./commands/use-command-flow.js";
 import { EntityList } from "./EntityList.js";
@@ -62,7 +62,6 @@ const SpatialResultsInspector = lazy(() =>
   import("./plugins/SpatialResultsInspector.js").then((module) => ({ default: module.SpatialResultsInspector }))
 );
 
-type CommandManifestStatus = "ready" | "loading" | "unavailable";
 const EMPTY_ENTITY_QUERIES = Object.fromEntries(ENTITY_KINDS.map((kind) => [kind, ""])) as Record<EntityKind, string>;
 
 export function MapConsole() {
@@ -110,6 +109,7 @@ export function MapConsole() {
   const selection = sidebar.selection;
   const selectedSnapshotEntity = getEntity(snapshot, selection?.id);
   const selectedSnapshotEntityId = selectedSnapshotEntity?.entity_id;
+  const selectedSnapshotEntityVersion = selectedSnapshotEntity?.metadata.version;
   const [selectedEntityDetails, setSelectedEntityDetails] = useState<EntityResource>();
   const [commandManifestStatus, setCommandManifestStatus] = useState<CommandManifestStatus>("ready");
   const commandDetailsRequired = Boolean(
@@ -127,22 +127,24 @@ export function MapConsole() {
         cancelled = true;
       };
     }
+    const controller = new AbortController();
     setCommandManifestStatus("loading");
     void atlas
-      .loadEntityDetails(selectedSnapshotEntityId)
+      .loadEntityDetails(selectedSnapshotEntityId, controller.signal)
       .then((entity) => {
-        if (!cancelled) {
+        if (!cancelled && !controller.signal.aborted) {
           setSelectedEntityDetails(entity);
           setCommandManifestStatus("ready");
         }
       })
       .catch(() => {
-        if (!cancelled) setCommandManifestStatus("unavailable");
+        if (!cancelled && !controller.signal.aborted) setCommandManifestStatus("unavailable");
       });
     return () => {
       cancelled = true;
+      controller.abort();
     };
-  }, [atlas.loadEntityDetails, commandDetailsRequired, selectedSnapshotEntityId]);
+  }, [atlas.loadEntityDetails, commandDetailsRequired, selectedSnapshotEntityId, selectedSnapshotEntityVersion]);
   const resolvedCommandManifestStatus =
     !commandDetailsRequired &&
     selectedSnapshotEntity &&
@@ -569,6 +571,7 @@ function PanelBody(props: PanelBodyProps) {
         entity={selectedEntity}
         snapshot={snapshot}
         catalog={catalog}
+        commandManifestStatus={props.commandManifestStatus}
         onPickCommand={props.onPickCommand}
       />
     );

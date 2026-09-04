@@ -91,6 +91,38 @@ describe("MapView runtime boundary", () => {
     expect(screen.queryByText("Map unavailable")).not.toBeInTheDocument();
   });
 
+  it("shows a retryable error for an initial style failure and retries map initialization", async () => {
+    const runtime = createRuntime(false);
+    loaderMocks.loadMapLibre.mockResolvedValue(runtime);
+    loaderMocks.loadSidcRuntime.mockResolvedValue({});
+
+    renderMapView();
+    await waitFor(() => expect(loaderMocks.mapConstructor).toHaveBeenCalledTimes(1));
+
+    act(() => runtime.instances[0]?.fire("error", { error: new Error("initial style failed") }));
+
+    expect(await screen.findByText("Map unavailable")).toBeInTheDocument();
+    expect(screen.getByText("initial style failed")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+    await waitFor(() => expect(loaderMocks.mapConstructor).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText("Map unavailable")).not.toBeInTheDocument();
+  });
+
+  it("keeps ordinary tile errors nonfatal after the initial style is ready", async () => {
+    const runtime = createRuntime();
+    loaderMocks.loadMapLibre.mockResolvedValue(runtime);
+    loaderMocks.loadSidcRuntime.mockResolvedValue({});
+
+    renderMapView();
+    await waitFor(() => expect(loaderMocks.mapConstructor).toHaveBeenCalledTimes(1));
+
+    act(() => runtime.instances[0]?.fire("error", { error: new Error("tile failed"), sourceId: "basemap" }));
+
+    expect(screen.queryByText("Map unavailable")).not.toBeInTheDocument();
+    expect(loaderMocks.mapConstructor).toHaveBeenCalledTimes(1);
+  });
+
   it("initializes with the latest style selected while runtimes are loading", async () => {
     let resolveMapLibre!: (runtime: unknown) => void;
     let resolveSidc!: (runtime: unknown) => void;
@@ -150,14 +182,19 @@ async function actResolve(resolve: () => void): Promise<void> {
   });
 }
 
-function createRuntime() {
+function createRuntime(initialStyleLoaded = true) {
   class FakeMap {
+    static instances: FakeMap[] = [];
     private readonly sources = new Map<string, { setData: ReturnType<typeof vi.fn> }>();
     private readonly layers = new Set<string>();
+    private readonly listeners = new Map<string, Array<(event?: unknown) => void>>();
+    loaded: boolean;
     readonly touchZoomRotate = { disableRotation: vi.fn() };
 
     constructor(options: unknown) {
       loaderMocks.mapConstructor(options);
+      this.loaded = FakeMap.instances.length > 0 || initialStyleLoaded;
+      FakeMap.instances.push(this);
     }
 
     addControl() {}
@@ -181,15 +218,25 @@ function createRuntime() {
     fitBounds() {}
 
     isStyleLoaded() {
-      return true;
+      return this.loaded;
     }
 
-    on() {
+    on(type: string, listener: (event?: unknown) => void) {
+      this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener]);
       return this;
     }
 
-    off() {
+    off(type: string, listener: (event?: unknown) => void) {
+      this.listeners.set(
+        type,
+        (this.listeners.get(type) ?? []).filter((entry) => entry !== listener)
+      );
       return this;
+    }
+
+    fire(type: string, event?: unknown) {
+      if (type === "style.load") this.loaded = true;
+      for (const listener of this.listeners.get(type) ?? []) listener(event);
     }
 
     remove() {}
@@ -199,6 +246,7 @@ function createRuntime() {
 
   return {
     Map: FakeMap,
+    instances: FakeMap.instances,
     Marker: class {},
     NavigationControl: class {}
   };

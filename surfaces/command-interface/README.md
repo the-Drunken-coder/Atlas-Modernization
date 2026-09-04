@@ -128,7 +128,7 @@ The production build emits `dist/client/_headers` with the static Pages security
 ```bash
 npm run build:sdk
 npm run lint --workspace @the-drunken-coder/atlas-command-interface
-npm run format:check --workspace @the-drunken-coder/atlas-command-interface -- --since=origin/main
+npm run format:check --workspace @the-drunken-coder/atlas-command-interface
 npm test --workspace @the-drunken-coder/atlas-command-interface
 npm run typecheck --workspace @the-drunken-coder/atlas-command-interface
 npm run build:command-interface

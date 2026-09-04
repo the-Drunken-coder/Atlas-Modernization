@@ -1,5 +1,4 @@
 import {
-  AtlasClient,
   type CommandCatalog,
   type CommandDefinition,
   type EntityResource,
@@ -7,6 +6,7 @@ import {
   type TaskResource
 } from "@the-drunken-coder/atlas-sdk";
 import type { AppConfig } from "../app/config.js";
+import { createAuthenticatedAtlasClient } from "../auth/atlas.js";
 import { sanitizeConnectionError } from "./connection-error.js";
 import type { UiGeometry } from "./geometry.js";
 import type { AtlasSnapshot } from "./store.js";
@@ -25,7 +25,7 @@ export type ConnectionHealth = { running: boolean; healthy: boolean; degraded: b
 export interface AtlasDataSource {
   snapshot(): AtlasSnapshot;
   loadCommandCatalog(): Promise<CommandCatalog>;
-  loadEntityDetails?(entityId: string): Promise<EntityResource>;
+  loadEntityDetails?(entityId: string, signal?: AbortSignal): Promise<EntityResource>;
   watch(onSnapshot: (snapshot: AtlasSnapshot) => void): () => void;
   start(): Promise<void>;
   submitCommand(submission: CommandSubmission): Promise<TaskResource>;
@@ -36,11 +36,8 @@ export interface AtlasDataSource {
 
 /** The real data source: an Atlas SDK client pointed directly at Atlas Core. */
 export function createSdkDataSource(config: AppConfig): AtlasDataSource {
-  const client = new AtlasClient({
-    baseUrl: config.atlasBaseUrl,
-    credentials: "include",
+  const client = createAuthenticatedAtlasClient(config.atlasBaseUrl, {
     sync: "all",
-    fetch: atlasFetch,
     WebSocket: globalThis.WebSocket
   });
   const snapshot = (): AtlasSnapshot => {
@@ -55,7 +52,7 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
 
     loadCommandCatalog: () => client.commandCatalog(),
 
-    loadEntityDetails: (entityId) => client.entities.get(entityId, { fresh: true }),
+    loadEntityDetails: (entityId, signal) => client.entities.get(entityId, { fresh: true, signal }),
 
     watch(onSnapshot) {
       let previous = client.sync.snapshot();
@@ -116,25 +113,4 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
       startupError = undefined;
     }
   };
-}
-
-async function atlasFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
-  const response = await fetch(input, { ...init, credentials: "include" });
-  if (response.status === 401 && typeof window !== "undefined" && (await isCoreSessionExpired(response.clone()))) {
-    window.dispatchEvent(new Event("atlas-auth-expired"));
-  }
-  return response;
-}
-
-async function isCoreSessionExpired(response: Response): Promise<boolean> {
-  try {
-    const payload = await response.json();
-    return isRecord(payload) && payload.error_code === "UNAUTHORIZED";
-  } catch {
-    return false;
-  }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

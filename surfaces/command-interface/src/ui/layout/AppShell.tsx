@@ -80,7 +80,7 @@ export function AppShell({ collapsed, rail, panel, map }: AppShellProps) {
         {panel}
         {collapsed ? null : (
           <div
-            aria-label="Resize assets panel"
+            aria-label="Resize sidebar panel"
             aria-orientation="vertical"
             aria-valuemax={MAX_PANEL_WIDTH}
             aria-valuemin={MIN_PANEL_WIDTH}

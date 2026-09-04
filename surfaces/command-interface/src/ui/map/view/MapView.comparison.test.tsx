@@ -38,6 +38,37 @@ describe("MapView region comparison", () => {
     expect(screen.getByText("Drag an area. Press Escape to cancel.")).toBeInTheDocument();
   });
 
+  it("closes an open comparison panel when spatial drawing starts", async () => {
+    const spatial = spatialInteraction(false);
+    const rendered = renderMapView({ styleId: "base", style: style("base"), mapSourceOptions, spatial });
+    await drawComparison();
+    expect(screen.getByRole("dialog", { name: "Region comparison" })).toBeInTheDocument();
+
+    rendered.rerenderMap({ spatial: { ...spatial, drawing: true } });
+
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Region comparison" })).not.toBeInTheDocument());
+    expect(screen.getByText("Drag an area. Press Escape to cancel.")).toBeInTheDocument();
+  });
+
+  it("rejects a date-line crossing comparison rectangle", async () => {
+    const rendered = renderMapView({ styleId: "base", style: style("base"), mapSourceOptions });
+    rendered.map.unproject.mockImplementation((point: [number, number] | { x: number; y: number }) => {
+      const [x, y] = Array.isArray(point) ? point : [point.x, point.y];
+      return { lng: x < 160 ? 179.8 : -179.8, lat: y };
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Compare map source inside a region" }));
+    const prompt = screen.getByText("Drag a region. Shift-drag still zooms.");
+    const surface = prompt.parentElement;
+    if (!surface) throw new Error("Drawing surface is missing");
+    fireEvent.pointerDown(surface, { pointerId: 14, pointerType: "mouse", button: 0, clientX: 80, clientY: 80 });
+    fireEvent.pointerMove(window, { pointerId: 14, pointerType: "mouse", clientX: 260, clientY: 160 });
+    fireEvent.pointerUp(window, { pointerId: 14, pointerType: "mouse", clientX: 260, clientY: 160 });
+
+    expect(screen.queryByTestId("map-comparison-region")).not.toBeInTheDocument();
+    expect(await screen.findByRole("status")).toHaveTextContent(/date-line crossings are not supported/i);
+  });
+
   it("cancels an active comparison transform when spatial drawing starts", async () => {
     const spatial = spatialInteraction(false);
     const rendered = renderMapView({ styleId: "base", style: style("base"), mapSourceOptions, spatial });

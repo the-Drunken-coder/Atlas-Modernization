@@ -1,10 +1,11 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { AtlasAPIError, type PluginStatus, type SpatialOperationResult } from "@the-drunken-coder/atlas-sdk";
+import type { PluginStatus, SpatialOperationResult } from "@the-drunken-coder/atlas-sdk";
 import { useEffect, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { styleFixture } from "../../../test/fixtures.js";
 import { emptySnapshot } from "../../atlas/store.js";
+import { ATLAS_AUTH_EXPIRED_EVENT, rotateAuthSession } from "../../auth/atlas.js";
 import { type AtlasContextValue, AtlasStaticProvider } from "../../state/atlas-context.js";
 import { MapWindowWorkspace } from "../../ui/map/view/MapWindowWorkspace.js";
 import { SpatialResultsInspector } from "../plugins/SpatialResultsInspector.js";
@@ -99,18 +100,86 @@ describe("PluginsPanel", () => {
     expect(signals.at(-1)?.aborted).toBe(true);
   });
 
-  it("dispatches auth expiry and supports roving keyboard focus", async () => {
-    const expired = vi.fn();
-    window.addEventListener("atlas-auth-expired", expired);
+  it("keeps a polling failure visible in the selected plugin detail and marks its status unknown", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
     const reader = {
       list: vi
         .fn<() => Promise<PluginStatus[]>>()
-        .mockResolvedValueOnce([available, unavailable])
-        .mockRejectedValueOnce(new AtlasAPIError("unauthorized", 401, {}))
+        .mockResolvedValueOnce([available])
+        .mockRejectedValueOnce(new Error("gateway offline"))
     };
+    renderPanel(reader, { pluginId: available.plugin_id, name: available.display_name ?? available.plugin_id });
+
+    expect(await screen.findByText(/available · 1 operation/)).toBeInTheDocument();
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("gateway offline");
+    expect(screen.getByText(/status unknown \(last check: available\)/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Inspect fixture/ })).toBeDisabled();
+  });
+
+  it("keeps a discovery error visible while a retry is pending", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let releaseRetry!: (next: PluginStatus[]) => void;
+    const retry = new Promise<PluginStatus[]>((resolve) => {
+      releaseRetry = resolve;
+    });
+    const reader = {
+      list: vi
+        .fn<() => Promise<PluginStatus[]>>()
+        .mockResolvedValueOnce([available])
+        .mockRejectedValueOnce(new Error("gateway offline"))
+        .mockImplementationOnce(() => retry)
+    };
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    renderPanel(reader);
+
+    expect(await screen.findByText("Reference Fixture")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Refresh" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("gateway offline");
+    await user.click(screen.getByRole("button", { name: "Refresh" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("gateway offline");
+    expect(screen.getByText(/status unknown \(last check: available\)/)).toBeInTheDocument();
+
+    releaseRetry([available]);
+    await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+  });
+
+  it("keeps a polling failure visible and disables stale operation controls", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const reader = {
+      list: vi
+        .fn<() => Promise<PluginStatus[]>>()
+        .mockResolvedValueOnce([available])
+        .mockRejectedValueOnce(new Error("gateway offline"))
+    };
+    const executor: SpatialOperationExecutor = {
+      invokeSpatial: vi.fn(async () => spatialResponse())
+    };
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+
+    renderSpatialPanel(reader, executor);
+    await openSpatialOperation(user, available.display_name ?? available.plugin_id, "Inspect fixture");
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("gateway offline");
+    expect(screen.getByRole("button", { name: "Search" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Search" }));
+    expect(executor.invokeSpatial).not.toHaveBeenCalled();
+  });
+
+  it("dispatches auth expiry and supports roving keyboard focus", async () => {
+    const expired = vi.fn();
+    window.addEventListener(ATLAS_AUTH_EXPIRED_EVENT, expired);
+    rotateAuthSession();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([available, unavailable]))
+      .mockResolvedValueOnce(jsonResponse({ error_code: "UNAUTHORIZED", message: "unauthorized" }, 401));
+    vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
     try {
-      renderPanel(reader);
+      renderPanel();
       const firstDataRow = await screen.findByRole("button", {
         name: /Reference Fixture/
       });
@@ -125,7 +194,7 @@ describe("PluginsPanel", () => {
       await waitFor(() => expect(expired).toHaveBeenCalledTimes(1));
       expect(screen.getByText("Reference Fixture")).toBeInTheDocument();
     } finally {
-      window.removeEventListener("atlas-auth-expired", expired);
+      window.removeEventListener(ATLAS_AUTH_EXPIRED_EVENT, expired);
     }
   });
 
@@ -352,13 +421,20 @@ function spatialResponse({
   };
 }
 
-function renderPanel(reader: { list(options?: { signal?: AbortSignal }): Promise<PluginStatus[]> }) {
+function renderPanel(
+  reader?: { list(options?: { signal?: AbortSignal }): Promise<PluginStatus[]> },
+  selection?: PluginSelection
+) {
   const value = atlasContextValue();
   return render(
     <AtlasStaticProvider value={value}>
-      <PluginsPanel reader={reader} onSelectionChange={() => undefined} />
+      <PluginsPanel reader={reader} selection={selection} onSelectionChange={() => undefined} />
     </AtlasStaticProvider>
   );
+}
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
 
 function renderSpatialPanel(

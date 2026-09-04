@@ -10,6 +10,7 @@ import type { CommandMapPoint } from "./command-input-registry.js";
 export type MapMenuState = { x: number; y: number; lat: number; lng: number };
 export type CommandFormState = { availability: CommandAvailability; mapPoint?: CommandMapPoint };
 type PendingSubmission = { identity: string; idempotencyKey: string };
+type PendingMapMenu = { entityId: string; info: MapContextMenuInfo };
 
 export function useCommandFlow({
   catalog,
@@ -23,10 +24,12 @@ export function useCommandFlow({
   submitCommand: AtlasContextValue["submitCommand"];
 }) {
   const [mapMenu, setMapMenu] = useState<MapMenuState | null>(null);
+  const [pendingMapMenu, setPendingMapMenu] = useState<PendingMapMenu | null>(null);
   const [commandForm, setCommandForm] = useState<CommandFormState | null>(null);
   const nextSubmitIdRef = useRef(1);
   const activeSubmitIdRef = useRef<number | undefined>(undefined);
   const pendingSubmissionRef = useRef<PendingSubmission | undefined>(undefined);
+  const previousSelectedIdRef = useRef(selectedId);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string>();
   const selectedEntityId = selectedEntity?.entity_id;
@@ -46,12 +49,31 @@ export function useCommandFlow({
   useEffect(() => {
     closeMapMenu();
     if (activeSubmitIdRef.current === undefined) dismissCommandForm();
+    setPendingMapMenu(null);
   }, [catalog, closeMapMenu, dismissCommandForm]);
+
+  useEffect(() => {
+    const previousSelectedId = previousSelectedIdRef.current;
+    previousSelectedIdRef.current = selectedId;
+    if (pendingMapMenu && previousSelectedId !== selectedId && pendingMapMenu.entityId !== selectedId) {
+      setPendingMapMenu(null);
+    }
+  }, [pendingMapMenu, selectedId]);
+
+  useEffect(() => {
+    if (!pendingMapMenu || pendingMapMenu.entityId !== selectedEntityId) return;
+    setPendingMapMenu(null);
+    if (!selectedEntity || entityKind(selectedEntity) !== "asset") return;
+    dismissCommandForm();
+    const { info } = pendingMapMenu;
+    setMapMenu({ x: info.x, y: info.y, lat: info.lat, lng: info.lng });
+  }, [pendingMapMenu, selectedEntity, selectedEntityId, dismissCommandForm]);
 
   useEffect(() => {
     if (!selectedId || selectedEntityId) return;
     closeMapMenu();
     dismissCommandForm();
+    setPendingMapMenu(null);
   }, [selectedId, selectedEntityId, closeMapMenu, dismissCommandForm]);
 
   const submit = useCallback(
@@ -106,6 +128,13 @@ export function useCommandFlow({
 
   const onMapContextMenu = useCallback(
     (info: MapContextMenuInfo) => {
+      if (info.entityId && info.entityId !== selectedEntityId) {
+        closeMapMenu();
+        dismissCommandForm();
+        setPendingMapMenu({ entityId: info.entityId, info });
+        return;
+      }
+      setPendingMapMenu(null);
       if (!selectedEntity || entityKind(selectedEntity) !== "asset") {
         closeMapMenu();
         return;
@@ -113,7 +142,7 @@ export function useCommandFlow({
       dismissCommandForm();
       setMapMenu({ x: info.x, y: info.y, lat: info.lat, lng: info.lng });
     },
-    [selectedEntity, closeMapMenu, dismissCommandForm]
+    [selectedEntity, selectedEntityId, closeMapMenu, dismissCommandForm]
   );
 
   return {

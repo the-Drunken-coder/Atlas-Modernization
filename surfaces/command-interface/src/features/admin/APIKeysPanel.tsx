@@ -1,8 +1,8 @@
 import { Alert, Callout } from "@blueprintjs/core";
-import { AtlasAPIError } from "@the-drunken-coder/atlas-sdk";
-import { type AdminAPIKey, type AdminCreatedAPIKey, AtlasAdminClient } from "@the-drunken-coder/atlas-sdk/admin";
+import type { AdminAPIKey, AdminCreatedAPIKey } from "@the-drunken-coder/atlas-sdk/admin";
 import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { sanitizeConnectionError } from "../../atlas/connection-error.js";
+import { createAuthenticatedAtlasAdminClient } from "../../auth/atlas.js";
 import { useAtlas } from "../../state/atlas-context.js";
 import { Button, IconButton, TextField } from "../../ui/primitives/controls.js";
 import { CopyIcon, PlusIcon, TrashIcon } from "../../ui/primitives/icons.js";
@@ -20,9 +20,10 @@ export function APIKeysPanel() {
   const [submitting, setSubmitting] = useState(false);
   const [revoking, setRevoking] = useState<string>();
   const [keyToRevoke, setKeyToRevoke] = useState<AdminAPIKey>();
+  const [listAttempt, setListAttempt] = useState(0);
 
   const admin = useMemo(
-    () => (config ? new AtlasAdminClient({ baseUrl: config.atlasBaseUrl, credentials: "include" }) : undefined),
+    () => (config ? createAuthenticatedAtlasAdminClient(config.atlasBaseUrl) : undefined),
     [config]
   );
 
@@ -41,7 +42,6 @@ export function APIKeysPanel() {
       })
       .catch((cause) => {
         if (!cancelled) {
-          handleAdminError(cause);
           setError(sanitizeConnectionError(cause));
           setLoadState("error");
         }
@@ -49,7 +49,7 @@ export function APIKeysPanel() {
     return () => {
       cancelled = true;
     };
-  }, [admin]);
+  }, [admin, listAttempt]);
 
   const createKey = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -65,7 +65,6 @@ export function APIKeysPanel() {
       setName("");
       setLoadState("ready");
     } catch (cause) {
-      handleAdminError(cause);
       setError(sanitizeConnectionError(cause));
     } finally {
       setSubmitting(false);
@@ -94,14 +93,13 @@ export function APIKeysPanel() {
       setKeys((current) => current.filter((entry) => entry.id !== key.id));
       if (generated?.id === key.id) setGenerated(undefined);
     } catch (cause) {
-      handleAdminError(cause);
       setError(sanitizeConnectionError(cause));
     } finally {
       setRevoking(undefined);
     }
   };
 
-  if (loadState === "loading") {
+  if (loadState === "loading" && keys.length === 0) {
     return <div className="panel__empty">Loading API keys...</div>;
   }
 
@@ -116,8 +114,13 @@ export function APIKeysPanel() {
       </form>
 
       {error ? (
-        <Callout className="banner banner--error" intent="danger" icon={null} compact>
+        <Callout className="banner banner--error" intent="danger" icon={null} compact role="alert">
           {error}
+          {loadState === "error" ? (
+            <Button variant="ghost" onClick={() => setListAttempt((current) => current + 1)}>
+              Retry
+            </Button>
+          ) : null}
         </Callout>
       ) : null}
 
@@ -135,9 +138,9 @@ export function APIKeysPanel() {
         </div>
       ) : null}
 
-      {loadState === "error" ? null : keys.length === 0 ? (
+      {keys.length === 0 && loadState !== "error" ? (
         <div className="panel__empty">No API keys.</div>
-      ) : (
+      ) : keys.length > 0 ? (
         <ul className="api-key-list" aria-label="API keys">
           {keys.map((key) => (
             <li key={key.id} className="api-key-row">
@@ -150,7 +153,7 @@ export function APIKeysPanel() {
               </div>
               <IconButton
                 label={`Revoke ${key.name}`}
-                disabled={revoking === key.id}
+                disabled={revoking !== undefined}
                 onClick={() => setKeyToRevoke(key)}
               >
                 <TrashIcon size={16} />
@@ -158,7 +161,7 @@ export function APIKeysPanel() {
             </li>
           ))}
         </ul>
-      )}
+      ) : null}
       <Alert
         isOpen={keyToRevoke !== undefined}
         intent="danger"
@@ -179,12 +182,6 @@ export function APIKeysPanel() {
       </Alert>
     </div>
   );
-}
-
-function handleAdminError(error: unknown) {
-  if (error instanceof AtlasAPIError && error.status === 401) {
-    window.dispatchEvent(new Event("atlas-auth-expired"));
-  }
 }
 
 function formatCreatedAt(value: string): string {

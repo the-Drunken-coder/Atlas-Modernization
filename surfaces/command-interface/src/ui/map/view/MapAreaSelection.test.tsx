@@ -23,6 +23,14 @@ describe("MapAreaSelection", () => {
     vi.mocked(spatial.onViewportArea).mockClear();
     act(() => map.fire("moveend"));
     expect(spatial.onViewportArea).toHaveBeenCalledOnce();
+    map.getBounds.mockReturnValue({
+      getWest: () => 179.8,
+      getSouth: () => -10,
+      getEast: () => -179.8,
+      getNorth: () => 10
+    });
+    act(() => map.fire("moveend"));
+    expect(spatial.onViewportArea).toHaveBeenLastCalledWith(null);
 
     await waitFor(() => expect(canvas).toHaveClass("map-canvas--region-drawing"));
     fireEvent.pointerDown(canvas, {
@@ -76,6 +84,38 @@ describe("MapAreaSelection", () => {
     });
     fireEvent.keyDown(window, { key: "Escape" });
     expect(spatial.onCancelDrawing).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects a date-line crossing instead of publishing a near-worldwide area", async () => {
+    const spatial = interaction({ area: null, drawing: true });
+    const { map } = renderMapView({ spatial });
+    map.unproject.mockImplementation((point: [number, number] | { x: number; y: number }) => {
+      const [x, y] = Array.isArray(point) ? point : [point.x, point.y];
+      return { lng: x < 160 ? 179.8 : -179.8, lat: y };
+    });
+
+    const prompt = await screen.findByText("Drag an area. Press Escape to cancel.");
+    const surface = prompt.parentElement;
+    if (!surface) throw new Error("Drawing surface is missing");
+    fireEvent.pointerDown(surface, { pointerId: 13, button: 0, clientX: 60, clientY: 70 });
+    fireEvent.pointerMove(window, { pointerId: 13, clientX: 200, clientY: 140 });
+    fireEvent.pointerUp(window, { pointerId: 13, clientX: 200, clientY: 140 });
+
+    expect(spatial.onAreaChange).not.toHaveBeenCalled();
+    expect(spatial.onDrawingComplete).not.toHaveBeenCalled();
+    expect(await screen.findByRole("status")).toHaveTextContent(/date-line crossings are not supported/i);
+    expect(screen.getByText(/date-line crossings are not supported/i)).toBeInTheDocument();
+
+    map.unproject.mockImplementation((point: [number, number] | { x: number; y: number }) => {
+      const [x, y] = Array.isArray(point) ? point : [point.x, point.y];
+      return { lng: x, lat: y };
+    });
+    fireEvent.pointerDown(surface, { pointerId: 14, button: 0, clientX: 60, clientY: 20 });
+    fireEvent.pointerMove(window, { pointerId: 14, clientX: 100, clientY: 60 });
+    fireEvent.pointerUp(window, { pointerId: 14, clientX: 100, clientY: 60 });
+
+    expect(spatial.onAreaChange).toHaveBeenLastCalledWith({ west: 50, south: 0, east: 90, north: 40 });
+    expect(spatial.onDrawingComplete).toHaveBeenCalledOnce();
   });
 
   it("moves and resizes an existing area with pointer and keyboard input", async () => {

@@ -5,6 +5,8 @@ import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
 
 const packageRoot = fileURLToPath(new URL("..", import.meta.url));
+const repositoryRoot = resolve(packageRoot, "../..");
+const packageName = "@the-drunken-coder/atlas-command-interface";
 const defaultOutputDir = resolve(packageRoot, "dist/client");
 const args = new Set(process.argv.slice(2));
 const outputArgIndex = process.argv.indexOf("--output-dir");
@@ -28,21 +30,31 @@ const budgets = {
 };
 
 if (!args.has("--skip-build")) {
-  const build = spawnSync(process.execPath, [resolve(packageRoot, "../../node_modules/vite/bin/vite.js"), "build"], {
-    cwd: packageRoot,
+  const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
+  const build = spawnSync(npmCommand, ["run", "build", "--workspace", packageName], {
+    cwd: repositoryRoot,
     stdio: "inherit"
   });
   if (build.status !== 0) process.exit(build.status ?? 1);
 }
 
-const manifestPath = [join(outputDir, "manifest.json"), join(outputDir, ".vite", "manifest.json")].find((path) => {
+const manifestPath = [resolve(outputDir, "..", "bundle-manifest.json")].find((path) => {
   try {
     return statSync(path).isFile();
   } catch {
     return false;
   }
 });
-if (!manifestPath) fail(`Missing Vite manifest in ${outputDir}`);
+if (!manifestPath) fail(`Missing bundle analysis manifest beside ${outputDir}`);
+
+const publicManifest = [join(outputDir, "manifest.json"), join(outputDir, ".vite", "manifest.json")].find((path) => {
+  try {
+    return statSync(path).isFile();
+  } catch {
+    return false;
+  }
+});
+if (publicManifest) fail(`Vite manifest must not be deployed from ${publicManifest}`);
 
 const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
 const manifestFiles = new Set();

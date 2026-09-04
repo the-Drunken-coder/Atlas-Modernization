@@ -1,5 +1,4 @@
 import {
-  AtlasClient,
   isMapArea,
   type MapArea,
   type SpatialFeature,
@@ -7,6 +6,7 @@ import {
 } from "@the-drunken-coder/atlas-sdk";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { sanitizeConnectionError } from "../../atlas/connection-error.js";
+import { createAuthenticatedAtlasClient } from "../../auth/atlas.js";
 import { foregroundEscapeOwner } from "../../ui/map/interaction/foreground-escape-owner.js";
 
 export type SpatialOperationTarget = {
@@ -40,7 +40,7 @@ export type SpatialOperationRunner = {
   beginDrawing(): void;
   cancelDrawing(): void;
   setArea(area: MapArea): void;
-  setViewportArea(area: MapArea): void;
+  setViewportArea(area: MapArea | null): void;
   useCurrentView(): void;
   search(): Promise<void>;
   retry(): Promise<void>;
@@ -60,7 +60,7 @@ export function useSpatialOperationRunner({
     () =>
       suppliedExecutor ??
       (baseUrl
-        ? new AtlasClient({ baseUrl, credentials: "include", sync: false, requestTimeoutMs: 25_000 }).plugins
+        ? createAuthenticatedAtlasClient(baseUrl, { sync: false, requestTimeoutMs: 25_000 }).plugins
         : undefined),
     [baseUrl, suppliedExecutor]
   );

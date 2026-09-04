@@ -26,6 +26,7 @@ let nextAnimationFrameId = 0;
 const maplibreMock = vi.hoisted(() => {
   const markerOperations = { created: 0, setLngLat: 0, addTo: 0, remove: 0 };
   const markerCoordinates = new WeakMap<HTMLElement, [number, number]>();
+  let nextDetailMapStyleLoaded = true;
 
   class FakeMap {
     static instances: FakeMap[] = [];
@@ -63,12 +64,14 @@ const maplibreMock = vi.hoisted(() => {
     readonly getBearing = vi.fn(() => 0);
     readonly getPitch = vi.fn(() => 0);
     readonly getZoom = vi.fn(() => this.zoom);
-    readonly getBounds = vi.fn(() => ({
-      getWest: () => -20,
-      getSouth: () => -10,
-      getEast: () => 20,
-      getNorth: () => 10
-    }));
+    readonly getBounds = vi.fn(
+      (): { getWest(): number; getSouth(): number; getEast(): number; getNorth(): number } => ({
+        getWest: () => -20,
+        getSouth: () => -10,
+        getEast: () => 20,
+        getNorth: () => 10
+      })
+    );
     readonly getLayer = vi.fn((id: string) => this.layers.get(id));
     readonly getSource = vi.fn((id: string) => this.sources.get(id));
     readonly cameraForBounds = vi.fn(
@@ -107,6 +110,8 @@ const maplibreMock = vi.hoisted(() => {
       this.options = options;
       this.style = options.style;
       this.renderWorldCopies = Boolean(options.renderWorldCopies);
+      this.loaded = options.interactive === false ? nextDetailMapStyleLoaded : true;
+      if (options.interactive === false) nextDetailMapStyleLoaded = true;
       FakeMap.instances.push(this);
     }
 
@@ -186,7 +191,16 @@ const maplibreMock = vi.hoisted(() => {
 
   class FakeControl {}
 
-  return { FakeControl, FakeMap, FakeMarker, markerCoordinates, markerOperations };
+  return {
+    FakeControl,
+    FakeMap,
+    FakeMarker,
+    markerCoordinates,
+    markerOperations,
+    setNextDetailMapStyleLoaded: (loaded: boolean) => {
+      nextDetailMapStyleLoaded = loaded;
+    }
+  };
 });
 
 vi.mock("maplibre-gl", () => ({
@@ -222,6 +236,7 @@ vi.mock("../../symbols/sidc-runtime.js", () => ({
 
 beforeEach(() => {
   maplibreMock.FakeMap.instances.length = 0;
+  maplibreMock.setNextDetailMapStyleLoaded(true);
   resetMarkerOperationCounts();
   resizeObservers = [];
   animationFrames = new Map();
@@ -343,6 +358,10 @@ export function mapInstances(): FakeMapInstance[] {
 }
 
 export type FakeMapInstance = InstanceType<typeof maplibreMock.FakeMap>;
+
+export function setNextDetailMapStyleLoaded(loaded: boolean): void {
+  maplibreMock.setNextDetailMapStyleLoaded(loaded);
+}
 
 export function style(id: string, metadata: Record<string, unknown> = {}): StyleSpecification {
   return { version: 8, sources: {}, layers: [], metadata: { id, ...metadata } };

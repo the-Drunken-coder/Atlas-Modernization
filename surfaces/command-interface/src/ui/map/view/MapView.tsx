@@ -43,7 +43,7 @@ import { MapReticle } from "./MapReticle.js";
 import { cloneStyle, fitWorldOnce, webglAvailable } from "./map-view-utils.js";
 import { PlaceDetailLens } from "./PlaceDetailLens.js";
 
-export type MapContextMenuInfo = { lng: number; lat: number; x: number; y: number };
+export type MapContextMenuInfo = { lng: number; lat: number; x: number; y: number; entityId?: string };
 export type { MapReticleTarget } from "../interaction/map-targets.js";
 export type { MapEditing } from "../rendering/map-editing.js";
 export { buildMapSources } from "../rendering/map-sources.js";
@@ -72,7 +72,7 @@ export type MapSpatialInteraction = SpatialMapOverlay & {
   onAreaChange(area: MapArea): void;
   onDrawingComplete(): void;
   onCancelDrawing(): void;
-  onViewportArea(area: MapArea): void;
+  onViewportArea(area: MapArea | null): void;
   onSelectFeature(id: string): void;
 };
 
@@ -264,8 +264,8 @@ export function MapView({
       if (mapInstance.isStyleLoaded()) initializeLayers();
       mapInstance.on("boxzoomcancel", () => mapActionsRef.current.cancelBoxZoom());
       mapInstance.on("error", (event) => {
-        // Tile/style errors should not blank the operator picture. Keep overlays
-        // alive and surface the details in devtools.
+        // Keep render errors nonfatal once the map is usable, and surface the
+        // details in devtools.
         console.warn("Map render warning", sanitizeConnectionError(event.error));
         const failedStyleId = pendingStyleIdRef.current;
         if (failedStyleId) {
@@ -278,6 +278,11 @@ export function MapView({
           }
           styleSwitchErrorRef.current?.({ failedStyleId, activeStyleId: currentStyleIdRef.current ?? failedStyleId });
         }
+        // A source/tile error includes sourceId in MapLibre's bubbled event.
+        // Before the first style.load, an error without one means the initial
+        // style itself failed and the map cannot become usable without retrying.
+        if (!cancelled && !readyRef.current && !("sourceId" in event))
+          setMapError(sanitizeConnectionError(event.error));
       });
     };
 
@@ -393,7 +398,8 @@ export function MapView({
           lng: current.geometry.coordinates[0],
           lat: current.geometry.coordinates[1],
           x: event.clientX,
-          y: event.clientY
+          y: event.clientY,
+          entityId: current.properties.entityId
         });
       });
       markers.set(entityId, entry);

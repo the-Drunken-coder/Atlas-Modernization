@@ -94,7 +94,8 @@ describe("MapView symbol marker reconciliation", () => {
       lng: moved.components.telemetry?.longitude,
       lat: moved.components.telemetry?.latitude,
       x: 120,
-      y: 85
+      y: 85,
+      entityId: moved.entity_id
     });
   });
 });

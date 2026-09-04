@@ -89,4 +89,21 @@ describe("map window workspace state", () => {
     const unchanged = mapWindowWorkspaceReducer(state, { type: "activate", id: "fourth" });
     expect(unchanged).toBe(state);
   });
+
+  it("keeps a cascade slot reserved after a floating window is positioned", () => {
+    let state = mapWindowWorkspaceReducer(initialMapWindowWorkspaceState, {
+      type: "register",
+      id: "first",
+      title: "First"
+    });
+    state = mapWindowWorkspaceReducer(state, {
+      type: "position",
+      id: "first",
+      position: { left: 120, top: 80 }
+    });
+    state = mapWindowWorkspaceReducer(state, { type: "register", id: "second", title: "Second" });
+
+    expect(state.windows.first?.cascade).toBe(0);
+    expect(state.windows.second?.cascade).toBe(1);
+  });
 });

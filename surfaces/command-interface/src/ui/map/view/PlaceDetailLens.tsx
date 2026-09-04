@@ -1,6 +1,7 @@
 import type { Map as MlMap, StyleSpecification } from "maplibre-gl";
 import { type CSSProperties, useEffect, useRef, useState } from "react";
 import { sanitizeConnectionError } from "../../../atlas/connection-error.js";
+import { Button } from "../../primitives/controls.js";
 import {
   boundsForGeometry,
   CAMERA_EVENT_TAG,
@@ -82,6 +83,7 @@ export function PlaceDetailLens({ target, style }: PlaceDetailLensProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MlMap | undefined>(undefined);
   const initialStyleRef = useRef(style);
+  const [retryGeneration, setRetryGeneration] = useState(0);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string>();
   const [reticle, setReticle] = useState<ReticleState | null>(null);
@@ -97,6 +99,7 @@ export function PlaceDetailLens({ target, style }: PlaceDetailLensProps) {
     let resizeObserver: ResizeObserver | undefined;
     let resizeFrame: number | undefined;
     let cancelled = false;
+    let styleLoaded = false;
     const initializeMap = (maplibre: MapLibreRuntime) => {
       if (cancelled || !containerRef.current) return;
       try {
@@ -119,8 +122,17 @@ export function PlaceDetailLens({ target, style }: PlaceDetailLensProps) {
 
       const mapInstance = map;
       mapRef.current = mapInstance;
-      const markReady = () => setReady(true);
+      const markReady = () => {
+        styleLoaded = true;
+        setReady(true);
+      };
       mapInstance.on("style.load", markReady);
+      mapInstance.on("error", (event) => {
+        // Tile/source failures are nonfatal. Before style.load, an error
+        // without sourceId identifies a style failure, so keep Loading from
+        // hanging forever and offer a fresh initialization.
+        if (!cancelled && !styleLoaded && !("sourceId" in event)) setError(sanitizeConnectionError(event.error));
+      });
       if (mapInstance.isStyleLoaded()) markReady();
 
       resizeObserver = new ResizeObserver(() => mapInstance.resize({ [CAMERA_EVENT_TAG]: true }));
@@ -149,7 +161,7 @@ export function PlaceDetailLens({ target, style }: PlaceDetailLensProps) {
       map?.remove();
       mapRef.current = undefined;
     };
-  }, []);
+  }, [retryGeneration]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -209,6 +221,16 @@ export function PlaceDetailLens({ target, style }: PlaceDetailLensProps) {
       {error ? (
         <div style={statusStyle} role="status">
           Place detail unavailable
+          <Button
+            variant="primary"
+            onClick={() => {
+              setError(undefined);
+              setReady(false);
+              setRetryGeneration((generation) => generation + 1);
+            }}
+          >
+            Retry
+          </Button>
         </div>
       ) : null}
     </section>

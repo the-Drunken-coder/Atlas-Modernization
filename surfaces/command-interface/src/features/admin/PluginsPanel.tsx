@@ -1,7 +1,8 @@
 import { Callout } from "@blueprintjs/core";
-import { AtlasAPIError, AtlasClient, mapAreaSquareMeters, type PluginStatus } from "@the-drunken-coder/atlas-sdk";
+import { mapAreaSquareMeters, type PluginStatus } from "@the-drunken-coder/atlas-sdk";
 import { type KeyboardEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { sanitizeConnectionError } from "../../atlas/connection-error.js";
+import { createAuthenticatedAtlasClient } from "../../auth/atlas.js";
 import { useAtlas } from "../../state/atlas-context.js";
 import { Button, IconButton } from "../../ui/primitives/controls.js";
 import { CloseIcon } from "../../ui/primitives/icons.js";
@@ -35,9 +36,7 @@ export function PluginsPanel({
   const reader = useMemo<PluginReader | undefined>(
     () =>
       suppliedReader ??
-      (config
-        ? new AtlasClient({ baseUrl: config.atlasBaseUrl, credentials: "include", sync: false }).plugins
-        : undefined),
+      (config ? createAuthenticatedAtlasClient(config.atlasBaseUrl, { sync: false }).plugins : undefined),
     [config, suppliedReader]
   );
   const [snapshot, setSnapshot] = useState<PluginStatus[]>();
@@ -53,17 +52,14 @@ export function PluginsPanel({
     const controller = new AbortController();
     requestRef.current = controller;
     setRefreshing(true);
-    setError(undefined);
     try {
       const next = await reader.list({ signal: controller.signal });
       if (controller.signal.aborted) return;
       setSnapshot(next);
+      setError(undefined);
       setActiveIndex((current) => Math.min(current, Math.max(0, next.length - 1)));
     } catch (cause) {
       if (controller.signal.aborted) return;
-      if (cause instanceof AtlasAPIError && cause.status === 401) {
-        window.dispatchEvent(new Event("atlas-auth-expired"));
-      }
       setError(sanitizeConnectionError(cause));
     } finally {
       if (requestRef.current === controller) {
@@ -146,9 +142,9 @@ export function PluginsPanel({
       selectedPlugin.status === "available" &&
       selectedTargetOperation &&
       spatial ? (
-      <SpatialOperationControls spatial={spatial} />
+      <SpatialOperationControls spatial={spatial} discoveryError={error} />
     ) : (
-      <PluginDetail plugin={selectedPlugin} spatial={spatial} />
+      <PluginDetail plugin={selectedPlugin} spatial={spatial} discoveryError={error} />
     );
   }
 
@@ -186,8 +182,8 @@ export function PluginsPanel({
                   else rowRefs.current.delete(plugin.plugin_id);
                 }}
                 title={plugin.display_name ?? plugin.plugin_id}
-                meta={`${formatStatus(plugin)} · ${operationSummary(plugin)}`}
-                indicatorColor={statusColor(plugin.status)}
+                meta={`${formatStatus(plugin, error !== undefined)} · ${operationSummary(plugin)}`}
+                indicatorColor={statusColor(plugin.status, error !== undefined)}
                 tabIndex={index === activeIndex ? 0 : -1}
                 onClick={() => {
                   setActiveIndex(index);
@@ -204,15 +200,28 @@ export function PluginsPanel({
   );
 }
 
-function PluginDetail({ plugin, spatial }: { plugin: PluginStatus; spatial?: SpatialOperationRunner }) {
+function PluginDetail({
+  plugin,
+  spatial,
+  discoveryError
+}: {
+  plugin: PluginStatus;
+  spatial?: SpatialOperationRunner;
+  discoveryError?: string;
+}) {
   const operations = plugin.operations.filter((operation) => operation.interaction?.kind === "map_area");
   return (
     <div className="plugin-detail" aria-label={plugin.display_name ?? plugin.plugin_id}>
       <div className="plugin-detail__summary">
-        <span className="plugin-detail__status-dot" style={{ background: statusColor(plugin.status) }} aria-hidden />
-        <span>{`${formatStatus(plugin)} · ${operationSummary(plugin)}`}</span>
+        <span
+          className="plugin-detail__status-dot"
+          style={{ background: statusColor(plugin.status, discoveryError !== undefined) }}
+          aria-hidden
+        />
+        <span>{`${formatStatus(plugin, discoveryError !== undefined)} · ${operationSummary(plugin)}`}</span>
       </div>
 
+      {discoveryError ? <PluginDiscoveryError error={discoveryError} /> : null}
       {plugin.status !== "available" ? (
         <Callout className="banner banner--error" intent="danger" icon={null} compact role="status">
           <strong>Plugin unavailable</strong>
@@ -228,6 +237,7 @@ function PluginDetail({ plugin, spatial }: { plugin: PluginStatus; spatial?: Spa
                 title={operation.display_name}
                 meta={`Map area · ${formatTimeout(operation.timeout_ms)}`}
                 indicatorColor="var(--accent)"
+                disabled={discoveryError !== undefined}
                 onClick={() =>
                   spatial?.selectTarget({
                     pluginId: plugin.plugin_id,
@@ -245,14 +255,22 @@ function PluginDetail({ plugin, spatial }: { plugin: PluginStatus; spatial?: Spa
   );
 }
 
-function SpatialOperationControls({ spatial }: { spatial: SpatialOperationRunner }) {
+function SpatialOperationControls({
+  spatial,
+  discoveryError
+}: {
+  spatial: SpatialOperationRunner;
+  discoveryError?: string;
+}) {
   const area = spatial.area;
   const result = spatial.result;
   const featureCount = result?.features.length ?? 0;
   const busy = spatial.status === "loading" || spatial.status === "drawing";
+  const statusUnknown = discoveryError !== undefined;
 
   return (
     <div className="plugin-operation" aria-label={spatial.target?.operationName} data-spatial-operation>
+      {discoveryError ? <PluginDiscoveryError error={discoveryError} /> : null}
       <div className="plugin-operation__area">
         <div className="plugin-operation__area-heading">
           <strong>{area ? "Selected area" : "Area"}</strong>
@@ -266,14 +284,18 @@ function SpatialOperationControls({ spatial }: { spatial: SpatialOperationRunner
         {area ? <div className="plugin-operation__bounds">{formatBounds(area)}</div> : null}
         <div className="plugin-operation__actions">
           {area ? (
-            <Button variant="primary" disabled={busy} onClick={() => void spatial.search()}>
+            <Button variant="primary" disabled={busy || statusUnknown} onClick={() => void spatial.search()}>
               Search
             </Button>
           ) : null}
-          <Button variant={area ? "default" : "primary"} disabled={busy} onClick={spatial.beginDrawing}>
+          <Button
+            variant={area ? "default" : "primary"}
+            disabled={busy || statusUnknown}
+            onClick={spatial.beginDrawing}
+          >
             {area ? "Redraw" : "Draw area"}
           </Button>
-          <Button aria-label="Use current view" disabled={busy} onClick={spatial.useCurrentView}>
+          <Button aria-label="Use current view" disabled={busy || statusUnknown} onClick={spatial.useCurrentView}>
             Current view
           </Button>
         </div>
@@ -345,8 +367,9 @@ function formatBounds(area: { west: number; south: number; east: number; north: 
   return `${area.south.toFixed(5)}, ${area.west.toFixed(5)} to ${area.north.toFixed(5)}, ${area.east.toFixed(5)}`;
 }
 
-function formatStatus(plugin: PluginStatus): string {
-  return plugin.reason_code ? `${plugin.status}: ${formatSpatialReason(plugin.reason_code)}` : plugin.status;
+function formatStatus(plugin: PluginStatus, stale = false): string {
+  const status = plugin.reason_code ? `${plugin.status}: ${formatSpatialReason(plugin.reason_code)}` : plugin.status;
+  return stale ? `status unknown (last check: ${status})` : status;
 }
 
 function operationSummary(plugin: PluginStatus): string {
@@ -358,8 +381,18 @@ function formatTimeout(timeoutMs: number): string {
   return timeoutMs >= 1000 ? `${timeoutMs / 1000}s timeout` : `${timeoutMs}ms timeout`;
 }
 
-function statusColor(status: PluginStatus["status"]): string {
+function statusColor(status: PluginStatus["status"], stale = false): string {
+  if (stale) return "var(--warning)";
   if (status === "available") return "var(--success)";
   if (status === "unavailable") return "var(--error)";
   return "var(--warning)";
+}
+
+function PluginDiscoveryError({ error }: { error: string }) {
+  return (
+    <Callout className="banner banner--error" intent="danger" icon={null} compact role="alert">
+      <strong>Refresh failed. Showing the last check.</strong>
+      <span>{error}</span>
+    </Callout>
+  );
 }
