@@ -591,16 +591,16 @@ describe("MapConsole", () => {
     expect(await screen.findByText("Asset Commands unavailable")).toBeInTheDocument();
   });
 
-  it("does not restart a failed stale Asset detail refresh", async () => {
+  it("waits for a later version before retrying a failed stale Asset detail refresh", async () => {
     const user = userEvent.setup();
     const first = deferred<EntityResource>();
     const second = deferred<EntityResource>();
-    const unexpectedThird = deferred<EntityResource>();
+    const third = deferred<EntityResource>();
     const loadEntityDetails = vi
       .fn<NonNullable<AtlasContextValue["loadEntityDetails"]>>()
       .mockImplementationOnce(() => first.promise)
       .mockImplementationOnce(() => second.promise)
-      .mockImplementation(() => unexpectedThird.promise);
+      .mockImplementationOnce(() => third.promise);
     const baseValue: AtlasContextValue = {
       status: "ready",
       config: appConfig(),
@@ -646,6 +646,24 @@ describe("MapConsole", () => {
     expect(await screen.findByText("Asset Commands unavailable")).toBeInTheDocument();
     await act(async () => Promise.resolve());
     expect(loadEntityDetails).toHaveBeenCalledTimes(2);
+
+    view.rerender(
+      <AtlasStaticProvider
+        value={{
+          ...baseValue,
+          snapshot: {
+            entities: { [rover.entity_id]: { ...rover, metadata: { ...rover.metadata, version: 3 } } },
+            tasks: {}
+          }
+        }}
+      >
+        <MapConsole />
+      </AtlasStaticProvider>
+    );
+    await waitFor(() => expect(loadEntityDetails).toHaveBeenCalledTimes(3));
+    third.resolve({ ...rover, metadata: { ...rover.metadata, version: 3 }, command_manifest: [queuedManifest] });
+
+    expect(await screen.findByText("No operator inputs are available for this Asset's Commands")).toBeInTheDocument();
   });
 
   it("recovers a failed initial Asset detail load when a newer snapshot arrives", async () => {

@@ -70,7 +70,7 @@ type EntityDetailsRequest = {
   inFlight: boolean;
   cancelled: boolean;
   controller?: AbortController;
-  lastRequestedVersion?: number;
+  failedVersion?: number;
   staleRefreshAttempts: number;
   start: () => void;
 };
@@ -155,7 +155,6 @@ export function MapConsole() {
     request.start = () => {
       if (request.cancelled || request.inFlight || detailsRequestRef.current !== request) return;
       request.inFlight = true;
-      request.lastRequestedVersion = desiredEntityVersionRef.current;
       const controller = new AbortController();
       request.controller = controller;
       void atlas
@@ -169,6 +168,7 @@ export function MapConsole() {
               : entity
           );
 
+          request.failedVersion = undefined;
           const desiredVersion = desiredEntityVersionRef.current;
           const stale = desiredVersion !== undefined && entity.metadata.version < desiredVersion;
           if (!stale) {
@@ -188,7 +188,7 @@ export function MapConsole() {
         .catch(() => {
           if (request.cancelled || controller.signal.aborted || detailsRequestRef.current !== request) return;
           request.inFlight = false;
-          request.staleRefreshAttempts = MAX_STALE_DETAIL_REFRESHES;
+          request.failedVersion = desiredEntityVersionRef.current;
           setCommandManifestState({ entityId: request.entityId, status: "unavailable" });
         });
     };
@@ -210,15 +210,16 @@ export function MapConsole() {
         selectedSnapshotEntityVersion !== undefined &&
         selectedDetailsForRequest.metadata.version < selectedSnapshotEntityVersion
     );
-    const failedBeforeDetailsLoaded =
-      !selectedDetailsForRequest &&
-      commandManifestState.entityId === selectedSnapshotEntityId &&
-      commandManifestState.status === "unavailable";
     const newerVersionAfterFailure =
-      failedBeforeDetailsLoaded &&
+      request.failedVersion !== undefined &&
+      commandManifestState.entityId === selectedSnapshotEntityId &&
+      commandManifestState.status === "unavailable" &&
       selectedSnapshotEntityVersion !== undefined &&
-      selectedSnapshotEntityVersion > (request.lastRequestedVersion ?? Number.NEGATIVE_INFINITY);
-    const staleRetryAvailable = detailsAreStale && request.staleRefreshAttempts < MAX_STALE_DETAIL_REFRESHES;
+      selectedSnapshotEntityVersion > request.failedVersion;
+    const staleRetryAvailable =
+      request.failedVersion === undefined &&
+      detailsAreStale &&
+      request.staleRefreshAttempts < MAX_STALE_DETAIL_REFRESHES;
     if (
       !commandDetailsRequired ||
       request.entityId !== selectedSnapshotEntityId ||
