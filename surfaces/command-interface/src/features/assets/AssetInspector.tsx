@@ -115,7 +115,12 @@ export function AssetInspector({
       </Section>
 
       <Section title="Commands">
-        <CommandList availabilities={sidebarCommands} onPick={onPickCommand} emptyLabel={commandEmptyLabel} />
+        <CommandList
+          availabilities={sidebarCommands}
+          onPick={onPickCommand}
+          emptyLabel={commandEmptyLabel}
+          disabled={commandManifestStatus !== "ready"}
+        />
       </Section>
 
       <Section title="Task History">

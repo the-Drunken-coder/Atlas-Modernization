@@ -39,4 +39,15 @@ describe("CommandList", () => {
     );
     expect(screen.getByText("No Commands are defined in Atlas Protocol")).toBeInTheDocument();
   });
+
+  it("disables retained Commands while their manifest is not ready", async () => {
+    const user = userEvent.setup();
+    const onPick = vi.fn();
+    render(<CommandList availabilities={[availability]} onPick={onPick} disabled />);
+
+    const button = screen.getByRole("button", { name: /Fixture queued/ });
+    expect(button).toBeDisabled();
+    await user.click(button);
+    expect(onPick).not.toHaveBeenCalled();
+  });
 });

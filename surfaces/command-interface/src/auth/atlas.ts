@@ -69,15 +69,23 @@ function createAtlasFetch(session: AuthSessionToken): typeof fetch {
   return async (input, init) => {
     const response = await fetch(input, { ...init, credentials: "include" });
     if (response.status === 401 && session === currentSession) {
-      const payload = (await response
+      void response
         .clone()
         .json()
-        .catch(() => undefined)) as { error_code?: unknown } | undefined;
-      if (payload?.error_code === "UNAUTHORIZED" && session === currentSession) {
-        window.dispatchEvent(
-          new CustomEvent<AtlasAuthExpiredEventDetail>(ATLAS_AUTH_EXPIRED_EVENT, { detail: { session } })
-        );
-      }
+        .then((payload: unknown) => {
+          if (
+            typeof payload === "object" &&
+            payload !== null &&
+            "error_code" in payload &&
+            payload.error_code === "UNAUTHORIZED" &&
+            session === currentSession
+          ) {
+            window.dispatchEvent(
+              new CustomEvent<AtlasAuthExpiredEventDetail>(ATLAS_AUTH_EXPIRED_EVENT, { detail: { session } })
+            );
+          }
+        })
+        .catch(() => undefined);
     }
     return response;
   };

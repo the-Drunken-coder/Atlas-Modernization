@@ -5,10 +5,11 @@ type CommandListProps = {
   availabilities: CommandAvailability[];
   onPick: (availability: CommandAvailability) => void;
   emptyLabel?: string;
+  disabled?: boolean;
 };
 
 /** Sidebar list of Commands supported by both Protocol and the selected Asset. */
-export function CommandList({ availabilities, onPick, emptyLabel }: CommandListProps) {
+export function CommandList({ availabilities, onPick, emptyLabel, disabled = false }: CommandListProps) {
   if (availabilities.length === 0) {
     return <div className="panel__empty">{emptyLabel ?? "No commands available"}</div>;
   }
@@ -24,6 +25,7 @@ export function CommandList({ availabilities, onPick, emptyLabel }: CommandListP
             fill
             alignText="start"
             title={command.description}
+            disabled={disabled}
             onClick={() => onPick(availability)}
           >
             <span className="command-row__main">

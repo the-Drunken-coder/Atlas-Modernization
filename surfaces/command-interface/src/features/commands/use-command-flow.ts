@@ -71,13 +71,13 @@ export function useCommandFlow({
 
   useEffect(() => {
     if (commandManifestStatus !== "ready") {
-      dismissCommandForm();
+      setCommandForm(null);
       return;
     }
     if (commandForm && commandForm.manifestGeneration !== commandManifestGeneration) {
-      dismissCommandForm();
+      setCommandForm(null);
     }
-  }, [commandForm, commandManifestGeneration, commandManifestStatus, dismissCommandForm]);
+  }, [commandForm, commandManifestGeneration, commandManifestStatus]);
 
   useEffect(() => {
     const previousSelectedId = previousSelectedIdRef.current;
@@ -160,7 +160,6 @@ export function useCommandFlow({
       }
       closeMapMenu();
       if (availability.input.Form) {
-        pendingSubmissionRef.current = undefined;
         setSubmitError(undefined);
         setCommandForm({ availability, mapPoint, manifestGeneration: manifestGenerationRef.current });
         return;

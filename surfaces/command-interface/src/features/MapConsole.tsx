@@ -194,6 +194,12 @@ export function MapConsole() {
         .catch(() => {
           if (request.cancelled || controller.signal.aborted || detailsRequestRef.current !== request) return;
           request.inFlight = false;
+          const desiredVersion = desiredEntityVersionRef.current;
+          if (request.staleRefreshVersion !== desiredVersion) {
+            request.staleRefreshVersion = desiredVersion;
+            request.staleRefreshAttempts = 0;
+          }
+          request.staleRefreshAttempts = MAX_STALE_DETAIL_REFRESHES;
           setCommandManifestState({ entityId: request.entityId, status: "unavailable" });
         });
     };
@@ -747,6 +753,7 @@ function ListBody({
           <CommandList
             availabilities={catalog ? commandsForTargeting(catalog, selectedEntity, "none") : []}
             onPick={onPickCommand}
+            disabled={commandManifestStatus !== "ready"}
             emptyLabel={
               !catalog
                 ? "Command Catalog unavailable"

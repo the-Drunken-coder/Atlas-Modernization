@@ -591,6 +591,63 @@ describe("MapConsole", () => {
     expect(await screen.findByText("Asset Commands unavailable")).toBeInTheDocument();
   });
 
+  it("does not restart a failed stale Asset detail refresh", async () => {
+    const user = userEvent.setup();
+    const first = deferred<EntityResource>();
+    const second = deferred<EntityResource>();
+    const unexpectedThird = deferred<EntityResource>();
+    const loadEntityDetails = vi
+      .fn<NonNullable<AtlasContextValue["loadEntityDetails"]>>()
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(() => second.promise)
+      .mockImplementation(() => unexpectedThird.promise);
+    const baseValue: AtlasContextValue = {
+      status: "ready",
+      config: appConfig(),
+      snapshot: { entities: { [rover.entity_id]: rover }, tasks: {} },
+      catalog: taskingCatalog,
+      health: healthyConnection,
+      reconnect: vi.fn(),
+      loadEntityDetails,
+      submitCommand: async () => {
+        throw new Error("not used");
+      },
+      updateGeometry: async () => {
+        throw new Error("not used");
+      }
+    };
+    const view = render(
+      <AtlasStaticProvider value={baseValue}>
+        <MapConsole />
+      </AtlasStaticProvider>
+    );
+
+    await user.click(await screen.findByText("Rover"));
+    await waitFor(() => expect(loadEntityDetails).toHaveBeenCalledOnce());
+    first.resolve({ ...rover, command_manifest: [queuedManifest] });
+    expect(await screen.findByText("No operator inputs are available for this Asset's Commands")).toBeInTheDocument();
+
+    view.rerender(
+      <AtlasStaticProvider
+        value={{
+          ...baseValue,
+          snapshot: {
+            entities: { [rover.entity_id]: { ...rover, metadata: { ...rover.metadata, version: 2 } } },
+            tasks: {}
+          }
+        }}
+      >
+        <MapConsole />
+      </AtlasStaticProvider>
+    );
+    await waitFor(() => expect(loadEntityDetails).toHaveBeenCalledTimes(2));
+    second.reject(new Error("detail service unavailable"));
+
+    expect(await screen.findByText("Asset Commands unavailable")).toBeInTheDocument();
+    await act(async () => Promise.resolve());
+    expect(loadEntityDetails).toHaveBeenCalledTimes(2);
+  });
+
   it("recovers a failed initial Asset detail load when a newer snapshot arrives", async () => {
     const user = userEvent.setup();
     const first = deferred<EntityResource>();

@@ -133,6 +133,54 @@ describe("useCommandFlow", () => {
     expect(result.current.submitError).toBeUndefined();
   });
 
+  it("preserves an uncertain form submission across a manifest refresh", async () => {
+    vi.spyOn(crypto, "randomUUID")
+      .mockReturnValueOnce("00000000-0000-4000-8000-000000000001")
+      .mockReturnValueOnce("00000000-0000-4000-8000-000000000002");
+    let rejectSubmission: ((reason: Error) => void) | undefined;
+    const submitCommand = vi
+      .fn<NonNullable<Parameters<typeof useCommandFlow>[0]["submitCommand"]>>()
+      .mockImplementationOnce(
+        () =>
+          new Promise<TaskResource>((_resolve, reject) => {
+            rejectSubmission = reject;
+          })
+      )
+      .mockResolvedValueOnce(task);
+    const { result, rerender } = renderHook(
+      (props: { commandManifestStatus: "ready" | "loading"; commandManifestGeneration: number }) =>
+        useCommandFlow({
+          catalog: commandCatalog,
+          selectedEntity: asset,
+          selectedId: asset.entity_id,
+          submitCommand,
+          ...props
+        }),
+      { initialProps: { commandManifestStatus: "ready", commandManifestGeneration: 1 } }
+    );
+    let submission: Promise<void> | undefined;
+
+    act(() => result.current.pickSidebarCommand(formAvailability));
+    act(() => {
+      submission = result.current.submit(formAvailability, { value: "same" });
+    });
+    rerender({ commandManifestStatus: "loading", commandManifestGeneration: 2 });
+    expect(result.current.commandForm).toBeNull();
+    await act(async () => {
+      rejectSubmission?.(new Error("response lost"));
+      await submission;
+    });
+    expect(result.current.submitError).toBeDefined();
+
+    rerender({ commandManifestStatus: "ready", commandManifestGeneration: 2 });
+    act(() => result.current.pickSidebarCommand(formAvailability));
+    await act(async () => result.current.submit(formAvailability, { value: "same" }));
+
+    expect(submitCommand).toHaveBeenCalledTimes(2);
+    expect(submitCommand.mock.calls[0]?.[0].idempotencyKey).toBe("00000000-0000-4000-8000-000000000001");
+    expect(submitCommand.mock.calls[1]?.[0].idempotencyKey).toBe("00000000-0000-4000-8000-000000000001");
+  });
+
   it("dismisses forms and rejects callbacks from an older manifest generation", async () => {
     const submitCommand = vi.fn().mockResolvedValue(task);
     const { result, rerender } = renderHook(

@@ -33,12 +33,41 @@ describe("Atlas authenticated transport", () => {
       errorCode: "UNAUTHORIZED"
     });
 
-    expect(dispatchEvent).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: ATLAS_AUTH_EXPIRED_EVENT,
-        detail: expect.objectContaining({ session: expect.any(Number) })
-      })
+    await vi.waitFor(() =>
+      expect(dispatchEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: ATLAS_AUTH_EXPIRED_EVENT,
+          detail: expect.objectContaining({ session: expect.any(Number) })
+        })
+      )
     );
+  });
+
+  it("does not hold the SDK response open while inspecting an expiry payload", async () => {
+    vi.stubGlobal("window", { dispatchEvent: vi.fn() });
+    const response = Response.json(
+      { success: false, error_code: "UNAUTHORIZED", message: "Login is required" },
+      { status: 401 }
+    );
+    const hangingClone = response.clone();
+    vi.spyOn(hangingClone, "json").mockImplementation(() => new Promise<never>(() => {}));
+    vi.spyOn(response, "clone").mockReturnValue(hangingClone);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => response)
+    );
+    rotateAuthSession();
+    let settled = false;
+
+    const request = createAuthenticatedAtlasAdminClient("https://core.test")
+      .apiKeys.list()
+      .catch((error: unknown) => {
+        settled = true;
+        return error;
+      });
+
+    await vi.waitFor(() => expect(settled).toBe(true));
+    await expect(request).resolves.toMatchObject({ status: 401, errorCode: "UNAUTHORIZED" });
   });
 
   it("does not report session-check or login 401 responses as expiry", async () => {
