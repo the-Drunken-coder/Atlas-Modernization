@@ -1,6 +1,6 @@
 import { Alert, Callout } from "@blueprintjs/core";
 import type { AdminAPIKey, AdminCreatedAPIKey } from "@the-drunken-coder/atlas-sdk/admin";
-import { type FormEvent, useEffect, useMemo, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { sanitizeConnectionError } from "../../atlas/connection-error.js";
 import { createAuthenticatedAtlasAdminClient } from "../../auth/atlas.js";
 import { useAtlas } from "../../state/atlas-context.js";
@@ -21,6 +21,8 @@ export function APIKeysPanel() {
   const [revoking, setRevoking] = useState<string>();
   const [keyToRevoke, setKeyToRevoke] = useState<AdminAPIKey>();
   const [listAttempt, setListAttempt] = useState(0);
+  const mutationRevisionRef = useRef(0);
+  const refreshing = loadState === "loading";
 
   const admin = useMemo(
     () => (config ? createAuthenticatedAtlasAdminClient(config.atlasBaseUrl) : undefined),
@@ -30,13 +32,15 @@ export function APIKeysPanel() {
   useEffect(() => {
     if (!admin) return;
     let cancelled = false;
+    const mutationRevision = mutationRevisionRef.current;
     setLoadState("loading");
     setError(undefined);
+    setKeyToRevoke(undefined);
     void admin.apiKeys
       .list()
       .then((next) => {
         if (!cancelled) {
-          setKeys(next);
+          if (mutationRevisionRef.current === mutationRevision) setKeys(next);
           setLoadState("ready");
         }
       })
@@ -53,17 +57,18 @@ export function APIKeysPanel() {
 
   const createKey = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!admin || name.trim() === "") return;
+    if (!admin || refreshing || name.trim() === "") return;
     setSubmitting(true);
     setGenerated(undefined);
     setCopied(false);
     setError(undefined);
     try {
       const created = await admin.apiKeys.create({ name });
+      mutationRevisionRef.current += 1;
       setGenerated(created);
       setKeys((current) => [created, ...current.filter((key) => key.id !== created.id)]);
       setName("");
-      setLoadState("ready");
+      setLoadState((current) => (current === "loading" ? current : "ready"));
     } catch (cause) {
       setError(sanitizeConnectionError(cause));
     } finally {
@@ -85,11 +90,12 @@ export function APIKeysPanel() {
   };
 
   const revokeKey = async (key: AdminAPIKey) => {
-    if (!admin || revoking) return;
+    if (!admin || refreshing || revoking) return;
     setRevoking(key.id);
     setError(undefined);
     try {
       await admin.apiKeys.revoke(key.id);
+      mutationRevisionRef.current += 1;
       setKeys((current) => current.filter((entry) => entry.id !== key.id));
       if (generated?.id === key.id) setGenerated(undefined);
     } catch (cause) {
@@ -99,15 +105,15 @@ export function APIKeysPanel() {
     }
   };
 
-  if (loadState === "loading" && keys.length === 0) {
+  if (refreshing && keys.length === 0) {
     return <div className="panel__empty">Loading API keys...</div>;
   }
 
   return (
     <div className="api-keys-panel">
       <form className="api-key-create" onSubmit={createKey}>
-        <TextField label="Name" value={name} onChange={(event) => setName(event.target.value)} />
-        <Button type="submit" variant="primary" disabled={submitting || name.trim() === ""}>
+        <TextField label="Name" value={name} disabled={refreshing} onChange={(event) => setName(event.target.value)} />
+        <Button type="submit" variant="primary" disabled={refreshing || submitting || name.trim() === ""}>
           <PlusIcon size={16} />
           <span>{submitting ? "Creating" : "Create"}</span>
         </Button>
@@ -153,7 +159,7 @@ export function APIKeysPanel() {
               </div>
               <IconButton
                 label={`Revoke ${key.name}`}
-                disabled={revoking !== undefined}
+                disabled={refreshing || revoking !== undefined}
                 onClick={() => setKeyToRevoke(key)}
               >
                 <TrashIcon size={16} />

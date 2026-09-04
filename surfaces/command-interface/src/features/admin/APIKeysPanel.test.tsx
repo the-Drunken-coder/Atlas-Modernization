@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { styleFixture } from "../../../test/fixtures.js";
@@ -189,6 +189,44 @@ describe("APIKeysPanel", () => {
     expect(screen.getByText("existing")).toBeInTheDocument();
   });
 
+  it("does not let a reconnect refresh overwrite a completed revoke", async () => {
+    const user = userEvent.setup();
+    const revoke = deferred<Response>();
+    const refresh = deferred<Response>();
+    const existing = {
+      id: "atlas_ak_existing",
+      name: "existing",
+      key_prefix: "atlas_ak_existing",
+      created_at: "2026-07-01T12:00:00Z",
+      created_by: "admin"
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([existing]))
+      .mockImplementationOnce(() => revoke.promise)
+      .mockImplementationOnce(() => refresh.promise);
+    vi.stubGlobal("fetch", fetchMock);
+    const view = renderPanel();
+
+    await screen.findByText("existing");
+    await user.click(screen.getByRole("button", { name: "Revoke existing" }));
+    await user.click(screen.getByRole("button", { name: "Revoke" }));
+    view.rerender(
+      <AtlasStaticProvider value={{ ...atlasValue, config: { ...atlasValue.config! } }}>
+        <APIKeysPanel />
+      </AtlasStaticProvider>
+    );
+
+    expect(screen.getByLabelText("Name")).toBeDisabled();
+    await act(async () => revoke.resolve(new Response(null, { status: 204 })));
+    expect(screen.queryByText("existing")).not.toBeInTheDocument();
+    expect(screen.getByText("Loading API keys...")).toBeInTheDocument();
+
+    await act(async () => refresh.resolve(jsonResponse([existing])));
+    expect(screen.queryByText("existing")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Name")).toBeEnabled();
+  });
+
   it("announces dynamic API-key errors", async () => {
     const user = userEvent.setup();
     vi.stubGlobal(
@@ -263,4 +301,12 @@ function renderPanel() {
 
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((complete) => {
+    resolve = complete;
+  });
+  return { promise, resolve };
 }
