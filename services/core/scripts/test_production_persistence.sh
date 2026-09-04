@@ -11,8 +11,12 @@ API_URL="http://127.0.0.1:8000"
 ENTITY_ID="durable-restart-entity"
 OBJECT_ID="durable-restart-object"
 ADMIN_ID="durable-restart-admin"
-EXPECTED_SCHEMA_VERSION="8"
+EXPECTED_SCHEMA_VERSION="9"
 MINIO_BUCKET="${MINIO_BUCKET:-atlas-media}"
+POSTGRES_VOLUME="atlas_core_production_postgres_data"
+MINIO_VOLUME="atlas_core_production_minio_data"
+STORAGE_SET_ID="production-persistence-ci"
+CREATED_VOLUMES=()
 MARKER_DIR="$(mktemp -d)"
 MARKER_FILE="${MARKER_DIR}/marker.txt"
 DOWNLOADED_FILE="${MARKER_DIR}/downloaded.txt"
@@ -39,6 +43,9 @@ cleanup() {
         compose logs --no-color || true
     fi
     compose down -v --remove-orphans >/dev/null 2>&1 || true
+    if [ "${#CREATED_VOLUMES[@]}" -gt 0 ]; then
+        docker volume rm --force "${CREATED_VOLUMES[@]}" >/dev/null 2>&1 || true
+    fi
     rm -rf "${MARKER_DIR}"
     exit "${exit_code}"
 }
@@ -49,6 +56,18 @@ for container in atlas_core_production_api atlas_core_production_postgres atlas_
         printf 'Refusing to disturb existing Atlas container: %s\n' "${container}" >&2
         exit 1
     fi
+done
+
+for volume in "${POSTGRES_VOLUME}" "${MINIO_VOLUME}"; do
+    if docker volume inspect "${volume}" >/dev/null 2>&1; then
+        printf 'Refusing to disturb existing Atlas volume: %s\n' "${volume}" >&2
+        exit 1
+    fi
+done
+
+for volume in "${POSTGRES_VOLUME}" "${MINIO_VOLUME}"; do
+    docker volume create --label "io.atlas.core.storage-set=${STORAGE_SET_ID}" "${volume}" >/dev/null
+    CREATED_VOLUMES+=("${volume}")
 done
 
 wait_for_api() {

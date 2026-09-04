@@ -96,17 +96,14 @@ export function matchesSubscription(filter: AtlasSubscription, event: AtlasWatch
     case "all":
       return true;
     case "id":
-      return (
-        event.resource_type === normalized.resource_type &&
-        normalizeResourceID(`${normalized.resource_type}_id`, event.id) === normalized.id
-      );
+      return event.resource_type === normalized.resource_type && event.id === normalized.id;
     case "type":
       return event.resource_type === normalized.resource_type;
     case "tasks_for_asset":
       if (event.resource_type !== "task") {
         return false;
       }
-      return normalizeResourceID("asset_id", event.resource.asset_id) === normalized.asset_id;
+      return event.resource.asset_id === normalized.asset_id;
   }
 }
 
@@ -115,18 +112,21 @@ export function resourceID(type: ResourceType, resource: ResourceValue): string 
   switch (type) {
     case "entity":
       assertResourceMatchesType("entity", resource);
-      return normalizeResourceID("entity_id", resource.entity_id);
+      return resource.entity_id;
     case "task":
       assertResourceMatchesType("task", resource);
-      return normalizeResourceID("task_id", resource.task_id);
+      return resource.task_id;
     case "object":
       assertResourceMatchesType("object", resource);
-      return normalizeResourceID("object_id", resource.object_id);
+      return resource.object_id;
   }
 }
 
 export function resourceCacheKey(type: ResourceType, id: string): string {
-  return JSON.stringify([type, normalizeResourceID(`${type}_id`, id)]);
+  if (!id || id.trim() !== id) {
+    throw new TypeError(`Atlas ${type}_id must be canonical`);
+  }
+  return JSON.stringify([type, id]);
 }
 
 export function localDeleteEvent(
@@ -134,16 +134,15 @@ export function localDeleteEvent(
   id: string,
   previousVersion: number
 ): AtlasLocalDeleteWatchEvent {
-  const normalizedID = normalizeResourceID(`${type}_id`, id);
   switch (type) {
     case "entity":
       return previousVersion > 0
-        ? { event: "local_delete", resource_type: "entity", id: normalizedID, previous_version: previousVersion }
-        : { event: "local_delete", resource_type: "entity", id: normalizedID };
+        ? { event: "local_delete", resource_type: "entity", id, previous_version: previousVersion }
+        : { event: "local_delete", resource_type: "entity", id };
     case "object":
       return previousVersion > 0
-        ? { event: "local_delete", resource_type: "object", id: normalizedID, previous_version: previousVersion }
-        : { event: "local_delete", resource_type: "object", id: normalizedID };
+        ? { event: "local_delete", resource_type: "object", id, previous_version: previousVersion }
+        : { event: "local_delete", resource_type: "object", id };
   }
 }
 
@@ -155,26 +154,25 @@ export function resourceUpsertEvent<TType extends ResourceType>(
   resource: ResourceOf<TType>
 ): FeedEvent {
   const actualID = resourceID(type, resource);
-  const normalizedID = normalizeResourceID(`${type}_id`, id);
-  if (actualID !== normalizedID) {
-    throw new TypeError(`Atlas ${type} resource id ${actualID} does not match event id ${normalizedID}`);
+  if (actualID !== id) {
+    throw new TypeError(`Atlas ${type} resource id ${actualID} does not match event id ${id}`);
   }
   switch (type) {
     case "entity":
       assertResourceMatchesType("entity", resource);
       return event === "create"
-        ? { event: "create", resource_type: "entity", id: normalizedID, version, resource }
-        : { event: "update", resource_type: "entity", id: normalizedID, version, resource };
+        ? { event: "create", resource_type: "entity", id, version, resource }
+        : { event: "update", resource_type: "entity", id, version, resource };
     case "task":
       assertResourceMatchesType("task", resource);
       return event === "create"
-        ? { event: "create", resource_type: "task", id: normalizedID, version, resource }
-        : { event: "update", resource_type: "task", id: normalizedID, version, resource };
+        ? { event: "create", resource_type: "task", id, version, resource }
+        : { event: "update", resource_type: "task", id, version, resource };
     case "object":
       assertResourceMatchesType("object", resource);
       return event === "create"
-        ? { event: "create", resource_type: "object", id: normalizedID, version, resource }
-        : { event: "update", resource_type: "object", id: normalizedID, version, resource };
+        ? { event: "create", resource_type: "object", id, version, resource }
+        : { event: "update", resource_type: "object", id, version, resource };
   }
 }
 

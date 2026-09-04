@@ -40,7 +40,13 @@ func TestAdminLogoutClearsCookieAndReportsRevocationFailure(t *testing.T) {
 	}
 	req := routeRequest(http.MethodPost, "/admin/auth/logout", "")
 	req.Header.Set("Origin", "https://ui.test")
-	req.AddCookie(&http.Cookie{Name: admin.CookieName, Value: "retained-session-token"})
+	req.AddCookie(&http.Cookie{
+		Name:     admin.CookieName,
+		Value:    "retained-session-token",
+		Secure:   true,
+		HttpOnly: true,
+		SameSite: http.SameSiteStrictMode,
+	})
 	rec := httptest.NewRecorder()
 
 	handler.AdminLogout(rec, req)

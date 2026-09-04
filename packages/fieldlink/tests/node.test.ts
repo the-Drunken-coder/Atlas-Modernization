@@ -1598,6 +1598,82 @@ describe("inbound transfer validation", () => {
     ).toBe(true);
   });
 
+  it("allows an accepted message listener to initiate close", async () => {
+    const transport = new MemoryTransport();
+    const node = new FieldLinkNode({
+      nodeId: nodeB,
+      transport,
+      retryTimeoutMs: 250,
+    });
+    let listenerClosed = false;
+    let reportStarted = (): void => undefined;
+    const started = new Promise<void>((resolve) => {
+      reportStarted = resolve;
+    });
+    node.onMessage(async () => {
+      reportStarted();
+      await node.close();
+      listenerClosed = true;
+    });
+    transport.inject({
+      bytes: encodeFrame({
+        transmissionId: 1,
+        kind: FrameKind.complete,
+        source: nodeA,
+        destination: nodeB,
+        logicalId: 74n,
+        messageType: 1,
+        body: testMessage.encode(test("request", 0)),
+      }),
+    });
+
+    await started;
+    await eventually(() => listenerClosed);
+    await expect(node.close()).resolves.toBeUndefined();
+    expect(transport.closed).toBe(true);
+  });
+
+  it("bounds shutdown when an accepted listener never settles", async () => {
+    const transport = new MemoryTransport();
+    const node = new FieldLinkNode({
+      nodeId: nodeB,
+      transport,
+      retryTimeoutMs: 25,
+    });
+    let reportStarted = (): void => undefined;
+    const started = new Promise<void>((resolve) => {
+      reportStarted = resolve;
+    });
+    node.onMessage(() => {
+      reportStarted();
+      return new Promise<void>(() => undefined);
+    });
+    transport.inject({
+      bytes: encodeFrame({
+        transmissionId: 1,
+        kind: FrameKind.complete,
+        source: nodeA,
+        destination: nodeB,
+        logicalId: 75n,
+        messageType: 1,
+        body: testMessage.encode(test("request", 0)),
+      }),
+    });
+
+    await started;
+    const failure = await node.close().then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect(
+      (failure as AggregateError).errors.map((error: Error) => error.message),
+    ).toContain(
+      "Timed out waiting for FieldLink node shutdown work after 25 ms",
+    );
+    expect(transport.closed).toBe(true);
+  });
+
   it("drains an accepted async event listener before close", async () => {
     const transport = new MemoryTransport();
     const node = new FieldLinkNode({ nodeId: nodeB, transport });

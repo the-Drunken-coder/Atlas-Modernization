@@ -112,10 +112,9 @@ export class AtlasClient {
   private readonly checkInEntity = createEntityCheckIn(() => this.engine);
 
   readonly entities = {
-    get: (id: string, options?: ReadOptions) => this.engine.readEntity(normalizeResourceID("entity_id", id), options),
+    get: (id: string, options?: ReadOptions) => this.engine.readEntity(normalizeEntityID(id), options),
     create: (entity: EntityCreateRequest, options?: ResourceCreateOptions) => {
-      const entityID =
-        typeof entity.entity_id === "string" ? normalizeResourceID("entity_id", entity.entity_id) : entity.entity_id;
+      const entityID = typeof entity.entity_id === "string" ? normalizeEntityID(entity.entity_id) : entity.entity_id;
       return this.engine.writeResource(
         "POST",
         "/entities",
@@ -130,7 +129,7 @@ export class AtlasClient {
       );
     },
     update: (id: string, patch: EntityUpdateRequest, options?: { ifMatchVersion?: number }) => {
-      const entityID = normalizeResourceID("entity_id", id);
+      const entityID = normalizeEntityID(id);
       return this.engine.writeResource(
         "PATCH",
         `/entities/${encodeURIComponent(entityID)}`,
@@ -142,19 +141,18 @@ export class AtlasClient {
       );
     },
     delete: (id: string, options?: ResourceDeleteOptions) => {
-      const entityID = normalizeResourceID("entity_id", id);
+      const entityID = normalizeEntityID(id);
       return this.engine.deleteResource("entity", entityID, `/entities/${encodeURIComponent(entityID)}`, options);
     },
     checkIn: this.checkInEntity,
     watch: (id: string, callback: WatchCallback<EntityResource>) =>
-      this.engine.watch({ filter: "id", resource_type: "entity", id: normalizeResourceID("entity_id", id) }, callback)
+      this.engine.watch({ filter: "id", resource_type: "entity", id: normalizeEntityID(id) }, callback)
   };
 
   readonly tasks = {
-    get: (id: string, options?: ReadOptions) => this.engine.readTask(normalizeResourceID("task_id", id), options),
+    get: (id: string, options?: ReadOptions) => this.engine.readTask(normalizeTaskID(id), options),
     create: (task: TaskCreateRequest, options: TaskCreateOptions) => {
-      const assetID =
-        typeof task.asset_id === "string" ? normalizeResourceID("asset_id", task.asset_id) : task.asset_id;
+      const assetID = typeof task.asset_id === "string" ? normalizeAssetID(task.asset_id) : task.asset_id;
       return this.engine.writeTask(
         "POST",
         "/tasks",
@@ -167,7 +165,7 @@ export class AtlasClient {
       );
     },
     acknowledge: (id: string, options: RuntimeContextOptions) => {
-      const taskID = normalizeResourceID("task_id", id);
+      const taskID = normalizeTaskID(id);
       return this.engine.writeTask(
         "POST",
         `/tasks/${encodeURIComponent(taskID)}/acknowledge`,
@@ -176,7 +174,7 @@ export class AtlasClient {
       );
     },
     start: (id: string, options: RuntimeContextOptions) => {
-      const taskID = normalizeResourceID("task_id", id);
+      const taskID = normalizeTaskID(id);
       return this.engine.writeTask(
         "POST",
         `/tasks/${encodeURIComponent(taskID)}/start`,
@@ -185,7 +183,7 @@ export class AtlasClient {
       );
     },
     progress: (id: string, request: TaskProgressRequest, options: RuntimeContextOptions) => {
-      const taskID = normalizeResourceID("task_id", id);
+      const taskID = normalizeTaskID(id);
       return this.engine.writeTask("POST", `/tasks/${encodeURIComponent(taskID)}/progress`, request, {
         requestHeaders: runtimeHeaders(options.runtimeId),
         signal: options.signal,
@@ -193,7 +191,7 @@ export class AtlasClient {
       });
     },
     complete: (id: string, options: TaskCompleteOptions) => {
-      const taskID = normalizeResourceID("task_id", id);
+      const taskID = normalizeTaskID(id);
       const request = options.output === undefined ? {} : { output: options.output };
       Object.setPrototypeOf(request, null);
       return this.engine.writeTask("POST", `/tasks/${encodeURIComponent(taskID)}/complete`, request, {
@@ -203,7 +201,7 @@ export class AtlasClient {
       });
     },
     fail: (id: string, options: TaskFailOptions) => {
-      const taskID = normalizeResourceID("task_id", id);
+      const taskID = normalizeTaskID(id);
       const failure = { code: options.failure.code, message: options.failure.message };
       Object.setPrototypeOf(failure, null);
       const request = { failure };
@@ -215,7 +213,7 @@ export class AtlasClient {
       });
     },
     cancel: (id: string, options: TaskCancelOptions) => {
-      const taskID = normalizeResourceID("task_id", id);
+      const taskID = normalizeTaskID(id);
       return this.engine.writeTask(
         "POST",
         `/tasks/${encodeURIComponent(taskID)}/cancel`,
@@ -224,12 +222,12 @@ export class AtlasClient {
       );
     },
     watch: (id: string, callback: WatchCallback<TaskResource>) =>
-      this.engine.watch({ filter: "id", resource_type: "task", id: normalizeResourceID("task_id", id) }, callback)
+      this.engine.watch({ filter: "id", resource_type: "task", id: normalizeTaskID(id) }, callback)
   };
 
   readonly runtime = {
     begin: (assetId: string, request: RuntimeRegistrationRequest, options?: { signal?: AbortSignal }) => {
-      const normalizedAssetID = normalizeResourceID("asset_id", assetId);
+      const normalizedAssetID = normalizeAssetID(assetId);
       return this.transport.empty(
         "POST",
         `/entities/${encodeURIComponent(normalizedAssetID)}/runtime`,
@@ -239,7 +237,7 @@ export class AtlasClient {
       );
     },
     stop: (assetId: string, request: RuntimeStopRequest, options?: { signal?: AbortSignal }) => {
-      const normalizedAssetID = normalizeResourceID("asset_id", assetId);
+      const normalizedAssetID = normalizeAssetID(assetId);
       return this.transport.empty(
         "POST",
         `/entities/${encodeURIComponent(normalizedAssetID)}/runtime/stop`,
@@ -249,7 +247,7 @@ export class AtlasClient {
       );
     },
     ready: (assetId: string, request: RuntimeReadyRequest, options?: { signal?: AbortSignal }) => {
-      const normalizedAssetID = normalizeResourceID("asset_id", assetId);
+      const normalizedAssetID = normalizeAssetID(assetId);
       return this.transport.empty(
         "POST",
         `/entities/${encodeURIComponent(normalizedAssetID)}/runtime/ready`,
@@ -259,7 +257,7 @@ export class AtlasClient {
       );
     },
     tasks: (assetId: string, options: RuntimeContextOptions) => {
-      const normalizedAssetID = normalizeResourceID("asset_id", assetId);
+      const normalizedAssetID = normalizeAssetID(assetId);
       return this.transport.json(
         "GET",
         `/entities/${encodeURIComponent(normalizedAssetID)}/runtime/tasks`,
@@ -274,10 +272,9 @@ export class AtlasClient {
   };
 
   readonly objects = {
-    get: (id: string, options?: ReadOptions) => this.engine.readObject(normalizeResourceID("object_id", id), options),
+    get: (id: string, options?: ReadOptions) => this.engine.readObject(normalizeObjectID(id), options),
     create: (object: ObjectCreateRequest, options?: ResourceCreateOptions) => {
-      const objectID =
-        typeof object.object_id === "string" ? normalizeResourceID("object_id", object.object_id) : object.object_id;
+      const objectID = typeof object.object_id === "string" ? normalizeObjectID(object.object_id) : object.object_id;
       return this.engine.writeResource(
         "POST",
         "/objects",
@@ -292,7 +289,7 @@ export class AtlasClient {
       );
     },
     update: (id: string, patch: ObjectUpdateRequest, options?: { ifMatchVersion?: number }) => {
-      const objectID = normalizeResourceID("object_id", id);
+      const objectID = normalizeObjectID(id);
       return this.engine.writeResource(
         "PATCH",
         `/objects/${encodeURIComponent(objectID)}`,
@@ -304,12 +301,12 @@ export class AtlasClient {
       );
     },
     delete: (id: string, options?: ResourceDeleteOptions) => {
-      const objectID = normalizeResourceID("object_id", id);
+      const objectID = normalizeObjectID(id);
       return this.engine.deleteResource("object", objectID, `/objects/${encodeURIComponent(objectID)}`, options);
     },
-    content: (id: string) => this.objectContent(normalizeResourceID("object_id", id)),
+    content: (id: string) => this.objectContent(normalizeObjectID(id)),
     watch: (id: string, callback: WatchCallback<ObjectResource>) =>
-      this.engine.watch({ filter: "id", resource_type: "object", id: normalizeResourceID("object_id", id) }, callback)
+      this.engine.watch({ filter: "id", resource_type: "object", id: normalizeObjectID(id) }, callback)
   };
 
   readonly queries = {
@@ -437,27 +434,26 @@ export class AtlasClient {
   }
 
   private async objectContent(id: string): Promise<ArrayBuffer> {
-    const normalizedID = normalizeResourceID("object_id", id);
     for (let attempt = 0; attempt < 2; attempt++) {
-      const object = await this.objects.get(normalizedID, { fresh: true });
-      const key = `${normalizedID}@${object.metadata.version}`;
+      const object = await this.objects.get(id, { fresh: true });
+      const key = `${id}@${object.metadata.version}`;
       const cached = this.objectContents.get(key);
       if (cached) {
         return cached;
       }
-      const data = await this.transport.arrayBuffer("GET", `/objects/${encodeURIComponent(normalizedID)}/download`);
-      const after = await this.objects.get(normalizedID, { fresh: true });
+      const data = await this.transport.arrayBuffer("GET", `/objects/${encodeURIComponent(id)}/download`);
+      const after = await this.objects.get(id, { fresh: true });
       if (after.metadata.version === object.metadata.version) {
         this.objectContents.set(key, data);
         return data;
       }
     }
-    throw new Error(`Atlas object ${normalizedID} changed while downloading content; retry`);
+    throw new Error(`Atlas object ${id} changed while downloading content; retry`);
   }
 }
 
 function checkInRequest(id: string, options?: EntityCheckInOptions): { path: string; body: EntityCheckInRequest } {
-  const normalizedID = normalizeResourceID("entity_id", id);
+  const normalizedID = normalizeEntityID(id);
   const body: EntityCheckInRequest = {};
   if (options?.status !== undefined) body.status = options.status;
   if (options?.components !== undefined) body.components = options.components;
@@ -511,6 +507,22 @@ function createEntityCheckIn(engine: () => SyncEngine): EntityCheckInMethod {
 
 function runtimeHeaders(runtimeId: string): HeadersInit {
   return { "Atlas-Runtime-ID": normalizeOpaqueIdentifier("runtimeId", runtimeId) };
+}
+
+function normalizeEntityID(value: string): string {
+  return normalizeResourceID("entity_id", value);
+}
+
+function normalizeTaskID(value: string): string {
+  return normalizeResourceID("task_id", value);
+}
+
+function normalizeObjectID(value: string): string {
+  return normalizeResourceID("object_id", value);
+}
+
+function normalizeAssetID(value: string): string {
+  return normalizeResourceID("asset_id", value);
 }
 
 function normalizeOpaqueIdentifier(name: string, value: string): string {

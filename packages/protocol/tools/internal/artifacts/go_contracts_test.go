@@ -402,13 +402,20 @@ func TestGoIntegerUnmarshalSourceCoversAuthoredIntegerFields(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
-		"new(big.Rat).SetString",
-		"rational.IsInt()",
+		"atlasProtocolParseBoundedExponent",
+		"atlasProtocolDecodeCanonicalJSON",
+		"strconv.ParseInt",
 		"atlasProtocolMaxSafeInteger int64 = 9007199254740991",
 		"atlasProtocolDecodeOptionalInt64JSON",
+		"unknown field %q",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("generated integer unmarshaller missing %q", want)
+		}
+	}
+	for _, forbidden := range []string{"math/big", "big.Rat"} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("generated integer unmarshaller contains allocation-prone %q", forbidden)
 		}
 	}
 }

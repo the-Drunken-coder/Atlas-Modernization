@@ -72,6 +72,8 @@ func TestGeneratedIntegerUnmarshalAcceptsExactIntegralJSONNumbers(t *testing.T) 
 		"9223372036854775808",
 		"9223372036854775807.5",
 		"1e-4000",
+		"1e1000000",
+		"1e-1000000",
 		"9007199254740993",
 	} {
 		var ready protocol.FeedSubscriptionsReadyMessage
@@ -83,6 +85,7 @@ func TestGeneratedIntegerUnmarshalAcceptsExactIntegralJSONNumbers(t *testing.T) 
 	for _, raw := range []string{
 		`{"type":"subscriptions_ready","version":1.5,"version":1}`,
 		`{"type":"subscriptions_ready","version":1,"version":1.5}`,
+		`{"type":"subscriptions_ready","version":1e1000000,"version":1e1000000}`,
 	} {
 		var ready protocol.FeedSubscriptionsReadyMessage
 		if err := json.Unmarshal([]byte(raw), &ready); err == nil {
@@ -110,6 +113,48 @@ func TestGeneratedIntegerUnmarshalAcceptsExactIntegralJSONNumbers(t *testing.T) 
 	}
 	if ready.Type != "subscriptions_ready" || ready.Version != 7 {
 		t.Fatalf("Unmarshal empty object = %#v, want original values", ready)
+	}
+
+	for _, raw := range []string{
+		`{"type":"subscriptions_ready","VERSION":9007199254740993}`,
+		`{"type":"subscriptions_ready","Version":9007199254740993}`,
+		`{"type":"subscriptions_ready","version":1,"unknown":true}`,
+	} {
+		var strict protocol.FeedSubscriptionsReadyMessage
+		if err := json.Unmarshal([]byte(raw), &strict); err == nil {
+			t.Fatalf("Unmarshal(%s) accepted an unknown or case-variant property", raw)
+		}
+	}
+
+	var deletion protocol.EntityDeleteEvent
+	if err := json.Unmarshal(
+		[]byte(`{"event":"delete","resource_type":"entity","id":"entity-1","version":1}`),
+		&deletion,
+	); err != nil {
+		t.Fatalf("Unmarshal valid EntityDeleteEvent wire properties: %v", err)
+	}
+
+	var manifest protocol.PluginManifest
+	if err := json.Unmarshal(
+		[]byte(`{"plugin_id":"fixture","display_name":"Fixture","operations":[{"operation_id":"run","display_name":"Run","timeout_ms":1,"UNKNOWN":true}]}`),
+		&manifest,
+	); err == nil {
+		t.Fatal("Unmarshal accepted an unknown property inside PluginOperationDescriptor")
+	}
+}
+
+func TestGeneratedFeedEventUnmarshalPreservesNestedJSONNumbers(t *testing.T) {
+	const raw = `{"event":"create","resource_type":"task","id":"task-1","version":1,"resource":{"task_id":"task-1","input":{"value":9007199254740993}}}`
+	var event protocol.FeedEvent
+	if err := json.Unmarshal([]byte(raw), &event); err != nil {
+		t.Fatalf("Unmarshal FeedEvent: %v", err)
+	}
+	encoded, err := json.Marshal(event.Resource)
+	if err != nil {
+		t.Fatalf("Marshal FeedEvent resource: %v", err)
+	}
+	if !strings.Contains(string(encoded), `"value":9007199254740993`) {
+		t.Fatalf("FeedEvent resource lost nested number precision: %s", encoded)
 	}
 }
 

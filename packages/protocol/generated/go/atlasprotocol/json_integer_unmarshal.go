@@ -7,7 +7,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"math/big"
+	"strconv"
+	"strings"
 )
 
 const atlasProtocolMaxSafeInteger int64 = 9007199254740991
@@ -30,18 +31,77 @@ func atlasProtocolDecodeInt64JSON(raw json.RawMessage) (int64, error) {
 	if !ok {
 		return 0, fmt.Errorf("expected JSON number")
 	}
-	rational, ok := new(big.Rat).SetString(number.String())
-	if !ok {
-		return 0, fmt.Errorf("invalid JSON number %q", number)
+	return atlasProtocolParseSafeInteger(number.String())
+}
+
+func atlasProtocolParseSafeInteger(number string) (int64, error) {
+	negative := strings.HasPrefix(number, "-")
+	unsigned := strings.TrimPrefix(number, "-")
+	mantissa := unsigned
+	exponent := 0
+	if index := strings.IndexAny(unsigned, "eE"); index >= 0 {
+		mantissa = unsigned[:index]
+		parsed, err := atlasProtocolParseBoundedExponent(unsigned[index+1:], len(unsigned)+32)
+		if err != nil {
+			return 0, fmt.Errorf("invalid JSON number %q", number)
+		}
+		exponent = parsed
 	}
-	if !rational.IsInt() {
-		return 0, fmt.Errorf("JSON number %q is not an integer", number)
+	fractionDigits := 0
+	digits := mantissa
+	if index := strings.IndexByte(mantissa, '.'); index >= 0 {
+		fractionDigits = len(mantissa) - index - 1
+		digits = mantissa[:index] + mantissa[index+1:]
 	}
-	integer := rational.Num()
-	if integer.Cmp(big.NewInt(-atlasProtocolMaxSafeInteger)) < 0 || integer.Cmp(big.NewInt(atlasProtocolMaxSafeInteger)) > 0 {
+	digits = strings.TrimLeft(digits, "0")
+	if digits == "" {
+		return 0, nil
+	}
+	scale := exponent - fractionDigits
+	if scale < 0 {
+		remove := -scale
+		if remove >= len(digits) || len(digits)-len(strings.TrimRight(digits, "0")) < remove {
+			return 0, fmt.Errorf("JSON number %q is not an integer", number)
+		}
+		digits = digits[:len(digits)-remove]
+	} else if scale > 0 {
+		if len(digits)+scale > 16 {
+			return 0, fmt.Errorf("JSON integer %q exceeds the safe range", number)
+		}
+		digits += strings.Repeat("0", scale)
+	}
+	if len(digits) > 16 {
 		return 0, fmt.Errorf("JSON integer %q exceeds the safe range", number)
 	}
-	return integer.Int64(), nil
+	magnitude, err := strconv.ParseInt(digits, 10, 64)
+	if err != nil || magnitude > atlasProtocolMaxSafeInteger {
+		return 0, fmt.Errorf("JSON integer %q exceeds the safe range", number)
+	}
+	if negative {
+		return -magnitude, nil
+	}
+	return magnitude, nil
+}
+
+func atlasProtocolParseBoundedExponent(text string, limit int) (int, error) {
+	negative := strings.HasPrefix(text, "-")
+	digits := strings.TrimPrefix(strings.TrimPrefix(text, "-"), "+")
+	if digits == "" {
+		return 0, fmt.Errorf("missing exponent")
+	}
+	value := 0
+	for _, digit := range digits {
+		if digit < '0' || digit > '9' {
+			return 0, fmt.Errorf("invalid exponent")
+		}
+		if value < limit {
+			value = min(limit, value*10+int(digit-'0'))
+		}
+	}
+	if negative {
+		return -value, nil
+	}
+	return value, nil
 }
 
 func atlasProtocolDecodeOptionalInt64JSON(raw json.RawMessage) (*int64, error) {
@@ -55,7 +115,7 @@ func atlasProtocolDecodeOptionalInt64JSON(raw json.RawMessage) (*int64, error) {
 	return &value, nil
 }
 
-func atlasProtocolCanonicalizeIntegerFields(data []byte, optional map[string]bool) (map[string]json.RawMessage, error) {
+func atlasProtocolCanonicalizeIntegerFields(data []byte, allowed map[string]struct{}, optional map[string]bool) (map[string]json.RawMessage, error) {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	token, err := decoder.Token()
 	if err != nil {
@@ -75,6 +135,9 @@ func atlasProtocolCanonicalizeIntegerFields(data []byte, optional map[string]boo
 		if !ok {
 			return nil, fmt.Errorf("expected JSON object key")
 		}
+		if _, ok := allowed[name]; !ok {
+			return nil, fmt.Errorf("unknown field %q", name)
+		}
 		var rawValue json.RawMessage
 		if err := decoder.Decode(&rawValue); err != nil {
 			return nil, err
@@ -89,17 +152,14 @@ func atlasProtocolCanonicalizeIntegerFields(data []byte, optional map[string]boo
 				if optionalValue == nil {
 					canonical = []byte("null")
 				} else {
-					canonical, err = json.Marshal(*optionalValue)
+					canonical = strconv.AppendInt(nil, *optionalValue, 10)
 				}
 			} else {
 				decoded, err := atlasProtocolDecodeInt64JSON(rawValue)
 				if err != nil {
 					return nil, fmt.Errorf("%s: %w", name, err)
 				}
-				canonical, err = json.Marshal(decoded)
-			}
-			if err != nil {
-				return nil, err
+				canonical = strconv.AppendInt(nil, decoded, 10)
 			}
 			raw[name] = canonical
 			continue
@@ -121,12 +181,18 @@ func atlasProtocolCanonicalizeIntegerFields(data []byte, optional map[string]boo
 	return raw, nil
 }
 
+func atlasProtocolDecodeCanonicalJSON(data []byte, target any) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	return decoder.Decode(target)
+}
+
 func (value *ChangedSinceResponse) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(bytes.Trim(data, " \t\r\n"), []byte("null")) {
 		return nil
 	}
 	type alias ChangedSinceResponse
-	raw, err := atlasProtocolCanonicalizeIntegerFields(data, map[string]bool{"version": false})
+	raw, err := atlasProtocolCanonicalizeIntegerFields(data, map[string]struct{}{"events": {}, "has_more": {}, "next_cursor": {}, "version": {}}, map[string]bool{"version": false})
 	if err != nil {
 		return err
 	}
@@ -135,7 +201,7 @@ func (value *ChangedSinceResponse) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	decoded := alias(*value)
-	if err := json.Unmarshal(canonical, &decoded); err != nil {
+	if err := atlasProtocolDecodeCanonicalJSON(canonical, &decoded); err != nil {
 		return err
 	}
 	*value = ChangedSinceResponse(decoded)
@@ -147,7 +213,7 @@ func (value *EntityDeleteEvent) UnmarshalJSON(data []byte) error {
 		return nil
 	}
 	type alias EntityDeleteEvent
-	raw, err := atlasProtocolCanonicalizeIntegerFields(data, map[string]bool{"version": false})
+	raw, err := atlasProtocolCanonicalizeIntegerFields(data, map[string]struct{}{"event": {}, "id": {}, "resource_type": {}, "version": {}}, map[string]bool{"version": false})
 	if err != nil {
 		return err
 	}
@@ -156,7 +222,7 @@ func (value *EntityDeleteEvent) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	decoded := alias(*value)
-	if err := json.Unmarshal(canonical, &decoded); err != nil {
+	if err := atlasProtocolDecodeCanonicalJSON(canonical, &decoded); err != nil {
 		return err
 	}
 	*value = EntityDeleteEvent(decoded)
@@ -168,7 +234,7 @@ func (value *FeedEvent) UnmarshalJSON(data []byte) error {
 		return nil
 	}
 	type alias FeedEvent
-	raw, err := atlasProtocolCanonicalizeIntegerFields(data, map[string]bool{"version": false})
+	raw, err := atlasProtocolCanonicalizeIntegerFields(data, map[string]struct{}{"event": {}, "id": {}, "resource": {}, "resource_type": {}, "version": {}}, map[string]bool{"version": false})
 	if err != nil {
 		return err
 	}
@@ -177,7 +243,7 @@ func (value *FeedEvent) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	decoded := alias(*value)
-	if err := json.Unmarshal(canonical, &decoded); err != nil {
+	if err := atlasProtocolDecodeCanonicalJSON(canonical, &decoded); err != nil {
 		return err
 	}
 	*value = FeedEvent(decoded)
@@ -189,7 +255,7 @@ func (value *FeedSubscriptionsReadyMessage) UnmarshalJSON(data []byte) error {
 		return nil
 	}
 	type alias FeedSubscriptionsReadyMessage
-	raw, err := atlasProtocolCanonicalizeIntegerFields(data, map[string]bool{"version": false})
+	raw, err := atlasProtocolCanonicalizeIntegerFields(data, map[string]struct{}{"type": {}, "version": {}}, map[string]bool{"version": false})
 	if err != nil {
 		return err
 	}
@@ -198,7 +264,7 @@ func (value *FeedSubscriptionsReadyMessage) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	decoded := alias(*value)
-	if err := json.Unmarshal(canonical, &decoded); err != nil {
+	if err := atlasProtocolDecodeCanonicalJSON(canonical, &decoded); err != nil {
 		return err
 	}
 	*value = FeedSubscriptionsReadyMessage(decoded)
@@ -210,7 +276,7 @@ func (value *FullDatasetResponse) UnmarshalJSON(data []byte) error {
 		return nil
 	}
 	type alias FullDatasetResponse
-	raw, err := atlasProtocolCanonicalizeIntegerFields(data, map[string]bool{"version": false})
+	raw, err := atlasProtocolCanonicalizeIntegerFields(data, map[string]struct{}{"entities": {}, "has_more_entities": {}, "has_more_objects": {}, "has_more_tasks": {}, "next_entity_cursor": {}, "next_object_cursor": {}, "next_task_cursor": {}, "objects": {}, "tasks": {}, "version": {}}, map[string]bool{"version": false})
 	if err != nil {
 		return err
 	}
@@ -219,7 +285,7 @@ func (value *FullDatasetResponse) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	decoded := alias(*value)
-	if err := json.Unmarshal(canonical, &decoded); err != nil {
+	if err := atlasProtocolDecodeCanonicalJSON(canonical, &decoded); err != nil {
 		return err
 	}
 	*value = FullDatasetResponse(decoded)
@@ -231,7 +297,7 @@ func (value *MetadataBlock) UnmarshalJSON(data []byte) error {
 		return nil
 	}
 	type alias MetadataBlock
-	raw, err := atlasProtocolCanonicalizeIntegerFields(data, map[string]bool{"version": false})
+	raw, err := atlasProtocolCanonicalizeIntegerFields(data, map[string]struct{}{"created_at": {}, "updated_at": {}, "version": {}}, map[string]bool{"version": false})
 	if err != nil {
 		return err
 	}
@@ -240,7 +306,7 @@ func (value *MetadataBlock) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	decoded := alias(*value)
-	if err := json.Unmarshal(canonical, &decoded); err != nil {
+	if err := atlasProtocolDecodeCanonicalJSON(canonical, &decoded); err != nil {
 		return err
 	}
 	*value = MetadataBlock(decoded)
@@ -252,7 +318,7 @@ func (value *ObjectDeleteEvent) UnmarshalJSON(data []byte) error {
 		return nil
 	}
 	type alias ObjectDeleteEvent
-	raw, err := atlasProtocolCanonicalizeIntegerFields(data, map[string]bool{"version": false})
+	raw, err := atlasProtocolCanonicalizeIntegerFields(data, map[string]struct{}{"event": {}, "id": {}, "resource_type": {}, "version": {}}, map[string]bool{"version": false})
 	if err != nil {
 		return err
 	}
@@ -261,7 +327,7 @@ func (value *ObjectDeleteEvent) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	decoded := alias(*value)
-	if err := json.Unmarshal(canonical, &decoded); err != nil {
+	if err := atlasProtocolDecodeCanonicalJSON(canonical, &decoded); err != nil {
 		return err
 	}
 	*value = ObjectDeleteEvent(decoded)
@@ -273,7 +339,7 @@ func (value *ObjectDetailResource) UnmarshalJSON(data []byte) error {
 		return nil
 	}
 	type alias ObjectDetailResource
-	raw, err := atlasProtocolCanonicalizeIntegerFields(data, map[string]bool{"size_bytes": true})
+	raw, err := atlasProtocolCanonicalizeIntegerFields(data, map[string]struct{}{"bucket": {}, "content_type": {}, "extra": {}, "metadata": {}, "object_id": {}, "path": {}, "referenced_by": {}, "size_bytes": {}, "type": {}, "usage_hints": {}}, map[string]bool{"size_bytes": true})
 	if err != nil {
 		return err
 	}
@@ -282,7 +348,7 @@ func (value *ObjectDetailResource) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	decoded := alias(*value)
-	if err := json.Unmarshal(canonical, &decoded); err != nil {
+	if err := atlasProtocolDecodeCanonicalJSON(canonical, &decoded); err != nil {
 		return err
 	}
 	*value = ObjectDetailResource(decoded)
@@ -294,7 +360,7 @@ func (value *ObjectResource) UnmarshalJSON(data []byte) error {
 		return nil
 	}
 	type alias ObjectResource
-	raw, err := atlasProtocolCanonicalizeIntegerFields(data, map[string]bool{"size_bytes": true})
+	raw, err := atlasProtocolCanonicalizeIntegerFields(data, map[string]struct{}{"bucket": {}, "content_type": {}, "metadata": {}, "object_id": {}, "path": {}, "referenced_by": {}, "size_bytes": {}, "type": {}, "usage_hints": {}}, map[string]bool{"size_bytes": true})
 	if err != nil {
 		return err
 	}
@@ -303,7 +369,7 @@ func (value *ObjectResource) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	decoded := alias(*value)
-	if err := json.Unmarshal(canonical, &decoded); err != nil {
+	if err := atlasProtocolDecodeCanonicalJSON(canonical, &decoded); err != nil {
 		return err
 	}
 	*value = ObjectResource(decoded)
@@ -315,7 +381,7 @@ func (value *PluginOperationDescriptor) UnmarshalJSON(data []byte) error {
 		return nil
 	}
 	type alias PluginOperationDescriptor
-	raw, err := atlasProtocolCanonicalizeIntegerFields(data, map[string]bool{"timeout_ms": false})
+	raw, err := atlasProtocolCanonicalizeIntegerFields(data, map[string]struct{}{"display_name": {}, "interaction": {}, "operation_id": {}, "timeout_ms": {}}, map[string]bool{"timeout_ms": false})
 	if err != nil {
 		return err
 	}
@@ -324,7 +390,7 @@ func (value *PluginOperationDescriptor) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	decoded := alias(*value)
-	if err := json.Unmarshal(canonical, &decoded); err != nil {
+	if err := atlasProtocolDecodeCanonicalJSON(canonical, &decoded); err != nil {
 		return err
 	}
 	*value = PluginOperationDescriptor(decoded)

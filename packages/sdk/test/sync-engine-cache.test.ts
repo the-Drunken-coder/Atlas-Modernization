@@ -249,7 +249,6 @@ describe("AtlasClient sync: cache projection and reads", () => {
     expect(client.sync.snapshot().entities[original.entity_id]).toEqual(original);
     expect(watch).not.toHaveBeenCalled();
     const cache = (client as unknown as { engine: { cache: ResourceCache } }).engine.cache;
-    expect(cache.inFlightDeletes).toEqual(new Set());
     expect(cache.pendingDeletes).toEqual(new Set());
     expect(cache.locallyNotifiedDeletes).toEqual(new Set());
   });
@@ -290,7 +289,6 @@ describe("AtlasClient sync: cache projection and reads", () => {
     await expect(deletion).resolves.toBeUndefined();
     expect(watch).toHaveBeenCalledWith(undefined, deleteEvent);
     const cache = (client as unknown as { engine: { cache: ResourceCache } }).engine.cache;
-    expect(cache.inFlightDeletes).toEqual(new Set());
     expect(cache.pendingDeletes).toEqual(new Set());
     expect(cache.locallyNotifiedDeletes).toEqual(new Set());
   });
@@ -335,9 +333,95 @@ describe("AtlasClient sync: cache projection and reads", () => {
     expect(watch.mock.calls[0]).toEqual([undefined, deleteEvent]);
     expect(watch.mock.calls[1]).toEqual([recreated, expect.objectContaining({ event: "create" })]);
     const cache = (client as unknown as { engine: { cache: ResourceCache } }).engine.cache;
-    expect(cache.inFlightDeletes).toEqual(new Set());
     expect(cache.pendingDeletes).toEqual(new Set());
     expect(cache.locallyNotifiedDeletes).toEqual(new Set());
+  });
+
+  it("keeps a fresh point read visible after an older delete response arrives", async () => {
+    const core = new FakeCore();
+    const original = core.upsertEntity(entity("asset-point-read-recreated"));
+    let releaseDelete!: () => void;
+    const deleteGate = new Promise<void>((resolve) => {
+      releaseDelete = resolve;
+    });
+    const fetchImpl: typeof fetch = async (url, init) => {
+      if (new URL(String(url)).pathname === `/entities/${original.entity_id}` && init?.method === "DELETE") {
+        const response = await core.fetch(String(url), init);
+        await deleteGate;
+        return response;
+      }
+      return core.fetch(String(url), init);
+    };
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: fetchImpl,
+      WebSocket: core.attachWebSocketGlobal(),
+      sync: "all",
+      pollIntervalMs: 0
+    });
+    await client.sync.start();
+
+    const deletion = client.entities.delete(original.entity_id);
+    await vi.waitFor(() => expect(core.deleteEvents).toHaveLength(1));
+    const recreated = core.upsertEntity({ ...entity(original.entity_id), alias: "fresh point read" });
+    await expect(client.entities.get(original.entity_id, { fresh: true })).resolves.toEqual(recreated);
+    releaseDelete();
+
+    await expect(deletion).resolves.toBeUndefined();
+    expect(client.sync.snapshot().entities[original.entity_id]).toEqual(recreated);
+  });
+
+  it("keeps a recreated hydration entry after an older delete finishes", () => {
+    const cache = new ResourceCache();
+    const original = entity("asset-hydrated-recreated");
+    cache.cacheResource("entity", original.entity_id, original);
+    const deletion = cache.beginLocalDelete("entity", original.entity_id);
+    const recreated = { ...original, alias: "hydrated recreation", metadata: metadata(2) };
+
+    cache.replaceHydratedResources({ entities: [recreated], tasks: [], objects: [] });
+
+    expect(cache.finishLocalDelete(deletion)).toBeUndefined();
+    expect(cache.value("entity", original.entity_id)).toEqual(recreated);
+  });
+
+  it("keeps an overlapping successful delete when the older request fails", async () => {
+    const core = new FakeCore();
+    const original = core.upsertEntity(entity("asset-overlapping-deletes"));
+    let deleteAttempts = 0;
+    let failFirstDelete!: () => void;
+    const firstDeleteGate = new Promise<void>((resolve) => {
+      failFirstDelete = resolve;
+    });
+    const fetchImpl: typeof fetch = async (url, init) => {
+      if (new URL(String(url)).pathname === `/entities/${original.entity_id}` && init?.method === "DELETE") {
+        deleteAttempts += 1;
+        if (deleteAttempts === 1) {
+          await firstDeleteGate;
+          throw new Error("older delete failed");
+        }
+      }
+      return core.fetch(String(url), init);
+    };
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: fetchImpl,
+      WebSocket: core.attachWebSocketGlobal(),
+      sync: "all",
+      pollIntervalMs: 0
+    });
+    await client.sync.start();
+    const watch = vi.fn();
+    client.entities.watch(original.entity_id, watch);
+
+    const failingDelete = client.entities.delete(original.entity_id);
+    await vi.waitFor(() => expect(deleteAttempts).toBe(1));
+    await expect(client.entities.delete(original.entity_id)).resolves.toBeUndefined();
+    failFirstDelete();
+    await expect(failingDelete).rejects.toThrow("older delete failed");
+
+    expect(client.sync.snapshot().entities[original.entity_id]).toBeUndefined();
+    expect(watch).toHaveBeenCalledOnce();
+    expect(watch).toHaveBeenCalledWith(undefined, expect.objectContaining({ event: "local_delete" }));
   });
 
   it("drains paginated full-dataset hydration responses", async () => {
@@ -954,10 +1038,11 @@ describe("AtlasClient sync: cache projection and reads", () => {
     expect(client.sync.snapshot().tasks[original.task_id].asset_id).toBe("asset-old");
   });
 
-  it("canonicalizes cache identity and watcher filters for resource IDs", async () => {
+  it("requires canonical cache identity and normalizes watcher filters", async () => {
     const cache = new ResourceCache();
     const cached = entity("asset-cache-canonical");
-    expect(cache.cacheResource("entity", " asset-cache-canonical ", cached)).toBe(true);
+    expect(() => cache.cacheResource("entity", " asset-cache-canonical ", cached)).toThrow("does not match cache id");
+    expect(cache.cacheResource("entity", "asset-cache-canonical", cached)).toBe(true);
     expect(cache.value("entity", "asset-cache-canonical")).toEqual(cached);
     expect(cache.snapshot().entities).toEqual({ [cached.entity_id]: cached });
 

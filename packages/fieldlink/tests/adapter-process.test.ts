@@ -586,6 +586,49 @@ describe("adapter process proxy", () => {
     await expect(closing).resolves.toBeUndefined();
   });
 
+  it("allows a proxy listener to initiate close", async () => {
+    let listenerClosed = false;
+    const adapter = await AdapterProcessNode.start({
+      path: "test",
+      channel: 1,
+      allowInboxDrain: true,
+      exitTimeoutMs: 500,
+      program: nodeScript(listenerDrainChildScript()),
+    });
+    adapter.onMessage(async () => {
+      await adapter.close();
+      listenerClosed = true;
+    });
+
+    await adapter.activate();
+    await eventually(() => listenerClosed);
+    await expect(adapter.close()).resolves.toBeUndefined();
+  });
+
+  it("bounds close when a proxy listener never settles", async () => {
+    let reportStarted = (): void => undefined;
+    const started = new Promise<void>((resolve) => {
+      reportStarted = resolve;
+    });
+    const adapter = await AdapterProcessNode.start({
+      path: "test",
+      channel: 1,
+      allowInboxDrain: true,
+      exitTimeoutMs: 500,
+      program: nodeScript(listenerDrainChildScript()),
+    });
+    adapter.onMessage(() => {
+      reportStarted();
+      return new Promise<void>(() => undefined);
+    });
+
+    await adapter.activate();
+    await started;
+    await expect(adapter.close()).rejects.toThrow(
+      "Timed out waiting for adapter listener callbacks",
+    );
+  });
+
   it("reaps an adapter that fails before readiness", async () => {
     await expect(
       AdapterProcessNode.start({

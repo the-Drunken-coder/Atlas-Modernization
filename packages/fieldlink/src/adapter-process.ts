@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { extname } from "node:path";
 import { createInterface } from "node:readline";
@@ -534,6 +535,13 @@ interface PendingRequest {
   readonly cleanup: () => void;
 }
 
+interface ActiveCallback {
+  promise: Promise<void>;
+  awaitingClose: boolean;
+  readonly releaseFromDrain: () => void;
+  readonly releasedFromDrain: Promise<void>;
+}
+
 interface AdapterExit {
   readonly code: number | null;
   readonly signal: NodeJS.Signals | null;
@@ -561,7 +569,8 @@ export class AdapterProcessNode {
   readonly #eventListeners = new Set<
     (event: FieldLinkEvent) => void | Promise<void>
   >();
-  readonly #activeCallbacks = new Set<Promise<void>>();
+  readonly #activeCallbacks = new Set<ActiveCallback>();
+  readonly #callbackContext = new AsyncLocalStorage<ActiveCallback>();
   #nextRequestId = 1;
   #failure: Error | undefined;
   #activation: Promise<void> | undefined;
@@ -855,6 +864,11 @@ export class AdapterProcessNode {
   }
 
   close(): Promise<void> {
+    const callback = this.#callbackContext.getStore();
+    if (callback !== undefined && !callback.awaitingClose) {
+      callback.awaitingClose = true;
+      callback.releaseFromDrain();
+    }
     this.#closePromise ??= this.#close();
     return this.#closePromise;
   }
@@ -898,7 +912,15 @@ export class AdapterProcessNode {
         ),
       );
     }
-    await this.#drainCallbacks();
+    try {
+      await withTimeout(
+        this.#drainCallbacks(),
+        this.#exitTimeoutMs,
+        "adapter listener callbacks",
+      );
+    } catch (error: unknown) {
+      closeErrors.push(asError(error));
+    }
     const [closeError] = closeErrors;
     if (closeError !== undefined && closeErrors.length === 1) {
       throw closeError;
@@ -1037,7 +1059,7 @@ export class AdapterProcessNode {
                 receivedAt: new Date(message.message.receivedAt),
               };
               for (const listener of this.#messageListeners) {
-                this.#trackCallback(
+                this.#trackCallback(() =>
                   Promise.resolve()
                     .then(() => listener(received))
                     .catch(async (error: unknown) => {
@@ -1053,7 +1075,7 @@ export class AdapterProcessNode {
                 receivedAt: new Date(message.message.receivedAt),
               };
               for (const listener of this.#passiveMessageListeners) {
-                this.#trackCallback(
+                this.#trackCallback(() =>
                   Promise.resolve()
                     .then(() => listener(received))
                     .catch(async (error: unknown) => {
@@ -1065,7 +1087,7 @@ export class AdapterProcessNode {
             }
             case "event":
               for (const listener of this.#eventListeners) {
-                this.#trackCallback(
+                this.#trackCallback(() =>
                   Promise.resolve()
                     .then(() => listener(message.event))
                     .catch(async (error: unknown) => {
@@ -1100,17 +1122,40 @@ export class AdapterProcessNode {
     })();
   }
 
-  #trackCallback(callback: Promise<void>): void {
+  #trackCallback(operation: () => void | Promise<void>): void {
+    let releaseFromDrain = (): void => undefined;
+    const releasedFromDrain = new Promise<void>((resolve) => {
+      releaseFromDrain = resolve;
+    });
+    const callback: ActiveCallback = {
+      promise: Promise.resolve(),
+      awaitingClose: false,
+      releaseFromDrain,
+      releasedFromDrain,
+    };
+    callback.promise = this.#callbackContext.run(callback, async () =>
+      operation(),
+    );
     this.#activeCallbacks.add(callback);
     const clear = (): void => {
       this.#activeCallbacks.delete(callback);
     };
-    void callback.then(clear, clear);
+    void callback.promise.then(clear, clear);
   }
 
   async #drainCallbacks(): Promise<void> {
-    while (this.#activeCallbacks.size > 0) {
-      await Promise.allSettled([...this.#activeCallbacks]);
+    for (;;) {
+      const pending = [...this.#activeCallbacks].filter(
+        (callback) => !callback.awaitingClose,
+      );
+      if (pending.length === 0) {
+        return;
+      }
+      await Promise.allSettled(
+        pending.map((callback) =>
+          Promise.race([callback.promise, callback.releasedFromDrain]),
+        ),
+      );
     }
   }
 

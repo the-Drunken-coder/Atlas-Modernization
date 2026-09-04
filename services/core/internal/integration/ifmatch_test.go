@@ -202,7 +202,7 @@ func TestResourceInstanceTokenPreconditionsForEntityAndObject(t *testing.T) {
 			requireHTTPStatus(t, resp, http.StatusNoContent, "ordinary delete replacement "+resource.name)
 			drainClose(resp)
 
-			otherBody := map[string]interface{}{}
+			var otherBody map[string]interface{}
 			if resource.name == "entity" {
 				otherBody = map[string]interface{}{"entity_id": resource.id + "-reuse", "entity_type": "asset"}
 			} else {

@@ -6,7 +6,6 @@ import {
   type ResourceType,
   type TaskResource
 } from "./protocol.js";
-import { normalizeResourceID } from "./resource-id.js";
 import { resourceCacheKey, resourceID } from "./subscriptions.js";
 import type { CacheEntry, DeletableResourceType, ResourceOf, SyncSnapshot } from "./types.js";
 
@@ -19,6 +18,12 @@ export type CacheResourceOptions = {
 
 type SnapshotRecords = {
   [TType in ResourceType]: SnapshotRecord<ResourceOf<TType>>;
+};
+
+type LocalDeleteOperation = {
+  readonly type: DeletableResourceType;
+  readonly id: string;
+  readonly observedEntry: object | undefined;
 };
 
 class SnapshotRecord<T> {
@@ -93,7 +98,6 @@ export class ResourceCache {
   };
   readonly pendingDeletes = new Set<string>();
   readonly locallyNotifiedDeletes = new Set<string>();
-  readonly inFlightDeletes = new Set<string>();
   private readonly snapshotRecords: SnapshotRecords = {
     entity: new SnapshotRecord<EntityResource>(),
     task: new SnapshotRecord<TaskResource>(),
@@ -104,7 +108,7 @@ export class ResourceCache {
   lastVersion = 0;
 
   entry<TType extends ResourceType>(type: TType, id: string): CacheEntry<ResourceOf<TType>> | undefined {
-    return this.entries[type].get(normalizeResourceID(`${type}_id`, id));
+    return this.entries[type].get(id);
   }
 
   value<TType extends ResourceType>(type: TType, id: string): ResourceOf<TType> | undefined {
@@ -113,7 +117,7 @@ export class ResourceCache {
   }
 
   objectDetail(id: string): ObjectDetailResource | undefined {
-    const entry = this.entries.object.get(normalizeResourceID("object_id", id));
+    const entry = this.entries.object.get(id);
     return entry?.detail && entry.value && !entry.deleted && isObjectDetailResource(entry.value)
       ? entry.value
       : undefined;
@@ -155,13 +159,12 @@ export class ResourceCache {
     value: ResourceOf<TType>,
     options?: CacheResourceOptions
   ): boolean {
-    const normalizedID = normalizeResourceID(`${type}_id`, id);
     const actualID = resourceID(type, value);
-    if (actualID !== normalizedID) {
-      throw new TypeError(`Atlas ${type} resource id ${actualID} does not match cache id ${normalizedID}`);
+    if (actualID !== id) {
+      throw new TypeError(`Atlas ${type} resource id ${actualID} does not match cache id ${id}`);
     }
     const version = options?.version ?? embeddedResourceVersion(type, value);
-    const existing = this.entries[type].get(normalizedID);
+    const existing = this.entries[type].get(id);
     const isDetailUpgrade =
       type === "object" && options?.detail === true && existing?.version === version && existing.detail !== true;
     if (existing && existing.version > version) {
@@ -171,11 +174,11 @@ export class ResourceCache {
       return false;
     }
     const immutableValue = immutableClone(value);
-    const key = resourceCacheKey(type, normalizedID);
-    this.updateSnapshot(type, normalizedID, immutableValue);
+    const key = resourceCacheKey(type, id);
+    this.updateSnapshot(type, id, immutableValue);
     this.pendingDeletes.delete(key);
     this.locallyNotifiedDeletes.delete(key);
-    this.entries[type].set(normalizedID, {
+    this.entries[type].set(id, {
       value: immutableValue,
       version,
       deleted: false,
@@ -192,44 +195,31 @@ export class ResourceCache {
   }
 
   versionFor(type: ResourceType, id: string): number {
-    return this.entries[type].get(normalizeResourceID(`${type}_id`, id))?.version ?? 0;
+    return this.entries[type].get(id)?.version ?? 0;
   }
 
   markRemoteDelete(type: ResourceType, id: string, version: number): void {
-    const normalizedID = normalizeResourceID(`${type}_id`, id);
-    this.entries[type].set(normalizedID, { version, deleted: true });
-    this.removeFromSnapshot(type, normalizedID);
+    this.entries[type].set(id, { version, deleted: true });
+    this.removeFromSnapshot(type, id);
   }
 
   markLocalDelete(type: DeletableResourceType, id: string): number {
-    const normalizedID = normalizeResourceID(`${type}_id`, id);
-    const previousEntry = this.entries[type].get(normalizedID);
+    const previousEntry = this.entries[type].get(id);
     const previousVersion = previousEntry?.version ?? 0;
-    this.markRemoteDelete(type, normalizedID, previousVersion);
-    const key = resourceCacheKey(type, normalizedID);
+    this.markRemoteDelete(type, id, previousVersion);
+    const key = resourceCacheKey(type, id);
     this.pendingDeletes.add(key);
     this.locallyNotifiedDeletes.add(key);
     return previousVersion;
   }
 
-  beginLocalDelete(type: DeletableResourceType, id: string): void {
-    const normalizedID = normalizeResourceID(`${type}_id`, id);
-    this.inFlightDeletes.add(resourceCacheKey(type, normalizedID));
+  beginLocalDelete(type: DeletableResourceType, id: string): LocalDeleteOperation {
+    return { type, id, observedEntry: this.entries[type].get(id) };
   }
 
-  finishLocalDelete(type: DeletableResourceType, id: string): number | undefined {
-    const normalizedID = normalizeResourceID(`${type}_id`, id);
-    const key = resourceCacheKey(type, normalizedID);
-    if (!this.inFlightDeletes.delete(key)) return undefined;
-    return this.markLocalDelete(type, normalizedID);
-  }
-
-  cancelLocalDelete(type: DeletableResourceType, id: string): void {
-    this.inFlightDeletes.delete(resourceCacheKey(type, normalizeResourceID(`${type}_id`, id)));
-  }
-
-  clearInFlightDelete(type: ResourceType, id: string): void {
-    this.inFlightDeletes.delete(resourceCacheKey(type, normalizeResourceID(`${type}_id`, id)));
+  finishLocalDelete(operation: LocalDeleteOperation): number | undefined {
+    if (this.entries[operation.type].get(operation.id) !== operation.observedEntry) return undefined;
+    return this.markLocalDelete(operation.type, operation.id);
   }
 
   private updateSnapshot<TType extends ResourceType>(type: TType, id: string, value: ResourceOf<TType>): void {

@@ -39,12 +39,7 @@ export function isNotFoundError(error: unknown): boolean {
 }
 
 export function isResourceInstanceTokenPreconditionFailure(error: unknown): boolean {
-  return (
-    error instanceof AtlasAPIError &&
-    error.status === 412 &&
-    error.errorCode === "PRECONDITION_FAILED" &&
-    error.message.startsWith("Resource instance token precondition failed")
-  );
+  return error instanceof AtlasAPIError && error.status === 412 && error.errorCode === "PRECONDITION_FAILED";
 }
 
 function abortableFetch(signal?: AbortSignal): typeof fetch {

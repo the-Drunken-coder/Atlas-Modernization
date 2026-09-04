@@ -112,6 +112,8 @@ export function MapConsole() {
   const selectedSnapshotEntityId = selectedSnapshotEntity?.entity_id;
   const selectedSnapshotEntityVersion = selectedSnapshotEntity?.metadata.version;
   const [selectedEntityDetails, setSelectedEntityDetails] = useState<EntityResource>();
+  const selectedEntityDetailsIdRef = useRef<string | undefined>(undefined);
+  selectedEntityDetailsIdRef.current = selectedEntityDetails?.entity_id;
   const [commandManifestStatus, setCommandManifestStatus] = useState<CommandManifestStatus>("ready");
   const commandDetailsRequired = Boolean(
     selectedSnapshotEntity &&
@@ -121,7 +123,10 @@ export function MapConsole() {
   );
   useEffect(() => {
     let cancelled = false;
-    setSelectedEntityDetails(undefined);
+    const hasSelectedEntityDetails = selectedEntityDetailsIdRef.current === selectedSnapshotEntityId;
+    if (!hasSelectedEntityDetails) {
+      setSelectedEntityDetails(undefined);
+    }
     if (!commandDetailsRequired || !selectedSnapshotEntityId || !atlas.loadEntityDetails) {
       setCommandManifestStatus("ready");
       return () => {
@@ -129,7 +134,9 @@ export function MapConsole() {
       };
     }
     const controller = new AbortController();
-    setCommandManifestStatus("loading");
+    if (!hasSelectedEntityDetails) {
+      setCommandManifestStatus("loading");
+    }
     void atlas
       .loadEntityDetails(selectedSnapshotEntityId, controller.signal)
       .then((entity) => {

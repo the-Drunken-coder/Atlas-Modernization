@@ -625,6 +625,59 @@ describe("MapConsole", () => {
     expect(await screen.findByText("This Asset has no Commands")).toBeInTheDocument();
   });
 
+  it("keeps loaded Asset commands visible while refreshing runtime details", async () => {
+    const user = userEvent.setup();
+    const pending = deferred<EntityResource>();
+    const loadEntityDetails = vi
+      .fn()
+      .mockResolvedValueOnce({ ...rover, command_manifest: [queuedManifest] })
+      .mockImplementationOnce(() => pending.promise);
+    const baseValue: AtlasContextValue = {
+      status: "ready",
+      config: appConfig(),
+      snapshot: { entities: { [rover.entity_id]: rover }, tasks: {} },
+      catalog: taskingCatalog,
+      health: healthyConnection,
+      reconnect: vi.fn(),
+      loadEntityDetails,
+      submitCommand: async () => {
+        throw new Error("not used");
+      },
+      updateGeometry: async () => {
+        throw new Error("not used");
+      }
+    };
+    const view = render(
+      <AtlasStaticProvider value={baseValue}>
+        <MapConsole />
+      </AtlasStaticProvider>
+    );
+
+    await user.click(await screen.findByText("Rover"));
+    await user.click(screen.getByRole("button", { name: /Commands/ }));
+    expect(await screen.findByText("No operator inputs are available for this Asset's Commands")).toBeInTheDocument();
+
+    view.rerender(
+      <AtlasStaticProvider
+        value={{
+          ...baseValue,
+          snapshot: {
+            entities: { [rover.entity_id]: { ...rover, metadata: { ...rover.metadata, version: 2 } } },
+            tasks: {}
+          }
+        }}
+      >
+        <MapConsole />
+      </AtlasStaticProvider>
+    );
+
+    await waitFor(() => expect(loadEntityDetails).toHaveBeenCalledTimes(2));
+    expect(screen.getByText("No operator inputs are available for this Asset's Commands")).toBeInTheDocument();
+
+    pending.resolve({ ...rover, metadata: { ...rover.metadata, version: 2 }, command_manifest: [] });
+    expect(await screen.findByText("This Asset has no Commands")).toBeInTheDocument();
+  });
+
   it("aborts obsolete Asset detail requests when selection changes", async () => {
     const user = userEvent.setup();
     const signals: AbortSignal[] = [];

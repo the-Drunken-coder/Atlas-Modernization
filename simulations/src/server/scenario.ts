@@ -137,11 +137,20 @@ export function createScenarioContext(args: {
   const assertRunOwned = (resource: CreatedResource) => {
     assertRunOwnedResourceId(args.runId, resource);
   };
+  const instanceTokens = new Map<string, string>();
   const newClient = (options?: { sync?: ClientMode; pollIntervalMs?: number }) => {
     throwIfCancelled();
     const rawClient = args.clientFactory({ ...options, signal: args.signal });
     args.registerClient(rawClient);
-    return trackClientCreates(rawClient, track, trackCleanupCandidate, assertRunOwned, throwIfCancelled, args.signal);
+    return trackClientCreates(
+      rawClient,
+      track,
+      trackCleanupCandidate,
+      instanceTokens,
+      assertRunOwned,
+      throwIfCancelled,
+      args.signal
+    );
   };
   const client = newClient({ sync: false });
   const idForName = createIdFactory(args.runId);
@@ -173,6 +182,7 @@ function trackClientCreates(
   client: AtlasClientLike,
   track: (resource: CreatedResource) => void,
   trackCleanupCandidate: (resource: CleanupResource) => void,
+  instanceTokens: Map<string, string>,
   assertRunOwned: (resource: CreatedResource) => void,
   throwIfCancelled: () => void,
   signal: AbortSignal
@@ -195,8 +205,10 @@ function trackClientCreates(
   ): Promise<T> => {
     throwIfCancelled();
     assertRunOwned(resource);
-    const instanceToken = randomUUID();
+    const key = `${resource.type}\0${resource.id}`;
+    const instanceToken = instanceTokens.get(key) ?? randomUUID();
     trackCleanupCandidate({ ...resource, instanceToken });
+    instanceTokens.set(key, instanceToken);
     const created = await operation(instanceToken);
     track(resource);
     throwIfCancelled();

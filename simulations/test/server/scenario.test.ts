@@ -224,6 +224,72 @@ describe("scenario input parsing", () => {
     ]);
   });
 
+  it("reuses the cleanup token when a create is retried through another client", async () => {
+    for (const type of ["entity", "object"] as const) {
+      const core = createFakeAtlasCore();
+      const createTokens: string[] = [];
+      const cleanupCandidates: Array<{ type: string; id: string; instanceToken: string }> = [];
+      let failFirstCreate = true;
+      const ctx = scenarioContext({
+        runId: `sim-retry-${type}`,
+        clientFactory: () => {
+          const client = core.factory();
+          const beforeCreate = (instanceToken: string | undefined) => {
+            createTokens.push(instanceToken ?? "");
+            if (failFirstCreate) {
+              failFirstCreate = false;
+              throw new Error("transient create failure");
+            }
+          };
+          return {
+            ...client,
+            entities: {
+              ...client.entities,
+              create: async (entity, options) => {
+                beforeCreate(options?.instanceToken);
+                return client.entities.create(entity, options);
+              }
+            },
+            objects: {
+              ...client.objects,
+              create: async (object, options) => {
+                beforeCreate(options?.instanceToken);
+                return client.objects.create(object, options);
+              }
+            }
+          };
+        },
+        trackCleanupCandidate: (resource) => {
+          if (
+            !cleanupCandidates.some((candidate) => candidate.type === resource.type && candidate.id === resource.id)
+          ) {
+            cleanupCandidates.push(resource);
+          }
+        }
+      });
+      const resourceID = ctx.id(type);
+      const create = (client: typeof ctx.client) =>
+        type === "entity"
+          ? client.entities.create({ entity_id: resourceID, entity_type: "asset" })
+          : client.objects.create({ object_id: resourceID });
+
+      await expect(create(ctx.client)).rejects.toThrow("transient create failure");
+      await expect(create(ctx.newClient())).resolves.toBeDefined();
+
+      expect(createTokens).toHaveLength(2);
+      expect(createTokens[0]).toBe(createTokens[1]);
+      expect(cleanupCandidates).toEqual([{ type, id: resourceID, instanceToken: createTokens[0] }]);
+
+      const cleanupClient = ctx.newClient();
+      if (type === "entity") {
+        await cleanupClient.entities.delete(resourceID, { instanceToken: cleanupCandidates[0].instanceToken });
+      } else {
+        await cleanupClient.objects.delete(resourceID, { instanceToken: cleanupCandidates[0].instanceToken });
+      }
+      expect(core.state.deleted).toEqual([`${type}:${resourceID}`]);
+    }
+  });
+
   it("preserves full and minimal check-in response inference", () => {
     const ctx = scenarioContext({
       runId: "sim-check-in-types"
