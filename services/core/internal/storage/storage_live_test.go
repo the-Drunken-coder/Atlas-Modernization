@@ -44,7 +44,7 @@ func TestLiveStorageObjectLifecycle(t *testing.T) {
 		t.Fatalf("uploaded object info = %#v", info)
 	}
 
-	reader, streamedInfo, err := client.StreamObjectPath(ctx, objectID, path)
+	reader, streamedInfo, err := client.StreamObjectPath(ctx, objectID, bucket, path)
 	if err != nil {
 		t.Fatalf("StreamObjectPath: %v", err)
 	}
@@ -60,13 +60,13 @@ func TestLiveStorageObjectLifecycle(t *testing.T) {
 		t.Fatalf("streamed body/info = %q %#v", string(body), streamedInfo)
 	}
 
-	if err := client.DeleteObjectPath(ctx, path); err != nil {
+	if err := client.DeleteObjectPath(ctx, bucket, path); err != nil {
 		t.Fatalf("DeleteObjectPath: %v", err)
 	}
-	if _, _, err := client.StreamObjectPath(ctx, objectID, path); !isObjectNotFound(err) {
+	if _, _, err := client.StreamObjectPath(ctx, objectID, bucket, path); !isObjectNotFound(err) {
 		t.Fatalf("StreamObjectPath deleted object error = %v, want ObjectNotFoundError", err)
 	}
-	if err := client.DeleteObjectPath(ctx, path); err != nil {
+	if err := client.DeleteObjectPath(ctx, bucket, path); err != nil {
 		t.Fatalf("DeleteObjectPath missing key should be idempotent: %v", err)
 	}
 	if err := client.EmptyBucket(ctx); err != nil {

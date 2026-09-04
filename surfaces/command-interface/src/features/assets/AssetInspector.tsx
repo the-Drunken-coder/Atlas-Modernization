@@ -59,8 +59,8 @@ export function AssetInspector({ entity, snapshot, catalog, onPickCommand }: Ass
       <Section title="Status">
         <FieldGrid
           rows={[
-            ["State", entityStatusValue(entity) ?? "—"],
-            ["Link", connection ? <ConnectionStatusPill key="connection-status" status={connection} /> : "—"],
+            ["State", entityStatusValue(entity) ?? "N/A"],
+            ["Link", connection ? <ConnectionStatusPill key="connection-status" status={connection} /> : "N/A"],
             [
               "Heartbeat",
               level ? (
@@ -70,10 +70,10 @@ export function AssetInspector({ entity, snapshot, catalog, onPickCommand }: Ass
                   accent={level === "clock-error" ? "var(--text-3)" : heartbeatColor(level)}
                 />
               ) : (
-                "—"
+                "N/A"
               )
             ],
-            ["Battery", battery !== undefined ? formatPercent(battery) : "—"]
+            ["Battery", battery !== undefined ? formatPercent(battery) : "N/A"]
           ]}
         />
       </Section>
@@ -81,8 +81,8 @@ export function AssetInspector({ entity, snapshot, catalog, onPickCommand }: Ass
       <Section title="Location & Movement">
         <FieldGrid
           rows={[
-            ["Latitude", position ? position[1].toFixed(5) : "—"],
-            ["Longitude", position ? position[0].toFixed(5) : "—"],
+            ["Latitude", position ? position[1].toFixed(5) : "N/A"],
+            ["Longitude", position ? position[0].toFixed(5) : "N/A"],
             ["Altitude", formatNumber(entityAltitude(entity), { unit: "m", digits: 0 })],
             ["Heading", formatNumber(entityHeading(entity), { unit: "°", digits: 0 })],
             ["Speed", formatNumber(entitySpeed(entity), { unit: "m/s", digits: 1 })]

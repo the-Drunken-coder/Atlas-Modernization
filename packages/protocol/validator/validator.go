@@ -282,14 +282,7 @@ func normalizeForJSONSchemaValue(value any, active map[jsonReference]struct{}) (
 	case json.RawMessage:
 		return decodeRawJSON(typed)
 	case json.Number:
-		if i, err := typed.Int64(); err == nil {
-			return i, nil
-		}
-		f, err := typed.Float64()
-		if err != nil {
-			return typed.String(), nil
-		}
-		return f, nil
+		return typed, nil
 	default:
 		return normalizeReflectedJSONValue(reflect.ValueOf(value), active)
 	}
@@ -459,6 +452,8 @@ func semanticErrors(definition string, value any) []string {
 	switch definition {
 	case "CommandCatalog":
 		return commandCatalogSemanticErrors(value)
+	case "CommandManifest":
+		return commandManifestSemanticErrors(value)
 	case "MapArea":
 		return mapAreaSemanticErrors(value)
 	case "SpatialGeometry":
@@ -516,6 +511,14 @@ func mapAreaSemanticErrors(value any) []string {
 }
 
 func commandCatalogSemanticErrors(value any) []string {
+	return commandNameSemanticErrors(value)
+}
+
+func commandManifestSemanticErrors(value any) []string {
+	return commandNameSemanticErrors(value)
+}
+
+func commandNameSemanticErrors(value any) []string {
 	payload, ok := value.([]any)
 	if !ok {
 		return nil

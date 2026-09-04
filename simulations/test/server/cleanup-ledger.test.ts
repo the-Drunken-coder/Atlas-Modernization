@@ -60,7 +60,7 @@ describe("CleanupLedger", () => {
     const run = record();
     const filePath = path.join(directory, `${run.runId}.json`);
     mkdirSync(directory, { recursive: true, mode: 0o777 });
-    writeFileSync(filePath, JSON.stringify({ version: 1, run }), { mode: 0o666 });
+    writeFileSync(filePath, JSON.stringify({ version: 2, run }), { mode: 0o666 });
     chmodSync(directory, 0o777);
     chmodSync(filePath, 0o666);
 
@@ -73,25 +73,33 @@ describe("CleanupLedger", () => {
     const ledger = new CleanupLedger(temporaryLedgerDirectory());
     const run = record();
 
-    expect(() => ledger.save({ ...run, resources: [{ type: "entity", id: "external-entity" }] })).toThrow(
-      "outside its run ID prefix"
-    );
+    expect(() =>
+      ledger.save({ ...run, resources: [{ type: "entity", id: "external-entity", instanceToken: "external" }] })
+    ).toThrow("outside its run ID prefix");
     expect(() => ledger.save({ ...run, resources: [run.resources[0]!, run.resources[0]!] })).toThrow(
       "duplicate resources"
     );
     expect(ledger.load()).toEqual([]);
   });
 
-  it("rejects attacker-chosen run IDs and loopback targets", () => {
+  it("rejects attacker-chosen run IDs and every loopback target form", () => {
     const ledger = new CleanupLedger(temporaryLedgerDirectory());
     const run = record();
 
     expect(() =>
-      ledger.save({ ...run, runId: "external", resources: [{ type: "entity", id: "external-entity" }] })
+      ledger.save({
+        ...run,
+        runId: "external",
+        resources: [{ type: "entity", id: "external-entity", instanceToken: "external" }]
+      })
     ).toThrow("invalid run record");
-    expect(() => ledger.save({ ...run, target: { ...run.target, baseUrl: "https://localhost:8443" } })).toThrow(
-      "invalid run record"
-    );
+    for (const baseUrl of [
+      "https://localhost:8443",
+      "https://[::ffff:127.0.0.1]:8443",
+      "https://[::ffff:7f00:1]:8443"
+    ]) {
+      expect(() => ledger.save({ ...run, target: { ...run.target, baseUrl } })).toThrow("invalid run record");
+    }
     expect(ledger.load()).toEqual([]);
   });
 
@@ -100,7 +108,8 @@ describe("CleanupLedger", () => {
     const run = record();
     const resources = Array.from({ length: 1_002 }, (_, index) => ({
       type: "entity" as const,
-      id: `${run.runId}-asset-${index}`
+      id: `${run.runId}-asset-${index}`,
+      instanceToken: `token-${index}`
     }));
 
     expect(() => ledger.save({ ...run, resources })).toThrow("contains too many resources");
@@ -111,7 +120,7 @@ describe("CleanupLedger", () => {
     mkdirSync(malformedDirectory, { recursive: true });
     writeFileSync(
       path.join(malformedDirectory, `${record().runId}.json`),
-      JSON.stringify({ version: 1, run: { unexpected: true } })
+      JSON.stringify({ version: 2, run: { unexpected: true } })
     );
 
     expect(() => new CleanupLedger(malformedDirectory).load()).toThrow("invalid run record");
@@ -119,11 +128,21 @@ describe("CleanupLedger", () => {
     const symlinkDirectory = temporaryLedgerDirectory();
     mkdirSync(symlinkDirectory, { recursive: true });
     const targetPath = path.join(path.dirname(symlinkDirectory), "target");
-    writeFileSync(targetPath, JSON.stringify({ version: 1, run: record() }));
+    writeFileSync(targetPath, JSON.stringify({ version: 2, run: record() }));
     const symlinkPath = path.join(symlinkDirectory, `${record().runId}.json`);
     symlinkSync(targetPath, symlinkPath);
 
     expect(() => new CleanupLedger(symlinkDirectory).load()).toThrow("regular file");
+  });
+
+  it("fails closed for legacy ledgers without instance tokens", () => {
+    const directory = temporaryLedgerDirectory();
+    mkdirSync(directory, { recursive: true });
+    const run = record();
+    const legacyRun = { ...run, resources: [{ type: "entity", id: `${run.runId}-asset` }] };
+    writeFileSync(path.join(directory, `${run.runId}.json`), JSON.stringify({ version: 1, run: legacyRun }));
+
+    expect(() => new CleanupLedger(directory).load()).toThrow("unsupported schema");
   });
 
   it("rejects symlinked ledger directories", () => {
@@ -140,7 +159,7 @@ describe("CleanupLedger", () => {
     mkdirSync(directory, { recursive: true });
     writeFileSync(
       path.join(directory, "sim-ledger-file.json"),
-      JSON.stringify({ version: 1, run: record("sim-ledger-other") })
+      JSON.stringify({ version: 2, run: record("sim-ledger-other") })
     );
 
     expect(() => new CleanupLedger(directory).load()).toThrow("filename does not match");
@@ -158,7 +177,7 @@ function record(runId = "sim-ledger-test"): CleanupLedgerRecord {
       label: "Deployed Core",
       baseUrl: "https://atlas.example.test"
     },
-    resources: [{ type: "entity", id: `${runId}-asset` }]
+    resources: [{ type: "entity", id: `${runId}-asset`, instanceToken: `${runId}-token` }]
   };
 }
 

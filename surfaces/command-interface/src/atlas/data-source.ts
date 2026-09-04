@@ -25,7 +25,7 @@ export type ConnectionHealth = { running: boolean; healthy: boolean; degraded: b
 export interface AtlasDataSource {
   snapshot(): AtlasSnapshot;
   loadCommandCatalog(): Promise<CommandCatalog>;
-  loadEntityDetails?(entityId: string): Promise<EntityResource>;
+  loadEntityDetails?(entityId: string, signal?: AbortSignal): Promise<EntityResource>;
   watch(onSnapshot: (snapshot: AtlasSnapshot) => void): () => void;
   start(): Promise<void>;
   submitCommand(submission: CommandSubmission): Promise<TaskResource>;
@@ -55,7 +55,7 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
 
     loadCommandCatalog: () => client.commandCatalog(),
 
-    loadEntityDetails: (entityId) => client.entities.get(entityId, { fresh: true }),
+    loadEntityDetails: (entityId, signal) => client.entities.get(entityId, { fresh: true, signal }),
 
     watch(onSnapshot) {
       let previous = client.sync.snapshot();

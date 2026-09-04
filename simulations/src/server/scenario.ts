@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type {
   EntityCheckInFullResponse,
   EntityCheckInMinimalResponse,
@@ -14,6 +15,7 @@ import type {
   ScenarioInputField
 } from "../shared/types.js";
 import type { AtlasClientFactory, AtlasClientLike, ClientMode } from "./atlas.js";
+import type { CleanupResource } from "./run-store-types.js";
 
 type NumberInputField = Extract<ScenarioInputField, { type: "number" }>;
 
@@ -115,7 +117,7 @@ export function createScenarioContext(args: {
   log(message: string, data?: JSONValue): void;
   assert(name: string, passed: boolean, message?: string): AssertionResult;
   track(resource: CreatedResource): void;
-  trackCleanupCandidate?(resource: CreatedResource): void;
+  trackCleanupCandidate?(resource: CleanupResource): void;
   registerClient(client: AtlasClientLike): void;
 }): ScenarioContext {
   const throwIfCancelled = () => {
@@ -127,7 +129,7 @@ export function createScenarioContext(args: {
     if (resource.type !== "task") assertRunOwnedResourceId(args.runId, resource);
     args.track(resource);
   };
-  const trackCleanupCandidate = (resource: CreatedResource) => {
+  const trackCleanupCandidate = (resource: CleanupResource) => {
     if (resource.type === "task") return;
     assertRunOwnedResourceId(args.runId, resource);
     args.trackCleanupCandidate?.(resource);
@@ -170,7 +172,7 @@ function assertRunOwnedResourceId(runId: string, resource: CreatedResource): voi
 function trackClientCreates(
   client: AtlasClientLike,
   track: (resource: CreatedResource) => void,
-  trackCleanupCandidate: (resource: CreatedResource) => void,
+  trackCleanupCandidate: (resource: CleanupResource) => void,
   assertRunOwned: (resource: CreatedResource) => void,
   throwIfCancelled: () => void,
   signal: AbortSignal
@@ -187,11 +189,15 @@ function trackClientCreates(
     throwIfCancelled();
     return result;
   };
-  const createTracked = async <T>(resource: CreatedResource, operation: () => Promise<T>): Promise<T> => {
+  const createTracked = async <T>(
+    resource: CreatedResource,
+    operation: (instanceToken: string) => Promise<T>
+  ): Promise<T> => {
     throwIfCancelled();
     assertRunOwned(resource);
-    trackCleanupCandidate(resource);
-    const created = await operation();
+    const instanceToken = randomUUID();
+    trackCleanupCandidate({ ...resource, instanceToken });
+    const created = await operation(instanceToken);
     track(resource);
     throwIfCancelled();
     return created;
@@ -233,12 +239,14 @@ function trackClientCreates(
   return {
     entities: {
       get: (id) => guarded(() => client.entities.get(id)),
-      create: async (entity) => {
+      create: async (entity, options) => {
         const resource = { type: "entity", id: entity.entity_id } satisfies CreatedResource;
-        return createTracked(resource, () => client.entities.create(entity));
+        return createTracked(resource, (instanceToken) =>
+          client.entities.create(entity, { ...options, instanceToken })
+        );
       },
       update: (id, patch) => guarded(() => client.entities.update(id, patch)),
-      delete: (id) => guarded(() => client.entities.delete(id)),
+      delete: (id, options) => guarded(() => client.entities.delete(id, options)),
       checkIn
     },
     tasks: {
@@ -265,11 +273,11 @@ function trackClientCreates(
     },
     objects: {
       get: (id) => guarded(() => client.objects.get(id)),
-      create: async (object) => {
+      create: async (object, options) => {
         const resource = { type: "object", id: object.object_id } satisfies CreatedResource;
-        return createTracked(resource, () => client.objects.create(object));
+        return createTracked(resource, (instanceToken) => client.objects.create(object, { ...options, instanceToken }));
       },
-      delete: (id) => guarded(() => client.objects.delete(id))
+      delete: (id, options) => guarded(() => client.objects.delete(id, options))
     },
     queries: {
       full: () => guarded(() => client.queries.full())

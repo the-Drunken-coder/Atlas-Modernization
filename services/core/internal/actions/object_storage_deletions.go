@@ -258,7 +258,7 @@ func (a *ObjectActions) completeQueuedStorageDeletionByID(ctx context.Context, i
 }
 
 func (a *ObjectActions) deleteQueuedStoragePathNow(ctx context.Context, bucket, path string) error {
-	if err := a.storage.DeleteObjectPath(ctx, path); err != nil {
+	if err := a.storage.DeleteObjectPath(ctx, bucket, path); err != nil {
 		if recordErr := a.recordQueuedStorageDeletionFailure(ctx, bucket, path, err); recordErr != nil {
 			return fmt.Errorf("storage deletion failed: %w (also failed to update retry metadata: %w)", err, recordErr)
 		}
@@ -293,15 +293,15 @@ func (a *ObjectActions) ReconcileStorageDeletions(ctx context.Context, limit int
 	deleted := 0
 	configuredBucket := strings.TrimSpace(a.storage.Bucket())
 	for _, item := range queued {
-		if strings.TrimSpace(item.bucket) != configuredBucket {
-			if err := a.recordQueuedStorageDeletionFailureByID(ctx, item.id, item.attempts, "configured storage bucket does not match queued deletion bucket"); err != nil {
-				return deleted, errors.Join(recoveryErr, fmt.Errorf("record storage deletion bucket mismatch: %w", err))
-			}
-			continue
-		}
-
 		var live bool
-		if err := a.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM objects WHERE path = $1)`, item.path).Scan(&live); err != nil {
+		if err := a.pool.QueryRow(ctx, `
+			SELECT EXISTS (
+				SELECT 1
+				FROM objects
+				WHERE path = $1
+					AND COALESCE(NULLIF(BTRIM(json->>'bucket'), ''), $3) = $2
+			)
+		`, item.path, item.bucket, configuredBucket).Scan(&live); err != nil {
 			return deleted, errors.Join(recoveryErr, fmt.Errorf("check queued storage path live reference: %w", err))
 		}
 		if live {
@@ -311,7 +311,7 @@ func (a *ObjectActions) ReconcileStorageDeletions(ctx context.Context, limit int
 			continue
 		}
 
-		if err := a.storage.DeleteObjectPath(ctx, item.path); err != nil {
+		if err := a.storage.DeleteObjectPath(ctx, item.bucket, item.path); err != nil {
 			if updateErr := a.recordQueuedStorageDeletionFailureByID(ctx, item.id, item.attempts, err.Error()); updateErr != nil {
 				return deleted, errors.Join(recoveryErr, fmt.Errorf("record storage deletion failure: %w", updateErr))
 			}

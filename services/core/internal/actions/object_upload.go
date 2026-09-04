@@ -167,23 +167,23 @@ func (a *ObjectActions) cleanupUploadedPathAfterFailure(ctx context.Context, obj
 	if objectPath == "" {
 		return cause
 	}
-	if err := a.deleteObjectPathOrQueueRetry(ctx, objectID, objectPath); err != nil {
+	if err := a.deleteObjectPathOrQueueRetry(ctx, a.storage.Bucket(), objectID, objectPath); err != nil {
 		return fmt.Errorf("%w (also %w)", cause, err)
 	}
 	return cause
 }
 
-func (a *ObjectActions) deleteObjectPathOrQueueRetry(ctx context.Context, objectID, objectPath string) error {
+func (a *ObjectActions) deleteObjectPathOrQueueRetry(ctx context.Context, bucket, objectID, objectPath string) error {
 	objectPath = strings.TrimSpace(objectPath)
 	if objectPath == "" {
 		return nil
 	}
 
-	if err := a.storage.DeleteObjectPath(ctx, objectPath); err != nil {
+	if err := a.storage.DeleteObjectPath(ctx, bucket, objectPath); err != nil {
 		if a.pool == nil {
 			return fmt.Errorf("failed to remove uploaded object %q for %s: %w", objectPath, objectID, err)
 		}
-		if queueErr := a.queueStorageDeletionAfterFailure(ctx, a.storage.Bucket(), objectPath, objectID, err); queueErr != nil {
+		if queueErr := a.queueStorageDeletionAfterFailure(ctx, bucket, objectPath, objectID, err); queueErr != nil {
 			return fmt.Errorf("failed to remove uploaded object %q for %s: %w (also failed to queue storage deletion retry: %w)", objectPath, objectID, err, queueErr)
 		}
 		return fmt.Errorf("failed to remove uploaded object %q for %s: %w (queued storage deletion retry)", objectPath, objectID, err)
@@ -312,7 +312,9 @@ func (a *ObjectActions) Upload(ctx context.Context, objectID string, reader io.R
 	var oldPath string
 	if currentState.path != nil && strings.TrimSpace(*currentState.path) != "" && *currentState.path != objectPath {
 		oldPath = strings.TrimSpace(*currentState.path)
-		if err := a.queueStorageDeletionTx(ctx, tx, bucket, oldPath, objectID); err != nil {
+		// A replacement may leave its old blob in a bucket that is no longer configured.
+		oldBucket := effectiveObjectBucket(currentState.resource, bucket)
+		if err := a.queueStorageDeletionTx(ctx, tx, oldBucket, oldPath, objectID); err != nil {
 			return cleanupMetadataFailure(err)
 		}
 	}
@@ -338,7 +340,8 @@ func (a *ObjectActions) Upload(ctx context.Context, objectID string, reader io.R
 	}
 
 	if oldPath != "" {
-		if err := a.deleteQueuedStoragePathNow(ctx, bucket, oldPath); err != nil {
+		oldBucket := effectiveObjectBucket(currentState.resource, bucket)
+		if err := a.deleteQueuedStoragePathNow(ctx, oldBucket, oldPath); err != nil {
 			log.Warn().Err(err).Str("object_id", objectID).Str("old_path", oldPath).Msg("Uploaded object metadata now points to a new blob, but old blob cleanup failed")
 		}
 	}

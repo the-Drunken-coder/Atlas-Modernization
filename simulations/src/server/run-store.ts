@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   type AssertionResult,
   type CreatedResource,
@@ -178,7 +179,10 @@ export class RunStore {
 
   private track(run: RunRecord, resource: CreatedResource): void {
     if (run.cleanupStarted || run.cleaned) return;
-    this.trackCleanupCandidate(run, resource);
+    // API-created Entity/Object candidates are recorded before the request and
+    // already carry their capability. Manual tracking has no request to bind,
+    // so give it an unshared token; conditional Core cleanup will fail closed.
+    this.trackCleanupCandidate(run, { ...resource, instanceToken: randomUUID() });
     const tracked = cloneValue(resource);
     if (!hasResource(run.createdResources, tracked)) {
       if (run.createdResources.length >= MAX_CREATED_RESOURCES_PER_RUN) return;
@@ -187,7 +191,7 @@ export class RunStore {
     }
   }
 
-  private trackCleanupCandidate(run: RunRecord, resource: CreatedResource): void {
+  private trackCleanupCandidate(run: RunRecord, resource: RunRecord["cleanupResources"][number]): void {
     if (run.cleanupStarted || run.cleaned) return;
     const tracked = cloneValue(resource);
     if (!hasResource(run.cleanupResources, tracked) && !sameResource(run.overflowCleanupResource, tracked)) {

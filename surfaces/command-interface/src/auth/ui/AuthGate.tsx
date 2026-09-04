@@ -85,7 +85,6 @@ export function AuthGate({ baseUrl, children }: { baseUrl: string; children: Rea
         />
         <Callout className="login-panel" icon={null} role="alert">
           <div className="login-panel__header">
-            <span className="login-panel__eyebrow">Atlas</span>
             <h1>Core unavailable</h1>
           </div>
           <p>Open the connection error for details and retry.</p>
@@ -221,7 +220,6 @@ function LoginPanel({
     <main className="login-shell">
       <form className="login-panel" aria-label="Atlas login" onSubmit={submit}>
         <div className="login-panel__header">
-          <span className="login-panel__eyebrow">Atlas</span>
           <h1>Sign in</h1>
         </div>
         <TextField

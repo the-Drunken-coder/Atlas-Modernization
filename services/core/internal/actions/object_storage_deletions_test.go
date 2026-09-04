@@ -223,3 +223,33 @@ func TestReconcileStorageDeletionPreservesPathThatBecameLive(t *testing.T) {
 		t.Fatal("live path remained queued for deletion")
 	}
 }
+
+func TestReconcileStorageDeletionUsesQueuedBucketForSamePath(t *testing.T) {
+	pool := openActionsTestPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	objectID := fmt.Sprintf("same-path-bucket-%d", time.Now().UTC().UnixNano())
+	path := fmt.Sprintf("objects/%s/blob", objectID)
+	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
+
+	createStoredObjectFixture(ctx, t, pool, objectID, path)
+	if _, err := pool.Exec(ctx, `UPDATE objects SET json = '{"bucket":"atlas-current"}'::jsonb WHERE object_id = $1`, objectID); err != nil {
+		t.Fatalf("set current object bucket: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO storage_deletion_outbox (bucket, path, object_id)
+		VALUES ('atlas-old', $1, $2)
+	`, path, objectID); err != nil {
+		t.Fatalf("insert old-bucket outbox row: %v", err)
+	}
+
+	storageClient := &recordingObjectStorage{bucket: "atlas-current"}
+	deleted, err := NewObjectActions(pool, storageClient).ReconcileStorageDeletions(ctx, 10)
+	if err != nil {
+		t.Fatalf("ReconcileStorageDeletions: %v", err)
+	}
+	if deleted != 1 || len(storageClient.deletedObjects) != 1 || storageClient.deletedObjects[0] != (recordedStorageDelete{bucket: "atlas-old", path: path}) {
+		t.Fatalf("reconciliation deleted=%d objects=%#v, want atlas-old/%q", deleted, storageClient.deletedObjects, path)
+	}
+}

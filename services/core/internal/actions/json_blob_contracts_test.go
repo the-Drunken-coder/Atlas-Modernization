@@ -207,3 +207,73 @@ func TestDecodeObjectJSONForPatchStillPreservesNumbers(t *testing.T) {
 		t.Fatalf("size_bytes = %d, want exact large integer", got)
 	}
 }
+
+func TestPatchEntityJSONPreservesNestedUnsafeRangeNumbersForPatchAndCheckin(t *testing.T) {
+	const raw = `{
+		"type":"asset",
+		"components":{
+			"custom_data":{
+				"precise":9007199254740993,
+				"nested":{"precise":9007199254740995}
+			}
+		},
+		"metadata":{
+			"precise":9007199254740997,
+			"nested":{"precise":9007199254740999}
+		}
+	}`
+
+	t.Run("unrelated patch", func(t *testing.T) {
+		patched, err := patchEntityJSON(json.RawMessage(raw), UpdateEntityParams{
+			Components: map[string]interface{}{
+				"custom_data": map[string]interface{}{"operator_note": "patched"},
+			},
+			Extra: map[string]interface{}{"another_note": "patched"},
+		})
+		if err != nil {
+			t.Fatalf("patch entity JSON: %v", err)
+		}
+		assertEntityUnsafeRangeNumbers(t, patched)
+	})
+
+	t.Run("check-in heartbeat merge", func(t *testing.T) {
+		patched, err := patchEntityJSON(json.RawMessage(raw), UpdateEntityParams{
+			Components: map[string]interface{}{
+				"heartbeat": map[string]interface{}{"last_seen": "2026-09-03T00:00:00Z"},
+			},
+		})
+		if err != nil {
+			t.Fatalf("patch check-in JSON: %v", err)
+		}
+		assertEntityUnsafeRangeNumbers(t, patched)
+	})
+}
+
+func assertEntityUnsafeRangeNumbers(t *testing.T, raw []byte) {
+	t.Helper()
+	blob, err := decodeJSONBlobForPatch(raw, jsonBlobDecodeUseNumber)
+	if err != nil {
+		t.Fatalf("decode patched entity JSON: %v", err)
+	}
+
+	components := blob[string(jsonBlobFieldComponents)].(map[string]interface{})
+	customData := components["custom_data"].(map[string]interface{})
+	assertExactJSONNumber(t, customData["precise"], "9007199254740993")
+	nested := customData["nested"].(map[string]interface{})
+	assertExactJSONNumber(t, nested["precise"], "9007199254740995")
+	metadata := blob["metadata"].(map[string]interface{})
+	assertExactJSONNumber(t, metadata["precise"], "9007199254740997")
+	nestedMetadata := metadata["nested"].(map[string]interface{})
+	assertExactJSONNumber(t, nestedMetadata["precise"], "9007199254740999")
+}
+
+func assertExactJSONNumber(t *testing.T, value interface{}, want string) {
+	t.Helper()
+	number, ok := value.(json.Number)
+	if !ok {
+		t.Fatalf("number type = %T, want json.Number", value)
+	}
+	if number.String() != want {
+		t.Fatalf("number = %s, want %s", number, want)
+	}
+}

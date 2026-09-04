@@ -188,6 +188,7 @@ export class MeshCoreTransport implements FieldLinkTransport {
   #lifecycleGeneration = 0;
   #pollTimer: ReturnType<typeof setInterval> | undefined;
   #fatalError: Error | undefined;
+  #fatalNotification: Promise<void> | undefined;
 
   constructor(path: string, options: MeshCoreTransportOptions) {
     this.#path = path;
@@ -260,7 +261,13 @@ export class MeshCoreTransport implements FieldLinkTransport {
       this.#requestDrain();
     }, INBOX_POLL_INTERVAL_MS);
     this.#pollTimer.unref();
-    await this.flushInbox();
+    try {
+      await this.flushInbox();
+    } catch (error: unknown) {
+      const failure = asError(error);
+      await this.#reportFatalAndWait(failure);
+      throw failure;
+    }
   }
 
   async enableDatagramDelivery(): Promise<void> {
@@ -566,9 +573,14 @@ export class MeshCoreTransport implements FieldLinkTransport {
   }
 
   #reportFatal(error: Error): void {
+    void this.#reportFatalAndWait(error);
+  }
+
+  async #reportFatalAndWait(error: Error): Promise<void> {
     if (this.#makeFatal(error)) {
-      void this.#notifyFatalError(error);
+      this.#fatalNotification = this.#notifyFatalError(error);
     }
+    await this.#fatalNotification;
   }
 
   #makeFatal(error: Error): boolean {

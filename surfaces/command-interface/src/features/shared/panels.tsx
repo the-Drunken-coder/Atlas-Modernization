@@ -18,7 +18,7 @@ export function FieldGrid({ rows }: { rows: Array<[string, ReactNode]> }) {
       {rows.map(([label, value]) => (
         <Fragment key={label}>
           <dt>{label}</dt>
-          <dd>{value ?? "—"}</dd>
+          <dd>{value ?? "N/A"}</dd>
         </Fragment>
       ))}
     </dl>

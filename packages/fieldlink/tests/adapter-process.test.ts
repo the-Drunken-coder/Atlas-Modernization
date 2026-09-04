@@ -553,6 +553,39 @@ describe("adapter process proxy", () => {
     await expect(adapter.close()).resolves.toBeUndefined();
   });
 
+  it("drains async proxy listeners before completing close", async () => {
+    let release = (): void => undefined;
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let started = 0;
+    const adapter = await AdapterProcessNode.start({
+      path: "test",
+      channel: 1,
+      allowInboxDrain: true,
+      program: nodeScript(listenerDrainChildScript()),
+    });
+    const listener = async (): Promise<void> => {
+      started += 1;
+      await released;
+    };
+    adapter.onMessage(listener);
+    adapter.onPassiveMessage(listener);
+    adapter.onEvent(listener);
+
+    await adapter.activate();
+    await eventually(() => started === 3);
+
+    let closed = false;
+    const closing = adapter.close().then(() => {
+      closed = true;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(closed).toBe(false);
+    release();
+    await expect(closing).resolves.toBeUndefined();
+  });
+
   it("reaps an adapter that fails before readiness", async () => {
     await expect(
       AdapterProcessNode.start({
@@ -1060,6 +1093,40 @@ function listenerFailureChildScript(): string {
 let pending="";
 process.stdin.setEncoding("utf8");
 process.stdin.on("data",chunk=>{pending+=chunk;let i;while((i=pending.indexOf("\\n"))>=0){const line=pending.slice(0,i);pending=pending.slice(i+1);if(!line)continue;const request=JSON.parse(line);if(request.type==="activate"){const response=JSON.stringify({type:"response",id:request.id,ok:true});const event=JSON.stringify({type:"event",event:{type:"protocol-error",at:"2026-08-24T12:00:00.000Z",message:"test"}});process.stdout.write(response+"\\n"+event+"\\n");}else if(request.type==="close"){process.stdout.write(JSON.stringify({type:"response",id:request.id,ok:true})+"\\n",()=>process.exit(0));}}});`;
+}
+
+function listenerDrainChildScript(): string {
+  const message = {
+    message: {
+      type: "test",
+      kind: "response",
+      correlationId: 1,
+      payload: { $fieldlinkBytes: "" },
+    },
+    source: nodeA,
+    destination: nodeB,
+    logicalId: "0000000000000001",
+    delivery: "complete",
+    receivedAt: "2026-08-24T12:00:00.000Z",
+  };
+  const notifications = [
+    { type: "message", message },
+    { type: "passive-message", message },
+    {
+      type: "event",
+      event: {
+        type: "protocol-error",
+        at: "2026-08-24T12:00:00.000Z",
+        message: "test",
+      },
+    },
+  ]
+    .map((value) => JSON.stringify(value))
+    .join("\n");
+  return `${writeReady()}
+let pending="";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data",chunk=>{pending+=chunk;let i;while((i=pending.indexOf("\\n"))>=0){const line=pending.slice(0,i);pending=pending.slice(i+1);if(!line)continue;const request=JSON.parse(line);if(request.type==="activate"){const response=JSON.stringify({type:"response",id:request.id,ok:true});process.stdout.write(response+"\\n"+${JSON.stringify(`${notifications}\n`)});}else if(request.type==="close"){process.stdout.write(JSON.stringify({type:"response",id:request.id,ok:true})+"\\n",()=>process.exit(0));}}});`;
 }
 
 function closedStdoutChildScript(): string {

@@ -224,6 +224,122 @@ describe("AtlasClient sync: cache projection and reads", () => {
     expect(watch).toHaveBeenCalledTimes(2);
   });
 
+  it("rolls back an in-flight local delete when HTTP fails", async () => {
+    const core = new FakeCore();
+    const original = core.upsertEntity(entity("asset-delete-http-failure"));
+    const fetchImpl: typeof fetch = async (url, init) => {
+      if (new URL(String(url)).pathname === `/entities/${original.entity_id}` && init?.method === "DELETE") {
+        throw new Error("delete request failed");
+      }
+      return core.fetch(String(url), init);
+    };
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: fetchImpl,
+      WebSocket: core.attachWebSocketGlobal(),
+      sync: "all",
+      pollIntervalMs: 0
+    });
+    await client.sync.start();
+    const watch = vi.fn();
+    client.entities.watch(original.entity_id, watch);
+
+    await expect(client.entities.delete(` ${original.entity_id} `)).rejects.toThrow("delete request failed");
+
+    expect(client.sync.snapshot().entities[original.entity_id]).toEqual(original);
+    expect(watch).not.toHaveBeenCalled();
+    const cache = (client as unknown as { engine: { cache: ResourceCache } }).engine.cache;
+    expect(cache.inFlightDeletes).toEqual(new Set());
+    expect(cache.pendingDeletes).toEqual(new Set());
+    expect(cache.locallyNotifiedDeletes).toEqual(new Set());
+  });
+
+  it("does not double-notify when feed delete wins an in-flight local delete", async () => {
+    const core = new FakeCore();
+    const original = core.upsertEntity(entity("asset-feed-delete-wins"));
+    let releaseDelete!: () => void;
+    const deleteGate = new Promise<void>((resolve) => {
+      releaseDelete = resolve;
+    });
+    const fetchImpl: typeof fetch = async (url, init) => {
+      if (new URL(String(url)).pathname === `/entities/${original.entity_id}` && init?.method === "DELETE") {
+        const response = await core.fetch(String(url), init);
+        await deleteGate;
+        return response;
+      }
+      return core.fetch(String(url), init);
+    };
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: fetchImpl,
+      WebSocket: core.attachWebSocketGlobal(),
+      sync: "all",
+      pollIntervalMs: 0
+    });
+    await client.sync.start();
+    const watch = vi.fn();
+    client.entities.watch(original.entity_id, watch);
+
+    const deletion = client.entities.delete(original.entity_id);
+    await vi.waitFor(() => expect(core.deleteEvents).toHaveLength(1));
+    const deleteEvent = core.deleteEvents[0];
+    core.emit(deleteEvent, { record: false });
+    await vi.waitFor(() => expect(watch).toHaveBeenCalledTimes(1));
+    releaseDelete();
+
+    await expect(deletion).resolves.toBeUndefined();
+    expect(watch).toHaveBeenCalledWith(undefined, deleteEvent);
+    const cache = (client as unknown as { engine: { cache: ResourceCache } }).engine.cache;
+    expect(cache.inFlightDeletes).toEqual(new Set());
+    expect(cache.pendingDeletes).toEqual(new Set());
+    expect(cache.locallyNotifiedDeletes).toEqual(new Set());
+  });
+
+  it("keeps a newer same-ID recreation visible when it races an in-flight delete", async () => {
+    const core = new FakeCore();
+    const original = core.upsertEntity(entity("asset-feed-recreated"));
+    let releaseDelete!: () => void;
+    const deleteGate = new Promise<void>((resolve) => {
+      releaseDelete = resolve;
+    });
+    const fetchImpl: typeof fetch = async (url, init) => {
+      if (new URL(String(url)).pathname === `/entities/${original.entity_id}` && init?.method === "DELETE") {
+        const response = await core.fetch(String(url), init);
+        await deleteGate;
+        return response;
+      }
+      return core.fetch(String(url), init);
+    };
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: fetchImpl,
+      WebSocket: core.attachWebSocketGlobal(),
+      sync: "all",
+      pollIntervalMs: 0
+    });
+    await client.sync.start();
+    const watch = vi.fn();
+    client.entities.watch(original.entity_id, watch);
+
+    const deletion = client.entities.delete(original.entity_id);
+    await vi.waitFor(() => expect(core.deleteEvents).toHaveLength(1));
+    const deleteEvent = core.deleteEvents[0];
+    core.emit(deleteEvent, { record: false });
+    const recreated = core.createEntity({ entity_id: original.entity_id, entity_type: "asset" });
+    core.emit(core.events.at(-1)!, { record: false });
+    await vi.waitFor(() => expect(client.sync.snapshot().entities[original.entity_id]).toEqual(recreated));
+    releaseDelete();
+
+    await expect(deletion).resolves.toBeUndefined();
+    expect(watch).toHaveBeenCalledTimes(2);
+    expect(watch.mock.calls[0]).toEqual([undefined, deleteEvent]);
+    expect(watch.mock.calls[1]).toEqual([recreated, expect.objectContaining({ event: "create" })]);
+    const cache = (client as unknown as { engine: { cache: ResourceCache } }).engine.cache;
+    expect(cache.inFlightDeletes).toEqual(new Set());
+    expect(cache.pendingDeletes).toEqual(new Set());
+    expect(cache.locallyNotifiedDeletes).toEqual(new Set());
+  });
+
   it("drains paginated full-dataset hydration responses", async () => {
     const core = new FakeCore();
     core.fullLimitPerType = 1;
@@ -836,5 +952,38 @@ describe("AtlasClient sync: cache projection and reads", () => {
       );
     });
     expect(client.sync.snapshot().tasks[original.task_id].asset_id).toBe("asset-old");
+  });
+
+  it("canonicalizes cache identity and watcher filters for resource IDs", async () => {
+    const cache = new ResourceCache();
+    const cached = entity("asset-cache-canonical");
+    expect(cache.cacheResource("entity", " asset-cache-canonical ", cached)).toBe(true);
+    expect(cache.value("entity", "asset-cache-canonical")).toEqual(cached);
+    expect(cache.snapshot().entities).toEqual({ [cached.entity_id]: cached });
+
+    const core = new FakeCore();
+    const client = createAtlasClient(core, { sync: "all", pollIntervalMs: 0 });
+    await client.sync.start();
+    const applyFeedEvent = (
+      client as unknown as { engine: { applyEvent(event: FeedEvent): void } }
+    ).engine.applyEvent.bind((client as unknown as { engine: object }).engine);
+    const entityWatch = vi.fn();
+    const taskWatch = vi.fn();
+    client.watch({ filter: "id", resource_type: "entity", id: " asset-watch-canonical " }, entityWatch);
+    client.watch({ filter: "tasks_for_asset", asset_id: " asset-watch-canonical " }, taskWatch);
+
+    const watchedEntity = core.upsertEntity(entity("asset-watch-canonical"));
+    applyFeedEvent(core.events.at(-1)!);
+    const watchedTask = core.upsertTask(task("task-watch-canonical", "asset-watch-canonical"));
+    applyFeedEvent(core.events.at(-1)!);
+
+    expect(entityWatch).toHaveBeenCalledWith(
+      watchedEntity,
+      expect.objectContaining({ resource_type: "entity", id: "asset-watch-canonical" })
+    );
+    expect(taskWatch).toHaveBeenCalledWith(
+      watchedTask,
+      expect.objectContaining({ resource_type: "task", id: "task-watch-canonical" })
+    );
   });
 });

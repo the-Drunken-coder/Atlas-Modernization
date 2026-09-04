@@ -20,6 +20,7 @@ import { MapConsole } from "./MapConsole.js";
 type MockMapViewProps = {
   styleId: string;
   mapSourceOptions: AppConfig["mapSources"];
+  selectedId?: string;
   editing?: unknown;
   focusTarget?: { id: string } | null;
   placeDetailTarget?: { id: string } | null;
@@ -27,7 +28,7 @@ type MockMapViewProps = {
     | { seq: number; intent: "world" }
     | { seq: number; target: { id: string }; intent?: "focus" | "preview" | "commit" }
     | null;
-  onMapContextMenu?: (info: { lat: number; lng: number; x: number; y: number }) => void;
+  onMapContextMenu?: (info: { lat: number; lng: number; x: number; y: number; entityId?: string }) => void;
   onBackgroundClick?: () => void;
   onSelectEntity?: (id: string) => void;
   onStyleSwitchError?: (error: { failedStyleId: string; activeStyleId: string }) => void;
@@ -69,6 +70,24 @@ vi.mock("../ui/map/view/MapView.js", async () => {
           />
           <button
             type="button"
+            data-testid="map-marker-context-menu"
+            onContextMenu={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              props.onSelectEntity?.("asset-1");
+              props.onMapContextMenu?.({ lat: 47.61, lng: -122.33, x: 10, y: 20, entityId: "asset-1" });
+            }}
+          />
+          <button
+            type="button"
+            data-testid="map-select-other-marker"
+            onClick={(event) => {
+              event.stopPropagation();
+              props.onSelectEntity?.("asset-2");
+            }}
+          />
+          <button
+            type="button"
             data-testid="map-set-viewport"
             onClick={(event) => {
               event.stopPropagation();
@@ -93,6 +112,13 @@ const taskingCatalog: CommandCatalog = [
     input_schema: "atlas.protocol.JSONValue"
   }
 ];
+const queuedManifest = {
+  command: "fixture.queued",
+  description: "Runs the fixture.",
+  scheduling: "queued" as const,
+  supports_cancel: true,
+  supports_progress: true
+};
 
 const rover: EntityResource = {
   entity_id: "asset-1",
@@ -103,6 +129,11 @@ const rover: EntityResource = {
     telemetry: { latitude: 40, longitude: -74 }
   },
   metadata
+};
+const scout: EntityResource = {
+  ...rover,
+  entity_id: "asset-2",
+  alias: "Scout"
 };
 
 const area: EntityResource = {
@@ -320,6 +351,42 @@ function renderStaticConsole(overrides: Partial<AtlasContextValue> = {}) {
 }
 
 describe("MapConsole", () => {
+  it("selects and opens a marker menu from the first context gesture", async () => {
+    const loadEntityDetails = vi.fn(async (entityId: string) => ({
+      ...(entityId === scout.entity_id ? scout : rover),
+      command_manifest: []
+    }));
+    renderStaticConsole({
+      snapshot: { entities: { [rover.entity_id]: rover, [scout.entity_id]: scout, [area.entity_id]: area }, tasks: {} },
+      catalog: taskingCatalog,
+      loadEntityDetails
+    });
+
+    fireEvent.contextMenu(await screen.findByTestId("map-marker-context-menu"));
+
+    expect(await screen.findByText("Commands · 47.6100, -122.3300")).toBeInTheDocument();
+    expect(mapViewMock.lastProps?.selectedId).toBe("asset-1");
+  });
+
+  it("moves selection before opening a marker menu when another asset was selected", async () => {
+    const user = userEvent.setup();
+    const loadEntityDetails = vi.fn(async (entityId: string) => ({
+      ...(entityId === scout.entity_id ? scout : rover),
+      command_manifest: []
+    }));
+    renderStaticConsole({
+      snapshot: { entities: { [rover.entity_id]: rover, [scout.entity_id]: scout, [area.entity_id]: area }, tasks: {} },
+      catalog: taskingCatalog,
+      loadEntityDetails
+    });
+
+    await user.click(screen.getByRole("button", { name: /Scout/ }));
+    fireEvent.contextMenu(await screen.findByTestId("map-marker-context-menu"));
+
+    expect(await screen.findByText("Commands · 47.6100, -122.3300")).toBeInTheDocument();
+    expect(mapViewMock.lastProps?.selectedId).toBe("asset-1");
+  });
+
   it("uses the standard sidebar header for Plugin and operation navigation", async () => {
     vi.stubGlobal(
       "fetch",
@@ -401,7 +468,7 @@ describe("MapConsole", () => {
     expect(screen.getByText("No Commands are defined in Atlas Protocol")).toBeInTheDocument();
   });
 
-  it("keeps one Asset detail request alive across telemetry snapshot replacements", async () => {
+  it("keeps one Asset detail request alive across same-version snapshot replacements", async () => {
     const user = userEvent.setup();
     const pending = deferred<EntityResource>();
     const loadEntityDetails = vi.fn(() => pending.promise);
@@ -440,7 +507,7 @@ describe("MapConsole", () => {
               [rover.entity_id]: {
                 ...rover,
                 components: { telemetry: { latitude: 40.1, longitude: -74.1 } },
-                metadata: { ...rover.metadata, version: 2 }
+                metadata: { ...rover.metadata, version: 1 }
               }
             },
             tasks: {}
@@ -454,6 +521,151 @@ describe("MapConsole", () => {
 
     pending.resolve({ ...rover, command_manifest: [] });
     expect(await screen.findByText("This Asset has no Commands")).toBeInTheDocument();
+  });
+
+  it("reloads Asset commands when the selected runtime version changes from stopped to ready", async () => {
+    const user = userEvent.setup();
+    const loadEntityDetails = vi
+      .fn()
+      .mockResolvedValueOnce({ ...rover, command_manifest: [] })
+      .mockResolvedValueOnce({
+        ...rover,
+        metadata: { ...rover.metadata, version: 2 },
+        command_manifest: [queuedManifest]
+      });
+    const baseValue: AtlasContextValue = {
+      status: "ready",
+      config: appConfig(),
+      snapshot: { entities: { [rover.entity_id]: rover }, tasks: {} },
+      catalog: taskingCatalog,
+      health: healthyConnection,
+      reconnect: vi.fn(),
+      loadEntityDetails,
+      submitCommand: async () => {
+        throw new Error("not used");
+      },
+      updateGeometry: async () => {
+        throw new Error("not used");
+      }
+    };
+    const view = render(
+      <AtlasStaticProvider value={baseValue}>
+        <MapConsole />
+      </AtlasStaticProvider>
+    );
+
+    await user.click(await screen.findByText("Rover"));
+    await user.click(screen.getByRole("button", { name: /Commands/ }));
+    expect(await screen.findByText("This Asset has no Commands")).toBeInTheDocument();
+
+    view.rerender(
+      <AtlasStaticProvider
+        value={{
+          ...baseValue,
+          snapshot: {
+            entities: { [rover.entity_id]: { ...rover, metadata: { ...rover.metadata, version: 2 } } },
+            tasks: {}
+          }
+        }}
+      >
+        <MapConsole />
+      </AtlasStaticProvider>
+    );
+
+    await waitFor(() => expect(loadEntityDetails).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText("No operator inputs are available for this Asset's Commands")).toBeInTheDocument();
+  });
+
+  it("reloads Asset commands when the selected runtime version changes from ready to stopped", async () => {
+    const user = userEvent.setup();
+    const loadEntityDetails = vi
+      .fn()
+      .mockResolvedValueOnce({ ...rover, command_manifest: [queuedManifest] })
+      .mockResolvedValueOnce({ ...rover, metadata: { ...rover.metadata, version: 2 }, command_manifest: [] });
+    const baseValue: AtlasContextValue = {
+      status: "ready",
+      config: appConfig(),
+      snapshot: { entities: { [rover.entity_id]: rover }, tasks: {} },
+      catalog: taskingCatalog,
+      health: healthyConnection,
+      reconnect: vi.fn(),
+      loadEntityDetails,
+      submitCommand: async () => {
+        throw new Error("not used");
+      },
+      updateGeometry: async () => {
+        throw new Error("not used");
+      }
+    };
+    const view = render(
+      <AtlasStaticProvider value={baseValue}>
+        <MapConsole />
+      </AtlasStaticProvider>
+    );
+
+    await user.click(await screen.findByText("Rover"));
+    await user.click(screen.getByRole("button", { name: /Commands/ }));
+    expect(await screen.findByText("No operator inputs are available for this Asset's Commands")).toBeInTheDocument();
+
+    view.rerender(
+      <AtlasStaticProvider
+        value={{
+          ...baseValue,
+          snapshot: {
+            entities: { [rover.entity_id]: { ...rover, metadata: { ...rover.metadata, version: 2 } } },
+            tasks: {}
+          }
+        }}
+      >
+        <MapConsole />
+      </AtlasStaticProvider>
+    );
+
+    await waitFor(() => expect(loadEntityDetails).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText("This Asset has no Commands")).toBeInTheDocument();
+  });
+
+  it("aborts obsolete Asset detail requests when selection changes", async () => {
+    const user = userEvent.setup();
+    const signals: AbortSignal[] = [];
+    const loadEntityDetails = vi.fn((_entityId: string, signal?: AbortSignal) => {
+      if (signal) {
+        signals.push(signal);
+        return new Promise<EntityResource>((_resolve, reject) => {
+          signal.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+        });
+      }
+      return new Promise<EntityResource>(() => {});
+    });
+    renderStaticConsole({
+      snapshot: { entities: { [rover.entity_id]: rover, [scout.entity_id]: scout, [area.entity_id]: area }, tasks: {} },
+      catalog: taskingCatalog,
+      loadEntityDetails
+    });
+
+    await user.click(await screen.findByText("Rover"));
+    await waitFor(() => expect(loadEntityDetails).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByTestId("map-select-other-marker"));
+
+    await waitFor(() => expect(loadEntityDetails).toHaveBeenCalledTimes(2));
+    expect(signals[0]?.aborted).toBe(true);
+    expect(signals[1]?.aborted).toBe(false);
+  });
+
+  it("aborts the selected Asset detail request on unmount", async () => {
+    const user = userEvent.setup();
+    let signal: AbortSignal | undefined;
+    const loadEntityDetails = vi.fn((_entityId: string, nextSignal?: AbortSignal) => {
+      signal = nextSignal;
+      return new Promise<EntityResource>(() => {});
+    });
+    const view = renderStaticConsole({ catalog: taskingCatalog, loadEntityDetails });
+
+    await user.click(await screen.findByText("Rover"));
+    await waitFor(() => expect(loadEntityDetails).toHaveBeenCalledOnce());
+    view.unmount();
+
+    expect(signal?.aborted).toBe(true);
   });
 
   it("reports unavailable Asset Commands when detail loading fails", async () => {

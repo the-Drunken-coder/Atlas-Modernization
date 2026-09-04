@@ -295,7 +295,10 @@ export const resourceMessage = {
         return (
           side === "source" &&
           received.kind === "response" &&
-          received.request_id === sent.request_id
+          received.request_id === sent.request_id &&
+          received.status === 200 &&
+          isPlainRecord(received.body) &&
+          received.body.fieldlink_test_responder === true
         );
       }
       return (

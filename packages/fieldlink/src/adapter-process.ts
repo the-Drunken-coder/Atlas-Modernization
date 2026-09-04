@@ -561,6 +561,7 @@ export class AdapterProcessNode {
   readonly #eventListeners = new Set<
     (event: FieldLinkEvent) => void | Promise<void>
   >();
+  readonly #activeCallbacks = new Set<Promise<void>>();
   #nextRequestId = 1;
   #failure: Error | undefined;
   #activation: Promise<void> | undefined;
@@ -897,6 +898,7 @@ export class AdapterProcessNode {
         ),
       );
     }
+    await this.#drainCallbacks();
     const [closeError] = closeErrors;
     if (closeError !== undefined && closeErrors.length === 1) {
       throw closeError;
@@ -1035,11 +1037,13 @@ export class AdapterProcessNode {
                 receivedAt: new Date(message.message.receivedAt),
               };
               for (const listener of this.#messageListeners) {
-                void Promise.resolve()
-                  .then(() => listener(received))
-                  .catch(async (error: unknown) => {
-                    await options.onListenerError?.(asError(error));
-                  });
+                this.#trackCallback(
+                  Promise.resolve()
+                    .then(() => listener(received))
+                    .catch(async (error: unknown) => {
+                      await options.onListenerError?.(asError(error));
+                    }),
+                );
               }
               break;
             }
@@ -1049,21 +1053,25 @@ export class AdapterProcessNode {
                 receivedAt: new Date(message.message.receivedAt),
               };
               for (const listener of this.#passiveMessageListeners) {
-                void Promise.resolve()
-                  .then(() => listener(received))
-                  .catch(async (error: unknown) => {
-                    await options.onListenerError?.(asError(error));
-                  });
+                this.#trackCallback(
+                  Promise.resolve()
+                    .then(() => listener(received))
+                    .catch(async (error: unknown) => {
+                      await options.onListenerError?.(asError(error));
+                    }),
+                );
               }
               break;
             }
             case "event":
               for (const listener of this.#eventListeners) {
-                void Promise.resolve()
-                  .then(() => listener(message.event))
-                  .catch(async (error: unknown) => {
-                    await options.onListenerError?.(asError(error));
-                  });
+                this.#trackCallback(
+                  Promise.resolve()
+                    .then(() => listener(message.event))
+                    .catch(async (error: unknown) => {
+                      await options.onListenerError?.(asError(error));
+                    }),
+                );
               }
               break;
             case "inbox-message":
@@ -1090,6 +1098,20 @@ export class AdapterProcessNode {
         lines.close();
       }
     })();
+  }
+
+  #trackCallback(callback: Promise<void>): void {
+    this.#activeCallbacks.add(callback);
+    const clear = (): void => {
+      this.#activeCallbacks.delete(callback);
+    };
+    void callback.then(clear, clear);
+  }
+
+  async #drainCallbacks(): Promise<void> {
+    while (this.#activeCallbacks.size > 0) {
+      await Promise.allSettled([...this.#activeCallbacks]);
+    }
   }
 
   #write(request: AdapterRequest): Promise<void> {

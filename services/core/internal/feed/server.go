@@ -205,6 +205,8 @@ func (s Server) readAuthFrame(ctx context.Context, conn *websocket.Conn) error {
 	if timeout <= 0 {
 		timeout = defaultAuthTimeout
 	}
+	authCtx, cancelAuth := context.WithTimeout(ctx, timeout)
+	defer cancelAuth()
 
 	readCtx, cancelRead := context.WithCancel(ctx)
 	readCh := make(chan feedReadResult, 1)
@@ -250,7 +252,10 @@ func (s Server) readAuthFrame(ctx context.Context, conn *websocket.Conn) error {
 	if err := json.Unmarshal(result.data, &message); err != nil {
 		return fmt.Errorf("feed auth frame is invalid JSON")
 	}
-	valid, err := s.validAPIKey(ctx, message.APIKey)
+	if err := authCtx.Err(); err != nil {
+		return fmt.Errorf("feed auth frame validation timed out")
+	}
+	valid, err := s.validAPIKey(authCtx, message.APIKey)
 	if err != nil {
 		return fmt.Errorf("feed API key validation failed: %w", err)
 	}

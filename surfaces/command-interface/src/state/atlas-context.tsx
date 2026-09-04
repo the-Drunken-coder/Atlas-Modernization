@@ -22,7 +22,7 @@ export type AtlasContextValue = {
   catalog?: CommandCatalog;
   health: ConnectionHealth;
   reconnect: () => void;
-  loadEntityDetails?: (entityId: string) => Promise<EntityResource>;
+  loadEntityDetails?: (entityId: string, signal?: AbortSignal) => Promise<EntityResource>;
   submitCommand: (submission: CommandSubmission) => Promise<TaskResource>;
   updateGeometry: (entityId: string, geometry: UiGeometry, ifMatchVersion?: number) => Promise<EntityResource>;
 };
@@ -170,10 +170,10 @@ export function AtlasProvider({
     setConnectionAttempt((attempt) => attempt + 1);
   }, []);
 
-  const loadEntityDetails = useCallback(async (entityId: string) => {
+  const loadEntityDetails = useCallback(async (entityId: string, signal?: AbortSignal) => {
     const dataSource = dataSourceRef.current;
     if (!dataSource?.loadEntityDetails) return Promise.reject(new Error("Atlas Entity details are unavailable"));
-    return dataSource.loadEntityDetails(entityId);
+    return dataSource.loadEntityDetails(entityId, signal);
   }, []);
 
   const value = useMemo<AtlasContextValue>(

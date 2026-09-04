@@ -77,6 +77,8 @@ describe("AuthGate", () => {
     );
 
     expect(await screen.findByLabelText("Username")).toHaveFocus();
+    expect(screen.getByRole("heading", { name: "Sign in" })).toBeInTheDocument();
+    expect(screen.queryByText("Atlas")).not.toBeInTheDocument();
     expect(screen.queryByText("map console")).not.toBeInTheDocument();
     expect(fetchStub.calls[0]?.[0]).toBe("https://core.test/admin/auth/me");
     expect(fetchStub.calls[0]?.[1]).toMatchObject({ credentials: "include" });
@@ -125,6 +127,7 @@ describe("AuthGate", () => {
     );
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Core unavailable");
+    expect(screen.queryByText("Atlas")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Username")).not.toBeInTheDocument();
     expect(screen.queryByText("map console")).not.toBeInTheDocument();
   });

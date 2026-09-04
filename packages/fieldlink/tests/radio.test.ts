@@ -530,16 +530,21 @@ describe("MeshCore transport", () => {
       null,
     );
     const onInbox = vi.fn().mockRejectedValueOnce(new Error("disk full"));
+    const onFatalError = vi.fn();
     const transport = new MeshCoreTransport("/dev/cu.test", {
       channel: 2,
       connection,
       onInboxMessage: onInbox,
+      onFatalError,
     });
     await transport.open();
     await expect(transport.startInbox()).rejects.toThrow("disk full");
     expect(onInbox).toHaveBeenCalledTimes(1);
+    await new Promise<void>((resolve) => setTimeout(resolve, 550));
+    expect(onInbox).toHaveBeenCalledTimes(1);
+    expect(onFatalError).toHaveBeenCalledOnce();
     expect(connection.messages).toHaveLength(2);
-    await transport.close();
+    await expect(transport.close()).rejects.toThrow("Could not cleanly close");
   });
 
   it("disables background drains and reports fatal evidence failures", async () => {

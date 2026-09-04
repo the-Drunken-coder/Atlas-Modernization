@@ -261,7 +261,7 @@ describe("scenario input parsing", () => {
 
   it("keeps cleanup candidates when create is aborted after Core accepts it", async () => {
     const tracked: Array<{ type: string; id: string }> = [];
-    const cleanupCandidates: Array<{ type: string; id: string }> = [];
+    const cleanupCandidates: Array<{ type: string; id: string; instanceToken: string }> = [];
     const core = createFakeAtlasCore();
     const controller = new AbortController();
     const ctx = scenarioContext({
@@ -273,8 +273,8 @@ describe("scenario input parsing", () => {
           ...client,
           entities: {
             ...client.entities,
-            create: async (entity) => {
-              await client.entities.create(entity);
+            create: async (entity, options) => {
+              await client.entities.create(entity, options);
               controller.abort();
               throw new Error("request aborted");
             }
@@ -292,7 +292,7 @@ describe("scenario input parsing", () => {
     );
     await expect(core.factory().entities.get(entityId)).resolves.toMatchObject({ entity_id: entityId });
     expect(tracked).toEqual([]);
-    expect(cleanupCandidates).toEqual([{ type: "entity", id: entityId }]);
+    expect(cleanupCandidates).toEqual([{ type: "entity", id: entityId, instanceToken: expect.any(String) }]);
   });
 
   it("tracks generated command task IDs from Core responses", async () => {

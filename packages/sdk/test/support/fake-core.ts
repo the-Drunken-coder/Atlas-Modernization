@@ -43,6 +43,7 @@ export class FakeCore {
     apiKey?: string | null;
     idempotencyKey?: string | null;
     runtimeId?: string | null;
+    instanceToken?: string | null;
   }> = [];
   feedAuthFrames: Array<{ apiKey?: string }> = [];
   expectedFeedApiKey: string | undefined;
@@ -66,8 +67,16 @@ export class FakeCore {
     const apiKey = headers.get("X-API-Key");
     const idempotencyKey = headers.get("Idempotency-Key");
     const runtimeId = headers.get("Atlas-Runtime-ID");
+    const instanceToken = headers.get("Atlas-Resource-Instance-Token");
     this.requests.push(parsed.pathname + parsed.search);
-    this.requestHeaders.push({ path: parsed.pathname + parsed.search, ifMatch, apiKey, idempotencyKey, runtimeId });
+    this.requestHeaders.push({
+      path: parsed.pathname + parsed.search,
+      ifMatch,
+      apiKey,
+      idempotencyKey,
+      runtimeId,
+      instanceToken
+    });
     let segments: string[];
     try {
       segments = path.split("/").slice(1).map(decodeURIComponent);

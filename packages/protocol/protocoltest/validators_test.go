@@ -2,6 +2,7 @@ package protocoltest
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
@@ -59,6 +60,64 @@ func TestGeneratedMapAreaValidatorAppliesSemanticLimits(t *testing.T) {
 		"west": -71.1, "south": 42.0, "east": -71.0, "north": 42.1,
 	}), "area must not exceed 5 km²")
 	assertErrorContains(t, protocol.ValidateMapArea(json.RawMessage(`{"west":1,"south":0,"east":0,"north":1}`)), "west must be less than east")
+}
+
+func TestCommandManifestCommandNamesMustBeUnique(t *testing.T) {
+	entry := func(command string) map[string]any {
+		return map[string]any{
+			"command":           command,
+			"description":       "Fixture command",
+			"scheduling":        "immediate",
+			"supports_cancel":   false,
+			"supports_progress": false,
+		}
+	}
+
+	if errors := protocol.ValidateCommandManifest([]any{entry("fixture.first"), entry("fixture.second")}); len(errors) > 0 {
+		t.Fatalf("distinct command manifest entries rejected: %v", errors)
+	}
+	assertErrorContains(t, protocol.ValidateCommandManifest([]any{entry("fixture.first"), entry("fixture.first")}), `command "fixture.first" is duplicated`)
+}
+
+func TestNonEmptyStringRejectsUnicodeWhitespaceOnlyValues(t *testing.T) {
+	for _, value := range []string{
+		"\u00a0", "\u1680", "\u2000", "\u2028", "\u2029", "\ufeff", " ", "\t", "\n",
+	} {
+		t.Run(fmt.Sprintf("U+%04X", []rune(value)[0]), func(t *testing.T) {
+			if errors := protocolvalidator.ValidateDefinition("NonEmptyString", value); len(errors) == 0 {
+				t.Fatalf("whitespace-only value %q passed validation", value)
+			}
+		})
+	}
+	if errors := protocolvalidator.ValidateDefinition("NonEmptyString", "\u200b"); len(errors) > 0 {
+		t.Fatalf("zero-width space should remain content: %v", errors)
+	}
+}
+
+func TestRFC3339TimestampMatchesCanonicalDateTimeRules(t *testing.T) {
+	for _, value := range []string{
+		"2026-01-02T03:04:05Z",
+		"2026-01-02t03:04:05Z",
+		"2026-01-02T03:04:05z",
+		"2026-01-02T23:59:60Z",
+		"2026-01-02T00:59:60+01:00",
+		"2026-01-02T22:59:60-01:00",
+	} {
+		if errors := protocolvalidator.ValidateDefinition("RFC3339Timestamp", value); len(errors) > 0 {
+			t.Errorf("canonical timestamp %q rejected: %v", value, errors)
+		}
+	}
+	for _, value := range []string{
+		"2026-01-02T03:04:60Z",
+		"2026-01-02T23:59:60+01:01",
+		"2026-01-02T22:59:60-02:00",
+		"2026-02-29T03:04:05Z",
+		"2026-01-02T23:59:59+24:00",
+	} {
+		if errors := protocolvalidator.ValidateDefinition("RFC3339Timestamp", value); len(errors) == 0 {
+			t.Errorf("invalid timestamp %q passed validation", value)
+		}
+	}
 }
 
 func TestGeneratedSpatialValidatorsApplySemanticLimits(t *testing.T) {
@@ -472,6 +531,11 @@ func TestResponseValidatorsRequireContinuationCursors(t *testing.T) {
 	assertErrorContains(t, protocol.ValidateChangedSinceResponse(map[string]any{
 		"events": []any{}, "has_more": true, "version": 1,
 	}), "next_cursor")
+	if errors := protocol.ValidateChangedSinceResponse(map[string]any{
+		"events": []any{}, "has_more": false, "next_cursor": "orphan", "version": 1,
+	}); len(errors) == 0 {
+		t.Fatal("ChangedSinceResponse accepted an orphan next_cursor")
+	}
 
 	for _, flag := range []string{"has_more_entities", "has_more_tasks", "has_more_objects"} {
 		t.Run(flag, func(t *testing.T) {
@@ -481,6 +545,26 @@ func TestResponseValidatorsRequireContinuationCursors(t *testing.T) {
 			}
 			fullDataset[flag] = true
 			assertErrorContains(t, protocol.ValidateFullDatasetResponse(fullDataset), "cursor")
+		})
+	}
+
+	for _, test := range []struct {
+		flag   string
+		cursor string
+	}{
+		{flag: "has_more_entities", cursor: "next_entity_cursor"},
+		{flag: "has_more_objects", cursor: "next_object_cursor"},
+		{flag: "has_more_tasks", cursor: "next_task_cursor"},
+	} {
+		t.Run(test.flag+" orphan cursor", func(t *testing.T) {
+			fullDataset := map[string]any{
+				"entities": []any{}, "tasks": []any{}, "objects": []any{}, "version": 1,
+				"has_more_entities": false, "has_more_tasks": false, "has_more_objects": false,
+			}
+			fullDataset[test.cursor] = "orphan"
+			if errors := protocol.ValidateFullDatasetResponse(fullDataset); len(errors) == 0 {
+				t.Fatalf("FullDatasetResponse accepted an orphan %s", test.cursor)
+			}
 		})
 	}
 }

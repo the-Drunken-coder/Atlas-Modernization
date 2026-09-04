@@ -842,7 +842,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     const imageReference = this.#requirePublishedImage();
     const runtime = await this.#preflight();
     await this.#dockerRuntimeScope.run(runtime, async () => {
-      if (existsSync(this.#configDir)) this.#assertResetConfigurationMatchesRuntime(runtime.engineId);
+      this.#assertResetConfigurationMatchesRuntime(runtime.engineId);
       await this.#checkCommand("docker", ["pull", imageReference]);
       await this.#withMutationLock(
         runtime.engineId,
@@ -3064,9 +3064,15 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   }
 
   #assertResetConfigurationMatchesRuntime(dockerEngineId: string): void {
+    if (!existsSync(this.#configDir) || !existsSync(this.#stateFile)) {
+      throw new Error("Atlas Core is not initialized. Run atlas-core init first.");
+    }
     this.#assertPrivateConfiguration();
     const state = this.#readState();
-    if (state && state.dockerEngineId !== dockerEngineId) {
+    if (!state || state.phase !== "ready") {
+      throw new Error("Atlas Core is not initialized. Run atlas-core init first.");
+    }
+    if (state.dockerEngineId !== dockerEngineId) {
       throw new Error(
         `Atlas Core configuration belongs to Docker engine ${state.dockerEngineId}, but the current engine is ${dockerEngineId}. ` +
           "Restore the original Docker context before resetting this deployment."

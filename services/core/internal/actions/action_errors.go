@@ -75,7 +75,8 @@ func NewObjectNotFoundError(objectID string) *NotFoundError {
 	}
 }
 
-// PreconditionFailedError is returned when If-Match does not match the current resource.
+// PreconditionFailedError is returned when a resource write precondition does
+// not match the current resource.
 type PreconditionFailedError struct {
 	ActionError
 }
@@ -108,6 +109,21 @@ func NewPreconditionFailedError(resourceType string) *PreconditionFailedError {
 	return &PreconditionFailedError{
 		ActionError: ActionError{
 			Message: fmt.Sprintf("If-Match precondition failed for %s", resourceType),
+			Code:    protocol.ErrorCodePreconditionFailed,
+		},
+	}
+}
+
+// NewResourceInstanceTokenPreconditionFailedError reports that a cleanup token
+// does not identify the current resource instance.
+func NewResourceInstanceTokenPreconditionFailedError(resourceType string) *PreconditionFailedError {
+	resourceType = strings.TrimSpace(resourceType)
+	if resourceType == "" {
+		resourceType = "resource"
+	}
+	return &PreconditionFailedError{
+		ActionError: ActionError{
+			Message: fmt.Sprintf("Resource instance token precondition failed for %s", resourceType),
 			Code:    protocol.ErrorCodePreconditionFailed,
 		},
 	}

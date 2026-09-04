@@ -298,6 +298,54 @@ func TestWebsocketFeedFirstMessageAuthClosesWhenAPIKeyValidatorErrors(t *testing
 	expectFeedClosedWithStatus(t, conn, websocket.StatusPolicyViolation)
 }
 
+func TestWebsocketFeedFirstMessageAuthCancelsBlockingAPIKeyValidator(t *testing.T) {
+	hub := NewHub(Options{})
+	defer hub.Close()
+	validatorStarted := make(chan struct{})
+	validatorCanceled := make(chan error, 1)
+	const authTimeout = 100 * time.Millisecond
+	server := httptest.NewServer(http.HandlerFunc(Server{
+		Hub: hub,
+		Config: ServerConfig{
+			EnableAPIAuth: true,
+			AuthTimeout:   authTimeout,
+			APIKeyValidator: func(ctx context.Context, _ string) (bool, error) {
+				close(validatorStarted)
+				<-ctx.Done()
+				validatorCanceled <- ctx.Err()
+				return false, ctx.Err()
+			},
+		},
+	}.ServeHTTP))
+	defer server.Close()
+
+	conn := dialFeed(t, server.URL)
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
+
+	startedAt := time.Now()
+	if err := conn.Write(context.Background(), websocket.MessageText, []byte(`{"action":"auth","api_key":"managed-secret"}`)); err != nil {
+		t.Fatalf("auth feed with managed key: %v", err)
+	}
+	select {
+	case <-validatorStarted:
+	case <-time.After(time.Second):
+		t.Fatal("API key validator did not start")
+	}
+	select {
+	case err := <-validatorCanceled:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("validator context error = %v, want deadline exceeded", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("API key validator context was not canceled")
+	}
+
+	expectFeedClosedWithStatus(t, conn, websocket.StatusPolicyViolation)
+	if elapsed := time.Since(startedAt); elapsed > authTimeout+time.Second {
+		t.Fatalf("feed auth took %s, want completion within auth deadline", elapsed)
+	}
+}
+
 func TestWebsocketFeedRejectsDeniedCrossOriginBeforeUpgrade(t *testing.T) {
 	hub := NewHub(Options{})
 	defer hub.Close()

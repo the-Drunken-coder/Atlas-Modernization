@@ -110,6 +110,7 @@ export function MapConsole() {
   const selection = sidebar.selection;
   const selectedSnapshotEntity = getEntity(snapshot, selection?.id);
   const selectedSnapshotEntityId = selectedSnapshotEntity?.entity_id;
+  const selectedSnapshotEntityVersion = selectedSnapshotEntity?.metadata.version;
   const [selectedEntityDetails, setSelectedEntityDetails] = useState<EntityResource>();
   const [commandManifestStatus, setCommandManifestStatus] = useState<CommandManifestStatus>("ready");
   const commandDetailsRequired = Boolean(
@@ -127,22 +128,24 @@ export function MapConsole() {
         cancelled = true;
       };
     }
+    const controller = new AbortController();
     setCommandManifestStatus("loading");
     void atlas
-      .loadEntityDetails(selectedSnapshotEntityId)
+      .loadEntityDetails(selectedSnapshotEntityId, controller.signal)
       .then((entity) => {
-        if (!cancelled) {
+        if (!cancelled && !controller.signal.aborted) {
           setSelectedEntityDetails(entity);
           setCommandManifestStatus("ready");
         }
       })
       .catch(() => {
-        if (!cancelled) setCommandManifestStatus("unavailable");
+        if (!cancelled && !controller.signal.aborted) setCommandManifestStatus("unavailable");
       });
     return () => {
       cancelled = true;
+      controller.abort();
     };
-  }, [atlas.loadEntityDetails, commandDetailsRequired, selectedSnapshotEntityId]);
+  }, [atlas.loadEntityDetails, commandDetailsRequired, selectedSnapshotEntityId, selectedSnapshotEntityVersion]);
   const resolvedCommandManifestStatus =
     !commandDetailsRequired &&
     selectedSnapshotEntity &&

@@ -73,8 +73,8 @@ describe("RunStore", () => {
         ...client,
         entities: {
           ...client.entities,
-          create: async (entity) => {
-            await client.entities.create(entity);
+          create: async (entity, options) => {
+            await client.entities.create(entity, options);
             throw new Error("response failed");
           }
         }
@@ -98,6 +98,44 @@ describe("RunStore", () => {
     await expect(core.factory().entities.get(entityId)).resolves.toMatchObject({ entity_id: entityId });
     await expect(store.cleanup(started.id)).resolves.toMatchObject({ cleaned: true });
     expect(core.state.deleted).toEqual([`entity:${entityId}`]);
+  });
+
+  it("cleans up hidden Object candidates after response failure", async () => {
+    const core = createFakeAtlasCore();
+    let firstClient = true;
+    const store = new RunStore((options) => {
+      const client = core.factory(options);
+      if (!firstClient) return client;
+      firstClient = false;
+      return {
+        ...client,
+        objects: {
+          ...client.objects,
+          create: async (object, createOptions) => {
+            await client.objects.create(object, createOptions);
+            throw new Error("response failed");
+          }
+        }
+      };
+    });
+    let objectID = "";
+    const scenario = scenarioFixture({
+      id: "response-failure-object-cleanup",
+      name: "Response failure object cleanup",
+      summary: "Cleans up an Object whose response failed after persistence",
+      async run(ctx) {
+        objectID = ctx.id("object");
+        await ctx.createObject({ object_id: objectID });
+      }
+    });
+
+    const started = store.start(scenario, { fields: {} });
+    await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("failed"));
+
+    expect(store.get(started.id)?.createdResources).toEqual([]);
+    await expect(core.factory().objects.get(objectID)).resolves.toMatchObject({ object_id: objectID });
+    await expect(store.cleanup(started.id)).resolves.toMatchObject({ cleaned: true });
+    expect(core.state.deleted).toEqual([`object:${objectID}`]);
   });
 
   it("reports cancelled status after a stopped run unwinds", async () => {
@@ -468,6 +506,103 @@ describe("RunStore", () => {
     );
   });
 
+  it("does not delete an Entity/Object replacement with the same ID", async () => {
+    for (const type of ["entity", "object"] as const) {
+      const core = createFakeAtlasCore();
+      const store = new RunStore(core.factory);
+      let resourceID = "";
+      const scenario = scenarioFixture({
+        id: `replacement-${type}`,
+        name: `Replacement ${type}`,
+        summary: "Recreates a cleanup ID after the original instance is gone",
+        async run(ctx) {
+          resourceID = ctx.id(type);
+          if (type === "entity") {
+            await ctx.createEntity({ entity_id: resourceID, entity_type: "asset" });
+          } else {
+            await ctx.createObject({ object_id: resourceID });
+          }
+        }
+      });
+
+      const started = store.start(scenario, { fields: {} });
+      await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("completed"));
+      const writer = core.factory();
+      if (type === "entity") {
+        await writer.entities.delete(resourceID);
+        await writer.entities.create({ entity_id: resourceID, entity_type: "asset" });
+      } else {
+        await writer.objects.delete(resourceID);
+        await writer.objects.create({ object_id: resourceID });
+      }
+
+      await expect(store.cleanup(started.id)).resolves.toMatchObject({ cleaned: true });
+      if (type === "entity") {
+        await expect(core.factory().entities.get(resourceID)).resolves.toMatchObject({ entity_id: resourceID });
+      } else {
+        await expect(core.factory().objects.get(resourceID)).resolves.toMatchObject({ object_id: resourceID });
+      }
+      expect(core.state.deleted).toEqual([`${type}:${resourceID}`]);
+      expect(store.events(started.id)).toContainEqual(
+        expect.objectContaining({
+          type: "cleanup",
+          resource: { type, id: resourceID },
+          message: `${type} ${resourceID} owned instance is no longer present`
+        })
+      );
+    }
+  });
+
+  it("retries an accepted delete whose response is lost", async () => {
+    for (const type of ["entity", "object"] as const) {
+      const core = createFakeAtlasCore();
+      const store = new RunStore(core.factory);
+      let resourceID = "";
+      const scenario = scenarioFixture({
+        id: `lost-delete-${type}`,
+        name: `Lost delete ${type}`,
+        summary: "Retries cleanup after Core accepted a delete",
+        async run(ctx) {
+          resourceID = ctx.id(type);
+          if (type === "entity") await ctx.createEntity({ entity_id: resourceID, entity_type: "asset" });
+          else await ctx.createObject({ object_id: resourceID });
+        }
+      });
+      const started = store.start(scenario, { fields: {} });
+      await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("completed"));
+
+      const responseLostFactory: AtlasClientFactory = (options) => {
+        const client = core.factory(options);
+        if (type === "entity") {
+          return {
+            ...client,
+            entities: {
+              ...client.entities,
+              delete: async (id, deleteOptions) => {
+                await client.entities.delete(id, deleteOptions);
+                throw new Error("delete response lost");
+              }
+            }
+          };
+        }
+        return {
+          ...client,
+          objects: {
+            ...client.objects,
+            delete: async (id, deleteOptions) => {
+              await client.objects.delete(id, deleteOptions);
+              throw new Error("delete response lost");
+            }
+          }
+        };
+      };
+      await expect(store.cleanup(started.id, responseLostFactory)).rejects.toThrow("delete response lost");
+      expect(core.state.deleted).toEqual([`${type}:${resourceID}`]);
+      await expect(store.cleanup(started.id)).resolves.toMatchObject({ cleaned: true });
+      expect(core.state.deleted).toEqual([`${type}:${resourceID}`]);
+    }
+  });
+
   it("does not mark unsupported cleanup resource types as deleted", async () => {
     const { store } = runStoreFixture();
     const scenario = scenarioFixture({
@@ -607,6 +742,43 @@ describe("RunStore", () => {
     expect((await reader.entities.get("asset-1")).alias).toBe("old");
     await reader.sync.status();
     expect((await reader.entities.get("asset-1")).alias).toBe("new");
+  });
+
+  it("enforces instance-token mismatch and one-time use for Entity/Object while preserving ordinary calls", async () => {
+    const core = createFakeAtlasCore();
+    const client = core.factory();
+    for (const type of ["entity", "object"] as const) {
+      const id = `token-contract-${type}`;
+      const token = `token-contract-${type}-one`;
+      if (type === "entity")
+        await client.entities.create({ entity_id: id, entity_type: "asset" }, { instanceToken: token });
+      else await client.objects.create({ object_id: id }, { instanceToken: token });
+
+      const mismatch =
+        type === "entity"
+          ? client.entities.delete(id, { instanceToken: "wrong-token" })
+          : client.objects.delete(id, { instanceToken: "wrong-token" });
+      await expect(mismatch).rejects.toMatchObject({ status: 412, errorCode: "PRECONDITION_FAILED" });
+      if (type === "entity") await expect(client.entities.get(id)).resolves.toMatchObject({ entity_id: id });
+      else await expect(client.objects.get(id)).resolves.toMatchObject({ object_id: id });
+
+      if (type === "entity") await client.entities.delete(id, { instanceToken: token });
+      else await client.objects.delete(id, { instanceToken: token });
+      const reuse =
+        type === "entity"
+          ? client.entities.create({ entity_id: `${id}-reuse`, entity_type: "asset" }, { instanceToken: token })
+          : client.objects.create({ object_id: `${id}-reuse` }, { instanceToken: token });
+      await expect(reuse).rejects.toMatchObject({ status: 400, errorCode: "VALIDATION_ERROR" });
+
+      const ordinaryID = `${id}-ordinary`;
+      if (type === "entity") {
+        await client.entities.create({ entity_id: ordinaryID, entity_type: "asset" });
+        await client.entities.delete(ordinaryID);
+      } else {
+        await client.objects.create({ object_id: ordinaryID });
+        await client.objects.delete(ordinaryID);
+      }
+    }
   });
 
   it("fake sync writers immediately see their own mutations", async () => {
@@ -863,16 +1035,16 @@ describe("RunStore", () => {
     const { directory, ledger } = temporaryLedger();
     try {
       const core = createFakeAtlasCore();
-      let resourcesObservedByCore: Array<{ type: string; id: string }> | undefined;
+      let resourcesObservedByCore: Array<{ type: string; id: string; instanceToken: string }> | undefined;
       const factory: AtlasClientFactory = (options) => {
         const client = core.factory(options);
         return {
           ...client,
           entities: {
             ...client.entities,
-            create: async (entity) => {
+            create: async (entity, options) => {
               resourcesObservedByCore = ledger.load()[0]?.resources;
-              return client.entities.create(entity);
+              return client.entities.create(entity, options);
             }
           }
         };
@@ -883,7 +1055,9 @@ describe("RunStore", () => {
       const started = store.start(scenario, { fields: {} }, deployedTarget(factory));
       await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("completed"));
 
-      expect(resourcesObservedByCore).toEqual([{ type: "entity", id: expect.stringMatching(`${started.id}-`) }]);
+      expect(resourcesObservedByCore).toEqual([
+        { type: "entity", id: expect.stringMatching(`${started.id}-`), instanceToken: expect.any(String) }
+      ]);
       expect(ledger.load()[0]?.resources).toEqual(resourcesObservedByCore);
     } finally {
       rmSync(directory, { recursive: true, force: true });
@@ -915,6 +1089,7 @@ describe("RunStore", () => {
       const started = original.start(createOneEntityScenario(), { fields: {} }, deployedTarget(core.factory));
       await vi.waitFor(() => expect(original.get(started.id)?.status).toBe("completed"));
       const resource = ledger.load()[0]?.resources[0];
+      const publicResource = resource && { type: resource.type, id: resource.id };
 
       expect(
         () =>
@@ -933,7 +1108,7 @@ describe("RunStore", () => {
       expect(recovered.get(started.id)).toMatchObject({
         status: "abandoned",
         cleaned: false,
-        createdResources: [resource],
+        createdResources: [publicResource],
         lastError: expect.stringContaining("restarted before explicit cleanup")
       });
       expect(recovered.events(started.id)).toEqual([
@@ -961,6 +1136,37 @@ describe("RunStore", () => {
       });
       expect(new CleanupLedger(path.join(directory, "state", "runs")).load()).toEqual([]);
       expect(core.state.deleted).toEqual([`entity:${resource?.id}`]);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed when an abandoned ledger resource ID has been replaced", async () => {
+    const { directory, ledger } = temporaryLedger();
+    try {
+      const core = createFakeAtlasCore();
+      const original = new RunStore(core.factory, { ledger });
+      const started = original.start(createOneEntityScenario(), { fields: {} }, deployedTarget(core.factory));
+      await vi.waitFor(() => expect(original.get(started.id)?.status).toBe("completed"));
+      const resource = ledger.load()[0]!.resources[0]!;
+      const writer = core.factory();
+      await writer.entities.delete(resource.id);
+      await writer.entities.create({ entity_id: resource.id, entity_type: "asset" });
+
+      const recovered = new RunStore(core.factory, {
+        ledger: new CleanupLedger(path.join(directory, "state", "runs")),
+        resolveTarget: (target) => deployedTarget(core.factory, target)
+      });
+      await expect(recovered.cleanup(started.id)).resolves.toMatchObject({ cleaned: true });
+      await expect(core.factory().entities.get(resource.id)).resolves.toMatchObject({ entity_id: resource.id });
+      expect(core.state.deleted).toEqual([`entity:${resource.id}`]);
+      expect(recovered.events(started.id)).toContainEqual(
+        expect.objectContaining({
+          type: "cleanup",
+          resource: { type: "entity", id: resource.id },
+          message: `entity ${resource.id} owned instance is no longer present`
+        })
+      );
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }

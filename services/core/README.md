@@ -117,9 +117,27 @@ export MINIO_BUCKET="${MINIO_BUCKET:-atlas-media}"
 The owner-readable environment file must define `POSTGRES_PASSWORD`,
 `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD`, `API_AUTH_KEY`, and
 `ATLAS_ADMIN_PASSWORD`; the admin password must contain at least 12 characters.
-Before the first manual production start on a new MinIO volume, provision the configured
-durable bucket and verify it exists; Core startup deliberately will not create it.
+The manual production Compose files use the fixed external volumes
+`atlas_core_production_postgres_data` and `atlas_core_production_minio_data`.
+Before the first manual production start, choose one non-empty storage-set ID
+for this deployment and explicitly create both volumes with that same label:
+
+```bash
+ATLAS_STORAGE_SET_ID='production-primary-2026-09'
+docker volume create --label "io.atlas.core.storage-set=${ATLAS_STORAGE_SET_ID}" \
+  atlas_core_production_postgres_data
+docker volume create --label "io.atlas.core.storage-set=${ATLAS_STORAGE_SET_ID}" \
+  atlas_core_production_minio_data
+```
+
+The launcher verifies that the required volume set exists and that both volumes
+carry the same non-empty storage-set label before stopping or starting
+containers. On a new MinIO volume, provision the configured durable bucket and
+verify it exists; Core startup deliberately will not create it.
 `MINIO_BUCKET` defaults to `atlas-media` when the operator file omits it.
+The explicit `--production --db-only` mode deliberately checks the PostgreSQL
+external volume and its storage-set identity, then starts only PostgreSQL; it
+does not initialize or validate MinIO.
 
 ```bash
 (

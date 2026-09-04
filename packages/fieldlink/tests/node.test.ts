@@ -1598,6 +1598,75 @@ describe("inbound transfer validation", () => {
     ).toBe(true);
   });
 
+  it("drains an accepted async event listener before close", async () => {
+    const transport = new MemoryTransport();
+    const node = new FieldLinkNode({ nodeId: nodeB, transport });
+    let reportStarted = (): void => undefined;
+    const started = new Promise<void>((resolve) => {
+      reportStarted = resolve;
+    });
+    let release = (): void => undefined;
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    node.onEvent(async () => {
+      reportStarted();
+      await released;
+    });
+    transport.inject({
+      bytes: encodeFrame({
+        transmissionId: 1,
+        kind: FrameKind.complete,
+        source: nodeA,
+        destination: nodeB,
+        logicalId: 73n,
+        messageType: 1,
+        body: testMessage.encode(test("response", 0)),
+      }),
+    });
+    await started;
+
+    let closed = false;
+    const closing = node.close().then(() => {
+      closed = true;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(closed).toBe(false);
+    release();
+    await expect(closing).resolves.toBeUndefined();
+  });
+
+  it("cancels a built-in reply queue wait during close", async () => {
+    const transport = new MemoryTransport();
+    transport.queueLength = 1;
+    const node = new FieldLinkNode({ nodeId: nodeB, transport });
+    transport.inject({
+      bytes: encodeFrame({
+        transmissionId: 1,
+        kind: FrameKind.complete,
+        source: nodeA,
+        destination: nodeB,
+        logicalId: 74n,
+        messageType: 1,
+        body: testMessage.encode(test("request", 0)),
+      }),
+    });
+    await eventually(() => transport.queueLengths.length > 0);
+
+    const closing = node.close();
+    const result = await Promise.race([
+      closing.then(() => "closed" as const),
+      new Promise<"timeout">((resolve) => {
+        setTimeout(() => resolve("timeout"), 100);
+      }),
+    ]);
+    if (result === "timeout") {
+      transport.queueLength = 0;
+    }
+    await closing;
+    expect(result).toBe("closed");
+  });
+
   it("returns the same promise to concurrent close callers", async () => {
     const transport = new MemoryTransport();
     const node = new FieldLinkNode({ nodeId: nodeB, transport });

@@ -18,6 +18,23 @@ func (h *Handler) parseIfMatchExpectedVersion(w http.ResponseWriter, r *http.Req
 	return expectedVersion, true
 }
 
+func (h *Handler) parseResourceInstanceToken(w http.ResponseWriter, r *http.Request) (*string, bool) {
+	values := r.Header.Values(actions.ResourceInstanceTokenHeader)
+	if len(values) == 0 {
+		return nil, true
+	}
+	if len(values) != 1 {
+		h.handleActionError(w, r, actions.NewValidationError("resource instance token header must appear once"))
+		return nil, false
+	}
+	if err := actions.ValidateResourceInstanceToken(values[0]); err != nil {
+		h.handleActionError(w, r, actions.NewValidationError(err.Error()))
+		return nil, false
+	}
+	token := values[0]
+	return &token, true
+}
+
 func parseIfMatchExpectedVersionValues(values []string) (*int64, error) {
 	return ParseIfMatchExpectedVersion(strings.Join(values, ","))
 }

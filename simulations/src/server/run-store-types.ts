@@ -20,6 +20,10 @@ export type RunScenario = {
   name: string;
 };
 
+export type CleanupResource = CreatedResource & {
+  instanceToken: string;
+};
+
 export type RunRecord = {
   id: string;
   scenario: RunScenario;
@@ -31,8 +35,8 @@ export type RunRecord = {
   inputs: Record<string, string | number | boolean>;
   jsonInput?: JSONValue;
   createdResources: CreatedResource[];
-  cleanupResources: CreatedResource[];
-  overflowCleanupResource?: CreatedResource;
+  cleanupResources: CleanupResource[];
+  overflowCleanupResource?: CleanupResource;
   assertions: AssertionResult[];
   assertionHistoryBytes: number;
   events: RunEvent[];

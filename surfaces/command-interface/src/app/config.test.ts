@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { appConfigFromEnv, coreConfigFromEnv, fetchAppConfig } from "./config.js";
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -355,5 +356,60 @@ describe("fetchAppConfig", () => {
       unavailableReason: "missing key"
     });
     expect(warn).toHaveBeenCalled();
+  });
+
+  it("keeps configuration loading bounded when the Google session fetch never settles", async () => {
+    vi.useFakeTimers();
+    vi.stubEnv("VITE_GOOGLE_MAPS_API_KEY", "google-key");
+    vi.stubGlobal("location", { origin: "http://127.0.0.1:5173" });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const fetch = vi.fn((_input: RequestInfo | URL, _init?: RequestInit) => new Promise<Response>(() => {}));
+    vi.stubGlobal("fetch", fetch);
+
+    const config = fetchAppConfig();
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    await expect(config).resolves.toMatchObject({ defaultMapSourceId: "maptiler-osm-dark" });
+    expect(fetch).toHaveBeenCalledWith(
+      "https://tile.googleapis.com/v1/createSession?key=google-key",
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
+    );
+    expect(fetch.mock.calls[0]?.[1]?.signal).toHaveProperty("aborted", true);
+    expect(warn).toHaveBeenCalledWith(
+      "Google Maps satellite session request unavailable",
+      expect.stringContaining("timed out")
+    );
+  });
+
+  it("keeps configuration loading bounded when the Google session response body never ends", async () => {
+    vi.useFakeTimers();
+    vi.stubEnv("VITE_GOOGLE_MAPS_API_KEY", "google-key");
+    vi.stubGlobal("location", { origin: "http://127.0.0.1:5173" });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const fetch = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode("{"));
+            }
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" }
+          }
+        )
+    );
+    vi.stubGlobal("fetch", fetch);
+
+    const config = fetchAppConfig();
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    await expect(config).resolves.toMatchObject({ defaultMapSourceId: "maptiler-osm-dark" });
+    expect(fetch.mock.calls[0]?.[1]?.signal).toHaveProperty("aborted", true);
+    expect(warn).toHaveBeenCalledWith(
+      "Google Maps satellite session request unavailable",
+      expect.stringContaining("timed out")
+    );
   });
 });

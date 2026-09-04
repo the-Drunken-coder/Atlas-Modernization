@@ -203,15 +203,20 @@ func (c *Client) UploadObjectFromReaderToPath(ctx context.Context, objectID, pat
 	return c.putObject(ctx, objectID, path, reader, size, contentType)
 }
 
-// StreamObjectPath returns an io.ReadCloser for streaming an object from an explicit storage path.
-func (c *Client) StreamObjectPath(ctx context.Context, objectID, path string) (io.ReadCloser, *ObjectInfo, error) {
-	obj, err := c.client.GetObject(ctx, c.bucket, path, minio.GetObjectOptions{})
+// StreamObjectPath returns an io.ReadCloser for streaming an object from an explicit bucket and path.
+func (c *Client) StreamObjectPath(ctx context.Context, objectID, bucket, path string) (io.ReadCloser, *ObjectInfo, error) {
+	bucket = strings.TrimSpace(bucket)
+	if bucket == "" {
+		return nil, nil, &StorageError{Message: "storage bucket not configured"}
+	}
+
+	obj, err := c.client.GetObject(ctx, bucket, path, minio.GetObjectOptions{})
 	if err != nil {
 		switch minio.ToErrorResponse(err).Code {
 		case "NoSuchBucket":
-			return nil, nil, &BucketNotFoundError{Bucket: c.bucket}
+			return nil, nil, &BucketNotFoundError{Bucket: bucket}
 		case "NoSuchKey":
-			return nil, nil, &ObjectNotFoundError{Bucket: c.bucket, ObjectName: path}
+			return nil, nil, &ObjectNotFoundError{Bucket: bucket, ObjectName: path}
 		default:
 			return nil, nil, &StorageError{Message: "failed to get object", Err: err}
 		}
@@ -222,9 +227,9 @@ func (c *Client) StreamObjectPath(ctx context.Context, objectID, path string) (i
 		_ = obj.Close()
 		switch minio.ToErrorResponse(err).Code {
 		case "NoSuchBucket":
-			return nil, nil, &BucketNotFoundError{Bucket: c.bucket}
+			return nil, nil, &BucketNotFoundError{Bucket: bucket}
 		case "NoSuchKey":
-			return nil, nil, &ObjectNotFoundError{Bucket: c.bucket, ObjectName: path}
+			return nil, nil, &ObjectNotFoundError{Bucket: bucket, ObjectName: path}
 		default:
 			return nil, nil, &StorageError{Message: "failed to stat object", Err: err}
 		}
@@ -232,7 +237,7 @@ func (c *Client) StreamObjectPath(ctx context.Context, objectID, path string) (i
 
 	info := &ObjectInfo{
 		ObjectID:     objectID,
-		Bucket:       c.bucket,
+		Bucket:       bucket,
 		Path:         path,
 		SizeBytes:    stat.Size,
 		ContentType:  stat.ContentType,
@@ -243,16 +248,21 @@ func (c *Client) StreamObjectPath(ctx context.Context, objectID, path string) (i
 	return obj, info, nil
 }
 
-// DeleteObjectPath deletes an object by its storage path.
-func (c *Client) DeleteObjectPath(ctx context.Context, path string) error {
-	err := c.client.RemoveObject(ctx, c.bucket, path, minio.RemoveObjectOptions{})
+// DeleteObjectPath deletes an object by its explicit bucket and path.
+func (c *Client) DeleteObjectPath(ctx context.Context, bucket, path string) error {
+	bucket = strings.TrimSpace(bucket)
+	if bucket == "" {
+		return &StorageError{Message: "storage bucket not configured"}
+	}
+
+	err := c.client.RemoveObject(ctx, bucket, path, minio.RemoveObjectOptions{})
 	if err != nil {
 		code := minio.ToErrorResponse(err).Code
 		if code == "NoSuchKey" {
 			return nil
 		}
 		if code == "NoSuchBucket" {
-			return &BucketNotFoundError{Bucket: c.bucket}
+			return &BucketNotFoundError{Bucket: bucket}
 		}
 		return &StorageError{Message: "failed to delete object", Err: err}
 	}

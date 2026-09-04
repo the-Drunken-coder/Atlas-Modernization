@@ -1514,6 +1514,7 @@ export class FieldLinkNode {
                 await this.send(reply as SupportedMessage, {
                   destination: source,
                   ...(priority === undefined ? {} : { priority }),
+                  signal: this.#receiveController.signal,
                 });
               },
             }),
@@ -1644,9 +1645,11 @@ export class FieldLinkNode {
   #emit(event: FieldLinkEvent): void {
     this.#congestion.record(event);
     for (const listener of this.#eventListeners) {
-      void Promise.resolve()
-        .then(() => listener(event))
-        .catch(() => undefined);
+      this.#trackCallback(
+        Promise.resolve()
+          .then(() => listener(event))
+          .catch(() => undefined),
+      );
     }
   }
 

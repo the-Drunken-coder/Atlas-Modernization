@@ -73,6 +73,9 @@ func runtimeValidatorSource(g *typeScriptGenerator) (string, error) {
 		if name == "CommandCatalog" {
 			check = "(" + check + " && atlasProtocolHasValidCommandCatalogSemantics(value))"
 		}
+		if name == "CommandManifest" {
+			check = "(" + check + " && atlasProtocolHasValidCommandManifestSemantics(value))"
+		}
 		if name == "MapArea" {
 			check = "(" + check + " && atlasProtocolHasValidMapAreaSemantics(value))"
 		}
@@ -166,6 +169,17 @@ func (g *typeScriptGenerator) runtimeValidatorExpressionWithRefs(valueExpr strin
 			return "", fmt.Errorf("allOf has no schemas")
 		}
 		return "(" + strings.Join(parts, " && ") + ")", nil
+	}
+	if rawNot, ok := schema["not"]; ok {
+		notSchema, ok := rawNot.(map[string]any)
+		if !ok {
+			return "", fmt.Errorf("not is not a schema")
+		}
+		expression, err := g.runtimeValidatorExpressionWithRefs(valueExpr, notSchema, seenRefs)
+		if err != nil {
+			return "", fmt.Errorf("not: %w", err)
+		}
+		return "!(" + expression + ")", nil
 	}
 	if rawIf, ok := schema["if"]; ok {
 		ifSchema, ok := rawIf.(map[string]any)
@@ -329,7 +343,7 @@ func runtimeStringValidatorExpression(valueExpr string, schema typeScriptSchema)
 func runtimeNumberValidatorExpression(valueExpr string, schema typeScriptSchema, integer bool) string {
 	checks := []string{"typeof " + valueExpr + " === \"number\"", "Number.isFinite(" + valueExpr + ")"}
 	if integer {
-		checks = append(checks, "Number.isInteger("+valueExpr+")")
+		checks = append(checks, "Number.isSafeInteger("+valueExpr+")")
 	}
 	if minimum, ok := schema["minimum"].(float64); ok {
 		checks = append(checks, valueExpr+" >= "+jsonNumber(minimum))
@@ -397,6 +411,16 @@ func (g *typeScriptGenerator) runtimeObjectValidatorExpression(valueExpr string,
 	checks := []string{"atlasProtocolIsRecord(" + valueExpr + ")"}
 	if minPropertiesOne(schema) {
 		checks = append(checks, "Object.keys("+valueExpr+").length >= 1")
+	}
+	requiredOnly := make([]string, 0, len(required))
+	for key := range required {
+		if _, declared := props[key]; !declared {
+			requiredOnly = append(requiredOnly, key)
+		}
+	}
+	sort.Strings(requiredOnly)
+	for _, key := range requiredOnly {
+		checks = append(checks, "atlasProtocolHasOwn("+valueExpr+", "+jsonString(key)+")")
 	}
 	for _, key := range keys {
 		propSchema, ok := props[key].(map[string]any)

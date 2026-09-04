@@ -43,6 +43,76 @@ func TestGeneratedDeleteEventHelpers(t *testing.T) {
 	}
 }
 
+func TestGeneratedIntegerUnmarshalAcceptsExactIntegralJSONNumbers(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want int64
+	}{
+		{name: "integer", raw: "1", want: 1},
+		{name: "decimal integer", raw: "1.0", want: 1},
+		{name: "exponent integer", raw: "1e3", want: 1_000},
+		{name: "safe maximum", raw: "9007199254740991", want: 9_007_199_254_740_991},
+		{name: "safe maximum decimal", raw: "9007199254740991.0", want: 9_007_199_254_740_991},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var ready protocol.FeedSubscriptionsReadyMessage
+			data := []byte(`{"type":"subscriptions_ready","version":` + test.raw + `}`)
+			if err := json.Unmarshal(data, &ready); err != nil {
+				t.Fatalf("Unmarshal(%s) returned error: %v", data, err)
+			}
+			if ready.Version != test.want {
+				t.Fatalf("Version = %d, want %d", ready.Version, test.want)
+			}
+		})
+	}
+
+	for _, raw := range []string{
+		"9223372036854775808",
+		"9223372036854775807.5",
+		"1e-4000",
+		"9007199254740993",
+	} {
+		var ready protocol.FeedSubscriptionsReadyMessage
+		data := []byte(`{"type":"subscriptions_ready","version":` + raw + `}`)
+		if err := json.Unmarshal(data, &ready); err == nil {
+			t.Fatalf("Unmarshal(%s) accepted an unrepresentable version", data)
+		}
+	}
+	for _, raw := range []string{
+		`{"type":"subscriptions_ready","version":1.5,"version":1}`,
+		`{"type":"subscriptions_ready","version":1,"version":1.5}`,
+	} {
+		var ready protocol.FeedSubscriptionsReadyMessage
+		if err := json.Unmarshal([]byte(raw), &ready); err == nil {
+			t.Fatalf("Unmarshal(%s) accepted an invalid duplicate version", raw)
+		}
+	}
+
+	var detail protocol.ObjectDetailResource
+	if err := json.Unmarshal([]byte(`{"size_bytes":1.0}`), &detail); err != nil {
+		t.Fatalf("Unmarshal optional integral size_bytes returned error: %v", err)
+	}
+	if detail.SizeBytes == nil || *detail.SizeBytes != 1 {
+		t.Fatalf("SizeBytes = %v, want pointer to 1", detail.SizeBytes)
+	}
+	if err := json.Unmarshal([]byte(`{"size_bytes":null}`), &detail); err != nil {
+		t.Fatalf("Unmarshal null size_bytes returned error: %v", err)
+	}
+	if detail.SizeBytes != nil {
+		t.Fatalf("SizeBytes = %v, want nil", detail.SizeBytes)
+	}
+
+	ready := protocol.FeedSubscriptionsReadyMessage{Type: "subscriptions_ready", Version: 7}
+	if err := json.Unmarshal([]byte(`{}`), &ready); err != nil {
+		t.Fatalf("Unmarshal empty object returned error: %v", err)
+	}
+	if ready.Type != "subscriptions_ready" || ready.Version != 7 {
+		t.Fatalf("Unmarshal empty object = %#v, want original values", ready)
+	}
+}
+
 func assertDeleteEvent(t *testing.T, value json.Marshaler, event protocol.FeedEvent, resourceType protocol.ResourceType, id string, version int64) {
 	t.Helper()
 	if event.Event != protocol.FeedEventDelete || event.ResourceType != resourceType || event.ID != id || event.Version != version {

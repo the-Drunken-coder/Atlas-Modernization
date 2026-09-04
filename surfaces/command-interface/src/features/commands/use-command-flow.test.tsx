@@ -41,6 +41,25 @@ const task = taskFixture({
 afterEach(() => vi.restoreAllMocks());
 
 describe("useCommandFlow", () => {
+  it("waits for the marker selection to commit before opening its menu", () => {
+    const selectedAsset = { ...asset, entity_id: "asset-2", alias: "Scout" };
+    const submitCommand = vi.fn();
+    const { result, rerender } = renderHook(
+      (props: { selectedEntity: typeof asset; selectedId: string }) =>
+        useCommandFlow({ catalog: commandCatalog, submitCommand, ...props }),
+      { initialProps: { selectedEntity: asset, selectedId: asset.entity_id } }
+    );
+
+    act(() => {
+      result.current.onMapContextMenu({ entityId: selectedAsset.entity_id, x: 10, y: 20, lat: 40, lng: -74 });
+    });
+    expect(result.current.mapMenu).toBeNull();
+
+    rerender({ selectedEntity: selectedAsset, selectedId: selectedAsset.entity_id });
+
+    expect(result.current.mapMenu).toEqual({ x: 10, y: 20, lat: 40, lng: -74 });
+  });
+
   it("reuses the idempotency key after an uncertain submission failure", async () => {
     vi.spyOn(crypto, "randomUUID")
       .mockReturnValueOnce("00000000-0000-4000-8000-000000000001")

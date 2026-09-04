@@ -27,6 +27,7 @@ export type CoreConfig = Pick<AppConfig, "atlasBaseUrl" | "protocolRevision">;
 const LOCAL_CORE_BASE_URL = "http://127.0.0.1:8000";
 const REMOTE_CORE_BASE_URL = "https://api.atlasinterface.com";
 const DEFAULT_MAP_SOURCE_ID = "maptiler-osm-dark";
+const GOOGLE_MAPS_TILE_SESSION_TIMEOUT_MS = 10_000;
 
 type RuntimeEnv = {
   DEV?: boolean;
@@ -260,23 +261,41 @@ function buildMapSourceConfig(env: RuntimeEnv): MapSourceConfig[] {
 }
 
 async function fetchGoogleMapsTileSession(apiKey: string): Promise<string | undefined> {
-  const response = await fetch(`https://tile.googleapis.com/v1/createSession?key=${urlParam(apiKey)}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ mapType: "satellite", language: "en-US", region: "US" })
-  }).catch((error: unknown) => {
-    console.warn("Google Maps satellite session request failed", sanitizeErrorMessage(error));
-    return undefined;
+  const controller = new AbortController();
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  const request = (async () => {
+    const response = await fetch(`https://tile.googleapis.com/v1/createSession?key=${urlParam(apiKey)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mapType: "satellite", language: "en-US", region: "US" }),
+      signal: controller.signal
+    });
+    if (!response.ok) {
+      console.warn(`Google Maps satellite session request failed (${response.status})`);
+      return undefined;
+    }
+    const payload = (await response.json().catch(() => undefined)) as { session?: unknown } | undefined;
+    const session = typeof payload?.session === "string" ? payload.session.trim() : "";
+    if (!session) console.warn("Google Maps satellite session response did not include a session token");
+    return session || undefined;
+  })();
+  const deadline = new Promise<never>((_, reject) => {
+    timeoutHandle = setTimeout(() => {
+      controller.abort();
+      reject(
+        new Error(`Google Maps satellite session request timed out after ${GOOGLE_MAPS_TILE_SESSION_TIMEOUT_MS}ms`)
+      );
+    }, GOOGLE_MAPS_TILE_SESSION_TIMEOUT_MS);
   });
-  if (!response) return undefined;
-  if (!response.ok) {
-    console.warn(`Google Maps satellite session request failed (${response.status})`);
+
+  try {
+    return await Promise.race([request, deadline]);
+  } catch (error: unknown) {
+    console.warn("Google Maps satellite session request unavailable", sanitizeErrorMessage(error));
     return undefined;
+  } finally {
+    if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
   }
-  const payload = (await response.json().catch(() => undefined)) as { session?: unknown } | undefined;
-  const session = typeof payload?.session === "string" ? payload.session.trim() : "";
-  if (!session) console.warn("Google Maps satellite session response did not include a session token");
-  return session || undefined;
 }
 
 function envValue(value: string | undefined): string | undefined {

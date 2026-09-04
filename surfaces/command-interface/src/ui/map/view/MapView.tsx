@@ -43,7 +43,7 @@ import { MapReticle } from "./MapReticle.js";
 import { cloneStyle, fitWorldOnce, webglAvailable } from "./map-view-utils.js";
 import { PlaceDetailLens } from "./PlaceDetailLens.js";
 
-export type MapContextMenuInfo = { lng: number; lat: number; x: number; y: number };
+export type MapContextMenuInfo = { lng: number; lat: number; x: number; y: number; entityId?: string };
 export type { MapReticleTarget } from "../interaction/map-targets.js";
 export type { MapEditing } from "../rendering/map-editing.js";
 export { buildMapSources } from "../rendering/map-sources.js";
@@ -393,7 +393,8 @@ export function MapView({
           lng: current.geometry.coordinates[0],
           lat: current.geometry.coordinates[1],
           x: event.clientX,
-          y: event.clientY
+          y: event.clientY,
+          entityId: current.properties.entityId
         });
       });
       markers.set(entityId, entry);

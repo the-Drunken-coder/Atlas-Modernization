@@ -188,6 +188,10 @@ func (a *ObjectActions) recoverStorageUploadIntents(ctx context.Context, limit i
 	rows.Close()
 
 	recovered := 0
+	configuredBucket := ""
+	if a.storage != nil {
+		configuredBucket = strings.TrimSpace(a.storage.Bucket())
+	}
 	for _, item := range intents {
 		recoveredIntent, err := func() (bool, error) {
 			tx, err := a.pool.BeginTx(ctx, pgx.TxOptions{})
@@ -213,7 +217,14 @@ func (a *ObjectActions) recoverStorageUploadIntents(ctx context.Context, limit i
 				return false, fmt.Errorf("lock storage upload intent for recovery: %w", err)
 			}
 			var live bool
-			if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM objects WHERE path = $1)`, item.path).Scan(&live); err != nil {
+			if err := tx.QueryRow(ctx, `
+				SELECT EXISTS (
+					SELECT 1
+					FROM objects
+					WHERE path = $1
+						AND COALESCE(NULLIF(BTRIM(json->>'bucket'), ''), $3) = $2
+				)
+			`, item.path, item.bucket, configuredBucket).Scan(&live); err != nil {
 				return false, fmt.Errorf("check storage upload intent live reference: %w", err)
 			}
 			if !live {
