@@ -187,6 +187,20 @@ func TestResourceChangeRecordCarriesEntityChangeReason(t *testing.T) {
 	}
 }
 
+func TestResourceChangeRecordRejectsUnknownEntityChangeReason(t *testing.T) {
+	_, err := resourceChangeRecord(ResourceChange{
+		Event:        ChangeEventUpdate,
+		ResourceType: ChangeResourceEntity,
+		ID:           "entity-1",
+		Version:      8,
+		ChangeReason: protocol.EntityChangeReason("other"),
+		AfterEntity:  &models.Entity{EntityID: "entity-1", Type: "asset", JSON: json.RawMessage(`{}`), Version: 8},
+	})
+	if err == nil {
+		t.Fatal("resourceChangeRecord accepted unknown entity change reason")
+	}
+}
+
 func TestResourceChangeRecordRejectsChangeReasonOutsideEntityUpdate(t *testing.T) {
 	for _, change := range []ResourceChange{
 		{Event: ChangeEventCreate, ResourceType: ChangeResourceEntity, ID: "entity-1", Version: 1, ChangeReason: protocol.EntityChangeReasonRuntimeManifestChanged},

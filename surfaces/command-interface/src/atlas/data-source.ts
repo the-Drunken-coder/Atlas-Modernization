@@ -76,11 +76,16 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
         (_resource, event) => {
           rawEntityEventObserved = true;
           const runtimeManifestChange = runtimeManifestChangeVersion(event);
-          if (!runtimeManifestChange) return;
-          runtimeManifestVersions = {
-            ...runtimeManifestVersions,
-            [runtimeManifestChange.id]: runtimeManifestChange.version
-          };
+          if (runtimeManifestChange) {
+            runtimeManifestVersions = {
+              ...runtimeManifestVersions,
+              [runtimeManifestChange.id]: runtimeManifestChange.version
+            };
+            return;
+          }
+          if (event.event === "delete" && event.resource_type === "entity") {
+            runtimeManifestVersions = removeRuntimeManifestVersion(event.id, runtimeManifestVersions);
+          }
         }
       );
       const unsubscribeSnapshot = client.sync.watchSnapshot((next) => {
@@ -167,6 +172,15 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
 function runtimeManifestChangeVersion(event: AtlasWatchEvent): { id: string; version: number } | undefined {
   if (event.event !== "update" || event.resource_type !== "entity") return undefined;
   return event.change_reason === "runtime_manifest_changed" ? { id: event.id, version: event.version } : undefined;
+}
+
+function removeRuntimeManifestVersion(
+  id: string,
+  current: Readonly<Record<string, number>> | undefined
+): Readonly<Record<string, number>> | undefined {
+  if (!current || !Object.hasOwn(current, id)) return current;
+  const { [id]: _removed, ...remaining } = current;
+  return Object.keys(remaining).length === 0 ? undefined : remaining;
 }
 
 function runtimeManifestVersionsAfterHydration(

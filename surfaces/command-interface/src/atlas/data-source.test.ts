@@ -347,6 +347,40 @@ describe("sdk data source", () => {
     dataSource.dispose();
   });
 
+  it("removes deleted entities from the runtime-manifest signal map", async () => {
+    const core = new TestCore();
+    const deleted = core.upsertEntity(entity("asset-deleted-signal"));
+    const retained = core.upsertEntity(entity("asset-retained-signal"));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => core.fetch(String(input), init))
+    );
+    vi.stubGlobal("WebSocket", core.attachWebSocketGlobal());
+    const dataSource = createSdkDataSource(config);
+    dataSource.watch(() => undefined);
+
+    await dataSource.start();
+    const updatedDeleted = core.publishEntity({ ...deleted }, "runtime_manifest_changed");
+    const updatedRetained = core.publishEntity({ ...retained }, "runtime_manifest_changed");
+    await vi.waitFor(() =>
+      expect(dataSource.snapshot().runtimeManifestVersions).toEqual({
+        [updatedDeleted.entity_id]: updatedDeleted.metadata.version,
+        [updatedRetained.entity_id]: updatedRetained.metadata.version
+      })
+    );
+
+    core.publishDelete(updatedDeleted.entity_id);
+    await vi.waitFor(() =>
+      expect(dataSource.snapshot().runtimeManifestVersions).toEqual({
+        [updatedRetained.entity_id]: updatedRetained.metadata.version
+      })
+    );
+
+    core.publishDelete(updatedRetained.entity_id);
+    await vi.waitFor(() => expect(dataSource.snapshot().runtimeManifestVersions).toBeUndefined());
+    dataSource.dispose();
+  });
+
   it("invalidates changed entities once when recovery installs a reason-less hydrated snapshot", async () => {
     vi.useFakeTimers();
     vi.stubGlobal("WebSocket", BlockedWebSocket);
@@ -659,6 +693,14 @@ class TestCore {
     if (!this.entities.delete(id)) return;
     const version = ++this.version;
     this.events.push({ event: "delete", resource_type: "entity", id, version });
+  }
+
+  publishDelete(id: string): void {
+    const previousVersion = this.version;
+    this.deleteEntity(id);
+    if (this.version === previousVersion) return;
+    const event = this.events[this.events.length - 1];
+    if (event) this.emit(event);
   }
 
   private emit(event: FeedEvent): void {

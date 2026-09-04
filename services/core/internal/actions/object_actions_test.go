@@ -509,6 +509,48 @@ func TestPathBearingObjectRequiresPersistedBucket(t *testing.T) {
 	}
 }
 
+func TestPathBearingObjectDeleteRequiresStorage(t *testing.T) {
+	pool := testenv.OpenDatabasePool(t, "ATLAS_ACTIONS_DATABASE_URL", "set ATLAS_ACTIONS_DATABASE_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed object bucket test")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if ok, err := actionsTestCoreSchemaPresent(ctx, pool); err != nil {
+		t.Fatalf("check core schema: %v", err)
+	} else if !ok {
+		t.Skip("core schema with storage deletion outbox is not present in test database")
+	}
+
+	objectID := fmt.Sprintf("storage-required-%d", time.Now().UTC().UnixNano())
+	path := fmt.Sprintf("objects/%s/blob", objectID)
+	metadataOnlyID := fmt.Sprintf("metadata-only-%d", time.Now().UTC().UnixNano())
+	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
+	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, metadataOnlyID)
+	createStoredObjectFixture(ctx, t, pool, objectID, path)
+	if _, err := NewObjectActions(pool, nil).Create(ctx, CreateObjectParams{ObjectID: metadataOnlyID}); err != nil {
+		t.Fatalf("create metadata-only object: %v", err)
+	}
+
+	if err := NewObjectActions(pool, nil).Delete(ctx, objectID); err == nil || !strings.Contains(err.Error(), "storage not configured") {
+		t.Fatalf("path-bearing Delete error = %v, want storage not configured", err)
+	}
+	if err := NewObjectActions(pool, nil).Delete(ctx, metadataOnlyID); err != nil {
+		t.Fatalf("metadata-only Delete: %v", err)
+	}
+
+	var pathObjectExists, metadataOnlyExists bool
+	if err := pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM objects WHERE object_id = $1)`, objectID).Scan(&pathObjectExists); err != nil {
+		t.Fatalf("check path-bearing object row: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM objects WHERE object_id = $1)`, metadataOnlyID).Scan(&metadataOnlyExists); err != nil {
+		t.Fatalf("check metadata-only object row: %v", err)
+	}
+	if !pathObjectExists {
+		t.Fatal("path-bearing object metadata was removed without storage configured")
+	}
+	if metadataOnlyExists {
+		t.Fatal("metadata-only object metadata was not removed without storage configured")
+	}
+}
+
 func TestObjectUploadReplacementDeletesPersistedOldBucket(t *testing.T) {
 	pool := testenv.OpenDatabasePool(t, "ATLAS_ACTIONS_DATABASE_URL", "set ATLAS_ACTIONS_DATABASE_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed object bucket test")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

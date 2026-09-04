@@ -1681,7 +1681,7 @@ describe("inbound transfer validation", () => {
       transport,
       retryTimeoutMs: 25,
     });
-    void node.send(test("response", 0), { destination: nodeB });
+    const sending = node.send(test("response", 0), { destination: nodeB });
     await transport.sendStarted;
 
     const failure = await node.close().then(
@@ -1697,6 +1697,9 @@ describe("inbound transfer validation", () => {
       ),
     );
     expect(transport.closed).toBe(true);
+    await expect(sending).rejects.toThrow(
+      "Timed out waiting for FieldLink scheduler shutdown after 25 ms",
+    );
   });
 
   it("drains an accepted async event listener before close", async () => {

@@ -133,11 +133,15 @@ func resourceChangeRecord(change ResourceChange) (ChangeRecord, error) {
 		ID:           change.ID,
 		Version:      change.Version,
 	}
-	if change.ChangeReason != "" {
+	switch change.ChangeReason {
+	case "":
+	case protocol.EntityChangeReasonRuntimeManifestChanged:
 		if change.ResourceType != ChangeResourceEntity || change.Event != ChangeEventUpdate {
 			return ChangeRecord{}, fmt.Errorf("change reason is only supported on entity update events")
 		}
 		event.ChangeReason = change.ChangeReason
+	default:
+		return ChangeRecord{}, fmt.Errorf("unsupported entity change reason %q", change.ChangeReason)
 	}
 	var record ChangeRecord
 	switch change.ResourceType {

@@ -641,7 +641,9 @@ export class FieldLinkNode {
         "FieldLink scheduler shutdown",
       );
     } catch (error: unknown) {
-      errors.push(asError(error));
+      const failure = asError(error);
+      errors.push(failure);
+      this.#scheduler.rejectActive(failure);
     }
     for (const signals of this.#outbound.values()) {
       signals.reject(new Error("FieldLink node closed"));
@@ -1852,6 +1854,7 @@ class FrameScheduler {
   readonly #emit: (event: FieldLinkEvent) => void;
   readonly #inboundPriorities = new Map<string, Priority>();
   #running: Promise<void> | undefined;
+  #active: ScheduledFrame | undefined;
   #closed = false;
 
   constructor(
@@ -1943,6 +1946,13 @@ class FrameScheduler {
     await this.#running;
   }
 
+  rejectActive(error: Error): void {
+    const active = this.#active;
+    if (active !== undefined && this.#settle(active)) {
+      active.reject(error);
+    }
+  }
+
   async #run(): Promise<void> {
     for (;;) {
       const waiting = this.#next();
@@ -1963,6 +1973,7 @@ class FrameScheduler {
       if (item === undefined) {
         continue;
       }
+      this.#active = item;
       try {
         throwIfAborted(item.signal);
         await this.#transport.send(item.bytes);
@@ -1976,6 +1987,10 @@ class FrameScheduler {
         this.#resolve(item);
       } catch (error: unknown) {
         this.#reject(item, error);
+      } finally {
+        if (this.#active === item) {
+          this.#active = undefined;
+        }
       }
       await new Promise<void>((resolve) => setImmediate(resolve));
     }

@@ -361,6 +361,18 @@ func (a *ObjectActions) Delete(ctx context.Context, objectID string, options ...
 			return err
 		}
 	}
+
+	var queuedBucket, queuedPath string
+	if object.Path != nil && strings.TrimSpace(*object.Path) != "" {
+		if a.storage == nil {
+			return &storage.StorageError{Message: "storage not configured"}
+		}
+		queuedPath = strings.TrimSpace(*object.Path)
+		queuedBucket, err = persistedObjectBucket(object)
+		if err != nil {
+			return err
+		}
+	}
 	result, err := tx.Exec(ctx, "DELETE FROM objects WHERE object_id = $1", objectID)
 	if err != nil {
 		return fmt.Errorf("failed to delete object: %w", err)
@@ -369,13 +381,7 @@ func (a *ObjectActions) Delete(ctx context.Context, objectID string, options ...
 		return NewObjectNotFoundError(objectID)
 	}
 
-	var queuedBucket, queuedPath string
-	if a.storage != nil && object.Path != nil && strings.TrimSpace(*object.Path) != "" {
-		queuedBucket, err = persistedObjectBucket(object)
-		if err != nil {
-			return err
-		}
-		queuedPath = strings.TrimSpace(*object.Path)
+	if queuedPath != "" {
 		if err := a.queueStorageDeletionTx(ctx, tx, queuedBucket, queuedPath, objectID); err != nil {
 			return err
 		}
