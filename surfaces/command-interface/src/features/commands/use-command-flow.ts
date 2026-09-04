@@ -71,13 +71,14 @@ export function useCommandFlow({
 
   useEffect(() => {
     if (commandManifestStatus !== "ready") {
+      closeMapMenu();
       setCommandForm(null);
       return;
     }
     if (commandForm && commandForm.manifestGeneration !== commandManifestGeneration) {
       setCommandForm(null);
     }
-  }, [commandForm, commandManifestGeneration, commandManifestStatus]);
+  }, [commandForm, commandManifestGeneration, commandManifestStatus, closeMapMenu]);
 
   useEffect(() => {
     const previousSelectedId = previousSelectedIdRef.current;

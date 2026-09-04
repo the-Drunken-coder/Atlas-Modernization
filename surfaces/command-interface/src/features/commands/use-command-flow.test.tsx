@@ -181,6 +181,30 @@ describe("useCommandFlow", () => {
     expect(submitCommand.mock.calls[1]?.[0].idempotencyKey).toBe("00000000-0000-4000-8000-000000000001");
   });
 
+  it("closes an open map command menu while the manifest refreshes", () => {
+    const submitCommand = vi.fn();
+    const { result, rerender } = renderHook(
+      (props: { commandManifestStatus: "ready" | "loading" }) =>
+        useCommandFlow({
+          catalog: commandCatalog,
+          selectedEntity: asset,
+          selectedId: asset.entity_id,
+          commandManifestStatus: props.commandManifestStatus,
+          submitCommand
+        }),
+      { initialProps: { commandManifestStatus: "ready" } }
+    );
+
+    act(() => {
+      result.current.onMapContextMenu({ entityId: asset.entity_id, x: 10, y: 20, lat: 40, lng: -74 });
+    });
+    expect(result.current.mapMenu).not.toBeNull();
+
+    rerender({ commandManifestStatus: "loading" });
+
+    expect(result.current.mapMenu).toBeNull();
+  });
+
   it("dismisses forms and rejects callbacks from an older manifest generation", async () => {
     const submitCommand = vi.fn().mockResolvedValue(task);
     const { result, rerender } = renderHook(
