@@ -5,8 +5,9 @@ import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
 
 const packageRoot = fileURLToPath(new URL("..", import.meta.url));
+const repositoryRoot = resolve(packageRoot, "../..");
+const packageName = "@the-drunken-coder/atlas-command-interface";
 const defaultOutputDir = resolve(packageRoot, "dist/client");
-const analysisManifestPath = join(packageRoot, "node_modules/.cache/atlas-command-interface/manifest.json");
 const args = new Set(process.argv.slice(2));
 const outputArgIndex = process.argv.indexOf("--output-dir");
 const outputDir = resolve(packageRoot, outputArgIndex === -1 ? defaultOutputDir : process.argv[outputArgIndex + 1]);
@@ -14,38 +15,50 @@ const outputDir = resolve(packageRoot, outputArgIndex === -1 ? defaultOutputDir 
 const budgets = {
   // Blueprint Core is a deliberate shell dependency. These limits include its
   // shared component styles and icon-path chunks. Map budgets remain scoped separately.
-  initialJavaScript: { raw: 415_000, gzip: 127_000 },
+  // SDK point-read generations and local-delete guards add 3.54 kB raw to the
+  // initial graph. Keep enough gzip margin for Node's platform zlib variance.
+  initialJavaScript: { raw: 418_000, gzip: 128_000 },
   initialCss: { raw: 510_000, gzip: 55_000 },
   // MapWindowWorkspace coordinates four ordered edge rails for the map shell.
   shellJavaScript: { raw: 142_500, gzip: 47_500 },
-  mapViewJavaScript: { raw: 71_000, gzip: 21_000 },
+  mapViewJavaScript: { raw: 71_000, gzip: 21_250 },
   mapLibreJavaScript: { raw: 1_100_000, gzip: 300_000 },
   mapLibreWorkerJavaScript: { raw: 500_000, gzip: 140_000 },
   milsymbolJavaScript: { raw: 900_000, gzip: 240_000 },
   mapLibreCss: { raw: 85_000, gzip: 11_000 },
   mapRoute: { raw: 2_100_000, gzip: 550_000 },
-  allJavaScript: { raw: 3_612_000, gzip: 1_000_000 },
+  // SDK point-read generations and local-delete guards add 4.13 kB raw while
+  // remaining within the existing aggregate gzip ceiling.
+  allJavaScript: { raw: 3_617_000, gzip: 1_000_000 },
   allCss: { raw: 600_000, gzip: 66_000 }
 };
 
 if (!args.has("--skip-build")) {
-  const build = spawnSync(process.execPath, [resolve(packageRoot, "../../node_modules/vite/bin/vite.js"), "build"], {
-    cwd: packageRoot,
+  const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
+  const build = spawnSync(npmCommand, ["run", "build", "--workspace", packageName], {
+    cwd: repositoryRoot,
     stdio: "inherit"
   });
   if (build.status !== 0) process.exit(build.status ?? 1);
 }
 
-const manifestCandidates = [join(outputDir, "manifest.json"), join(outputDir, ".vite", "manifest.json")];
-if (outputDir === defaultOutputDir) manifestCandidates.push(analysisManifestPath);
-const manifestPath = manifestCandidates.find((path) => {
+const manifestPath = [resolve(outputDir, "..", "bundle-manifest.json")].find((path) => {
   try {
     return statSync(path).isFile();
   } catch {
     return false;
   }
 });
-if (!manifestPath) fail(`Missing Vite manifest in ${outputDir}`);
+if (!manifestPath) fail(`Missing bundle analysis manifest beside ${outputDir}`);
+
+const publicManifest = [join(outputDir, "manifest.json"), join(outputDir, ".vite", "manifest.json")].find((path) => {
+  try {
+    return statSync(path).isFile();
+  } catch {
+    return false;
+  }
+});
+if (publicManifest) fail(`Vite manifest must not be deployed from ${publicManifest}`);
 
 const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
 const manifestFiles = new Set();

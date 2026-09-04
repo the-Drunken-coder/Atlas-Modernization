@@ -35,13 +35,14 @@ export type SpatialOperationRunner = {
   beginDrawing(): void;
   cancelDrawing(): void;
   setArea(area: MapArea): void;
-  setViewportArea(area: MapArea): void;
+  setViewportArea(area: MapArea | null): void;
   useCurrentView(): void;
   search(): Promise<void>;
   retry(): Promise<void>;
   cancel(): void;
   clear(): void;
   selectFeature(id: string): void;
+  setMapBoxZoomActive(active: boolean): void;
 };
 
 export function useSpatialOperationRunner({
@@ -64,6 +65,7 @@ export function useSpatialOperationRunner({
   const [stale, setStale] = useState(false);
   const [error, setError] = useState<string>();
   const requestRef = useRef<AbortController | undefined>(undefined);
+  const mapBoxZoomActiveRef = useRef(false);
 
   const abortRequest = useCallback(() => {
     requestRef.current?.abort();
@@ -204,10 +206,15 @@ export function useSpatialOperationRunner({
     setError(undefined);
   }, [abortRequest]);
 
+  const setMapBoxZoomActive = useCallback((active: boolean) => {
+    mapBoxZoomActiveRef.current = active;
+  }, []);
+
   useEffect(() => {
     if (status !== "drawing" && status !== "loading") return;
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || event.defaultPrevented) return;
+      if (status === "drawing" && mapBoxZoomActiveRef.current) return;
       const owner = foregroundEscapeOwner(event.target);
       if (owner && !owner.matches("[data-spatial-operation]")) return;
       event.preventDefault();
@@ -240,19 +247,21 @@ export function useSpatialOperationRunner({
     retry: search,
     cancel,
     clear,
-    selectFeature: setSelectedFeatureId
+    selectFeature: setSelectedFeatureId,
+    setMapBoxZoomActive
   };
 }
 
 function lazySpatialExecutor(baseUrl: string): SpatialOperationExecutor {
-  let clientPromise: Promise<import("@the-drunken-coder/atlas-sdk").AtlasClient> | undefined;
-  const client = () =>
-    (clientPromise ??= import("@the-drunken-coder/atlas-sdk").then(
-      ({ AtlasClient }) => new AtlasClient({ baseUrl, credentials: "include", sync: false, requestTimeoutMs: 25_000 })
+  let executorPromise: Promise<SpatialOperationExecutor> | undefined;
+  const executor = () =>
+    (executorPromise ??= import("../../auth/atlas.js").then(
+      ({ createAuthenticatedAtlasClient }) =>
+        createAuthenticatedAtlasClient(baseUrl, { sync: false, requestTimeoutMs: 25_000 }).plugins
     ));
   return {
     async invokeSpatial(pluginId, operationId, area, options) {
-      return (await client()).plugins.invokeSpatial(pluginId, operationId, area, options);
+      return (await executor()).invokeSpatial(pluginId, operationId, area, options);
     }
   };
 }

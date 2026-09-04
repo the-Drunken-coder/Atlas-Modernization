@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SidebarRail } from "../../ui/layout/SidebarRail.js";
+import { ATLAS_AUTH_EXPIRED_EVENT, rotateAuthSession } from "../atlas.js";
 import { AuthGate, WorkspaceErrorBoundary } from "./AuthGate.js";
 
 function Workspace() {
@@ -426,14 +427,14 @@ describe("AuthGate", () => {
     );
 
     expect(await screen.findByText("map console")).toBeInTheDocument();
-    fireEvent(window, new Event("atlas-auth-expired"));
+    fireEvent(window, new CustomEvent(ATLAS_AUTH_EXPIRED_EVENT, { detail: { session: rotateAuthSession() } }));
 
     await waitFor(() => expect(screen.getByLabelText("Username")).toBeInTheDocument());
     expect(screen.getByText("Your session has expired. Please sign in again.")).toBeInTheDocument();
     expect(screen.queryByText("map console")).not.toBeInTheDocument();
   });
 
-  it("shows expiration reason when auth expires while login is already visible", async () => {
+  it("ignores an auth-expired event without session provenance while login is visible", async () => {
     stubFetch([{ status: 401, body: { success: false, error_code: "UNAUTHORIZED", message: "unauthorized" } }]);
 
     render(
@@ -443,11 +444,10 @@ describe("AuthGate", () => {
     );
 
     expect(await screen.findByLabelText("Username")).toBeInTheDocument();
-    fireEvent(window, new Event("atlas-auth-expired"));
+    fireEvent(window, new Event(ATLAS_AUTH_EXPIRED_EVENT));
 
-    await waitFor(() =>
-      expect(screen.getByText("Your session has expired. Please sign in again.")).toBeInTheDocument()
-    );
+    await waitFor(() => expect(screen.getByLabelText("Username")).toBeInTheDocument());
+    expect(screen.queryByText("Your session has expired. Please sign in again.")).not.toBeInTheDocument();
   });
 });
 

@@ -2,7 +2,7 @@ import type { MapGeoJSONFeature, Map as MlMap } from "maplibre-gl";
 import type { UiRawGeometry } from "../../../atlas/geometry.js";
 import { INTERACTIVE_LAYERS } from "../rendering/map-layers.js";
 import type { MapFeature, MapSources } from "../rendering/map-sources.js";
-import { collectLngLatPositions, featureForEntityId, type MapTarget } from "./map-camera.js";
+import { boundsForGeometry, collectLngLatPositions, featureForEntityId, type MapTarget } from "./map-camera.js";
 import {
   boxFromProjectedPositions,
   boxIntersectsViewport,
@@ -247,7 +247,21 @@ function boxForFeature(map: MlMap, feature: MapFeature | undefined): TargetBox |
 }
 
 function boxFromGeometry(map: MlMap, geometry: UiRawGeometry): TargetBox | null {
-  return boxFromCoordinates(map, geometry.coordinates);
+  const bounds = boundsForGeometry(geometry);
+  if (!bounds) return null;
+  const west = bounds[0][0];
+  const east = bounds[1][0];
+  return boxFromProjectedPositions(collectLngLatPositions(geometry.coordinates), (position) => {
+    const longitude = longitudeInInterval(position[0], west, east);
+    const projected = map.project([longitude, position[1]]);
+    return { x: projected.x, y: projected.y };
+  });
+}
+
+/** Project geometry on the same unwrapped world interval used by fitBounds. */
+function longitudeInInterval(longitude: number, west: number, east: number): number {
+  const shifted = longitude + Math.ceil((west - longitude) / 360) * 360;
+  return shifted > east ? shifted - 360 : shifted;
 }
 
 function boxFromCoordinates(map: MlMap, coordinates: unknown): TargetBox | null {

@@ -1,9 +1,8 @@
 import { Alert, Callout } from "@blueprintjs/core";
-import { type AdminAPIKey, type AdminCreatedAPIKey, AtlasAdminClient } from "@the-drunken-coder/atlas-sdk/admin";
-import { AtlasAPIError } from "@the-drunken-coder/atlas-sdk/errors";
-import { type FormEvent, useEffect, useMemo, useState } from "react";
+import type { AdminAPIKey, AdminCreatedAPIKey } from "@the-drunken-coder/atlas-sdk/admin";
+import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { sanitizeConnectionError } from "../../atlas/connection-error.js";
-import { getAuthSessionEpoch, isCurrentAuthSessionEpoch } from "../../auth/session-epoch.js";
+import { createAuthenticatedAtlasAdminClient } from "../../auth/atlas.js";
 import { useAtlas } from "../../state/atlas-context.js";
 import { Button, IconButton, TextField } from "../../ui/primitives/controls.js";
 import { CopyIcon, PlusIcon, TrashIcon } from "../../ui/primitives/icons.js";
@@ -21,29 +20,32 @@ export function APIKeysPanel() {
   const [submitting, setSubmitting] = useState(false);
   const [revoking, setRevoking] = useState<string>();
   const [keyToRevoke, setKeyToRevoke] = useState<AdminAPIKey>();
+  const [listAttempt, setListAttempt] = useState(0);
+  const mutationRevisionRef = useRef(0);
+  const refreshing = loadState === "loading";
 
   const admin = useMemo(
-    () => (config ? new AtlasAdminClient({ baseUrl: config.atlasBaseUrl, credentials: "include" }) : undefined),
+    () => (config ? createAuthenticatedAtlasAdminClient(config.atlasBaseUrl) : undefined),
     [config]
   );
 
   useEffect(() => {
     if (!admin) return;
     let cancelled = false;
-    const requestAuthEpoch = getAuthSessionEpoch();
+    const mutationRevision = mutationRevisionRef.current;
     setLoadState("loading");
     setError(undefined);
+    setKeyToRevoke(undefined);
     void admin.apiKeys
       .list()
       .then((next) => {
         if (!cancelled) {
-          setKeys(next);
+          if (mutationRevisionRef.current === mutationRevision) setKeys(next);
           setLoadState("ready");
         }
       })
       .catch((cause) => {
         if (!cancelled) {
-          handleAdminError(cause, requestAuthEpoch);
           setError(sanitizeConnectionError(cause));
           setLoadState("error");
         }
@@ -51,24 +53,23 @@ export function APIKeysPanel() {
     return () => {
       cancelled = true;
     };
-  }, [admin]);
+  }, [admin, listAttempt]);
 
   const createKey = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!admin || name.trim() === "") return;
+    if (!admin || refreshing || name.trim() === "") return;
     setSubmitting(true);
     setGenerated(undefined);
     setCopied(false);
     setError(undefined);
-    const requestAuthEpoch = getAuthSessionEpoch();
     try {
       const created = await admin.apiKeys.create({ name });
+      mutationRevisionRef.current += 1;
       setGenerated(created);
       setKeys((current) => [created, ...current.filter((key) => key.id !== created.id)]);
       setName("");
-      setLoadState("ready");
+      setLoadState((current) => (current === "loading" ? current : "ready"));
     } catch (cause) {
-      handleAdminError(cause, requestAuthEpoch);
       setError(sanitizeConnectionError(cause));
     } finally {
       setSubmitting(false);
@@ -89,39 +90,43 @@ export function APIKeysPanel() {
   };
 
   const revokeKey = async (key: AdminAPIKey) => {
-    if (!admin || revoking) return;
+    if (!admin || refreshing || revoking) return;
     setRevoking(key.id);
     setError(undefined);
-    const requestAuthEpoch = getAuthSessionEpoch();
     try {
       await admin.apiKeys.revoke(key.id);
+      mutationRevisionRef.current += 1;
       setKeys((current) => current.filter((entry) => entry.id !== key.id));
       if (generated?.id === key.id) setGenerated(undefined);
     } catch (cause) {
-      handleAdminError(cause, requestAuthEpoch);
       setError(sanitizeConnectionError(cause));
     } finally {
       setRevoking(undefined);
     }
   };
 
-  if (loadState === "loading") {
+  if (refreshing && keys.length === 0) {
     return <div className="panel__empty">Loading API keys...</div>;
   }
 
   return (
     <div className="api-keys-panel">
       <form className="api-key-create" onSubmit={createKey}>
-        <TextField label="Name" value={name} onChange={(event) => setName(event.target.value)} />
-        <Button type="submit" variant="primary" disabled={submitting || name.trim() === ""}>
+        <TextField label="Name" value={name} disabled={refreshing} onChange={(event) => setName(event.target.value)} />
+        <Button type="submit" variant="primary" disabled={refreshing || submitting || name.trim() === ""}>
           <PlusIcon size={16} />
           <span>{submitting ? "Creating" : "Create"}</span>
         </Button>
       </form>
 
       {error ? (
-        <Callout className="banner banner--error" intent="danger" icon={null} compact>
+        <Callout className="banner banner--error" intent="danger" icon={null} compact role="alert">
           {error}
+          {loadState === "error" ? (
+            <Button variant="ghost" onClick={() => setListAttempt((current) => current + 1)}>
+              Retry
+            </Button>
+          ) : null}
         </Callout>
       ) : null}
 
@@ -139,9 +144,9 @@ export function APIKeysPanel() {
         </div>
       ) : null}
 
-      {loadState === "error" ? null : keys.length === 0 ? (
+      {keys.length === 0 && loadState !== "error" ? (
         <div className="panel__empty">No API keys.</div>
-      ) : (
+      ) : keys.length > 0 ? (
         <ul className="api-key-list" aria-label="API keys">
           {keys.map((key) => (
             <li key={key.id} className="api-key-row">
@@ -154,7 +159,7 @@ export function APIKeysPanel() {
               </div>
               <IconButton
                 label={`Revoke ${key.name}`}
-                disabled={revoking === key.id}
+                disabled={refreshing || revoking !== undefined}
                 onClick={() => setKeyToRevoke(key)}
               >
                 <TrashIcon size={16} />
@@ -162,7 +167,7 @@ export function APIKeysPanel() {
             </li>
           ))}
         </ul>
-      )}
+      ) : null}
       <Alert
         isOpen={keyToRevoke !== undefined}
         intent="danger"
@@ -183,12 +188,6 @@ export function APIKeysPanel() {
       </Alert>
     </div>
   );
-}
-
-function handleAdminError(error: unknown, requestAuthEpoch: number) {
-  if (error instanceof AtlasAPIError && error.status === 401 && isCurrentAuthSessionEpoch(requestAuthEpoch)) {
-    window.dispatchEvent(new Event("atlas-auth-expired"));
-  }
 }
 
 function formatCreatedAt(value: string): string {

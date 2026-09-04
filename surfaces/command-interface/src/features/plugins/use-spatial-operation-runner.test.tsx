@@ -1,6 +1,7 @@
 import { act, renderHook } from "@testing-library/react";
 import type { SpatialOperationResult } from "@the-drunken-coder/atlas-sdk";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { ATLAS_AUTH_EXPIRED_EVENT, rotateAuthSession } from "../../auth/atlas.js";
 import { type SpatialOperationExecutor, useSpatialOperationRunner } from "./use-spatial-operation-runner.js";
 
 const area = { west: -71.001, south: 42, east: -71, north: 42.001 };
@@ -120,5 +121,43 @@ describe("useSpatialOperationRunner", () => {
     expect(hook.result.current.result).toBe(response);
     expect(hook.result.current.status).toBe("idle");
     expect(hook.result.current.stale).toBe(true);
+  });
+
+  it("clears a cached viewport when the current view becomes unavailable", () => {
+    const hook = renderHook(() => useSpatialOperationRunner({ executor: { invokeSpatial: vi.fn() } }));
+
+    act(() => hook.result.current.setViewportArea(area));
+    act(() => hook.result.current.setViewportArea(null));
+    act(() => hook.result.current.useCurrentView());
+
+    expect(hook.result.current.viewportArea).toBeNull();
+    expect(hook.result.current.status).toBe("error");
+    expect(hook.result.current.error).toBe("The current map view is unavailable.");
+  });
+
+  it("publishes session expiry when a spatial operation receives an unauthorized Core response", async () => {
+    const expired = vi.fn();
+    window.addEventListener(ATLAS_AUTH_EXPIRED_EVENT, expired);
+    rotateAuthSession();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({ error_code: "UNAUTHORIZED", message: "Login is required" }, { status: 401 }))
+    );
+    const hook = renderHook(() => useSpatialOperationRunner({ baseUrl: "https://core.test" }));
+
+    act(() => {
+      hook.result.current.selectTarget({
+        pluginId: "fixture",
+        pluginName: "Fixture",
+        operationId: "inspect",
+        operationName: "Inspect"
+      });
+      hook.result.current.setArea(area);
+    });
+    await act(async () => hook.result.current.search());
+
+    expect(expired).toHaveBeenCalledOnce();
+    expect(hook.result.current.status).toBe("error");
+    window.removeEventListener(ATLAS_AUTH_EXPIRED_EVENT, expired);
   });
 });

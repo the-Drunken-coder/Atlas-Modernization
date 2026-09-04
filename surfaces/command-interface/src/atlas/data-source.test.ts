@@ -7,6 +7,7 @@ import {
 } from "@the-drunken-coder/atlas-sdk";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { entityFixture, metadataFixture, styleFixture, taskFixture } from "../../test/fixtures.js";
+import { rotateAuthSession } from "../auth/atlas.js";
 import { createSdkDataSource } from "./data-source.js";
 import type { UiGeometry } from "./geometry.js";
 import type { AtlasSnapshot } from "./store.js";
@@ -625,6 +626,7 @@ describe("sdk data source", () => {
       vi.fn(async () => pendingResponse)
     );
 
+    rotateAuthSession();
     const dataSource = createSdkDataSource(config);
     const request = dataSource.submitCommand({
       assetId: "asset-1",
@@ -634,11 +636,11 @@ describe("sdk data source", () => {
     });
     await vi.waitFor(() => expect(fetch).toHaveBeenCalled());
 
-    window.dispatchEvent(new Event("atlas-auth-session-changed"));
+    rotateAuthSession();
     resolveResponse(Response.json({ success: false, error_code: "UNAUTHORIZED" }, { status: 401 }));
 
     await expect(request).rejects.toMatchObject({ status: 401, errorCode: "UNAUTHORIZED" });
-    expect(dispatchEvent).not.toHaveBeenCalledWith(expect.objectContaining({ type: "atlas-auth-expired" }));
+    expect(dispatchEvent).not.toHaveBeenCalled();
   });
 });
 

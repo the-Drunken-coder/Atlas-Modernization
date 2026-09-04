@@ -20,15 +20,23 @@ import type { MapEditing } from "../rendering/map-editing.js";
 import { pushEditingOverlay, pushSources, registerSourcesAndLayers } from "../rendering/map-layers.js";
 import type { MapSources } from "../rendering/map-sources.js";
 import type { MapLibreRuntime } from "../runtime/maplibre-runtime.js";
-import { MapRegionSelection, type RegionTransform, type ResizeAxes, type ScreenRect } from "./MapRegionSelection.js";
-import { cloneStyle, geographicBoundsFromScreenRect, longitudeNear } from "./map-view-utils.js";
-
-type GeographicRegion = {
-  west: number;
-  south: number;
-  east: number;
-  north: number;
-};
+import { MapRegionSelection, type RegionTransform, type ScreenRect } from "./MapRegionSelection.js";
+import {
+  clampMovedRect,
+  clampResizedRect,
+  DATE_LINE_CROSSING_MESSAGE,
+  keyboardDelta,
+  MIN_REGION_SIZE,
+  pointInCanvas,
+  projectedScreenRect,
+  type RegionBounds,
+  rectFromPoints,
+  regionFromScreenRect,
+  type ScreenPoint,
+  screenRectsEqual,
+  visibleScreenRect
+} from "./map-region-geometry.js";
+import { cloneStyle } from "./map-view-utils.js";
 
 type DragState =
   | {
@@ -47,7 +55,7 @@ type DragState =
       initialRegion: GeographicRegion;
     };
 
-type ScreenPoint = { x: number; y: number };
+type GeographicRegion = RegionBounds;
 
 type ComparisonStatus = { kind: "idle" } | { kind: "loading" } | { kind: "ready" } | { kind: "error"; message: string };
 
@@ -62,12 +70,11 @@ type MapRegionComparisonProps = {
   sources: MapSources;
   editing?: MapEditing;
   exclusiveDrawingActive: boolean;
+  onBeginRegionInteraction: () => void;
   onBeginDrawing: () => void;
-  notifyUserGesture: () => void;
   suppressNextClick: () => void;
 };
 
-const MIN_REGION_SIZE = 32;
 const PANEL_WIDTH = 258;
 const PANEL_HEIGHT_ESTIMATE = 210;
 
@@ -82,8 +89,8 @@ export function MapRegionComparison({
   sources,
   editing,
   exclusiveDrawingActive,
+  onBeginRegionInteraction,
   onBeginDrawing,
-  notifyUserGesture,
   suppressNextClick
 }: MapRegionComparisonProps) {
   const alternatives = useMemo(
@@ -105,6 +112,7 @@ export function MapRegionComparison({
   const [panelHeight, setPanelHeight] = useState(PANEL_HEIGHT_ESTIMATE);
   const [opacity, setOpacity] = useState(100);
   const [status, setStatus] = useState<ComparisonStatus>({ kind: "idle" });
+  const [selectionError, setSelectionError] = useState<string | null>(null);
   const [retryGeneration, setRetryGeneration] = useState(0);
   const toolRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLElement>(null);
@@ -122,13 +130,18 @@ export function MapRegionComparison({
   regionRectRef.current = regionRect;
 
   useEffect(() => {
-    if (!exclusiveDrawingActive || !drag) return;
+    if (!exclusiveDrawingActive) return;
+    if (!drag) {
+      setPanelOpen(false);
+      return;
+    }
     if (drag.pointerId !== null && mapCanvas?.hasPointerCapture?.(drag.pointerId)) {
       suppressNextClick();
       mapCanvas.releasePointerCapture?.(drag.pointerId);
     }
     setRegion(drag.kind === "draw" ? drag.previousRegion : drag.initialRegion);
-    if (drag.kind === "draw") setPanelOpen(Boolean(drag.previousRegion));
+    setPanelOpen(false);
+    setSelectionError(null);
     setDrag(null);
   }, [drag, exclusiveDrawingActive, mapCanvas, suppressNextClick]);
 
@@ -202,11 +215,11 @@ export function MapRegionComparison({
         return;
       event.preventDefault();
       event.stopPropagation();
-      primaryMap.stop();
+      onBeginRegionInteraction();
       mapCanvas.setPointerCapture?.(event.pointerId);
       const point = pointInCanvas(event, mapCanvas, true);
+      setSelectionError(null);
       setDrag({ ...drag, start: point, current: point, pointerId: event.pointerId });
-      notifyUserGesture();
     };
     const updateDrag = (event: globalThis.PointerEvent) => {
       if (drag.pointerId === null || event.pointerId !== drag.pointerId) return;
@@ -221,7 +234,13 @@ export function MapRegionComparison({
         drag.transform === "move"
           ? clampMovedRect(drag.initialRect, delta, mapCanvas.getBoundingClientRect())
           : clampResizedRect(drag.initialRect, delta, drag.transform);
-      setRegion(regionFromScreenRect(primaryMap, nextRect));
+      const nextRegion = regionFromScreenRect(primaryMap, nextRect);
+      if (!nextRegion) {
+        setSelectionError(DATE_LINE_CROSSING_MESSAGE);
+        return;
+      }
+      setRegion(nextRegion);
+      setSelectionError(null);
     };
     const finishDrag = (event: globalThis.PointerEvent) => {
       if (drag.pointerId === null || event.pointerId !== drag.pointerId) return;
@@ -230,8 +249,16 @@ export function MapRegionComparison({
         const end = pointInCanvas(event, mapCanvas, true);
         const rect = rectFromPoints(drag.start, end);
         if (rect.width >= MIN_REGION_SIZE && rect.height >= MIN_REGION_SIZE) {
-          setRegion(regionFromScreenRect(primaryMap, rect));
-          setPanelOpen(true);
+          const nextRegion = regionFromScreenRect(primaryMap, rect);
+          if (!nextRegion) {
+            setRegion(drag.previousRegion);
+            setPanelOpen(true);
+            setSelectionError(DATE_LINE_CROSSING_MESSAGE);
+          } else {
+            setRegion(nextRegion);
+            setPanelOpen(true);
+            setSelectionError(null);
+          }
         } else {
           setRegion(drag.previousRegion);
           setPanelOpen(Boolean(drag.previousRegion));
@@ -239,7 +266,6 @@ export function MapRegionComparison({
       }
       if (event.target instanceof Node && mapCanvas.contains(event.target)) suppressNextClick();
       setDrag(null);
-      notifyUserGesture();
     };
     const cancelActiveDrag = (suppressReleaseClick: boolean) => {
       if (drag.pointerId !== null) {
@@ -248,6 +274,7 @@ export function MapRegionComparison({
       }
       setRegion(drag.kind === "draw" ? drag.previousRegion : drag.initialRegion);
       setPanelOpen(drag.kind === "draw" && Boolean(drag.previousRegion));
+      setSelectionError(null);
       setDrag(null);
       toolRef.current?.focus();
     };
@@ -275,7 +302,7 @@ export function MapRegionComparison({
       window.removeEventListener("pointercancel", cancelPointer);
       window.removeEventListener("keydown", cancelDrag, { capture: true });
     };
-  }, [boxZoomActive, drag, map, mapCanvas, notifyUserGesture, suppressNextClick]);
+  }, [boxZoomActive, drag, map, mapCanvas, onBeginRegionInteraction, suppressNextClick]);
 
   useEffect(() => {
     if (!region && !panelOpen) return;
@@ -327,6 +354,7 @@ export function MapRegionComparison({
       return;
     }
     comparisonMapRef.current = comparisonMap;
+    let styleLoaded = comparisonMap.isStyleLoaded();
 
     const initializeLayers = () => {
       registerSourcesAndLayers(comparisonMap);
@@ -340,15 +368,24 @@ export function MapRegionComparison({
     const handleIdle = () => {
       if (!failed) setStatus({ kind: "ready" });
     };
-    const handleError = (event: { error?: unknown }) => {
+    const handleStyleLoad = () => {
+      styleLoaded = true;
+      initializeLayers();
+    };
+    const handleError = (event: { error?: unknown; sourceId?: string }) => {
+      // MapLibre bubbles source/tile failures through the map. They are not
+      // fatal to the comparison map and should not strand the operator in an
+      // error state. Before the initial style load, an error without a
+      // sourceId means the style itself failed and needs a fresh retry.
+      if (styleLoaded || "sourceId" in event) return;
       failed = true;
       setStatus({ kind: "error", message: sanitizeConnectionError(event.error) });
     };
-    comparisonMap.on("style.load", initializeLayers);
+    comparisonMap.on("style.load", handleStyleLoad);
     comparisonMap.on("dataloading", handleLoading);
     comparisonMap.on("idle", handleIdle);
     comparisonMap.on("error", handleError);
-    if (comparisonMap.isStyleLoaded()) initializeLayers();
+    if (styleLoaded) initializeLayers();
 
     return () => {
       comparisonMap.remove();
@@ -379,13 +416,16 @@ export function MapRegionComparison({
     setPanelOpen(false);
     setOpacity(100);
     setStatus({ kind: "idle" });
+    setSelectionError(null);
     toolRef.current?.focus();
   };
 
   const beginDrawing = (previousRegion: GeographicRegion | null) => {
     if (!mapCanvas || !map || !mapReady) return;
+    onBeginRegionInteraction();
     onBeginDrawing();
     setPanelOpen(false);
+    setSelectionError(null);
     setDrag({ kind: "draw", start: null, current: null, pointerId: null, previousRegion });
   };
 
@@ -395,28 +435,33 @@ export function MapRegionComparison({
     if (viewport.width < MIN_REGION_SIZE || viewport.height < MIN_REGION_SIZE) return;
     const width = Math.min(240, Math.max(MIN_REGION_SIZE, viewport.width / 2));
     const height = Math.min(180, Math.max(MIN_REGION_SIZE, viewport.height / 2));
+    onBeginRegionInteraction();
     onBeginDrawing();
-    map.stop();
-    setRegion(
-      regionFromScreenRect(map, {
-        left: (viewport.width - width) / 2,
-        top: (viewport.height - height) / 2,
-        width,
-        height
-      })
-    );
+    setSelectionError(null);
+    const nextRegion = regionFromScreenRect(map, {
+      left: (viewport.width - width) / 2,
+      top: (viewport.height - height) / 2,
+      width,
+      height
+    });
+    if (!nextRegion) {
+      setSelectionError(DATE_LINE_CROSSING_MESSAGE);
+      setRegion(null);
+      setPanelOpen(true);
+      return;
+    }
+    setRegion(nextRegion);
     setPanelOpen(true);
-    notifyUserGesture();
   };
 
   const beginTransform = (transform: RegionTransform, event: ReactPointerEvent<HTMLButtonElement>) => {
     if (event.button !== 0 || !map || !mapCanvas || !region || !regionRect) return;
     event.preventDefault();
     event.stopPropagation();
-    map.stop();
+    onBeginRegionInteraction();
     mapCanvas.setPointerCapture?.(event.pointerId);
-    notifyUserGesture();
     setPanelOpen(false);
+    setSelectionError(null);
     setDrag({
       kind: "transform",
       transform,
@@ -433,16 +478,22 @@ export function MapRegionComparison({
     if (!delta) return;
     event.preventDefault();
     event.stopPropagation();
-    map.stop();
+    onBeginRegionInteraction();
     setPanelOpen(false);
+    setSelectionError(null);
     const viewport = mapCanvas.getBoundingClientRect();
     const projectedRect = projectedScreenRect(map, region);
     const nextRect =
       transform === "move"
         ? clampMovedRect(projectedRect, delta, viewport)
         : clampResizedRect(projectedRect, delta, transform);
-    setRegion(regionFromScreenRect(map, nextRect));
-    notifyUserGesture();
+    const nextRegion = regionFromScreenRect(map, nextRect);
+    if (!nextRegion) {
+      setSelectionError(DATE_LINE_CROSSING_MESSAGE);
+      return;
+    }
+    setRegion(nextRegion);
+    setSelectionError(null);
   };
 
   const drawingRect =
@@ -520,8 +571,14 @@ export function MapRegionComparison({
             {source?.label ?? "Source unavailable"}
             {source?.style ? ` · ${opacity}%` : ""}
           </span>
-          <StatusLabel status={status} />
+          <StatusLabel status={status} selectionError={selectionError} />
         </button>
+      ) : null}
+
+      {selectionError && !panelOpen && !drawing ? (
+        <p className="map-region-selection__status" role="status">
+          {selectionError}
+        </p>
       ) : null}
 
       {panelOpen ? (
@@ -556,6 +613,11 @@ export function MapRegionComparison({
               setRetryGeneration((generation) => generation + 1);
             }}
           />
+          {selectionError ? (
+            <p className="map-compare__status" role="status">
+              {selectionError}
+            </p>
+          ) : null}
           {region && source?.style ? (
             <label className="map-compare__opacity">
               <span>
@@ -616,70 +678,13 @@ export function MapRegionComparison({
   );
 }
 
-function StatusLabel({ status }: { status: ComparisonStatus }) {
+function StatusLabel({ status, selectionError }: { status: ComparisonStatus; selectionError: string | null }) {
+  if (selectionError) return <small data-error>Error</small>;
   return status.kind === "loading" ? (
     <small>Loading</small>
   ) : status.kind === "error" ? (
     <small data-error>Error</small>
   ) : null;
-}
-
-function pointInCanvas(
-  event: Pick<globalThis.MouseEvent, "clientX" | "clientY">,
-  canvas: HTMLDivElement,
-  clamp: boolean
-): ScreenPoint {
-  const bounds = canvas.getBoundingClientRect();
-  const point = { x: event.clientX - bounds.left, y: event.clientY - bounds.top };
-  return clamp
-    ? { x: Math.max(0, Math.min(bounds.width, point.x)), y: Math.max(0, Math.min(bounds.height, point.y)) }
-    : point;
-}
-
-function rectFromPoints(a: ScreenPoint, b: ScreenPoint): ScreenRect {
-  return {
-    left: Math.min(a.x, b.x),
-    top: Math.min(a.y, b.y),
-    width: Math.abs(a.x - b.x),
-    height: Math.abs(a.y - b.y)
-  };
-}
-
-function regionFromScreenRect(map: MlMap, rect: ScreenRect): GeographicRegion {
-  return geographicBoundsFromScreenRect(map, rect);
-}
-
-function visibleScreenRect(
-  map: MlMap,
-  region: GeographicRegion,
-  viewportWidth: number,
-  viewportHeight: number
-): ScreenRect | null {
-  const rect = projectedScreenRect(map, region);
-  const left = Math.max(0, rect.left);
-  const top = Math.max(0, rect.top);
-  const right = Math.min(viewportWidth, rect.left + rect.width);
-  const bottom = Math.min(viewportHeight, rect.top + rect.height);
-  if (right - left < 2 || bottom - top < 2) return null;
-  return { left, top, width: right - left, height: bottom - top };
-}
-
-function projectedScreenRect(map: MlMap, region: GeographicRegion): ScreenRect {
-  const centerLongitude = map.getCenter().lng;
-  const crossesAntimeridian = (region.west < -180 || region.east > 180) && region.east - region.west < 180;
-  const west = crossesAntimeridian ? longitudeNear(region.west, centerLongitude) : region.west;
-  const east = crossesAntimeridian ? west + (region.east - region.west) : region.east;
-  const points = [
-    map.project([west, region.north]),
-    map.project([east, region.north]),
-    map.project([east, region.south]),
-    map.project([west, region.south])
-  ];
-  const left = Math.min(...points.map((point) => point.x));
-  const top = Math.min(...points.map((point) => point.y));
-  const right = Math.max(...points.map((point) => point.x));
-  const bottom = Math.max(...points.map((point) => point.y));
-  return { left, top, width: right - left, height: bottom - top };
 }
 
 function syncComparisonCamera(
@@ -696,34 +701,6 @@ function syncComparisonCamera(
     bearing: primaryMap.getBearing(),
     pitch: primaryMap.getPitch()
   });
-}
-
-function clampMovedRect(rect: ScreenRect, delta: ScreenPoint, viewport: DOMRect): ScreenRect {
-  const visibleWidth = Math.min(MIN_REGION_SIZE, rect.width);
-  const visibleHeight = Math.min(MIN_REGION_SIZE, rect.height);
-  return {
-    ...rect,
-    left: Math.max(visibleWidth - rect.width, Math.min(viewport.width - visibleWidth, rect.left + delta.x)),
-    top: Math.max(visibleHeight - rect.height, Math.min(viewport.height - visibleHeight, rect.top + delta.y))
-  };
-}
-
-function clampResizedRect(rect: ScreenRect, delta: ScreenPoint, axes: ResizeAxes): ScreenRect {
-  const minWidth = Math.max(MIN_REGION_SIZE, MIN_REGION_SIZE - rect.left);
-  const minHeight = Math.max(MIN_REGION_SIZE, MIN_REGION_SIZE - rect.top);
-  return {
-    ...rect,
-    width: axes === "height" ? rect.width : Math.max(minWidth, rect.width + delta.x),
-    height: axes === "width" ? rect.height : Math.max(minHeight, rect.height + delta.y)
-  };
-}
-
-function keyboardDelta(key: string, step: number, axes: ResizeAxes): ScreenPoint | null {
-  if (axes !== "height" && key === "ArrowLeft") return { x: -step, y: 0 };
-  if (axes !== "height" && key === "ArrowRight") return { x: step, y: 0 };
-  if (axes !== "width" && key === "ArrowUp") return { x: 0, y: -step };
-  if (axes !== "width" && key === "ArrowDown") return { x: 0, y: step };
-  return null;
 }
 
 function rectStyle(rect: ScreenRect): CSSProperties {
@@ -756,15 +733,4 @@ function captionPosition(rect: ScreenRect | null, viewport: DOMRect | undefined)
     left: Math.max(8, Math.min(viewport.width - 210, rect.left)),
     top: Math.max(8, rect.top - 30)
   };
-}
-
-function screenRectsEqual(a: ScreenRect | null, b: ScreenRect | null): boolean {
-  if (a === b) return true;
-  if (!a || !b) return false;
-  return (
-    Math.abs(a.left - b.left) < 0.5 &&
-    Math.abs(a.top - b.top) < 0.5 &&
-    Math.abs(a.width - b.width) < 0.5 &&
-    Math.abs(a.height - b.height) < 0.5
-  );
 }

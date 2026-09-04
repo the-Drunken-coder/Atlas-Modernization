@@ -1,5 +1,4 @@
 import {
-  AtlasClient,
   type AtlasWatchEvent,
   type CommandCatalog,
   type CommandDefinition,
@@ -8,7 +7,7 @@ import {
   type TaskResource
 } from "@the-drunken-coder/atlas-sdk";
 import type { AppConfig } from "../app/config.js";
-import { getAuthSessionEpoch, isCurrentAuthSessionEpoch } from "../auth/session-epoch.js";
+import { createAuthenticatedAtlasClient } from "../auth/atlas.js";
 import { sanitizeConnectionError } from "./connection-error.js";
 import type { UiGeometry } from "./geometry.js";
 import type { AtlasSnapshot } from "./store.js";
@@ -38,11 +37,8 @@ export interface AtlasDataSource {
 
 /** The real data source: an Atlas SDK client pointed directly at Atlas Core. */
 export function createSdkDataSource(config: AppConfig): AtlasDataSource {
-  const client = new AtlasClient({
-    baseUrl: config.atlasBaseUrl,
-    credentials: "include",
+  const client = createAuthenticatedAtlasClient(config.atlasBaseUrl, {
     sync: "all",
-    fetch: atlasFetch,
     WebSocket: globalThis.WebSocket
   });
   let runtimeManifestVersions: Readonly<Record<string, number>> | undefined;
@@ -169,7 +165,6 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
     }
   };
 }
-
 function runtimeManifestChangeVersion(event: AtlasWatchEvent): { id: string; version: number } | undefined {
   if (event.event !== "update" || event.resource_type !== "entity") return undefined;
   return event.change_reason === "runtime_manifest_changed" ? { id: event.id, version: event.version } : undefined;
@@ -197,29 +192,4 @@ function runtimeManifestVersionsAfterHydration(
     ...current,
     ...Object.fromEntries(changedEntities.map(([id, entity]) => [id, entity.metadata.version]))
   };
-}
-
-async function atlasFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
-  const requestAuthEpoch = getAuthSessionEpoch();
-  const response = await fetch(input, { ...init, credentials: "include" });
-  if (response.status === 401 && typeof window !== "undefined") {
-    const sessionExpired = await isCoreSessionExpired(response.clone());
-    if (sessionExpired && isCurrentAuthSessionEpoch(requestAuthEpoch)) {
-      window.dispatchEvent(new Event("atlas-auth-expired"));
-    }
-  }
-  return response;
-}
-
-async function isCoreSessionExpired(response: Response): Promise<boolean> {
-  try {
-    const payload = await response.json();
-    return isRecord(payload) && payload.error_code === "UNAUTHORIZED";
-  } catch {
-    return false;
-  }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

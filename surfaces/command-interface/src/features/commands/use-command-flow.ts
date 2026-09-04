@@ -5,10 +5,18 @@ import { sanitizeConnectionError } from "../../atlas/connection-error.js";
 import { entityKind } from "../../atlas/entities.js";
 import type { AtlasContextValue } from "../../state/atlas-context.js";
 import type { MapContextMenuInfo } from "../../ui/map/view/MapView.js";
+import type { CommandManifestStatus } from "../assets/AssetInspector.js";
 import type { CommandMapPoint } from "./command-input-registry.js";
 
+type ManifestGeneration = number | string | undefined;
+
 export type MapMenuState = { x: number; y: number; lat: number; lng: number; generation?: string };
-export type CommandFormState = { availability: CommandAvailability; mapPoint?: CommandMapPoint; generation?: string };
+export type CommandFormState = {
+  availability: CommandAvailability;
+  mapPoint?: CommandMapPoint;
+  manifestGeneration?: ManifestGeneration;
+  generation?: string;
+};
 type PendingSubmission = { identity: string; idempotencyKey: string };
 type PendingMapMenu = { entityId: string; info: MapContextMenuInfo };
 
@@ -17,12 +25,16 @@ export function useCommandFlow({
   selectedEntity,
   selectedId,
   generation,
+  commandManifestStatus = "ready",
+  commandManifestGeneration,
   submitCommand
 }: {
   catalog?: CommandCatalog;
   selectedEntity?: EntityResource;
   selectedId?: string;
   generation?: string;
+  commandManifestStatus?: CommandManifestStatus;
+  commandManifestGeneration?: ManifestGeneration;
   submitCommand: AtlasContextValue["submitCommand"];
 }) {
   const [mapMenu, setMapMenu] = useState<MapMenuState | null>(null);
@@ -35,8 +47,17 @@ export function useCommandFlow({
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string>();
   const selectedEntityId = selectedEntity?.entity_id;
-  const generationRef = useRef(generation);
-  generationRef.current = generation;
+  const selectedEntityRef = useRef(selectedEntity);
+  selectedEntityRef.current = selectedEntity;
+  const manifestStatusRef = useRef(commandManifestStatus);
+  manifestStatusRef.current = commandManifestStatus;
+  const manifestGeneration = commandManifestGeneration ?? generation;
+  const manifestGenerationRef = useRef<ManifestGeneration>(manifestGeneration);
+  manifestGenerationRef.current = manifestGeneration;
+  const previousManifestGenerationRef = useRef<ManifestGeneration>(manifestGeneration);
+  const previousSelectedEntityIdRef = useRef(selectedEntityId);
+  const submittingRef = useRef(submitting);
+  submittingRef.current = submitting;
 
   const closeMapMenu = useCallback(() => setMapMenu(null), []);
   const dismissCommandForm = useCallback(() => {
@@ -57,12 +78,35 @@ export function useCommandFlow({
   }, [catalog, closeMapMenu, dismissCommandForm]);
 
   useEffect(() => {
-    closeMapMenu();
-    dismissCommandForm();
-    setPendingMapMenu(null);
-    activeSubmitIdRef.current = undefined;
-    setSubmitting(false);
-  }, [generation, closeMapMenu, dismissCommandForm]);
+    const generationChanged = previousManifestGenerationRef.current !== manifestGeneration;
+    previousManifestGenerationRef.current = manifestGeneration;
+    const selectedEntityChanged = previousSelectedEntityIdRef.current !== selectedEntityId;
+    previousSelectedEntityIdRef.current = selectedEntityId;
+    if (commandManifestStatus !== "ready" || generationChanged) {
+      closeMapMenu();
+      dismissCommandForm();
+      if (!selectedEntityChanged) setPendingMapMenu(null);
+      pendingSubmissionRef.current = undefined;
+      activeSubmitIdRef.current = undefined;
+      setSubmitting(false);
+      return;
+    }
+    if (
+      commandForm &&
+      (commandForm.manifestGeneration !== commandManifestGeneration || commandForm.generation !== generation)
+    ) {
+      dismissCommandForm();
+    }
+  }, [
+    commandForm,
+    commandManifestGeneration,
+    commandManifestStatus,
+    closeMapMenu,
+    dismissCommandForm,
+    generation,
+    manifestGeneration,
+    selectedEntityId
+  ]);
 
   useEffect(() => {
     const previousSelectedId = previousSelectedIdRef.current;
@@ -73,7 +117,7 @@ export function useCommandFlow({
   }, [pendingMapMenu, selectedId]);
 
   useEffect(() => {
-    if (!pendingMapMenu || pendingMapMenu.entityId !== selectedEntityId) return;
+    if (!pendingMapMenu || pendingMapMenu.entityId !== selectedEntityId || commandManifestStatus !== "ready") return;
     setPendingMapMenu(null);
     if (!selectedEntity || entityKind(selectedEntity) !== "asset") return;
     dismissCommandForm();
@@ -85,7 +129,7 @@ export function useCommandFlow({
       lng: info.lng,
       ...(generation === undefined ? {} : { generation })
     });
-  }, [generation, pendingMapMenu, selectedEntity, selectedEntityId, dismissCommandForm]);
+  }, [commandManifestStatus, generation, pendingMapMenu, selectedEntity, selectedEntityId, dismissCommandForm]);
 
   useEffect(() => {
     if (!selectedId || selectedEntityId) return;
@@ -95,10 +139,18 @@ export function useCommandFlow({
   }, [selectedId, selectedEntityId, closeMapMenu, dismissCommandForm]);
 
   const submit = useCallback(
-    async (availability: CommandAvailability, input: JSONValue) => {
-      if (!selectedEntity) return;
-      const submissionGeneration = generationRef.current;
-      const identity = JSON.stringify([selectedEntity.entity_id, availability.command.command, input]);
+    async (availability: CommandAvailability, input: JSONValue, expectedGeneration = manifestGeneration) => {
+      const currentEntity = selectedEntityRef.current;
+      if (
+        !currentEntity ||
+        manifestStatusRef.current !== "ready" ||
+        expectedGeneration !== manifestGenerationRef.current ||
+        !availabilityMatchesManifest(currentEntity, availability)
+      ) {
+        return;
+      }
+      const submissionGeneration = manifestGenerationRef.current;
+      const identity = JSON.stringify([currentEntity.entity_id, availability.command.command, input]);
       const existing = pendingSubmissionRef.current;
       const pending = existing?.identity === identity ? existing : { identity, idempotencyKey: crypto.randomUUID() };
       pendingSubmissionRef.current = pending;
@@ -108,17 +160,25 @@ export function useCommandFlow({
       setSubmitError(undefined);
       try {
         await submitCommand({
-          assetId: selectedEntity.entity_id,
+          assetId: currentEntity.entity_id,
           command: availability.command,
           input,
           idempotencyKey: pending.idempotencyKey
         });
-        if (generationRef.current === submissionGeneration && pendingSubmissionRef.current === pending) {
+        if (
+          manifestGenerationRef.current === submissionGeneration &&
+          manifestStatusRef.current === "ready" &&
+          pendingSubmissionRef.current === pending
+        ) {
           pendingSubmissionRef.current = undefined;
           setCommandForm(null);
         }
       } catch (cause) {
-        if (generationRef.current === submissionGeneration && pendingSubmissionRef.current === pending) {
+        if (
+          manifestGenerationRef.current === submissionGeneration &&
+          manifestStatusRef.current === "ready" &&
+          pendingSubmissionRef.current === pending
+        ) {
           setSubmitError(sanitizeConnectionError(cause));
         }
       } finally {
@@ -128,25 +188,37 @@ export function useCommandFlow({
         }
       }
     },
-    [selectedEntity, submitCommand]
+    [manifestGeneration, submitCommand]
   );
 
   const pick = useCallback(
     (availability: CommandAvailability, mapPoint?: CommandMapPoint) => {
-      if (submitting || !selectedEntity) return;
+      const currentEntity = selectedEntityRef.current;
+      if (
+        submittingRef.current ||
+        manifestStatusRef.current !== "ready" ||
+        !currentEntity ||
+        !availabilityMatchesManifest(currentEntity, availability)
+      ) {
+        return;
+      }
       closeMapMenu();
       if (availability.input.Form) {
-        pendingSubmissionRef.current = undefined;
         setSubmitError(undefined);
-        setCommandForm({ availability, mapPoint, ...(generation === undefined ? {} : { generation }) });
+        setCommandForm({
+          availability,
+          mapPoint,
+          ...(commandManifestGeneration === undefined ? {} : { manifestGeneration: commandManifestGeneration }),
+          ...(generation === undefined ? {} : { generation })
+        });
         return;
       }
       void submit(
         availability,
-        availability.input.buildInput({ asset: selectedEntity, command: availability.command, mapPoint })
+        availability.input.buildInput({ asset: currentEntity, command: availability.command, mapPoint })
       );
     },
-    [closeMapMenu, generation, selectedEntity, submit, submitting]
+    [closeMapMenu, commandManifestGeneration, generation, submit]
   );
 
   const onMapContextMenu = useCallback(
@@ -158,7 +230,7 @@ export function useCommandFlow({
         return;
       }
       setPendingMapMenu(null);
-      if (!selectedEntity || entityKind(selectedEntity) !== "asset") {
+      if (manifestStatusRef.current !== "ready" || !selectedEntity || entityKind(selectedEntity) !== "asset") {
         closeMapMenu();
         return;
       }
@@ -175,8 +247,14 @@ export function useCommandFlow({
   );
 
   return {
-    mapMenu: mapMenu?.generation === generation ? mapMenu : null,
-    commandForm: commandForm?.generation === generation ? commandForm : null,
+    mapMenu:
+      commandManifestStatus === "ready" && (mapMenu === null || mapMenu.generation === generation) ? mapMenu : null,
+    commandForm:
+      commandManifestStatus === "ready" &&
+      (commandForm === null ||
+        (commandForm.manifestGeneration === commandManifestGeneration && commandForm.generation === generation))
+        ? commandForm
+        : null,
     submitting,
     submitError,
     closeMapMenu,
@@ -186,4 +264,9 @@ export function useCommandFlow({
     onMapContextMenu,
     submit
   };
+}
+
+function availabilityMatchesManifest(entity: EntityResource, availability: CommandAvailability): boolean {
+  const manifestEntry = entity.command_manifest?.find((entry) => entry.command === availability.command.command);
+  return manifestEntry !== undefined && JSON.stringify(manifestEntry) === JSON.stringify(availability.manifest);
 }

@@ -8,42 +8,6 @@ const DOM_DELTA_LINE = 1;
 
 export type CursorHandoffState = { nativePoint: ScreenPoint; visualPoint: ScreenPoint };
 
-type ScreenRectLike = { left: number; top: number; width: number; height: number };
-
-export type ScreenGeographicBounds = {
-  west: number;
-  south: number;
-  east: number;
-  north: number;
-};
-
-/** Convert a screen rectangle to its longitude interval, preserving wrapped screen-space spans. */
-export function geographicBoundsFromScreenRect(
-  map: Pick<MlMap, "unproject">,
-  rect: ScreenRectLike
-): ScreenGeographicBounds {
-  const first = map.unproject([rect.left, rect.top]);
-  const middle = map.unproject([rect.left + rect.width / 2, rect.top + rect.height / 2]);
-  const second = map.unproject([rect.left + rect.width, rect.top + rect.height]);
-  const middleLongitude = longitudeNear(middle.lng, first.lng);
-  const secondLongitude = longitudeNear(second.lng, middleLongitude);
-  const longitudes = [first.lng, middleLongitude, secondLongitude];
-  return {
-    west: Math.min(...longitudes),
-    south: Math.min(first.lat, second.lat),
-    east: Math.max(...longitudes),
-    north: Math.max(first.lat, second.lat)
-  };
-}
-
-/** Keep a longitude in the world copy nearest a map center. */
-export function longitudeNear(longitude: number, reference: number): number {
-  let result = longitude;
-  while (result - reference > 180) result -= 360;
-  while (result - reference < -180) result += 360;
-  return result;
-}
-
 export function cursorPointsFromEvent(
   event: { clientX: number; clientY: number },
   rect: DOMRect,

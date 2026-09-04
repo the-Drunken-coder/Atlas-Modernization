@@ -32,7 +32,7 @@ type MockMapViewProps = {
   onBackgroundClick?: () => void;
   onSelectEntity?: (id: string) => void;
   onStyleSwitchError?: (error: { failedStyleId: string; activeStyleId: string }) => void;
-  spatial?: { onViewportArea: (area: MapArea) => void };
+  spatial?: { onViewportArea: (area: MapArea | null) => void };
 };
 
 const mapViewMock = vi.hoisted(() => ({ lastProps: undefined as MockMapViewProps | undefined }));
@@ -468,7 +468,7 @@ describe("MapConsole", () => {
     expect(screen.getByText("No Commands are defined in Atlas Protocol")).toBeInTheDocument();
   });
 
-  it("keeps one Asset detail request alive across telemetry updates", async () => {
+  it("keeps one Asset detail request alive across same-version snapshot replacements", async () => {
     const user = userEvent.setup();
     const pending = deferred<EntityResource>();
     const signals: AbortSignal[] = [];
@@ -511,29 +511,7 @@ describe("MapConsole", () => {
               [rover.entity_id]: {
                 ...rover,
                 components: { telemetry: { latitude: 40.1, longitude: -74.1 } },
-                metadata: { ...rover.metadata, version: 2 }
-              }
-            },
-            tasks: {}
-          }
-        }}
-      >
-        <MapConsole />
-      </AtlasStaticProvider>
-    );
-    expect(loadEntityDetails).toHaveBeenCalledOnce();
-    expect(signals[0]?.aborted).toBe(false);
-
-    view.rerender(
-      <AtlasStaticProvider
-        value={{
-          ...baseValue,
-          snapshot: {
-            entities: {
-              [rover.entity_id]: {
-                ...rover,
-                components: { telemetry: { latitude: 40.1, longitude: -74.1 } },
-                metadata: { ...rover.metadata, version: 3 }
+                metadata: { ...rover.metadata, version: 1 }
               }
             },
             tasks: {}
@@ -550,9 +528,367 @@ describe("MapConsole", () => {
     expect(await screen.findByText("This Asset has no Commands")).toBeInTheDocument();
   });
 
-  it("does not reload loaded Asset commands for telemetry updates", async () => {
+  it("coalesces Asset detail refreshes and keeps the confirmed manifest visible", async () => {
     const user = userEvent.setup();
-    const loadEntityDetails = vi.fn().mockResolvedValue({ ...rover, command_manifest: [] });
+    const first = deferred<EntityResource>();
+    const second = deferred<EntityResource>();
+    const signals: AbortSignal[] = [];
+    const loadEntityDetails = vi.fn((_entityId: string, signal?: AbortSignal) => {
+      if (signal) signals.push(signal);
+      return signals.length === 1 ? first.promise : second.promise;
+    });
+    const baseValue: AtlasContextValue = {
+      status: "ready",
+      config: appConfig(),
+      snapshot: { entities: { [rover.entity_id]: rover }, tasks: {} },
+      catalog: taskingCatalog,
+      health: healthyConnection,
+      reconnect: vi.fn(),
+      loadEntityDetails,
+      submitCommand: async () => {
+        throw new Error("not used");
+      },
+      updateGeometry: async () => {
+        throw new Error("not used");
+      }
+    };
+    const view = render(
+      <AtlasStaticProvider value={baseValue}>
+        <MapConsole />
+      </AtlasStaticProvider>
+    );
+
+    await user.click(await screen.findByText("Rover"));
+    await waitFor(() => expect(loadEntityDetails).toHaveBeenCalledOnce());
+
+    const snapshotAtVersion = (version: number): AtlasSnapshot => ({
+      entities: {
+        [rover.entity_id]: {
+          ...rover,
+          components: { telemetry: { latitude: 40 + version / 100, longitude: -74 } },
+          metadata: { ...rover.metadata, version }
+        }
+      },
+      tasks: {}
+    });
+    view.rerender(
+      <AtlasStaticProvider value={{ ...baseValue, snapshot: snapshotAtVersion(2) }}>
+        <MapConsole />
+      </AtlasStaticProvider>
+    );
+    expect(await screen.findByText("Loading Asset Commands")).toBeInTheDocument();
+    view.rerender(
+      <AtlasStaticProvider value={{ ...baseValue, snapshot: snapshotAtVersion(3) }}>
+        <MapConsole />
+      </AtlasStaticProvider>
+    );
+
+    expect(loadEntityDetails).toHaveBeenCalledOnce();
+    expect(signals[0]?.aborted).toBe(false);
+    first.resolve({ ...rover, command_manifest: [queuedManifest] });
+    await waitFor(() => expect(loadEntityDetails).toHaveBeenCalledTimes(2));
+    expect(signals[1]?.aborted).toBe(false);
+    await user.click(screen.getByRole("button", { name: "Raw entity JSON" }));
+    expect(screen.getByText(/fixture\.queued/)).toBeInTheDocument();
+    second.resolve({
+      ...rover,
+      metadata: { ...rover.metadata, version: 3 },
+      command_manifest: [queuedManifest]
+    });
+    expect(await screen.findByText("No operator inputs are available for this Asset's Commands")).toBeInTheDocument();
+    expect(loadEntityDetails).toHaveBeenCalledTimes(2);
+  });
+
+  it("surfaces a failed trailing Asset detail refresh instead of remaining loading", async () => {
+    const user = userEvent.setup();
+    const first = deferred<EntityResource>();
+    const second = deferred<EntityResource>();
+    const loadEntityDetails = vi
+      .fn<NonNullable<AtlasContextValue["loadEntityDetails"]>>()
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(() => second.promise);
+    const baseValue: AtlasContextValue = {
+      status: "ready",
+      config: appConfig(),
+      snapshot: { entities: { [rover.entity_id]: rover }, tasks: {} },
+      catalog: taskingCatalog,
+      health: healthyConnection,
+      reconnect: vi.fn(),
+      loadEntityDetails,
+      submitCommand: async () => {
+        throw new Error("not used");
+      },
+      updateGeometry: async () => {
+        throw new Error("not used");
+      }
+    };
+    const view = render(
+      <AtlasStaticProvider value={baseValue}>
+        <MapConsole />
+      </AtlasStaticProvider>
+    );
+
+    await user.click(await screen.findByText("Rover"));
+    await waitFor(() => expect(loadEntityDetails).toHaveBeenCalledOnce());
+    view.rerender(
+      <AtlasStaticProvider
+        value={{
+          ...baseValue,
+          snapshot: {
+            entities: { [rover.entity_id]: rover },
+            tasks: {},
+            runtimeManifestVersions: { [rover.entity_id]: 2 }
+          }
+        }}
+      >
+        <MapConsole />
+      </AtlasStaticProvider>
+    );
+
+    first.resolve({ ...rover, command_manifest: [queuedManifest] });
+    await waitFor(() => expect(loadEntityDetails).toHaveBeenCalledTimes(2));
+    second.reject(new Error("detail service unavailable"));
+
+    expect(await screen.findByText("Asset Commands unavailable")).toBeInTheDocument();
+  });
+
+  it("waits for a later version before retrying a failed stale Asset detail refresh", async () => {
+    const user = userEvent.setup();
+    const first = deferred<EntityResource>();
+    const second = deferred<EntityResource>();
+    const third = deferred<EntityResource>();
+    const loadEntityDetails = vi
+      .fn<NonNullable<AtlasContextValue["loadEntityDetails"]>>()
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(() => second.promise)
+      .mockImplementationOnce(() => third.promise);
+    const baseValue: AtlasContextValue = {
+      status: "ready",
+      config: appConfig(),
+      snapshot: { entities: { [rover.entity_id]: rover }, tasks: {} },
+      catalog: taskingCatalog,
+      health: healthyConnection,
+      reconnect: vi.fn(),
+      loadEntityDetails,
+      submitCommand: async () => {
+        throw new Error("not used");
+      },
+      updateGeometry: async () => {
+        throw new Error("not used");
+      }
+    };
+    const view = render(
+      <AtlasStaticProvider value={baseValue}>
+        <MapConsole />
+      </AtlasStaticProvider>
+    );
+
+    await user.click(await screen.findByText("Rover"));
+    await waitFor(() => expect(loadEntityDetails).toHaveBeenCalledOnce());
+    first.resolve({ ...rover, command_manifest: [queuedManifest] });
+    expect(await screen.findByText("No operator inputs are available for this Asset's Commands")).toBeInTheDocument();
+
+    view.rerender(
+      <AtlasStaticProvider
+        value={{
+          ...baseValue,
+          snapshot: {
+            entities: { [rover.entity_id]: { ...rover, metadata: { ...rover.metadata, version: 2 } } },
+            tasks: {}
+          }
+        }}
+      >
+        <MapConsole />
+      </AtlasStaticProvider>
+    );
+    await waitFor(() => expect(loadEntityDetails).toHaveBeenCalledTimes(2));
+    second.reject(new Error("detail service unavailable"));
+
+    expect(await screen.findByText("Asset Commands unavailable")).toBeInTheDocument();
+    await act(async () => Promise.resolve());
+    expect(loadEntityDetails).toHaveBeenCalledTimes(2);
+
+    view.rerender(
+      <AtlasStaticProvider
+        value={{
+          ...baseValue,
+          snapshot: {
+            entities: { [rover.entity_id]: { ...rover, metadata: { ...rover.metadata, version: 3 } } },
+            tasks: {}
+          }
+        }}
+      >
+        <MapConsole />
+      </AtlasStaticProvider>
+    );
+    await waitFor(() => expect(loadEntityDetails).toHaveBeenCalledTimes(3));
+    third.resolve({ ...rover, metadata: { ...rover.metadata, version: 3 }, command_manifest: [queuedManifest] });
+
+    expect(await screen.findByText("No operator inputs are available for this Asset's Commands")).toBeInTheDocument();
+  });
+
+  it("recovers a failed initial Asset detail load when a newer snapshot arrives", async () => {
+    const user = userEvent.setup();
+    const first = deferred<EntityResource>();
+    const second = deferred<EntityResource>();
+    const loadEntityDetails = vi
+      .fn<NonNullable<AtlasContextValue["loadEntityDetails"]>>()
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(() => second.promise);
+    const baseValue: AtlasContextValue = {
+      status: "ready",
+      config: appConfig(),
+      snapshot: { entities: { [rover.entity_id]: rover }, tasks: {} },
+      catalog: taskingCatalog,
+      health: healthyConnection,
+      reconnect: vi.fn(),
+      loadEntityDetails,
+      submitCommand: async () => {
+        throw new Error("not used");
+      },
+      updateGeometry: async () => {
+        throw new Error("not used");
+      }
+    };
+    const view = render(
+      <AtlasStaticProvider value={baseValue}>
+        <MapConsole />
+      </AtlasStaticProvider>
+    );
+
+    await user.click(await screen.findByText("Rover"));
+    await user.click(screen.getByRole("button", { name: /Commands/ }));
+    await waitFor(() => expect(loadEntityDetails).toHaveBeenCalledOnce());
+    first.reject(new Error("detail service unavailable"));
+    expect(await screen.findByText("Asset Commands unavailable")).toBeInTheDocument();
+
+    view.rerender(
+      <AtlasStaticProvider
+        value={{
+          ...baseValue,
+          snapshot: {
+            entities: { [rover.entity_id]: { ...rover, metadata: { ...rover.metadata, version: 2 } } },
+            tasks: {}
+          }
+        }}
+      >
+        <MapConsole />
+      </AtlasStaticProvider>
+    );
+
+    await waitFor(() => expect(loadEntityDetails).toHaveBeenCalledTimes(2));
+    expect(screen.getByText("Loading Asset Commands")).toBeInTheDocument();
+    second.resolve({ ...rover, metadata: { ...rover.metadata, version: 2 }, command_manifest: [] });
+    expect(await screen.findByText("This Asset has no Commands")).toBeInTheDocument();
+  });
+
+  it("bounds refreshes when Asset detail responses stay stale", async () => {
+    const user = userEvent.setup();
+    const staleDetails = { ...rover, command_manifest: [queuedManifest] };
+    const loadEntityDetails = vi.fn(() => Promise.resolve(staleDetails));
+    renderStaticConsole({
+      snapshot: {
+        entities: { [rover.entity_id]: { ...rover, metadata: { ...rover.metadata, version: 2 } } },
+        tasks: {}
+      },
+      catalog: taskingCatalog,
+      loadEntityDetails
+    });
+
+    await user.click(await screen.findByText("Rover"));
+    await waitFor(() => expect(loadEntityDetails).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText("Asset Commands unavailable")).toBeInTheDocument();
+    expect(loadEntityDetails).toHaveBeenCalledTimes(2);
+    await user.click(screen.getByRole("button", { name: "Raw entity JSON" }));
+    expect(screen.getByText(/fixture\.queued/)).toBeInTheDocument();
+  });
+
+  it("restarts a bounded stale-refresh cycle after a later telemetry version", async () => {
+    const user = userEvent.setup();
+    const first = deferred<EntityResource>();
+    const second = deferred<EntityResource>();
+    const recovery = deferred<EntityResource>();
+    const loadEntityDetails = vi
+      .fn<NonNullable<AtlasContextValue["loadEntityDetails"]>>()
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(() => second.promise)
+      .mockImplementation(() => recovery.promise);
+    const snapshotAtVersion = (version: number): AtlasSnapshot => ({
+      entities: {
+        [rover.entity_id]: {
+          ...rover,
+          components: { telemetry: { latitude: 40 + version / 100, longitude: -74 } },
+          metadata: { ...rover.metadata, version }
+        }
+      },
+      tasks: {}
+    });
+    const baseValue: AtlasContextValue = {
+      status: "ready",
+      config: appConfig(),
+      snapshot: snapshotAtVersion(1),
+      catalog: taskingCatalog,
+      health: healthyConnection,
+      reconnect: vi.fn(),
+      loadEntityDetails,
+      submitCommand: async () => {
+        throw new Error("not used");
+      },
+      updateGeometry: async () => {
+        throw new Error("not used");
+      }
+    };
+    const view = render(
+      <AtlasStaticProvider value={baseValue}>
+        <MapConsole />
+      </AtlasStaticProvider>
+    );
+
+    await user.click(await screen.findByText("Rover"));
+    await waitFor(() => expect(loadEntityDetails).toHaveBeenCalledOnce());
+    view.rerender(
+      <AtlasStaticProvider value={{ ...baseValue, snapshot: snapshotAtVersion(2) }}>
+        <MapConsole />
+      </AtlasStaticProvider>
+    );
+    first.resolve({ ...rover, metadata: { ...rover.metadata, version: 1 }, command_manifest: [queuedManifest] });
+    await waitFor(() => expect(loadEntityDetails).toHaveBeenCalledTimes(2));
+    view.rerender(
+      <AtlasStaticProvider value={{ ...baseValue, snapshot: snapshotAtVersion(3) }}>
+        <MapConsole />
+      </AtlasStaticProvider>
+    );
+    second.resolve({ ...rover, metadata: { ...rover.metadata, version: 2 }, command_manifest: [queuedManifest] });
+
+    expect(await screen.findByText("Asset Commands unavailable")).toBeInTheDocument();
+    await act(async () => Promise.resolve());
+    expect(loadEntityDetails).toHaveBeenCalledTimes(2);
+
+    view.rerender(
+      <AtlasStaticProvider value={{ ...baseValue, snapshot: snapshotAtVersion(4) }}>
+        <MapConsole />
+      </AtlasStaticProvider>
+    );
+    await waitFor(() => expect(loadEntityDetails).toHaveBeenCalledTimes(3));
+    recovery.resolve({
+      ...rover,
+      metadata: { ...rover.metadata, version: 4 },
+      command_manifest: [queuedManifest]
+    });
+
+    expect(await screen.findByText("No operator inputs are available for this Asset's Commands")).toBeInTheDocument();
+  });
+
+  it("reloads Asset commands when the selected runtime version changes from stopped to ready", async () => {
+    const user = userEvent.setup();
+    const loadEntityDetails = vi
+      .fn()
+      .mockResolvedValueOnce({ ...rover, command_manifest: [] })
+      .mockResolvedValueOnce({
+        ...rover,
+        metadata: { ...rover.metadata, version: 2 },
+        command_manifest: [queuedManifest]
+      });
     const baseValue: AtlasContextValue = {
       status: "ready",
       config: appConfig(),
@@ -577,79 +913,13 @@ describe("MapConsole", () => {
     await user.click(await screen.findByText("Rover"));
     await user.click(screen.getByRole("button", { name: /Commands/ }));
     expect(await screen.findByText("This Asset has no Commands")).toBeInTheDocument();
-    expect(loadEntityDetails).toHaveBeenCalledOnce();
-
-    view.rerender(
-      <AtlasStaticProvider
-        value={{
-          ...baseValue,
-          snapshot: {
-            entities: {
-              [rover.entity_id]: {
-                ...rover,
-                components: { telemetry: { latitude: 40.1, longitude: -74.1 } },
-                metadata: { ...rover.metadata, version: 2 }
-              }
-            },
-            tasks: {}
-          }
-        }}
-      >
-        <MapConsole />
-      </AtlasStaticProvider>
-    );
-
-    await waitFor(() => expect(loadEntityDetails).toHaveBeenCalledOnce());
-    expect(screen.getByText("This Asset has no Commands")).toBeInTheDocument();
-  });
-
-  it("reloads Asset commands when the selected runtime version changes from stopped to ready", async () => {
-    const user = userEvent.setup();
-    const loadEntityDetails = vi
-      .fn()
-      .mockResolvedValueOnce({ ...rover, command_manifest: [] })
-      .mockResolvedValueOnce({
-        ...rover,
-        metadata: { ...rover.metadata, version: 2 },
-        command_manifest: [queuedManifest]
-      });
-    const baseValue: AtlasContextValue = {
-      status: "ready",
-      config: appConfig(),
-      snapshot: {
-        entities: { [rover.entity_id]: rover },
-        tasks: {},
-        runtimeManifestVersions: { [rover.entity_id]: 1 }
-      },
-      catalog: taskingCatalog,
-      health: healthyConnection,
-      reconnect: vi.fn(),
-      loadEntityDetails,
-      submitCommand: async () => {
-        throw new Error("not used");
-      },
-      updateGeometry: async () => {
-        throw new Error("not used");
-      }
-    };
-    const view = render(
-      <AtlasStaticProvider value={baseValue}>
-        <MapConsole />
-      </AtlasStaticProvider>
-    );
-
-    await user.click(await screen.findByText("Rover"));
-    await user.click(screen.getByRole("button", { name: /Commands/ }));
-    expect(await screen.findByText("This Asset has no Commands")).toBeInTheDocument();
-
     view.rerender(
       <AtlasStaticProvider
         value={{
           ...baseValue,
           snapshot: {
             entities: { [rover.entity_id]: { ...rover, metadata: { ...rover.metadata, version: 2 } } },
-            tasks: {},
-            runtimeManifestVersions: { [rover.entity_id]: 2 }
+            tasks: {}
           }
         }}
       >
@@ -670,11 +940,7 @@ describe("MapConsole", () => {
     const baseValue: AtlasContextValue = {
       status: "ready",
       config: appConfig(),
-      snapshot: {
-        entities: { [rover.entity_id]: rover },
-        tasks: {},
-        runtimeManifestVersions: { [rover.entity_id]: 1 }
-      },
+      snapshot: { entities: { [rover.entity_id]: rover }, tasks: {} },
       catalog: taskingCatalog,
       health: healthyConnection,
       reconnect: vi.fn(),
@@ -702,8 +968,7 @@ describe("MapConsole", () => {
           ...baseValue,
           snapshot: {
             entities: { [rover.entity_id]: { ...rover, metadata: { ...rover.metadata, version: 2 } } },
-            tasks: {},
-            runtimeManifestVersions: { [rover.entity_id]: 2 }
+            tasks: {}
           }
         }}
       >
@@ -758,7 +1023,7 @@ describe("MapConsole", () => {
         value={{
           ...baseValue,
           snapshot: {
-            entities: { [rover.entity_id]: { ...rover, metadata: { ...rover.metadata, version: 2 } } },
+            entities: { [rover.entity_id]: rover },
             tasks: {},
             runtimeManifestVersions: { [rover.entity_id]: 2 }
           }
@@ -781,23 +1046,22 @@ describe("MapConsole", () => {
     const user = userEvent.setup();
     const signals: AbortSignal[] = [];
     const loadEntityDetails = vi.fn((_entityId: string, signal?: AbortSignal) => {
-      if (signal) {
-        signals.push(signal);
-        return new Promise<EntityResource>((_resolve, reject) => {
-          signal.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
-        });
-      }
-      return new Promise<EntityResource>(() => {});
+      if (!signal) return new Promise<EntityResource>(() => {});
+      signals.push(signal);
+      return new Promise<EntityResource>((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+      });
     });
     renderStaticConsole({
-      snapshot: { entities: { [rover.entity_id]: rover, [scout.entity_id]: scout, [area.entity_id]: area }, tasks: {} },
+      snapshot: { entities: { [rover.entity_id]: rover, [scout.entity_id]: scout }, tasks: {} },
       catalog: taskingCatalog,
       loadEntityDetails
     });
 
     await user.click(await screen.findByText("Rover"));
     await waitFor(() => expect(loadEntityDetails).toHaveBeenCalledOnce());
-    fireEvent.click(screen.getByTestId("map-select-other-marker"));
+    await user.click(screen.getByRole("button", { name: "Back" }));
+    await user.click(screen.getByText("Scout"));
 
     await waitFor(() => expect(loadEntityDetails).toHaveBeenCalledTimes(2));
     expect(signals[0]?.aborted).toBe(true);
