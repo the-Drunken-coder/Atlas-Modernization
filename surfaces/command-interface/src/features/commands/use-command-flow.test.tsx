@@ -23,6 +23,18 @@ const availability: CommandAvailability = {
 };
 const commandCatalog = [availability.command];
 
+const formAvailability: CommandAvailability = {
+  ...availability,
+  input: {
+    targeting: "none",
+    Form: ({ onSubmit }) => (
+      <button type="button" onClick={() => onSubmit({ value: "stale" })}>
+        Submit fixture
+      </button>
+    )
+  }
+};
+
 const asset = entityFixture({
   entity_id: "asset-1",
   alias: "Rover 1",
@@ -119,5 +131,43 @@ describe("useCommandFlow", () => {
     });
 
     expect(result.current.submitError).toBeUndefined();
+  });
+
+  it("dismisses forms and rejects callbacks from an older manifest generation", async () => {
+    const submitCommand = vi.fn().mockResolvedValue(task);
+    const { result, rerender } = renderHook(
+      (props: {
+        commandManifestStatus: "ready" | "loading";
+        commandManifestGeneration: number;
+        entity: typeof asset;
+      }) =>
+        useCommandFlow({
+          catalog: commandCatalog,
+          selectedEntity: props.entity,
+          selectedId: props.entity.entity_id,
+          commandManifestStatus: props.commandManifestStatus,
+          commandManifestGeneration: props.commandManifestGeneration,
+          submitCommand
+        }),
+      {
+        initialProps: { commandManifestStatus: "ready", commandManifestGeneration: 1, entity: asset }
+      }
+    );
+
+    act(() => result.current.pickSidebarCommand(formAvailability));
+    expect(result.current.commandForm).not.toBeNull();
+    const staleSubmit = result.current.submit;
+
+    const changedAsset = { ...asset, command_manifest: [] };
+    rerender({ commandManifestStatus: "loading", commandManifestGeneration: 2, entity: changedAsset });
+    expect(result.current.commandForm).toBeNull();
+    rerender({ commandManifestStatus: "ready", commandManifestGeneration: 2, entity: changedAsset });
+    act(() => result.current.pickSidebarCommand(formAvailability));
+    expect(result.current.commandForm).toBeNull();
+
+    await act(async () => {
+      await staleSubmit(formAvailability, { value: "stale" }, 1);
+    });
+    expect(submitCommand).not.toHaveBeenCalled();
   });
 });

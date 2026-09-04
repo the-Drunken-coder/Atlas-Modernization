@@ -70,8 +70,8 @@ type MapRegionComparisonProps = {
   sources: MapSources;
   editing?: MapEditing;
   exclusiveDrawingActive: boolean;
+  onBeginRegionInteraction: () => void;
   onBeginDrawing: () => void;
-  notifyUserGesture: () => void;
   suppressNextClick: () => void;
 };
 
@@ -89,8 +89,8 @@ export function MapRegionComparison({
   sources,
   editing,
   exclusiveDrawingActive,
+  onBeginRegionInteraction,
   onBeginDrawing,
-  notifyUserGesture,
   suppressNextClick
 }: MapRegionComparisonProps) {
   const alternatives = useMemo(
@@ -215,12 +215,11 @@ export function MapRegionComparison({
         return;
       event.preventDefault();
       event.stopPropagation();
-      primaryMap.stop();
+      onBeginRegionInteraction();
       mapCanvas.setPointerCapture?.(event.pointerId);
       const point = pointInCanvas(event, mapCanvas, true);
       setSelectionError(null);
       setDrag({ ...drag, start: point, current: point, pointerId: event.pointerId });
-      notifyUserGesture();
     };
     const updateDrag = (event: globalThis.PointerEvent) => {
       if (drag.pointerId === null || event.pointerId !== drag.pointerId) return;
@@ -267,7 +266,6 @@ export function MapRegionComparison({
       }
       if (event.target instanceof Node && mapCanvas.contains(event.target)) suppressNextClick();
       setDrag(null);
-      notifyUserGesture();
     };
     const cancelActiveDrag = (suppressReleaseClick: boolean) => {
       if (drag.pointerId !== null) {
@@ -304,7 +302,7 @@ export function MapRegionComparison({
       window.removeEventListener("pointercancel", cancelPointer);
       window.removeEventListener("keydown", cancelDrag, { capture: true });
     };
-  }, [boxZoomActive, drag, map, mapCanvas, notifyUserGesture, suppressNextClick]);
+  }, [boxZoomActive, drag, map, mapCanvas, onBeginRegionInteraction, suppressNextClick]);
 
   useEffect(() => {
     if (!region && !panelOpen) return;
@@ -356,6 +354,7 @@ export function MapRegionComparison({
       return;
     }
     comparisonMapRef.current = comparisonMap;
+    let styleLoaded = comparisonMap.isStyleLoaded();
 
     const initializeLayers = () => {
       registerSourcesAndLayers(comparisonMap);
@@ -369,15 +368,24 @@ export function MapRegionComparison({
     const handleIdle = () => {
       if (!failed) setStatus({ kind: "ready" });
     };
-    const handleError = (event: { error?: unknown }) => {
+    const handleStyleLoad = () => {
+      styleLoaded = true;
+      initializeLayers();
+    };
+    const handleError = (event: { error?: unknown; sourceId?: string }) => {
+      // MapLibre bubbles source/tile failures through the map. They are not
+      // fatal to the comparison map and should not strand the operator in an
+      // error state. Before the initial style load, an error without a
+      // sourceId means the style itself failed and needs a fresh retry.
+      if (styleLoaded || "sourceId" in event) return;
       failed = true;
       setStatus({ kind: "error", message: sanitizeConnectionError(event.error) });
     };
-    comparisonMap.on("style.load", initializeLayers);
+    comparisonMap.on("style.load", handleStyleLoad);
     comparisonMap.on("dataloading", handleLoading);
     comparisonMap.on("idle", handleIdle);
     comparisonMap.on("error", handleError);
-    if (comparisonMap.isStyleLoaded()) initializeLayers();
+    if (styleLoaded) initializeLayers();
 
     return () => {
       comparisonMap.remove();
@@ -414,6 +422,7 @@ export function MapRegionComparison({
 
   const beginDrawing = (previousRegion: GeographicRegion | null) => {
     if (!mapCanvas || !map || !mapReady) return;
+    onBeginRegionInteraction();
     onBeginDrawing();
     setPanelOpen(false);
     setSelectionError(null);
@@ -426,8 +435,8 @@ export function MapRegionComparison({
     if (viewport.width < MIN_REGION_SIZE || viewport.height < MIN_REGION_SIZE) return;
     const width = Math.min(240, Math.max(MIN_REGION_SIZE, viewport.width / 2));
     const height = Math.min(180, Math.max(MIN_REGION_SIZE, viewport.height / 2));
+    onBeginRegionInteraction();
     onBeginDrawing();
-    map.stop();
     setSelectionError(null);
     const nextRegion = regionFromScreenRect(map, {
       left: (viewport.width - width) / 2,
@@ -439,21 +448,18 @@ export function MapRegionComparison({
       setSelectionError(DATE_LINE_CROSSING_MESSAGE);
       setRegion(null);
       setPanelOpen(true);
-      notifyUserGesture();
       return;
     }
     setRegion(nextRegion);
     setPanelOpen(true);
-    notifyUserGesture();
   };
 
   const beginTransform = (transform: RegionTransform, event: ReactPointerEvent<HTMLButtonElement>) => {
     if (event.button !== 0 || !map || !mapCanvas || !region || !regionRect) return;
     event.preventDefault();
     event.stopPropagation();
-    map.stop();
+    onBeginRegionInteraction();
     mapCanvas.setPointerCapture?.(event.pointerId);
-    notifyUserGesture();
     setPanelOpen(false);
     setSelectionError(null);
     setDrag({
@@ -472,7 +478,7 @@ export function MapRegionComparison({
     if (!delta) return;
     event.preventDefault();
     event.stopPropagation();
-    map.stop();
+    onBeginRegionInteraction();
     setPanelOpen(false);
     setSelectionError(null);
     const viewport = mapCanvas.getBoundingClientRect();
@@ -488,7 +494,6 @@ export function MapRegionComparison({
     }
     setRegion(nextRegion);
     setSelectionError(null);
-    notifyUserGesture();
   };
 
   const drawingRect =

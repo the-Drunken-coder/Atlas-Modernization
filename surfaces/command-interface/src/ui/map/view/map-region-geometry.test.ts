@@ -11,6 +11,14 @@ describe("map region geometry", () => {
     expect(regionFromScreenRect(map, { left: 0, top: 0, width: 32, height: 32 })).toBeNull();
   });
 
+  it("rejects unwrapped longitude endpoints outside the geographic range", () => {
+    const map = {
+      unproject: ([x, y]: [number, number]) => ({ lng: x + 200, lat: y })
+    } as unknown as MlMap;
+
+    expect(regionFromScreenRect(map, { left: 0, top: 0, width: 32, height: 32 })).toBeNull();
+  });
+
   it("uses the same clipped resize minimum for either selector", () => {
     const clippedRect: ScreenRect = { left: -10, top: -8, width: 20, height: 18 };
     const expected: ScreenRect = { left: -10, top: -8, width: 42, height: 40 };

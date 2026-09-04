@@ -1,13 +1,74 @@
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { MapArea } from "@the-drunken-coder/atlas-sdk";
+import type { Map as MlMap } from "maplibre-gl";
 import { act } from "react";
 import { describe, expect, it, vi } from "vitest";
+import { MapAreaSelection } from "./MapAreaSelection.js";
 import type { MapSpatialInteraction } from "./MapView.js";
-import { renderMapView } from "./MapView.test-harness.js";
+import { rect, renderMapView } from "./MapView.test-harness.js";
 
 const selectedArea: MapArea = { west: 40, south: 50, east: 140, north: 120 };
 
 describe("MapAreaSelection", () => {
+  it("notifies before drawing mode and pointer geometry begin", () => {
+    const mapCanvas = document.createElement("div");
+    document.body.append(mapCanvas);
+    vi.spyOn(mapCanvas, "getBoundingClientRect").mockReturnValue(rect(0, 0, 400, 200));
+    const map = areaMap();
+    const onBeginRegionInteraction = vi.fn();
+
+    render(
+      <MapAreaSelection
+        mapCanvas={mapCanvas}
+        map={map}
+        mapReady
+        area={null}
+        drawing
+        onAreaChange={vi.fn()}
+        onDrawingComplete={vi.fn()}
+        onCancelDrawing={vi.fn()}
+        onBeginRegionInteraction={onBeginRegionInteraction}
+        onViewportArea={vi.fn()}
+        suppressNextClick={vi.fn()}
+      />
+    );
+
+    expect(onBeginRegionInteraction).toHaveBeenCalledOnce();
+    fireEvent.pointerDown(mapCanvas, { pointerId: 1, button: 0, clientX: 40, clientY: 40 });
+    expect(onBeginRegionInteraction).toHaveBeenCalledTimes(2);
+  });
+
+  it("notifies before a keyboard transform that is rejected at the date line", async () => {
+    const mapCanvas = document.createElement("div");
+    document.body.append(mapCanvas);
+    vi.spyOn(mapCanvas, "getBoundingClientRect").mockReturnValue(rect(0, 0, 400, 200));
+    const map = areaMap();
+    vi.mocked(map.unproject).mockImplementation((point: [number, number] | { x: number; y: number }) => {
+      const [x, y] = Array.isArray(point) ? point : [point.x, point.y];
+      return { lng: x < 100 ? 179.8 : -179.8, lat: y } as unknown as ReturnType<MlMap["unproject"]>;
+    });
+    const onBeginRegionInteraction = vi.fn();
+
+    render(
+      <MapAreaSelection
+        mapCanvas={mapCanvas}
+        map={map}
+        mapReady
+        area={selectedArea}
+        drawing={false}
+        onAreaChange={vi.fn()}
+        onDrawingComplete={vi.fn()}
+        onCancelDrawing={vi.fn()}
+        onBeginRegionInteraction={onBeginRegionInteraction}
+        onViewportArea={vi.fn()}
+        suppressNextClick={vi.fn()}
+      />
+    );
+
+    fireEvent.keyDown(await screen.findByRole("button", { name: "Move selected area" }), { key: "ArrowRight" });
+    expect(onBeginRegionInteraction).toHaveBeenCalledOnce();
+  });
+
   it("publishes the viewport and draws a map area with pointer input", async () => {
     const spatial = interaction({ area: null, drawing: true });
     const { canvas, map, rerenderMap } = renderMapView({ spatial });
@@ -118,6 +179,54 @@ describe("MapAreaSelection", () => {
     expect(spatial.onDrawingComplete).toHaveBeenCalledOnce();
   });
 
+  it("leaves Shift-drag box zoom responsible for Escape while drawing is armed", async () => {
+    const spatial = interaction({ area: null, drawing: true });
+    const { canvas } = renderMapView({ spatial });
+    const primaryHost = canvas.querySelector<HTMLElement>(".maplibre-host");
+    if (!primaryHost) throw new Error("Primary map host is missing");
+
+    await waitFor(() => expect(canvas).toHaveClass("map-canvas--region-drawing"));
+    fireEvent.pointerDown(primaryHost, {
+      pointerId: 1,
+      pointerType: "mouse",
+      button: 0,
+      clientX: 80,
+      clientY: 80,
+      shiftKey: true
+    });
+    fireEvent.mouseDown(primaryHost, { button: 0, clientX: 80, clientY: 80, shiftKey: true });
+
+    expect(canvas.querySelector(".map-reticle--zoom")).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "Escape" });
+
+    expect(canvas.querySelector(".map-reticle--zoom")).not.toBeInTheDocument();
+    expect(spatial.onCancelDrawing).not.toHaveBeenCalled();
+  });
+
+  it("releases a captured pointer and suppresses its click when drawing is canceled externally", async () => {
+    const spatial = interaction({ area: null, drawing: true });
+    const { canvas, onBackgroundClick, rerenderMap } = renderMapView({ spatial });
+    let captured = false;
+    const setPointerCapture = vi.fn(() => {
+      captured = true;
+    });
+    const hasPointerCapture = vi.fn(() => captured);
+    const releasePointerCapture = vi.fn(() => {
+      captured = false;
+    });
+    Object.assign(canvas, { setPointerCapture, hasPointerCapture, releasePointerCapture });
+
+    await waitFor(() => expect(canvas).toHaveClass("map-canvas--region-drawing"));
+    fireEvent.pointerDown(canvas, { pointerId: 15, button: 0, clientX: 80, clientY: 70 });
+    expect(setPointerCapture).toHaveBeenCalledWith(15);
+
+    rerenderMap({ spatial: { ...spatial, drawing: false } });
+
+    expect(releasePointerCapture).toHaveBeenCalledWith(15);
+    fireEvent.click(canvas);
+    expect(onBackgroundClick).not.toHaveBeenCalled();
+  });
+
   it("moves and resizes an existing area with pointer and keyboard input", async () => {
     const spatial = interaction({ area: selectedArea, drawing: false });
     const { canvas, map } = renderMapView({ spatial });
@@ -222,4 +331,23 @@ function interaction(overrides: Partial<MapSpatialInteraction>): MapSpatialInter
     onSelectFeature: vi.fn(),
     ...overrides
   };
+}
+
+function areaMap(): MlMap {
+  return {
+    on: vi.fn(),
+    off: vi.fn(),
+    stop: vi.fn(),
+    project: vi.fn(([longitude, latitude]: [number, number]) => ({ x: longitude, y: latitude })),
+    unproject: vi.fn((point: [number, number] | { x: number; y: number }) => {
+      const [x, y] = Array.isArray(point) ? point : [point.x, point.y];
+      return { lng: x, lat: y };
+    }),
+    getBounds: vi.fn(() => ({
+      getWest: () => -20,
+      getSouth: () => -10,
+      getEast: () => 20,
+      getNorth: () => 10
+    }))
+  } as unknown as MlMap;
 }

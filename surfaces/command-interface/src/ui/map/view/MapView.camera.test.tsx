@@ -14,6 +14,7 @@ import {
   RETICLE_FLASH_MS
 } from "../interaction/map-camera.js";
 import { buildMapSources } from "../rendering/map-sources.js";
+import type { MapSpatialInteraction } from "./MapView.js";
 import { entity, markerSources, notifyResizeObservers, type PointLike, renderMapView } from "./MapView.test-harness.js";
 
 describe("MapView camera commands", () => {
@@ -504,6 +505,53 @@ describe("MapView camera commands", () => {
     );
   });
 
+  it("releases follow while an area interaction is active", async () => {
+    const { map, rerenderMap } = await startFollowing();
+    map.stop.mockClear();
+
+    rerenderMap({ spatial: spatialInteraction(true) });
+    await waitFor(() => expect(map.stop).toHaveBeenCalled());
+    rerenderMap({ sources: movedSources() });
+
+    expect(map.easeTo).not.toHaveBeenCalled();
+  });
+
+  it("cancels a pending entity move when area drawing begins but accepts a newer command", async () => {
+    const { map, rerenderMap } = renderMapView({
+      cameraCommand: { seq: 1, target: { type: "entity", id: "asset-1" } },
+      sources: buildMapSources([entity({ entity_id: "asset-1" })], undefined),
+      spatial: spatialInteraction(true)
+    });
+    await waitFor(() => expect(map.stop).toHaveBeenCalled());
+
+    rerenderMap({ sources: markerSources() });
+    expect(map.flyTo).not.toHaveBeenCalled();
+
+    rerenderMap({ cameraCommand: { seq: 2, target: { type: "entity", id: "asset-1" } } });
+    await waitFor(() => expect(map.flyTo).toHaveBeenCalledTimes(1));
+  });
+
+  it("consumes a canceled sequence across equivalent command objects", async () => {
+    const command: MapCameraCommand = { seq: 1, target: { type: "entity", id: "asset-1" } };
+    const { map, rerenderMap } = renderMapView({
+      cameraCommand: command,
+      sources: buildMapSources([entity({ entity_id: "asset-1" })], undefined)
+    });
+    expect(map.flyTo).not.toHaveBeenCalled();
+
+    rerenderMap({ spatial: spatialInteraction(true) });
+    await waitFor(() => expect(map.stop).toHaveBeenCalled());
+    map.flyTo.mockClear();
+    map.easeTo.mockClear();
+
+    rerenderMap({ cameraCommand: { ...command }, sources: markerSources() });
+    expect(map.flyTo).not.toHaveBeenCalled();
+    expect(map.easeTo).not.toHaveBeenCalled();
+
+    rerenderMap({ cameraCommand: { ...command, seq: 2 } });
+    await waitFor(() => expect(map.flyTo).toHaveBeenCalledTimes(1));
+  });
+
   it("stops following when the user moves the map", async () => {
     const { map, rerenderMap } = await startFollowing();
 
@@ -586,3 +634,16 @@ describe("MapView camera commands", () => {
     expect(map.easeTo).not.toHaveBeenCalled();
   });
 });
+
+function spatialInteraction(drawing: boolean): MapSpatialInteraction {
+  return {
+    area: null,
+    drawing,
+    features: [],
+    onAreaChange: vi.fn(),
+    onDrawingComplete: vi.fn(),
+    onCancelDrawing: vi.fn(),
+    onViewportArea: vi.fn(),
+    onSelectFeature: vi.fn()
+  };
+}

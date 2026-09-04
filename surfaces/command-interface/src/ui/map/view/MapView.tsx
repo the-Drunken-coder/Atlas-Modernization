@@ -108,6 +108,7 @@ export function MapView({
   const spatialRef = useRef(spatial);
   const initialMapRef = useRef({ initialCenter, style, styleId });
   const currentStyleIdRef = useRef<string | undefined>(undefined);
+  const currentStyleRef = useRef<{ id: string; style: StyleSpecification } | undefined>(undefined);
   const pendingStyleIdRef = useRef<string | undefined>(undefined);
   const readyRef = useRef(false);
   const eventsRegisteredRef = useRef(false);
@@ -121,6 +122,7 @@ export function MapView({
   const [appliedCameraCommand, setAppliedCameraCommand] = useState<MapCameraCommand | null | undefined>(() =>
     cameraCommand?.intent === "commit" ? null : cameraCommand
   );
+  const canceledCameraSeqRef = useRef(0);
   const [reticleFlashing, setReticleFlashing] = useState(false);
   const pendingCommitTimeoutRef = useRef<number | undefined>(undefined);
   handlersRef.current = { onSelectEntity, onMapContextMenu };
@@ -158,9 +160,21 @@ export function MapView({
   });
   const mapActionsRef = useRef(reticleInteraction.mapActions);
   mapActionsRef.current = reticleInteraction.mapActions;
+  const beginRegionInteraction = useCallback(() => {
+    if (cameraCommand) canceledCameraSeqRef.current = Math.max(canceledCameraSeqRef.current, cameraCommand.seq);
+    mapRef.current?.stop();
+    notifyUserGesture();
+    releaseCameraOwnership();
+    setAppliedCameraCommand((current) => (current == null ? current : null));
+  }, [cameraCommand, notifyUserGesture, releaseCameraOwnership]);
 
   useEffect(() => {
     clearPendingCommit();
+    if (cameraCommand && cameraCommand.seq <= canceledCameraSeqRef.current) {
+      setReticleFlashing(false);
+      setAppliedCameraCommand(null);
+      return;
+    }
     if (cameraCommand?.intent !== "commit") {
       setReticleFlashing(false);
       setAppliedCameraCommand(cameraCommand);
@@ -230,6 +244,7 @@ export function MapView({
       const mapInstance = map;
       mapRef.current = mapInstance;
       currentStyleIdRef.current = initialMap.styleId;
+      currentStyleRef.current = { id: initialMap.styleId, style: cloneStyle(initialMap.style) };
       mapInstance.touchZoomRotate.disableRotation();
       mapInstance.addControl(new maplibre.NavigationControl({ showCompass: false }), "top-right");
 
@@ -267,9 +282,26 @@ export function MapView({
         // Keep render errors nonfatal once the map is usable, and surface the
         // details in devtools.
         console.warn("Map render warning", sanitizeConnectionError(event.error));
+
+        // Source/tile errors bubble through the map while a style is loading,
+        // but they do not mean that the style switch itself failed.
+        if ("sourceId" in event) return;
+
         const failedStyleId = pendingStyleIdRef.current;
         if (failedStyleId) {
           pendingStyleIdRef.current = undefined;
+
+          // A style can fail asynchronously after setStyle has replaced the
+          // previous style. Reapply the last known-good style before notifying
+          // the parent, which may only restore the selected source in React.
+          const currentStyle = currentStyleRef.current;
+          if (currentStyle && currentStyle.id !== failedStyleId) {
+            try {
+              mapInstance.setStyle(cloneStyle(currentStyle.style));
+            } catch (restoreError) {
+              console.warn("Map style recovery failed", sanitizeConnectionError(restoreError));
+            }
+          }
           if (readyRef.current && mapInstance.isStyleLoaded()) {
             registerSourcesAndLayers(mapInstance);
             pushSources(mapInstance, sourcesRef.current);
@@ -342,6 +374,7 @@ export function MapView({
       map.once("style.load", () => {
         if (pendingStyleIdRef.current !== styleId) return;
         currentStyleIdRef.current = styleId;
+        currentStyleRef.current = { id: styleId, style: cloneStyle(style) };
         pendingStyleIdRef.current = undefined;
       });
       map.setStyle(cloneStyle(style));
@@ -480,8 +513,8 @@ export function MapView({
           sources={sources}
           editing={editing}
           exclusiveDrawingActive={spatial?.drawing ?? false}
+          onBeginRegionInteraction={beginRegionInteraction}
           onBeginDrawing={() => spatial?.onCancelDrawing()}
-          notifyUserGesture={notifyUserGesture}
           suppressNextClick={reticleInteraction.mapActions.suppressNextClick}
         />
         {spatial ? (
@@ -494,6 +527,7 @@ export function MapView({
             onAreaChange={spatial.onAreaChange}
             onDrawingComplete={spatial.onDrawingComplete}
             onCancelDrawing={spatial.onCancelDrawing}
+            onBeginRegionInteraction={beginRegionInteraction}
             onViewportArea={spatial.onViewportArea}
             suppressNextClick={reticleInteraction.mapActions.suppressNextClick}
           />

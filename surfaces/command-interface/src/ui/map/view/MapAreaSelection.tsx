@@ -7,6 +7,7 @@ import {
   useRef,
   useState
 } from "react";
+import { foregroundEscapeOwner } from "../interaction/foreground-escape-owner.js";
 import { MapRegionSelection, type RegionTransform, type ScreenRect } from "./MapRegionSelection.js";
 import {
   clampMovedRect,
@@ -44,6 +45,7 @@ type MapAreaSelectionProps = {
   onAreaChange(area: MapArea): void;
   onDrawingComplete(): void;
   onCancelDrawing(): void;
+  onBeginRegionInteraction(): void;
   onViewportArea(area: MapArea | null): void;
   suppressNextClick(): void;
 };
@@ -57,6 +59,7 @@ export function MapAreaSelection({
   onAreaChange,
   onDrawingComplete,
   onCancelDrawing,
+  onBeginRegionInteraction,
   onViewportArea,
   suppressNextClick
 }: MapAreaSelectionProps) {
@@ -64,9 +67,20 @@ export function MapAreaSelection({
   const [drag, setDrag] = useState<DragState | null>(null);
   const [selectionError, setSelectionError] = useState<string | null>(null);
   const rectRef = useRef(rect);
+  const dragRef = useRef<DragState | null>(drag);
+  const boxZoomGestureRef = useRef(false);
+  const onBeginRegionInteractionRef = useRef(onBeginRegionInteraction);
   const callbacksRef = useRef({ onAreaChange, onDrawingComplete, onCancelDrawing, onViewportArea });
   rectRef.current = rect;
+  dragRef.current = drag;
+  onBeginRegionInteractionRef.current = onBeginRegionInteraction;
   callbacksRef.current = { onAreaChange, onDrawingComplete, onCancelDrawing, onViewportArea };
+
+  useEffect(() => {
+    return () => {
+      releasePointerCapture(mapCanvas, dragRef.current?.pointerId ?? null, suppressNextClick, true);
+    };
+  }, [mapCanvas, suppressNextClick]);
 
   useEffect(() => {
     if (!map || !mapCanvas || !mapReady) return;
@@ -109,28 +123,59 @@ export function MapAreaSelection({
   }, [area, map, mapCanvas, mapReady]);
 
   useEffect(() => {
+    if (!map) return;
+    const markBoxZoomStarted = () => {
+      boxZoomGestureRef.current = true;
+    };
+    const markBoxZoomEnded = () => {
+      boxZoomGestureRef.current = false;
+    };
+    map.on("boxzoomstart", markBoxZoomStarted);
+    map.on("boxzoomend", markBoxZoomEnded);
+    map.on("boxzoomcancel", markBoxZoomEnded);
+    return () => {
+      map.off("boxzoomstart", markBoxZoomStarted);
+      map.off("boxzoomend", markBoxZoomEnded);
+      map.off("boxzoomcancel", markBoxZoomEnded);
+    };
+  }, [map]);
+
+  useEffect(() => {
+    const currentDrag = dragRef.current;
     if (!drawing) {
       setSelectionError(null);
-      setDrag((current) => (current?.kind === "draw" ? null : current));
+      if (currentDrag?.kind === "draw") {
+        releasePointerCapture(mapCanvas, currentDrag.pointerId, suppressNextClick, true);
+        setDrag(null);
+      }
       return;
+    }
+    onBeginRegionInteractionRef.current();
+    if (currentDrag?.kind === "transform") {
+      releasePointerCapture(mapCanvas, currentDrag.pointerId, suppressNextClick, true);
+      callbacksRef.current.onAreaChange(currentDrag.initialArea);
     }
     setDrag((current) =>
       current?.kind === "draw" ? current : { kind: "draw", start: null, current: null, pointerId: null }
     );
-  }, [drawing]);
+  }, [drawing, mapCanvas, suppressNextClick]);
 
   useEffect(() => {
     if (!map || !mapCanvas || !drag) return;
     const startDrag = (event: globalThis.PointerEvent) => {
-      if (drag.kind !== "draw" || drag.start || event.button !== 0 || event.shiftKey) return;
+      if (drag.kind !== "draw" || drag.start || event.button !== 0) return;
       if (
         event.target instanceof Element &&
         event.target.closest(".maplibregl-control-container, [data-map-interaction-control]")
       )
         return;
+      if (event.shiftKey) {
+        boxZoomGestureRef.current = true;
+        return;
+      }
       event.preventDefault();
       event.stopPropagation();
-      map.stop();
+      onBeginRegionInteraction();
       mapCanvas.setPointerCapture?.(event.pointerId);
       const point = pointInCanvas(event, mapCanvas);
       setSelectionError(null);
@@ -158,13 +203,14 @@ export function MapAreaSelection({
     };
     const finishDrag = (event: globalThis.PointerEvent) => {
       if (drag.pointerId === null || event.pointerId !== drag.pointerId) return;
+      const suppressReleaseClick = event.target instanceof Node && mapCanvas.contains(event.target);
+      releasePointerCapture(mapCanvas, drag.pointerId, suppressNextClick, suppressReleaseClick);
       if (drag.kind === "draw" && drag.start) {
         const next = rectFromPoints(drag.start, pointInCanvas(event, mapCanvas));
         if (next.width >= MIN_REGION_SIZE && next.height >= MIN_REGION_SIZE) {
           const nextArea = regionFromScreenRect(map, next);
           if (!nextArea) {
             setSelectionError(DATE_LINE_CROSSING_MESSAGE);
-            if (event.target instanceof Node && mapCanvas.contains(event.target)) suppressNextClick();
             setDrag({ kind: "draw", start: null, current: null, pointerId: null });
             return;
           } else {
@@ -176,20 +222,35 @@ export function MapAreaSelection({
           callbacksRef.current.onCancelDrawing();
         }
       }
-      if (event.target instanceof Node && mapCanvas.contains(event.target)) suppressNextClick();
       setDrag(null);
     };
+    const clearBoxZoomGesture = () => {
+      boxZoomGestureRef.current = false;
+    };
     const cancelPointer = (event: globalThis.PointerEvent) => {
-      if (drag.pointerId === null || event.pointerId !== drag.pointerId) return;
+      if (drag.pointerId === null || event.pointerId !== drag.pointerId) {
+        if (drag.pointerId === null) boxZoomGestureRef.current = false;
+        return;
+      }
+      releasePointerCapture(mapCanvas, drag.pointerId, suppressNextClick, true);
       if (drag.kind === "transform") callbacksRef.current.onAreaChange(drag.initialArea);
       else callbacksRef.current.onCancelDrawing();
       setSelectionError(null);
       setDrag(null);
     };
     const cancelKeyboard = (event: globalThis.KeyboardEvent) => {
-      if (event.key !== "Escape" || event.defaultPrevented) return;
+      if (
+        event.key !== "Escape" ||
+        event.defaultPrevented ||
+        foregroundEscapeOwner(event.target) ||
+        boxZoomGestureRef.current
+      ) {
+        if (event.key === "Escape" && boxZoomGestureRef.current) boxZoomGestureRef.current = false;
+        return;
+      }
       event.preventDefault();
       event.stopPropagation();
+      releasePointerCapture(mapCanvas, drag.pointerId, suppressNextClick, true);
       if (drag.kind === "transform") callbacksRef.current.onAreaChange(drag.initialArea);
       else callbacksRef.current.onCancelDrawing();
       setSelectionError(null);
@@ -201,6 +262,7 @@ export function MapAreaSelection({
     window.addEventListener("pointermove", updateDrag);
     window.addEventListener("pointerup", finishDrag);
     window.addEventListener("pointercancel", cancelPointer);
+    window.addEventListener("mouseup", clearBoxZoomGesture);
     window.addEventListener("keydown", cancelKeyboard, { capture: true });
     return () => {
       mapCanvas.classList.remove("map-canvas--region-drawing");
@@ -208,15 +270,16 @@ export function MapAreaSelection({
       window.removeEventListener("pointermove", updateDrag);
       window.removeEventListener("pointerup", finishDrag);
       window.removeEventListener("pointercancel", cancelPointer);
+      window.removeEventListener("mouseup", clearBoxZoomGesture);
       window.removeEventListener("keydown", cancelKeyboard, { capture: true });
     };
-  }, [drag, map, mapCanvas, suppressNextClick]);
+  }, [drag, map, mapCanvas, onBeginRegionInteraction, suppressNextClick]);
 
   const beginTransform = (transform: RegionTransform, event: ReactPointerEvent<HTMLButtonElement>) => {
     if (event.button !== 0 || !map || !mapCanvas || !area || !rect) return;
     event.preventDefault();
     event.stopPropagation();
-    map.stop();
+    onBeginRegionInteraction();
     mapCanvas.setPointerCapture?.(event.pointerId);
     setSelectionError(null);
     setDrag({
@@ -235,6 +298,7 @@ export function MapAreaSelection({
     if (!delta) return;
     event.preventDefault();
     event.stopPropagation();
+    onBeginRegionInteraction();
     const initial = projectedScreenRect(map, area);
     const next =
       transform === "move"
@@ -272,4 +336,15 @@ export function MapAreaSelection({
       ) : null}
     </>
   );
+}
+
+function releasePointerCapture(
+  mapCanvas: HTMLDivElement | null,
+  pointerId: number | null,
+  suppressNextClick: () => void,
+  suppressReleaseClick: boolean
+): void {
+  if (pointerId === null) return;
+  if (suppressReleaseClick) suppressNextClick();
+  if (mapCanvas?.hasPointerCapture?.(pointerId)) mapCanvas.releasePointerCapture?.(pointerId);
 }

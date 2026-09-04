@@ -145,6 +145,7 @@ function regionFromLongitudeInterval(
   north: number
 ): RegionBounds | null {
   if (![firstLongitude, south, secondLongitude, north].every(Number.isFinite)) return null;
+  if ([firstLongitude, secondLongitude].some((longitude) => longitude < -180 || longitude > 180)) return null;
   if (firstLongitude >= secondLongitude || south >= north) return null;
   return { west: firstLongitude, south, east: secondLongitude, north };
 }

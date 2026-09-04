@@ -63,6 +63,18 @@ const SpatialResultsInspector = lazy(() =>
 );
 
 const EMPTY_ENTITY_QUERIES = Object.fromEntries(ENTITY_KINDS.map((kind) => [kind, ""])) as Record<EntityKind, string>;
+const MAX_STALE_DETAIL_REFRESHES = 1;
+
+type EntityDetailsRequest = {
+  entityId: string;
+  inFlight: boolean;
+  cancelled: boolean;
+  controller?: AbortController;
+  lastRequestedVersion?: number;
+  staleRefreshVersion?: number;
+  staleRefreshAttempts: number;
+  start: () => void;
+};
 
 export function MapConsole() {
   const atlas = useAtlas();
@@ -111,7 +123,13 @@ export function MapConsole() {
   const selectedSnapshotEntityId = selectedSnapshotEntity?.entity_id;
   const selectedSnapshotEntityVersion = selectedSnapshotEntity?.metadata.version;
   const [selectedEntityDetails, setSelectedEntityDetails] = useState<EntityResource>();
-  const [commandManifestStatus, setCommandManifestStatus] = useState<CommandManifestStatus>("ready");
+  const [commandManifestState, setCommandManifestState] = useState<{
+    entityId?: string;
+    status: CommandManifestStatus;
+  }>({ status: "ready" });
+  const desiredEntityVersionRef = useRef(selectedSnapshotEntityVersion);
+  desiredEntityVersionRef.current = selectedSnapshotEntityVersion;
+  const detailsRequestRef = useRef<EntityDetailsRequest>(undefined);
   const commandDetailsRequired = Boolean(
     selectedSnapshotEntity &&
       entityKind(selectedSnapshotEntity) === "asset" &&
@@ -119,32 +137,123 @@ export function MapConsole() {
       atlas.loadEntityDetails
   );
   useEffect(() => {
-    let cancelled = false;
-    setSelectedEntityDetails(undefined);
     if (!commandDetailsRequired || !selectedSnapshotEntityId || !atlas.loadEntityDetails) {
-      setCommandManifestStatus("ready");
-      return () => {
-        cancelled = true;
-      };
+      setSelectedEntityDetails(undefined);
+      setCommandManifestState({ status: "ready" });
+      return;
     }
-    const controller = new AbortController();
-    setCommandManifestStatus("loading");
-    void atlas
-      .loadEntityDetails(selectedSnapshotEntityId, controller.signal)
-      .then((entity) => {
-        if (!cancelled && !controller.signal.aborted) {
-          setSelectedEntityDetails(entity);
-          setCommandManifestStatus("ready");
-        }
-      })
-      .catch(() => {
-        if (!cancelled && !controller.signal.aborted) setCommandManifestStatus("unavailable");
-      });
-    return () => {
-      cancelled = true;
-      controller.abort();
+    const request: EntityDetailsRequest = {
+      entityId: selectedSnapshotEntityId,
+      inFlight: false,
+      cancelled: false,
+      staleRefreshAttempts: 0,
+      start: () => {}
     };
-  }, [atlas.loadEntityDetails, commandDetailsRequired, selectedSnapshotEntityId, selectedSnapshotEntityVersion]);
+    detailsRequestRef.current = request;
+    setSelectedEntityDetails(undefined);
+    setCommandManifestState({ entityId: request.entityId, status: "loading" });
+
+    request.start = () => {
+      if (request.cancelled || request.inFlight || detailsRequestRef.current !== request) return;
+      request.inFlight = true;
+      request.lastRequestedVersion = desiredEntityVersionRef.current;
+      const controller = new AbortController();
+      request.controller = controller;
+      void atlas
+        .loadEntityDetails?.(request.entityId, controller.signal)
+        .then((entity) => {
+          if (request.cancelled || controller.signal.aborted || detailsRequestRef.current !== request) return;
+          request.inFlight = false;
+          setSelectedEntityDetails((current) =>
+            current?.entity_id === entity.entity_id && current.metadata.version > entity.metadata.version
+              ? current
+              : entity
+          );
+
+          const desiredVersion = desiredEntityVersionRef.current;
+          const stale = desiredVersion !== undefined && entity.metadata.version < desiredVersion;
+          if (!stale) {
+            request.staleRefreshVersion = undefined;
+            request.staleRefreshAttempts = 0;
+            setCommandManifestState({ entityId: request.entityId, status: "ready" });
+            return;
+          }
+
+          if (request.staleRefreshVersion !== desiredVersion) {
+            request.staleRefreshVersion = desiredVersion;
+            request.staleRefreshAttempts = 0;
+          }
+          if (request.staleRefreshAttempts < MAX_STALE_DETAIL_REFRESHES) {
+            request.staleRefreshAttempts += 1;
+            setCommandManifestState({ entityId: request.entityId, status: "loading" });
+            request.start();
+          } else {
+            setCommandManifestState({ entityId: request.entityId, status: "unavailable" });
+          }
+        })
+        .catch(() => {
+          if (request.cancelled || controller.signal.aborted || detailsRequestRef.current !== request) return;
+          request.inFlight = false;
+          setCommandManifestState({ entityId: request.entityId, status: "unavailable" });
+        });
+    };
+    request.start();
+    return () => {
+      request.cancelled = true;
+      request.controller?.abort();
+      if (detailsRequestRef.current === request) detailsRequestRef.current = undefined;
+    };
+  }, [atlas.loadEntityDetails, commandDetailsRequired, selectedSnapshotEntityId]);
+
+  useEffect(() => {
+    const request = detailsRequestRef.current;
+    if (!request) return;
+    const selectedDetailsForRequest =
+      selectedEntityDetails?.entity_id === selectedSnapshotEntityId ? selectedEntityDetails : undefined;
+    const detailsAreStale = Boolean(
+      selectedDetailsForRequest &&
+        selectedSnapshotEntityVersion !== undefined &&
+        selectedDetailsForRequest.metadata.version < selectedSnapshotEntityVersion
+    );
+    const failedBeforeDetailsLoaded =
+      commandManifestState.entityId === selectedSnapshotEntityId && commandManifestState.status === "unavailable";
+    const newerVersionAfterFailure =
+      failedBeforeDetailsLoaded &&
+      selectedSnapshotEntityVersion !== undefined &&
+      selectedSnapshotEntityVersion > (request.lastRequestedVersion ?? Number.NEGATIVE_INFINITY);
+    const staleRetryAvailable =
+      detailsAreStale &&
+      (request.staleRefreshVersion !== selectedSnapshotEntityVersion ||
+        request.staleRefreshAttempts < MAX_STALE_DETAIL_REFRESHES);
+    if (
+      !commandDetailsRequired ||
+      request.entityId !== selectedSnapshotEntityId ||
+      request.inFlight ||
+      selectedSnapshotEntityVersion === undefined ||
+      (!newerVersionAfterFailure && !staleRetryAvailable)
+    ) {
+      return;
+    }
+    setCommandManifestState({ entityId: request.entityId, status: "loading" });
+    request.start();
+  }, [
+    commandDetailsRequired,
+    commandManifestState,
+    selectedEntityDetails,
+    selectedSnapshotEntityId,
+    selectedSnapshotEntityVersion
+  ]);
+
+  const selectedDetails =
+    selectedEntityDetails?.entity_id === selectedSnapshotEntityId ? selectedEntityDetails : undefined;
+  const detailsNeedRefresh = Boolean(
+    commandDetailsRequired &&
+      selectedDetails &&
+      selectedSnapshotEntityVersion !== undefined &&
+      selectedDetails.metadata.version < selectedSnapshotEntityVersion
+  );
+  const currentCommandManifestStatus =
+    commandManifestState.entityId === selectedSnapshotEntityId ? commandManifestState.status : "loading";
   const resolvedCommandManifestStatus =
     !commandDetailsRequired &&
     selectedSnapshotEntity &&
@@ -152,15 +261,28 @@ export function MapConsole() {
     catalog?.length &&
     selectedSnapshotEntity.command_manifest === undefined
       ? "unavailable"
-      : commandManifestStatus;
+      : !commandDetailsRequired
+        ? "ready"
+        : currentCommandManifestStatus === "unavailable"
+          ? "unavailable"
+          : !selectedDetails || detailsNeedRefresh
+            ? "loading"
+            : "ready";
   const selectedEntity =
-    selectedSnapshotEntity && selectedEntityDetails?.entity_id === selectedSnapshotEntity.entity_id
-      ? { ...selectedSnapshotEntity, command_manifest: selectedEntityDetails.command_manifest }
+    selectedSnapshotEntity && selectedDetails
+      ? { ...selectedSnapshotEntity, command_manifest: selectedDetails.command_manifest }
       : commandDetailsRequired
         ? selectedSnapshotEntity && { ...selectedSnapshotEntity, command_manifest: undefined }
         : selectedSnapshotEntity;
   const selectedId = selection?.id;
-  const commandFlow = useCommandFlow({ catalog, selectedEntity, selectedId, submitCommand: atlas.submitCommand });
+  const commandFlow = useCommandFlow({
+    catalog,
+    selectedEntity,
+    selectedId,
+    commandManifestStatus: resolvedCommandManifestStatus,
+    commandManifestGeneration: selectedDetails?.metadata.version,
+    submitCommand: atlas.submitCommand
+  });
   const geometryEdit = useGeometryEdit({ selectedEntity, selectedId, updateGeometry: atlas.updateGeometry });
   const { edit, saving, saveError } = geometryEdit;
   const { mapMenu, commandForm, submitting, submitError } = commandFlow;
@@ -471,14 +593,14 @@ export function MapConsole() {
         </Callout>
       ) : null}
 
-      {commandForm && selectedEntity ? (
+      {commandForm && selectedEntity && resolvedCommandManifestStatus === "ready" ? (
         <PurposeBuiltCommandForm
           state={commandForm}
           asset={selectedEntity}
           submitting={submitting}
           error={submitError}
           onCancel={commandFlow.dismissCommandForm}
-          onSubmit={(input) => void commandFlow.submit(commandForm.availability, input)}
+          onSubmit={(input) => void commandFlow.submit(commandForm.availability, input, commandForm.manifestGeneration)}
         />
       ) : submitError ? (
         <Callout className="banner banner--error" intent="danger" icon={null} compact role="alert">

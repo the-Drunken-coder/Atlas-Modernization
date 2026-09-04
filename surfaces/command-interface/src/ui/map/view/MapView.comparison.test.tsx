@@ -2,7 +2,14 @@ import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { MapSourceConfig } from "../../../app/config.js";
 import type { MapSpatialInteraction } from "./MapView.js";
-import { mapInstances, notifyResizeObservers, rect, renderMapView, style } from "./MapView.test-harness.js";
+import {
+  mapInstances,
+  notifyResizeObservers,
+  rect,
+  renderMapView,
+  setNextDetailMapStyleLoaded,
+  style
+} from "./MapView.test-harness.js";
 
 const mapSourceOptions: MapSourceConfig[] = [
   { id: "base", label: "Base map", style: style("base") },
@@ -102,7 +109,7 @@ describe("MapView region comparison", () => {
 
     rendered.map.stop.mockClear();
     await drawComparison();
-    expect(rendered.map.stop).toHaveBeenCalledOnce();
+    expect(rendered.map.stop).toHaveBeenCalledTimes(2);
 
     const region = await screen.findByTestId("map-comparison-region");
     expect(region).toHaveStyle({ left: "70px", top: "60px", width: "180px", height: "80px" });
@@ -164,6 +171,14 @@ describe("MapView region comparison", () => {
 
   it("creates a keyboard-adjustable default region when the Compare tool is activated from the keyboard", async () => {
     const { map } = renderMapView({ styleId: "base", style: style("base"), mapSourceOptions });
+    map.unproject.mockImplementation((point: [number, number] | { x: number; y: number }) => {
+      const [x, y] = Array.isArray(point) ? point : [point.x, point.y];
+      return { lng: x / 4 - 50, lat: y / 2 - 50 };
+    });
+    map.project.mockImplementation(([longitude, latitude]: [number, number]) => ({
+      x: (longitude + 50) * 4,
+      y: (latitude + 50) * 2
+    }));
     const compare = screen.getByRole("button", { name: "Compare map source inside a region" });
 
     map.stop.mockClear();
@@ -261,7 +276,10 @@ describe("MapView region comparison", () => {
     await drawComparison();
     const comparisonMap = mapInstances()[1];
     comparisonMap.jumpTo.mockClear();
-    map.project.mockImplementation((position: [number, number]) => ({ x: position[0] + 20, y: position[1] + 10 }));
+    map.project.mockImplementation(([longitude, latitude]: [number, number]) => ({
+      x: (longitude + 50) * 4 + 20,
+      y: (latitude + 50) * 2 + 10
+    }));
 
     map.fire("move");
 
@@ -273,9 +291,9 @@ describe("MapView region comparison", () => {
     const { map } = renderMapView({ styleId: "base", style: style("base"), mapSourceOptions });
     await drawComparison();
     const comparisonMap = mapInstances()[1];
-    map.project.mockImplementation((position: [number, number]) => ({
-      x: position[0] < 160 ? -100 : 500,
-      y: position[1] > 100 ? -100 : 300
+    map.project.mockImplementation(([longitude, latitude]: [number, number]) => ({
+      x: longitude < 0 ? -100 : 500,
+      y: latitude > 0 ? -100 : 300
     }));
 
     map.fire("zoom");
@@ -443,10 +461,13 @@ describe("MapView region comparison", () => {
   it("preserves the off-screen part of a region while moving its clipped projection", async () => {
     const { map } = renderMapView({ styleId: "base", style: style("base"), mapSourceOptions });
     await drawComparison();
-    map.project.mockImplementation((position: [number, number]) => ({ x: position[0] - 100, y: position[1] }));
+    map.project.mockImplementation(([longitude, latitude]: [number, number]) => ({
+      x: (longitude + 50) * 4 - 100,
+      y: (latitude + 50) * 2
+    }));
     map.unproject.mockImplementation((point: [number, number] | { x: number; y: number }) => {
       const [x, y] = Array.isArray(point) ? point : [point.x, point.y];
-      return { lng: x + 100, lat: y };
+      return { lng: (x + 100) / 4 - 50, lat: y / 2 - 50 };
     });
     map.fire("move");
     await waitFor(() =>
@@ -472,10 +493,13 @@ describe("MapView region comparison", () => {
   it("preserves and grows the off-screen part of a region while resizing", async () => {
     const { map } = renderMapView({ styleId: "base", style: style("base"), mapSourceOptions });
     await drawComparison();
-    map.project.mockImplementation((position: [number, number]) => ({ x: position[0] + 200, y: position[1] }));
+    map.project.mockImplementation(([longitude, latitude]: [number, number]) => ({
+      x: (longitude + 50) * 4 + 200,
+      y: (latitude + 50) * 2
+    }));
     map.unproject.mockImplementation((point: [number, number] | { x: number; y: number }) => {
       const [x, y] = Array.isArray(point) ? point : [point.x, point.y];
-      return { lng: x - 200, lat: y };
+      return { lng: (x - 200) / 4 - 50, lat: y / 2 - 50 };
     });
     map.fire("move");
     await waitFor(() =>
@@ -485,7 +509,10 @@ describe("MapView region comparison", () => {
     fireEvent.keyDown(screen.getByRole("button", { name: "Resize comparison region width" }), {
       key: "ArrowRight"
     });
-    map.project.mockImplementation((position: [number, number]) => ({ x: position[0], y: position[1] }));
+    map.project.mockImplementation(([longitude, latitude]: [number, number]) => ({
+      x: (longitude + 50) * 4,
+      y: (latitude + 50) * 2
+    }));
     map.fire("move");
 
     await waitFor(() =>
@@ -602,9 +629,23 @@ describe("MapView region comparison", () => {
     comparisonMap.fire("dataloading", { sourceId: "alternate" });
     await waitFor(() => expect(screen.getByText("Loading tiles")).toBeInTheDocument());
 
-    comparisonMap.fire("error", { error: new Error("tile request failed") });
+    comparisonMap.fire("error", { error: new Error("tile request failed"), sourceId: "alternate" });
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("tile request failed");
+    await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+    comparisonMap.fire("idle");
+    await waitFor(() => expect(screen.queryByText("Loading tiles")).not.toBeInTheDocument());
+  });
+
+  it("surfaces an initial comparison style error for retry", async () => {
+    setNextDetailMapStyleLoaded(false);
+    renderMapView({ styleId: "base", style: style("base"), mapSourceOptions });
+    await drawComparison();
+    const comparisonMap = mapInstances().at(-1);
+    if (!comparisonMap) throw new Error("Comparison map is missing");
+
+    comparisonMap.fire("error", { error: new Error("style request failed") });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("style request failed");
     const mapCount = mapInstances().length;
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(screen.getByRole("button", { name: "Inside region" })).toHaveFocus();
@@ -612,6 +653,7 @@ describe("MapView region comparison", () => {
   });
 
   it("floats a measured error panel when its rendered height does not fit below the region", async () => {
+    setNextDetailMapStyleLoaded(false);
     const rendered = renderMapView({ styleId: "base", style: style("base"), mapSourceOptions });
     vi.spyOn(rendered.canvas, "getBoundingClientRect").mockReturnValue(rect(10, 20, 600, 360));
     await drawComparison();
@@ -632,6 +674,17 @@ describe("MapView region comparison", () => {
 
 async function drawComparison(pointerType: "mouse" | "touch" = "mouse"): Promise<void> {
   const mapCount = mapInstances().length;
+  const primaryMap = mapInstances()
+    .filter((instance) => instance.options.interactive !== false)
+    .at(-1);
+  primaryMap?.unproject.mockImplementation((point: [number, number] | { x: number; y: number }) => {
+    const [x, y] = Array.isArray(point) ? point : [point.x, point.y];
+    return { lng: x / 4 - 50, lat: y / 2 - 50 };
+  });
+  primaryMap?.project.mockImplementation(([longitude, latitude]: [number, number]) => ({
+    x: (longitude + 50) * 4,
+    y: (latitude + 50) * 2
+  }));
   fireEvent.click(screen.getByRole("button", { name: "Compare map source inside a region" }));
   const prompt = screen.getByText("Drag a region. Shift-drag still zooms.");
   const surface = prompt.parentElement;
