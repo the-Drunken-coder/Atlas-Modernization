@@ -271,7 +271,7 @@ func TestRuntimeManifestEventsCarryReasonAndEntityUpdatesDoNot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read registering Entity: %v", err)
 	}
-	assertEntityChangeReason(t, ctx, pool, assetID, registeringEntity.Version, string(protocol.EntityChangeReasonRuntimeManifestChanged))
+	assertEntityChangeReason(ctx, t, pool, assetID, registeringEntity.Version, string(protocol.EntityChangeReasonRuntimeManifestChanged))
 
 	if err := tasks.CompleteRuntimeRegistration(ctx, assetID, "runtime-1", fixtureTaskManifest(t)); err != nil {
 		t.Fatalf("complete runtime registration: %v", err)
@@ -280,14 +280,14 @@ func TestRuntimeManifestEventsCarryReasonAndEntityUpdatesDoNot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read ready Entity: %v", err)
 	}
-	assertEntityChangeReason(t, ctx, pool, assetID, readyEntity.Version, string(protocol.EntityChangeReasonRuntimeManifestChanged))
+	assertEntityChangeReason(ctx, t, pool, assetID, readyEntity.Version, string(protocol.EntityChangeReasonRuntimeManifestChanged))
 
 	note := "operator update"
 	updatedEntity, err := entities.Update(ctx, assetID, UpdateEntityParams{Alias: &note})
 	if err != nil {
 		t.Fatalf("ordinary Entity update: %v", err)
 	}
-	assertEntityChangeReason(t, ctx, pool, assetID, updatedEntity.Version, "")
+	assertEntityChangeReason(ctx, t, pool, assetID, updatedEntity.Version, "")
 
 	checkin, err := NewEntityCheckinActions(entities).CheckIn(ctx, EntityCheckinParams{
 		EntityID:   assetID,
@@ -296,7 +296,7 @@ func TestRuntimeManifestEventsCarryReasonAndEntityUpdatesDoNot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Entity check-in: %v", err)
 	}
-	assertEntityChangeReason(t, ctx, pool, assetID, checkin.Entity.Version, "")
+	assertEntityChangeReason(ctx, t, pool, assetID, checkin.Entity.Version, "")
 
 	if err := tasks.StopRuntime(ctx, assetID, "runtime-1"); err != nil {
 		t.Fatalf("stop runtime: %v", err)
@@ -305,10 +305,10 @@ func TestRuntimeManifestEventsCarryReasonAndEntityUpdatesDoNot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read stopped Entity: %v", err)
 	}
-	assertEntityChangeReason(t, ctx, pool, assetID, stoppedEntity.Version, string(protocol.EntityChangeReasonRuntimeManifestChanged))
+	assertEntityChangeReason(ctx, t, pool, assetID, stoppedEntity.Version, string(protocol.EntityChangeReasonRuntimeManifestChanged))
 }
 
-func assertEntityChangeReason(t *testing.T, ctx context.Context, pool interface {
+func assertEntityChangeReason(ctx context.Context, t *testing.T, pool interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
 }, entityID string, version int64, want string) {
 	t.Helper()
