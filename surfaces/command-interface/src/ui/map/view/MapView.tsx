@@ -277,6 +277,8 @@ export function MapView({
             pushSpatialOverlay(mapInstance, spatialRef.current);
           }
           styleSwitchErrorRef.current?.({ failedStyleId, activeStyleId: currentStyleIdRef.current ?? failedStyleId });
+        } else if (!readyRef.current) {
+          setMapError(sanitizeConnectionError(event.error));
         }
       });
     };
@@ -491,6 +493,7 @@ export function MapView({
             onCancelDrawing={spatial.onCancelDrawing}
             onViewportArea={spatial.onViewportArea}
             suppressNextClick={reticleInteraction.mapActions.suppressNextClick}
+            notifyUserGesture={notifyUserGesture}
           />
         ) : null}
         {reticleInteraction.cursorOverlay ? <MapCursorOverlay {...reticleInteraction.cursorOverlay} /> : null}

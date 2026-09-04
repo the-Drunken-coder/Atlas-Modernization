@@ -8,6 +8,7 @@ import {
   type TaskResource
 } from "@the-drunken-coder/atlas-sdk";
 import type { AppConfig } from "../app/config.js";
+import { getAuthSessionEpoch, isCurrentAuthSessionEpoch } from "../auth/session-epoch.js";
 import { sanitizeConnectionError } from "./connection-error.js";
 import type { UiGeometry } from "./geometry.js";
 import type { AtlasSnapshot } from "./store.js";
@@ -199,9 +200,13 @@ function runtimeManifestVersionsAfterHydration(
 }
 
 async function atlasFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const requestAuthEpoch = getAuthSessionEpoch();
   const response = await fetch(input, { ...init, credentials: "include" });
-  if (response.status === 401 && typeof window !== "undefined" && (await isCoreSessionExpired(response.clone()))) {
-    window.dispatchEvent(new Event("atlas-auth-expired"));
+  if (response.status === 401 && typeof window !== "undefined") {
+    const sessionExpired = await isCoreSessionExpired(response.clone());
+    if (sessionExpired && isCurrentAuthSessionEpoch(requestAuthEpoch)) {
+      window.dispatchEvent(new Event("atlas-auth-expired"));
+    }
   }
   return response;
 }

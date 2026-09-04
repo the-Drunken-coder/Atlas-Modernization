@@ -387,6 +387,8 @@ func TestGoIntegerUnmarshalSourceCoversAuthoredIntegerFields(t *testing.T) {
 	text := string(source)
 	for _, typeName := range []string{
 		"ChangedSinceResponse",
+		"EntityCheckInFullResponse",
+		"EntityResource",
 		"EntityDeleteEvent",
 		"FeedEvent",
 		"FeedSubscriptionsReadyMessage",
@@ -396,6 +398,7 @@ func TestGoIntegerUnmarshalSourceCoversAuthoredIntegerFields(t *testing.T) {
 		"ObjectResource",
 		"ObjectDeleteEvent",
 		"PluginOperationDescriptor",
+		"TaskResource",
 	} {
 		if !strings.Contains(text, "func (value *"+typeName+") UnmarshalJSON") {
 			t.Fatalf("generated integer unmarshaller missing %s", typeName)

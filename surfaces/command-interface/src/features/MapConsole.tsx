@@ -63,6 +63,7 @@ const SpatialResultsInspector = lazy(() =>
 );
 
 type CommandManifestStatus = "ready" | "loading" | "unavailable";
+type SelectedEntityDetails = { entity: EntityResource; requestKey: string };
 const EMPTY_ENTITY_QUERIES = Object.fromEntries(ENTITY_KINDS.map((kind) => [kind, ""])) as Record<EntityKind, string>;
 
 export function MapConsole() {
@@ -113,9 +114,9 @@ export function MapConsole() {
   const selectedRuntimeManifestVersion = selectedSnapshotEntityId
     ? snapshot.runtimeManifestVersions?.[selectedSnapshotEntityId]
     : undefined;
-  const [selectedEntityDetails, setSelectedEntityDetails] = useState<EntityResource>();
-  const selectedEntityDetailsIdRef = useRef<string | undefined>(undefined);
-  selectedEntityDetailsIdRef.current = selectedEntityDetails?.entity_id;
+  const [selectedEntityDetails, setSelectedEntityDetails] = useState<SelectedEntityDetails>();
+  const selectedEntityDetailsRef = useRef<SelectedEntityDetails | undefined>(undefined);
+  selectedEntityDetailsRef.current = selectedEntityDetails;
   const detailRequestKey = selectedSnapshotEntityId
     ? `${selectedSnapshotEntityId}:${selectedRuntimeManifestVersion ?? "initial"}`
     : undefined;
@@ -128,7 +129,11 @@ export function MapConsole() {
   );
   useEffect(() => {
     let cancelled = false;
-    const hasSelectedEntityDetails = selectedEntityDetailsIdRef.current === selectedSnapshotEntityId;
+    const currentDetails = selectedEntityDetailsRef.current;
+    const hasSelectedEntityDetails =
+      currentDetails !== undefined &&
+      currentDetails.entity.entity_id === selectedSnapshotEntityId &&
+      currentDetails.requestKey === detailRequestKey;
     if (!hasSelectedEntityDetails) {
       setSelectedEntityDetails(undefined);
     }
@@ -146,7 +151,7 @@ export function MapConsole() {
       .loadEntityDetails(selectedSnapshotEntityId, controller.signal)
       .then((entity) => {
         if (!cancelled && !controller.signal.aborted) {
-          setSelectedEntityDetails(entity);
+          setSelectedEntityDetails({ entity, requestKey: detailRequestKey });
           setCommandManifestStatus("ready");
         }
       })
@@ -158,22 +163,36 @@ export function MapConsole() {
       controller.abort();
     };
   }, [atlas.loadEntityDetails, commandDetailsRequired, detailRequestKey, selectedSnapshotEntityId]);
+  const currentSelectedEntityDetails =
+    selectedEntityDetails !== undefined &&
+    selectedEntityDetails.requestKey === detailRequestKey &&
+    selectedEntityDetails.entity.entity_id === selectedSnapshotEntityId
+      ? selectedEntityDetails
+      : undefined;
   const resolvedCommandManifestStatus =
-    !commandDetailsRequired &&
-    selectedSnapshotEntity &&
-    entityKind(selectedSnapshotEntity) === "asset" &&
-    catalog?.length &&
-    selectedSnapshotEntity.command_manifest === undefined
-      ? "unavailable"
-      : commandManifestStatus;
+    commandDetailsRequired && !currentSelectedEntityDetails && commandManifestStatus === "ready"
+      ? "loading"
+      : !commandDetailsRequired &&
+          selectedSnapshotEntity &&
+          entityKind(selectedSnapshotEntity) === "asset" &&
+          catalog?.length &&
+          selectedSnapshotEntity.command_manifest === undefined
+        ? "unavailable"
+        : commandManifestStatus;
   const selectedEntity =
-    selectedSnapshotEntity && selectedEntityDetails?.entity_id === selectedSnapshotEntity.entity_id
-      ? { ...selectedSnapshotEntity, command_manifest: selectedEntityDetails.command_manifest }
+    selectedSnapshotEntity && currentSelectedEntityDetails
+      ? { ...selectedSnapshotEntity, command_manifest: currentSelectedEntityDetails.entity.command_manifest }
       : commandDetailsRequired
         ? selectedSnapshotEntity && { ...selectedSnapshotEntity, command_manifest: undefined }
         : selectedSnapshotEntity;
   const selectedId = selection?.id;
-  const commandFlow = useCommandFlow({ catalog, selectedEntity, selectedId, submitCommand: atlas.submitCommand });
+  const commandFlow = useCommandFlow({
+    catalog,
+    selectedEntity,
+    selectedId,
+    generation: detailRequestKey,
+    submitCommand: atlas.submitCommand
+  });
   const geometryEdit = useGeometryEdit({ selectedEntity, selectedId, updateGeometry: atlas.updateGeometry });
   const { edit, saving, saveError } = geometryEdit;
   const { mapMenu, commandForm, submitting, submitError } = commandFlow;

@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import {
   type AssertionResult,
   type CreatedResource,
@@ -115,6 +114,7 @@ export class RunStore {
       assert: this.assert.bind(this),
       track: this.track.bind(this),
       trackCleanupCandidate: this.trackCleanupCandidate.bind(this),
+      untrackCleanupCandidate: this.untrackCleanupCandidate.bind(this),
       finish: this.finish.bind(this),
       prune: this.pruneRuns.bind(this)
     });
@@ -177,12 +177,12 @@ export class RunStore {
     run.subscribers.clear();
   }
 
-  private track(run: RunRecord, resource: CreatedResource): void {
+  private track(run: RunRecord, resource: CreatedResource, instanceToken?: string): void {
     if (run.cleanupStarted || run.cleaned) return;
-    // API-created Entity/Object candidates are recorded before the request and
-    // already carry their capability. Manual tracking has no request to bind,
-    // so give it an unshared token; conditional Core cleanup will fail closed.
-    this.trackCleanupCandidate(run, { ...resource, instanceToken: randomUUID() });
+    if (resource.type !== "task") {
+      if (!instanceToken) throw new Error(`${resource.type} tracking requires an instance token`);
+      this.trackCleanupCandidate(run, { ...resource, instanceToken });
+    }
     const tracked = cloneValue(resource);
     if (!hasResource(run.createdResources, tracked)) {
       if (run.createdResources.length >= MAX_CREATED_RESOURCES_PER_RUN) return;
@@ -208,6 +208,18 @@ export class RunStore {
       run.cleanupResources.push(cloneValue(tracked));
       persistRun(run, this.options);
     }
+  }
+
+  private untrackCleanupCandidate(run: RunRecord, resource: CreatedResource): void {
+    if (run.cleanupStarted || run.cleaned) return;
+    const index = run.cleanupResources.findIndex((candidate) => sameResource(candidate, resource));
+    let changed = index !== -1;
+    if (changed) run.cleanupResources.splice(index, 1);
+    if (sameResource(run.overflowCleanupResource, resource)) {
+      run.overflowCleanupResource = undefined;
+      changed = true;
+    }
+    if (changed) persistRun(run, this.options);
   }
 
   private assert(run: RunRecord, name: string, passed: boolean, message?: string): AssertionResult {

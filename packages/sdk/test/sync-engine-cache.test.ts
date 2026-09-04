@@ -371,6 +371,92 @@ describe("AtlasClient sync: cache projection and reads", () => {
     expect(client.sync.snapshot().entities[original.entity_id]).toEqual(recreated);
   });
 
+  it.each([
+    ["entity", "read-before-delete-response"],
+    ["entity", "delete-before-read-response"],
+    ["object", "read-before-delete-response"],
+    ["object", "delete-before-read-response"]
+  ] as const)(
+    "does not let an uncached stale %s read repopulate after a successful delete (%s)",
+    async (type, ordering) => {
+      const core = new FakeCore();
+      let targetID = "";
+      let readResponse: Response | undefined;
+      let releaseRead!: () => void;
+      const readGate = new Promise<void>((resolve) => {
+        releaseRead = resolve;
+      });
+      let releaseDelete!: () => void;
+      const deleteGate = new Promise<void>((resolve) => {
+        releaseDelete = resolve;
+      });
+      const fetchImpl: typeof fetch = async (url, init) => {
+        const parsed = new URL(String(url));
+        const method = (init?.method ?? "GET").toUpperCase();
+        const resourcePath = type === "entity" ? "entities" : "objects";
+        if (targetID !== "" && parsed.pathname === `/${resourcePath}/${targetID}` && method === "GET") {
+          readResponse = await core.fetch(String(url), init);
+          await readGate;
+          return readResponse;
+        }
+        if (
+          ordering === "read-before-delete-response" &&
+          targetID !== "" &&
+          parsed.pathname === `/${resourcePath}/${targetID}` &&
+          method === "DELETE"
+        ) {
+          const response = await core.fetch(String(url), init);
+          await deleteGate;
+          return response;
+        }
+        return core.fetch(String(url), init);
+      };
+      const client = new AtlasClient({
+        baseUrl: "http://atlas.test",
+        fetch: fetchImpl,
+        WebSocket: core.attachWebSocketGlobal(),
+        sync: "all",
+        pollIntervalMs: 0
+      });
+
+      try {
+        await client.sync.start();
+        const original =
+          type === "entity"
+            ? core.upsertEntity(entity("asset-uncached-delete-race"))
+            : core.upsertObject(object("object-uncached-delete-race"));
+        targetID = type === "entity" ? original.entity_id : original.object_id;
+        expect(
+          type === "entity" ? client.sync.snapshot().entities[targetID] : client.sync.snapshot().objects[targetID]
+        ).toBeUndefined();
+
+        const read =
+          type === "entity"
+            ? client.entities.get(targetID, { fresh: true })
+            : client.objects.get(targetID, { fresh: true });
+        await vi.waitFor(() => expect(readResponse).toBeDefined());
+        const deletion = type === "entity" ? client.entities.delete(targetID) : client.objects.delete(targetID);
+
+        if (ordering === "read-before-delete-response") {
+          releaseRead();
+          await expect(read).resolves.toMatchObject({ [type === "entity" ? "entity_id" : "object_id"]: targetID });
+          releaseDelete();
+        } else {
+          await deletion;
+          releaseRead();
+          await expect(read).resolves.toMatchObject({ [type === "entity" ? "entity_id" : "object_id"]: targetID });
+        }
+        await deletion;
+
+        expect(
+          type === "entity" ? client.sync.snapshot().entities[targetID] : client.sync.snapshot().objects[targetID]
+        ).toBeUndefined();
+      } finally {
+        client.sync.stop();
+      }
+    }
+  );
+
   it("deletes an updated same-instance resource when the update precedes server deletion", async () => {
     const core = new FakeCore();
     const original = core.upsertEntity(entity("asset-update-before-delete"));

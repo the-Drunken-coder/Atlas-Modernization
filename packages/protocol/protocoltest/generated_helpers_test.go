@@ -160,6 +160,45 @@ func TestGeneratedFeedEventUnmarshalPreservesNestedJSONNumbers(t *testing.T) {
 	}
 }
 
+func TestGeneratedDirectResourceUnmarshalPreservesNestedJSONNumbers(t *testing.T) {
+	const nested = `{"container":{"exact":9007199254740993,"lower":1e3,"upper":1E+3,"decimal":1.0e0}}`
+
+	var task protocol.TaskResource
+	if err := json.Unmarshal([]byte(`{"input":`+nested+`}`), &task); err != nil {
+		t.Fatalf("Unmarshal TaskResource: %v", err)
+	}
+	assertNestedJSONNumbers(t, "TaskResource input", task.Input)
+
+	var entity protocol.EntityResource
+	if err := json.Unmarshal([]byte(`{"components":`+nested+`,"extra":`+nested+`}`), &entity); err != nil {
+		t.Fatalf("Unmarshal EntityResource: %v", err)
+	}
+	assertNestedJSONNumbers(t, "EntityResource components", entity.Components)
+	assertNestedJSONNumbers(t, "EntityResource extra", entity.Extra)
+
+	var object protocol.ObjectDetailResource
+	if err := json.Unmarshal([]byte(`{"size_bytes":1E+3,"extra":`+nested+`}`), &object); err != nil {
+		t.Fatalf("Unmarshal ObjectDetailResource: %v", err)
+	}
+	if object.SizeBytes == nil || *object.SizeBytes != 1_000 {
+		t.Fatalf("ObjectDetailResource size_bytes = %v, want 1000", object.SizeBytes)
+	}
+	assertNestedJSONNumbers(t, "ObjectDetailResource extra", object.Extra)
+}
+
+func assertNestedJSONNumbers(t *testing.T, name string, value any) {
+	t.Helper()
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("Marshal %s: %v", name, err)
+	}
+	for _, number := range []string{`"exact":9007199254740993`, `"lower":1e3`, `"upper":1E+3`, `"decimal":1.0e0`} {
+		if !strings.Contains(string(encoded), number) {
+			t.Fatalf("%s lost nested number spelling %q: %s", name, number, encoded)
+		}
+	}
+}
+
 func assertDeleteEvent(t *testing.T, value json.Marshaler, event protocol.FeedEvent, resourceType protocol.ResourceType, id string, version int64) {
 	t.Helper()
 	if event.Event != protocol.FeedEventDelete || event.ResourceType != resourceType || event.ID != id || event.Version != version {

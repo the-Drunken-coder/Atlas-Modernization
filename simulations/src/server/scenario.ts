@@ -18,6 +18,7 @@ import type { AtlasClientFactory, AtlasClientLike, ClientMode } from "./atlas.js
 import type { CleanupResource } from "./run-store-types.js";
 
 type NumberInputField = Extract<ScenarioInputField, { type: "number" }>;
+type ResourceDeleteOptions = Parameters<AtlasClientLike["entities"]["delete"]>[1];
 
 const MAX_JSON_INPUT_DEPTH = 200;
 const MAX_JSON_INPUT_BYTES = 200_000;
@@ -38,7 +39,7 @@ export type ScenarioContext = {
   log(message: string, data?: JSONValue): void;
   assert(name: string, passed: boolean, message?: string): AssertionResult;
   wait(ms: number): Promise<void>;
-  track(resource: CreatedResource): void;
+  track(resource: CreatedResource, instanceToken?: string): void;
   createEntity: AtlasClientLike["entities"]["create"];
   createTask(task: TaskCreateRequest): Promise<TaskResource>;
   createObject: AtlasClientLike["objects"]["create"];
@@ -116,8 +117,9 @@ export function createScenarioContext(args: {
   clientFactory: AtlasClientFactory;
   log(message: string, data?: JSONValue): void;
   assert(name: string, passed: boolean, message?: string): AssertionResult;
-  track(resource: CreatedResource): void;
+  track(resource: CreatedResource, instanceToken?: string): void;
   trackCleanupCandidate?(resource: CleanupResource): void;
+  untrackCleanupCandidate?(resource: CreatedResource): void;
   registerClient(client: AtlasClientLike): void;
 }): ScenarioContext {
   const throwIfCancelled = () => {
@@ -125,19 +127,25 @@ export function createScenarioContext(args: {
       throw new Error("Simulation cancelled");
     }
   };
-  const track = (resource: CreatedResource) => {
+  const instanceTokens = new Map<string, string>();
+  const track = (resource: CreatedResource, instanceToken?: string) => {
     if (resource.type !== "task") assertRunOwnedResourceId(args.runId, resource);
-    args.track(resource);
+    if (instanceToken !== undefined) instanceTokens.set(`${resource.type}\0${resource.id}`, instanceToken);
+    args.track(resource, instanceToken);
   };
   const trackCleanupCandidate = (resource: CleanupResource) => {
     if (resource.type === "task") return;
     assertRunOwnedResourceId(args.runId, resource);
     args.trackCleanupCandidate?.(resource);
   };
+  const untrackCleanupCandidate = (resource: CreatedResource) => {
+    if (resource.type === "task") return;
+    assertRunOwnedResourceId(args.runId, resource);
+    args.untrackCleanupCandidate?.(resource);
+  };
   const assertRunOwned = (resource: CreatedResource) => {
     assertRunOwnedResourceId(args.runId, resource);
   };
-  const instanceTokens = new Map<string, string>();
   const newClient = (options?: { sync?: ClientMode; pollIntervalMs?: number }) => {
     throwIfCancelled();
     const rawClient = args.clientFactory({ ...options, signal: args.signal });
@@ -146,6 +154,7 @@ export function createScenarioContext(args: {
       rawClient,
       track,
       trackCleanupCandidate,
+      untrackCleanupCandidate,
       instanceTokens,
       assertRunOwned,
       throwIfCancelled,
@@ -180,8 +189,9 @@ function assertRunOwnedResourceId(runId: string, resource: CreatedResource): voi
 
 function trackClientCreates(
   client: AtlasClientLike,
-  track: (resource: CreatedResource) => void,
+  track: (resource: CreatedResource, instanceToken?: string) => void,
   trackCleanupCandidate: (resource: CleanupResource) => void,
+  untrackCleanupCandidate: (resource: CreatedResource) => void,
   instanceTokens: Map<string, string>,
   assertRunOwned: (resource: CreatedResource) => void,
   throwIfCancelled: () => void,
@@ -210,9 +220,29 @@ function trackClientCreates(
     trackCleanupCandidate({ ...resource, instanceToken });
     instanceTokens.set(key, instanceToken);
     const created = await operation(instanceToken);
-    track(resource);
+    track(resource, instanceToken);
     throwIfCancelled();
     return created;
+  };
+  const deleteTracked = async (
+    type: "entity" | "object",
+    id: string,
+    options: ResourceDeleteOptions | undefined,
+    operation: (id: string, options?: ResourceDeleteOptions) => Promise<void>
+  ): Promise<void> => {
+    throwIfCancelled();
+    const key = `${type}\0${id}`;
+    const recordedToken = instanceTokens.get(key);
+    const deleteOptions =
+      recordedToken === undefined || options?.instanceToken !== undefined
+        ? options
+        : { ...options, instanceToken: recordedToken };
+    await operation(id, deleteOptions);
+    if (recordedToken !== undefined) {
+      instanceTokens.delete(key);
+      untrackCleanupCandidate({ type, id });
+    }
+    throwIfCancelled();
   };
   const guardedWatch: AtlasClientLike["watch"] = (filter, callback) => {
     throwIfCancelled();
@@ -258,7 +288,10 @@ function trackClientCreates(
         );
       },
       update: (id, patch) => guarded(() => client.entities.update(id, patch)),
-      delete: (id, options) => guarded(() => client.entities.delete(id, options)),
+      delete: (id, options) =>
+        deleteTracked("entity", id, options, (resourceID, deleteOptions) =>
+          client.entities.delete(resourceID, deleteOptions)
+        ),
       checkIn
     },
     tasks: {
@@ -289,7 +322,10 @@ function trackClientCreates(
         const resource = { type: "object", id: object.object_id } satisfies CreatedResource;
         return createTracked(resource, (instanceToken) => client.objects.create(object, { ...options, instanceToken }));
       },
-      delete: (id, options) => guarded(() => client.objects.delete(id, options))
+      delete: (id, options) =>
+        deleteTracked("object", id, options, (resourceID, deleteOptions) =>
+          client.objects.delete(resourceID, deleteOptions)
+        )
     },
     queries: {
       full: () => guarded(() => client.queries.full())

@@ -8,6 +8,7 @@ import {
   useState
 } from "react";
 import { MapRegionSelection, type RegionTransform, type ResizeAxes, type ScreenRect } from "./MapRegionSelection.js";
+import { geographicBoundsFromScreenRect, longitudeNear } from "./map-view-utils.js";
 
 type ScreenPoint = { x: number; y: number };
 type DragState =
@@ -32,6 +33,7 @@ type MapAreaSelectionProps = {
   onCancelDrawing(): void;
   onViewportArea(area: MapArea): void;
   suppressNextClick(): void;
+  notifyUserGesture(): void;
 };
 
 const MIN_AREA_SIZE = 32;
@@ -46,7 +48,8 @@ export function MapAreaSelection({
   onDrawingComplete,
   onCancelDrawing,
   onViewportArea,
-  suppressNextClick
+  suppressNextClick,
+  notifyUserGesture
 }: MapAreaSelectionProps) {
   const [rect, setRect] = useState<ScreenRect | null>(null);
   const [drag, setDrag] = useState<DragState | null>(null);
@@ -93,10 +96,11 @@ export function MapAreaSelection({
       setDrag((current) => (current?.kind === "draw" ? null : current));
       return;
     }
+    notifyUserGesture();
     setDrag((current) =>
       current?.kind === "draw" ? current : { kind: "draw", start: null, current: null, pointerId: null }
     );
-  }, [drawing]);
+  }, [drawing, notifyUserGesture]);
 
   useEffect(() => {
     if (!map || !mapCanvas || !drag) return;
@@ -110,6 +114,7 @@ export function MapAreaSelection({
       event.preventDefault();
       event.stopPropagation();
       map.stop();
+      notifyUserGesture();
       mapCanvas.setPointerCapture?.(event.pointerId);
       const point = pointInCanvas(event, mapCanvas);
       setDrag({ kind: "draw", start: point, current: point, pointerId: event.pointerId });
@@ -126,15 +131,21 @@ export function MapAreaSelection({
         drag.transform === "move"
           ? clampMovedRect(drag.initialRect, delta, mapCanvas.getBoundingClientRect())
           : clampResizedRect(drag.initialRect, delta, drag.transform);
-      callbacksRef.current.onAreaChange(areaFromScreenRect(map, next));
+      const nextArea = areaFromScreenRect(map, next);
+      if (nextArea) callbacksRef.current.onAreaChange(nextArea);
     };
     const finishDrag = (event: globalThis.PointerEvent) => {
       if (drag.pointerId === null || event.pointerId !== drag.pointerId) return;
       if (drag.kind === "draw" && drag.start) {
         const next = rectFromPoints(drag.start, pointInCanvas(event, mapCanvas));
         if (next.width >= MIN_AREA_SIZE && next.height >= MIN_AREA_SIZE) {
-          callbacksRef.current.onAreaChange(areaFromScreenRect(map, next));
-          callbacksRef.current.onDrawingComplete();
+          const nextArea = areaFromScreenRect(map, next);
+          if (nextArea) {
+            callbacksRef.current.onAreaChange(nextArea);
+            callbacksRef.current.onDrawingComplete();
+          } else {
+            callbacksRef.current.onCancelDrawing();
+          }
         } else {
           callbacksRef.current.onCancelDrawing();
         }
@@ -171,13 +182,14 @@ export function MapAreaSelection({
       window.removeEventListener("pointercancel", cancelPointer);
       window.removeEventListener("keydown", cancelKeyboard, { capture: true });
     };
-  }, [drag, map, mapCanvas, suppressNextClick]);
+  }, [drag, map, mapCanvas, notifyUserGesture, suppressNextClick]);
 
   const beginTransform = (transform: RegionTransform, event: ReactPointerEvent<HTMLButtonElement>) => {
     if (event.button !== 0 || !map || !mapCanvas || !area || !rect) return;
     event.preventDefault();
     event.stopPropagation();
     map.stop();
+    notifyUserGesture();
     mapCanvas.setPointerCapture?.(event.pointerId);
     setDrag({
       kind: "transform",
@@ -195,12 +207,14 @@ export function MapAreaSelection({
     if (!delta) return;
     event.preventDefault();
     event.stopPropagation();
+    notifyUserGesture();
     const initial = projectedScreenRect(map, area);
     const next =
       transform === "move"
         ? clampMovedRect(initial, delta, mapCanvas.getBoundingClientRect())
         : clampResizedRect(initial, delta, transform);
-    callbacksRef.current.onAreaChange(areaFromScreenRect(map, next));
+    const nextArea = areaFromScreenRect(map, next);
+    if (nextArea) callbacksRef.current.onAreaChange(nextArea);
   };
 
   const drawingRect =
@@ -243,15 +257,10 @@ function rectFromPoints(first: ScreenPoint, second: ScreenPoint): ScreenRect {
   };
 }
 
-function areaFromScreenRect(map: MlMap, rect: ScreenRect): MapArea {
-  const first = map.unproject([rect.left, rect.top]);
-  const second = map.unproject([rect.left + rect.width, rect.top + rect.height]);
-  return {
-    west: Math.min(first.lng, second.lng),
-    south: Math.min(first.lat, second.lat),
-    east: Math.max(first.lng, second.lng),
-    north: Math.max(first.lat, second.lat)
-  };
+function areaFromScreenRect(map: MlMap, rect: ScreenRect): MapArea | null {
+  const bounds = geographicBoundsFromScreenRect(map, rect);
+  if (bounds.west < -180 || bounds.east > 180 || bounds.west >= bounds.east) return null;
+  return bounds;
 }
 
 function visibleScreenRect(
@@ -270,11 +279,15 @@ function visibleScreenRect(
 }
 
 function projectedScreenRect(map: MlMap, area: MapArea): ScreenRect {
+  const centerLongitude = map.getCenter().lng;
+  const crossesAntimeridian = (area.west < -180 || area.east > 180) && area.east - area.west < 180;
+  const west = crossesAntimeridian ? longitudeNear(area.west, centerLongitude) : area.west;
+  const east = crossesAntimeridian ? west + (area.east - area.west) : area.east;
   const points = [
-    map.project([area.west, area.north]),
-    map.project([area.east, area.north]),
-    map.project([area.east, area.south]),
-    map.project([area.west, area.south])
+    map.project([west, area.north]),
+    map.project([east, area.north]),
+    map.project([east, area.south]),
+    map.project([west, area.south])
   ];
   const left = Math.min(...points.map((point) => point.x));
   const top = Math.min(...points.map((point) => point.y));

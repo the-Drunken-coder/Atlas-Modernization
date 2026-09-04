@@ -107,6 +107,7 @@ const maplibreMock = vi.hoisted(() => {
       this.options = options;
       this.style = options.style;
       this.renderWorldCopies = Boolean(options.renderWorldCopies);
+      this.loaded = !(this.style as { metadata?: { initialStyleLoading?: boolean } }).metadata?.initialStyleLoading;
       FakeMap.instances.push(this);
     }
 

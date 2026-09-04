@@ -91,6 +91,27 @@ describe("MapView region comparison", () => {
     expect(region).toBeInTheDocument();
   });
 
+  it("keeps a comparison rectangle narrow when it crosses the antimeridian", async () => {
+    const { map } = renderMapView({ styleId: "base", style: style("base"), mapSourceOptions });
+    map.unproject.mockImplementation((point: [number, number] | { x: number; y: number }) => {
+      const [x, y] = Array.isArray(point) ? point : [point.x, point.y];
+      return { lng: x < 150 ? 179 : -179, lat: y };
+    });
+    map.project.mockImplementation(([longitude, latitude]: [number, number]) => ({
+      x: 160 + (longitude - 179) * 40,
+      y: latitude
+    }));
+
+    await drawComparison();
+
+    expect(screen.getByTestId("map-comparison-region")).toHaveStyle({
+      left: "160px",
+      top: "60px",
+      width: "80px",
+      height: "80px"
+    });
+  });
+
   it("draws and resizes a region with touch pointers", async () => {
     renderMapView({ styleId: "base", style: style("base"), mapSourceOptions });
     await drawComparison("touch");

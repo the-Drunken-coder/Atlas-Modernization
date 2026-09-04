@@ -8,6 +8,44 @@ const DOM_DELTA_LINE = 1;
 
 export type CursorHandoffState = { nativePoint: ScreenPoint; visualPoint: ScreenPoint };
 
+type ScreenRectLike = { left: number; top: number; width: number; height: number };
+
+export type ScreenGeographicBounds = {
+  west: number;
+  south: number;
+  east: number;
+  north: number;
+};
+
+/** Convert a screen rectangle to the shortest longitude interval it covers. */
+export function geographicBoundsFromScreenRect(
+  map: Pick<MlMap, "unproject">,
+  rect: ScreenRectLike
+): ScreenGeographicBounds {
+  const first = map.unproject([rect.left, rect.top]);
+  const second = map.unproject([rect.left + rect.width, rect.top + rect.height]);
+  const firstLongitude = first.lng;
+  let secondLongitude = second.lng;
+  if (isCanonicalLongitude(firstLongitude) && isCanonicalLongitude(secondLongitude)) {
+    if (secondLongitude - firstLongitude > 180) secondLongitude -= 360;
+    if (secondLongitude - firstLongitude < -180) secondLongitude += 360;
+  }
+  return {
+    west: Math.min(firstLongitude, secondLongitude),
+    south: Math.min(first.lat, second.lat),
+    east: Math.max(firstLongitude, secondLongitude),
+    north: Math.max(first.lat, second.lat)
+  };
+}
+
+/** Keep a longitude in the world copy nearest a map center. */
+export function longitudeNear(longitude: number, reference: number): number {
+  let result = longitude;
+  while (result - reference > 180) result -= 360;
+  while (result - reference < -180) result += 360;
+  return result;
+}
+
 export function cursorPointsFromEvent(
   event: { clientX: number; clientY: number },
   rect: DOMRect,
@@ -76,4 +114,8 @@ export function fitWorldOnce(map: MlMap, fitWorldOnceRef: { current: boolean }):
   if (fitWorldOnceRef.current) return;
   fitWorldOnceRef.current = true;
   map.fitBounds(INITIAL_WORLD_BOUNDS, { padding: 0, duration: 0 }, { [CAMERA_EVENT_TAG]: true });
+}
+
+function isCanonicalLongitude(longitude: number): boolean {
+  return longitude >= -180 && longitude <= 180;
 }

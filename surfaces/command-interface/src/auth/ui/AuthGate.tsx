@@ -5,6 +5,7 @@ import { Component, type FormEvent, lazy, type ReactNode, Suspense, useEffect, u
 import { sanitizeConnectionError } from "../../atlas/connection-error.js";
 import { ConnectionBadge } from "../../ui/ConnectionBadge.js";
 import { Button, TextField } from "../../ui/primitives/controls.js";
+import { notifyAuthSessionChanged } from "../session-epoch.js";
 
 const AccountMenu = lazy(() => import("./AccountMenu.js"));
 
@@ -39,8 +40,10 @@ export function AuthGate({ baseUrl, children }: { baseUrl: string; children: Rea
         }
       }
     };
-    const expireSession = () =>
+    const expireSession = () => {
+      notifyAuthSessionChanged();
       setState({ status: "unauthenticated", error: "Your session has expired. Please sign in again." });
+    };
 
     void checkSession();
     window.addEventListener("atlas-auth-expired", expireSession);
@@ -121,12 +124,14 @@ function AuthenticatedShell({
     setError(undefined);
     try {
       await new AtlasAdminClient({ baseUrl, credentials: "include" }).auth.logout();
+      notifyAuthSessionChanged();
       onLoggedOut();
     } catch (cause) {
       const logoutError = sanitizeConnectionError(cause);
       // Core clears the cookie before returning its 500 revocation error. Do
       // not leave the shell mounted with a browser session that no longer exists.
       if (cause instanceof AtlasAPIError && cause.status === 500) {
+        notifyAuthSessionChanged();
         onLoggedOut(logoutError);
         return;
       }
@@ -215,6 +220,7 @@ function LoginPanel({
     setError(undefined);
     try {
       const data = await new AtlasAdminClient({ baseUrl, credentials: "include" }).auth.login({ username, password });
+      notifyAuthSessionChanged();
       onAuthenticated(data.user.username);
     } catch (cause) {
       setError(sanitizeConnectionError(cause));

@@ -611,6 +611,35 @@ describe("sdk data source", () => {
     });
     expect(dispatchEvent).not.toHaveBeenCalled();
   });
+
+  it("does not let an old request expire a newer session", async () => {
+    let resolveResponse!: (response: Response) => void;
+    const pendingResponse = new Promise<Response>((resolve) => {
+      resolveResponse = resolve;
+    });
+    const authWindow = new EventTarget();
+    const dispatchEvent = vi.spyOn(authWindow, "dispatchEvent");
+    vi.stubGlobal("window", authWindow);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => pendingResponse)
+    );
+
+    const dataSource = createSdkDataSource(config);
+    const request = dataSource.submitCommand({
+      assetId: "asset-1",
+      command: holdPositionCommand,
+      input: { value: "old-session" },
+      idempotencyKey: "tasking-old-session"
+    });
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalled());
+
+    window.dispatchEvent(new Event("atlas-auth-session-changed"));
+    resolveResponse(Response.json({ success: false, error_code: "UNAUTHORIZED" }, { status: 401 }));
+
+    await expect(request).rejects.toMatchObject({ status: 401, errorCode: "UNAUTHORIZED" });
+    expect(dispatchEvent).not.toHaveBeenCalledWith(expect.objectContaining({ type: "atlas-auth-expired" }));
+  });
 });
 
 class TestCore {

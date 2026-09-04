@@ -62,6 +62,95 @@ describe("RunStore", () => {
     expect(core.state.deleted).toEqual([]);
   });
 
+  it("rejects manual Entity/Object tracking without an instance token", async () => {
+    for (const type of ["entity", "object"] as const) {
+      const { store } = runStoreFixture();
+      const scenario = scenarioFixture({
+        id: `manual-track-${type}`,
+        name: `Manual track ${type}`,
+        summary: "Requires a capability for manually tracked resources",
+        async run(ctx) {
+          ctx.track({ type, id: ctx.id(type) });
+        }
+      });
+
+      const started = store.start(scenario, { fields: {} });
+      await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("failed"));
+
+      expect(store.get(started.id)?.lastError).toBe(`${type} tracking requires an instance token`);
+      expect(store.get(started.id)?.createdResources).toEqual([]);
+      await expect(store.cleanup(started.id)).resolves.toMatchObject({ cleaned: true });
+    }
+  });
+
+  it("cleans manually tracked resources when the caller supplies the create token", async () => {
+    for (const type of ["entity", "object"] as const) {
+      const core = createFakeAtlasCore();
+      const store = new RunStore(core.factory);
+      const token = `manual-${type}-token`;
+      let resourceID = "";
+      const scenario = scenarioFixture({
+        id: `manual-track-token-${type}`,
+        name: `Manual track token ${type}`,
+        summary: "Cleans manually tracked resources with their capability",
+        async run(ctx) {
+          resourceID = ctx.id(type);
+          if (type === "entity") {
+            await core
+              .factory()
+              .entities.create({ entity_id: resourceID, entity_type: "asset" }, { instanceToken: token });
+          } else {
+            await core.factory().objects.create({ object_id: resourceID }, { instanceToken: token });
+          }
+          ctx.track({ type, id: resourceID }, token);
+        }
+      });
+
+      const started = store.start(scenario, { fields: {} });
+      await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("completed"));
+      await expect(store.cleanup(started.id)).resolves.toMatchObject({ cleaned: true });
+      expect(core.state.deleted).toEqual([`${type}:${resourceID}`]);
+    }
+  });
+
+  it("removes cleanup candidates after a scenario deletes its own resource", async () => {
+    const { directory, ledger } = temporaryLedger();
+    try {
+      for (const type of ["entity", "object"] as const) {
+        const core = createFakeAtlasCore();
+        const store = new RunStore(core.factory, { ledger });
+        let resourceID = "";
+        const scenario = scenarioFixture({
+          id: `delete-own-${type}`,
+          name: `Delete own ${type}`,
+          summary: "Retires explicitly deleted resources",
+          async run(ctx) {
+            const id = ctx.id(type);
+            resourceID = id;
+            if (type === "entity") {
+              await ctx.createEntity({ entity_id: id, entity_type: "asset" });
+              await ctx.client.entities.delete(id);
+            } else {
+              await ctx.createObject({ object_id: id });
+              await ctx.client.objects.delete(id);
+            }
+          }
+        });
+
+        const started = store.start(scenario, { fields: {} }, deployedTarget(core.factory));
+        await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("completed"));
+
+        expect(core.state.deleted).toEqual([`${type}:${resourceID}`]);
+        expect(ledger.load()[0]?.resources).toEqual([]);
+        await expect(store.cleanup(started.id)).resolves.toMatchObject({ cleaned: true });
+        expect(core.state.deleted).toHaveLength(1);
+        expect(ledger.load()).toEqual([]);
+      }
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it("cleans up hidden create candidates after response failure", async () => {
     const core = createFakeAtlasCore();
     let firstClient = true;
@@ -610,7 +699,10 @@ describe("RunStore", () => {
       name: "Unsupported cleanup",
       summary: "Tracks an unsupported resource type",
       async run(ctx) {
-        ctx.track({ type: "track", id: ctx.id("track") } as unknown as Parameters<typeof ctx.track>[0]);
+        ctx.track(
+          { type: "track", id: ctx.id("track") } as unknown as Parameters<typeof ctx.track>[0],
+          "manual-track-token"
+        );
       }
     });
 
@@ -648,7 +740,7 @@ describe("RunStore", () => {
       summary: "Tracks many cleanup resources",
       async run(ctx) {
         for (let index = 0; index < 1_005; index += 1) {
-          ctx.track({ type: "entity", id: ctx.id(`asset-${index}`) });
+          ctx.track({ type: "entity", id: ctx.id(`asset-${index}`) }, `manual-asset-token-${index}`);
         }
       }
     });
@@ -684,7 +776,7 @@ describe("RunStore", () => {
       async run(ctx) {
         for (let index = 0; index < 1_005; index += 1) {
           try {
-            ctx.track({ type: "entity", id: ctx.id(`asset-${index}`) });
+            ctx.track({ type: "entity", id: ctx.id(`asset-${index}`) }, `manual-asset-token-${index}`);
           } catch {
             // Keep exercising the guard after the first overflow.
           }

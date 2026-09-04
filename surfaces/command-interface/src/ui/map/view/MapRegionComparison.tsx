@@ -21,7 +21,7 @@ import { pushEditingOverlay, pushSources, registerSourcesAndLayers } from "../re
 import type { MapSources } from "../rendering/map-sources.js";
 import type { MapLibreRuntime } from "../runtime/maplibre-runtime.js";
 import { MapRegionSelection, type RegionTransform, type ResizeAxes, type ScreenRect } from "./MapRegionSelection.js";
-import { cloneStyle } from "./map-view-utils.js";
+import { cloneStyle, geographicBoundsFromScreenRect, longitudeNear } from "./map-view-utils.js";
 
 type GeographicRegion = {
   west: number;
@@ -646,14 +646,7 @@ function rectFromPoints(a: ScreenPoint, b: ScreenPoint): ScreenRect {
 }
 
 function regionFromScreenRect(map: MlMap, rect: ScreenRect): GeographicRegion {
-  const first = map.unproject([rect.left, rect.top]);
-  const second = map.unproject([rect.left + rect.width, rect.top + rect.height]);
-  return {
-    west: Math.min(first.lng, second.lng),
-    south: Math.min(first.lat, second.lat),
-    east: Math.max(first.lng, second.lng),
-    north: Math.max(first.lat, second.lat)
-  };
+  return geographicBoundsFromScreenRect(map, rect);
 }
 
 function visibleScreenRect(
@@ -672,11 +665,15 @@ function visibleScreenRect(
 }
 
 function projectedScreenRect(map: MlMap, region: GeographicRegion): ScreenRect {
+  const centerLongitude = map.getCenter().lng;
+  const crossesAntimeridian = (region.west < -180 || region.east > 180) && region.east - region.west < 180;
+  const west = crossesAntimeridian ? longitudeNear(region.west, centerLongitude) : region.west;
+  const east = crossesAntimeridian ? west + (region.east - region.west) : region.east;
   const points = [
-    map.project([region.west, region.north]),
-    map.project([region.east, region.north]),
-    map.project([region.east, region.south]),
-    map.project([region.west, region.south])
+    map.project([west, region.north]),
+    map.project([east, region.north]),
+    map.project([east, region.south]),
+    map.project([west, region.south])
   ];
   const left = Math.min(...points.map((point) => point.x));
   const top = Math.min(...points.map((point) => point.y));

@@ -1,14 +1,15 @@
 import type { AssertionResult, CreatedResource, RunEventDetails, RunStatus } from "../shared/types.js";
 import type { AtlasClientLike } from "./atlas.js";
 import { errorMessage, hasFailedAssertions, lateAssertion } from "./run-store-events.js";
-import type { RunRecord } from "./run-store-types.js";
+import type { CleanupResource, RunRecord } from "./run-store-types.js";
 import { createScenarioContext, type Scenario, type ScenarioInput } from "./scenario.js";
 
 type RunExecutionOperations = {
   emit(run: RunRecord, details: RunEventDetails): void;
   assert(run: RunRecord, name: string, passed: boolean, message?: string): AssertionResult;
-  track(run: RunRecord, resource: CreatedResource): void;
-  trackCleanupCandidate(run: RunRecord, resource: CreatedResource): void;
+  track(run: RunRecord, resource: CreatedResource, instanceToken?: string): void;
+  trackCleanupCandidate(run: RunRecord, resource: CleanupResource): void;
+  untrackCleanupCandidate(run: RunRecord, resource: CreatedResource): void;
   finish(run: RunRecord, status: RunStatus, message: string): void;
   prune(): void;
 };
@@ -34,11 +35,14 @@ export async function executeRun(
       },
       assert: (name, passed, message) =>
         run.settled ? lateAssertion(name, passed, message) : operations.assert(run, name, passed, message),
-      track: (resource) => {
-        if (!run.settled && !run.cleanupStarted && !run.cleaned) operations.track(run, resource);
+      track: (resource, instanceToken) => {
+        if (!run.settled && !run.cleanupStarted && !run.cleaned) operations.track(run, resource, instanceToken);
       },
       trackCleanupCandidate: (resource) => {
         if (!run.settled && !run.cleanupStarted && !run.cleaned) operations.trackCleanupCandidate(run, resource);
+      },
+      untrackCleanupCandidate: (resource) => {
+        if (!run.settled && !run.cleanupStarted && !run.cleaned) operations.untrackCleanupCandidate(run, resource);
       }
     });
     await scenario.run(context, input);

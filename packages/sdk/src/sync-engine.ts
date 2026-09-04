@@ -404,6 +404,7 @@ export class SyncEngine {
     ) {
       return cached.value;
     }
+    const generation = this.cache.generation("entity", id);
     const entity = await this.transport.json(
       "GET",
       `/entities/${encodeURIComponent(id)}`,
@@ -413,7 +414,7 @@ export class SyncEngine {
       options?.signal
     );
     assertExpectedResourceID("entity", id, entity);
-    if (this.cache.cacheResource("entity", id, entity, { advanceCursor: false })) this.notifySnapshot();
+    if (this.cache.cacheResource("entity", id, entity, { advanceCursor: false, generation })) this.notifySnapshot();
     return entity;
   }
 
@@ -479,6 +480,7 @@ export class SyncEngine {
     if (!options?.fresh && this.canServeFromCache({ filter: "id", resource_type: "object", id }) && cached) {
       return cached;
     }
+    const generation = this.cache.generation("object", id);
     const object = await this.transport.json(
       "GET",
       `/objects/${encodeURIComponent(id)}`,
@@ -488,7 +490,8 @@ export class SyncEngine {
       options?.signal
     );
     assertExpectedResourceID("object", id, object);
-    if (this.cache.cacheResource("object", id, object, { detail: true, advanceCursor: false })) this.notifySnapshot();
+    if (this.cache.cacheResource("object", id, object, { detail: true, advanceCursor: false, generation }))
+      this.notifySnapshot();
     return object;
   }
 

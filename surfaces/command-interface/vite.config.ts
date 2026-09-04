@@ -1,12 +1,15 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import react from "@vitejs/plugin-react";
 import { defineConfig, loadEnv } from "vite";
 import { renderSecurityHeaders } from "./src/app/security-headers.js";
 
 const milsymbolRuntimeSource = "atlas-milsymbol-runtime?url";
+const packageRoot = dirname(fileURLToPath(import.meta.url));
 const milsymbolRuntimePath = fileURLToPath(new URL("../../node_modules/milsymbol/dist/milsymbol.js", import.meta.url));
 const runtimeSourceMaps = [{ path: `${milsymbolRuntimePath}.map`, fileName: "assets/milsymbol.js.map" }];
+const analysisManifestPath = resolve(packageRoot, "node_modules/.cache/atlas-command-interface/manifest.json");
 const milsymbolAssetPattern = /^assets\/milsymbol-[^/]+\.js$/;
 let emitRuntimeMaps = false;
 
@@ -51,6 +54,19 @@ export default defineConfig(({ mode }) => ({
           const source = typeof output.source === "string" ? output.source : new TextDecoder().decode(output.source);
           output.source = appendMilsymbolSourceMapReference(source, output.fileName);
         }
+      }
+    },
+    {
+      name: "atlas-analysis-manifest",
+      buildStart() {
+        // The manifest is consumed by check:bundle only; never leave it in the Pages tree.
+        rmSync(analysisManifestPath, { force: true });
+      },
+      writeBundle(options) {
+        const outputManifestPath = resolve(options.dir ?? resolve(packageRoot, "dist/client"), "manifest.json");
+        if (!existsSync(outputManifestPath)) return;
+        mkdirSync(dirname(analysisManifestPath), { recursive: true });
+        renameSync(outputManifestPath, analysisManifestPath);
       }
     }
   ],

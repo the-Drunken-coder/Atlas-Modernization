@@ -290,6 +290,61 @@ describe("scenario input parsing", () => {
     }
   });
 
+  it("uses and retires the recorded instance token when deleting a tracked resource", async () => {
+    for (const type of ["entity", "object"] as const) {
+      const core = createFakeAtlasCore();
+      const deleteTokens: string[] = [];
+      const cleanupCandidates = new Map<string, string>();
+      const ctx = scenarioContext({
+        runId: `sim-delete-${type}`,
+        clientFactory: () => {
+          const client = core.factory();
+          if (type === "entity") {
+            return {
+              ...client,
+              entities: {
+                ...client.entities,
+                delete: async (id, options) => {
+                  deleteTokens.push(options?.instanceToken ?? "");
+                  return client.entities.delete(id, options);
+                }
+              }
+            };
+          }
+          return {
+            ...client,
+            objects: {
+              ...client.objects,
+              delete: async (id, options) => {
+                deleteTokens.push(options?.instanceToken ?? "");
+                return client.objects.delete(id, options);
+              }
+            }
+          };
+        },
+        trackCleanupCandidate: (resource) =>
+          cleanupCandidates.set(`${resource.type}:${resource.id}`, resource.instanceToken),
+        untrackCleanupCandidate: (resource) => cleanupCandidates.delete(`${resource.type}:${resource.id}`)
+      });
+      const resourceID = ctx.id(type);
+      if (type === "entity") await ctx.client.entities.create({ entity_id: resourceID, entity_type: "asset" });
+      else await ctx.client.objects.create({ object_id: resourceID });
+
+      const firstToken = cleanupCandidates.get(`${type}:${resourceID}`);
+      expect(firstToken).toBeDefined();
+      if (type === "entity") await ctx.client.entities.delete(resourceID);
+      else await ctx.client.objects.delete(resourceID);
+
+      expect(deleteTokens).toEqual([firstToken]);
+      expect(cleanupCandidates).toEqual(new Map());
+
+      if (type === "entity") await ctx.client.entities.create({ entity_id: resourceID, entity_type: "asset" });
+      else await ctx.client.objects.create({ object_id: resourceID });
+      expect(cleanupCandidates.get(`${type}:${resourceID}`)).toBeDefined();
+      expect(cleanupCandidates.get(`${type}:${resourceID}`)).not.toBe(firstToken);
+    }
+  });
+
   it("preserves full and minimal check-in response inference", () => {
     const ctx = scenarioContext({
       runId: "sim-check-in-types"

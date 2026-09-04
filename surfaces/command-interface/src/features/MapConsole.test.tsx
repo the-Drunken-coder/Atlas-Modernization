@@ -715,7 +715,7 @@ describe("MapConsole", () => {
     expect(await screen.findByText("This Asset has no Commands")).toBeInTheDocument();
   });
 
-  it("keeps loaded Asset commands visible while refreshing runtime details", async () => {
+  it("hides loaded Asset commands while refreshing runtime details", async () => {
     const user = userEvent.setup();
     const pending = deferred<EntityResource>();
     const loadEntityDetails = vi
@@ -750,6 +750,8 @@ describe("MapConsole", () => {
     await user.click(await screen.findByText("Rover"));
     await user.click(screen.getByRole("button", { name: /Commands/ }));
     expect(await screen.findByText("No operator inputs are available for this Asset's Commands")).toBeInTheDocument();
+    fireEvent.contextMenu(screen.getByTestId("map-marker-context-menu"));
+    expect(await screen.findByText("Commands · 47.6100, -122.3300")).toBeInTheDocument();
 
     view.rerender(
       <AtlasStaticProvider
@@ -767,7 +769,9 @@ describe("MapConsole", () => {
     );
 
     await waitFor(() => expect(loadEntityDetails).toHaveBeenCalledTimes(2));
-    expect(screen.getByText("No operator inputs are available for this Asset's Commands")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Commands" }));
+    expect(screen.getByText("Loading Asset Commands")).toBeInTheDocument();
+    expect(screen.queryByText("Commands · 47.6100, -122.3300")).not.toBeInTheDocument();
 
     pending.resolve({ ...rover, metadata: { ...rover.metadata, version: 2 }, command_manifest: [] });
     expect(await screen.findByText("This Asset has no Commands")).toBeInTheDocument();

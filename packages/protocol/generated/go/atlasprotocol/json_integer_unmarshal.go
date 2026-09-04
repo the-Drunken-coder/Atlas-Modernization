@@ -208,6 +208,45 @@ func (value *ChangedSinceResponse) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+func (value *EntityCheckInFullResponse) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(bytes.Trim(data, " \t\r\n"), []byte("null")) {
+		return nil
+	}
+	type alias EntityCheckInFullResponse
+	decoded := alias(*value)
+	if err := atlasProtocolDecodeCanonicalJSON(data, &decoded); err != nil {
+		return err
+	}
+	*value = EntityCheckInFullResponse(decoded)
+	return nil
+}
+
+func (value *EntityCheckInMinimalResponse) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(bytes.Trim(data, " \t\r\n"), []byte("null")) {
+		return nil
+	}
+	type alias EntityCheckInMinimalResponse
+	decoded := alias(*value)
+	if err := atlasProtocolDecodeCanonicalJSON(data, &decoded); err != nil {
+		return err
+	}
+	*value = EntityCheckInMinimalResponse(decoded)
+	return nil
+}
+
+func (value *EntityCheckInRequest) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(bytes.Trim(data, " \t\r\n"), []byte("null")) {
+		return nil
+	}
+	type alias EntityCheckInRequest
+	decoded := alias(*value)
+	if err := atlasProtocolDecodeCanonicalJSON(data, &decoded); err != nil {
+		return err
+	}
+	*value = EntityCheckInRequest(decoded)
+	return nil
+}
+
 func (value *EntityDeleteEvent) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(bytes.Trim(data, " \t\r\n"), []byte("null")) {
 		return nil
@@ -226,6 +265,32 @@ func (value *EntityDeleteEvent) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	*value = EntityDeleteEvent(decoded)
+	return nil
+}
+
+func (value *EntityResource) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(bytes.Trim(data, " \t\r\n"), []byte("null")) {
+		return nil
+	}
+	type alias EntityResource
+	decoded := alias(*value)
+	if err := atlasProtocolDecodeCanonicalJSON(data, &decoded); err != nil {
+		return err
+	}
+	*value = EntityResource(decoded)
+	return nil
+}
+
+func (value *ErrorResponse) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(bytes.Trim(data, " \t\r\n"), []byte("null")) {
+		return nil
+	}
+	type alias ErrorResponse
+	decoded := alias(*value)
+	if err := atlasProtocolDecodeCanonicalJSON(data, &decoded); err != nil {
+		return err
+	}
+	*value = ErrorResponse(decoded)
 	return nil
 }
 
@@ -394,5 +459,83 @@ func (value *PluginOperationDescriptor) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	*value = PluginOperationDescriptor(decoded)
+	return nil
+}
+
+func (value *RuntimeTaskDeliveryResponse) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(bytes.Trim(data, " \t\r\n"), []byte("null")) {
+		return nil
+	}
+	type alias RuntimeTaskDeliveryResponse
+	decoded := alias(*value)
+	if err := atlasProtocolDecodeCanonicalJSON(data, &decoded); err != nil {
+		return err
+	}
+	*value = RuntimeTaskDeliveryResponse(decoded)
+	return nil
+}
+
+func (value *SpatialFeature) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(bytes.Trim(data, " \t\r\n"), []byte("null")) {
+		return nil
+	}
+	type alias SpatialFeature
+	decoded := alias(*value)
+	if err := atlasProtocolDecodeCanonicalJSON(data, &decoded); err != nil {
+		return err
+	}
+	*value = SpatialFeature(decoded)
+	return nil
+}
+
+func (value *SpatialOperationResult) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(bytes.Trim(data, " \t\r\n"), []byte("null")) {
+		return nil
+	}
+	type alias SpatialOperationResult
+	decoded := alias(*value)
+	if err := atlasProtocolDecodeCanonicalJSON(data, &decoded); err != nil {
+		return err
+	}
+	*value = SpatialOperationResult(decoded)
+	return nil
+}
+
+func (value *TaskCompleteRequest) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(bytes.Trim(data, " \t\r\n"), []byte("null")) {
+		return nil
+	}
+	type alias TaskCompleteRequest
+	decoded := alias(*value)
+	if err := atlasProtocolDecodeCanonicalJSON(data, &decoded); err != nil {
+		return err
+	}
+	*value = TaskCompleteRequest(decoded)
+	return nil
+}
+
+func (value *TaskCreateRequest) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(bytes.Trim(data, " \t\r\n"), []byte("null")) {
+		return nil
+	}
+	type alias TaskCreateRequest
+	decoded := alias(*value)
+	if err := atlasProtocolDecodeCanonicalJSON(data, &decoded); err != nil {
+		return err
+	}
+	*value = TaskCreateRequest(decoded)
+	return nil
+}
+
+func (value *TaskResource) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(bytes.Trim(data, " \t\r\n"), []byte("null")) {
+		return nil
+	}
+	type alias TaskResource
+	decoded := alias(*value)
+	if err := atlasProtocolDecodeCanonicalJSON(data, &decoded); err != nil {
+		return err
+	}
+	*value = TaskResource(decoded)
 	return nil
 }

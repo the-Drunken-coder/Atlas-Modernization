@@ -12,6 +12,7 @@ import type { CacheEntry, DeletableResourceType, ResourceOf, SyncSnapshot } from
 export type CacheResourceOptions = {
   detail?: boolean;
   advanceCursor?: boolean;
+  generation?: number;
   version?: number;
   replaceSameVersion?: boolean;
 };
@@ -100,6 +101,8 @@ export class ResourceCache {
   readonly pendingDeletes = new Set<string>();
   readonly locallyNotifiedDeletes = new Set<string>();
   private readonly localDeleteOperations = new Set<LocalDeleteOperation>();
+  // Point reads capture this generation before the request and only project the response if it is still current.
+  private readonly generations = new Map<string, number>();
   private readonly snapshotRecords: SnapshotRecords = {
     entity: new SnapshotRecord<EntityResource>(),
     task: new SnapshotRecord<TaskResource>(),
@@ -166,6 +169,9 @@ export class ResourceCache {
     if (actualID !== id) {
       throw new TypeError(`Atlas ${type} resource id ${actualID} does not match cache id ${id}`);
     }
+    if (options?.generation !== undefined && this.generation(type, id) !== options.generation) {
+      return false;
+    }
     const version = options?.version ?? embeddedResourceVersion(type, value);
     const existing = this.entries[type].get(id);
     const isDetailUpgrade =
@@ -201,7 +207,12 @@ export class ResourceCache {
     return this.entries[type].get(id)?.version ?? 0;
   }
 
+  generation(type: ResourceType, id: string): number {
+    return this.generations.get(resourceCacheKey(type, id)) ?? 0;
+  }
+
   markRemoteDelete(type: ResourceType, id: string, version: number): void {
+    this.bumpGeneration(type, id);
     for (const operation of this.localDeleteOperations) {
       if (operation.type === type && operation.id === id) operation.remoteDeleteSeen = true;
     }
@@ -220,6 +231,7 @@ export class ResourceCache {
   }
 
   beginLocalDelete(type: DeletableResourceType, id: string): LocalDeleteOperation {
+    this.bumpGeneration(type, id);
     const operation = { type, id, observedEntry: this.entries[type].get(id), remoteDeleteSeen: false };
     this.localDeleteOperations.add(operation);
     return operation;
@@ -228,6 +240,7 @@ export class ResourceCache {
   finishLocalDelete(operation: LocalDeleteOperation): number | undefined {
     if (!this.localDeleteOperations.delete(operation)) return undefined;
     const currentEntry = this.entries[operation.type].get(operation.id);
+    this.bumpGeneration(operation.type, operation.id);
     if (
       currentEntry !== operation.observedEntry &&
       (operation.remoteDeleteSeen || !sameResourceInstance(operation.type, operation.observedEntry, currentEntry))
@@ -239,6 +252,13 @@ export class ResourceCache {
 
   cancelLocalDelete(operation: LocalDeleteOperation): void {
     this.localDeleteOperations.delete(operation);
+  }
+
+  private bumpGeneration(type: ResourceType, id: string): number {
+    const key = resourceCacheKey(type, id);
+    const next = this.generation(type, id) + 1;
+    this.generations.set(key, next);
+    return next;
   }
 
   private updateSnapshot<TType extends ResourceType>(type: TType, id: string, value: ResourceOf<TType>): void {

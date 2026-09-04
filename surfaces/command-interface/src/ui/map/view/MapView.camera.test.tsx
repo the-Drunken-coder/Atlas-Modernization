@@ -14,6 +14,7 @@ import {
   RETICLE_FLASH_MS
 } from "../interaction/map-camera.js";
 import { buildMapSources } from "../rendering/map-sources.js";
+import type { MapSpatialInteraction } from "./MapView.js";
 import { entity, markerSources, notifyResizeObservers, type PointLike, renderMapView } from "./MapView.test-harness.js";
 
 describe("MapView camera commands", () => {
@@ -400,6 +401,35 @@ describe("MapView camera commands", () => {
 
       expect(document.querySelector(".map-reticle")).toHaveAttribute("data-flashing", "true");
       expect(map.easeTo).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("cancels a staged place commit when area drawing starts", async () => {
+    const target: MapTarget = { type: "point", id: "place:visible", coordinates: [70, 80] };
+    const spatial: MapSpatialInteraction = {
+      area: null,
+      drawing: false,
+      features: [],
+      onAreaChange: vi.fn(),
+      onDrawingComplete: vi.fn(),
+      onCancelDrawing: vi.fn(),
+      onViewportArea: vi.fn(),
+      onSelectFeature: vi.fn()
+    };
+    const { map, rerenderMap } = renderMapView({ focusTarget: target, spatial });
+    await waitFor(() => expect(document.querySelector(".map-reticle")).toBeInTheDocument());
+    vi.useFakeTimers();
+    try {
+      rerenderMap({ cameraCommand: { seq: 1, intent: "commit", target } });
+      expect(document.querySelector(".map-reticle")).toHaveAttribute("data-flashing", "true");
+
+      rerenderMap({ spatial: { ...spatial, drawing: true } });
+
+      expect(document.querySelector(".map-reticle")).not.toHaveAttribute("data-flashing");
+      act(() => vi.advanceTimersByTime(RETICLE_FLASH_MS));
+      expect(map.flyTo).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
     }

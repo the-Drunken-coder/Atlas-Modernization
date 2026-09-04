@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { performance } from "node:perf_hooks";
 import { extname } from "node:path";
 import { createInterface } from "node:readline";
 import type { Readable, Writable } from "node:stream";
@@ -36,6 +37,7 @@ import {
 
 const REQUEST_TIMEOUT_MS = 31 * 60 * 1000;
 const EXIT_TIMEOUT_MS = 5_000;
+const ADAPTER_TEARDOWN_TIMEOUT_MS = EXIT_TIMEOUT_MS;
 const STDOUT_EXIT_GRACE_MS = 25;
 const BYTES_MARKER = "$fieldlinkBytes";
 const CONTROLLER_OPTIONS_WITH_VALUES = new Set([
@@ -155,6 +157,7 @@ export interface ServeAdapterOptions {
   readonly output: Writable;
   readonly processId?: number;
   readonly signal?: AbortSignal;
+  readonly teardownTimeoutMs?: number;
   readonly createRuntime?: RuntimeFactory;
   readonly onInboxMessage?: (message: InboxMessage) => void | Promise<void>;
   readonly parentManagesEvidence?: boolean;
@@ -192,13 +195,12 @@ export async function serveAdapter(
       },
       onListenerError: (error) =>
         writer.write({ type: "listener-error", error: error.message }),
-      onFatalError: async (error) => {
+      onFatalError: (error) => {
         runtimeFailure ??= error;
-        try {
-          await writer.write({ type: "listener-error", error: error.message });
-        } finally {
-          stopForRuntimeFailure();
-        }
+        stopForRuntimeFailure();
+        void writer
+          .write({ type: "listener-error", error: error.message })
+          .catch(() => undefined);
       },
     });
   } catch (error: unknown) {
@@ -208,7 +210,11 @@ export async function serveAdapter(
   if (isAborted(signal)) {
     const abort = abortError(signal);
     try {
-      await runtime.node.close();
+      await withTimeout(
+        runtime.node.close(),
+        options.teardownTimeoutMs ?? ADAPTER_TEARDOWN_TIMEOUT_MS,
+        "adapter node close",
+      );
     } catch (error: unknown) {
       throw new AggregateError(
         [abort, asError(error)],
@@ -221,11 +227,62 @@ export async function serveAdapter(
   const activeOperations = new Map<number, Promise<void>>();
   let activated = false;
   let closing = false;
+  let teardownPromise: Promise<void> | undefined;
+  let teardownDeadline = 0;
+  let teardownFailure: Error | undefined;
+  const teardownTimeoutMs =
+    options.teardownTimeoutMs ?? ADAPTER_TEARDOWN_TIMEOUT_MS;
+  const waitForTeardownStep = async <Result>(
+    operation: () => Promise<Result>,
+    description: string,
+  ): Promise<Result | undefined> => {
+    const remainingMs = teardownDeadline - performance.now();
+    if (remainingMs <= 0) {
+      teardownFailure ??= new Error(
+        `Timed out waiting for ${description} after ${teardownTimeoutMs} ms`,
+      );
+      return undefined;
+    }
+    try {
+      return await withTimeout(operation(), remainingMs, description);
+    } catch (error: unknown) {
+      teardownFailure ??= asError(error);
+      return undefined;
+    }
+  };
+  const beginTeardown = (): Promise<void> => {
+    if (teardownPromise !== undefined) {
+      return teardownPromise;
+    }
+    closing = true;
+    teardownDeadline = performance.now() + teardownTimeoutMs;
+    for (const controller of active.values()) {
+      controller.abort(new Error("Adapter is closing"));
+    }
+    let nodeClose: Promise<void>;
+    try {
+      nodeClose = runtime.node.close();
+    } catch (error: unknown) {
+      nodeClose = Promise.reject(asError(error));
+    }
+    void nodeClose.catch(() => undefined);
+    teardownPromise = (async () => {
+      await waitForTeardownStep(
+        () =>
+          Promise.allSettled(activeOperations.values()).then(() => undefined),
+        "adapter active operations",
+      );
+      await waitForTeardownStep(
+        () => runtime.dispose?.() ?? Promise.resolve(),
+        "adapter runtime disposal",
+      );
+      await waitForTeardownStep(() => nodeClose, "adapter node close");
+    })();
+    return teardownPromise;
+  };
   const stopReading = (): void => {
     requestPump.close();
-    if (isAborted(signal)) {
-      void runtime.node.close().catch(() => undefined);
-    }
+    void beginTeardown();
   };
   stopForRuntimeFailure = stopReading;
   if (runtimeFailure !== undefined) {
@@ -298,14 +355,11 @@ export async function serveAdapter(
         continue;
       }
       if (request.type === "close") {
-        closing = true;
-        for (const controller of active.values()) {
-          controller.abort(new Error("Adapter is closing"));
-        }
-        await Promise.allSettled(activeOperations.values());
-        await runtime.dispose?.();
-        await runtime.node.close();
-        await writer.write({ type: "response", id: request.id, ok: true });
+        await beginTeardown();
+        await waitForTeardownStep(
+          () => writer.write({ type: "response", id: request.id, ok: true }),
+          "adapter close response",
+        );
         break;
       }
       if (!activated) {
@@ -360,20 +414,28 @@ export async function serveAdapter(
             })
       )
         .then(
-          (result) =>
-            writer.write({
+          (result) => {
+            if (closing) {
+              return;
+            }
+            return writer.write({
               type: "response",
               id: request.id,
               ok: true,
               result,
-            }),
-          (error: unknown) =>
-            writer.write({
+            });
+          },
+          (error: unknown) => {
+            if (closing) {
+              return;
+            }
+            return writer.write({
               type: "response",
               id: request.id,
               ok: false,
               error: asError(error).message,
-            }),
+            });
+          },
         )
         .finally(() => {
           active.delete(request.id);
@@ -381,24 +443,20 @@ export async function serveAdapter(
         });
       activeOperations.set(request.id, operation);
     }
-    if (runtimeFailure !== undefined) {
-      throw runtimeFailure;
-    }
   } finally {
     options.signal?.removeEventListener("abort", stopReading);
     unsubscribeMessage();
     unsubscribePassiveMessage();
     unsubscribeEvent();
     requestPump.close();
-    for (const controller of active.values()) {
-      controller.abort(new Error("Adapter input closed"));
-    }
-    await Promise.allSettled(activeOperations.values());
-    if (!closing) {
-      await runtime.dispose?.();
-      await runtime.node.close();
-    }
-    await writer.flush();
+    await beginTeardown();
+    await waitForTeardownStep(() => writer.flush(), "adapter output drain");
+  }
+  if (runtimeFailure !== undefined) {
+    throw runtimeFailure;
+  }
+  if (teardownFailure !== undefined) {
+    throw teardownFailure;
   }
 }
 

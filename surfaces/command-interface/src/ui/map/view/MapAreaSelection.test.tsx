@@ -152,6 +152,23 @@ describe("MapAreaSelection", () => {
     expect(spatial.onAreaChange).toHaveBeenLastCalledWith(selectedArea);
   });
 
+  it("cancels a rectangle that crosses the antimeridian instead of publishing invalid bounds", async () => {
+    const spatial = interaction({ area: null, drawing: true });
+    const { canvas, map } = renderMapView({ spatial });
+    map.unproject.mockImplementation((point: [number, number] | { x: number; y: number }) => {
+      const [x, y] = Array.isArray(point) ? point : [point.x, point.y];
+      return { lng: x < 150 ? 179 : -179, lat: y };
+    });
+
+    await waitFor(() => expect(canvas).toHaveClass("map-canvas--region-drawing"));
+    fireEvent.pointerDown(canvas, { button: 0, pointerId: 1, clientX: 60, clientY: 70 });
+    fireEvent.pointerUp(canvas, { button: 0, pointerId: 1, clientX: 260, clientY: 160 });
+
+    expect(spatial.onAreaChange).not.toHaveBeenCalled();
+    expect(spatial.onDrawingComplete).not.toHaveBeenCalled();
+    expect(spatial.onCancelDrawing).toHaveBeenCalledOnce();
+  });
+
   it("skips spatial hit testing while result layers are absent", () => {
     const spatial = interaction({ area: null, drawing: false });
     const { canvas, map, onBackgroundClick } = renderMapView({ spatial });

@@ -40,8 +40,11 @@ func goIntegerUnmarshalSource(root string) ([]byte, error) {
 		}
 	}
 
-	typeNames := make([]string, 0, len(integerFields))
-	for typeName := range integerFields {
+	typeNames := make([]string, 0, len(parsed.structs))
+	for typeName := range parsed.structs {
+		if len(integerFields[typeName]) == 0 && !goTypeContainsJSONValue(typeName, parsed, nil) {
+			continue
+		}
 		typeNames = append(typeNames, typeName)
 		sort.Slice(integerFields[typeName], func(i, j int) bool {
 			return integerFields[typeName][i].jsonName < integerFields[typeName][j].jsonName
@@ -256,6 +259,18 @@ func goIntegerUnmarshalSource(root string) ([]byte, error) {
 		builder.WriteString("\ttype alias ")
 		builder.WriteString(typeName)
 		builder.WriteString("\n")
+		if len(fields) == 0 {
+			builder.WriteString("\tdecoded := alias(*value)\n")
+			builder.WriteString("\tif err := atlasProtocolDecodeCanonicalJSON(data, &decoded); err != nil {\n")
+			builder.WriteString("\t\treturn err\n")
+			builder.WriteString("\t}\n")
+			builder.WriteString("\t*value = ")
+			builder.WriteString(typeName)
+			builder.WriteString("(decoded)\n")
+			builder.WriteString("\treturn nil\n")
+			builder.WriteString("}\n\n")
+			continue
+		}
 		builder.WriteString("\traw, err := atlasProtocolCanonicalizeIntegerFields(data, map[string]struct{}{")
 		for _, jsonName := range allowedFields {
 			fmt.Fprintf(&builder, "%q: {}, ", jsonName)
@@ -284,4 +299,43 @@ func goIntegerUnmarshalSource(root string) ([]byte, error) {
 	}
 
 	return formatGeneratedGoSource(builder.String())
+}
+
+func goTypeContainsJSONValue(typeName string, parsed parsedGoContracts, visiting map[string]bool) bool {
+	if typeName == "JSONValue" || strings.Contains(typeName, "JSONValue") {
+		return true
+	}
+	if strings.HasPrefix(typeName, "*") {
+		return goTypeContainsJSONValue(typeName[1:], parsed, visiting)
+	}
+	if strings.HasPrefix(typeName, "[]") {
+		return goTypeContainsJSONValue(typeName[2:], parsed, visiting)
+	}
+	if strings.HasPrefix(typeName, "map[") {
+		if closingBracket := strings.IndexByte(typeName, ']'); closingBracket >= 0 {
+			return goTypeContainsJSONValue(typeName[closingBracket+1:], parsed, visiting)
+		}
+		return false
+	}
+	if alias, ok := parsed.aliases[typeName]; ok {
+		return goTypeContainsJSONValue(alias, parsed, visiting)
+	}
+	fields, ok := parsed.structs[typeName]
+	if !ok {
+		return false
+	}
+	if visiting == nil {
+		visiting = make(map[string]bool)
+	}
+	if visiting[typeName] {
+		return false
+	}
+	visiting[typeName] = true
+	defer delete(visiting, typeName)
+	for _, field := range fields {
+		if goTypeContainsJSONValue(field.typeName, parsed, visiting) {
+			return true
+		}
+	}
+	return false
 }

@@ -1,4 +1,4 @@
-import { PassThrough } from "node:stream";
+import { PassThrough, Writable } from "node:stream";
 import { createInterface } from "node:readline";
 import { describe, expect, it, vi } from "vitest";
 
@@ -54,6 +54,113 @@ describe("NDJSON adapter server", () => {
     await expect(serving).rejects.toThrow("disk full");
     expect(close).toHaveBeenCalledOnce();
     reader.close();
+  });
+
+  it("starts runtime shutdown before a send that ignores abort settles", async () => {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    let reportSendStarted = (): void => undefined;
+    const sendStarted = new Promise<void>((resolve) => {
+      reportSendStarted = resolve;
+    });
+    const node = {
+      close: vi.fn(() => Promise.resolve()),
+      congestion: () => Promise.resolve({}),
+      onEvent: () => () => undefined,
+      onMessage: () => () => undefined,
+      onPassiveMessage: () => () => undefined,
+      publish: () => new Promise<never>(() => undefined),
+      send: () => {
+        reportSendStarted();
+        return new Promise<never>(() => undefined);
+      },
+    } as unknown as FieldLinkNode;
+    const serving = serveAdapter({
+      path: "test",
+      channel: 1,
+      input,
+      output,
+      teardownTimeoutMs: 25,
+      createRuntime: () =>
+        Promise.resolve({
+          node,
+          activate: () => Promise.resolve(),
+          ready: ready(1),
+        }),
+    });
+    const reader = lineReader(output);
+    await reader.nextType("ready");
+    input.write(`${JSON.stringify({ id: 1, type: "activate" })}\n`);
+    await reader.nextType("response");
+    input.write(
+      `${JSON.stringify({
+        id: 2,
+        type: "send",
+        message: {
+          type: "test",
+          kind: "response",
+          correlationId: 1,
+          payload: {},
+        },
+        destination: nodeA,
+      })}\n`,
+    );
+    await sendStarted;
+    input.write(`${JSON.stringify({ id: 3, type: "close" })}\n`);
+    const stopped = expect(serving).rejects.toThrow(
+      "adapter active operations",
+    );
+
+    await vi.waitFor(() => {
+      expect(node.close).toHaveBeenCalledOnce();
+    });
+    await stopped;
+    reader.close();
+  });
+
+  it("stops fatal teardown before a notification write settles", async () => {
+    const input = new PassThrough();
+    let writeCount = 0;
+    let releaseWrite = (): void => undefined;
+    const output = new Writable({
+      write: (_chunk, _encoding, callback) => {
+        writeCount += 1;
+        if (writeCount === 1) {
+          callback();
+        } else {
+          releaseWrite = callback;
+        }
+      },
+    });
+    const node = new FieldLinkNode({
+      nodeId: nodeB,
+      transport: new MemoryTransport(),
+    });
+    const close = vi.spyOn(node, "close");
+    let reportFatal: ((error: Error) => void | Promise<void>) | undefined;
+    const serving = serveAdapter({
+      path: "test",
+      channel: 1,
+      input,
+      output,
+      createRuntime: (options) => {
+        reportFatal = options.onFatalError;
+        return Promise.resolve({ node, ready: ready(1) });
+      },
+    });
+    await vi.waitFor(() => {
+      expect(writeCount).toBe(1);
+    });
+    if (reportFatal === undefined) {
+      throw new Error("Runtime fatal callback was not installed");
+    }
+
+    reportFatal(new Error("radio failed"));
+    await vi.waitFor(() => {
+      expect(close).toHaveBeenCalledOnce();
+    });
+    releaseWrite();
+    await expect(serving).rejects.toThrow("radio failed");
   });
 
   it("closes a runtime created after startup cancellation", async () => {

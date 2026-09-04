@@ -3,6 +3,7 @@ import { type AdminAPIKey, type AdminCreatedAPIKey, AtlasAdminClient } from "@th
 import { AtlasAPIError } from "@the-drunken-coder/atlas-sdk/errors";
 import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { sanitizeConnectionError } from "../../atlas/connection-error.js";
+import { getAuthSessionEpoch, isCurrentAuthSessionEpoch } from "../../auth/session-epoch.js";
 import { useAtlas } from "../../state/atlas-context.js";
 import { Button, IconButton, TextField } from "../../ui/primitives/controls.js";
 import { CopyIcon, PlusIcon, TrashIcon } from "../../ui/primitives/icons.js";
@@ -29,6 +30,7 @@ export function APIKeysPanel() {
   useEffect(() => {
     if (!admin) return;
     let cancelled = false;
+    const requestAuthEpoch = getAuthSessionEpoch();
     setLoadState("loading");
     setError(undefined);
     void admin.apiKeys
@@ -41,7 +43,7 @@ export function APIKeysPanel() {
       })
       .catch((cause) => {
         if (!cancelled) {
-          handleAdminError(cause);
+          handleAdminError(cause, requestAuthEpoch);
           setError(sanitizeConnectionError(cause));
           setLoadState("error");
         }
@@ -58,6 +60,7 @@ export function APIKeysPanel() {
     setGenerated(undefined);
     setCopied(false);
     setError(undefined);
+    const requestAuthEpoch = getAuthSessionEpoch();
     try {
       const created = await admin.apiKeys.create({ name });
       setGenerated(created);
@@ -65,7 +68,7 @@ export function APIKeysPanel() {
       setName("");
       setLoadState("ready");
     } catch (cause) {
-      handleAdminError(cause);
+      handleAdminError(cause, requestAuthEpoch);
       setError(sanitizeConnectionError(cause));
     } finally {
       setSubmitting(false);
@@ -89,12 +92,13 @@ export function APIKeysPanel() {
     if (!admin || revoking) return;
     setRevoking(key.id);
     setError(undefined);
+    const requestAuthEpoch = getAuthSessionEpoch();
     try {
       await admin.apiKeys.revoke(key.id);
       setKeys((current) => current.filter((entry) => entry.id !== key.id));
       if (generated?.id === key.id) setGenerated(undefined);
     } catch (cause) {
-      handleAdminError(cause);
+      handleAdminError(cause, requestAuthEpoch);
       setError(sanitizeConnectionError(cause));
     } finally {
       setRevoking(undefined);
@@ -181,8 +185,8 @@ export function APIKeysPanel() {
   );
 }
 
-function handleAdminError(error: unknown) {
-  if (error instanceof AtlasAPIError && error.status === 401) {
+function handleAdminError(error: unknown, requestAuthEpoch: number) {
+  if (error instanceof AtlasAPIError && error.status === 401 && isCurrentAuthSessionEpoch(requestAuthEpoch)) {
     window.dispatchEvent(new Event("atlas-auth-expired"));
   }
 }
