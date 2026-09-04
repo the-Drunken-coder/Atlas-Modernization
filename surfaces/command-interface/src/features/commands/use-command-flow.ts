@@ -89,13 +89,13 @@ export function useCommandFlow({
   }, [pendingMapMenu, selectedId]);
 
   useEffect(() => {
-    if (!pendingMapMenu || pendingMapMenu.entityId !== selectedEntityId) return;
+    if (!pendingMapMenu || pendingMapMenu.entityId !== selectedEntityId || commandManifestStatus !== "ready") return;
     setPendingMapMenu(null);
     if (!selectedEntity || entityKind(selectedEntity) !== "asset") return;
     dismissCommandForm();
     const { info } = pendingMapMenu;
     setMapMenu({ x: info.x, y: info.y, lat: info.lat, lng: info.lng });
-  }, [pendingMapMenu, selectedEntity, selectedEntityId, dismissCommandForm]);
+  }, [commandManifestStatus, pendingMapMenu, selectedEntity, selectedEntityId, dismissCommandForm]);
 
   useEffect(() => {
     if (!selectedId || selectedEntityId) return;
@@ -182,7 +182,7 @@ export function useCommandFlow({
         return;
       }
       setPendingMapMenu(null);
-      if (!selectedEntity || entityKind(selectedEntity) !== "asset") {
+      if (manifestStatusRef.current !== "ready" || !selectedEntity || entityKind(selectedEntity) !== "asset") {
         closeMapMenu();
         return;
       }

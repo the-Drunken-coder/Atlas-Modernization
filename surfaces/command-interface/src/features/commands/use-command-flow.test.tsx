@@ -57,9 +57,15 @@ describe("useCommandFlow", () => {
     const selectedAsset = { ...asset, entity_id: "asset-2", alias: "Scout" };
     const submitCommand = vi.fn();
     const { result, rerender } = renderHook(
-      (props: { selectedEntity: typeof asset; selectedId: string }) =>
+      (props: { selectedEntity: typeof asset; selectedId: string; commandManifestStatus: "ready" | "loading" }) =>
         useCommandFlow({ catalog: commandCatalog, submitCommand, ...props }),
-      { initialProps: { selectedEntity: asset, selectedId: asset.entity_id } }
+      {
+        initialProps: {
+          selectedEntity: asset,
+          selectedId: asset.entity_id,
+          commandManifestStatus: "ready"
+        }
+      }
     );
 
     act(() => {
@@ -67,7 +73,18 @@ describe("useCommandFlow", () => {
     });
     expect(result.current.mapMenu).toBeNull();
 
-    rerender({ selectedEntity: selectedAsset, selectedId: selectedAsset.entity_id });
+    rerender({
+      selectedEntity: selectedAsset,
+      selectedId: selectedAsset.entity_id,
+      commandManifestStatus: "loading"
+    });
+    expect(result.current.mapMenu).toBeNull();
+
+    rerender({
+      selectedEntity: selectedAsset,
+      selectedId: selectedAsset.entity_id,
+      commandManifestStatus: "ready"
+    });
 
     expect(result.current.mapMenu).toEqual({ x: 10, y: 20, lat: 40, lng: -74 });
   });
@@ -202,6 +219,10 @@ describe("useCommandFlow", () => {
 
     rerender({ commandManifestStatus: "loading" });
 
+    expect(result.current.mapMenu).toBeNull();
+    act(() => {
+      result.current.onMapContextMenu({ entityId: asset.entity_id, x: 10, y: 20, lat: 40, lng: -74 });
+    });
     expect(result.current.mapMenu).toBeNull();
   });
 

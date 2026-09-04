@@ -724,6 +724,68 @@ describe("MapConsole", () => {
     expect(screen.getByText(/fixture\.queued/)).toBeInTheDocument();
   });
 
+  it("bounds stale refreshes while telemetry versions keep advancing", async () => {
+    const user = userEvent.setup();
+    const first = deferred<EntityResource>();
+    const second = deferred<EntityResource>();
+    const unexpectedThird = deferred<EntityResource>();
+    const loadEntityDetails = vi
+      .fn<NonNullable<AtlasContextValue["loadEntityDetails"]>>()
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(() => second.promise)
+      .mockImplementation(() => unexpectedThird.promise);
+    const snapshotAtVersion = (version: number): AtlasSnapshot => ({
+      entities: {
+        [rover.entity_id]: {
+          ...rover,
+          components: { telemetry: { latitude: 40 + version / 100, longitude: -74 } },
+          metadata: { ...rover.metadata, version }
+        }
+      },
+      tasks: {}
+    });
+    const baseValue: AtlasContextValue = {
+      status: "ready",
+      config: appConfig(),
+      snapshot: snapshotAtVersion(1),
+      catalog: taskingCatalog,
+      health: healthyConnection,
+      reconnect: vi.fn(),
+      loadEntityDetails,
+      submitCommand: async () => {
+        throw new Error("not used");
+      },
+      updateGeometry: async () => {
+        throw new Error("not used");
+      }
+    };
+    const view = render(
+      <AtlasStaticProvider value={baseValue}>
+        <MapConsole />
+      </AtlasStaticProvider>
+    );
+
+    await user.click(await screen.findByText("Rover"));
+    await waitFor(() => expect(loadEntityDetails).toHaveBeenCalledOnce());
+    view.rerender(
+      <AtlasStaticProvider value={{ ...baseValue, snapshot: snapshotAtVersion(2) }}>
+        <MapConsole />
+      </AtlasStaticProvider>
+    );
+    first.resolve({ ...rover, metadata: { ...rover.metadata, version: 1 }, command_manifest: [queuedManifest] });
+    await waitFor(() => expect(loadEntityDetails).toHaveBeenCalledTimes(2));
+    view.rerender(
+      <AtlasStaticProvider value={{ ...baseValue, snapshot: snapshotAtVersion(3) }}>
+        <MapConsole />
+      </AtlasStaticProvider>
+    );
+    second.resolve({ ...rover, metadata: { ...rover.metadata, version: 2 }, command_manifest: [queuedManifest] });
+
+    expect(await screen.findByText("Asset Commands unavailable")).toBeInTheDocument();
+    await act(async () => Promise.resolve());
+    expect(loadEntityDetails).toHaveBeenCalledTimes(2);
+  });
+
   it("reloads Asset commands when the selected runtime version changes from stopped to ready", async () => {
     const user = userEvent.setup();
     const loadEntityDetails = vi
