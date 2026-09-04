@@ -148,9 +148,12 @@ export async function fetchAppConfig(): Promise<AppConfig> {
   const env = import.meta.env;
   const googleMapsApiKey = envValue(env.VITE_GOOGLE_MAPS_API_KEY);
   const googleMapsTileSession = googleMapsApiKey
-    ? await import("./google-maps-session.js").then(({ fetchGoogleMapsTileSession }) =>
-        fetchGoogleMapsTileSession(googleMapsApiKey)
-      )
+    ? await import("./google-maps-session.js")
+        .then(({ fetchGoogleMapsTileSession }) => fetchGoogleMapsTileSession(googleMapsApiKey))
+        .catch(() => {
+          console.warn("Google Maps satellite session request unavailable");
+          return undefined;
+        })
     : undefined;
   return appConfigFromEnv({ ...env, googleMapsTileSession });
 }

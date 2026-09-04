@@ -360,7 +360,11 @@ func waitForDatabaseLockWait(t testing.TB, pool *pgxpool.Pool) {
 	defer cancel()
 	for {
 		var waiting bool
-		if err := pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM pg_locks WHERE NOT granted)`).Scan(&waiting); err != nil {
+		if err := pool.QueryRow(ctx, `SELECT EXISTS (
+			SELECT 1 FROM pg_locks
+			WHERE NOT granted
+			  AND relation = 'tasks'::regclass
+		)`).Scan(&waiting); err != nil {
 			t.Fatalf("check for blocked database statement: %v", err)
 		}
 		if waiting {

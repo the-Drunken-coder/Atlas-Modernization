@@ -65,6 +65,34 @@ const SpatialResultsInspector = lazy(() =>
 type CommandManifestStatus = "ready" | "loading" | "unavailable";
 const EMPTY_ENTITY_QUERIES = Object.fromEntries(ENTITY_KINDS.map((kind) => [kind, ""])) as Record<EntityKind, string>;
 
+// Entity versions cover both runtime-manifest changes and ordinary check-in
+// writes. The latter only change the observed-state components below, so they
+// must not invalidate a detail request or cause another fresh GET.
+function isRuntimeManifestChange(previous: EntityResource, current: EntityResource): boolean {
+  if (previous.entity_id !== current.entity_id || previous.metadata.version === current.metadata.version) return false;
+  return (
+    entityStructureSignal(previous) === entityStructureSignal(current) &&
+    observedStateSignal(previous) === observedStateSignal(current)
+  );
+}
+
+function entityStructureSignal(entity: EntityResource): string {
+  const { telemetry: _telemetry, heartbeat: _heartbeat, status: _status, ...stableComponents } = entity.components;
+  return JSON.stringify({
+    entity_id: entity.entity_id,
+    entity_type: entity.entity_type,
+    subtype: entity.subtype,
+    alias: entity.alias,
+    components: stableComponents,
+    extra: entity.extra
+  });
+}
+
+function observedStateSignal(entity: EntityResource): string {
+  const { telemetry, heartbeat, status } = entity.components;
+  return JSON.stringify({ telemetry, heartbeat, status });
+}
+
 export function MapConsole() {
   const atlas = useAtlas();
   const { snapshot, catalog } = atlas;
@@ -110,10 +138,28 @@ export function MapConsole() {
   const selection = sidebar.selection;
   const selectedSnapshotEntity = getEntity(snapshot, selection?.id);
   const selectedSnapshotEntityId = selectedSnapshotEntity?.entity_id;
-  const selectedSnapshotEntityVersion = selectedSnapshotEntity?.metadata.version;
   const [selectedEntityDetails, setSelectedEntityDetails] = useState<EntityResource>();
   const selectedEntityDetailsIdRef = useRef<string | undefined>(undefined);
   selectedEntityDetailsIdRef.current = selectedEntityDetails?.entity_id;
+  const previousSelectedSnapshotEntityRef = useRef<EntityResource | undefined>(undefined);
+  const detailRequestKeyRef = useRef<string | undefined>(undefined);
+  const detailRequestSequenceRef = useRef(0);
+  const detailRequestKey = useMemo(() => {
+    const previous = previousSelectedSnapshotEntityRef.current;
+    const selectionChanged = previous?.entity_id !== selectedSnapshotEntityId;
+    const manifestChanged =
+      !selectionChanged &&
+      previous !== undefined &&
+      selectedSnapshotEntity !== undefined &&
+      isRuntimeManifestChange(previous, selectedSnapshotEntity);
+
+    previousSelectedSnapshotEntityRef.current = selectedSnapshotEntity;
+    if (selectionChanged || manifestChanged || detailRequestKeyRef.current === undefined) {
+      detailRequestSequenceRef.current += 1;
+      detailRequestKeyRef.current = `${selectedSnapshotEntityId ?? "none"}:${detailRequestSequenceRef.current}`;
+    }
+    return detailRequestKeyRef.current;
+  }, [selectedSnapshotEntity, selectedSnapshotEntityId]);
   const [commandManifestStatus, setCommandManifestStatus] = useState<CommandManifestStatus>("ready");
   const commandDetailsRequired = Boolean(
     selectedSnapshotEntity &&
@@ -127,7 +173,7 @@ export function MapConsole() {
     if (!hasSelectedEntityDetails) {
       setSelectedEntityDetails(undefined);
     }
-    if (!commandDetailsRequired || !selectedSnapshotEntityId || !atlas.loadEntityDetails) {
+    if (!commandDetailsRequired || !selectedSnapshotEntityId || !atlas.loadEntityDetails || !detailRequestKey) {
       setCommandManifestStatus("ready");
       return () => {
         cancelled = true;
@@ -152,7 +198,7 @@ export function MapConsole() {
       cancelled = true;
       controller.abort();
     };
-  }, [atlas.loadEntityDetails, commandDetailsRequired, selectedSnapshotEntityId, selectedSnapshotEntityVersion]);
+  }, [atlas.loadEntityDetails, commandDetailsRequired, detailRequestKey, selectedSnapshotEntityId]);
   const resolvedCommandManifestStatus =
     !commandDetailsRequired &&
     selectedSnapshotEntity &&

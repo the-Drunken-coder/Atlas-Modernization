@@ -134,11 +134,13 @@ func TestGeneratedIntegerUnmarshalAcceptsExactIntegralJSONNumbers(t *testing.T) 
 		t.Fatalf("Unmarshal valid EntityDeleteEvent wire properties: %v", err)
 	}
 
+	unknownPropertyManifest := `{"plugin_id":"fixture","display_name":"Fixture","operations":[{"operation_id":"run","display_name":"Run","timeout_ms":1,"UNKNOWN":true}]}`
+	validManifest := strings.Replace(unknownPropertyManifest, `,"UNKNOWN":true`, "", 1)
 	var manifest protocol.PluginManifest
-	if err := json.Unmarshal(
-		[]byte(`{"plugin_id":"fixture","display_name":"Fixture","operations":[{"operation_id":"run","display_name":"Run","timeout_ms":1,"UNKNOWN":true}]}`),
-		&manifest,
-	); err == nil {
+	if err := json.Unmarshal([]byte(validManifest), &manifest); err != nil {
+		t.Fatalf("Unmarshal valid PluginManifest fixture: %v", err)
+	}
+	if err := json.Unmarshal([]byte(unknownPropertyManifest), &manifest); err == nil {
 		t.Fatal("Unmarshal accepted an unknown property inside PluginOperationDescriptor")
 	}
 }

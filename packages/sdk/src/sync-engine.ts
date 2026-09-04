@@ -554,14 +554,19 @@ export class SyncEngine {
     options?: ResourceDeleteOptions
   ): Promise<void> {
     const localDelete = this.cache.beginLocalDelete(type, id);
-    await this.transport.empty(
-      "DELETE",
-      path,
-      undefined,
-      undefined,
-      undefined,
-      resourceInstanceTokenHeaders(options?.instanceToken)
-    );
+    try {
+      await this.transport.empty(
+        "DELETE",
+        path,
+        undefined,
+        undefined,
+        undefined,
+        resourceInstanceTokenHeaders(options?.instanceToken)
+      );
+    } catch (error) {
+      this.cache.cancelLocalDelete(localDelete);
+      throw error;
+    }
     const previousVersion = this.cache.finishLocalDelete(localDelete);
     if (previousVersion === undefined) return;
     this.notify(localDeleteEvent(type, id, previousVersion), undefined);

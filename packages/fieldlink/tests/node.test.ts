@@ -1674,6 +1674,31 @@ describe("inbound transfer validation", () => {
     expect(transport.closed).toBe(true);
   });
 
+  it("continues teardown when a transport send never settles", async () => {
+    const transport = new NeverSettlingSendTransport();
+    const node = new FieldLinkNode({
+      nodeId: nodeA,
+      transport,
+      retryTimeoutMs: 25,
+    });
+    void node.send(test("response", 0), { destination: nodeB });
+    await transport.sendStarted;
+
+    const failure = await node.close().then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect(
+      (failure as AggregateError).errors.map((error: Error) => error.message),
+    ).toContainEqual(
+      expect.stringMatching(
+        /^Timed out waiting for FieldLink scheduler shutdown after \d+ ms$/,
+      ),
+    );
+    expect(transport.closed).toBe(true);
+  });
+
   it("drains an accepted async event listener before close", async () => {
     const transport = new MemoryTransport();
     const node = new FieldLinkNode({ nodeId: nodeB, transport });
@@ -1767,6 +1792,23 @@ class FailsFirstCompletionTransport extends MemoryTransport {
       return Promise.reject(new Error("completion send failed"));
     }
     return super.send(bytes);
+  }
+}
+
+class NeverSettlingSendTransport extends MemoryTransport {
+  readonly sendStarted: Promise<void>;
+  #resolveSendStarted: () => void = () => undefined;
+
+  constructor() {
+    super();
+    this.sendStarted = new Promise<void>((resolve) => {
+      this.#resolveSendStarted = resolve;
+    });
+  }
+
+  override send(_bytes: Uint8Array): Promise<void> {
+    this.#resolveSendStarted();
+    return new Promise<void>(() => undefined);
   }
 }
 

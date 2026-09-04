@@ -24,6 +24,7 @@ type LocalDeleteOperation = {
   readonly type: DeletableResourceType;
   readonly id: string;
   readonly observedEntry: object | undefined;
+  remoteDeleteSeen: boolean;
 };
 
 class SnapshotRecord<T> {
@@ -98,6 +99,7 @@ export class ResourceCache {
   };
   readonly pendingDeletes = new Set<string>();
   readonly locallyNotifiedDeletes = new Set<string>();
+  private readonly localDeleteOperations = new Set<LocalDeleteOperation>();
   private readonly snapshotRecords: SnapshotRecords = {
     entity: new SnapshotRecord<EntityResource>(),
     task: new SnapshotRecord<TaskResource>(),
@@ -145,6 +147,7 @@ export class ResourceCache {
     this.snapshotDirty = true;
     this.pendingDeletes.clear();
     this.locallyNotifiedDeletes.clear();
+    this.localDeleteOperations.clear();
     this.lastVersion = 0;
     for (const entity of resources.entities)
       this.cacheResource("entity", entity.entity_id, entity, { advanceCursor: false });
@@ -199,6 +202,9 @@ export class ResourceCache {
   }
 
   markRemoteDelete(type: ResourceType, id: string, version: number): void {
+    for (const operation of this.localDeleteOperations) {
+      if (operation.type === type && operation.id === id) operation.remoteDeleteSeen = true;
+    }
     this.entries[type].set(id, { version, deleted: true });
     this.removeFromSnapshot(type, id);
   }
@@ -214,12 +220,25 @@ export class ResourceCache {
   }
 
   beginLocalDelete(type: DeletableResourceType, id: string): LocalDeleteOperation {
-    return { type, id, observedEntry: this.entries[type].get(id) };
+    const operation = { type, id, observedEntry: this.entries[type].get(id), remoteDeleteSeen: false };
+    this.localDeleteOperations.add(operation);
+    return operation;
   }
 
   finishLocalDelete(operation: LocalDeleteOperation): number | undefined {
-    if (this.entries[operation.type].get(operation.id) !== operation.observedEntry) return undefined;
+    if (!this.localDeleteOperations.delete(operation)) return undefined;
+    const currentEntry = this.entries[operation.type].get(operation.id);
+    if (
+      currentEntry !== operation.observedEntry &&
+      (operation.remoteDeleteSeen || !sameResourceInstance(operation.type, operation.observedEntry, currentEntry))
+    ) {
+      return undefined;
+    }
     return this.markLocalDelete(operation.type, operation.id);
+  }
+
+  cancelLocalDelete(operation: LocalDeleteOperation): void {
+    this.localDeleteOperations.delete(operation);
   }
 
   private updateSnapshot<TType extends ResourceType>(type: TType, id: string, value: ResourceOf<TType>): void {
@@ -230,6 +249,18 @@ export class ResourceCache {
   private removeFromSnapshot<TType extends ResourceType>(type: TType, id: string): void {
     if (this.snapshotRecords[type].remove(id)) this.snapshotDirty = true;
   }
+}
+
+function sameResourceInstance<TType extends DeletableResourceType>(
+  type: TType,
+  observedEntry: object | undefined,
+  currentEntry: CacheEntry<ResourceOf<TType>> | undefined
+): boolean {
+  // Core keeps metadata.created_at stable across updates and changes it when an ID is reused.
+  if (!observedEntry || !currentEntry?.value || (type !== "entity" && type !== "object")) return false;
+  const observed = observedEntry as CacheEntry<ResourceOf<TType>>;
+  if (!observed.value) return false;
+  return observed.value.metadata.created_at === currentEntry.value.metadata.created_at;
 }
 
 function embeddedResourceVersion<TType extends ResourceType>(type: TType, value: ResourceOf<TType>): number {

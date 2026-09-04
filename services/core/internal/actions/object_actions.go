@@ -126,17 +126,16 @@ func normalizeOptionalObjectString(value *string) *string {
 	return &trimmed
 }
 
-// effectiveObjectBucket returns the bucket recorded with a persisted blob. The
-// configured bucket remains the compatibility fallback for legacy metadata.
-func effectiveObjectBucket(object *models.MediaObject, configuredBucket string) string {
+// persistedObjectBucket returns the bucket recorded with a persisted blob.
+func persistedObjectBucket(object *models.MediaObject) (string, error) {
 	if object != nil {
 		if bucket := object.GetBucket(); bucket != nil {
 			if trimmed := strings.TrimSpace(*bucket); trimmed != "" {
-				return trimmed
+				return trimmed, nil
 			}
 		}
 	}
-	return strings.TrimSpace(configuredBucket)
+	return "", &storage.StorageError{Message: "stored object is missing bucket metadata"}
 }
 
 // Get retrieves an object by ID.
@@ -372,7 +371,10 @@ func (a *ObjectActions) Delete(ctx context.Context, objectID string, options ...
 
 	var queuedBucket, queuedPath string
 	if a.storage != nil && object.Path != nil && strings.TrimSpace(*object.Path) != "" {
-		queuedBucket = effectiveObjectBucket(object, a.storage.Bucket())
+		queuedBucket, err = persistedObjectBucket(object)
+		if err != nil {
+			return err
+		}
 		queuedPath = strings.TrimSpace(*object.Path)
 		if err := a.queueStorageDeletionTx(ctx, tx, queuedBucket, queuedPath, objectID); err != nil {
 			return err
@@ -428,10 +430,13 @@ func (a *ObjectActions) Download(ctx context.Context, objectID string) (io.ReadC
 		return nil, "", 0, err
 	}
 	if obj.Path == nil || strings.TrimSpace(*obj.Path) == "" {
-		return nil, "", 0, &storage.ObjectNotFoundError{Bucket: effectiveObjectBucket(obj, a.storage.Bucket()), ObjectName: objectID}
+		return nil, "", 0, &storage.ObjectNotFoundError{Bucket: a.storage.Bucket(), ObjectName: objectID}
 	}
 
-	bucket := effectiveObjectBucket(obj, a.storage.Bucket())
+	bucket, err := persistedObjectBucket(obj)
+	if err != nil {
+		return nil, "", 0, err
+	}
 	reader, info, err := a.storage.StreamObjectPath(ctx, objectID, bucket, *obj.Path)
 	if err != nil {
 		return nil, "", 0, err

@@ -530,7 +530,11 @@ describe("MeshCore transport", () => {
       null,
     );
     const onInbox = vi.fn().mockRejectedValueOnce(new Error("disk full"));
-    const onFatalError = vi.fn();
+    let releaseFatal = (): void => undefined;
+    const fatalReleased = new Promise<void>((resolve) => {
+      releaseFatal = resolve;
+    });
+    const onFatalError = vi.fn(() => fatalReleased);
     const transport = new MeshCoreTransport("/dev/cu.test", {
       channel: 2,
       connection,
@@ -538,7 +542,22 @@ describe("MeshCore transport", () => {
       onFatalError,
     });
     await transport.open();
-    await expect(transport.startInbox()).rejects.toThrow("disk full");
+    let settled = false;
+    const starting = transport.startInbox();
+    void starting.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      },
+    );
+    await vi.waitFor(() => {
+      expect(onFatalError).toHaveBeenCalledOnce();
+    });
+    expect(settled).toBe(false);
+    releaseFatal();
+    await expect(starting).rejects.toThrow("disk full");
     expect(onInbox).toHaveBeenCalledTimes(1);
     await new Promise<void>((resolve) => setTimeout(resolve, 550));
     expect(onInbox).toHaveBeenCalledTimes(1);

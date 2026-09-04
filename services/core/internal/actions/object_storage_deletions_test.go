@@ -224,6 +224,53 @@ func TestReconcileStorageDeletionPreservesPathThatBecameLive(t *testing.T) {
 	}
 }
 
+func TestReconcileStorageDeletionRejectsLivePathWithoutBucket(t *testing.T) {
+	pool := openActionsTestPool(t)
+	for _, tt := range []struct {
+		name     string
+		metadata string
+	}{
+		{name: "missing", metadata: `{"size_bytes":3}`},
+		{name: "blank", metadata: `{"bucket":" ","size_bytes":3}`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			objectID := fmt.Sprintf("invalid-live-deletion-%s-%d", tt.name, time.Now().UTC().UnixNano())
+			path := fmt.Sprintf("objects/%s/blob", objectID)
+			defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
+
+			createStoredObjectFixture(ctx, t, pool, objectID, path)
+			if _, err := pool.Exec(ctx, `UPDATE objects SET json = $2::jsonb WHERE object_id = $1`, objectID, tt.metadata); err != nil {
+				t.Fatalf("set invalid bucket metadata: %v", err)
+			}
+			if _, err := pool.Exec(ctx, `
+				INSERT INTO storage_deletion_outbox (bucket, path, object_id)
+				VALUES ('atlas-media', $1, $2)
+			`, path, objectID); err != nil {
+				t.Fatalf("insert queued deletion: %v", err)
+			}
+
+			storageClient := &recordingObjectStorage{}
+			deleted, err := NewObjectActions(pool, storageClient).ReconcileStorageDeletions(ctx, 10)
+			if err == nil || !strings.Contains(err.Error(), "missing bucket metadata") {
+				t.Fatalf("ReconcileStorageDeletions error = %v, want missing bucket metadata", err)
+			}
+			if deleted != 0 || len(storageClient.deletedObjects) != 0 {
+				t.Fatalf("reconciliation deleted=%d objects=%#v, want none", deleted, storageClient.deletedObjects)
+			}
+
+			var outboxExists bool
+			if err := pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM storage_deletion_outbox WHERE path = $1)`, path).Scan(&outboxExists); err != nil {
+				t.Fatalf("check deletion outbox: %v", err)
+			}
+			if !outboxExists {
+				t.Fatal("invalid live path was removed from the deletion outbox")
+			}
+		})
+	}
+}
+
 func TestReconcileStorageDeletionUsesQueuedBucketForSamePath(t *testing.T) {
 	pool := openActionsTestPool(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

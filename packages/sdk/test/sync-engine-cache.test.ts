@@ -371,6 +371,50 @@ describe("AtlasClient sync: cache projection and reads", () => {
     expect(client.sync.snapshot().entities[original.entity_id]).toEqual(recreated);
   });
 
+  it("deletes an updated same-instance resource when the update precedes server deletion", async () => {
+    const core = new FakeCore();
+    const original = core.upsertEntity(entity("asset-update-before-delete"));
+    let deleteStarted = false;
+    let releaseDelete!: () => void;
+    const deleteGate = new Promise<void>((resolve) => {
+      releaseDelete = resolve;
+    });
+    const fetchImpl: typeof fetch = async (url, init) => {
+      if (new URL(String(url)).pathname === `/entities/${original.entity_id}` && init?.method === "DELETE") {
+        deleteStarted = true;
+        await deleteGate;
+      }
+      return core.fetch(String(url), init);
+    };
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: fetchImpl,
+      WebSocket: core.attachWebSocketGlobal(),
+      sync: "all",
+      pollIntervalMs: 0
+    });
+    await client.sync.start();
+    const watch = vi.fn();
+    client.entities.watch(original.entity_id, watch);
+
+    const deletion = client.entities.delete(original.entity_id);
+    await vi.waitFor(() => expect(deleteStarted).toBe(true));
+    const updated = await client.entities.update(original.entity_id, { alias: "updated before delete" });
+    expect(updated.metadata.created_at).toBe(original.metadata.created_at);
+    releaseDelete();
+
+    await expect(deletion).resolves.toBeUndefined();
+    expect(client.sync.snapshot().entities[original.entity_id]).toBeUndefined();
+    expect(watch).toHaveBeenLastCalledWith(
+      undefined,
+      expect.objectContaining({
+        event: "local_delete",
+        id: original.entity_id,
+        previous_version: updated.metadata.version
+      })
+    );
+  });
+
   it("keeps a recreated hydration entry after an older delete finishes", () => {
     const cache = new ResourceCache();
     const original = entity("asset-hydrated-recreated");
@@ -422,6 +466,41 @@ describe("AtlasClient sync: cache projection and reads", () => {
     expect(client.sync.snapshot().entities[original.entity_id]).toBeUndefined();
     expect(watch).toHaveBeenCalledOnce();
     expect(watch).toHaveBeenCalledWith(undefined, expect.objectContaining({ event: "local_delete" }));
+  });
+
+  it("enforces instance-token preconditions and omits the header when no token is supplied", async () => {
+    const core = new FakeCore();
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch });
+    const tokenized = await client.entities.create(
+      { entity_id: "asset-token-precondition", entity_type: "asset" },
+      { instanceToken: "expected-token" }
+    );
+
+    await expect(client.entities.delete(tokenized.entity_id, { instanceToken: "wrong-token" })).rejects.toMatchObject({
+      status: 412,
+      errorCode: "PRECONDITION_FAILED"
+    });
+    expect(core.entities.has(tokenized.entity_id)).toBe(true);
+
+    await expect(
+      client.entities.delete(tokenized.entity_id, { instanceToken: "expected-token" })
+    ).resolves.toBeUndefined();
+    const tokenizedObject = await client.objects.create(
+      { object_id: "object-token-precondition" },
+      { instanceToken: "expected-object-token" }
+    );
+    await expect(
+      client.objects.delete(tokenizedObject.object_id, { instanceToken: "wrong-object-token" })
+    ).rejects.toMatchObject({ status: 412, errorCode: "PRECONDITION_FAILED" });
+    expect(core.objects.has(tokenizedObject.object_id)).toBe(true);
+    await expect(
+      client.objects.delete(tokenizedObject.object_id, { instanceToken: "expected-object-token" })
+    ).resolves.toBeUndefined();
+    const tokenless = await client.entities.create({ entity_id: "asset-tokenless-delete", entity_type: "asset" });
+    await expect(client.entities.delete(tokenless.entity_id)).resolves.toBeUndefined();
+    expect(
+      core.requestHeaders.find((request) => request.path === `/entities/${tokenless.entity_id}`)?.instanceToken
+    ).toBeNull();
   });
 
   it("drains paginated full-dataset hydration responses", async () => {

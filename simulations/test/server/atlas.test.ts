@@ -68,4 +68,33 @@ describe("Atlas client factory", () => {
     expect(failure).toBeDefined();
     expect(isResourceInstanceTokenPreconditionFailure(failure)).toBe(true);
   });
+
+  it("does not classify a stale If-Match failure as an instance-token failure", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json(
+          {
+            success: false,
+            message: "If-Match precondition failed for entity",
+            error_code: "PRECONDITION_FAILED"
+          },
+          { status: 412 }
+        )
+      )
+    );
+    const client = createAtlasClientFactory({
+      id: "local",
+      label: "Local Core",
+      baseUrl: "http://127.0.0.1:8000"
+    })();
+
+    const failure = await client.entities.delete("asset-recreated", { instanceToken: "owned-instance" }).then(
+      () => undefined,
+      (error: unknown) => error
+    );
+
+    expect(failure).toBeDefined();
+    expect(isResourceInstanceTokenPreconditionFailure(failure)).toBe(false);
+  });
 });

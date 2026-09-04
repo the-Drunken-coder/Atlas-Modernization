@@ -412,4 +412,25 @@ describe("fetchAppConfig", () => {
       expect.stringContaining("timed out")
     );
   });
+
+  it("keeps Google unavailable when the optional session module cannot load", async () => {
+    vi.doMock("./google-maps-session.js", () => {
+      throw new Error("Google session module unavailable");
+    });
+    vi.stubEnv("VITE_GOOGLE_MAPS_API_KEY", "google-key");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    try {
+      const config = await fetchAppConfig();
+
+      expect(config.defaultMapSourceId).toBe("maptiler-osm-dark");
+      expect(config.mapSources.find((source) => source.id === "google-satellite")).toMatchObject({
+        id: "google-satellite",
+        unavailableReason: "session unavailable"
+      });
+      expect(warn).toHaveBeenCalledWith("Google Maps satellite session request unavailable");
+    } finally {
+      vi.doUnmock("./google-maps-session.js");
+    }
+  });
 });

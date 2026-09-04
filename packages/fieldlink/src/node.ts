@@ -613,6 +613,7 @@ export class FieldLinkNode {
   }
 
   async #close(): Promise<void> {
+    const teardownDeadline = performance.now() + this.#retryTimeoutMs;
     this.#closing = true;
     this.#receiveController.abort(new Error("FieldLink node is closing"));
     clearInterval(this.#cleanupTimer);
@@ -624,7 +625,7 @@ export class FieldLinkNode {
           await settleCallbacksUntilEmpty(this.#activeCallbacks);
           await settleUntilEmpty(this.#backgroundCleanup);
         })(),
-        this.#retryTimeoutMs,
+        remainingTimeout(teardownDeadline),
         "FieldLink node shutdown work",
       );
     } catch (error: unknown) {
@@ -634,7 +635,11 @@ export class FieldLinkNode {
     this.#unsubscribeTransport();
     this.#outboundTransfers.close();
     try {
-      await this.#scheduler.close();
+      await withTimeout(
+        this.#scheduler.close(),
+        remainingTimeout(teardownDeadline),
+        "FieldLink scheduler shutdown",
+      );
     } catch (error: unknown) {
       errors.push(asError(error));
     }
@@ -646,7 +651,11 @@ export class FieldLinkNode {
     this.#completedInbound.clear();
     this.#passiveInbound.clear();
     try {
-      await this.#transport.close();
+      await withTimeout(
+        this.#transport.close(),
+        remainingTimeout(teardownDeadline),
+        "FieldLink transport shutdown",
+      );
     } catch (error: unknown) {
       errors.push(asError(error));
     }
@@ -2324,6 +2333,10 @@ function withTimeout<Result>(
       },
     );
   });
+}
+
+function remainingTimeout(deadline: number): number {
+  return Math.max(0, Math.ceil(deadline - performance.now()));
 }
 
 function priorityRank(priority: Priority): number {

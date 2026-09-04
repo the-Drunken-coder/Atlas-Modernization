@@ -23,11 +23,19 @@ func TestLiveStorageObjectLifecycle(t *testing.T) {
 	if err := client.EnsureBucket(ctx); err != nil {
 		testenv.SkipOrFatal(t, "live MinIO unavailable: %v", err)
 	}
+	explicitBucket := fmt.Sprintf("atlas-storage-live-explicit-%d", time.Now().UTC().UnixNano())
+	explicitClient := newLiveStorageClient(t, explicitBucket)
+	if err := explicitClient.EnsureBucket(ctx); err != nil {
+		testenv.SkipOrFatal(t, "live MinIO unavailable: %v", err)
+	}
 	t.Cleanup(func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cleanupCancel()
 		if err := client.EmptyBucket(cleanupCtx); err != nil {
 			t.Errorf("empty live test bucket %q: %v", bucket, err)
+		}
+		if err := explicitClient.EmptyBucket(cleanupCtx); err != nil {
+			t.Errorf("empty live test bucket %q: %v", explicitBucket, err)
 		}
 	})
 
@@ -35,16 +43,16 @@ func TestLiveStorageObjectLifecycle(t *testing.T) {
 		t.Fatalf("EmptyBucket on empty bucket: %v", err)
 	}
 	objectID := "storage-live-object"
-	path := client.NewObjectPath(objectID)
-	info, err := client.UploadObjectFromReaderToPath(ctx, objectID, path, strings.NewReader("storage body"), int64(len("storage body")), "text/plain")
+	path := explicitClient.NewObjectPath(objectID)
+	info, err := explicitClient.UploadObjectFromReaderToPath(ctx, objectID, path, strings.NewReader("storage body"), int64(len("storage body")), "text/plain")
 	if err != nil {
 		t.Fatalf("UploadObjectFromReaderToPath: %v", err)
 	}
-	if info.Bucket != bucket || info.Path != path || info.SizeBytes != int64(len("storage body")) || info.ContentType != "text/plain" {
+	if info.Bucket != explicitBucket || info.Path != path || info.SizeBytes != int64(len("storage body")) || info.ContentType != "text/plain" {
 		t.Fatalf("uploaded object info = %#v", info)
 	}
 
-	reader, streamedInfo, err := client.StreamObjectPath(ctx, objectID, bucket, path)
+	reader, streamedInfo, err := client.StreamObjectPath(ctx, objectID, explicitBucket, path)
 	if err != nil {
 		t.Fatalf("StreamObjectPath: %v", err)
 	}
@@ -56,17 +64,17 @@ func TestLiveStorageObjectLifecycle(t *testing.T) {
 	if closeErr != nil {
 		t.Fatalf("close streamed object: %v", closeErr)
 	}
-	if string(body) != "storage body" || streamedInfo.Path != path || streamedInfo.SizeBytes != int64(len("storage body")) {
+	if string(body) != "storage body" || streamedInfo.Bucket != explicitBucket || streamedInfo.Path != path || streamedInfo.SizeBytes != int64(len("storage body")) {
 		t.Fatalf("streamed body/info = %q %#v", string(body), streamedInfo)
 	}
 
-	if err := client.DeleteObjectPath(ctx, bucket, path); err != nil {
+	if err := client.DeleteObjectPath(ctx, explicitBucket, path); err != nil {
 		t.Fatalf("DeleteObjectPath: %v", err)
 	}
-	if _, _, err := client.StreamObjectPath(ctx, objectID, bucket, path); !isObjectNotFound(err) {
+	if _, _, err := client.StreamObjectPath(ctx, objectID, explicitBucket, path); !isObjectNotFound(err) {
 		t.Fatalf("StreamObjectPath deleted object error = %v, want ObjectNotFoundError", err)
 	}
-	if err := client.DeleteObjectPath(ctx, bucket, path); err != nil {
+	if err := client.DeleteObjectPath(ctx, explicitBucket, path); err != nil {
 		t.Fatalf("DeleteObjectPath missing key should be idempotent: %v", err)
 	}
 	if err := client.EmptyBucket(ctx); err != nil {

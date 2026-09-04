@@ -291,17 +291,9 @@ func (a *ObjectActions) ReconcileStorageDeletions(ctx context.Context, limit int
 	}
 
 	deleted := 0
-	configuredBucket := strings.TrimSpace(a.storage.Bucket())
 	for _, item := range queued {
-		var live bool
-		if err := a.pool.QueryRow(ctx, `
-			SELECT EXISTS (
-				SELECT 1
-				FROM objects
-				WHERE path = $1
-					AND COALESCE(NULLIF(BTRIM(json->>'bucket'), ''), $3) = $2
-			)
-		`, item.path, item.bucket, configuredBucket).Scan(&live); err != nil {
+		live, err := objectStoragePathIsLive(ctx, a.pool, item.path, item.bucket)
+		if err != nil {
 			return deleted, errors.Join(recoveryErr, fmt.Errorf("check queued storage path live reference: %w", err))
 		}
 		if live {

@@ -146,7 +146,7 @@ func TestResourceInstanceTokenPreconditionsForEntityAndObject(t *testing.T) {
 		},
 	} {
 		t.Run(resource.name, func(t *testing.T) {
-			token := "instance-token-" + resource.name
+			token := fmt.Sprintf("instance-token-%s-%s", prefix, resource.name)
 			resp, err := requestJSONWithHeaders(ctx, client, http.MethodPost, resource.createPath, resource.body, map[string]string{
 				"Atlas-Resource-Instance-Token": token,
 			})

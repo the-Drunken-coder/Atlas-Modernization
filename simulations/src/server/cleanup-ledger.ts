@@ -213,10 +213,7 @@ function isCleanupResource(value: unknown): value is CleanupResource {
 
 function validInstanceToken(value: string): boolean {
   if (value.length === 0 || Buffer.byteLength(value, "utf8") > 256 || value.trim() !== value) return false;
-  return [...value].every((character) => {
-    const codePoint = character.codePointAt(0)!;
-    return codePoint >= 0x20 && codePoint !== 0x7f;
-  });
+  return [...value].every((character) => !/\p{C}/u.test(character));
 }
 
 function validTarget(value: unknown): value is CleanupLedgerTarget {

@@ -56,7 +56,7 @@ Broad credentialed-CORS wildcards such as `*`, `https://*`, `https://*.pages.dev
 ### Current Middleware Behavior
 
 - `AllowCredentials` is enabled so trusted browser origins can send Core-owned session cookies.
-- Allowed methods: `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS`
+- Allowed methods: `GET`, `POST`, `PATCH`, `DELETE`, `OPTIONS`
 - Allowed request headers: `Accept`, `Authorization`, `Content-Type`, `Idempotency-Key`, `Atlas-Runtime-ID`, `Atlas-Resource-Instance-Token`, `If-Match`, `If-None-Match`, `X-API-Key`, `X-Request-ID` (structured-log correlation)
 - Exposed headers: `ETag`, `X-Has-More`, `X-Next-Cursor`, `X-Limit`, `X-Returned-Count`, `Content-Length`
 

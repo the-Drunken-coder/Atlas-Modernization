@@ -558,11 +558,20 @@ describe("adapter process proxy", () => {
     const released = new Promise<void>((resolve) => {
       release = resolve;
     });
+    let acknowledgeClose = (): void => undefined;
+    const closeAcknowledged = new Promise<void>((resolve) => {
+      acknowledgeClose = resolve;
+    });
+    let observeChildExit = (): void => undefined;
+    const childExited = new Promise<void>((resolve) => {
+      observeChildExit = resolve;
+    });
     let started = 0;
     const adapter = await AdapterProcessNode.start({
       path: "test",
       channel: 1,
       allowInboxDrain: true,
+      onStderrEnd: observeChildExit,
       program: nodeScript(listenerDrainChildScript()),
     });
     const listener = async (): Promise<void> => {
@@ -571,7 +580,12 @@ describe("adapter process proxy", () => {
     };
     adapter.onMessage(listener);
     adapter.onPassiveMessage(listener);
-    adapter.onEvent(listener);
+    adapter.onEvent(async (event) => {
+      if (event.type === "adapter-close-ack") {
+        acknowledgeClose();
+      }
+      await listener();
+    });
 
     await adapter.activate();
     await eventually(() => started === 3);
@@ -580,7 +594,8 @@ describe("adapter process proxy", () => {
     const closing = adapter.close().then(() => {
       closed = true;
     });
-    await new Promise<void>((resolve) => setImmediate(resolve));
+    await closeAcknowledged;
+    await childExited;
     expect(closed).toBe(false);
     release();
     await expect(closing).resolves.toBeUndefined();
@@ -1166,10 +1181,18 @@ function listenerDrainChildScript(): string {
   ]
     .map((value) => JSON.stringify(value))
     .join("\n");
+  const closeAcknowledgement = JSON.stringify({
+    type: "event",
+    event: {
+      type: "adapter-close-ack",
+      at: "2026-08-24T12:00:00.000Z",
+      message: "close acknowledged",
+    },
+  });
   return `${writeReady()}
 let pending="";
 process.stdin.setEncoding("utf8");
-process.stdin.on("data",chunk=>{pending+=chunk;let i;while((i=pending.indexOf("\\n"))>=0){const line=pending.slice(0,i);pending=pending.slice(i+1);if(!line)continue;const request=JSON.parse(line);if(request.type==="activate"){const response=JSON.stringify({type:"response",id:request.id,ok:true});process.stdout.write(response+"\\n"+${JSON.stringify(`${notifications}\n`)});}else if(request.type==="close"){process.stdout.write(JSON.stringify({type:"response",id:request.id,ok:true})+"\\n",()=>process.exit(0));}}});`;
+process.stdin.on("data",chunk=>{pending+=chunk;let i;while((i=pending.indexOf("\\n"))>=0){const line=pending.slice(0,i);pending=pending.slice(i+1);if(!line)continue;const request=JSON.parse(line);if(request.type==="activate"){const response=JSON.stringify({type:"response",id:request.id,ok:true});process.stdout.write(response+"\\n"+${JSON.stringify(`${notifications}\n`)});}else if(request.type==="close"){const response=JSON.stringify({type:"response",id:request.id,ok:true});process.stderr.write("closing\\n");process.stdout.write(response+"\\n"+${JSON.stringify(`${closeAcknowledgement}\n`)},()=>setTimeout(()=>process.exit(0),25));}}});`;
 }
 
 function closedStdoutChildScript(): string {

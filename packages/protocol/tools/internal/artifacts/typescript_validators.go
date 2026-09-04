@@ -179,7 +179,15 @@ func (g *typeScriptGenerator) runtimeValidatorExpressionWithRefs(valueExpr strin
 		if err != nil {
 			return "", fmt.Errorf("not: %w", err)
 		}
-		return "!(" + expression + ")", nil
+		siblingSchema := cloneSchemaWithoutKey(schema, "not")
+		if len(siblingSchema) == 0 {
+			return "!(" + expression + ")", nil
+		}
+		siblingExpression, err := g.runtimeValidatorExpressionWithRefs(valueExpr, siblingSchema, seenRefs)
+		if err != nil {
+			return "", err
+		}
+		return "(" + siblingExpression + " && !(" + expression + "))", nil
 	}
 	if rawIf, ok := schema["if"]; ok {
 		ifSchema, ok := rawIf.(map[string]any)

@@ -473,6 +473,21 @@ func TestTypeScriptRuntimeSupportsNegatedRequiredProperties(t *testing.T) {
 	}
 }
 
+func TestTypeScriptRuntimePreservesSiblingConstraintsWithNot(t *testing.T) {
+	generator := &typeScriptGenerator{}
+	expression, err := generator.runtimeValidatorExpressionWithRefs("value", typeScriptSchema{
+		"type": "string",
+		"not":  map[string]any{"const": "reserved"},
+	}, map[string]bool{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `(typeof value === "string" && !(value === "reserved"))`
+	if expression != want {
+		t.Fatalf("type plus negated expression = %q, want %q", expression, want)
+	}
+}
+
 func TestTypeScriptIntegerValidatorsUseSafeIntegerGuard(t *testing.T) {
 	expression := runtimeNumberValidatorExpression("value", typeScriptSchema{"type": "integer"}, true)
 	if !strings.Contains(expression, "Number.isSafeInteger(value)") {

@@ -309,11 +309,13 @@ func (a *ObjectActions) Upload(ctx context.Context, objectID string, reader io.R
 	if err != nil {
 		return cleanupMetadataFailure(err)
 	}
-	var oldPath string
+	var oldBucket, oldPath string
 	if currentState.path != nil && strings.TrimSpace(*currentState.path) != "" && *currentState.path != objectPath {
 		oldPath = strings.TrimSpace(*currentState.path)
-		// A replacement may leave its old blob in a bucket that is no longer configured.
-		oldBucket := effectiveObjectBucket(currentState.resource, bucket)
+		oldBucket, err = persistedObjectBucket(currentState.resource)
+		if err != nil {
+			return cleanupMetadataFailure(err)
+		}
 		if err := a.queueStorageDeletionTx(ctx, tx, oldBucket, oldPath, objectID); err != nil {
 			return cleanupMetadataFailure(err)
 		}
@@ -340,7 +342,6 @@ func (a *ObjectActions) Upload(ctx context.Context, objectID string, reader io.R
 	}
 
 	if oldPath != "" {
-		oldBucket := effectiveObjectBucket(currentState.resource, bucket)
 		if err := a.deleteQueuedStoragePathNow(ctx, oldBucket, oldPath); err != nil {
 			log.Warn().Err(err).Str("object_id", objectID).Str("old_path", oldPath).Msg("Uploaded object metadata now points to a new blob, but old blob cleanup failed")
 		}

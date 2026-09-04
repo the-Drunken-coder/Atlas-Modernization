@@ -22,6 +22,7 @@ export type AtlasClientFactory = (options?: {
 }) => AtlasClientLike;
 
 const ATLAS_REQUEST_TIMEOUT_MS = 10_000;
+const RESOURCE_INSTANCE_TOKEN_PRECONDITION_MESSAGE = "Resource instance token precondition failed for ";
 
 export function createAtlasClientFactory(config: AtlasTargetConfig): AtlasClientFactory {
   return (options = {}) =>
@@ -39,7 +40,18 @@ export function isNotFoundError(error: unknown): boolean {
 }
 
 export function isResourceInstanceTokenPreconditionFailure(error: unknown): boolean {
-  return error instanceof AtlasAPIError && error.status === 412 && error.errorCode === "PRECONDITION_FAILED";
+  if (!(error instanceof AtlasAPIError) || error.status !== 412 || error.errorCode !== "PRECONDITION_FAILED") {
+    return false;
+  }
+  const response = error.response;
+  return (
+    typeof response === "object" &&
+    response !== null &&
+    !Array.isArray(response) &&
+    "message" in response &&
+    typeof response.message === "string" &&
+    response.message.startsWith(RESOURCE_INSTANCE_TOKEN_PRECONDITION_MESSAGE)
+  );
 }
 
 function abortableFetch(signal?: AbortSignal): typeof fetch {

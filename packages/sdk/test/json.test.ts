@@ -22,13 +22,16 @@ describe("parseAtlasJSON", () => {
     expect(() => parseAtlasJSON(serialized)).toThrow("integer that JavaScript cannot represent exactly");
   });
 
-  it.each(["0.1", "1e-300"])("preserves the standard fractional-number policy for %s", (serialized) => {
+  it.each(["0.1", "1e-300", "5e-324"])("preserves the standard fractional-number policy for %s", (serialized) => {
     expect(parseAtlasJSON(serialized)).toBe(JSON.parse(serialized));
   });
 
-  it.each(["1e-4000", "-1e-4000", "1e-400"])("rejects nonzero numbers that underflow to zero: %s", (serialized) => {
-    expect(() => parseAtlasJSON(serialized)).toThrow("nonzero number outside the JavaScript range");
-  });
+  it.each(["1e-4000", "-1e-4000", "1e-400", "1e-324"])(
+    "rejects nonzero numbers that underflow to zero: %s",
+    (serialized) => {
+      expect(() => parseAtlasJSON(serialized)).toThrow("nonzero number outside the JavaScript range");
+    }
+  );
 
   it.each(["0", "-0", "0.0", "0e-4000", "-0.0e-4000"])("preserves zero-valued number %s", (serialized) => {
     expect(parseAtlasJSON(serialized)).toBe(JSON.parse(serialized));

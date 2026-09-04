@@ -31,6 +31,8 @@ export class FakeCore {
   taskIdempotency = new Map<string, { request: string; task: FakeTaskResource }>();
   runtimes = new Map<string, { runtimeId: string; ready: boolean }>();
   objects = new Map<string, ObjectResource>();
+  entityInstanceTokens = new Map<string, string>();
+  objectInstanceTokens = new Map<string, string>();
   objectExtras = new Map<string, Record<string, unknown>>();
   deleteEvents: FeedEvent[] = [];
   events: FeedEvent[] = [];
@@ -87,10 +89,10 @@ export class FakeCore {
     if (path === "/command-catalog" && method === "GET") return json(this.commandCatalog);
     if (path === "/queries/full" || path === "/queries/changed-since") return this.queryResponse(parsed, method);
     if (segments[0] === "entities") {
-      return this.entityResponse(parsed, segments, method, init, ifMatch);
+      return this.entityResponse(parsed, segments, method, init, ifMatch, instanceToken);
     }
     if (segments[0] === "tasks") return this.taskResponse(segments, method, init, idempotencyKey);
-    if (segments[0] === "objects") return this.objectRouteResponse(segments, method, init, ifMatch);
+    if (segments[0] === "objects") return this.objectRouteResponse(segments, method, init, ifMatch, instanceToken);
     return protocolError("not found", "VALIDATION_ERROR", 404);
   };
 
@@ -177,7 +179,8 @@ export class FakeCore {
     segments: string[],
     method: string,
     init: RequestInit | undefined,
-    ifMatch: string | null
+    ifMatch: string | null,
+    instanceToken: string | null
   ): Promise<Response> {
     if (segments.length === 1 && method === "POST") {
       const body = await readValidatedBody<EntityCreateRequest>(init, requestValidators.entityCreate);
@@ -185,7 +188,9 @@ export class FakeCore {
       if (this.entities.has(body.entity_id)) {
         return protocolError("entity already exists", "ENTITY_ALREADY_EXISTS", 409);
       }
-      return json(this.createEntity(body), 201);
+      const value = this.createEntity(body);
+      if (instanceToken !== null) this.entityInstanceTokens.set(value.entity_id, instanceToken);
+      return json(value, 201);
     }
     const [, id, action] = segments;
     if (!id) return protocolError("not found", "VALIDATION_ERROR", 404);
@@ -232,7 +237,7 @@ export class FakeCore {
       const body = await readValidatedBody<EntityUpdateRequest>(init, requestValidators.entityUpdate);
       return body instanceof Response ? body : json(this.updateEntity(id, body));
     }
-    if (method === "DELETE") return this.deleteEntityResponse(id);
+    if (method === "DELETE") return this.deleteEntityResponse(id, instanceToken);
     return protocolError("not found", "VALIDATION_ERROR", 404);
   }
 
@@ -321,7 +326,8 @@ export class FakeCore {
     segments: string[],
     method: string,
     init: RequestInit | undefined,
-    ifMatch: string | null
+    ifMatch: string | null,
+    instanceToken: string | null
   ): Promise<Response> {
     if (segments.length === 1 && method === "POST") {
       const body = await readValidatedBody<ObjectCreateRequest>(init, requestValidators.objectCreate);
@@ -329,7 +335,9 @@ export class FakeCore {
       if (this.objects.has(body.object_id)) {
         return protocolError("object already exists", "OBJECT_ALREADY_EXISTS", 409);
       }
-      return json(this.createObject(body), 201);
+      const value = this.createObject(body);
+      if (instanceToken !== null) this.objectInstanceTokens.set(value.object_id, instanceToken);
+      return json(value, 201);
     }
     const [, id, action] = segments;
     if (!id) return protocolError("not found", "VALIDATION_ERROR", 404);
@@ -349,7 +357,7 @@ export class FakeCore {
       const body = await readValidatedBody<ObjectUpdateRequest>(init, requestValidators.objectUpdate);
       return body instanceof Response ? body : json(this.updateObject(id, body));
     }
-    if (method === "DELETE") return this.deleteObjectResponse(id);
+    if (method === "DELETE") return this.deleteObjectResponse(id, instanceToken);
     return protocolError("not found", "VALIDATION_ERROR", 404);
   }
 
@@ -361,7 +369,11 @@ export class FakeCore {
 
   upsertEntity(entity: EntityResource): EntityResource {
     const version = this.nextVersion();
-    const value = { ...entity, metadata: metadata(version) };
+    const current = this.entities.get(entity.entity_id);
+    const value = {
+      ...entity,
+      metadata: { ...metadata(version), created_at: current?.metadata.created_at ?? creationTimestamp(version) }
+    };
     this.entities.set(value.entity_id, value);
     this.record({ event: "update", resource_type: "entity", id: value.entity_id, version, resource: value });
     return value;
@@ -376,7 +388,7 @@ export class FakeCore {
       alias: request.alias ?? null,
       components: request.components ?? {},
       ...(request.extra === undefined ? {} : { extra: request.extra }),
-      metadata: metadata(version)
+      metadata: { ...metadata(version), created_at: creationTimestamp(version) }
     };
     this.entities.set(value.entity_id, value);
     this.record({ event: "create", resource_type: "entity", id: value.entity_id, version, resource: value });
@@ -456,7 +468,11 @@ export class FakeCore {
 
   upsertObject(object: ObjectResource): ObjectResource {
     const version = this.nextVersion();
-    const value = { ...object, metadata: metadata(version) };
+    const current = this.objects.get(object.object_id);
+    const value = {
+      ...object,
+      metadata: { ...metadata(version), created_at: current?.metadata.created_at ?? creationTimestamp(version) }
+    };
     this.objects.set(value.object_id, value);
     this.record({ event: "update", resource_type: "object", id: value.object_id, version, resource: value });
     return value;
@@ -473,7 +489,7 @@ export class FakeCore {
       usage_hints: request.usage_hints ?? [],
       ...(request.referenced_by === undefined ? {} : { referenced_by: request.referenced_by }),
       bucket: null,
-      metadata: metadata(version)
+      metadata: { ...metadata(version), created_at: creationTimestamp(version) }
     };
     this.objects.set(value.object_id, value);
     this.applyObjectExtra(value.object_id, request.extra);
@@ -503,6 +519,7 @@ export class FakeCore {
     const version = this.nextVersion();
     const event: FeedEvent = { event: "delete", resource_type: "entity", id, version };
     this.entities.delete(id);
+    this.entityInstanceTokens.delete(id);
     this.record(event);
     return event;
   }
@@ -514,18 +531,25 @@ export class FakeCore {
     const version = this.nextVersion();
     const event: FeedEvent = { event: "delete", resource_type: "object", id, version };
     this.objects.delete(id);
+    this.objectInstanceTokens.delete(id);
     this.objectExtras.delete(id);
     this.record(event);
     return event;
   }
 
-  private deleteEntityResponse(id: string): Response {
+  private deleteEntityResponse(id: string, instanceToken: string | null): Response {
+    if (instanceToken !== null && this.entityInstanceTokens.get(id) !== instanceToken) {
+      return protocolError("precondition failed", "PRECONDITION_FAILED", 412);
+    }
     return this.deleteEntity(id)
       ? new Response(null, { status: 204 })
       : protocolError("entity not found", "ENTITY_NOT_FOUND", 404);
   }
 
-  private deleteObjectResponse(id: string): Response {
+  private deleteObjectResponse(id: string, instanceToken: string | null): Response {
+    if (instanceToken !== null && this.objectInstanceTokens.get(id) !== instanceToken) {
+      return protocolError("precondition failed", "PRECONDITION_FAILED", 412);
+    }
     return this.deleteObject(id)
       ? new Response(null, { status: 204 })
       : protocolError("object not found", "OBJECT_NOT_FOUND", 404);
@@ -647,4 +671,8 @@ const promotedObjectExtraKeys = new Set([
 
 function now(): string {
   return "2026-06-12T12:00:00Z";
+}
+
+function creationTimestamp(version: number): string {
+  return new Date(Date.parse("2026-06-12T12:00:00Z") + version).toISOString();
 }

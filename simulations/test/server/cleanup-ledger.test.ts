@@ -79,6 +79,30 @@ describe("CleanupLedger", () => {
     expect(() => ledger.save({ ...run, resources: [run.resources[0]!, run.resources[0]!] })).toThrow(
       "duplicate resources"
     );
+    expect(() =>
+      ledger.save({
+        ...run,
+        resources: [
+          run.resources[0]!,
+          { type: "entity", id: `${run.runId}-asset-2`, instanceToken: run.resources[0]!.instanceToken }
+        ]
+      })
+    ).toThrow("duplicate instance tokens");
+    expect(ledger.load()).toEqual([]);
+  });
+
+  it("rejects Unicode control and non-printable instance-token characters", () => {
+    const ledger = new CleanupLedger(temporaryLedgerDirectory());
+    const run = record();
+
+    for (const character of ["\u0085", "\u200b"]) {
+      expect(() =>
+        ledger.save({
+          ...run,
+          resources: [{ ...run.resources[0]!, instanceToken: `token${character}value` }]
+        })
+      ).toThrow("outside its run ID prefix");
+    }
     expect(ledger.load()).toEqual([]);
   });
 

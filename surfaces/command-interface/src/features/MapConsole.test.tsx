@@ -468,7 +468,7 @@ describe("MapConsole", () => {
     expect(screen.getByText("No Commands are defined in Atlas Protocol")).toBeInTheDocument();
   });
 
-  it("keeps one Asset detail request alive across same-version snapshot replacements", async () => {
+  it("keeps one Asset detail request alive across telemetry updates", async () => {
     const user = userEvent.setup();
     const pending = deferred<EntityResource>();
     const loadEntityDetails = vi.fn(() => pending.promise);
@@ -507,7 +507,7 @@ describe("MapConsole", () => {
               [rover.entity_id]: {
                 ...rover,
                 components: { telemetry: { latitude: 40.1, longitude: -74.1 } },
-                metadata: { ...rover.metadata, version: 1 }
+                metadata: { ...rover.metadata, version: 2 }
               }
             },
             tasks: {}
@@ -521,6 +521,59 @@ describe("MapConsole", () => {
 
     pending.resolve({ ...rover, command_manifest: [] });
     expect(await screen.findByText("This Asset has no Commands")).toBeInTheDocument();
+  });
+
+  it("does not reload loaded Asset commands for telemetry updates", async () => {
+    const user = userEvent.setup();
+    const loadEntityDetails = vi.fn().mockResolvedValue({ ...rover, command_manifest: [] });
+    const baseValue: AtlasContextValue = {
+      status: "ready",
+      config: appConfig(),
+      snapshot: { entities: { [rover.entity_id]: rover }, tasks: {} },
+      catalog: taskingCatalog,
+      health: healthyConnection,
+      reconnect: vi.fn(),
+      loadEntityDetails,
+      submitCommand: async () => {
+        throw new Error("not used");
+      },
+      updateGeometry: async () => {
+        throw new Error("not used");
+      }
+    };
+    const view = render(
+      <AtlasStaticProvider value={baseValue}>
+        <MapConsole />
+      </AtlasStaticProvider>
+    );
+
+    await user.click(await screen.findByText("Rover"));
+    await user.click(screen.getByRole("button", { name: /Commands/ }));
+    expect(await screen.findByText("This Asset has no Commands")).toBeInTheDocument();
+    expect(loadEntityDetails).toHaveBeenCalledOnce();
+
+    view.rerender(
+      <AtlasStaticProvider
+        value={{
+          ...baseValue,
+          snapshot: {
+            entities: {
+              [rover.entity_id]: {
+                ...rover,
+                components: { telemetry: { latitude: 40.1, longitude: -74.1 } },
+                metadata: { ...rover.metadata, version: 2 }
+              }
+            },
+            tasks: {}
+          }
+        }}
+      >
+        <MapConsole />
+      </AtlasStaticProvider>
+    );
+
+    await waitFor(() => expect(loadEntityDetails).toHaveBeenCalledOnce());
+    expect(screen.getByText("This Asset has no Commands")).toBeInTheDocument();
   });
 
   it("reloads Asset commands when the selected runtime version changes from stopped to ready", async () => {

@@ -47,12 +47,12 @@ func TestNormalizeOptionalObjectString(t *testing.T) {
 	}
 }
 
-func TestEffectiveObjectBucketUsesPersistedBucketWithLegacyFallback(t *testing.T) {
-	configuredBucket := "atlas-current"
+func TestPersistedObjectBucketRequiresMetadata(t *testing.T) {
 	tests := []struct {
-		name   string
-		object *models.MediaObject
-		want   string
+		name    string
+		object  *models.MediaObject
+		want    string
+		wantErr bool
 	}{
 		{
 			name:   "persisted bucket",
@@ -60,21 +60,28 @@ func TestEffectiveObjectBucketUsesPersistedBucketWithLegacyFallback(t *testing.T
 			want:   "atlas-old",
 		},
 		{
-			name:   "missing bucket uses configured bucket",
-			object: &models.MediaObject{JSON: []byte(`{"size_bytes":3}`)},
-			want:   configuredBucket,
+			name:    "missing bucket",
+			object:  &models.MediaObject{JSON: []byte(`{"size_bytes":3}`)},
+			wantErr: true,
 		},
 		{
-			name:   "blank bucket uses configured bucket",
-			object: &models.MediaObject{JSON: []byte(`{"bucket":"  "}`)},
-			want:   configuredBucket,
+			name:    "blank bucket",
+			object:  &models.MediaObject{JSON: []byte(`{"bucket":"  "}`)},
+			wantErr: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := effectiveObjectBucket(tt.object, configuredBucket); got != tt.want {
-				t.Fatalf("effectiveObjectBucket() = %q, want %q", got, tt.want)
+			got, err := persistedObjectBucket(tt.object)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("persistedObjectBucket() = %q, want error", got)
+				}
+				return
+			}
+			if err != nil || got != tt.want {
+				t.Fatalf("persistedObjectBucket() = (%q, %v), want (%q, nil)", got, err, tt.want)
 			}
 		})
 	}
@@ -460,6 +467,45 @@ func TestObjectDownloadUsesPersistedBucket(t *testing.T) {
 	}
 	if len(storageClient.streamedObjects) != 1 || storageClient.streamedObjects[0] != (recordedStorageDelete{bucket: "atlas-old", path: path}) {
 		t.Fatalf("streamed objects = %#v, want atlas-old/%q", storageClient.streamedObjects, path)
+	}
+}
+
+func TestPathBearingObjectRequiresPersistedBucket(t *testing.T) {
+	pool := testenv.OpenDatabasePool(t, "ATLAS_ACTIONS_DATABASE_URL", "set ATLAS_ACTIONS_DATABASE_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed object bucket test")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if ok, err := actionsTestCoreSchemaPresent(ctx, pool); err != nil {
+		t.Fatalf("check core schema: %v", err)
+	} else if !ok {
+		t.Skip("core schema with storage deletion outbox is not present in test database")
+	}
+
+	objectID := fmt.Sprintf("missing-bucket-%d", time.Now().UTC().UnixNano())
+	path := fmt.Sprintf("objects/%s/blob", objectID)
+	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
+	createStoredObjectFixture(ctx, t, pool, objectID, path)
+	if _, err := pool.Exec(ctx, `UPDATE objects SET json = '{"size_bytes":3}'::jsonb WHERE object_id = $1`, objectID); err != nil {
+		t.Fatalf("remove persisted object bucket: %v", err)
+	}
+
+	storageClient := &recordingObjectStorage{bucket: "atlas-current"}
+	actions := NewObjectActions(pool, storageClient)
+	if _, _, _, err := actions.Download(ctx, objectID); err == nil || !strings.Contains(err.Error(), "missing bucket metadata") {
+		t.Fatalf("Download error = %v, want missing bucket metadata", err)
+	}
+	if err := actions.Delete(ctx, objectID); err == nil || !strings.Contains(err.Error(), "missing bucket metadata") {
+		t.Fatalf("Delete error = %v, want missing bucket metadata", err)
+	}
+	if len(storageClient.streamedObjects) != 0 || len(storageClient.deletedObjects) != 0 {
+		t.Fatalf("storage calls = streamed %#v, deleted %#v; want none", storageClient.streamedObjects, storageClient.deletedObjects)
+	}
+
+	var rowExists bool
+	if err := pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM objects WHERE object_id = $1)`, objectID).Scan(&rowExists); err != nil {
+		t.Fatalf("check object row: %v", err)
+	}
+	if !rowExists {
+		t.Fatal("delete removed object metadata without a persisted storage bucket")
 	}
 }
 
