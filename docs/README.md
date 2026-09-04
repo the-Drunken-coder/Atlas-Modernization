@@ -9,6 +9,7 @@ This is the single entry point for project documentation. Docs are split into **
 
 | Location | What it holds | Use it when… |
 | --- | --- | --- |
+| [`docs/slopo.md`](slopo.md) | Local duplication scans and Codex skills. | "How do I find repeated implementation logic?" |
 | [`docs/atlas-core/`](atlas-core/) | Atlas Core packaging, ingress, and release operations. | "How is the installable Core deployed or released?" |
 | [`docs/atlas-change-feed/`](atlas-change-feed/) | Change feed design: websocket push contract, subscription filters, consumption rules, simulation-testing approach. | "How do clients learn about writes without polling?" |
 | [`docs/atlas-plugins/`](atlas-plugins/) | Plugin architecture: operations, datastreams, external sources, isolation, and Core ownership. | "How does Atlas add external-data and extension capabilities?" |

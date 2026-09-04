@@ -48,6 +48,7 @@ Useful focused commands are `npm run build:sdk`, `npm run build:plugin-runtime`,
 
 ## Agent guidance
 
+- [Slopo duplication review](docs/slopo.md) configures local code similarity scans and explicit-use Codex skills.
 - **`AGENTS.md`** — hard constraints, commands, and recurring gotchas for agents working in this repo.
 - **`docs/README.md`** — the documentation index (project-level + per-package).
 - **`docs/design-decisions/`** — durable architectural decisions across the project.

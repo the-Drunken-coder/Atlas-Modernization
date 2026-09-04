@@ -1,0 +1,61 @@
+# Reviewed non-actionable clusters, one hash per line with a short reason.
+a794a5247e1d # Elementary finite-number predicate.
+9a7436d8cd3c # Standard callback-to-Promise completion.
+97a4f803fe98 # Small error-message adapters with different formatting policies.
+6e18a403daf2 # Conventional Error subclass constructor in separate CLIs.
+cba85601c989 # Elementary string predicates with distinct whitespace policies.
+5a1bfc464916 # Standard extraction of fulfilled Promise results.
+46b1326ea20a # One-line schema reference construction.
+3da571b833c2 # Elementary degree-to-radian conversion.
+7d5c1b5f356e # Standard slice-to-set conversion in separate Go modules.
+76dfd5ddf79e # Standard abort-listener cleanup on completion.
+c39c10b30f29 # Single abort-listener removal.
+39d5b4d44322 # Standard deferred HTTP response-body cleanup.
+e9a8ac1720b5 # Elementary name comparator.
+c6c6dc36b65e # Conventional stderr-and-exit CLI helper.
+720f98c97ccf # Elementary optional-string normalization.
+553408a03d11 # Standard deferred transaction rollback.
+076137400c04 # Elementary Node error type guard.
+ce7080911fb2 # Elementary numeric clamps with different bound handling.
+7a0a0ef74250 # Adapters already delegate to the same origin-policy helper.
+4b5c95d26cd9 # Elementary numeric predicates with different integer and range requirements.
+038c9507d808 # Standard deferred transaction cleanup with uncancelled contexts.
+e76b3b8dbad0 # Standard listener registration and unsubscribe pattern.
+e3c46362bd9b # Separate escape syntaxes use the appropriate character decoder.
+e1f8cb72980b # Single queued append operation.
+c5db003ac8ea # Standard deferred reader cleanup.
+bbed0c1859b6 # Standard listener registration and unsubscribe pattern.
+b4e8cc22c21c # Single field-projection callback.
+b4aef6bec515 # Single lookup predicate.
+9f3bc0c6df84 # Small callbacks already delegate to the same error handler.
+820f10816c37 # Standard timer cleanup and Promise rejection.
+7ac9f98cd19d # Standard listener registration and unsubscribe pattern.
+7465104e9f25 # Conventional Promise adapters for distinct stream and serial operations.
+62e52c4cd968 # Standard idempotent-close Promise memoization.
+61dc55920b0e # Single first-error assignment.
+5b0cfb2d38a7 # Elementary extraction of fulfilled Promise results.
+524c18d5aec3 # Single field-projection callback.
+491add31dc5a # Elementary extraction of rejected Promise results.
+3b60c9fd23cd # Single abort callback for separate connection stages.
+34ec079176af # Elementary normalization of thrown values to Error.
+2ad45acbf590 # Small callbacks already delegate to the same fatal-error handler.
+284fcfa5ea52 # Small abort guards with operation-specific error messages.
+24a665a7ed90 # One-line composition of existing validation predicates.
+1ea74f7e507e # Elementary path comparator.
+1064964609a3 # Single listener-removal closures.
+1c3ee812783c # Separate request and response header policies already share set cloning.
+9cf5c4941c7f # Small error callbacks for distinct connection failure events.
+8b4793144178 # Complementary camera-start and camera-settle callbacks, including a nested callback.
+4eae42e48a38 # Short allowlist predicates for different message shapes.
+316838aed2db # Distinct newest-updated and oldest-created task orderings.
+e9a834b1efc6 # Elementary abort-reason normalization.
+945820a6fb8b # Different task-status predicates.
+1ad7ffe84c4e # Small projections from different target representations; one derives the status fields.
+192326a8f3ab # Thin resource-specific adapters already reuse generated validators.
+ed7f49a67f95 # Wrapper delegates to the reported implementation.
+da1d72cc0acc # Thin adapters for different feature representations.
+90b0b26a1358 # Small error-reporting callbacks with distinct event messages.
+8c2cbfa0b603 # Heartbeat-only lookup and broader last-seen fallback have different semantics.
+48d49f1b224f # Simple typed conversions with different resource discriminators.
+166b5b49bc58 # Created-key validation already composes the base-key validator.
+da8a1c88eb69 # Client method delegates to the reported engine implementation.

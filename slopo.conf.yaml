@@ -1,0 +1,49 @@
+# Run Slopo from the repository root. See docs/slopo.md.
+source_dir: .
+
+# Slopo does not read .gitignore. Exclude dependencies, outputs, and test
+# scaffolding from the first pass over authored implementation code.
+source_dir_exclude:
+  - .git/
+  - .agents/
+  - .claude/
+  - .benchmarks/
+  - node_modules/
+  - vendor/
+  - .venv/
+  - venv/
+  - env/
+  - ENV/
+  - __pycache__/
+  - dist/
+  - coverage/
+  - htmlcov/
+  - storybook-static/
+  - .wrangler/
+  - .atlas-simulations/
+  - slopo-report/
+  - logs/
+  - tests/
+  - test/
+  - __tests__/
+  - testdata/
+  - fixtures/
+  - '*.test.*'
+  - '*.spec.*'
+  - '*_test.go'
+  - 'test_*.py'
+  - '*_test.py'
+  - '*.stories.*'
+  - '*.d.ts'
+  - packages/sdk/src/package-metadata.ts
+  - packages/protocol/generated/typescript/
+  - packages/protocol/generated/go/atlasprotocol/command_catalog.go
+  - packages/protocol/generated/go/atlasprotocol/json_integer_unmarshal.go
+  - packages/protocol/generated/go/atlasprotocol/revision.go
+  - packages/protocol/generated/go/atlasprotocol/validators.go
+  # types.go in the same generated directory is hand-authored and stays indexed.
+
+embedding_model: ollama/unclemusclez/jina-embeddings-v2-base-code
+embedding_dimensions: 768
+embedding_params:
+  api_base: http://127.0.0.1:11434
