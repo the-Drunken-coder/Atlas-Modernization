@@ -129,9 +129,10 @@ export function createScenarioContext(args: {
   };
   const instanceTokens = new Map<string, string>();
   const track = (resource: CreatedResource, instanceToken?: string) => {
-    if (resource.type !== "task") assertRunOwnedResourceId(args.runId, resource);
-    if (instanceToken !== undefined) instanceTokens.set(`${resource.type}\0${resource.id}`, instanceToken);
-    args.track(resource, instanceToken);
+    const normalizedResource = normalizeTrackedResource(resource);
+    if (normalizedResource.type !== "task") assertRunOwnedResourceId(args.runId, normalizedResource);
+    if (instanceToken !== undefined) instanceTokens.set(resourceKey(normalizedResource), instanceToken);
+    args.track(normalizedResource, instanceToken);
   };
   const trackCleanupCandidate = (resource: CleanupResource) => {
     if (resource.type === "task") return;
@@ -214,13 +215,14 @@ function trackClientCreates(
     operation: (instanceToken: string) => Promise<T>
   ): Promise<T> => {
     throwIfCancelled();
-    assertRunOwned(resource);
-    const key = `${resource.type}\0${resource.id}`;
+    const normalizedResource = normalizeTrackedResource(resource);
+    assertRunOwned(normalizedResource);
+    const key = resourceKey(normalizedResource);
     const instanceToken = instanceTokens.get(key) ?? randomUUID();
-    trackCleanupCandidate({ ...resource, instanceToken });
+    trackCleanupCandidate({ ...normalizedResource, instanceToken });
     instanceTokens.set(key, instanceToken);
     const created = await operation(instanceToken);
-    track(resource, instanceToken);
+    track(normalizedResource, instanceToken);
     throwIfCancelled();
     return created;
   };
@@ -231,16 +233,17 @@ function trackClientCreates(
     operation: (id: string, options?: ResourceDeleteOptions) => Promise<void>
   ): Promise<void> => {
     throwIfCancelled();
-    const key = `${type}\0${id}`;
+    const normalizedID = normalizeResourceID(type, id);
+    const key = `${type}\0${normalizedID}`;
     const recordedToken = instanceTokens.get(key);
     const deleteOptions =
       recordedToken === undefined || options?.instanceToken !== undefined
         ? options
         : { ...options, instanceToken: recordedToken };
-    await operation(id, deleteOptions);
+    await operation(normalizedID, deleteOptions);
     if (recordedToken !== undefined) {
       instanceTokens.delete(key);
-      untrackCleanupCandidate({ type, id });
+      untrackCleanupCandidate({ type, id: normalizedID });
     }
     throwIfCancelled();
   };
@@ -340,6 +343,21 @@ function trackClientCreates(
     subscribe: (filter) => guarded(() => client.subscribe(filter)),
     handshake: () => guarded(() => client.handshake())
   };
+}
+
+function normalizeTrackedResource(resource: CreatedResource): CreatedResource {
+  if (resource.type === "task") return resource;
+  return { ...resource, id: normalizeResourceID(resource.type, resource.id) };
+}
+
+function normalizeResourceID(type: "entity" | "object", id: string): string {
+  const normalized = id.trim();
+  if (!normalized) throw new TypeError(`${type}_id must not be empty`);
+  return normalized;
+}
+
+function resourceKey(resource: CreatedResource): string {
+  return `${resource.type}\0${resource.id}`;
 }
 
 function parseFields(

@@ -457,6 +457,48 @@ describe("AtlasClient sync: cache projection and reads", () => {
     }
   );
 
+  it.each(["entity", "object"] as const)(
+    "does not retain an uncached %s read that begins after local delete",
+    async (type) => {
+      const core = new FakeCore();
+      const original =
+        type === "entity"
+          ? core.upsertEntity(entity("asset-delete-read-started-late"))
+          : core.upsertObject(object("object-delete-read-started-late"));
+      const targetID = type === "entity" ? original.entity_id : original.object_id;
+      let deleteStarted = false;
+      let releaseDelete!: () => void;
+      const deleteGate = new Promise<void>((resolve) => {
+        releaseDelete = resolve;
+      });
+      const fetchImpl: typeof fetch = async (url, init) => {
+        const parsed = new URL(String(url));
+        if (parsed.pathname.endsWith(`/${targetID}`) && (init?.method ?? "GET").toUpperCase() === "DELETE") {
+          deleteStarted = true;
+          await deleteGate;
+        }
+        return core.fetch(String(url), init);
+      };
+      const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: false });
+
+      const deletion = type === "entity" ? client.entities.delete(targetID) : client.objects.delete(targetID);
+      await vi.waitFor(() => expect(deleteStarted).toBe(true));
+      const read =
+        type === "entity"
+          ? client.entities.get(targetID, { fresh: true })
+          : client.objects.get(targetID, { fresh: true });
+      await expect(read).resolves.toMatchObject({
+        [type === "entity" ? "entity_id" : "object_id"]: targetID
+      });
+
+      releaseDelete();
+      await expect(deletion).resolves.toBeUndefined();
+      expect(
+        type === "entity" ? client.sync.snapshot().entities[targetID] : client.sync.snapshot().objects[targetID]
+      ).toBeUndefined();
+    }
+  );
+
   it("deletes an updated same-instance resource when the update precedes server deletion", async () => {
     const core = new FakeCore();
     const original = core.upsertEntity(entity("asset-update-before-delete"));

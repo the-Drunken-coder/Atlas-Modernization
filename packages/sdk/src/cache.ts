@@ -7,7 +7,7 @@ import {
   type TaskResource
 } from "./protocol.js";
 import { resourceCacheKey, resourceID } from "./subscriptions.js";
-import type { CacheEntry, DeletableResourceType, ResourceOf, SyncSnapshot } from "./types.js";
+import type { CacheEntry, DeletableResourceType, ResourceOf, ResourceValue, SyncSnapshot } from "./types.js";
 
 export type CacheResourceOptions = {
   detail?: boolean;
@@ -169,8 +169,22 @@ export class ResourceCache {
     if (actualID !== id) {
       throw new TypeError(`Atlas ${type} resource id ${actualID} does not match cache id ${id}`);
     }
-    if (options?.generation !== undefined && this.generation(type, id) !== options.generation) {
-      return false;
+    if (options?.generation !== undefined) {
+      if (this.generation(type, id) !== options.generation) return false;
+      // A point read that starts after a local delete has begun must not make
+      // the deleted resource visible again before that delete finishes. A
+      // different instance is allowed through so a concurrent recreation is
+      // preserved by finishLocalDelete.
+      if (
+        [...this.localDeleteOperations].some(
+          (operation) =>
+            operation.type === type &&
+            operation.id === id &&
+            (operation.observedEntry === undefined || sameResourceValue(type, operation.observedEntry, value))
+        )
+      ) {
+        return false;
+      }
     }
     const version = options?.version ?? embeddedResourceVersion(type, value);
     const existing = this.entries[type].get(id);
@@ -281,6 +295,17 @@ function sameResourceInstance<TType extends DeletableResourceType>(
   const observed = observedEntry as CacheEntry<ResourceOf<TType>>;
   if (!observed.value) return false;
   return observed.value.metadata.created_at === currentEntry.value.metadata.created_at;
+}
+
+function sameResourceValue(
+  type: ResourceType,
+  observedEntry: object | undefined,
+  currentValue: ResourceValue
+): boolean {
+  if (!observedEntry || (type !== "entity" && type !== "object")) return false;
+  const observed = observedEntry as CacheEntry<EntityResource | ObjectResource>;
+  const current = currentValue as EntityResource | ObjectResource;
+  return observed.value?.metadata.created_at === current.metadata.created_at;
 }
 
 function embeddedResourceVersion<TType extends ResourceType>(type: TType, value: ResourceOf<TType>): number {

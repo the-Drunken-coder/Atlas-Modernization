@@ -17,23 +17,21 @@ export type ScreenGeographicBounds = {
   north: number;
 };
 
-/** Convert a screen rectangle to the shortest longitude interval it covers. */
+/** Convert a screen rectangle to its longitude interval, preserving wrapped screen-space spans. */
 export function geographicBoundsFromScreenRect(
   map: Pick<MlMap, "unproject">,
   rect: ScreenRectLike
 ): ScreenGeographicBounds {
   const first = map.unproject([rect.left, rect.top]);
+  const middle = map.unproject([rect.left + rect.width / 2, rect.top + rect.height / 2]);
   const second = map.unproject([rect.left + rect.width, rect.top + rect.height]);
-  const firstLongitude = first.lng;
-  let secondLongitude = second.lng;
-  if (isCanonicalLongitude(firstLongitude) && isCanonicalLongitude(secondLongitude)) {
-    if (secondLongitude - firstLongitude > 180) secondLongitude -= 360;
-    if (secondLongitude - firstLongitude < -180) secondLongitude += 360;
-  }
+  const middleLongitude = longitudeNear(middle.lng, first.lng);
+  const secondLongitude = longitudeNear(second.lng, middleLongitude);
+  const longitudes = [first.lng, middleLongitude, secondLongitude];
   return {
-    west: Math.min(firstLongitude, secondLongitude),
+    west: Math.min(...longitudes),
     south: Math.min(first.lat, second.lat),
-    east: Math.max(firstLongitude, secondLongitude),
+    east: Math.max(...longitudes),
     north: Math.max(first.lat, second.lat)
   };
 }
@@ -114,8 +112,4 @@ export function fitWorldOnce(map: MlMap, fitWorldOnceRef: { current: boolean }):
   if (fitWorldOnceRef.current) return;
   fitWorldOnceRef.current = true;
   map.fitBounds(INITIAL_WORLD_BOUNDS, { padding: 0, duration: 0 }, { [CAMERA_EVENT_TAG]: true });
-}
-
-function isCanonicalLongitude(longitude: number): boolean {
-  return longitude >= -180 && longitude <= 180;
 }

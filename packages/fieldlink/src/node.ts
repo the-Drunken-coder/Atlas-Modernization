@@ -645,6 +645,15 @@ export class FieldLinkNode {
       errors.push(failure);
       this.#scheduler.rejectActive(failure);
     }
+    try {
+      await withTimeout(
+        settleCallbacksUntilEmpty(this.#activeCallbacks),
+        remainingTimeout(teardownDeadline),
+        "FieldLink node listener shutdown",
+      );
+    } catch (error: unknown) {
+      errors.push(asError(error));
+    }
     for (const signals of this.#outbound.values()) {
       signals.reject(new Error("FieldLink node closed"));
     }

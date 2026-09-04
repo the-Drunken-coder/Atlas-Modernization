@@ -232,6 +232,27 @@ export async function serveAdapter(
   let teardownFailure: Error | undefined;
   const teardownTimeoutMs =
     options.teardownTimeoutMs ?? ADAPTER_TEARDOWN_TIMEOUT_MS;
+  let rejectServingWait: (error: Error) => void = () => undefined;
+  const servingTermination = new Promise<never>((_resolve, reject) => {
+    rejectServingWait = reject;
+  });
+  void servingTermination.catch(() => undefined);
+  const servingTerminationError = (): Error =>
+    runtimeFailure ??
+    (isAborted(signal) ? abortError(signal) : new Error("Adapter is closing"));
+  const waitForServingOperation = async <Result>(
+    operation: () => Promise<Result>,
+  ): Promise<Result> => {
+    const started = Promise.resolve().then(() => {
+      if (closing) {
+        throw servingTerminationError();
+      }
+      return operation();
+    });
+    return Promise.race([started, servingTermination]);
+  };
+  const writeServingMessage = (message: AdapterMessage): Promise<void> =>
+    waitForServingOperation(() => writer.write(message));
   const waitForTeardownStep = async <Result>(
     operation: () => Promise<Result>,
     description: string,
@@ -256,6 +277,7 @@ export async function serveAdapter(
     }
     closing = true;
     teardownDeadline = performance.now() + teardownTimeoutMs;
+    rejectServingWait(servingTerminationError());
     for (const controller of active.values()) {
       controller.abort(new Error("Adapter is closing"));
     }
@@ -310,17 +332,17 @@ export async function serveAdapter(
       throw abortError(options.signal);
     }
     if (options.parentManagesEvidence) {
-      await writer.write({ type: "parent-ready-required" });
+      await writeServingMessage({ type: "parent-ready-required" });
       const parentReady = await requestPump.next();
       if (parentReady?.type !== "parent-ready") {
         throw new Error("Adapter parent evidence handshake was not completed");
       }
     }
-    await runtime.start?.();
+    await waitForServingOperation(() => runtime.start?.() ?? Promise.resolve());
     if (isAborted(signal)) {
       throw abortError(signal);
     }
-    await writer.write({ type: "ready", ...runtime.ready });
+    await writeServingMessage({ type: "ready", ...runtime.ready });
     for (;;) {
       const request = await requestPump.next();
       if (request === undefined) {
@@ -331,14 +353,20 @@ export async function serveAdapter(
       }
       if (request.type === "activate") {
         try {
-          await runtime.activate?.();
+          await waitForServingOperation(
+            () => runtime.activate?.() ?? Promise.resolve(),
+          );
           if (isAborted(signal)) {
             throw abortError(signal);
           }
           activated = true;
-          await writer.write({ type: "response", id: request.id, ok: true });
+          await writeServingMessage({
+            type: "response",
+            id: request.id,
+            ok: true,
+          });
         } catch (error: unknown) {
-          await writer.write({
+          await writeServingMessage({
             type: "response",
             id: request.id,
             ok: false,
@@ -351,7 +379,11 @@ export async function serveAdapter(
         active
           .get(request.targetId)
           ?.abort(new Error(`Adapter request ${request.targetId} aborted`));
-        await writer.write({ type: "response", id: request.id, ok: true });
+        await writeServingMessage({
+          type: "response",
+          id: request.id,
+          ok: true,
+        });
         continue;
       }
       if (request.type === "close") {
@@ -363,7 +395,7 @@ export async function serveAdapter(
         break;
       }
       if (!activated) {
-        await writer.write({
+        await writeServingMessage({
           type: "response",
           id: request.id,
           ok: false,
@@ -374,15 +406,17 @@ export async function serveAdapter(
 
       if (request.type === "congestion") {
         try {
-          const result = await runtime.node.congestion();
-          await writer.write({
+          const result = await waitForServingOperation(() =>
+            runtime.node.congestion(),
+          );
+          await writeServingMessage({
             type: "response",
             id: request.id,
             ok: true,
             result,
           });
         } catch (error: unknown) {
-          await writer.write({
+          await writeServingMessage({
             type: "response",
             id: request.id,
             ok: false,

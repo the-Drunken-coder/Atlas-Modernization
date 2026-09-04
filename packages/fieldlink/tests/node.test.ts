@@ -1702,6 +1702,44 @@ describe("inbound transfer validation", () => {
     );
   });
 
+  it("does not let frame-sent listeners outlive close", async () => {
+    const transport = new PausesSendTransport();
+    const node = new FieldLinkNode({ nodeId: nodeA, transport });
+    let reportStarted = (): void => undefined;
+    const started = new Promise<void>((resolve) => {
+      reportStarted = resolve;
+    });
+    let release = (): void => undefined;
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let listenerFinished = false;
+    node.onEvent(async (event) => {
+      if (event.type !== "frame-sent") {
+        return;
+      }
+      reportStarted();
+      await released;
+      listenerFinished = true;
+    });
+
+    const sending = node.send(test("response", 0), { destination: nodeB });
+    await transport.sendStarted;
+    const closing = node.close();
+    let closed = false;
+    void closing.then(() => {
+      closed = true;
+    });
+    transport.releaseSend();
+    await sending;
+    await started;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(closed).toBe(false);
+    release();
+    await closing;
+    expect(listenerFinished).toBe(true);
+  });
+
   it("drains an accepted async event listener before close", async () => {
     const transport = new MemoryTransport();
     const node = new FieldLinkNode({ nodeId: nodeB, transport });
@@ -1812,6 +1850,36 @@ class NeverSettlingSendTransport extends MemoryTransport {
   override send(_bytes: Uint8Array): Promise<void> {
     this.#resolveSendStarted();
     return new Promise<void>(() => undefined);
+  }
+}
+
+class PausesSendTransport extends MemoryTransport {
+  readonly sendStarted: Promise<void>;
+  #resolveSendStarted: () => void = () => undefined;
+  #releaseSend: () => void = () => undefined;
+  #paused = false;
+
+  constructor() {
+    super();
+    this.sendStarted = new Promise<void>((resolve) => {
+      this.#resolveSendStarted = resolve;
+    });
+  }
+
+  override send(bytes: Uint8Array): Promise<void> {
+    const sent = super.send(bytes);
+    if (this.#paused) {
+      return sent;
+    }
+    this.#paused = true;
+    this.#resolveSendStarted();
+    return new Promise<void>((resolve) => {
+      this.#releaseSend = resolve;
+    });
+  }
+
+  releaseSend(): void {
+    this.#releaseSend();
   }
 }
 

@@ -163,6 +163,71 @@ describe("NDJSON adapter server", () => {
     await expect(serving).rejects.toThrow("radio failed");
   });
 
+  it("interrupts an inline writer wait when fatal teardown starts", async () => {
+    const input = new PassThrough();
+    let writeCount = 0;
+    let releaseWrite = (): void => undefined;
+    const output = new Writable({
+      write: (_chunk, _encoding, callback) => {
+        writeCount += 1;
+        if (writeCount === 2) {
+          releaseWrite = callback;
+          return;
+        }
+        callback();
+      },
+    });
+    const node = new FieldLinkNode({
+      nodeId: nodeB,
+      transport: new MemoryTransport(),
+    });
+    let reportFatal: ((error: Error) => void | Promise<void>) | undefined;
+    const serving = serveAdapter({
+      path: "test",
+      channel: 1,
+      input,
+      output,
+      teardownTimeoutMs: 25,
+      createRuntime: (options) => {
+        reportFatal = options.onFatalError;
+        return Promise.resolve({
+          node,
+          activate: () => Promise.resolve(),
+          ready: ready(1),
+        });
+      },
+    });
+    await vi.waitFor(() => {
+      expect(writeCount).toBe(1);
+    });
+
+    input.write(`${JSON.stringify({ id: 1, type: "activate" })}\n`);
+    await vi.waitFor(() => {
+      expect(writeCount).toBe(2);
+    });
+    if (reportFatal === undefined) {
+      throw new Error("Runtime fatal callback was not installed");
+    }
+
+    reportFatal(new Error("radio failed"));
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const result = await Promise.race([
+      serving.then(
+        () => ({ type: "resolved" as const }),
+        (error: unknown) => ({ type: "rejected" as const, error }),
+      ),
+      new Promise<{ readonly type: "timed-out" }>((resolve) => {
+        timeout = setTimeout(() => resolve({ type: "timed-out" }), 250);
+      }),
+    ]);
+    if (timeout !== undefined) {
+      clearTimeout(timeout);
+    }
+    releaseWrite();
+    await expect(serving).rejects.toThrow("radio failed");
+    expect(result.type).toBe("rejected");
+  });
+
   it("closes a runtime created after startup cancellation", async () => {
     const input = new PassThrough();
     const output = new PassThrough();

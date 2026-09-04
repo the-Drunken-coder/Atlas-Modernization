@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { AtlasClientFactory } from "../../src/server/atlas.js";
-import { CleanupLedger, type CleanupLedgerStore } from "../../src/server/cleanup-ledger.js";
+import { CleanupLedger, type CleanupLedgerRecord, type CleanupLedgerStore } from "../../src/server/cleanup-ledger.js";
 import { RunStore, type RunTarget } from "../../src/server/run-store.js";
 import type { Scenario, ScenarioInput } from "../../src/server/scenario.js";
 import { createFakeAtlasCore } from "../support/fake-atlas.js";
@@ -1171,6 +1171,43 @@ describe("RunStore", () => {
       "ledger write failed"
     );
     expect(store.list()).toEqual([]);
+  });
+
+  it("does not retain an unpersisted cleanup candidate across a retry", async () => {
+    const core = createFakeAtlasCore();
+    let saveCount = 0;
+    let lastSaved: CleanupLedgerRecord | undefined;
+    const ledger: CleanupLedgerStore = {
+      load: () => [],
+      save: (record) => {
+        saveCount += 1;
+        if (saveCount === 2) throw new Error("candidate write failed");
+        lastSaved = structuredClone(record);
+      },
+      remove: () => undefined
+    };
+    const store = new RunStore(core.factory, { ledger });
+    const scenario = scenarioFixture({
+      id: "retry-after-ledger-failure",
+      name: "Retry after ledger failure",
+      summary: "Retries creation after candidate persistence fails",
+      async run(ctx) {
+        const entityID = ctx.id("asset");
+        const create = () => ctx.createEntity({ entity_id: entityID, entity_type: "asset" });
+        await expect(create()).rejects.toThrow("candidate write failed");
+        await create();
+      }
+    });
+
+    const started = store.start(scenario, { fields: {} }, deployedTarget(core.factory));
+    await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("completed"));
+
+    expect(saveCount).toBe(3);
+    expect(lastSaved?.resources).toEqual([
+      { type: "entity", id: expect.stringMatching(`${started.id}-`), instanceToken: expect.any(String) }
+    ]);
+    await expect(store.cleanup(started.id)).resolves.toMatchObject({ cleaned: true });
+    expect(core.state.deleted).toEqual([expect.stringMatching("entity:")]);
   });
 
   it("recovers deployed runs as abandoned and retains their ledger until cleanup succeeds", async () => {

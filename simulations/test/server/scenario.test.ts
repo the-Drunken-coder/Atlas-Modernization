@@ -345,6 +345,119 @@ describe("scenario input parsing", () => {
     }
   });
 
+  it("matches instance tokens when the SDK trims resource IDs", async () => {
+    for (const type of ["entity", "object"] as const) {
+      const core = createFakeAtlasCore();
+      const deleteTokens: string[] = [];
+      const cleanupCandidates = new Map<string, string>();
+      const ctx = scenarioContext({
+        runId: `sim-delete-trim-${type}`,
+        clientFactory: () => {
+          const client = core.factory();
+          if (type === "entity") {
+            return {
+              ...client,
+              entities: {
+                ...client.entities,
+                create: async (entity, options) =>
+                  client.entities.create({ ...entity, entity_id: entity.entity_id.trim() }, options),
+                delete: async (id, options) => {
+                  deleteTokens.push(options?.instanceToken ?? "");
+                  return client.entities.delete(id.trim(), options);
+                }
+              }
+            };
+          }
+          return {
+            ...client,
+            objects: {
+              ...client.objects,
+              create: async (object, options) =>
+                client.objects.create({ ...object, object_id: object.object_id.trim() }, options),
+              delete: async (id, options) => {
+                deleteTokens.push(options?.instanceToken ?? "");
+                return client.objects.delete(id.trim(), options);
+              }
+            }
+          };
+        },
+        trackCleanupCandidate: (resource) =>
+          cleanupCandidates.set(`${resource.type}:${resource.id}`, resource.instanceToken),
+        untrackCleanupCandidate: (resource) => cleanupCandidates.delete(`${resource.type}:${resource.id}`)
+      });
+      const resourceID = ctx.id(type);
+      const paddedID = `${resourceID} `;
+      if (type === "entity") await ctx.client.entities.create({ entity_id: paddedID, entity_type: "asset" });
+      else await ctx.client.objects.create({ object_id: paddedID });
+
+      const token = cleanupCandidates.get(`${type}:${resourceID}`);
+      expect(token).toBeDefined();
+      if (type === "entity") await ctx.client.entities.delete(resourceID);
+      else await ctx.client.objects.delete(resourceID);
+
+      expect(deleteTokens).toEqual([token]);
+      expect(cleanupCandidates).toEqual(new Map());
+    }
+  });
+
+  it("matches manually tracked tokens when the SDK trims resource IDs", async () => {
+    for (const type of ["entity", "object"] as const) {
+      const core = createFakeAtlasCore();
+      const deleteTokens: string[] = [];
+      const cleanupCandidates = new Map<string, string>();
+      const ctx = scenarioContext({
+        runId: `sim-manual-track-trim-${type}`,
+        clientFactory: () => {
+          const client = core.factory();
+          if (type === "entity") {
+            return {
+              ...client,
+              entities: {
+                ...client.entities,
+                delete: async (id, options) => {
+                  deleteTokens.push(options?.instanceToken ?? "");
+                  return client.entities.delete(id.trim(), options);
+                }
+              }
+            };
+          }
+          return {
+            ...client,
+            objects: {
+              ...client.objects,
+              delete: async (id, options) => {
+                deleteTokens.push(options?.instanceToken ?? "");
+                return client.objects.delete(id.trim(), options);
+              }
+            }
+          };
+        },
+        track: (resource, token) => {
+          if (resource.type !== "task" && token !== undefined) {
+            cleanupCandidates.set(`${resource.type}:${resource.id}`, token);
+          }
+        },
+        untrackCleanupCandidate: (resource) => cleanupCandidates.delete(`${resource.type}:${resource.id}`)
+      });
+      const resourceID = ctx.id(type);
+      const paddedID = `${resourceID} `;
+      const instanceToken = `manual-${type}-token`;
+      if (type === "entity") {
+        await core.factory().entities.create({ entity_id: resourceID, entity_type: "asset" }, { instanceToken });
+      } else {
+        await core.factory().objects.create({ object_id: resourceID }, { instanceToken });
+      }
+      ctx.track({ type, id: paddedID }, instanceToken);
+
+      expect(cleanupCandidates).toEqual(new Map([[`${type}:${resourceID}`, instanceToken]]));
+      if (type === "entity") await ctx.client.entities.delete(resourceID);
+      else await ctx.client.objects.delete(resourceID);
+
+      expect(deleteTokens).toEqual([instanceToken]);
+      expect(cleanupCandidates).toEqual(new Map());
+    }
+  });
+
   it("preserves full and minimal check-in response inference", () => {
     const ctx = scenarioContext({
       runId: "sim-check-in-types"

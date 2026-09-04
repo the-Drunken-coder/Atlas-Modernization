@@ -197,16 +197,18 @@ export class RunStore {
     if (!hasResource(run.cleanupResources, tracked) && !sameResource(run.overflowCleanupResource, tracked)) {
       if (run.cleanupResources.length >= MAX_CREATED_RESOURCES_PER_RUN) {
         if (!run.overflowCleanupResource) {
-          run.overflowCleanupResource = cloneValue(tracked);
-          persistRun(run, this.options);
+          const overflowCleanupResource = cloneValue(tracked);
+          persistRun({ ...run, overflowCleanupResource }, this.options);
+          run.overflowCleanupResource = overflowCleanupResource;
         }
         const message = `Simulation can track at most ${MAX_CREATED_RESOURCES_PER_RUN} created resources`;
         run.trackingError = message;
         run.lastError = message;
         throw new Error(message);
       }
-      run.cleanupResources.push(cloneValue(tracked));
-      persistRun(run, this.options);
+      const cleanupResources = [...run.cleanupResources, cloneValue(tracked)];
+      persistRun({ ...run, cleanupResources }, this.options);
+      run.cleanupResources = cleanupResources;
     }
   }
 
@@ -214,12 +216,20 @@ export class RunStore {
     if (run.cleanupStarted || run.cleaned) return;
     const index = run.cleanupResources.findIndex((candidate) => sameResource(candidate, resource));
     let changed = index !== -1;
-    if (changed) run.cleanupResources.splice(index, 1);
-    if (sameResource(run.overflowCleanupResource, resource)) {
-      run.overflowCleanupResource = undefined;
+    const cleanupResources = changed
+      ? run.cleanupResources.filter((_, candidateIndex) => candidateIndex !== index)
+      : run.cleanupResources;
+    const overflowCleanupResource = sameResource(run.overflowCleanupResource, resource)
+      ? undefined
+      : run.overflowCleanupResource;
+    if (overflowCleanupResource !== run.overflowCleanupResource) {
       changed = true;
     }
-    if (changed) persistRun(run, this.options);
+    if (changed) {
+      persistRun({ ...run, cleanupResources, overflowCleanupResource }, this.options);
+      run.cleanupResources = cleanupResources;
+      run.overflowCleanupResource = overflowCleanupResource;
+    }
   }
 
   private assert(run: RunRecord, name: string, passed: boolean, message?: string): AssertionResult {
