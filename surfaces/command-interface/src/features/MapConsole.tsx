@@ -70,7 +70,7 @@ type EntityDetailsRequest = {
   inFlight: boolean;
   cancelled: boolean;
   controller?: AbortController;
-  failedVersion?: number;
+  retryAfterVersion?: number;
   staleRefreshAttempts: number;
   start: () => void;
 };
@@ -168,7 +168,7 @@ export function MapConsole() {
               : entity
           );
 
-          request.failedVersion = undefined;
+          request.retryAfterVersion = undefined;
           const desiredVersion = desiredEntityVersionRef.current;
           const stale = desiredVersion !== undefined && entity.metadata.version < desiredVersion;
           if (!stale) {
@@ -182,13 +182,14 @@ export function MapConsole() {
             setCommandManifestState({ entityId: request.entityId, status: "loading" });
             request.start();
           } else {
+            request.retryAfterVersion = desiredVersion;
             setCommandManifestState({ entityId: request.entityId, status: "unavailable" });
           }
         })
         .catch(() => {
           if (request.cancelled || controller.signal.aborted || detailsRequestRef.current !== request) return;
           request.inFlight = false;
-          request.failedVersion = desiredEntityVersionRef.current;
+          request.retryAfterVersion = desiredEntityVersionRef.current;
           setCommandManifestState({ entityId: request.entityId, status: "unavailable" });
         });
     };
@@ -210,34 +211,27 @@ export function MapConsole() {
         selectedSnapshotEntityVersion !== undefined &&
         selectedDetailsForRequest.metadata.version < selectedSnapshotEntityVersion
     );
-    const newerVersionAfterFailure =
-      request.failedVersion !== undefined &&
-      commandManifestState.entityId === selectedSnapshotEntityId &&
-      commandManifestState.status === "unavailable" &&
-      selectedSnapshotEntityVersion !== undefined &&
-      selectedSnapshotEntityVersion > request.failedVersion;
-    const staleRetryAvailable =
-      request.failedVersion === undefined &&
-      detailsAreStale &&
-      request.staleRefreshAttempts < MAX_STALE_DETAIL_REFRESHES;
+    const retryAfterVersion = request.retryAfterVersion;
+    const refreshAvailable =
+      retryAfterVersion === undefined
+        ? detailsAreStale && request.staleRefreshAttempts < MAX_STALE_DETAIL_REFRESHES
+        : selectedSnapshotEntityVersion !== undefined && selectedSnapshotEntityVersion > retryAfterVersion;
     if (
       !commandDetailsRequired ||
       request.entityId !== selectedSnapshotEntityId ||
       request.inFlight ||
       selectedSnapshotEntityVersion === undefined ||
-      (!newerVersionAfterFailure && !staleRetryAvailable)
+      !refreshAvailable
     ) {
       return;
     }
+    if (retryAfterVersion !== undefined) {
+      request.retryAfterVersion = undefined;
+      request.staleRefreshAttempts = 0;
+    }
     setCommandManifestState({ entityId: request.entityId, status: "loading" });
     request.start();
-  }, [
-    commandDetailsRequired,
-    commandManifestState,
-    selectedEntityDetails,
-    selectedSnapshotEntityId,
-    selectedSnapshotEntityVersion
-  ]);
+  }, [commandDetailsRequired, selectedEntityDetails, selectedSnapshotEntityId, selectedSnapshotEntityVersion]);
 
   const selectedDetails =
     selectedEntityDetails?.entity_id === selectedSnapshotEntityId ? selectedEntityDetails : undefined;

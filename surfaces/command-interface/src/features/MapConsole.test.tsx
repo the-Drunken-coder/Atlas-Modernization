@@ -742,16 +742,16 @@ describe("MapConsole", () => {
     expect(screen.getByText(/fixture\.queued/)).toBeInTheDocument();
   });
 
-  it("bounds stale refreshes while telemetry versions keep advancing", async () => {
+  it("restarts a bounded stale-refresh cycle after a later telemetry version", async () => {
     const user = userEvent.setup();
     const first = deferred<EntityResource>();
     const second = deferred<EntityResource>();
-    const unexpectedThird = deferred<EntityResource>();
+    const recovery = deferred<EntityResource>();
     const loadEntityDetails = vi
       .fn<NonNullable<AtlasContextValue["loadEntityDetails"]>>()
       .mockImplementationOnce(() => first.promise)
       .mockImplementationOnce(() => second.promise)
-      .mockImplementation(() => unexpectedThird.promise);
+      .mockImplementation(() => recovery.promise);
     const snapshotAtVersion = (version: number): AtlasSnapshot => ({
       entities: {
         [rover.entity_id]: {
@@ -802,6 +802,20 @@ describe("MapConsole", () => {
     expect(await screen.findByText("Asset Commands unavailable")).toBeInTheDocument();
     await act(async () => Promise.resolve());
     expect(loadEntityDetails).toHaveBeenCalledTimes(2);
+
+    view.rerender(
+      <AtlasStaticProvider value={{ ...baseValue, snapshot: snapshotAtVersion(4) }}>
+        <MapConsole />
+      </AtlasStaticProvider>
+    );
+    await waitFor(() => expect(loadEntityDetails).toHaveBeenCalledTimes(3));
+    recovery.resolve({
+      ...rover,
+      metadata: { ...rover.metadata, version: 4 },
+      command_manifest: [queuedManifest]
+    });
+
+    expect(await screen.findByText("No operator inputs are available for this Asset's Commands")).toBeInTheDocument();
   });
 
   it("reloads Asset commands when the selected runtime version changes from stopped to ready", async () => {
