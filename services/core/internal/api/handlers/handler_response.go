@@ -85,33 +85,7 @@ func (h *Handler) writeErrorWithDetails(w http.ResponseWriter, r *http.Request, 
 
 // writeErrorWithCause writes an error response and logs an optional wrapped cause (for 5xx diagnostics).
 func (h *Handler) writeErrorWithCause(w http.ResponseWriter, r *http.Request, status int, message string, errorCode protocol.ErrorCode, cause error) {
-	errorID := generateErrorID()
-	resp := ErrorResponse{
-		Success:   false,
-		Message:   message,
-		ErrorCode: errorCode,
-		ErrorID:   errorID,
-		Timestamp: time.Now().UTC().Format(time.RFC3339),
-		Path:      r.URL.Path,
-	}
-
-	logger := h.requestLogger(r)
-	event := logger.Warn()
-	if status >= http.StatusInternalServerError {
-		event = logger.Error()
-	}
-	event = event.
-		Str("error_id", errorID).
-		Str("error_code", string(errorCode)).
-		Str("path", r.URL.Path).
-		Str("method", r.Method).
-		Int("status", status)
-	if cause != nil && status >= http.StatusInternalServerError {
-		event = event.Err(cause)
-	}
-	event.Msg(message)
-
-	writeJSON(w, r, status, resp)
+	h.writeErrorWithDetails(w, r, status, message, errorCode, nil, cause)
 }
 
 // writeValidationError writes a validation error response with details.

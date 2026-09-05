@@ -390,7 +390,7 @@ export function attachTaskRequestHandler(
       }
     }
     const resolved = await response;
-    if (isActive(lifecycleSignal)) {
+    if (!lifecycleSignal.aborted) {
       await node.send(resolved, {
         destination: received.source,
         signal: lifecycleSignal,
@@ -462,10 +462,6 @@ function conflict(requestId: string): TaskResponse {
     status: 409,
     body: { error: "request_id was already used for different JSON" },
   };
-}
-
-function isActive(signal: AbortSignal): boolean {
-  return !signal.aborted;
 }
 
 function hasShape(

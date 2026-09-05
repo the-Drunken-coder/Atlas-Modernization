@@ -74,18 +74,22 @@ export function useSpatialOperationRunner({
 
   useEffect(() => abortRequest, [abortRequest]);
 
+  const resetSearch = useCallback(() => {
+    setAreaState(null);
+    setResult(null);
+    setSelectedFeatureId(undefined);
+    setStatus("idle");
+    setStale(false);
+    setError(undefined);
+  }, []);
+
   const selectTarget = useCallback(
     (next: SpatialOperationTarget) => {
       abortRequest();
       setTarget(next);
-      setAreaState(null);
-      setResult(null);
-      setSelectedFeatureId(undefined);
-      setStatus("idle");
-      setStale(false);
-      setError(undefined);
+      resetSearch();
     },
-    [abortRequest]
+    [abortRequest, resetSearch]
   );
 
   const refreshTarget = useCallback((next: SpatialOperationTarget) => {
@@ -99,13 +103,8 @@ export function useSpatialOperationRunner({
   const closeTarget = useCallback(() => {
     abortRequest();
     setTarget(undefined);
-    setAreaState(null);
-    setResult(null);
-    setSelectedFeatureId(undefined);
-    setStatus("idle");
-    setStale(false);
-    setError(undefined);
-  }, [abortRequest]);
+    resetSearch();
+  }, [abortRequest, resetSearch]);
 
   const setArea = useCallback(
     (next: MapArea) => {
@@ -198,13 +197,8 @@ export function useSpatialOperationRunner({
 
   const clear = useCallback(() => {
     abortRequest();
-    setAreaState(null);
-    setResult(null);
-    setSelectedFeatureId(undefined);
-    setStatus("idle");
-    setStale(false);
-    setError(undefined);
-  }, [abortRequest]);
+    resetSearch();
+  }, [abortRequest, resetSearch]);
 
   const setMapBoxZoomActive = useCallback((active: boolean) => {
     mapBoxZoomActiveRef.current = active;

@@ -696,7 +696,6 @@ def tunnel_readiness_url():
 
 def verify_tunnel_connection(public_url=None, max_retries=10, delay=2.0):
     """Verify the Cloudflare tunnel is working by checking the public readiness endpoint."""
-    import json
     import urllib.error
     import urllib.parse
     import urllib.request
@@ -724,9 +723,7 @@ def verify_tunnel_connection(public_url=None, max_retries=10, delay=2.0):
             logger.debug("Tunnel verification HTTP error: %s", e)
             # A warming tunnel commonly returns 5xx (e.g. Cloudflare 502/503/504)
             # before the origin is reachable, so keep retrying on server errors.
-            if e.code >= 500:
-                pass  # Tunnel still warming up, retry
-            else:
+            if e.code < 500:
                 return False, f"HTTP {e.code}"
         except urllib.error.URLError:
             pass  # Network error, retry

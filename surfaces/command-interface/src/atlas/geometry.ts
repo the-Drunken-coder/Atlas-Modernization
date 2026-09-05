@@ -130,11 +130,11 @@ export function addVertexAfter(geometry: UiGeometry, ref: VertexRef, position: P
 /** Midpoint along the shortest longitude path, retaining dimensions shared by both positions. */
 export function midpointPosition(current: Position, next: Position): Position {
   const longitudeDelta = normalizeLongitude(next[0] - current[0]);
-  const midpoint: number[] = [normalizeLongitude(current[0] + longitudeDelta / 2), (current[1] + next[1]) / 2];
+  const midpoint: Position = [normalizeLongitude(current[0] + longitudeDelta / 2), (current[1] + next[1]) / 2];
   for (let index = 2; index < Math.min(current.length, next.length); index++) {
     midpoint.push((current[index] + next[index]) / 2);
   }
-  return midpoint as Position;
+  return midpoint;
 }
 
 export function canRemoveVertex(geometry: UiGeometry, ref: VertexRef): boolean {

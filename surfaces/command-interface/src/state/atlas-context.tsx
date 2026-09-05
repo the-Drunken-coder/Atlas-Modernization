@@ -172,7 +172,7 @@ export function AtlasProvider({
 
   const loadEntityDetails = useCallback(async (entityId: string, signal?: AbortSignal) => {
     const dataSource = dataSourceRef.current;
-    if (!dataSource?.loadEntityDetails) return Promise.reject(new Error("Atlas Entity details are unavailable"));
+    if (!dataSource?.loadEntityDetails) throw new Error("Atlas Entity details are unavailable");
     return dataSource.loadEntityDetails(entityId, signal);
   }, []);
 
@@ -189,12 +189,12 @@ export function AtlasProvider({
       loadEntityDetails: entityDetailsAvailable ? loadEntityDetails : undefined,
       submitCommand: async (submission) => {
         const dataSource = dataSourceRef.current;
-        if (!dataSource) return Promise.reject(new Error("Atlas data source is not ready"));
+        if (!dataSource) throw new Error("Atlas data source is not ready");
         return dataSource.submitCommand(submission);
       },
       updateGeometry: async (entityId, geometry, ifMatchVersion) => {
         const dataSource = dataSourceRef.current;
-        if (!dataSource) return Promise.reject(new Error("Atlas data source is not ready"));
+        if (!dataSource) throw new Error("Atlas data source is not ready");
         return dataSource.updateGeometry(entityId, geometry, ifMatchVersion);
       }
     }),

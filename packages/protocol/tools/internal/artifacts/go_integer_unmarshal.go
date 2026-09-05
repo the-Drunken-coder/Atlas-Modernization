@@ -9,7 +9,6 @@ import (
 
 type goIntegerField struct {
 	jsonName string
-	goName   string
 	pointer  bool
 }
 
@@ -33,9 +32,9 @@ func goIntegerUnmarshalSource(root string) ([]byte, error) {
 		for jsonName, field := range fields {
 			switch field.typeName {
 			case "int64":
-				integerFields[typeName] = append(integerFields[typeName], goIntegerField{jsonName: jsonName, goName: field.name})
+				integerFields[typeName] = append(integerFields[typeName], goIntegerField{jsonName: jsonName})
 			case "*int64":
-				integerFields[typeName] = append(integerFields[typeName], goIntegerField{jsonName: jsonName, goName: field.name, pointer: true})
+				integerFields[typeName] = append(integerFields[typeName], goIntegerField{jsonName: jsonName, pointer: true})
 			}
 		}
 	}
@@ -302,7 +301,7 @@ func goIntegerUnmarshalSource(root string) ([]byte, error) {
 }
 
 func goTypeContainsJSONValue(typeName string, parsed parsedGoContracts, visiting map[string]bool) bool {
-	if typeName == "JSONValue" || strings.Contains(typeName, "JSONValue") {
+	if strings.Contains(typeName, "JSONValue") {
 		return true
 	}
 	if strings.HasPrefix(typeName, "*") {

@@ -28,14 +28,14 @@ export function createEditingMarkers(
 ): InstanceType<MapLibreRuntime["Marker"]>[] {
   const overlay = map.getSource("editing") as maplibregl.GeoJSONSource | undefined;
   if (!editing) {
-    overlay?.setData(emptyFeatureCollection() as never);
+    overlay?.setData(emptyFeatureCollection());
     return [];
   }
 
   overlay?.setData({
     type: "FeatureCollection",
     features: [{ type: "Feature", geometry: displayGeometry(editing.geometry), properties: {} }]
-  } as never);
+  });
 
   const markers: InstanceType<MapLibreRuntime["Marker"]>[] = [];
   const { geometry, onChange } = editing;

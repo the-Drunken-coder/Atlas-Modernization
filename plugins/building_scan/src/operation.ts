@@ -164,8 +164,10 @@ function parseCandidates(payload: unknown): { candidates: Candidate[]; sourceLim
     if (!isRecord(value) || (value.type !== "way" && value.type !== "relation")) {
       throw new MalformedSourceResponse();
     }
-    if (!Number.isSafeInteger(value.id) || (value.id as number) < 1) throw new MalformedSourceResponse();
-    const id = value.id as number;
+    if (typeof value.id !== "number" || !Number.isSafeInteger(value.id) || value.id < 1) {
+      throw new MalformedSourceResponse();
+    }
+    const id = value.id;
     const tags = parseTags(value.tags);
     const metadata = parseMetadata(value);
     const candidate: Candidate =
@@ -223,8 +225,8 @@ function parseMetadata(value: Record<string, unknown>): ElementMetadata {
 
 function optionalPositiveInteger(value: unknown): number | undefined {
   if (value === undefined) return undefined;
-  if (!Number.isSafeInteger(value) || (value as number) < 1) throw new MalformedSourceResponse();
-  return value as number;
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1) throw new MalformedSourceResponse();
+  return value;
 }
 
 function optionalNonEmptyString(value: unknown): string | undefined {
@@ -313,10 +315,12 @@ function assembleRings(input: Ring[]): Ring[] {
 function orientAndCanonicalizeRing(ring: Ring, role: "outer" | "inner"): Ring {
   if (!positionsEqual(ring[0], ring[ring.length - 1])) throw new MalformedSourceResponse();
   if (ring.length > 10_000) throw new MalformedSourceResponse();
-  let open = ring.slice(0, -1);
-  if (open.length < 3 || signedArea(ring) === 0) throw new MalformedSourceResponse();
-  const isCounterClockwise = signedArea(ring) > 0;
-  if ((role === "outer") !== isCounterClockwise) open = [...open].reverse();
+  const open = ring.slice(0, -1);
+  if (open.length < 3) throw new MalformedSourceResponse();
+  const area = signedArea(ring);
+  if (area === 0) throw new MalformedSourceResponse();
+  const isCounterClockwise = area > 0;
+  if ((role === "outer") !== isCounterClockwise) open.reverse();
   let start = 0;
   for (let index = 1; index < open.length; index += 1) {
     if (comparePositions(open[index], open[start]) < 0) start = index;

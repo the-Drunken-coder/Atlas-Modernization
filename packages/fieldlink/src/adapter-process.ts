@@ -1441,20 +1441,14 @@ function parseAdapterRequest(line: string): AdapterRequest {
   if (!isRecord(value) || !isRequestId(value.id)) {
     throw new Error("Malformed adapter request");
   }
-  if (value.type === "close") {
-    return { type: "close", id: value.id };
-  }
-  if (value.type === "parent-ready") {
-    return { type: "parent-ready", id: value.id };
-  }
-  if (value.type === "inbox-ack") {
-    return { type: "inbox-ack", id: value.id };
-  }
-  if (value.type === "activate") {
-    return { type: "activate", id: value.id };
-  }
-  if (value.type === "congestion") {
-    return { type: "congestion", id: value.id };
+  if (
+    value.type === "close" ||
+    value.type === "parent-ready" ||
+    value.type === "inbox-ack" ||
+    value.type === "activate" ||
+    value.type === "congestion"
+  ) {
+    return { type: value.type, id: value.id };
   }
   if (value.type === "abort" && isRequestId(value.targetId)) {
     return { type: "abort", id: value.id, targetId: value.targetId };
@@ -1478,12 +1472,7 @@ function parseAdapterRequest(line: string): AdapterRequest {
   ) {
     const priority = value.priority;
     const retryStrategy = value.retryStrategy;
-    if (
-      priority !== undefined &&
-      priority !== "high" &&
-      priority !== "normal" &&
-      priority !== "bulk"
-    ) {
+    if (priority !== undefined && !isPriority(priority)) {
       throw new Error("Malformed adapter priority");
     }
     if (retryStrategy !== undefined && retryStrategy !== "selective-window") {

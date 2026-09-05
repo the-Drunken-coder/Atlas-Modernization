@@ -185,11 +185,8 @@ func (c *httpClient) request(ctx context.Context, method, target string, body io
 	if err == nil {
 		return response, nil
 	}
-	if errors.Is(ctx.Err(), context.Canceled) {
-		return nil, &clientError{kind: failureCanceled, err: err}
-	}
-	if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded) {
-		return nil, &clientError{kind: failureTimeout, err: err}
+	if contextErr := privateContextError(ctx, err); contextErr != nil {
+		return nil, contextErr
 	}
 	return nil, &clientError{kind: failureUnreachable, err: err}
 }

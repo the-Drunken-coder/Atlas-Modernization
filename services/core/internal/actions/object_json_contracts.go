@@ -29,12 +29,12 @@ func objectJSONPatch(raw json.RawMessage, params UpdateObjectParams) jsonBlobPat
 
 // ValidateObjectBlob validates storage-facing object metadata.
 func ValidateObjectBlob(blob map[string]interface{}) error {
-	result := validationResultFromErrors(protocol.ValidateObjectBlob(blob))
-	if !result.HasErrors() {
+	validationErrors := protocol.ValidateObjectBlob(blob)
+	if len(validationErrors) == 0 {
 		return nil
 	}
 	return NewValidationErrorWithDetails(
-		fmt.Sprintf("Object validation failed (%d errors)", len(result.Errors)),
-		result.Errors,
+		fmt.Sprintf("Object validation failed (%d errors)", len(validationErrors)),
+		validationErrors,
 	)
 }

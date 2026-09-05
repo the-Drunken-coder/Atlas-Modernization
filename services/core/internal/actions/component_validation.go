@@ -6,21 +6,6 @@ import (
 	protocol "github.com/the-drunken-coder/atlas/packages/protocol/generated/go/atlasprotocol"
 )
 
-// ValidationResult holds multiple validation errors
-type ValidationResult struct {
-	Errors []string
-}
-
-func (vr *ValidationResult) HasErrors() bool {
-	return len(vr.Errors) > 0
-}
-
-func validationResultFromErrors(errors []string) *ValidationResult {
-	result := &ValidationResult{}
-	result.Errors = append(result.Errors, errors...)
-	return result
-}
-
 // NewValidationErrorWithDetails creates a validation error with multiple error details.
 func NewValidationErrorWithDetails(message string, details []string) *ValidationError {
 	return &ValidationError{
@@ -38,12 +23,12 @@ func ValidateEntityComponents(components map[string]interface{}) error {
 		return nil
 	}
 
-	result := validationResultFromErrors(protocol.ValidateEntityComponents(components))
+	validationErrors := protocol.ValidateEntityComponents(components)
 
-	if result.HasErrors() {
+	if len(validationErrors) > 0 {
 		return NewValidationErrorWithDetails(
-			fmt.Sprintf("Component validation failed (%d errors)", len(result.Errors)),
-			result.Errors,
+			fmt.Sprintf("Component validation failed (%d errors)", len(validationErrors)),
+			validationErrors,
 		)
 	}
 
@@ -55,12 +40,12 @@ func ValidateEntityBlob(blob map[string]interface{}) error {
 	if blob == nil {
 		return nil
 	}
-	result := validationResultFromErrors(protocol.ValidateEntityBlob(blob))
-	if !result.HasErrors() {
+	validationErrors := protocol.ValidateEntityBlob(blob)
+	if len(validationErrors) == 0 {
 		return nil
 	}
 	return NewValidationErrorWithDetails(
-		fmt.Sprintf("Entity validation failed (%d errors)", len(result.Errors)),
-		result.Errors,
+		fmt.Sprintf("Entity validation failed (%d errors)", len(validationErrors)),
+		validationErrors,
 	)
 }

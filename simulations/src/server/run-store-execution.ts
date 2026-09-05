@@ -72,12 +72,10 @@ export async function executeRun(
     if (!run.controller.signal.aborted) run.controller.abort(new Error("Simulation finished"));
     const outcome = { status: finalStatus, message: finalMessage };
     stopRegisteredClients(run, operations, outcome);
-    finalStatus = outcome.status;
-    finalMessage = outcome.message;
     run.clients = [];
     run.settled = true;
     if (finalError) operations.emit(run, { type: "error", level: "error", message: finalError });
-    operations.finish(run, finalStatus, finalMessage);
+    operations.finish(run, outcome.status, outcome.message);
     operations.prune();
   }
 }

@@ -259,11 +259,11 @@ function failedFinalizationSummary(
 ): Record<string, unknown> {
   const base = isRecord(summary) ? summary : { summary };
   const artifactError = [
-    ...(typeof base.artifactError === "string" ? [base.artifactError] : []),
-    ...errors.map((error) => error.message),
-  ]
-    .filter((message, index, messages) => messages.indexOf(message) === index)
-    .join("; ");
+    ...new Set([
+      ...(typeof base.artifactError === "string" ? [base.artifactError] : []),
+      ...errors.map((error) => error.message),
+    ]),
+  ].join("; ");
   return {
     ...base,
     status: "failed",

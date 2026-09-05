@@ -412,7 +412,7 @@ export function attachResourceRequestHandler(
     }
 
     const resolved = await response;
-    if (isActive(lifecycleSignal)) {
+    if (!lifecycleSignal.aborted) {
       await node.send(resolved, {
         destination: received.source,
         signal: lifecycleSignal,
@@ -543,10 +543,6 @@ function isRequestId(value: unknown): value is string {
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
-}
-
-function isActive(signal: AbortSignal): boolean {
-  return !signal.aborted;
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {

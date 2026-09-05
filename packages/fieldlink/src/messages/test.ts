@@ -1,12 +1,12 @@
 import { randomInt } from "node:crypto";
 
+import { FIELDLINK_MAX_MESSAGE_BYTES } from "../frame.js";
 import {
   MessageValidationError,
   type MessageDefinition,
 } from "./definition.js";
 
 const HEADER_BYTES = 5;
-const MAX_ENCODED_BYTES = 1024 * 1024;
 let nextExerciseCorrelationId = randomInt(0x1_0000_0000);
 
 /**
@@ -69,7 +69,7 @@ export const testMessage = {
       (value.kind === "request" || value.kind === "response") &&
       isUint32(value.correlationId) &&
       value.payload instanceof Uint8Array &&
-      value.payload.length <= MAX_ENCODED_BYTES - HEADER_BYTES
+      value.payload.length <= FIELDLINK_MAX_MESSAGE_BYTES - HEADER_BYTES
     );
   },
   encode(message: TestMessage): Uint8Array {
@@ -84,9 +84,12 @@ export const testMessage = {
     return bytes;
   },
   decode(bytes: Uint8Array): TestMessage {
-    if (bytes.length < HEADER_BYTES || bytes.length > MAX_ENCODED_BYTES) {
+    if (
+      bytes.length < HEADER_BYTES ||
+      bytes.length > FIELDLINK_MAX_MESSAGE_BYTES
+    ) {
       throw new MessageValidationError(
-        `Test message must be ${HEADER_BYTES} to ${MAX_ENCODED_BYTES} bytes`,
+        `Test message must be ${HEADER_BYTES} to ${FIELDLINK_MAX_MESSAGE_BYTES} bytes`,
       );
     }
     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -103,7 +106,7 @@ export const testMessage = {
   },
   exercise: {
     defaultPayloadBytes: 64,
-    maximumPayloadBytes: MAX_ENCODED_BYTES - HEADER_BYTES,
+    maximumPayloadBytes: FIELDLINK_MAX_MESSAGE_BYTES - HEADER_BYTES,
     payloadPresets: [64, 127, 4096],
     create(payloadBytes: number): TestMessage {
       return {
@@ -125,7 +128,7 @@ export const testMessage = {
         sent.kind === "request" &&
         received.kind === "response" &&
         received.correlationId === sent.correlationId &&
-        equalBytes(received.payload, sent.payload)
+        Buffer.compare(received.payload, sent.payload) === 0
       );
     },
   },
@@ -159,11 +162,4 @@ function isUint32(value: unknown): value is number {
     value >= 0 &&
     value <= 0xffff_ffff
   );
-}
-
-function equalBytes(a: Uint8Array, b: Uint8Array): boolean {
-  if (a.length !== b.length) {
-    return false;
-  }
-  return a.every((value, index) => value === b[index]);
 }

@@ -599,16 +599,7 @@ function readGatewayFailure(value: unknown): SourceGatewayFailureCode {
   if (typeof value !== "object" || value === null || Object.keys(value).length !== 1 || !("code" in value)) {
     throw new TypeError("Source Gateway failure response is invalid");
   }
-  const codes: readonly SourceGatewayFailureCode[] = [
-    "request_rejected",
-    "unknown_connector",
-    "response_too_large",
-    "upstream_unreachable",
-    "circuit_open",
-    "admission_timeout",
-    "upstream_timeout"
-  ];
-  if (typeof value.code !== "string" || !codes.includes(value.code as SourceGatewayFailureCode)) {
+  if (typeof value.code !== "string" || !Object.hasOwn(gatewayFailureStatuses, value.code)) {
     throw new TypeError("Source Gateway failure response is invalid");
   }
   return value.code as SourceGatewayFailureCode;
