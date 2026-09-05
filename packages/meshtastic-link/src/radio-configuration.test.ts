@@ -7,7 +7,13 @@ import { MeshtasticSerialRadio } from "./radio.js";
 
 const harness = vi.hoisted(() => ({ device: undefined as ReturnType<typeof configuredDevice> | undefined }));
 vi.mock("@meshtastic/transport-node-serial", () => ({
-  TransportNodeSerial: { create: vi.fn(async () => ({})) }
+  TransportNodeSerial: {
+    create: vi.fn(async () => ({
+      fromDevice: new ReadableStream(),
+      toDevice: new WritableStream(),
+      disconnect: vi.fn(async () => undefined)
+    }))
+  }
 }));
 vi.mock("@meshtastic/core", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@meshtastic/core")>()),
@@ -171,6 +177,7 @@ function configuredDevice() {
     onDeviceMetadataPacket: event<{ data: Protobuf.Mesh.DeviceMetadata }>(),
     onNodeInfoPacket: event<Protobuf.Mesh.NodeInfo>(),
     onMeshPacket: event<Protobuf.Mesh.MeshPacket>(),
+    onQueueStatus: event<Protobuf.Mesh.QueueStatus>(),
     onDeviceStatus: event<Types.DeviceStatusEnum>()
   };
   async function configure() {

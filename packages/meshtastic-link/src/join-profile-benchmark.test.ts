@@ -2,9 +2,10 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { runCanonicalBaseline, runFirstVerticalSlice, runStressBaseline } from "./benchmark.js";
+import { FakeCoreFeed, runCanonicalBaseline, runFirstVerticalSlice, runStressBaseline } from "./benchmark.js";
 import { VirtualClock } from "./clock.js";
 import { LINK_PROTOCOL_REVISION, RADIO_CONTRACT_REVISION } from "./contract.js";
+import { GatewayFeedDemand } from "./gateway.js";
 import {
   AssetJoinService,
   type DiscoveryBeacon,
@@ -16,6 +17,7 @@ import {
   type SourceAdmission
 } from "./joining.js";
 import { GatewayMembershipStore } from "./membership.js";
+import { SharedPicture } from "./picture.js";
 import {
   type ActualRadioConfiguration,
   type ConfigurationDifference,
@@ -26,7 +28,11 @@ import {
   RadioProfileManager
 } from "./profile.js";
 import type { LinkRadio, RadioPacket, RadioSendOptions } from "./radio.js";
+import { AtlasRadioSDK } from "./sdk.js";
 import { SimulatedPacketNetwork } from "./simulation.js";
+import { positionPublication } from "./test-fixtures.js";
+import { LinkTransport } from "./transport.js";
+import type { FeedSelector } from "./types.js";
 
 describe("joining and Radio profile", () => {
   it("fits discovery in one packet and preserves the full contract revision", () => {
@@ -520,7 +526,7 @@ describe("deterministic baseline", () => {
   it("runs the documented five-radio normal scenario through production transport", async () => {
     const result = await runCanonicalBaseline(42);
     expect(result).toEqual(
-      JSON.parse(await readFile(new URL("../baselines/canonical-json-v1-seed-42.json", import.meta.url), "utf8"))
+      JSON.parse(await readFile(new URL("../baselines/canonical-json-v2-seed-42.json", import.meta.url), "utf8"))
     );
     expect(result.semantic_result).toMatchObject({
       aggregate_subscription_feeds: 1,
@@ -528,7 +534,13 @@ describe("deterministic baseline", () => {
       data_request_completed: false,
       task_reports_received: 0
     });
-    expect(result.picture_metrics.at_30_seconds.total_records).toBeGreaterThan(0);
+    expect(result.feed_metrics).toEqual({
+      subscriber_count: 2,
+      core_publish_count: 1,
+      gateway_publish_count: 1,
+      receiver_delivery_count: 0
+    });
+    expect(result.picture_metrics.at_30_seconds.total_records).toBe(0);
     expect(result.picture_metrics.at_60_seconds.total_records).toBeGreaterThan(0);
     expect(result.network_metrics.radio_submissions).toBeGreaterThan(0);
   });
@@ -544,6 +556,148 @@ describe("deterministic baseline", () => {
       priority_preempted_object: true
     });
     expect(result.transport_metrics.retry_exhausted).toBe(3);
+  });
+
+  it("keeps one Core feed active after one of two subscribers leaves", async () => {
+    const clock = new VirtualClock();
+    const network = new SimulatedPacketNetwork({ seed: 7, clock, contentionWindowAirtimes: 0 });
+    const radioIDs = ["gateway", "asset-alpha", "asset-bravo"] as const;
+    const radios = new Map(radioIDs.map((id, index) => [id, network.addRadio(id, index + 1)]));
+    network.connect("gateway", "asset-alpha");
+    network.connect("gateway", "asset-bravo");
+
+    const pictures = new Map(radioIDs.map((id) => [id, new SharedPicture(`quiet-${id}`)]));
+    const transports = new Map(
+      radioIDs.map((id) => [
+        id,
+        new LinkTransport({
+          node: id === "gateway" ? { role: "gateway", id } : { role: "asset", id },
+          sourceGeneration: 1,
+          serviceSession: `quiet-session-${id}`,
+          radio: radios.get(id)!,
+          clock,
+          picture: pictures.get(id)!
+        })
+      ])
+    );
+    const clients = new Map([...transports].map(([id, transport]) => [id, new AtlasRadioSDK(transport)]));
+    const gateway = transports.get("gateway")!;
+    const selector: FeedSelector = { kind: "resource_type", resource_type: "entity" };
+    const gatewayNode = { role: "gateway", id: "gateway" } as const;
+    const demand = new GatewayFeedDemand();
+    const coreFeed = new FakeCoreFeed();
+    const feedSubscribers = new Set<string>();
+    const feedOperationIDs = new Set<string>();
+    const receiverDeliveries = new Map<string, number>([
+      ["asset-alpha", 0],
+      ["asset-bravo", 0]
+    ]);
+    let unsubscribeCoreFeed: (() => void) | undefined;
+    let gatewayPublishCount = 0;
+
+    for (const assetID of ["asset-alpha", "asset-bravo"] as const) {
+      const transport = transports.get(assetID)!;
+      transport.onEvent((event) => {
+        if (
+          event.type === "message" &&
+          event.source.id === "gateway" &&
+          event.message.type === "state" &&
+          event.message.path === "gateway_feed" &&
+          feedOperationIDs.has(event.operation_id)
+        ) {
+          receiverDeliveries.set(assetID, (receiverDeliveries.get(assetID) ?? 0) + 1);
+        }
+        if (event.type === "message" && event.requires_settlement && event.addressed_to_local) {
+          transport.settleInbound(event.settlement_id, true);
+        }
+      });
+    }
+    gateway.onEvent((event) => {
+      if (event.type !== "message" || event.message.type !== "subscription") return;
+      const result = demand.apply(event, clock.now());
+      if (result && "rejected" in result) {
+        gateway.settleInbound(event.settlement_id, false, result.reason);
+        return;
+      }
+      if (event.message.action === "remove") feedSubscribers.delete(event.source.id);
+      else feedSubscribers.add(event.source.id);
+      if (result?.active) {
+        unsubscribeCoreFeed = coreFeed.subscribe(result.selector, (publication, publishNumber) => {
+          const operationID = `quiet-feed-${publishNumber}`;
+          feedOperationIDs.add(operationID);
+          gatewayPublishCount++;
+          clients.get("gateway")!.publish({ ...publication, operation_id: operationID }, operationID);
+        });
+      } else if (result && !result.active) {
+        unsubscribeCoreFeed?.();
+        unsubscribeCoreFeed = undefined;
+      }
+      gateway.settleInbound(event.settlement_id, true);
+    });
+
+    try {
+      clients
+        .get("asset-alpha")!
+        .subscribe({ type: "subscription", action: "add", selector }, gatewayNode, "quiet-subscription-alpha");
+      await clock.runUntilIdle();
+      clients
+        .get("asset-bravo")!
+        .subscribe({ type: "subscription", action: "add", selector }, gatewayNode, "quiet-subscription-bravo");
+      await clock.runUntilIdle();
+
+      const firstPublication = {
+        ...positionPublication(1),
+        path: "gateway_feed",
+        confirmation: "core_confirmed"
+      } as const;
+      coreFeed.publish(selector, firstPublication);
+      await clock.runUntilIdle();
+      expect(coreFeed.metrics()).toEqual({ active_subscriptions: 1, publish_count: 1, delivery_count: 1 });
+      expect(gatewayPublishCount).toBe(1);
+      expect(receiverDeliveries).toEqual(
+        new Map([
+          ["asset-alpha", 1],
+          ["asset-bravo", 1]
+        ])
+      );
+      expect(pictures.get("asset-alpha")!.snapshot().records[0]?.state).toEqual(firstPublication.resource);
+      expect(pictures.get("asset-bravo")!.snapshot().records[0]?.state).toEqual(firstPublication.resource);
+
+      clients
+        .get("asset-alpha")!
+        .subscribe({ type: "subscription", action: "remove", selector }, gatewayNode, "quiet-unsubscribe-alpha");
+      await clock.runUntilIdle();
+      const secondPublication = {
+        ...positionPublication(2),
+        path: "gateway_feed",
+        confirmation: "core_confirmed"
+      } as const;
+      coreFeed.publish(selector, secondPublication);
+      await clock.runUntilIdle();
+      expect(feedSubscribers).toEqual(new Set(["asset-bravo"]));
+      expect(coreFeed.metrics()).toEqual({ active_subscriptions: 1, publish_count: 2, delivery_count: 2 });
+      expect(gatewayPublishCount).toBe(2);
+      expect(receiverDeliveries).toEqual(
+        new Map([
+          ["asset-alpha", 2],
+          ["asset-bravo", 2]
+        ])
+      );
+      expect(pictures.get("asset-bravo")!.snapshot().records[0]?.state).toEqual(secondPublication.resource);
+
+      clients
+        .get("asset-bravo")!
+        .subscribe({ type: "subscription", action: "remove", selector }, gatewayNode, "quiet-unsubscribe-bravo");
+      await clock.runUntilIdle();
+      coreFeed.publish(selector, secondPublication);
+      await clock.runUntilIdle();
+      expect(feedSubscribers.size).toBe(0);
+      expect(coreFeed.metrics()).toEqual({ active_subscriptions: 0, publish_count: 3, delivery_count: 2 });
+      expect(gatewayPublishCount).toBe(2);
+    } finally {
+      unsubscribeCoreFeed?.();
+      for (const transport of transports.values()) transport.stop();
+    }
   });
 });
 

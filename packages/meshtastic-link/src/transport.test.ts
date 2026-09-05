@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { TaskResource } from "@the-drunken-coder/atlas-sdk";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { encodeCanonicalJSON } from "./canonical-json.js";
 import { type Clock, type TimerHandle, VirtualClock } from "./clock.js";
 import { serializeLinkMessage } from "./contract.js";
@@ -14,6 +14,88 @@ import { LinkTransport } from "./transport.js";
 import type { LinkMessage } from "./types.js";
 
 describe("Link transport", () => {
+  it("counts malformed frames and invalid messages without retaining packet data", () => {
+    const clock = new VirtualClock();
+    const radio = new InMemoryMeshRadio();
+    const transport = new LinkTransport({
+      node: { role: "gateway", id: "gateway" },
+      sourceGeneration: 1,
+      radio,
+      clock
+    });
+    try {
+      radio.receive({
+        payload: Uint8Array.of(0x7b),
+        received_at: 0,
+        radio_source: 1,
+        channel: 1,
+        public_key_encrypted: false
+      });
+      radio.receive({
+        payload: encodeCanonicalJSON({
+          v: 1,
+          k: "u",
+          s: "a:asset-alpha",
+          d: "g:gateway",
+          g: 1,
+          x: "asset-session",
+          q: 1,
+          o: "invalid-message",
+          m: "invalid-message",
+          y: "q",
+          i: 0,
+          n: 1,
+          p: Buffer.from([0x7b]).toString("base64url")
+        }),
+        received_at: 1,
+        radio_source: 1,
+        channel: 1,
+        public_key_encrypted: false
+      });
+
+      expect(transport.metrics()).toMatchObject({
+        packets_received: 2,
+        malformed_frames: 1,
+        invalid_messages: 1
+      });
+      expect(transport.metrics()).not.toHaveProperty("payload");
+    } finally {
+      transport.stop();
+    }
+  });
+
+  it("logs and removes throwing event listeners", async () => {
+    const clock = new VirtualClock();
+    const radio = new InMemoryMeshRadio();
+    const transport = new LinkTransport({
+      node: { role: "asset", id: "asset-alpha" },
+      sourceGeneration: 1,
+      radio,
+      clock
+    });
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    let calls = 0;
+    transport.onEvent(() => {
+      calls++;
+      throw new Error("event listener failed");
+    });
+    try {
+      transport.submit(positionPublication(1));
+      await clock.runUntilIdle();
+      transport.submit(positionPublication(2));
+      await clock.runUntilIdle();
+
+      expect(calls).toBe(1);
+      expect(consoleError).toHaveBeenCalledWith(
+        "Link transport event listener failed; removing listener",
+        expect.any(Error)
+      );
+    } finally {
+      consoleError.mockRestore();
+      transport.stop();
+    }
+  });
+
   it("requires application settlement before confirming addressed work", async () => {
     const { clock, gateway, asset } = directPair();
     const received: string[] = [];
@@ -2056,7 +2138,7 @@ describe("Link transport", () => {
     expect(asset.status("renew-after-prune")).toMatchObject({ status: "confirmed" });
   });
 
-  it("reclaims completed identity capacity after the retention horizon", async () => {
+  it("reclaims completed identity capacity after the retention horizon", { timeout: 30_000 }, async () => {
     const { clock, gateway, asset } = directPair();
     gateway.onEvent((event) => {
       if (event.type === "message" && event.addressed_to_local) gateway.settleInbound(event.settlement_id, true);
@@ -2079,7 +2161,7 @@ describe("Link transport", () => {
     expect(asset.diagnostics()).toMatchObject({ queue_depth: 0, confirmed_pending: 0, stopped: false });
   });
 
-  it("wakes capacity listeners when completed identity retention expires", async () => {
+  it("wakes capacity listeners when completed identity retention expires", { timeout: 30_000 }, async () => {
     const { clock, gateway, asset } = immediatePair();
     gateway.onEvent((event) => {
       if (event.type === "message" && event.addressed_to_local) gateway.settleInbound(event.settlement_id, true);

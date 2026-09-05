@@ -223,6 +223,8 @@ export class LinkTransport {
     packets_sent: 0,
     transmitted_bytes: 0,
     packets_received: 0,
+    malformed_frames: 0,
+    invalid_messages: 0,
     duplicate_packets_suppressed: 0,
     stale_messages_rejected: 0,
     picture_rejected_capacity: 0,
@@ -728,6 +730,7 @@ export class LinkTransport {
     try {
       frame = decodeFrame(packet.payload);
     } catch {
+      this.mutableMetrics.malformed_frames++;
       return;
     }
     if (
@@ -780,6 +783,7 @@ export class LinkTransport {
     try {
       message = deserializeLinkMessage(bytes);
     } catch {
+      this.mutableMetrics.invalid_messages++;
       return;
     }
     if (message.type !== identity.message_type || messagePriority(message) !== identity.priority) return;
@@ -1438,7 +1442,8 @@ export class LinkTransport {
     for (const listener of this.listeners) {
       try {
         listener(event);
-      } catch {
+      } catch (error) {
+        console.error("Link transport event listener failed; removing listener", error);
         this.listeners.delete(listener);
       }
     }
@@ -1448,7 +1453,8 @@ export class LinkTransport {
     for (const listener of this.capacityListeners) {
       try {
         listener();
-      } catch {
+      } catch (error) {
+        console.error("Link transport capacity listener failed; removing listener", error);
         this.capacityListeners.delete(listener);
       }
     }

@@ -7,7 +7,13 @@ import { isFeedSelector, isLinkMessage } from "./contract.js";
 import { OrderedTaskDispatcher } from "./gateway.js";
 import type { AssetJoinStatus } from "./joining.js";
 import { PictureCursorError, type PictureEvent, type PictureSnapshot, SharedPicture } from "./picture.js";
-import { type RadioProfile, type RadioProfileManager, validateRadioProfile } from "./profile.js";
+import {
+  type ConfigurationEvidence,
+  type RadioProfile,
+  type RadioProfileInspection,
+  type RadioProfileManager,
+  validateRadioProfile
+} from "./profile.js";
 import type { LinkRadioTransmissionGate } from "./radio.js";
 import {
   LocalSubscriptionDemand,
@@ -46,6 +52,8 @@ export type LinkServiceStatus = {
 export type LinkServiceEvent =
   | { sequence: number; type: "transport"; event: TransportEvent }
   | { sequence: number; type: "status"; status: LinkServiceStatus };
+
+export type RadioProfileStatus = { available: false } | ({ available: true } & RadioProfileInspection);
 
 type LinkServiceEventInput =
   | { type: "transport"; event: TransportEvent }
@@ -300,12 +308,12 @@ export class LinkService {
     this.profileManager.replaceProfile(profile);
   }
 
-  async radioStatus(): Promise<unknown> {
+  async radioStatus(): Promise<RadioProfileStatus> {
     if (!this.profileManager) return { available: false };
     return { available: true, ...(await this.profileManager.inspect()) };
   }
 
-  async applyRadioProfile(): Promise<unknown> {
+  async applyRadioProfile(): Promise<ConfigurationEvidence> {
     if (!this.profileManager) throw new Error("Radio profile management is unavailable");
     const previous = this.profileApplyTail;
     let release!: () => void;
@@ -495,7 +503,7 @@ export class LinkService {
     this.scheduleRenewalIfNeeded();
   }
 
-  private async applyRadioProfileOnce(): Promise<unknown> {
+  private async applyRadioProfileOnce(): Promise<ConfigurationEvidence> {
     if (this.lifecycle === "stopped") throw new Error("Link service is stopped");
     const profileManager = this.profileManager;
     if (!profileManager) throw new Error("Radio profile management is unavailable");
@@ -570,7 +578,8 @@ export class LinkService {
     for (const listener of this.eventListeners) {
       try {
         listener(complete);
-      } catch {
+      } catch (error) {
+        console.error("Link service event listener failed; removing listener", error);
         this.eventListeners.delete(listener);
       }
     }

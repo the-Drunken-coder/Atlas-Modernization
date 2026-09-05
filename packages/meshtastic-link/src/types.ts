@@ -213,6 +213,8 @@ export type LinkMetrics = {
   packets_sent: number;
   transmitted_bytes: number;
   packets_received: number;
+  malformed_frames: number;
+  invalid_messages: number;
   duplicate_packets_suppressed: number;
   stale_messages_rejected: number;
   picture_rejected_capacity: number;

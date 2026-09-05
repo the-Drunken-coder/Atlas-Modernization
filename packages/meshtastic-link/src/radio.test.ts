@@ -32,6 +32,7 @@ const mocks = vi.hoisted(() => {
       onDeviceMetadataPacket: new FakeDispatcher(),
       onNodeInfoPacket: new FakeDispatcher(),
       onMeshPacket: new FakeDispatcher(),
+      onQueueStatus: new FakeDispatcher(),
       onDeviceStatus: new FakeDispatcher()
     };
     readonly index = state.devices.length;
@@ -57,7 +58,11 @@ const mocks = vi.hoisted(() => {
   return {
     state,
     FakeMeshDevice,
-    transportCreate: vi.fn(async () => ({}))
+    transportCreate: vi.fn(async () => ({
+      fromDevice: new ReadableStream(),
+      toDevice: new WritableStream(),
+      disconnect: vi.fn(async () => undefined)
+    }))
   };
 });
 

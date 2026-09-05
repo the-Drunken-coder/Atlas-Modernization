@@ -3,7 +3,7 @@ import { runCanonicalBaseline, runFirstVerticalSlice, runStressBaseline } from "
 
 const baselines = [
   ["first-position-v1-seed-42.json", await runFirstVerticalSlice(42)],
-  ["canonical-json-v1-seed-42.json", await runCanonicalBaseline(42)],
+  ["canonical-json-v2-seed-42.json", await runCanonicalBaseline(42)],
   ["canonical-json-stress-v1-seed-42.json", await runStressBaseline(42)]
 ] as const;
 

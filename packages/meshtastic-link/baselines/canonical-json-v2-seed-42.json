@@ -1,6 +1,6 @@
 {
   "scenario": "canonical_five_radio_normal",
-  "scenario_revision": 1,
+  "scenario_revision": 2,
   "seed": 42,
   "semantic_result": {
     "gateway_field_records": 0,
@@ -10,63 +10,71 @@
     "data_request_completed": false,
     "task_reports_received": 0
   },
+  "feed_metrics": {
+    "subscriber_count": 2,
+    "core_publish_count": 1,
+    "gateway_publish_count": 1,
+    "receiver_delivery_count": 0
+  },
   "transport_metrics": {
-    "application_bytes": 346013,
-    "packets_sent": 330,
-    "transmitted_bytes": 74603,
-    "packets_received": 738,
-    "duplicate_packets_suppressed": 10,
+    "application_bytes": 347052,
+    "packets_sent": 312,
+    "transmitted_bytes": 70469,
+    "packets_received": 706,
+    "malformed_frames": 0,
+    "invalid_messages": 0,
+    "duplicate_packets_suppressed": 4,
     "stale_messages_rejected": 0,
     "picture_rejected_capacity": 0,
-    "incomplete_reassemblies": 148,
-    "best_effort_replaced": 538,
+    "incomplete_reassemblies": 167,
+    "best_effort_replaced": 541,
     "confirmed_rejected_overload": 0,
     "retry_exhausted": 5,
-    "retransmitted_packets": 28,
-    "fragment_repair_requests_sent": 2,
-    "fragment_repair_requests_received": 1,
+    "retransmitted_packets": 21,
+    "fragment_repair_requests_sent": 4,
+    "fragment_repair_requests_received": 0,
     "radio_send_failures": 0,
     "inbound_settlement_expired": 0,
-    "peak_queue_depth": 4,
+    "peak_queue_depth": 5,
     "packets_sent_by_message_type": {
-      "state": 247,
-      "task_delivery": 10,
+      "state": 227,
+      "task_delivery": 8,
       "task_report": 0,
-      "data_request": 17,
+      "data_request": 13,
       "data_response": 0,
       "resource_operation": 0,
       "subscription": 24,
       "object_content": 0,
-      "control": 32
+      "control": 40
     },
     "transmitted_bytes_by_priority": {
-      "safety": 7134,
-      "task": 2323,
-      "request": 9217,
-      "live_state": 55929,
+      "safety": 8991,
+      "task": 1807,
+      "request": 8324,
+      "live_state": 51347,
       "resource": 0,
       "object_content": 0
     },
     "queue_wait_ms_by_priority": {
       "safety": {
-        "samples": 8,
-        "total_ms": 0,
-        "maximum_ms": 0
+        "samples": 10,
+        "total_ms": 2407.642822265625,
+        "maximum_ms": 2407.642822265625
       },
       "task": {
         "samples": 1,
-        "total_ms": 0,
-        "maximum_ms": 0
+        "total_ms": 355.75830078125,
+        "maximum_ms": 355.75830078125
       },
       "request": {
         "samples": 4,
-        "total_ms": 602.90625,
-        "maximum_ms": 602.90625
+        "total_ms": 1589.927734375,
+        "maximum_ms": 1589.927734375
       },
       "live_state": {
-        "samples": 26,
-        "total_ms": 259201.2626953125,
-        "maximum_ms": 51035.111328125
+        "samples": 24,
+        "total_ms": 193391.98046875,
+        "maximum_ms": 46517.708740234375
       },
       "resource": {
         "samples": 0,
@@ -81,9 +89,9 @@
     },
     "operation_latency_ms_by_priority": {
       "safety": {
-        "samples": 8,
-        "total_ms": 24274.1396484375,
-        "maximum_ms": 4086.487548828125
+        "samples": 10,
+        "total_ms": 38630.915283203125,
+        "maximum_ms": 8541.73388671875
       },
       "task": {
         "samples": 1,
@@ -96,9 +104,9 @@
         "maximum_ms": 30000
       },
       "live_state": {
-        "samples": 26,
-        "total_ms": 660984.1606445312,
-        "maximum_ms": 65739.08227539062
+        "samples": 24,
+        "total_ms": 596501.7893066406,
+        "maximum_ms": 56600.27099609375
       },
       "resource": {
         "samples": 0,
@@ -116,35 +124,35 @@
       "confirmed": 0,
       "responded": 0,
       "rejected": 0,
-      "failed": 543
+      "failed": 546
     }
   },
   "network_metrics": {
-    "radio_submissions": 330,
-    "mesh_transmissions": 778,
-    "transmitted_bytes": 175370,
-    "modeled_airtime_ms": 156617.98400000072,
-    "delivered_packets": 738,
+    "radio_submissions": 312,
+    "mesh_transmissions": 751,
+    "transmitted_bytes": 169602,
+    "modeled_airtime_ms": 151369.08800000054,
+    "delivered_packets": 706,
     "lost_packets": 0,
-    "collided_packets": 435,
+    "collided_packets": 399,
     "duplicate_deliveries": 0,
     "modeled_airtime_ms_by_message_type": {
-      "state": 107621.63199999937,
-      "task_delivery": 7661.696000000004,
+      "state": 101545.3439999995,
+      "task_delivery": 5292.287999999998,
       "task_report": 0,
-      "data_request": 6667.904000000001,
+      "data_request": 5299.968,
       "data_response": 0,
       "resource_operation": 0,
       "subscription": 14386.175999999989,
       "object_content": 0,
-      "control": 20280.57599999998,
+      "control": 24845.31200000001,
       "non_link": 0
     },
     "modeled_airtime_ms_by_priority": {
-      "safety": 20280.57599999998,
-      "task": 7661.696000000004,
-      "request": 21054.079999999987,
-      "live_state": 107621.63199999937,
+      "safety": 24845.31200000001,
+      "task": 5292.287999999998,
+      "request": 19686.143999999997,
+      "live_state": 101545.3439999995,
       "resource": 0,
       "object_content": 0,
       "non_link": 0
@@ -152,29 +160,29 @@
   },
   "picture_metrics": {
     "at_30_seconds": {
-      "total_records": 3,
+      "total_records": 0,
       "gateway_records": 0,
       "minimum_asset_records": 0,
-      "fresh_records": 3,
+      "fresh_records": 0,
       "stale_records": 0,
       "degraded_records": 0
     },
     "at_60_seconds": {
-      "total_records": 3,
+      "total_records": 1,
       "gateway_records": 0,
       "minimum_asset_records": 0,
-      "fresh_records": 3,
+      "fresh_records": 1,
       "stale_records": 0,
       "degraded_records": 0
     },
     "final": {
-      "total_records": 4,
+      "total_records": 2,
       "gateway_records": 0,
       "minimum_asset_records": 0,
-      "fresh_records": 3,
+      "fresh_records": 1,
       "stale_records": 1,
       "degraded_records": 0
     }
   },
-  "elapsed_ms": 136943.39111328125
+  "elapsed_ms": 126949.4833984375
 }

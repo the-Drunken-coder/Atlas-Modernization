@@ -36,6 +36,8 @@
     "packets_sent": 9,
     "transmitted_bytes": 2067,
     "packets_received": 0,
+    "malformed_frames": 0,
+    "invalid_messages": 0,
     "duplicate_packets_suppressed": 0,
     "stale_messages_rejected": 0,
     "picture_rejected_capacity": 0,

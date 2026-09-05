@@ -208,6 +208,43 @@ describe("Gateway application seams", () => {
 });
 
 describe("Ordered Task dispatcher recovery", () => {
+  it("dispatches assignments by RFC3339 instant with sub-millisecond precision", async () => {
+    const { clock, dispatcher, gateway, asset, network } = disconnectedTaskPair();
+    const delivered: string[] = [];
+    asset.onEvent((event) => {
+      if (event.type !== "message" || !event.addressed_to_local || event.message.type !== "task_delivery") return;
+      delivered.push(event.message.task.task_id);
+      asset.settleInbound(event.settlement_id, true);
+    });
+
+    try {
+      network.connect("gateway", "asset-alpha");
+      dispatcher.enqueueAssignments("asset-alpha", [
+        pendingTask("task-sub-ms-later", "2026-09-05T12:00:00.100001Z"),
+        pendingTask("task-c", "2026-09-05T08:00:00.100000-04:00"),
+        pendingTask("task-offset-earlier", "2026-09-05T13:00:00.099999+01:00"),
+        pendingTask("task-b", "2026-09-05T12:00:00.10Z"),
+        pendingTask("task-earliest", "2026-09-05T11:59:59.999999999Z"),
+        pendingTask("task-a", "2026-09-05T12:00:00.1Z")
+      ]);
+      await clock.runUntilIdle();
+
+      expect(delivered).toEqual([
+        "task-earliest",
+        "task-offset-earlier",
+        "task-a",
+        "task-b",
+        "task-c",
+        "task-sub-ms-later"
+      ]);
+      expect(dispatcher.state("asset-alpha")).toEqual({ queued: [] });
+    } finally {
+      dispatcher.close();
+      gateway.stop();
+      asset.stop();
+    }
+  });
+
   it("replays a timed-out first assignment from authoritative bulk state before the next Task", async () => {
     const { clock, dispatcher, gateway, asset, network } = disconnectedTaskPair();
     const first = pendingTask("first", "2026-09-05T12:00:00Z");

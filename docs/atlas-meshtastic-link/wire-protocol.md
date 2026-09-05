@@ -8,6 +8,8 @@ Atlas Protocol remains the source of truth for resources, Commands, Tasks, lifec
 
 The initial generator preserves the Atlas Protocol shapes and semantics without selecting a radio-specific subset of fields. It produces a radio-facing equivalent of the Atlas API and SDK rather than a second hand-authored model.
 
+The current Protocol schema defines resource shapes and validators, but has no endpoint operation catalog. The baseline generator therefore validates its operation adapters against Protocol definitions and the Protocol revision, and a parity test compares the generated operation names with the public Atlas SDK resource, Runtime, query, catalog, and Plugin methods. Local watches and sync/feed lifecycle helpers are excluded. Input, output, and context validation switches are exhaustive over the generated operation names. This catches drift in existing SDK operation families; adding a new SDK family or a Protocol operation that the SDK does not expose still requires extending the adapter coverage.
+
 The first baseline serialization is the ordinary compact UTF-8 JSON emitted for Atlas Protocol operations. It adds no presentation whitespace, compression, shortened fields, omitted Protocol fields, or radio-specific representation. The generated serializer makes output deterministic so a repeated logical payload has stable benchmark bytes.
 
 Future optimized encodings may shorten identifiers, use smaller field representations, or introduce purpose-built compact layouts. They remain generated adapters. A decoded optimized message must produce the same Atlas operation as the baseline and pass the same Protocol validation.

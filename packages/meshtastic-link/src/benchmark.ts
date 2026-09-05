@@ -7,7 +7,7 @@ import { SharedPicture } from "./picture.js";
 import { AtlasRadioSDK } from "./sdk.js";
 import { type PacketNetworkMetrics, SimulatedPacketNetwork } from "./simulation.js";
 import { LinkTransport } from "./transport.js";
-import type { LinkMetrics, StatePublication } from "./types.js";
+import type { FeedSelector, LinkMetrics, LinkOperationResult, StatePublication } from "./types.js";
 
 const SCENARIO_START_MS = Date.parse("2026-09-02T12:00:00Z");
 
@@ -27,7 +27,7 @@ export type BaselineBenchmarkResult = {
 
 export type CanonicalBaselineResult = {
   scenario: "canonical_five_radio_normal";
-  scenario_revision: 1;
+  scenario_revision: 2;
   seed: number;
   semantic_result: {
     gateway_field_records: number;
@@ -36,6 +36,12 @@ export type CanonicalBaselineResult = {
     task_delivery_order: string[];
     data_request_completed: boolean;
     task_reports_received: number;
+  };
+  feed_metrics: {
+    subscriber_count: number;
+    core_publish_count: number;
+    gateway_publish_count: number;
+    receiver_delivery_count: number;
   };
   transport_metrics: LinkMetrics;
   network_metrics: PacketNetworkMetrics;
@@ -76,6 +82,44 @@ export type PictureBenchmarkSummary = {
   stale_records: number;
   degraded_records: number;
 };
+
+type FakeCoreFeedListener = (publication: StatePublication, publishNumber: number) => void;
+type TaskReportAction = "acknowledge" | "start" | "progress" | "complete";
+
+/** A deterministic change-feed seam for exercising the Gateway application's production path. */
+export class FakeCoreFeed {
+  private readonly listeners = new Map<string, FakeCoreFeedListener>();
+  private publishCount = 0;
+  private deliveryCount = 0;
+
+  subscribe(selector: FeedSelector, listener: FakeCoreFeedListener): () => void {
+    const key = canonicalJSON(selector);
+    if (this.listeners.has(key)) throw new Error(`fake Core feed is already subscribed: ${key}`);
+    this.listeners.set(key, listener);
+    let subscribed = true;
+    return () => {
+      if (!subscribed) return;
+      subscribed = false;
+      this.listeners.delete(key);
+    };
+  }
+
+  publish(selector: FeedSelector, publication: StatePublication): void {
+    const publishNumber = ++this.publishCount;
+    const listener = this.listeners.get(canonicalJSON(selector));
+    if (listener === undefined) return;
+    this.deliveryCount++;
+    listener(structuredClone(publication), publishNumber);
+  }
+
+  metrics(): { active_subscriptions: number; publish_count: number; delivery_count: number } {
+    return {
+      active_subscriptions: this.listeners.size,
+      publish_count: this.publishCount,
+      delivery_count: this.deliveryCount
+    };
+  }
+}
 
 export async function runFirstVerticalSlice(seed = 42): Promise<BaselineBenchmarkResult> {
   const clock = new VirtualClock(SCENARIO_START_MS);
@@ -173,7 +217,12 @@ export async function runCanonicalBaseline(seed = 42): Promise<CanonicalBaseline
     transports.set(id, transport);
     if (index > 0) {
       transport.onEvent((event) => {
-        if (event.type === "message" && event.requires_settlement && event.addressed_to_local) {
+        if (
+          event.type === "message" &&
+          event.requires_settlement &&
+          event.addressed_to_local &&
+          event.message.type !== "task_delivery"
+        ) {
           transport.settleInbound(event.settlement_id, true);
         }
       });
@@ -182,10 +231,29 @@ export async function runCanonicalBaseline(seed = 42): Promise<CanonicalBaseline
 
   const gateway = requiredMapValue(transports, "gateway");
   const clients = new Map([...transports].map(([id, transport]) => [id, new AtlasRadioSDK(transport)]));
+  const assetIDs = radioIDs.filter((id) => id !== "gateway");
   const feedDemand = new GatewayFeedDemand();
-  let aggregateFeedActivations = 0;
+  const coreFeed = new FakeCoreFeed();
+  const feedSubscriberIDs = new Set<string>();
+  const feedOperationIDs = new Set<string>();
+  let gatewayFeedPublications = 0;
+  let feedReceiverDeliveries = 0;
+  let unsubscribeCoreFeed: (() => void) | undefined;
   let dataRequestsCompleted = 0;
   let taskReportsReceived = 0;
+  for (const assetID of assetIDs) {
+    requiredMapValue(transports, assetID).onEvent((event) => {
+      if (
+        event.type === "message" &&
+        event.source.role === "gateway" &&
+        event.message.type === "state" &&
+        event.message.path === "gateway_feed" &&
+        feedOperationIDs.has(event.operation_id)
+      ) {
+        feedReceiverDeliveries++;
+      }
+    });
+  }
   gateway.onEvent((event) => {
     if (event.type !== "message") return;
     if (event.message.type === "subscription") {
@@ -194,8 +262,23 @@ export async function runCanonicalBaseline(seed = 42): Promise<CanonicalBaseline
         gateway.settleInbound(event.settlement_id, false, result.reason);
         return;
       }
+      if (event.message.action === "remove") feedSubscriberIDs.delete(event.source.id);
+      else feedSubscriberIDs.add(event.source.id);
       const transition = result;
-      if (transition?.active) aggregateFeedActivations++;
+      if (transition?.active) {
+        unsubscribeCoreFeed = coreFeed.subscribe(transition.selector, (publication, publishNumber) => {
+          const operationID = `canonical-feed-${publishNumber}`;
+          feedOperationIDs.add(operationID);
+          gatewayFeedPublications++;
+          requiredMapValue(clients, "gateway").publish(
+            { ...publication, operation_id: operationID, path: "gateway_feed", confirmation: "core_confirmed" },
+            operationID
+          );
+        });
+      } else if (transition && !transition.active) {
+        unsubscribeCoreFeed?.();
+        unsubscribeCoreFeed = undefined;
+      }
       gateway.settleInbound(event.settlement_id, true);
     } else if (event.message.type === "data_request" && event.addressed_to_local) {
       requiredMapValue(clients, "gateway").respond(
@@ -225,7 +308,6 @@ export async function runCanonicalBaseline(seed = 42): Promise<CanonicalBaseline
     }
   });
 
-  const assetIDs = radioIDs.filter((id) => id !== "gateway");
   const selector = { kind: "resource_type", resource_type: "entity" } as const;
   requiredMapValue(clients, "asset-alpha").subscribe(
     { type: "subscription", action: "add", selector },
@@ -240,68 +322,86 @@ export async function runCanonicalBaseline(seed = 42): Promise<CanonicalBaseline
   );
   await clock.runUntilIdle();
 
+  coreFeed.publish(selector, {
+    type: "state",
+    resource_type: "entity",
+    resource: positionFixtureFor("asset-alpha", 1),
+    observation_time: "2026-09-02T12:00:00Z",
+    path: "gateway_feed",
+    confirmation: "core_confirmed"
+  });
+
   const taskOrder: string[] = [];
+  const pendingTaskReports = new Map<string, { taskID: string; nextAction?: TaskReportAction }>();
+  const taskReportAction: Record<TaskReportAction, TaskReportAction | undefined> = {
+    acknowledge: "start",
+    start: "progress",
+    progress: "complete",
+    complete: undefined
+  };
+  const submitTaskReport = (taskID: string, action: TaskReportAction): void => {
+    const operationID = `report-${taskID}-${action}`;
+    const client = requiredMapValue(clients, "asset-delta");
+    const destination = { role: "gateway", id: "gateway" } as const;
+    const context = {
+      type: "task_report" as const,
+      task_id: taskID,
+      runtime_id: "runtime-asset-delta",
+      observation_time: new Date(clock.now()).toISOString()
+    };
+    let result: LinkOperationResult;
+    switch (action) {
+      case "acknowledge":
+        result = client.reportTask({ ...context, action, body: {} }, destination, operationID);
+        break;
+      case "start":
+        result = client.reportTask({ ...context, action, body: {} }, destination, operationID);
+        break;
+      case "progress":
+        result = client.reportTask({ ...context, action, body: { progress: 0.5 } }, destination, operationID);
+        break;
+      case "complete":
+        result = client.reportTask(
+          { ...context, action, body: { output: { surveyed: true } } },
+          destination,
+          operationID
+        );
+        break;
+    }
+    if (result.status !== "failed") {
+      const nextAction = taskReportAction[action];
+      pendingTaskReports.set(operationID, { taskID, ...(nextAction === undefined ? {} : { nextAction }) });
+    }
+  };
   requiredMapValue(transports, "asset-delta").onEvent((event) => {
-    if (event.type === "message" && event.addressed_to_local && event.message.type === "task_delivery") {
-      taskOrder.push(event.message.task.task_id);
-      const operationPrefix = `report-${event.message.task.task_id}`;
-      const client = requiredMapValue(clients, "asset-delta");
-      const gatewayNode = { role: "gateway", id: "gateway" } as const;
-      client.reportTask(
-        {
-          type: "task_report",
-          action: "acknowledge",
-          task_id: event.message.task.task_id,
-          runtime_id: "runtime-asset-delta",
-          observation_time: new Date(clock.now()).toISOString(),
-          body: {}
-        },
-        gatewayNode,
-        `${operationPrefix}-acknowledge`
-      );
-      client.reportTask(
-        {
-          type: "task_report",
-          action: "start",
-          task_id: event.message.task.task_id,
-          runtime_id: "runtime-asset-delta",
-          observation_time: new Date(clock.now()).toISOString(),
-          body: {}
-        },
-        gatewayNode,
-        `${operationPrefix}-start`
-      );
-      client.reportTask(
-        {
-          type: "task_report",
-          action: "progress",
-          task_id: event.message.task.task_id,
-          runtime_id: "runtime-asset-delta",
-          observation_time: new Date(clock.now()).toISOString(),
-          body: { progress: 0.5 }
-        },
-        gatewayNode,
-        `${operationPrefix}-progress`
-      );
-      client.reportTask(
-        {
-          type: "task_report",
-          action: "complete",
-          task_id: event.message.task.task_id,
-          runtime_id: "runtime-asset-delta",
-          observation_time: new Date(clock.now()).toISOString(),
-          body: { output: { surveyed: true } }
-        },
-        gatewayNode,
-        `${operationPrefix}-complete`
-      );
+    if (event.type !== "operation") return;
+    const pending = pendingTaskReports.get(event.result.operation_id);
+    if (!pending) return;
+    if (event.result.status === "confirmed") {
+      pendingTaskReports.delete(event.result.operation_id);
+      if (pending.nextAction) submitTaskReport(pending.taskID, pending.nextAction);
+    } else if (event.result.status === "failed" || event.result.status === "rejected") {
+      pendingTaskReports.delete(event.result.operation_id);
+    }
+  });
+  requiredMapValue(transports, "asset-delta").onEvent((event) => {
+    if (
+      event.type === "message" &&
+      event.addressed_to_local &&
+      event.message.type === "task_delivery" &&
+      event.message.delivery === "assignment"
+    ) {
+      if (event.message.task.asset_id === "asset-delta" && event.message.task.status === "pending") {
+        taskOrder.push(event.message.task.task_id);
+        requiredMapValue(transports, "asset-delta").settleInbound(event.settlement_id, true);
+        submitTaskReport(event.message.task.task_id, "acknowledge");
+      }
     }
   });
   const dispatcher = new OrderedTaskDispatcher(gateway);
-  dispatcher.enqueueAssignments("asset-delta", [
-    taskFixture("task-later", "2026-09-02T11:59:00Z"),
-    taskFixture("task-earlier", "2026-09-02T11:58:00Z")
-  ]);
+  clock.schedule(0, () => {
+    dispatcher.enqueue("asset-delta", taskFixture("task-minute-1", new Date(clock.now()).toISOString()));
+  });
 
   const startedAt = clock.now();
   let pictureAt30Seconds: PictureBenchmarkSummary | undefined;
@@ -380,15 +480,21 @@ export async function runCanonicalBaseline(seed = 42): Promise<CanonicalBaseline
 
   const result: CanonicalBaselineResult = {
     scenario: "canonical_five_radio_normal",
-    scenario_revision: 1,
+    scenario_revision: 2,
     seed,
     semantic_result: {
       gateway_field_records: finalPicture.gateway_records,
       minimum_asset_picture_records: finalPicture.minimum_asset_records,
-      aggregate_subscription_feeds: aggregateFeedActivations,
+      aggregate_subscription_feeds: coreFeed.metrics().active_subscriptions,
       task_delivery_order: taskOrder,
       data_request_completed: dataRequestsCompleted === 2,
       task_reports_received: taskReportsReceived
+    },
+    feed_metrics: {
+      subscriber_count: feedSubscriberIDs.size,
+      core_publish_count: coreFeed.metrics().publish_count,
+      gateway_publish_count: gatewayFeedPublications,
+      receiver_delivery_count: feedReceiverDeliveries
     },
     transport_metrics: aggregateTransportMetrics([...transports.values()]),
     network_metrics: network.metrics(),
@@ -627,6 +733,8 @@ function aggregateTransportMetrics(transports: readonly LinkTransport[]): LinkMe
     packets_sent: 0,
     transmitted_bytes: 0,
     packets_received: 0,
+    malformed_frames: 0,
+    invalid_messages: 0,
     duplicate_packets_suppressed: 0,
     stale_messages_rejected: 0,
     picture_rejected_capacity: 0,
@@ -669,6 +777,8 @@ function aggregateTransportMetrics(transports: readonly LinkTransport[]): LinkMe
     aggregate.packets_sent += metrics.packets_sent;
     aggregate.transmitted_bytes += metrics.transmitted_bytes;
     aggregate.packets_received += metrics.packets_received;
+    aggregate.malformed_frames += metrics.malformed_frames;
+    aggregate.invalid_messages += metrics.invalid_messages;
     aggregate.duplicate_packets_suppressed += metrics.duplicate_packets_suppressed;
     aggregate.stale_messages_rejected += metrics.stale_messages_rejected;
     aggregate.picture_rejected_capacity += metrics.picture_rejected_capacity;
