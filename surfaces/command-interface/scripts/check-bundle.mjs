@@ -21,16 +21,18 @@ const budgets = {
   initialCss: { raw: 510_000, gzip: 55_000 },
   // MapWindowWorkspace coordinates four ordered edge rails for the map shell.
   shellJavaScript: { raw: 142_500, gzip: 47_500 },
-  mapViewJavaScript: { raw: 71_000, gzip: 21_250 },
+  // Vertex keyboard controls, focus restoration, and heartbeat-qualified symbols
+  // add 2.14 kB raw / 0.79 kB gzip compared with the 0cb16dcb build.
+  mapViewJavaScript: { raw: 73_250, gzip: 22_250 },
   mapLibreJavaScript: { raw: 1_100_000, gzip: 300_000 },
   mapLibreWorkerJavaScript: { raw: 500_000, gzip: 140_000 },
   milsymbolJavaScript: { raw: 900_000, gzip: 240_000 },
   mapLibreCss: { raw: 85_000, gzip: 11_000 },
   mapRoute: { raw: 2_100_000, gzip: 550_000 },
-  // SDK point-read generations and local-delete guards add 4.13 kB raw while
-  // remaining within the existing aggregate gzip ceiling.
-  allJavaScript: { raw: 3_617_000, gzip: 1_000_000 },
-  allCss: { raw: 600_000, gzip: 66_000 }
+  // Command and geometry fixes add 2.99 kB raw JS and 0.59 kB raw CSS
+  // compared with 0cb16dcb. Keep the existing aggregate JS gzip ceiling.
+  allJavaScript: { raw: 3_620_000, gzip: 1_000_000 },
+  allCss: { raw: 601_000, gzip: 66_250 }
 };
 
 if (!args.has("--skip-build")) {

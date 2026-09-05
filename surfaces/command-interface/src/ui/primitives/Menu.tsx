@@ -4,7 +4,7 @@ import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "re
 export type MenuItemDef = {
   key: string;
   title: string;
-  sub?: string;
+  sub?: ReactNode;
   disabled?: boolean;
   disabledReason?: string;
   onSelect?: () => void;

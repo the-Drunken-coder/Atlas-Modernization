@@ -65,6 +65,10 @@ export function useCommandFlow({
     setCommandForm(null);
     setSubmitError(undefined);
   }, []);
+  const invalidateCommandForm = useCallback(() => {
+    setCommandForm(null);
+    setSubmitError(undefined);
+  }, []);
 
   useEffect(() => {
     closeMapMenu();
@@ -82,28 +86,31 @@ export function useCommandFlow({
     previousManifestGenerationRef.current = manifestGeneration;
     const selectedEntityChanged = previousSelectedEntityIdRef.current !== selectedEntityId;
     previousSelectedEntityIdRef.current = selectedEntityId;
-    if (commandManifestStatus !== "ready" || generationChanged) {
+    if (generationChanged) {
       closeMapMenu();
-      dismissCommandForm();
+      invalidateCommandForm();
       if (!selectedEntityChanged) setPendingMapMenu(null);
-      pendingSubmissionRef.current = undefined;
-      activeSubmitIdRef.current = undefined;
-      setSubmitting(false);
+      return;
+    }
+    if (commandManifestStatus !== "ready") {
+      closeMapMenu();
+      if (commandManifestStatus === "unavailable") invalidateCommandForm();
+      if (!selectedEntityChanged) setPendingMapMenu(null);
       return;
     }
     if (
       commandForm &&
       (commandForm.manifestGeneration !== commandManifestGeneration || commandForm.generation !== generation)
     ) {
-      dismissCommandForm();
+      invalidateCommandForm();
     }
   }, [
     commandForm,
     commandManifestGeneration,
     commandManifestStatus,
     closeMapMenu,
-    dismissCommandForm,
     generation,
+    invalidateCommandForm,
     manifestGeneration,
     selectedEntityId
   ]);
@@ -142,6 +149,8 @@ export function useCommandFlow({
     async (availability: CommandAvailability, input: JSONValue, expectedGeneration = manifestGeneration) => {
       const currentEntity = selectedEntityRef.current;
       if (
+        submittingRef.current ||
+        activeSubmitIdRef.current !== undefined ||
         !currentEntity ||
         manifestStatusRef.current !== "ready" ||
         expectedGeneration !== manifestGenerationRef.current ||
@@ -149,7 +158,6 @@ export function useCommandFlow({
       ) {
         return;
       }
-      const submissionGeneration = manifestGenerationRef.current;
       const identity = JSON.stringify([currentEntity.entity_id, availability.command.command, input]);
       const existing = pendingSubmissionRef.current;
       const pending = existing?.identity === identity ? existing : { identity, idempotencyKey: crypto.randomUUID() };
@@ -165,20 +173,12 @@ export function useCommandFlow({
           input,
           idempotencyKey: pending.idempotencyKey
         });
-        if (
-          manifestGenerationRef.current === submissionGeneration &&
-          manifestStatusRef.current === "ready" &&
-          pendingSubmissionRef.current === pending
-        ) {
+        if (pendingSubmissionRef.current === pending) {
           pendingSubmissionRef.current = undefined;
           setCommandForm(null);
         }
       } catch (cause) {
-        if (
-          manifestGenerationRef.current === submissionGeneration &&
-          manifestStatusRef.current === "ready" &&
-          pendingSubmissionRef.current === pending
-        ) {
+        if (pendingSubmissionRef.current === pending) {
           setSubmitError(sanitizeConnectionError(cause));
         }
       } finally {
@@ -250,7 +250,7 @@ export function useCommandFlow({
     mapMenu:
       commandManifestStatus === "ready" && (mapMenu === null || mapMenu.generation === generation) ? mapMenu : null,
     commandForm:
-      commandManifestStatus === "ready" &&
+      commandManifestStatus !== "unavailable" &&
       (commandForm === null ||
         (commandForm.manifestGeneration === commandManifestGeneration && commandForm.generation === generation))
         ? commandForm

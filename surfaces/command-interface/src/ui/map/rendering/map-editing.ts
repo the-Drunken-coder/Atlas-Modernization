@@ -21,6 +21,9 @@ export type MapEditing = {
 
 type Midpoint = { position: Position; afterRef: VertexRef };
 
+const KEYBOARD_MOVE_STEP = 10;
+const KEYBOARD_MOVE_SHIFT_STEP = 40;
+
 export function createEditingMarkers(
   map: MlMap,
   editing: MapEditing | undefined,
@@ -39,17 +42,44 @@ export function createEditingMarkers(
 
   const markers: InstanceType<MapLibreRuntime["Marker"]>[] = [];
   const { geometry, onChange } = editing;
-  for (const vertex of geometryVertices(geometry)) {
-    const element = document.createElement("div");
+  for (const [vertexIndex, vertex] of geometryVertices(geometry).entries()) {
+    const element = document.createElement("button");
+    element.type = "button";
     element.className = "vertex-handle";
-    element.title = "Drag to move - right-click to remove";
+    element.title = "Drag to move; use arrow keys to move; press Delete or right-click to remove";
+    element.setAttribute("aria-label", vertexLabel(geometry, vertexIndex));
+    element.setAttribute("data-map-interaction-control", "");
+    element.dataset.vertexKey = vertexKey(vertex.ref);
     const marker = new MarkerConstructor({ element, draggable: true }).setLngLat([vertex.lng, vertex.lat]).addTo(map);
     marker.on("dragend", () => {
       const next = marker.getLngLat();
       onChange(moveVertex(geometry, vertex.ref, next.lng, next.lat));
     });
+    element.addEventListener("keydown", (event) => {
+      const delta = vertexKeyboardDelta(event.key, event.shiftKey ? KEYBOARD_MOVE_SHIFT_STEP : KEYBOARD_MOVE_STEP);
+      if (delta) {
+        event.preventDefault();
+        event.stopPropagation();
+        const current = marker.getLngLat();
+        const projected = map.project([current.lng, current.lat]);
+        const next = map.unproject([projected.x + delta.x, projected.y + delta.y]);
+        const lng = clamp(next.lng, -180, 180);
+        const lat = clamp(next.lat, -90, 90);
+        if (!Number.isFinite(lng) || !Number.isFinite(lat) || (lng === current.lng && lat === current.lat)) return;
+        marker.setLngLat([lng, lat]);
+        onChange(moveVertex(geometry, vertex.ref, lng, lat));
+        return;
+      }
+
+      if (event.key !== "Delete") return;
+      event.preventDefault();
+      event.stopPropagation();
+      const next = removeVertex(geometry, vertex.ref);
+      if (next) onChange(next);
+    });
     element.addEventListener("contextmenu", (event) => {
       event.preventDefault();
+      event.stopPropagation();
       const next = removeVertex(geometry, vertex.ref);
       if (next) onChange(next);
     });
@@ -62,6 +92,7 @@ export function createEditingMarkers(
     element.className = "vertex-handle vertex-handle--mid";
     element.title = "Click to add a vertex";
     element.setAttribute("aria-label", "Add vertex");
+    element.setAttribute("data-map-interaction-control", "");
     const marker = new MarkerConstructor({ element, draggable: false })
       .setLngLat([mid.position[0], mid.position[1]])
       .addTo(map);
@@ -72,6 +103,31 @@ export function createEditingMarkers(
     markers.push(marker);
   }
   return markers;
+}
+
+function vertexLabel(geometry: UiGeometry, index: number): string {
+  if (geometry.type === "Feature") return "Move center";
+  if (geometry.type === "Point") return "Move point";
+  return `Move vertex ${index + 1}`;
+}
+
+function vertexKey(ref: VertexRef): string {
+  if (ref.kind === "Point") return "point";
+  if (ref.kind === "Circle") return "circle";
+  if (ref.kind === "LineString") return `line-${ref.index}`;
+  return `polygon-${ref.ring}-${ref.index}`;
+}
+
+function vertexKeyboardDelta(key: string, step: number): { x: number; y: number } | undefined {
+  if (key === "ArrowLeft") return { x: -step, y: 0 };
+  if (key === "ArrowRight") return { x: step, y: 0 };
+  if (key === "ArrowUp") return { x: 0, y: -step };
+  if (key === "ArrowDown") return { x: 0, y: step };
+  return undefined;
+}
+
+function clamp(value: number, minimum: number, maximum: number): number {
+  return Math.max(minimum, Math.min(maximum, value));
 }
 
 function midpoints(geometry: UiGeometry): Midpoint[] {
