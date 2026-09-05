@@ -1,8 +1,10 @@
+import { createHash } from "node:crypto";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { FakeCoreFeed, runCanonicalBaseline, runFirstVerticalSlice, runStressBaseline } from "./benchmark.js";
+import { canonicalJSON } from "./canonical-json.js";
 import { VirtualClock } from "./clock.js";
 import { LINK_PROTOCOL_REVISION, RADIO_CONTRACT_REVISION } from "./contract.js";
 import { GatewayFeedDemand } from "./gateway.js";
@@ -526,7 +528,7 @@ describe("deterministic baseline", () => {
   it("runs the documented five-radio normal scenario through production transport", async () => {
     const result = await runCanonicalBaseline(42);
     expect(result).toEqual(
-      JSON.parse(await readFile(new URL("../baselines/canonical-json-v2-seed-42.json", import.meta.url), "utf8"))
+      JSON.parse(await readFile(new URL("../baselines/canonical-json-v4-seed-42.json", import.meta.url), "utf8"))
     );
     expect(result.semantic_result).toMatchObject({
       aggregate_subscription_feeds: 1,
@@ -535,7 +537,10 @@ describe("deterministic baseline", () => {
       task_reports_received: 0
     });
     expect(result.feed_metrics).toEqual({
-      subscriber_count: 2,
+      active_subscriptions_at_window: 1,
+      active_subscriptions_after_drain: 0,
+      subscriber_count_at_window: 2,
+      subscriber_count_after_drain: 0,
       core_publish_count: 1,
       gateway_publish_count: 1,
       receiver_delivery_count: 0
@@ -543,19 +548,53 @@ describe("deterministic baseline", () => {
     expect(result.picture_metrics.at_30_seconds.total_records).toBe(0);
     expect(result.picture_metrics.at_60_seconds.total_records).toBeGreaterThan(0);
     expect(result.network_metrics.radio_submissions).toBeGreaterThan(0);
+    expect(result.scenario_manifest.topology.hop_limit).toBe(3);
+    expect(result.workload_counts.normal).toMatchObject({
+      position_publications: 240,
+      telemetry_publications: 24,
+      track_publications: 300,
+      task_assignments: 1,
+      subscription_adds: 2,
+      subscription_renewals: 2,
+      small_data_requests: 2
+    });
+    const { configuration_sha256: configurationHash, ...manifestConfig } = result.scenario_manifest;
+    expect(configurationHash).toBe(
+      `sha256:${createHash("sha256").update(canonicalJSON(manifestConfig)).digest("hex")}`
+    );
   });
 
   it("records the 32 KiB stress cost while cancellation preempts Object chunks", async () => {
     const result = await runStressBaseline(42);
     expect(result).toEqual(
-      JSON.parse(await readFile(new URL("../baselines/canonical-json-stress-v1-seed-42.json", import.meta.url), "utf8"))
+      JSON.parse(await readFile(new URL("../baselines/canonical-json-stress-v3-seed-42.json", import.meta.url), "utf8"))
     );
     expect(result.semantic_result).toMatchObject({
       object_completed: false,
       cancellation_received: false,
       priority_preempted_object: true
     });
-    expect(result.transport_metrics.retry_exhausted).toBe(3);
+    expect(result.workload_counts.normal).toMatchObject({
+      position_publications: 240,
+      telemetry_publications: 24,
+      track_publications: 300,
+      task_assignments: 1,
+      subscription_adds: 2,
+      subscription_renewals: 2,
+      small_data_requests: 2
+    });
+    expect(result.workload_counts.stress_additions).toEqual({
+      track_publications: 1_200,
+      object_requests: 1,
+      object_transfers: 1,
+      cancellations: 1
+    });
+    expect(result.feed_metrics.active_subscriptions_after_drain).toBe(0);
+    const { configuration_sha256: configurationHash, ...manifestConfig } = result.scenario_manifest;
+    expect(configurationHash).toBe(
+      `sha256:${createHash("sha256").update(canonicalJSON(manifestConfig)).digest("hex")}`
+    );
+    expect(result.transport_metrics.retry_exhausted).toBeGreaterThan(0);
   });
 
   it("keeps one Core feed active after one of two subscribers leaves", async () => {

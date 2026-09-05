@@ -128,7 +128,7 @@ npm run meshtastic-link -- benchmark --scenario vertical-slice --seed 42
 After an intentional benchmark or metrics change, refresh all three exact seed-42 snapshots with
 `npm run baseline:update --workspace @the-drunken-coder/atlas-meshtastic-link` and review the resulting JSON diff.
 
-The checked-in results under [`baselines`](baselines) measure the ordinary deterministic Atlas JSON contract through the production SDK, serializer, fragmenter, scheduler, reassembler, and Shared Picture receive path. The full-rate normal and stress baselines record deadline and convergence failures honestly. They are comparison data, not field performance claims. The packet model remains uncalibrated until the documented three-radio hardware trial is completed.
+The checked-in results under [`baselines`](baselines) measure the ordinary deterministic Atlas JSON contract through the production SDK, serializer, fragmenter, scheduler, reassembler, and Shared Picture receive path. Each result carries a hashed manifest describing the exact profile, topology, network assumptions, workload rates, and measurement window. The full-rate normal and stress baselines record deadline and convergence failures honestly. They are comparison data, not field performance claims. The packet model remains uncalibrated until the documented three-radio hardware trial is completed.
 
 ## Checks
 

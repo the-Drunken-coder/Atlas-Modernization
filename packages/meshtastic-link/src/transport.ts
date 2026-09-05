@@ -1,17 +1,10 @@
 import { createHash, randomBytes } from "node:crypto";
 import {
-  type ChangedSinceResponse,
-  type EntityResource,
-  isChangedSinceResponse,
   isEntityCheckInResponse,
   isEntityResource,
-  isFullDatasetResponse,
   isObjectDetailResource,
   isRuntimeTaskDeliveryResponse,
-  isTaskResource,
-  type ObjectDetailResource,
-  type ObjectResource,
-  type TaskResource
+  isTaskResource
 } from "@the-drunken-coder/atlas-sdk";
 import type { Clock, TimerHandle } from "./clock.js";
 import {
@@ -23,9 +16,9 @@ import {
 } from "./contract.js";
 import { decodeFrame, type FrameIdentity, fragmentPayload, type LinkFrame, MAX_LINK_MESSAGE_BYTES } from "./frame.js";
 import type { PictureApplyContext, SharedPicture } from "./picture.js";
+import { messagePublications } from "./picture-projection.js";
 import type { LinkRadio, RadioPacket } from "./radio.js";
 import type {
-  ConfirmationState,
   ControlMessage,
   DataRequest,
   DataResponse,
@@ -36,12 +29,10 @@ import type {
   LinkOperationResult,
   LinkOperationStatus,
   MessagePriority,
-  PublicationPath,
   ResourceOperation,
-  StatePublication,
-  TaskDelivery,
-  TaskReport
+  SourceAdmissionFailure
 } from "./types.js";
+import { LINK_SOURCE_IDENTITY_LIMIT, SourceAdmissionError } from "./types.js";
 
 const PRIORITY_ORDER: Record<MessagePriority, number> = {
   safety: 0,
@@ -448,10 +439,13 @@ export class LinkTransport {
     if (this.node.role !== "gateway" || source.role !== "asset") {
       throw new Error("only a Gateway may announce an Asset source activation");
     }
-    const operationID = `source_active_${source.id}_${generation}`;
-    if (!this.activateSourceFence(source, generation, session)) {
-      return this.failedResult(operationID, "source activation is stale");
+    validateNode(source);
+    if (!Number.isSafeInteger(generation) || generation <= 0 || session.trim().length === 0) {
+      throw new Error("source activation requires a positive generation and nonempty session");
     }
+    const operationID = `source_active_${source.id}_${generation}`;
+    const rejection = this.activateSourceFence(source, generation, session);
+    if (rejection !== undefined) throw new SourceAdmissionError(rejection);
     return this.submit({
       type: "control",
       control: "source_active",
@@ -735,7 +729,7 @@ export class LinkTransport {
     }
     if (
       sameNode(frame.source, this.node) ||
-      !this.activateSourceFence(frame.source, frame.source_generation, frame.service_session)
+      this.activateSourceFence(frame.source, frame.source_generation, frame.service_session) !== undefined
     )
       return;
     if (frame.message_type === "object_content" && !this.expectsObjectContent(frame)) return;
@@ -788,7 +782,8 @@ export class LinkTransport {
     }
     if (message.type !== identity.message_type || messagePriority(message) !== identity.priority) return;
     if (!validStateSource(message, identity.source)) return;
-    if (!this.activateSourceFence(identity.source, identity.source_generation, identity.service_session)) return;
+    if (this.activateSourceFence(identity.source, identity.source_generation, identity.service_session) !== undefined)
+      return;
     if (message.type === "control") {
       if (identity.destination !== undefined && !sameNode(identity.destination, this.node)) return;
       this.handleControl(message, identity);
@@ -954,24 +949,7 @@ export class LinkTransport {
 
   private updatePicture(message: LinkMessage, identity: FrameIdentity): void {
     if (!this.picture) return;
-    let publications: StatePublication[] = [];
-    if (message.type === "state") publications = [message];
-    else if (message.type === "task_delivery") publications = [taskDeliveryPublication(message)];
-    else if (message.type === "task_report") {
-      const publication = taskReportPublication(message, this.picture, identity);
-      if (publication) publications = [publication];
-    } else if (message.type === "data_response") {
-      publications = responsePublications(
-        message,
-        new Date(this.clock.now()).toISOString(),
-        identity.source.role === "gateway"
-          ? { path: "gateway_feed", confirmation: "core_confirmed" }
-          : { path: "field", confirmation: "not_required" }
-      );
-      if (identity.source.role === "asset") {
-        publications = publications.filter((publication) => publication.resource_type !== "task");
-      }
-    }
+    const publications = messagePublications(message, identity, this.picture, this.clock.now());
     if (publications.length === 0) return;
     const context: PictureApplyContext = {
       source: identity.source,
@@ -1011,7 +989,6 @@ export class LinkTransport {
       return;
     }
     if (message.control === "missing_chunks") {
-      if (!message.missing_chunks) return;
       outbound.pendingChunks = message.missing_chunks.filter((index) => outbound.frames[index] !== undefined);
       if (outbound.retryTimer) this.clock.cancel(outbound.retryTimer);
       if (outbound.pendingChunks.length > 0) {
@@ -1036,7 +1013,11 @@ export class LinkTransport {
     }
   }
 
-  private activateSourceFence(source: LinkNode, generation: number, session: string): boolean {
+  private activateSourceFence(
+    source: LinkNode,
+    generation: number,
+    session: string
+  ): SourceAdmissionFailure | undefined {
     const key = `${source.role}:${source.id}`;
     const current = this.sourceFences.get(key);
     if (
@@ -1044,9 +1025,11 @@ export class LinkTransport {
       (generation < current.generation || (generation === current.generation && session !== current.session))
     ) {
       this.mutableMetrics.stale_messages_rejected++;
-      return false;
+      return "stale_source";
     }
+    if (current === undefined && this.sourceFences.size >= LINK_SOURCE_IDENTITY_LIMIT) return "capacity";
     const changed = current === undefined || generation > current.generation;
+    if (changed && this.picture && !this.picture.activateSource(source, generation, session)) return "picture_rejected";
     this.sourceFences.set(key, { generation, session });
     if (changed) {
       for (const [reassemblyKey, reassembly] of this.reassemblies) {
@@ -1058,9 +1041,8 @@ export class LinkTransport {
         this.reassemblies.delete(reassemblyKey);
         this.mutableMetrics.incomplete_reassemblies++;
       }
-      this.picture?.activateSource(source, generation, session);
     }
-    return true;
+    return undefined;
   }
 
   private expectsObjectContent(frame: LinkFrame): boolean {
@@ -1516,273 +1498,6 @@ function joinChunks(reassembly: Reassembly): Uint8Array {
     offset += chunk.byteLength;
   }
   return output;
-}
-
-function taskDeliveryPublication(message: TaskDelivery): StatePublication {
-  return {
-    type: "state",
-    resource_type: "task",
-    resource: message.task,
-    observation_time: message.task.updated_at,
-    path: "gateway_feed",
-    confirmation: "core_confirmed"
-  };
-}
-
-type ResponseProvenance = {
-  path: PublicationPath;
-  confirmation: ConfirmationState;
-};
-
-function collapseChangedSinceEvents(events: ChangedSinceResponse["events"]): ChangedSinceResponse["events"] {
-  const latest = new Map<string, ChangedSinceResponse["events"][number]>();
-  for (const event of events) {
-    const key = `${event.resource_type}:${event.id}`;
-    const current = latest.get(key);
-    if (current === undefined || event.version >= current.version) latest.set(key, event);
-  }
-  return [...latest.values()];
-}
-
-function responsePublications(
-  response: DataResponse,
-  observedAt: string,
-  provenance: ResponseProvenance
-): StatePublication[] {
-  const { operation, output, request_id: operationID } = response;
-  switch (operation) {
-    case "entity.get":
-    case "entity.create":
-    case "entity.update":
-      return isEntityResource(output) ? [entityPublication(output, operationID, provenance)] : [];
-    case "entity.check_in":
-      return isEntityCheckInResponse(output) ? [entityPublication(output.entity, operationID, provenance)] : [];
-    case "task.get":
-    case "task.create":
-    case "task.acknowledge":
-    case "task.start":
-    case "task.progress":
-    case "task.complete":
-    case "task.fail":
-    case "task.cancel":
-      return isTaskResource(output) ? [taskPublication(output, operationID, provenance)] : [];
-    case "runtime.tasks":
-      return isRuntimeTaskDeliveryResponse(output)
-        ? output.tasks.map((task) => taskPublication(task, operationID, provenance))
-        : [];
-    case "object.get":
-    case "object.create":
-    case "object.update":
-      return isObjectDetailResource(output) ? [objectPublication(objectSummary(output), operationID, provenance)] : [];
-    case "query.full":
-      return isFullDatasetResponse(output)
-        ? [
-            ...output.entities.map((entity) => entityPublication(entity, operationID, provenance)),
-            ...output.tasks.map((task) => taskPublication(task, operationID, provenance)),
-            ...output.objects.map((object) => objectPublication(objectSummary(object), operationID, provenance))
-          ]
-        : [];
-    case "query.changed_since":
-      return isChangedSinceResponse(output)
-        ? collapseChangedSinceEvents(output.events).flatMap((event) => {
-            if (event.event !== "delete") {
-              switch (event.resource_type) {
-                case "entity":
-                  return [entityPublication(event.resource, operationID, provenance)];
-                case "task":
-                  return [taskPublication(event.resource, operationID, provenance)];
-                case "object":
-                  return [objectPublication(event.resource, operationID, provenance)];
-              }
-            }
-            return [
-              deletedPublication(event.resource_type, event.id, event.version, operationID, observedAt, provenance)
-            ];
-          })
-        : [];
-    case "object.content":
-    case "entity.delete":
-    case "runtime.begin":
-    case "runtime.stop":
-    case "runtime.ready":
-    case "object.delete":
-    case "command_catalog.get":
-    case "plugin.list":
-    case "plugin.invoke":
-    case "plugin.invoke_spatial":
-      return [];
-  }
-}
-
-function entityPublication(
-  resource: EntityResource,
-  operationID: string,
-  provenance: ResponseProvenance
-): StatePublication {
-  return {
-    type: "state",
-    resource_type: "entity",
-    resource,
-    observation_time: resource.metadata.updated_at,
-    ...provenance,
-    operation_id: operationID
-  };
-}
-
-function taskPublication(
-  resource: TaskResource,
-  operationID: string,
-  provenance: ResponseProvenance
-): StatePublication {
-  return {
-    type: "state",
-    resource_type: "task",
-    resource,
-    observation_time: resource.updated_at,
-    ...provenance,
-    operation_id: operationID
-  };
-}
-
-function objectPublication(
-  resource: ObjectResource,
-  operationID: string,
-  provenance: ResponseProvenance
-): StatePublication {
-  return {
-    type: "state",
-    resource_type: "object",
-    resource,
-    observation_time: resource.metadata.updated_at,
-    ...provenance,
-    operation_id: operationID
-  };
-}
-
-function deletedPublication(
-  resourceType: "entity" | "object",
-  resourceIDValue: string,
-  atlasVersion: number,
-  operationID: string,
-  observedAt: string,
-  provenance: ResponseProvenance
-): StatePublication {
-  return {
-    type: "state",
-    resource_type: resourceType,
-    resource_id: resourceIDValue,
-    deleted: true,
-    atlas_version: atlasVersion,
-    observation_time: observedAt,
-    ...provenance,
-    operation_id: operationID
-  };
-}
-
-function objectSummary(resource: ObjectDetailResource): ObjectResource {
-  return {
-    object_id: resource.object_id,
-    type: resource.type,
-    content_type: resource.content_type,
-    size_bytes: resource.size_bytes,
-    bucket: resource.bucket,
-    path: resource.path,
-    usage_hints: resource.usage_hints,
-    ...(resource.referenced_by === undefined ? {} : { referenced_by: resource.referenced_by }),
-    metadata: resource.metadata
-  };
-}
-
-function taskReportPublication(
-  message: TaskReport,
-  picture: SharedPicture,
-  identity: FrameIdentity
-): StatePublication | undefined {
-  const current = picture
-    .snapshot()
-    .records.find((record) => record.resource_type === "task" && record.id === message.task_id)?.state as
-    | TaskResource
-    | undefined;
-  if (
-    !current ||
-    identity.source.role !== "asset" ||
-    current.asset_id !== identity.source.id ||
-    current.status === "completed" ||
-    current.status === "failed" ||
-    current.status === "cancelled"
-  ) {
-    return undefined;
-  }
-  const observedAt = message.observation_time;
-  const acknowledgedAt = current.acknowledged_at ?? observedAt;
-  const startedAt = current.started_at ?? observedAt;
-  const common = {
-    asset_id: current.asset_id,
-    command: current.command,
-    created_at: current.created_at,
-    input: current.input,
-    task_id: current.task_id,
-    updated_at: observedAt
-  };
-  let task: TaskResource;
-  switch (message.action) {
-    case "acknowledge":
-      task = { ...common, acknowledged_at: acknowledgedAt, status: "acknowledged" };
-      break;
-    case "start":
-      task = { ...common, acknowledged_at: acknowledgedAt, started_at: startedAt, status: "in_progress" };
-      break;
-    case "progress":
-      task = {
-        ...common,
-        acknowledged_at: acknowledgedAt,
-        started_at: startedAt,
-        status: "in_progress",
-        progress: message.body.progress
-      };
-      break;
-    case "complete":
-      task = {
-        ...common,
-        acknowledged_at: acknowledgedAt,
-        started_at: startedAt,
-        finished_at: observedAt,
-        status: "completed",
-        progress: 1,
-        ...(message.body.output === undefined ? {} : { output: message.body.output })
-      };
-      break;
-    case "fail":
-      task = {
-        ...common,
-        ...(current.acknowledged_at === undefined ? {} : { acknowledged_at: current.acknowledged_at }),
-        ...(current.started_at === undefined ? {} : { started_at: current.started_at }),
-        finished_at: observedAt,
-        status: "failed",
-        failure: message.body.failure
-      };
-      break;
-    case "cancel":
-      task = {
-        ...common,
-        ...(current.acknowledged_at === undefined ? {} : { acknowledged_at: current.acknowledged_at }),
-        ...(current.started_at === undefined ? {} : { started_at: current.started_at }),
-        finished_at: observedAt,
-        status: "cancelled",
-        cancellation: message.body.cancellation
-      };
-      break;
-  }
-  return {
-    type: "state",
-    resource_type: "task",
-    resource: task,
-    observation_time: observedAt,
-    path: "field",
-    confirmation: "awaiting_core",
-    operation_id: identity.operation_id,
-    runtime_id: message.runtime_id
-  };
 }
 
 function operationIDFor(message: LinkMessage): string {

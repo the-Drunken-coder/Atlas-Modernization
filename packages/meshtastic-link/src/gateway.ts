@@ -14,6 +14,13 @@ import type {
 const TASK_QUEUE_LIMIT = 4_096;
 const FEED_TRANSITION_FENCE_LIMIT = 4_096;
 
+export class TaskQueueCapacityError extends RangeError {
+  constructor() {
+    super("Task delivery queue capacity is exhausted");
+    this.name = "TaskQueueCapacityError";
+  }
+}
+
 export type IntentionalFieldMessage = StatePublication | TaskReport | ResourceOperation | DataRequest | ObjectContent;
 
 export type GatewayFieldOperation = {
@@ -125,6 +132,14 @@ export class GatewayFeedDemand {
     return [...this.demand.aggregate(now).values()];
   }
 
+  subscriberCount(now: number): number {
+    return new Set(
+      [...this.latestTransitions.values()]
+        .filter((transition) => this.demand.has(transition.sourceNodeID, transition.selector, now))
+        .map((transition) => transition.sourceNodeID)
+    ).size;
+  }
+
   private pruneTransitionFences(now: number): void {
     while (this.latestTransitions.size > FEED_TRANSITION_FENCE_LIMIT) {
       const removable = [...this.latestTransitions].find(
@@ -211,6 +226,7 @@ export class OrderedTaskDispatcher {
     }
     const queue = this.queued.get(assetID) ?? [];
     const existing = queue.findIndex((item) => item.task.task_id === task.task_id);
+    if (existing >= 0 && queue[existing]?.delivery === "cancellation") return;
     if (existing >= 0) queue[existing] = { task, delivery };
     else {
       this.reserveQueueSlots(1);
@@ -246,6 +262,7 @@ export class OrderedTaskDispatcher {
         continue;
       }
       const existing = queue.findIndex((item) => item.task.task_id === task.task_id);
+      if (existing >= 0 && queue[existing]?.delivery === "cancellation") continue;
       if (existing >= 0) queue[existing] = { task, delivery: "assignment" };
       else queue.push({ task, delivery: "assignment" });
     }
@@ -387,7 +404,7 @@ export class OrderedTaskDispatcher {
   private reserveQueueSlots(count: number): void {
     if (count === 0) return;
     const queued = [...this.queued.values()].reduce((total, tasks) => total + tasks.length, 0);
-    if (queued + count > this.queueLimit) throw new RangeError("Task delivery queue capacity is exhausted");
+    if (queued + count > this.queueLimit) throw new TaskQueueCapacityError();
   }
 
   private handleTransportEvent(event: TransportEvent): void {

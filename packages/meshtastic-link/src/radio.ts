@@ -37,6 +37,13 @@ export type RadioSendOptions = {
   require_public_key?: boolean;
 };
 
+export class RadioUnavailableError extends Error {
+  constructor(message = "Meshtastic radio is unavailable") {
+    super(message);
+    this.name = "RadioUnavailableError";
+  }
+}
+
 export interface LinkRadio {
   readonly max_payload_bytes: number;
   pacingDelayMs?(payload: Uint8Array): number;
@@ -256,7 +263,7 @@ export class MeshtasticSerialRadio implements LinkRadio, RadioConfigurationAdapt
 
   async send(payload: Uint8Array, options: RadioSendOptions): Promise<void> {
     if (this.closed) throw new Error("Meshtastic radio is closed");
-    if (!this.available) throw new Error("Meshtastic radio is unavailable");
+    if (!this.available) throw new RadioUnavailableError();
     if (payload.byteLength > this.max_payload_bytes)
       throw new RangeError("Meshtastic application payload exceeds 233 bytes");
     const destination = options.destination_radio_node ?? "broadcast";
@@ -312,11 +319,13 @@ export class MeshtasticSerialRadio implements LinkRadio, RadioConfigurationAdapt
   }
 
   nodeNumber(): number {
+    this.throwIfUnavailable();
     if (this.localRadioNodeNumber === undefined) throw new Error("Meshtastic radio did not report its node number");
     return this.localRadioNodeNumber;
   }
 
   async readConfiguration(): Promise<ActualRadioConfiguration> {
+    this.throwIfUnavailable();
     const device = this.requireConfig("device").payloadVariant;
     const lora = this.requireConfig("lora").payloadVariant;
     const power = this.requireConfig("power").payloadVariant;
@@ -390,6 +399,7 @@ export class MeshtasticSerialRadio implements LinkRadio, RadioConfigurationAdapt
   }
 
   async applyConfiguration(profile: RadioProfile, differences: readonly ConfigurationDifference[]): Promise<void> {
+    this.throwIfUnavailable();
     if (differences.length === 0) return;
     const publicChannelChanged = hasDifference(differences, ["public_channel"]);
     if (hasDifference(differences, ["device_role", "rebroadcast_mode", "managed_mode"])) {
@@ -526,6 +536,7 @@ export class MeshtasticSerialRadio implements LinkRadio, RadioConfigurationAdapt
   }
 
   async readPrivateMembership(privateChannelIndex: number): Promise<PrivateChannelMembership | undefined> {
+    this.throwIfUnavailable();
     const channel = this.channels.get(privateChannelIndex);
     if (channel?.role !== Protobuf.Channel.Channel_Role.SECONDARY || !channel.settings) return undefined;
     const key = Buffer.from(channel.settings.psk);
@@ -538,11 +549,13 @@ export class MeshtasticSerialRadio implements LinkRadio, RadioConfigurationAdapt
   }
 
   async clearPrivateMembership(privateChannelIndex: number): Promise<void> {
+    this.throwIfUnavailable();
     await this.device.clearChannel(privateChannelIndex);
     await this.commitAndRefresh();
   }
 
   async installPrivateMembership(membership: PrivateChannelMembership): Promise<void> {
+    this.throwIfUnavailable();
     const key = Uint8Array.from(Buffer.from(membership.channel_key_base64, "base64"));
     if (key.byteLength !== 16 && key.byteLength !== 32)
       throw new TypeError("private channel key must be 16 or 32 bytes");
@@ -570,6 +583,10 @@ export class MeshtasticSerialRadio implements LinkRadio, RadioConfigurationAdapt
     const config = this.configs.get(kind);
     if (!config) throw new Error(`Meshtastic ${kind} configuration was not reported by the radio`);
     return config;
+  }
+
+  private throwIfUnavailable(): void {
+    if (this.closed || !this.available) throw new RadioUnavailableError();
   }
 
   private requireModuleConfig(kind: string): Protobuf.ModuleConfig.ModuleConfig {

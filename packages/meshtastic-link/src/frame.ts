@@ -4,7 +4,8 @@ import type { LinkMessageType, LinkNode, MessagePriority } from "./types.js";
 
 export const MESHTASTIC_APPLICATION_PAYLOAD_BYTES = 233;
 export const MAX_LINK_MESSAGE_BYTES = 128 * 1024;
-const MAX_FRAGMENTS = 4096;
+
+import { MAX_LINK_FRAGMENTS } from "./types.js";
 
 export type LinkFrame = {
   revision: typeof LINK_PROTOCOL_REVISION;
@@ -73,10 +74,11 @@ export function fragmentPayload(
   if (payload.byteLength > MAX_LINK_MESSAGE_BYTES) throw new RangeError("Link payload exceeds 128 KiB");
   if (!Number.isSafeInteger(maxFrameBytes) || maxFrameBytes < 64) throw new RangeError("maxFrameBytes is too small");
 
+  const frameLimit = Math.min(maxFrameBytes, MESHTASTIC_APPLICATION_PAYLOAD_BYTES);
   // Frame metadata changes at fragment-count digit boundaries, so encoded size is not monotone.
-  for (let chunkSize = Math.min(payload.byteLength, maxFrameBytes); chunkSize > 0; chunkSize--) {
+  for (let chunkSize = Math.min(payload.byteLength, frameLimit); chunkSize > 0; chunkSize--) {
     const count = Math.ceil(payload.byteLength / chunkSize);
-    if (count > MAX_FRAGMENTS || !framesFit(payload, identity, chunkSize, count, maxFrameBytes)) continue;
+    if (count > MAX_LINK_FRAGMENTS || !framesFit(payload, identity, chunkSize, count, frameLimit)) continue;
     return framesForChunkSize(payload, identity, chunkSize);
   }
   throw new RangeError("Link envelope leaves no room for a payload chunk");
@@ -184,7 +186,7 @@ function isCompactFrame(value: unknown): value is CompactFrame {
     isNonNegativeInteger(value.i) &&
     Number.isSafeInteger(value.n) &&
     Number(value.n) > 0 &&
-    Number(value.n) <= MAX_FRAGMENTS &&
+    Number(value.n) <= MAX_LINK_FRAGMENTS &&
     Number(value.i) < Number(value.n) &&
     isBase64URL(value.p)
   );

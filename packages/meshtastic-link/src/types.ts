@@ -25,6 +25,18 @@ import type {
   AtlasRadioRequestOperation
 } from "./generated/radio-contract.generated.js";
 
+export const LINK_SOURCE_IDENTITY_LIMIT = 4096;
+export const MAX_LINK_FRAGMENTS = 4096;
+
+export type SourceAdmissionFailure = "capacity" | "stale_source" | "picture_rejected";
+
+export class SourceAdmissionError extends Error {
+  constructor(readonly reason: SourceAdmissionFailure) {
+    super(`Source admission rejected: ${reason}`);
+    this.name = "SourceAdmissionError";
+  }
+}
+
 export type LinkRole = "asset" | "gateway";
 
 export type LinkNode = {
@@ -150,11 +162,17 @@ export type ObjectContent = {
 export type ControlMessage =
   | {
       type: "control";
-      control: "confirmed" | "rejected" | "missing_chunks";
+      control: "confirmed" | "rejected";
       operation_id: string;
-      message_id?: string;
-      missing_chunks?: number[];
+      message_id: string;
       reason?: string;
+    }
+  | {
+      type: "control";
+      control: "missing_chunks";
+      operation_id: string;
+      message_id: string;
+      missing_chunks: number[];
     }
   | {
       type: "control";

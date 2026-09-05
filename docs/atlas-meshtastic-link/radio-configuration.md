@@ -26,6 +26,8 @@ An explicit live apply uses the same convergence and verification path after the
 
 If a write, reconnect, readback, or verification step fails, the service reports an error and keeps the gate closed. Existing transport work remains tracked for a later successful apply, subject to its original deadlines. A queued operation may therefore fail while the gate is closed. No queued or new traffic may reach the radio while the profile is unverified. A stop or radio disconnect invalidates an in-flight apply, leaves the gate closed, and prevents a later adapter completion from reopening transmission.
 
+A physical disconnect also invalidates cached radio state. Actual-configuration, private-membership, and local-node reads report the radio as unavailable until the adapter reconnects and completes configuration; they do not present the last cached snapshot as current.
+
 Changing the desired profile remains separate from applying it. A desired-only change does not suspend the radio. The apply operation takes a snapshot of the desired profile, so a concurrent desired change becomes the next explicit apply.
 
 ## Why Atlas owns the profile

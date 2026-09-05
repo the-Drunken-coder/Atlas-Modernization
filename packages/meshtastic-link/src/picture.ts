@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { EntityResource, ObjectResource, ResourceType, TaskResource } from "@the-drunken-coder/atlas-sdk";
 import { resourceID } from "./contract.js";
 import type { ConfirmationState, LinkNode, PublicationPath, StatePublication } from "./types.js";
+import { LINK_SOURCE_IDENTITY_LIMIT } from "./types.js";
 
 export type PictureFreshness = "fresh" | "stale" | "degraded";
 
@@ -71,7 +72,6 @@ const RECORD_SOURCE_SEQUENCE_REPLAY_MS = 10 * 60_000;
 const RECORD_SOURCE_SEQUENCE_LIMIT = 4_096;
 const PICTURE_ENTRY_LIMIT = 4_096;
 const PICTURE_RETAINED_BYTES_LIMIT = 16 * 1024 * 1024;
-const PICTURE_SOURCE_LIMIT = 4_096;
 const PICTURE_LISTENER_LIMIT = 1_024;
 const PICTURE_EVENT_BYTES_LIMIT = 8 * 1024 * 1024;
 const APPLIED = { status: "applied" } as const satisfies PictureApplyResult;
@@ -92,6 +92,7 @@ export class SharedPicture {
   private readonly records = new Map<string, PictureRecord>();
   private readonly tombstones = new Map<string, PictureTombstone>();
   private readonly sources = new Map<string, SourcePosition>();
+  private readonly assetConnectivity = new Map<string, boolean>();
   private readonly recordSourceSequences = new Map<string, RecordSourceSequence>();
   private readonly entryBytes = new Map<string, number>();
   private readonly events: PictureEvent[] = [];
@@ -113,11 +114,16 @@ export class SharedPicture {
   }
 
   apply(publication: StatePublication, context: PictureApplyContext): PictureApplyResult {
+    const id = resourceID(publication);
+    const key = `${publication.resource_type}:${id}`;
+    const current = this.records.get(key);
+    const connectivityAssetID = this.connectivityAssetID(publication, context, current);
+    if (connectivityAssetID !== undefined && !this.canAdmitAsset(connectivityAssetID)) {
+      return rejected("capacity");
+    }
     const sourceRejection = this.acceptSource(context);
     if (sourceRejection) return rejected(sourceRejection);
     this.pruneRecordSourceSequences(context.received_at);
-    const id = resourceID(publication);
-    const key = `${publication.resource_type}:${id}`;
     const sourceKey = `${context.source.role}:${context.source.id}`;
     const recordSourceKey = `${key}\0${sourceKey}`;
     const sourceSequence = this.recordSourceSequences.get(recordSourceKey);
@@ -138,7 +144,6 @@ export class SharedPicture {
       sequence: context.source_sequence,
       receivedAt: context.received_at
     });
-    const current = this.records.get(key);
     const tombstone = this.tombstones.get(key);
     if (
       current &&
@@ -172,6 +177,9 @@ export class SharedPicture {
       if (!this.canRetain(key, retainedEntryBytes(nextTombstone))) return rejected("capacity");
       if (current) this.degradeTasksForExpiredAsset(current);
       this.retainTombstone(key, nextTombstone);
+      if (connectivityAssetID !== undefined) {
+        this.markSourceConnectivity({ role: "asset", id: connectivityAssetID }, false);
+      }
       if (current) {
         this.emit({ type: "remove", key });
       }
@@ -183,6 +191,8 @@ export class SharedPicture {
       return rejected("stale_record");
     }
     const sourceAsset = sourceAssetID(publication, context.source);
+    const freshness =
+      publication.resource_type === "task" ? this.taskFreshness(publication.resource, current) : ("fresh" as const);
     const record: PictureRecord = {
       resource_type: publication.resource_type,
       id,
@@ -197,18 +207,27 @@ export class SharedPicture {
       observation_time: publication.observation_time,
       received_at: context.received_at,
       ...(version === undefined ? {} : { atlas_version: version }),
-      freshness: "fresh",
+      freshness,
       path: publication.path,
       confirmation: publication.confirmation
     };
     if (!this.canRetain(key, retainedEntryBytes(record))) return rejected("capacity");
     this.retainRecord(key, record);
+    if (connectivityAssetID !== undefined) {
+      this.assetConnectivity.set(connectivityAssetID, true);
+    }
     this.emit({ type: "upsert", key, record });
-    if (context.source.role === "asset") this.markSourceConnectivity(context.source, true);
+    if (connectivityAssetID !== undefined) {
+      this.markSourceConnectivity({ role: "asset", id: connectivityAssetID }, true);
+    }
     return APPLIED;
   }
 
   markSourceConnectivity(source: LinkNode, connected: boolean): void {
+    if (source.role !== "asset") return;
+    if (this.assetConnectivity.has(source.id)) {
+      this.assetConnectivity.set(source.id, connected);
+    }
     const freshness: PictureFreshness = connected ? "fresh" : "degraded";
     for (const [key, record] of this.records) {
       if (
@@ -274,13 +293,18 @@ export class SharedPicture {
     }
     const key = `${source.role}:${source.id}`;
     const current = this.sources.get(key);
-    if (!current && this.sources.size >= PICTURE_SOURCE_LIMIT) return false;
+    if (!current && this.sources.size >= LINK_SOURCE_IDENTITY_LIMIT) return false;
     if (
       current &&
       (generation < current.generation || (generation === current.generation && session !== current.session))
     ) {
       return false;
     }
+    if (source.role === "asset" && !this.assetConnectivity.has(source.id)) {
+      if (this.assetConnectivity.size >= LINK_SOURCE_IDENTITY_LIMIT) return false;
+      this.assetConnectivity.set(source.id, false);
+    }
+    if (current && generation === current.generation && session === current.session) return true;
     if (current && generation > current.generation) {
       this.markSourceConnectivity(source, false);
       for (const [recordSourceKey, position] of this.recordSourceSequences) {
@@ -311,7 +335,7 @@ export class SharedPicture {
   private acceptSource(context: PictureApplyContext): "stale_source" | "capacity" | undefined {
     const key = `${context.source.role}:${context.source.id}`;
     const current = this.sources.get(key);
-    if (!current && this.sources.size >= PICTURE_SOURCE_LIMIT) return "capacity";
+    if (!current && this.sources.size >= LINK_SOURCE_IDENTITY_LIMIT) return "capacity";
     return this.activateSource(context.source, context.source_generation, context.service_session)
       ? undefined
       : "stale_source";
@@ -321,6 +345,40 @@ export class SharedPicture {
     if (record.resource_type !== "entity") return;
     const entity = record.state as EntityResource;
     if (entity.entity_type === "asset") this.markSourceConnectivity({ role: "asset", id: entity.entity_id }, false);
+  }
+
+  private connectivityAssetID(
+    publication: StatePublication,
+    context: PictureApplyContext,
+    current: PictureRecord | undefined
+  ): string | undefined {
+    if (publication.deleted) {
+      if (current?.resource_type === "entity" && (current.state as EntityResource).entity_type === "asset") {
+        return current.id;
+      }
+      if (publication.resource_type !== "entity") return undefined;
+      return this.assetConnectivity.has(publication.resource_id) ? publication.resource_id : undefined;
+    }
+    if (context.source.role === "asset") return context.source.id;
+    if (publication.resource_type === "entity" && publication.resource.entity_type === "asset") {
+      return publication.resource.entity_id;
+    }
+    return undefined;
+  }
+
+  private canAdmitAsset(assetID: string): boolean {
+    return this.assetConnectivity.has(assetID) || this.assetConnectivity.size < LINK_SOURCE_IDENTITY_LIMIT;
+  }
+
+  private taskFreshness(task: TaskResource, current: PictureRecord | undefined): PictureFreshness {
+    if (isTerminalTask(task)) return "fresh";
+    if (current?.resource_type === "task" && current.freshness !== "fresh") return current.freshness;
+    const assetKey = `entity:${task.asset_id}`;
+    const asset = this.records.get(assetKey);
+    if (asset !== undefined && asset.freshness !== "fresh") return "degraded";
+    if (this.tombstones.has(assetKey)) return "degraded";
+    if (this.assetConnectivity.get(task.asset_id) === false) return "degraded";
+    return "fresh";
   }
 
   private pruneRecordSourceSequences(now: number): void {

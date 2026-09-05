@@ -3,8 +3,30 @@ import { SharedPicture } from "./picture.js";
 import { GatewaySubscriptionDemand, LocalSubscriptionDemand } from "./subscriptions.js";
 import { positionPublication } from "./test-fixtures.js";
 import type { ResourceStatePublication } from "./types.js";
+import { LINK_SOURCE_IDENTITY_LIMIT } from "./types.js";
 
 describe("Shared Picture", () => {
+  it("retains generation connectivity for Tasks before any Asset Entity arrives", () => {
+    const picture = new SharedPicture();
+    const asset = { role: "asset", id: "asset-alpha" } as const;
+    expect(picture.activateSource(asset, 1, "first")).toBe(true);
+    picture.markSourceConnectivity(asset, true);
+    picture.apply(taskPublication("first"), gatewayContext(1));
+    expect(picture.snapshot().records[0]?.freshness).toBe("fresh");
+    expect(picture.activateSource(asset, 2, "second")).toBe(true);
+    picture.apply(taskPublication("second"), gatewayContext(2));
+    expect(picture.snapshot().records.map((record) => record.freshness)).toEqual(["degraded", "degraded"]);
+  });
+
+  it("keeps Gateway generations separate from an Asset with the same textual ID", () => {
+    const picture = new SharedPicture();
+    picture.apply(taskPublication("first"), gatewayContext(1));
+    const gateway = { role: "gateway", id: "asset-alpha" } as const;
+    picture.activateSource(gateway, 1, "first");
+    picture.activateSource(gateway, 2, "second");
+    expect(picture.snapshot().records[0]?.freshness).toBe("fresh");
+  });
+
   it("provides a gap-free snapshot cursor and bounded replay", () => {
     const picture = new SharedPicture("picture-session", 4);
     picture.apply(positionPublication(1), context(1));
@@ -503,11 +525,347 @@ describe("Shared Picture", () => {
       source_asset_id: "asset-alpha"
     });
 
+    const updatedTask = {
+      type: "state",
+      resource_type: "task",
+      resource: {
+        asset_id: "asset-alpha",
+        command: "atlas.survey",
+        created_at: "2026-09-02T12:00:00Z",
+        input: {},
+        status: "acknowledged",
+        acknowledged_at: "2026-09-02T12:00:10Z",
+        started_at: "2026-09-02T12:00:15Z",
+        task_id: "task-1",
+        updated_at: "2026-09-02T12:00:10Z"
+      },
+      observation_time: "2026-09-02T12:00:10Z",
+      path: "gateway_feed",
+      confirmation: "core_confirmed"
+    } as const;
+    expect(
+      picture.apply(updatedTask, {
+        source: { role: "gateway", id: "gateway" },
+        source_generation: 1,
+        service_session: "gateway-session",
+        source_sequence: 2,
+        received_at: 6_000
+      })
+    ).toEqual({ status: "applied" });
+    expect(picture.snapshot().records.find((record) => record.resource_type === "task")).toMatchObject({
+      freshness: "degraded",
+      source_asset_id: "asset-alpha"
+    });
+
+    const completedTask = {
+      ...updatedTask,
+      resource: {
+        ...updatedTask.resource,
+        finished_at: "2026-09-02T12:00:20Z",
+        status: "completed",
+        updated_at: "2026-09-02T12:00:20Z"
+      },
+      observation_time: "2026-09-02T12:00:20Z"
+    } as const;
+    expect(
+      picture.apply(completedTask, {
+        source: { role: "gateway", id: "gateway" },
+        source_generation: 1,
+        service_session: "gateway-session",
+        source_sequence: 3,
+        received_at: 7_000
+      })
+    ).toEqual({ status: "applied" });
+    expect(picture.snapshot().records.find((record) => record.resource_type === "task")).toMatchObject({
+      freshness: "fresh",
+      source_asset_id: "asset-alpha"
+    });
+
     picture.apply(positionPublication(2), { ...context(2), received_at: 6_000 });
     expect(picture.snapshot().records.find((record) => record.resource_type === "task")).toMatchObject({
       freshness: "fresh",
       source_asset_id: "asset-alpha"
     });
+  });
+
+  it("degrades a Task that arrives after its Asset state becomes stale", () => {
+    const picture = new SharedPicture("picture-session");
+    picture.apply(positionPublication(1), context(1));
+    picture.refresh(5_001);
+
+    expect(
+      picture.apply(
+        {
+          type: "state",
+          resource_type: "task",
+          resource: {
+            asset_id: "asset-alpha",
+            command: "atlas.survey",
+            created_at: "2026-09-02T12:00:00Z",
+            input: {},
+            status: "pending",
+            task_id: "task-late",
+            updated_at: "2026-09-02T12:00:00Z"
+          },
+          observation_time: "2026-09-02T12:00:00Z",
+          path: "gateway_feed",
+          confirmation: "core_confirmed"
+        },
+        {
+          source: { role: "gateway", id: "gateway" },
+          source_generation: 1,
+          service_session: "gateway-session",
+          source_sequence: 1,
+          received_at: 5_001
+        }
+      )
+    ).toEqual({ status: "applied" });
+    expect(picture.snapshot().records.find((record) => record.resource_type === "task")).toMatchObject({
+      freshness: "degraded",
+      source_asset_id: "asset-alpha"
+    });
+  });
+
+  it("degrades a Task that arrives after its Asset record is removed", () => {
+    const picture = new SharedPicture("picture-session");
+    picture.apply(positionPublication(1), context(1));
+    picture.refresh(31_001);
+    expect(picture.snapshot().records).toEqual([]);
+
+    expect(
+      picture.apply(
+        {
+          type: "state",
+          resource_type: "task",
+          resource: {
+            asset_id: "asset-alpha",
+            command: "atlas.survey",
+            created_at: "2026-09-02T12:00:00Z",
+            input: {},
+            status: "pending",
+            task_id: "task-after-removal",
+            updated_at: "2026-09-02T12:00:00Z"
+          },
+          observation_time: "2026-09-02T12:00:00Z",
+          path: "gateway_feed",
+          confirmation: "core_confirmed"
+        },
+        {
+          source: { role: "gateway", id: "gateway" },
+          source_generation: 1,
+          service_session: "gateway-session",
+          source_sequence: 1,
+          received_at: 31_001
+        }
+      )
+    ).toEqual({ status: "applied" });
+    expect(picture.snapshot().records.find((record) => record.resource_type === "task")).toMatchObject({
+      freshness: "degraded",
+      source_asset_id: "asset-alpha"
+    });
+  });
+
+  it("degrades a Gateway-origin Task after Asset feed expiry and recovers on Asset evidence", () => {
+    const picture = new SharedPicture("picture-session");
+    const gatewayContext = {
+      source: { role: "gateway", id: "gateway" } as const,
+      source_generation: 1,
+      service_session: "gateway-session",
+      source_sequence: 1,
+      received_at: 0
+    };
+    const gatewayPosition = {
+      ...positionPublication(1),
+      path: "gateway_feed",
+      confirmation: "core_confirmed"
+    } as const;
+    expect(picture.apply(gatewayPosition, gatewayContext)).toEqual({ status: "applied" });
+    picture.refresh(31_001);
+    expect(picture.snapshot().records).toEqual([]);
+
+    expect(
+      picture.apply(
+        {
+          type: "state",
+          resource_type: "task",
+          resource: {
+            asset_id: "asset-alpha",
+            command: "atlas.survey",
+            created_at: "2026-09-02T12:00:00Z",
+            input: {},
+            status: "pending",
+            task_id: "task-after-gateway-expiry",
+            updated_at: "2026-09-02T12:00:00Z"
+          },
+          observation_time: "2026-09-02T12:00:00Z",
+          path: "gateway_feed",
+          confirmation: "core_confirmed"
+        },
+        { ...gatewayContext, source_sequence: 2, received_at: 31_001 }
+      )
+    ).toEqual({ status: "applied" });
+    expect(picture.snapshot().records.find((record) => record.resource_type === "task")).toMatchObject({
+      freshness: "degraded",
+      source_asset_id: "asset-alpha"
+    });
+
+    expect(
+      picture.apply(positionPublication(2), {
+        source: { role: "asset", id: "asset-alpha" },
+        source_generation: 1,
+        service_session: "asset-session",
+        source_sequence: 1,
+        received_at: 32_001
+      })
+    ).toEqual({ status: "applied" });
+    expect(picture.snapshot().records.find((record) => record.resource_type === "task")).toMatchObject({
+      freshness: "fresh",
+      source_asset_id: "asset-alpha"
+    });
+  });
+
+  it("refreshes an existing Task when Gateway-origin Asset state recovers it", () => {
+    const picture = new SharedPicture("picture-session");
+    const gatewayContext = {
+      source: { role: "gateway", id: "gateway" } as const,
+      source_generation: 1,
+      service_session: "gateway-session",
+      source_sequence: 1,
+      received_at: 0
+    };
+    const gatewayPosition = {
+      ...positionPublication(1),
+      path: "gateway_feed",
+      confirmation: "core_confirmed"
+    } as const;
+    expect(picture.apply(gatewayPosition, gatewayContext)).toEqual({ status: "applied" });
+    expect(
+      picture.apply(
+        {
+          type: "state",
+          resource_type: "task",
+          resource: {
+            asset_id: "asset-alpha",
+            command: "atlas.survey",
+            created_at: "2026-09-02T12:00:00Z",
+            input: {},
+            status: "pending",
+            task_id: "task-gateway-recovery",
+            updated_at: "2026-09-02T12:00:00Z"
+          },
+          observation_time: "2026-09-02T12:00:00Z",
+          path: "gateway_feed",
+          confirmation: "core_confirmed"
+        },
+        { ...gatewayContext, source_sequence: 2 }
+      )
+    ).toEqual({ status: "applied" });
+
+    picture.refresh(5_001);
+    expect(picture.snapshot().records.find((record) => record.resource_type === "task")).toMatchObject({
+      freshness: "degraded"
+    });
+
+    const recoveredPosition = {
+      ...positionPublication(2),
+      path: "gateway_feed",
+      confirmation: "core_confirmed"
+    } as const;
+    expect(picture.apply(recoveredPosition, { ...gatewayContext, source_sequence: 3, received_at: 6_000 })).toEqual({
+      status: "applied"
+    });
+    expect(picture.snapshot().records.find((record) => record.resource_type === "task")).toMatchObject({
+      freshness: "fresh"
+    });
+  });
+
+  it("does not treat an Object deletion as Asset disconnection", () => {
+    const picture = new SharedPicture("picture-session");
+    const gatewayContext = {
+      source: { role: "gateway", id: "gateway" } as const,
+      source_generation: 1,
+      service_session: "gateway-session",
+      source_sequence: 1,
+      received_at: 0
+    };
+    const asset = {
+      ...positionPublication(1),
+      path: "gateway_feed" as const,
+      confirmation: "core_confirmed" as const
+    };
+    asset.resource = { ...asset.resource, entity_id: "shared-id" };
+    expect(picture.apply(asset, gatewayContext)).toEqual({ status: "applied" });
+    expect(
+      picture.apply(
+        {
+          type: "state",
+          resource_type: "task",
+          resource: {
+            asset_id: "shared-id",
+            command: "atlas.survey",
+            created_at: "2026-09-02T12:00:00Z",
+            input: {},
+            status: "pending",
+            task_id: "task-object-collision",
+            updated_at: "2026-09-02T12:00:00Z"
+          },
+          observation_time: "2026-09-02T12:00:00Z",
+          path: "gateway_feed",
+          confirmation: "core_confirmed"
+        },
+        { ...gatewayContext, source_sequence: 2 }
+      )
+    ).toEqual({ status: "applied" });
+
+    expect(
+      picture.apply(
+        {
+          type: "state",
+          resource_type: "object",
+          resource_id: "shared-id",
+          deleted: true,
+          atlas_version: 1,
+          observation_time: "2026-09-02T12:00:01Z",
+          path: "gateway_feed",
+          confirmation: "core_confirmed"
+        },
+        { ...gatewayContext, source_sequence: 3, received_at: 1_000 }
+      )
+    ).toEqual({ status: "applied" });
+    expect(picture.snapshot().records.find((record) => record.resource_type === "task")).toMatchObject({
+      freshness: "fresh"
+    });
+  });
+
+  it("retains disconnected Asset knowledge at its bounded admission limit", () => {
+    const picture = new SharedPicture("picture-session");
+    for (let index = 0; index < LINK_SOURCE_IDENTITY_LIMIT; index++) {
+      const publication = positionPublication(index + 1);
+      publication.resource = { ...publication.resource, entity_id: `asset-${index}` };
+      expect(
+        picture.apply(publication, {
+          source: { role: "gateway", id: "gateway" },
+          source_generation: 1,
+          service_session: "gateway-session",
+          source_sequence: index + 1,
+          received_at: index
+        })
+      ).toEqual({ status: "applied" });
+    }
+    picture.refresh(10 * 60_000 + 1_000);
+    expect(picture.snapshot().records).toEqual([]);
+
+    const overflow = positionPublication(9_999);
+    overflow.resource = { ...overflow.resource, entity_id: "asset-overflow" };
+    expect(
+      picture.apply(overflow, {
+        source: { role: "gateway", id: "gateway" },
+        source_generation: 1,
+        service_session: "gateway-session",
+        source_sequence: LINK_SOURCE_IDENTITY_LIMIT + 1,
+        received_at: 10 * 60_000 + 1_000
+      })
+    ).toEqual({ status: "rejected", reason: "capacity" });
   });
 
   it("degrades an active Task when its Asset is deleted", () => {
@@ -620,5 +978,35 @@ function objectPublication(
     path: "field",
     confirmation: "awaiting_core",
     operation_id: `object-${index}`
+  };
+}
+
+function taskPublication(taskID: string): Extract<ResourceStatePublication, { resource_type: "task" }> {
+  const timestamp = "2026-09-02T12:00:00Z";
+  return {
+    type: "state",
+    resource_type: "task",
+    resource: {
+      asset_id: "asset-alpha",
+      command: "atlas.survey",
+      created_at: timestamp,
+      updated_at: timestamp,
+      input: {},
+      status: "pending",
+      task_id: taskID
+    },
+    observation_time: timestamp,
+    path: "gateway_feed",
+    confirmation: "core_confirmed"
+  };
+}
+
+function gatewayContext(sequence: number) {
+  return {
+    source: { role: "gateway" as const, id: "gateway" },
+    source_generation: 1,
+    service_session: "gateway-session",
+    source_sequence: sequence,
+    received_at: sequence
   };
 }

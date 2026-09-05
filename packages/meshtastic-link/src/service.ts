@@ -4,7 +4,7 @@ import type { AddressInfo } from "node:net";
 import { isTaskResource, type TaskResource } from "@the-drunken-coder/atlas-sdk";
 import type { Clock, TimerHandle } from "./clock.js";
 import { isFeedSelector, isLinkMessage } from "./contract.js";
-import { OrderedTaskDispatcher } from "./gateway.js";
+import { OrderedTaskDispatcher, TaskQueueCapacityError } from "./gateway.js";
 import type { AssetJoinStatus } from "./joining.js";
 import { PictureCursorError, type PictureEvent, type PictureSnapshot, SharedPicture } from "./picture.js";
 import {
@@ -14,7 +14,7 @@ import {
   type RadioProfileManager,
   validateRadioProfile
 } from "./profile.js";
-import type { LinkRadioTransmissionGate } from "./radio.js";
+import { type LinkRadioTransmissionGate, RadioUnavailableError } from "./radio.js";
 import {
   LocalSubscriptionDemand,
   SUBSCRIPTION_LEASE_MS,
@@ -34,6 +34,8 @@ const SERVICE_EVENT_LIMIT = 1024;
 const CLIENT_CLEANUP_MS = 5_000;
 const PICTURE_REFRESH_MS = 1_000;
 const LOCAL_OPERATION_LIMIT = 4_096;
+const SSE_MAX_PENDING_EVENTS = SERVICE_EVENT_LIMIT;
+const SSE_MAX_PENDING_BYTES = 16 * 1024 * 1024;
 
 export type LinkLifecycle = "configuring" | "discovering" | "active" | "stopped" | "error";
 
@@ -156,8 +158,7 @@ export class LinkService {
       node: this.node,
       lifecycle: this.lifecycle,
       service_session: this.serviceSession,
-      gateway_available:
-        this.options.mode === "gateway" || (this.transport !== undefined && this.gatewayNode !== undefined),
+      gateway_available: this.options.mode === "gateway" || this.gatewayNode !== undefined,
       ...(this.statusDetail === undefined ? {} : { detail: this.statusDetail }),
       ...(this.joiningStatus === undefined ? {} : { joining: structuredClone(this.joiningStatus) }),
       picture: { session: snapshot.session, revision: snapshot.revision, records: snapshot.records.length },
@@ -310,7 +311,12 @@ export class LinkService {
 
   async radioStatus(): Promise<RadioProfileStatus> {
     if (!this.profileManager) return { available: false };
-    return { available: true, ...(await this.profileManager.inspect()) };
+    try {
+      return { available: true, ...(await this.profileManager.inspect()) };
+    } catch (error) {
+      if (error instanceof RadioUnavailableError) return { available: false };
+      throw error;
+    }
   }
 
   async applyRadioProfile(): Promise<ConfigurationEvidence> {
@@ -738,13 +744,15 @@ export class LinkHTTPServer {
     } catch (error) {
       json(
         response,
-        error instanceof PictureCursorError ||
-          error instanceof TypeError ||
-          error instanceof SyntaxError ||
-          error instanceof RangeError ||
-          error instanceof URIError
-          ? 400
-          : 500,
+        error instanceof TaskQueueCapacityError
+          ? 503
+          : error instanceof PictureCursorError ||
+              error instanceof TypeError ||
+              error instanceof SyntaxError ||
+              error instanceof RangeError ||
+              error instanceof URIError
+            ? 400
+            : 500,
         { error: error instanceof Error ? error.message : String(error) }
       );
     }
@@ -753,24 +761,30 @@ export class LinkHTTPServer {
   private streamPicture(url: URL, request: IncomingMessage, response: ServerResponse): void {
     const session = url.searchParams.get("session") ?? "";
     const revision = Number(url.searchParams.get("after"));
-    const subscription = this.service.picture.subscribeAfter(session, revision, (event) => sendSSE(response, event));
+    let unsubscribe: () => void = () => undefined;
+    let writer!: SSEWriter;
+    const subscription = this.service.picture.subscribeAfter(session, revision, (event) => writer.write(event));
+    unsubscribe = subscription.unsubscribe;
+    writer = new SSEWriter(response, () => unsubscribe());
     initializeSSE(response);
-    for (const event of subscription.replay) sendSSE(response, event);
-    request.once("close", subscription.unsubscribe);
+    for (const event of subscription.replay) writer.write(event);
+    request.once("close", () => writer.close());
   }
 
   private streamEvents(url: URL, request: IncomingMessage, response: ServerResponse): void {
     const after = url.searchParams.get("after");
     const clientID = url.searchParams.get("client_id") ?? randomUUID();
     const replay = after === null ? [] : this.service.eventsAfter(Number(after));
-    initializeSSE(response);
-    for (const event of replay) sendSSE(response, event);
-    const unsubscribe = this.service.onEvent((event) => sendSSE(response, event));
-    this.connectClient(clientID);
-    request.once("close", () => {
+    let unsubscribe: () => void = () => undefined;
+    const writer = new SSEWriter(response, () => {
       unsubscribe();
       this.releaseClient(clientID);
     });
+    unsubscribe = this.service.onEvent((event) => writer.write(event));
+    this.connectClient(clientID);
+    initializeSSE(response);
+    for (const event of replay) writer.write(event);
+    request.once("close", () => writer.close());
   }
 
   private connectClient(clientID: string): void {
@@ -857,12 +871,83 @@ function initializeSSE(response: ServerResponse): void {
   response.flushHeaders();
 }
 
-function sendSSE(response: ServerResponse, event: PictureEvent | LinkServiceEvent): void {
-  if (
-    !response.destroyed &&
-    !response.write(`id: ${"revision" in event ? event.revision : event.sequence}\ndata: ${JSON.stringify(event)}\n\n`)
+class SSEWriter {
+  private readonly pending: Array<{ data: string; bytes: number }> = [];
+  private pendingBytes = 0;
+  private waitingForDrain = false;
+  private closed = false;
+
+  private readonly onDrain = (): void => {
+    this.waitingForDrain = false;
+    this.flush();
+  };
+
+  private readonly onClose = (): void => {
+    this.finish();
+  };
+
+  private readonly onError = (): void => {
+    this.finish();
+  };
+
+  constructor(
+    private readonly response: ServerResponse,
+    private readonly cleanup: () => void
   ) {
-    response.destroy(new Error("slow Link service event client exceeded its response buffer"));
+    response.once("close", this.onClose);
+    response.once("error", this.onError);
+  }
+
+  write(event: PictureEvent | LinkServiceEvent): void {
+    if (this.closed) return;
+    const data = `id: ${"revision" in event ? event.revision : event.sequence}\ndata: ${JSON.stringify(event)}\n\n`;
+    const bytes = Buffer.byteLength(data);
+    if (
+      this.pending.length >= SSE_MAX_PENDING_EVENTS ||
+      (this.pending.length > 0 && this.pendingBytes + bytes > SSE_MAX_PENDING_BYTES)
+    ) {
+      this.close(new Error("slow Link service event client exceeded its pending event limit"));
+      return;
+    }
+    this.pending.push({ data, bytes });
+    this.pendingBytes += bytes;
+    this.flush();
+  }
+
+  close(reason?: Error): void {
+    if (this.closed) return;
+    this.finish();
+    if (reason && !this.response.destroyed && !this.response.writableEnded) this.response.destroy();
+  }
+
+  private flush(): void {
+    if (this.closed || this.waitingForDrain || this.response.destroyed || this.response.writableEnded) return;
+    while (this.pending.length > 0) {
+      const next = this.pending.shift();
+      if (!next) continue;
+      this.pendingBytes -= next.bytes;
+      try {
+        if (!this.response.write(next.data)) {
+          this.waitingForDrain = true;
+          this.response.once("drain", this.onDrain);
+          return;
+        }
+      } catch (error) {
+        this.close(error instanceof Error ? error : new Error(String(error)));
+        return;
+      }
+    }
+  }
+
+  private finish(): void {
+    if (this.closed) return;
+    this.closed = true;
+    this.pending.length = 0;
+    this.pendingBytes = 0;
+    this.response.off("drain", this.onDrain);
+    this.response.off("close", this.onClose);
+    this.response.off("error", this.onError);
+    this.cleanup();
   }
 }
 
