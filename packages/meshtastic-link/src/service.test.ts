@@ -1,3 +1,4 @@
+import type { TaskResource } from "@the-drunken-coder/atlas-sdk";
 import { describe, expect, it } from "vitest";
 import { RealClock, VirtualClock } from "./clock.js";
 import type { LinkRadio } from "./radio.js";
@@ -355,6 +356,337 @@ describe("loopback Link service", () => {
     service.stop();
   });
 });
+
+describe("Gateway Task dispatch over loopback", () => {
+  it("orders assignments and replays a failed first Task from authoritative HTTP state", async () => {
+    const harness = await taskHarness({ connected: false });
+    const delivered: string[] = [];
+    harness.assetTransport.onEvent((event) => {
+      if (event.type !== "message" || !event.addressed_to_local || event.message.type !== "task_delivery") return;
+      delivered.push(event.message.task.task_id);
+      harness.assetTransport.settleInbound(event.settlement_id, true);
+    });
+    const first = pendingTask("first", "2026-09-05T12:00:00Z");
+    const second = pendingTask("second", "2026-09-05T12:01:00Z");
+
+    try {
+      const submitted = await postJSON(`${harness.base}/v1/tasks/asset-alpha/assignments`, { tasks: [first, second] });
+      expect(submitted.response.status).toBe(202);
+      await expect(getJSON(`${harness.base}/v1/tasks/asset-alpha`)).resolves.toEqual({
+        in_flight: "first",
+        in_flight_operation_id: "task_first_assignment_1",
+        queued: ["second"]
+      });
+
+      await harness.clock.advanceBy(15_001);
+      await expect(getJSON(`${harness.base}/v1/tasks/asset-alpha`)).resolves.toEqual({
+        in_flight: "first",
+        in_flight_operation_id: "task_first_assignment_1",
+        queued: ["second"]
+      });
+
+      harness.network.connect("gateway", "asset-alpha");
+      const replay = await postJSON(`${harness.base}/v1/tasks/asset-alpha/assignments`, { tasks: [first, second] });
+      expect(replay.response.status).toBe(202);
+      await advanceUntil(harness.clock, () => delivered.length === 2);
+
+      expect(delivered).toEqual(["first", "second"]);
+      await waitForTaskIdle(harness);
+      await expect(getJSON(`${harness.base}/v1/tasks/asset-alpha`)).resolves.toEqual({ queued: [] });
+    } finally {
+      await closeTaskHarness(harness);
+    }
+  });
+
+  it("delivers cancellation and removes terminal work after authoritative observation", async () => {
+    const harness = await taskHarness();
+    const delivered: Array<{ delivery: string; taskID: string }> = [];
+    harness.assetTransport.onEvent((event) => {
+      if (event.type !== "message" || !event.addressed_to_local || event.message.type !== "task_delivery") return;
+      delivered.push({ delivery: event.message.delivery, taskID: event.message.task.task_id });
+      harness.assetTransport.settleInbound(event.settlement_id, true);
+    });
+    const task = pendingTask("cancel-me", "2026-09-05T12:00:00Z");
+
+    try {
+      const assignment = await postJSON(`${harness.base}/v1/tasks/asset-alpha`, { task, delivery: "assignment" });
+      expect(assignment.response.status).toBe(202);
+      await advanceUntil(harness.clock, () => delivered.length === 1);
+
+      const cancellation = cancelledTask(task.task_id, task.created_at);
+      const cancelled = await postJSON(`${harness.base}/v1/tasks/asset-alpha`, {
+        task: cancellation,
+        delivery: "cancellation"
+      });
+      expect(cancelled.response.status).toBe(202);
+      await advanceUntil(harness.clock, () => delivered.length === 2);
+      expect(delivered).toEqual([
+        { delivery: "assignment", taskID: "cancel-me" },
+        { delivery: "cancellation", taskID: "cancel-me" }
+      ]);
+      await expect(getJSON(`${harness.base}/v1/tasks/asset-alpha`)).resolves.toMatchObject({
+        cancellation: { task_id: "cancel-me", operation_id: "task_cancel-me_cancellation_2" },
+        queued: []
+      });
+      await waitForTaskIdle(harness);
+      await expect(getJSON(`${harness.base}/v1/tasks/asset-alpha`)).resolves.toEqual({ queued: [] });
+
+      const terminal = pendingTask("terminal", "2026-09-05T12:02:00Z");
+      const later = pendingTask("later", "2026-09-05T12:03:00Z");
+      const batch = await postJSON(`${harness.base}/v1/tasks/asset-alpha/assignments`, { tasks: [terminal, later] });
+      expect(batch.response.status).toBe(202);
+      const observed = await postJSON(`${harness.base}/v1/tasks/asset-alpha/authoritative`, {
+        task: cancelledTask(terminal.task_id, terminal.created_at)
+      });
+      expect(observed.response.status).toBe(200);
+      await advanceUntil(harness.clock, () => delivered.some((item) => item.taskID === "later"));
+      expect(delivered.filter((item) => item.taskID === "terminal")).toEqual([]);
+      await waitForTaskIdle(harness);
+      await expect(getJSON(`${harness.base}/v1/tasks/asset-alpha`)).resolves.toEqual({ queued: [] });
+    } finally {
+      await closeTaskHarness(harness);
+    }
+  });
+
+  it("retains an assignment when transport capacity is full and retries after capacity clears", async () => {
+    const harness = await taskHarness({ connected: false, transportQueueLimit: 1 });
+    const delivered: string[] = [];
+    harness.assetTransport.onEvent((event) => {
+      if (event.type !== "message" || !event.addressed_to_local || event.message.type !== "task_delivery") return;
+      delivered.push(event.message.task.task_id);
+      harness.assetTransport.settleInbound(event.settlement_id, true);
+    });
+    const occupied = harness.gatewayTransport.submit(
+      { type: "task_delivery", delivery: "assignment", task: pendingTask("occupier", "2026-09-05T12:00:00Z") },
+      { destination: { role: "asset", id: "asset-alpha" }, operationID: "occupier" }
+    );
+    expect(occupied.status).toBe("queued");
+
+    try {
+      const submitted = await postJSON(`${harness.base}/v1/tasks/asset-alpha`, {
+        task: pendingTask("capacity-task", "2026-09-05T12:01:00Z"),
+        delivery: "assignment"
+      });
+      expect(submitted.response.status).toBe(202);
+      await expect(getJSON(`${harness.base}/v1/tasks/asset-alpha`)).resolves.toEqual({ queued: ["capacity-task"] });
+
+      harness.network.connect("gateway", "asset-alpha");
+      await advanceUntil(harness.clock, () => delivered.length === 2);
+      expect(delivered).toEqual(["occupier", "capacity-task"]);
+      await waitForTaskIdle(harness);
+      await expect(getJSON(`${harness.base}/v1/tasks/asset-alpha`)).resolves.toEqual({ queued: [] });
+    } finally {
+      await closeTaskHarness(harness);
+    }
+  });
+
+  it("validates Task routes before enqueue and rejects the generic task_delivery bypass", async () => {
+    const harness = await taskHarness();
+    try {
+      const mismatched = await postJSON(`${harness.base}/v1/tasks/asset-alpha`, {
+        task: { ...pendingTask("wrong-asset", "2026-09-05T12:00:00Z"), asset_id: "asset-bravo" },
+        delivery: "assignment"
+      });
+      expect(mismatched.response.status).toBe(400);
+      await expect(getJSON(`${harness.base}/v1/tasks/asset-alpha`)).resolves.toEqual({ queued: [] });
+
+      const batchMismatch = await postJSON(`${harness.base}/v1/tasks/asset-alpha/assignments`, {
+        tasks: [
+          pendingTask("batch-valid", "2026-09-05T12:00:30Z"),
+          { ...pendingTask("batch-wrong-asset", "2026-09-05T12:00:31Z"), asset_id: "asset-bravo" }
+        ]
+      });
+      expect(batchMismatch.response.status).toBe(400);
+      await expect(getJSON(`${harness.base}/v1/tasks/asset-alpha`)).resolves.toEqual({ queued: [] });
+
+      const duplicate = pendingTask("duplicate", "2026-09-05T12:01:00Z");
+      const duplicateBatch = await postJSON(`${harness.base}/v1/tasks/asset-alpha/assignments`, {
+        tasks: [duplicate, duplicate]
+      });
+      expect(duplicateBatch.response.status).toBe(400);
+      await expect(getJSON(`${harness.base}/v1/tasks/asset-alpha`)).resolves.toEqual({ queued: [] });
+
+      const bypass = await postJSON(`${harness.base}/v1/messages`, {
+        message: { type: "task_delivery", delivery: "assignment", task: pendingTask("bypass", "2026-09-05T12:02:00Z") },
+        destination: { role: "asset", id: "asset-alpha" },
+        operation_id: "bypass"
+      });
+      expect(bypass.response.status).toBe(400);
+      expect(bypass.body).toMatchObject({ error: expect.stringContaining("/v1/tasks") });
+    } finally {
+      await closeTaskHarness(harness);
+    }
+  });
+
+  it.each(["configuring", "error", "stopped"] as const)(
+    "rejects Task routes while the service is %s",
+    async (lifecycle) => {
+      const clock = new VirtualClock();
+      const service = new LinkService({ mode: "gateway", nodeID: "gateway", clock });
+      if (lifecycle !== "configuring") service.setLifecycle(lifecycle);
+      const server = new LinkHTTPServer(service);
+      const address = await server.listen(0);
+      try {
+        if (lifecycle === "stopped") service.stop();
+        const response = await fetch(`http://${address.host}:${address.port}/v1/tasks/asset-alpha`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ task: pendingTask("inactive", "2026-09-05T12:00:00Z"), delivery: "assignment" })
+        });
+        expect(response.status).toBe(503);
+      } finally {
+        await server.close();
+        service.stop();
+      }
+    }
+  );
+
+  it("rejects an active service that has no Gateway transport", async () => {
+    const clock = new VirtualClock();
+    const service = new LinkService({ mode: "gateway", nodeID: "gateway", clock });
+    service.setLifecycle("active");
+    const server = new LinkHTTPServer(service);
+    const address = await server.listen(0);
+    try {
+      const response = await fetch(`http://${address.host}:${address.port}/v1/tasks/asset-alpha`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ task: pendingTask("no-transport", "2026-09-05T12:00:00Z"), delivery: "assignment" })
+      });
+      expect(response.status).toBe(503);
+    } finally {
+      await server.close();
+      service.stop();
+    }
+  });
+
+  it("keeps dispatcher state readable while the Gateway service is configuring or in error", async () => {
+    const harness = await taskHarness({ connected: false });
+    try {
+      const submitted = await postJSON(`${harness.base}/v1/tasks/asset-alpha`, {
+        task: pendingTask("diagnostic", "2026-09-05T12:00:00Z"),
+        delivery: "assignment"
+      });
+      expect(submitted.response.status).toBe(202);
+
+      for (const lifecycle of ["error", "configuring"] as const) {
+        harness.service.setLifecycle(lifecycle);
+        await expect(getJSON(`${harness.base}/v1/tasks/asset-alpha`)).resolves.toEqual({
+          in_flight: "diagnostic",
+          in_flight_operation_id: "task_diagnostic_assignment_1",
+          queued: []
+        });
+      }
+    } finally {
+      await closeTaskHarness(harness);
+    }
+  });
+});
+
+type TaskHarness = {
+  clock: VirtualClock;
+  network: SimulatedPacketNetwork;
+  gatewayTransport: LinkTransport;
+  assetTransport: LinkTransport;
+  service: LinkService;
+  server: LinkHTTPServer;
+  base: string;
+};
+
+async function taskHarness(options: { connected?: boolean; transportQueueLimit?: number } = {}): Promise<TaskHarness> {
+  const clock = new VirtualClock();
+  const network = new SimulatedPacketNetwork({ seed: 82, clock });
+  const gatewayRadio = network.addRadio("gateway", 1);
+  const assetRadio = network.addRadio("asset-alpha", 2);
+  if (options.connected ?? true) network.connect("gateway", "asset-alpha");
+  const gatewayTransport = new LinkTransport({
+    node: { role: "gateway", id: "gateway" },
+    sourceGeneration: 1,
+    serviceSession: "gateway-session",
+    radio: gatewayRadio,
+    clock,
+    ...(options.transportQueueLimit === undefined ? {} : { queueLimit: options.transportQueueLimit })
+  });
+  const assetTransport = new LinkTransport({
+    node: { role: "asset", id: "asset-alpha" },
+    sourceGeneration: 1,
+    serviceSession: "asset-session",
+    radio: assetRadio,
+    clock
+  });
+  const service = new LinkService({ mode: "gateway", nodeID: "gateway", clock });
+  service.attachTransport(gatewayTransport);
+  const server = new LinkHTTPServer(service);
+  const address = await server.listen(0);
+  return {
+    clock,
+    network,
+    gatewayTransport,
+    assetTransport,
+    service,
+    server,
+    base: `http://${address.host}:${address.port}`
+  };
+}
+
+async function closeTaskHarness(harness: TaskHarness): Promise<void> {
+  await harness.server.close();
+  harness.service.stop();
+  harness.assetTransport.stop();
+  await harness.clock.runUntilIdle();
+}
+
+async function postJSON(url: string, body: unknown): Promise<{ response: Response; body: unknown }> {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  return { response, body: await response.json() };
+}
+
+async function getJSON(base: string): Promise<unknown> {
+  return fetch(base).then((response) => response.json());
+}
+
+async function advanceUntil(clock: VirtualClock, predicate: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 80 && !predicate(); attempt++) await clock.advanceBy(500);
+  expect(predicate()).toBe(true);
+}
+
+async function waitForTaskIdle(harness: TaskHarness): Promise<void> {
+  await advanceUntil(harness.clock, () => {
+    const state = harness.service.taskState("asset-alpha");
+    return (
+      state !== undefined &&
+      state.in_flight === undefined &&
+      state.cancellation === undefined &&
+      state.queued.length === 0
+    );
+  });
+}
+
+function pendingTask(taskID: string, createdAt: string): TaskResource {
+  return {
+    asset_id: "asset-alpha",
+    command: "atlas.survey",
+    created_at: createdAt,
+    input: {},
+    status: "pending",
+    task_id: taskID,
+    updated_at: createdAt
+  };
+}
+
+function cancelledTask(taskID: string, createdAt: string): TaskResource {
+  return {
+    ...pendingTask(taskID, createdAt),
+    cancellation: { code: "requested", message: "Return immediately" },
+    finished_at: "2026-09-05T12:05:00Z",
+    status: "cancelled",
+    updated_at: "2026-09-05T12:05:00Z"
+  };
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);

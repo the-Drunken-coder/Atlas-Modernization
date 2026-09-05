@@ -81,6 +81,10 @@ The service binds `127.0.0.1:7331` by default. Its normal interface is:
 | `GET /v1/picture/events?session=...&after=...` | Gap-free picture SSE stream |
 | `GET /v1/events?after=...&client_id=...` | Link operation and addressed-message SSE stream |
 | `POST /v1/messages` | Submit a validated Radio contract message |
+| `POST /v1/tasks/:asset_id` | Enqueue one validated Task assignment or cancellation in Gateway order |
+| `POST /v1/tasks/:asset_id/assignments` | Enqueue a validated ordered batch of Task assignments atomically |
+| `POST /v1/tasks/:asset_id/authoritative` | Reconcile one terminal authoritative Task observation |
+| `GET /v1/tasks/:asset_id` | Read the Gateway Task dispatcher state for one Asset |
 | `GET /v1/operations/:id` | Read a queued, sent, confirmed, responded, rejected, or failed outcome |
 | `POST /v1/inbound/:settlement-id/settle` | Application acceptance or rejection of one source-scoped confirmed inbound delivery |
 | `POST /v1/subscriptions` | Add, renew, or remove one local client's feed demand |
@@ -93,9 +97,11 @@ Task delivery events include `addressed_to_local`, `requires_settlement`, and an
 
 Omit `after` from `GET /v1/events` to start with future events. Supply a previous event ID to replay retained events before following live changes. An explicit expired cursor returns HTTP 400; clients can query operation outcomes and reconnect without a cursor. Picture snapshot recovery uses the separate picture stream.
 
-`POST /v1/messages` accepts `{ message, destination?, operation_id? }`. A client retrying a confirmed write supplies the same `operation_id`; data requests and requested Object-content responses use their `request_id` as that stable identity. Task reports carry the Asset application's original `observation_time`, so radio delay does not make an old lifecycle report appear newer.
+`POST /v1/messages` accepts `{ message, destination?, operation_id? }` for the ordinary Radio contract. A `task_delivery` message submitted there is rejected with guidance to the Task routes so Gateway callers cannot bypass ordered dispatch. A client retrying a confirmed write supplies the same `operation_id`; data requests and requested Object-content responses use their `request_id` as that stable identity. Task reports carry the Asset application's original `observation_time`, so radio delay does not make an old lifecycle report appear newer.
 
-Gateway applications consume `GatewayFieldOperationInbox`, `GatewayFeedDemand`, and `OrderedTaskDispatcher`. These expose intentional field reports, aggregate feed demand, and ordered confirmed Tasks without moving Core credentials or durable Core reconciliation into this package.
+Gateway applications supply Core-derived Task resources through the loopback Task routes. The Link service owns one `OrderedTaskDispatcher` for its attached Gateway transport, preserving per-Asset order, bounded capacity, cancellation priority, and replay of a failed first assignment. `POST /v1/tasks/:asset_id/assignments` accepts `{ tasks }`; the single route accepts `{ task, delivery }`; and the authoritative route accepts `{ task }` only for a terminal Task. Every Task's `asset_id` must match the route, and a batch is validated completely before any enqueue. `GET /v1/tasks/:asset_id` reports only local dispatcher state: the in-flight Task and its operation ID, an optional cancellation attempt with its Task and operation IDs, and queued Task IDs. It does not report Core authority or evidence that a Task has executed.
+
+Gateway applications may still use `GatewayFieldOperationInbox` and `GatewayFeedDemand` for intentional field reports and aggregate feed demand. These seams do not move Core credentials, durable Core reconciliation, or radio ownership into the Link package.
 
 Radio configuration commands are thin clients of the running loopback service. They never open the serial device independently:
 

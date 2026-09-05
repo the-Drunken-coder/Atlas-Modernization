@@ -1451,6 +1451,7 @@ describe("Link transport", () => {
     expect(gateway.status("task_task-failed_assignment_1")).toMatchObject({ status: "failed" });
     expect(dispatcher.state("asset-alpha")).toEqual({
       in_flight: "task-failed",
+      in_flight_operation_id: "task_task-failed_assignment_1",
       queued: ["task-blocked"]
     });
     dispatcher.close();
@@ -1479,7 +1480,12 @@ describe("Link transport", () => {
         { delivery: "cancellation", taskID: "task-safety" }
       ])
     );
-    expect(dispatcher.state("asset-alpha")).toEqual({ in_flight: "task-unacknowledged", queued: [] });
+    expect(dispatcher.state("asset-alpha")).toEqual({
+      in_flight: "task-unacknowledged",
+      in_flight_operation_id: "task_task-unacknowledged_assignment_1",
+      cancellation: { task_id: "task-safety", operation_id: "task_task-safety_cancellation_2" },
+      queued: []
+    });
     dispatcher.close();
   });
 
@@ -1520,7 +1526,11 @@ describe("Link transport", () => {
     expect(() =>
       dispatcher.enqueue("asset-alpha", cancelledTask(active.task_id, active.created_at), "cancellation")
     ).toThrow("Task delivery queue capacity is exhausted");
-    expect(dispatcher.state("asset-alpha")).toEqual({ in_flight: "task-active", queued: ["task-queued"] });
+    expect(dispatcher.state("asset-alpha")).toEqual({
+      in_flight: "task-active",
+      in_flight_operation_id: "task_task-active_assignment_1",
+      queued: ["task-queued"]
+    });
     dispatcher.close();
   });
 
@@ -1639,7 +1649,10 @@ describe("Link transport", () => {
     dispatcher.enqueueAssignments("asset-alpha", [assignment]);
     for (let attempt = 0; attempt < 28 && delivered.length === 0; attempt++) await clock.advanceBy(500);
 
-    expect(dispatcher.state("asset-alpha")).toEqual({ queued: [] });
+    expect(dispatcher.state("asset-alpha")).toEqual({
+      cancellation: { task_id: "task-cancel-in-flight", operation_id: "task_task-cancel-in-flight_cancellation_1" },
+      queued: []
+    });
     expect(delivered).toEqual(["cancellation"]);
     dispatcher.close();
   });
@@ -1661,6 +1674,8 @@ describe("Link transport", () => {
     dispatcher.observeAuthoritativeTask("asset-alpha", terminal);
     expect(dispatcher.state("asset-alpha")).toEqual({
       in_flight: "task-first",
+      in_flight_operation_id: "task_task-first_assignment_1",
+      cancellation: { task_id: "task-cancelled", operation_id: "task_task-cancelled_cancellation_2" },
       queued: []
     });
 
@@ -1945,7 +1960,7 @@ describe("Link transport", () => {
     ).toEqual(failed);
   });
 
-  it("does not reuse a confirmed operation identity after its result is evicted", async () => {
+  it("does not reuse a confirmed operation identity while it is retained", async () => {
     const { clock, gateway, asset } = directPair();
     const delivered: string[] = [];
     asset.onEvent((event) => {
@@ -1979,7 +1994,131 @@ describe("Link transport", () => {
     expect(delivered).toEqual(["task-original"]);
   });
 
-  it("bounds the session-lifetime confirmed operation identity fence", () => {
+  it("prunes expired completed identities without losing a pending response", async () => {
+    const { clock, gateway, asset } = directPair();
+    gateway.onEvent((event) => {
+      if (event.type !== "message" || !event.addressed_to_local) return;
+      gateway.settleInbound(event.settlement_id, true);
+    });
+    asset.onEvent((event) => {
+      if (event.type === "message" && event.requires_settlement) asset.settleInbound(event.settlement_id, true);
+    });
+
+    asset.submit(
+      { type: "subscription", action: "renew", selector: { kind: "resource_type", resource_type: "entity" } },
+      { destination: { role: "gateway", id: "gateway" }, operationID: "identity-to-expire" }
+    );
+    await clock.runUntilIdle();
+    const identityExpiry = clock.now() + 10 * 60_000;
+    await clock.advanceTo(identityExpiry - 10_000);
+
+    asset.submit(
+      {
+        type: "data_request",
+        request_id: "pending-response-after-prune",
+        operation: "entity.get",
+        target_id: "asset-alpha"
+      },
+      {
+        destination: { role: "gateway", id: "gateway" },
+        operationID: "pending-response-after-prune"
+      }
+    );
+    for (
+      let attempt = 0;
+      attempt < 100 && asset.status("pending-response-after-prune")?.status !== "confirmed";
+      attempt++
+    ) {
+      await clock.advanceBy(100);
+    }
+    expect(asset.status("pending-response-after-prune")?.status).toBe("confirmed");
+    expect(asset.diagnostics().confirmed_pending).toBe(1);
+
+    await clock.advanceTo(identityExpiry);
+    expect(
+      asset.submit(
+        { type: "subscription", action: "renew", selector: { kind: "resource_type", resource_type: "entity" } },
+        { destination: { role: "gateway", id: "gateway" }, operationID: "renew-after-prune" }
+      ).status
+    ).toBe("queued");
+    gateway.submit(
+      {
+        type: "data_response",
+        request_id: "pending-response-after-prune",
+        operation: "entity.get",
+        output: positionPublication(1).resource
+      },
+      { destination: { role: "asset", id: "asset-alpha" }, operationID: "response-after-prune" }
+    );
+    await clock.runUntilIdle();
+
+    expect(asset.status("pending-response-after-prune")).toMatchObject({ status: "responded" });
+    expect(asset.status("renew-after-prune")).toMatchObject({ status: "confirmed" });
+  });
+
+  it("reclaims completed identity capacity after the retention horizon", async () => {
+    const { clock, gateway, asset } = directPair();
+    gateway.onEvent((event) => {
+      if (event.type === "message" && event.addressed_to_local) gateway.settleInbound(event.settlement_id, true);
+    });
+
+    for (let index = 0; index < 4_200; index++) {
+      const operationID = `renew-${index}`;
+      expect(
+        asset.submit(
+          { type: "subscription", action: "renew", selector: { kind: "resource_type", resource_type: "entity" } },
+          { destination: { role: "gateway", id: "gateway" }, operationID }
+        ).status
+      ).toBe("queued");
+      await clock.runUntilIdle();
+      expect(asset.status(operationID)?.status).toBe("confirmed");
+      await clock.advanceBy(30_000);
+    }
+
+    expect(asset.status("renew-4199")).toMatchObject({ status: "confirmed" });
+    expect(asset.diagnostics()).toMatchObject({ queue_depth: 0, confirmed_pending: 0, stopped: false });
+  });
+
+  it("wakes capacity listeners when completed identity retention expires", async () => {
+    const { clock, gateway, asset } = immediatePair();
+    gateway.onEvent((event) => {
+      if (event.type === "message" && event.addressed_to_local) gateway.settleInbound(event.settlement_id, true);
+    });
+
+    for (let index = 0; index < 4_096; index++) {
+      const operationID = `completed-${index}`;
+      expect(
+        asset.submit(
+          { type: "subscription", action: "renew", selector: { kind: "resource_type", resource_type: "entity" } },
+          { destination: { role: "gateway", id: "gateway" }, operationID }
+        ).status
+      ).toBe("queued");
+      await clock.runUntilIdle();
+    }
+
+    let notifications = 0;
+    asset.onCapacityAvailable(() => {
+      notifications++;
+    });
+    expect(
+      asset.submit(
+        { type: "subscription", action: "renew", selector: { kind: "resource_type", resource_type: "entity" } },
+        { destination: { role: "gateway", id: "gateway" }, operationID: "over-capacity" }
+      )
+    ).toMatchObject({ status: "failed", reason: "confirmed operation identity capacity is exhausted" });
+    expect(notifications).toBe(0);
+
+    await clock.advanceBy(10 * 60_000);
+    expect(notifications).toBe(1);
+    expect(
+      asset.submit(
+        { type: "subscription", action: "renew", selector: { kind: "resource_type", resource_type: "entity" } },
+        { destination: { role: "gateway", id: "gateway" }, operationID: "after-capacity-wakeup" }
+      ).status
+    ).toBe("queued");
+  });
+
+  it("bounds pending confirmed operation identity capacity", () => {
     const clock = new VirtualClock();
     const network = new SimulatedPacketNetwork({ seed: 84, clock });
     const transport = new LinkTransport({
@@ -2051,7 +2190,11 @@ describe("Link transport", () => {
         expect(receiver.settleInbound(event.settlement_id, true)).toBe(true);
       }
     });
-    const message = { type: "resource_operation", operation: "entity.delete", target_id: "entity" } as const;
+    const message = {
+      type: "subscription",
+      action: "renew",
+      selector: { kind: "resource_type", resource_type: "entity" }
+    } as const;
     for (let start = 0; start < 4_095; start += 64) {
       for (let index = start; index < Math.min(start + 64, 4_095); index++) {
         source.submit(message, {
@@ -2095,6 +2238,14 @@ describe("Link transport", () => {
       reason: "inbound settlement identity capacity is exhausted"
     });
     expect(receiver.metrics().confirmed_rejected_overload).toBe(2);
+    await clock.advanceBy(10 * 60_000);
+    otherSource.submit(message, {
+      destination: { role: "gateway", id: "gateway" },
+      operationID: "inbound-after-expiry"
+    });
+    await clock.advanceBy(0);
+    expect(delivered).toBe(4_097);
+    expect(otherSource.status("inbound-after-expiry")).toMatchObject({ status: "confirmed" });
     source.stop();
     otherSource.stop();
     receiver.stop();
@@ -2268,6 +2419,33 @@ function directPair(): {
   };
 }
 
+function immediatePair(): {
+  clock: VirtualClock;
+  gateway: LinkTransport;
+  asset: LinkTransport;
+} {
+  const clock = new VirtualClock();
+  const gatewayRadio = new ImmediateRadio(clock);
+  const assetRadio = new ImmediateRadio(clock);
+  gatewayRadio.connect(assetRadio);
+  assetRadio.connect(gatewayRadio);
+  return {
+    clock,
+    gateway: new LinkTransport({
+      node: { role: "gateway", id: "gateway" },
+      sourceGeneration: 1,
+      radio: gatewayRadio,
+      clock
+    }),
+    asset: new LinkTransport({
+      node: { role: "asset", id: "asset-alpha" },
+      sourceGeneration: 1,
+      radio: assetRadio,
+      clock
+    })
+  };
+}
+
 function pendingTask(taskID: string, createdAt: string): TaskResource {
   return {
     asset_id: "asset-alpha",
@@ -2321,6 +2499,42 @@ class ControlledClock implements Clock {
     for (const timer of due) this.cancel(timer.handle);
     return due.map((timer) => Promise.resolve(timer.callback()));
   }
+}
+
+class ImmediateRadio implements LinkRadio {
+  readonly max_payload_bytes = 233;
+  private peer: ImmediateRadio | undefined;
+  private readonly handlers = new Set<(packet: RadioPacket) => void>();
+
+  constructor(private readonly clock: VirtualClock) {}
+
+  connect(peer: ImmediateRadio): void {
+    this.peer = peer;
+  }
+
+  async send(payload: Uint8Array, options: RadioSendOptions): Promise<void> {
+    const peer = this.peer;
+    if (!peer) return;
+    this.clock.schedule(0, () => {
+      peer.receive({
+        payload: payload.slice(),
+        received_at: this.clock.now(),
+        channel: options.channel,
+        public_key_encrypted: options.require_public_key === true
+      });
+    });
+  }
+
+  onPacket(handler: (packet: RadioPacket) => void): () => void {
+    this.handlers.add(handler);
+    return () => this.handlers.delete(handler);
+  }
+
+  receive(packet: RadioPacket): void {
+    for (const handler of this.handlers) handler(packet);
+  }
+
+  async close(): Promise<void> {}
 }
 
 class DeferredFirstSendRadio implements LinkRadio {

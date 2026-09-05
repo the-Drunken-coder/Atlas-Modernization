@@ -20,6 +20,14 @@ If the radio already matches, startup performs no configuration writes.
 
 If required settings cannot be applied and verified, the Link service stops before discovery, Gateway bootstrap, or Atlas transmission. Status and diagnostics identify the desired value, actual value, attempted change, and Meshtastic response.
 
+## Live apply
+
+An explicit live apply uses the same convergence and verification path after the service has started. Before the first configuration write, the service suspends every radio sender, including Link transport and join traffic, and waits for any current send to finish. A successful readback reopens the send gate and restores the service's prior lifecycle.
+
+If a write, reconnect, readback, or verification step fails, the service reports an error and keeps the gate closed. Existing transport work remains tracked for a later successful apply, subject to its original deadlines. A queued operation may therefore fail while the gate is closed. No queued or new traffic may reach the radio while the profile is unverified. A stop or radio disconnect invalidates an in-flight apply, leaves the gate closed, and prevents a later adapter completion from reopening transmission.
+
+Changing the desired profile remains separate from applying it. A desired-only change does not suspend the radio. The apply operation takes a snapshot of the desired profile, so a concurrent desired change becomes the next explicit apply.
+
 ## Why Atlas owns the profile
 
 Every radio runs behind the same Meshtastic Link service. Owning the profile allows the system to tune range, airtime, relay behavior, and available application capacity as one controlled mesh instead of inheriting unrelated defaults or manual app configuration.

@@ -16,7 +16,7 @@ For operation and service events, `GET /v1/events` without `after` starts with f
 
 ## Logical capabilities
 
-The route names and wire shapes remain open, but the interface must support:
+The loopback interface must support:
 
 - Read the current Shared Picture
 - Follow picture additions, changes, staleness, and removals in real time
@@ -25,6 +25,9 @@ The route names and wire shapes remain open, but the interface must support:
 - Start a data request and observe its response or failure
 - Add, renew, and remove local Link subscription demand
 - Read bounded operational metrics and diagnostic summaries
+- Enqueue one Task assignment or cancellation for an Asset in order
+- Enqueue an ordered Task assignment batch after complete validation
+- Reconcile a terminal authoritative Task observation and read per-Asset dispatcher state
 
 Raw Meshtastic packets, transfer fragments, and radio-management commands are not part of the normal client interface.
 
@@ -48,6 +51,10 @@ Clients never edit picture records directly. They use explicit operations to:
 - Report Task acknowledgement, progress, cancellation handling, or outcome
 - Request Atlas data
 - Subscribe or unsubscribe from a Gateway feed
+
+Gateway clients submit Core-derived Task resources through the loopback Task boundary. The Link service creates one ordered dispatcher for its attached Gateway transport. `POST /v1/tasks/:asset_id` accepts `{ task, delivery }` for one assignment or cancellation, `POST /v1/tasks/:asset_id/assignments` accepts `{ tasks }` for an ordered assignment batch, `POST /v1/tasks/:asset_id/authoritative` accepts `{ task }` for a terminal authoritative observation, and `GET /v1/tasks/:asset_id` returns local dispatcher state with the in-flight Task and `in_flight_operation_id`, an optional `cancellation` object containing its `task_id` and `operation_id`, and queued Task IDs. Each Task must match the route Asset ID; a batch is validated in full before enqueue; and `POST /v1/messages` rejects `task_delivery` messages so callers cannot bypass ordering. The state route reports local queue and operation identity, not Core authority or Task execution.
+
+After a delivery timeout, the Task remains an ordering barrier. The Gateway application rechecks Core and explicitly enqueues that same Task again through the single or batch route when another attempt is appropriate. The dispatcher assigns a fresh Link operation ID and keeps later assignments blocked until application acceptance, rejection, or an authoritative terminal observation. Clients use the returned operation IDs with the operation endpoint and event stream to follow each attempt.
 
 The Link service validates and sends the corresponding Atlas message. Eligible state received in response may subsequently update the Shared Picture through the normal receive path.
 
