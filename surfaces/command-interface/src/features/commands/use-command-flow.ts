@@ -86,6 +86,11 @@ export function useCommandFlow({
     previousManifestGenerationRef.current = manifestGeneration;
     const selectedEntityChanged = previousSelectedEntityIdRef.current !== selectedEntityId;
     previousSelectedEntityIdRef.current = selectedEntityId;
+    if (selectedEntityChanged) {
+      activeSubmitIdRef.current = undefined;
+      pendingSubmissionRef.current = undefined;
+      setSubmitting(false);
+    }
     if (generationChanged) {
       closeMapMenu();
       invalidateCommandForm();

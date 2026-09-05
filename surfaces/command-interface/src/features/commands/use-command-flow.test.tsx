@@ -346,6 +346,69 @@ describe("useCommandFlow", () => {
     expect(result.current.commandForm).not.toBeNull();
   });
 
+  it.each(["success", "failure"] as const)(
+    "allows tasking another asset while an old request hangs and ignores its late %s",
+    async (outcome) => {
+      const nextAsset = { ...asset, entity_id: "asset-2" };
+      let resolveFirst: ((value: TaskResource) => void) | undefined;
+      let rejectFirst: ((reason: Error) => void) | undefined;
+      let resolveSecond: ((value: TaskResource) => void) | undefined;
+      const first = new Promise<TaskResource>((resolve, reject) => {
+        resolveFirst = resolve;
+        rejectFirst = reject;
+      });
+      const second = new Promise<TaskResource>((resolve) => {
+        resolveSecond = resolve;
+      });
+      const submitCommand = vi.fn().mockReturnValueOnce(first).mockReturnValueOnce(second);
+      const { result, rerender } = renderHook(
+        (props: { entity: typeof asset; commandManifestStatus: "ready" | "loading" }) =>
+          useCommandFlow({
+            catalog: commandCatalog,
+            selectedEntity: props.entity,
+            selectedId: props.entity.entity_id,
+            generation: props.entity.entity_id,
+            commandManifestStatus: props.commandManifestStatus,
+            submitCommand
+          }),
+        { initialProps: { entity: asset, commandManifestStatus: "ready" } }
+      );
+      let firstSubmission: Promise<void> | undefined;
+      act(() => {
+        firstSubmission = result.current.submit(availability, { value: "first" });
+      });
+      expect(result.current.submitting).toBe(true);
+
+      rerender({ entity: nextAsset, commandManifestStatus: "loading" });
+      expect(result.current.submitting).toBe(false);
+      rerender({ entity: nextAsset, commandManifestStatus: "ready" });
+      act(() => result.current.pickSidebarCommand(formAvailability));
+      const nextForm = result.current.commandForm;
+      expect(nextForm).not.toBeNull();
+      let secondSubmission: Promise<void> | undefined;
+      act(() => {
+        secondSubmission = result.current.submit(formAvailability, { value: "second" });
+      });
+      expect(submitCommand).toHaveBeenCalledTimes(2);
+      expect(submitCommand.mock.calls[1]?.[0].assetId).toBe(nextAsset.entity_id);
+
+      await act(async () => {
+        if (outcome === "success") resolveFirst?.(task);
+        else rejectFirst?.(new Error("old asset failure"));
+        await firstSubmission;
+      });
+      expect(result.current.submitting).toBe(true);
+      expect(result.current.commandForm).toBe(nextForm);
+      expect(result.current.submitError).toBeUndefined();
+      await act(async () => {
+        resolveSecond?.({ ...task, asset_id: nextAsset.entity_id });
+        await secondSubmission;
+      });
+      expect(result.current.submitting).toBe(false);
+      expect(result.current.commandForm).toBeNull();
+    }
+  );
+
   it("starts a new attempt when the failed submission data changes", async () => {
     vi.spyOn(crypto, "randomUUID")
       .mockReturnValueOnce("00000000-0000-4000-8000-000000000001")
