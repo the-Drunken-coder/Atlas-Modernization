@@ -51,6 +51,7 @@ import type {
   TaskDelivery,
   TaskReport
 } from "./types.js";
+import { MAX_LINK_FRAGMENTS } from "./types.js";
 
 export type {
   AtlasProtocolDefinitionName,
@@ -450,11 +451,14 @@ function isControlMessage(value: Record<string, unknown>): value is ControlMessa
   return (
     isOneOf(value.control, ["confirmed", "rejected", "missing_chunks"]) &&
     isNonEmptyString(value.operation_id) &&
-    optionalString(value.message_id) &&
+    isNonEmptyString(value.message_id) &&
     optionalString(value.reason) &&
-    (value.missing_chunks === undefined ||
-      (Array.isArray(value.missing_chunks) &&
-        value.missing_chunks.every((item) => Number.isSafeInteger(item) && item >= 0)))
+    (value.control !== "missing_chunks"
+      ? value.missing_chunks === undefined
+      : Array.isArray(value.missing_chunks) &&
+        value.missing_chunks.length <= MAX_LINK_FRAGMENTS &&
+        new Set(value.missing_chunks).size === value.missing_chunks.length &&
+        value.missing_chunks.every((item) => Number.isSafeInteger(item) && item >= 0 && item < MAX_LINK_FRAGMENTS))
   );
 }
 

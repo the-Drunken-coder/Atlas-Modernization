@@ -1,3 +1,5 @@
+import { once } from "node:events";
+import { connect, type Socket } from "node:net";
 import type { TaskResource } from "@the-drunken-coder/atlas-sdk";
 import { describe, expect, it, vi } from "vitest";
 import { RealClock, VirtualClock } from "./clock.js";
@@ -7,6 +9,7 @@ import { SimulatedPacketNetwork } from "./simulation.js";
 import { SUBSCRIPTION_LEASE_MS } from "./subscriptions.js";
 import { positionPublication } from "./test-fixtures.js";
 import { LinkTransport } from "./transport.js";
+import type { ResourceStatePublication } from "./types.js";
 
 describe("loopback Link service", () => {
   it("logs and removes throwing event listeners", () => {
@@ -64,6 +67,20 @@ describe("loopback Link service", () => {
       await server.close();
       service.stop();
     }
+  });
+
+  it("reports the configured Gateway association without claiming peer liveness", () => {
+    const service = new LinkService({
+      mode: "asset",
+      nodeID: "asset-alpha",
+      clock: new VirtualClock(),
+      gatewayNode: { role: "gateway", id: "gateway" }
+    });
+
+    expect(service.status().gateway_available).toBe(true);
+    service.setLifecycle("error", "serial connection lost");
+    expect(service.status().gateway_available).toBe(true);
+    service.stop();
   });
 
   it("refuses non-loopback binds", async () => {
@@ -143,6 +160,134 @@ describe("loopback Link service", () => {
       await expect(expired.json()).resolves.toEqual({ error: "service event cursor expired" });
     } finally {
       await reader?.cancel();
+      await server.close();
+      service.stop();
+    }
+  });
+
+  it("replays the full ordinary event buffer before delivering a live event", async () => {
+    const service = new LinkService({ mode: "asset", nodeID: "asset-alpha", clock: new VirtualClock() });
+    for (let index = 0; index < 1_024; index++) service.setLifecycle("discovering");
+    const expectedReplay = service.eventsAfter(0);
+    const server = new LinkHTTPServer(service);
+    const address = await server.listen(0);
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+    try {
+      const response = await fetch(`http://${address.host}:${address.port}/v1/events?after=0&client_id=replay-test`);
+      expect(response.status).toBe(200);
+      reader = response.body?.getReader();
+      if (!reader) throw new Error("event stream did not expose a body reader");
+
+      service.setLifecycle("active");
+      const records = await readSSERecords(reader, 1_025);
+      expect(records.map((record) => record.id)).toEqual(Array.from({ length: 1_025 }, (_, index) => index + 1));
+      expect(records.map((record) => record.data)).toEqual([...expectedReplay, ...service.eventsAfter(1_024)]);
+      expect(records.at(-1)?.data).toMatchObject({
+        sequence: 1_025,
+        type: "status",
+        status: { lifecycle: "active" }
+      });
+    } finally {
+      await reader?.cancel();
+      await server.close();
+      service.stop();
+    }
+  });
+
+  it("drains a large live picture event for a healthy reader", async () => {
+    const service = new LinkService({ mode: "asset", nodeID: "asset-alpha", clock: new RealClock() });
+    const server = new LinkHTTPServer(service);
+    const address = await server.listen(0);
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+    try {
+      const response = await fetch(
+        `http://${address.host}:${address.port}/v1/picture/events?session=${service.picture.session}&after=0`
+      );
+      expect(response.status).toBe(200);
+      reader = response.body?.getReader();
+      if (!reader) throw new Error("picture stream did not expose a body reader");
+
+      expect(
+        service.picture.apply(largeObjectPublication(0), {
+          source: { role: "asset", id: "asset-alpha" },
+          source_generation: 1,
+          service_session: "asset-session",
+          source_sequence: 1,
+          received_at: 0
+        })
+      ).toEqual({ status: "applied" });
+
+      const expected = service.picture.eventsAfter(service.picture.session, 0)[0];
+      const [record] = await readSSERecords(reader, 1);
+      expect(record).toEqual({ id: 1, data: expected });
+    } finally {
+      await reader?.cancel();
+      await server.close();
+      service.stop();
+    }
+  });
+
+  it("drains a large retained picture replay for a healthy reader", async () => {
+    const service = new LinkService({ mode: "asset", nodeID: "asset-alpha", clock: new RealClock() });
+    expect(
+      service.picture.apply(largeObjectPublication(0), {
+        source: { role: "asset", id: "asset-alpha" },
+        source_generation: 1,
+        service_session: "asset-session",
+        source_sequence: 1,
+        received_at: 0
+      })
+    ).toEqual({ status: "applied" });
+    const server = new LinkHTTPServer(service);
+    const address = await server.listen(0);
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+    try {
+      const response = await fetch(
+        `http://${address.host}:${address.port}/v1/picture/events?session=${service.picture.session}&after=0`
+      );
+      expect(response.status).toBe(200);
+      reader = response.body?.getReader();
+      if (!reader) throw new Error("picture stream did not expose a body reader");
+
+      const expected = service.picture.eventsAfter(service.picture.session, 0)[0];
+      const [record] = await readSSERecords(reader, 1);
+      expect(record).toEqual({ id: 1, data: expected });
+    } finally {
+      await reader?.cancel();
+      await server.close();
+      service.stop();
+    }
+  });
+
+  it("disconnects a stalled picture reader after its pending buffer is full", async () => {
+    const service = new LinkService({ mode: "asset", nodeID: "asset-alpha", clock: new VirtualClock() });
+    const server = new LinkHTTPServer(service);
+    const address = await server.listen(0);
+    let socket: Socket | undefined;
+    try {
+      socket = connect(address.port, address.host);
+      await once(socket, "connect");
+      socket.write(
+        `GET /v1/picture/events?session=${service.picture.session}&after=0 HTTP/1.1\r\nHost: ${address.host}\r\nConnection: keep-alive\r\n\r\n`
+      );
+      const [head] = await once(socket, "data");
+      expect(Buffer.from(head as Uint8Array).toString("utf8")).toContain("text/event-stream");
+      socket.pause();
+
+      const closed = waitForSocketClose(socket);
+      const usageHint = "x".repeat(8_000);
+      for (let index = 0; index < 1_200; index++) {
+        service.picture.apply(largeObjectPublication(index, usageHint), {
+          source: { role: "asset", id: "asset-alpha" },
+          source_generation: 1,
+          service_session: "asset-session",
+          source_sequence: index + 1,
+          received_at: index
+        });
+      }
+      await closed;
+    } finally {
+      socket?.destroy();
       await server.close();
       service.stop();
     }
@@ -583,6 +728,29 @@ describe("Gateway Task dispatch over loopback", () => {
     }
   });
 
+  it("reports Task queue exhaustion as service overload", async () => {
+    const harness = await taskHarness({ connected: false });
+    try {
+      for (let index = 0; index < 4_097; index++) {
+        harness.service.enqueueTask(
+          "asset-alpha",
+          pendingTask(`queued-${index}`, "2026-09-05T12:00:00Z"),
+          "assignment"
+        );
+      }
+
+      const result = await postJSON(`${harness.base}/v1/tasks/asset-alpha`, {
+        task: pendingTask("overflow", "2026-09-05T12:00:00Z"),
+        delivery: "assignment"
+      });
+
+      expect(result.response.status).toBe(503);
+      expect(result.body).toEqual({ error: "Task delivery queue capacity is exhausted" });
+    } finally {
+      await closeTaskHarness(harness);
+    }
+  });
+
   it("keeps dispatcher state readable while the Gateway service is configuring or in error", async () => {
     const harness = await taskHarness({ connected: false });
     try {
@@ -709,6 +877,74 @@ function cancelledTask(taskID: string, createdAt: string): TaskResource {
     status: "cancelled",
     updated_at: "2026-09-05T12:05:00Z"
   };
+}
+
+function largeObjectPublication(
+  index: number,
+  usageHint = "x".repeat(72_000)
+): Extract<ResourceStatePublication, { resource_type: "object" }> {
+  const timestamp = "2026-09-05T12:00:00Z";
+  return {
+    type: "state",
+    resource_type: "object",
+    resource: {
+      bucket: null,
+      content_type: null,
+      metadata: { created_at: timestamp, updated_at: timestamp, version: index + 1 },
+      object_id: `object-${index}`,
+      path: null,
+      size_bytes: 0,
+      type: "test",
+      usage_hints: [usageHint]
+    },
+    observation_time: timestamp,
+    path: "field",
+    confirmation: "awaiting_core",
+    operation_id: `object-${index}`
+  };
+}
+
+async function waitForSocketClose(socket: Socket): Promise<void> {
+  if (socket.destroyed) return;
+  await new Promise<void>((resolve, reject) => {
+    let timer: NodeJS.Timeout;
+    const onClose = (): void => {
+      clearTimeout(timer);
+      resolve();
+    };
+    timer = setTimeout(() => {
+      socket.off("close", onClose);
+      reject(new Error("stalled SSE socket did not close within the bounded drain window"));
+    }, 5_000);
+    timer.unref();
+    socket.once("close", onClose);
+  });
+}
+
+async function readSSERecords(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  count: number
+): Promise<Array<{ id: number; data: unknown }>> {
+  const decoder = new TextDecoder();
+  const records: Array<{ id: number; data: unknown }> = [];
+  let pending = "";
+  while (records.length < count) {
+    const chunk = await reader.read();
+    if (chunk.done) throw new Error(`event stream ended after ${records.length} records`);
+    pending += decoder.decode(chunk.value, { stream: true });
+    let boundary = pending.indexOf("\n\n");
+    while (boundary >= 0) {
+      const record = pending.slice(0, boundary);
+      pending = pending.slice(boundary + 2);
+      const id = /^id: (\d+)$/m.exec(record)?.[1];
+      const data = /^data: (.+)$/m.exec(record)?.[1];
+      if (id === undefined || data === undefined) throw new Error("malformed SSE record");
+      records.push({ id: Number(id), data: JSON.parse(data) });
+      if (records.length === count) return records;
+      boundary = pending.indexOf("\n\n");
+    }
+  }
+  return records;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

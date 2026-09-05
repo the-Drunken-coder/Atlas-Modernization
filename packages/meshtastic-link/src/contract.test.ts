@@ -14,6 +14,33 @@ import { decodeFrame, type FrameIdentity, fragmentPayload } from "./frame.js";
 import { positionPublication } from "./test-fixtures.js";
 
 describe("generated Radio contract", () => {
+  it("caps outgoing frames at the wire limit when an adapter offers more capacity", () => {
+    const frames = fragmentPayload(serializeLinkMessage(positionPublication(1)), frameIdentity(), 300);
+    expect(frames.length).toBeGreaterThan(1);
+    for (const frame of frames) {
+      expect(frame.byteLength).toBeLessThanOrEqual(233);
+      expect(() => decodeFrame(frame)).not.toThrow();
+    }
+  });
+
+  it("requires correlation and unique bounded repair indexes on controls", () => {
+    const control = {
+      type: "control",
+      control: "missing_chunks",
+      operation_id: "operation",
+      message_id: "message",
+      missing_chunks: [0, 2]
+    };
+    expect(isLinkMessage(control)).toBe(true);
+    expect(isLinkMessage({ ...control, message_id: undefined })).toBe(false);
+    expect(isLinkMessage({ ...control, missing_chunks: undefined })).toBe(false);
+    expect(isLinkMessage({ ...control, missing_chunks: [0, 0] })).toBe(false);
+    expect(isLinkMessage({ ...control, missing_chunks: [4096] })).toBe(false);
+    expect(
+      isLinkMessage({ type: "control", control: "confirmed", operation_id: "operation", message_id: "message" })
+    ).toBe(true);
+  });
+
   it("matches the public Atlas SDK operation surface", () => {
     const client = new AtlasClient({
       baseUrl: "http://127.0.0.1:1",

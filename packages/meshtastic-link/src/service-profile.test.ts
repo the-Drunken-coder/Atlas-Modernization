@@ -9,7 +9,13 @@ import {
   type RadioProfile,
   RadioProfileManager
 } from "./profile.js";
-import { type LinkRadio, LinkRadioGate, type RadioPacket, RadioTransmissionSuspendedError } from "./radio.js";
+import {
+  type LinkRadio,
+  LinkRadioGate,
+  type RadioPacket,
+  RadioTransmissionSuspendedError,
+  RadioUnavailableError
+} from "./radio.js";
 import { LinkService } from "./service.js";
 import { SUBSCRIPTION_RENEWAL_MS } from "./subscriptions.js";
 import { positionPublication } from "./test-fixtures.js";
@@ -65,12 +71,14 @@ class FakeConfigurationAdapter implements RadioConfigurationAdapter {
   private applyRelease: (() => void) | undefined;
   ignoreWrites = false;
   blockWrites = false;
+  readError: Error | undefined;
 
   constructor(profile: RadioProfile) {
     this.configuration = actualConfiguration(profile);
   }
 
   async readConfiguration(): Promise<ActualRadioConfiguration> {
+    if (this.readError) throw this.readError;
     return structuredClone(this.configuration);
   }
 
@@ -165,6 +173,22 @@ function setup() {
 }
 
 describe("Link service radio profile apply", () => {
+  it("reports an unavailable radio when cached profile reads lose the connection", async () => {
+    const { adapter, service } = setup();
+    adapter.readError = new RadioUnavailableError();
+
+    await expect(service.radioStatus()).resolves.toEqual({ available: false });
+    service.stop();
+  });
+
+  it("preserves non-radio profile inspection failures", async () => {
+    const { adapter, service } = setup();
+    adapter.readError = new Error("profile read failed");
+
+    await expect(service.radioStatus()).rejects.toThrow("profile read failed");
+    service.stop();
+  });
+
   it("suspends radio sends and restores the active lifecycle after verified apply", async () => {
     const { adapter, radio, rawRadio, service, clock } = setup();
     const desired = service.profile();

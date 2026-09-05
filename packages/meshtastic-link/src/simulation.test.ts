@@ -3,6 +3,28 @@ import { VirtualClock } from "./clock.js";
 import { SimulatedPacketNetwork } from "./simulation.js";
 
 describe("simulated packet network", () => {
+  it.each([
+    [1, false],
+    [3, true]
+  ] as const)("respects hop limit %i across a three-link path", async (hopLimit, expected) => {
+    const clock = new VirtualClock();
+    const network = new SimulatedPacketNetwork({ seed: 42, clock, hopLimit });
+    const source = network.addRadio("source", 101);
+    network.addRadio("relay-one", 102);
+    network.addRadio("relay-two", 103);
+    const destination = network.addRadio("destination", 104);
+    network.connect("source", "relay-one");
+    network.connect("relay-one", "relay-two");
+    network.connect("relay-two", "destination");
+    let received = false;
+    destination.onPacket(() => {
+      received = true;
+    });
+    await source.send(Uint8Array.of(1), { channel: 1 });
+    await clock.runUntilIdle();
+    expect(received).toBe(expected);
+  });
+
   it("rejects duplicate numeric radio identities", () => {
     const network = new SimulatedPacketNetwork({ seed: 1, clock: new VirtualClock() });
     network.addRadio("alpha", 2);

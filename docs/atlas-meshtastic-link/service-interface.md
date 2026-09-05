@@ -14,6 +14,8 @@ The generated radio-facing SDK preserves Atlas Protocol resource types, operatio
 
 For operation and service events, `GET /v1/events` without `after` starts with future events. An explicit `after` replays retained events and rejects expired cursors. After expiry, clients may query their operation IDs and open a fresh stream. Picture changes use the snapshot cursor handoff described below.
 
+Both event streams preserve replay-before-live ordering and honor HTTP response backpressure. They keep only a bounded pending event buffer; a client that remains stalled beyond that bound is disconnected. It can reconnect with its last received cursor while that cursor is retained; after expiry, a picture client must read a fresh snapshot, and an operation client must query its operation IDs before opening a fresh stream.
+
 ## Logical capabilities
 
 The loopback interface must support:
@@ -75,6 +77,8 @@ Pending Link operations and transmission queues do not survive a Link service st
 The Link service tracks demand from each connected local client and sends only one Link subscription for each canonical feed selector. One client's unsubscribe removes only that client's demand. The Link service removes its Link subscription after no local client still wants the feed.
 
 Local clients renew their demand at least every thirty seconds. The Link service expires all demand for a client after ninety seconds without an add or renewal, while a detected event-stream disconnect starts the shorter connection cleanup interval. A client using only request-response calls or the picture stream therefore still releases demand after it vanishes.
+
+The `gateway_available` status field reports the configured Gateway association: it is true in Gateway mode or when an Asset has a configured Gateway node. It does not assert radio reachability, peer liveness, or a successful heartbeat.
 
 ## Diagnostics
 

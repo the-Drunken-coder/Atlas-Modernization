@@ -146,7 +146,8 @@ async function serve(argv: string[]): Promise<void> {
         store,
         authentication,
         (error) => service.setJoiningLifecycle("active", `join attempt deferred: ${error.message}`),
-        (admission) => {
+        (admission): void => {
+          // Source-fence rejection throws; a queue result must not roll back local membership admission.
           transport.announceSourceActivation(admission.source, admission.source_generation, admission.service_session);
         }
       );

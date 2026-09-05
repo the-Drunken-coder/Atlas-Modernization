@@ -76,7 +76,9 @@ These intervals are Link defaults and may later be tuned from scenario and field
 
 ## Memory bounds
 
-The initial Link service retains at most 4,096 combined picture records and deletion fences, up to 16 MiB of serialized picture state, 4,096 source identities, and 1,024 subscribers during one service session. It rejects a new picture entry or source when the applicable bound is full instead of evicting a live record or deletion fence. Subscriber registration fails explicitly at its bound. The apply result distinguishes capacity rejection from stale traffic, and transport metrics report picture-capacity rejections separately.
+The initial Link service retains at most 4,096 combined picture records and deletion fences, up to 16 MiB of serialized picture state, 4,096 source identities, 4,096 remembered Asset connectivity identities, and 1,024 subscribers during one service session. It rejects a new picture entry, source, or Asset connectivity identity when the applicable bound is full instead of evicting a live record, deletion fence, or lost-connectivity knowledge. Subscriber registration fails explicitly at its bound. The apply result distinguishes capacity rejection from stale traffic, and transport metrics report picture-capacity rejections separately.
+
+Source activation alone does not establish Asset connectivity. An accepted Asset-origin observation or Gateway-origin Asset state marks the Asset connectivity identity as connected. Freshness expiry, explicit deletion, or a newer source generation marks it disconnected. Actual later Asset-origin state marks it connected again. This bounded knowledge remains for the Link service session so a Gateway-origin Task arriving after the Asset record expires still reports degraded source connectivity.
 
 The snapshot-to-stream handoff journal retains at most 1,024 events and 8 MiB. Crossing either limit removes the oldest complete events, so a cursor behind the retained journal fails and must obtain a new snapshot.
 

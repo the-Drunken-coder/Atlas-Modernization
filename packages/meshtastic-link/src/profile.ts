@@ -312,12 +312,12 @@ export function validateRadioProfile(profile: unknown): asserts profile is Radio
   }
   if (
     profile.tx_power !== 0 ||
-    profile.power_saving ||
-    profile.remote_administration ||
-    profile.managed_mode ||
-    profile.native_position ||
-    profile.native_telemetry ||
-    profile.mqtt
+    profile.power_saving !== false ||
+    profile.remote_administration !== false ||
+    profile.managed_mode !== false ||
+    profile.native_position !== false ||
+    profile.native_telemetry !== false ||
+    profile.mqtt !== false
   ) {
     throw new TypeError("Radio profile enables behavior excluded by the accepted architecture");
   }
@@ -326,9 +326,10 @@ export function validateRadioProfile(profile: unknown): asserts profile is Radio
     profile.public_channel.name !== PUBLIC_RENDEZVOUS_CHANNEL_NAME ||
     profile.public_channel.role !== "PRIMARY" ||
     profile.public_channel.key_base64 !== "AQ==" ||
-    profile.public_channel.uplink ||
-    profile.public_channel.downlink ||
+    profile.public_channel.uplink !== false ||
+    profile.public_channel.downlink !== false ||
     typeof profile.private_channel.index !== "number" ||
+    !Number.isSafeInteger(profile.private_channel.index) ||
     profile.private_channel.index <= 0 ||
     profile.private_channel.index > 7 ||
     profile.private_channel.name !== "ATLAS"

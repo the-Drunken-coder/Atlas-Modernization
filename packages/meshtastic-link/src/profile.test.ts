@@ -7,7 +7,8 @@ import {
   profileDifferences,
   type RadioConfigurationAdapter,
   type RadioProfile,
-  RadioProfileManager
+  RadioProfileManager,
+  validateRadioProfile
 } from "./profile.js";
 
 describe("radio profile", () => {
@@ -28,6 +29,46 @@ describe("radio profile", () => {
         { path: "override_frequency", desired: 0, actual: 915 }
       ])
     );
+  });
+
+  it("rejects omitted disabled flags and malformed private channel slots", () => {
+    const profile = createUSShortFastProfile(20, "2.7.15");
+    const disabledFlags = [
+      "power_saving",
+      "remote_administration",
+      "managed_mode",
+      "native_position",
+      "native_telemetry",
+      "mqtt"
+    ] as const;
+
+    for (const flag of disabledFlags) {
+      for (const invalid of [undefined, 0]) {
+        const malformed = structuredClone(profile);
+        Reflect.set(malformed, flag, invalid);
+        expect(() => validateRadioProfile(malformed), `${flag}=${String(invalid)}`).toThrow(
+          "Radio profile enables behavior"
+        );
+      }
+    }
+
+    for (const flag of ["uplink", "downlink"] as const) {
+      for (const invalid of [undefined, 0]) {
+        const malformed = structuredClone(profile);
+        Reflect.set(malformed.public_channel, flag, invalid);
+        expect(() => validateRadioProfile(malformed), `public_channel.${flag}=${String(invalid)}`).toThrow(
+          "Radio profile channel layout"
+        );
+      }
+    }
+
+    for (const index of [1.5, Number.NaN, Number.MAX_SAFE_INTEGER + 1]) {
+      const malformed = structuredClone(profile);
+      malformed.private_channel.index = index;
+      expect(() => validateRadioProfile(malformed), `private_channel.index=${index}`).toThrow(
+        "Radio profile channel layout"
+      );
+    }
   });
 
   it("keeps apply evidence tied to the selected profile when the desired profile changes", async () => {

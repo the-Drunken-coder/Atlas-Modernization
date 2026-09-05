@@ -108,4 +108,18 @@ describe("Meshtastic serial radio", () => {
     expect(disconnected).not.toHaveBeenCalled();
     await radio.close();
   });
+
+  it("does not expose cached radio state after a physical disconnect", async () => {
+    const { MeshtasticSerialRadio, RadioUnavailableError } = await import("./radio.js");
+    const radio = await MeshtasticSerialRadio.open("/dev/cu.test");
+    const device = mocks.state.devices[0];
+    if (!device) throw new Error("test device was not opened");
+
+    device.events.onDeviceStatus.dispatch(2);
+
+    await expect(radio.readConfiguration()).rejects.toBeInstanceOf(RadioUnavailableError);
+    await expect(radio.readPrivateMembership(1)).rejects.toBeInstanceOf(RadioUnavailableError);
+    expect(() => radio.nodeNumber()).toThrow(RadioUnavailableError);
+    await radio.close();
+  });
 });

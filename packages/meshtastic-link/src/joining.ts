@@ -240,6 +240,12 @@ export class GatewayJoinService {
       if (!accepted || this.closed) return;
       const admitted = await this.membershipStore.admitAsset(pending.beacon.asset_id);
       if (this.closed) return;
+      await this.onAdmitted?.({
+        source: { role: "asset", id: pending.beacon.asset_id },
+        source_generation: admitted.source_generation,
+        service_session: pending.beacon.service_session
+      });
+      if (this.closed) return;
       const acceptance: JoinAcceptance = {
         type: "accept",
         join_attempt_id: message.join_attempt_id,
@@ -258,12 +264,6 @@ export class GatewayJoinService {
       });
       this.pruneCompleted(packet.received_at);
       await this.sendAcceptance(acceptance, packet.radio_source);
-      if (this.closed) return;
-      await this.onAdmitted?.({
-        source: { role: "asset", id: pending.beacon.asset_id },
-        source_generation: admitted.source_generation,
-        service_session: pending.beacon.service_session
-      });
     } finally {
       this.pending.delete(message.join_attempt_id);
       this.processing.delete(message.join_attempt_id);
