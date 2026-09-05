@@ -35,6 +35,7 @@ import { ContextMenu, type MenuItemDef } from "../ui/primitives/Menu.js";
 import { APIKeysPanel } from "./admin/APIKeysPanel.js";
 import type { PluginSelection } from "./admin/PluginsPanel.js";
 import { AssetInspector, type CommandManifestStatus } from "./assets/AssetInspector.js";
+import { CommandDetails } from "./commands/CommandDetails.js";
 import { CommandList } from "./commands/CommandList.js";
 import { type CommandFormState, useCommandFlow } from "./commands/use-command-flow.js";
 import { EntityList } from "./EntityList.js";
@@ -44,6 +45,7 @@ import { PlacesPanel } from "./places/PlacesPanel.js";
 import { createMapTilerPlaceSearch, type PlaceSearch } from "./places/place-search.js";
 import { type SpatialOperationRunner, useSpatialOperationRunner } from "./plugins/use-spatial-operation-runner.js";
 import { TrackInspector } from "./tracks/TrackInspector.js";
+import { useHeartbeatClock } from "./useHeartbeatClock.js";
 
 const LIST_TITLES = Object.fromEntries([
   ...ENTITY_KINDS.map((kind) => [ENTITY_DESCRIPTORS[kind].list, ENTITY_DESCRIPTORS[kind].label]),
@@ -79,6 +81,7 @@ type EntityDetailsRequest = {
 export function MapConsole() {
   const atlas = useAtlas();
   const { snapshot, catalog } = atlas;
+  const now = useHeartbeatClock();
   const [sidebar, dispatch] = useReducer(sidebarReducer, initialSidebarState);
   const [entityQueries, setEntityQueries] = useState(EMPTY_ENTITY_QUERIES);
   const [placeQuery, setPlaceQuery] = useState("");
@@ -154,7 +157,7 @@ export function MapConsole() {
       start: () => {}
     };
     detailsRequestRef.current = request;
-    setSelectedEntityDetails(undefined);
+    setSelectedEntityDetails((current) => (current?.entity_id === request.entityId ? current : undefined));
     setCommandManifestState({ entityId: request.entityId, status: "loading" });
 
     request.start = () => {
@@ -260,7 +263,7 @@ export function MapConsole() {
         ? "ready"
         : currentCommandManifestStatus === "unavailable"
           ? "unavailable"
-          : !selectedDetails || detailsNeedRefresh
+          : currentCommandManifestStatus === "loading" || !selectedDetails || detailsNeedRefresh
             ? "loading"
             : "ready";
   const selectedEntity =
@@ -278,7 +281,7 @@ export function MapConsole() {
     commandManifestGeneration:
       selectedDetails === undefined
         ? undefined
-        : `${selectedDetails.metadata.version}:${selectedRuntimeManifestVersion ?? "initial"}`,
+        : JSON.stringify(selectedDetails.command_manifest?.slice().sort((a, b) => a.command.localeCompare(b.command))),
     submitCommand: atlas.submitCommand
   });
   const geometryEdit = useGeometryEdit({ selectedEntity, selectedId, updateGeometry: atlas.updateGeometry });
@@ -296,8 +299,8 @@ export function MapConsole() {
   }, [atlas.config]);
 
   const sources = useMemo(
-    () => buildMapSources(Object.values(snapshot.entities), selectedId),
-    [snapshot.entities, selectedId]
+    () => buildMapSources(Object.values(snapshot.entities), selectedId, now),
+    [snapshot.entities, selectedId, now]
   );
   const counts = useMemo(() => countsByKind(snapshot), [snapshot]);
   const handleMapStyleSwitchError = useCallback(
@@ -413,7 +416,7 @@ export function MapConsole() {
       ? commandsForTargeting(catalog, selectedEntity, "map_point").map((availability) => ({
           key: availability.command.command,
           title: availability.command.name,
-          sub: availability.manifest.description,
+          sub: <CommandDetails command={availability.command} manifest={availability.manifest} density="menu" />,
           onSelect: () => commandFlow.pickMapCommand(availability, { lat: mapMenu.lat, lng: mapMenu.lng })
         }))
       : [];
@@ -592,11 +595,11 @@ export function MapConsole() {
         </Callout>
       ) : null}
 
-      {commandForm && selectedEntity && resolvedCommandManifestStatus === "ready" ? (
+      {commandForm && selectedEntity && resolvedCommandManifestStatus !== "unavailable" ? (
         <PurposeBuiltCommandForm
           state={commandForm}
           asset={selectedEntity}
-          submitting={submitting}
+          submitting={submitting || resolvedCommandManifestStatus !== "ready"}
           error={submitError}
           onCancel={commandFlow.dismissCommandForm}
           onSubmit={(input) => void commandFlow.submit(commandForm.availability, input, commandForm.manifestGeneration)}

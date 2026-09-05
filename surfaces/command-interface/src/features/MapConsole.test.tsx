@@ -15,9 +15,11 @@ import type { AtlasDataSource, CommandSubmission, ConnectionHealth } from "../at
 import type { UiGeometry } from "../atlas/geometry.js";
 import type { AtlasSnapshot } from "../atlas/store.js";
 import { type AtlasContextValue, AtlasProvider, AtlasStaticProvider } from "../state/atlas-context.js";
+import { COMMAND_INPUT_REGISTRY } from "./commands/command-input-registry.js";
 import { MapConsole } from "./MapConsole.js";
 
 type MockMapViewProps = {
+  sources: import("../ui/map/rendering/map-sources.js").MapSources;
   styleId: string;
   mapSourceOptions: AppConfig["mapSources"];
   selectedId?: string;
@@ -351,6 +353,35 @@ function renderStaticConsole(overrides: Partial<AtlasContextValue> = {}) {
 }
 
 describe("MapConsole", () => {
+  it("updates map heartbeat freshness as time passes without a new snapshot", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-06-20T00:10:00Z"));
+    const connectedRover: EntityResource = {
+      ...rover,
+      components: {
+        ...rover.components,
+        communications: { link_state: "connected" },
+        heartbeat: { last_seen: "2026-06-20T00:10:00Z" }
+      }
+    };
+    const rendered = renderStaticConsole({
+      snapshot: { entities: { [rover.entity_id]: connectedRover }, tasks: {} }
+    });
+    try {
+      await screen.findByTestId("map");
+      expect(mapViewMock.lastProps?.sources.assets.features[0]?.properties.connectionFreshness).toBe("fresh");
+      vi.setSystemTime(new Date("2026-06-20T00:12:00Z"));
+      await waitFor(
+        () => expect(mapViewMock.lastProps?.sources.assets.features[0]?.properties.connectionFreshness).toBe("offline"),
+        { timeout: 2_000 }
+      );
+      expect(mapViewMock.lastProps?.sources.assets.features[0]?.properties.linkState).toBe("connected");
+    } finally {
+      rendered.unmount();
+      vi.useRealTimers();
+    }
+  });
+
   it("selects and opens a marker menu from the first context gesture", async () => {
     const loadEntityDetails = vi.fn(async (entityId: string) => ({
       ...(entityId === scout.entity_id ? scout : rover),
@@ -366,6 +397,38 @@ describe("MapConsole", () => {
 
     expect(await screen.findByText("Commands · 47.6100, -122.3300")).toBeInTheDocument();
     expect(mapViewMock.lastProps?.selectedId).toBe("asset-1");
+  });
+
+  it("shows Protocol, Asset, and capability details in the map command menu", async () => {
+    Reflect.set(COMMAND_INPUT_REGISTRY, "fixture.queued", {
+      targeting: "map_point",
+      buildInput: () => ({})
+    });
+    try {
+      const loadEntityDetails = vi.fn(async (entityId: string) => ({
+        ...(entityId === scout.entity_id ? scout : rover),
+        command_manifest: [queuedManifest]
+      }));
+      renderStaticConsole({
+        snapshot: {
+          entities: { [rover.entity_id]: rover, [scout.entity_id]: scout, [area.entity_id]: area },
+          tasks: {}
+        },
+        catalog: taskingCatalog,
+        loadEntityDetails
+      });
+
+      fireEvent.contextMenu(await screen.findByTestId("map-marker-context-menu"));
+
+      const item = await screen.findByRole("menuitem", { name: /Fixture queued/ });
+      expect(item).toHaveTextContent("Protocol");
+      expect(item).toHaveTextContent("Exercise tasking.");
+      expect(item).toHaveTextContent("Asset");
+      expect(item).toHaveTextContent("Runs the fixture.");
+      expect(item).toHaveTextContent("Queued · Cancel yes · Progress yes");
+    } finally {
+      Reflect.deleteProperty(COMMAND_INPUT_REGISTRY, "fixture.queued");
+    }
   });
 
   it("moves selection before opening a marker menu when another asset was selected", async () => {
