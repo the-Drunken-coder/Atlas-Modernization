@@ -4,6 +4,7 @@ import { type MapMouseEvent, type Map as MlMap, type StyleSpecification } from "
 import { type MouseEvent as ReactMouseEvent, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { MapSourceConfig } from "../../../app/config.js";
 import { sanitizeConnectionError } from "../../../atlas/connection-error.js";
+import type { Position } from "../../../atlas/geometry.js";
 import { Button } from "../../primitives/controls.js";
 import { getSidcRuntime, loadSidcRuntime } from "../../symbols/sidc-runtime.js";
 import {
@@ -55,6 +56,7 @@ type MapViewProps = {
   mapSourceOptions: MapSourceConfig[];
   selectedId?: string;
   editing?: MapEditing;
+  drawing?: { onPoint: (position: Position) => void };
   initialCenter?: [number, number];
   focusTarget?: MapReticleTarget | null;
   placeDetailTarget?: MapTarget | null;
@@ -90,6 +92,7 @@ export function MapView({
   mapSourceOptions,
   selectedId,
   editing,
+  drawing,
   initialCenter,
   focusTarget,
   placeDetailTarget,
@@ -515,7 +518,7 @@ export function MapView({
           sourceOptions={mapSourceOptions}
           sources={sources}
           editing={editing}
-          exclusiveDrawingActive={spatial?.drawing ?? false}
+          exclusiveDrawingActive={Boolean(drawing || spatial?.drawing)}
           onBeginRegionInteraction={beginRegionInteraction}
           onBeginDrawing={() => spatial?.onCancelDrawing()}
           suppressNextClick={reticleInteraction.mapActions.suppressNextClick}
@@ -534,6 +537,31 @@ export function MapView({
             onViewportArea={spatial.onViewportArea}
             onBoxZoomActiveChange={spatial.onBoxZoomActiveChange}
             suppressNextClick={reticleInteraction.mapActions.suppressNextClick}
+          />
+        ) : null}
+        {drawing ? (
+          <div
+            className="geofeature-drawing"
+            data-map-interaction-control
+            data-testid="geofeature-drawing"
+            onMouseDown={(event) => event.stopPropagation()}
+            onPointerMove={(event) => event.stopPropagation()}
+            onContextMenu={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+            }}
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              const map = mapRef.current;
+              if (!map || !mapReady || event.detail > 1) return;
+              const bounds = event.currentTarget.getBoundingClientRect();
+              const point = map.unproject([event.clientX - bounds.left, event.clientY - bounds.top]);
+              drawing.onPoint([
+                ((((point.lng + 180) % 360) + 360) % 360) - 180,
+                Math.max(-90, Math.min(90, point.lat))
+              ]);
+            }}
           />
         ) : null}
         {reticleInteraction.cursorOverlay ? <MapCursorOverlay {...reticleInteraction.cursorOverlay} /> : null}

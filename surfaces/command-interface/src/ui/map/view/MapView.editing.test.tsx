@@ -1,10 +1,38 @@
-import { screen } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { UiGeometry } from "../../../atlas/geometry.js";
 import { renderMapView } from "./MapView.test-harness.js";
 
 describe("MapView geometry editing", () => {
+  it("draws normalized coordinates without selecting entities or opening map commands", async () => {
+    const onPoint = vi.fn();
+    const { map, onSelectEntity, onBackgroundClick, onMapContextMenu } = renderMapView({ drawing: { onPoint } });
+    await waitFor(() => expect(map.getSource("editing")).toBeDefined());
+    vi.spyOn(map, "unproject").mockReturnValue({ lng: 289, lat: 42 });
+    const drawing = screen.getByTestId("geofeature-drawing");
+    fireEvent.click(drawing, { clientX: 80, clientY: 90 });
+    fireEvent.contextMenu(drawing);
+    expect(onPoint).toHaveBeenCalledExactlyOnceWith([-71, 42]);
+    expect(onSelectEntity).not.toHaveBeenCalled();
+    expect(onBackgroundClick).not.toHaveBeenCalled();
+    expect(onMapContextMenu).not.toHaveBeenCalled();
+  });
+
+  it("shows draft geometry without edit handles while drawing or saving", async () => {
+    const geometry: UiGeometry = {
+      type: "LineString",
+      coordinates: [
+        [-71, 42],
+        [-70, 43]
+      ]
+    };
+    const { map } = renderMapView({ editing: { geometry, onChange: vi.fn(), readOnly: true } });
+    await waitFor(() => expect(map.getSource("editing")?.setData).toHaveBeenCalled());
+    expect(screen.queryByRole("button", { name: "Add vertex" })).not.toBeInTheDocument();
+    expect(document.querySelector(".vertex-handle")).toBeNull();
+  });
+
   it("renders midpoint actions as keyboard-operable buttons", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();

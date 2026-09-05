@@ -716,3 +716,16 @@
   font-size: 10px;
   color: var(--text-3);
 }
+
+.geofeature-create { padding: var(--space-3); }
+.geofeature-create fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+.geofeature-create__shapes { display: flex; gap: var(--space-1); flex-wrap: wrap; margin-bottom: var(--space-3); }
+.geofeature-create .row-actions { margin-top: var(--space-4); }
+.geofeature-drawing { position: absolute; inset: 0; z-index: 5; cursor: crosshair; }
+
+@media (max-width: 640px) {
+  .app-shell:has(.geofeature-create):has(.sidebar[data-collapsed="false"]) { grid-template-columns: 1fr; grid-template-rows: 45% 55%; }
+  .app-shell:has(.geofeature-create) .sidebar[data-collapsed="false"] { grid-row: 2; grid-template-columns: var(--rail-width) minmax(0, 1fr); }
+  .app-shell:has(.geofeature-create) .sidebar[data-collapsed="false"] .sidebar-resizer { display: none; }
+  .app-shell:has(.geofeature-create):has(.sidebar[data-collapsed="false"]) .map-region { grid-row: 1; }
+}

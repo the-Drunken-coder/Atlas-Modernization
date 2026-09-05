@@ -3,6 +3,7 @@ import type { EntityResource } from "@the-drunken-coder/atlas-sdk";
 import type { StyleSpecification } from "maplibre-gl";
 import { afterEach, beforeEach, vi } from "vitest";
 import type { MapSourceConfig } from "../../../app/config.js";
+import type { Position } from "../../../atlas/geometry.js";
 import type { MapCameraCommand } from "../interaction/map-camera.js";
 import type { MapReticleTarget } from "../interaction/map-targets.js";
 import type { MapEditing } from "../rendering/map-editing.js";
@@ -291,6 +292,7 @@ afterEach(() => {
 type RenderMapViewProps = {
   cameraCommand?: MapCameraCommand | null;
   editing?: MapEditing;
+  drawing?: { onPoint: (position: Position) => void };
   focusTarget?: MapReticleTarget | null;
   mapSourceOptions?: MapSourceConfig[];
   placeDetailTarget?: MapReticleTarget | null;
@@ -322,6 +324,7 @@ export function renderMapView(props: RenderMapViewProps = {}) {
         mapSourceOptions={renderProps.mapSourceOptions}
         selectedId={renderProps.selectedId}
         editing={renderProps.editing}
+        drawing={renderProps.drawing}
         focusTarget={renderProps.focusTarget}
         placeDetailTarget={renderProps.placeDetailTarget}
         cameraCommand={renderProps.cameraCommand}

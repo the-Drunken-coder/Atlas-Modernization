@@ -116,6 +116,9 @@ function catalogDataSource(loadCommandCatalog: () => Promise<CommandCatalog>) {
     async submitCommand() {
       throw new Error("not used");
     },
+    createGeofeature: async () => {
+      throw new Error("Unexpected Geo Feature creation");
+    },
     async updateGeometry() {
       throw new Error("not used");
     },
@@ -230,6 +233,9 @@ describe("AtlasProvider", () => {
       async submitCommand() {
         throw new Error("not used");
       },
+      createGeofeature: async () => {
+        throw new Error("Unexpected Geo Feature creation");
+      },
       async updateGeometry() {
         throw new Error("not used");
       },
@@ -300,6 +306,9 @@ describe("AtlasProvider", () => {
       async submitCommand() {
         throw new Error("not used");
       },
+      createGeofeature: async () => {
+        throw new Error("Unexpected Geo Feature creation");
+      },
       async updateGeometry() {
         throw new Error("not used");
       },
@@ -337,6 +346,9 @@ describe("AtlasProvider", () => {
       async submitCommand() {
         throw new Error("not used");
       },
+      createGeofeature: async () => {
+        throw new Error("Unexpected Geo Feature creation");
+      },
       async updateGeometry() {
         throw new Error("not used");
       },
@@ -355,6 +367,9 @@ describe("AtlasProvider", () => {
       async start() {},
       async submitCommand() {
         throw new Error("not used");
+      },
+      createGeofeature: async () => {
+        throw new Error("Unexpected Geo Feature creation");
       },
       async updateGeometry() {
         throw new Error("not used");
@@ -451,6 +466,9 @@ describe("AtlasProvider", () => {
       async start() {},
       async submitCommand() {
         throw new Error("not used");
+      },
+      createGeofeature: async () => {
+        throw new Error("Unexpected Geo Feature creation");
       },
       updateGeometry,
       dispose() {}

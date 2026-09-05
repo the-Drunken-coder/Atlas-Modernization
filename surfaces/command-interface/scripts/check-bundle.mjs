@@ -19,18 +19,18 @@ const budgets = {
   // initial graph. Keep enough gzip margin for Node's platform zlib variance.
   initialJavaScript: { raw: 418_000, gzip: 128_000 },
   initialCss: { raw: 510_000, gzip: 55_000 },
-  // MapWindowWorkspace coordinates four ordered edge rails for the map shell.
-  shellJavaScript: { raw: 142_500, gzip: 47_500 },
+  // Includes the Geo Feature creation editor and draft lifecycle.
+  shellJavaScript: { raw: 146_000, gzip: 47_500 },
   mapViewJavaScript: { raw: 71_000, gzip: 21_250 },
   mapLibreJavaScript: { raw: 1_100_000, gzip: 300_000 },
   mapLibreWorkerJavaScript: { raw: 500_000, gzip: 140_000 },
   milsymbolJavaScript: { raw: 900_000, gzip: 240_000 },
   mapLibreCss: { raw: 85_000, gzip: 11_000 },
   mapRoute: { raw: 2_100_000, gzip: 550_000 },
-  // SDK point-read generations and local-delete guards add 4.13 kB raw while
-  // remaining within the existing aggregate gzip ceiling.
-  allJavaScript: { raw: 3_617_000, gzip: 1_000_000 },
-  allCss: { raw: 600_000, gzip: 66_000 }
+  // Geo Feature creation adds the sidebar editor and map drawing interaction.
+  // The measured aggregate is 3,621 kB JS and 600.1 kB CSS; retain gzip variance margin.
+  allJavaScript: { raw: 3_622_000, gzip: 1_000_000 },
+  allCss: { raw: 601_000, gzip: 67_000 }
 };
 
 if (!args.has("--skip-build")) {

@@ -503,6 +503,9 @@ function atlasContextValue(): AtlasContextValue {
     submitCommand: async () => {
       throw new Error("not used");
     },
+    createGeofeature: async () => {
+      throw new Error("Unexpected Geo Feature creation");
+    },
     updateGeometry: async () => {
       throw new Error("not used");
     }

@@ -30,6 +30,7 @@ export interface AtlasDataSource {
   watch(onSnapshot: (snapshot: AtlasSnapshot) => void): () => void;
   start(): Promise<void>;
   submitCommand(submission: CommandSubmission): Promise<TaskResource>;
+  createGeofeature(entityId: string, name: string, geometry: UiGeometry): Promise<EntityResource>;
   updateGeometry(entityId: string, geometry: UiGeometry, ifMatchVersion?: number): Promise<EntityResource>;
   health?(): ConnectionHealth;
   dispose(): void;
@@ -146,6 +147,15 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
           signal: submission.signal
         }
       );
+    },
+
+    async createGeofeature(entityId, name, geometry) {
+      return client.entities.create({
+        entity_id: entityId,
+        entity_type: "geofeature",
+        alias: name,
+        components: { geometry }
+      });
     },
 
     async updateGeometry(entityId, geometry, ifMatchVersion) {

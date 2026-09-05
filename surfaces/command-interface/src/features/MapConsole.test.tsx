@@ -22,6 +22,7 @@ type MockMapViewProps = {
   mapSourceOptions: AppConfig["mapSources"];
   selectedId?: string;
   editing?: unknown;
+  drawing?: { onPoint: (position: [number, number]) => void };
   focusTarget?: { id: string } | null;
   placeDetailTarget?: { id: string } | null;
   cameraCommand?:
@@ -266,6 +267,12 @@ function makeFakeDataSource(geofeature: EntityResource = area, health: Connectio
       notify?.(current);
       return task;
     },
+    async createGeofeature(entityId, name, geometry) {
+      const created = { ...area, entity_id: entityId, alias: name, components: { geometry } };
+      current = { ...current, entities: { ...current.entities, [created.entity_id]: created } };
+      notify?.(current);
+      return created;
+    },
     async updateGeometry(entityId, geometry, ifMatchVersion) {
       geometryUpdates.push({ entityId, geometry, ifMatchVersion });
       const updated = {
@@ -337,6 +344,9 @@ function renderStaticConsole(overrides: Partial<AtlasContextValue> = {}) {
     reconnect: vi.fn(),
     submitCommand: async () => {
       throw new Error("not used");
+    },
+    createGeofeature: async () => {
+      throw new Error("Unexpected Geo Feature creation");
     },
     updateGeometry: async () => {
       throw new Error("not used");
@@ -487,6 +497,9 @@ describe("MapConsole", () => {
       submitCommand: async () => {
         throw new Error("not used");
       },
+      createGeofeature: async () => {
+        throw new Error("Unexpected Geo Feature creation");
+      },
       updateGeometry: async () => {
         throw new Error("not used");
       }
@@ -547,6 +560,9 @@ describe("MapConsole", () => {
       loadEntityDetails,
       submitCommand: async () => {
         throw new Error("not used");
+      },
+      createGeofeature: async () => {
+        throw new Error("Unexpected Geo Feature creation");
       },
       updateGeometry: async () => {
         throw new Error("not used");
@@ -618,6 +634,9 @@ describe("MapConsole", () => {
       submitCommand: async () => {
         throw new Error("not used");
       },
+      createGeofeature: async () => {
+        throw new Error("Unexpected Geo Feature creation");
+      },
       updateGeometry: async () => {
         throw new Error("not used");
       }
@@ -672,6 +691,9 @@ describe("MapConsole", () => {
       loadEntityDetails,
       submitCommand: async () => {
         throw new Error("not used");
+      },
+      createGeofeature: async () => {
+        throw new Error("Unexpected Geo Feature creation");
       },
       updateGeometry: async () => {
         throw new Error("not used");
@@ -745,6 +767,9 @@ describe("MapConsole", () => {
       loadEntityDetails,
       submitCommand: async () => {
         throw new Error("not used");
+      },
+      createGeofeature: async () => {
+        throw new Error("Unexpected Geo Feature creation");
       },
       updateGeometry: async () => {
         throw new Error("not used");
@@ -834,6 +859,9 @@ describe("MapConsole", () => {
       submitCommand: async () => {
         throw new Error("not used");
       },
+      createGeofeature: async () => {
+        throw new Error("Unexpected Geo Feature creation");
+      },
       updateGeometry: async () => {
         throw new Error("not used");
       }
@@ -900,6 +928,9 @@ describe("MapConsole", () => {
       submitCommand: async () => {
         throw new Error("not used");
       },
+      createGeofeature: async () => {
+        throw new Error("Unexpected Geo Feature creation");
+      },
       updateGeometry: async () => {
         throw new Error("not used");
       }
@@ -947,6 +978,9 @@ describe("MapConsole", () => {
       loadEntityDetails,
       submitCommand: async () => {
         throw new Error("not used");
+      },
+      createGeofeature: async () => {
+        throw new Error("Unexpected Geo Feature creation");
       },
       updateGeometry: async () => {
         throw new Error("not used");
@@ -1001,6 +1035,9 @@ describe("MapConsole", () => {
       loadEntityDetails,
       submitCommand: async () => {
         throw new Error("not used");
+      },
+      createGeofeature: async () => {
+        throw new Error("Unexpected Geo Feature creation");
       },
       updateGeometry: async () => {
         throw new Error("not used");
@@ -1493,6 +1530,46 @@ describe("MapConsole", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("creates a Geo Feature from an empty list and opens its inspector", async () => {
+    const user = userEvent.setup();
+    const { fake, emit } = makeFakeDataSource();
+    const create = vi.spyOn(fake, "createGeofeature");
+    renderConsole(fake);
+    await screen.findByText("Rover");
+    act(() => emit({ entities: {}, tasks: {} }));
+    await user.click(screen.getByRole("button", { name: "Geo Features" }));
+    await user.click(screen.getByRole("button", { name: "Add Geo Feature" }));
+    expect(screen.getByRole("textbox", { name: "Name" })).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Create feature" })).toBeDisabled();
+    await user.type(screen.getByRole("textbox", { name: "Name" }), "  Rally point  ");
+    await user.click(screen.getByRole("button", { name: "Point" }));
+    act(() => mapViewMock.lastProps?.drawing?.onPoint([-71, 42]));
+    await user.click(screen.getByRole("button", { name: "Create feature" }));
+    await screen.findByText("Rally point");
+    expect(create).toHaveBeenCalledExactlyOnceWith(expect.any(String), "Rally point", {
+      type: "Point",
+      coordinates: [-71, 42]
+    });
+    expect(screen.getByRole("button", { name: "Edit" })).toBeInTheDocument();
+    expect(screen.queryByText("New Geo Feature")).not.toBeInTheDocument();
+  });
+
+  it("keeps creation active on map selection and cancels without saving", async () => {
+    const user = userEvent.setup();
+    const { fake } = makeFakeDataSource();
+    const create = vi.spyOn(fake, "createGeofeature");
+    renderConsole(fake);
+    await screen.findByText("Rover");
+    await user.click(screen.getByRole("button", { name: "Geo Features" }));
+    await user.click(screen.getByRole("button", { name: "Add Geo Feature" }));
+    await user.click(screen.getByTestId("map-marker-select"));
+    expect(screen.getByText("New Geo Feature")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.getByRole("button", { name: "Add Geo Feature" })).toBeInTheDocument();
+    expect(mapViewMock.lastProps?.drawing).toBeUndefined();
+    expect(create).not.toHaveBeenCalled();
   });
 
   it("saves geometry edits with the version captured when editing started", async () => {

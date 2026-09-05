@@ -16,6 +16,7 @@ import { emptyFeatureCollection } from "./map-sources.js";
 
 export type MapEditing = {
   geometry: UiGeometry;
+  readOnly?: boolean;
   onChange: (geometry: UiGeometry) => void;
 };
 
@@ -36,6 +37,8 @@ export function createEditingMarkers(
     type: "FeatureCollection",
     features: [{ type: "Feature", geometry: displayGeometry(editing.geometry), properties: {} }]
   });
+
+  if (editing.readOnly) return [];
 
   const markers: InstanceType<MapLibreRuntime["Marker"]>[] = [];
   const { geometry, onChange } = editing;

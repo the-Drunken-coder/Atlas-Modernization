@@ -30,7 +30,7 @@ import { buildMapSources } from "../ui/map/rendering/map-sources.js";
 import type { MapReticleTarget } from "../ui/map/view/MapView.js";
 import { MapWindowWorkspace } from "../ui/map/view/MapWindowWorkspace.js";
 import { Button, IconButton } from "../ui/primitives/controls.js";
-import { WorldViewIcon } from "../ui/primitives/icons.js";
+import { PlusIcon, WorldViewIcon } from "../ui/primitives/icons.js";
 import { ContextMenu, type MenuItemDef } from "../ui/primitives/Menu.js";
 import { APIKeysPanel } from "./admin/APIKeysPanel.js";
 import type { PluginSelection } from "./admin/PluginsPanel.js";
@@ -38,7 +38,9 @@ import { AssetInspector, type CommandManifestStatus } from "./assets/AssetInspec
 import { CommandList } from "./commands/CommandList.js";
 import { type CommandFormState, useCommandFlow } from "./commands/use-command-flow.js";
 import { EntityList } from "./EntityList.js";
+import { GeofeatureCreatePanel } from "./geofeatures/GeofeatureCreatePanel.js";
 import { GeofeatureInspector } from "./geofeatures/GeofeatureInspector.js";
+import { useGeofeatureCreate } from "./geofeatures/use-geofeature-create.js";
 import { type GeometryEditState, useGeometryEdit } from "./geofeatures/use-geometry-edit.js";
 import { PlacesPanel } from "./places/PlacesPanel.js";
 import { createMapTilerPlaceSearch, type PlaceSearch } from "./places/place-search.js";
@@ -282,6 +284,9 @@ export function MapConsole() {
     submitCommand: atlas.submitCommand
   });
   const geometryEdit = useGeometryEdit({ selectedEntity, selectedId, updateGeometry: atlas.updateGeometry });
+  const creation = useGeofeatureCreate(atlas.createGeofeature, (entity) => {
+    dispatch({ type: "selectEntity", kind: "geofeature", id: entity.entity_id, origin: "sidebar" });
+  });
   const { edit, saving, saveError } = geometryEdit;
   const { mapMenu, commandForm, submitting, submitError } = commandFlow;
 
@@ -308,13 +313,15 @@ export function MapConsole() {
     [atlas.config]
   );
   const placesActive = sidebar.view.mode === "list" && sidebar.view.list === "places";
-  const selectSidebarList = useCallback((list: ListKind) => {
+  const selectSidebarList = (list: ListKind) => {
+    if (creation.saving) return;
+    creation.cancel();
     if (list !== "places") {
       setPlacePreviewTarget(null);
       setCameraCommand((current) => (current?.intent === "commit" ? null : current));
     }
     dispatch({ type: "openList", list });
-  }, []);
+  };
   const placeFocusTarget = placesActive && cameraCommand?.intent === "commit" ? cameraCommand.target : null;
   const pluginsActive = sidebar.view.mode === "list" && sidebar.view.list === "plugins";
   const selectedSpatialTarget =
@@ -338,6 +345,7 @@ export function MapConsole() {
 
   const selectEntityById = useCallback(
     (id: string) => {
+      if (creation.draft) return;
       const entity = snapshot.entities[id];
       if (!entity) return;
       const kind = entityKind(entity);
@@ -346,7 +354,7 @@ export function MapConsole() {
       setCameraCommand(null);
       dispatch({ type: "selectEntity", kind, id, origin: "map" });
     },
-    [snapshot.entities]
+    [snapshot.entities, creation.draft]
   );
   const setEntityQuery = useCallback((kind: EntityKind, query: string) => {
     setEntityQueries((current) => (current[kind] === query ? current : { ...current, [kind]: query }));
@@ -391,18 +399,24 @@ export function MapConsole() {
   const pluginOperationActive = Boolean(
     pluginActive && pluginSelection && spatial.target?.pluginId === pluginSelection.pluginId
   );
-  const currentPanelTitle = pluginOperationActive
-    ? (spatial.target?.operationName ?? "Spatial operation")
-    : pluginActive && pluginSelection
-      ? pluginSelection.name
-      : panelTitle(sidebar, selection?.kind);
-  const currentPanelBack = pluginOperationActive
-    ? spatial.closeTarget
-    : pluginActive && pluginSelection
-      ? () => setPluginSelection(undefined)
-      : sidebar.view.mode === "inspector"
-        ? () => dispatch({ type: "back" })
-        : undefined;
+  const currentPanelTitle = creation.draft
+    ? "New Geo Feature"
+    : pluginOperationActive
+      ? (spatial.target?.operationName ?? "Spatial operation")
+      : pluginActive && pluginSelection
+        ? pluginSelection.name
+        : panelTitle(sidebar, selection?.kind);
+  const currentPanelBack = creation.draft
+    ? creation.saving
+      ? undefined
+      : creation.cancel
+    : pluginOperationActive
+      ? spatial.closeTarget
+      : pluginActive && pluginSelection
+        ? () => setPluginSelection(undefined)
+        : sidebar.view.mode === "inspector"
+          ? () => dispatch({ type: "back" })
+          : undefined;
   const selectedMapSource =
     availableMapSource(atlas.config.mapSources.find((source) => source.id === selectedMapSourceId)) ??
     availableMapSource(atlas.config.mapSources.find((source) => source.id === atlas.config?.defaultMapSourceId));
@@ -437,7 +451,23 @@ export function MapConsole() {
             onBack={currentPanelBack}
             autoFocusBack={sidebar.focusRequest?.id === selection?.id}
             headerAction={
-              activeList === "places" ? (
+              activeList === "geofeatures" && !creation.draft ? (
+                <IconButton
+                  label="Add Geo Feature"
+                  onClick={() => {
+                    geometryEdit.cancelEdit();
+                    spatial.closeTarget();
+                    commandFlow.closeMapMenu();
+                    setPlacePreviewTarget(null);
+                    setSpatialPreviewTarget(null);
+                    dispatch({ type: "clearSelection" });
+                    dispatch({ type: "openList", list: "geofeatures" });
+                    creation.start();
+                  }}
+                >
+                  <PlusIcon size={18} />
+                </IconButton>
+              ) : activeList === "places" ? (
                 <IconButton label="World view" onClick={showWorld}>
                   <WorldViewIcon size={18} />
                 </IconButton>
@@ -450,39 +480,43 @@ export function MapConsole() {
               });
             }}
           >
-            <PanelBody
-              snapshot={snapshot}
-              sidebar={sidebar}
-              entityQueries={entityQueries}
-              placeQuery={placeQuery}
-              placeSearch={placeSearch}
-              placeSearchUnavailableReason={atlas.config.placeSearch.unavailableReason}
-              selectedEntity={selectedEntity}
-              catalog={catalog}
-              commandManifestStatus={resolvedCommandManifestStatus}
-              edit={edit}
-              saving={saving}
-              saveError={saveError}
-              onSelectEntity={(entity) => {
-                const kind = entityKind(entity);
-                if (kind === "other") return;
-                setPlacePreviewTarget(null);
-                setSpatialPreviewTarget(null);
-                dispatch({ type: "selectEntity", kind, id: entity.entity_id, origin: "sidebar" });
-              }}
-              onEntityQueryChange={setEntityQuery}
-              onPlaceQueryChange={setPlaceQuery}
-              onPreviewPlace={previewPlace}
-              onFocusPlace={focusPlace}
-              onPickCommand={commandFlow.pickSidebarCommand}
-              onStartEdit={geometryEdit.startEdit}
-              onChangeDraft={geometryEdit.changeDraft}
-              onSaveEdit={() => void geometryEdit.saveEdit()}
-              onCancelEdit={geometryEdit.cancelEdit}
-              spatial={spatial}
-              pluginSelection={pluginSelection}
-              onPluginSelectionChange={setPluginSelection}
-            />
+            {creation.draft ? (
+              <GeofeatureCreatePanel creation={creation} />
+            ) : (
+              <PanelBody
+                snapshot={snapshot}
+                sidebar={sidebar}
+                entityQueries={entityQueries}
+                placeQuery={placeQuery}
+                placeSearch={placeSearch}
+                placeSearchUnavailableReason={atlas.config.placeSearch.unavailableReason}
+                selectedEntity={selectedEntity}
+                catalog={catalog}
+                commandManifestStatus={resolvedCommandManifestStatus}
+                edit={edit}
+                saving={saving}
+                saveError={saveError}
+                onSelectEntity={(entity) => {
+                  const kind = entityKind(entity);
+                  if (kind === "other") return;
+                  setPlacePreviewTarget(null);
+                  setSpatialPreviewTarget(null);
+                  dispatch({ type: "selectEntity", kind, id: entity.entity_id, origin: "sidebar" });
+                }}
+                onEntityQueryChange={setEntityQuery}
+                onPlaceQueryChange={setPlaceQuery}
+                onPreviewPlace={previewPlace}
+                onFocusPlace={focusPlace}
+                onPickCommand={commandFlow.pickSidebarCommand}
+                onStartEdit={geometryEdit.startEdit}
+                onChangeDraft={geometryEdit.changeDraft}
+                onSaveEdit={() => void geometryEdit.saveEdit()}
+                onCancelEdit={geometryEdit.cancelEdit}
+                spatial={spatial}
+                pluginSelection={pluginSelection}
+                onPluginSelectionChange={setPluginSelection}
+              />
+            )}
           </SidebarPanel>
         }
         map={
@@ -505,14 +539,21 @@ export function MapConsole() {
                         mapSourceOptions={atlas.config.mapSources}
                         selectedId={selectedId}
                         editing={
-                          edit
+                          creation.draft?.geometry
                             ? {
-                                geometry: edit.draft,
-                                onChange: geometryEdit.changeDraft
+                                geometry: creation.draft.geometry,
+                                onChange: creation.changeGeometry,
+                                readOnly: creation.draft.drawing || creation.saving
                               }
-                            : undefined
+                            : edit
+                              ? {
+                                  geometry: edit.draft,
+                                  onChange: geometryEdit.changeDraft
+                                }
+                              : undefined
                         }
-                        focusTarget={focusTarget}
+                        drawing={creation.draft?.drawing ? { onPoint: creation.addPoint } : undefined}
+                        focusTarget={creation.draft ? null : focusTarget}
                         placeDetailTarget={placePreviewTarget}
                         cameraCommand={cameraCommand}
                         spatial={
@@ -532,8 +573,11 @@ export function MapConsole() {
                             : undefined
                         }
                         onSelectEntity={selectEntityById}
-                        onMapContextMenu={commandFlow.onMapContextMenu}
+                        onMapContextMenu={(info) => {
+                          if (!creation.draft) commandFlow.onMapContextMenu(info);
+                        }}
                         onBackgroundClick={() => {
+                          if (creation.draft) return;
                           commandFlow.closeMapMenu();
                           setPlacePreviewTarget(null);
                           setCameraCommand(null);

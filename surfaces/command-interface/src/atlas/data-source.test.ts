@@ -490,6 +490,46 @@ describe("sdk data source", () => {
     expect(requestSignal).toHaveProperty("aborted", true);
   });
 
+  it("creates Geo Features through Core and publishes them to the SDK snapshot", async () => {
+    const geometry: UiGeometry = {
+      type: "Polygon",
+      coordinates: [
+        [
+          [-71, 42],
+          [-70, 42],
+          [-70, 43],
+          [-71, 42]
+        ]
+      ]
+    };
+    const created = {
+      ...entity("geo-new", 1),
+      entity_type: "geofeature",
+      alias: "North boundary",
+      components: { geometry }
+    };
+    const fetchMock = vi.fn(async () => Response.json(created, { status: 201 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const dataSource = createSdkDataSource(config);
+    const snapshots = vi.fn();
+    dataSource.watch(snapshots);
+    await expect(dataSource.createGeofeature("geo-new", "North boundary", geometry)).resolves.toEqual(created);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://core.test/entities",
+      expect.objectContaining({
+        method: "POST",
+        credentials: "include",
+        body: JSON.stringify({
+          entity_id: "geo-new",
+          entity_type: "geofeature",
+          alias: "North boundary",
+          components: { geometry }
+        })
+      })
+    );
+    expect(snapshots).toHaveBeenLastCalledWith({ entities: { "geo-new": created }, tasks: {} });
+  });
+
   it("routes command and geometry writes through SDK cache notifications", async () => {
     const calls: Array<{ input: unknown; init: RequestInit }> = [];
     const createdTask = task("task-created", "asset-1", 2);

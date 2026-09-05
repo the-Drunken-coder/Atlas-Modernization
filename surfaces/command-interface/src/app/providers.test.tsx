@@ -153,6 +153,9 @@ function fakeDataSource(calls: string[]): AtlasDataSource {
     async submitCommand() {
       throw new Error("not used");
     },
+    createGeofeature: async () => {
+      throw new Error("Unexpected Geo Feature creation");
+    },
     async updateGeometry() {
       throw new Error("not used");
     },

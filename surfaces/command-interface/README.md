@@ -1,6 +1,6 @@
 # Atlas Command Interface
 
-Atlas Command Interface is an operator-facing tactical map console hosted as a static Cloudflare Pages app. The browser app is the single workspace at `/map` for inspecting assets, tracks, and geofeatures, editing geofeature geometry, and commanding assets.
+Atlas Command Interface is an operator-facing tactical map console hosted as a static Cloudflare Pages app. The browser app is the single workspace at `/map` for inspecting assets, tracks, and geofeatures, creating geofeatures, editing their geometry, and commanding assets.
 
 This project is greenfield: remove stale helpers and reshape contracts instead of preserving backwards compatibility.
 
@@ -133,3 +133,9 @@ npm test --workspace @the-drunken-coder/atlas-command-interface
 npm run typecheck --workspace @the-drunken-coder/atlas-command-interface
 npm run build:command-interface
 ```
+
+### Creating Geo Features
+
+In Geo Features, select **Add Geo Feature**, enter a name, and choose Point, Line, Polygon, or Circle. Click the map to place a point or circle center. For lines and polygons, click each vertex, then select **Finish drawing**. Circles start with a 100 m radius that can be changed before saving. Adjust coordinates or drag the map handles, then select **Create feature**. Names are stored as Core entity aliases and must be unique.
+
+Drawing owns map clicks until finished or cancelled. Redraw clears the current geometry. Cancel or switching tabs discards the unsaved feature; saving temporarily prevents leaving the editor. Failed requests keep the draft and its entity ID for retry. Successful creation opens the existing inspector. On narrow screens, the map appears above the creation editor.
