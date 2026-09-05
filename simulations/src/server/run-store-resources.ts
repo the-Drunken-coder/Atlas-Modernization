@@ -42,10 +42,7 @@ export async function withCleanupTimeout(
 
 export function cleanupOrder(resources: CleanupResource[]): CleanupResource[] {
   const order: Record<CreatedResource["type"], number> = { object: 0, entity: 1, task: 2 };
-  return resources
-    .map((resource, index) => ({ resource, index }))
-    .sort((a, b) => cleanupRank(a.resource, order) - cleanupRank(b.resource, order) || b.index - a.index)
-    .map(({ resource }) => resource);
+  return [...resources].reverse().sort((a, b) => (order[a.type] ?? 3) - (order[b.type] ?? 3));
 }
 
 export function stopClientSync(client: AtlasClientLike): unknown {
@@ -55,8 +52,4 @@ export function stopClientSync(client: AtlasClientLike): unknown {
   } catch (error) {
     return error;
   }
-}
-
-function cleanupRank(resource: CreatedResource, order: Record<CreatedResource["type"], number>): number {
-  return order[resource.type] ?? 3;
 }

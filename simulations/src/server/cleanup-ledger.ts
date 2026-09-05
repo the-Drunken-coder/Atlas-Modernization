@@ -206,14 +206,14 @@ function isCleanupResource(value: unknown): value is CleanupResource {
   return (
     isRecord(value) &&
     hasExactKeys(value, ["type", "id", "instanceToken"]) &&
-    isCreatedResource(value) &&
-    typeof (value as { instanceToken?: unknown }).instanceToken === "string"
+    typeof value.instanceToken === "string" &&
+    isCreatedResource(value)
   );
 }
 
 function validInstanceToken(value: string): boolean {
   if (value.length === 0 || Buffer.byteLength(value, "utf8") > 256 || value.trim() !== value) return false;
-  return [...value].every((character) => !/\p{C}/u.test(character));
+  return !/\p{C}/u.test(value);
 }
 
 function validTarget(value: unknown): value is CleanupLedgerTarget {
@@ -287,14 +287,8 @@ function entryStat(filePath: string): Stats | undefined {
 }
 
 function hasExactKeys(value: Record<string, unknown>, expected: string[]): boolean {
-  const keys = Object.keys(value).sort();
-  return (
-    keys.length === expected.length &&
-    expected
-      .slice()
-      .sort()
-      .every((key, index) => keys[index] === key)
-  );
+  const keys = Object.keys(value);
+  return keys.length === expected.length && keys.every((key) => expected.includes(key));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
