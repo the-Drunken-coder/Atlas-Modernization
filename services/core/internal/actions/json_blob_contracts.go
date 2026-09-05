@@ -60,17 +60,8 @@ var (
 	}
 )
 
-type jsonBlobDecodeMode int
-
-const (
-	// Objects keep integer blob fields as json.Number so size_bytes can round-trip
-	// without float64 precision loss during patch-time merge/validation.
-	jsonBlobDecodeUseNumber jsonBlobDecodeMode = iota + 1
-)
-
 type jsonBlobPatch struct {
 	rawMessage      json.RawMessage
-	decodeMode      jsonBlobDecodeMode
 	decodeError     string
 	components      map[string]interface{}
 	mergeComponents func(map[string]interface{}, map[string]interface{}) error
@@ -82,7 +73,7 @@ type jsonBlobPatch struct {
 }
 
 func patchValidatedJSONBlob(patch jsonBlobPatch) ([]byte, error) {
-	blob, err := decodeJSONBlobForPatch(patch.rawMessage, patch.decodeMode)
+	blob, err := decodeJSONBlobForPatch(patch.rawMessage)
 	if err != nil {
 		if patch.decodeError != "" {
 			return nil, fmt.Errorf("%s: %w", patch.decodeError, err)
@@ -104,31 +95,22 @@ func patchValidatedJSONBlob(patch jsonBlobPatch) ([]byte, error) {
 	return marshalValidatedJSONBlob(blob, patch.validate)
 }
 
-func decodeJSONBlobForPatch(raw json.RawMessage, mode jsonBlobDecodeMode) (map[string]interface{}, error) {
+func decodeJSONBlobForPatch(raw json.RawMessage) (map[string]interface{}, error) {
 	if raw == nil {
 		return make(map[string]interface{}), nil
 	}
 
 	var data map[string]interface{}
-	var err error
-	if mode == jsonBlobDecodeUseNumber {
-		decoder := json.NewDecoder(bytes.NewReader(raw))
-		decoder.UseNumber()
-		err = jsondecode.Decode(decoder, &data)
-	} else {
-		err = json.Unmarshal(raw, &data)
-	}
-	if err != nil {
+	// Preserve integers beyond float64's exact range during patch merges.
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if err := jsondecode.Decode(decoder, &data); err != nil {
 		return nil, err
 	}
 	if data == nil {
 		return make(map[string]interface{}), nil
 	}
 	return data, nil
-}
-
-func decodeObjectJSONForPatch(raw json.RawMessage) (map[string]interface{}, error) {
-	return decodeJSONBlobForPatch(raw, jsonBlobDecodeUseNumber)
 }
 
 func mergeBlobExtraFields(blob map[string]interface{}, extra map[string]interface{}, promoted jsonBlobFieldSet) {
@@ -149,14 +131,10 @@ func removeBlobExtraKeys(blob map[string]interface{}, promoted jsonBlobFieldSet,
 }
 
 func mergeEntityComponents(blob map[string]interface{}, components map[string]interface{}) error {
-	return mergeBlobComponents(blob, components, ValidateEntityComponents, "entity")
-}
-
-func mergeBlobComponents(blob map[string]interface{}, components map[string]interface{}, validate func(map[string]interface{}) error, resource string) error {
 	if components == nil {
 		return nil
 	}
-	if err := validate(components); err != nil {
+	if err := ValidateEntityComponents(components); err != nil {
 		return err
 	}
 
@@ -165,7 +143,7 @@ func mergeBlobComponents(blob map[string]interface{}, components map[string]inte
 	if hadStored && rawStored != nil {
 		storedMap, ok := rawStored.(map[string]interface{})
 		if !ok {
-			return NewValidationError(fmt.Sprintf("stored %s components must be an object or null", resource))
+			return NewValidationError("stored entity components must be an object or null")
 		}
 		existingComponents = storedMap
 	}
@@ -173,7 +151,7 @@ func mergeBlobComponents(blob map[string]interface{}, components map[string]inte
 	for key, value := range components {
 		existingComponents[key] = mergeJSONValue(existingComponents[key], value)
 	}
-	if err := validate(existingComponents); err != nil {
+	if err := ValidateEntityComponents(existingComponents); err != nil {
 		return err
 	}
 	blob[string(jsonBlobFieldComponents)] = existingComponents

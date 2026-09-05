@@ -306,7 +306,6 @@ func (p UpdateEntityParams) IsEmpty() bool {
 func patchEntityJSON(rawMessage json.RawMessage, params UpdateEntityParams) ([]byte, error) {
 	return patchValidatedJSONBlob(jsonBlobPatch{
 		rawMessage:      rawMessage,
-		decodeMode:      jsonBlobDecodeUseNumber,
 		decodeError:     "existing entity json is corrupt or invalid",
 		components:      params.Components,
 		mergeComponents: mergeEntityComponents,

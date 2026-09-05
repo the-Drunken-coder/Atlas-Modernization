@@ -88,9 +88,9 @@ func TestPersistedObjectBucketRequiresMetadata(t *testing.T) {
 }
 
 func TestDecodeObjectJSONForPatchPreservesLargeIntegers(t *testing.T) {
-	data, err := decodeObjectJSONForPatch(json.RawMessage(`{"size_bytes":9007199254740993,"extra":"patched"}`))
+	data, err := decodeJSONBlobForPatch(json.RawMessage(`{"size_bytes":9007199254740993,"extra":"patched"}`))
 	if err != nil {
-		t.Fatalf("decodeObjectJSONForPatch: %v", err)
+		t.Fatalf("decodeJSONBlobForPatch: %v", err)
 	}
 
 	size, ok := data["size_bytes"].(json.Number)
@@ -107,7 +107,7 @@ func TestDecodeObjectJSONForPatchPreservesLargeIntegers(t *testing.T) {
 }
 
 func TestDecodeObjectJSONForPatchRejectsTrailingData(t *testing.T) {
-	if _, err := decodeObjectJSONForPatch(json.RawMessage(`{"size_bytes":1024}{"extra":"bad"}`)); err == nil {
+	if _, err := decodeJSONBlobForPatch(json.RawMessage(`{"size_bytes":1024}{"extra":"bad"}`)); err == nil {
 		t.Fatal("expected trailing data to fail")
 	}
 }
