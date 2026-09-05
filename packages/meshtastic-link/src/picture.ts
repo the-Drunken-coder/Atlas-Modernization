@@ -389,7 +389,8 @@ export class SharedPicture {
           if (!this.listeners.has(listener)) continue;
           try {
             listener(structuredClone(pending));
-          } catch {
+          } catch (error) {
+            console.error("Shared Picture subscriber failed; removing subscriber", error);
             this.listeners.delete(listener);
           }
         }

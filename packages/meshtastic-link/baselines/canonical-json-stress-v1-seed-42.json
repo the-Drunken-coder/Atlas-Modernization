@@ -14,6 +14,8 @@
     "packets_sent": 1119,
     "transmitted_bytes": 258663,
     "packets_received": 2372,
+    "malformed_frames": 0,
+    "invalid_messages": 0,
     "duplicate_packets_suppressed": 35,
     "stale_messages_rejected": 0,
     "picture_rejected_capacity": 0,

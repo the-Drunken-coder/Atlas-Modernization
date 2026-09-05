@@ -2,6 +2,8 @@
 
 This Node 24 workspace implements the Atlas Meshtastic Link described in [`docs/atlas-meshtastic-link`](../../docs/atlas-meshtastic-link/README.md). It owns the radio-facing Atlas contract, packet transport, Shared Picture, local service, Radio profile convergence, Gateway membership, dynamic joining, and deterministic packet simulation. It does not own Atlas Core access or Asset behavior.
 
+The Radio contract generator checks Protocol definitions and revisions. Operation coverage is checked against the public Atlas SDK, with exhaustive input, output, and context validation; see the [generation boundary](../../docs/atlas-meshtastic-link/wire-protocol.md#source-of-truth).
+
 ## What runs
 
 One `atlas-meshtastic-link` service runs on each Asset Host and on the Gateway. Both modes use the same static Radio profile and USB serial adapter.
@@ -19,6 +21,8 @@ The initial authentication policy mutually proves a provisioned join key with HM
 - Native position, telemetry, MQTT, managed mode, remote administration, and power saving disabled
 
 The service changes only Atlas-owned settings and verifies the complete readback before joining or transmitting. The private channel key is never stored in the static profile.
+
+Serial application sends complete when the attached firmware reports a matching successful `QueueStatus`, with a 15-second local acceptance deadline. They do not request a Meshtastic routing acknowledgement. Atlas application confirmation remains a separate exchange. Disconnect and shutdown reject pending sends and cancel writes that have not started; configuration and application traffic share one serial writer.
 
 Generate a profile after selecting the field frequency slot and exact tested firmware:
 

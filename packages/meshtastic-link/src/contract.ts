@@ -434,6 +434,7 @@ function validOperationOutput(operation: AtlasRadioOperationName, output: unknow
     case "object.content":
       return output === undefined;
   }
+  return assertNever(operation);
 }
 
 function isControlMessage(value: Record<string, unknown>): value is ControlMessage {

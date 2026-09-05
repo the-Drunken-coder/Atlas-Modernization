@@ -43,7 +43,7 @@ The normal workload supplies these Asset and Gateway behaviors as scenario input
 
 - Each of four Asset applications submits position once per second and telemetry every ten seconds.
 - Five active Tracks each receive one update per second.
-- One Task is created each minute, reports progress, and completes.
+- One Task is created each minute. After the assigned Asset receives and accepts it, the Asset reports acknowledgement, start, progress, and completion through the production Task-report path.
 - Two Assets subscribe to the same feed, which must produce only one Gateway publication.
 - One small data request occurs every thirty seconds.
 
@@ -59,7 +59,7 @@ Atlas semantics are checked at both ends. A successful delivery must decode into
 
 The first named baseline uses the generated Atlas Protocol Radio contract as ordinary compact UTF-8 JSON without compression or radio-specific field selection. Its fragmentation is part of the result.
 
-The checked-in seed-42 position, canonical five-radio normal, and canonical stress baseline results live in `packages/meshtastic-link/baselines`. Package tests rerun all three through the production transport and fail if their semantics or exact measurements drift without an intentional baseline update. The canonical picture snapshots preserve the exact 30-second, 60-second, and final post-drain observations. Its independent record-count gate uses the 30-second and 60-second measurement windows; the exact final snapshot still records slow delivery and freshness expiry honestly without turning a performance miss into a correctness failure.
+The checked-in seed-42 position, canonical five-radio normal, and canonical stress baseline results live in `packages/meshtastic-link/baselines`. The canonical normal scenario is revision 2 because its feed and Task workload now exercise the documented Core publication and one-minute Task cadence. Package tests rerun all three through the production transport and fail if their semantics or exact measurements drift without an intentional baseline update. The canonical picture snapshots preserve the exact 30-second, 60-second, and final post-drain observations. Its independent record-count gate uses the 30-second and 60-second measurement windows; with the current seed-42 full workload, the normal run has zero records at 30 seconds and one at 60 seconds. The exact final snapshot still records slow delivery and freshness expiry honestly without turning a performance miss into a correctness failure.
 
 The ordinary JSON baseline is not a field candidate. At the documented publication rates, the checked-in normal and stress runs truthfully record deadline failures and incomplete convergence instead of manufacturing successful delivery. Focused quiet-link tests separately prove confirmation, rejection, retry exhaustion, ordered Task delivery, priority interruption, joining, and snapshot handoff. A later encoding or scheduling optimization must rerun the unchanged load and improve those recorded outcomes.
 
@@ -81,6 +81,8 @@ At minimum, record:
 - Object transfer completion time and interference with higher-priority work
 
 Throughput improvement is invalid if Atlas semantics, application confirmation, delivery success, or priority behavior regresses outside the scenario's accepted limits.
+
+The canonical normal benchmark uses a deterministic fake Core change feed. Aggregate Gateway demand opens one Core feed subscription, a feed event enters the Gateway's production Radio SDK, and the resulting `gateway_feed` publication goes through serialization, transport, the simulated radio, and normal receiver handling. The result records the Core publish count, Gateway publish count, number of Link subscribers, and receiver deliveries. A broadcast may be received by every radio, so receiver delivery is measured from the actual receive path rather than inferred from demand transitions.
 
 The production Link implementation and whole-system scenarios must prove:
 

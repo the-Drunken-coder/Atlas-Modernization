@@ -1,5 +1,5 @@
 import type { TaskResource } from "@the-drunken-coder/atlas-sdk";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { RealClock, VirtualClock } from "./clock.js";
 import type { LinkRadio } from "./radio.js";
 import { LinkHTTPServer, LinkService } from "./service.js";
@@ -9,6 +9,29 @@ import { positionPublication } from "./test-fixtures.js";
 import { LinkTransport } from "./transport.js";
 
 describe("loopback Link service", () => {
+  it("logs and removes throwing event listeners", () => {
+    const service = new LinkService({ mode: "asset", nodeID: "asset-alpha", clock: new VirtualClock() });
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    let calls = 0;
+    service.onEvent(() => {
+      calls++;
+      throw new Error("event listener failed");
+    });
+    try {
+      service.setLifecycle("discovering");
+      service.setLifecycle("active");
+
+      expect(calls).toBe(1);
+      expect(consoleError).toHaveBeenCalledWith(
+        "Link service event listener failed; removing listener",
+        expect.any(Error)
+      );
+    } finally {
+      consoleError.mockRestore();
+      service.stop();
+    }
+  });
+
   it("serves status, picture, and asynchronous operation results as JSON", async () => {
     const service = new LinkService({ mode: "asset", nodeID: "asset-alpha", clock: new RealClock() });
     service.setLifecycle("discovering");

@@ -488,8 +488,22 @@ function runtimeID(message: IntentionalFieldMessage): string | undefined {
 
 function compareTasks(left: QueuedTask, right: QueuedTask): number {
   return (
-    left.task.created_at.localeCompare(right.task.created_at) || left.task.task_id.localeCompare(right.task.task_id)
+    compareRFC3339Timestamps(left.task.created_at, right.task.created_at) ||
+    left.task.task_id.localeCompare(right.task.task_id)
   );
+}
+
+function compareRFC3339Timestamps(left: string, right: string): number {
+  const leftMilliseconds = Date.parse(left);
+  const rightMilliseconds = Date.parse(right);
+  if (leftMilliseconds !== rightMilliseconds) return leftMilliseconds < rightMilliseconds ? -1 : 1;
+
+  const leftFraction = left.match(/\.(\d+)(?=(?:Z|[+-]\d{2}:\d{2})$)/)?.[1]?.slice(3) ?? "";
+  const rightFraction = right.match(/\.(\d+)(?=(?:Z|[+-]\d{2}:\d{2})$)/)?.[1]?.slice(3) ?? "";
+  const precision = Math.max(leftFraction.length, rightFraction.length);
+  const paddedLeft = leftFraction.padEnd(precision, "0");
+  const paddedRight = rightFraction.padEnd(precision, "0");
+  return paddedLeft < paddedRight ? -1 : paddedLeft > paddedRight ? 1 : 0;
 }
 
 function isTerminalTask(task: TaskResource): boolean {

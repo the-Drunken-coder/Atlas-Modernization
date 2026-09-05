@@ -1,4 +1,4 @@
-import { fromBinary, toBinary } from "@bufbuild/protobuf";
+import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
 import { MeshDevice, Protobuf, Types } from "@meshtastic/core";
 import { ModuleConfig as FirmwareProtobuf } from "@meshtastic/protobufs-firmware";
 import { TransportNodeSerial } from "@meshtastic/transport-node-serial";
@@ -10,6 +10,18 @@ import type {
   RadioProfile
 } from "./profile.js";
 import { PUBLIC_RENDEZVOUS_CHANNEL_NAME } from "./profile.js";
+
+type PendingRadioSend = {
+  resolve: () => void;
+  reject: (reason: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+};
+
+type DeviceConnection = {
+  device: MeshDevice;
+  writePacket: (data: Uint8Array, shouldWrite?: () => boolean) => Promise<void>;
+  disconnect: () => Promise<void>;
+};
 
 export type RadioPacket = {
   payload: Uint8Array;
@@ -121,6 +133,7 @@ export class LinkRadioGate implements LinkRadio, LinkRadioTransmissionGate {
 }
 
 export class MeshtasticSerialRadio implements LinkRadio, RadioConfigurationAdapter {
+  private static readonly sendStatusTimeoutMs = 15_000;
   readonly max_payload_bytes = 233;
   private readonly handlers = new Set<(packet: RadioPacket) => void>();
   private readonly disconnectHandlers = new Set<(reason: Error) => void>();
@@ -132,11 +145,17 @@ export class MeshtasticSerialRadio implements LinkRadio, RadioConfigurationAdapt
   private localRadioNodeNumber: number | undefined;
   private recoveringConfiguration = false;
   private closed = false;
+  private available = true;
+  private readonly pendingSends = new Map<number, PendingRadioSend>();
+  private writePacket: (data: Uint8Array, shouldWrite?: () => boolean) => Promise<void>;
 
   private constructor(
     private readonly path: string,
-    private device: MeshDevice
+    private device: MeshDevice,
+    writePacket: (data: Uint8Array, shouldWrite?: () => boolean) => Promise<void>,
+    private disconnectTransport: () => Promise<void>
   ) {
+    this.writePacket = writePacket;
     this.bindDevice(device);
   }
 
@@ -183,29 +202,49 @@ export class MeshtasticSerialRadio implements LinkRadio, RadioConfigurationAdapt
       };
       for (const handler of this.handlers) handler(received);
     });
+    device.events.onQueueStatus.subscribe((status: Protobuf.Mesh.QueueStatus) => {
+      if (!current() || status.meshPacketId === 0) return;
+      const pending = this.pendingSends.get(status.meshPacketId);
+      if (!pending) return;
+      if (status.res === 0) {
+        this.settleSend(status.meshPacketId);
+      } else {
+        this.settleSend(
+          status.meshPacketId,
+          new Error(`Meshtastic radio rejected packet ${status.meshPacketId} (${status.res})`)
+        );
+      }
+    });
     device.events.onDeviceStatus.subscribe((status: Types.DeviceStatusEnum) => {
-      if (
-        !current() ||
-        status !== Types.DeviceStatusEnum.DeviceDisconnected ||
-        this.recoveringConfiguration ||
-        this.closed
-      ) {
+      if (!current()) return;
+      if (status === Types.DeviceStatusEnum.DeviceConfigured) {
+        this.available = true;
         return;
       }
+      if (status !== Types.DeviceStatusEnum.DeviceDisconnected) return;
+      this.available = false;
       const reason = new Error("Meshtastic radio disconnected");
+      this.rejectPendingSends(reason);
+      if (this.recoveringConfiguration || this.closed) return;
       for (const handler of this.disconnectHandlers) handler(reason);
     });
   }
 
   static async open(path: string): Promise<MeshtasticSerialRadio> {
     if (!path.startsWith("/dev/cu.")) throw new TypeError("Meshtastic serial paths must be macOS /dev/cu.* devices");
-    const device = await MeshtasticSerialRadio.createDevice(path);
-    const radio = new MeshtasticSerialRadio(path, device);
+    const connection = await MeshtasticSerialRadio.createDevice(path);
+    const radio = new MeshtasticSerialRadio(path, connection.device, connection.writePacket, connection.disconnect);
+    const device = connection.device;
     device.setHeartbeatInterval(20_000);
     try {
       await radio.configureAndWait(() => device.configure(), device);
       return radio;
     } catch (error) {
+      try {
+        await connection.disconnect();
+      } catch {
+        // Preserve the configuration failure that prevented the radio from opening.
+      }
       try {
         await device.disconnect();
       } catch {
@@ -216,6 +255,8 @@ export class MeshtasticSerialRadio implements LinkRadio, RadioConfigurationAdapt
   }
 
   async send(payload: Uint8Array, options: RadioSendOptions): Promise<void> {
+    if (this.closed) throw new Error("Meshtastic radio is closed");
+    if (!this.available) throw new Error("Meshtastic radio is unavailable");
     if (payload.byteLength > this.max_payload_bytes)
       throw new RangeError("Meshtastic application payload exceeds 233 bytes");
     const destination = options.destination_radio_node ?? "broadcast";
@@ -224,14 +265,40 @@ export class MeshtasticSerialRadio implements LinkRadio, RadioConfigurationAdapt
         throw new Error("public-key-only send requires a destination with a known public key");
       }
     }
-    await this.device.sendPacket(
-      payload,
-      Protobuf.Portnums.PortNum.PRIVATE_APP,
-      destination,
-      channelNumber(options.channel),
-      false,
-      false
+    const packetId = this.nextPacketId();
+    const packet = create(Protobuf.Mesh.MeshPacketSchema, {
+      from: this.localRadioNodeNumber ?? 0,
+      to: destination === "broadcast" ? 0xffffffff : destination,
+      id: packetId,
+      wantAck: false,
+      channel: channelNumber(options.channel),
+      payloadVariant: {
+        case: "decoded",
+        value: {
+          payload,
+          portnum: Protobuf.Portnums.PortNum.PRIVATE_APP,
+          wantResponse: false
+        }
+      }
+    });
+    const toRadio = toBinary(
+      Protobuf.Mesh.ToRadioSchema,
+      create(Protobuf.Mesh.ToRadioSchema, { payloadVariant: { case: "packet", value: packet } })
     );
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.settleSend(packetId, new Error(`Meshtastic radio did not accept packet ${packetId}`));
+      }, MeshtasticSerialRadio.sendStatusTimeoutMs);
+      this.pendingSends.set(packetId, { reject, resolve, timer });
+      const writing = this.writePacket(
+        toRadio,
+        () => this.pendingSends.has(packetId) && this.available && !this.closed
+      );
+      void writing.then(
+        () => undefined,
+        (error: unknown) => this.settleSend(packetId, asError(error))
+      );
+    });
   }
 
   onPacket(handler: (packet: RadioPacket) => void): () => void {
@@ -486,10 +553,17 @@ export class MeshtasticSerialRadio implements LinkRadio, RadioConfigurationAdapt
   }
 
   async close(): Promise<void> {
+    if (this.closed) return;
     this.closed = true;
+    this.rejectPendingSends(new Error("Meshtastic radio is closed"));
     this.handlers.clear();
     this.disconnectHandlers.clear();
-    await this.device.disconnect();
+    await this.disconnectTransport();
+    try {
+      await this.device.disconnect();
+    } catch (error) {
+      if (!isClosedStreamError(error)) throw error;
+    }
   }
 
   private requireConfig(kind: string): Protobuf.Config.Config {
@@ -533,13 +607,20 @@ export class MeshtasticSerialRadio implements LinkRadio, RadioConfigurationAdapt
   }
 
   private async reconnectAndConfigure(timeoutMs = 45_000): Promise<void> {
+    this.available = false;
+    this.rejectPendingSends(new Error("Meshtastic radio connection is restarting"));
     const deadline = Date.now() + timeoutMs;
     let lastError: unknown = new Error("Meshtastic radio did not reconnect");
     while (Date.now() < deadline) {
       let device: MeshDevice | undefined;
+      let connection: DeviceConnection | undefined;
       try {
-        device = await MeshtasticSerialRadio.createDevice(this.path);
+        connection = await MeshtasticSerialRadio.createDevice(this.path);
+        device = connection.device;
         this.device = device;
+        this.writePacket = connection.writePacket;
+        this.disconnectTransport = connection.disconnect;
+        this.available = false;
         this.resetSnapshot();
         this.bindDevice(device);
         device.setHeartbeatInterval(20_000);
@@ -553,6 +634,11 @@ export class MeshtasticSerialRadio implements LinkRadio, RadioConfigurationAdapt
       } catch (error) {
         lastError = error;
         if (device !== undefined) {
+          try {
+            await connection?.disconnect();
+          } catch {
+            // Preserve the reconnect failure.
+          }
           try {
             await device.disconnect();
           } catch {
@@ -576,26 +662,77 @@ export class MeshtasticSerialRadio implements LinkRadio, RadioConfigurationAdapt
     this.localRadioNodeNumber = undefined;
   }
 
-  private static async createDevice(path: string): Promise<MeshDevice> {
+  private static async createDevice(path: string): Promise<DeviceConnection> {
     const transport = await TransportNodeSerial.create(path, 115_200);
-    return new MeshDevice(transport);
+    let writes: Promise<void> = Promise.resolve();
+    let outputClosed = false;
+    const writePacket = (chunk: Uint8Array, shouldWrite = (): boolean => true): Promise<void> => {
+      const operation = writes.then(() =>
+        outputClosed || !shouldWrite() ? undefined : writeToWritable(transport.toDevice, chunk)
+      );
+      writes = operation.catch(() => undefined);
+      return operation;
+    };
+    const toDevice = new WritableStream<Uint8Array>({
+      write: (chunk) => writePacket(chunk),
+      close: async () => {
+        outputClosed = true;
+        await transport.disconnect();
+        void transport.toDevice.abort(new Error("Meshtastic radio output is closed")).catch(() => undefined);
+      },
+      abort: async (reason) => {
+        outputClosed = true;
+        await transport.toDevice.abort(reason);
+      }
+    });
+    return {
+      device: new MeshDevice({
+        fromDevice: transport.fromDevice,
+        toDevice,
+        disconnect: () => transport.disconnect()
+      }),
+      writePacket,
+      disconnect: async () => {
+        outputClosed = true;
+        await transport.disconnect();
+        void transport.toDevice.abort(new Error("Meshtastic radio output is closed")).catch(() => undefined);
+      }
+    };
   }
 
-  private async configureAndWait<Result>(
-    operation: () => Promise<Result>,
+  private async configureAndWait(
+    operation: () => Promise<unknown>,
     device: MeshDevice,
     timeoutMs = 45_000
-  ): Promise<Result> {
+  ): Promise<void> {
     const configured = this.waitForConfigured(device, timeoutMs);
-    void configured.promise.catch(() => undefined);
+    const operationPromise = operation();
+    void operationPromise.catch(() => undefined);
     try {
-      const result = await operation();
-      await configured.promise;
-      return result;
+      await Promise.race([configured.promise, operationPromise.then(() => configured.promise)]);
     } catch (error) {
       configured.cancel();
       throw error;
     }
+  }
+
+  private nextPacketId(): number {
+    let packetId = randomPacketId();
+    while (this.pendingSends.has(packetId)) packetId = randomPacketId();
+    return packetId;
+  }
+
+  private settleSend(packetId: number, error?: Error): void {
+    const pending = this.pendingSends.get(packetId);
+    if (!pending) return;
+    this.pendingSends.delete(packetId);
+    clearTimeout(pending.timer);
+    if (error) pending.reject(error);
+    else pending.resolve();
+  }
+
+  private rejectPendingSends(reason: Error): void {
+    for (const packetId of this.pendingSends.keys()) this.settleSend(packetId, reason);
   }
 
   private waitForConfigured(
@@ -635,6 +772,29 @@ function isDisconnectError(error: unknown): boolean {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function asError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
+}
+
+function randomPacketId(): number {
+  const seed = crypto.getRandomValues(new Uint32Array(1))[0] ?? 0;
+  if (seed === 0) throw new Error("Cannot generate Meshtastic packet identifier");
+  return seed;
+}
+
+function isClosedStreamError(error: unknown): boolean {
+  return /stream is locked|stream is closed|invalid state/i.test(errorMessage(error));
+}
+
+async function writeToWritable(output: WritableStream<Uint8Array>, data: Uint8Array): Promise<void> {
+  const writer = output.getWriter();
+  try {
+    await writer.write(data);
+  } finally {
+    writer.releaseLock();
+  }
 }
 
 function delay(milliseconds: number): Promise<void> {

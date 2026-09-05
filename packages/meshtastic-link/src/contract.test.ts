@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { AtlasClient } from "@the-drunken-coder/atlas-sdk";
 import { describe, expect, it } from "vitest";
 import { canonicalJSON } from "./canonical-json.js";
 import {
@@ -13,19 +14,31 @@ import { decodeFrame, type FrameIdentity, fragmentPayload } from "./frame.js";
 import { positionPublication } from "./test-fixtures.js";
 
 describe("generated Radio contract", () => {
-  it("exposes every current Atlas operation family", () => {
-    const operationNames = Object.keys(ATLAS_RADIO_OPERATIONS);
-    expect(operationNames).toEqual([...operationNames].sort());
-    expect(operationNames).toEqual(
-      expect.arrayContaining([
-        "entity.get",
-        "entity.create",
-        "task.get",
-        "task.acknowledge",
-        "object.get",
-        "plugin.invoke_spatial"
-      ])
+  it("matches the public Atlas SDK operation surface", () => {
+    const client = new AtlasClient({
+      baseUrl: "http://127.0.0.1:1",
+      sync: false,
+      fetch: async () => {
+        throw new Error("operation discovery must not make requests");
+      }
+    });
+    const families = {
+      entity: client.entities,
+      task: client.tasks,
+      runtime: client.runtime,
+      object: client.objects,
+      query: client.queries,
+      plugin: client.plugins
+    };
+    // Local watches and sync/feed lifecycle helpers are not remote operations.
+    const operations = Object.entries(families).flatMap(([family, methods]) =>
+      Object.keys(methods)
+        .filter((method) => method !== "watch")
+        .map((method) => `${family}.${method.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`)}`)
     );
+    expect(typeof client.commandCatalog).toBe("function");
+    operations.push("command_catalog.get");
+    expect(Object.keys(ATLAS_RADIO_OPERATIONS)).toEqual(operations.sort());
   });
 
   it("serializes Atlas state as deterministic compact JSON", () => {

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { SharedPicture } from "./picture.js";
 import { GatewaySubscriptionDemand, LocalSubscriptionDemand } from "./subscriptions.js";
 import { positionPublication } from "./test-fixtures.js";
@@ -394,6 +394,7 @@ describe("Shared Picture", () => {
 
   it("isolates throwing subscribers and serializes reentrant events", () => {
     const picture = new SharedPicture("picture-session");
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
     let throwingCalls = 0;
     const observed: number[] = [];
     picture.subscribe(() => {
@@ -405,9 +406,17 @@ describe("Shared Picture", () => {
     });
     picture.subscribe((event) => observed.push(event.revision));
 
-    expect(picture.apply(positionPublication(1), context(1))).toEqual({ status: "applied" });
-    expect(throwingCalls).toBe(1);
-    expect(observed).toEqual([1, 2]);
+    try {
+      expect(picture.apply(positionPublication(1), context(1))).toEqual({ status: "applied" });
+      expect(throwingCalls).toBe(1);
+      expect(observed).toEqual([1, 2]);
+      expect(consoleError).toHaveBeenCalledWith(
+        "Shared Picture subscriber failed; removing subscriber",
+        expect.any(Error)
+      );
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 
   it("retains mixed position and telemetry records for the telemetry interval", () => {
