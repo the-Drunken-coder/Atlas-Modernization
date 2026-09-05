@@ -575,7 +575,7 @@ describe("NDJSON adapter server", () => {
 describe("adapter process command", () => {
   it("keeps interruption handlers installed while evidence closes", async () => {
     const originalListeners = new Set(process.listeners("SIGINT"));
-    let abort: NodeJS.SignalsListener | undefined;
+    let abort: ((signal: "SIGINT") => void) | undefined;
     let handlerPresentDuringClose = false;
     const evidence = {
       close: () => {
