@@ -87,10 +87,3 @@ logs/
 # --- Agent / personal tooling ---
 .claude/
 .benchmarks/
-
-# --- Slopo local index and reports ---
-/slopo.db
-/slopo.db-*
-/slopo-report/
-/slopo.agent.log
-/slopo-agent-configs/
