@@ -152,8 +152,9 @@ export class RadioProfileManager {
     });
   }
 
-  async apply(): Promise<ConfigurationEvidence> {
-    const selectedProfile = structuredClone(this.desired);
+  async apply(profile = this.profile()): Promise<ConfigurationEvidence> {
+    validateRadioProfile(profile);
+    const selectedProfile = structuredClone(profile);
     return this.enqueue(() => this.applySelectedProfile(selectedProfile));
   }
 

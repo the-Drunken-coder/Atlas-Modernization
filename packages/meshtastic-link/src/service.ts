@@ -1,11 +1,14 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
+import { isTaskResource, type TaskResource } from "@the-drunken-coder/atlas-sdk";
 import type { Clock, TimerHandle } from "./clock.js";
 import { isFeedSelector, isLinkMessage } from "./contract.js";
+import { OrderedTaskDispatcher } from "./gateway.js";
 import type { AssetJoinStatus } from "./joining.js";
 import { PictureCursorError, type PictureEvent, type PictureSnapshot, SharedPicture } from "./picture.js";
 import { type RadioProfile, type RadioProfileManager, validateRadioProfile } from "./profile.js";
+import type { LinkRadioTransmissionGate } from "./radio.js";
 import {
   LocalSubscriptionDemand,
   SUBSCRIPTION_LEASE_MS,
@@ -54,6 +57,7 @@ export type LinkServiceOptions = {
   clock: Clock;
   picture?: SharedPicture;
   profileManager?: RadioProfileManager;
+  radioGate?: LinkRadioTransmissionGate;
   gatewayNode?: LinkNode;
   onGatewaySubscriptionTransition?: (transition: SubscriptionTransition) => void;
 };
@@ -64,12 +68,14 @@ export class LinkService {
   readonly serviceSession = randomBytes(12).toString("base64url");
   private readonly clock: Clock;
   private readonly profileManager: RadioProfileManager | undefined;
+  private readonly radioGate: LinkRadioTransmissionGate | undefined;
   private readonly subscriptions = new LocalSubscriptionDemand();
   private readonly eventListeners = new Set<(event: LinkServiceEvent) => void>();
   private readonly eventBuffer: LinkServiceEvent[] = [];
   private readonly localOperations = new Map<string, LinkOperationResult>();
   private readonly clientLeaseTimers = new Map<string, TimerHandle>();
   private transport: LinkTransport | undefined;
+  private taskDispatcher: OrderedTaskDispatcher | undefined;
   private unsubscribeTransport: (() => void) | undefined;
   private gatewayNode: LinkNode | undefined;
   private lifecycle: LinkLifecycle = "configuring";
@@ -78,6 +84,10 @@ export class LinkService {
   private eventSequence = 0;
   private renewalTimer: TimerHandle | undefined;
   private pictureRefreshTimer: TimerHandle | undefined;
+  private profileApplyTail: Promise<void> = Promise.resolve();
+  private profileApplyActive = false;
+  private profileApplyGeneration = 0;
+  private transportSubscriptionsDispatched = false;
 
   constructor(private readonly options: LinkServiceOptions) {
     if (!options.nodeID || options.nodeID.includes(":")) throw new TypeError("Link node ID is invalid");
@@ -85,6 +95,7 @@ export class LinkService {
     this.picture = options.picture ?? new SharedPicture(this.serviceSession);
     this.node = { role: options.mode, id: options.nodeID };
     this.profileManager = options.profileManager;
+    this.radioGate = options.radioGate;
     this.gatewayNode = options.gatewayNode;
     this.schedulePictureRefresh();
   }
@@ -95,23 +106,39 @@ export class LinkService {
       throw new Error("Link transport identity does not match the service");
     }
     this.transport = transport;
+    if (this.node.role === "gateway") this.taskDispatcher = new OrderedTaskDispatcher(transport);
     if (gatewayNode) this.gatewayNode = gatewayNode;
     this.unsubscribeTransport = transport.onEvent((event) => this.handleTransportEvent(event));
-    this.setLifecycle("active");
-    for (const selector of this.subscriptions.aggregate().values()) this.dispatchSubscription("add", selector);
-    this.scheduleRenewalIfNeeded();
+    if (this.profileApplyActive || this.lifecycle === "error" || this.lifecycle === "stopped") void transport.pause();
+    if (!this.profileApplyActive && this.lifecycle !== "error" && this.lifecycle !== "stopped") {
+      this.activateTransport();
+    }
   }
 
   setLifecycle(lifecycle: LinkLifecycle, detail?: string): void {
     if (this.lifecycle === "stopped") return;
-    if (this.lifecycle === "error" && lifecycle !== "error" && lifecycle !== "stopped") return;
+    if (this.lifecycle === "error" && lifecycle !== "error" && lifecycle !== "stopped" && !this.profileApplyActive)
+      return;
     this.lifecycle = lifecycle;
     this.statusDetail = detail;
+    if (lifecycle === "configuring" || lifecycle === "error" || lifecycle === "stopped") {
+      if (this.renewalTimer) this.clock.cancel(this.renewalTimer);
+      this.renewalTimer = undefined;
+    }
     this.emit({ type: "status", status: this.status() });
   }
 
   setJoiningStatus(status: AssetJoinStatus): void {
     this.joiningStatus = status;
+  }
+
+  setJoiningLifecycle(lifecycle: "discovering" | "active", detail?: string): void {
+    if (this.lifecycle === "stopped" || this.lifecycle === "error" || this.profileApplyActive) return;
+    this.setLifecycle(lifecycle, detail);
+  }
+
+  isRadioProfileApplying(): boolean {
+    return this.profileApplyActive;
   }
 
   status(): LinkServiceStatus {
@@ -139,9 +166,60 @@ export class LinkService {
     return this.transport?.metrics();
   }
 
+  taskState(assetID: string): ReturnType<OrderedTaskDispatcher["state"]> | undefined {
+    validateTaskAssetID(assetID);
+    return this.taskDispatcher?.state(assetID);
+  }
+
+  taskMutationFailure(): string | undefined {
+    if (this.node.role !== "gateway") return "Task dispatch requires Gateway mode";
+    if (this.lifecycle !== "active") return "Task dispatch requires an active Link service";
+    if (!this.transport || !this.taskDispatcher) return "Gateway Task dispatcher is unavailable";
+    return undefined;
+  }
+
+  enqueueTask(
+    assetID: string,
+    task: TaskResource,
+    delivery: "assignment" | "cancellation"
+  ): ReturnType<OrderedTaskDispatcher["state"]> {
+    validateTaskForAsset(assetID, task);
+    const dispatcher = this.requireTaskDispatcher();
+    dispatcher.enqueue(assetID, task, delivery);
+    return dispatcher.state(assetID);
+  }
+
+  enqueueTaskAssignments(assetID: string, tasks: readonly TaskResource[]): ReturnType<OrderedTaskDispatcher["state"]> {
+    validateTaskAssetID(assetID);
+    if (tasks.length === 0) throw new TypeError("Task assignment batch must not be empty");
+    const seen = new Set<string>();
+    for (const task of tasks) {
+      validateTaskForAsset(assetID, task);
+      if (seen.has(task.task_id)) throw new TypeError("Task assignment batch contains a duplicate Task ID");
+      seen.add(task.task_id);
+    }
+    const dispatcher = this.requireTaskDispatcher();
+    dispatcher.enqueueAssignments(assetID, tasks);
+    return dispatcher.state(assetID);
+  }
+
+  observeAuthoritativeTask(assetID: string, task: TaskResource): ReturnType<OrderedTaskDispatcher["state"]> {
+    validateTaskForAsset(assetID, task);
+    if (!isTerminalTask(task)) throw new TypeError("authoritative Task observation must be terminal");
+    const dispatcher = this.requireTaskDispatcher();
+    dispatcher.observeAuthoritativeTask(assetID, task);
+    return dispatcher.state(assetID);
+  }
+
   submit(message: LinkMessage, destination?: LinkNode, operationIDValue?: string): LinkOperationResult {
     if (!isLinkMessage(message)) throw new TypeError("invalid Radio contract message");
     const stableOperationID = operationIDValue ?? operationID(message);
+    if (this.node.role === "gateway" && message.type === "task_delivery") {
+      return this.failLocal(stableOperationID, "Gateway task_delivery must use the /v1/tasks routes");
+    }
+    if (this.lifecycle === "configuring" || this.lifecycle === "error") {
+      return this.failLocal(stableOperationID, "Link service is not transmitting");
+    }
     if (!this.transport) return this.failLocal(stableOperationID, "Link transport is unavailable");
     const target = destination ?? this.defaultDestination(message);
     if (this.node.role === "asset" && requiresGateway(message)) {
@@ -229,7 +307,17 @@ export class LinkService {
 
   async applyRadioProfile(): Promise<unknown> {
     if (!this.profileManager) throw new Error("Radio profile management is unavailable");
-    return this.profileManager.apply();
+    const previous = this.profileApplyTail;
+    let release!: () => void;
+    this.profileApplyTail = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous;
+    try {
+      return await this.applyRadioProfileOnce();
+    } finally {
+      release();
+    }
   }
 
   onEvent(listener: (event: LinkServiceEvent) => void): () => void {
@@ -248,6 +336,9 @@ export class LinkService {
 
   stop(): void {
     if (this.lifecycle === "stopped") return;
+    this.taskDispatcher?.close();
+    this.profileApplyGeneration++;
+    this.profileApplyActive = false;
     if (this.renewalTimer) this.clock.cancel(this.renewalTimer);
     if (this.pictureRefreshTimer) this.clock.cancel(this.pictureRefreshTimer);
     for (const timer of this.clientLeaseTimers.values()) this.clock.cancel(timer);
@@ -260,6 +351,7 @@ export class LinkService {
       this.subscriptions.clear();
     }
     this.transport?.stop();
+    this.radioGate?.abort(new Error("Link service stopped"));
     this.unsubscribeTransport?.();
     this.setLifecycle("stopped");
     this.eventListeners.clear();
@@ -271,6 +363,13 @@ export class LinkService {
     return undefined;
   }
 
+  private requireTaskDispatcher(): OrderedTaskDispatcher {
+    const failure = this.taskMutationFailure();
+    if (failure) throw new Error(failure);
+    if (!this.taskDispatcher) throw new Error("Gateway Task dispatcher is unavailable");
+    return this.taskDispatcher;
+  }
+
   private dispatchSubscription(action: "add" | "renew" | "remove", selector: FeedSelector): string | undefined {
     if (this.node.role === "gateway") {
       try {
@@ -279,6 +378,9 @@ export class LinkService {
       } catch (error) {
         return error instanceof Error ? error.message : String(error);
       }
+    }
+    if (this.lifecycle === "configuring" || this.lifecycle === "error" || this.profileApplyActive) {
+      return "Link service is not transmitting";
     }
     if (!this.transport || !this.gatewayNode) return "Gateway is unavailable";
     const result = this.transport.submit({ type: "subscription", action, selector }, { destination: this.gatewayNode });
@@ -303,6 +405,14 @@ export class LinkService {
   }
 
   private scheduleRenewalIfNeeded(): void {
+    if (
+      this.lifecycle === "stopped" ||
+      (this.node.role === "asset" && (this.lifecycle === "configuring" || this.lifecycle === "error"))
+    ) {
+      if (this.renewalTimer) this.clock.cancel(this.renewalTimer);
+      this.renewalTimer = undefined;
+      return;
+    }
     const canDispatch =
       this.node.role === "gateway"
         ? this.options.onGatewaySubscriptionTransition !== undefined
@@ -331,7 +441,12 @@ export class LinkService {
   }
 
   private handleTransportEvent(event: TransportEvent): void {
-    if (event.type === "link_error") this.setLifecycle("error", event.reason);
+    if (event.type === "link_error") {
+      this.profileApplyGeneration++;
+      this.profileApplyActive = false;
+      this.radioGate?.abort(new Error(event.reason));
+      this.setLifecycle("error", event.reason);
+    }
     if (event.type === "message" && event.message.type === "task_delivery" && !event.addressed_to_local) return;
     if (
       event.type === "message" &&
@@ -369,6 +484,62 @@ export class LinkService {
       this.transport?.settleInbound(event.settlement_id, true);
     }
     this.emit({ type: "transport", event });
+  }
+
+  private activateTransport(): void {
+    if (!this.transport || this.lifecycle === "stopped" || this.lifecycle === "error" || this.profileApplyActive)
+      return;
+    this.setLifecycle("active");
+    for (const selector of this.subscriptions.aggregate().values()) this.dispatchSubscription("add", selector);
+    this.transportSubscriptionsDispatched = true;
+    this.scheduleRenewalIfNeeded();
+  }
+
+  private async applyRadioProfileOnce(): Promise<unknown> {
+    if (this.lifecycle === "stopped") throw new Error("Link service is stopped");
+    const profileManager = this.profileManager;
+    if (!profileManager) throw new Error("Radio profile management is unavailable");
+    if (!this.radioGate) {
+      this.setLifecycle("error", "radio transmission gate is unavailable");
+      throw new Error("radio transmission gate is unavailable");
+    }
+    const generation = ++this.profileApplyGeneration;
+    const previousLifecycle = this.lifecycle;
+    const hadTransport = this.transport !== undefined;
+    const selectedProfile = profileManager.profile();
+    this.profileApplyActive = true;
+    this.setLifecycle("configuring", "applying and verifying the radio profile");
+    try {
+      await this.transport?.pause();
+      await this.radioGate.suspend();
+      if (generation !== this.profileApplyGeneration) {
+        throw new Error("Link service stopped during radio profile apply");
+      }
+      const evidence = await profileManager.apply(selectedProfile);
+      if (generation !== this.profileApplyGeneration) {
+        throw new Error("Link service stopped during radio profile apply");
+      }
+      this.profileApplyActive = false;
+      this.radioGate.resume();
+      this.transport?.resume();
+      const resumedLifecycle = hadTransport
+        ? "active"
+        : previousLifecycle === "discovering"
+          ? "discovering"
+          : previousLifecycle === "error"
+            ? "discovering"
+            : previousLifecycle;
+      this.setLifecycle(resumedLifecycle, undefined);
+      if (this.transport && !this.transportSubscriptionsDispatched) this.activateTransport();
+      this.scheduleRenewalIfNeeded();
+      return evidence;
+    } catch (error) {
+      this.profileApplyActive = false;
+      if (generation === this.profileApplyGeneration) {
+        this.setLifecycle("error", error instanceof Error ? error.message : String(error));
+      }
+      throw error;
+    }
   }
 
   private failLocal(operationIDValue: string, reason: string): LinkOperationResult {
@@ -463,6 +634,33 @@ export class LinkHTTPServer {
         return this.streamPicture(url, request, response);
       }
       if (request.method === "GET" && url.pathname === "/v1/events") return this.streamEvents(url, request, response);
+      const taskMatch = /^\/v1\/tasks\/([^/]+)(?:\/(assignments|authoritative))?$/.exec(url.pathname);
+      if (request.method === "GET" && taskMatch?.[1] && taskMatch[2] === undefined) {
+        const state = this.service.taskState(decodeURIComponent(taskMatch[1]));
+        return state === undefined
+          ? json(response, 503, { error: "Gateway Task dispatcher is unavailable" })
+          : json(response, 200, state);
+      }
+      if (request.method === "POST" && taskMatch?.[1]) {
+        const assetID = decodeURIComponent(taskMatch[1]);
+        const unavailable = this.service.taskMutationFailure();
+        if (unavailable) return json(response, 503, { error: unavailable });
+        const body = await readJSONObject(request);
+        if (taskMatch[2] === undefined) {
+          if (!isTaskResource(body.task) || !isTaskDelivery(body.delivery)) {
+            return json(response, 400, { error: "invalid Task dispatch request" });
+          }
+          return json(response, 202, this.service.enqueueTask(assetID, body.task, body.delivery));
+        }
+        if (taskMatch[2] === "assignments") {
+          if (!Array.isArray(body.tasks) || !body.tasks.every(isTaskResource)) {
+            return json(response, 400, { error: "invalid Task assignment batch" });
+          }
+          return json(response, 202, this.service.enqueueTaskAssignments(assetID, body.tasks));
+        }
+        if (!isTaskResource(body.task)) return json(response, 400, { error: "invalid authoritative Task observation" });
+        return json(response, 200, this.service.observeAuthoritativeTask(assetID, body.task));
+      }
       const operationMatch = /^\/v1\/operations\/([^/]+)$/.exec(url.pathname);
       if (request.method === "GET" && operationMatch?.[1]) {
         const operation = this.service.operation(decodeURIComponent(operationMatch[1]));
@@ -477,6 +675,9 @@ export class LinkHTTPServer {
             (typeof body.operation_id !== "string" || body.operation_id.trim().length === 0))
         ) {
           return json(response, 400, { error: "invalid Link message request" });
+        }
+        if (body.message.type === "task_delivery" && this.service.node.role === "gateway") {
+          return json(response, 400, { error: "Gateway task_delivery must use the /v1/tasks routes" });
         }
         return json(
           response,
@@ -531,7 +732,8 @@ export class LinkHTTPServer {
         error instanceof PictureCursorError ||
           error instanceof TypeError ||
           error instanceof SyntaxError ||
-          error instanceof RangeError
+          error instanceof RangeError ||
+          error instanceof URIError
           ? 400
           : 500,
         { error: error instanceof Error ? error.message : String(error) }
@@ -662,6 +864,24 @@ function isLoopbackHost(host: string): boolean {
 function isCrossOriginMutation(request: IncomingMessage): boolean {
   if (request.method === "GET" || request.method === "HEAD" || request.method === "OPTIONS") return false;
   return request.headers.origin !== undefined || request.headers["sec-fetch-site"] === "cross-site";
+}
+
+function validateTaskAssetID(assetID: string): void {
+  if (!assetID.trim() || assetID.includes(":")) throw new TypeError("Task Asset ID is invalid");
+}
+
+function validateTaskForAsset(assetID: string, task: TaskResource): void {
+  validateTaskAssetID(assetID);
+  if (!isTaskResource(task)) throw new TypeError("invalid Task resource");
+  if (task.asset_id !== assetID) throw new TypeError("Task asset_id must match the route Asset ID");
+}
+
+function isTerminalTask(task: TaskResource): boolean {
+  return task.status === "cancelled" || task.status === "completed" || task.status === "failed";
+}
+
+function isTaskDelivery(value: unknown): value is "assignment" | "cancellation" {
+  return value === "assignment" || value === "cancellation";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

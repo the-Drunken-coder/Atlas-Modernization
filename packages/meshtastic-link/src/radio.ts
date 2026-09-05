@@ -34,6 +34,92 @@ export interface LinkRadio {
   close(): Promise<void>;
 }
 
+export interface LinkRadioTransmissionGate {
+  suspend(): Promise<void>;
+  resume(): void;
+  abort(reason?: Error): void;
+}
+
+export class RadioTransmissionSuspendedError extends Error {
+  constructor() {
+    super("radio transmission is suspended");
+    this.name = "RadioTransmissionSuspendedError";
+  }
+}
+
+export class LinkRadioGate implements LinkRadio, LinkRadioTransmissionGate {
+  readonly max_payload_bytes: number;
+  private paused = false;
+  private abortedReason: Error | undefined;
+  private activeSends = 0;
+  private drainPromise: Promise<void> | undefined;
+  private resolveDrain: (() => void) | undefined;
+
+  constructor(private readonly radio: LinkRadio) {
+    this.max_payload_bytes = radio.max_payload_bytes;
+  }
+
+  pacingDelayMs(payload: Uint8Array): number {
+    return this.radio.pacingDelayMs?.(payload) ?? 0;
+  }
+
+  async send(payload: Uint8Array, options: RadioSendOptions): Promise<void> {
+    this.throwIfAborted();
+    if (this.paused) throw new RadioTransmissionSuspendedError();
+    this.throwIfAborted();
+    this.activeSends++;
+    try {
+      await this.radio.send(payload, options);
+    } finally {
+      this.activeSends--;
+      if (this.activeSends === 0) this.resolveDrain?.();
+    }
+  }
+
+  onPacket(handler: (packet: RadioPacket) => void): () => void {
+    return this.radio.onPacket(handler);
+  }
+
+  onDisconnect(handler: (reason: Error) => void): () => void {
+    return this.radio.onDisconnect?.(handler) ?? (() => undefined);
+  }
+
+  async close(): Promise<void> {
+    this.abort(new Error("radio is closed"));
+    await this.radio.close();
+  }
+
+  async suspend(): Promise<void> {
+    this.throwIfAborted();
+    this.paused = true;
+    if (this.activeSends === 0) return;
+    if (!this.drainPromise) {
+      this.drainPromise = new Promise<void>((resolve) => {
+        this.resolveDrain = resolve;
+      });
+    }
+    await this.drainPromise;
+    this.drainPromise = undefined;
+    this.resolveDrain = undefined;
+  }
+
+  resume(): void {
+    if (this.abortedReason) return;
+    this.paused = false;
+  }
+
+  abort(reason = new Error("radio transmission is unavailable")): void {
+    if (this.abortedReason) return;
+    this.abortedReason = reason;
+    this.paused = true;
+    if (this.activeSends === 0) this.resolveDrain?.();
+  }
+
+  private throwIfAborted(): void {
+    if (this.abortedReason) throw this.abortedReason;
+  }
+}
+
 export class MeshtasticSerialRadio implements LinkRadio, RadioConfigurationAdapter {
   readonly max_payload_bytes = 233;
   private readonly handlers = new Set<(packet: RadioPacket) => void>();

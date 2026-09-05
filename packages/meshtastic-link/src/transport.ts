@@ -71,6 +71,7 @@ const RETRY_MS: Record<MessagePriority, number> = {
 };
 const OPERATION_RESULT_LIMIT = 4_096;
 const COMMITTED_OPERATION_ID_LIMIT = 4_096;
+const COMMITTED_OPERATION_ID_RETENTION_MS = 10 * 60_000; // Twice the longest five-minute operation deadline.
 const SETTLED_INBOUND_LIMIT = 4_096;
 const TASK_DELIVERY_FENCE_LIMIT = 4_096;
 
@@ -163,6 +164,16 @@ type PendingInbound = {
   timer: TimerHandle;
 };
 
+type CommittedOperation = {
+  // Pending operations remain fenced until they reach a terminal outcome.
+  expiresAt?: number;
+};
+
+type CommittedOperationExpiry = {
+  operationID: string;
+  expiresAt: number;
+};
+
 export class LinkTransport {
   readonly node: LinkNode;
   readonly sourceGeneration: number;
@@ -183,9 +194,10 @@ export class LinkTransport {
   private readonly reassemblies = new Map<string, Reassembly>();
   private readonly sourceFences = new Map<string, SourceFence>();
   private readonly pendingInbound = new Map<string, PendingInbound>();
-  private readonly settledInbound = new Map<string, "confirmed" | "rejected">();
+  private readonly settledInbound = new Map<string, { result: "confirmed" | "rejected"; expiresAt: number }>();
   private readonly operationResults = new Map<string, LinkOperationResult>();
-  private readonly committedOperationIDs = new Set<string>();
+  private readonly committedOperationIDs = new Map<string, CommittedOperation>();
+  private readonly committedOperationExpiryQueue: CommittedOperationExpiry[] = [];
   private readonly intermediateResponseConfirmations = new Set<string>();
   private readonly taskDeliverySequences = new Map<string, number>();
   private readonly listeners = new Set<(event: TransportEvent) => void>();
@@ -196,9 +208,16 @@ export class LinkTransport {
   private nextOrder = 0;
   private pumping = false;
   private pumpRequested = false;
+  private pumpTimer: TimerHandle | undefined;
+  private paused = false;
+  private readonly pauseWaiters = new Set<() => void>();
   private activeOutbound: Outbound | undefined;
   private stopped = false;
   private activeObjectMessageID: string | undefined;
+  private committedOperationExpiryTimer: TimerHandle | undefined;
+  private committedOperationExpiryAt: number | undefined;
+  private committedOperationExpiryQueueHead = 0;
+  private committedOperationCapacityBlocked = false;
   private readonly mutableMetrics: LinkMetrics = {
     application_bytes: 0,
     packets_sent: 0,
@@ -284,6 +303,7 @@ export class LinkTransport {
     if (message.type === "data_request" && operationID !== message.request_id) {
       return this.failedResult(operationID, "Data request operation ID must match its request ID", trackingKey);
     }
+    this.pruneCommittedOperationIDs();
     const existing = this.operationResults.get(trackingKey);
     if (existing) {
       if (existing.status !== "failed" || this.committedOperationIDs.has(trackingKey)) return { ...existing };
@@ -298,6 +318,8 @@ export class LinkTransport {
       );
     }
     if (delivery === "confirmed" && this.committedOperationIDs.size >= COMMITTED_OPERATION_ID_LIMIT) {
+      this.committedOperationCapacityBlocked = true;
+      this.scheduleCommittedOperationExpiryWakeup();
       this.mutableMetrics.confirmed_rejected_overload++;
       return this.failedResult(operationID, "confirmed operation identity capacity is exhausted", trackingKey);
     }
@@ -358,7 +380,7 @@ export class LinkTransport {
       : occupancy + this.pendingInbound.size >= this.queueLimit;
     if (capacityExhausted) return this.failedResult(operationID, "outbound queue capacity is exhausted", trackingKey);
     this.queue.push(outbound);
-    if (delivery === "confirmed") this.committedOperationIDs.add(trackingKey);
+    if (delivery === "confirmed") this.committedOperationIDs.set(trackingKey, {});
     if (delivery === "confirmed") {
       this.outboundByOperation.set(trackingKey, outbound);
       if (message.type === "data_request") this.pendingDataRequests.set(message.request_id, outbound);
@@ -469,13 +491,39 @@ export class LinkTransport {
     return () => this.capacityListeners.delete(listener);
   }
 
+  async pause(): Promise<void> {
+    if (this.stopped) return;
+    this.paused = true;
+    if (this.pumpRequested && this.pumpTimer) {
+      this.clock.cancel(this.pumpTimer);
+      this.pumpTimer = undefined;
+      this.pumpRequested = false;
+    }
+    if (!this.pumping) return;
+    await new Promise<void>((resolve) => this.pauseWaiters.add(resolve));
+  }
+
+  resume(): void {
+    if (this.stopped) return;
+    this.paused = false;
+    if (this.hasEligibleOutbound()) this.requestPump();
+  }
+
   stop(reason = "link service stopped"): void {
     if (this.stopped) return;
     this.stopped = true;
+    this.paused = true;
+    if (this.pumpTimer) this.clock.cancel(this.pumpTimer);
+    this.pumpTimer = undefined;
+    this.pumpRequested = false;
     this.unsubscribeRadio();
     this.unsubscribeRadioDisconnect();
     for (const reassembly of this.reassemblies.values()) this.clock.cancel(reassembly.timer);
     this.reassemblies.clear();
+    if (this.committedOperationExpiryTimer) this.clock.cancel(this.committedOperationExpiryTimer);
+    this.committedOperationExpiryTimer = undefined;
+    this.committedOperationExpiryAt = undefined;
+    this.committedOperationCapacityBlocked = false;
     const pending = new Set(this.queue);
     for (const outbound of this.outboundByOperation.values()) pending.add(outbound);
     for (const outbound of this.pendingDataRequests.values()) pending.add(outbound);
@@ -489,6 +537,7 @@ export class LinkTransport {
     for (const pending of this.pendingInbound.values()) this.clock.cancel(pending.timer);
     this.pendingInbound.clear();
     this.responseOperations.clear();
+    if (!this.pumping) this.resolvePauseWaiters();
   }
 
   private handleRadioDisconnect(reason: Error): void {
@@ -498,16 +547,21 @@ export class LinkTransport {
   }
 
   private requestPump(delayMs = 0): void {
-    if (this.pumping || this.pumpRequested || this.stopped) return;
+    if (this.pumping || this.pumpRequested || this.stopped || this.paused) return;
     this.pumpRequested = true;
-    this.clock.schedule(delayMs, async () => {
+    this.pumpTimer = this.clock.schedule(delayMs, async () => {
+      this.pumpTimer = undefined;
       this.pumpRequested = false;
+      if (this.paused || this.stopped) {
+        this.resolvePauseWaiters();
+        return;
+      }
       await this.pump();
     });
   }
 
   private async pump(): Promise<void> {
-    if (this.pumping || this.stopped) return;
+    if (this.pumping || this.stopped || this.paused) return;
     this.pumping = true;
     let nextDelayMs = 0;
     try {
@@ -573,8 +627,15 @@ export class LinkTransport {
       if (this.outboundOccupancy() + this.pendingInbound.size < this.queueLimit) {
         this.emitCapacityAvailable();
       }
-      if (this.hasEligibleOutbound()) this.requestPump(nextDelayMs);
+      if (!this.paused && this.hasEligibleOutbound()) this.requestPump(nextDelayMs);
+      if (!this.pumping && !this.pumpRequested) this.resolvePauseWaiters();
     }
+  }
+
+  private resolvePauseWaiters(): void {
+    const waiters = [...this.pauseWaiters];
+    this.pauseWaiters.clear();
+    for (const resolve of waiters) resolve();
   }
 
   private takeNextOutbound(): Outbound | undefined {
@@ -779,6 +840,7 @@ export class LinkTransport {
     const requiresSettlement = deliveryClass(message) === "confirmed" && addressed;
     const settlementID = inboundSettlementID(identity);
     if (requiresSettlement) {
+      this.pruneSettledInbound();
       const settled = this.settledInbound.get(settlementID);
       if (settled) {
         this.mutableMetrics.duplicate_packets_suppressed++;
@@ -786,7 +848,7 @@ export class LinkTransport {
           identity.source,
           {
             type: "control",
-            control: settled,
+            control: settled.result,
             operation_id: identity.operation_id,
             message_id: identity.message_id
           },
@@ -818,7 +880,7 @@ export class LinkTransport {
         this.rejectInboundCapacity(identity, settlementID);
         return;
       }
-      // A pending settlement reserves its eventual session fence identity.
+      // A pending settlement reserves its eventual retained settlement identity.
       if (this.settledInbound.size + this.pendingInbound.size >= SETTLED_INBOUND_LIMIT) {
         this.rejectInboundCapacity(identity, settlementID, "inbound settlement identity capacity is exhausted");
         return;
@@ -1000,6 +1062,7 @@ export class LinkTransport {
   private expectsObjectContent(frame: LinkFrame): boolean {
     if (frame.destination === undefined || !sameNode(frame.destination, this.node)) return false;
     const settlementID = inboundSettlementID(frameIdentity(frame));
+    this.pruneSettledInbound();
     if (this.pendingInbound.has(settlementID) || this.settledInbound.has(settlementID)) return true;
     const request = this.pendingDataRequests.get(frame.operation_id);
     return (
@@ -1108,6 +1171,7 @@ export class LinkTransport {
       ...(reason === undefined ? {} : { reason }),
       completed_at: this.clock.now()
     };
+    this.retainCompletedOperation(outbound.trackingKey);
     this.recordOperationTiming(outbound);
     this.recordOperation(result, outbound.trackingKey);
     this.emit({ type: "operation", result });
@@ -1160,6 +1224,7 @@ export class LinkTransport {
         : {}),
       completed_at: this.clock.now()
     };
+    this.retainCompletedOperation(outbound.trackingKey);
     this.recordOperationTiming(outbound);
     this.recordOperation(result, outbound.trackingKey);
     this.emit({ type: "operation", result });
@@ -1298,12 +1363,68 @@ export class LinkTransport {
     return [...this.pendingDataRequests.values()].some((outbound) => outbound.trackingKey === operationID);
   }
 
+  private retainCompletedOperation(operationID: string): void {
+    const committed = this.committedOperationIDs.get(operationID);
+    if (!committed) return;
+    const expiresAt = this.clock.now() + COMMITTED_OPERATION_ID_RETENTION_MS;
+    committed.expiresAt = expiresAt;
+    this.committedOperationExpiryQueue.push({ operationID, expiresAt });
+    if (this.committedOperationCapacityBlocked) this.scheduleCommittedOperationExpiryWakeup();
+  }
+
+  private pruneCommittedOperationIDs(): void {
+    const now = this.clock.now();
+    while (this.committedOperationExpiryQueueHead < this.committedOperationExpiryQueue.length) {
+      const expiry = this.committedOperationExpiryQueue[this.committedOperationExpiryQueueHead];
+      if (!expiry) break;
+      if (expiry.expiresAt > now) break;
+      this.committedOperationExpiryQueueHead++;
+      const committed = this.committedOperationIDs.get(expiry.operationID);
+      if (committed?.expiresAt === expiry.expiresAt) this.committedOperationIDs.delete(expiry.operationID);
+    }
+    if (this.committedOperationExpiryQueueHead === this.committedOperationExpiryQueue.length) {
+      this.committedOperationExpiryQueue.length = 0;
+      this.committedOperationExpiryQueueHead = 0;
+    } else if (this.committedOperationExpiryQueueHead >= 1_024) {
+      this.committedOperationExpiryQueue.splice(0, this.committedOperationExpiryQueueHead);
+      this.committedOperationExpiryQueueHead = 0;
+    }
+  }
+
+  private scheduleCommittedOperationExpiryWakeup(): void {
+    if (!this.committedOperationCapacityBlocked || this.stopped) return;
+    const earliestExpiry = this.committedOperationExpiryQueue[this.committedOperationExpiryQueueHead]?.expiresAt;
+    if (earliestExpiry === undefined) return;
+    if (this.committedOperationExpiryAt !== undefined && this.committedOperationExpiryAt <= earliestExpiry) return;
+    if (this.committedOperationExpiryTimer) this.clock.cancel(this.committedOperationExpiryTimer);
+    this.committedOperationExpiryAt = earliestExpiry;
+    this.committedOperationExpiryTimer = this.clock.schedule(Math.max(0, earliestExpiry - this.clock.now()), () => {
+      this.committedOperationExpiryTimer = undefined;
+      this.committedOperationExpiryAt = undefined;
+      this.pruneCommittedOperationIDs();
+      this.committedOperationCapacityBlocked = false;
+      this.emitCapacityAvailable();
+    });
+  }
+
+  private pruneSettledInbound(): void {
+    const now = this.clock.now();
+    for (const [settlementID, settled] of this.settledInbound) {
+      if (settled.expiresAt > now) break;
+      this.settledInbound.delete(settlementID);
+    }
+  }
+
   private recordSettledInbound(settlementID: string, result: "confirmed" | "rejected"): void {
+    this.pruneSettledInbound();
     if (this.settledInbound.has(settlementID)) return;
-    // Keep an admitted pending identity when moving it into the session fence.
+    // Keep an admitted pending identity when moving it into completed settlement history.
     const hasReservation = this.pendingInbound.has(settlementID);
     if (!hasReservation && this.settledInbound.size + this.pendingInbound.size >= SETTLED_INBOUND_LIMIT) return;
-    this.settledInbound.set(settlementID, result);
+    this.settledInbound.set(settlementID, {
+      result,
+      expiresAt: this.clock.now() + COMMITTED_OPERATION_ID_RETENTION_MS
+    });
   }
 
   private recordOperationTiming(outbound: Outbound): void {

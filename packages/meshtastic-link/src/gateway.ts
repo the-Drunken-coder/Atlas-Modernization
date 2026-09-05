@@ -154,6 +154,8 @@ type QueuedTask = {
 
 type InFlightTask = QueuedTask & {
   operationID: string;
+  failed: boolean;
+  retryQueued?: TaskResource;
 };
 
 export class OrderedTaskDispatcher {
@@ -163,8 +165,10 @@ export class OrderedTaskDispatcher {
   private readonly unsubscribe: () => void;
   private readonly unsubscribeCapacity: () => void;
   private readonly pumpingAssets = new Set<string>();
+  private readonly retryingAssets = new Set<string>();
   private readonly retiringAssets = new Set<string>();
   private pumpingQueuedAssets = false;
+  private wakingRetries = false;
   private dispatchSequence = 0;
 
   constructor(
@@ -174,7 +178,10 @@ export class OrderedTaskDispatcher {
     if (transport.node.role !== "gateway") throw new Error("ordered Task dispatcher requires a Gateway transport");
     if (!Number.isSafeInteger(queueLimit) || queueLimit < 1) throw new RangeError("Task queue limit must be positive");
     this.unsubscribe = transport.onEvent((event) => this.handleTransportEvent(event));
-    this.unsubscribeCapacity = transport.onCapacityAvailable(() => this.pumpQueuedAssets());
+    this.unsubscribeCapacity = transport.onCapacityAvailable(() => {
+      this.wakeRetryableAssignments();
+      this.pumpQueuedAssets();
+    });
   }
 
   enqueue(assetID: string, task: TaskResource, delivery: TaskDelivery["delivery"] = "assignment"): void {
@@ -195,10 +202,11 @@ export class OrderedTaskDispatcher {
       this.pump(assetID);
       return;
     }
-    if (
-      this.inFlight.get(assetID)?.task.task_id === task.task_id ||
-      this.inFlightCancellations.get(assetID)?.task.task_id === task.task_id
-    ) {
+    if (this.inFlightCancellations.get(assetID)?.task.task_id === task.task_id) return;
+    const active = this.inFlight.get(assetID);
+    if (active?.task.task_id === task.task_id) {
+      if (!active.failed) return;
+      this.retryFailedAssignment(assetID, task);
       return;
     }
     const queue = this.queued.get(assetID) ?? [];
@@ -215,6 +223,8 @@ export class OrderedTaskDispatcher {
 
   enqueueAssignments(assetID: string, tasks: readonly TaskResource[]): void {
     if (!assetID) throw new TypeError("Task delivery requires an Asset ID");
+    const active = this.inFlight.get(assetID);
+    const replay = active?.failed ? tasks.find((task) => task.task_id === active.task.task_id) : undefined;
     const queue = this.queued.get(assetID) ?? [];
     const additions = new Set(
       tasks
@@ -227,6 +237,7 @@ export class OrderedTaskDispatcher {
         .map((task) => task.task_id)
     );
     this.reserveQueueSlots(additions.size);
+    if (replay !== undefined) this.retryFailedAssignment(assetID, replay);
     for (const task of tasks) {
       if (
         this.inFlight.get(assetID)?.task.task_id === task.task_id ||
@@ -257,10 +268,21 @@ export class OrderedTaskDispatcher {
     this.pump(assetID);
   }
 
-  state(assetID: string): { in_flight?: string; queued: string[] } {
+  state(assetID: string): {
+    in_flight?: string;
+    in_flight_operation_id?: string;
+    cancellation?: { task_id: string; operation_id: string };
+    queued: string[];
+  } {
     const inFlight = this.inFlight.get(assetID);
+    const cancellation = this.inFlightCancellations.get(assetID);
     return {
-      ...(inFlight === undefined ? {} : { in_flight: inFlight.task.task_id }),
+      ...(inFlight === undefined
+        ? {}
+        : { in_flight: inFlight.task.task_id, in_flight_operation_id: inFlight.operationID }),
+      ...(cancellation === undefined
+        ? {}
+        : { cancellation: { task_id: cancellation.task.task_id, operation_id: cancellation.operationID } }),
       queued: (this.queued.get(assetID) ?? []).map((item) => item.task.task_id)
     };
   }
@@ -271,6 +293,7 @@ export class OrderedTaskDispatcher {
     this.queued.clear();
     this.inFlight.clear();
     this.inFlightCancellations.clear();
+    this.retryingAssets.clear();
   }
 
   private pump(assetID: string): void {
@@ -298,7 +321,7 @@ export class OrderedTaskDispatcher {
       }
       queue.shift();
       if (queue.length === 0) this.queued.delete(assetID);
-      const inFlight = { ...next, operationID: result.operation_id };
+      const inFlight = { ...next, operationID: result.operation_id, failed: false };
       if (next.delivery === "cancellation") this.inFlightCancellations.set(assetID, inFlight);
       else this.inFlight.set(assetID, inFlight);
     } finally {
@@ -322,6 +345,45 @@ export class OrderedTaskDispatcher {
     );
   }
 
+  private retryFailedAssignment(assetID: string, task: TaskResource): void {
+    const active = this.inFlight.get(assetID);
+    if (active?.task.task_id !== task.task_id || !active.failed) return;
+    if (this.inFlightCancellations.has(assetID)) {
+      active.retryQueued = task;
+      return;
+    }
+    if (this.retryingAssets.has(assetID)) return;
+    delete active.retryQueued;
+    this.retryingAssets.add(assetID);
+    try {
+      const result = this.send(assetID, { task, delivery: "assignment" });
+      if (result.status === "failed") {
+        active.retryQueued = task;
+        return;
+      }
+      this.inFlight.set(assetID, { task, delivery: "assignment", operationID: result.operation_id, failed: false });
+    } finally {
+      this.retryingAssets.delete(assetID);
+    }
+  }
+
+  private retryQueuedAssignment(assetID: string): void {
+    const active = this.inFlight.get(assetID);
+    if (!active?.failed || active.retryQueued === undefined) return;
+    const task = active.retryQueued;
+    this.retryFailedAssignment(assetID, task);
+  }
+
+  private wakeRetryableAssignments(): void {
+    if (this.wakingRetries) return;
+    this.wakingRetries = true;
+    try {
+      for (const assetID of this.inFlight.keys()) this.retryQueuedAssignment(assetID);
+    } finally {
+      this.wakingRetries = false;
+    }
+  }
+
   private reserveQueueSlots(count: number): void {
     if (count === 0) return;
     const queued = [...this.queued.values()].reduce((total, tasks) => total + tasks.length, 0);
@@ -334,23 +396,33 @@ export class OrderedTaskDispatcher {
     for (const [assetID, task] of this.inFlightCancellations) {
       if (task.operationID !== event.result.operation_id) continue;
       if (event.result.status === "failed") {
+        task.failed = true;
+        this.wakeRetryableAssignments();
         this.pumpQueuedAssets(undefined, assetID);
         return;
       }
       this.inFlightCancellations.delete(assetID);
-      if (!this.retiringAssets.has(assetID)) this.pumpQueuedAssets(assetID);
+      if (!this.retiringAssets.has(assetID)) {
+        this.retryQueuedAssignment(assetID);
+        this.pumpQueuedAssets(assetID);
+      }
+      this.wakeRetryableAssignments();
       return;
     }
     for (const [assetID, task] of this.inFlight) {
       if (task.operationID !== event.result.operation_id) continue;
       if (event.result.status === "failed") {
+        task.failed = true;
+        this.wakeRetryableAssignments();
         this.pumpQueuedAssets(undefined, assetID);
         return;
       }
       this.inFlight.delete(assetID);
       if (!this.retiringAssets.has(assetID)) this.pumpQueuedAssets(assetID);
+      this.wakeRetryableAssignments();
       return;
     }
+    this.wakeRetryableAssignments();
     this.pumpQueuedAssets();
   }
 
@@ -390,7 +462,11 @@ export class OrderedTaskDispatcher {
 }
 
 function isCapacityFailure(reason: string | undefined): boolean {
-  return reason === "confirmed operation capacity is exhausted" || reason === "outbound queue capacity is exhausted";
+  return (
+    reason === "confirmed operation capacity is exhausted" ||
+    reason === "confirmed operation identity capacity is exhausted" ||
+    reason === "outbound queue capacity is exhausted"
+  );
 }
 
 function isIntentionalFieldMessage(message: TransportMessageEvent["message"]): message is IntentionalFieldMessage {

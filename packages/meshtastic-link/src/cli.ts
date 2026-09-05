@@ -8,7 +8,7 @@ import { AssetJoinService, GatewayJoinService, PreSharedKeyAuthenticationPolicy 
 import { GatewayMembershipStore } from "./membership.js";
 import { readPrivateFile } from "./private-file.js";
 import { createUSShortFastProfile, type RadioProfile, RadioProfileManager, validateRadioProfile } from "./profile.js";
-import { MeshtasticSerialRadio } from "./radio.js";
+import { LinkRadioGate, MeshtasticSerialRadio } from "./radio.js";
 import { LinkHTTPServer, LinkService } from "./service.js";
 import { LinkTransport } from "./transport.js";
 
@@ -110,9 +110,10 @@ async function serve(argv: string[]): Promise<void> {
   const port = integerOption(argv, "--port", 7331);
   const authentication = new PreSharedKeyAuthenticationPolicy(joinKey);
   const clock = new RealClock();
-  const radio = await MeshtasticSerialRadio.open(requiredOption(argv, "--serial"));
-  const profileManager = new RadioProfileManager(profile, radio);
-  const service = new LinkService({ mode, nodeID, clock, profileManager });
+  const rawRadio = await MeshtasticSerialRadio.open(requiredOption(argv, "--serial"));
+  const radio = new LinkRadioGate(rawRadio);
+  const profileManager = new RadioProfileManager(profile, rawRadio);
+  const service = new LinkService({ mode, nodeID, clock, profileManager, radioGate: radio });
   const http = new LinkHTTPServer(service);
   let listening = false;
   let gatewayJoin: GatewayJoinService | undefined;
@@ -144,28 +145,31 @@ async function serve(argv: string[]): Promise<void> {
         profile.public_channel.index,
         store,
         authentication,
-        (error) => service.setLifecycle("active", `join attempt deferred: ${error.message}`),
+        (error) => service.setJoiningLifecycle("active", `join attempt deferred: ${error.message}`),
         (admission) => {
           transport.announceSourceActivation(admission.source, admission.source_generation, admission.service_session);
         }
       );
     } else {
       await profileManager.prepareAssetForJoin();
-      service.setLifecycle("discovering", "waiting for authenticated Gateway admission");
+      service.setJoiningLifecycle("discovering", "waiting for authenticated Gateway admission");
       let attached = false;
       assetJoin = new AssetJoinService({
         radio,
         clock,
         assetID: nodeID,
-        radioNodeID: radio.nodeNumber(),
+        radioNodeID: rawRadio.nodeNumber(),
         serviceSession: service.serviceSession,
         rendezvousChannel: profile.public_channel.index,
         authentication,
-        installMembership: (membership) => profileManager.installAssetMembership(membership),
+        installMembership: async (membership) => {
+          if (service.isRadioProfileApplying()) throw new Error("radio profile apply is in progress");
+          await profileManager.installAssetMembership(membership);
+        },
         onStatus: (status) => {
           service.setJoiningStatus(status);
           if (status.state === "discovering" || status.state === "authenticating") {
-            service.setLifecycle("discovering", status.state);
+            service.setJoiningLifecycle("discovering", status.state);
           } else if (status.state === "joined" && !attached) {
             attached = true;
             const transport = new LinkTransport({
@@ -180,7 +184,7 @@ async function serve(argv: string[]): Promise<void> {
             service.attachTransport(transport, { role: "gateway", id: status.gateway_node_id });
           }
         },
-        onError: (error) => service.setLifecycle("discovering", `join attempt deferred: ${error.message}`),
+        onError: (error) => service.setJoiningLifecycle("discovering", `join attempt deferred: ${error.message}`),
         onDisconnect: (error) => service.setLifecycle("error", error.message)
       });
       assetJoin.start();
@@ -197,7 +201,7 @@ async function serve(argv: string[]): Promise<void> {
   }
 
   const cleanupErrors: unknown[] = [];
-  for (const cleanup of [() => assetJoin?.close(), () => gatewayJoin?.close(), () => service.stop()]) {
+  for (const cleanup of [() => service.stop(), () => assetJoin?.close(), () => gatewayJoin?.close()]) {
     try {
       await cleanup();
     } catch (error) {
