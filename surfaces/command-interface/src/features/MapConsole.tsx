@@ -67,6 +67,7 @@ const MAX_STALE_DETAIL_REFRESHES = 1;
 
 type EntityDetailsRequest = {
   entityId: string;
+  runtimeManifestVersion?: number;
   inFlight: boolean;
   cancelled: boolean;
   controller?: AbortController;
@@ -120,6 +121,9 @@ export function MapConsole() {
   const selection = sidebar.selection;
   const selectedSnapshotEntity = getEntity(snapshot, selection?.id);
   const selectedSnapshotEntityId = selectedSnapshotEntity?.entity_id;
+  const selectedRuntimeManifestVersion = selectedSnapshotEntityId
+    ? snapshot.runtimeManifestVersions?.[selectedSnapshotEntityId]
+    : undefined;
   const selectedSnapshotEntityVersion = selectedSnapshotEntity?.metadata.version;
   const [selectedEntityDetails, setSelectedEntityDetails] = useState<EntityResource>();
   const [commandManifestState, setCommandManifestState] = useState<{
@@ -143,6 +147,7 @@ export function MapConsole() {
     }
     const request: EntityDetailsRequest = {
       entityId: selectedSnapshotEntityId,
+      runtimeManifestVersion: selectedRuntimeManifestVersion,
       inFlight: false,
       cancelled: false,
       staleRefreshAttempts: 0,
@@ -199,7 +204,7 @@ export function MapConsole() {
       request.controller?.abort();
       if (detailsRequestRef.current === request) detailsRequestRef.current = undefined;
     };
-  }, [atlas.loadEntityDetails, commandDetailsRequired, selectedSnapshotEntityId]);
+  }, [atlas.loadEntityDetails, commandDetailsRequired, selectedRuntimeManifestVersion, selectedSnapshotEntityId]);
 
   useEffect(() => {
     const request = detailsRequestRef.current;
@@ -239,7 +244,8 @@ export function MapConsole() {
     commandDetailsRequired &&
       selectedDetails &&
       selectedSnapshotEntityVersion !== undefined &&
-      selectedDetails.metadata.version < selectedSnapshotEntityVersion
+      (selectedDetails.metadata.version < selectedSnapshotEntityVersion ||
+        detailsRequestRef.current?.runtimeManifestVersion !== selectedRuntimeManifestVersion)
   );
   const currentCommandManifestStatus =
     commandManifestState.entityId === selectedSnapshotEntityId ? commandManifestState.status : "loading";
@@ -269,7 +275,10 @@ export function MapConsole() {
     selectedEntity,
     selectedId,
     commandManifestStatus: resolvedCommandManifestStatus,
-    commandManifestGeneration: selectedDetails?.metadata.version,
+    commandManifestGeneration:
+      selectedDetails === undefined
+        ? undefined
+        : `${selectedDetails.metadata.version}:${selectedRuntimeManifestVersion ?? "initial"}`,
     submitCommand: atlas.submitCommand
   });
   const geometryEdit = useGeometryEdit({ selectedEntity, selectedId, updateGeometry: atlas.updateGeometry });

@@ -30,6 +30,12 @@ const (
 	FeedEventDelete FeedEventName = "delete"
 )
 
+type EntityChangeReason string
+
+const (
+	EntityChangeReasonRuntimeManifestChanged EntityChangeReason = "runtime_manifest_changed"
+)
+
 type ErrorCode string
 
 const (
@@ -433,11 +439,12 @@ type ChangedSinceResponse struct {
 }
 
 type FeedEvent struct {
-	Event        FeedEventName `json:"event"`
-	ResourceType ResourceType  `json:"resource_type"`
-	ID           string        `json:"id"`
-	Version      int64         `json:"version"`
-	Resource     JSONValue     `json:"resource,omitempty"`
+	ChangeReason EntityChangeReason `json:"change_reason,omitempty"`
+	Event        FeedEventName      `json:"event"`
+	ResourceType ResourceType       `json:"resource_type"`
+	ID           string             `json:"id"`
+	Version      int64              `json:"version"`
+	Resource     JSONValue          `json:"resource,omitempty"`
 }
 
 func (e FeedEvent) MarshalJSON() ([]byte, error) {

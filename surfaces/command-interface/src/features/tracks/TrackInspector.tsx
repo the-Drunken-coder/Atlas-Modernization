@@ -23,8 +23,8 @@ export function TrackInspector({ entity }: { entity: EntityResource }) {
       <Section title="Location & Movement">
         <FieldGrid
           rows={[
-            ["Latitude", position ? position[1].toFixed(5) : "—"],
-            ["Longitude", position ? position[0].toFixed(5) : "—"],
+            ["Latitude", position ? position[1].toFixed(5) : "N/A"],
+            ["Longitude", position ? position[0].toFixed(5) : "N/A"],
             ["Altitude", formatNumber(entityAltitude(entity), { unit: "m", digits: 0 })],
             ["Heading", formatNumber(entityHeading(entity), { unit: "°", digits: 0 })],
             ["Speed", formatNumber(entitySpeed(entity), { unit: "m/s", digits: 1 })],

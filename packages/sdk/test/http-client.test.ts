@@ -1014,6 +1014,94 @@ describe("AtlasClient HTTP", () => {
     expect(core.requestHeaders.find((request) => request.path === "/tasks")?.idempotencyKey).toBe("attempt-1");
   });
 
+  it("canonicalizes resource IDs in create bodies and request paths", async () => {
+    const core = new FakeCore();
+    const requestBodies: Array<{ path: string; body: string | undefined }> = [];
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: async (url, init) => {
+        requestBodies.push({ path: new URL(String(url)).pathname, body: String(init?.body) });
+        return core.fetch(String(url), init);
+      }
+    });
+
+    const createdEntity = await client.entities.create({ entity_id: " asset-canonical ", entity_type: "asset" });
+    const createdObject = await client.objects.create({ object_id: " object-canonical " });
+    const createdTask = await client.tasks.create(
+      { asset_id: " asset-canonical ", command: "fixture.queued", input: {} },
+      { idempotencyKey: "resource-id-task" }
+    );
+
+    expect(createdEntity.entity_id).toBe("asset-canonical");
+    expect(createdObject.object_id).toBe("object-canonical");
+    expect(createdTask.asset_id).toBe("asset-canonical");
+    expect(JSON.parse(requestBodies.find(({ path }) => path === "/entities")?.body ?? "null")).toMatchObject({
+      entity_id: "asset-canonical"
+    });
+    expect(JSON.parse(requestBodies.find(({ path }) => path === "/objects")?.body ?? "null")).toMatchObject({
+      object_id: "object-canonical"
+    });
+    expect(JSON.parse(requestBodies.find(({ path }) => path === "/tasks")?.body ?? "null")).toMatchObject({
+      asset_id: "asset-canonical"
+    });
+
+    core.requests = [];
+    await client.entities.get(" asset-canonical ", { fresh: true });
+    await client.objects.get(" object-canonical ", { fresh: true });
+    expect(core.requests).toContain("/entities/asset-canonical");
+    expect(core.requests).toContain("/objects/object-canonical");
+  });
+
+  it("carries resource-instance tokens only in Entity/Object headers", async () => {
+    const core = new FakeCore();
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch });
+    const entityToken = "sdk-entity-instance";
+    const objectToken = "sdk-object-instance";
+
+    await client.entities.create(
+      { entity_id: "sdk-token-entity", entity_type: "asset" },
+      { instanceToken: entityToken }
+    );
+    await client.objects.create({ object_id: "sdk-token-object" }, { instanceToken: objectToken });
+    await client.entities.delete("sdk-token-entity", { instanceToken: entityToken });
+    await client.objects.delete("sdk-token-object", { instanceToken: objectToken });
+
+    expect(core.requestHeaders.find((request) => request.path === "/entities")?.instanceToken).toBe(entityToken);
+    expect(core.requestHeaders.find((request) => request.path === "/objects")?.instanceToken).toBe(objectToken);
+    expect(core.requestHeaders.find((request) => request.path === "/entities/sdk-token-entity")?.instanceToken).toBe(
+      entityToken
+    );
+    expect(core.requestHeaders.find((request) => request.path === "/objects/sdk-token-object")?.instanceToken).toBe(
+      objectToken
+    );
+    expect(core.requests).not.toContain("/entities/sdk-token-entity?instance_token");
+  });
+
+  it("rejects blank or padded resource-instance tokens before the request", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl });
+
+    expect(() =>
+      client.entities.create({ entity_id: "sdk-invalid-token", entity_type: "asset" }, { instanceToken: " " })
+    ).toThrow("instanceToken must be non-empty");
+    await expect(client.objects.delete("sdk-invalid-token", { instanceToken: " padded" })).rejects.toThrow(
+      "surrounding whitespace"
+    );
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("rejects empty resource IDs before making requests", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl });
+
+    expect(() => client.entities.get(" \t")).toThrow("entity_id must not be empty");
+    expect(() => client.objects.create({ object_id: "  " })).toThrow("object_id must not be empty");
+    expect(() =>
+      client.tasks.create({ asset_id: "\n", command: "fixture.queued", input: {} }, { idempotencyKey: "empty-asset" })
+    ).toThrow("asset_id must not be empty");
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it("checks in telemetry without polling Tasks", async () => {
     const core = new FakeCore();
     const baseEntity = core.upsertEntity(entity("asset-checkin"));

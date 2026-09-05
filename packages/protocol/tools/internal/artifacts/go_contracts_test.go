@@ -378,6 +378,51 @@ func TestBuildArtifactsIsDeterministic(t *testing.T) {
 	}
 }
 
+func TestGoIntegerUnmarshalSourceCoversAuthoredIntegerFields(t *testing.T) {
+	root, _ := canonicalGoContractFixture(t)
+	source, err := goIntegerUnmarshalSource(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	for _, typeName := range []string{
+		"ChangedSinceResponse",
+		"EntityCheckInFullResponse",
+		"EntityResource",
+		"EntityDeleteEvent",
+		"FeedEvent",
+		"FeedSubscriptionsReadyMessage",
+		"FullDatasetResponse",
+		"MetadataBlock",
+		"ObjectDetailResource",
+		"ObjectResource",
+		"ObjectDeleteEvent",
+		"PluginOperationDescriptor",
+		"TaskResource",
+	} {
+		if !strings.Contains(text, "func (value *"+typeName+") UnmarshalJSON") {
+			t.Fatalf("generated integer unmarshaller missing %s", typeName)
+		}
+	}
+	for _, want := range []string{
+		"atlasProtocolParseBoundedExponent",
+		"atlasProtocolDecodeCanonicalJSON",
+		"strconv.ParseInt",
+		"atlasProtocolMaxSafeInteger int64 = 9007199254740991",
+		"atlasProtocolDecodeOptionalInt64JSON",
+		"unknown field %q",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("generated integer unmarshaller missing %q", want)
+		}
+	}
+	for _, forbidden := range []string{"math/big", "big.Rat"} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("generated integer unmarshaller contains allocation-prone %q", forbidden)
+		}
+	}
+}
+
 func TestGoValidatorsSourceCoversPublicDefinitions(t *testing.T) {
 	_, bundle := canonicalGoContractFixture(t)
 	defs, err := schemaDefs(bundle)

@@ -40,8 +40,16 @@ func (h *Handler) CreateEntity(w http.ResponseWriter, r *http.Request) {
 	if !h.decodeProtocolRequestBody(w, r, &req, false, protocol.ValidateEntityCreateRequest) {
 		return
 	}
+	instanceToken, ok := h.parseResourceInstanceToken(w, r)
+	if !ok {
+		return
+	}
 
-	entity, err := h.entityActions.Create(r.Context(), req.actionParams())
+	params := req.actionParams()
+	if instanceToken != nil {
+		params.InstanceToken = *instanceToken
+	}
+	entity, err := h.entityActions.Create(r.Context(), params)
 	if err != nil {
 		h.handleActionError(w, r, err)
 		return
@@ -142,8 +150,12 @@ func (f nullablePatchString) actionValue() *string {
 // DeleteEntity handles DELETE /entities/{entity_id}.
 func (h *Handler) DeleteEntity(w http.ResponseWriter, r *http.Request) {
 	entityID := chi.URLParam(r, "entity_id")
+	instanceToken, ok := h.parseResourceInstanceToken(w, r)
+	if !ok {
+		return
+	}
 
-	if err := h.entityActions.Delete(r.Context(), entityID); err != nil {
+	if err := h.entityActions.Delete(r.Context(), entityID, actions.EntityDeleteOptions{InstanceToken: instanceToken}); err != nil {
 		h.handleActionError(w, r, err)
 		return
 	}

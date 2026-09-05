@@ -561,6 +561,25 @@ class FieldLinkTuiTests(unittest.TestCase):
         self.assertIn("Atlas response", rendered)
         self.assertIn('"task_id": "task-1"', rendered)
 
+    def test_renders_the_task_application_response_from_summary(self):
+        summary = {
+            "status": "passed",
+            "condition": "clean",
+            "verification": {"correlation": "matched"},
+            "taskResponse": {
+                "type": "task",
+                "kind": "response",
+                "request_id": "req-task",
+                "status": 201,
+                "body": {"task_id": "task-1", "state": "started"},
+            },
+        }
+        rendered = "\n".join(
+            TUI.summary_lines(summary, TUI.RunView(), self.config())
+        )
+        self.assertIn("Task status 201", rendered)
+        self.assertIn('Task body {"task_id":"task-1","state":"started"}', rendered)
+
     def test_reads_only_complete_jsonl_records(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "events.jsonl"

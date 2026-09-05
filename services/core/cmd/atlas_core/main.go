@@ -31,7 +31,7 @@ const objectTransferIdleTimeout = 30 * time.Second
 func atlasCORSOptions(allowedOrigins []string, allowedOriginPatterns []string) cors.Options {
 	return cors.Options{
 		AllowedMethods:   []string{"GET", "POST", "PATCH", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "Idempotency-Key", "Atlas-Runtime-ID", "If-Match", "If-None-Match", "X-API-Key", "X-Request-ID"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "Idempotency-Key", "Atlas-Runtime-ID", "Atlas-Resource-Instance-Token", "If-Match", "If-None-Match", "X-API-Key", "X-Request-ID"},
 		ExposedHeaders:   []string{"ETag", "X-Has-More", "X-Next-Cursor", "X-Limit", "X-Returned-Count", "Content-Length"},
 		AllowCredentials: true,
 		AllowOriginFunc: func(r *http.Request, origin string) bool {

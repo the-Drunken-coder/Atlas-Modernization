@@ -66,7 +66,9 @@ func (h *Handler) AdminLogout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.adminAuth.Logout(r.Context(), r); err != nil {
-		h.requestLogger(r).Warn().Err(err).Msg("admin logout failed")
+		h.adminAuth.ClearSessionCookie(w)
+		h.writeErrorWithCause(w, r, http.StatusInternalServerError, "admin logout failed", protocol.ErrorCodeInternalServerError, err)
+		return
 	}
 	h.adminAuth.ClearSessionCookie(w)
 	w.WriteHeader(http.StatusNoContent)

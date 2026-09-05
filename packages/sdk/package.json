@@ -39,6 +39,21 @@
       "types": "./dist/packages/sdk/src/admin.d.ts",
       "import": "./dist/packages/sdk/src/admin.js",
       "default": "./dist/packages/sdk/src/admin.js"
+    },
+    "./config": {
+      "types": "./dist/packages/sdk/src/config.d.ts",
+      "import": "./dist/packages/sdk/src/config.js",
+      "default": "./dist/packages/sdk/src/config.js"
+    },
+    "./errors": {
+      "types": "./dist/packages/sdk/src/errors.d.ts",
+      "import": "./dist/packages/sdk/src/errors.js",
+      "default": "./dist/packages/sdk/src/errors.js"
+    },
+    "./spatial": {
+      "types": "./dist/packages/sdk/src/spatial.d.ts",
+      "import": "./dist/packages/sdk/src/spatial.js",
+      "default": "./dist/packages/sdk/src/spatial.js"
     }
   },
   "bin": {

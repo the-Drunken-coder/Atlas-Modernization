@@ -7,8 +7,13 @@ import {
 } from "@the-drunken-coder/atlas-sdk";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { entityFixture, metadataFixture, styleFixture, taskFixture } from "../../test/fixtures.js";
+import { rotateAuthSession } from "../auth/atlas.js";
 import { createSdkDataSource } from "./data-source.js";
 import type { UiGeometry } from "./geometry.js";
+import type { AtlasSnapshot } from "./store.js";
+
+type RuntimeManifestChangeReason = "runtime_manifest_changed";
+type TestEntityFeedEvent = FeedEvent & { change_reason?: RuntimeManifestChangeReason };
 
 const config = {
   atlasBaseUrl: "https://core.test",
@@ -255,12 +260,20 @@ describe("sdk data source", () => {
 
     await vi.advanceTimersByTimeAsync(120_000);
     await vi.waitFor(() =>
-      expect(snapshots).toHaveBeenLastCalledWith({ entities: { [updated.entity_id]: updated }, tasks: {} })
+      expect(snapshots).toHaveBeenLastCalledWith({
+        entities: { [updated.entity_id]: updated },
+        tasks: {},
+        runtimeManifestVersions: { [updated.entity_id]: updated.metadata.version }
+      })
     );
 
     expect(core.requests).toContain(`/queries/changed-since?since_version=${deleted.metadata.version}`);
     expect(snapshots).toHaveBeenCalledTimes(1);
-    expect(dataSource.snapshot()).toEqual({ entities: { [updated.entity_id]: updated }, tasks: {} });
+    expect(dataSource.snapshot()).toEqual({
+      entities: { [updated.entity_id]: updated },
+      tasks: {},
+      runtimeManifestVersions: { [updated.entity_id]: updated.metadata.version }
+    });
     expect(dataSource.health?.()).toMatchObject({ running: true, degraded: true });
     dataSource.dispose();
   });
@@ -299,6 +312,120 @@ describe("sdk data source", () => {
     expect(core.feedConnections).toBe(2);
     expect(core.requests.some((request) => request.startsWith("/queries/changed-since"))).toBe(true);
     expect(dataSource.health?.()).toEqual({ running: true, healthy: true, degraded: false });
+
+    dataSource.dispose();
+  });
+
+  it("publishes the runtime-manifest signal with its Entity snapshot", async () => {
+    const core = new TestCore();
+    const original = core.upsertEntity(entity("asset-runtime-signal"));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => core.fetch(String(input), init))
+    );
+    vi.stubGlobal("WebSocket", core.attachWebSocketGlobal());
+    const dataSource = createSdkDataSource(config);
+    const snapshots: Array<{ version: number; signal?: number }> = [];
+    dataSource.watch((snapshot) => {
+      const updated = snapshot.entities[original.entity_id];
+      if (updated) {
+        snapshots.push({
+          version: updated.metadata.version,
+          signal: snapshot.runtimeManifestVersions?.[updated.entity_id]
+        });
+      }
+    });
+
+    await dataSource.start();
+    snapshots.length = 0;
+    const updated = core.publishEntity({ ...original }, "runtime_manifest_changed");
+
+    await vi.waitFor(() =>
+      expect(snapshots).toContainEqual({ version: updated.metadata.version, signal: updated.metadata.version })
+    );
+    expect(dataSource.snapshot().runtimeManifestVersions).toEqual({ [updated.entity_id]: updated.metadata.version });
+
+    dataSource.dispose();
+  });
+
+  it("removes deleted entities from the runtime-manifest signal map", async () => {
+    const core = new TestCore();
+    const deleted = core.upsertEntity(entity("asset-deleted-signal"));
+    const retained = core.upsertEntity(entity("asset-retained-signal"));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => core.fetch(String(input), init))
+    );
+    vi.stubGlobal("WebSocket", core.attachWebSocketGlobal());
+    const dataSource = createSdkDataSource(config);
+    dataSource.watch(() => undefined);
+
+    await dataSource.start();
+    const updatedDeleted = core.publishEntity({ ...deleted }, "runtime_manifest_changed");
+    const updatedRetained = core.publishEntity({ ...retained }, "runtime_manifest_changed");
+    await vi.waitFor(() =>
+      expect(dataSource.snapshot().runtimeManifestVersions).toEqual({
+        [updatedDeleted.entity_id]: updatedDeleted.metadata.version,
+        [updatedRetained.entity_id]: updatedRetained.metadata.version
+      })
+    );
+
+    core.publishDelete(updatedDeleted.entity_id);
+    await vi.waitFor(() =>
+      expect(dataSource.snapshot().runtimeManifestVersions).toEqual({
+        [updatedRetained.entity_id]: updatedRetained.metadata.version
+      })
+    );
+
+    core.publishDelete(updatedRetained.entity_id);
+    await vi.waitFor(() => expect(dataSource.snapshot().runtimeManifestVersions).toBeUndefined());
+    dataSource.dispose();
+  });
+
+  it("invalidates changed entities once when recovery installs a reason-less hydrated snapshot", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("WebSocket", BlockedWebSocket);
+    const core = new TestCore();
+    const original = core.upsertEntity(entity("asset-hydrated-runtime"));
+    let detailed = {
+      ...original,
+      command_manifest: []
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input));
+        if (url.pathname === `/entities/${original.entity_id}`) return Promise.resolve(Response.json(detailed));
+        return core.fetch(String(input), init);
+      })
+    );
+    const dataSource = createSdkDataSource(config);
+    const snapshots: AtlasSnapshot[] = [];
+    dataSource.watch((snapshot) => snapshots.push(snapshot));
+
+    const start = dataSource.start();
+    await vi.advanceTimersByTimeAsync(0);
+    await start;
+    snapshots.length = 0;
+
+    const hydrated = core.upsertEntity({ ...original, alias: "Recovered after hydration" });
+    core.minRetainedVersion = hydrated.metadata.version;
+    await vi.advanceTimersByTimeAsync(120_000);
+    await vi.waitFor(() =>
+      expect(snapshots).toContainEqual({
+        entities: { [hydrated.entity_id]: hydrated },
+        tasks: {},
+        runtimeManifestVersions: { [hydrated.entity_id]: hydrated.metadata.version }
+      })
+    );
+    const snapshotsAfterHydration = snapshots.length;
+
+    detailed = { ...hydrated, command_manifest: [] };
+    await expect(dataSource.loadEntityDetails?.(hydrated.entity_id)).resolves.toEqual(detailed);
+    await vi.waitFor(() => expect(snapshots).toHaveLength(snapshotsAfterHydration));
+    expect(dataSource.snapshot().runtimeManifestVersions).toEqual({
+      [hydrated.entity_id]: hydrated.metadata.version
+    });
 
     dataSource.dispose();
   });
@@ -485,6 +612,36 @@ describe("sdk data source", () => {
     });
     expect(dispatchEvent).not.toHaveBeenCalled();
   });
+
+  it("does not let an old request expire a newer session", async () => {
+    let resolveResponse!: (response: Response) => void;
+    const pendingResponse = new Promise<Response>((resolve) => {
+      resolveResponse = resolve;
+    });
+    const authWindow = new EventTarget();
+    const dispatchEvent = vi.spyOn(authWindow, "dispatchEvent");
+    vi.stubGlobal("window", authWindow);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => pendingResponse)
+    );
+
+    rotateAuthSession();
+    const dataSource = createSdkDataSource(config);
+    const request = dataSource.submitCommand({
+      assetId: "asset-1",
+      command: holdPositionCommand,
+      input: { value: "old-session" },
+      idempotencyKey: "tasking-old-session"
+    });
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalled());
+
+    rotateAuthSession();
+    resolveResponse(Response.json({ success: false, error_code: "UNAUTHORIZED" }, { status: 401 }));
+
+    await expect(request).rejects.toMatchObject({ status: 401, errorCode: "UNAUTHORIZED" });
+    expect(dispatchEvent).not.toHaveBeenCalled();
+  });
 });
 
 class TestCore {
@@ -495,7 +652,7 @@ class TestCore {
   requests: string[] = [];
   readonly sockets = new Set<TestWebSocket>();
   private readonly entities = new Map<string, EntityResource>();
-  private readonly events: FeedEvent[] = [];
+  private readonly events: TestEntityFeedEvent[] = [];
 
   fetch = async (input: RequestInfo | URL, _init?: RequestInit): Promise<Response> => {
     const url = new URL(String(input));
@@ -541,11 +698,25 @@ class TestCore {
     };
   }
 
-  upsertEntity(value: EntityResource): EntityResource {
+  upsertEntity(value: EntityResource, changeReason?: RuntimeManifestChangeReason): EntityResource {
     const version = ++this.version;
     const updated = { ...value, metadata: { ...value.metadata, version } };
     this.entities.set(updated.entity_id, updated);
-    this.events.push({ event: "update", resource_type: "entity", id: updated.entity_id, version, resource: updated });
+    this.events.push({
+      event: "update",
+      resource_type: "entity",
+      id: updated.entity_id,
+      version,
+      resource: updated,
+      ...(changeReason ? { change_reason: changeReason } : {})
+    });
+    return updated;
+  }
+
+  publishEntity(value: EntityResource, changeReason?: RuntimeManifestChangeReason): EntityResource {
+    const updated = this.upsertEntity(value, changeReason);
+    const event = this.events[this.events.length - 1];
+    if (event) this.emit(event);
     return updated;
   }
 
@@ -553,6 +724,14 @@ class TestCore {
     if (!this.entities.delete(id)) return;
     const version = ++this.version;
     this.events.push({ event: "delete", resource_type: "entity", id, version });
+  }
+
+  publishDelete(id: string): void {
+    const previousVersion = this.version;
+    this.deleteEntity(id);
+    if (this.version === previousVersion) return;
+    const event = this.events[this.events.length - 1];
+    if (event) this.emit(event);
   }
 
   private emit(event: FeedEvent): void {

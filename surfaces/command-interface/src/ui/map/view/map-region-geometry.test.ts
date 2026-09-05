@@ -3,6 +3,19 @@ import { describe, expect, it } from "vitest";
 import { clampResizedRect, regionFromScreenRect, type ScreenRect } from "./map-region-geometry.js";
 
 describe("map region geometry", () => {
+  it("preserves a wide non-crossing screen selection", () => {
+    const map = {
+      unproject: ([x, y]: [number, number]) => ({ lng: x - 120, lat: y })
+    } as unknown as MlMap;
+
+    expect(regionFromScreenRect(map, { left: 0, top: 0, width: 240, height: 100 })).toEqual({
+      west: -120,
+      south: 0,
+      east: 120,
+      north: 100
+    });
+  });
+
   it("rejects a rectangle that crosses the date line instead of swapping its longitudes", () => {
     const map = {
       unproject: ([x, y]: [number, number]) => ({ lng: x === 0 ? 179.8 : -179.8, lat: y })

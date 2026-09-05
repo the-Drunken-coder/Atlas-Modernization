@@ -44,6 +44,8 @@ await admin.auth.login({ username: "admin", password: "replace-me" });
 
 The admin entry point covers operator sessions and managed API keys. Admin records do not enter the resource cache.
 
+Browser code that does not need the resource client can import the focused `config`, `errors`, and `spatial` entry points. These expose the protocol revision and URL normalization, public error types and sanitization, and map-area measurement without loading the client or generated runtime predicates.
+
 ## CLI
 
 ```bash
@@ -68,4 +70,4 @@ npm run test:types --workspace @the-drunken-coder/atlas-sdk
 npm test --workspace @the-drunken-coder/atlas-sdk
 ```
 
-The package smoke test builds a clean tarball, installs it into a temporary consumer, compiles its public types, and exercises the root, admin, CLI, and generated protocol paths. See the [full SDK design documentation](https://github.com/the-Drunken-coder/Atlas-Modernization/blob/main/docs/atlas-sdk/README.md) for sync, cache, feed, and reconciliation details.
+The package smoke test builds a clean tarball, installs it into a temporary consumer, compiles its public types, and exercises the root, focused browser entries, CLI, and generated protocol paths. See the [full SDK design documentation](https://github.com/the-Drunken-coder/Atlas-Modernization/blob/main/docs/atlas-sdk/README.md) for sync, cache, feed, and reconciliation details.

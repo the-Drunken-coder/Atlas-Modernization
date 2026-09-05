@@ -54,6 +54,32 @@ describe("Atlas CLI", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  it("rejects unsafe integer task JSON before handshake or fetch", async () => {
+    const io = captureIO();
+    const fetchSpy = vi.fn(async () => {
+      throw new Error("fetch should not be called for unsafe task JSON");
+    });
+    io.io.fetch = fetchSpy;
+
+    await expect(
+      runCLI(
+        [
+          "--base-url",
+          "http://atlas.test",
+          "--idempotency-key",
+          "unsafe",
+          "tasks",
+          "create",
+          '{"asset_id":"asset-1","command":"fixture.queued","input":{"n":9007199254740993}}'
+        ],
+        io.io
+      )
+    ).resolves.toBe(2);
+
+    expect(io.stderr()).toContain("invalid task JSON");
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it("creates tasks with Core request payloads and server defaults", async () => {
     const core = new FakeCore();
     const minimal = captureIO();
@@ -143,6 +169,15 @@ describe("Atlas CLI", () => {
     expect(parseFilter("tasks_for_asset:asset:with:colons")).toEqual({
       filter: "tasks_for_asset",
       asset_id: "asset:with:colons"
+    });
+    expect(parseFilter("id:entity: asset-canonical ")).toEqual({
+      filter: "id",
+      resource_type: "entity",
+      id: "asset-canonical"
+    });
+    expect(parseFilter("tasks_for_asset: asset-canonical ")).toEqual({
+      filter: "tasks_for_asset",
+      asset_id: "asset-canonical"
     });
   });
 

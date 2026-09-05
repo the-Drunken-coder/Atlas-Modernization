@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AtlasClientFactory } from "./atlas.js";
+import { isLoopbackHostname } from "./loopback.js";
 
 export type SimulationConfig = {
   atlasTargets: AtlasTargetConfig[];
@@ -171,7 +172,7 @@ function atlasUrlValue(value: string, name: string): string {
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     throw new Error(`${name} must be a valid HTTP(S) URL`);
   }
-  if (parsed.protocol === "http:" && !isLoopbackHost(parsed.hostname)) {
+  if (parsed.protocol === "http:" && !isLoopbackHostname(parsed.hostname)) {
     throw new Error(`${name} must use HTTPS unless it targets loopback`);
   }
   if (parsed.username || parsed.password) {
@@ -185,21 +186,11 @@ function atlasUrlValue(value: string, name: string): string {
 }
 
 function isLoopbackUrl(value: string): boolean {
-  return isLoopbackHost(new URL(value).hostname);
+  return isLoopbackHostname(new URL(value).hostname);
 }
 
 export function isDeployedAtlasUrl(value: string): boolean {
   return !isLoopbackUrl(value);
-}
-
-function isLoopbackHost(hostname: string): boolean {
-  const normalized = hostname.replace(/^\[|\]$/g, "").toLowerCase();
-  return normalized === "localhost" || normalized === "::1" || isIPv4Loopback(normalized);
-}
-
-function isIPv4Loopback(hostname: string): boolean {
-  const parts = hostname.split(".");
-  return parts.length === 4 && parts[0] === "127" && parts.every((part) => /^\d+$/.test(part) && Number(part) <= 255);
 }
 
 function unquote(value: string): string {

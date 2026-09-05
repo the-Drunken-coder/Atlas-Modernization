@@ -36,8 +36,22 @@ letters, digits, and `-._~!$&'()*+,;=:` in that password.
 
 External secrets are not stored in `admin_records` and are not recovered by a database restore. Back up the operator secret source separately.
 
-For the first deployment onto a new MinIO volume, start MinIO and explicitly
-provision the durable bucket with a host-installed MinIO client:
+For the first manual deployment, choose one non-empty storage-set ID for this
+deployment and explicitly create the two external durable volumes with that
+same label before starting MinIO or provisioning its bucket:
+
+```bash
+ATLAS_STORAGE_SET_ID='production-primary-2026-09'
+docker volume create --label "io.atlas.core.storage-set=${ATLAS_STORAGE_SET_ID}" \
+  atlas_core_production_postgres_data
+docker volume create --label "io.atlas.core.storage-set=${ATLAS_STORAGE_SET_ID}" \
+  atlas_core_production_minio_data
+```
+
+The production launcher verifies that this required volume set exists and that
+both volumes carry the same non-empty storage-set label before stopping or
+starting containers. Then start MinIO and explicitly provision the durable
+bucket with a host-installed MinIO client:
 
 ```bash
 (
@@ -56,9 +70,11 @@ The separate quoted credential arguments remain valid when values contain
 URL-reserved characters such as `/`, `?`, `#`, or `%`. The subshell's isolated
 temporary client configuration is removed on success, failure, or interruption.
 
-For a restore onto a replacement volume, follow [Restore a backup
-set](#restore-a-backup-set): create the bucket only as the mirror target, restore
-the MinIO backup paired with PostgreSQL, and verify it before starting Core.
+For a restore onto replacement external volumes, create both fixed volume names
+above with the same storage-set label first, then follow [Restore a backup
+set](#restore-a-backup-set): create the bucket only as the mirror target,
+restore the MinIO backup paired with PostgreSQL, and verify it before starting
+Core.
 Never start Core with a merely provisioned empty bucket against a restored
 database. Production startup only verifies the bucket so a missing blob store
 cannot be silently replaced with an empty one.
@@ -369,8 +385,14 @@ docker compose -f services/core/docker/docker-compose.production.yml \
   -f services/core/docker/docker-compose.tunnel.yml down --remove-orphans
 ```
 
-`down` preserves named volumes. The following command destroys the production database, all `admin_records`, migration history, and the MinIO bucket volume; it is not a rollback mechanism:
+`down` preserves the external production volumes, and `down -v` leaves external
+volumes in place as well. The launcher also refuses `--reset-volumes` for
+production. Only after separately verifying backups and intentionally deciding
+to destroy all production storage, remove the two fixed volumes explicitly; this
+is not a rollback mechanism:
 
 ```bash
-docker compose -f services/core/docker/docker-compose.production.yml down -v --remove-orphans
+docker volume rm \
+  atlas_core_production_postgres_data \
+  atlas_core_production_minio_data
 ```

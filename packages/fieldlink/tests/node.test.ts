@@ -1598,6 +1598,217 @@ describe("inbound transfer validation", () => {
     ).toBe(true);
   });
 
+  it("allows an accepted message listener to initiate close", async () => {
+    const transport = new MemoryTransport();
+    const node = new FieldLinkNode({
+      nodeId: nodeB,
+      transport,
+      retryTimeoutMs: 250,
+    });
+    let listenerClosed = false;
+    let reportStarted = (): void => undefined;
+    const started = new Promise<void>((resolve) => {
+      reportStarted = resolve;
+    });
+    node.onMessage(async () => {
+      reportStarted();
+      await node.close();
+      listenerClosed = true;
+    });
+    transport.inject({
+      bytes: encodeFrame({
+        transmissionId: 1,
+        kind: FrameKind.complete,
+        source: nodeA,
+        destination: nodeB,
+        logicalId: 74n,
+        messageType: 1,
+        body: testMessage.encode(test("request", 0)),
+      }),
+    });
+
+    await started;
+    await eventually(() => listenerClosed);
+    await expect(node.close()).resolves.toBeUndefined();
+    expect(transport.closed).toBe(true);
+  });
+
+  it("bounds shutdown when an accepted listener never settles", async () => {
+    const transport = new MemoryTransport();
+    const node = new FieldLinkNode({
+      nodeId: nodeB,
+      transport,
+      retryTimeoutMs: 25,
+    });
+    let reportStarted = (): void => undefined;
+    const started = new Promise<void>((resolve) => {
+      reportStarted = resolve;
+    });
+    node.onMessage(() => {
+      reportStarted();
+      return new Promise<void>(() => undefined);
+    });
+    transport.inject({
+      bytes: encodeFrame({
+        transmissionId: 1,
+        kind: FrameKind.complete,
+        source: nodeA,
+        destination: nodeB,
+        logicalId: 75n,
+        messageType: 1,
+        body: testMessage.encode(test("request", 0)),
+      }),
+    });
+
+    await started;
+    const failure = await node.close().then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect(
+      (failure as AggregateError).errors.map((error: Error) => error.message),
+    ).toContain(
+      "Timed out waiting for FieldLink node shutdown work after 25 ms",
+    );
+    expect(transport.closed).toBe(true);
+  });
+
+  it("continues teardown when a transport send never settles", async () => {
+    const transport = new NeverSettlingSendTransport();
+    const node = new FieldLinkNode({
+      nodeId: nodeA,
+      transport,
+      retryTimeoutMs: 25,
+    });
+    const sending = node.send(test("response", 0), { destination: nodeB });
+    await transport.sendStarted;
+
+    const failure = await node.close().then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect(
+      (failure as AggregateError).errors.map((error: Error) => error.message),
+    ).toContainEqual(
+      expect.stringMatching(
+        /^Timed out waiting for FieldLink scheduler shutdown after \d+ ms$/,
+      ),
+    );
+    expect(transport.closed).toBe(true);
+    await expect(sending).rejects.toThrow(
+      "Timed out waiting for FieldLink scheduler shutdown after 25 ms",
+    );
+  });
+
+  it("does not let frame-sent listeners outlive close", async () => {
+    const transport = new PausesSendTransport();
+    const node = new FieldLinkNode({ nodeId: nodeA, transport });
+    let reportStarted = (): void => undefined;
+    const started = new Promise<void>((resolve) => {
+      reportStarted = resolve;
+    });
+    let release = (): void => undefined;
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let listenerFinished = false;
+    node.onEvent(async (event) => {
+      if (event.type !== "frame-sent") {
+        return;
+      }
+      reportStarted();
+      await released;
+      listenerFinished = true;
+    });
+
+    const sending = node.send(test("response", 0), { destination: nodeB });
+    await transport.sendStarted;
+    const closing = node.close();
+    let closed = false;
+    void closing.then(() => {
+      closed = true;
+    });
+    transport.releaseSend();
+    await sending;
+    await started;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(closed).toBe(false);
+    release();
+    await closing;
+    expect(listenerFinished).toBe(true);
+  });
+
+  it("drains an accepted async event listener before close", async () => {
+    const transport = new MemoryTransport();
+    const node = new FieldLinkNode({ nodeId: nodeB, transport });
+    let reportStarted = (): void => undefined;
+    const started = new Promise<void>((resolve) => {
+      reportStarted = resolve;
+    });
+    let release = (): void => undefined;
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    node.onEvent(async () => {
+      reportStarted();
+      await released;
+    });
+    transport.inject({
+      bytes: encodeFrame({
+        transmissionId: 1,
+        kind: FrameKind.complete,
+        source: nodeA,
+        destination: nodeB,
+        logicalId: 73n,
+        messageType: 1,
+        body: testMessage.encode(test("response", 0)),
+      }),
+    });
+    await started;
+
+    let closed = false;
+    const closing = node.close().then(() => {
+      closed = true;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(closed).toBe(false);
+    release();
+    await expect(closing).resolves.toBeUndefined();
+  });
+
+  it("cancels a built-in reply queue wait during close", async () => {
+    const transport = new MemoryTransport();
+    transport.queueLength = 1;
+    const node = new FieldLinkNode({ nodeId: nodeB, transport });
+    transport.inject({
+      bytes: encodeFrame({
+        transmissionId: 1,
+        kind: FrameKind.complete,
+        source: nodeA,
+        destination: nodeB,
+        logicalId: 74n,
+        messageType: 1,
+        body: testMessage.encode(test("request", 0)),
+      }),
+    });
+    await eventually(() => transport.queueLengths.length > 0);
+
+    const closing = node.close();
+    const result = await Promise.race([
+      closing.then(() => "closed" as const),
+      new Promise<"timeout">((resolve) => {
+        setTimeout(() => resolve("timeout"), 100);
+      }),
+    ]);
+    if (result === "timeout") {
+      transport.queueLength = 0;
+    }
+    await closing;
+    expect(result).toBe("closed");
+  });
+
   it("returns the same promise to concurrent close callers", async () => {
     const transport = new MemoryTransport();
     const node = new FieldLinkNode({ nodeId: nodeB, transport });
@@ -1622,6 +1833,53 @@ class FailsFirstCompletionTransport extends MemoryTransport {
       return Promise.reject(new Error("completion send failed"));
     }
     return super.send(bytes);
+  }
+}
+
+class NeverSettlingSendTransport extends MemoryTransport {
+  readonly sendStarted: Promise<void>;
+  #resolveSendStarted: () => void = () => undefined;
+
+  constructor() {
+    super();
+    this.sendStarted = new Promise<void>((resolve) => {
+      this.#resolveSendStarted = resolve;
+    });
+  }
+
+  override send(_bytes: Uint8Array): Promise<void> {
+    this.#resolveSendStarted();
+    return new Promise<void>(() => undefined);
+  }
+}
+
+class PausesSendTransport extends MemoryTransport {
+  readonly sendStarted: Promise<void>;
+  #resolveSendStarted: () => void = () => undefined;
+  #releaseSend: () => void = () => undefined;
+  #paused = false;
+
+  constructor() {
+    super();
+    this.sendStarted = new Promise<void>((resolve) => {
+      this.#resolveSendStarted = resolve;
+    });
+  }
+
+  override send(bytes: Uint8Array): Promise<void> {
+    const sent = super.send(bytes);
+    if (this.#paused) {
+      return sent;
+    }
+    this.#paused = true;
+    this.#resolveSendStarted();
+    return new Promise<void>((resolve) => {
+      this.#releaseSend = resolve;
+    });
+  }
+
+  releaseSend(): void {
+    this.#releaseSend();
   }
 }
 

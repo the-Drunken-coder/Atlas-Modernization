@@ -78,6 +78,8 @@ describe("AuthGate", () => {
     );
 
     expect(await screen.findByLabelText("Username")).toHaveFocus();
+    expect(screen.getByRole("heading", { name: "Sign in" })).toBeInTheDocument();
+    expect(screen.queryByText("Atlas")).not.toBeInTheDocument();
     expect(screen.queryByText("map console")).not.toBeInTheDocument();
     expect(fetchStub.calls[0]?.[0]).toBe("https://core.test/admin/auth/me");
     expect(fetchStub.calls[0]?.[1]).toMatchObject({ credentials: "include" });
@@ -126,6 +128,7 @@ describe("AuthGate", () => {
     );
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Core unavailable");
+    expect(screen.queryByText("Atlas")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Username")).not.toBeInTheDocument();
     expect(screen.queryByText("map console")).not.toBeInTheDocument();
   });
@@ -391,6 +394,27 @@ describe("AuthGate", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("logout unavailable");
     expect(screen.getByText("map console")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Log out" })).toBeEnabled();
+  });
+
+  it("returns to login when Core clears the cookie before reporting revocation failure", async () => {
+    const user = userEvent.setup();
+    stubFetch([
+      { status: 200, body: { user: { username: "operator" } } },
+      { status: 500, body: { message: "admin logout failed" } }
+    ]);
+
+    render(
+      <AuthGate baseUrl="https://core.test">
+        <Workspace />
+      </AuthGate>
+    );
+
+    await user.click(await screen.findByRole("button", { name: "Account" }));
+    await user.click(screen.getByRole("button", { name: "Log out" }));
+
+    expect(await screen.findByLabelText("Username")).toHaveFocus();
+    expect(screen.getByRole("main")).toHaveTextContent("admin logout failed");
+    expect(screen.queryByText("map console")).not.toBeInTheDocument();
   });
 
   it("returns to logged-out state when Atlas auth expires", async () => {

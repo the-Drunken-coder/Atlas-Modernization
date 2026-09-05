@@ -34,6 +34,7 @@ type ResourceChange struct {
 	ResourceType ChangeResource
 	ID           string
 	Version      int64
+	ChangeReason protocol.EntityChangeReason
 
 	AfterEntity *models.Entity
 	AfterTask   *models.Task
@@ -131,6 +132,16 @@ func resourceChangeRecord(change ResourceChange) (ChangeRecord, error) {
 		ResourceType: change.ResourceType,
 		ID:           change.ID,
 		Version:      change.Version,
+	}
+	switch change.ChangeReason {
+	case "":
+	case protocol.EntityChangeReasonRuntimeManifestChanged:
+		if change.ResourceType != ChangeResourceEntity || change.Event != ChangeEventUpdate {
+			return ChangeRecord{}, fmt.Errorf("change reason is only supported on entity update events")
+		}
+		event.ChangeReason = change.ChangeReason
+	default:
+		return ChangeRecord{}, fmt.Errorf("unsupported entity change reason %q", change.ChangeReason)
 	}
 	var record ChangeRecord
 	switch change.ResourceType {

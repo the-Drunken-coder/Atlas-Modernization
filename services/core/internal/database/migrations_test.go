@@ -165,6 +165,27 @@ func TestRuntimeGenerationsMigrationDefinitionIsFrozen(t *testing.T) {
 	}
 }
 
+func TestResourceInstanceTokensMigrationDefinitionIsFrozen(t *testing.T) {
+	migration := coreSchemaMigrations()[8]
+	if actual := migrationChecksum(migration); actual != resourceInstanceTokensMigrationChecksum {
+		t.Fatalf("resource-instance-token migration checksum = %s, want %s", actual, resourceInstanceTokensMigrationChecksum)
+	}
+	if migration.fingerprintVersion != fingerprintVersionV2 {
+		t.Fatalf("resource-instance-token fingerprint version = %d, want %d", migration.fingerprintVersion, fingerprintVersionV2)
+	}
+	ddl := strings.Join(migration.statements, "\n")
+	for _, required := range []string{
+		"CREATE TABLE resource_instance_tokens",
+		"token_hash VARCHAR(64) PRIMARY KEY",
+		"ALTER TABLE entities ADD COLUMN instance_token_hash",
+		"ALTER TABLE objects ADD COLUMN instance_token_hash",
+	} {
+		if !strings.Contains(ddl, required) {
+			t.Fatalf("resource-instance-token migration is missing %q", required)
+		}
+	}
+}
+
 func TestMigrationDefinitionsAreValid(t *testing.T) {
 	if err := validateMigrationDefinitions(coreSchemaMigrations()); err != nil {
 		t.Fatalf("migration definitions: %v", err)

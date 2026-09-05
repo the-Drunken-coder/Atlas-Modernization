@@ -416,6 +416,11 @@ def summary_lines(
         lines.insert(1, f"MeshCore channel {selected_channel['index']}{detail}")
     if "atlasStatus" in verification:
         lines.append(f"Atlas status {verification['atlasStatus']}")
+    task_response = summary.get("taskResponse")
+    if isinstance(task_response, dict):
+        lines.append(f"Task status {task_response.get('status', '?')}")
+        if "body" in task_response:
+            lines.append(f"Task body {compact_json(task_response['body'])}")
     if elapsed_ms > 0 and config.payload_bytes is not None:
         rate = config.payload_bytes / (elapsed_ms / 1000)
         lines.append(f"Request payload per echo round trip {format_rate(rate)}")

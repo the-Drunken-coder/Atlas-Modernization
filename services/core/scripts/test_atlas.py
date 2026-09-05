@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 import unittest
 from contextlib import redirect_stdout
@@ -16,6 +17,9 @@ from atlas import (
     API_AUTH_KEY_PLACEHOLDER,
     DEFAULT_TUNNEL_HOSTNAME,
     LOCAL_AUTH_ENV_FILE,
+    PRODUCTION_MINIO_VOLUME,
+    PRODUCTION_POSTGRES_VOLUME,
+    PRODUCTION_STORAGE_SET_LABEL,
     cleanup_containers,
     compose_container_name,
     compose_down_command,
@@ -49,6 +53,93 @@ class FakeHTTPResponse:
 
 
 class AtlasScriptHelpersTest(unittest.TestCase):
+    def _render_compose(self, filename: str, values: dict[str, str | None] | None = None) -> dict[str, object]:
+        compose_dir = Path(__file__).resolve().parents[1] / "docker"
+        environment = {
+            "PATH": os.environ.get("PATH", ""),
+            "HOME": os.environ.get("HOME", ""),
+            "COMPOSE_DISABLE_ENV_FILE": "1",
+            "POSTGRES_PASSWORD": "postgres-test",
+            "MINIO_ROOT_USER": "minio-test",
+            "MINIO_ROOT_PASSWORD": "minio-password-test",
+            "API_AUTH_KEY": "api-key-test",
+            "ATLAS_ADMIN_PASSWORD": "admin-password-test",
+        }
+        for key, value in (values or {}).items():
+            if value is None:
+                environment.pop(key, None)
+            else:
+                environment[key] = value
+
+        result = subprocess.run(
+            ["docker", "compose", "-f", filename, "config", "--format", "json"],
+            cwd=compose_dir,
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return json.loads(result.stdout)
+
+    def _successful_production_docker_call(self, command, **kwargs):
+        if command[:3] == ["docker", "volume", "inspect"]:
+            stdout = json.dumps({PRODUCTION_STORAGE_SET_LABEL: "storage-set-test"})
+            return CompletedProcess(command, 0, stdout=stdout)
+        return CompletedProcess(command, 0)
+
+    def test_production_compose_preserves_cors_presence_semantics(self) -> None:
+        cases = (
+            (
+                "unset",
+                {"CORS_ORIGINS": None, "CORS_ORIGIN_PATTERNS": None},
+                {
+                    "CORS_ORIGINS": "https://atlasinterface.com",
+                    "CORS_ORIGIN_PATTERNS": "https://*.atlas-je0.pages.dev",
+                },
+            ),
+            (
+                "empty",
+                {"CORS_ORIGINS": "", "CORS_ORIGIN_PATTERNS": ""},
+                {"CORS_ORIGINS": "", "CORS_ORIGIN_PATTERNS": ""},
+            ),
+            (
+                "custom",
+                {
+                    "CORS_ORIGINS": "https://ops.example.test",
+                    "CORS_ORIGIN_PATTERNS": "https://*.ops-preview.example.test",
+                },
+                {
+                    "CORS_ORIGINS": "https://ops.example.test",
+                    "CORS_ORIGIN_PATTERNS": "https://*.ops-preview.example.test",
+                },
+            ),
+        )
+
+        for name, values, expected in cases:
+            with self.subTest(name=name):
+                config = self._render_compose("docker-compose.production.yml", values)
+                environment = config["services"]["api"]["environment"]
+                self.assertEqual(
+                    {key: environment[key] for key in expected},
+                    expected,
+                )
+
+    def test_production_compose_declares_external_fixed_volumes(self) -> None:
+        config = self._render_compose("docker-compose.production.yml")
+        self.assertEqual(
+            config["volumes"],
+            {
+                "postgres_data": {"external": True, "name": PRODUCTION_POSTGRES_VOLUME},
+                "minio_data": {"external": True, "name": PRODUCTION_MINIO_VOLUME},
+            },
+        )
+
+        db_only_config = self._render_compose("docker-compose.production-db.yml")
+        self.assertEqual(
+            db_only_config["volumes"],
+            {"postgres_data": {"external": True, "name": PRODUCTION_POSTGRES_VOLUME}},
+        )
+
     def test_public_auth_requires_direct_admin_password(self) -> None:
         base = {"API_AUTH_KEY": "configured-machine-key"}
         with patch.dict("os.environ", base, clear=True), patch("builtins.print") as output:
@@ -313,6 +404,193 @@ class AtlasScriptHelpersTest(unittest.TestCase):
         with patch("atlas.subprocess.run", return_value=CompletedProcess([], 1)):
             with self.assertRaisesRegex(RuntimeError, "provision it.*or restore"):
                 ensure_minio_bucket_docker(production=True)
+
+    def test_production_volume_preflight_rejects_missing_postgres_before_cleanup_or_start(self) -> None:
+        labels = json.dumps({PRODUCTION_STORAGE_SET_LABEL: "storage-set-test"})
+
+        def inspect_volume(command, **kwargs):
+            if command[-1] == PRODUCTION_POSTGRES_VOLUME:
+                return CompletedProcess(command, 1)
+            return CompletedProcess(command, 0, stdout=labels)
+
+        with (
+            patch.dict(
+                "os.environ",
+                {
+                    "POSTGRES_PASSWORD": "operator-postgres-password",
+                    "MINIO_ROOT_USER": "operator-minio-user",
+                    "MINIO_ROOT_PASSWORD": "operator-minio-password",
+                    "API_AUTH_KEY": "operator-api-key",
+                    "ATLAS_ADMIN_PASSWORD": "operator-admin-password",
+                },
+                clear=True,
+            ),
+            patch("atlas.resolve_atlas_core_dir", return_value="/tmp/atlas_core"),
+            patch("atlas.load_compose_dotenv"),
+            patch("atlas.print_storage_notice"),
+            patch("atlas.cleanup_containers") as cleanup,
+            patch("atlas.subprocess.run", side_effect=inspect_volume) as run,
+            patch("builtins.print"),
+            self.assertRaises(SystemExit),
+        ):
+            start_containers(production=True)
+
+        cleanup.assert_not_called()
+        commands = [call.args[0] for call in run.call_args_list]
+        self.assertEqual(
+            commands,
+            [
+                ["docker", "volume", "inspect", "--format", "{{json .Labels}}", PRODUCTION_POSTGRES_VOLUME],
+                ["docker", "volume", "inspect", "--format", "{{json .Labels}}", PRODUCTION_MINIO_VOLUME],
+            ],
+        )
+
+    def test_production_volume_preflight_rejects_missing_minio_before_cleanup_or_start(self) -> None:
+        labels = json.dumps({PRODUCTION_STORAGE_SET_LABEL: "storage-set-test"})
+
+        def inspect_volume(command, **kwargs):
+            if command[-1] == PRODUCTION_MINIO_VOLUME:
+                return CompletedProcess(command, 1)
+            return CompletedProcess(command, 0, stdout=labels)
+
+        with (
+            patch.dict(
+                "os.environ",
+                {
+                    "POSTGRES_PASSWORD": "operator-postgres-password",
+                    "MINIO_ROOT_USER": "operator-minio-user",
+                    "MINIO_ROOT_PASSWORD": "operator-minio-password",
+                    "API_AUTH_KEY": "operator-api-key",
+                    "ATLAS_ADMIN_PASSWORD": "operator-admin-password",
+                },
+                clear=True,
+            ),
+            patch("atlas.resolve_atlas_core_dir", return_value="/tmp/atlas_core"),
+            patch("atlas.load_compose_dotenv"),
+            patch("atlas.print_storage_notice"),
+            patch("atlas.cleanup_containers") as cleanup,
+            patch("atlas.subprocess.run", side_effect=inspect_volume) as run,
+            patch("builtins.print"),
+            self.assertRaises(SystemExit),
+        ):
+            start_containers(production=True)
+
+        cleanup.assert_not_called()
+        commands = [call.args[0] for call in run.call_args_list]
+        self.assertEqual(
+            commands,
+            [
+                ["docker", "volume", "inspect", "--format", "{{json .Labels}}", PRODUCTION_POSTGRES_VOLUME],
+                ["docker", "volume", "inspect", "--format", "{{json .Labels}}", PRODUCTION_MINIO_VOLUME],
+            ],
+        )
+
+    def test_production_volume_preflight_rejects_mismatched_storage_sets_before_cleanup_or_start(self) -> None:
+        identities = {
+            PRODUCTION_POSTGRES_VOLUME: "storage-set-a",
+            PRODUCTION_MINIO_VOLUME: "storage-set-b",
+        }
+
+        def inspect_volume(command, **kwargs):
+            stdout = json.dumps({PRODUCTION_STORAGE_SET_LABEL: identities[command[-1]]})
+            return CompletedProcess(command, 0, stdout=stdout)
+
+        with (
+            patch.dict(
+                "os.environ",
+                {
+                    "POSTGRES_PASSWORD": "operator-postgres-password",
+                    "MINIO_ROOT_USER": "operator-minio-user",
+                    "MINIO_ROOT_PASSWORD": "operator-minio-password",
+                    "API_AUTH_KEY": "operator-api-key",
+                    "ATLAS_ADMIN_PASSWORD": "operator-admin-password",
+                },
+                clear=True,
+            ),
+            patch("atlas.resolve_atlas_core_dir", return_value="/tmp/atlas_core"),
+            patch("atlas.load_compose_dotenv"),
+            patch("atlas.print_storage_notice"),
+            patch("atlas.cleanup_containers") as cleanup,
+            patch("atlas.subprocess.run", side_effect=inspect_volume) as run,
+            patch("builtins.print"),
+            self.assertRaises(SystemExit),
+        ):
+            start_containers(production=True)
+
+        cleanup.assert_not_called()
+        self.assertEqual(
+            [call.args[0] for call in run.call_args_list],
+            [
+                ["docker", "volume", "inspect", "--format", "{{json .Labels}}", PRODUCTION_POSTGRES_VOLUME],
+                ["docker", "volume", "inspect", "--format", "{{json .Labels}}", PRODUCTION_MINIO_VOLUME],
+            ],
+        )
+
+    def test_production_volume_preflight_rejects_missing_storage_set_before_cleanup_or_start(self) -> None:
+        labels = {
+            PRODUCTION_POSTGRES_VOLUME: {},
+            PRODUCTION_MINIO_VOLUME: {PRODUCTION_STORAGE_SET_LABEL: "storage-set-test"},
+        }
+
+        def inspect_volume(command, **kwargs):
+            return CompletedProcess(command, 0, stdout=json.dumps(labels[command[-1]]))
+
+        with (
+            patch.dict(
+                "os.environ",
+                {
+                    "POSTGRES_PASSWORD": "operator-postgres-password",
+                    "MINIO_ROOT_USER": "operator-minio-user",
+                    "MINIO_ROOT_PASSWORD": "operator-minio-password",
+                    "API_AUTH_KEY": "operator-api-key",
+                    "ATLAS_ADMIN_PASSWORD": "operator-admin-password",
+                },
+                clear=True,
+            ),
+            patch("atlas.resolve_atlas_core_dir", return_value="/tmp/atlas_core"),
+            patch("atlas.load_compose_dotenv"),
+            patch("atlas.print_storage_notice"),
+            patch("atlas.cleanup_containers") as cleanup,
+            patch("atlas.subprocess.run", side_effect=inspect_volume) as run,
+            patch("builtins.print"),
+            self.assertRaises(SystemExit),
+        ):
+            start_containers(production=True)
+
+        cleanup.assert_not_called()
+        self.assertEqual(
+            [call.args[0] for call in run.call_args_list],
+            [
+                ["docker", "volume", "inspect", "--format", "{{json .Labels}}", PRODUCTION_POSTGRES_VOLUME],
+                ["docker", "volume", "inspect", "--format", "{{json .Labels}}", PRODUCTION_MINIO_VOLUME],
+            ],
+        )
+
+    def test_production_db_only_preflight_rejects_missing_storage_set_before_cleanup_or_start(self) -> None:
+        with (
+            patch.dict(
+                "os.environ",
+                {"POSTGRES_PASSWORD": "operator-postgres-password"},
+                clear=True,
+            ),
+            patch("atlas.resolve_atlas_core_dir", return_value="/tmp/atlas_core"),
+            patch("atlas.load_compose_dotenv"),
+            patch("atlas.print_storage_notice"),
+            patch("atlas.cleanup_containers") as cleanup,
+            patch("atlas.subprocess.run", return_value=CompletedProcess([], 0, stdout="{}")) as run,
+            patch("builtins.print"),
+            self.assertRaises(SystemExit),
+        ):
+            start_containers(db_only=True, production=True)
+
+        cleanup.assert_not_called()
+        run.assert_called_once_with(
+            ["docker", "volume", "inspect", "--format", "{{json .Labels}}", PRODUCTION_POSTGRES_VOLUME],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
 
     def test_development_bucket_verification_delegates_creation(self) -> None:
         output = StringIO()
@@ -755,8 +1033,11 @@ class AtlasScriptHelpersTest(unittest.TestCase):
             patch("atlas.persist_compose_env_values") as persist,
             patch("atlas.print_storage_notice"),
             patch("atlas.ensure_api_auth") as ensure_api_auth,
-            patch("atlas.cleanup_containers"),
-            patch("atlas.subprocess.run") as run,
+            patch("atlas.cleanup_containers") as cleanup,
+            patch(
+                "atlas.subprocess.run",
+                side_effect=self._successful_production_docker_call,
+            ) as run,
             patch("atlas.wait_for_database_docker"),
             patch("builtins.print"),
         ):
@@ -766,21 +1047,30 @@ class AtlasScriptHelpersTest(unittest.TestCase):
         ensure_minio_secrets.assert_not_called()
         ensure_postgres_password.assert_not_called()
         persist.assert_not_called()
-        run.assert_called_once_with(
+        cleanup.assert_called_once_with(
+            "/tmp/atlas_core",
+            remove_volumes=False,
+            production=True,
+            tunnel=False,
+            db_only=True,
+        )
+        self.assertEqual(
+            [call.args[0] for call in run.call_args_list],
             [
-                "docker",
-                "compose",
-                "--project-name",
-                "atlas_core_production",
-                "-f",
-                "docker-compose.production-db.yml",
-                "up",
-                "-d",
-                "--build",
-                "postgres",
+                ["docker", "volume", "inspect", "--format", "{{json .Labels}}", PRODUCTION_POSTGRES_VOLUME],
+                [
+                    "docker",
+                    "compose",
+                    "--project-name",
+                    "atlas_core_production",
+                    "-f",
+                    "docker-compose.production-db.yml",
+                    "up",
+                    "-d",
+                    "--build",
+                    "postgres",
+                ],
             ],
-            check=True,
-            cwd="/tmp/atlas_core/docker",
         )
 
     def test_production_db_only_rejects_resetting_only_half_of_storage(self) -> None:
@@ -815,8 +1105,11 @@ class AtlasScriptHelpersTest(unittest.TestCase):
             patch("atlas.ensure_postgres_password") as ensure_postgres_password,
             patch("atlas.persist_compose_env_values") as persist,
             patch("atlas.print_storage_notice"),
-            patch("atlas.cleanup_containers"),
-            patch("atlas.subprocess.run"),
+            patch("atlas.cleanup_containers") as cleanup,
+            patch(
+                "atlas.subprocess.run",
+                side_effect=self._successful_production_docker_call,
+            ) as run,
             patch("atlas.wait_for_database_docker"),
             patch("atlas.wait_for_minio"),
             patch("atlas.ensure_minio_bucket_docker"),
@@ -830,6 +1123,31 @@ class AtlasScriptHelpersTest(unittest.TestCase):
         ensure_minio_secrets.assert_not_called()
         ensure_postgres_password.assert_not_called()
         persist.assert_not_called()
+        cleanup.assert_called_once_with(
+            "/tmp/atlas_core",
+            remove_volumes=False,
+            production=True,
+            tunnel=False,
+            db_only=False,
+        )
+        self.assertEqual(
+            [call.args[0] for call in run.call_args_list],
+            [
+                ["docker", "volume", "inspect", "--format", "{{json .Labels}}", PRODUCTION_POSTGRES_VOLUME],
+                ["docker", "volume", "inspect", "--format", "{{json .Labels}}", PRODUCTION_MINIO_VOLUME],
+                [
+                    "docker",
+                    "compose",
+                    "--project-name",
+                    "atlas_core_production",
+                    "-f",
+                    "docker-compose.production.yml",
+                    "up",
+                    "-d",
+                    "--build",
+                ],
+            ],
+        )
 
     def test_development_start_persists_local_api_auth(self) -> None:
         local_auth = {

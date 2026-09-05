@@ -59,6 +59,9 @@ function rejectUnsafeJSONNumbers(serialized: string): void {
 
 function assertAtlasJSONNumber(value: number, match?: RegExpExecArray): void {
   if (!Number.isFinite(value)) throw new TypeError("Atlas JSON contains a number outside the JavaScript range");
+  if (value === 0 && match !== undefined && /[1-9]/.test(`${match[2] ?? ""}${match[3] ?? ""}`)) {
+    throw new TypeError("Atlas JSON contains a nonzero number outside the JavaScript range");
+  }
   const exactInteger = match === undefined ? undefined : exactIntegerValue(match);
   if (exactInteger !== undefined && exactInteger !== BigInt(value)) {
     throw new TypeError("Atlas JSON contains an integer that JavaScript cannot represent exactly");

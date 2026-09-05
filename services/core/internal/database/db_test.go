@@ -129,7 +129,7 @@ func TestCloseHandlesNilPool(t *testing.T) {
 }
 
 func TestCoreSchemaTables(t *testing.T) {
-	want := []string{"entities", "tasks", "asset_runtime_generations", "asset_runtimes", "objects", "atlas_change_clock", "atlas_change_events", "object_deletion_fences", "storage_deletion_outbox", "storage_upload_intents", "admin_records"}
+	want := []string{"entities", "tasks", "asset_runtime_generations", "asset_runtimes", "objects", "atlas_change_clock", "atlas_change_events", "object_deletion_fences", "storage_deletion_outbox", "storage_upload_intents", "resource_instance_tokens", "admin_records"}
 	if len(coreSchemaTables) != len(want) {
 		t.Fatalf("expected %d core tables, got %d", len(want), len(coreSchemaTables))
 	}
@@ -169,7 +169,7 @@ func TestBaselineSchemaDDLIncludesCursorIndexes(t *testing.T) {
 
 func TestScratchDataResetClearsResourcesOnly(t *testing.T) {
 	ddl := strings.Join(scratchDataResetDDL(), "\n")
-	for _, table := range []string{"storage_upload_intents", "storage_deletion_outbox", "object_deletion_fences", "tasks", "entities", "objects", "atlas_change_events"} {
+	for _, table := range []string{"storage_upload_intents", "storage_deletion_outbox", "object_deletion_fences", "resource_instance_tokens", "tasks", "entities", "objects", "atlas_change_events"} {
 		if !strings.Contains(ddl, table) {
 			t.Fatalf("scratch reset should include %q, got:\n%s", table, ddl)
 		}

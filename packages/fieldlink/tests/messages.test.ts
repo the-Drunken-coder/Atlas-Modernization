@@ -383,7 +383,7 @@ describe("Resource message", () => {
       kind: "response",
       request_id: "request-1",
       status: 200,
-      body: { task_id: "task-1" },
+      body: { fieldlink_test_responder: true },
     } as const;
 
     expect(
@@ -400,6 +400,59 @@ describe("Resource message", () => {
         side: "destination",
       }),
     ).toBe(false);
+  });
+
+  it("requires the successful canned responder for source exercise completion", () => {
+    const sent = {
+      type: "resource",
+      kind: "request",
+      operation: "get",
+      request_id: "request-1",
+      resource_type: "task",
+      resource_id: "task-1",
+    } as const;
+    const response = {
+      type: "resource",
+      kind: "response",
+      request_id: sent.request_id,
+      status: 200,
+      body: { fieldlink_test_responder: true },
+    } as const;
+
+    expect(
+      resourceMessage.exercise.isComplete({
+        sent,
+        received: { ...response, status: 500 },
+        side: "source",
+      }),
+    ).toBe(false);
+    expect(
+      resourceMessage.exercise.isComplete({
+        sent,
+        received: {
+          ...response,
+          body: { unrelated: true },
+        },
+        side: "source",
+      }),
+    ).toBe(false);
+    expect(
+      resourceMessage.exercise.isComplete({
+        sent,
+        received: {
+          ...response,
+          body: { fieldlink_test_responder: false },
+        },
+        side: "source",
+      }),
+    ).toBe(false);
+    expect(
+      resourceMessage.exercise.isComplete({
+        sent,
+        received: response,
+        side: "source",
+      }),
+    ).toBe(true);
   });
 
   it("executes requests only for the allowed source and replays cached results", async () => {

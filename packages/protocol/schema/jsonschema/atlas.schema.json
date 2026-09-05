@@ -36,6 +36,7 @@
           "$ref": "#/$defs/NonEmptyString"
         },
         "version": {
+          "maximum": 9007199254740991,
           "minimum": 0,
           "type": "integer"
         }
@@ -55,6 +56,14 @@
           "next_cursor"
         ],
         "type": "object"
+      },
+      "else": {
+        "not": {
+          "required": [
+            "next_cursor"
+          ],
+          "type": "object"
+        }
       },
       "type": "object"
     },
@@ -485,6 +494,9 @@
     "EntityUpdateEvent": {
       "additionalProperties": false,
       "properties": {
+        "change_reason": {
+          "const": "runtime_manifest_changed"
+        },
         "event": {
           "const": "update"
         },
@@ -714,6 +726,7 @@
           "const": "subscriptions_ready"
         },
         "version": {
+          "maximum": 9007199254740991,
           "minimum": 0,
           "type": "integer"
         }
@@ -758,6 +771,7 @@
     },
     "FeedVersion": {
       "exclusiveMinimum": 0,
+      "maximum": 9007199254740991,
       "type": "integer"
     },
     "EmptyObject": {
@@ -816,6 +830,14 @@
               "next_entity_cursor"
             ],
             "type": "object"
+          },
+          "else": {
+            "not": {
+              "required": [
+                "next_entity_cursor"
+              ],
+              "type": "object"
+            }
           }
         },
         {
@@ -840,6 +862,14 @@
               "next_object_cursor"
             ],
             "type": "object"
+          },
+          "else": {
+            "not": {
+              "required": [
+                "next_object_cursor"
+              ],
+              "type": "object"
+            }
           }
         },
         {
@@ -864,6 +894,14 @@
               "next_task_cursor"
             ],
             "type": "object"
+          },
+          "else": {
+            "not": {
+              "required": [
+                "next_task_cursor"
+              ],
+              "type": "object"
+            }
           }
         }
       ],
@@ -905,6 +943,7 @@
           "type": "array"
         },
         "version": {
+          "maximum": 9007199254740991,
           "minimum": 0,
           "type": "integer"
         }
@@ -1194,7 +1233,7 @@
       "type": "object"
     },
     "NonEmptyString": {
-      "pattern": "\\S",
+      "pattern": "[^\\t-\\r \u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF]",
       "type": "string"
     },
     "ObjectBlob": {

@@ -422,6 +422,82 @@ func TestTypeScriptCommandCatalogValidatorIncludesSemanticValidation(t *testing.
 	}
 }
 
+func TestTypeScriptCommandManifestValidatorIncludesSemanticValidation(t *testing.T) {
+	generator := &typeScriptGenerator{defs: map[string]typeScriptSchema{
+		"CommandManifest": {"type": "array"},
+	}}
+	source, err := runtimeValidatorSource(generator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"atlasProtocolHasValidCommandManifestSemantics(value)",
+		"function atlasProtocolHasUniqueCommandNames",
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("command manifest validator missing %q:\n%s", want, source)
+		}
+	}
+}
+
+func TestTypeScriptNonEmptyStringUsesExplicitUnicodeWhitespacePolicy(t *testing.T) {
+	helpers := runtimeValidatorHelpersSource()
+	for _, want := range []string{
+		"function atlasProtocolIsUnicodeWhitespace",
+		"Array.from(value).some((character) => !atlasProtocolIsUnicodeWhitespace(character))",
+		"0xFEFF",
+	} {
+		if !strings.Contains(helpers, want) {
+			t.Fatalf("non-empty string helper missing %q:\n%s", want, helpers)
+		}
+	}
+	if strings.Contains(helpers, "value.trim()") {
+		t.Fatal("non-empty string helper must not rely on String.trim")
+	}
+}
+
+func TestTypeScriptRuntimeSupportsNegatedRequiredProperties(t *testing.T) {
+	generator := &typeScriptGenerator{}
+	expression, err := generator.runtimeValidatorExpressionWithRefs("value", typeScriptSchema{
+		"not": map[string]any{
+			"required": []any{"next_cursor"},
+			"type":     "object",
+		},
+	}, map[string]bool{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `!((atlasProtocolIsRecord(value) && atlasProtocolHasOwn(value, "next_cursor")))`
+	if expression != want {
+		t.Fatalf("negated required expression = %q, want %q", expression, want)
+	}
+}
+
+func TestTypeScriptRuntimePreservesSiblingConstraintsWithNot(t *testing.T) {
+	generator := &typeScriptGenerator{}
+	expression, err := generator.runtimeValidatorExpressionWithRefs("value", typeScriptSchema{
+		"type": "string",
+		"not":  map[string]any{"const": "reserved"},
+	}, map[string]bool{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `(typeof value === "string" && !(value === "reserved"))`
+	if expression != want {
+		t.Fatalf("type plus negated expression = %q, want %q", expression, want)
+	}
+}
+
+func TestTypeScriptIntegerValidatorsUseSafeIntegerGuard(t *testing.T) {
+	expression := runtimeNumberValidatorExpression("value", typeScriptSchema{"type": "integer"}, true)
+	if !strings.Contains(expression, "Number.isSafeInteger(value)") {
+		t.Fatalf("integer validator = %q, want safe-integer guard", expression)
+	}
+	if strings.Contains(expression, "Number.isInteger(value)") {
+		t.Fatalf("integer validator retained unsafe Number.isInteger guard: %q", expression)
+	}
+}
+
 func TestTypeScriptRuntimePolygonRefIncludesSemanticValidation(t *testing.T) {
 	generator := &typeScriptGenerator{defs: map[string]typeScriptSchema{
 		"GeoJSONPolygon": {
@@ -447,7 +523,7 @@ func TestTypeScriptRuntimePolygonRefIncludesSemanticValidation(t *testing.T) {
 	}
 }
 
-func TestTypeScriptSourceGeneratesArrayBoundsAndStrictRFC3339Validators(t *testing.T) {
+func TestTypeScriptSourceGeneratesArrayBoundsAndRFC3339Validators(t *testing.T) {
 	source, err := typeScriptSource("sha256:0123456789abcdef0123456789ABCDEF0123456789abcdef0123456789ABCDEF", map[string][]byte{
 		"EntityCreateRequest": []byte(`{
 			"type": "object",
@@ -486,7 +562,7 @@ func TestTypeScriptSourceGeneratesArrayBoundsAndStrictRFC3339Validators(t *testi
 		`value["position"][1] >= -90`,
 		`value["position"].slice(2).every((item) => typeof item === "number" && Number.isFinite(item))`,
 		`const atlasProtocolPatternCache = new Map<string, RegExp>();`,
-		`const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|[+-]\d{2}:\d{2})$/.exec(value);`,
+		`const match = /^(\d{4})-(\d{2})-(\d{2})[Tt](\d{2}):(\d{2}):(\d{2})(?:\.\d+)?([Zz]|[+-]\d{2}:\d{2})$/.exec(value);`,
 		`day > atlasProtocolDaysInMonth(year, month)`,
 		`atlasProtocolIsURIString(value["source_url"])`,
 		`new URL(value);`,
@@ -714,7 +790,7 @@ func TestTypeScriptSourceRejectsUnsupportedTaskCreateValidatorSchema(t *testing.
 			"required": ["task_id"],
 			"$defs": {
 				"#NonEmptyString": { "type": "string", "pattern": "\\S" },
-				"#Unsupported": { "not": { "type": "string" } }
+				"#Unsupported": { "contains": { "type": "string" } }
 			}
 		}`),
 	})

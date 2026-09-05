@@ -12,6 +12,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
 	protocol "github.com/the-drunken-coder/atlas/packages/protocol/generated/go/atlasprotocol"
 )
 
@@ -248,6 +249,204 @@ func TestTaskLifecycleIdempotencyOrderingAndRuntimeFencing(t *testing.T) {
 		Code: protocol.TaskCancellationCodeRequested, Message: "different",
 	}); err == nil {
 		t.Fatal("cancelled Task accepted a different cancellation after runtime replacement")
+	}
+}
+
+func TestRuntimeManifestEventsCarryReasonAndEntityUpdatesDoNot(t *testing.T) {
+	pool := openActionsTestPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	assetID := fmt.Sprintf("runtime-event-reason-%d", time.Now().UnixNano())
+	defer cleanupFinalBlobValidationRowsWithTimeout(t, pool, assetID, "")
+
+	entities := NewEntityActions(pool)
+	if _, err := entities.Create(ctx, CreateEntityParams{EntityID: assetID, EntityType: "asset"}); err != nil {
+		t.Fatalf("create Asset: %v", err)
+	}
+	tasks := NewTaskActionsWithCatalog(pool, fixtureTaskCatalog(t))
+	if err := tasks.BeginRuntimeRegistration(ctx, assetID, "runtime-1"); err != nil {
+		t.Fatalf("begin runtime: %v", err)
+	}
+	registeringEntity, err := entities.Get(ctx, assetID)
+	if err != nil {
+		t.Fatalf("read registering Entity: %v", err)
+	}
+	assertEntityChangeReason(ctx, t, pool, assetID, registeringEntity.Version, string(protocol.EntityChangeReasonRuntimeManifestChanged))
+
+	if err := tasks.CompleteRuntimeRegistration(ctx, assetID, "runtime-1", fixtureTaskManifest(t)); err != nil {
+		t.Fatalf("complete runtime registration: %v", err)
+	}
+	readyEntity, err := entities.Get(ctx, assetID)
+	if err != nil {
+		t.Fatalf("read ready Entity: %v", err)
+	}
+	assertEntityChangeReason(ctx, t, pool, assetID, readyEntity.Version, string(protocol.EntityChangeReasonRuntimeManifestChanged))
+
+	note := "operator update"
+	updatedEntity, err := entities.Update(ctx, assetID, UpdateEntityParams{Alias: &note})
+	if err != nil {
+		t.Fatalf("ordinary Entity update: %v", err)
+	}
+	assertEntityChangeReason(ctx, t, pool, assetID, updatedEntity.Version, "")
+
+	checkin, err := NewEntityCheckinActions(entities).CheckIn(ctx, EntityCheckinParams{
+		EntityID:   assetID,
+		Components: map[string]interface{}{"status": map[string]interface{}{"value": "online"}},
+	})
+	if err != nil {
+		t.Fatalf("Entity check-in: %v", err)
+	}
+	assertEntityChangeReason(ctx, t, pool, assetID, checkin.Entity.Version, "")
+
+	if err := tasks.StopRuntime(ctx, assetID, "runtime-1"); err != nil {
+		t.Fatalf("stop runtime: %v", err)
+	}
+	stoppedEntity, err := entities.Get(ctx, assetID)
+	if err != nil {
+		t.Fatalf("read stopped Entity: %v", err)
+	}
+	assertEntityChangeReason(ctx, t, pool, assetID, stoppedEntity.Version, string(protocol.EntityChangeReasonRuntimeManifestChanged))
+}
+
+func assertEntityChangeReason(ctx context.Context, t *testing.T, pool interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}, entityID string, version int64, want string) {
+	t.Helper()
+	var reason string
+	if err := pool.QueryRow(ctx, `
+		SELECT COALESCE(event->>'change_reason', '')
+		FROM atlas_change_events
+		WHERE event->>'resource_type' = 'entity' AND event->>'id' = $1 AND version = $2
+	`, entityID, version).Scan(&reason); err != nil {
+		t.Fatalf("read Entity change reason for version %d: %v", version, err)
+	}
+	if reason != want {
+		t.Fatalf("Entity change reason for version %d = %q, want %q", version, reason, want)
+	}
+}
+
+func TestDeliverableHoldsRuntimeFenceDuringTaskSelection(t *testing.T) {
+	pool := openActionsTestPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	assetID := fmt.Sprintf("deliverable-race-asset-%d", time.Now().UnixNano())
+	defer cleanupFinalBlobValidationRowsWithTimeout(t, pool, assetID, "")
+
+	entities := NewEntityActions(pool)
+	if _, err := entities.Create(ctx, CreateEntityParams{EntityID: assetID, EntityType: "asset"}); err != nil {
+		t.Fatalf("create Asset: %v", err)
+	}
+	tasks := NewTaskActionsWithCatalog(pool, fixtureTaskCatalog(t))
+	if err := tasks.BeginRuntimeRegistration(ctx, assetID, "runtime-1"); err != nil {
+		t.Fatalf("begin runtime: %v", err)
+	}
+	if err := tasks.CompleteRuntimeRegistration(ctx, assetID, "runtime-1", fixtureTaskManifest(t)); err != nil {
+		t.Fatalf("ready runtime: %v", err)
+	}
+	pending, _, err := tasks.Create(ctx, CreateTaskParams{
+		AssetID: assetID,
+		Command: "fixture.queued",
+		Input:   map[string]any{"value": "delivery race"},
+	}, "deliverable-race")
+	if err != nil {
+		t.Fatalf("create pending Task: %v", err)
+	}
+
+	lockTx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin Task lock transaction: %v", err)
+	}
+	lockReleased := false
+	defer func() {
+		if !lockReleased {
+			_ = lockTx.Rollback(context.Background())
+		}
+	}()
+	if _, err := lockTx.Exec(ctx, `LOCK TABLE tasks IN ACCESS EXCLUSIVE MODE`); err != nil {
+		t.Fatalf("lock Task table: %v", err)
+	}
+
+	type deliveryResult struct {
+		taskID string
+		err    error
+	}
+	deliveryDone := make(chan deliveryResult, 1)
+	go func() {
+		deliverable, err := tasks.Deliverable(ctx, assetID, "runtime-1")
+		result := deliveryResult{err: err}
+		if len(deliverable) != 0 {
+			result.taskID = deliverable[0].TaskID
+		}
+		deliveryDone <- result
+	}()
+	waitForDatabaseLockWait(t, pool)
+
+	replacementStarted := make(chan struct{})
+	replacementDone := make(chan error, 1)
+	go func() {
+		close(replacementStarted)
+		replacementDone <- tasks.BeginRuntimeRegistration(ctx, assetID, "runtime-2")
+	}()
+	<-replacementStarted
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		var currentRuntimeID string
+		if err := pool.QueryRow(ctx, `SELECT runtime_id FROM asset_runtimes WHERE asset_id = $1`, assetID).Scan(&currentRuntimeID); err != nil {
+			t.Fatalf("read current runtime while delivery is blocked: %v", err)
+		}
+		if currentRuntimeID != "runtime-1" {
+			t.Fatalf("runtime replacement committed before delivery completed: current runtime = %q", currentRuntimeID)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	if err := lockTx.Rollback(ctx); err != nil {
+		t.Fatalf("release pending Task lock: %v", err)
+	}
+	lockReleased = true
+
+	select {
+	case result := <-deliveryDone:
+		if result.err != nil {
+			t.Fatalf("deliver pending Task: %v", result.err)
+		}
+		if result.taskID != pending.TaskID {
+			t.Fatalf("delivered Task = %q, want %q", result.taskID, pending.TaskID)
+		}
+	case <-ctx.Done():
+		t.Fatalf("deliverable did not finish: %v", ctx.Err())
+	}
+	select {
+	case err := <-replacementDone:
+		if err != nil {
+			t.Fatalf("replace runtime: %v", err)
+		}
+	case <-ctx.Done():
+		t.Fatalf("runtime replacement did not finish: %v", ctx.Err())
+	}
+}
+
+func waitForDatabaseLockWait(t testing.TB, pool *pgxpool.Pool) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	for {
+		var waiting bool
+		if err := pool.QueryRow(ctx, `SELECT EXISTS (
+			SELECT 1 FROM pg_locks
+			WHERE NOT granted
+			  AND relation = 'tasks'::regclass
+		)`).Scan(&waiting); err != nil {
+			t.Fatalf("check for blocked database statement: %v", err)
+		}
+		if waiting {
+			return
+		}
+		if ctx.Err() != nil {
+			t.Fatalf("delivery did not reach a blocked database statement: %v", ctx.Err())
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 

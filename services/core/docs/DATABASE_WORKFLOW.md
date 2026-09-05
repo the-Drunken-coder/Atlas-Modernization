@@ -29,6 +29,8 @@ The managed schema contains:
 - `storage_deletion_outbox` durable blob-deletion retries
 - `storage_upload_intents` leased upload ownership and crash recovery
 - `admin_records` accounts, sessions, login throttles, and managed API-key metadata
+- `asset_runtime_generations` immutable runtime history for Asset replacement and stop fences
+- `resource_instance_tokens` one-time hashes for Entity/Object create recovery
 - `atlas_schema_migrations`
 
 ## Durable startup
@@ -48,7 +50,7 @@ The managed schema contains:
 
 Unknown/future versions, missing versions, edited migration definitions, dropped indexes, changed columns/defaults/constraints, or other Atlas-owned catalog drift are startup-fatal. A failed migration rolls back its DDL and version record together.
 
-After PostgreSQL succeeds, durable startup verifies that the configured MinIO bucket already exists. It never creates or empties that bucket. A missing or unreachable bucket is startup-fatal so a restored database cannot become ready without its paired blob store. The production Compose API service waits for the `minio-init` verifier to succeed, so a missing bucket prevents the Core process from starting. Operators must provision the bucket explicitly for a clean manual deployment or restore it from the backup paired with PostgreSQL. For a new packaged deployment, `atlas-core init` may provision the bucket before PostgreSQL exists, but only after it proves that no prior Atlas volumes or unmatched configuration exist. Every later missing-bucket case still fails closed. The embedded command catalog is independent of object storage and is served directly at `GET /command-catalog`.
+After PostgreSQL succeeds, durable startup verifies that the configured MinIO bucket already exists. It never creates or empties that bucket. A missing or unreachable bucket is startup-fatal so a restored database cannot become ready without its paired blob store. The production Compose API service waits for the `minio-init` verifier to succeed, so a missing bucket prevents the Core process from starting. The manual production Compose files use fixed external PostgreSQL and MinIO volumes, and `atlas.py --production` verifies that the required set exists before cleanup or startup. Operators must explicitly create or restore those volumes as a pair with the same non-empty `io.atlas.core.storage-set` label, then provision the bucket for a clean manual deployment or restore it from the backup paired with PostgreSQL. For a new packaged deployment, `atlas-core init` may provision the bucket before PostgreSQL exists, but only after it proves that no prior Atlas volumes or unmatched configuration exist. Every later missing-bucket case still fails closed. The embedded command catalog is independent of object storage and is served directly at `GET /command-catalog`.
 
 ## Baseline migration v1
 
@@ -74,6 +76,10 @@ Migration v5 bounds that recovery log without coupling retention to object-stora
 Migration v6 corrects upgraded databases whose pre-change-stream resource versions have no corresponding recovery events. It advances `min_retained_version` to the earliest complete recovery cursor, so those clients receive `CURSOR_EXPIRED` instead of an empty response that falsely advances them across missing history. It also adds the `(created_at, version)` retention index. Pruning deletes bounded batches and commits each batch separately so resource mutations can acquire the change-clock lock between batches.
 
 Migration v7 replaces the empty legacy Task table with immutable Tasks and adds runtime registration for assets. It records catalog fingerprint v2, which treats the dense order of live columns as schema identity so PostgreSQL dump and restore can compact dropped-column storage gaps without causing false schema-drift failures.
+
+Migration v8 (`retired_asset_runtime_generations`) adds `asset_runtime_generations` with `asset_id VARCHAR(50)`, `runtime_id VARCHAR(255)`, an identity `generation BIGINT`, and a `stopped BOOLEAN NOT NULL DEFAULT FALSE` flag. The table has a composite primary key on `(asset_id, runtime_id)`, unique constraints on `runtime_id` and `(asset_id, generation)`, and is populated from the existing `asset_runtimes` rows. It also adds `asset_runtimes.stopped`, `tasks.completion_attempt`, and a foreign key from the current runtime to its generation history.
+
+Migration v9 (`immutable_resource_instance_tokens`) adds `resource_instance_tokens`, whose `token_hash VARCHAR(64)` is the primary key and whose `created_at` defaults to `clock_timestamp()`, with a length check on the hash. It adds nullable `instance_token_hash VARCHAR(64)` columns to `entities` and `objects`, each constrained to either NULL or a 64-character hash. These hashes provide one-time capabilities for recovering a create response without storing the raw token.
 
 Inspect the current production version with:
 

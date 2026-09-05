@@ -35,9 +35,9 @@ export function ConnectionStatusPill({ status }: { status: EntityConnectionStatu
 
 export function connectionStatusLabel({ reported, freshness }: EntityConnectionStatus): string {
   if (freshness === "fresh") return titleCase(reported);
-  if (freshness === "missing") return `Reported ${reported} — never checked in`;
-  if (freshness === "clock-error") return `Reported ${reported} — clock error`;
-  return `Reported ${reported} — ${freshness === "stale" ? "stale heartbeat" : "offline"}`;
+  if (freshness === "missing") return `Reported ${reported}: never checked in`;
+  if (freshness === "clock-error") return `Reported ${reported}: clock error`;
+  return `Reported ${reported}: ${freshness === "stale" ? "stale heartbeat" : "offline"}`;
 }
 
 export function connectionStatusColor({ reported, freshness }: EntityConnectionStatus): string {

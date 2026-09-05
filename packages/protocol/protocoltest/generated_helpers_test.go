@@ -43,6 +43,162 @@ func TestGeneratedDeleteEventHelpers(t *testing.T) {
 	}
 }
 
+func TestGeneratedIntegerUnmarshalAcceptsExactIntegralJSONNumbers(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want int64
+	}{
+		{name: "integer", raw: "1", want: 1},
+		{name: "decimal integer", raw: "1.0", want: 1},
+		{name: "exponent integer", raw: "1e3", want: 1_000},
+		{name: "safe maximum", raw: "9007199254740991", want: 9_007_199_254_740_991},
+		{name: "safe maximum decimal", raw: "9007199254740991.0", want: 9_007_199_254_740_991},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var ready protocol.FeedSubscriptionsReadyMessage
+			data := []byte(`{"type":"subscriptions_ready","version":` + test.raw + `}`)
+			if err := json.Unmarshal(data, &ready); err != nil {
+				t.Fatalf("Unmarshal(%s) returned error: %v", data, err)
+			}
+			if ready.Version != test.want {
+				t.Fatalf("Version = %d, want %d", ready.Version, test.want)
+			}
+		})
+	}
+
+	for _, raw := range []string{
+		"9223372036854775808",
+		"9223372036854775807.5",
+		"1e-4000",
+		"1e1000000",
+		"1e-1000000",
+		"9007199254740993",
+	} {
+		var ready protocol.FeedSubscriptionsReadyMessage
+		data := []byte(`{"type":"subscriptions_ready","version":` + raw + `}`)
+		if err := json.Unmarshal(data, &ready); err == nil {
+			t.Fatalf("Unmarshal(%s) accepted an unrepresentable version", data)
+		}
+	}
+	for _, raw := range []string{
+		`{"type":"subscriptions_ready","version":1.5,"version":1}`,
+		`{"type":"subscriptions_ready","version":1,"version":1.5}`,
+		`{"type":"subscriptions_ready","version":1e1000000,"version":1e1000000}`,
+	} {
+		var ready protocol.FeedSubscriptionsReadyMessage
+		if err := json.Unmarshal([]byte(raw), &ready); err == nil {
+			t.Fatalf("Unmarshal(%s) accepted an invalid duplicate version", raw)
+		}
+	}
+
+	var detail protocol.ObjectDetailResource
+	if err := json.Unmarshal([]byte(`{"size_bytes":1.0}`), &detail); err != nil {
+		t.Fatalf("Unmarshal optional integral size_bytes returned error: %v", err)
+	}
+	if detail.SizeBytes == nil || *detail.SizeBytes != 1 {
+		t.Fatalf("SizeBytes = %v, want pointer to 1", detail.SizeBytes)
+	}
+	if err := json.Unmarshal([]byte(`{"size_bytes":null}`), &detail); err != nil {
+		t.Fatalf("Unmarshal null size_bytes returned error: %v", err)
+	}
+	if detail.SizeBytes != nil {
+		t.Fatalf("SizeBytes = %v, want nil", detail.SizeBytes)
+	}
+
+	ready := protocol.FeedSubscriptionsReadyMessage{Type: "subscriptions_ready", Version: 7}
+	if err := json.Unmarshal([]byte(`{}`), &ready); err != nil {
+		t.Fatalf("Unmarshal empty object returned error: %v", err)
+	}
+	if ready.Type != "subscriptions_ready" || ready.Version != 7 {
+		t.Fatalf("Unmarshal empty object = %#v, want original values", ready)
+	}
+
+	for _, raw := range []string{
+		`{"type":"subscriptions_ready","VERSION":9007199254740993}`,
+		`{"type":"subscriptions_ready","Version":9007199254740993}`,
+		`{"type":"subscriptions_ready","version":1,"unknown":true}`,
+	} {
+		var strict protocol.FeedSubscriptionsReadyMessage
+		if err := json.Unmarshal([]byte(raw), &strict); err == nil {
+			t.Fatalf("Unmarshal(%s) accepted an unknown or case-variant property", raw)
+		}
+	}
+
+	var deletion protocol.EntityDeleteEvent
+	if err := json.Unmarshal(
+		[]byte(`{"event":"delete","resource_type":"entity","id":"entity-1","version":1}`),
+		&deletion,
+	); err != nil {
+		t.Fatalf("Unmarshal valid EntityDeleteEvent wire properties: %v", err)
+	}
+
+	unknownPropertyManifest := `{"plugin_id":"fixture","display_name":"Fixture","operations":[{"operation_id":"run","display_name":"Run","timeout_ms":1,"UNKNOWN":true}]}`
+	validManifest := strings.Replace(unknownPropertyManifest, `,"UNKNOWN":true`, "", 1)
+	var manifest protocol.PluginManifest
+	if err := json.Unmarshal([]byte(validManifest), &manifest); err != nil {
+		t.Fatalf("Unmarshal valid PluginManifest fixture: %v", err)
+	}
+	if err := json.Unmarshal([]byte(unknownPropertyManifest), &manifest); err == nil {
+		t.Fatal("Unmarshal accepted an unknown property inside PluginOperationDescriptor")
+	}
+}
+
+func TestGeneratedFeedEventUnmarshalPreservesNestedJSONNumbers(t *testing.T) {
+	const raw = `{"event":"create","resource_type":"task","id":"task-1","version":1,"resource":{"task_id":"task-1","input":{"value":9007199254740993}}}`
+	var event protocol.FeedEvent
+	if err := json.Unmarshal([]byte(raw), &event); err != nil {
+		t.Fatalf("Unmarshal FeedEvent: %v", err)
+	}
+	encoded, err := json.Marshal(event.Resource)
+	if err != nil {
+		t.Fatalf("Marshal FeedEvent resource: %v", err)
+	}
+	if !strings.Contains(string(encoded), `"value":9007199254740993`) {
+		t.Fatalf("FeedEvent resource lost nested number precision: %s", encoded)
+	}
+}
+
+func TestGeneratedDirectResourceUnmarshalPreservesNestedJSONNumbers(t *testing.T) {
+	const nested = `{"container":{"exact":9007199254740993,"lower":1e3,"upper":1E+3,"decimal":1.0e0}}`
+
+	var task protocol.TaskResource
+	if err := json.Unmarshal([]byte(`{"input":`+nested+`}`), &task); err != nil {
+		t.Fatalf("Unmarshal TaskResource: %v", err)
+	}
+	assertNestedJSONNumbers(t, "TaskResource input", task.Input)
+
+	var entity protocol.EntityResource
+	if err := json.Unmarshal([]byte(`{"components":`+nested+`,"extra":`+nested+`}`), &entity); err != nil {
+		t.Fatalf("Unmarshal EntityResource: %v", err)
+	}
+	assertNestedJSONNumbers(t, "EntityResource components", entity.Components)
+	assertNestedJSONNumbers(t, "EntityResource extra", entity.Extra)
+
+	var object protocol.ObjectDetailResource
+	if err := json.Unmarshal([]byte(`{"size_bytes":1E+3,"extra":`+nested+`}`), &object); err != nil {
+		t.Fatalf("Unmarshal ObjectDetailResource: %v", err)
+	}
+	if object.SizeBytes == nil || *object.SizeBytes != 1_000 {
+		t.Fatalf("ObjectDetailResource size_bytes = %v, want 1000", object.SizeBytes)
+	}
+	assertNestedJSONNumbers(t, "ObjectDetailResource extra", object.Extra)
+}
+
+func assertNestedJSONNumbers(t *testing.T, name string, value any) {
+	t.Helper()
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("Marshal %s: %v", name, err)
+	}
+	for _, number := range []string{`"exact":9007199254740993`, `"lower":1e3`, `"upper":1E+3`, `"decimal":1.0e0`} {
+		if !strings.Contains(string(encoded), number) {
+			t.Fatalf("%s lost nested number spelling %q: %s", name, number, encoded)
+		}
+	}
+}
+
 func assertDeleteEvent(t *testing.T, value json.Marshaler, event protocol.FeedEvent, resourceType protocol.ResourceType, id string, version int64) {
 	t.Helper()
 	if event.Event != protocol.FeedEventDelete || event.ResourceType != resourceType || event.ID != id || event.Version != version {

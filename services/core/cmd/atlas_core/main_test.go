@@ -156,7 +156,7 @@ func TestAtlasCORSOptionsAllowsCredentialsAndExposesCursorHeaders(t *testing.T) 
 	if emptyOpts.AllowOriginFunc(nil, "https://atlasinterface.com") {
 		t.Fatal("expected empty CORS config to reject normal origins")
 	}
-	for _, header := range []string{"Accept", "Authorization", "Content-Type", "If-Match", "If-None-Match", "X-API-Key", "X-Request-ID"} {
+	for _, header := range []string{"Accept", "Authorization", "Content-Type", "Atlas-Resource-Instance-Token", "If-Match", "If-None-Match", "X-API-Key", "X-Request-ID"} {
 		if !slices.Contains(opts.AllowedHeaders, header) {
 			t.Fatalf("expected allowed header %s in %#v", header, opts.AllowedHeaders)
 		}

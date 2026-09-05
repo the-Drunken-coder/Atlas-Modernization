@@ -310,6 +310,8 @@ export function MapView({
             pushSpatialOverlay(mapInstance, spatialRef.current);
           }
           styleSwitchErrorRef.current?.({ failedStyleId, activeStyleId: currentStyleIdRef.current ?? failedStyleId });
+        } else if (!readyRef.current) {
+          setMapError(sanitizeConnectionError(event.error));
         }
         // A source/tile error includes sourceId in MapLibre's bubbled event.
         // Before the first style.load, an error without one means the initial

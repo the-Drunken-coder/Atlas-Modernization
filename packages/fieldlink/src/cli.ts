@@ -380,6 +380,10 @@ async function runHardwareTest(command: TestCommand): Promise<number> {
           completion.received.message.kind === "response"
             ? { runtimeResponse: completion.received.message }
             : {}),
+          ...(completion.received.message.type === "task" &&
+          completion.received.message.kind === "response"
+            ? { taskResponse: completion.received.message }
+            : {}),
         }),
     ...(durationMs === undefined ? {} : { elapsedMs: durationMs }),
     ...(runError === undefined ? {} : { error: runError.message }),

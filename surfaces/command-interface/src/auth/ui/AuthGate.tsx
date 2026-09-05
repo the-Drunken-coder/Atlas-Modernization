@@ -74,9 +74,9 @@ export function AuthGate({ baseUrl, children }: { baseUrl: string; children: Rea
       <AuthenticatedShell
         baseUrl={baseUrl}
         username={state.username}
-        onLoggedOut={() => {
+        onLoggedOut={(error) => {
           rotateAuthSession();
-          setState({ status: "unauthenticated" });
+          setState({ status: "unauthenticated", ...(error ? { error } : {}) });
         }}
       >
         {children}
@@ -99,7 +99,6 @@ export function AuthGate({ baseUrl, children }: { baseUrl: string; children: Rea
         />
         <Callout className="login-panel" icon={null} role="alert">
           <div className="login-panel__header">
-            <span className="login-panel__eyebrow">Atlas</span>
             <h1>Core unavailable</h1>
           </div>
           <p>Open the connection error for details and retry.</p>
@@ -129,7 +128,7 @@ function AuthenticatedShell({
   baseUrl: string;
   username: string;
   children: ReactNode;
-  onLoggedOut: () => void;
+  onLoggedOut: (error?: string) => void;
 }) {
   const [loggingOut, setLoggingOut] = useState(false);
   const [error, setError] = useState<string>();
@@ -141,7 +140,14 @@ function AuthenticatedShell({
       await createAuthenticatedAtlasAdminClient(baseUrl).auth.logout();
       onLoggedOut();
     } catch (cause) {
-      setError(sanitizeConnectionError(cause));
+      const logoutError = sanitizeConnectionError(cause);
+      // Core clears the cookie before returning its 500 revocation error. Do
+      // not leave the shell mounted with a browser session that no longer exists.
+      if (cause instanceof AtlasAPIError && cause.status === 500) {
+        onLoggedOut(logoutError);
+        return;
+      }
+      setError(logoutError);
       setLoggingOut(false);
     }
   };
@@ -238,7 +244,6 @@ function LoginPanel({
     <main className="login-shell">
       <form className="login-panel" aria-label="Atlas login" onSubmit={submit}>
         <div className="login-panel__header">
-          <span className="login-panel__eyebrow">Atlas</span>
           <h1>Sign in</h1>
         </div>
         <TextField

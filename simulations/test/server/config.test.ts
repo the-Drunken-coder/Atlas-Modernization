@@ -2,7 +2,8 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { loadConfig } from "../../src/server/config.js";
+import { isDeployedAtlasUrl, loadConfig } from "../../src/server/config.js";
+import { isLoopbackHostname } from "../../src/server/loopback.js";
 import { createTargetRegistry, targetForRun } from "../../src/server/targets.js";
 
 describe("loadConfig", () => {
@@ -207,6 +208,46 @@ describe("loadConfig", () => {
     expect(
       loadConfig({ env: { ATLAS_LOCAL_BASE_URL: "http://[::1]:8000" }, packageRoot }).atlasTargets[0]?.baseUrl
     ).toBe("http://[::1]:8000");
+  });
+
+  it.each([
+    ["127.0.0.2", true],
+    ["::ffff:127.0.0.1", true],
+    ["::ffff:7f00:1", true],
+    ["::ffff:127.0.0.2", true],
+    ["::ffff:192.0.2.1", false],
+    ["192.168.0.1", false],
+    ["not-an-address", false],
+    ["[::ffff:7f00:1]", true]
+  ] as const)("classifies loopback host %s as %s", (hostname, expected) => {
+    expect(isLoopbackHostname(hostname)).toBe(expected);
+  });
+
+  it("treats mapped loopback URLs as local targets in every URL form", () => {
+    const packageRoot = tempPackageRoot();
+
+    for (const baseUrl of ["http://[::ffff:127.0.0.1]:8000", "http://[::ffff:7f00:1]:8000"]) {
+      expect(loadConfig({ env: { ATLAS_LOCAL_BASE_URL: baseUrl }, packageRoot }).atlasTargets[0]?.baseUrl).toBe(
+        "http://[::ffff:7f00:1]:8000"
+      );
+      expect(isDeployedAtlasUrl(baseUrl)).toBe(false);
+    }
+  });
+
+  it("rejects mapped loopback URLs as deployed targets", () => {
+    const packageRoot = tempPackageRoot();
+
+    for (const baseUrl of ["https://[::ffff:127.0.0.1]:8443", "https://[::ffff:7f00:1]:8443"]) {
+      expect(() =>
+        loadConfig({
+          env: {
+            ATLAS_SIM_ENABLE_DEPLOYED: "true",
+            ATLAS_DEPLOYED_BASE_URL: baseUrl
+          },
+          packageRoot
+        })
+      ).toThrow("ATLAS_DEPLOYED_BASE_URL must not target loopback");
+    }
   });
 
   it("rejects non-loopback URLs for the local target", () => {

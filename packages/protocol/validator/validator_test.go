@@ -215,6 +215,36 @@ func TestObjectBlobRejectsOversizedJSONNumberSizeBytes(t *testing.T) {
 	assertAnyContains(t, errors, "size_bytes")
 }
 
+func TestVersionJSONNumbersAreValidatedWithoutFloatRounding(t *testing.T) {
+	tests := []struct {
+		raw   string
+		valid bool
+	}{
+		{raw: "0", valid: true},
+		{raw: "1.0", valid: true},
+		{raw: "1e3", valid: true},
+		{raw: "9007199254740991", valid: true},
+		{raw: "9007199254740991.0", valid: true},
+		{raw: "9007199254740991.1", valid: false},
+		{raw: "9007199254740993", valid: false},
+		{raw: "9223372036854775808", valid: false},
+		{raw: "9223372036854775807.5", valid: false},
+		{raw: "1e-4000", valid: false},
+	}
+	for _, test := range tests {
+		t.Run(test.raw, func(t *testing.T) {
+			value := map[string]any{
+				"type":    "subscriptions_ready",
+				"version": json.Number(test.raw),
+			}
+			errors := ValidateDefinition("FeedSubscriptionsReadyMessage", value)
+			if valid := len(errors) == 0; valid != test.valid {
+				t.Fatalf("ValidateDefinition version %s valid = %t, want %t; errors = %v", test.raw, valid, test.valid, errors)
+			}
+		})
+	}
+}
+
 func TestObjectDetailResourceUsesExtraWithoutWideningFeedResources(t *testing.T) {
 	detail := map[string]any{
 		"object_id":    "object-1",

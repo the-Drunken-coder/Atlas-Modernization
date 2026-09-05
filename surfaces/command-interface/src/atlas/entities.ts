@@ -1,5 +1,5 @@
 import type { Classification, EntityResource, LinkState } from "@the-drunken-coder/atlas-sdk";
-import { type Position, representativePoint, toUiGeometry, type UiGeometry } from "./geometry.js";
+import { type Position, representativePoint, type UiGeometry } from "./geometry.js";
 
 export type { Classification, LinkState } from "@the-drunken-coder/atlas-sdk";
 
@@ -39,9 +39,9 @@ export function entityDisplayName(entity: EntityResource): string {
   return entity.alias ?? entity.entity_id;
 }
 
-/** Normalised GeoJSON geometry for the entity, if any. */
+/** Protocol-validated GeoJSON geometry for the entity, if any. */
 export function entityGeometry(entity: EntityResource): UiGeometry | undefined {
-  return toUiGeometry(entity.components.geometry);
+  return entity.components.geometry;
 }
 
 /**

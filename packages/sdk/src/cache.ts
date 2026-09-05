@@ -7,17 +7,25 @@ import {
   type TaskResource
 } from "./protocol.js";
 import { resourceCacheKey, resourceID } from "./subscriptions.js";
-import type { CacheEntry, DeletableResourceType, ResourceOf, SyncSnapshot } from "./types.js";
+import type { CacheEntry, DeletableResourceType, ResourceOf, ResourceValue, SyncSnapshot } from "./types.js";
 
 export type CacheResourceOptions = {
   detail?: boolean;
   advanceCursor?: boolean;
+  generation?: number;
   version?: number;
   replaceSameVersion?: boolean;
 };
 
 type SnapshotRecords = {
   [TType in ResourceType]: SnapshotRecord<ResourceOf<TType>>;
+};
+
+type LocalDeleteOperation = {
+  readonly type: DeletableResourceType;
+  readonly id: string;
+  readonly observedEntry: object | undefined;
+  remoteDeleteSeen: boolean;
 };
 
 class SnapshotRecord<T> {
@@ -92,6 +100,9 @@ export class ResourceCache {
   };
   readonly pendingDeletes = new Set<string>();
   readonly locallyNotifiedDeletes = new Set<string>();
+  private readonly localDeleteOperations = new Set<LocalDeleteOperation>();
+  // Point reads capture this generation before the request and only project the response if it is still current.
+  private readonly generations = new Map<string, number>();
   private readonly snapshotRecords: SnapshotRecords = {
     entity: new SnapshotRecord<EntityResource>(),
     task: new SnapshotRecord<TaskResource>(),
@@ -139,6 +150,7 @@ export class ResourceCache {
     this.snapshotDirty = true;
     this.pendingDeletes.clear();
     this.locallyNotifiedDeletes.clear();
+    this.localDeleteOperations.clear();
     this.lastVersion = 0;
     for (const entity of resources.entities)
       this.cacheResource("entity", entity.entity_id, entity, { advanceCursor: false });
@@ -156,6 +168,23 @@ export class ResourceCache {
     const actualID = resourceID(type, value);
     if (actualID !== id) {
       throw new TypeError(`Atlas ${type} resource id ${actualID} does not match cache id ${id}`);
+    }
+    if (options?.generation !== undefined) {
+      if (this.generation(type, id) !== options.generation) return false;
+      // A point read that starts after a local delete has begun must not make
+      // the deleted resource visible again before that delete finishes. A
+      // different instance is allowed through so a concurrent recreation is
+      // preserved by finishLocalDelete.
+      if (
+        [...this.localDeleteOperations].some(
+          (operation) =>
+            operation.type === type &&
+            operation.id === id &&
+            (operation.observedEntry === undefined || sameResourceValue(type, operation.observedEntry, value))
+        )
+      ) {
+        return false;
+      }
     }
     const version = options?.version ?? embeddedResourceVersion(type, value);
     const existing = this.entries[type].get(id);
@@ -192,7 +221,15 @@ export class ResourceCache {
     return this.entries[type].get(id)?.version ?? 0;
   }
 
+  generation(type: ResourceType, id: string): number {
+    return this.generations.get(resourceCacheKey(type, id)) ?? 0;
+  }
+
   markRemoteDelete(type: ResourceType, id: string, version: number): void {
+    this.bumpGeneration(type, id);
+    for (const operation of this.localDeleteOperations) {
+      if (operation.type === type && operation.id === id) operation.remoteDeleteSeen = true;
+    }
     this.entries[type].set(id, { version, deleted: true });
     this.removeFromSnapshot(type, id);
   }
@@ -207,6 +244,37 @@ export class ResourceCache {
     return previousVersion;
   }
 
+  beginLocalDelete(type: DeletableResourceType, id: string): LocalDeleteOperation {
+    this.bumpGeneration(type, id);
+    const operation = { type, id, observedEntry: this.entries[type].get(id), remoteDeleteSeen: false };
+    this.localDeleteOperations.add(operation);
+    return operation;
+  }
+
+  finishLocalDelete(operation: LocalDeleteOperation): number | undefined {
+    if (!this.localDeleteOperations.delete(operation)) return undefined;
+    const currentEntry = this.entries[operation.type].get(operation.id);
+    this.bumpGeneration(operation.type, operation.id);
+    if (
+      currentEntry !== operation.observedEntry &&
+      (operation.remoteDeleteSeen || !sameResourceInstance(operation.type, operation.observedEntry, currentEntry))
+    ) {
+      return undefined;
+    }
+    return this.markLocalDelete(operation.type, operation.id);
+  }
+
+  cancelLocalDelete(operation: LocalDeleteOperation): void {
+    this.localDeleteOperations.delete(operation);
+  }
+
+  private bumpGeneration(type: ResourceType, id: string): number {
+    const key = resourceCacheKey(type, id);
+    const next = this.generation(type, id) + 1;
+    this.generations.set(key, next);
+    return next;
+  }
+
   private updateSnapshot<TType extends ResourceType>(type: TType, id: string, value: ResourceOf<TType>): void {
     this.snapshotRecords[type].set(id, value);
     this.snapshotDirty = true;
@@ -215,6 +283,29 @@ export class ResourceCache {
   private removeFromSnapshot<TType extends ResourceType>(type: TType, id: string): void {
     if (this.snapshotRecords[type].remove(id)) this.snapshotDirty = true;
   }
+}
+
+function sameResourceInstance<TType extends DeletableResourceType>(
+  type: TType,
+  observedEntry: object | undefined,
+  currentEntry: CacheEntry<ResourceOf<TType>> | undefined
+): boolean {
+  // Core keeps metadata.created_at stable across updates and changes it when an ID is reused.
+  if (!observedEntry || !currentEntry?.value || (type !== "entity" && type !== "object")) return false;
+  const observed = observedEntry as CacheEntry<ResourceOf<TType>>;
+  if (!observed.value) return false;
+  return observed.value.metadata.created_at === currentEntry.value.metadata.created_at;
+}
+
+function sameResourceValue(
+  type: ResourceType,
+  observedEntry: object | undefined,
+  currentValue: ResourceValue
+): boolean {
+  if (!observedEntry || (type !== "entity" && type !== "object")) return false;
+  const observed = observedEntry as CacheEntry<EntityResource | ObjectResource>;
+  const current = currentValue as EntityResource | ObjectResource;
+  return observed.value?.metadata.created_at === current.metadata.created_at;
 }
 
 function embeddedResourceVersion<TType extends ResourceType>(type: TType, value: ResourceOf<TType>): number {

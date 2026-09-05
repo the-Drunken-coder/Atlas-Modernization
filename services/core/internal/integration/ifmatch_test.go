@@ -121,6 +121,105 @@ func TestIfMatchConcurrentConflict(t *testing.T) {
 	}
 }
 
+func TestResourceInstanceTokenPreconditionsForEntityAndObject(t *testing.T) {
+	SkipIfSystemNotAvailable(t)
+
+	client := NewAPIClient()
+	ctx := context.Background()
+	prefix := TestArtifactPrefix()
+	for _, resource := range []struct {
+		name         string
+		createPath   string
+		id           string
+		body         map[string]interface{}
+		resourcePath string
+	}{
+		{
+			name: "entity", createPath: "/entities", id: fmt.Sprintf("%s-token-entity", prefix),
+			body:         map[string]interface{}{"entity_id": fmt.Sprintf("%s-token-entity", prefix), "entity_type": "asset"},
+			resourcePath: "/entities/" + fmt.Sprintf("%s-token-entity", prefix),
+		},
+		{
+			name: "object", createPath: "/objects", id: fmt.Sprintf("%s-token-object", prefix),
+			body:         map[string]interface{}{"object_id": fmt.Sprintf("%s-token-object", prefix)},
+			resourcePath: "/objects/" + fmt.Sprintf("%s-token-object", prefix),
+		},
+	} {
+		t.Run(resource.name, func(t *testing.T) {
+			token := fmt.Sprintf("instance-token-%s-%s", prefix, resource.name)
+			resp, err := requestJSONWithHeaders(ctx, client, http.MethodPost, resource.createPath, resource.body, map[string]string{
+				"Atlas-Resource-Instance-Token": token,
+			})
+			if err != nil {
+				t.Fatalf("create token-bound %s: %v", resource.name, err)
+			}
+			requireHTTPStatus(t, resp, http.StatusCreated, "create token-bound "+resource.name)
+			createdBody, err := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if err != nil {
+				t.Fatalf("read token-bound %s response: %v", resource.name, err)
+			}
+			if strings.Contains(string(createdBody), token) || strings.Contains(string(createdBody), "instance_token") {
+				t.Fatalf("token-bound %s response exposed the instance token: %s", resource.name, createdBody)
+			}
+
+			resp, err = requestJSONWithHeaders(ctx, client, http.MethodDelete, resource.resourcePath, nil, map[string]string{
+				"Atlas-Resource-Instance-Token": token,
+			})
+			if err != nil {
+				t.Fatalf("delete token-bound %s: %v", resource.name, err)
+			}
+			requireHTTPStatus(t, resp, http.StatusNoContent, "delete token-bound "+resource.name)
+			drainClose(resp)
+
+			resp, err = client.Post(ctx, resource.createPath, resource.body)
+			if err != nil {
+				t.Fatalf("recreate ordinary %s: %v", resource.name, err)
+			}
+			requireHTTPStatus(t, resp, http.StatusCreated, "recreate ordinary "+resource.name)
+			drainClose(resp)
+
+			resp, err = requestJSONWithHeaders(ctx, client, http.MethodDelete, resource.resourcePath, nil, map[string]string{
+				"Atlas-Resource-Instance-Token": token,
+			})
+			if err != nil {
+				t.Fatalf("delete replacement %s: %v", resource.name, err)
+			}
+			requireHTTPStatus(t, resp, http.StatusPreconditionFailed, "delete replacement "+resource.name)
+			drainClose(resp)
+
+			resp, err = client.Get(ctx, resource.resourcePath)
+			if err != nil {
+				t.Fatalf("get replacement %s: %v", resource.name, err)
+			}
+			requireHTTPStatus(t, resp, http.StatusOK, "get replacement "+resource.name)
+			drainClose(resp)
+
+			resp, err = client.Request(ctx, http.MethodDelete, resource.resourcePath, nil)
+			if err != nil {
+				t.Fatalf("ordinary delete replacement %s: %v", resource.name, err)
+			}
+			requireHTTPStatus(t, resp, http.StatusNoContent, "ordinary delete replacement "+resource.name)
+			drainClose(resp)
+
+			var otherBody map[string]interface{}
+			if resource.name == "entity" {
+				otherBody = map[string]interface{}{"entity_id": resource.id + "-reuse", "entity_type": "asset"}
+			} else {
+				otherBody = map[string]interface{}{"object_id": resource.id + "-reuse"}
+			}
+			resp, err = requestJSONWithHeaders(ctx, client, http.MethodPost, resource.createPath, otherBody, map[string]string{
+				"Atlas-Resource-Instance-Token": token,
+			})
+			if err != nil {
+				t.Fatalf("reuse token %s: %v", resource.name, err)
+			}
+			requireHTTPStatus(t, resp, http.StatusBadRequest, "reuse token "+resource.name)
+			drainClose(resp)
+		})
+	}
+}
+
 type ifMatchConcurrentResource struct {
 	createPath string
 	createBody map[string]interface{}

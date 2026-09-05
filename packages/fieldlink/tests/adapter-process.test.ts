@@ -1,4 +1,4 @@
-import { PassThrough } from "node:stream";
+import { PassThrough, Writable } from "node:stream";
 import { createInterface } from "node:readline";
 import { describe, expect, it, vi } from "vitest";
 
@@ -54,6 +54,178 @@ describe("NDJSON adapter server", () => {
     await expect(serving).rejects.toThrow("disk full");
     expect(close).toHaveBeenCalledOnce();
     reader.close();
+  });
+
+  it("starts runtime shutdown before a send that ignores abort settles", async () => {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    let reportSendStarted = (): void => undefined;
+    const sendStarted = new Promise<void>((resolve) => {
+      reportSendStarted = resolve;
+    });
+    const node = {
+      close: vi.fn(() => Promise.resolve()),
+      congestion: () => Promise.resolve({}),
+      onEvent: () => () => undefined,
+      onMessage: () => () => undefined,
+      onPassiveMessage: () => () => undefined,
+      publish: () => new Promise<never>(() => undefined),
+      send: () => {
+        reportSendStarted();
+        return new Promise<never>(() => undefined);
+      },
+    } as unknown as FieldLinkNode;
+    const serving = serveAdapter({
+      path: "test",
+      channel: 1,
+      input,
+      output,
+      teardownTimeoutMs: 25,
+      createRuntime: () =>
+        Promise.resolve({
+          node,
+          activate: () => Promise.resolve(),
+          ready: ready(1),
+        }),
+    });
+    const reader = lineReader(output);
+    await reader.nextType("ready");
+    input.write(`${JSON.stringify({ id: 1, type: "activate" })}\n`);
+    await reader.nextType("response");
+    input.write(
+      `${JSON.stringify({
+        id: 2,
+        type: "send",
+        message: {
+          type: "test",
+          kind: "response",
+          correlationId: 1,
+          payload: {},
+        },
+        destination: nodeA,
+      })}\n`,
+    );
+    await sendStarted;
+    input.write(`${JSON.stringify({ id: 3, type: "close" })}\n`);
+    const stopped = expect(serving).rejects.toThrow(
+      "adapter active operations",
+    );
+
+    await vi.waitFor(() => {
+      expect(node.close).toHaveBeenCalledOnce();
+    });
+    await stopped;
+    reader.close();
+  });
+
+  it("stops fatal teardown before a notification write settles", async () => {
+    const input = new PassThrough();
+    let writeCount = 0;
+    let releaseWrite = (): void => undefined;
+    const output = new Writable({
+      write: (_chunk, _encoding, callback) => {
+        writeCount += 1;
+        if (writeCount === 1) {
+          callback();
+        } else {
+          releaseWrite = callback;
+        }
+      },
+    });
+    const node = new FieldLinkNode({
+      nodeId: nodeB,
+      transport: new MemoryTransport(),
+    });
+    const close = vi.spyOn(node, "close");
+    let reportFatal: ((error: Error) => void | Promise<void>) | undefined;
+    const serving = serveAdapter({
+      path: "test",
+      channel: 1,
+      input,
+      output,
+      createRuntime: (options) => {
+        reportFatal = options.onFatalError;
+        return Promise.resolve({ node, ready: ready(1) });
+      },
+    });
+    await vi.waitFor(() => {
+      expect(writeCount).toBe(1);
+    });
+    if (reportFatal === undefined) {
+      throw new Error("Runtime fatal callback was not installed");
+    }
+
+    reportFatal(new Error("radio failed"));
+    await vi.waitFor(() => {
+      expect(close).toHaveBeenCalledOnce();
+    });
+    releaseWrite();
+    await expect(serving).rejects.toThrow("radio failed");
+  });
+
+  it("interrupts an inline writer wait when fatal teardown starts", async () => {
+    const input = new PassThrough();
+    let writeCount = 0;
+    let releaseWrite = (): void => undefined;
+    const output = new Writable({
+      write: (_chunk, _encoding, callback) => {
+        writeCount += 1;
+        if (writeCount === 2) {
+          releaseWrite = callback;
+          return;
+        }
+        callback();
+      },
+    });
+    const node = new FieldLinkNode({
+      nodeId: nodeB,
+      transport: new MemoryTransport(),
+    });
+    let reportFatal: ((error: Error) => void | Promise<void>) | undefined;
+    const serving = serveAdapter({
+      path: "test",
+      channel: 1,
+      input,
+      output,
+      teardownTimeoutMs: 25,
+      createRuntime: (options) => {
+        reportFatal = options.onFatalError;
+        return Promise.resolve({
+          node,
+          activate: () => Promise.resolve(),
+          ready: ready(1),
+        });
+      },
+    });
+    await vi.waitFor(() => {
+      expect(writeCount).toBe(1);
+    });
+
+    input.write(`${JSON.stringify({ id: 1, type: "activate" })}\n`);
+    await vi.waitFor(() => {
+      expect(writeCount).toBe(2);
+    });
+    if (reportFatal === undefined) {
+      throw new Error("Runtime fatal callback was not installed");
+    }
+
+    reportFatal(new Error("radio failed"));
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const result = await Promise.race([
+      serving.then(
+        () => ({ type: "resolved" as const }),
+        (error: unknown) => ({ type: "rejected" as const, error }),
+      ),
+      new Promise<{ readonly type: "timed-out" }>((resolve) => {
+        timeout = setTimeout(() => resolve({ type: "timed-out" }), 250);
+      }),
+    ]);
+    if (timeout !== undefined) {
+      clearTimeout(timeout);
+    }
+    releaseWrite();
+    await expect(serving).rejects.toThrow("radio failed");
+    expect(result.type).toBe("rejected");
   });
 
   it("closes a runtime created after startup cancellation", async () => {
@@ -551,6 +723,97 @@ describe("adapter process proxy", () => {
 
     expect(listenerErrors[0]?.message).toBe("proxy listener failed");
     await expect(adapter.close()).resolves.toBeUndefined();
+  });
+
+  it("drains async proxy listeners before completing close", async () => {
+    let release = (): void => undefined;
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let acknowledgeClose = (): void => undefined;
+    const closeAcknowledged = new Promise<void>((resolve) => {
+      acknowledgeClose = resolve;
+    });
+    let observeChildExit = (): void => undefined;
+    const childExited = new Promise<void>((resolve) => {
+      observeChildExit = resolve;
+    });
+    let started = 0;
+    const adapter = await AdapterProcessNode.start({
+      path: "test",
+      channel: 1,
+      allowInboxDrain: true,
+      onStderrEnd: observeChildExit,
+      program: nodeScript(listenerDrainChildScript()),
+    });
+    const listener = async (): Promise<void> => {
+      started += 1;
+      await released;
+    };
+    adapter.onMessage(listener);
+    adapter.onPassiveMessage(listener);
+    adapter.onEvent(async (event) => {
+      if (event.type === "adapter-close-ack") {
+        acknowledgeClose();
+      }
+      await listener();
+    });
+
+    await adapter.activate();
+    await eventually(() => started === 3);
+
+    let closed = false;
+    const closing = adapter.close().then(() => {
+      closed = true;
+    });
+    await closeAcknowledged;
+    await childExited;
+    expect(closed).toBe(false);
+    release();
+    await expect(closing).resolves.toBeUndefined();
+  });
+
+  it("allows a proxy listener to initiate close", async () => {
+    let listenerClosed = false;
+    const adapter = await AdapterProcessNode.start({
+      path: "test",
+      channel: 1,
+      allowInboxDrain: true,
+      exitTimeoutMs: 500,
+      program: nodeScript(listenerDrainChildScript()),
+    });
+    adapter.onMessage(async () => {
+      await adapter.close();
+      listenerClosed = true;
+    });
+
+    await adapter.activate();
+    await eventually(() => listenerClosed);
+    await expect(adapter.close()).resolves.toBeUndefined();
+  });
+
+  it("bounds close when a proxy listener never settles", async () => {
+    let reportStarted = (): void => undefined;
+    const started = new Promise<void>((resolve) => {
+      reportStarted = resolve;
+    });
+    const adapter = await AdapterProcessNode.start({
+      path: "test",
+      channel: 1,
+      allowInboxDrain: true,
+      exitTimeoutMs: 500,
+      program: nodeScript(listenerDrainChildScript()),
+    });
+    adapter.onMessage(() => {
+      reportStarted();
+      return new Promise<void>(() => undefined);
+    });
+
+    await adapter.activate();
+    await started;
+    await expect(adapter.close()).rejects.toThrow(
+      "Timed out waiting for adapter listener callbacks",
+    );
   });
 
   it("reaps an adapter that fails before readiness", async () => {
@@ -1060,6 +1323,48 @@ function listenerFailureChildScript(): string {
 let pending="";
 process.stdin.setEncoding("utf8");
 process.stdin.on("data",chunk=>{pending+=chunk;let i;while((i=pending.indexOf("\\n"))>=0){const line=pending.slice(0,i);pending=pending.slice(i+1);if(!line)continue;const request=JSON.parse(line);if(request.type==="activate"){const response=JSON.stringify({type:"response",id:request.id,ok:true});const event=JSON.stringify({type:"event",event:{type:"protocol-error",at:"2026-08-24T12:00:00.000Z",message:"test"}});process.stdout.write(response+"\\n"+event+"\\n");}else if(request.type==="close"){process.stdout.write(JSON.stringify({type:"response",id:request.id,ok:true})+"\\n",()=>process.exit(0));}}});`;
+}
+
+function listenerDrainChildScript(): string {
+  const message = {
+    message: {
+      type: "test",
+      kind: "response",
+      correlationId: 1,
+      payload: { $fieldlinkBytes: "" },
+    },
+    source: nodeA,
+    destination: nodeB,
+    logicalId: "0000000000000001",
+    delivery: "complete",
+    receivedAt: "2026-08-24T12:00:00.000Z",
+  };
+  const notifications = [
+    { type: "message", message },
+    { type: "passive-message", message },
+    {
+      type: "event",
+      event: {
+        type: "protocol-error",
+        at: "2026-08-24T12:00:00.000Z",
+        message: "test",
+      },
+    },
+  ]
+    .map((value) => JSON.stringify(value))
+    .join("\n");
+  const closeAcknowledgement = JSON.stringify({
+    type: "event",
+    event: {
+      type: "adapter-close-ack",
+      at: "2026-08-24T12:00:00.000Z",
+      message: "close acknowledged",
+    },
+  });
+  return `${writeReady()}
+let pending="";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data",chunk=>{pending+=chunk;let i;while((i=pending.indexOf("\\n"))>=0){const line=pending.slice(0,i);pending=pending.slice(i+1);if(!line)continue;const request=JSON.parse(line);if(request.type==="activate"){const response=JSON.stringify({type:"response",id:request.id,ok:true});process.stdout.write(response+"\\n"+${JSON.stringify(`${notifications}\n`)});}else if(request.type==="close"){const response=JSON.stringify({type:"response",id:request.id,ok:true});process.stderr.write("closing\\n");process.stdout.write(response+"\\n"+${JSON.stringify(`${closeAcknowledgement}\n`)},()=>setTimeout(()=>process.exit(0),25));}}});`;
 }
 
 function closedStdoutChildScript(): string {

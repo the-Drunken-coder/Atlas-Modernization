@@ -22,6 +22,16 @@ export type HttpTransportOptions = {
 
 const ATLAS_API_ERROR_CODE = "ATLAS_API_ERROR";
 
+export const RESOURCE_INSTANCE_TOKEN_HEADER = "Atlas-Resource-Instance-Token";
+
+export function resourceInstanceTokenHeaders(instanceToken?: string): HeadersInit | undefined {
+  if (instanceToken === undefined) return undefined;
+  if (!instanceToken || instanceToken.trim() !== instanceToken) {
+    throw new TypeError("instanceToken must be non-empty and must not have surrounding whitespace");
+  }
+  return { [RESOURCE_INSTANCE_TOKEN_HEADER]: instanceToken };
+}
+
 export class AtlasAPIError extends Error {
   readonly code = ATLAS_API_ERROR_CODE;
   readonly status: number;

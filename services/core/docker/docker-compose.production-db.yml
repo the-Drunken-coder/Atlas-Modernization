@@ -27,7 +27,8 @@ services:
 
 volumes:
   postgres_data:
-    driver: local
+    external: true
+    name: atlas_core_production_postgres_data
 
 networks:
   atlas_core_network:

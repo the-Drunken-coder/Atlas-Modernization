@@ -15,6 +15,7 @@ Usage:
 
 import argparse
 import ipaddress
+import json
 import logging
 import os
 import re
@@ -48,6 +49,9 @@ PRODUCTION_COMPOSE_FILE = "docker-compose.production.yml"
 PRODUCTION_DB_COMPOSE_FILE = "docker-compose.production-db.yml"
 DEVELOPMENT_COMPOSE_PROJECT = "atlas_core_development"
 PRODUCTION_COMPOSE_PROJECT = "atlas_core_production"
+PRODUCTION_POSTGRES_VOLUME = f"{PRODUCTION_COMPOSE_PROJECT}_postgres_data"
+PRODUCTION_MINIO_VOLUME = f"{PRODUCTION_COMPOSE_PROJECT}_minio_data"
+PRODUCTION_STORAGE_SET_LABEL = "io.atlas.core.storage-set"
 LOCAL_AUTH_ENV_FILE = ".env.local"
 DEFAULT_MINIO_BUCKET = "atlas-media"
 
@@ -564,6 +568,66 @@ def cleanup_containers(atlas_core_dir, remove_volumes=False, production=False, t
         raise RuntimeError(f"{msg}" + (f": {detail}" if detail else ""))
 
 
+def ensure_production_volumes(db_only=False):
+    """Require the matched durable volumes to exist before production Compose can run."""
+    required = [PRODUCTION_POSTGRES_VOLUME]
+    if not db_only:
+        required.append(PRODUCTION_MINIO_VOLUME)
+
+    missing = []
+    invalid_identity = []
+    identities = {}
+    for volume in required:
+        try:
+            result = subprocess.run(
+                ["docker", "volume", "inspect", "--format", "{{json .Labels}}", volume],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as error:
+            print(f"[ERROR] Could not verify production volume {volume}: {error}")
+            return False
+        if result.returncode != 0:
+            missing.append(volume)
+            continue
+        try:
+            labels = json.loads(result.stdout or "")
+        except (TypeError, json.JSONDecodeError):
+            labels = None
+        identity = labels.get(PRODUCTION_STORAGE_SET_LABEL) if isinstance(labels, dict) else None
+        if not isinstance(identity, str) or not identity.strip():
+            invalid_identity.append(volume)
+            continue
+        identities[volume] = identity
+
+    if missing:
+        print(
+            "[ERROR] Production mode requires existing durable volume(s): "
+            + ", ".join(missing)
+            + ". Restore or explicitly initialize the required volume set before startup."
+        )
+        return False
+    if invalid_identity:
+        print(
+            "[ERROR] Production mode requires a non-empty "
+            f"{PRODUCTION_STORAGE_SET_LABEL} label on volume(s): "
+            + ", ".join(invalid_identity)
+            + ". Restore or explicitly initialize the required volume set before startup."
+        )
+        return False
+    if len(set(identities.values())) != 1:
+        details = ", ".join(f"{volume}={identities[volume]}" for volume in required)
+        print(
+            "[ERROR] Production volumes must share the same "
+            f"{PRODUCTION_STORAGE_SET_LABEL} identity ({details}). "
+            "Restore or explicitly initialize the required matched volume set before startup."
+        )
+        return False
+    return True
+
+
 def ensure_tunnel_token():
     """Ensure tunnel startup has a Cloudflare tunnel token."""
     token = os.getenv("CLOUDFLARE_TUNNEL_TOKEN")
@@ -713,6 +777,9 @@ def start_containers(db_only=False, tunnel=False, reset_volumes=False, productio
         if tunnel:
             if not ensure_tunnel_token():
                 sys.exit(1)
+
+        if production and not ensure_production_volumes(db_only=db_only):
+            sys.exit(1)
 
         cleanup_containers(
             atlas_core_dir,

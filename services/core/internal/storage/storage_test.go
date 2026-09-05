@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -202,5 +203,15 @@ func TestBucketAccessor(t *testing.T) {
 	client := &Client{bucket: "atlas-media"}
 	if got := client.Bucket(); got != "atlas-media" {
 		t.Fatalf("Bucket() = %q, want atlas-media", got)
+	}
+}
+
+func TestExplicitObjectOperationsRequireBucket(t *testing.T) {
+	client := &Client{}
+	if _, _, err := client.StreamObjectPath(context.Background(), "object-1", "  ", "path"); err == nil || err.Error() != "storage bucket not configured" {
+		t.Fatalf("StreamObjectPath empty bucket error = %v", err)
+	}
+	if err := client.DeleteObjectPath(context.Background(), "  ", "path"); err == nil || err.Error() != "storage bucket not configured" {
+		t.Fatalf("DeleteObjectPath empty bucket error = %v", err)
 	}
 }

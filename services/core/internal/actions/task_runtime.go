@@ -325,6 +325,7 @@ func recordRuntimeManifestEntityChange(ctx context.Context, tx pgx.Tx, before *m
 		ResourceType: ChangeResourceEntity,
 		ID:           updated.EntityID,
 		Version:      updated.Version,
+		ChangeReason: protocol.EntityChangeReasonRuntimeManifestChanged,
 		AfterEntity:  cloneEntityModel(updated),
 	}); err != nil {
 		return err
@@ -357,10 +358,24 @@ func (a *TaskActions) RuntimeManifest(ctx context.Context, assetID string) (prot
 // the queued Task is acknowledged to release the next Task of that kind.
 func (a *TaskActions) Deliverable(ctx context.Context, assetID, runtimeID string) ([]*models.Task, error) {
 	runtimeID = strings.TrimSpace(runtimeID)
+	tx, err := a.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("begin deliverable Task query transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var lockedAssetID string
+	if err := tx.QueryRow(ctx, `SELECT entity_id FROM entities WHERE entity_id = $1 FOR UPDATE`, assetID).Scan(&lockedAssetID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, NewValidationError("Asset has no registered runtime")
+		}
+		return nil, fmt.Errorf("lock Asset Entity: %w", err)
+	}
+
 	var currentRuntimeID string
 	var ready bool
 	var manifestJSON []byte
-	if err := a.pool.QueryRow(ctx, `SELECT runtime_id, ready, manifest FROM asset_runtimes WHERE asset_id = $1`, assetID).Scan(&currentRuntimeID, &ready, &manifestJSON); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT runtime_id, ready, manifest FROM asset_runtimes WHERE asset_id = $1 FOR UPDATE`, assetID).Scan(&currentRuntimeID, &ready, &manifestJSON); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, NewValidationError("Asset has no registered runtime")
 		}
@@ -387,7 +402,7 @@ func (a *TaskActions) Deliverable(ctx context.Context, assetID, runtimeID string
 			immediateCommands = append(immediateCommands, entry.Command)
 		}
 	}
-	rows, err := a.pool.Query(ctx, `
+	rows, err := tx.Query(ctx, `
 		(`+taskSelectSQL+` WHERE asset_id = $1 AND runtime_id = $2 AND status = 'pending'
 			AND command = ANY($3)
 			AND created_at > clock_timestamp() - ($4 * interval '1 second')
@@ -408,6 +423,9 @@ func (a *TaskActions) Deliverable(ctx context.Context, assetID, runtimeID string
 		if _, err := a.storedCommandDefinition(task.TaskID, task.Command); err != nil {
 			return nil, err
 		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit deliverable Task query: %w", err)
 	}
 	return deliverable, nil
 }

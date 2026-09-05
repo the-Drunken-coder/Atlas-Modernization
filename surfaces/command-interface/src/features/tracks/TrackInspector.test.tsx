@@ -54,13 +54,17 @@ describe("TrackInspector", () => {
     expect(screen.getByText("Hostile")).toBeInTheDocument();
   });
 
-  it("falls back to the entity id and em dashes when telemetry is absent", () => {
+  it("falls back to the entity id and N/A values when telemetry is absent", () => {
     render(<TrackInspector entity={track()} />);
 
     // No alias: the heading shows the raw id, which also appears as the id line.
     expect(screen.getAllByText("track-1")).toHaveLength(2);
-    expect(fieldValue("Latitude")).toHaveTextContent("—");
-    expect(fieldValue("Longitude")).toHaveTextContent("—");
+    expect(fieldValue("Latitude")).toHaveTextContent("N/A");
+    expect(fieldValue("Longitude")).toHaveTextContent("N/A");
+    expect(fieldValue("Altitude")).toHaveTextContent("N/A");
+    expect(fieldValue("Heading")).toHaveTextContent("N/A");
+    expect(fieldValue("Speed")).toHaveTextContent("N/A");
+    expect(fieldValue("Last update")).toHaveTextContent("N/A");
     expect(screen.getByText("Unclassified")).toBeInTheDocument();
   });
 });

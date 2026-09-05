@@ -18,9 +18,13 @@ import {
   FieldLinkNode,
   parseNodeId,
   type FieldLinkEvent,
+  type NodeId,
   type ReceivedMessage,
 } from "../src/node.js";
 import { memoryTransportPair } from "./helpers.js";
+
+const nodeA = parseNodeId("aaaaaaaaaaaaaaaa");
+const nodeB = parseNodeId("bbbbbbbbbbbbbbbb");
 
 describe("CLI message catalog", () => {
   it("describes payload defaults for every message", async () => {
@@ -204,6 +208,172 @@ describe("CLI message catalog", () => {
 });
 
 describe("CLI message exercise", () => {
+  it("includes the Task application response in the final summary", async () => {
+    type FakeAdapter = {
+      readonly nodeId: NodeId;
+      readonly messageListeners: Set<
+        (message: ReceivedMessage) => void | Promise<void>
+      >;
+    };
+    const artifacts = {
+      paths: {
+        directory: "test-artifacts",
+        manifest: "test-artifacts/manifest.json",
+        events: "test-artifacts/events.jsonl",
+        summary: "test-artifacts/summary.json",
+      },
+      record: () => Promise.resolve(),
+      flush: () => Promise.resolve(),
+      finish: (summary: unknown) => {
+        finishedSummary = summary;
+        return Promise.resolve();
+      },
+    } as unknown as TestArtifacts;
+    let finishedSummary: unknown;
+    const create = vi
+      .spyOn(TestArtifacts, "create")
+      .mockResolvedValue(artifacts);
+    const start = vi.spyOn(AdapterProcessNode, "start");
+    let adapterA: FakeAdapter | undefined;
+    let adapterB: FakeAdapter | undefined;
+
+    const makeAdapter = (nodeId: NodeId, processId: number) => {
+      const messageListeners = new Set<
+        (message: ReceivedMessage) => void | Promise<void>
+      >();
+      const eventListeners = new Set<
+        (event: FieldLinkEvent) => void | Promise<void>
+      >();
+      const adapter = {
+        processId,
+        identity: {
+          nodeId,
+          fingerprint: nodeId,
+          name: "radio",
+          model: "fake",
+          firmwareVersion: "1",
+          firmwareBuildDate: "2026-01-01",
+          firmwareProtocolCode: 12,
+          clientProtocolVersion: 1,
+          radio: {
+            frequency: 915_000_000,
+            bandwidth: 250_000,
+            spreadingFactor: 10,
+            codingRate: 5,
+            transmitPower: 10,
+            maximumTransmitPower: 22,
+          },
+        },
+        channel: {
+          index: 1,
+          name: "fieldlink",
+          configured: true,
+          keyFingerprint: "0011223344556677",
+        },
+        nodeId,
+        supportedMessages: [],
+        retryStrategies: [],
+        delivery: {
+          meshCoreDataType: 0xffff,
+          meshCoreMode: "flood" as const,
+          maximumChannelDatagramBytes: 163 as const,
+        },
+        activate: () => Promise.resolve(),
+        onMessage: (
+          listener: (message: ReceivedMessage) => void | Promise<void>,
+        ) => {
+          messageListeners.add(listener);
+          return () => messageListeners.delete(listener);
+        },
+        onEvent: (
+          listener: (event: FieldLinkEvent) => void | Promise<void>,
+        ) => {
+          eventListeners.add(listener);
+          return () => eventListeners.delete(listener);
+        },
+        send: async (message: ReceivedMessage["message"]) => {
+          const peer = nodeId === nodeA ? adapterB : adapterA;
+          if (peer === undefined) {
+            throw new Error("adapter peer is not ready");
+          }
+          const received: ReceivedMessage = {
+            message,
+            source: nodeId,
+            destination: peer.nodeId,
+            logicalId: "0000000000000001",
+            delivery: "complete",
+            receivedAt: new Date(),
+          };
+          await Promise.all(
+            [...peer.messageListeners].map((listener) => listener(received)),
+          );
+          return {
+            logicalId: received.logicalId,
+            messageType: message.type === "task" ? 4 : 0,
+            messageName: message.type,
+            destination: peer.nodeId,
+            priority: "high" as const,
+            delivery: "complete" as const,
+            encodedBytes: 1,
+            fragments: 1,
+            transferOpenRetries: 0,
+            completionRetries: 0,
+            retransmissions: 0,
+            receiptRequests: 0,
+            receiptRequestRetries: 0,
+            receipts: 0,
+            durationMs: 1,
+          };
+        },
+        close: () => Promise.resolve(),
+        messageListeners,
+      };
+      return adapter;
+    };
+
+    start.mockImplementation(async (options) => {
+      if (options.path === "/dev/a") {
+        adapterA = makeAdapter(nodeA, 1);
+        return adapterA as unknown as AdapterProcessNode;
+      }
+      adapterB = makeAdapter(nodeB, 2);
+      return adapterB as unknown as AdapterProcessNode;
+    });
+    try {
+      await expect(
+        main([
+          "test",
+          "--a",
+          "/dev/a",
+          "--b",
+          "/dev/b",
+          "--channel",
+          "1",
+          "--message",
+          "task",
+          "--payload-size",
+          "32",
+          "--timeout-ms",
+          "1000",
+          "--allow-inbox-drain",
+        ]),
+      ).resolves.toBe(0);
+      expect(finishedSummary).toMatchObject({
+        status: "passed",
+        verification: { correlation: "matched" },
+        taskResponse: {
+          type: "task",
+          kind: "response",
+          status: 200,
+          body: "x".repeat(32),
+        },
+      });
+    } finally {
+      start.mockRestore();
+      create.mockRestore();
+    }
+  });
+
   it("waits for parent inbox evidence before acknowledging the adapter", async () => {
     let releaseInboxEvidence = (): void => undefined;
     const inboxEvidence = new Promise<void>((resolve) => {

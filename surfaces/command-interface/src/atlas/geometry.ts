@@ -7,8 +7,7 @@ import {
   type GeoJSONPoint,
   type GeoJSONPolygon,
   type GeoJSONPosition,
-  type GeometryComponent,
-  isGeometryComponent
+  type GeometryComponent
 } from "@the-drunken-coder/atlas-sdk";
 
 export type Position = GeoJSONPosition;
@@ -37,14 +36,6 @@ export type GeometryValidity = { valid: true } | { valid: false; reason: string 
 const COORDINATE_EPSILON = 1e-9;
 const EARTH_RADIUS_M = 6_371_008.8;
 const CIRCLE_DISPLAY_SEGMENTS = 64;
-
-/**
- * Return a supported entity geometry in the shape the UI edits, or undefined
- * when the geometry is absent or unsupported.
- */
-export function toUiGeometry(value: unknown): UiGeometry | undefined {
-  return isGeometryComponent(value) ? value : undefined;
-}
 
 /** A representative [lng, lat] point used to place markers and recenter the map. */
 export function representativePoint(geometry: UiGeometry): Position | undefined {

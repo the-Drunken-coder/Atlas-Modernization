@@ -1,4 +1,4 @@
-import { waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { act } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { markerSources, renderMapView, style } from "./MapView.test-harness.js";
@@ -9,6 +9,18 @@ describe("MapView style switching", () => {
 
     await waitFor(() => expect(canvas.querySelectorAll(".map-symbol-marker")).toHaveLength(1));
     expect(map.sources.has("geofeatures")).toBe(true);
+  });
+
+  it("surfaces an initial style error with a retry action", async () => {
+    const rendered = renderMapView({ style: style("broken", { initialStyleLoading: true }) });
+    const initialMap = rendered.map;
+
+    act(() => initialMap.fire("error", { error: new Error("initial style failed") }));
+
+    expect(await screen.findByText("Map unavailable")).toBeInTheDocument();
+    expect(screen.getByText("initial style failed")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(initialMap.remove).toHaveBeenCalledOnce());
   });
 
   it("keeps existing symbol markers when a style switch fails", async () => {

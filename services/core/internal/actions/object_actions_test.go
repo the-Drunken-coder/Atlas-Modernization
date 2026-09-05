@@ -14,6 +14,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	protocol "github.com/the-drunken-coder/atlas/packages/protocol/generated/go/atlasprotocol"
+	"github.com/the-drunken-coder/atlas/services/core/internal/models"
 	"github.com/the-drunken-coder/atlas/services/core/internal/storage"
 	"github.com/the-drunken-coder/atlas/services/core/internal/testenv"
 )
@@ -41,6 +42,46 @@ func TestNormalizeOptionalObjectString(t *testing.T) {
 			}
 			if got == nil || *got != *tt.want {
 				t.Fatalf("normalizeOptionalObjectString() = %v, want %q", got, *tt.want)
+			}
+		})
+	}
+}
+
+func TestPersistedObjectBucketRequiresMetadata(t *testing.T) {
+	tests := []struct {
+		name    string
+		object  *models.MediaObject
+		want    string
+		wantErr bool
+	}{
+		{
+			name:   "persisted bucket",
+			object: &models.MediaObject{JSON: []byte(`{"bucket":"atlas-old"}`)},
+			want:   "atlas-old",
+		},
+		{
+			name:    "missing bucket",
+			object:  &models.MediaObject{JSON: []byte(`{"size_bytes":3}`)},
+			wantErr: true,
+		},
+		{
+			name:    "blank bucket",
+			object:  &models.MediaObject{JSON: []byte(`{"bucket":"  "}`)},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := persistedObjectBucket(tt.object)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("persistedObjectBucket() = %q, want error", got)
+				}
+				return
+			}
+			if err != nil || got != tt.want {
+				t.Fatalf("persistedObjectBucket() = (%q, %v), want (%q, nil)", got, err, tt.want)
 			}
 		})
 	}
@@ -352,6 +393,9 @@ func TestReconcileStorageDeletionsDeletesQueuedPath(t *testing.T) {
 	if len(storageClient.deletedPaths) != 1 || storageClient.deletedPaths[0] != path {
 		t.Fatalf("deleted paths = %#v, want %q", storageClient.deletedPaths, path)
 	}
+	if len(storageClient.deletedObjects) != 1 || storageClient.deletedObjects[0] != (recordedStorageDelete{bucket: "atlas-media", path: path}) {
+		t.Fatalf("deleted objects = %#v, want atlas-media/%q", storageClient.deletedObjects, path)
+	}
 
 	var pathTombstoned bool
 	if err := pool.QueryRow(ctx, `
@@ -365,6 +409,181 @@ func TestReconcileStorageDeletionsDeletesQueuedPath(t *testing.T) {
 	}
 	if !pathTombstoned {
 		t.Fatal("successful reconciliation did not retain a path tombstone")
+	}
+}
+
+func TestObjectDeleteUsesPersistedBucket(t *testing.T) {
+	pool := testenv.OpenDatabasePool(t, "ATLAS_ACTIONS_DATABASE_URL", "set ATLAS_ACTIONS_DATABASE_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed object bucket test")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if ok, err := actionsTestCoreSchemaPresent(ctx, pool); err != nil {
+		t.Fatalf("check core schema: %v", err)
+	} else if !ok {
+		t.Skip("core schema with storage deletion outbox is not present in test database")
+	}
+
+	objectID := fmt.Sprintf("delete-old-bucket-%d", time.Now().UTC().UnixNano())
+	path := fmt.Sprintf("objects/%s/blob", objectID)
+	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
+	createStoredObjectFixture(ctx, t, pool, objectID, path)
+	if _, err := pool.Exec(ctx, `UPDATE objects SET json = '{"bucket":"atlas-old"}'::jsonb WHERE object_id = $1`, objectID); err != nil {
+		t.Fatalf("set persisted object bucket: %v", err)
+	}
+
+	storageClient := &recordingObjectStorage{bucket: "atlas-current"}
+	if err := NewObjectActions(pool, storageClient).Delete(ctx, objectID); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if len(storageClient.deletedObjects) != 1 || storageClient.deletedObjects[0] != (recordedStorageDelete{bucket: "atlas-old", path: path}) {
+		t.Fatalf("deleted objects = %#v, want atlas-old/%q", storageClient.deletedObjects, path)
+	}
+}
+
+func TestObjectDownloadUsesPersistedBucket(t *testing.T) {
+	pool := testenv.OpenDatabasePool(t, "ATLAS_ACTIONS_DATABASE_URL", "set ATLAS_ACTIONS_DATABASE_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed object bucket test")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if ok, err := actionsTestCoreSchemaPresent(ctx, pool); err != nil {
+		t.Fatalf("check core schema: %v", err)
+	} else if !ok {
+		t.Skip("core schema is not present in test database")
+	}
+
+	objectID := fmt.Sprintf("download-old-bucket-%d", time.Now().UTC().UnixNano())
+	path := fmt.Sprintf("objects/%s/blob", objectID)
+	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
+	createStoredObjectFixture(ctx, t, pool, objectID, path)
+	if _, err := pool.Exec(ctx, `UPDATE objects SET json = '{"bucket":"atlas-old"}'::jsonb WHERE object_id = $1`, objectID); err != nil {
+		t.Fatalf("set persisted object bucket: %v", err)
+	}
+
+	storageClient := &recordingObjectStorage{bucket: "atlas-current"}
+	reader, _, _, err := NewObjectActions(pool, storageClient).Download(ctx, objectID)
+	if err != nil {
+		t.Fatalf("Download: %v", err)
+	}
+	if err := reader.Close(); err != nil {
+		t.Fatalf("close downloaded object: %v", err)
+	}
+	if len(storageClient.streamedObjects) != 1 || storageClient.streamedObjects[0] != (recordedStorageDelete{bucket: "atlas-old", path: path}) {
+		t.Fatalf("streamed objects = %#v, want atlas-old/%q", storageClient.streamedObjects, path)
+	}
+}
+
+func TestPathBearingObjectRequiresPersistedBucket(t *testing.T) {
+	pool := testenv.OpenDatabasePool(t, "ATLAS_ACTIONS_DATABASE_URL", "set ATLAS_ACTIONS_DATABASE_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed object bucket test")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if ok, err := actionsTestCoreSchemaPresent(ctx, pool); err != nil {
+		t.Fatalf("check core schema: %v", err)
+	} else if !ok {
+		t.Skip("core schema with storage deletion outbox is not present in test database")
+	}
+
+	objectID := fmt.Sprintf("missing-bucket-%d", time.Now().UTC().UnixNano())
+	path := fmt.Sprintf("objects/%s/blob", objectID)
+	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
+	createStoredObjectFixture(ctx, t, pool, objectID, path)
+	if _, err := pool.Exec(ctx, `UPDATE objects SET json = '{"size_bytes":3}'::jsonb WHERE object_id = $1`, objectID); err != nil {
+		t.Fatalf("remove persisted object bucket: %v", err)
+	}
+
+	storageClient := &recordingObjectStorage{bucket: "atlas-current"}
+	actions := NewObjectActions(pool, storageClient)
+	if _, _, _, err := actions.Download(ctx, objectID); err == nil || !strings.Contains(err.Error(), "missing bucket metadata") {
+		t.Fatalf("Download error = %v, want missing bucket metadata", err)
+	}
+	if err := actions.Delete(ctx, objectID); err == nil || !strings.Contains(err.Error(), "missing bucket metadata") {
+		t.Fatalf("Delete error = %v, want missing bucket metadata", err)
+	}
+	if len(storageClient.streamedObjects) != 0 || len(storageClient.deletedObjects) != 0 {
+		t.Fatalf("storage calls = streamed %#v, deleted %#v; want none", storageClient.streamedObjects, storageClient.deletedObjects)
+	}
+
+	var rowExists bool
+	if err := pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM objects WHERE object_id = $1)`, objectID).Scan(&rowExists); err != nil {
+		t.Fatalf("check object row: %v", err)
+	}
+	if !rowExists {
+		t.Fatal("delete removed object metadata without a persisted storage bucket")
+	}
+}
+
+func TestPathBearingObjectDeleteRequiresStorage(t *testing.T) {
+	pool := testenv.OpenDatabasePool(t, "ATLAS_ACTIONS_DATABASE_URL", "set ATLAS_ACTIONS_DATABASE_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed object bucket test")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if ok, err := actionsTestCoreSchemaPresent(ctx, pool); err != nil {
+		t.Fatalf("check core schema: %v", err)
+	} else if !ok {
+		t.Skip("core schema with storage deletion outbox is not present in test database")
+	}
+
+	objectID := fmt.Sprintf("storage-required-%d", time.Now().UTC().UnixNano())
+	path := fmt.Sprintf("objects/%s/blob", objectID)
+	metadataOnlyID := fmt.Sprintf("metadata-only-%d", time.Now().UTC().UnixNano())
+	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
+	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, metadataOnlyID)
+	createStoredObjectFixture(ctx, t, pool, objectID, path)
+	if _, err := NewObjectActions(pool, nil).Create(ctx, CreateObjectParams{ObjectID: metadataOnlyID}); err != nil {
+		t.Fatalf("create metadata-only object: %v", err)
+	}
+
+	if err := NewObjectActions(pool, nil).Delete(ctx, objectID); err == nil || !strings.Contains(err.Error(), "storage not configured") {
+		t.Fatalf("path-bearing Delete error = %v, want storage not configured", err)
+	}
+	if err := NewObjectActions(pool, nil).Delete(ctx, metadataOnlyID); err != nil {
+		t.Fatalf("metadata-only Delete: %v", err)
+	}
+
+	var pathObjectExists, metadataOnlyExists bool
+	if err := pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM objects WHERE object_id = $1)`, objectID).Scan(&pathObjectExists); err != nil {
+		t.Fatalf("check path-bearing object row: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM objects WHERE object_id = $1)`, metadataOnlyID).Scan(&metadataOnlyExists); err != nil {
+		t.Fatalf("check metadata-only object row: %v", err)
+	}
+	if !pathObjectExists {
+		t.Fatal("path-bearing object metadata was removed without storage configured")
+	}
+	if metadataOnlyExists {
+		t.Fatal("metadata-only object metadata was not removed without storage configured")
+	}
+}
+
+func TestObjectUploadReplacementDeletesPersistedOldBucket(t *testing.T) {
+	pool := testenv.OpenDatabasePool(t, "ATLAS_ACTIONS_DATABASE_URL", "set ATLAS_ACTIONS_DATABASE_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed object bucket test")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if ok, err := actionsTestCoreSchemaPresent(ctx, pool); err != nil {
+		t.Fatalf("check core schema: %v", err)
+	} else if !ok {
+		t.Skip("core schema with storage deletion outbox is not present in test database")
+	}
+
+	objectID := fmt.Sprintf("upload-old-bucket-%d", time.Now().UTC().UnixNano())
+	oldPath := fmt.Sprintf("objects/%s/old", objectID)
+	newPath := fmt.Sprintf("objects/%s/new", objectID)
+	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
+	createStoredObjectFixture(ctx, t, pool, objectID, oldPath)
+	if _, err := pool.Exec(ctx, `UPDATE objects SET json = '{"bucket":"atlas-old"}'::jsonb WHERE object_id = $1`, objectID); err != nil {
+		t.Fatalf("set persisted old bucket: %v", err)
+	}
+
+	storageClient := &replacementObjectStorage{bucket: "atlas-current", path: newPath}
+	if _, err := NewObjectActions(pool, storageClient).Upload(ctx, objectID, strings.NewReader("new"), 3, "text/plain", "data", nil); err != nil {
+		t.Fatalf("Upload replacement: %v", err)
+	}
+	if len(storageClient.deletedObjects) != 1 || storageClient.deletedObjects[0] != (recordedStorageDelete{bucket: "atlas-old", path: oldPath}) {
+		t.Fatalf("deleted objects = %#v, want atlas-old/%q", storageClient.deletedObjects, oldPath)
+	}
+
+	var bucket string
+	if err := pool.QueryRow(ctx, `SELECT json->>'bucket' FROM objects WHERE object_id = $1`, objectID).Scan(&bucket); err != nil {
+		t.Fatalf("read replacement bucket: %v", err)
+	}
+	if bucket != "atlas-current" {
+		t.Fatalf("replacement bucket = %q, want atlas-current", bucket)
 	}
 }
 
@@ -452,15 +671,70 @@ func ptrString(value string) *string {
 
 type recordingObjectStorage struct {
 	noopObjectStorage
-	deletedPaths []string
-	deleteErr    error
+	bucket          string
+	deletedPaths    []string
+	deletedObjects  []recordedStorageDelete
+	streamedObjects []recordedStorageDelete
+	deleteErr       error
+}
+
+type recordedStorageDelete struct {
+	bucket string
+	path   string
 }
 
 var _ objectStorage = (*recordingObjectStorage)(nil)
 
-func (s *recordingObjectStorage) DeleteObjectPath(_ context.Context, path string) error {
+func (s *recordingObjectStorage) Bucket() string {
+	if s.bucket != "" {
+		return s.bucket
+	}
+	return s.noopObjectStorage.Bucket()
+}
+
+func (s *recordingObjectStorage) DeleteObjectPath(_ context.Context, bucket, path string) error {
 	s.deletedPaths = append(s.deletedPaths, path)
+	s.deletedObjects = append(s.deletedObjects, recordedStorageDelete{bucket: bucket, path: path})
 	return s.deleteErr
+}
+
+func (s *recordingObjectStorage) StreamObjectPath(_ context.Context, objectID, bucket, path string) (io.ReadCloser, *storage.ObjectInfo, error) {
+	s.streamedObjects = append(s.streamedObjects, recordedStorageDelete{bucket: bucket, path: path})
+	return io.NopCloser(strings.NewReader("object body")), &storage.ObjectInfo{
+		ObjectID:    objectID,
+		Bucket:      bucket,
+		Path:        path,
+		SizeBytes:   int64(len("object body")),
+		ContentType: "text/plain",
+	}, nil
+}
+
+type replacementObjectStorage struct {
+	noopObjectStorage
+	bucket         string
+	path           string
+	deletedObjects []recordedStorageDelete
+}
+
+var _ objectStorage = (*replacementObjectStorage)(nil)
+
+func (s *replacementObjectStorage) Bucket() string { return s.bucket }
+
+func (s *replacementObjectStorage) NewObjectPath(string) string { return s.path }
+
+func (s *replacementObjectStorage) UploadObjectFromReaderToPath(_ context.Context, objectID, path string, _ io.Reader, size int64, contentType string) (*storage.ObjectInfo, error) {
+	return &storage.ObjectInfo{
+		ObjectID:    objectID,
+		Bucket:      s.bucket,
+		Path:        path,
+		SizeBytes:   size,
+		ContentType: contentType,
+	}, nil
+}
+
+func (s *replacementObjectStorage) DeleteObjectPath(_ context.Context, bucket, path string) error {
+	s.deletedObjects = append(s.deletedObjects, recordedStorageDelete{bucket: bucket, path: path})
+	return nil
 }
 
 type pausingDeleteObjectStorage struct {
@@ -479,7 +753,7 @@ func newPausingDeleteObjectStorage() *pausingDeleteObjectStorage {
 	}
 }
 
-func (s *pausingDeleteObjectStorage) DeleteObjectPath(ctx context.Context, path string) error {
+func (s *pausingDeleteObjectStorage) DeleteObjectPath(ctx context.Context, _ string, path string) error {
 	s.deleteStarted <- path
 	select {
 	case <-s.release:
@@ -526,7 +800,7 @@ func newBlockingObjectStorage() *blockingObjectStorage {
 	}
 }
 
-func (s *blockingObjectStorage) DeleteObjectPath(_ context.Context, path string) error {
+func (s *blockingObjectStorage) DeleteObjectPath(_ context.Context, _ string, path string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.deletedPaths = append(s.deletedPaths, path)

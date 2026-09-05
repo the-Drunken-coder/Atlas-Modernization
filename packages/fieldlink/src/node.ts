@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomBytes, randomInt } from "node:crypto";
 import { performance } from "node:perf_hooks";
 
@@ -184,6 +185,13 @@ interface TransferSlotWaiter {
   settled: boolean;
 }
 
+interface ActiveCallback {
+  promise: Promise<void>;
+  awaitingClose: boolean;
+  readonly releaseFromDrain: () => void;
+  readonly releasedFromDrain: Promise<void>;
+}
+
 type WithoutTransmissionId<Frame> = Frame extends FieldLinkFrame
   ? Omit<Frame, "transmissionId">
   : never;
@@ -209,7 +217,8 @@ export class FieldLinkNode {
   readonly #passiveInbound = new Map<string, PassiveInboundTransfer>();
   readonly #outbound = new Map<string, OutboundSignals>();
   readonly #activeReceives = new Set<Promise<void>>();
-  readonly #activeCallbacks = new Set<Promise<void>>();
+  readonly #activeCallbacks = new Set<ActiveCallback>();
+  readonly #callbackContext = new AsyncLocalStorage<ActiveCallback>();
   readonly #backgroundCleanup = new Set<Promise<void>>();
   readonly #receiveController = new AbortController();
   readonly #retryTimeoutMs: number;
@@ -594,23 +603,54 @@ export class FieldLinkNode {
   }
 
   close(): Promise<void> {
+    const callback = this.#callbackContext.getStore();
+    if (callback !== undefined && !callback.awaitingClose) {
+      callback.awaitingClose = true;
+      callback.releaseFromDrain();
+    }
     this.#closePromise ??= this.#close();
     return this.#closePromise;
   }
 
   async #close(): Promise<void> {
+    const teardownDeadline = performance.now() + this.#retryTimeoutMs;
     this.#closing = true;
     this.#receiveController.abort(new Error("FieldLink node is closing"));
     clearInterval(this.#cleanupTimer);
     const errors: Error[] = [];
-    await settleUntilEmpty(this.#activeReceives);
-    await settleUntilEmpty(this.#activeCallbacks);
-    await settleUntilEmpty(this.#backgroundCleanup);
+    try {
+      await withTimeout(
+        (async () => {
+          await settleUntilEmpty(this.#activeReceives);
+          await settleCallbacksUntilEmpty(this.#activeCallbacks);
+          await settleUntilEmpty(this.#backgroundCleanup);
+        })(),
+        remainingTimeout(teardownDeadline),
+        "FieldLink node shutdown work",
+      );
+    } catch (error: unknown) {
+      errors.push(asError(error));
+    }
     this.#closed = true;
     this.#unsubscribeTransport();
     this.#outboundTransfers.close();
     try {
-      await this.#scheduler.close();
+      await withTimeout(
+        this.#scheduler.close(),
+        remainingTimeout(teardownDeadline),
+        "FieldLink scheduler shutdown",
+      );
+    } catch (error: unknown) {
+      const failure = asError(error);
+      errors.push(failure);
+      this.#scheduler.rejectActive(failure);
+    }
+    try {
+      await withTimeout(
+        settleCallbacksUntilEmpty(this.#activeCallbacks),
+        remainingTimeout(teardownDeadline),
+        "FieldLink node listener shutdown",
+      );
     } catch (error: unknown) {
       errors.push(asError(error));
     }
@@ -622,7 +662,11 @@ export class FieldLinkNode {
     this.#completedInbound.clear();
     this.#passiveInbound.clear();
     try {
-      await this.#transport.close();
+      await withTimeout(
+        this.#transport.close(),
+        remainingTimeout(teardownDeadline),
+        "FieldLink transport shutdown",
+      );
     } catch (error: unknown) {
       errors.push(asError(error));
     }
@@ -1481,7 +1525,7 @@ export class FieldLinkNode {
       ...(snrDb === undefined ? {} : { snrDb }),
     };
     for (const listener of this.#messageListeners) {
-      this.#trackCallback(
+      this.#trackCallback(() =>
         Promise.resolve()
           .then(() => listener(received))
           .catch((error: unknown) => {
@@ -1503,7 +1547,7 @@ export class FieldLinkNode {
       ...(snrDb === undefined ? {} : { snrDb }),
     });
     if (definition.onMessage !== undefined) {
-      this.#trackCallback(
+      this.#trackCallback(() =>
         Promise.resolve()
           .then(() =>
             definition.onMessage?.(message, {
@@ -1514,6 +1558,7 @@ export class FieldLinkNode {
                 await this.send(reply as SupportedMessage, {
                   destination: source,
                   ...(priority === undefined ? {} : { priority }),
+                  signal: this.#receiveController.signal,
                 });
               },
             }),
@@ -1553,7 +1598,7 @@ export class FieldLinkNode {
       ...(snrDb === undefined ? {} : { snrDb }),
     };
     for (const listener of this.#passiveMessageListeners) {
-      this.#trackCallback(
+      this.#trackCallback(() =>
         Promise.resolve()
           .then(() => listener(received))
           .catch((error: unknown) => {
@@ -1625,12 +1670,25 @@ export class FieldLinkNode {
     }
   }
 
-  #trackCallback(callback: Promise<void>): void {
+  #trackCallback(operation: () => void | Promise<void>): void {
+    let releaseFromDrain = (): void => undefined;
+    const releasedFromDrain = new Promise<void>((resolve) => {
+      releaseFromDrain = resolve;
+    });
+    const callback: ActiveCallback = {
+      promise: Promise.resolve(),
+      awaitingClose: false,
+      releaseFromDrain,
+      releasedFromDrain,
+    };
+    callback.promise = this.#callbackContext.run(callback, async () =>
+      operation(),
+    );
     this.#activeCallbacks.add(callback);
     const clear = (): void => {
       this.#activeCallbacks.delete(callback);
     };
-    void callback.then(clear, clear);
+    void callback.promise.then(clear, clear);
   }
 
   #trackBackground(operation: Promise<void>): void {
@@ -1644,9 +1702,11 @@ export class FieldLinkNode {
   #emit(event: FieldLinkEvent): void {
     this.#congestion.record(event);
     for (const listener of this.#eventListeners) {
-      void Promise.resolve()
-        .then(() => listener(event))
-        .catch(() => undefined);
+      this.#trackCallback(() =>
+        Promise.resolve()
+          .then(() => listener(event))
+          .catch(() => undefined),
+      );
     }
   }
 
@@ -1803,6 +1863,7 @@ class FrameScheduler {
   readonly #emit: (event: FieldLinkEvent) => void;
   readonly #inboundPriorities = new Map<string, Priority>();
   #running: Promise<void> | undefined;
+  #active: ScheduledFrame | undefined;
   #closed = false;
 
   constructor(
@@ -1894,6 +1955,13 @@ class FrameScheduler {
     await this.#running;
   }
 
+  rejectActive(error: Error): void {
+    const active = this.#active;
+    if (active !== undefined && this.#settle(active)) {
+      active.reject(error);
+    }
+  }
+
   async #run(): Promise<void> {
     for (;;) {
       const waiting = this.#next();
@@ -1914,6 +1982,7 @@ class FrameScheduler {
       if (item === undefined) {
         continue;
       }
+      this.#active = item;
       try {
         throwIfAborted(item.signal);
         await this.#transport.send(item.bytes);
@@ -1927,6 +1996,10 @@ class FrameScheduler {
         this.#resolve(item);
       } catch (error: unknown) {
         this.#reject(item, error);
+      } finally {
+        if (this.#active === item) {
+          this.#active = undefined;
+        }
       }
       await new Promise<void>((resolve) => setImmediate(resolve));
     }
@@ -2242,6 +2315,52 @@ async function settleUntilEmpty(
   while (operations.size > 0) {
     await Promise.allSettled([...operations]);
   }
+}
+
+async function settleCallbacksUntilEmpty(
+  callbacks: ReadonlySet<ActiveCallback>,
+): Promise<void> {
+  for (;;) {
+    const pending = [...callbacks].filter(
+      (callback) => !callback.awaitingClose,
+    );
+    if (pending.length === 0) {
+      return;
+    }
+    await Promise.allSettled(
+      pending.map((callback) =>
+        Promise.race([callback.promise, callback.releasedFromDrain]),
+      ),
+    );
+  }
+}
+
+function withTimeout<Result>(
+  promise: Promise<Result>,
+  timeoutMs: number,
+  description: string,
+): Promise<Result> {
+  return new Promise<Result>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(
+        new Error(`Timed out waiting for ${description} after ${timeoutMs} ms`),
+      );
+    }, timeoutMs);
+    void promise.then(
+      (result) => {
+        clearTimeout(timer);
+        resolve(result);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
+function remainingTimeout(deadline: number): number {
+  return Math.max(0, Math.ceil(deadline - performance.now()));
 }
 
 function priorityRank(priority: Priority): number {

@@ -40,6 +40,15 @@ export type ReadOptions = {
   signal?: AbortSignal;
 };
 
+export type ResourceCreateOptions = {
+  instanceToken?: string;
+  signal?: AbortSignal;
+};
+
+export type ResourceDeleteOptions = {
+  instanceToken?: string;
+};
+
 export type TaskCreateOptions = {
   idempotencyKey: string;
   signal?: AbortSignal;

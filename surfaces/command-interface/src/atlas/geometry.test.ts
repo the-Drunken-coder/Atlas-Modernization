@@ -8,7 +8,6 @@ import {
   moveVertex,
   removeVertex,
   representativePoint,
-  toUiGeometry,
   type UiGeometry,
   validateGeometry
 } from "./geometry.js";
@@ -44,40 +43,7 @@ const elevatedCircle: UiGeometry = {
   properties: { shape: "circle", radius_m: 500 }
 };
 
-describe("geometry normalisation", () => {
-  it("passes through GeoJSON geometries", () => {
-    expect(toUiGeometry(point)).toEqual(point);
-    expect(toUiGeometry(line)).toEqual(line);
-    expect(toUiGeometry(polygon)).toEqual(polygon);
-    expect(toUiGeometry({ ...point, radius_m: 500 })).toBeUndefined();
-  });
-
-  it("passes through strict circle Features", () => {
-    expect(toUiGeometry(circle)).toEqual(circle);
-    expect(toUiGeometry(elevatedCircle)).toEqual(elevatedCircle);
-    expect(toUiGeometry({ ...circle, properties: { ...circle.properties, units: "meters" } })).toBeUndefined();
-    expect(toUiGeometry({ ...circle, properties: { radius_m: 500 } })).toBeUndefined();
-  });
-
-  it("returns undefined for geometry with non-finite coordinates", () => {
-    expect(toUiGeometry({ type: "Point", coordinates: [Number.NaN, 40.1] })).toBeUndefined();
-    expect(toUiGeometry({ type: "Point", coordinates: [-74.2, 40.1, Number.NaN] })).toBeUndefined();
-    expect(
-      toUiGeometry({ ...circle, geometry: { type: "Point", coordinates: [-74.2, Number.POSITIVE_INFINITY] } })
-    ).toBeUndefined();
-  });
-
-  it("returns undefined for coordinates outside Protocol ranges", () => {
-    expect(toUiGeometry({ type: "Point", coordinates: [180.0001, 40.1] })).toBeUndefined();
-    expect(toUiGeometry({ type: "Point", coordinates: [-74.2, -90.0001] })).toBeUndefined();
-  });
-
-  it("returns undefined for missing or unsupported geometry", () => {
-    expect(toUiGeometry(undefined)).toBeUndefined();
-    expect(toUiGeometry({})).toBeUndefined();
-    expect(toUiGeometry({ type: "MultiPoint", coordinates: [] })).toBeUndefined();
-  });
-
+describe("geometry display", () => {
   it("derives a representative point", () => {
     expect(representativePoint(point)).toEqual([-74.2, 40.1]);
     expect(representativePoint(line)).toEqual([-74.2, 40.1]);
