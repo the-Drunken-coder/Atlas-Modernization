@@ -61,7 +61,7 @@ func currentObjectStateForUpload(ctx context.Context, tx pgx.Tx, objectID string
 		state.resource = cloneObjectModel(object)
 		state.rowExists = true
 
-		decoded, err := decodeObjectJSONForPatch(object.JSON)
+		decoded, err := decodeJSONBlobForPatch(object.JSON)
 		if err != nil {
 			return nil, fmt.Errorf("existing object json is corrupt or invalid: %w", err)
 		}

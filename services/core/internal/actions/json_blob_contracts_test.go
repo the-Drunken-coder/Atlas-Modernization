@@ -119,7 +119,7 @@ func TestObjectJSONPatchReplacesSelectedExtraFields(t *testing.T) {
 	}
 }
 
-func TestMergeEntityComponentsUsesSharedStoredTypeGuard(t *testing.T) {
+func TestMergeEntityComponentsRejectsInvalidStoredType(t *testing.T) {
 	blob := map[string]interface{}{
 		string(jsonBlobFieldComponents): "corrupt",
 	}
@@ -186,10 +186,9 @@ func TestMergeEntityComponentsDeepMergesNestedMapsAndReplacesOtherValues(t *test
 	}
 }
 
-func TestDecodeObjectJSONForPatchStillPreservesNumbers(t *testing.T) {
+func TestDecodeJSONBlobForPatchPreservesNumbers(t *testing.T) {
 	blob, err := decodeJSONBlobForPatch(
 		json.RawMessage(`{"size_bytes":9007199254740993,"operator_note":"patched"}`),
-		jsonBlobDecodeUseNumber,
 	)
 	if err != nil {
 		t.Fatalf("decodeJSONBlobForPatch: %v", err)
@@ -251,7 +250,7 @@ func TestPatchEntityJSONPreservesNestedUnsafeRangeNumbersForPatchAndCheckin(t *t
 
 func assertEntityUnsafeRangeNumbers(t *testing.T, raw []byte) {
 	t.Helper()
-	blob, err := decodeJSONBlobForPatch(raw, jsonBlobDecodeUseNumber)
+	blob, err := decodeJSONBlobForPatch(raw)
 	if err != nil {
 		t.Fatalf("decode patched entity JSON: %v", err)
 	}

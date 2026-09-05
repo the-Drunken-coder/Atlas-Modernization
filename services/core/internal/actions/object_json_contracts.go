@@ -10,7 +10,6 @@ import (
 func objectJSONPatch(raw json.RawMessage, params UpdateObjectParams) jsonBlobPatch {
 	return jsonBlobPatch{
 		rawMessage:      raw,
-		decodeMode:      jsonBlobDecodeUseNumber,
 		decodeError:     "existing object json is corrupt or invalid",
 		extra:           params.Extra,
 		removeExtraKeys: params.RemoveExtraKeys,
