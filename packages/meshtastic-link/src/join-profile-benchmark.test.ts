@@ -25,6 +25,7 @@ import {
   type RadioProfile,
   RadioProfileManager
 } from "./profile.js";
+import type { LinkRadio, RadioPacket, RadioSendOptions } from "./radio.js";
 import { SimulatedPacketNetwork } from "./simulation.js";
 
 describe("joining and Radio profile", () => {
@@ -317,6 +318,51 @@ describe("joining and Radio profile", () => {
     expect(errors).toEqual([]);
   });
 
+  it("stops Asset discovery on radio disconnect and drains an in-flight beacon", async () => {
+    const clock = new VirtualClock();
+    const radio = new DisconnectingJoinRadio();
+    let releaseSend!: () => void;
+    radio.sendGate = new Promise<void>((resolve) => {
+      releaseSend = resolve;
+    });
+    const statuses: string[] = [];
+    const disconnects: string[] = [];
+    const service = new AssetJoinService({
+      radio,
+      clock,
+      assetID: "asset-alpha",
+      radioNodeID: 101,
+      serviceSession: "asset-session",
+      authentication: new PreSharedKeyAuthenticationPolicy("j".repeat(32)),
+      installMembership: async () => undefined,
+      onStatus: (status) => statuses.push(status.state),
+      onDisconnect: (error) => disconnects.push(error.message),
+      random: () => 0.5
+    });
+    service.start();
+    await Promise.resolve();
+
+    radio.disconnect(new Error("serial connection lost"));
+
+    expect(service.status()).toEqual({ state: "stopped" });
+    expect(statuses).toEqual(["discovering", "stopped"]);
+    expect(disconnects).toEqual(["serial connection lost"]);
+    let closeResolved = false;
+    const closing = service.close().then(() => {
+      closeResolved = true;
+    });
+    await Promise.resolve();
+    expect(closeResolved).toBe(false);
+
+    releaseSend();
+    await closing;
+    await clock.advanceBy(30_000);
+    expect(radio.sendCount).toBe(1);
+
+    radio.disconnect(new Error("second disconnect is ignored"));
+    expect(disconnects).toEqual(["serial connection lost"]);
+  });
+
   it("expires abandoned join challenges before they exhaust admission capacity", async () => {
     const directory = await mkdtemp(join(tmpdir(), "atlas-link-join-expiry-"));
     const store = new GatewayMembershipStore(join(directory, "membership.json"));
@@ -510,6 +556,8 @@ class FakeConfigurationAdapter implements RadioConfigurationAdapter {
   constructor(profile: RadioProfile) {
     this.configuration = {
       ...structuredClone(profile),
+      use_preset: true,
+      override_frequency: 0,
       hardware_model: "fake",
       firmware_version: profile.firmware.tested
     };
@@ -529,6 +577,8 @@ class FakeConfigurationAdapter implements RadioConfigurationAdapter {
     if (this.applyError) throw this.applyError;
     this.configuration = {
       ...structuredClone(profile),
+      use_preset: true,
+      override_frequency: 0,
       hardware_model: this.configuration.hardware_model,
       firmware_version: this.configuration.firmware_version
     };
@@ -541,6 +591,35 @@ class FakeConfigurationAdapter implements RadioConfigurationAdapter {
   async installPrivateMembership(membership: PrivateChannelMembership): Promise<void> {
     this.privateMembership.set(membership.channel_index, structuredClone(membership));
   }
+}
+
+class DisconnectingJoinRadio implements LinkRadio {
+  readonly max_payload_bytes = 233;
+  private disconnectHandler: ((error: Error) => void) | undefined;
+  sendCount = 0;
+  sendGate: Promise<void> | undefined;
+
+  async send(_payload: Uint8Array, _options: RadioSendOptions): Promise<void> {
+    this.sendCount++;
+    await this.sendGate;
+  }
+
+  onPacket(_handler: (packet: RadioPacket) => void): () => void {
+    return () => undefined;
+  }
+
+  onDisconnect(handler: (error: Error) => void): () => void {
+    this.disconnectHandler = handler;
+    return () => {
+      if (this.disconnectHandler === handler) this.disconnectHandler = undefined;
+    };
+  }
+
+  disconnect(error: Error): void {
+    this.disconnectHandler?.(error);
+  }
+
+  async close(): Promise<void> {}
 }
 
 async function advanceUntilJoined(

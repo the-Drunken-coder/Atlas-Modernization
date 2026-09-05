@@ -91,6 +91,8 @@ The service binds `127.0.0.1:7331` by default. Its normal interface is:
 
 Task delivery events include `addressed_to_local`, `requires_settlement`, and an opaque source-scoped `settlement_id`. Only the addressed Asset application settles executable Task work using that settlement ID. A `tasks_for_asset` state feed updates the Shared Picture and never invokes this delivery path.
 
+Omit `after` from `GET /v1/events` to start with future events. Supply a previous event ID to replay retained events before following live changes. An explicit expired cursor returns HTTP 400; clients can query operation outcomes and reconnect without a cursor. Picture snapshot recovery uses the separate picture stream.
+
 `POST /v1/messages` accepts `{ message, destination?, operation_id? }`. A client retrying a confirmed write supplies the same `operation_id`; data requests and requested Object-content responses use their `request_id` as that stable identity. Task reports carry the Asset application's original `observation_time`, so radio delay does not make an old lifecycle report appear newer.
 
 Gateway applications consume `GatewayFieldOperationInbox`, `GatewayFeedDemand`, and `OrderedTaskDispatcher`. These expose intentional field reports, aggregate feed demand, and ordered confirmed Tasks without moving Core credentials or durable Core reconciliation into this package.
@@ -126,3 +128,5 @@ npm run check --workspace @the-drunken-coder/atlas-meshtastic-link
 ```
 
 The check regenerates the Radio contract from the canonical Protocol schema, verifies that the checked-in output has not drifted, formats and lints the workspace, type-checks it, runs the deterministic suite, and builds the executable package.
+
+The serial adapter pins `@meshtastic/protobufs` 2.7.8 to match the schema bundled in `@meshtastic/core` 2.6.7. The `@meshtastic/protobufs-firmware` alias supplies schema 2.8.0 for the firmware's device-telemetry switch. Typed binary conversion preserves that field across the older SDK's read and write path.

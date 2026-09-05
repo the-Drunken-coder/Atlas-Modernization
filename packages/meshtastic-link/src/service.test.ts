@@ -96,6 +96,34 @@ describe("loopback Link service", () => {
     service.stop();
   });
 
+  it("starts a new event stream after buffer rotation while preserving explicit cursor expiry", async () => {
+    const service = new LinkService({ mode: "asset", nodeID: "asset-alpha", clock: new VirtualClock() });
+    for (let index = 0; index < 1_025; index++) service.setLifecycle("discovering");
+    const server = new LinkHTTPServer(service);
+    const address = await server.listen(0);
+    const base = `http://${address.host}:${address.port}`;
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+    try {
+      const response = await fetch(`${base}/v1/events`);
+      expect(response.status).toBe(200);
+      reader = response.body?.getReader();
+      if (!reader) throw new Error("event stream did not expose a body reader");
+
+      service.setLifecycle("active");
+      const next = await reader.read();
+      expect(next.done).toBe(false);
+      expect(new TextDecoder().decode(next.value)).toContain("id: 1026");
+
+      const expired = await fetch(`${base}/v1/events?after=0`);
+      expect(expired.status).toBe(400);
+      await expect(expired.json()).resolves.toEqual({ error: "service event cursor expired" });
+    } finally {
+      await reader?.cancel();
+      await server.close();
+      service.stop();
+    }
+  });
+
   it("retains an asynchronous radio response under the originating request ID", async () => {
     const clock = new VirtualClock();
     const network = new SimulatedPacketNetwork({ seed: 41, clock });

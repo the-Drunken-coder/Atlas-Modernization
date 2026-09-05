@@ -66,7 +66,7 @@ An observational `tasks_for_asset` feed is different. It carries current Shared 
 
 The Link service accepts a new confirmed operation only after reserving bounded queue and tracking resources for it. If it cannot make that reservation, it rejects the local submission immediately with an overload result. It never claims an operation is queued and then silently loses responsibility for it.
 
-The initial implementation retains up to 4,096 distinct confirmed operation identities for the lifetime of one Link service session. Once that session-lifetime fence is full, it rejects new confirmed identities explicitly. Restarting and rejoining creates a new service session and a new fence; an identity already committed in the current session is never silently reused after its detailed result rotates out.
+The initial implementation retains up to 4,096 distinct outbound confirmed operation identities for the lifetime of one Link service session. A separate inbound fence holds up to 4,096 pending or settled identities. Admission reserves an inbound slot until settlement, and rejection records cannot consume those reserved slots. Once either session-lifetime fence is full, the service rejects new identities in that direction explicitly. Restarting and rejoining creates a new service session and new fences; a committed identity is never silently reused after its detailed result rotates out.
 
 ## Bounded failure
 

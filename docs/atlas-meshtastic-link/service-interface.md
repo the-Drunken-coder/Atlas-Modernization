@@ -12,6 +12,8 @@ The interface provides request-response operations for commands from local clien
 
 The generated radio-facing SDK preserves Atlas Protocol resource types, operation names, inputs, outputs, and validation. It adapts completion to an asynchronous radio link rather than pretending to be a synchronous Core HTTP connection. A write or request returns an operation ID immediately; confirmation, response, rejection, or timeout arrives through the event stream and remains queryable by that ID. Query operations retain Atlas pagination so one request cannot silently produce an unlimited radio response.
 
+For operation and service events, `GET /v1/events` without `after` starts with future events. An explicit `after` replays retained events and rejects expired cursors. After expiry, clients may query their operation IDs and open a fresh stream. Picture changes use the snapshot cursor handoff described below.
+
 ## Logical capabilities
 
 The route names and wire shapes remain open, but the interface must support:
