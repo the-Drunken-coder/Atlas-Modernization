@@ -78,7 +78,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.11",
-    "@types/node": "26.2.0",
+    "@types/node": "26.4.1",
     "@vitest/browser-playwright": "4.1.11",
     "playwright": "1.62.1",
     "typescript": "^7.0.2",
