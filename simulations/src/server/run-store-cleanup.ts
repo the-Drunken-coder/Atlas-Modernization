@@ -51,18 +51,17 @@ export async function cleanupRun(
         throw new Error(`Timed out cleaning up run resources after ${CLEANUP_TOTAL_TIMEOUT_MS}ms`);
       }
       const timeoutMs = Math.min(CLEANUP_DELETE_TIMEOUT_MS, remainingCleanupMs);
-      const resourceType = resource.type as string;
       if (!resource.instanceToken) {
         throw new Error(`Cleanup resource ${resource.type} ${resource.id} has no instance token`);
       }
-      if (resourceType === "object") {
+      if (resource.type === "object") {
         await withCleanupTimeout(
           client.objects.delete(resource.id, { instanceToken: resource.instanceToken }),
           cleanupController,
           resource,
           timeoutMs
         );
-      } else if (resourceType === "entity") {
+      } else if (resource.type === "entity") {
         await withCleanupTimeout(
           client.entities.delete(resource.id, { instanceToken: resource.instanceToken }),
           cleanupController,
@@ -70,7 +69,7 @@ export async function cleanupRun(
           timeoutMs
         );
       } else {
-        throw new Error(`Unsupported cleanup resource type: ${resourceType}`);
+        throw new Error(`Unsupported cleanup resource type: ${resource.type}`);
       }
       emit(run, { type: "cleanup", resource: publicResource, message: `Deleted ${resource.type} ${resource.id}` });
     } catch (error) {
