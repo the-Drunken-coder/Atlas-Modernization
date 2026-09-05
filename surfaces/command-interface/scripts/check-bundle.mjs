@@ -19,20 +19,20 @@ const budgets = {
   // initial graph. Keep enough gzip margin for Node's platform zlib variance.
   initialJavaScript: { raw: 418_000, gzip: 128_000 },
   initialCss: { raw: 511_000, gzip: 55_000 },
-  // Includes the Geo Feature creation editor and draft lifecycle.
-  shellJavaScript: { raw: 147_000, gzip: 47_500 },
-  // Includes live drawing previews and the first-vertex close control.
-  mapViewJavaScript: { raw: 72_500, gzip: 21_750 },
+  // Includes the Geo Feature creation editor, command fixes, and draft lifecycle.
+  shellJavaScript: { raw: 150_000, gzip: 48_500 },
+  // Includes live drawing previews, keyboard vertex controls, focus restoration,
+  // heartbeat-qualified symbols, and the first-vertex close control.
+  mapViewJavaScript: { raw: 75_500, gzip: 23_000 },
   mapLibreJavaScript: { raw: 1_100_000, gzip: 300_000 },
   mapLibreWorkerJavaScript: { raw: 500_000, gzip: 140_000 },
   milsymbolJavaScript: { raw: 900_000, gzip: 240_000 },
   mapLibreCss: { raw: 85_000, gzip: 11_000 },
   mapRoute: { raw: 2_100_000, gzip: 550_000 },
-  // Geo Feature creation adds the sidebar editor and map drawing interaction.
-  // The aggregate is 3,624 kB JS and 600.9 kB CSS. Linux CI measures
-  // 1,000.29 kB gzipped JS versus 999.12 kB on macOS; retain platform variance margin.
-  allJavaScript: { raw: 3_625_000, gzip: 1_001_000 },
-  allCss: { raw: 601_000, gzip: 67_000 }
+  // Geo Feature creation and the command and geometry fixes share the map shell.
+  // Retain enough aggregate margin for platform zlib variance.
+  allJavaScript: { raw: 3_629_000, gzip: 1_003_000 },
+  allCss: { raw: 602_000, gzip: 67_000 }
 };
 
 if (!args.has("--skip-build")) {

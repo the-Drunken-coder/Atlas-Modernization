@@ -49,19 +49,25 @@ export function useGeometryEdit({
   }, []);
 
   const saveEdit = useCallback(async () => {
-    if (!edit || edit.entityId !== selectedEntity?.entity_id) return;
+    if (!edit || saving || edit.entityId !== selectedEntity?.entity_id) return;
+    const submittedEdit = edit;
     const saveId = ++saveIdRef.current;
     setSaving(true);
     setSaveError(undefined);
     try {
-      await updateGeometry(edit.entityId, edit.draft, edit.version);
-      if (saveId === saveIdRef.current) setEdit(null);
+      const updatedEntity = await updateGeometry(submittedEdit.entityId, submittedEdit.draft, submittedEdit.version);
+      if (saveId === saveIdRef.current) {
+        setEdit((current) => {
+          if (!current) return null;
+          return current === submittedEdit ? null : { ...current, version: updatedEntity.metadata.version };
+        });
+      }
     } catch (cause) {
       if (saveId === saveIdRef.current) setSaveError(sanitizeConnectionError(cause));
     } finally {
       if (saveId === saveIdRef.current) setSaving(false);
     }
-  }, [edit, selectedEntity, updateGeometry]);
+  }, [edit, saving, selectedEntity, updateGeometry]);
 
   return { edit, saving, saveError, startEdit, changeDraft, saveEdit, cancelEdit };
 }

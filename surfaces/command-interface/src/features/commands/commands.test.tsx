@@ -20,6 +20,22 @@ const availability: CommandAvailability = {
   },
   input: { targeting: "none", buildInput: () => ({ value: "fixture" }) }
 };
+const immediateAvailability: CommandAvailability = {
+  command: {
+    command: "fixture.immediate",
+    name: "Fixture immediate",
+    description: "Exercise immediate tasking.",
+    input_schema: "atlas.fixture.FixtureInput"
+  },
+  manifest: {
+    command: "fixture.immediate",
+    description: "Runs the immediate fixture handler.",
+    scheduling: "immediate",
+    supports_cancel: false,
+    supports_progress: false
+  },
+  input: { targeting: "none", buildInput: () => ({ value: "immediate" }) }
+};
 
 describe("CommandList", () => {
   it("renders the Asset-specific description and selects a Command", async () => {
@@ -28,9 +44,22 @@ describe("CommandList", () => {
     render(<CommandList availabilities={[availability]} onPick={onPick} />);
 
     const button = screen.getByRole("button", { name: /Fixture queued/ });
+    expect(button).toHaveTextContent("Protocol");
+    expect(button).toHaveTextContent("Exercise queued tasking.");
     expect(button).toHaveTextContent("Runs the fixture handler.");
+    expect(button).toHaveTextContent("Queued · Cancel yes · Progress yes");
     await user.click(button);
     expect(onPick).toHaveBeenCalledWith(availability);
+  });
+
+  it("shows immediate Commands with negative cancellation and progress capabilities", () => {
+    render(<CommandList availabilities={[immediateAvailability]} onPick={() => {}} />);
+
+    const button = screen.getByRole("button", { name: /Fixture immediate/ });
+    expect(button).toHaveTextContent("Protocol");
+    expect(button).toHaveTextContent("Exercise immediate tasking.");
+    expect(button).toHaveTextContent("Runs the immediate fixture handler.");
+    expect(button).toHaveTextContent("Immediate · Cancel no · Progress no");
   });
 
   it("renders the intentional no-Commands state", () => {
