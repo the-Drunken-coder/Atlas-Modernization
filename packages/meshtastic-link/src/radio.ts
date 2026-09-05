@@ -1,4 +1,6 @@
+import { fromBinary, toBinary } from "@bufbuild/protobuf";
 import { MeshDevice, Protobuf, Types } from "@meshtastic/core";
+import { ModuleConfig as FirmwareProtobuf } from "@meshtastic/protobufs-firmware";
 import { TransportNodeSerial } from "@meshtastic/transport-node-serial";
 import type {
   ActualRadioConfiguration,
@@ -7,6 +9,7 @@ import type {
   RadioConfigurationAdapter,
   RadioProfile
 } from "./profile.js";
+import { PUBLIC_RENDEZVOUS_CHANNEL_NAME } from "./profile.js";
 
 export type RadioPacket = {
   payload: Uint8Array;
@@ -190,6 +193,7 @@ export class MeshtasticSerialRadio implements LinkRadio, RadioConfigurationAdapt
       firmware: { minimum: "2.7.15", tested: this.metadata.firmwareVersion },
       region:
         lora.value.region === Protobuf.Config.Config_LoRaConfig_RegionCode.US ? "US" : `enum:${lora.value.region}`,
+      use_preset: lora.value.usePreset,
       modem_preset:
         lora.value.modemPreset === Protobuf.Config.Config_LoRaConfig_ModemPreset.SHORT_FAST
           ? "SHORT_FAST"
@@ -204,12 +208,15 @@ export class MeshtasticSerialRadio implements LinkRadio, RadioConfigurationAdapt
           ? "LOCAL_ONLY"
           : `enum:${device.value.rebroadcastMode}`,
       frequency_slot: lora.value.channelNum,
+      override_frequency: lora.value.overrideFrequency,
       tx_power: lora.value.txPower,
       power_saving: power.value.isPowerSaving,
       remote_administration: security.value.adminChannelEnabled || security.value.adminKey.length > 0,
       managed_mode: device.value.isManaged || security.value.isManaged,
-      native_position: position.value.positionBroadcastSecs > 0 || position.value.positionBroadcastSmartEnabled,
-      native_telemetry: telemetryEnabled(telemetry.value),
+      native_position: [...this.channels.values()].some(
+        (channel) => (channel.settings?.moduleSettings?.positionPrecision ?? 0) > 0
+      ),
+      native_telemetry: nativeTelemetryEnabled(telemetry.value),
       mqtt: mqtt.value.enabled || mqtt.value.proxyToClientEnabled || mqtt.value.mapReportingEnabled,
       public_channel: {
         index: 0,
@@ -231,6 +238,7 @@ export class MeshtasticSerialRadio implements LinkRadio, RadioConfigurationAdapt
 
   async applyConfiguration(profile: RadioProfile, differences: readonly ConfigurationDifference[]): Promise<void> {
     if (differences.length === 0) return;
+    const publicChannelChanged = hasDifference(differences, ["public_channel"]);
     if (hasDifference(differences, ["device_role", "rebroadcast_mode", "managed_mode"])) {
       const current = this.requireConfig("device");
       if (current.payloadVariant.case !== "device") throw new Error("Meshtastic device configuration is unavailable");
@@ -247,7 +255,17 @@ export class MeshtasticSerialRadio implements LinkRadio, RadioConfigurationAdapt
         }
       });
     }
-    if (hasDifference(differences, ["region", "modem_preset", "hop_limit", "frequency_slot", "tx_power"])) {
+    if (
+      hasDifference(differences, [
+        "region",
+        "use_preset",
+        "modem_preset",
+        "hop_limit",
+        "frequency_slot",
+        "override_frequency",
+        "tx_power"
+      ])
+    ) {
       const current = this.requireConfig("lora");
       if (current.payloadVariant.case !== "lora") throw new Error("Meshtastic LoRa configuration is unavailable");
       await this.device.setConfig({
@@ -264,7 +282,8 @@ export class MeshtasticSerialRadio implements LinkRadio, RadioConfigurationAdapt
             region: Protobuf.Config.Config_LoRaConfig_RegionCode.US,
             hopLimit: 3,
             txPower: 0,
-            channelNum: profile.frequency_slot
+            channelNum: profile.frequency_slot,
+            overrideFrequency: 0
           }
         }
       });
@@ -281,21 +300,12 @@ export class MeshtasticSerialRadio implements LinkRadio, RadioConfigurationAdapt
       });
     }
     if (hasDifference(differences, ["native_position"])) {
-      const current = this.requireConfig("position");
-      if (current.payloadVariant.case !== "position")
-        throw new Error("Meshtastic position configuration is unavailable");
-      await this.device.setConfig({
-        ...current,
-        payloadVariant: {
-          case: "position",
-          value: {
-            ...current.payloadVariant.value,
-            positionBroadcastSecs: 0,
-            positionBroadcastSmartEnabled: false,
-            positionFlags: 0
-          }
+      for (const channel of this.channels.values()) {
+        if (channel.index === 0 && publicChannelChanged) continue;
+        if ((channel.settings?.moduleSettings?.positionPrecision ?? 0) > 0) {
+          await this.device.setChannel(disableChannelPosition(channel));
         }
-      });
+      }
     }
     if (hasDifference(differences, ["remote_administration", "managed_mode"])) {
       const current = this.requireConfig("security");
@@ -340,7 +350,7 @@ export class MeshtasticSerialRadio implements LinkRadio, RadioConfigurationAdapt
         payloadVariant: {
           case: "telemetry",
           value: {
-            ...current.payloadVariant.value,
+            ...disableDeviceTelemetry(current.payloadVariant.value),
             deviceUpdateInterval: 0,
             environmentUpdateInterval: 0,
             environmentMeasurementEnabled: false,
@@ -354,8 +364,10 @@ export class MeshtasticSerialRadio implements LinkRadio, RadioConfigurationAdapt
         }
       });
     }
-    if (hasDifference(differences, ["public_channel"])) {
-      await this.device.setChannel(updateChannel(this.requireChannel(0), "ATLAS-RENDEZVOUS", Uint8Array.of(1), true));
+    if (publicChannelChanged) {
+      await this.device.setChannel(
+        updateChannel(this.requireChannel(0), PUBLIC_RENDEZVOUS_CHANNEL_NAME, Uint8Array.of(1), true)
+      );
     }
     await this.commitAndRefresh();
   }
@@ -565,7 +577,25 @@ function updateChannel(
       name,
       psk,
       uplinkEnabled: false,
-      downlinkEnabled: false
+      downlinkEnabled: false,
+      moduleSettings: {
+        ...current.settings.moduleSettings,
+        positionPrecision: 0
+      }
+    }
+  };
+}
+
+function disableChannelPosition(current: Protobuf.Channel.Channel): Protobuf.Channel.Channel {
+  if (!current.settings) throw new Error(`Meshtastic channel ${current.index} has no settings`);
+  return {
+    ...current,
+    settings: {
+      ...current.settings,
+      moduleSettings: {
+        ...current.settings.moduleSettings,
+        positionPrecision: 0
+      }
     }
   };
 }
@@ -574,13 +604,32 @@ function hasDifference(differences: readonly ConfigurationDifference[], prefixes
   return differences.some((difference) => prefixes.some((prefix) => difference.path.startsWith(prefix)));
 }
 
-function telemetryEnabled(config: Protobuf.ModuleConfig.ModuleConfig_TelemetryConfig): boolean {
+function nativeTelemetryEnabled(config: Protobuf.ModuleConfig.ModuleConfig_TelemetryConfig): boolean {
+  const current = fromBinary(
+    FirmwareProtobuf.ModuleConfig_TelemetryConfigSchema,
+    toBinary(Protobuf.ModuleConfig.ModuleConfig_TelemetryConfigSchema, config)
+  );
   return (
-    config.deviceUpdateInterval > 0 ||
-    config.environmentUpdateInterval > 0 ||
-    config.environmentMeasurementEnabled ||
-    config.airQualityEnabled ||
-    config.powerMeasurementEnabled ||
-    config.healthMeasurementEnabled
+    current.deviceTelemetryEnabled ||
+    current.environmentMeasurementEnabled ||
+    current.airQualityEnabled ||
+    current.powerMeasurementEnabled ||
+    current.healthMeasurementEnabled
+  );
+}
+
+function disableDeviceTelemetry(
+  current: Protobuf.ModuleConfig.ModuleConfig_TelemetryConfig
+): Protobuf.ModuleConfig.ModuleConfig_TelemetryConfig {
+  const firmwareCurrent = fromBinary(
+    FirmwareProtobuf.ModuleConfig_TelemetryConfigSchema,
+    toBinary(Protobuf.ModuleConfig.ModuleConfig_TelemetryConfigSchema, current)
+  );
+  return fromBinary(
+    Protobuf.ModuleConfig.ModuleConfig_TelemetryConfigSchema,
+    toBinary(FirmwareProtobuf.ModuleConfig_TelemetryConfigSchema, {
+      ...firmwareCurrent,
+      deviceTelemetryEnabled: false
+    })
   );
 }

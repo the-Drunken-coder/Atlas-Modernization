@@ -164,6 +164,7 @@ export class OrderedTaskDispatcher {
   private readonly unsubscribeCapacity: () => void;
   private readonly pumpingAssets = new Set<string>();
   private readonly retiringAssets = new Set<string>();
+  private pumpingQueuedAssets = false;
   private dispatchSequence = 0;
 
   constructor(
@@ -173,9 +174,7 @@ export class OrderedTaskDispatcher {
     if (transport.node.role !== "gateway") throw new Error("ordered Task dispatcher requires a Gateway transport");
     if (!Number.isSafeInteger(queueLimit) || queueLimit < 1) throw new RangeError("Task queue limit must be positive");
     this.unsubscribe = transport.onEvent((event) => this.handleTransportEvent(event));
-    this.unsubscribeCapacity = transport.onCapacityAvailable(() => {
-      for (const assetID of this.queued.keys()) this.pump(assetID);
-    });
+    this.unsubscribeCapacity = transport.onCapacityAvailable(() => this.pumpQueuedAssets());
   }
 
   enqueue(assetID: string, task: TaskResource, delivery: TaskDelivery["delivery"] = "assignment"): void {
@@ -334,19 +333,39 @@ export class OrderedTaskDispatcher {
     if (event.type !== "operation" || event.result.status === "queued") return;
     for (const [assetID, task] of this.inFlightCancellations) {
       if (task.operationID !== event.result.operation_id) continue;
-      if (event.result.status === "failed") return;
+      if (event.result.status === "failed") {
+        this.pumpQueuedAssets(undefined, assetID);
+        return;
+      }
       this.inFlightCancellations.delete(assetID);
-      if (!this.retiringAssets.has(assetID)) this.pump(assetID);
+      if (!this.retiringAssets.has(assetID)) this.pumpQueuedAssets(assetID);
       return;
     }
     for (const [assetID, task] of this.inFlight) {
       if (task.operationID !== event.result.operation_id) continue;
-      if (event.result.status === "failed") return;
+      if (event.result.status === "failed") {
+        this.pumpQueuedAssets(undefined, assetID);
+        return;
+      }
       this.inFlight.delete(assetID);
-      if (!this.retiringAssets.has(assetID)) this.pump(assetID);
+      if (!this.retiringAssets.has(assetID)) this.pumpQueuedAssets(assetID);
       return;
     }
-    for (const assetID of this.queued.keys()) this.pump(assetID);
+    this.pumpQueuedAssets();
+  }
+
+  private pumpQueuedAssets(preferredAssetID?: string, skippedAssetID?: string): void {
+    if (this.pumpingQueuedAssets) return;
+    this.pumpingQueuedAssets = true;
+    try {
+      if (preferredAssetID !== undefined && preferredAssetID !== skippedAssetID) this.pump(preferredAssetID);
+      for (const assetID of this.queued.keys()) {
+        if (assetID === preferredAssetID || assetID === skippedAssetID) continue;
+        this.pump(assetID);
+      }
+    } finally {
+      this.pumpingQueuedAssets = false;
+    }
   }
 
   private retireInFlight(assetID: string, task: InFlightTask, reason: string): void {

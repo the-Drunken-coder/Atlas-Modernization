@@ -180,7 +180,8 @@ async function serve(argv: string[]): Promise<void> {
             service.attachTransport(transport, { role: "gateway", id: status.gateway_node_id });
           }
         },
-        onError: (error) => service.setLifecycle("discovering", `join attempt deferred: ${error.message}`)
+        onError: (error) => service.setLifecycle("discovering", `join attempt deferred: ${error.message}`),
+        onDisconnect: (error) => service.setLifecycle("error", error.message)
       });
       assetJoin.start();
     }

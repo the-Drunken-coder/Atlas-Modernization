@@ -63,6 +63,8 @@ It contains no location, Tasks, telemetry, credentials, private-channel material
 
 The Asset sends the beacon immediately, then every five seconds with slight random variation for the first thirty seconds. It then retries every thirty seconds until the Gateway responds. Successful joining stops the beacon immediately.
 
+Losing the local radio connection stops the join attempt and its retry timer. The service reports an error and drains any in-flight join work during shutdown. A disconnected radio requires a service restart; an unavailable Gateway continues to use discovery retries.
+
 The public rendezvous channel stays configured after joining. Joined Asset-mode Link services ignore unrelated public traffic, and the Gateway continues listening for new discovery beacons.
 
 ## Source generations

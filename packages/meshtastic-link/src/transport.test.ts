@@ -11,6 +11,7 @@ import type { LinkRadio, RadioPacket, RadioSendOptions } from "./radio.js";
 import { SimulatedPacketNetwork } from "./simulation.js";
 import { positionPublication } from "./test-fixtures.js";
 import { LinkTransport } from "./transport.js";
+import type { LinkMessage } from "./types.js";
 
 describe("Link transport", () => {
   it("requires application settlement before confirming addressed work", async () => {
@@ -577,6 +578,74 @@ describe("Link transport", () => {
     receiver.stop();
   });
 
+  it("does not queue an active Object transfer twice when repairing a fragment", async () => {
+    const clock = new ControlledClock();
+    const radio = new DeferredFirstSendRadio();
+    const transport = new LinkTransport({
+      node: { role: "gateway", id: "gateway" },
+      sourceGeneration: 1,
+      radio,
+      clock
+    });
+    const object = (operationID: string): LinkMessage => ({
+      type: "object_content",
+      request_id: operationID,
+      object_id: operationID,
+      content_base64: Buffer.alloc(1_024, operationID === "object-a" ? 1 : 2).toString("base64"),
+      sha256: `sha256:${createHash("sha256")
+        .update(Buffer.alloc(1_024, operationID === "object-a" ? 1 : 2))
+        .digest("hex")}`
+    });
+
+    transport.submit(object("object-a"), {
+      destination: { role: "asset", id: "asset-alpha" },
+      operationID: "object-a"
+    });
+    transport.submit(object("object-b"), {
+      destination: { role: "asset", id: "asset-alpha" },
+      operationID: "object-b"
+    });
+    const firstPump = clock.fireAt(0);
+    expect(radio.sendCount).toBe(1);
+    const firstFrame = decodeFrame(radio.firstPayload ?? new Uint8Array());
+    const repair = {
+      type: "control",
+      control: "missing_chunks",
+      operation_id: firstFrame.operation_id,
+      message_id: firstFrame.message_id,
+      missing_chunks: [1]
+    } satisfies LinkMessage;
+    const repairIdentity: FrameIdentity = {
+      revision: 1,
+      message_type: "control",
+      source: { role: "asset", id: "asset-alpha" },
+      destination: { role: "gateway", id: "gateway" },
+      source_generation: 1,
+      service_session: "asset-session",
+      source_sequence: 1,
+      operation_id: "repair-control",
+      message_id: "repair-control",
+      priority: "safety"
+    };
+    for (const frame of fragmentPayload(serializeLinkMessage(repair), repairIdentity)) {
+      radio.receive({
+        payload: frame,
+        received_at: 0,
+        radio_source: 2,
+        channel: 1,
+        public_key_encrypted: false
+      });
+    }
+    radio.resolveFirstSend();
+    await Promise.all(firstPump);
+    for (let attempt = 0; attempt < 20 && !radio.sentOperations.includes("object-b"); attempt++) {
+      await Promise.all(clock.fireAt(0));
+    }
+
+    expect(radio.sentOperations).toContain("object-b");
+    transport.stop();
+  });
+
   it("does not continue a fragmented transmission after its deadline", async () => {
     const clock = new ControlledClock();
     const radio = new DeferredFirstSendRadio();
@@ -1042,6 +1111,24 @@ describe("Link transport", () => {
     }
 
     expect(picture.snapshot().records).toEqual([]);
+  });
+
+  it("does not let an Asset submit direct Task state", () => {
+    const { asset } = directPair();
+    const task = pendingTask("direct-task", "2026-09-02T12:00:00Z");
+    expect(
+      asset.submit({
+        type: "state",
+        resource_type: "task",
+        resource: task,
+        observation_time: task.updated_at,
+        path: "field",
+        confirmation: "awaiting_core"
+      })
+    ).toMatchObject({
+      status: "failed",
+      reason: "Assets must publish Task lifecycle reports instead of Task state"
+    });
   });
 
   it("returns a visible failure when Link metadata leaves no packet room", () => {
@@ -1922,6 +2009,97 @@ describe("Link transport", () => {
     transport.stop();
   });
 
+  it("rejects new inbound identities when the settlement fence is full", async () => {
+    const clock = new VirtualClock();
+    const sourceRadio = new InMemoryMeshRadio();
+    const otherSourceRadio = new InMemoryMeshRadio();
+    const receiverRadio = new InMemoryMeshRadio();
+    sourceRadio.connect(receiverRadio);
+    otherSourceRadio.connect(receiverRadio);
+    receiverRadio.connect(sourceRadio, otherSourceRadio);
+    const source = new LinkTransport({
+      node: { role: "asset", id: "asset-alpha" },
+      sourceGeneration: 1,
+      radio: sourceRadio,
+      clock,
+      queueLimit: 4_096,
+      confirmedLimit: 4_096
+    });
+    const otherSource = new LinkTransport({
+      node: { role: "asset", id: "asset-bravo" },
+      sourceGeneration: 1,
+      radio: otherSourceRadio,
+      clock
+    });
+    const receiver = new LinkTransport({
+      node: { role: "gateway", id: "gateway" },
+      sourceGeneration: 1,
+      radio: receiverRadio,
+      clock,
+      queueLimit: 4_096,
+      confirmedLimit: 4_096
+    });
+    let delivered = 0;
+    let heldSettlement: string | undefined;
+    receiver.onEvent((event) => {
+      if (event.type === "message" && event.requires_settlement) {
+        delivered++;
+        if (delivered === 4_096) {
+          heldSettlement = event.settlement_id;
+          return;
+        }
+        expect(receiver.settleInbound(event.settlement_id, true)).toBe(true);
+      }
+    });
+    const message = { type: "resource_operation", operation: "entity.delete", target_id: "entity" } as const;
+    for (let start = 0; start < 4_095; start += 64) {
+      for (let index = start; index < Math.min(start + 64, 4_095); index++) {
+        source.submit(message, {
+          destination: { role: "gateway", id: "gateway" },
+          operationID: `inbound-${index}`
+        });
+      }
+      await clock.runUntilIdle();
+    }
+    source.submit(message, {
+      destination: { role: "gateway", id: "gateway" },
+      operationID: "inbound-held"
+    });
+    await clock.advanceBy(0);
+
+    otherSource.submit(message, {
+      destination: { role: "gateway", id: "gateway" },
+      operationID: "inbound-over-capacity"
+    });
+    await clock.advanceBy(0);
+
+    expect(delivered).toBe(4_096);
+    expect(heldSettlement).toBeDefined();
+    expect(otherSource.status("inbound-over-capacity")).toMatchObject({
+      status: "rejected",
+      reason: "inbound settlement identity capacity is exhausted"
+    });
+    expect(receiver.metrics().confirmed_rejected_overload).toBe(1);
+    expect(receiver.diagnostics().inbound_awaiting_settlement).toBe(1);
+    expect(receiver.settleInbound(heldSettlement ?? "", true)).toBe(true);
+    await clock.advanceBy(0);
+    expect(source.status("inbound-held")?.status).toBe("confirmed");
+
+    otherSource.submit(message, {
+      destination: { role: "gateway", id: "gateway" },
+      operationID: "inbound-over-capacity-again"
+    });
+    await clock.advanceBy(0);
+    expect(otherSource.status("inbound-over-capacity-again")).toMatchObject({
+      status: "rejected",
+      reason: "inbound settlement identity capacity is exhausted"
+    });
+    expect(receiver.metrics().confirmed_rejected_overload).toBe(2);
+    source.stop();
+    otherSource.stop();
+    receiver.stop();
+  }, 15_000);
+
   it("projects visible Task lifecycle reports into a peer Shared Picture", async () => {
     const clock = new VirtualClock(Date.parse("2026-09-02T12:00:00Z"));
     const network = new SimulatedPacketNetwork({ seed: 31, clock });
@@ -2148,11 +2326,15 @@ class ControlledClock implements Clock {
 class DeferredFirstSendRadio implements LinkRadio {
   readonly max_payload_bytes = 233;
   sendCount = 0;
+  firstPayload: Uint8Array | undefined;
+  readonly sentOperations: string[] = [];
   private firstSendResolution: (() => void) | undefined;
   private readonly handlers = new Set<(packet: RadioPacket) => void>();
 
-  send(_payload: Uint8Array, _options: RadioSendOptions): Promise<void> {
+  send(payload: Uint8Array, _options: RadioSendOptions): Promise<void> {
     this.sendCount++;
+    this.sentOperations.push(decodeFrame(payload).operation_id);
+    if (this.sendCount === 1) this.firstPayload = payload.slice();
     if (this.sendCount > 1) return Promise.resolve();
     return new Promise((resolve) => {
       this.firstSendResolution = resolve;
@@ -2161,6 +2343,38 @@ class DeferredFirstSendRadio implements LinkRadio {
 
   resolveFirstSend(): void {
     this.firstSendResolution?.();
+  }
+
+  onPacket(handler: (packet: RadioPacket) => void): () => void {
+    this.handlers.add(handler);
+    return () => this.handlers.delete(handler);
+  }
+
+  receive(packet: RadioPacket): void {
+    for (const handler of this.handlers) handler(packet);
+  }
+
+  async close(): Promise<void> {}
+}
+
+class InMemoryMeshRadio implements LinkRadio {
+  readonly max_payload_bytes = 233;
+  private readonly handlers = new Set<(packet: RadioPacket) => void>();
+  private peers: InMemoryMeshRadio[] = [];
+
+  connect(...peers: InMemoryMeshRadio[]): void {
+    this.peers = peers;
+  }
+
+  async send(payload: Uint8Array, options: RadioSendOptions): Promise<void> {
+    for (const peer of this.peers) {
+      peer.receive({
+        payload: payload.slice(),
+        received_at: 0,
+        channel: options.channel,
+        public_key_encrypted: options.require_public_key === true
+      });
+    }
   }
 
   onPacket(handler: (packet: RadioPacket) => void): () => void {

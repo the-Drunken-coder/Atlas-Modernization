@@ -348,6 +348,7 @@ export type AssetJoinOptions = {
   installMembership: (membership: PrivateChannelMembership) => Promise<void>;
   onStatus?: (status: AssetJoinStatus) => void;
   onError?: (error: Error) => void;
+  onDisconnect?: (error: Error) => void;
   random?: () => number;
 };
 
@@ -363,10 +364,12 @@ export class AssetJoinService {
   private readonly random: () => number;
   private readonly onStatus: ((status: AssetJoinStatus) => void) | undefined;
   private readonly onError: ((error: Error) => void) | undefined;
+  private readonly onDisconnect: ((error: Error) => void) | undefined;
   private readonly activeOperations = new Set<Promise<void>>();
   private readonly startedAt: number;
   private readonly joinAttemptID = compactID();
   private readonly unsubscribe: () => void;
+  private readonly unsubscribeDisconnect: () => void;
   private retryTimer: TimerHandle | undefined;
   private gatewayRadioNodeID: number | undefined;
   private installingMembership = false;
@@ -387,9 +390,16 @@ export class AssetJoinService {
     this.random = options.random ?? Math.random;
     this.onStatus = options.onStatus;
     this.onError = options.onError;
+    this.onDisconnect = options.onDisconnect;
     this.startedAt = this.clock.now();
     this.currentStatus = { state: "discovering", join_attempt_id: this.joinAttemptID };
     this.unsubscribe = this.radio.onPacket((packet) => this.run(() => this.receive(packet)));
+    this.unsubscribeDisconnect =
+      this.radio.onDisconnect?.((error) => {
+        if (!this.isWaitingToJoin()) return;
+        this.stop();
+        this.onDisconnect?.(error);
+      }) ?? (() => undefined);
   }
 
   start(): void {
@@ -406,6 +416,7 @@ export class AssetJoinService {
     if (this.currentStatus.state === "stopped") return;
     if (this.retryTimer) this.clock.cancel(this.retryTimer);
     this.unsubscribe();
+    this.unsubscribeDisconnect();
     this.updateStatus({ state: "stopped" });
   }
 

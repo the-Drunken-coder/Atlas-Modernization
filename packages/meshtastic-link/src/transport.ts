@@ -270,7 +270,9 @@ export class LinkTransport {
     if (!validStateSource(message, this.node)) {
       return this.failedResult(
         operationID,
-        "Asset state must use the field path without claiming Core authority or publishing Task records",
+        message.type === "state" && message.resource_type === "task"
+          ? "Assets must publish Task lifecycle reports instead of Task state"
+          : "Asset state must use the field path without claiming Core authority",
         trackingKey
       );
     }
@@ -400,9 +402,9 @@ export class LinkTransport {
       true
     );
     if (result.status === "failed") return false;
+    this.recordSettledInbound(settlementID, control);
     this.pendingInbound.delete(settlementID);
     this.clock.cancel(pending.timer);
-    this.recordSettledInbound(settlementID, control);
     return true;
   }
 
@@ -513,7 +515,12 @@ export class LinkTransport {
       if (!outbound) return;
       this.activeOutbound = outbound;
       const chunkIndex = outbound.pendingChunks.shift();
-      if (chunkIndex === undefined) return;
+      if (chunkIndex === undefined) {
+        // A stale queue reference must not retain the Object-transfer lock.
+        removeAll(this.queue, outbound);
+        if (this.activeObjectMessageID === outbound.identity.message_id) this.activeObjectMessageID = undefined;
+        return;
+      }
       const frame = outbound.frames[chunkIndex];
       if (!frame) return;
       outbound.started = true;
@@ -634,8 +641,11 @@ export class LinkTransport {
       delete outbound.retryTimer;
       if (!this.outboundByOperation.has(outbound.trackingKey) || this.stopped) return;
       outbound.order = this.nextOrder++;
-      this.queue.push(outbound);
-      this.requestPump();
+      removeAll(this.queue, outbound);
+      if (this.activeOutbound !== outbound) {
+        this.queue.push(outbound);
+        this.requestPump();
+      }
     });
   }
 
@@ -643,8 +653,11 @@ export class LinkTransport {
     if (!this.outboundByOperation.has(outbound.trackingKey) || this.stopped) return;
     outbound.pendingChunks = outbound.frames.map((_, index) => index);
     outbound.order = this.nextOrder++;
-    this.queue.push(outbound);
-    this.requestPump();
+    removeAll(this.queue, outbound);
+    if (this.activeOutbound !== outbound) {
+      this.queue.push(outbound);
+      this.requestPump();
+    }
   }
 
   private receive(packet: RadioPacket): void {
@@ -805,6 +818,11 @@ export class LinkTransport {
         this.rejectInboundCapacity(identity, settlementID);
         return;
       }
+      // A pending settlement reserves its eventual session fence identity.
+      if (this.settledInbound.size + this.pendingInbound.size >= SETTLED_INBOUND_LIMIT) {
+        this.rejectInboundCapacity(identity, settlementID, "inbound settlement identity capacity is exhausted");
+        return;
+      }
       this.pendingInbound.set(settlementID, {
         source: identity.source,
         operationID: identity.operation_id,
@@ -884,6 +902,9 @@ export class LinkTransport {
           ? { path: "gateway_feed", confirmation: "core_confirmed" }
           : { path: "field", confirmation: "not_required" }
       );
+      if (identity.source.role === "asset") {
+        publications = publications.filter((publication) => publication.resource_type !== "task");
+      }
     }
     if (publications.length === 0) return;
     const context: PictureApplyContext = {
@@ -930,8 +951,10 @@ export class LinkTransport {
       if (outbound.pendingChunks.length > 0) {
         this.mutableMetrics.fragment_repair_requests_received++;
         removeAll(this.queue, outbound);
-        this.queue.push(outbound);
-        this.requestPump();
+        if (this.activeOutbound !== outbound) {
+          this.queue.push(outbound);
+          this.requestPump();
+        }
       } else {
         this.scheduleRetry(outbound);
       }
@@ -1028,7 +1051,11 @@ export class LinkTransport {
     );
   }
 
-  private rejectInboundCapacity(identity: FrameIdentity, settlementID: string): void {
+  private rejectInboundCapacity(
+    identity: FrameIdentity,
+    settlementID: string,
+    reason = "inbound confirmed operation capacity is exhausted"
+  ): void {
     this.mutableMetrics.confirmed_rejected_overload++;
     this.recordSettledInbound(settlementID, "rejected");
     this.sendControl(
@@ -1038,7 +1065,7 @@ export class LinkTransport {
         control: "rejected",
         operation_id: identity.operation_id,
         message_id: identity.message_id,
-        reason: "inbound confirmed operation capacity is exhausted"
+        reason
       },
       true
     );
@@ -1058,9 +1085,9 @@ export class LinkTransport {
       },
       true
     );
-    this.pendingInbound.delete(settlementID);
     this.mutableMetrics.inbound_settlement_expired++;
     this.recordSettledInbound(settlementID, "rejected");
+    this.pendingInbound.delete(settlementID);
   }
 
   private completeOutbound(outbound: Outbound, status: "confirmed" | "rejected" | "failed", reason?: string): void {
@@ -1272,12 +1299,11 @@ export class LinkTransport {
   }
 
   private recordSettledInbound(settlementID: string, result: "confirmed" | "rejected"): void {
+    if (this.settledInbound.has(settlementID)) return;
+    // Keep an admitted pending identity when moving it into the session fence.
+    const hasReservation = this.pendingInbound.has(settlementID);
+    if (!hasReservation && this.settledInbound.size + this.pendingInbound.size >= SETTLED_INBOUND_LIMIT) return;
     this.settledInbound.set(settlementID, result);
-    while (this.settledInbound.size > SETTLED_INBOUND_LIMIT) {
-      const oldest = this.settledInbound.keys().next().value as string | undefined;
-      if (oldest === undefined) return;
-      this.settledInbound.delete(oldest);
-    }
   }
 
   private recordOperationTiming(outbound: Outbound): void {

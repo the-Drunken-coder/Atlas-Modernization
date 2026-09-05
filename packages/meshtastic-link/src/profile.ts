@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import { canonicalJSON } from "./canonical-json.js";
 
+export const PUBLIC_RENDEZVOUS_CHANNEL_NAME = "ATLAS-RDV";
+
 export type RadioProfile = {
   firmware: {
     minimum: "2.7.15";
@@ -21,7 +23,7 @@ export type RadioProfile = {
   mqtt: false;
   public_channel: {
     index: 0;
-    name: "ATLAS-RENDEZVOUS";
+    name: typeof PUBLIC_RENDEZVOUS_CHANNEL_NAME;
     role: "PRIMARY";
     key_base64: "AQ==";
     uplink: false;
@@ -41,11 +43,13 @@ export type ActualRadioConfiguration = {
     tested: string;
   };
   region: string;
+  use_preset: boolean;
   modem_preset: string;
   hop_limit: number;
   device_role: string;
   rebroadcast_mode: string;
   frequency_slot: number;
+  override_frequency: number;
   tx_power: number;
   power_saving: boolean;
   remote_administration: boolean;
@@ -108,6 +112,7 @@ export type PrivateChannelMembership = {
 export class RadioProfileManager {
   private desired: RadioProfile;
   private lastEvidence: ConfigurationEvidence | undefined;
+  private operationQueue: Promise<void> = Promise.resolve();
 
   constructor(
     profile: RadioProfile,
@@ -130,26 +135,63 @@ export class RadioProfileManager {
   }
 
   async diff(): Promise<ConfigurationDifference[]> {
-    return profileDifferences(this.desired, await this.adapter.readConfiguration());
+    const selectedProfile = structuredClone(this.desired);
+    return this.enqueue(async () => profileDifferences(selectedProfile, await this.adapter.readConfiguration()));
   }
 
   async inspect(): Promise<RadioProfileInspection> {
-    const actual = await this.adapter.readConfiguration();
-    return {
-      profile: this.profile(),
-      actual,
-      differences: profileDifferences(this.desired, actual),
-      ...(this.lastEvidence === undefined ? {} : { evidence: structuredClone(this.lastEvidence) })
-    };
+    const selectedProfile = structuredClone(this.desired);
+    return this.enqueue(async () => {
+      const actual = await this.adapter.readConfiguration();
+      return {
+        profile: selectedProfile,
+        actual,
+        differences: profileDifferences(selectedProfile, actual),
+        ...(this.lastEvidence === undefined ? {} : { evidence: structuredClone(this.lastEvidence) })
+      };
+    });
   }
 
   async apply(): Promise<ConfigurationEvidence> {
+    const selectedProfile = structuredClone(this.desired);
+    return this.enqueue(() => this.applySelectedProfile(selectedProfile));
+  }
+
+  async prepareAssetForJoin(): Promise<void> {
+    const selectedProfile = structuredClone(this.desired);
+    return this.enqueue(async () => {
+      await this.applySelectedProfile(selectedProfile);
+      for (let index = 1; index <= 7; index++) {
+        if (await this.adapter.readPrivateMembership(index)) await this.adapter.clearPrivateMembership(index);
+      }
+      for (let index = 1; index <= 7; index++) {
+        if (await this.adapter.readPrivateMembership(index)) {
+          throw new Error(`Asset radio retained prior private-channel membership in slot ${index}`);
+        }
+      }
+    });
+  }
+
+  async prepareGateway(membership: PrivateChannelMembership): Promise<void> {
+    const selectedProfile = structuredClone(this.desired);
+    return this.enqueue(async () => {
+      await this.applySelectedProfile(selectedProfile);
+      await this.installMembership(membership, selectedProfile);
+    });
+  }
+
+  async installAssetMembership(membership: PrivateChannelMembership): Promise<void> {
+    const selectedProfile = structuredClone(this.desired);
+    return this.enqueue(() => this.installMembership(membership, selectedProfile));
+  }
+
+  private async applySelectedProfile(selectedProfile: RadioProfile): Promise<ConfigurationEvidence> {
     const before = await this.adapter.readConfiguration();
-    const requestedChanges = profileDifferences(this.desired, before);
+    const requestedChanges = profileDifferences(selectedProfile, before);
     let after: ActualRadioConfiguration | undefined;
     try {
-      assertSupportedFirmware(before.firmware_version, this.desired.firmware.tested);
-      if (requestedChanges.length > 0) await this.adapter.applyConfiguration(this.desired, requestedChanges);
+      assertSupportedFirmware(before.firmware_version, selectedProfile.firmware.tested);
+      if (requestedChanges.length > 0) await this.adapter.applyConfiguration(selectedProfile, requestedChanges);
       after = await this.adapter.readConfiguration();
     } catch (error) {
       try {
@@ -158,8 +200,8 @@ export class RadioProfileManager {
         // The original radio error is the useful failure. A missing after snapshot is explicit in the evidence.
       }
       const evidence: ConfigurationEvidence = {
-        profile_fingerprint: profileFingerprint(this.desired),
-        selected_profile: structuredClone(this.desired),
+        profile_fingerprint: profileFingerprint(selectedProfile),
+        selected_profile: structuredClone(selectedProfile),
         before,
         requested_changes: requestedChanges,
         ...(after === undefined ? {} : { after }),
@@ -170,10 +212,10 @@ export class RadioProfileManager {
       this.lastEvidence = evidence;
       throw error;
     }
-    const remaining = profileDifferences(this.desired, after);
+    const remaining = profileDifferences(selectedProfile, after);
     const evidence: ConfigurationEvidence = {
-      profile_fingerprint: profileFingerprint(this.desired),
-      selected_profile: structuredClone(this.desired),
+      profile_fingerprint: profileFingerprint(selectedProfile),
+      selected_profile: structuredClone(selectedProfile),
       before,
       requested_changes: requestedChanges,
       after,
@@ -189,29 +231,8 @@ export class RadioProfileManager {
     return evidence;
   }
 
-  async prepareAssetForJoin(): Promise<void> {
-    await this.apply();
-    for (let index = 1; index <= 7; index++) {
-      if (await this.adapter.readPrivateMembership(index)) await this.adapter.clearPrivateMembership(index);
-    }
-    for (let index = 1; index <= 7; index++) {
-      if (await this.adapter.readPrivateMembership(index)) {
-        throw new Error(`Asset radio retained prior private-channel membership in slot ${index}`);
-      }
-    }
-  }
-
-  async prepareGateway(membership: PrivateChannelMembership): Promise<void> {
-    await this.apply();
-    await this.installMembership(membership);
-  }
-
-  async installAssetMembership(membership: PrivateChannelMembership): Promise<void> {
-    await this.installMembership(membership);
-  }
-
-  private async installMembership(membership: PrivateChannelMembership): Promise<void> {
-    if (membership.channel_index !== this.desired.private_channel.index || membership.channel_name !== "ATLAS") {
+  private async installMembership(membership: PrivateChannelMembership, selectedProfile: RadioProfile): Promise<void> {
+    if (membership.channel_index !== selectedProfile.private_channel.index || membership.channel_name !== "ATLAS") {
       throw new Error("membership does not match the selected Radio profile private channel slot");
     }
     await this.adapter.installPrivateMembership(membership);
@@ -219,6 +240,15 @@ export class RadioProfileManager {
     if (!installed || !sameMembership(installed, membership)) {
       throw new Error("private-channel membership did not match radio readback");
     }
+  }
+
+  private enqueue<Result>(operation: () => Promise<Result>): Promise<Result> {
+    const result = this.operationQueue.then(operation);
+    this.operationQueue = result.then(
+      () => undefined,
+      () => undefined
+    );
+    return result;
   }
 
   evidence(): ConfigurationEvidence | undefined {
@@ -244,7 +274,7 @@ export function createUSShortFastProfile(frequencySlot: number, testedFirmware: 
     mqtt: false,
     public_channel: {
       index: 0,
-      name: "ATLAS-RENDEZVOUS",
+      name: PUBLIC_RENDEZVOUS_CHANNEL_NAME,
       role: "PRIMARY",
       key_base64: "AQ==",
       uplink: false,
@@ -292,7 +322,7 @@ export function validateRadioProfile(profile: unknown): asserts profile is Radio
   }
   if (
     profile.public_channel.index !== 0 ||
-    profile.public_channel.name !== "ATLAS-RENDEZVOUS" ||
+    profile.public_channel.name !== PUBLIC_RENDEZVOUS_CHANNEL_NAME ||
     profile.public_channel.role !== "PRIMARY" ||
     profile.public_channel.key_base64 !== "AQ==" ||
     profile.public_channel.uplink ||
@@ -317,11 +347,13 @@ export function profileFingerprint(profile: RadioProfile): string {
 export function profileDifferences(desired: RadioProfile, actual: ActualRadioConfiguration): ConfigurationDifference[] {
   const differences: ConfigurationDifference[] = [];
   compareOwned(differences, "region", desired.region, actual.region);
+  compareOwned(differences, "use_preset", true, actual.use_preset);
   compareOwned(differences, "modem_preset", desired.modem_preset, actual.modem_preset);
   compareOwned(differences, "hop_limit", desired.hop_limit, actual.hop_limit);
   compareOwned(differences, "device_role", desired.device_role, actual.device_role);
   compareOwned(differences, "rebroadcast_mode", desired.rebroadcast_mode, actual.rebroadcast_mode);
   compareOwned(differences, "frequency_slot", desired.frequency_slot, actual.frequency_slot);
+  compareOwned(differences, "override_frequency", 0, actual.override_frequency);
   compareOwned(differences, "tx_power", desired.tx_power, actual.tx_power);
   compareOwned(differences, "power_saving", desired.power_saving, actual.power_saving);
   compareOwned(differences, "remote_administration", desired.remote_administration, actual.remote_administration);

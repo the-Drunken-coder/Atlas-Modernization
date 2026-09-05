@@ -1,7 +1,10 @@
+import type { TaskResource } from "@the-drunken-coder/atlas-sdk";
 import { describe, expect, it } from "vitest";
-import { GatewayFeedDemand, GatewayFieldOperationInbox } from "./gateway.js";
+import { VirtualClock } from "./clock.js";
+import { GatewayFeedDemand, GatewayFieldOperationInbox, OrderedTaskDispatcher } from "./gateway.js";
+import { SimulatedPacketNetwork } from "./simulation.js";
 import { positionPublication } from "./test-fixtures.js";
-import type { TransportMessageEvent } from "./transport.js";
+import { LinkTransport, type TransportMessageEvent } from "./transport.js";
 import type { FeedSelector } from "./types.js";
 
 describe("Gateway application seams", () => {
@@ -109,6 +112,94 @@ describe("Gateway application seams", () => {
     });
     expect(demand.active(1)).toHaveLength(4_096);
   });
+
+  it("wakes another Asset queue when a confirmed Task completes", async () => {
+    const clock = new VirtualClock();
+    const network = new SimulatedPacketNetwork({ seed: 42, clock });
+    const gateway = new LinkTransport({
+      node: { role: "gateway", id: "gateway" },
+      sourceGeneration: 1,
+      radio: network.addRadio("gateway", 1),
+      clock,
+      confirmedLimit: 1
+    });
+    const delivered: string[] = [];
+    const assets = ["asset-alpha", "asset-bravo"].map((assetID, index) => {
+      const asset = new LinkTransport({
+        node: { role: "asset", id: assetID },
+        sourceGeneration: 1,
+        radio: network.addRadio(assetID, index + 2),
+        clock
+      });
+      network.connect("gateway", assetID);
+      asset.onEvent((event) => {
+        if (event.type !== "message" || !event.addressed_to_local || event.message.type !== "task_delivery") return;
+        delivered.push(event.message.task.task_id);
+        asset.settleInbound(event.settlement_id, true);
+      });
+      return asset;
+    });
+    const dispatcher = new OrderedTaskDispatcher(gateway);
+
+    try {
+      dispatcher.enqueue("asset-alpha", pendingTask("asset-alpha", "task-a"));
+      dispatcher.enqueue("asset-bravo", pendingTask("asset-bravo", "task-b"));
+      await clock.runUntilIdle();
+
+      expect(delivered).toEqual(["task-a", "task-b"]);
+      expect(dispatcher.state("asset-bravo")).toEqual({ queued: [] });
+      expect(gateway.diagnostics()).toMatchObject({ queue_depth: 0, confirmed_pending: 0 });
+    } finally {
+      dispatcher.close();
+      gateway.stop();
+      for (const asset of assets) asset.stop();
+    }
+  });
+
+  it("wakes another Asset queue when a confirmed Task fails and preserves the failed barrier", async () => {
+    const clock = new VirtualClock();
+    const network = new SimulatedPacketNetwork({ seed: 43, clock });
+    const gateway = new LinkTransport({
+      node: { role: "gateway", id: "gateway" },
+      sourceGeneration: 1,
+      radio: network.addRadio("gateway", 1),
+      clock,
+      confirmedLimit: 1
+    });
+    const asset = new LinkTransport({
+      node: { role: "asset", id: "asset-bravo" },
+      sourceGeneration: 1,
+      radio: network.addRadio("asset-bravo", 2),
+      clock
+    });
+    network.connect("gateway", "asset-bravo");
+    const delivered: string[] = [];
+    asset.onEvent((event) => {
+      if (event.type !== "message" || !event.addressed_to_local || event.message.type !== "task_delivery") return;
+      delivered.push(event.message.task.task_id);
+      asset.settleInbound(event.settlement_id, true);
+    });
+    const dispatcher = new OrderedTaskDispatcher(gateway);
+
+    try {
+      dispatcher.enqueue("asset-alpha", pendingTask("asset-alpha", "task-a"));
+      dispatcher.enqueue("asset-bravo", pendingTask("asset-bravo", "task-b"));
+      await clock.runUntilIdle();
+
+      expect(delivered).toEqual(["task-b"]);
+      expect(dispatcher.state("asset-alpha")).toEqual({ in_flight: "task-a", queued: [] });
+      expect(dispatcher.state("asset-bravo")).toEqual({ queued: [] });
+      expect(gateway.diagnostics()).toMatchObject({ queue_depth: 0, confirmed_pending: 0 });
+      expect(gateway.status("task_task-a_assignment_1")).toMatchObject({
+        status: "failed",
+        reason: "confirmation deadline expired"
+      });
+    } finally {
+      dispatcher.close();
+      gateway.stop();
+      asset.stop();
+    }
+  });
 });
 
 function messageEvent(message: ReturnType<typeof positionPublication>): TransportMessageEvent {
@@ -141,5 +232,17 @@ function subscriptionEvent(assetID: string, action: "add" | "remove", selector: 
     received_at: 0,
     addressed_to_local: true,
     requires_settlement: true
+  };
+}
+
+function pendingTask(assetID: string, taskID: string): TaskResource {
+  return {
+    asset_id: assetID,
+    task_id: taskID,
+    command: "atlas.survey",
+    input: {},
+    status: "pending",
+    created_at: "2026-09-02T12:00:00Z",
+    updated_at: "2026-09-02T12:00:00Z"
   };
 }

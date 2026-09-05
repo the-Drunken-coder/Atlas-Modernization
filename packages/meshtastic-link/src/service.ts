@@ -549,9 +549,9 @@ export class LinkHTTPServer {
   }
 
   private streamEvents(url: URL, request: IncomingMessage, response: ServerResponse): void {
-    const after = Number(url.searchParams.get("after") ?? 0);
+    const after = url.searchParams.get("after");
     const clientID = url.searchParams.get("client_id") ?? randomUUID();
-    const replay = this.service.eventsAfter(after);
+    const replay = after === null ? [] : this.service.eventsAfter(Number(after));
     initializeSSE(response);
     for (const event of replay) sendSSE(response, event);
     const unsubscribe = this.service.onEvent((event) => sendSSE(response, event));
