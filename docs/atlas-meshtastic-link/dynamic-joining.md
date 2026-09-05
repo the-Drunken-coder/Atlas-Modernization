@@ -63,13 +63,15 @@ It contains no location, Tasks, telemetry, credentials, private-channel material
 
 The Asset sends the beacon immediately, then every five seconds with slight random variation for the first thirty seconds. It then retries every thirty seconds until the Gateway responds. Successful joining stops the beacon immediately.
 
+Losing the local radio connection stops the join attempt and its retry timer. The service reports an error and drains any in-flight join work during shutdown. A disconnected radio requires a service restart; an unavailable Gateway continues to use discovery retries.
+
 The public rendezvous channel stays configured after joining. Joined Asset-mode Link services ignore unrelated public traffic, and the Gateway continues listening for new discovery beacons.
 
 ## Source generations
 
 Every Link service start creates a fresh service session identity and resets its source sequence. The Gateway also assigns a durable, increasing source generation to that service instance. Every normal Link envelope carries the role-tagged source Link node, source generation, service session, and source sequence.
 
-A receiver tracks the greatest accepted generation for each source Link node. Accepting a higher generation retires every lower generation and its service sessions. A packet from a retired generation cannot replace newer accepted state. For a previously unseen generation, the first valid private-channel packet binds its service session; a Gateway activation announcement may bind it first. Once bound, a different service session at the same generation is rejected. Source sequence rejects duplicates and reordered stale state within the bound session.
+A receiver tracks the greatest accepted generation for each source Link node. Accepting a higher generation retires every lower generation and its service sessions. A packet from a retired generation cannot replace newer accepted state. For a previously unseen generation, the first valid private-channel packet binds its service session; a Gateway activation announcement may bind it first. Once bound, a different service session at the same generation is rejected. Source sequence rejects duplicate and reordered stale updates to the same record within the bound session without discarding unrelated records that arrive out of order.
 
 ## Startup picture behavior
 

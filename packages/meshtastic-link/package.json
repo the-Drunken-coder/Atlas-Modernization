@@ -1,0 +1,47 @@
+{
+  "name": "@the-drunken-coder/atlas-meshtastic-link",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Atlas Protocol delivery and Shared Picture service over Meshtastic",
+  "type": "module",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "bin": {
+    "atlas-meshtastic-link": "dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "baseline:update": "tsx scripts/update-baselines.ts",
+    "build": "npm run generate:check && tsc -p tsconfig.build.json",
+    "check": "npm run generate:check && npm run format:check && npm run lint && npm run typecheck && npm test && npm run build",
+    "format": "biome check --write .",
+    "format:check": "biome check --linter-enabled=false .",
+    "generate": "node scripts/generate-contract.mjs",
+    "generate:check": "node scripts/generate-contract.mjs --check",
+    "link": "tsx src/cli.ts",
+    "lint": "biome lint --config-path biome.json .",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@bufbuild/protobuf": "2.14.1",
+    "@meshtastic/core": "2.6.7",
+    "@meshtastic/protobufs": "2.7.8",
+    "@meshtastic/protobufs-firmware": "npm:@meshtastic/protobufs@2.8.0",
+    "@meshtastic/transport-node-serial": "0.0.2",
+    "@the-drunken-coder/atlas-sdk": "0.1.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.10",
+    "@types/node": "26.2.0",
+    "tsx": "4.23.12",
+    "typescript": "7.0.2",
+    "vitest": "4.1.11"
+  }
+}

@@ -20,6 +20,14 @@ If the radio already matches, startup performs no configuration writes.
 
 If required settings cannot be applied and verified, the Link service stops before discovery, Gateway bootstrap, or Atlas transmission. Status and diagnostics identify the desired value, actual value, attempted change, and Meshtastic response.
 
+## Live apply
+
+An explicit live apply uses the same convergence and verification path after the service has started. Before the first configuration write, the service suspends every radio sender, including Link transport and join traffic, and waits for any current send to finish. A successful readback reopens the send gate and restores the service's prior lifecycle.
+
+If a write, reconnect, readback, or verification step fails, the service reports an error and keeps the gate closed. Existing transport work remains tracked for a later successful apply, subject to its original deadlines. A queued operation may therefore fail while the gate is closed. No queued or new traffic may reach the radio while the profile is unverified. A stop or radio disconnect invalidates an in-flight apply, leaves the gate closed, and prevents a later adapter completion from reopening transmission.
+
+Changing the desired profile remains separate from applying it. A desired-only change does not suspend the radio. The apply operation takes a snapshot of the desired profile, so a concurrent desired change becomes the next explicit apply.
+
 ## Why Atlas owns the profile
 
 Every radio runs behind the same Meshtastic Link service. Owning the profile allows the system to tune range, airtime, relay behavior, and available application capacity as one controlled mesh instead of inheriting unrelated defaults or manual app configuration.
@@ -43,11 +51,11 @@ The application protocol must remain independent of the selected preset. The Rad
 | Setting | Initial direction |
 | --- | --- |
 | Region | `US` |
-| Modem preset | `SHORT_FAST` normally; `SHORT_TURBO` only when explicitly selected for an experiment |
+| Modem preset | Preset mode enabled; `SHORT_FAST` normally; `SHORT_TURBO` only when explicitly selected for an experiment |
 | Hop limit | `3` |
 | Device role | `CLIENT` on every radio |
 | Rebroadcast mode | `LOCAL_ONLY` |
-| Frequency slot | One explicit profile value; actual slot selected during lab setup |
+| Frequency slot | One explicit profile value with the custom frequency override cleared; actual slot selected during lab setup |
 | Transmit power | `0`, Meshtastic's normal legal hardware capability |
 | Power saving | Disabled so the radio receives continuously |
 | Remote administration | Disabled and out of scope |
@@ -56,13 +64,15 @@ The profile retains the same modem, channel, and application settings when the s
 
 ## Channel layout
 
-The common static profile configures a known public Atlas rendezvous channel as primary. A new Asset broadcasts its custom Atlas discovery beacon there. The Gateway responds only through a public-key-encrypted direct message and runs authentication.
+The common static profile configures `ATLAS-RDV` as the public primary rendezvous channel. Its name fits the firmware's eleven-byte channel-name limit. A new Asset broadcasts its custom Atlas discovery beacon there. The Gateway responds only through a public-key-encrypted direct message and runs authentication.
 
 The profile reserves a secondary slot for the private shared Atlas channel but does not contain its secret membership material. The Gateway deployment stores that material durably and installs it locally during Gateway bootstrap. Successful Asset joining installs the same material in the reserved slot. Normal Atlas traffic uses the private channel, and the Asset stops its public discovery beacon after joining.
 
 The rendezvous channel remains configured after joining so every Asset-mode Link service restart can repeat discovery. Asset-mode services clear or disable prior private-channel material before joining again. The Gateway reloads its durable membership on restart and never joins through itself or silently rotates the channel key. Asset services ignore unrelated public traffic after joining, and the Gateway listens continuously for new structured Atlas discovery beacons.
 
 Meshtastic-native position, telemetry, MQTT, and other unnecessary periodic application traffic are disabled. Required routing and NodeInfo behavior remain enabled. The structured Atlas discovery beacon is the only intentional public application broadcast.
+
+Native position is disabled through zero position precision on every channel, including channels installed during joining. Device telemetry is disabled through its enable switch, along with the other telemetry measurement switches. A zero broadcast interval selects a firmware default and does not prove that either module is disabled. Readback verifies the effective switches and channel settings.
 
 ## One profile for every radio
 
@@ -99,6 +109,8 @@ The logical operations are:
 Exact command names and API routes remain implementation details. Both surfaces use the same validation, apply, reboot recovery, verification, and evidence path.
 
 Changing a desired setting and applying it are separate operations. A caller may change the desired profile, inspect the resulting diff, and explicitly apply it. Link service startup automatically applies its selected profile.
+
+Each apply captures the selected profile when requested and uses that snapshot for writes, verification, and evidence. Configuration and membership operations run serially. Replacing the desired profile during an apply leaves the new selection pending for the next apply.
 
 The companion computer is the trust boundary. Local CLI and loopback API callers do not use a second authentication system, but every mutation remains validated and every apply produces evidence.
 

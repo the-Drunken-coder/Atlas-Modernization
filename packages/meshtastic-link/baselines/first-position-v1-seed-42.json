@@ -1,0 +1,177 @@
+{
+  "scenario": "first_position_vertical_slice",
+  "scenario_revision": 1,
+  "seed": 42,
+  "semantic_result": {
+    "gateway_received": true,
+    "peer_asset_received": true,
+    "entity": {
+      "alias": "Alpha",
+      "entity_id": "asset-alpha",
+      "entity_type": "asset",
+      "subtype": null,
+      "components": {
+        "geometry": {
+          "type": "Point",
+          "coordinates": [
+            -71.8023,
+            42.2746,
+            110
+          ]
+        },
+        "telemetry": {
+          "speed_m_s": 4.5,
+          "heading_deg": 82
+        }
+      },
+      "metadata": {
+        "created_at": "2026-09-02T12:00:00Z",
+        "updated_at": "2026-09-02T12:00:00Z",
+        "version": 1
+      }
+    }
+  },
+  "source_metrics": {
+    "application_bytes": 598,
+    "packets_sent": 9,
+    "transmitted_bytes": 2067,
+    "packets_received": 0,
+    "malformed_frames": 0,
+    "invalid_messages": 0,
+    "duplicate_packets_suppressed": 0,
+    "stale_messages_rejected": 0,
+    "picture_rejected_capacity": 0,
+    "incomplete_reassemblies": 0,
+    "best_effort_replaced": 0,
+    "confirmed_rejected_overload": 0,
+    "retry_exhausted": 0,
+    "retransmitted_packets": 0,
+    "fragment_repair_requests_sent": 0,
+    "fragment_repair_requests_received": 0,
+    "radio_send_failures": 0,
+    "inbound_settlement_expired": 0,
+    "peak_queue_depth": 1,
+    "packets_sent_by_message_type": {
+      "state": 9,
+      "task_delivery": 0,
+      "task_report": 0,
+      "data_request": 0,
+      "data_response": 0,
+      "resource_operation": 0,
+      "subscription": 0,
+      "object_content": 0,
+      "control": 0
+    },
+    "transmitted_bytes_by_priority": {
+      "safety": 0,
+      "task": 0,
+      "request": 0,
+      "live_state": 2067,
+      "resource": 0,
+      "object_content": 0
+    },
+    "queue_wait_ms_by_priority": {
+      "safety": {
+        "samples": 0,
+        "total_ms": 0,
+        "maximum_ms": 0
+      },
+      "task": {
+        "samples": 0,
+        "total_ms": 0,
+        "maximum_ms": 0
+      },
+      "request": {
+        "samples": 0,
+        "total_ms": 0,
+        "maximum_ms": 0
+      },
+      "live_state": {
+        "samples": 1,
+        "total_ms": 0,
+        "maximum_ms": 0
+      },
+      "resource": {
+        "samples": 0,
+        "total_ms": 0,
+        "maximum_ms": 0
+      },
+      "object_content": {
+        "samples": 0,
+        "total_ms": 0,
+        "maximum_ms": 0
+      }
+    },
+    "operation_latency_ms_by_priority": {
+      "safety": {
+        "samples": 0,
+        "total_ms": 0,
+        "maximum_ms": 0
+      },
+      "task": {
+        "samples": 0,
+        "total_ms": 0,
+        "maximum_ms": 0
+      },
+      "request": {
+        "samples": 0,
+        "total_ms": 0,
+        "maximum_ms": 0
+      },
+      "live_state": {
+        "samples": 1,
+        "total_ms": 6327.928955078125,
+        "maximum_ms": 6327.928955078125
+      },
+      "resource": {
+        "samples": 0,
+        "total_ms": 0,
+        "maximum_ms": 0
+      },
+      "object_content": {
+        "samples": 0,
+        "total_ms": 0,
+        "maximum_ms": 0
+      }
+    },
+    "operation_outcomes": {
+      "sent": 1,
+      "confirmed": 0,
+      "responded": 0,
+      "rejected": 0,
+      "failed": 0
+    }
+  },
+  "network_metrics": {
+    "radio_submissions": 9,
+    "mesh_transmissions": 18,
+    "transmitted_bytes": 4134,
+    "modeled_airtime_ms": 3688.703999999999,
+    "delivered_packets": 18,
+    "lost_packets": 0,
+    "collided_packets": 0,
+    "duplicate_deliveries": 0,
+    "modeled_airtime_ms_by_message_type": {
+      "state": 3688.703999999999,
+      "task_delivery": 0,
+      "task_report": 0,
+      "data_request": 0,
+      "data_response": 0,
+      "resource_operation": 0,
+      "subscription": 0,
+      "object_content": 0,
+      "control": 0,
+      "non_link": 0
+    },
+    "modeled_airtime_ms_by_priority": {
+      "safety": 0,
+      "task": 0,
+      "request": 0,
+      "live_state": 3688.703999999999,
+      "resource": 0,
+      "object_content": 0,
+      "non_link": 0
+    }
+  },
+  "delivery_latency_ms": 8090.36962890625
+}

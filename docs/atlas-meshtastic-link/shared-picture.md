@@ -54,13 +54,13 @@ The following remain available only as diagnostic evidence:
 
 ## Staleness and removal
 
-Before applying state, the Link service rejects traffic from a source generation older than the newest generation accepted for that Link node. Within the active generation and service session, a lower source sequence cannot replace a higher one. Atlas resource versions still determine order when Core provides them.
+Before applying state, the Link service rejects traffic from a source generation older than the newest generation accepted for that Link node. Within the active generation and service session, a lower source sequence cannot replace a higher sequence for the same record. Sequence fences are record-specific so an earlier message for one record is not discarded merely because a later message for another record arrived first. Atlas resource versions still determine order when Core provides them.
 
 Freshness depends on the kind of record:
 
 - Asset position, telemetry, and Track state become stale quickly when expected publications stop. They later leave active query results.
 - Active Tasks remain through their terminal outcome and then age out of the Shared Picture.
-- Geofeatures and Object metadata remain until a newer version or explicit deletion replaces them.
+- Geofeatures and Object metadata remain until a newer version or explicit deletion replaces them. A versioned deletion leaves a hidden in-memory fence so delayed older state cannot recreate the record.
 
 Initial freshness intervals are:
 
@@ -70,7 +70,15 @@ Initial freshness intervals are:
 - An active Task remains visible if its Asset disappears, but its record reports degraded source connectivity.
 - Geofeatures and Object metadata remain until a newer version or explicit deletion replaces them.
 
+An Entity record that carries components with different freshness intervals uses the longest applicable record interval, so expiring position does not discard telemetry or health that is still within its retention window. Component timestamps remain available when a client needs a finer-grained freshness decision.
+
 These intervals are Link defaults and may later be tuned from scenario and field evidence. They do not define how often Asset software publishes. Every returned record exposes its freshness so local software does not have to infer it from payload contents.
+
+## Memory bounds
+
+The initial Link service retains at most 4,096 combined picture records and deletion fences, up to 16 MiB of serialized picture state, 4,096 source identities, and 1,024 subscribers during one service session. It rejects a new picture entry or source when the applicable bound is full instead of evicting a live record or deletion fence. Subscriber registration fails explicitly at its bound. The apply result distinguishes capacity rejection from stale traffic, and transport metrics report picture-capacity rejections separately.
+
+The snapshot-to-stream handoff journal retains at most 1,024 events and 8 MiB. Crossing either limit removes the oldest complete events, so a cursor behind the retained journal fails and must obtain a new snapshot.
 
 ## Not operational history
 

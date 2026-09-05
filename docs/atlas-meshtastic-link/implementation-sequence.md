@@ -1,6 +1,6 @@
 # Implementation boundary and sequence
 
-This document turns the accepted Meshtastic Link architecture into bounded implementation slices. It does not claim that the package or Link service exists yet.
+This document turns the accepted Meshtastic Link architecture into bounded implementation slices. The implementation now lives in `packages/meshtastic-link`; this document remains the boundary and sequencing record for that code.
 
 ## Package ownership
 
@@ -90,3 +90,5 @@ After the first slice is correct and repeatable:
 10. Introduce compact generated encodings only after measurements identify their value.
 
 Each phase uses the narrow correctness and documentation checks relevant to that phase. A later phase does not require speculative infrastructure in an earlier one.
+
+The package implementation covers the generated JSON baseline, typed radio SDK, transport behavior, ordered Task dispatcher, loopback service, USB serial adapter, profile convergence, durable Gateway membership, dynamic joining, and deterministic five-radio simulation. It exposes the documented Gateway and Asset application seams without moving either application's policy into the Link. Physical three-radio acceptance, simulator calibration, and any later compact encoding remain measurement-driven work rather than software claims.

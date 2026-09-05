@@ -8,6 +8,8 @@ Atlas Protocol remains the source of truth for resources, Commands, Tasks, lifec
 
 The initial generator preserves the Atlas Protocol shapes and semantics without selecting a radio-specific subset of fields. It produces a radio-facing equivalent of the Atlas API and SDK rather than a second hand-authored model.
 
+The current Protocol schema defines resource shapes and validators, but has no endpoint operation catalog. The baseline generator therefore validates its operation adapters against Protocol definitions and the Protocol revision, and a parity test compares the generated operation names with the public Atlas SDK resource, Runtime, query, catalog, and Plugin methods. Local watches and sync/feed lifecycle helpers are excluded. Input, output, and context validation switches are exhaustive over the generated operation names. This catches drift in existing SDK operation families; adding a new SDK family or a Protocol operation that the SDK does not expose still requires extending the adapter coverage.
+
 The first baseline serialization is the ordinary compact UTF-8 JSON emitted for Atlas Protocol operations. It adds no presentation whitespace, compression, shortened fields, omitted Protocol fields, or radio-specific representation. The generated serializer makes output deterministic so a repeated logical payload has stable benchmark bytes.
 
 Future optimized encodings may shorten identifiers, use smaller field representations, or introduce purpose-built compact layouts. They remain generated adapters. A decoded optimized message must produce the same Atlas operation as the baseline and pass the same Protocol validation.
@@ -39,13 +41,13 @@ The transport wraps a generated Atlas payload with only the information needed t
 
 These are Link fields, not Atlas resource fields. Atlas Protocol remains unaware of Meshtastic packet boundaries. Link node identity is independent of the attached radio's Meshtastic identity so replacing a radio does not rename an Asset or Gateway.
 
-The Gateway assigns increasing source generations when an Asset joins and increments its own durable generation when the Gateway service starts. Once a receiver accepts a generation for one source Link node, it rejects every lower generation. Source sequence orders messages only within the accepted generation and service session.
+The Gateway assigns increasing source generations when an Asset joins and increments its own durable generation when the Gateway service starts. Once a receiver accepts a generation for one source Link node, it rejects every lower generation. Source sequence orders updates to the same record within the accepted generation and service session; unrelated records may still arrive out of order over the radio.
 
 ## Fragmentation and reassembly
 
 Every supported message may be fragmented. Common messages should eventually fit in one packet, but packet count does not determine whether an Atlas operation is valid.
 
-The sender serializes once, assigns one logical message identity, and divides the bytes into bounded chunks. The receiver reassembles and validates the complete payload before exposing it to the application or Shared Picture. Partial messages expire from bounded transport state and remain visible only in diagnostics.
+The sender serializes once, assigns one logical message identity, and divides the bytes into bounded chunks. One encoded Link message is limited to 128 KiB. The receiver enforces both the 233-byte Meshtastic application-frame limit and the aggregate message limit while reassembling, then validates the complete payload before exposing it to the application or Shared Picture. Partial messages expire from bounded transport state and remain visible only in diagnostics.
 
 Confirmed messages can repair missing chunks without retransmitting a completed prefix. A best-effort fragmented publication that remains incomplete at its reassembly timeout is discarded without a missing-chunk request. It is recovered by a later current-state publication or focused request. The exact repair exchange, chunk size, reassembly timeout, and non-Object concurrency bound remain implementation choices for simulation and hardware measurement.
 

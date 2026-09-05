@@ -12,9 +12,11 @@ The interface provides request-response operations for commands from local clien
 
 The generated radio-facing SDK preserves Atlas Protocol resource types, operation names, inputs, outputs, and validation. It adapts completion to an asynchronous radio link rather than pretending to be a synchronous Core HTTP connection. A write or request returns an operation ID immediately; confirmation, response, rejection, or timeout arrives through the event stream and remains queryable by that ID. Query operations retain Atlas pagination so one request cannot silently produce an unlimited radio response.
 
+For operation and service events, `GET /v1/events` without `after` starts with future events. An explicit `after` replays retained events and rejects expired cursors. After expiry, clients may query their operation IDs and open a fresh stream. Picture changes use the snapshot cursor handoff described below.
+
 ## Logical capabilities
 
-The route names and wire shapes remain open, but the interface must support:
+The loopback interface must support:
 
 - Read the current Shared Picture
 - Follow picture additions, changes, staleness, and removals in real time
@@ -23,10 +25,13 @@ The route names and wire shapes remain open, but the interface must support:
 - Start a data request and observe its response or failure
 - Add, renew, and remove local Link subscription demand
 - Read bounded operational metrics and diagnostic summaries
+- Enqueue one Task assignment or cancellation for an Asset in order
+- Enqueue an ordered Task assignment batch after complete validation
+- Reconcile a terminal authoritative Task observation and read per-Asset dispatcher state
 
 Raw Meshtastic packets, transfer fragments, and radio-management commands are not part of the normal client interface.
 
-The same loopback interface also exposes validated Radio profile inspection, mutation, apply, and verification operations. The CLI uses these operations rather than opening the radio independently. The companion computer is the trust boundary; the local interface does not add a separate configuration credential system.
+The same loopback interface also exposes validated Radio profile inspection, mutation, apply, and verification operations. The CLI uses these operations rather than opening the radio independently. The companion computer is the trust boundary; the local interface does not add a separate configuration credential system. Mutation routes reject browser-originated requests so an unrelated web page cannot drive the loopback service through cross-origin form or fetch requests.
 
 ## Snapshot and live changes
 
@@ -47,6 +52,10 @@ Clients never edit picture records directly. They use explicit operations to:
 - Request Atlas data
 - Subscribe or unsubscribe from a Gateway feed
 
+Gateway clients submit Core-derived Task resources through the loopback Task boundary. The Link service creates one ordered dispatcher for its attached Gateway transport. `POST /v1/tasks/:asset_id` accepts `{ task, delivery }` for one assignment or cancellation, `POST /v1/tasks/:asset_id/assignments` accepts `{ tasks }` for an ordered assignment batch, `POST /v1/tasks/:asset_id/authoritative` accepts `{ task }` for a terminal authoritative observation, and `GET /v1/tasks/:asset_id` returns local dispatcher state with the in-flight Task and `in_flight_operation_id`, an optional `cancellation` object containing its `task_id` and `operation_id`, and queued Task IDs. Each Task must match the route Asset ID; a batch is validated in full before enqueue; and `POST /v1/messages` rejects `task_delivery` messages so callers cannot bypass ordering. The state route reports local queue and operation identity, not Core authority or Task execution.
+
+After a delivery timeout, the Task remains an ordering barrier. The Gateway application rechecks Core and explicitly enqueues that same Task again through the single or batch route when another attempt is appropriate. The dispatcher assigns a fresh Link operation ID and keeps later assignments blocked until application acceptance, rejection, or an authoritative terminal observation. Clients use the returned operation IDs with the operation endpoint and event stream to follow each attempt.
+
 The Link service validates and sends the corresponding Atlas message. Eligible state received in response may subsequently update the Shared Picture through the normal receive path.
 
 The Asset application owns when it invokes these publication operations. The Link service does not create position, Track, telemetry, health, or Task-progress schedules. It may coalesce older unsent best-effort state under congestion, but this queue behavior is not a substitute for the Asset's publication policy.
@@ -65,7 +74,7 @@ Pending Link operations and transmission queues do not survive a Link service st
 
 The Link service tracks demand from each connected local client and sends only one Link subscription for each canonical feed selector. One client's unsubscribe removes only that client's demand. The Link service removes its Link subscription after no local client still wants the feed.
 
-Unexpected client disconnection removes that client's local demand after a short cleanup interval. Exact connection and lease timing remains an implementation choice.
+Local clients renew their demand at least every thirty seconds. The Link service expires all demand for a client after ninety seconds without an add or renewal, while a detected event-stream disconnect starts the shorter connection cleanup interval. A client using only request-response calls or the picture stream therefore still releases demand after it vanishes.
 
 ## Diagnostics
 
