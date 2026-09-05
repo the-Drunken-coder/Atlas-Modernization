@@ -59,6 +59,22 @@ describe("MapView symbol marker reconciliation", () => {
     expect(markerOperationCounts()).toEqual({ created: 1, setLngLat: 1, addTo: 1, remove: 0 });
   });
 
+  it("dims stale assets even without a reported communications state", async () => {
+    const renderSymbol = vi.spyOn(defaultSidcIconService, "render");
+    const rover = entity({
+      entity_id: "asset-1",
+      components: {
+        heartbeat: { last_seen: "2026-06-20T00:09:00Z" },
+        telemetry: { latitude: 40, longitude: -74 }
+      }
+    });
+    const { canvas } = renderMapView({
+      sources: buildMapSources([rover], undefined, Date.parse("2026-06-20T00:10:00Z"))
+    });
+    await waitFor(() => expect(canvas.querySelectorAll(".map-symbol-marker")).toHaveLength(1));
+    expect(renderSymbol).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ opacity: 0.82 }));
+  });
+
   it("keeps reported disconnected opacity when heartbeat freshness is also stale", async () => {
     const renderSymbol = vi.spyOn(defaultSidcIconService, "render");
     const now = Date.parse("2026-06-20T00:10:00Z");

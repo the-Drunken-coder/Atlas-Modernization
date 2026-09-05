@@ -37,6 +37,7 @@ const manifest = {
   supports_cancel: true,
   supports_progress: true
 };
+const otherManifest = { ...manifest, command: "fixture.other" };
 const rover = entityFixture({ entity_id: "asset-1", alias: "Rover" });
 
 function deferred<T>() {
@@ -48,68 +49,95 @@ function deferred<T>() {
 }
 
 describe("MapConsole command revalidation", () => {
-  it("retains entered data and an uncertain attempt through a telemetry detail refresh", async () => {
-    const refreshedDetails = deferred<EntityResource>();
-    const submitCommand = vi.fn().mockRejectedValueOnce(new Error("response lost")).mockResolvedValue({});
-    const loadEntityDetails = vi
-      .fn()
-      .mockResolvedValueOnce({ ...rover, command_manifest: [manifest] })
-      .mockReturnValueOnce(refreshedDetails.promise);
-    const value: AtlasContextValue = {
-      status: "ready",
-      config: {
-        atlasBaseUrl: "/atlas",
-        protocolRevision: "fixture",
-        defaultMapSourceId: "fixture",
-        mapSources: [{ id: "fixture", label: "Fixture", style: styleFixture("fixture") }],
-        placeSearch: { provider: "maptiler", unavailableReason: "fixture" }
-      },
-      snapshot: { entities: { [rover.entity_id]: rover }, tasks: {} },
-      catalog: [
-        {
-          command: manifest.command,
-          name: "Fixture queued",
-          description: "Exercise tasking.",
-          input_schema: "atlas.protocol.JSONValue"
-        }
-      ],
-      health: { running: true, healthy: true, degraded: false },
-      reconnect: vi.fn(),
-      submitCommand,
-      loadEntityDetails,
-      updateGeometry: vi.fn()
-    };
-    const view = render(
-      <AtlasStaticProvider value={value}>
-        <MapConsole />
-      </AtlasStaticProvider>
-    );
-    fireEvent.click(await screen.findByText("Rover"));
-    fireEvent.click(await screen.findByRole("button", { name: /Fixture queued/ }));
-    const input = screen.getByRole("textbox", { name: "Fixture input" });
-    fireEvent.change(input, { target: { value: "keep this input" } });
-    fireEvent.click(screen.getByRole("button", { name: "Submit fixture" }));
-    await screen.findByText("response lost");
+  it.each(["telemetry", "runtime", "reordered", "changed"])(
+    "retains entered data and an uncertain attempt through a %s detail refresh",
+    async (refresh) => {
+      const refreshedDetails = deferred<EntityResource>();
+      const submitCommand = vi.fn().mockRejectedValueOnce(new Error("response lost")).mockResolvedValue({});
+      const loadEntityDetails = vi
+        .fn()
+        .mockResolvedValueOnce({ ...rover, command_manifest: [manifest, otherManifest] })
+        .mockReturnValueOnce(refreshedDetails.promise);
+      const value: AtlasContextValue = {
+        status: "ready",
+        config: {
+          atlasBaseUrl: "/atlas",
+          protocolRevision: "fixture",
+          defaultMapSourceId: "fixture",
+          mapSources: [{ id: "fixture", label: "Fixture", style: styleFixture("fixture") }],
+          placeSearch: { provider: "maptiler", unavailableReason: "fixture" }
+        },
+        snapshot: { entities: { [rover.entity_id]: rover }, tasks: {} },
+        catalog: [
+          {
+            command: manifest.command,
+            name: "Fixture queued",
+            description: "Exercise tasking.",
+            input_schema: "atlas.protocol.JSONValue"
+          }
+        ],
+        health: { running: true, healthy: true, degraded: false },
+        reconnect: vi.fn(),
+        submitCommand,
+        loadEntityDetails,
+        updateGeometry: vi.fn()
+      };
+      const view = render(
+        <AtlasStaticProvider value={value}>
+          <MapConsole />
+        </AtlasStaticProvider>
+      );
+      fireEvent.click(await screen.findByText("Rover"));
+      fireEvent.click(await screen.findByRole("button", { name: /Fixture queued/ }));
+      const input = screen.getByRole("textbox", { name: "Fixture input" });
+      fireEvent.change(input, { target: { value: "keep this input" } });
+      fireEvent.click(screen.getByRole("button", { name: "Submit fixture" }));
+      await screen.findByText("response lost");
 
-    const refreshedRover = { ...rover, metadata: { ...rover.metadata, version: rover.metadata.version + 1 } };
-    view.rerender(
-      <AtlasStaticProvider
-        value={{ ...value, snapshot: { entities: { [rover.entity_id]: refreshedRover }, tasks: {} } }}
-      >
-        <MapConsole />
-      </AtlasStaticProvider>
-    );
-    await waitFor(() => expect(loadEntityDetails).toHaveBeenCalledTimes(2));
-    expect(screen.getByRole("textbox", { name: "Fixture input" })).toBe(input);
-    expect(input).toHaveValue("keep this input");
-    expect(screen.getByRole("button", { name: "Submit fixture" })).toBeDisabled();
+      const refreshedRover = {
+        ...rover,
+        metadata: { ...rover.metadata, version: rover.metadata.version + (refresh === "telemetry" ? 1 : 0) }
+      };
+      view.rerender(
+        <AtlasStaticProvider
+          value={{
+            ...value,
+            snapshot: {
+              entities: { [rover.entity_id]: refreshedRover },
+              tasks: {},
+              ...(refresh !== "telemetry" ? { runtimeManifestVersions: { [rover.entity_id]: 1 } } : {})
+            }
+          }}
+        >
+          <MapConsole />
+        </AtlasStaticProvider>
+      );
+      await waitFor(() => expect(loadEntityDetails).toHaveBeenCalledTimes(2));
+      expect(screen.getByRole("textbox", { name: "Fixture input" })).toBe(input);
+      expect(input).toHaveValue("keep this input");
+      expect(screen.getByRole("button", { name: "Submit fixture" })).toBeDisabled();
 
-    await act(async () => refreshedDetails.resolve({ ...refreshedRover, command_manifest: [manifest] }));
-    expect(screen.getByRole("textbox", { name: "Fixture input" })).toBe(input);
-    expect(input).toHaveValue("keep this input");
-    expect(screen.getByRole("button", { name: "Submit fixture" })).toBeEnabled();
-    fireEvent.click(screen.getByRole("button", { name: "Submit fixture" }));
-    await waitFor(() => expect(submitCommand).toHaveBeenCalledTimes(2));
-    expect(submitCommand.mock.calls[1]?.[0]).toEqual(submitCommand.mock.calls[0]?.[0]);
-  });
+      await act(async () =>
+        refreshedDetails.resolve({
+          ...refreshedRover,
+          command_manifest:
+            refresh === "reordered"
+              ? [otherManifest, manifest]
+              : refresh === "changed"
+                ? [{ ...manifest, supports_cancel: false }, otherManifest]
+                : [manifest, otherManifest]
+        })
+      );
+      if (refresh === "changed") {
+        expect(screen.queryByRole("textbox", { name: "Fixture input" })).toBeNull();
+        return;
+      }
+      expect(screen.getByRole("textbox", { name: "Fixture input" })).toBe(input);
+      expect(input).toHaveValue("keep this input");
+      expect(screen.getByRole("button", { name: "Submit fixture" })).toBeEnabled();
+      fireEvent.click(screen.getByRole("button", { name: "Submit fixture" }));
+      await waitFor(() => expect(submitCommand).toHaveBeenCalledTimes(2));
+      expect(submitCommand.mock.calls[1]?.[0]).toEqual(submitCommand.mock.calls[0]?.[0]);
+    }
+  );
 });

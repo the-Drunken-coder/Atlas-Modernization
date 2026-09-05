@@ -159,7 +159,7 @@ export function MapConsole() {
       start: () => {}
     };
     detailsRequestRef.current = request;
-    setSelectedEntityDetails(undefined);
+    setSelectedEntityDetails((current) => (current?.entity_id === request.entityId ? current : undefined));
     setCommandManifestState({ entityId: request.entityId, status: "loading" });
 
     request.start = () => {
@@ -265,7 +265,7 @@ export function MapConsole() {
         ? "ready"
         : currentCommandManifestStatus === "unavailable"
           ? "unavailable"
-          : !selectedDetails || detailsNeedRefresh
+          : currentCommandManifestStatus === "loading" || !selectedDetails || detailsNeedRefresh
             ? "loading"
             : "ready";
   const selectedEntity =
@@ -281,7 +281,9 @@ export function MapConsole() {
     selectedId,
     commandManifestStatus: resolvedCommandManifestStatus,
     commandManifestGeneration:
-      selectedDetails === undefined ? undefined : JSON.stringify(selectedDetails.command_manifest),
+      selectedDetails === undefined
+        ? undefined
+        : JSON.stringify(selectedDetails.command_manifest?.slice().sort((a, b) => a.command.localeCompare(b.command))),
     submitCommand: atlas.submitCommand
   });
   const geometryEdit = useGeometryEdit({ selectedEntity, selectedId, updateGeometry: atlas.updateGeometry });

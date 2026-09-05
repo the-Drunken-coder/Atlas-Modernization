@@ -20,10 +20,12 @@ export function useGeometryEdit({
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string>();
   const saveIdRef = useRef(0);
+  const savingRef = useRef(false);
   const selectedEntityId = selectedEntity?.entity_id;
 
   const cancelEdit = useCallback(() => {
     saveIdRef.current += 1;
+    savingRef.current = false;
     setEdit(null);
     setSaving(false);
     setSaveError(undefined);
@@ -39,6 +41,7 @@ export function useGeometryEdit({
     const geometry = entityGeometry(selectedEntity);
     if (!geometry) return;
     saveIdRef.current += 1;
+    savingRef.current = false;
     setSaving(false);
     setSaveError(undefined);
     setEdit({ entityId: selectedEntity.entity_id, version: selectedEntity.metadata.version, draft: geometry });
@@ -49,9 +52,10 @@ export function useGeometryEdit({
   }, []);
 
   const saveEdit = useCallback(async () => {
-    if (!edit || saving || edit.entityId !== selectedEntity?.entity_id) return;
+    if (!edit || savingRef.current || edit.entityId !== selectedEntity?.entity_id) return;
     const submittedEdit = edit;
     const saveId = ++saveIdRef.current;
+    savingRef.current = true;
     setSaving(true);
     setSaveError(undefined);
     try {
@@ -65,9 +69,12 @@ export function useGeometryEdit({
     } catch (cause) {
       if (saveId === saveIdRef.current) setSaveError(sanitizeConnectionError(cause));
     } finally {
-      if (saveId === saveIdRef.current) setSaving(false);
+      if (saveId === saveIdRef.current) {
+        savingRef.current = false;
+        setSaving(false);
+      }
     }
-  }, [edit, saving, selectedEntity, updateGeometry]);
+  }, [edit, selectedEntity, updateGeometry]);
 
   return { edit, saving, saveError, startEdit, changeDraft, saveEdit, cancelEdit };
 }

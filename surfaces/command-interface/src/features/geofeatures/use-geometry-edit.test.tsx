@@ -88,6 +88,27 @@ describe("useGeometryEdit", () => {
     expect(result.current.edit).toBeNull();
   });
 
+  it("submits a draft only once before React renders the saving state", async () => {
+    const entity = geofeature();
+    const pending = deferred<EntityResource>();
+    const updateGeometry = vi.fn().mockReturnValue(pending.promise);
+    const { result } = renderHook(() =>
+      useGeometryEdit({ selectedEntity: entity, selectedId: entity.entity_id, updateGeometry })
+    );
+    act(() => result.current.startEdit());
+    let saves: Promise<void>[] = [];
+    act(() => {
+      saves = [result.current.saveEdit(), result.current.saveEdit()];
+    });
+    expect(updateGeometry).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      pending.resolve(geofeature("geo-1", draftA, 2));
+      await Promise.all(saves);
+    });
+    expect(result.current.saving).toBe(false);
+    expect(result.current.edit).toBeNull();
+  });
+
   it("retains a newer draft and exposes the failure when the earlier save fails", async () => {
     const entity = geofeature();
     const pending = deferred<EntityResource>();

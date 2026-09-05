@@ -76,7 +76,7 @@ export function symbolMarkerPresentationsEqual(left: SymbolMarkerFeature, right:
 
 function markerOpacity(linkState: LinkState | undefined, freshness: ConnectionFreshness | undefined): number {
   const linkOpacity = linkState === "disconnected" ? 0.58 : linkState === "degraded" ? 0.82 : 1;
-  const freshnessOpacity = linkState && freshness && freshness !== "fresh" ? 0.82 : 1;
+  const freshnessOpacity = freshness && freshness !== "fresh" ? 0.82 : 1;
   return Math.min(linkOpacity, freshnessOpacity);
 }
 
