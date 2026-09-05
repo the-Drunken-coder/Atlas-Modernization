@@ -24,7 +24,7 @@ type SnapshotRecords = {
 type LocalDeleteOperation = {
   readonly type: DeletableResourceType;
   readonly id: string;
-  readonly observedEntry: object | undefined;
+  readonly observedEntry: CacheEntry<ResourceOf<DeletableResourceType>> | undefined;
   remoteDeleteSeen: boolean;
 };
 
@@ -180,7 +180,7 @@ export class ResourceCache {
           (operation) =>
             operation.type === type &&
             operation.id === id &&
-            (operation.observedEntry === undefined || sameResourceValue(type, operation.observedEntry, value))
+            (operation.observedEntry === undefined || sameResourceInstance(operation.observedEntry.value, value))
         )
       ) {
         return false;
@@ -257,7 +257,7 @@ export class ResourceCache {
     this.bumpGeneration(operation.type, operation.id);
     if (
       currentEntry !== operation.observedEntry &&
-      (operation.remoteDeleteSeen || !sameResourceInstance(operation.type, operation.observedEntry, currentEntry))
+      (operation.remoteDeleteSeen || !sameResourceInstance(operation.observedEntry?.value, currentEntry?.value))
     ) {
       return undefined;
     }
@@ -268,11 +268,9 @@ export class ResourceCache {
     this.localDeleteOperations.delete(operation);
   }
 
-  private bumpGeneration(type: ResourceType, id: string): number {
+  private bumpGeneration(type: ResourceType, id: string): void {
     const key = resourceCacheKey(type, id);
-    const next = this.generation(type, id) + 1;
-    this.generations.set(key, next);
-    return next;
+    this.generations.set(key, this.generation(type, id) + 1);
   }
 
   private updateSnapshot<TType extends ResourceType>(type: TType, id: string, value: ResourceOf<TType>): void {
@@ -285,27 +283,13 @@ export class ResourceCache {
   }
 }
 
-function sameResourceInstance<TType extends DeletableResourceType>(
-  type: TType,
-  observedEntry: object | undefined,
-  currentEntry: CacheEntry<ResourceOf<TType>> | undefined
+function sameResourceInstance(
+  observed: ResourceOf<DeletableResourceType> | undefined,
+  current: ResourceValue | undefined
 ): boolean {
   // Core keeps metadata.created_at stable across updates and changes it when an ID is reused.
-  if (!observedEntry || !currentEntry?.value || (type !== "entity" && type !== "object")) return false;
-  const observed = observedEntry as CacheEntry<ResourceOf<TType>>;
-  if (!observed.value) return false;
-  return observed.value.metadata.created_at === currentEntry.value.metadata.created_at;
-}
-
-function sameResourceValue(
-  type: ResourceType,
-  observedEntry: object | undefined,
-  currentValue: ResourceValue
-): boolean {
-  if (!observedEntry || (type !== "entity" && type !== "object")) return false;
-  const observed = observedEntry as CacheEntry<EntityResource | ObjectResource>;
-  const current = currentValue as EntityResource | ObjectResource;
-  return observed.value?.metadata.created_at === current.metadata.created_at;
+  if (!observed || !current || !("metadata" in current)) return false;
+  return observed.metadata.created_at === current.metadata.created_at;
 }
 
 function embeddedResourceVersion<TType extends ResourceType>(type: TType, value: ResourceOf<TType>): number {

@@ -64,22 +64,14 @@ export function parseSubscriptionKey(key: string): AtlasSubscription {
   }
   const [kind, resourceType, id] = parsed;
   if (kind === "all" && parsed.length === 1) return { filter: "all" };
-  if (kind === "id" && parsed.length === 3 && isResourceType(resourceType) && typeof id === "string") {
-    try {
-      return normalizeSubscription({ filter: "id", resource_type: resourceType, id });
-    } catch {
-      throw new Error("invalid subscription key");
-    }
+  if (kind === "id" && parsed.length === 3 && isResourceType(resourceType) && id?.trim()) {
+    return { filter: "id", resource_type: resourceType, id: id.trim() };
   }
   if (kind === "type" && parsed.length === 2 && isResourceType(resourceType)) {
     return { filter: "type", resource_type: resourceType };
   }
-  if (kind === "tasks_for_asset" && parsed.length === 2 && typeof resourceType === "string") {
-    try {
-      return normalizeSubscription({ filter: "tasks_for_asset", asset_id: resourceType });
-    } catch {
-      throw new Error("invalid subscription key");
-    }
+  if (kind === "tasks_for_asset" && parsed.length === 2 && resourceType?.trim()) {
+    return { filter: "tasks_for_asset", asset_id: resourceType.trim() };
   }
   throw new Error("invalid subscription key");
 }
