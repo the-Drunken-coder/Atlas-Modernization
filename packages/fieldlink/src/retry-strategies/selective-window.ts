@@ -17,17 +17,19 @@ const SELECTIVE_WINDOW_RECEIPT_REQUEST_ATTEMPTS = 2;
 
 class SelectiveWindowSender implements RetrySender {
   async run(session: TransferSenderSession): Promise<RetryResult> {
-    const transferOpenRetries = await openTransfer(session);
-    let completionRetries = 0;
-    let retransmissions = 0;
-    let receiptRequests = 0;
-    let receiptRequestRetries = 0;
-    let receipts = 0;
+    const result = {
+      transferOpenRetries: await openTransfer(session),
+      completionRetries: 0,
+      retransmissions: 0,
+      receiptRequests: 0,
+      receiptRequestRetries: 0,
+      receipts: 0,
+    };
     const requestReceipt = (windowStart: number, windowCount: number) =>
       requestWindowReceipt(session, windowStart, windowCount, (retry) => {
-        receiptRequests += 1;
+        result.receiptRequests += 1;
         if (retry) {
-          receiptRequestRetries += 1;
+          result.receiptRequestRetries += 1;
         }
       });
 
@@ -49,7 +51,7 @@ class SelectiveWindowSender implements RetrySender {
           }
           await session.sendFragment(windowStart + offset, round > 0);
           if (round > 0) {
-            retransmissions += 1;
+            result.retransmissions += 1;
             session.recordRetry?.("fragment");
           }
         }
@@ -57,16 +59,9 @@ class SelectiveWindowSender implements RetrySender {
         try {
           const received = await requestReceipt(windowStart, windowCount);
           if (received === undefined) {
-            return {
-              transferOpenRetries,
-              completionRetries,
-              retransmissions,
-              receiptRequests,
-              receiptRequestRetries,
-              receipts,
-            };
+            return result;
           }
-          receipts += 1;
+          result.receipts += 1;
           missing = fullBitmap(windowCount) & ~received;
           if (missing === 0) {
             break;
@@ -98,14 +93,7 @@ class SelectiveWindowSender implements RetrySender {
     ) {
       try {
         await session.waitForCompletion(SELECTIVE_WINDOW_COMPLETION_TIMEOUT_MS);
-        return {
-          transferOpenRetries,
-          completionRetries,
-          retransmissions,
-          receiptRequests,
-          receiptRequestRetries,
-          receipts,
-        };
+        return result;
       } catch (error: unknown) {
         throwIfAborted(session.signal);
         if (error instanceof TransferRejectedError) {
@@ -117,7 +105,7 @@ class SelectiveWindowSender implements RetrySender {
             { cause: error },
           );
         }
-        completionRetries += 1;
+        result.completionRetries += 1;
         session.recordRetry?.("completion");
         const windowStart = Math.max(
           0,
@@ -129,16 +117,9 @@ class SelectiveWindowSender implements RetrySender {
         try {
           const received = await requestReceipt(windowStart, windowCount);
           if (received === undefined) {
-            return {
-              transferOpenRetries,
-              completionRetries,
-              retransmissions,
-              receiptRequests,
-              receiptRequestRetries,
-              receipts,
-            };
+            return result;
           }
-          receipts += 1;
+          result.receipts += 1;
         } catch (receiptError: unknown) {
           throwIfAborted(session.signal);
           if (receiptError instanceof TransferRejectedError) {

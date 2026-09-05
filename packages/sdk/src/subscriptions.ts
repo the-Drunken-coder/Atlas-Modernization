@@ -35,7 +35,7 @@ export function subscriptionMessage(
   action: "subscribe" | "unsubscribe",
   filter: AtlasSubscription
 ): FeedSubscribeMessage | FeedUnsubscribeMessage {
-  return { action, ...normalizeSubscription(filter) } as FeedSubscribeMessage | FeedUnsubscribeMessage;
+  return { action, ...normalizeSubscription(filter) };
 }
 
 export function subscriptionKey(filter: AtlasSubscription): string {
@@ -128,13 +128,10 @@ export function localDeleteEvent(
 ): AtlasLocalDeleteWatchEvent {
   switch (type) {
     case "entity":
-      return previousVersion > 0
-        ? { event: "local_delete", resource_type: "entity", id, previous_version: previousVersion }
-        : { event: "local_delete", resource_type: "entity", id };
     case "object":
       return previousVersion > 0
-        ? { event: "local_delete", resource_type: "object", id, previous_version: previousVersion }
-        : { event: "local_delete", resource_type: "object", id };
+        ? { event: "local_delete", resource_type: type, id, previous_version: previousVersion }
+        : { event: "local_delete", resource_type: type, id };
   }
 }
 

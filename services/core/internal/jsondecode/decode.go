@@ -2,7 +2,6 @@
 package jsondecode
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -23,8 +22,5 @@ func Decode(dec *json.Decoder, v any) error {
 		}
 		return err
 	}
-	if len(bytes.TrimSpace(trailing)) > 0 {
-		return ErrTrailingData
-	}
-	return nil
+	return ErrTrailingData
 }

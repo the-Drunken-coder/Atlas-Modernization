@@ -228,7 +228,8 @@ export class SyncEngine {
 
   async subscribe(filter: AtlasSubscription): Promise<void> {
     const normalizedFilter = normalizeSubscription(filter);
-    if (!this.subscriptions.some((existing) => subscriptionKey(existing) === subscriptionKey(normalizedFilter))) {
+    const key = subscriptionKey(normalizedFilter);
+    if (!this.subscriptions.some((existing) => subscriptionKey(existing) === key)) {
       this.subscriptions.push(normalizedFilter);
     }
     this.feed.sendSubscription("subscribe", normalizedFilter);

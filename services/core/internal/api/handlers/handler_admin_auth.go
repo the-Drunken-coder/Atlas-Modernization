@@ -65,12 +65,12 @@ func (h *Handler) AdminLogout(w http.ResponseWriter, r *http.Request) {
 	if !h.requireTrustedAdminOrigin(w, r) {
 		return
 	}
-	if err := h.adminAuth.Logout(r.Context(), r); err != nil {
-		h.adminAuth.ClearSessionCookie(w)
+	err := h.adminAuth.Logout(r.Context(), r)
+	h.adminAuth.ClearSessionCookie(w)
+	if err != nil {
 		h.writeErrorWithCause(w, r, http.StatusInternalServerError, "admin logout failed", protocol.ErrorCodeInternalServerError, err)
 		return
 	}
-	h.adminAuth.ClearSessionCookie(w)
 	w.WriteHeader(http.StatusNoContent)
 }
 

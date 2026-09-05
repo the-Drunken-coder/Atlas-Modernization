@@ -200,40 +200,9 @@ func protocolObjectReferences(objectID string, values []map[string]interface{}) 
 	}
 	refs := make([]protocol.ObjectReference, 0, len(values))
 	for _, value := range values {
-		ref := protocol.ObjectReference{}
-		if raw, exists := value["entity_id"]; exists {
-			if raw == nil {
-				// JSON null means no entity reference.
-			} else if entityID, ok := raw.(string); ok {
-				trimmed := strings.TrimSpace(entityID)
-				if trimmed != "" {
-					ref.EntityID = &trimmed
-				}
-			} else {
-				log.Warn().
-					Str("object_id", objectID).
-					Str("key", "entity_id").
-					Str("actual_type", fmt.Sprintf("%T", raw)).
-					Interface("value", raw).
-					Msg("Dropping object feed reference field with non-string id")
-			}
-		}
-		if raw, exists := value["task_id"]; exists {
-			if raw == nil {
-				// JSON null means no task reference.
-			} else if taskID, ok := raw.(string); ok {
-				trimmed := strings.TrimSpace(taskID)
-				if trimmed != "" {
-					ref.TaskID = &trimmed
-				}
-			} else {
-				log.Warn().
-					Str("object_id", objectID).
-					Str("key", "task_id").
-					Str("actual_type", fmt.Sprintf("%T", raw)).
-					Interface("value", raw).
-					Msg("Dropping object feed reference field with non-string id")
-			}
+		ref := protocol.ObjectReference{
+			EntityID: objectReferenceID(objectID, "entity_id", value["entity_id"]),
+			TaskID:   objectReferenceID(objectID, "task_id", value["task_id"]),
 		}
 		if ref.EntityID != nil || ref.TaskID != nil {
 			refs = append(refs, ref)
@@ -243,6 +212,27 @@ func protocolObjectReferences(objectID string, values []map[string]interface{}) 
 		return nil
 	}
 	return refs
+}
+
+func objectReferenceID(objectID, key string, raw interface{}) *string {
+	if raw == nil {
+		return nil
+	}
+	id, ok := raw.(string)
+	if !ok {
+		log.Warn().
+			Str("object_id", objectID).
+			Str("key", key).
+			Str("actual_type", fmt.Sprintf("%T", raw)).
+			Interface("value", raw).
+			Msg("Dropping object feed reference field with non-string id")
+		return nil
+	}
+	trimmed := strings.TrimSpace(id)
+	if trimmed == "" {
+		return nil
+	}
+	return &trimmed
 }
 
 // SerializeEntities converts a slice of entities to their API response format.

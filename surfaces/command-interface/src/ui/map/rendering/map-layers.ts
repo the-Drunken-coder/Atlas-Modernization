@@ -25,18 +25,18 @@ export type SpatialMapOverlay = {
 };
 
 export function pushSources(map: MlMap, sources: MapSources): void {
-  (map.getSource("geofeatures") as maplibregl.GeoJSONSource | undefined)?.setData(sources.geofeatures as never);
+  (map.getSource("geofeatures") as maplibregl.GeoJSONSource | undefined)?.setData(sources.geofeatures);
 }
 
 export function pushEditingOverlay(map: MlMap, editing: MapEditing | undefined): void {
   const overlay = map.getSource("editing") as maplibregl.GeoJSONSource | undefined;
   overlay?.setData(
     editing
-      ? ({
+      ? {
           type: "FeatureCollection",
           features: [{ type: "Feature", geometry: displayGeometry(editing.geometry), properties: {} }]
-        } as never)
-      : (emptyFeatureCollection() as never)
+        }
+      : emptyFeatureCollection()
   );
 }
 
@@ -44,7 +44,7 @@ export function pushSpatialOverlay(map: MlMap, overlay: SpatialMapOverlay | unde
   const source = map.getSource("spatial-results") as maplibregl.GeoJSONSource | undefined;
   source?.setData(
     overlay
-      ? ({
+      ? {
           type: "FeatureCollection",
           features: overlay.features.map((feature) => ({
             type: "Feature",
@@ -52,15 +52,15 @@ export function pushSpatialOverlay(map: MlMap, overlay: SpatialMapOverlay | unde
             geometry: feature.geometry,
             properties: { featureId: feature.id, selected: feature.id === overlay.selectedFeatureId }
           }))
-        } as never)
-      : (emptyFeatureCollection() as never)
+        }
+      : emptyFeatureCollection()
   );
 }
 
 export function registerSourcesAndLayers(map: MlMap): void {
   for (const id of ["geofeatures", "editing", "spatial-results"]) {
     if (!map.getSource(id)) {
-      map.addSource(id, { type: "geojson", data: emptyFeatureCollection() as never });
+      map.addSource(id, { type: "geojson", data: emptyFeatureCollection() });
     }
   }
 

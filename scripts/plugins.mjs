@@ -68,12 +68,9 @@ switch (command) {
     }
     break;
   case "generate-catalog": {
-    const packageRootFlag = args.indexOf("--package-root");
-    if (packageRootFlag === -1 || !args[packageRootFlag + 1]) {
-      throw new Error("generate-catalog requires --package-root <directory>");
-    }
+    const packageRoot = packageRootArgument(args, "generate-catalog");
     verifyPlugins(plugins, true);
-    generateCatalog(plugins, resolve(repositoryRoot, args[packageRootFlag + 1]), false, true);
+    generateCatalog(plugins, packageRoot, false, true);
     break;
   }
   case "check-seepage":

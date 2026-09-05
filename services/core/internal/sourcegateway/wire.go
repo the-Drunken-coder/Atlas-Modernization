@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"strings"
 	"unicode/utf8"
 
@@ -149,7 +150,7 @@ var hopByHopHeaders = map[string]bool{
 }
 
 var fixedForbiddenRequestHeaders = func() map[string]bool {
-	result := cloneHeaderSet(hopByHopHeaders)
+	result := maps.Clone(hopByHopHeaders)
 	for _, name := range []string{"host", "authorization", "cookie"} {
 		result[name] = true
 	}
@@ -157,20 +158,12 @@ var fixedForbiddenRequestHeaders = func() map[string]bool {
 }()
 
 var fixedForbiddenResponseHeaders = func() map[string]bool {
-	result := cloneHeaderSet(hopByHopHeaders)
+	result := maps.Clone(hopByHopHeaders)
 	for _, name := range []string{"authorization", "cookie", "set-cookie"} {
 		result[name] = true
 	}
 	return result
 }()
-
-func cloneHeaderSet(input map[string]bool) map[string]bool {
-	result := make(map[string]bool, len(input))
-	for name, value := range input {
-		result[name] = value
-	}
-	return result
-}
 
 func validateDecodedPath(path string) error {
 	if !utf8.ValidString(path) || !strings.HasPrefix(path, "/") {

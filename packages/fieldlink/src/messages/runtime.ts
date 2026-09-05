@@ -377,7 +377,7 @@ export function attachRuntimeRequestHandler(
     }
 
     const resolved = await response;
-    if (isActive(lifecycleSignal)) {
+    if (!lifecycleSignal.aborted) {
       await node.send(resolved, {
         destination: received.source,
         signal: lifecycleSignal,
@@ -474,10 +474,6 @@ function isBoundedIdentifier(value: unknown, maximum: number): value is string {
     value.length > 0 &&
     Array.from(value).length <= maximum
   );
-}
-
-function isActive(signal: AbortSignal): boolean {
-  return !signal.aborted;
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {

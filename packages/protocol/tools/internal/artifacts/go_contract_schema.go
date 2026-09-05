@@ -242,25 +242,23 @@ func schemaObjectVariants(schema map[string]any, defs map[string]any, seen map[s
 		nextSeen[definition] = true
 		return schemaObjectVariants(resolved, defs, nextSeen)
 	}
-	for _, keyword := range []string{"anyOf"} {
-		if rawVariants, ok := schema[keyword].([]any); ok {
-			if err := validateSchemaKeywords(schema, "go struct object shape", keyword); err != nil {
+	if rawVariants, ok := schema["anyOf"].([]any); ok {
+		if err := validateSchemaKeywords(schema, "go struct object shape", "anyOf"); err != nil {
+			return nil, err
+		}
+		var variants []schemaObjectVariant
+		for _, rawVariant := range rawVariants {
+			variant, ok := rawVariant.(map[string]any)
+			if !ok {
+				return nil, fmt.Errorf("anyOf contains a non-object schema")
+			}
+			resolved, err := schemaObjectVariants(variant, defs, cloneBoolMap(seen))
+			if err != nil {
 				return nil, err
 			}
-			var variants []schemaObjectVariant
-			for _, rawVariant := range rawVariants {
-				variant, ok := rawVariant.(map[string]any)
-				if !ok {
-					return nil, fmt.Errorf("%s contains a non-object schema", keyword)
-				}
-				resolved, err := schemaObjectVariants(variant, defs, cloneBoolMap(seen))
-				if err != nil {
-					return nil, err
-				}
-				variants = append(variants, resolved...)
-			}
-			return variants, nil
+			variants = append(variants, resolved...)
 		}
+		return variants, nil
 	}
 	if _, ok := schema["oneOf"]; ok {
 		return nil, fmt.Errorf("oneOf object unions are not supported for Go struct parity")
@@ -360,28 +358,26 @@ func schemaStringValuesFromSchema(defs map[string]any, schema map[string]any, pr
 		return schemaStringValuesFromSchema(defs, resolved, property, nextSeen)
 	}
 
-	for _, keyword := range []string{"anyOf"} {
-		if variants, ok := schema[keyword].([]any); ok {
-			if err := validateSchemaKeywords(schema, "finite string domain", keyword); err != nil {
+	if variants, ok := schema["anyOf"].([]any); ok {
+		if err := validateSchemaKeywords(schema, "finite string domain", "anyOf"); err != nil {
+			return nil, false, err
+		}
+		var values []string
+		for _, rawVariant := range variants {
+			variant, ok := rawVariant.(map[string]any)
+			if !ok {
+				return nil, false, fmt.Errorf("anyOf contains a non-object schema")
+			}
+			variantValues, finite, err := schemaStringValuesFromSchema(defs, variant, property, cloneBoolMap(seen))
+			if err != nil {
 				return nil, false, err
 			}
-			var values []string
-			for _, rawVariant := range variants {
-				variant, ok := rawVariant.(map[string]any)
-				if !ok {
-					return nil, false, fmt.Errorf("%s contains a non-object schema", keyword)
-				}
-				variantValues, finite, err := schemaStringValuesFromSchema(defs, variant, property, cloneBoolMap(seen))
-				if err != nil {
-					return nil, false, err
-				}
-				if !finite {
-					return nil, false, nil
-				}
-				values = append(values, variantValues...)
+			if !finite {
+				return nil, false, nil
 			}
-			return sortedUniqueStrings(values), true, nil
+			values = append(values, variantValues...)
 		}
+		return sortedUniqueStrings(values), true, nil
 	}
 	if _, ok := schema["oneOf"]; ok {
 		return nil, false, fmt.Errorf("oneOf finite string domains are not supported")

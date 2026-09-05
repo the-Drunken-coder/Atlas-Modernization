@@ -3398,6 +3398,7 @@ function parseCommand(argv: string[]): Command {
     case "doctor":
     case "config":
     case "init":
+    case "reset":
     case "restart":
     case "start":
     case "status":
@@ -3414,9 +3415,6 @@ function parseCommand(argv: string[]): Command {
     case "__apply-core-update":
       if (args.length !== 2) throw new UsageError("invalid internal update request");
       return { kind: "apply-core-update", fromVersion: args[0] ?? "", expectedImage: args[1] ?? "" };
-    case "reset":
-      if (args.length > 0) throw new UsageError("reset does not accept arguments");
-      return { kind: "reset" };
     case "logs":
       return parseLogs(args);
     case "plugins":

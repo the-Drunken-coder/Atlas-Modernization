@@ -215,21 +215,17 @@ export class RunStore {
   private untrackCleanupCandidate(run: RunRecord, resource: CreatedResource): void {
     if (run.cleanupStarted || run.cleaned) return;
     const index = run.cleanupResources.findIndex((candidate) => sameResource(candidate, resource));
-    let changed = index !== -1;
-    const cleanupResources = changed
-      ? run.cleanupResources.filter((_, candidateIndex) => candidateIndex !== index)
-      : run.cleanupResources;
+    const cleanupResources =
+      index !== -1
+        ? run.cleanupResources.filter((_, candidateIndex) => candidateIndex !== index)
+        : run.cleanupResources;
     const overflowCleanupResource = sameResource(run.overflowCleanupResource, resource)
       ? undefined
       : run.overflowCleanupResource;
-    if (overflowCleanupResource !== run.overflowCleanupResource) {
-      changed = true;
-    }
-    if (changed) {
-      persistRun({ ...run, cleanupResources, overflowCleanupResource }, this.options);
-      run.cleanupResources = cleanupResources;
-      run.overflowCleanupResource = overflowCleanupResource;
-    }
+    if (index === -1 && overflowCleanupResource === run.overflowCleanupResource) return;
+    persistRun({ ...run, cleanupResources, overflowCleanupResource }, this.options);
+    run.cleanupResources = cleanupResources;
+    run.overflowCleanupResource = overflowCleanupResource;
   }
 
   private assert(run: RunRecord, name: string, passed: boolean, message?: string): AssertionResult {

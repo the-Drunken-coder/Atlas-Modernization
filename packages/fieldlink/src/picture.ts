@@ -227,9 +227,9 @@ export class FieldLinkPicture {
       if (this.#journal.length > 0) {
         this.#journal.shift();
       } else if (this.#seen.size > 0) {
-        this.#seen.delete(this.#seen.keys().next().value as string);
+        trimMap(this.#seen, this.#seen.size - 1);
       } else if (this.#latest.size > 0) {
-        this.#latest.delete(this.#latest.keys().next().value as string);
+        trimMap(this.#latest, this.#latest.size - 1);
       } else {
         break;
       }

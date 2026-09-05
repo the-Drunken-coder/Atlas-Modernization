@@ -54,15 +54,16 @@ export function targetForRun(
       apiKey
     };
   }
-  if (configured && targetSummary(configured).baseUrl !== runTarget.baseUrl) {
+  if (configured && configured.baseUrl !== runTarget.baseUrl) {
     throw new Error(`Atlas target ${runTarget.id} no longer matches the run cleanup target`);
   }
-  const target = configured ?? {
-    id: runTarget.id,
-    label: "Recovered deployed Core",
-    baseUrl: runTarget.baseUrl
-  };
-  return target;
+  return (
+    configured ?? {
+      id: runTarget.id,
+      label: "Recovered deployed Core",
+      baseUrl: runTarget.baseUrl
+    }
+  );
 }
 
 export function runTarget(target: AtlasTargetConfig, includeClientFactory: boolean): RunTarget {

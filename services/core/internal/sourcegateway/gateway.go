@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"net/netip"
@@ -603,7 +604,7 @@ func (c *connector) attempt(
 }
 
 func (c *connector) responseHeaders(headers http.Header, allowedNames []string, limits ConnectorLimits) ([]HeaderTuple, error) {
-	connectionNamed := cloneHeaderSet(fixedForbiddenResponseHeaders)
+	connectionNamed := maps.Clone(fixedForbiddenResponseHeaders)
 	for _, value := range headers.Values("Connection") {
 		for _, name := range strings.Split(value, ",") {
 			connectionNamed[strings.ToLower(strings.TrimSpace(name))] = true

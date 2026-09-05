@@ -96,19 +96,16 @@ function pointGeometry(entity: EntityResource): UiPoint | undefined {
 function entitySymbolHints(entity: EntityResource): Pick<MapFeatureProperties, "modelId" | "assetType" | "symbolType"> {
   const customSymbol = recordValue(entity.components.custom_symbol);
   return {
-    modelId: firstString(customSymbol?.model_id),
-    assetType: firstString(customSymbol?.asset_type),
-    symbolType: firstString(customSymbol?.symbol_type)
+    modelId: trimmedString(customSymbol?.model_id),
+    assetType: trimmedString(customSymbol?.asset_type),
+    symbolType: trimmedString(customSymbol?.symbol_type)
   };
 }
 
-function firstString(...values: unknown[]): string | undefined {
-  for (const value of values) {
-    if (typeof value !== "string") continue;
-    const trimmed = value.trim();
-    if (trimmed) return trimmed;
-  }
-  return undefined;
+function trimmedString(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed || undefined;
 }
 
 function recordValue(value: unknown): Record<string, unknown> | undefined {
