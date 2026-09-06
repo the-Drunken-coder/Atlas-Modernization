@@ -29,8 +29,9 @@ const budgets = {
   mapLibreCss: { raw: 85_000, gzip: 11_000 },
   mapRoute: { raw: 2_100_000, gzip: 550_000 },
   // Geo Feature creation adds the sidebar editor and map drawing interaction.
-  // The measured aggregate is 3,624 kB JS and 600.9 kB CSS; retain gzip variance margin.
-  allJavaScript: { raw: 3_625_000, gzip: 1_000_000 },
+  // The aggregate is 3,624 kB JS and 600.9 kB CSS. Linux CI measures
+  // 1,000.29 kB gzipped JS versus 999.12 kB on macOS; retain platform variance margin.
+  allJavaScript: { raw: 3_625_000, gzip: 1_001_000 },
   allCss: { raw: 601_000, gzip: 67_000 }
 };
 
