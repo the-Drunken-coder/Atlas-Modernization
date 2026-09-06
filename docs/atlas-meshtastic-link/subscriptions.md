@@ -29,6 +29,12 @@ Link subscriptions are renewable leases. A Link service renews its active subscr
 
 A Link service renews each active Link subscription every thirty seconds. The Gateway lease expires after ninety seconds without a renewal. One or two lost renewals therefore do not stop the feed, while demand from a vanished Link service disappears within roughly a minute and a half. An explicit unsubscribe removes that Link service's demand immediately.
 
+Adds and explicit removes are confirmed addressed transitions. Renewals are best-effort lease refreshes and do not request a settlement or retry at the Link layer. A later renewal refreshes the lease after a lost one; the Gateway still expires demand after ninety seconds without a received renewal.
+
+The Gateway retains the latest generation, session, and sequence fence for each source and selector pair, including demand that has been removed or expired. Its in-memory demand owner accepts up to 4,096 distinct pairs for its lifetime. Once full, it rejects a new pair while continuing to accept newer transitions for pairs it already knows. Recreating the demand owner, such as during a Gateway restart, resets this history and its demand; subsequent adds or renewals rebuild active demand. Retaining removed fences prevents a delayed old transition from reviving a feed.
+
+The receiver cannot know whether a subscription frame is an add, renewal, or remove until it has reassembled the full message. A rare multi-frame renewal can therefore solicit a `missing_chunks` repair request that the best-effort sender does not retain. The request is ignored, and the partial message remains until the normal reassembly timeout.
+
 ## Feed update behavior
 
 The Gateway coalesces superseded state while it waits for radio capacity. If several position, Track, or observational Task updates accumulate for the same feed, it keeps the newest state for each record and does not replay obsolete intermediate values.

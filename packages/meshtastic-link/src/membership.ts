@@ -11,6 +11,11 @@ export type GatewayMembership = PrivateChannelMembership & {
   asset_generations: Record<string, number>;
 };
 
+type AssetAdmission = { membership: GatewayMembership; source_generation: number };
+// Preparation runs under the per-membership mutation lock before the new generation is written.
+// It must only derive local data and must not send packets or write external state.
+type AdmissionPreparation<T> = (membership: GatewayMembership, source_generation: number) => T | Promise<T>;
+
 export class GatewayMembershipStore {
   private readonly path: string;
 
@@ -64,7 +69,10 @@ export class GatewayMembershipStore {
     });
   }
 
-  async admitAsset(assetID: string): Promise<{ membership: GatewayMembership; source_generation: number }> {
+  async admitAsset<T = never>(
+    assetID: string,
+    prepare?: AdmissionPreparation<T>
+  ): Promise<AssetAdmission & { prepared?: T }> {
     if (!assetID.trim()) throw new TypeError("Asset ID must not be empty");
     return this.mutate(async () => {
       const membership = await this.load();
@@ -72,6 +80,7 @@ export class GatewayMembershipStore {
         ? membership.asset_generations[assetID]
         : 0;
       const sourceGeneration = (previousGeneration ?? 0) + 1;
+      const prepared = prepare ? await prepare(membership, sourceGeneration) : undefined;
       Object.defineProperty(membership.asset_generations, assetID, {
         value: sourceGeneration,
         enumerable: true,
@@ -79,7 +88,11 @@ export class GatewayMembershipStore {
         writable: true
       });
       await this.write(membership);
-      return { membership, source_generation: sourceGeneration };
+      return {
+        membership,
+        source_generation: sourceGeneration,
+        ...(prepared === undefined ? {} : { prepared })
+      };
     });
   }
 

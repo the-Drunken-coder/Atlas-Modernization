@@ -5,7 +5,7 @@ import type {
   AtlasRadioOutputByOperation,
   AtlasRadioRequestOperation
 } from "./generated/radio-contract.generated.js";
-import type { SubmitOptions } from "./transport.js";
+import type { AtomicTaskSettlementResult, SubmitOptions } from "./transport.js";
 import type {
   DataRequest,
   DataResponse,
@@ -82,6 +82,12 @@ type OperationContext<Operation extends AtlasRadioOperationName> = Operation ext
 
 export interface RadioOperationSubmitter {
   submit(message: LinkMessage, options?: SubmitOptions): LinkOperationResult;
+  settleInboundWithTaskReport(
+    settlementID: string,
+    report: TaskReport,
+    destination: LinkNode,
+    operationID?: string
+  ): AtomicTaskSettlementResult;
 }
 
 /** Typed application entry point into the Radio contract and production transport. */
@@ -127,6 +133,15 @@ export class AtlasRadioSDK {
 
   reportTask(report: TaskReport, destination: LinkNode, operationID?: string): LinkOperationResult {
     return this.addressed(report, destination, operationID);
+  }
+
+  settleInboundWithTaskReport(
+    settlementID: string,
+    report: TaskReport,
+    destination: LinkNode,
+    operationID?: string
+  ): AtomicTaskSettlementResult {
+    return this.submitter.settleInboundWithTaskReport(settlementID, report, destination, operationID);
   }
 
   subscribe(subscription: SubscriptionOperation, destination: LinkNode, operationID?: string): LinkOperationResult {

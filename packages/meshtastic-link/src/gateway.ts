@@ -78,8 +78,6 @@ export class GatewayFeedDemand {
       generation: number;
       session: string;
       sequence: number;
-      sourceNodeID: string;
-      selector: SubscriptionTransition["selector"];
     }
   >();
 
@@ -99,51 +97,25 @@ export class GatewayFeedDemand {
         if (event.service_session !== previous.session || event.source_sequence <= previous.sequence) return undefined;
       }
     }
-    if (previous === undefined && !this.makeTransitionFenceRoom(now)) {
+    if (previous === undefined && this.latestTransitions.size >= FEED_TRANSITION_FENCE_LIMIT) {
       return { rejected: true, reason: "subscription transition capacity is exhausted" };
     }
     this.latestTransitions.set(transitionKey, {
       generation: event.source_generation,
       session: event.service_session,
-      sequence: event.source_sequence,
-      sourceNodeID: event.source.id,
-      selector: event.message.selector
+      sequence: event.source_sequence
     });
     const changed = this.demand.apply(event.source.id, transition, now);
-    this.pruneTransitionFences(now);
     if (!changed) return undefined;
     return { active: event.message.action !== "remove", selector: event.message.selector };
   }
 
   expire(now: number): GatewayFeedTransition[] {
-    const expired = this.demand.expire(now).map((selector) => ({ active: false, selector }));
-    this.pruneTransitionFences(now);
-    return expired;
+    return this.demand.expire(now).map((selector) => ({ active: false, selector }));
   }
 
   active(now: number): readonly SubscriptionTransition["selector"][] {
     return [...this.demand.aggregate(now).values()];
-  }
-
-  private pruneTransitionFences(now: number): void {
-    while (this.latestTransitions.size > FEED_TRANSITION_FENCE_LIMIT) {
-      const removable = [...this.latestTransitions].find(
-        ([, transition]) => !this.demand.has(transition.sourceNodeID, transition.selector, now)
-      );
-      if (removable === undefined) return;
-      this.latestTransitions.delete(removable[0]);
-    }
-  }
-
-  private makeTransitionFenceRoom(now: number): boolean {
-    while (this.latestTransitions.size >= FEED_TRANSITION_FENCE_LIMIT) {
-      const removable = [...this.latestTransitions].find(
-        ([, transition]) => !this.demand.has(transition.sourceNodeID, transition.selector, now)
-      );
-      if (removable === undefined) return false;
-      this.latestTransitions.delete(removable[0]);
-    }
-    return true;
   }
 }
 

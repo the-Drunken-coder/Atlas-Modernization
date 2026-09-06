@@ -66,13 +66,13 @@ const mocks = vi.hoisted(() => {
   };
 });
 
-vi.mock("@meshtastic/transport-node-serial", () => ({
-  TransportNodeSerial: { create: mocks.transportCreate }
+vi.mock("./serial.js", () => ({
+  openSerialTransport: mocks.transportCreate
 }));
 
-vi.mock("@meshtastic/core", () => ({
+vi.mock("@meshtastic/core", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@meshtastic/core")>()),
   MeshDevice: mocks.FakeMeshDevice,
-  Protobuf: {},
   Types: { DeviceStatusEnum: { DeviceDisconnected: 2, DeviceConfigured: 7 } }
 }));
 

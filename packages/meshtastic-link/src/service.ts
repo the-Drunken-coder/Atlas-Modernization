@@ -22,6 +22,7 @@ import {
   type SubscriptionTransition
 } from "./subscriptions.js";
 import {
+  type AtomicTaskSettlementResult,
   LinkTransport,
   type TransportDiagnostics,
   type TransportEvent,
@@ -246,6 +247,34 @@ export class LinkService {
 
   settleInbound(settlementID: string, accepted: boolean, reason?: string): boolean {
     return this.transport?.settleInbound(settlementID, accepted, reason) ?? false;
+  }
+
+  settleInboundWithTaskReport(
+    settlementID: string,
+    report: LinkMessage,
+    destination?: LinkNode,
+    operationIDValue?: string
+  ): AtomicTaskSettlementResult {
+    if (!isLinkMessage(report) || report.type !== "task_report") throw new TypeError("invalid Task report");
+    const reportOperationID = operationIDValue ?? operationID(report);
+    const target = destination ?? this.defaultDestination(report);
+    const failed = (reason: string): AtomicTaskSettlementResult => ({
+      accepted: false,
+      receipt: {
+        operation_id: `control_${randomUUID().replaceAll("-", "")}`,
+        status: "failed",
+        reason,
+        completed_at: this.clock.now()
+      },
+      report: { operation_id: reportOperationID, status: "failed", reason, completed_at: this.clock.now() }
+    });
+    if (this.lifecycle === "configuring" || this.lifecycle === "error") {
+      return failed("Link service is not transmitting");
+    }
+    if (!this.transport) return failed("Link transport is unavailable");
+    if (target === undefined) return failed("Gateway is unavailable");
+    if (!isLinkNode(target)) return failed("Task report destination is invalid");
+    return this.transport.settleInboundWithTaskReport(settlementID, report, target, operationIDValue);
   }
 
   operation(operationID: string): LinkOperationResult | undefined {
@@ -693,6 +722,26 @@ export class LinkHTTPServer {
           202,
           this.service.submit(body.message, body.destination, body.operation_id as string | undefined)
         );
+      }
+      const taskSettlementMatch = /^\/v1\/inbound\/([^/]+)\/settle-task$/.exec(url.pathname);
+      if (request.method === "POST" && taskSettlementMatch?.[1]) {
+        const body = await readJSONObject(request);
+        if (
+          !isLinkMessage(body.report) ||
+          body.report.type !== "task_report" ||
+          (body.destination !== undefined && !isLinkNode(body.destination)) ||
+          (body.operation_id !== undefined &&
+            (typeof body.operation_id !== "string" || body.operation_id.trim().length === 0))
+        ) {
+          return json(response, 400, { error: "invalid atomic Task settlement request" });
+        }
+        const result = this.service.settleInboundWithTaskReport(
+          decodeURIComponent(taskSettlementMatch[1]),
+          body.report,
+          body.destination,
+          body.operation_id
+        );
+        return json(response, result.accepted ? 202 : 409, result);
       }
       const settleMatch = /^\/v1\/inbound\/([^/]+)\/settle$/.exec(url.pathname);
       if (request.method === "POST" && settleMatch?.[1]) {

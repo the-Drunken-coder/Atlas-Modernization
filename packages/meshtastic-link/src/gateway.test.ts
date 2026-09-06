@@ -62,20 +62,50 @@ describe("Gateway application seams", () => {
     expect(demand.active(2)).toEqual([]);
   });
 
-  it("does not evict a transition fence while its lease is active", () => {
+  it("retains inactive transition fences and keeps existing keys usable at capacity", () => {
     const demand = new GatewayFeedDemand();
-    const active = { kind: "resource_type", resource_type: "entity" } as const;
-    demand.apply({ ...subscriptionEvent("asset-alpha", "add", active), source_sequence: 2 }, 0);
-    for (let index = 0; index < 4_096; index++) {
-      const selector = { kind: "record", resource_type: "entity", id: `entity-${index}` } as const;
+    const retired = { kind: "record", resource_type: "entity", id: "retired" } as const;
+    expect(demand.apply({ ...subscriptionEvent("asset-retired", "add", retired), source_sequence: 1 }, 0)).toEqual({
+      active: true,
+      selector: retired
+    });
+    expect(demand.apply({ ...subscriptionEvent("asset-retired", "remove", retired), source_sequence: 2 }, 1)).toEqual({
+      active: false,
+      selector: retired
+    });
+
+    const existing = { kind: "record", resource_type: "entity", id: "entity-0" } as const;
+    for (let index = 0; index < 4_095; index++) {
+      const selector =
+        index === 0
+          ? existing
+          : ({
+              kind: "record",
+              resource_type: "entity",
+              id: `entity-${index}`
+            } as const);
       demand.apply({ ...subscriptionEvent(`asset-${index}`, "add", selector), source_sequence: 1 }, 1);
-      demand.apply({ ...subscriptionEvent(`asset-${index}`, "remove", selector), source_sequence: 2 }, 2);
     }
 
+    const overflow = { kind: "record", resource_type: "entity", id: "overflow" } as const;
+    expect(demand.apply(subscriptionEvent("asset-overflow", "add", overflow), 3)).toEqual({
+      rejected: true,
+      reason: "subscription transition capacity is exhausted"
+    });
     expect(
-      demand.apply({ ...subscriptionEvent("asset-alpha", "remove", active), source_sequence: 1 }, 3)
+      demand.apply({ ...subscriptionEvent("asset-retired", "add", retired), source_sequence: 1 }, 3)
     ).toBeUndefined();
-    expect(demand.active(3)).toEqual([active]);
+    expect(demand.active(3)).not.toContain(retired);
+    expect(demand.active(3)).toHaveLength(4_095);
+
+    expect(demand.apply({ ...subscriptionEvent("asset-0", "remove", existing), source_sequence: 2 }, 4)).toEqual({
+      active: false,
+      selector: existing
+    });
+    expect(demand.apply({ ...subscriptionEvent("asset-0", "renew", existing), source_sequence: 3 }, 5)).toEqual({
+      active: true,
+      selector: existing
+    });
   });
 
   it("replaces obsolete session fences for the same source and selector", () => {
@@ -658,7 +688,11 @@ function messageEvent(message: ReturnType<typeof positionPublication>): Transpor
   };
 }
 
-function subscriptionEvent(assetID: string, action: "add" | "remove", selector: FeedSelector): TransportMessageEvent {
+function subscriptionEvent(
+  assetID: string,
+  action: "add" | "renew" | "remove",
+  selector: FeedSelector
+): TransportMessageEvent {
   return {
     type: "message",
     message: { type: "subscription", action, selector },

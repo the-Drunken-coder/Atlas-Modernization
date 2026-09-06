@@ -6,14 +6,12 @@ import { createUSShortFastProfile, RadioProfileManager } from "./profile.js";
 import { MeshtasticSerialRadio } from "./radio.js";
 
 const harness = vi.hoisted(() => ({ device: undefined as ReturnType<typeof configuredDevice> | undefined }));
-vi.mock("@meshtastic/transport-node-serial", () => ({
-  TransportNodeSerial: {
-    create: vi.fn(async () => ({
-      fromDevice: new ReadableStream(),
-      toDevice: new WritableStream(),
-      disconnect: vi.fn(async () => undefined)
-    }))
-  }
+vi.mock("./serial.js", () => ({
+  openSerialTransport: vi.fn(async () => ({
+    fromDevice: new ReadableStream(),
+    toDevice: new WritableStream(),
+    disconnect: vi.fn(async () => undefined)
+  }))
 }));
 vi.mock("@meshtastic/core", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@meshtastic/core")>()),
@@ -76,6 +74,25 @@ describe("radio configuration readback", () => {
       });
       expect(await radio.readConfiguration()).toMatchObject({ native_position: false, native_telemetry: false });
       await expect(manager.diff()).resolves.toEqual([]);
+    } finally {
+      await radio.close();
+    }
+  });
+  it("installs membership when a fresh channel omits module settings", async () => {
+    const device = configuredDevice();
+    const channel = device.channels.get(1);
+    if (!channel?.settings) throw new Error("Missing test channel");
+    channel.settings.moduleSettings = undefined;
+    harness.device = device;
+    const radio = await MeshtasticSerialRadio.open("/dev/cu.test");
+    try {
+      await radio.installPrivateMembership({
+        channel_index: 1,
+        channel_name: "ATLAS",
+        channel_key_base64: Buffer.alloc(32, 7).toString("base64")
+      });
+      expect(await radio.readPrivateMembership(1)).toMatchObject({ channel_name: "ATLAS" });
+      expect(device.channels.get(1)?.settings?.moduleSettings?.positionPrecision).toBe(0);
     } finally {
       await radio.close();
     }

@@ -116,3 +116,43 @@ The simulator operates at the packet level. It does not attempt to simulate elec
 Hardware experiments record actual firmware, Radio profile, topology, environment, packet outcomes, and timing. Their results calibrate or bound the simulator. Uncalibrated assumptions remain labeled instead of being presented as field predictions.
 
 Before field use, three physical radios using the selected firmware and `LOCAL_ONLY` profile must prove that an Asset discovery beacon and the public-key-encrypted join exchange traverse one intermediate relay in both directions. This result cannot be inferred from the packet simulator.
+
+
+## Meshtastic Lab backend
+
+Atlas also owns a real-time experiment runner at
+`packages/meshtastic-link/src/experiments`. It uses Meshtastic Lab programmatically
+as a native firmware and RF-medium backend. The lab does not interpret Atlas
+messages or decide whether an Atlas experiment passed. The runner supplies valid
+Radio contract workloads and observes production Link instances at both ends.
+
+Individual packet drops, complete-message acceptance, sender confirmation, and
+missed deadlines remain separate outcomes. Recovered packet loss is successful
+message delivery with additional cost. A lost confirmation does not erase the
+receiver's acceptance. Native RF observations and controlled pre-reassembly fault
+injections retain separate provenance; unavailable native loss rates stay unknown.
+
+These experiments use lab-configured channels and TCP Client API connections.
+They supplement the deterministic benchmarks and physical-radio trials without
+claiming to validate joining, full Radio profile convergence, or physical range.
+See [the experiment guide](../../packages/meshtastic-link/experiments/README.md)
+for scenarios, reproducibility, lifecycle ownership, and exact result denominators.
+
+## September 2026 bandwidth comparison
+
+The [bandwidth optimization report](../../packages/meshtastic-link/experiments/BANDWIDTH-OPTIMIZATION.md) compares the frozen `deflate-v1` implementation with corrected native payload budgets, causal response metadata, and the opt-in `deflate-v2` encoding. It retains the three-Asset A–Gateway–B–C workload, five-second telemetry, and fifteen-second command cadence.
+
+The packet model now carries received native packet IDs, applies the per-send native budget, and includes the five-byte request ID in estimated airtime. Its three checked-in canonical baseline artifacts were intentionally regenerated after that correction. Those artifacts remain JSON reference costs, not evidence of an optimized fleet's throughput. The model still lacks firmware queue priority and eviction, and does not establish physical RF performance.
+
+The native Lab comparison resets host-local packet priority at the simulated RF boundary, matching physical Meshtastic headers. Earlier Lab results that carried that priority across RF cannot measure the benefit of native response metadata. Both implementations must run on the corrected Lab to make that comparison.
+
+The [next optimization round](../../packages/meshtastic-link/experiments/FURTHER-OPTIMIZATION.md) tests explicit receipt/report pairing with `deflate-v3`, lease renewal traffic, and join acceptance limits. `runSimulatedExperiment` derives per-node Link IDs from the scenario seed, so compressed sizes and event timing are reproducible without replacing global crypto functions. Production services retain cryptographic IDs. Native experiment node results include `radio_queue`: bounded local queue-status observations since device connection (including setup), with minimum reported free slots and matched admissions/rejections. These observations do not establish RF transmission or end-to-end delivery.
+
+
+## Latency and current-state comparisons
+
+`createGatewayFleetExperiment({ commandsPerAsset: true })` keeps three Assets publishing every five seconds and increases commands to one per Asset every fifteen seconds. The original default remains one fleet-wide round-robin command every fifteen seconds. Both use the same Gateway–A, Gateway–B, B–C connectivity. `scripts/compare-latency.ts` compares the prior v3 encoding, binary encoding, adaptive retries, compact state updates, and their combination across both loads and both presets with seeded identities.
+
+Experiment telemetry results include time-weighted sample age (p50, p95, maximum), the longest interval without a fresher accepted sample, and unknown time before the first accepted sample. These use independently observed application acceptance. Their active window runs from the first through the last scheduled publication for that source and receiver; the remaining drain window is reported separately. An out-of-order older sample cannot make the freshest known state older. A missing initial sample is unknown state, not zero age. The existing per-message delivery, confirmation, and packet counters remain separate.
+
+The [latency and bandwidth comparison](../../packages/meshtastic-link/experiments/LATENCY-AND-BANDWIDTH.md) records the binary codec, atomic acceptance/report API, telemetry scheduler, optional retry/update modes, and their measured tradeoffs.

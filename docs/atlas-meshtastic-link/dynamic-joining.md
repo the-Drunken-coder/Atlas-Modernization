@@ -31,7 +31,20 @@ The common Radio profile and Link membership are different inputs:
 
 ## Asset join flow
 
-The exact message encodings remain open, but the required flow is:
+Discovery, challenge, and response use the compact JSON form described by the
+implementation. Acceptance wire version 1 uses a compact binary form so its
+full credential and membership payload fits the native directed/PKI budget.
+It carries length-prefixed UTF-8 join and Gateway IDs, the source generation,
+the raw radio-contract digest, channel index and name, and the channel key.
+The Gateway encodes this acceptance against the actual send budget while its
+membership mutation is still locked. If it does not fit, the join fails before
+the Asset's source generation is persisted. This is an exact packet-size
+preflight rather than a character limit on Gateway IDs.
+Gateway initialization and startup run the same encoder with the
+generated key, a synthetic 32-byte attempt ID, and the native PKI budget before
+creating or activating the durable membership record.
+
+The required flow is:
 
 1. The Asset-mode Link service connects to its local Meshtastic radio.
 2. Startup convergence applies the common static Radio profile and clears or disables private-channel material left by an earlier service session.

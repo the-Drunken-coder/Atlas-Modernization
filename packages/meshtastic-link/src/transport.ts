@@ -18,12 +18,23 @@ import {
   coalescingKey,
   deliveryClass,
   deserializeLinkMessage,
+  isLinkMessage,
   messagePriority,
   serializeLinkMessage
 } from "./contract.js";
-import { decodeFrame, type FrameIdentity, fragmentPayload, type LinkFrame, MAX_LINK_MESSAGE_BYTES } from "./frame.js";
+import {
+  decodeFrame,
+  type FrameEncoding,
+  type FrameIdentity,
+  fragmentPayload,
+  type LinkFrame,
+  MAX_LINK_MESSAGE_BYTES
+} from "./frame.js";
+import { decodeMessagePayload } from "./message-codec.js";
 import type { PictureApplyContext, SharedPicture } from "./picture.js";
-import type { LinkRadio, RadioPacket } from "./radio.js";
+import type { LinkRadio, RadioPacket, RadioSendOptions } from "./radio.js";
+import { RetryTimingEstimator } from "./retry-timing.js";
+import { isStateDeltaPayload, StateDeltaDecoder, StateDeltaEncoder } from "./state-delta.js";
 import type {
   ConfirmationState,
   ControlMessage,
@@ -112,16 +123,51 @@ export type TransportOptions = {
   clock: Clock;
   picture?: SharedPicture;
   privateChannel?: number;
+  frameEncoding?: FrameEncoding;
+  /** Supply reproducible unique IDs in simulations; real services use cryptographic randomness. */
+  createID?: () => string;
   queueLimit?: number;
   confirmedLimit?: number;
   reassemblyLimit?: number;
   reassemblyTimeoutMs?: number;
   retryIntervalMs?: number;
+  adaptiveRetries?: boolean;
+  stateDeltas?: boolean;
+  retryJitterMs?: number;
 };
 
 export type SubmitOptions = {
   destination?: LinkNode;
   operationID?: string;
+};
+
+export type AtomicTaskSettlementResult = {
+  accepted: boolean;
+  receipt: LinkOperationResult;
+  report: LinkOperationResult;
+};
+
+type PreparedOutbound = {
+  outbound: Outbound;
+  payloadByteLength: number;
+  replacesFailedResult: boolean;
+};
+
+type OutboundPreparation =
+  | { kind: "ready"; prepared: PreparedOutbound }
+  | { kind: "existing"; result: LinkOperationResult }
+  | {
+      kind: "failed";
+      operationID: string;
+      trackingKey: string;
+      reason: string;
+      confirmedOverload?: boolean;
+    };
+
+type CapacityReservation = {
+  additionalOutbound: number;
+  pendingInboundDelta: number;
+  additionalConfirmed: number;
 };
 
 type Outbound = {
@@ -139,7 +185,21 @@ type Outbound = {
   order: number;
   queuedAt: number;
   firstSentAt?: number;
+  rttAmbiguous?: boolean;
   chunkSendCounts: number[];
+  retrySequence: number;
+  sendOptions: RadioSendOptions;
+  commitStateBaseline?: () => void;
+};
+
+type CompoundReceiptPair = {
+  receipt: Outbound;
+  report: Outbound;
+  combinedFrame: Uint8Array;
+  originalFrame: Uint8Array;
+  originalIdentity: FrameIdentity;
+  originalSendOptions: RadioSendOptions;
+  receiptIdentity: NonNullable<FrameIdentity["receipt"]>;
 };
 
 type Reassembly = {
@@ -149,6 +209,7 @@ type Reassembly = {
   byteLength: number;
   expiresAt: number;
   lastReceivedAt: number;
+  radioPacketID: number | undefined;
   timer: TimerHandle;
 };
 
@@ -159,8 +220,11 @@ type SourceFence = {
 
 type PendingInbound = {
   source: LinkNode;
+  message_type: LinkMessage["type"];
+  task_id?: string;
   operationID: string;
   messageID: string;
+  radioPacketID?: number;
   timer: TimerHandle;
 };
 
@@ -186,15 +250,29 @@ export class LinkTransport {
   private readonly confirmedLimit: number;
   private readonly reassemblyLimit: number;
   private readonly reassemblyTimeoutMs: number;
+  private readonly retryJitterMs: number;
   private readonly retryIntervalMs: number | undefined;
+  private readonly adaptiveRetries: boolean;
+  private readonly retryTimings = new Map<MessagePriority, RetryTimingEstimator>();
+  private readonly stateEncoder: StateDeltaEncoder | undefined;
+  private readonly stateDecoder = new StateDeltaDecoder();
   private readonly queue: Outbound[] = [];
   private readonly outboundByOperation = new Map<string, Outbound>();
   private readonly pendingDataRequests = new Map<string, Outbound>();
   private readonly responseOperations = new Map<string, Outbound>();
   private readonly reassemblies = new Map<string, Reassembly>();
+  private readonly frameEncoding: FrameEncoding;
+  private readonly createID: () => string;
   private readonly sourceFences = new Map<string, SourceFence>();
   private readonly pendingInbound = new Map<string, PendingInbound>();
-  private readonly settledInbound = new Map<string, { result: "confirmed" | "rejected"; expiresAt: number }>();
+  private readonly settledInbound = new Map<
+    string,
+    {
+      result: "confirmed" | "rejected";
+      expiresAt: number;
+      atomicTask?: { fingerprint: string; outcome: AtomicTaskSettlementResult };
+    }
+  >();
   private readonly operationResults = new Map<string, LinkOperationResult>();
   private readonly committedOperationIDs = new Map<string, CommittedOperation>();
   private readonly committedOperationExpiryQueue: CommittedOperationExpiry[] = [];
@@ -252,9 +330,13 @@ export class LinkTransport {
     }
     this.node = options.node;
     this.sourceGeneration = options.sourceGeneration;
-    this.serviceSession = options.serviceSession ?? compactID();
+    this.createID = options.createID ?? compactID;
+    this.serviceSession = options.serviceSession ?? this.createID();
     if (!this.serviceSession.trim()) throw new TypeError("service session must not be blank");
     this.radio = options.radio;
+    this.frameEncoding = options.frameEncoding ?? "canonical-json";
+    this.adaptiveRetries = options.adaptiveRetries ?? false;
+    this.stateEncoder = options.stateDeltas ? new StateDeltaEncoder() : undefined;
     this.clock = options.clock;
     this.picture = options.picture;
     this.privateChannel = positiveBoundedInteger(options.privateChannel ?? 1, 0, 7, "private channel");
@@ -267,6 +349,7 @@ export class LinkTransport {
       300_000,
       "reassembly timeout"
     );
+    this.retryJitterMs = positiveBoundedInteger(options.retryJitterMs ?? 0, 0, 1000, "retry jitter");
     this.retryIntervalMs =
       options.retryIntervalMs === undefined
         ? undefined
@@ -283,61 +366,86 @@ export class LinkTransport {
   private submitWithCapacity(
     message: LinkMessage,
     options: SubmitOptions,
-    useInboundReservation: boolean
+    useInboundReservation: boolean,
+    radioRequestID?: number
   ): LinkOperationResult {
-    const operationID = options.operationID ?? operationIDFor(message);
+    const prepared = this.prepareOutbound(message, options, useInboundReservation, radioRequestID);
+    if (prepared.kind === "existing") return prepared.result;
+    if (prepared.kind === "failed") {
+      if (prepared.confirmedOverload) this.mutableMetrics.confirmed_rejected_overload++;
+      return this.failedResult(prepared.operationID, prepared.reason, prepared.trackingKey);
+    }
+    return this.commitOutbound(prepared.prepared);
+  }
+
+  private prepareOutbound(
+    message: LinkMessage,
+    options: SubmitOptions,
+    useInboundReservation: boolean,
+    radioRequestID?: number,
+    capacity: CapacityReservation = {
+      additionalOutbound: 1,
+      pendingInboundDelta: 0,
+      additionalConfirmed: deliveryClass(message) === "confirmed" ? 1 : 0
+    },
+    sourceSequence = this.sourceSequence + 1
+  ): OutboundPreparation {
+    const operationID = options.operationID ?? operationIDFor(message, this.createID);
     const trackingKey = operationTrackingKey(message, options.destination, operationID);
-    if (this.stopped) return this.failedResult(operationID, "link service is stopped", trackingKey);
+    const failure = (reason: string, confirmedOverload = false): OutboundPreparation => ({
+      kind: "failed",
+      operationID,
+      trackingKey,
+      reason,
+      ...(confirmedOverload ? { confirmedOverload: true } : {})
+    });
+    if (this.stopped) return failure("link service is stopped");
     if (!validStateSource(message, this.node)) {
-      return this.failedResult(
-        operationID,
+      return failure(
         message.type === "state" && message.resource_type === "task"
           ? "Assets must publish Task lifecycle reports instead of Task state"
-          : "Asset state must use the field path without claiming Core authority",
-        trackingKey
+          : "Asset state must use the field path without claiming Core authority"
       );
     }
     const delivery = deliveryClass(message);
     if (delivery === "confirmed" && options.destination === undefined) {
-      return this.failedResult(operationID, "confirmed operations require a destination", trackingKey);
+      return failure("confirmed operations require a destination");
     }
     if (!operationID.trim()) throw new TypeError("operation ID must not be blank");
     if (message.type === "data_request" && operationID !== message.request_id) {
-      return this.failedResult(operationID, "Data request operation ID must match its request ID", trackingKey);
+      return failure("Data request operation ID must match its request ID");
     }
     this.pruneCommittedOperationIDs();
     const existing = this.operationResults.get(trackingKey);
     if (existing) {
-      if (existing.status !== "failed" || this.committedOperationIDs.has(trackingKey)) return { ...existing };
-      this.operationResults.delete(trackingKey);
+      if (existing.status !== "failed" || this.committedOperationIDs.has(trackingKey)) {
+        return { kind: "existing", result: { ...existing } };
+      }
     }
     // Detailed results rotate; the separate session fence still blocks identities that were already transmitted.
     if (this.committedOperationIDs.has(trackingKey)) {
-      return this.failedResult(
-        operationID,
-        "operation ID was already committed in this Link service session",
-        trackingKey
-      );
+      return failure("operation ID was already committed in this Link service session");
     }
-    if (delivery === "confirmed" && this.committedOperationIDs.size >= COMMITTED_OPERATION_ID_LIMIT) {
+    if (
+      delivery === "confirmed" &&
+      this.committedOperationIDs.size + capacity.additionalConfirmed > COMMITTED_OPERATION_ID_LIMIT
+    ) {
       this.committedOperationCapacityBlocked = true;
       this.scheduleCommittedOperationExpiryWakeup();
-      this.mutableMetrics.confirmed_rejected_overload++;
-      return this.failedResult(operationID, "confirmed operation identity capacity is exhausted", trackingKey);
+      return failure("confirmed operation identity capacity is exhausted", true);
     }
     if (message.type === "data_request" && this.pendingDataRequests.has(message.request_id)) {
-      return this.failedResult(operationID, "data request ID is already pending", trackingKey);
+      return failure("data request ID is already pending");
     }
-    if (delivery === "confirmed" && this.confirmedCount() >= this.confirmedLimit) {
-      this.mutableMetrics.confirmed_rejected_overload++;
-      return this.failedResult(operationID, "confirmed operation capacity is exhausted", trackingKey);
+    if (delivery === "confirmed" && this.confirmedCount() + capacity.additionalConfirmed > this.confirmedLimit) {
+      return failure("confirmed operation capacity is exhausted", true);
     }
 
     let payload: Uint8Array;
     try {
       payload = serializeLinkMessage(message);
     } catch (error) {
-      return this.failedResult(operationID, `Radio contract encoding failed: ${asErrorMessage(error)}`, trackingKey);
+      return failure(`Radio contract encoding failed: ${asErrorMessage(error)}`);
     }
     const identity: FrameIdentity = {
       revision: 1,
@@ -346,17 +454,58 @@ export class LinkTransport {
       ...(options.destination === undefined ? {} : { destination: options.destination }),
       source_generation: this.sourceGeneration,
       service_session: this.serviceSession,
-      source_sequence: ++this.sourceSequence,
+      source_sequence: sourceSequence,
       operation_id: wireOperationIDFor(message, operationID),
-      message_id: compactID(),
+      message_id: this.createID(),
       priority: messagePriority(message)
     };
     const replaceKey = coalescingKey(message);
+    const sendOptions: RadioSendOptions = {
+      channel: this.privateChannel,
+      priority: identity.priority,
+      ...(radioRequestID === undefined ? {} : { request_id: radioRequestID })
+    };
     let frames: Uint8Array[];
+    let commitStateBaseline: (() => void) | undefined;
     try {
-      frames = fragmentPayload(payload, identity, this.radio.max_payload_bytes);
+      const limit = this.radio.maxPayloadBytes?.(sendOptions) ?? this.radio.max_payload_bytes;
+      // V3 is reserved for the compound receipt envelope; ordinary frames retain V2's smaller header.
+      const frameEncoding = this.frameEncoding === "deflate-v3" ? "deflate-v2" : this.frameEncoding;
+      frames = fragmentPayload(payload, identity, limit, frameEncoding);
+      if (this.stateEncoder && message.type === "state") {
+        const prepared = this.stateEncoder.prepare(message, identity, this.clock.now());
+        commitStateBaseline = prepared.commitFull;
+        if (prepared.deltaPayload) {
+          try {
+            const deltaFrames = fragmentPayload(prepared.deltaPayload, identity, limit, frameEncoding);
+            if (
+              deltaFrames.length <= frames.length &&
+              deltaFrames.reduce((total, frame) => total + frame.byteLength, 0) <
+                frames.reduce((total, frame) => total + frame.byteLength, 0)
+            ) {
+              frames = deltaFrames;
+              commitStateBaseline = undefined;
+            }
+          } catch {
+            // A valid full publication still proceeds when its optional delta cannot fit.
+          }
+        }
+      }
     } catch (error) {
-      return this.failedResult(operationID, `Link framing failed: ${asErrorMessage(error)}`, trackingKey);
+      return failure(`Link framing failed: ${asErrorMessage(error)}`);
+    }
+    const replacesQueuedBestEffort =
+      delivery === "best_effort" &&
+      replaceKey !== undefined &&
+      this.queue.some((item) => !item.started && item.delivery === "best_effort" && item.coalescingKey === replaceKey);
+    const finalOccupancy = this.outboundOccupancy() + capacity.additionalOutbound - (replacesQueuedBestEffort ? 1 : 0);
+    const finalPendingInbound = this.pendingInbound.size + capacity.pendingInboundDelta;
+    if (
+      useInboundReservation
+        ? this.outboundOccupancy() >= this.queueLimit + this.confirmedLimit
+        : finalOccupancy + finalPendingInbound > this.queueLimit
+    ) {
+      return failure("outbound queue capacity is exhausted");
     }
     const outbound: Outbound = {
       message,
@@ -364,49 +513,66 @@ export class LinkTransport {
       trackingKey,
       identity,
       frames,
-      pendingChunks: [],
+      pendingChunks: frames.map((_, index) => index),
       delivery,
       ...(replaceKey === undefined ? {} : { coalescingKey: replaceKey }),
       started: false,
       order: this.nextOrder++,
       queuedAt: this.clock.now(),
-      chunkSendCounts: []
+      chunkSendCounts: frames.map(() => 0),
+      retrySequence: 0,
+      sendOptions,
+      ...(commitStateBaseline === undefined ? {} : { commitStateBaseline })
     };
-    outbound.pendingChunks = outbound.frames.map((_, index) => index);
-    outbound.chunkSendCounts = outbound.frames.map(() => 0);
+    return {
+      kind: "ready",
+      prepared: {
+        outbound,
+        payloadByteLength: payload.byteLength,
+        replacesFailedResult: existing?.status === "failed"
+      }
+    };
+  }
 
-    if (delivery === "best_effort" && outbound.coalescingKey !== undefined) this.replaceQueuedBestEffort(outbound);
-    const occupancy = this.outboundOccupancy();
-    const capacityExhausted = useInboundReservation
-      ? occupancy >= this.queueLimit + this.confirmedLimit
-      : occupancy + this.pendingInbound.size >= this.queueLimit;
-    if (capacityExhausted) return this.failedResult(operationID, "outbound queue capacity is exhausted", trackingKey);
-    this.queue.push(outbound);
-    if (delivery === "confirmed") this.committedOperationIDs.set(trackingKey, {});
-    if (delivery === "confirmed") {
-      this.outboundByOperation.set(trackingKey, outbound);
-      if (message.type === "data_request") this.pendingDataRequests.set(message.request_id, outbound);
-      if (message.type === "resource_operation") this.responseOperations.set(trackingKey, outbound);
-      outbound.deadlineTimer = this.clock.schedule(outboundDeadlineMs(message, identity.priority), () => {
-        const awaitingConfirmation = this.outboundByOperation.has(trackingKey);
-        const requestID = dataRequestID(outbound);
-        const awaitingResponse =
-          (requestID !== undefined && this.pendingDataRequests.get(requestID) === outbound) ||
-          this.responseOperations.get(trackingKey) === outbound;
-        if (!awaitingConfirmation && !awaitingResponse) return;
-        this.mutableMetrics.retry_exhausted++;
-        this.completeOutbound(
-          outbound,
-          "failed",
-          awaitingConfirmation ? "confirmation deadline expired" : "response deadline expired"
-        );
-      });
+  private commitOutbound(
+    prepared: PreparedOutbound,
+    options: { requestPump?: boolean; recordQueued?: boolean } = {}
+  ): LinkOperationResult {
+    const { outbound } = prepared;
+    if (prepared.replacesFailedResult) this.operationResults.delete(outbound.trackingKey);
+    this.sourceSequence = Math.max(this.sourceSequence, outbound.identity.source_sequence);
+    if (outbound.delivery === "best_effort" && outbound.coalescingKey !== undefined) {
+      this.replaceQueuedBestEffort(outbound);
     }
-    this.mutableMetrics.application_bytes += payload.byteLength;
+    this.queue.push(outbound);
+    if (outbound.delivery === "confirmed") this.committedOperationIDs.set(outbound.trackingKey, {});
+    if (outbound.delivery === "confirmed") {
+      this.outboundByOperation.set(outbound.trackingKey, outbound);
+      if (outbound.message.type === "data_request") this.pendingDataRequests.set(outbound.message.request_id, outbound);
+      if (outbound.message.type === "resource_operation") this.responseOperations.set(outbound.trackingKey, outbound);
+      outbound.deadlineTimer = this.clock.schedule(
+        outboundDeadlineMs(outbound.message, outbound.identity.priority),
+        () => {
+          const awaitingConfirmation = this.outboundByOperation.has(outbound.trackingKey);
+          const requestID = dataRequestID(outbound);
+          const awaitingResponse =
+            (requestID !== undefined && this.pendingDataRequests.get(requestID) === outbound) ||
+            this.responseOperations.get(outbound.trackingKey) === outbound;
+          if (!awaitingConfirmation && !awaitingResponse) return;
+          this.mutableMetrics.retry_exhausted++;
+          this.completeOutbound(
+            outbound,
+            "failed",
+            awaitingConfirmation ? "confirmation deadline expired" : "response deadline expired"
+          );
+        }
+      );
+    }
+    this.mutableMetrics.application_bytes += prepared.payloadByteLength;
     this.mutableMetrics.peak_queue_depth = Math.max(this.mutableMetrics.peak_queue_depth, this.queue.length);
-    const result: LinkOperationResult = { operation_id: operationID, status: "queued" };
-    this.recordOperation(result, trackingKey);
-    this.requestPump();
+    const result: LinkOperationResult = { operation_id: outbound.operationID, status: "queued" };
+    if (options.recordQueued !== false) this.recordOperation(result, outbound.trackingKey);
+    if (options.requestPump !== false) this.requestPump();
     return result;
   }
 
@@ -423,13 +589,125 @@ export class LinkTransport {
         message_id: pending.messageID,
         ...(reason === undefined ? {} : { reason })
       },
-      true
+      true,
+      pending.radioPacketID
     );
     if (result.status === "failed") return false;
     this.recordSettledInbound(settlementID, control);
     this.pendingInbound.delete(settlementID);
     this.clock.cancel(pending.timer);
     return true;
+  }
+
+  settleInboundWithTaskReport(
+    settlementID: string,
+    report: TaskReport,
+    destination: LinkNode,
+    operationIDValue?: string
+  ): AtomicTaskSettlementResult {
+    const reportOperationID = operationIDValue ?? operationIDFor(report, this.createID);
+    const receiptOperationID = `control_${this.createID()}`;
+    const failed = (reason: string): AtomicTaskSettlementResult =>
+      this.failedAtomicTaskSettlement(receiptOperationID, reportOperationID, reason);
+    if (this.stopped) return failed("link service is stopped");
+    if (!isLinkMessage(report) || report.type !== "task_report")
+      return failed("atomic settlement requires a Task report");
+    if (!reportOperationID.trim()) return failed("operation ID must not be blank");
+    if (
+      destination === undefined ||
+      (destination.role !== "asset" && destination.role !== "gateway") ||
+      typeof destination.id !== "string" ||
+      !destination.id.trim()
+    ) {
+      return failed("Task report destination is invalid");
+    }
+    let fingerprint: string;
+    try {
+      fingerprint = createHash("sha256")
+        .update(serializeLinkMessage(report))
+        .update(JSON.stringify([destination.role, destination.id]))
+        .digest("hex");
+    } catch {
+      return failed("invalid Task report encoding");
+    }
+    this.pruneSettledInbound();
+    const prior = this.settledInbound.get(settlementID)?.atomicTask;
+    if (prior) {
+      if (
+        prior.fingerprint !== fingerprint ||
+        (operationIDValue !== undefined && prior.outcome.report.operation_id !== operationIDValue)
+      ) {
+        return failed("settlement was already accepted with a different Task report");
+      }
+      return structuredClone(prior.outcome);
+    }
+    const pending = this.pendingInbound.get(settlementID);
+    if (!pending || pending.message_type !== "task_delivery" || pending.task_id !== report.task_id) {
+      return failed("settlement does not belong to the reported Task");
+    }
+    if (this.node.role !== "asset" || pending.source.role !== "gateway") {
+      return failed("atomic Task settlement is only valid for an Asset Task delivery");
+    }
+    if (!sameNode(destination, pending.source)) {
+      return failed("Task report destination must match the pending Task source");
+    }
+
+    const receiptMessage: ControlMessage = {
+      type: "control",
+      control: "confirmed",
+      operation_id: pending.operationID,
+      message_id: pending.messageID
+    };
+    const receiptPreparation = this.prepareOutbound(
+      receiptMessage,
+      { destination: pending.source, operationID: receiptOperationID },
+      false,
+      pending.radioPacketID,
+      { additionalOutbound: 0, pendingInboundDelta: -1, additionalConfirmed: 0 },
+      this.sourceSequence + 1
+    );
+    if (receiptPreparation.kind === "existing") return failed("receipt operation identity is already tracked");
+    if (receiptPreparation.kind === "failed") return failed(receiptPreparation.reason);
+
+    const reportPreparation = this.prepareOutbound(
+      report,
+      { destination, operationID: reportOperationID },
+      false,
+      undefined,
+      { additionalOutbound: 2, pendingInboundDelta: -1, additionalConfirmed: 1 },
+      this.sourceSequence + 2
+    );
+    if (reportPreparation.kind === "existing") return failed("Task report operation identity is already tracked");
+    if (reportPreparation.kind === "failed") {
+      if (reportPreparation.confirmedOverload) this.mutableMetrics.confirmed_rejected_overload++;
+      return failed(reportPreparation.reason);
+    }
+
+    const receiptResult = this.commitOutbound(receiptPreparation.prepared, { requestPump: false, recordQueued: false });
+    const reportResult = this.commitOutbound(reportPreparation.prepared, { requestPump: false, recordQueued: false });
+    this.recordSettledInbound(settlementID, "confirmed");
+    this.pendingInbound.delete(settlementID);
+    this.clock.cancel(pending.timer);
+    this.recordOperation(receiptResult, receiptResult.operation_id);
+    this.recordOperation(reportResult, reportResult.operation_id);
+    const outcome: AtomicTaskSettlementResult = { accepted: true, receipt: receiptResult, report: reportResult };
+    const settled = this.settledInbound.get(settlementID);
+    if (settled) settled.atomicTask = { fingerprint, outcome: structuredClone(outcome) };
+    this.requestPump();
+    return outcome;
+  }
+
+  private failedAtomicTaskSettlement(
+    receiptOperationID: string,
+    reportOperationID: string,
+    reason: string
+  ): AtomicTaskSettlementResult {
+    const completedAt = this.clock.now();
+    return {
+      accepted: false,
+      receipt: { operation_id: receiptOperationID, status: "failed", reason, completed_at: completedAt },
+      report: { operation_id: reportOperationID, status: "failed", reason, completed_at: completedAt }
+    };
   }
 
   cancel(operationID: string, reason = "operation cancelled locally"): boolean {
@@ -579,19 +857,28 @@ export class LinkTransport {
       }
       const frame = outbound.frames[chunkIndex];
       if (!frame) return;
-      outbound.started = true;
-      if (outbound.firstSentAt === undefined) {
-        outbound.firstSentAt = this.clock.now();
-        observeTiming(
-          this.mutableMetrics.queue_wait_ms_by_priority[outbound.identity.priority],
-          outbound.firstSentAt - outbound.queuedAt
-        );
+      const pair = this.compoundReceiptPair(outbound);
+      const physicalFrame = pair?.combinedFrame ?? frame;
+      const physicalSendOptions = pair?.receipt.sendOptions ?? outbound.sendOptions;
+      this.markOutboundStarted(outbound);
+      if (pair) {
+        pair.report.started = true;
+        pair.report.pendingChunks = [];
+        this.markOutboundStarted(pair.report);
       }
       try {
-        await this.radio.send(frame, { channel: this.privateChannel });
+        // Firmware silently switches directed PRIVATE_APP packets to PKI/channel 0.
+        // Keep private-channel encryption; Atlas framing carries the destination.
+        await this.radio.send(physicalFrame, physicalSendOptions);
       } catch (error) {
         if (this.stopped) return;
         this.mutableMetrics.radio_send_failures++;
+        outbound.rttAmbiguous = true;
+        if (pair) {
+          pair.report.rttAmbiguous = true;
+          this.handleCompoundReceiptFailure(pair);
+          return;
+        }
         if (outbound.delivery === "confirmed") {
           if (this.outboundByOperation.has(outbound.trackingKey)) {
             outbound.pendingChunks.unshift(chunkIndex);
@@ -603,21 +890,18 @@ export class LinkTransport {
         return;
       }
       if (this.stopped) return;
+      if (pair) {
+        nextDelayMs = this.radio.pacingDelayMs?.(physicalFrame) ?? 0;
+        this.recordPhysicalSend(pair.report, physicalFrame);
+        if (!this.stopped) this.finishCompoundReceiptPair(pair);
+        return;
+      }
       if (outbound.delivery === "confirmed" && !this.outboundByOperation.has(outbound.trackingKey)) return;
       nextDelayMs = this.radio.pacingDelayMs?.(frame) ?? 0;
-      if ((outbound.chunkSendCounts[chunkIndex] ?? 0) > 0) this.mutableMetrics.retransmitted_packets++;
-      outbound.chunkSendCounts[chunkIndex] = (outbound.chunkSendCounts[chunkIndex] ?? 0) + 1;
-      this.mutableMetrics.packets_sent++;
-      this.mutableMetrics.transmitted_bytes += frame.byteLength;
-      this.mutableMetrics.packets_sent_by_message_type[outbound.identity.message_type]++;
-      this.mutableMetrics.transmitted_bytes_by_priority[outbound.identity.priority] += frame.byteLength;
-      this.emit({
-        type: "packet_sent",
-        message_id: outbound.identity.message_id,
-        operation_id: outbound.operationID,
-        bytes: frame.byteLength,
-        sent_at: this.clock.now()
-      });
+      this.recordPhysicalSend(outbound, frame, chunkIndex);
+      if (this.stopped || (outbound.delivery === "confirmed" && !this.outboundByOperation.has(outbound.trackingKey))) {
+        return;
+      }
       if (outbound.pendingChunks.length > 0) {
         this.queue.push(outbound);
       } else {
@@ -658,6 +942,127 @@ export class LinkTransport {
     return this.queue.splice(bestIndex, 1)[0];
   }
 
+  private compoundReceiptPair(receipt: Outbound): CompoundReceiptPair | undefined {
+    if (
+      (this.frameEncoding !== "deflate-v3" &&
+        this.frameEncoding !== "binary-v1" &&
+        this.frameEncoding !== "message-v1" &&
+        this.frameEncoding !== "message-v2") ||
+      !isConfirmedControl(receipt) ||
+      receipt.frames.length !== 1
+    )
+      return undefined;
+    if (receipt.identity.destination === undefined || receipt.message.message_id === undefined) return undefined;
+    const receiptIdentity = {
+      operation_id: receipt.message.operation_id,
+      message_id: receipt.message.message_id
+    };
+    for (let index = 0; index < this.queue.length; index++) {
+      const report = this.queue[index];
+      if (
+        !report ||
+        report.started ||
+        report.delivery !== "confirmed" ||
+        report.message.type !== "task_report" ||
+        report.frames.length !== 1 ||
+        report.identity.destination === undefined ||
+        !sameNode(report.identity.destination, receipt.identity.destination)
+      ) {
+        continue;
+      }
+      const originalFrame = report.frames[0];
+      if (!originalFrame) continue;
+      let original: LinkFrame;
+      try {
+        original = decodeFrame(originalFrame);
+      } catch {
+        continue;
+      }
+      if (
+        original.message_type !== "task_report" ||
+        original.receipt !== undefined ||
+        original.destination === undefined ||
+        !sameNode(original.destination, receipt.identity.destination)
+      ) {
+        continue;
+      }
+      const identity: FrameIdentity = {
+        ...frameIdentity(original),
+        receipt: receiptIdentity
+      };
+      let combined: Uint8Array[];
+      try {
+        const limit = this.radio.maxPayloadBytes?.(receipt.sendOptions) ?? this.radio.max_payload_bytes;
+        combined = fragmentPayload(decodeMessagePayload(original.payload), identity, limit, this.frameEncoding);
+      } catch {
+        continue;
+      }
+      const combinedFrame = combined[0];
+      if (combined.length !== 1 || !combinedFrame) continue;
+      this.queue.splice(index, 1);
+      return {
+        receipt,
+        report,
+        combinedFrame,
+        originalFrame,
+        originalIdentity: report.identity,
+        originalSendOptions: report.sendOptions,
+        receiptIdentity
+      };
+    }
+    return undefined;
+  }
+
+  private markOutboundStarted(outbound: Outbound): void {
+    outbound.started = true;
+    if (outbound.firstSentAt !== undefined) return;
+    outbound.firstSentAt = this.clock.now();
+    observeTiming(
+      this.mutableMetrics.queue_wait_ms_by_priority[outbound.identity.priority],
+      outbound.firstSentAt - outbound.queuedAt
+    );
+  }
+
+  private recordPhysicalSend(outbound: Outbound, frame: Uint8Array, chunkIndex = 0): void {
+    if ((outbound.chunkSendCounts[chunkIndex] ?? 0) > 0) this.mutableMetrics.retransmitted_packets++;
+    outbound.chunkSendCounts[chunkIndex] = (outbound.chunkSendCounts[chunkIndex] ?? 0) + 1;
+    this.mutableMetrics.packets_sent++;
+    this.mutableMetrics.transmitted_bytes += frame.byteLength;
+    this.mutableMetrics.packets_sent_by_message_type[outbound.identity.message_type]++;
+    this.mutableMetrics.transmitted_bytes_by_priority[outbound.identity.priority] += frame.byteLength;
+    this.emit({
+      type: "packet_sent",
+      message_id: outbound.identity.message_id,
+      operation_id: outbound.operationID,
+      bytes: frame.byteLength,
+      sent_at: this.clock.now()
+    });
+  }
+
+  private finishCompoundReceiptPair(pair: CompoundReceiptPair): void {
+    this.afterAllChunksSent(pair.receipt);
+    if (!this.outboundByOperation.has(pair.report.trackingKey)) return;
+    pair.report.identity = { ...pair.report.identity, receipt: pair.receiptIdentity };
+    pair.report.frames = [pair.combinedFrame];
+    pair.report.sendOptions = { ...pair.receipt.sendOptions };
+    this.afterAllChunksSent(pair.report);
+  }
+
+  private handleCompoundReceiptFailure(pair: CompoundReceiptPair): void {
+    const reportPending = this.outboundByOperation.has(pair.report.trackingKey);
+    if (reportPending) {
+      pair.report.identity = pair.originalIdentity;
+      pair.report.frames = [pair.originalFrame];
+      pair.report.sendOptions = pair.originalSendOptions;
+      pair.report.pendingChunks = [0];
+      this.deferRadioSendRetry(pair.report);
+    }
+    pair.receipt.pendingChunks = [0];
+    pair.receipt.order = this.nextOrder++;
+    this.queue.push(pair.receipt);
+    this.requestPump();
+  }
+
   private objectEligible(outbound: Outbound): boolean {
     if (outbound.message.type !== "object_content") return true;
     if (this.activeObjectMessageID === undefined) this.activeObjectMessageID = outbound.identity.message_id;
@@ -674,6 +1079,9 @@ export class LinkTransport {
   }
 
   private afterAllChunksSent(outbound: Outbound): void {
+    // Only a complete full send may become a baseline for later current-state updates.
+    outbound.commitStateBaseline?.();
+    delete outbound.commitStateBaseline;
     if (outbound.message.type === "object_content" && this.activeObjectMessageID === outbound.identity.message_id) {
       this.activeObjectMessageID = undefined;
     }
@@ -691,16 +1099,53 @@ export class LinkTransport {
     this.scheduleRetry(outbound);
   }
 
+  private retryTiming(priority: MessagePriority): RetryTimingEstimator {
+    let timing = this.retryTimings.get(priority);
+    if (!timing) {
+      timing = new RetryTimingEstimator({
+        fallback_ms: RETRY_MS[priority],
+        minimum_delay_ms: 2_000,
+        maximum_delay_ms: RETRY_MS[priority] * 1.5
+      });
+      this.retryTimings.set(priority, timing);
+    }
+    return timing;
+  }
+
+  private retryDestination(destination: LinkNode): string {
+    const fence = this.sourceFences.get(`${destination.role}:${destination.id}`);
+    return JSON.stringify([destination.role, destination.id, fence?.generation, fence?.session]);
+  }
+
+  private retryDelay(outbound: Outbound): number {
+    const fallback = RETRY_MS[outbound.identity.priority];
+    const base =
+      this.retryIntervalMs ??
+      (this.adaptiveRetries && outbound.identity.destination
+        ? this.retryTiming(outbound.identity.priority).estimate(
+            this.retryDestination(outbound.identity.destination),
+            this.clock.now()
+          )
+        : fallback);
+    if (this.retryJitterMs === 0) return base;
+    // Stable across modeled runs, distinct across sources, operations, and attempts.
+    const sample = createHash("sha256")
+      .update(
+        `${outbound.identity.source.role}:${outbound.identity.source.id}:${outbound.operationID}:${outbound.retrySequence++}`
+      )
+      .digest()
+      .readUInt32BE();
+    return Math.max(1, base - (sample % (this.retryJitterMs + 1)));
+  }
+
   private scheduleRetry(outbound: Outbound): void {
     if (outbound.retryTimer) this.clock.cancel(outbound.retryTimer);
-    outbound.retryTimer = this.clock.schedule(this.retryIntervalMs ?? RETRY_MS[outbound.identity.priority], () =>
-      this.retryOutbound(outbound)
-    );
+    outbound.retryTimer = this.clock.schedule(this.retryDelay(outbound), () => this.retryOutbound(outbound));
   }
 
   private deferRadioSendRetry(outbound: Outbound): void {
     if (outbound.retryTimer) this.clock.cancel(outbound.retryTimer);
-    outbound.retryTimer = this.clock.schedule(this.retryIntervalMs ?? RETRY_MS[outbound.identity.priority], () => {
+    outbound.retryTimer = this.clock.schedule(this.retryDelay(outbound), () => {
       delete outbound.retryTimer;
       if (!this.outboundByOperation.has(outbound.trackingKey) || this.stopped) return;
       outbound.order = this.nextOrder++;
@@ -751,6 +1196,7 @@ export class LinkTransport {
         byteLength: 0,
         expiresAt: this.clock.now() + DEADLINE_MS[frame.priority],
         lastReceivedAt: packet.received_at,
+        radioPacketID: packet.radio_packet_id,
         timer
       };
       this.reassemblies.set(key, reassembly);
@@ -769,19 +1215,32 @@ export class LinkTransport {
     reassembly.chunks.set(frame.chunk_index, frame.payload);
     reassembly.byteLength += frame.payload.byteLength;
     reassembly.lastReceivedAt = packet.received_at;
+    reassembly.radioPacketID = packet.radio_packet_id ?? reassembly.radioPacketID;
     this.clock.cancel(reassembly.timer);
     if (reassembly.chunks.size !== reassembly.chunkCount) {
-      reassembly.timer = this.clock.schedule(this.reassemblyTimeoutMs, () => this.expireReassembly(key));
+      reassembly.timer = this.clock.schedule(this.reassemblyInterval(reassembly), () => this.expireReassembly(key));
       return;
     }
     this.reassemblies.delete(key);
-    this.handleCompleteMessage(reassembly.identity, joinChunks(reassembly));
+    this.handleCompleteMessage(reassembly.identity, joinChunks(reassembly), reassembly.radioPacketID);
   }
 
-  private handleCompleteMessage(identity: FrameIdentity, bytes: Uint8Array): void {
+  private handleCompleteMessage(identity: FrameIdentity, bytes: Uint8Array, radioPacketID?: number): void {
     let message: LinkMessage;
+    let stateDelta = false;
     try {
-      message = deserializeLinkMessage(bytes);
+      bytes = decodeMessagePayload(bytes);
+      stateDelta = identity.message_type === "state" && isStateDeltaPayload(bytes);
+      if (stateDelta) {
+        const reconstructed = this.stateDecoder.decode(bytes, identity);
+        if (!reconstructed) {
+          this.mutableMetrics.invalid_messages++;
+          return;
+        }
+        message = reconstructed;
+      } else {
+        message = deserializeLinkMessage(bytes);
+      }
     } catch {
       this.mutableMetrics.invalid_messages++;
       return;
@@ -789,6 +1248,11 @@ export class LinkTransport {
     if (message.type !== identity.message_type || messagePriority(message) !== identity.priority) return;
     if (!validStateSource(message, identity.source)) return;
     if (!this.activateSourceFence(identity.source, identity.source_generation, identity.service_session)) return;
+    if (message.type === "state" && !stateDelta) this.stateDecoder.decode(bytes, identity);
+    if (message.type === "task_report" && identity.receipt !== undefined) {
+      this.handleCompoundReceipt(identity);
+      if (this.stopped) return;
+    }
     if (message.type === "control") {
       if (identity.destination !== undefined && !sameNode(identity.destination, this.node)) return;
       this.handleControl(message, identity);
@@ -809,32 +1273,35 @@ export class LinkTransport {
             message_id: identity.message_id,
             reason: "Task delivery source is not the Gateway"
           },
-          true
+          true,
+          radioPacketID
         );
       }
       return;
     }
     if (message.type === "task_delivery" && addressed && message.task.asset_id !== this.node.id) {
-      this.rejectAddressedMessage(identity, "Task is assigned to a different Asset");
+      this.rejectAddressedMessage(identity, "Task is assigned to a different Asset", radioPacketID);
       return;
     }
     if (message.type === "task_report") {
       if (identity.source.role !== "asset") {
-        if (addressed) this.rejectAddressedMessage(identity, "Task reports must originate from an Asset");
+        if (addressed)
+          this.rejectAddressedMessage(identity, "Task reports must originate from an Asset", radioPacketID);
         return;
       }
       const assignedAsset = this.picture
         ?.snapshot()
         .records.find((record) => record.resource_type === "task" && record.id === message.task_id)?.source_asset_id;
       if (assignedAsset !== undefined && assignedAsset !== identity.source.id) {
-        if (addressed) this.rejectAddressedMessage(identity, "Task report source is not the assigned Asset");
+        if (addressed)
+          this.rejectAddressedMessage(identity, "Task report source is not the assigned Asset", radioPacketID);
         return;
       }
     }
     const taskDeliveryOrder = this.acceptTaskDeliverySequence(message, identity);
     if (taskDeliveryOrder === "stale") {
       this.mutableMetrics.stale_messages_rejected++;
-      if (addressed) this.rejectAddressedMessage(identity, "Task delivery source sequence is stale");
+      if (addressed) this.rejectAddressedMessage(identity, "Task delivery source sequence is stale", radioPacketID);
       return;
     }
     if (taskDeliveryOrder === "duplicate" && !addressed) {
@@ -856,7 +1323,8 @@ export class LinkTransport {
             operation_id: identity.operation_id,
             message_id: identity.message_id
           },
-          true
+          true,
+          radioPacketID
         );
         return;
       }
@@ -881,18 +1349,26 @@ export class LinkTransport {
         this.pendingInbound.size >= this.confirmedLimit ||
         this.outboundOccupancy() + this.pendingInbound.size >= this.queueLimit
       ) {
-        this.rejectInboundCapacity(identity, settlementID);
+        this.rejectInboundCapacity(identity, settlementID, radioPacketID);
         return;
       }
       // A pending settlement reserves its eventual retained settlement identity.
       if (this.settledInbound.size + this.pendingInbound.size >= SETTLED_INBOUND_LIMIT) {
-        this.rejectInboundCapacity(identity, settlementID, "inbound settlement identity capacity is exhausted");
+        this.rejectInboundCapacity(
+          identity,
+          settlementID,
+          radioPacketID,
+          "inbound settlement identity capacity is exhausted"
+        );
         return;
       }
       this.pendingInbound.set(settlementID, {
         source: identity.source,
+        message_type: message.type,
+        ...(message.type === "task_delivery" ? { task_id: message.task.task_id } : {}),
         operationID: identity.operation_id,
         messageID: identity.message_id,
+        ...(radioPacketID === undefined ? {} : { radioPacketID }),
         timer: this.clock.schedule(DEADLINE_MS[identity.priority], () => this.expirePendingInbound(settlementID))
       });
     }
@@ -936,7 +1412,7 @@ export class LinkTransport {
     return "new";
   }
 
-  private rejectAddressedMessage(identity: FrameIdentity, reason: string): void {
+  private rejectAddressedMessage(identity: FrameIdentity, reason: string, radioPacketID?: number): void {
     const settlementID = inboundSettlementID(identity);
     this.recordSettledInbound(settlementID, "rejected");
     this.sendControl(
@@ -948,7 +1424,8 @@ export class LinkTransport {
         message_id: identity.message_id,
         reason
       },
-      true
+      true,
+      radioPacketID
     );
   }
 
@@ -1028,12 +1505,46 @@ export class LinkTransport {
     }
     if (
       message.control === "confirmed" &&
+      this.adaptiveRetries &&
+      this.retryIntervalMs === undefined &&
+      outbound.frames.length === 1 &&
+      outbound.firstSentAt !== undefined
+    ) {
+      this.retryTiming(outbound.identity.priority).observe({
+        destination: this.retryDestination(outbound.identity.destination),
+        measured_rtt_ms: this.clock.now() - outbound.firstSentAt,
+        observed_at_ms: this.clock.now(),
+        retransmitted: outbound.rttAmbiguous === true || outbound.chunkSendCounts[0] !== 1
+      });
+    }
+    if (
+      message.control === "confirmed" &&
       (outbound.message.type === "data_request" || outbound.message.type === "resource_operation")
     ) {
       this.confirmAwaitingResponseTransport(outbound);
     } else {
       this.completeOutbound(outbound, message.control === "confirmed" ? "confirmed" : "rejected", message.reason);
     }
+  }
+
+  private handleCompoundReceipt(identity: FrameIdentity): void {
+    if (
+      identity.receipt === undefined ||
+      identity.source.role !== "asset" ||
+      identity.destination === undefined ||
+      !sameNode(identity.destination, this.node)
+    ) {
+      return;
+    }
+    this.handleControl(
+      {
+        type: "control",
+        control: "confirmed",
+        operation_id: identity.receipt.operation_id,
+        message_id: identity.receipt.message_id
+      },
+      identity
+    );
   }
 
   private activateSourceFence(source: LinkNode, generation: number, session: string): boolean {
@@ -1078,6 +1589,23 @@ export class LinkTransport {
     );
   }
 
+  private reassemblyInterval(reassembly: Reassembly): number {
+    const { identity } = reassembly;
+    if (
+      identity.message_type === "state" ||
+      identity.message_type === "control" ||
+      identity.destination === undefined ||
+      !sameNode(identity.destination, this.node) ||
+      !reassembly.chunks.has(reassembly.chunkCount - 1)
+    )
+      return this.reassemblyTimeoutMs;
+    // Once the tail arrives, repair a missing prefix before the sender's full retry.
+    // Do not interrupt a slow but still progressing initial transmission.
+    return identity.priority === "task" || identity.priority === "safety"
+      ? Math.min(this.reassemblyTimeoutMs, 1_000)
+      : this.reassemblyTimeoutMs;
+  }
+
   private expireReassembly(key: string): void {
     const reassembly = this.reassemblies.get(key);
     if (!reassembly) return;
@@ -1086,19 +1614,25 @@ export class LinkTransport {
     if (
       reassembly.identity.message_type !== "state" &&
       addressed &&
-      this.clock.now() + this.reassemblyTimeoutMs < reassembly.expiresAt
+      this.clock.now() + this.reassemblyInterval(reassembly) < reassembly.expiresAt
     ) {
       const missing = Array.from({ length: reassembly.chunkCount }, (_, index) => index).filter(
         (index) => !reassembly.chunks.has(index)
       );
-      this.sendControl(reassembly.identity.source, {
-        type: "control",
-        control: "missing_chunks",
-        operation_id: reassembly.identity.operation_id,
-        message_id: reassembly.identity.message_id,
-        missing_chunks: missing
-      });
+      this.sendControl(
+        reassembly.identity.source,
+        {
+          type: "control",
+          control: "missing_chunks",
+          operation_id: reassembly.identity.operation_id,
+          message_id: reassembly.identity.message_id,
+          missing_chunks: missing
+        },
+        false,
+        reassembly.radioPacketID
+      );
       this.mutableMetrics.fragment_repair_requests_sent++;
+      // Leave the repair exchange time to finish rather than queueing repeated requests.
       reassembly.timer = this.clock.schedule(this.reassemblyTimeoutMs, () => this.expireReassembly(key));
       return;
     }
@@ -1109,18 +1643,21 @@ export class LinkTransport {
   private sendControl(
     destination: LinkNode,
     message: ControlMessage,
-    useInboundReservation = false
+    useInboundReservation = false,
+    radioRequestID?: number
   ): LinkOperationResult {
     return this.submitWithCapacity(
       message,
-      { destination, operationID: `control_${compactID()}` },
-      useInboundReservation
+      { destination, operationID: `control_${this.createID()}` },
+      useInboundReservation,
+      radioRequestID
     );
   }
 
   private rejectInboundCapacity(
     identity: FrameIdentity,
     settlementID: string,
+    radioPacketID: number | undefined,
     reason = "inbound confirmed operation capacity is exhausted"
   ): void {
     this.mutableMetrics.confirmed_rejected_overload++;
@@ -1134,7 +1671,8 @@ export class LinkTransport {
         message_id: identity.message_id,
         reason
       },
-      true
+      true,
+      radioPacketID
     );
   }
 
@@ -1150,7 +1688,8 @@ export class LinkTransport {
         message_id: pending.messageID,
         reason: "application settlement deadline expired"
       },
-      true
+      true,
+      pending.radioPacketID
     );
     this.mutableMetrics.inbound_settlement_expired++;
     this.recordSettledInbound(settlementID, "rejected");
@@ -1472,6 +2011,7 @@ function frameIdentity(frame: LinkFrame): FrameIdentity {
     source_sequence: frame.source_sequence,
     operation_id: frame.operation_id,
     message_id: frame.message_id,
+    ...(frame.receipt === undefined ? {} : { receipt: frame.receipt }),
     priority: frame.priority
   };
 }
@@ -1785,12 +2325,12 @@ function taskReportPublication(
   };
 }
 
-function operationIDFor(message: LinkMessage): string {
+function operationIDFor(message: LinkMessage, createID: () => string): string {
   if (message.type === "data_request" || message.type === "data_response") return message.request_id;
   if (message.type === "object_content") return message.request_id;
   if (message.type === "control") return message.operation_id;
   if (message.type === "state" && message.operation_id) return message.operation_id;
-  return compactID();
+  return createID();
 }
 
 function wireOperationIDFor(message: LinkMessage, operationID: string): string {
@@ -1833,6 +2373,12 @@ function validateNode(node: LinkNode): void {
 
 function sameNode(left: LinkNode, right: LinkNode): boolean {
   return left.role === right.role && left.id === right.id;
+}
+
+function isConfirmedControl(
+  outbound: Outbound
+): outbound is Outbound & { message: ControlMessage & { control: "confirmed" } } {
+  return outbound.message.type === "control" && outbound.message.control === "confirmed";
 }
 
 function sameOptionalNode(left: LinkNode | undefined, right: LinkNode | undefined): boolean {

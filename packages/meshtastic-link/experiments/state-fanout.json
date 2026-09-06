@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "name": "state-fanout",
+  "lab_url": "http://127.0.0.1:8080",
+  "preset": "SHORT_FAST",
+  "topology": "full-mesh",
+  "settle_ms": 2000,
+  "duration_ms": 35000,
+  "nodes": [
+    {
+      "id": "gateway",
+      "role": "gateway",
+      "port": 45001
+    },
+    {
+      "id": "asset",
+      "role": "asset",
+      "port": 45002
+    },
+    {
+      "id": "peer",
+      "role": "asset",
+      "port": 45003
+    }
+  ],
+  "messages": [
+    {
+      "id": "position-one",
+      "source": "asset",
+      "receivers": [
+        "gateway",
+        "peer"
+      ],
+      "at_ms": 0,
+      "deadline_ms": 30000,
+      "expect": "delivered",
+      "message": {
+        "type": "state",
+        "resource_type": "entity",
+        "resource": {
+          "alias": "Lab Asset",
+          "entity_id": "asset",
+          "entity_type": "asset",
+          "subtype": null,
+          "components": {
+            "geometry": {
+              "type": "Point",
+              "coordinates": [
+                -71.8,
+                42.2,
+                100
+              ]
+            }
+          },
+          "metadata": {
+            "created_at": "2026-09-05T12:00:00Z",
+            "updated_at": "2026-09-05T12:00:00Z",
+            "version": 1
+          }
+        },
+        "observation_time": "2026-09-05T12:00:00Z",
+        "path": "field",
+        "confirmation": "awaiting_core",
+        "operation_id": "position-one"
+      }
+    }
+  ],
+  "faults": [],
+  "link_changes": [],
+  "max_payload_bytes": 200
+}

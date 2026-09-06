@@ -62,6 +62,8 @@ The application protocol must remain independent of the selected preset. The Rad
 
 The profile retains the same modem, channel, and application settings when the system moves to higher-power compatible radios.
 
+Meshtastic expands transmit power `0` to the US regional configuration value `30` before readback. Atlas accepts either representation of that default while rejecting other explicit power settings. The radio driver separately limits emitted power to the hardware capability; a configuration readback of `30` does not prove 30 dBm RF output.
+
 ## Channel layout
 
 The common static profile configures `ATLAS-RDV` as the public primary rendezvous channel. Its name fits the firmware's eleven-byte channel-name limit. A new Asset broadcasts its custom Atlas discovery beacon there. The Gateway responds only through a public-key-encrypted direct message and runs authentication.
@@ -168,3 +170,9 @@ Meshtastic Managed Mode blocks ordinary client applications from writing configu
 
 - The actual explicit US frequency slot selected during lab setup
 - Exact Meshtastic settings used to suppress each unnecessary native module without disrupting routing or NodeInfo
+
+## Native packet budget and responses
+
+The adapter budgets for the firmware's encoded `PRIVATE_APP` data and radio header, including the present `Data.bitfield`. Plain broadcasts allow 231 application bytes; directed/PKI sends reserve encryption overhead and allow 219. A nonzero native `Data.request_id` takes another five bytes, reducing those limits to 226 and 214. Transport fragmentation, the live-configuration gate, experiment wrappers, and join messages use the selected send budget.
+
+An Atlas acceptance or rejection receipt carries the last available native packet ID from its reassembled message. Fragment-repair requests reference a received fragment. On physical relays, that on-air request ID lets Meshtastic derive native `RESPONSE` priority. It does not request a Meshtastic ACK or module response: `wantAck` and `wantResponse` remain false. The addressed Atlas application must still settle a complete message before its acceptance receipt is sent. Atlas retries retain logical message identity and use fresh native packet IDs.

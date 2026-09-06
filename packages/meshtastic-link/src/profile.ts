@@ -355,7 +355,11 @@ export function profileDifferences(desired: RadioProfile, actual: ActualRadioCon
   compareOwned(differences, "rebroadcast_mode", desired.rebroadcast_mode, actual.rebroadcast_mode);
   compareOwned(differences, "frequency_slot", desired.frequency_slot, actual.frequency_slot);
   compareOwned(differences, "override_frequency", 0, actual.override_frequency);
-  compareOwned(differences, "tx_power", desired.tx_power, actual.tx_power);
+  // Meshtastic expands the US default (0) to the regional setting (30 dBm)
+  // before reporting configuration. The driver separately clamps actual RF power.
+  if (actual.tx_power !== 0 && !(actual.region === "US" && actual.tx_power === 30)) {
+    compareOwned(differences, "tx_power", desired.tx_power, actual.tx_power);
+  }
   compareOwned(differences, "power_saving", desired.power_saving, actual.power_saving);
   compareOwned(differences, "remote_administration", desired.remote_administration, actual.remote_administration);
   compareOwned(differences, "managed_mode", desired.managed_mode, actual.managed_mode);

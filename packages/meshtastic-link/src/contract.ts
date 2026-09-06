@@ -35,6 +35,7 @@ import {
   type AtlasRadioOperationName,
   RADIO_CONTRACT_REVISION
 } from "./generated/radio-contract.generated.js";
+import { decodeMessagePayload } from "./message-codec.js";
 import type {
   ControlMessage,
   DataRequest,
@@ -76,7 +77,7 @@ export function serializeLinkMessage(message: LinkMessage): Uint8Array {
 }
 
 export function deserializeLinkMessage(bytes: Uint8Array): LinkMessage {
-  const value = decodeJSON(bytes);
+  const value = decodeJSON(decodeMessagePayload(bytes));
   if (!isRecord(value) || value.r !== RADIO_CONTRACT_REVISION || !isLinkMessage(value.message)) {
     throw new TypeError("Invalid or incompatible Atlas Radio contract message");
   }
@@ -106,6 +107,7 @@ export function messagePriority(message: LinkMessage): MessagePriority {
 }
 
 export function deliveryClass(message: LinkMessage): "best_effort" | "confirmed" {
+  if (message.type === "subscription") return message.action === "renew" ? "best_effort" : "confirmed";
   return message.type === "state" || message.type === "control" ? "best_effort" : "confirmed";
 }
 

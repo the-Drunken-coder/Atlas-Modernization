@@ -1,6 +1,6 @@
 import type { VirtualClock } from "./clock.js";
 import { decodeFrame } from "./frame.js";
-import type { LinkRadio, RadioPacket, RadioSendOptions } from "./radio.js";
+import { type LinkRadio, meshtasticMaxPayloadBytes, type RadioPacket, type RadioSendOptions } from "./radio.js";
 import type { LinkMessageType, MessagePriority } from "./types.js";
 
 export type ModemProfile = {
@@ -89,7 +89,7 @@ export class SimulatedPacketNetwork {
   private readonly carrierWindows = new Map<string, MediumWindow[]>();
   private readonly transmitWindows = new Map<string, MediumWindow[]>();
   private readonly receiveWindows = new Map<string, ReceiveWindow[]>();
-  private nextPacketID = 0;
+  private nextPacketID = 1;
   private readonly mutableMetrics: PacketNetworkMetrics = {
     radio_submissions: 0,
     mesh_transmissions: 0,
@@ -153,15 +153,19 @@ export class SimulatedPacketNetwork {
   transmit(sourceID: string, payload: Uint8Array, options: RadioSendOptions): number {
     const source = this.radios.get(sourceID);
     if (!source) throw new Error(`unknown simulated source radio ${sourceID}`);
-    const airtime = this.airtimeMs(payload.byteLength);
+    // Atlas PRIVATE_APP directed sends use native PKI; the model assumes the peer key is known.
+    const publicKeyEncrypted = options.destination_radio_node !== undefined;
+    const airtime = this.airtimeMs(
+      payload.byteLength + (options.request_id === undefined ? 0 : 5) + (publicKeyEncrypted ? 12 : 0)
+    );
     this.mutableMetrics.radio_submissions++;
     const packet: MeshPacket = {
       id: this.nextPacketID++,
       source,
       payload: payload.slice(),
-      channel: options.channel,
+      channel: publicKeyEncrypted ? 0 : options.channel,
       ...(options.destination_radio_node === undefined ? {} : { destinationRadioNode: options.destination_radio_node }),
-      publicKeyEncrypted: options.require_public_key === true,
+      publicKeyEncrypted,
       airtime,
       forwarded: new Set([sourceID]),
       delivered: new Set([sourceID])
@@ -302,6 +306,7 @@ export class SimulatedPacketNetwork {
       payload: packet.payload.slice(),
       received_at: this.clock.now(),
       radio_source: packet.source.radioNodeNumber,
+      radio_packet_id: packet.id,
       channel: packet.channel,
       public_key_encrypted: packet.publicKeyEncrypted
     });
@@ -309,7 +314,7 @@ export class SimulatedPacketNetwork {
 }
 
 export class SimulatedRadio implements LinkRadio {
-  readonly max_payload_bytes = 233;
+  readonly max_payload_bytes = meshtasticMaxPayloadBytes({});
   private readonly handlers = new Set<(packet: RadioPacket) => void>();
   private closed = false;
   private lastPacingDelayMs = 0;
@@ -324,10 +329,16 @@ export class SimulatedRadio implements LinkRadio {
     return this.lastPacingDelayMs;
   }
 
+  maxPayloadBytes(options: RadioSendOptions): number {
+    return meshtasticMaxPayloadBytes(options);
+  }
+
   async send(payload: Uint8Array, options: RadioSendOptions): Promise<void> {
     if (this.closed) throw new Error(`simulated radio ${this.id} is closed`);
-    if (payload.byteLength > this.max_payload_bytes)
-      throw new RangeError("simulated Meshtastic payload exceeds 233 bytes");
+    if (options.require_public_key === true && options.destination_radio_node === undefined)
+      throw new Error("public-key-only send requires a destination");
+    if (payload.byteLength > this.maxPayloadBytes(options))
+      throw new RangeError("simulated Meshtastic payload exceeds the native send budget");
     this.lastPacingDelayMs = this.network.transmit(this.id, payload, options);
   }
 

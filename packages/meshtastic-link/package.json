@@ -5,7 +5,7 @@
   "description": "Atlas Protocol delivery and Shared Picture service over Meshtastic",
   "type": "module",
   "engines": {
-    "node": ">=24 <25"
+    "node": ">=24.6 <25"
   },
   "bin": {
     "atlas-meshtastic-link": "dist/cli.js"
@@ -14,6 +14,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./experiments": {
+      "types": "./dist/experiments/index.d.ts",
+      "import": "./dist/experiments/index.js"
     }
   },
   "scripts": {
@@ -34,8 +38,8 @@
     "@meshtastic/core": "2.6.7",
     "@meshtastic/protobufs": "2.7.8",
     "@meshtastic/protobufs-firmware": "npm:@meshtastic/protobufs@2.8.0",
-    "@meshtastic/transport-node-serial": "0.0.2",
-    "@the-drunken-coder/atlas-sdk": "0.1.0"
+    "@the-drunken-coder/atlas-sdk": "0.1.0",
+    "serialport": "13.0.0"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.10",

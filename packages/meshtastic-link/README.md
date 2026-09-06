@@ -76,6 +76,10 @@ npm run meshtastic-link -- serve \
   --join-key-file atlas-join.key
 ```
 
+Use `serve --frame-encoding message-v1` on every service in an experimental fleet to enable adaptive lossless message compression and combine an explicit acceptance receipt with an immediately queued single-frame Task report when both fit. Delayed or larger reports keep separate receipts. `binary-v1`, `deflate-v1`, `deflate-v2`, and `deflate-v3` remain available for comparison. Messages that already fit one packet retain the binary-v1 path; larger messages can compress before fragmentation without recompressing their bodies in each frame. Optional `--adaptive-retries` and `--state-deltas` enable the additional experimental modes; neither is enabled by default because their latency and freshness tradeoffs depend on load. The default `canonical-json` retains the measured baseline. Commands, reports, and Shared Picture publications use private-channel broadcast; Atlas carries application destinations and confirmations. See [the wire contract](../../docs/atlas-meshtastic-link/wire-protocol.md) for encoding and compatibility details. See [whole-message compression results](experiments/MESSAGE-COMPRESSION.md) for the fixture measurements and 240-run modeled comparison.
+
+`serve --frame-encoding message-v2` additionally compares dictionary DEFLATE, Brotli, and dictionary Zstandard over three lossless value representations, including packed integers, UUIDs, and per-message string references. It selects using complete framed bytes and fragment count, retaining the previous encoding whenever it wins. Use Node 24.6 or newer in the Node 24 release line and compatible Link software on every participant. See [compression method results](experiments/COMPRESSION-METHODS.md) for measurements against `message-v1`.
+
 The service binds `127.0.0.1:7331` by default. Its normal interface is:
 
 | Method and route | Purpose |
@@ -91,6 +95,7 @@ The service binds `127.0.0.1:7331` by default. Its normal interface is:
 | `GET /v1/tasks/:asset_id` | Read the Gateway Task dispatcher state for one Asset |
 | `GET /v1/operations/:id` | Read a queued, sent, confirmed, responded, rejected, or failed outcome |
 | `POST /v1/inbound/:settlement-id/settle` | Application acceptance or rejection of one source-scoped confirmed inbound delivery |
+| `POST /v1/inbound/:settlement-id/settle-task` | Atomically accept a Task and enqueue its already available lifecycle report |
 | `POST /v1/subscriptions` | Add, renew, or remove one local client's feed demand |
 | `DELETE /v1/clients/:id` | Release all demand for a disconnected local client |
 | `GET /v1/metrics` | Bounded transport counters |
@@ -98,6 +103,23 @@ The service binds `127.0.0.1:7331` by default. Its normal interface is:
 | `POST /v1/radio/profile/apply` | Apply and verify Atlas-owned radio settings |
 
 Task delivery events include `addressed_to_local`, `requires_settlement`, and an opaque source-scoped `settlement_id`. Only the addressed Asset application settles executable Task work using that settlement ID. A `tasks_for_asset` state feed updates the Shared Picture and never invokes this delivery path.
+
+When the Asset already has a Task report available, `POST /v1/inbound/:settlement-id/settle-task` accepts `{ report, destination?, operation_id? }`. It validates the Task relationship and reserves both queue entries before accepting the command. A successful `202` response contains `{ accepted: true, receipt, report }`; a `409` leaves the inbound command unsettled and queues neither item. The receipt and report retain separate delivery outcomes. Repeating the same settlement and report replays the original admission response for the ten-minute settlement retention window; changing its report, destination, or supplied operation ID fails explicitly. Current delivery outcomes remain available through the operation routes. Do not delay command acceptance to wait for work to finish: use ordinary settlement first and publish the report later when needed. The programmatic equivalent is `settleInboundWithTaskReport` on the transport, service, and Radio SDK.
+
+`TelemetryPublisher` is an opt-in application helper for five-second or other fixed publication cadences. It chooses a stable per-node phase, samples at the scheduled emission, skips missed ticks instead of accumulating a backlog, and discards an async sample that has become a full period old. Normal message submission and command priority are unchanged. Sampling and publication callbacks must settle: stopping cancels future scheduling, but cannot cancel an arbitrary Promise, and a restart waits for any previous callback to finish so unresolved work cannot accumulate.
+
+```ts
+const telemetry = new TelemetryPublisher({
+  clock: new RealClock(),
+  nodeID: "asset-a",
+  periodMs: 5_000,
+  sample: (sampledAt) => readCurrentState(sampledAt),
+  publish: (publication) => radioSDK.publish(publication),
+  onError: (error) => console.error(error)
+});
+telemetry.start();
+// Call telemetry.stop() when the owning application shuts down.
+```
 
 Omit `after` from `GET /v1/events` to start with future events. Supply a previous event ID to replay retained events before following live changes. An explicit expired cursor returns HTTP 400; clients can query operation outcomes and reconnect without a cursor. Picture snapshot recovery uses the separate picture stream.
 
@@ -130,6 +152,14 @@ After an intentional benchmark or metrics change, refresh all three exact seed-4
 
 The checked-in results under [`baselines`](baselines) measure the ordinary deterministic Atlas JSON contract through the production SDK, serializer, fragmenter, scheduler, reassembler, and Shared Picture receive path. The full-rate normal and stress baselines record deadline and convergence failures honestly. They are comparison data, not field performance claims. The packet model remains uncalibrated until the documented three-radio hardware trial is completed.
 
+## Native firmware experiments
+
+The Atlas-owned experiment runner controls Meshtastic Lab programmatically and
+reports packet observations, complete-message delivery, application acceptance,
+confirmation, deadlines, and recovery cost separately. See
+[`experiments/README.md`](experiments/README.md) for runnable workloads, result
+semantics, and the laboratory configuration boundary.
+
 ## Checks
 
 ```sh
@@ -140,3 +170,7 @@ npm run check --workspace @the-drunken-coder/atlas-meshtastic-link
 The check regenerates the Radio contract from the canonical Protocol schema, verifies that the checked-in output has not drifted, formats and lints the workspace, type-checks it, runs the deterministic suite, and builds the executable package.
 
 The serial adapter pins `@meshtastic/protobufs` 2.7.8 to match the schema bundled in `@meshtastic/core` 2.6.7. The `@meshtastic/protobufs-firmware` alias supplies schema 2.8.0 for the firmware's device-telemetry switch. Typed binary conversion preserves that field across the older SDK's read and write path.
+
+The [second optimization report](experiments/FURTHER-OPTIMIZATION.md) covers combined receipts, subscription renewal traffic, compact join acceptance, and native queue observations. Run `npx tsx scripts/compare-fleet.ts new-comparison.json` from this package to compare v2 and v3 using ten reproducible seeds on each of SHORT_FAST and SHORT_TURBO. This comparison uses the same current implementation on both sides; native before/after results use a frozen earlier implementation.
+
+The [latency and bandwidth comparison](experiments/LATENCY-AND-BANDWIDTH.md) records the binary codec, atomic acceptance/report API, telemetry scheduler, optional retry/update modes, and their measured tradeoffs.

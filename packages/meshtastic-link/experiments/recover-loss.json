@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "name": "recover-loss",
+  "lab_url": "http://127.0.0.1:8080",
+  "preset": "SHORT_FAST",
+  "topology": "full-mesh",
+  "settle_ms": 2000,
+  "duration_ms": 20000,
+  "nodes": [
+    {
+      "id": "gateway",
+      "role": "gateway",
+      "port": 45001
+    },
+    {
+      "id": "asset",
+      "role": "asset",
+      "port": 45002
+    }
+  ],
+  "messages": [
+    {
+      "id": "task-one",
+      "source": "gateway",
+      "receivers": [
+        "asset"
+      ],
+      "destination": "asset",
+      "at_ms": 0,
+      "deadline_ms": 15000,
+      "message": {
+        "type": "task_delivery",
+        "delivery": "assignment",
+        "task": {
+          "asset_id": "asset",
+          "task_id": "task-one",
+          "command": "atlas.survey",
+          "input": {},
+          "status": "pending",
+          "created_at": "2026-09-05T12:00:00Z",
+          "updated_at": "2026-09-05T12:00:00Z"
+        }
+      },
+      "expect": "delivered"
+    }
+  ],
+  "faults": [
+    {
+      "receiver": "asset",
+      "source": "gateway",
+      "message_type": "task_delivery",
+      "action": "drop",
+      "count": 1,
+      "after_ms": 0,
+      "before_ms": 20000
+    }
+  ],
+  "link_changes": [],
+  "max_payload_bytes": 200
+}

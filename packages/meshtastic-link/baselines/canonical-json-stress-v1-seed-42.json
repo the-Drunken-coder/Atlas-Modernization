@@ -10,49 +10,49 @@
     "gateway_track_records": 0
   },
   "transport_metrics": {
-    "application_bytes": 86988,
-    "packets_sent": 1119,
-    "transmitted_bytes": 258663,
-    "packets_received": 2372,
+    "application_bytes": 103338,
+    "packets_sent": 1627,
+    "transmitted_bytes": 368098,
+    "packets_received": 3680,
     "malformed_frames": 0,
     "invalid_messages": 0,
-    "duplicate_packets_suppressed": 35,
+    "duplicate_packets_suppressed": 65,
     "stale_messages_rejected": 0,
     "picture_rejected_capacity": 0,
-    "incomplete_reassemblies": 191,
+    "incomplete_reassemblies": 175,
     "best_effort_replaced": 0,
     "confirmed_rejected_overload": 0,
     "retry_exhausted": 3,
     "retransmitted_packets": 30,
-    "fragment_repair_requests_sent": 12,
+    "fragment_repair_requests_sent": 15,
     "fragment_repair_requests_received": 0,
     "radio_send_failures": 0,
     "inbound_settlement_expired": 0,
-    "peak_queue_depth": 5,
+    "peak_queue_depth": 9,
     "packets_sent_by_message_type": {
-      "state": 203,
+      "state": 205,
       "task_delivery": 8,
       "task_report": 0,
       "data_request": 35,
       "data_response": 0,
       "resource_operation": 0,
       "subscription": 0,
-      "object_content": 226,
-      "control": 647
+      "object_content": 263,
+      "control": 1116
     },
     "transmitted_bytes_by_priority": {
-      "safety": 151897,
+      "safety": 253221,
       "task": 0,
-      "request": 7903,
-      "live_state": 46315,
+      "request": 7896,
+      "live_state": 46601,
       "resource": 0,
-      "object_content": 52548
+      "object_content": 60380
     },
     "queue_wait_ms_by_priority": {
       "safety": {
-        "samples": 14,
-        "total_ms": 670605.3955078125,
-        "maximum_ms": 185709.02221679688
+        "samples": 17,
+        "total_ms": 2883976.8908691406,
+        "maximum_ms": 500658.32421875
       },
       "task": {
         "samples": 0,
@@ -66,8 +66,8 @@
       },
       "live_state": {
         "samples": 20,
-        "total_ms": 838568.9887695312,
-        "maximum_ms": 131821.76293945312
+        "total_ms": 792885.1804199219,
+        "maximum_ms": 124809.1826171875
       },
       "resource": {
         "samples": 0,
@@ -76,15 +76,15 @@
       },
       "object_content": {
         "samples": 1,
-        "total_ms": 10595.416748046875,
-        "maximum_ms": 10595.416748046875
+        "total_ms": 7550.2578125,
+        "maximum_ms": 7550.2578125
       }
     },
     "operation_latency_ms_by_priority": {
       "safety": {
-        "samples": 14,
-        "total_ms": 1200303.9074707031,
-        "maximum_ms": 241731.49194335938
+        "samples": 17,
+        "total_ms": 3766130.1716308594,
+        "maximum_ms": 566542.5090332031
       },
       "task": {
         "samples": 0,
@@ -98,8 +98,8 @@
       },
       "live_state": {
         "samples": 20,
-        "total_ms": 1316650.1306152344,
-        "maximum_ms": 190151.02954101562
+        "total_ms": 1218679.6352539062,
+        "maximum_ms": 169711.88696289062
       },
       "resource": {
         "samples": 0,
@@ -113,7 +113,7 @@
       }
     },
     "operation_outcomes": {
-      "sent": 33,
+      "sent": 36,
       "confirmed": 0,
       "responded": 0,
       "rejected": 0,
@@ -121,33 +121,33 @@
     }
   },
   "network_metrics": {
-    "radio_submissions": 1119,
-    "mesh_transmissions": 2835,
-    "transmitted_bytes": 655573,
-    "modeled_airtime_ms": 583185.2800000262,
-    "delivered_packets": 2372,
+    "radio_submissions": 1627,
+    "mesh_transmissions": 4288,
+    "transmitted_bytes": 970442,
+    "modeled_airtime_ms": 876309.5039999527,
+    "delivered_packets": 3680,
     "lost_packets": 0,
-    "collided_packets": 1526,
-    "duplicate_deliveries": 41,
+    "collided_packets": 1984,
+    "duplicate_deliveries": 78,
     "modeled_airtime_ms_by_message_type": {
-      "state": 87707.26400000002,
-      "task_delivery": 5394.688,
+      "state": 91196.28799999988,
+      "task_delivery": 4098.559999999999,
       "task_report": 0,
-      "data_request": 16855.42399999998,
+      "data_request": 15154.55999999999,
       "data_response": 0,
       "resource_operation": 0,
       "subscription": 0,
-      "object_content": 141742.97599999982,
-      "control": 331484.92800001084,
+      "object_content": 165932.8000000024,
+      "control": 599927.2960000109,
       "non_link": 0
     },
     "modeled_airtime_ms_by_priority": {
-      "safety": 336879.61600001116,
+      "safety": 604025.85600001,
       "task": 0,
-      "request": 16855.42399999998,
-      "live_state": 87707.26400000002,
+      "request": 15154.55999999999,
+      "live_state": 91196.28799999988,
       "resource": 0,
-      "object_content": 141742.97599999982,
+      "object_content": 165932.8000000024,
       "non_link": 0
     }
   },
@@ -163,5 +163,5 @@
     "object_completion_ms": null,
     "cancellation_delivery_ms": null
   },
-  "elapsed_ms": 599061.0571289062
+  "elapsed_ms": 958093.0510253906
 }

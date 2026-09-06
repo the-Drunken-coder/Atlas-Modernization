@@ -13,6 +13,7 @@ import {
   encodeJoinMessage,
   type GatewayAuthenticationPolicy,
   GatewayJoinService,
+  type JoinAcceptance,
   PreSharedKeyAuthenticationPolicy,
   type SourceAdmission
 } from "./joining.js";
@@ -35,6 +36,51 @@ import { LinkTransport } from "./transport.js";
 import type { FeedSelector } from "./types.js";
 
 describe("joining and Radio profile", () => {
+  it("uses a versioned compact acceptance for long UTF-8 IDs and large generations", () => {
+    const acceptance: JoinAcceptance = {
+      type: "accept",
+      join_attempt_id: "a".repeat(32),
+      gateway_node_id: `gateway-${"é".repeat(20)}"\\`,
+      source_generation: Number.MAX_SAFE_INTEGER,
+      radio_contract_revision: RADIO_CONTRACT_REVISION,
+      channel_index: 1,
+      channel_name: "ATLAS",
+      channel_key_base64: Buffer.alloc(32, 9).toString("base64")
+    };
+    const encoded = encodeJoinMessage(acceptance, 219);
+
+    expect(encoded[0]).toBe(0xa4);
+    expect(encoded.byteLength).toBeLessThanOrEqual(219);
+    expect(decodeJoinMessage(encoded)).toEqual(acceptance);
+    const legacyKey = Buffer.alloc(32, 8).toString("base64");
+    const legacyPayload = Buffer.from(
+      JSON.stringify({
+        m: "AJ1",
+        t: "a",
+        a: "legacy-attempt",
+        h: "legacy-gateway",
+        g: 1,
+        r: Buffer.from(RADIO_CONTRACT_REVISION.slice("sha256:".length), "hex").toString("base64url"),
+        i: 1,
+        n: "ATLAS",
+        k: legacyKey
+      })
+    );
+    expect(decodeJoinMessage(legacyPayload)).toEqual({
+      type: "accept",
+      join_attempt_id: "legacy-attempt",
+      gateway_node_id: "legacy-gateway",
+      source_generation: 1,
+      radio_contract_revision: RADIO_CONTRACT_REVISION,
+      channel_index: 1,
+      channel_name: "ATLAS",
+      channel_key_base64: legacyKey
+    });
+    expect(() => encodeJoinMessage({ ...acceptance, gateway_node_id: "g".repeat(2_000) }, 219)).toThrow(
+      "exceeds one Meshtastic packet"
+    );
+  });
+
   it("fits discovery in one packet and preserves the full contract revision", () => {
     const beacon: DiscoveryBeacon = {
       type: "discovery",
@@ -50,6 +96,174 @@ describe("joining and Radio profile", () => {
     expect(encoded.byteLength).toBeLessThanOrEqual(233);
     expect(decodeJoinMessage(encoded)).toEqual(beacon);
     expect(() => encodeJoinMessage(beacon, encoded.byteLength - 1)).toThrow("exceeds one Meshtastic packet");
+  });
+
+  it("uses the plain budget for discovery and the PKI budget for the join exchange", async () => {
+    const authentication = new PreSharedKeyAuthenticationPolicy("j".repeat(32));
+    const clock = new VirtualClock();
+    const assetRadio = new BudgetRecordingRadio();
+    const asset = new AssetJoinService({
+      radio: assetRadio,
+      clock,
+      assetID: "asset-alpha",
+      radioNodeID: 101,
+      serviceSession: "asset-session",
+      authentication,
+      installMembership: async () => undefined,
+      random: () => 0.5
+    });
+    asset.start();
+    await flushJoinOperations();
+    expect(assetRadio.budgets).toEqual([{ channel: 0 }]);
+    const status = asset.status();
+    if (status.state !== "discovering") throw new Error("expected the Asset to be discovering");
+    const beacon: DiscoveryBeacon = {
+      type: "discovery",
+      join_attempt_id: status.join_attempt_id,
+      radio_node_id: 101,
+      asset_id: "asset-alpha",
+      service_session: "asset-session",
+      link_revision: LINK_PROTOCOL_REVISION,
+      radio_contract_revision: RADIO_CONTRACT_REVISION,
+      capabilities: ["json", "fragmentation", "confirmation"]
+    };
+    const challenge = await authentication.challenge(beacon);
+    const proof = await authentication.prove(beacon, challenge);
+    assetRadio.emit({
+      payload: encodeJoinMessage({
+        type: "challenge",
+        join_attempt_id: status.join_attempt_id,
+        challenge,
+        gateway_proof: proof
+      }),
+      received_at: 1,
+      radio_source: 201,
+      channel: 0,
+      public_key_encrypted: true
+    });
+    await flushJoinOperations();
+    expect(assetRadio.budgets[1]).toMatchObject({
+      channel: 0,
+      destination_radio_node: 201,
+      require_public_key: true
+    });
+    asset.stop();
+
+    const directory = await mkdtemp(join(tmpdir(), "atlas-link-join-budget-"));
+    const store = new GatewayMembershipStore(join(directory, "membership.json"));
+    await store.initialize({
+      gateway_node_id: "gateway",
+      channel_index: 1,
+      channel_name: "ATLAS",
+      channel_key_base64: Buffer.alloc(32, 9).toString("base64")
+    });
+    const gatewayRadio = new BudgetRecordingRadio();
+    const gatewayErrors: Error[] = [];
+    let admittedResolve!: () => void;
+    const admitted = new Promise<void>((resolve) => {
+      admittedResolve = resolve;
+    });
+    const gateway = new GatewayJoinService(
+      gatewayRadio,
+      0,
+      store,
+      authentication,
+      (error) => gatewayErrors.push(error),
+      () => admittedResolve()
+    );
+    gatewayRadio.emit({
+      payload: encodeJoinMessage(beacon),
+      received_at: 0,
+      radio_source: 101,
+      channel: 0,
+      public_key_encrypted: false
+    });
+    await flushJoinOperations();
+    expect(gatewayRadio.budgets[0]).toMatchObject({
+      channel: 0,
+      destination_radio_node: 101,
+      require_public_key: true
+    });
+    const firstSend = gatewayRadio.sends[0];
+    if (!firstSend) throw new Error("expected a challenge send");
+    const challengeMessage = decodeJoinMessage(firstSend.payload);
+    if (!challengeMessage || challengeMessage.type !== "challenge") throw new Error("expected a join challenge");
+    const response = await authentication.answer(challengeMessage.challenge);
+    const responsePayload = encodeJoinMessage({
+      type: "response",
+      join_attempt_id: beacon.join_attempt_id,
+      response
+    });
+    gatewayRadio.emit({
+      payload: responsePayload,
+      received_at: 1,
+      radio_source: 101,
+      channel: 0,
+      public_key_encrypted: true
+    });
+    await admitted;
+    expect(gatewayErrors).toEqual([]);
+    expect(gatewayRadio.budgets[1]).toMatchObject({
+      channel: 0,
+      destination_radio_node: 101,
+      require_public_key: true
+    });
+    await gateway.close();
+  });
+
+  it("preflights an oversized acceptance before consuming an Asset generation", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "atlas-link-join-preflight-"));
+    const store = new GatewayMembershipStore(join(directory, "membership.json"));
+    await store.initialize({
+      gateway_node_id: "g".repeat(2_000),
+      channel_index: 1,
+      channel_name: "ATLAS",
+      channel_key_base64: Buffer.alloc(32, 9).toString("base64")
+    });
+    const radio = new BudgetRecordingRadio();
+    const errors: Error[] = [];
+    const authentication = new PreSharedKeyAuthenticationPolicy("j".repeat(32));
+    const gateway = new GatewayJoinService(radio, 0, store, authentication, (error) => errors.push(error));
+    const beacon: DiscoveryBeacon = {
+      type: "discovery",
+      join_attempt_id: "a".repeat(32),
+      radio_node_id: 101,
+      asset_id: "asset-alpha",
+      service_session: "s".repeat(32),
+      link_revision: LINK_PROTOCOL_REVISION,
+      radio_contract_revision: RADIO_CONTRACT_REVISION,
+      capabilities: ["json", "fragmentation", "confirmation"]
+    };
+
+    radio.emit({
+      payload: encodeJoinMessage(beacon),
+      received_at: 0,
+      radio_source: 101,
+      channel: 0,
+      public_key_encrypted: false
+    });
+    await flushJoinOperations();
+    const challengePayload = radio.sends[0]?.payload;
+    if (!challengePayload) throw new Error("expected a challenge send");
+    const challenge = decodeJoinMessage(challengePayload);
+    if (!challenge || challenge.type !== "challenge") throw new Error("expected a join challenge");
+    radio.emit({
+      payload: encodeJoinMessage({
+        type: "response",
+        join_attempt_id: beacon.join_attempt_id,
+        response: await authentication.answer(challenge.challenge)
+      }),
+      received_at: 1,
+      radio_source: 101,
+      channel: 0,
+      public_key_encrypted: true
+    });
+    await waitFor(() => errors.length > 0);
+
+    expect(errors.map((error) => error.message)).toContain("join message exceeds one Meshtastic packet");
+    expect((await store.load()).asset_generations).toEqual({});
+    expect(radio.sends).toHaveLength(1);
+    await gateway.close();
   });
 
   it("mutually authenticates the Gateway and Asset through the replaceable join policy", async () => {
@@ -142,8 +356,9 @@ describe("joining and Radio profile", () => {
     const directory = await mkdtemp(join(tmpdir(), "atlas-link-join-"));
     const store = new GatewayMembershipStore(join(directory, "membership.json"));
     const channelKey = Buffer.alloc(32, 9).toString("base64");
+    const gatewayNodeID = `gateway-${"x".repeat(40)}`;
     await store.initialize({
-      gateway_node_id: "gateway",
+      gateway_node_id: gatewayNodeID,
       channel_index: 1,
       channel_name: "ATLAS",
       channel_key_base64: channelKey
@@ -193,7 +408,7 @@ describe("joining and Radio profile", () => {
 
     const first = start("session-one");
     await advanceUntilJoined(clock, () => latestStatus, joinErrors);
-    expect(latestStatus).toMatchObject({ state: "joined", gateway_node_id: "gateway", source_generation: 1 });
+    expect(latestStatus).toMatchObject({ state: "joined", gateway_node_id: gatewayNodeID, source_generation: 1 });
     expect(installed[0]).toEqual({ channel_index: 1, channel_name: "ATLAS", channel_key_base64: channelKey });
     first.stop();
 
@@ -425,6 +640,19 @@ describe("joining and Radio profile", () => {
 
     expect(network.metrics().radio_submissions).toBe(257);
     await gateway.close();
+  });
+
+  it("accepts firmware-expanded US default power but repairs explicit power overrides", async () => {
+    const profile = createUSShortFastProfile(20, "2.7.26.54e0d8d");
+    const adapter = new FakeConfigurationAdapter(profile);
+    adapter.configuration.tx_power = 30;
+    const manager = new RadioProfileManager(profile, adapter);
+    expect(await manager.diff()).toEqual([]);
+    adapter.configuration.tx_power = 22;
+    expect(await manager.diff()).toContainEqual({ path: "tx_power", desired: 0, actual: 22 });
+    adapter.configuration.tx_power = 30;
+    adapter.configuration.region = "EU_868";
+    expect(await manager.diff()).toContainEqual({ path: "tx_power", desired: 0, actual: 30 });
   });
 
   it("applies only owned profile differences and verifies the readback", async () => {
@@ -774,6 +1002,47 @@ class DisconnectingJoinRadio implements LinkRadio {
   }
 
   async close(): Promise<void> {}
+}
+
+class BudgetRecordingRadio implements LinkRadio {
+  readonly max_payload_bytes = 233;
+  readonly budgets: RadioSendOptions[] = [];
+  readonly sends: Array<{ payload: Uint8Array; options: RadioSendOptions }> = [];
+  private handler: ((packet: RadioPacket) => void) | undefined;
+
+  maxPayloadBytes(options: RadioSendOptions): number {
+    this.budgets.push(options);
+    return options.require_public_key === true ? 219 : 231;
+  }
+
+  async send(payload: Uint8Array, options: RadioSendOptions): Promise<void> {
+    this.sends.push({ payload, options });
+  }
+
+  onPacket(handler: (packet: RadioPacket) => void): () => void {
+    this.handler = handler;
+    return () => {
+      if (this.handler === handler) this.handler = undefined;
+    };
+  }
+
+  emit(packet: RadioPacket): void {
+    this.handler?.(packet);
+  }
+
+  async close(): Promise<void> {}
+}
+
+async function flushJoinOperations(): Promise<void> {
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+}
+
+async function waitFor(condition: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    if (condition()) return;
+    await new Promise<void>((resolve) => setTimeout(resolve, 1));
+  }
+  throw new Error("timed out waiting for join operation");
 }
 
 async function advanceUntilJoined(

@@ -5,7 +5,7 @@ import { LINK_PROTOCOL_REVISION, RADIO_CONTRACT_REVISION } from "./contract.js";
 import { MESHTASTIC_APPLICATION_PAYLOAD_BYTES } from "./frame.js";
 import type { GatewayMembershipStore } from "./membership.js";
 import type { PrivateChannelMembership } from "./profile.js";
-import type { LinkRadio, RadioPacket } from "./radio.js";
+import type { LinkRadio, RadioPacket, RadioSendOptions } from "./radio.js";
 
 const JOIN_MARKER = "AJ1";
 const REQUIRED_CAPABILITIES = 0b111;
@@ -13,6 +13,10 @@ const MAX_PENDING_JOINS = 256;
 const PENDING_JOIN_RETENTION_MS = 2 * 60_000;
 const MAX_COMPLETED_JOINS = 256;
 const COMPLETED_JOIN_RETENTION_MS = 5 * 60_000;
+
+function joinPayloadBudget(radio: LinkRadio, options: RadioSendOptions): number {
+  return radio.maxPayloadBytes?.(options) ?? radio.max_payload_bytes;
+}
 
 export type DiscoveryBeacon = {
   type: "discovery";
@@ -141,8 +145,14 @@ type CompletedJoin = {
   beacon: DiscoveryBeacon;
   radioNodeID: number;
   acceptance: JoinAcceptance;
+  payload: Uint8Array;
   expiresAt: number;
 };
+
+const COMPACT_ACCEPTANCE_MARKER = 0xa4;
+const COMPACT_ACCEPTANCE_VERSION = 1;
+const COMPACT_ACCEPTANCE_TYPE = 1;
+const COMPACT_ACCEPTANCE_DIGEST_BYTES = 32;
 
 export class GatewayJoinService {
   private readonly pending = new Map<string, PendingJoin>();
@@ -187,7 +197,7 @@ export class GatewayJoinService {
       const completed = this.completed.get(message.join_attempt_id);
       if (completed) {
         if (sameJoin(completed.beacon, message, completed.radioNodeID, packet.radio_source)) {
-          await this.sendAcceptance(completed.acceptance, packet.radio_source);
+          await this.sendAcceptancePayload(completed.payload, packet.radio_source);
         }
         return;
       }
@@ -238,26 +248,40 @@ export class GatewayJoinService {
     try {
       const accepted = await this.authentication.verify(pending.beacon, pending.challenge, message.response);
       if (!accepted || this.closed) return;
-      const admitted = await this.membershipStore.admitAsset(pending.beacon.asset_id);
-      if (this.closed) return;
-      const acceptance: JoinAcceptance = {
-        type: "accept",
-        join_attempt_id: message.join_attempt_id,
-        gateway_node_id: admitted.membership.gateway_node_id,
-        source_generation: admitted.source_generation,
-        radio_contract_revision: RADIO_CONTRACT_REVISION,
-        channel_index: admitted.membership.channel_index,
-        channel_name: admitted.membership.channel_name,
-        channel_key_base64: admitted.membership.channel_key_base64
+      const options: RadioSendOptions = {
+        channel: this.rendezvousChannel,
+        destination_radio_node: packet.radio_source,
+        require_public_key: true
       };
+      const budget = joinPayloadBudget(this.radio, options);
+      const admitted = await this.membershipStore.admitAsset(
+        pending.beacon.asset_id,
+        (membership, sourceGeneration) => {
+          const acceptance: JoinAcceptance = {
+            type: "accept",
+            join_attempt_id: message.join_attempt_id,
+            gateway_node_id: membership.gateway_node_id,
+            source_generation: sourceGeneration,
+            radio_contract_revision: RADIO_CONTRACT_REVISION,
+            channel_index: membership.channel_index,
+            channel_name: membership.channel_name,
+            channel_key_base64: membership.channel_key_base64
+          };
+          return { acceptance, payload: encodeJoinMessage(acceptance, budget) };
+        }
+      );
+      if (this.closed) return;
+      const prepared = admitted.prepared;
+      if (!prepared) throw new Error("join acceptance preparation did not produce a payload");
       this.completed.set(message.join_attempt_id, {
         beacon: pending.beacon,
         radioNodeID: pending.radioNodeID,
-        acceptance,
+        acceptance: prepared.acceptance,
+        payload: prepared.payload,
         expiresAt: packet.received_at + COMPLETED_JOIN_RETENTION_MS
       });
       this.pruneCompleted(packet.received_at);
-      await this.sendAcceptance(acceptance, packet.radio_source);
+      await this.sendAcceptancePayload(prepared.payload, packet.radio_source);
       if (this.closed) return;
       await this.onAdmitted?.({
         source: { role: "asset", id: pending.beacon.asset_id },
@@ -277,6 +301,11 @@ export class GatewayJoinService {
     destination: number
   ): Promise<void> {
     if (this.closed) return;
+    const options: RadioSendOptions = {
+      channel: this.rendezvousChannel,
+      destination_radio_node: destination,
+      require_public_key: true
+    };
     await this.radio.send(
       encodeJoinMessage(
         {
@@ -285,23 +314,20 @@ export class GatewayJoinService {
           challenge,
           gateway_proof: gatewayProof
         },
-        this.radio.max_payload_bytes
+        joinPayloadBudget(this.radio, options)
       ),
-      {
-        channel: this.rendezvousChannel,
-        destination_radio_node: destination,
-        require_public_key: true
-      }
+      options
     );
   }
 
-  private async sendAcceptance(acceptance: JoinAcceptance, destination: number): Promise<void> {
+  private async sendAcceptancePayload(payload: Uint8Array, destination: number): Promise<void> {
     if (this.closed) return;
-    await this.radio.send(encodeJoinMessage(acceptance, this.radio.max_payload_bytes), {
+    const options: RadioSendOptions = {
       channel: this.rendezvousChannel,
       destination_radio_node: destination,
       require_public_key: true
-    });
+    };
+    await this.radio.send(payload, options);
   }
 
   private pruneCompleted(now = Date.now()): void {
@@ -431,10 +457,9 @@ export class AssetJoinService {
     const elapsed = this.clock.now() - this.startedAt;
     const baseDelay = elapsed < 30_000 ? 5_000 : 30_000;
     const jitter = elapsed < 30_000 ? Math.round((this.random() - 0.5) * 1_000) : 0;
+    const options: RadioSendOptions = { channel: this.rendezvousChannel };
     try {
-      await this.radio.send(encodeJoinMessage(beacon, this.radio.max_payload_bytes), {
-        channel: this.rendezvousChannel
-      });
+      await this.radio.send(encodeJoinMessage(beacon, joinPayloadBudget(this.radio, options)), options);
     } finally {
       if (this.isWaitingToJoin()) {
         this.retryTimer = this.clock.schedule(baseDelay + jitter, () => this.run(() => this.sendDiscovery()));
@@ -478,16 +503,17 @@ export class AssetJoinService {
       this.updateStatus({ state: "authenticating", join_attempt_id: this.joinAttemptID });
       const response = await this.authentication.answer(message.challenge);
       if (this.isStopped()) return;
+      const options: RadioSendOptions = {
+        channel: this.rendezvousChannel,
+        destination_radio_node: packet.radio_source,
+        require_public_key: true
+      };
       await this.radio.send(
         encodeJoinMessage(
           { type: "response", join_attempt_id: this.joinAttemptID, response },
-          this.radio.max_payload_bytes
+          joinPayloadBudget(this.radio, options)
         ),
-        {
-          channel: this.rendezvousChannel,
-          destination_radio_node: packet.radio_source,
-          require_public_key: true
-        }
+        options
       );
       return;
     }
@@ -537,16 +563,17 @@ export function encodeJoinMessage(
   message: JoinWireMessage,
   maxPayloadBytes = MESHTASTIC_APPLICATION_PAYLOAD_BYTES
 ): Uint8Array {
-  const compact = compactJoinMessage(message);
-  const encoded = encodeCanonicalJSON(compact);
   if (!Number.isSafeInteger(maxPayloadBytes) || maxPayloadBytes < 1) {
     throw new RangeError("join message payload budget must be a positive integer");
   }
+  const encoded =
+    message.type === "accept" ? encodeCompactJoinAcceptance(message) : encodeCanonicalJSON(compactJoinMessage(message));
   if (encoded.byteLength > maxPayloadBytes) throw new RangeError("join message exceeds one Meshtastic packet");
   return encoded;
 }
 
 export function decodeJoinMessage(payload: Uint8Array): JoinWireMessage | undefined {
+  if (payload[0] === COMPACT_ACCEPTANCE_MARKER) return decodeCompactJoinAcceptance(payload);
   let value: unknown;
   try {
     value = decodeJSON(payload);
@@ -615,7 +642,187 @@ export function decodeJoinMessage(payload: Uint8Array): JoinWireMessage | undefi
   return undefined;
 }
 
-function compactJoinMessage(message: JoinWireMessage): Record<string, string | number> {
+function encodeCompactJoinAcceptance(message: JoinAcceptance): Uint8Array {
+  if (
+    !isNonEmptyString(message.join_attempt_id) ||
+    !isNonEmptyString(message.gateway_node_id) ||
+    !Number.isSafeInteger(message.source_generation) ||
+    message.source_generation < 1 ||
+    message.radio_contract_revision !== RADIO_CONTRACT_REVISION ||
+    !Number.isSafeInteger(message.channel_index) ||
+    message.channel_index < 1 ||
+    message.channel_index > 7 ||
+    message.channel_name !== "ATLAS"
+  ) {
+    throw new TypeError("Join acceptance fields are invalid");
+  }
+  const revision = digestBytes(message.radio_contract_revision);
+  const channelKey = channelKeyBytes(message.channel_key_base64);
+  return concatBytes([
+    Uint8Array.of(COMPACT_ACCEPTANCE_MARKER, COMPACT_ACCEPTANCE_VERSION, COMPACT_ACCEPTANCE_TYPE),
+    lengthPrefixedUTF8(message.join_attempt_id),
+    lengthPrefixedUTF8(message.gateway_node_id),
+    encodeUnsignedVarint(message.source_generation),
+    revision,
+    encodeUnsignedVarint(message.channel_index),
+    lengthPrefixedUTF8(message.channel_name),
+    lengthPrefixedBytes(channelKey)
+  ]);
+}
+
+function decodeCompactJoinAcceptance(payload: Uint8Array): JoinAcceptance | undefined {
+  const reader = new CompactAcceptanceReader(payload);
+  if (
+    reader.readByte() !== COMPACT_ACCEPTANCE_MARKER ||
+    reader.readByte() !== COMPACT_ACCEPTANCE_VERSION ||
+    reader.readByte() !== COMPACT_ACCEPTANCE_TYPE
+  ) {
+    return undefined;
+  }
+  const joinAttemptID = reader.readUTF8();
+  const gatewayNodeID = reader.readUTF8();
+  const sourceGeneration = reader.readUnsignedVarint();
+  const revision = reader.readBytes(COMPACT_ACCEPTANCE_DIGEST_BYTES);
+  const channelIndex = reader.readUnsignedVarint();
+  const channelName = reader.readUTF8();
+  const channelKey = reader.readLengthPrefixedBytes();
+  if (
+    joinAttemptID === undefined ||
+    gatewayNodeID === undefined ||
+    sourceGeneration === undefined ||
+    revision === undefined ||
+    channelIndex === undefined ||
+    channelName === undefined ||
+    channelKey === undefined ||
+    !reader.done() ||
+    !isNonEmptyString(joinAttemptID) ||
+    !isNonEmptyString(gatewayNodeID) ||
+    sourceGeneration < 1 ||
+    channelIndex < 1 ||
+    channelIndex > 7 ||
+    channelName !== "ATLAS" ||
+    !isChannelKeyBytes(channelKey) ||
+    Buffer.compare(Buffer.from(revision), digestBytes(RADIO_CONTRACT_REVISION)) !== 0
+  ) {
+    return undefined;
+  }
+  return {
+    type: "accept",
+    join_attempt_id: joinAttemptID,
+    gateway_node_id: gatewayNodeID,
+    source_generation: sourceGeneration,
+    radio_contract_revision: RADIO_CONTRACT_REVISION,
+    channel_index: channelIndex,
+    channel_name: channelName,
+    channel_key_base64: Buffer.from(channelKey).toString("base64")
+  };
+}
+
+function digestBytes(revision: string): Uint8Array {
+  const match = /^sha256:([0-9a-f]{64})$/.exec(revision);
+  if (!match?.[1]) throw new TypeError("radio contract revision must be a SHA-256 digest");
+  return Buffer.from(match[1], "hex");
+}
+
+function channelKeyBytes(value: string): Uint8Array {
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(value)) throw new TypeError("channel key must be base64");
+  const bytes = Buffer.from(value, "base64");
+  if (!isChannelKeyBytes(bytes)) throw new TypeError("channel key must contain 16 or 32 bytes");
+  return bytes;
+}
+
+function isChannelKeyBytes(value: Uint8Array): boolean {
+  return value.byteLength === 16 || value.byteLength === 32;
+}
+
+function lengthPrefixedUTF8(value: string): Uint8Array {
+  const bytes = new TextEncoder().encode(value);
+  if (new TextDecoder("utf-8", { fatal: true }).decode(bytes) !== value) {
+    throw new TypeError("join acceptance strings must contain valid UTF-8");
+  }
+  return lengthPrefixedBytes(bytes);
+}
+
+function lengthPrefixedBytes(value: Uint8Array): Uint8Array {
+  return concatBytes([encodeUnsignedVarint(value.byteLength), value]);
+}
+
+function encodeUnsignedVarint(value: number): Uint8Array {
+  if (!Number.isSafeInteger(value) || value < 0)
+    throw new RangeError("compact join value must be a safe nonnegative integer");
+  const bytes: number[] = [];
+  let remaining = BigInt(value);
+  do {
+    let byte = Number(remaining & 0x7fn);
+    remaining >>= 7n;
+    if (remaining !== 0n) byte |= 0x80;
+    bytes.push(byte);
+  } while (remaining !== 0n);
+  return Uint8Array.from(bytes);
+}
+
+function concatBytes(parts: readonly Uint8Array[]): Uint8Array {
+  const total = parts.reduce((sum, part) => sum + part.byteLength, 0);
+  const result = new Uint8Array(total);
+  let offset = 0;
+  for (const part of parts) {
+    result.set(part, offset);
+    offset += part.byteLength;
+  }
+  return result;
+}
+
+class CompactAcceptanceReader {
+  private offset = 0;
+
+  constructor(private readonly payload: Uint8Array) {}
+
+  readByte(): number | undefined {
+    if (this.offset >= this.payload.byteLength) return undefined;
+    return this.payload[this.offset++];
+  }
+
+  readUnsignedVarint(): number | undefined {
+    let value = 0n;
+    for (let index = 0; index < 8; index++) {
+      const byte = this.readByte();
+      if (byte === undefined) return undefined;
+      value |= BigInt(byte & 0x7f) << BigInt(index * 7);
+      if ((byte & 0x80) === 0) {
+        return value <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(value) : undefined;
+      }
+    }
+    return undefined;
+  }
+
+  readBytes(length: number): Uint8Array | undefined {
+    if (!Number.isSafeInteger(length) || length < 0 || length > this.payload.byteLength - this.offset) return undefined;
+    const result = this.payload.slice(this.offset, this.offset + length);
+    this.offset += length;
+    return result;
+  }
+
+  readLengthPrefixedBytes(): Uint8Array | undefined {
+    const length = this.readUnsignedVarint();
+    return length === undefined ? undefined : this.readBytes(length);
+  }
+
+  readUTF8(): string | undefined {
+    const bytes = this.readLengthPrefixedBytes();
+    if (bytes === undefined) return undefined;
+    try {
+      return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    } catch {
+      return undefined;
+    }
+  }
+
+  done(): boolean {
+    return this.offset === this.payload.byteLength;
+  }
+}
+
+function compactJoinMessage(message: DiscoveryBeacon | JoinChallenge | JoinResponse): Record<string, string | number> {
   if (message.type === "discovery") {
     return {
       m: JOIN_MARKER,
@@ -639,23 +846,11 @@ function compactJoinMessage(message: JoinWireMessage): Record<string, string | n
     };
   }
   if (message.type === "response") return { m: JOIN_MARKER, t: "r", a: message.join_attempt_id, p: message.response };
-  return {
-    m: JOIN_MARKER,
-    t: "a",
-    a: message.join_attempt_id,
-    h: message.gateway_node_id,
-    g: message.source_generation,
-    r: encodeRevision(message.radio_contract_revision),
-    i: message.channel_index,
-    n: message.channel_name,
-    k: message.channel_key_base64
-  };
+  throw new TypeError("Unsupported join message type");
 }
 
 function encodeRevision(revision: string): string {
-  const match = /^sha256:([0-9a-f]{64})$/.exec(revision);
-  if (!match?.[1]) throw new TypeError("radio contract revision must be a SHA-256 digest");
-  return Buffer.from(match[1], "hex").toString("base64url");
+  return Buffer.from(digestBytes(revision)).toString("base64url");
 }
 
 function decodeRevision(value: unknown): string | undefined {

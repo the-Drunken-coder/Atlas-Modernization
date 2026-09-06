@@ -1,7 +1,6 @@
 import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
 import { MeshDevice, Protobuf, Types } from "@meshtastic/core";
 import { ModuleConfig as FirmwareProtobuf } from "@meshtastic/protobufs-firmware";
-import { TransportNodeSerial } from "@meshtastic/transport-node-serial";
 import type {
   ActualRadioConfiguration,
   ConfigurationDifference,
@@ -10,11 +9,39 @@ import type {
   RadioProfile
 } from "./profile.js";
 import { PUBLIC_RENDEZVOUS_CHANNEL_NAME } from "./profile.js";
+import { openSerialTransport } from "./serial.js";
+import type { MessagePriority } from "./types.js";
+
+export const MESHTASTIC_NATIVE_PLAINTEXT_PAYLOAD_BYTES = 231;
+export const MESHTASTIC_NATIVE_PKI_PAYLOAD_BYTES = 219;
+const MESHTASTIC_NATIVE_REQUEST_ID_BYTES = 5;
+
+// Preserve Atlas scheduling when a packet moves from the host into the radio queue.
+const RADIO_PRIORITIES: Record<MessagePriority, Protobuf.Mesh.MeshPacket_Priority> = {
+  safety: Protobuf.Mesh.MeshPacket_Priority.ACK,
+  task: Protobuf.Mesh.MeshPacket_Priority.HIGH,
+  request: Protobuf.Mesh.MeshPacket_Priority.RELIABLE,
+  live_state: Protobuf.Mesh.MeshPacket_Priority.DEFAULT,
+  resource: Protobuf.Mesh.MeshPacket_Priority.BACKGROUND,
+  object_content: Protobuf.Mesh.MeshPacket_Priority.BACKGROUND
+};
 
 type PendingRadioSend = {
   resolve: () => void;
   reject: (reason: Error) => void;
   timer: ReturnType<typeof setTimeout>;
+};
+
+/** Bounded observations of the local device queue-status stream. */
+export type MeshtasticQueueMetrics = {
+  statuses_observed: number;
+  matched_local_admissions: number;
+  matched_local_rejections: number;
+  minimum_free: number | null;
+  latest_free: number | null;
+  latest_maxlen: number | null;
+  full_queue_observations: number;
+  zero_id_capacity_notifications: number;
 };
 
 type DeviceConnection = {
@@ -27,18 +54,31 @@ export type RadioPacket = {
   payload: Uint8Array;
   received_at: number;
   radio_source?: number;
+  radio_packet_id?: number;
   channel: number;
   public_key_encrypted: boolean;
 };
 
 export type RadioSendOptions = {
   channel: number;
+  priority?: MessagePriority;
   destination_radio_node?: number;
   require_public_key?: boolean;
+  request_id?: number;
 };
+
+type NativePayloadOptions = Pick<RadioSendOptions, "destination_radio_node" | "require_public_key" | "request_id">;
+
+export function meshtasticMaxPayloadBytes(options: NativePayloadOptions): number {
+  const requestID = validateRequestID(options.request_id);
+  const usesPki = options.require_public_key === true || options.destination_radio_node !== undefined;
+  const nativeBudget = usesPki ? MESHTASTIC_NATIVE_PKI_PAYLOAD_BYTES : MESHTASTIC_NATIVE_PLAINTEXT_PAYLOAD_BYTES;
+  return requestID === undefined ? nativeBudget : nativeBudget - MESHTASTIC_NATIVE_REQUEST_ID_BYTES;
+}
 
 export interface LinkRadio {
   readonly max_payload_bytes: number;
+  maxPayloadBytes?(options: RadioSendOptions): number;
   pacingDelayMs?(payload: Uint8Array): number;
   send(payload: Uint8Array, options: RadioSendOptions): Promise<void>;
   onPacket(handler: (packet: RadioPacket) => void): () => void;
@@ -73,6 +113,10 @@ export class LinkRadioGate implements LinkRadio, LinkRadioTransmissionGate {
 
   pacingDelayMs(payload: Uint8Array): number {
     return this.radio.pacingDelayMs?.(payload) ?? 0;
+  }
+
+  maxPayloadBytes(options: RadioSendOptions): number {
+    return this.radio.maxPayloadBytes?.(options) ?? this.max_payload_bytes;
   }
 
   async send(payload: Uint8Array, options: RadioSendOptions): Promise<void> {
@@ -134,7 +178,7 @@ export class LinkRadioGate implements LinkRadio, LinkRadioTransmissionGate {
 
 export class MeshtasticSerialRadio implements LinkRadio, RadioConfigurationAdapter {
   private static readonly sendStatusTimeoutMs = 15_000;
-  readonly max_payload_bytes = 233;
+  readonly max_payload_bytes = MESHTASTIC_NATIVE_PLAINTEXT_PAYLOAD_BYTES;
   private readonly handlers = new Set<(packet: RadioPacket) => void>();
   private readonly disconnectHandlers = new Set<(reason: Error) => void>();
   private readonly knownPublicKeys = new Set<number>();
@@ -147,10 +191,20 @@ export class MeshtasticSerialRadio implements LinkRadio, RadioConfigurationAdapt
   private closed = false;
   private available = true;
   private readonly pendingSends = new Map<number, PendingRadioSend>();
+  private readonly mutableQueueMetrics: MeshtasticQueueMetrics = {
+    statuses_observed: 0,
+    matched_local_admissions: 0,
+    matched_local_rejections: 0,
+    minimum_free: null,
+    latest_free: null,
+    latest_maxlen: null,
+    full_queue_observations: 0,
+    zero_id_capacity_notifications: 0
+  };
   private writePacket: (data: Uint8Array, shouldWrite?: () => boolean) => Promise<void>;
 
   private constructor(
-    private readonly path: string,
+    private readonly createTransport: () => Promise<Types.Transport>,
     private device: MeshDevice,
     writePacket: (data: Uint8Array, shouldWrite?: () => boolean) => Promise<void>,
     private disconnectTransport: () => Promise<void>
@@ -187,28 +241,35 @@ export class MeshtasticSerialRadio implements LinkRadio, RadioConfigurationAdapt
     });
     device.events.onMeshPacket.subscribe((packet: Protobuf.Mesh.MeshPacket) => {
       if (!current()) return;
+      const decoded = packet.payloadVariant;
       if (
-        packet.decoded?.portnum !== Protobuf.Portnums.PortNum.PRIVATE_APP ||
-        packet.decoded.payload.byteLength === 0
+        decoded.case !== "decoded" ||
+        decoded.value.portnum !== Protobuf.Portnums.PortNum.PRIVATE_APP ||
+        decoded.value.payload.byteLength === 0
       ) {
         return;
       }
       const received: RadioPacket = {
-        payload: packet.decoded.payload,
+        payload: decoded.value.payload,
         received_at: Date.now(),
         radio_source: packet.from,
+        ...(packet.id === 0 ? {} : { radio_packet_id: packet.id }),
         channel: packet.channel,
         public_key_encrypted: packet.pkiEncrypted
       };
       for (const handler of this.handlers) handler(received);
     });
     device.events.onQueueStatus.subscribe((status: Protobuf.Mesh.QueueStatus) => {
-      if (!current() || status.meshPacketId === 0) return;
+      if (!current()) return;
+      this.recordQueueStatus(status);
+      if (status.meshPacketId === 0) return;
       const pending = this.pendingSends.get(status.meshPacketId);
       if (!pending) return;
       if (status.res === 0) {
+        this.mutableQueueMetrics.matched_local_admissions++;
         this.settleSend(status.meshPacketId);
       } else {
+        this.mutableQueueMetrics.matched_local_rejections++;
         this.settleSend(
           status.meshPacketId,
           new Error(`Meshtastic radio rejected packet ${status.meshPacketId} (${status.res})`)
@@ -232,8 +293,18 @@ export class MeshtasticSerialRadio implements LinkRadio, RadioConfigurationAdapt
 
   static async open(path: string): Promise<MeshtasticSerialRadio> {
     if (!path.startsWith("/dev/cu.")) throw new TypeError("Meshtastic serial paths must be macOS /dev/cu.* devices");
-    const connection = await MeshtasticSerialRadio.createDevice(path);
-    const radio = new MeshtasticSerialRadio(path, connection.device, connection.writePacket, connection.disconnect);
+    return MeshtasticSerialRadio.openTransport(() => openSerialTransport(path));
+  }
+
+  /** Share the production device protocol with laboratory stream transports. */
+  static async openTransport(createTransport: () => Promise<Types.Transport>): Promise<MeshtasticSerialRadio> {
+    const connection = await MeshtasticSerialRadio.createDevice(createTransport);
+    const radio = new MeshtasticSerialRadio(
+      createTransport,
+      connection.device,
+      connection.writePacket,
+      connection.disconnect
+    );
     const device = connection.device;
     device.setHeartbeatInterval(20_000);
     try {
@@ -257,27 +328,35 @@ export class MeshtasticSerialRadio implements LinkRadio, RadioConfigurationAdapt
   async send(payload: Uint8Array, options: RadioSendOptions): Promise<void> {
     if (this.closed) throw new Error("Meshtastic radio is closed");
     if (!this.available) throw new Error("Meshtastic radio is unavailable");
-    if (payload.byteLength > this.max_payload_bytes)
-      throw new RangeError("Meshtastic application payload exceeds 233 bytes");
+    const requestID = validateRequestID(options.request_id);
+    const maxPayloadBytes = this.maxPayloadBytes(options);
+    if (payload.byteLength > maxPayloadBytes) {
+      throw new RangeError(`Meshtastic application payload exceeds ${maxPayloadBytes} bytes for this send`);
+    }
     const destination = options.destination_radio_node ?? "broadcast";
     if (options.require_public_key === true) {
       if (typeof destination !== "number" || !this.knownPublicKeys.has(destination)) {
         throw new Error("public-key-only send requires a destination with a known public key");
       }
     }
+    const lora = this.configs.get("lora")?.payloadVariant;
     const packetId = this.nextPacketId();
     const packet = create(Protobuf.Mesh.MeshPacketSchema, {
       from: this.localRadioNodeNumber ?? 0,
       to: destination === "broadcast" ? 0xffffffff : destination,
       id: packetId,
       wantAck: false,
+      priority:
+        options.priority === undefined ? Protobuf.Mesh.MeshPacket_Priority.UNSET : RADIO_PRIORITIES[options.priority],
+      hopLimit: lora?.case === "lora" ? lora.value.hopLimit : 0,
       channel: channelNumber(options.channel),
       payloadVariant: {
         case: "decoded",
         value: {
           payload,
           portnum: Protobuf.Portnums.PortNum.PRIVATE_APP,
-          wantResponse: false
+          wantResponse: false,
+          ...(requestID === undefined ? {} : { requestId: requestID })
         }
       }
     });
@@ -299,6 +378,15 @@ export class MeshtasticSerialRadio implements LinkRadio, RadioConfigurationAdapt
         (error: unknown) => this.settleSend(packetId, asError(error))
       );
     });
+  }
+
+  maxPayloadBytes(options: RadioSendOptions): number {
+    return meshtasticMaxPayloadBytes(options);
+  }
+
+  /** Return a copy of queue diagnostics; these counters never imply RF completion. */
+  queueMetrics(): MeshtasticQueueMetrics {
+    return { ...this.mutableQueueMetrics };
   }
 
   onPacket(handler: (packet: RadioPacket) => void): () => void {
@@ -615,7 +703,7 @@ export class MeshtasticSerialRadio implements LinkRadio, RadioConfigurationAdapt
       let device: MeshDevice | undefined;
       let connection: DeviceConnection | undefined;
       try {
-        connection = await MeshtasticSerialRadio.createDevice(this.path);
+        connection = await MeshtasticSerialRadio.createDevice(this.createTransport);
         device = connection.device;
         this.device = device;
         this.writePacket = connection.writePacket;
@@ -662,8 +750,8 @@ export class MeshtasticSerialRadio implements LinkRadio, RadioConfigurationAdapt
     this.localRadioNodeNumber = undefined;
   }
 
-  private static async createDevice(path: string): Promise<DeviceConnection> {
-    const transport = await TransportNodeSerial.create(path, 115_200);
+  private static async createDevice(createTransport: () => Promise<Types.Transport>): Promise<DeviceConnection> {
+    const transport = await createTransport();
     let writes: Promise<void> = Promise.resolve();
     let outputClosed = false;
     const writePacket = (chunk: Uint8Array, shouldWrite = (): boolean => true): Promise<void> => {
@@ -720,6 +808,21 @@ export class MeshtasticSerialRadio implements LinkRadio, RadioConfigurationAdapt
     let packetId = randomPacketId();
     while (this.pendingSends.has(packetId)) packetId = randomPacketId();
     return packetId;
+  }
+
+  private recordQueueStatus(status: Protobuf.Mesh.QueueStatus): void {
+    this.mutableQueueMetrics.statuses_observed++;
+    const free = status.free;
+    const maxlen = status.maxlen;
+    // A zero maxlen is the protobuf default, not a usable queue-capacity report.
+    if (!Number.isInteger(free) || !Number.isInteger(maxlen) || maxlen <= 0 || free < 0 || free > maxlen) return;
+
+    this.mutableQueueMetrics.minimum_free =
+      this.mutableQueueMetrics.minimum_free === null ? free : Math.min(this.mutableQueueMetrics.minimum_free, free);
+    this.mutableQueueMetrics.latest_free = free;
+    this.mutableQueueMetrics.latest_maxlen = maxlen;
+    if (free === 0) this.mutableQueueMetrics.full_queue_observations++;
+    if (status.meshPacketId === 0) this.mutableQueueMetrics.zero_id_capacity_notifications++;
   }
 
   private settleSend(packetId: number, error?: Error): void {
@@ -784,6 +887,14 @@ function randomPacketId(): number {
   return seed;
 }
 
+function validateRequestID(requestID: number | undefined): number | undefined {
+  if (requestID === undefined) return undefined;
+  if (!Number.isInteger(requestID) || requestID < 1 || requestID > 0xffffffff) {
+    throw new RangeError("Meshtastic request_id must be a nonzero uint32");
+  }
+  return requestID;
+}
+
 function isClosedStreamError(error: unknown): boolean {
   return /stream is locked|stream is closed|invalid state/i.test(errorMessage(error));
 }
@@ -824,10 +935,10 @@ function updateChannel(
       psk,
       uplinkEnabled: false,
       downlinkEnabled: false,
-      moduleSettings: {
+      moduleSettings: create(Protobuf.Channel.ModuleSettingsSchema, {
         ...current.settings.moduleSettings,
         positionPrecision: 0
-      }
+      })
     }
   };
 }
@@ -838,10 +949,10 @@ function disableChannelPosition(current: Protobuf.Channel.Channel): Protobuf.Cha
     ...current,
     settings: {
       ...current.settings,
-      moduleSettings: {
+      moduleSettings: create(Protobuf.Channel.ModuleSettingsSchema, {
         ...current.settings.moduleSettings,
         positionPrecision: 0
-      }
+      })
     }
   };
 }

@@ -1,14 +1,23 @@
 #!/usr/bin/env node
 import { randomBytes } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { open, readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { runCanonicalBaseline, runFirstVerticalSlice, runStressBaseline } from "./benchmark.js";
 import { RealClock } from "./clock.js";
-import { AssetJoinService, GatewayJoinService, PreSharedKeyAuthenticationPolicy } from "./joining.js";
-import { GatewayMembershipStore } from "./membership.js";
+import { RADIO_CONTRACT_REVISION } from "./contract.js";
+import { parseExperiment } from "./experiments/config.js";
+import { runLabExperiment } from "./experiments/runner.js";
+import { experimentSourceIdentity } from "./experiments/source.js";
+import {
+  AssetJoinService,
+  encodeJoinMessage,
+  GatewayJoinService,
+  PreSharedKeyAuthenticationPolicy
+} from "./joining.js";
+import { type GatewayMembership, GatewayMembershipStore } from "./membership.js";
 import { readPrivateFile } from "./private-file.js";
 import { createUSShortFastProfile, type RadioProfile, RadioProfileManager, validateRadioProfile } from "./profile.js";
-import { LinkRadioGate, MeshtasticSerialRadio } from "./radio.js";
+import { LinkRadioGate, MESHTASTIC_NATIVE_PKI_PAYLOAD_BYTES, MeshtasticSerialRadio } from "./radio.js";
 import { LinkHTTPServer, LinkService } from "./service.js";
 import { LinkTransport } from "./transport.js";
 
@@ -16,6 +25,45 @@ const args = process.argv.slice(2);
 
 export async function main(argv = args): Promise<void> {
   const command = argv[0];
+  if (command === "experiment") {
+    const config = parseExperiment(JSON.parse(await readFile(requiredOption(argv, "--config"), "utf8")));
+    const output = await open(requiredOption(argv, "--output"), "wx", 0o600);
+    const controller = new AbortController();
+    const abort = () => controller.abort(new Error("Experiment interrupted"));
+    process.once("SIGINT", abort);
+    process.once("SIGTERM", abort);
+    try {
+      const source = await experimentSourceIdentity();
+      const result = await runLabExperiment(config, controller.signal);
+      await output.writeFile(`${JSON.stringify({ ...result, source }, null, 2)}\n`);
+      console.log(
+        JSON.stringify({
+          passed: result.passed,
+          output: requiredOption(argv, "--output"),
+          summary: result.outcomes.summary,
+          injected_packet_drop_rate: result.injected_faults.packet_drop_rate,
+          errors: result.errors
+        })
+      );
+      if (!result.passed) process.exitCode = 1;
+    } catch (error) {
+      const failure = {
+        schema_version: 1,
+        kind: "atlas-meshtastic-lab-experiment",
+        passed: false,
+        config,
+        completed_observation_window: false,
+        errors: [error instanceof Error ? error.message : String(error)]
+      };
+      await output.writeFile(`${JSON.stringify(failure, null, 2)}\n`);
+      throw error;
+    } finally {
+      process.removeListener("SIGINT", abort);
+      process.removeListener("SIGTERM", abort);
+      await output.close();
+    }
+    return;
+  }
   if (command === "benchmark") {
     const seed = integerOption(argv, "--seed", 42);
     const scenario = option(argv, "--scenario") ?? "canonical";
@@ -41,12 +89,14 @@ export async function main(argv = args): Promise<void> {
     const gatewayID = requiredOption(argv, "--gateway-id");
     if (gatewayID.includes(":")) throw new Error("--gateway-id must not contain ':'");
     const store = new GatewayMembershipStore(requiredOption(argv, "--membership"));
-    await store.initialize({
+    const membership = {
       gateway_node_id: gatewayID,
       channel_index: requiredIntegerOption(argv, "--channel-index"),
       channel_name: "ATLAS",
       channel_key_base64: randomBytes(32).toString("base64")
-    });
+    };
+    preflightGatewayAcceptance(membership);
+    await store.initialize(membership);
     console.log(JSON.stringify({ initialized: true, membership: requiredOption(argv, "--membership") }));
     return;
   }
@@ -105,6 +155,17 @@ async function serve(argv: string[]): Promise<void> {
   if (mode !== "asset" && mode !== "gateway") throw new Error("--mode must be asset or gateway");
   const nodeID = requiredOption(argv, "--node-id");
   if (nodeID.includes(":")) throw new Error("--node-id must not contain ':'");
+  const frameEncoding = option(argv, "--frame-encoding") ?? "canonical-json";
+  if (
+    frameEncoding !== "canonical-json" &&
+    frameEncoding !== "deflate-v1" &&
+    frameEncoding !== "deflate-v2" &&
+    frameEncoding !== "deflate-v3" &&
+    frameEncoding !== "binary-v1" &&
+    frameEncoding !== "message-v1" &&
+    frameEncoding !== "message-v2"
+  )
+    throw new Error("Invalid --frame-encoding");
   const profile = await readProfile(requiredOption(argv, "--profile"));
   const joinKey = await readPrivateFile(requiredOption(argv, "--join-key-file"), "join authentication key");
   const port = integerOption(argv, "--port", 7331);
@@ -128,10 +189,15 @@ async function serve(argv: string[]): Promise<void> {
       const membership = await store.load();
       if (membership.gateway_node_id !== nodeID)
         throw new Error("Gateway membership identity does not match --node-id");
+      preflightGatewayAcceptance(membership);
       await profileManager.prepareGateway(membership);
       const active = await store.activateGateway();
       const transport = new LinkTransport({
         node: service.node,
+        frameEncoding,
+        retryJitterMs: 1000,
+        adaptiveRetries: argv.includes("--adaptive-retries"),
+        stateDeltas: argv.includes("--state-deltas"),
         sourceGeneration: active.gateway_generation,
         serviceSession: service.serviceSession,
         radio,
@@ -174,6 +240,10 @@ async function serve(argv: string[]): Promise<void> {
             attached = true;
             const transport = new LinkTransport({
               node: service.node,
+              frameEncoding,
+              retryJitterMs: 1000,
+              adaptiveRetries: argv.includes("--adaptive-retries"),
+              stateDeltas: argv.includes("--state-deltas"),
               sourceGeneration: status.source_generation,
               serviceSession: service.serviceSession,
               radio,
@@ -276,14 +346,33 @@ function requiredIntegerOption(argv: string[], name: string): number {
 function usage(): string {
   return [
     "Usage:",
+    "  atlas-meshtastic-link experiment --config PATH --output NEW_JSON_PATH",
     "  atlas-meshtastic-link benchmark [--scenario canonical|stress|vertical-slice] [--seed N]",
     "  atlas-meshtastic-link profile --frequency-slot N --tested-firmware VERSION",
     "  atlas-meshtastic-link gateway-init --membership PATH --gateway-id ID --channel-index N",
     "  atlas-meshtastic-link radio show [--url http://127.0.0.1:7331]",
     "  atlas-meshtastic-link radio set --profile PATH [--url http://127.0.0.1:7331]",
     "  atlas-meshtastic-link radio apply [--url http://127.0.0.1:7331]",
-    "  atlas-meshtastic-link serve --mode asset|gateway --node-id ID --serial /dev/cu.* --profile PATH --join-key-file PATH [--membership PATH] [--port N]"
+    "  atlas-meshtastic-link serve --mode asset|gateway --node-id ID --serial /dev/cu.* --profile PATH --join-key-file PATH [--membership PATH] [--port N] [--frame-encoding canonical-json|deflate-v1|deflate-v2|deflate-v3|binary-v1|message-v1|message-v2] [--adaptive-retries] [--state-deltas]"
   ].join("\n");
+}
+
+function preflightGatewayAcceptance(
+  membership: Omit<GatewayMembership, "gateway_generation" | "asset_generations">
+): void {
+  encodeJoinMessage(
+    {
+      type: "accept",
+      join_attempt_id: "0".repeat(32),
+      gateway_node_id: membership.gateway_node_id,
+      source_generation: 1,
+      radio_contract_revision: RADIO_CONTRACT_REVISION,
+      channel_index: membership.channel_index,
+      channel_name: membership.channel_name,
+      channel_key_base64: membership.channel_key_base64
+    },
+    MESHTASTIC_NATIVE_PKI_PAYLOAD_BYTES
+  );
 }
 
 function isLoopbackHostname(hostname: string): boolean {

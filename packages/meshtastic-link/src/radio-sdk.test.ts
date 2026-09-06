@@ -1,10 +1,11 @@
 import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
 import type { MeshDevice as MeshDeviceType } from "@meshtastic/core";
 import { Protobuf, Types } from "@meshtastic/core";
+import { Mesh as FirmwareMesh } from "@meshtastic/protobufs-firmware";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { VirtualClock } from "./clock.js";
 import { AssetJoinService, PreSharedKeyAuthenticationPolicy } from "./joining.js";
-import { MeshtasticSerialRadio } from "./radio.js";
+import { type LinkRadio, LinkRadioGate, MeshtasticSerialRadio, type RadioSendOptions } from "./radio.js";
 
 const serial = vi.hoisted(() => ({
   create: vi.fn()
@@ -13,8 +14,8 @@ const sdk = vi.hoisted(() => ({
   device: undefined as MeshDeviceType | undefined
 }));
 
-vi.mock("@meshtastic/transport-node-serial", () => ({
-  TransportNodeSerial: { create: serial.create }
+vi.mock("./serial.js", () => ({
+  openSerialTransport: serial.create
 }));
 
 vi.mock("@meshtastic/core", async (importOriginal) => {
@@ -34,6 +35,76 @@ describe("Meshtastic radio SDK adapter", () => {
     sdk.device = undefined;
   });
 
+  it("forwards per-send payload budgets through the transmission gate", async () => {
+    const raw: LinkRadio = {
+      max_payload_bytes: 231,
+      maxPayloadBytes: vi.fn((_options: RadioSendOptions) => 219),
+      send: vi.fn(async (_payload: Uint8Array, _options: RadioSendOptions) => undefined),
+      onPacket: (_handler) => () => undefined,
+      close: async () => undefined
+    };
+    const gate = new LinkRadioGate(raw);
+
+    expect(gate.maxPayloadBytes({ channel: 1, require_public_key: true })).toBe(219);
+    expect(raw.maxPayloadBytes).toHaveBeenCalledWith({ channel: 1, require_public_key: true });
+    await gate.close();
+  });
+
+  it("receives real SDK protobuf oneof packets through the Link adapter", async () => {
+    const { radio, connection } = await openRadio();
+    const received = vi.fn();
+    radio.onPacket(received);
+    try {
+      connection.enqueueMeshPacket(
+        create(Protobuf.Mesh.MeshPacketSchema, {
+          from: 123,
+          id: 77,
+          to: 0xffffffff,
+          channel: 1,
+          pkiEncrypted: false,
+          payloadVariant: {
+            case: "decoded",
+            value: { portnum: Protobuf.Portnums.PortNum.PRIVATE_APP, payload: Uint8Array.of(1, 2, 3) }
+          }
+        })
+      );
+      await vi.waitFor(() => expect(received).toHaveBeenCalledOnce());
+      expect(received).toHaveBeenCalledWith(
+        expect.objectContaining({
+          radio_source: 123,
+          radio_packet_id: 77,
+          channel: 1,
+          payload: Uint8Array.of(1, 2, 3)
+        })
+      );
+    } finally {
+      await radio.close();
+    }
+  });
+
+  it("omits radio packet metadata when the native packet ID is zero", async () => {
+    const { radio, connection } = await openRadio();
+    const received = vi.fn();
+    radio.onPacket(received);
+    try {
+      connection.enqueueMeshPacket(
+        create(Protobuf.Mesh.MeshPacketSchema, {
+          from: 123,
+          to: 0xffffffff,
+          channel: 1,
+          payloadVariant: {
+            case: "decoded",
+            value: { portnum: Protobuf.Portnums.PortNum.PRIVATE_APP, payload: Uint8Array.of(1) }
+          }
+        })
+      );
+      await vi.waitFor(() => expect(received).toHaveBeenCalledOnce());
+      expect(received.mock.calls[0]?.[0]).not.toHaveProperty("radio_packet_id");
+    } finally {
+      await radio.close();
+    }
+  });
+
   it("completes application sends from the firmware QueueStatus response", async () => {
     const { radio, connection } = await openRadio();
     try {
@@ -44,11 +115,114 @@ describe("Meshtastic radio SDK adapter", () => {
         .find(({ payloadVariant }) => payloadVariant.case === "packet");
       if (!message || message.payloadVariant.case !== "packet") throw new Error("expected application packet");
       expect(message.payloadVariant.value.wantAck).toBe(false);
+      expect(message.payloadVariant.value.hopLimit).toBe(3);
       expect(message.payloadVariant.value.payloadVariant.case).toBe("decoded");
       if (message.payloadVariant.value.payloadVariant.case !== "decoded") throw new Error("expected decoded payload");
       expect(message.payloadVariant.value.payloadVariant.value.portnum).toBe(Protobuf.Portnums.PortNum.PRIVATE_APP);
       expect(message.payloadVariant.value.payloadVariant.value.payload).toEqual(Uint8Array.of(1, 2, 3));
       await expect(sending).resolves.toBeUndefined();
+    } finally {
+      await radio.close();
+    }
+  });
+
+  it("maps a native request ID while leaving native reliability disabled", async () => {
+    const { radio, connection } = await openRadio();
+    try {
+      await radio.send(Uint8Array.of(4, 5, 6), { channel: 1, request_id: 0x01020304 });
+      const packet = connection.writes.map(decodeToRadio).find((message) => message.payloadVariant.case === "packet");
+      if (packet?.payloadVariant.case !== "packet") throw new Error("Missing packet");
+      expect(packet.payloadVariant.value.wantAck).toBe(false);
+      expect(packet.payloadVariant.value.payloadVariant.case).toBe("decoded");
+      if (packet.payloadVariant.value.payloadVariant.case !== "decoded") throw new Error("Missing decoded data");
+      expect(packet.payloadVariant.value.payloadVariant.value.wantResponse).toBe(false);
+      expect(packet.payloadVariant.value.payloadVariant.value.requestId).toBe(0x01020304);
+    } finally {
+      await radio.close();
+    }
+  });
+
+  it("calculates the native payload budget for plain, request, and PKI sends", async () => {
+    const { radio } = await openRadio();
+    try {
+      expect(radio.max_payload_bytes).toBe(231);
+      expect(radio.maxPayloadBytes?.({ channel: 1 })).toBe(231);
+      expect(radio.maxPayloadBytes?.({ channel: 1, request_id: 1 })).toBe(226);
+      expect(radio.maxPayloadBytes?.({ channel: 1, require_public_key: true })).toBe(219);
+      expect(radio.maxPayloadBytes?.({ channel: 1, destination_radio_node: 123 })).toBe(219);
+      expect(radio.maxPayloadBytes?.({ channel: 1, require_public_key: true, request_id: 1 })).toBe(214);
+    } finally {
+      await radio.close();
+    }
+  });
+
+  it.each([
+    [232, { channel: 1 }, 231],
+    [227, { channel: 1, request_id: 1 }, 226],
+    [220, { channel: 1, require_public_key: true }, 219],
+    [215, { channel: 1, require_public_key: true, request_id: 1 }, 214]
+  ] as const)("rejects a payload above the native %s-byte budget", async (payloadLength, options, budget) => {
+    const { radio, connection } = await openRadio();
+    const writesBeforeSend = connection.writes.length;
+    try {
+      await expect(radio.send(new Uint8Array(payloadLength), options)).rejects.toThrow(`exceeds ${budget} bytes`);
+      expect(connection.writes).toHaveLength(writesBeforeSend);
+    } finally {
+      await radio.close();
+    }
+  });
+
+  it.each([0, -1, 1.5, 0x1_0000_0000, Number.NaN])("rejects invalid native request ID %s", async (requestID) => {
+    const { radio } = await openRadio();
+    try {
+      await expect(radio.send(Uint8Array.of(1), { channel: 1, request_id: requestID })).rejects.toThrow(
+        "nonzero uint32"
+      );
+    } finally {
+      await radio.close();
+    }
+  });
+
+  it("reserves the firmware bitfield, header, PKI, and request ID bytes", () => {
+    const encodedDataBytes = (payloadLength: number, requestID?: number): number =>
+      toBinary(
+        FirmwareMesh.DataSchema,
+        create(FirmwareMesh.DataSchema, {
+          portnum: 256,
+          payload: new Uint8Array(payloadLength),
+          bitfield: 0,
+          ...(requestID === undefined ? {} : { requestId: requestID })
+        })
+      ).byteLength;
+    const rfBytes = (payloadLength: number, requestID?: number, pki = false): number =>
+      encodedDataBytes(payloadLength, requestID) + 16 + (pki ? 12 : 0);
+
+    expect(encodedDataBytes(231)).toBe(239);
+    expect(rfBytes(231)).toBe(255);
+    expect(rfBytes(232)).toBe(256);
+    expect(encodedDataBytes(226, 1)).toBe(239);
+    expect(rfBytes(226, 1)).toBe(255);
+    expect(rfBytes(227, 1)).toBe(256);
+    expect(rfBytes(219, undefined, true)).toBe(255);
+    expect(rfBytes(220, undefined, true)).toBe(256);
+    expect(rfBytes(214, 1, true)).toBe(255);
+    expect(rfBytes(215, 1, true)).toBe(256);
+  });
+
+  it.each([
+    ["safety", Protobuf.Mesh.MeshPacket_Priority.ACK],
+    ["task", Protobuf.Mesh.MeshPacket_Priority.HIGH],
+    ["request", Protobuf.Mesh.MeshPacket_Priority.RELIABLE],
+    ["live_state", Protobuf.Mesh.MeshPacket_Priority.DEFAULT],
+    ["resource", Protobuf.Mesh.MeshPacket_Priority.BACKGROUND],
+    ["object_content", Protobuf.Mesh.MeshPacket_Priority.BACKGROUND]
+  ] as const)("preserves %s scheduling in the firmware queue", async (priority, expected) => {
+    const { radio, connection } = await openRadio();
+    try {
+      await radio.send(Uint8Array.of(1), { channel: 1, priority });
+      const packet = connection.writes.map(decodeToRadio).find((message) => message.payloadVariant.case === "packet");
+      if (packet?.payloadVariant.case !== "packet") throw new Error("Missing packet");
+      expect(packet.payloadVariant.value.priority).toBe(expected);
     } finally {
       await radio.close();
     }
@@ -133,6 +307,103 @@ describe("Meshtastic radio SDK adapter", () => {
     }
   });
 
+  it("records matched admissions and rejections separately from unmatched statuses", async () => {
+    const { radio, connection } = await openRadio();
+    connection.setAutomaticQueueStatus(false);
+    const sending = radio.send(Uint8Array.of(6), { channel: 1 }).catch((error: unknown) => error);
+    try {
+      await waitForWrites(connection.writes, 2);
+      const message = decodeToRadio(connection.writes[1]);
+      if (message.payloadVariant.case !== "packet") throw new Error("expected packet");
+      const id = message.payloadVariant.value.id;
+      const unmatchedID = id === 0xffffffff ? id - 1 : id + 1;
+
+      connection.enqueueQueueStatus(unmatchedID, 0, 12, 16);
+      connection.enqueueQueueStatus(id, 0, 11, 16);
+      await expect(sending).resolves.toBeUndefined();
+
+      expect(radio.queueMetrics()).toEqual({
+        statuses_observed: 2,
+        matched_local_admissions: 1,
+        matched_local_rejections: 0,
+        minimum_free: 11,
+        latest_free: 11,
+        latest_maxlen: 16,
+        full_queue_observations: 0,
+        zero_id_capacity_notifications: 0
+      });
+    } finally {
+      await radio.close();
+    }
+  });
+
+  it("records valid zero-ID capacity notifications and ignores unavailable capacity", async () => {
+    const { radio, connection } = await openRadio();
+    try {
+      connection.enqueueQueueStatus(0, 0, 4, 16);
+      connection.enqueueQueueStatus(0, 0, 0, 16);
+      connection.enqueueQueueStatus(0, 0, 0, 0);
+      connection.enqueueQueueStatus(0, 0, 17, 16);
+      await vi.waitFor(() => expect(radio.queueMetrics().statuses_observed).toBe(4));
+
+      expect(radio.queueMetrics()).toEqual({
+        statuses_observed: 4,
+        matched_local_admissions: 0,
+        matched_local_rejections: 0,
+        minimum_free: 0,
+        latest_free: 0,
+        latest_maxlen: 16,
+        full_queue_observations: 1,
+        zero_id_capacity_notifications: 2
+      });
+    } finally {
+      await radio.close();
+    }
+  });
+
+  it("returns queue metric snapshots that cannot mutate the radio counters", async () => {
+    const { radio, connection } = await openRadio();
+    try {
+      connection.enqueueQueueStatus(0, 0, 8, 16);
+      await vi.waitFor(() => expect(radio.queueMetrics().statuses_observed).toBe(1));
+      const snapshot = radio.queueMetrics();
+      snapshot.statuses_observed = 99;
+      snapshot.minimum_free = 0;
+
+      expect(radio.queueMetrics()).toMatchObject({ statuses_observed: 1, minimum_free: 8 });
+    } finally {
+      await radio.close();
+    }
+  });
+
+  it("records a matched queue-full rejection without treating it as RF completion", async () => {
+    const { radio, connection } = await openRadio();
+    connection.setAutomaticQueueStatus(false);
+    const sending = radio.send(Uint8Array.of(7), { channel: 1 }).catch((error: unknown) => error);
+    try {
+      await waitForWrites(connection.writes, 2);
+      const message = decodeToRadio(connection.writes[1]);
+      if (message.payloadVariant.case !== "packet") throw new Error("expected packet");
+      connection.enqueueQueueStatus(message.payloadVariant.value.id, 32, 0, 16);
+      await expect(sending).resolves.toEqual(
+        expect.objectContaining({ message: expect.stringContaining("rejected packet") })
+      );
+
+      expect(radio.queueMetrics()).toMatchObject({
+        statuses_observed: 1,
+        matched_local_admissions: 0,
+        matched_local_rejections: 1,
+        minimum_free: 0,
+        latest_free: 0,
+        latest_maxlen: 16,
+        full_queue_observations: 1,
+        zero_id_capacity_notifications: 0
+      });
+    } finally {
+      await radio.close();
+    }
+  });
+
   it("expires queued sends without writing their bytes after the deadline", async () => {
     const { radio, connection } = await openRadio();
     connection.blockNextWrite();
@@ -207,6 +478,20 @@ function openedTransport() {
             data: toBinary(
               Protobuf.Mesh.FromRadioSchema,
               create(Protobuf.Mesh.FromRadioSchema, {
+                payloadVariant: {
+                  case: "config",
+                  value: {
+                    payloadVariant: { case: "lora", value: { hopLimit: 3 } }
+                  }
+                }
+              })
+            )
+          });
+          enqueue({
+            type: "packet",
+            data: toBinary(
+              Protobuf.Mesh.FromRadioSchema,
+              create(Protobuf.Mesh.FromRadioSchema, {
                 payloadVariant: { case: "configCompleteId", value: decoded.payloadVariant.value }
               })
             )
@@ -235,13 +520,22 @@ function openedTransport() {
     setAutomaticQueueStatus(enabled: boolean) {
       automaticQueueStatus = enabled;
     },
-    enqueueQueueStatus(meshPacketId: number, res: number) {
+    enqueueMeshPacket(packet: Protobuf.Mesh.MeshPacket) {
+      enqueue({
+        type: "packet",
+        data: toBinary(
+          Protobuf.Mesh.FromRadioSchema,
+          create(Protobuf.Mesh.FromRadioSchema, { payloadVariant: { case: "packet", value: packet } })
+        )
+      });
+    },
+    enqueueQueueStatus(meshPacketId: number, res: number, free = 15, maxlen = 16) {
       enqueue({
         type: "packet",
         data: toBinary(
           Protobuf.Mesh.FromRadioSchema,
           create(Protobuf.Mesh.FromRadioSchema, {
-            payloadVariant: { case: "queueStatus", value: { res, free: 15, maxlen: 16, meshPacketId } }
+            payloadVariant: { case: "queueStatus", value: { res, free, maxlen, meshPacketId } }
           })
         )
       });

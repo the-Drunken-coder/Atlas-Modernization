@@ -3,7 +3,7 @@ import type { TaskResource } from "@the-drunken-coder/atlas-sdk";
 import { describe, expect, it, vi } from "vitest";
 import { encodeCanonicalJSON } from "./canonical-json.js";
 import { type Clock, type TimerHandle, VirtualClock } from "./clock.js";
-import { serializeLinkMessage } from "./contract.js";
+import { deserializeLinkMessage, serializeLinkMessage } from "./contract.js";
 import { decodeFrame, type FrameIdentity, fragmentPayload, MAX_LINK_MESSAGE_BYTES } from "./frame.js";
 import { OrderedTaskDispatcher } from "./gateway.js";
 import { SharedPicture } from "./picture.js";
@@ -14,6 +14,251 @@ import { LinkTransport } from "./transport.js";
 import type { LinkMessage } from "./types.js";
 
 describe("Link transport", () => {
+  it.each([
+    { accepted: true, omitFinalID: false },
+    { accepted: false, omitFinalID: false },
+    { accepted: true, omitFinalID: true }
+  ])("marks an application settlement with its causal native packet ID: %j", async ({ accepted, omitFinalID }) => {
+    const clock = new VirtualClock();
+    const radio = Object.assign(new InMemoryMeshRadio(), {
+      maxPayloadBytes: vi.fn((options: RadioSendOptions) => (options.request_id === undefined ? 231 : 180))
+    });
+    const send = vi.spyOn(radio, "send");
+    const receiver = new LinkTransport({
+      node: { role: "asset", id: "asset-alpha" },
+      sourceGeneration: 1,
+      radio,
+      clock,
+      frameEncoding: "deflate-v2"
+    });
+    let settlementID: string | undefined;
+    let deliveries = 0;
+    receiver.onEvent((event) => {
+      if (event.type === "message") {
+        settlementID = event.settlement_id;
+        deliveries++;
+      }
+    });
+    const identity: FrameIdentity = {
+      revision: 1,
+      message_type: "task_delivery",
+      source: { role: "gateway", id: "gateway" },
+      destination: receiver.node,
+      source_generation: 1,
+      service_session: "gateway-session",
+      source_sequence: 1,
+      operation_id: "native-receipt",
+      message_id: "original-message",
+      priority: "task"
+    };
+    const frames = fragmentPayload(
+      serializeLinkMessage({
+        type: "task_delivery",
+        delivery: "assignment",
+        task: pendingTask("native-receipt", "2026-09-02T12:00:00Z")
+      }),
+      identity,
+      231
+    );
+    try {
+      expect(frames.length).toBeGreaterThan(1);
+      const lastKnownIndex = frames.length - (omitFinalID ? 2 : 1);
+      for (const [index, payload] of frames.entries())
+        radio.receive({
+          payload,
+          received_at: clock.now(),
+          channel: 1,
+          public_key_encrypted: false,
+          ...(omitFinalID && index === frames.length - 1 ? {} : { radio_packet_id: 100 + index })
+        });
+      await clock.advanceBy(0);
+      expect(send).not.toHaveBeenCalled();
+      expect(settlementID).toBeDefined();
+      const reason = Array.from({ length: 8 }, (_, index) =>
+        createHash("sha256").update(`receipt-${index}`).digest("hex")
+      ).join("");
+      expect(receiver.settleInbound(settlementID!, accepted, reason)).toBe(true);
+      await clock.advanceBy(0);
+      expect(send.mock.calls.length).toBeGreaterThan(1);
+      expect(
+        send.mock.calls.every(
+          ([payload, options]) =>
+            payload.byteLength <= 180 &&
+            options.request_id === 100 + lastKnownIndex &&
+            options.destination_radio_node === undefined
+        )
+      ).toBe(true);
+      const decoded = send.mock.calls.map(([payload]) => decodeFrame(payload));
+      const control = deserializeLinkMessage(Buffer.concat(decoded.map((frame) => frame.payload)));
+      expect(control).toMatchObject({
+        control: accepted ? "confirmed" : "rejected",
+        operation_id: identity.operation_id,
+        message_id: identity.message_id
+      });
+      // A fresh native copy of a settled message gets the same application receipt,
+      // associated with the new native attempt, without another application delivery.
+      for (const [index, payload] of frames.entries())
+        radio.receive({
+          payload,
+          received_at: clock.now(),
+          channel: 1,
+          public_key_encrypted: false,
+          ...(omitFinalID && index === frames.length - 1 ? {} : { radio_packet_id: 200 + index })
+        });
+      send.mockClear();
+      await clock.advanceBy(0);
+      expect(send.mock.calls.every(([, options]) => options.request_id === 200 + lastKnownIndex)).toBe(true);
+      expect(send).toHaveBeenCalled();
+      expect(deliveries).toBe(1);
+    } finally {
+      receiver.stop();
+    }
+  });
+
+  it("breaks a repeating five-second interference window with bounded retry jitter", async () => {
+    for (const retryJitterMs of [0, 1000]) {
+      const clock = new VirtualClock();
+      const senderRadio = new InMemoryMeshRadio();
+      const receiverRadio = new InMemoryMeshRadio();
+      senderRadio.connect(receiverRadio);
+      receiverRadio.connect(senderRadio);
+      const originalSend = senderRadio.send.bind(senderRadio);
+      vi.spyOn(senderRadio, "send").mockImplementation(async (payload, options) => {
+        if (clock.now() % 5000 < 100) return;
+        await originalSend(payload, options);
+      });
+      const sender = new LinkTransport({
+        node: { role: "gateway", id: "gateway" },
+        sourceGeneration: 1,
+        radio: senderRadio,
+        clock,
+        frameEncoding: "deflate-v1",
+        retryJitterMs
+      });
+      const receiver = new LinkTransport({
+        node: { role: "asset", id: "asset-alpha" },
+        sourceGeneration: 1,
+        radio: receiverRadio,
+        clock,
+        frameEncoding: "deflate-v1"
+      });
+      let accepted = 0;
+      receiver.onEvent((event) => {
+        if (event.type === "message") {
+          accepted++;
+          receiver.settleInbound(event.settlement_id, true);
+        }
+      });
+      try {
+        sender.submit(
+          { type: "task_delivery", delivery: "assignment", task: pendingTask("periodic", "2026-09-02T12:00:00Z") },
+          { operationID: "periodic", destination: { role: "asset", id: "asset-alpha" } }
+        );
+        await clock.advanceBy(15000);
+        expect(accepted).toBe(retryJitterMs === 0 ? 0 : 1);
+      } finally {
+        sender.stop();
+        receiver.stop();
+      }
+    }
+  });
+
+  it("keeps directed tasks and state on private-channel broadcast", async () => {
+    const clock = new VirtualClock();
+    const radio = new InMemoryMeshRadio();
+    const send = vi.spyOn(radio, "send");
+    const transport = new LinkTransport({
+      node: { role: "gateway", id: "gateway" },
+      sourceGeneration: 1,
+      radio,
+      clock,
+      frameEncoding: "deflate-v1"
+    });
+    try {
+      transport.submit(
+        { type: "task_delivery", delivery: "assignment", task: pendingTask("addressed", "2026-09-02T12:00:00Z") },
+        { destination: { role: "asset", id: "asset-alpha" } }
+      );
+      await clock.advanceBy(0);
+      expect(send.mock.calls.length).toBeGreaterThan(0);
+      expect(
+        send.mock.calls.every(
+          ([, options]) =>
+            options.destination_radio_node === undefined && options.channel === 1 && options.priority === "task"
+        )
+      ).toBe(true);
+      send.mockClear();
+      transport.submit(positionPublication(1));
+      await clock.advanceBy(0);
+      expect(send.mock.calls.length).toBeGreaterThan(0);
+      expect(send.mock.calls.every(([, options]) => options.destination_radio_node === undefined)).toBe(true);
+    } finally {
+      transport.stop();
+    }
+  });
+
+  it("requests a missing Task fragment before the default Task deadline", async () => {
+    const clock = new VirtualClock();
+    const radio = new InMemoryMeshRadio();
+    const send = vi.spyOn(radio, "send");
+    const receiver = new LinkTransport({
+      node: { role: "asset", id: "asset-alpha" },
+      sourceGeneration: 1,
+      radio,
+      clock
+    });
+    const identity: FrameIdentity = {
+      revision: 1,
+      message_type: "task_delivery",
+      source: { role: "gateway", id: "gateway" },
+      destination: { role: "asset", id: "asset-alpha" },
+      source_generation: 1,
+      service_session: "gateway-session",
+      source_sequence: 1,
+      operation_id: "repair-task",
+      message_id: "repair-message",
+      priority: "task"
+    };
+    const frames = fragmentPayload(
+      serializeLinkMessage({
+        type: "task_delivery",
+        delivery: "assignment",
+        task: pendingTask("repair-task", "2026-09-02T12:00:00Z")
+      }),
+      identity,
+      200
+    );
+    const receive = (payload: Uint8Array) =>
+      radio.receive({ payload, received_at: clock.now(), channel: 1, public_key_encrypted: false });
+    let accepted = 0;
+    receiver.onEvent((event) => {
+      if (event.type === "message") {
+        accepted++;
+        receiver.settleInbound(event.settlement_id, true);
+      }
+    });
+    for (const frame of frames.slice(1, -1)) receive(frame);
+    await clock.advanceBy(2_000);
+    expect(receiver.metrics().fragment_repair_requests_sent).toBe(0);
+    const tail = frames.at(-1);
+    if (!tail) throw new Error("Task must have a final fragment");
+    receive(tail);
+    await clock.advanceBy(1_000);
+    expect(receiver.metrics().fragment_repair_requests_sent).toBe(1);
+    const repairFrames = send.mock.calls.map(([payload]) => decodeFrame(payload));
+    const firstRepair = repairFrames.filter((frame) => frame.message_id === repairFrames[0]?.message_id);
+    const repair = deserializeLinkMessage(Buffer.concat(firstRepair.map((frame) => frame.payload)));
+    expect(repair).toMatchObject({ control: "missing_chunks", missing_chunks: [0], message_id: identity.message_id });
+    await clock.advanceBy(2_000);
+    expect(receiver.metrics().fragment_repair_requests_sent).toBe(1);
+    const missing = frames[0];
+    if (!missing) throw new Error("Task must have a first fragment");
+    receive(missing);
+    await clock.advanceBy(0);
+    expect(accepted).toBe(1);
+    receiver.stop();
+  });
+
   it("counts malformed frames and invalid messages without retaining packet data", () => {
     const clock = new VirtualClock();
     const radio = new InMemoryMeshRadio();
@@ -2087,7 +2332,7 @@ describe("Link transport", () => {
     });
 
     asset.submit(
-      { type: "subscription", action: "renew", selector: { kind: "resource_type", resource_type: "entity" } },
+      { type: "subscription", action: "add", selector: { kind: "resource_type", resource_type: "entity" } },
       { destination: { role: "gateway", id: "gateway" }, operationID: "identity-to-expire" }
     );
     await clock.runUntilIdle();
@@ -2119,8 +2364,8 @@ describe("Link transport", () => {
     await clock.advanceTo(identityExpiry);
     expect(
       asset.submit(
-        { type: "subscription", action: "renew", selector: { kind: "resource_type", resource_type: "entity" } },
-        { destination: { role: "gateway", id: "gateway" }, operationID: "renew-after-prune" }
+        { type: "subscription", action: "add", selector: { kind: "resource_type", resource_type: "entity" } },
+        { destination: { role: "gateway", id: "gateway" }, operationID: "add-after-prune" }
       ).status
     ).toBe("queued");
     gateway.submit(
@@ -2135,7 +2380,7 @@ describe("Link transport", () => {
     await clock.runUntilIdle();
 
     expect(asset.status("pending-response-after-prune")).toMatchObject({ status: "responded" });
-    expect(asset.status("renew-after-prune")).toMatchObject({ status: "confirmed" });
+    expect(asset.status("add-after-prune")).toMatchObject({ status: "confirmed" });
   });
 
   it("reclaims completed identity capacity after the retention horizon", { timeout: 30_000 }, async () => {
@@ -2145,10 +2390,10 @@ describe("Link transport", () => {
     });
 
     for (let index = 0; index < 4_200; index++) {
-      const operationID = `renew-${index}`;
+      const operationID = `add-${index}`;
       expect(
         asset.submit(
-          { type: "subscription", action: "renew", selector: { kind: "resource_type", resource_type: "entity" } },
+          { type: "subscription", action: "add", selector: { kind: "resource_type", resource_type: "entity" } },
           { destination: { role: "gateway", id: "gateway" }, operationID }
         ).status
       ).toBe("queued");
@@ -2157,7 +2402,7 @@ describe("Link transport", () => {
       await clock.advanceBy(30_000);
     }
 
-    expect(asset.status("renew-4199")).toMatchObject({ status: "confirmed" });
+    expect(asset.status("add-4199")).toMatchObject({ status: "confirmed" });
     expect(asset.diagnostics()).toMatchObject({ queue_depth: 0, confirmed_pending: 0, stopped: false });
   });
 
@@ -2171,7 +2416,7 @@ describe("Link transport", () => {
       const operationID = `completed-${index}`;
       expect(
         asset.submit(
-          { type: "subscription", action: "renew", selector: { kind: "resource_type", resource_type: "entity" } },
+          { type: "subscription", action: "add", selector: { kind: "resource_type", resource_type: "entity" } },
           { destination: { role: "gateway", id: "gateway" }, operationID }
         ).status
       ).toBe("queued");
@@ -2184,7 +2429,7 @@ describe("Link transport", () => {
     });
     expect(
       asset.submit(
-        { type: "subscription", action: "renew", selector: { kind: "resource_type", resource_type: "entity" } },
+        { type: "subscription", action: "add", selector: { kind: "resource_type", resource_type: "entity" } },
         { destination: { role: "gateway", id: "gateway" }, operationID: "over-capacity" }
       )
     ).toMatchObject({ status: "failed", reason: "confirmed operation identity capacity is exhausted" });
@@ -2194,7 +2439,7 @@ describe("Link transport", () => {
     expect(notifications).toBe(1);
     expect(
       asset.submit(
-        { type: "subscription", action: "renew", selector: { kind: "resource_type", resource_type: "entity" } },
+        { type: "subscription", action: "add", selector: { kind: "resource_type", resource_type: "entity" } },
         { destination: { role: "gateway", id: "gateway" }, operationID: "after-capacity-wakeup" }
       ).status
     ).toBe("queued");
@@ -2274,7 +2519,7 @@ describe("Link transport", () => {
     });
     const message = {
       type: "subscription",
-      action: "renew",
+      action: "add",
       selector: { kind: "resource_type", resource_type: "entity" }
     } as const;
     for (let start = 0; start < 4_095; start += 64) {
@@ -2709,6 +2954,10 @@ class DropFirstControlRadio implements LinkRadio {
 
   constructor(private readonly delegate: LinkRadio) {
     this.max_payload_bytes = delegate.max_payload_bytes;
+  }
+
+  maxPayloadBytes(options: RadioSendOptions): number {
+    return this.delegate.maxPayloadBytes?.(options) ?? this.max_payload_bytes;
   }
 
   async send(payload: Uint8Array, options: RadioSendOptions): Promise<void> {
