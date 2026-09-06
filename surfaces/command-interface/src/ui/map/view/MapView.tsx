@@ -38,6 +38,7 @@ import {
 import { getMapLibreRuntime, loadMapLibre, type MapLibreRuntime } from "../runtime/maplibre-runtime.js";
 import { MapAreaSelection } from "./MapAreaSelection.js";
 import { MapCursorOverlay } from "./MapCursorOverlay.js";
+import { type GeofeatureDrawing, MapGeofeatureDrawing } from "./MapGeofeatureDrawing.js";
 import { MapRegionComparison } from "./MapRegionComparison.js";
 import { MapReticle } from "./MapReticle.js";
 import { cloneStyle, fitWorldOnce, webglAvailable } from "./map-view-utils.js";
@@ -55,6 +56,7 @@ type MapViewProps = {
   mapSourceOptions: MapSourceConfig[];
   selectedId?: string;
   editing?: MapEditing;
+  drawing?: GeofeatureDrawing;
   initialCenter?: [number, number];
   focusTarget?: MapReticleTarget | null;
   placeDetailTarget?: MapTarget | null;
@@ -90,6 +92,7 @@ export function MapView({
   mapSourceOptions,
   selectedId,
   editing,
+  drawing,
   initialCenter,
   focusTarget,
   placeDetailTarget,
@@ -515,7 +518,7 @@ export function MapView({
           sourceOptions={mapSourceOptions}
           sources={sources}
           editing={editing}
-          exclusiveDrawingActive={spatial?.drawing ?? false}
+          exclusiveDrawingActive={Boolean(drawing || spatial?.drawing)}
           onBeginRegionInteraction={beginRegionInteraction}
           onBeginDrawing={() => spatial?.onCancelDrawing()}
           suppressNextClick={reticleInteraction.mapActions.suppressNextClick}
@@ -536,6 +539,7 @@ export function MapView({
             suppressNextClick={reticleInteraction.mapActions.suppressNextClick}
           />
         ) : null}
+        {drawing && mapReady && mapRef.current ? <MapGeofeatureDrawing map={mapRef.current} drawing={drawing} /> : null}
         {reticleInteraction.cursorOverlay ? <MapCursorOverlay {...reticleInteraction.cursorOverlay} /> : null}
         {reticleInteraction.visibleReticle ? (
           <MapReticle

@@ -64,12 +64,7 @@ export function GeofeatureInspector(props: GeofeatureInspectorProps) {
                 ["Summary", geometrySummary(geometry)]
               ]}
             />
-            {editing ? (
-              <>
-                {isCircleFeature(geometry) ? <CircleEditor geometry={geometry} onChange={onChangeDraft} /> : null}
-                <VertexEditor geometry={geometry} onChange={onChangeDraft} validity={validity} />
-              </>
-            ) : null}
+            {editing ? <GeometryFields geometry={geometry} onChange={onChangeDraft} /> : null}
           </>
         ) : (
           <div style={{ color: "var(--text-3)" }}>No editable geometry</div>
@@ -102,6 +97,21 @@ export function GeofeatureInspector(props: GeofeatureInspectorProps) {
 
       <JsonDrawer title="Raw entity JSON" value={entity} />
     </div>
+  );
+}
+
+export function GeometryFields({
+  geometry,
+  onChange
+}: {
+  geometry: UiGeometry;
+  onChange: (geometry: UiGeometry) => void;
+}) {
+  return (
+    <>
+      {isCircleFeature(geometry) ? <CircleEditor geometry={geometry} onChange={onChange} /> : null}
+      <VertexEditor geometry={geometry} onChange={onChange} validity={validateGeometry(geometry)} />
+    </>
   );
 }
 
@@ -236,6 +246,7 @@ function CoordinateField({
     <TextField
       label={label}
       type="number"
+      required
       min={min}
       max={max}
       step="any"

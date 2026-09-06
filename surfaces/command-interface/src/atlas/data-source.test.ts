@@ -490,6 +490,151 @@ describe("sdk data source", () => {
     expect(requestSignal).toHaveProperty("aborted", true);
   });
 
+  it("creates Geo Features through Core and publishes them to the SDK snapshot", async () => {
+    const geometry: UiGeometry = {
+      type: "Polygon",
+      coordinates: [
+        [
+          [-71, 42],
+          [-70, 42],
+          [-70, 43],
+          [-71, 42]
+        ]
+      ]
+    };
+    const created = {
+      ...entity("geo-new", 1),
+      entity_type: "geofeature",
+      alias: "North boundary",
+      components: { geometry }
+    };
+    const fetchMock = vi.fn(async () => Response.json(created, { status: 201 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const dataSource = createSdkDataSource(config);
+    const snapshots = vi.fn();
+    dataSource.watch(snapshots);
+    await expect(dataSource.createGeofeature("geo-new", "North boundary", geometry)).resolves.toEqual(created);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://core.test/entities",
+      expect.objectContaining({
+        method: "POST",
+        credentials: "include",
+        body: JSON.stringify({
+          entity_id: "geo-new",
+          entity_type: "geofeature",
+          alias: "North boundary",
+          components: { geometry }
+        })
+      })
+    );
+    expect(snapshots).toHaveBeenLastCalledWith({ entities: { "geo-new": created }, tasks: {} });
+  });
+
+  it.each(["lost response", "conflict", "server error"])("recovers a committed create after %s", async (failure) => {
+    const geometry: UiGeometry = { type: "Point", coordinates: [-71, 42] };
+    const created = { ...entity("geo-new"), entity_type: "geofeature", alias: "Rally", components: { geometry } };
+    const fetchMock = vi.fn(async (_input: unknown, init?: RequestInit) => {
+      if (init?.method === "POST") {
+        if (failure === "lost response") throw new TypeError("Connection lost after commit");
+        return Response.json({ error: "Create failed" }, { status: failure === "conflict" ? 409 : 502 });
+      }
+      return Response.json(created);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const source = createSdkDataSource(config);
+    const snapshots = vi.fn();
+    source.watch(snapshots);
+    await expect(source.createGeofeature("geo-new", "Rally", geometry)).resolves.toEqual(created);
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      "https://core.test/entities/geo-new",
+      expect.objectContaining({ method: "GET" })
+    );
+    expect(source.snapshot().entities["geo-new"]).toEqual(created);
+    expect(snapshots).toHaveBeenCalled();
+  });
+
+  it("recovers the same draft on retry after both the POST response and recovery read fail", async () => {
+    const geometry: UiGeometry = {
+      type: "Feature",
+      geometry: { type: "Point", coordinates: [-71, 42] },
+      properties: { shape: "circle", radius_m: 100 }
+    };
+    const created = { ...entity("geo-new"), entity_type: "geofeature", alias: "Rally", components: { geometry } };
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError("Lost response"))
+      .mockRejectedValueOnce(new TypeError("Offline"))
+      .mockResolvedValueOnce(Response.json({ error: "Already exists" }, { status: 409 }))
+      .mockResolvedValueOnce(Response.json(created));
+    vi.stubGlobal("fetch", fetchMock);
+    const source = createSdkDataSource(config);
+    await expect(source.createGeofeature("geo-new", "Rally", geometry)).rejects.toMatchObject({
+      code: "ATLAS_TRANSPORT_ERROR"
+    });
+    await expect(source.createGeofeature("geo-new", "Rally", geometry)).resolves.toEqual(created);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it("does not recover a circle with a different radius", async () => {
+    const geometry: UiGeometry = {
+      type: "Feature",
+      geometry: { type: "Point", coordinates: [-71, 42] },
+      properties: { shape: "circle", radius_m: 100 }
+    };
+    const existing = {
+      ...entity("geo-new"),
+      entity_type: "geofeature",
+      alias: "Rally",
+      components: { geometry: { ...geometry, properties: { shape: "circle", radius_m: 200 } } }
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(Response.json({ error: "Already exists" }, { status: 409 }))
+        .mockResolvedValueOnce(Response.json(existing))
+    );
+    await expect(createSdkDataSource(config).createGeofeature("geo-new", "Rally", geometry)).rejects.toMatchObject({
+      status: 409
+    });
+  });
+
+  it.each(["alias", "geometry", "type", "missing"])(
+    "preserves the create error when recovery differs in %s",
+    async (difference) => {
+      const geometry: UiGeometry = { type: "Point", coordinates: [-71, 42] };
+      const existing = {
+        ...entity("geo-new"),
+        entity_type: difference === "type" ? "asset" : "geofeature",
+        alias: difference === "alias" ? "Other" : "Rally",
+        components: { geometry: difference === "geometry" ? { type: "Point", coordinates: [0, 0] } : geometry }
+      };
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (_input: unknown, init?: RequestInit) =>
+          init?.method === "POST"
+            ? Response.json({ error: "Already exists" }, { status: 409 })
+            : Response.json(existing, { status: difference === "missing" ? 404 : 200 })
+        )
+      );
+      await expect(createSdkDataSource(config).createGeofeature("geo-new", "Rally", geometry)).rejects.toMatchObject({
+        status: 409
+      });
+    }
+  );
+
+  it("does not attempt recovery after a definitive permission denial", async () => {
+    const fetchMock = vi.fn(async () => Response.json({ error: "Forbidden" }, { status: 403 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(
+      createSdkDataSource(config).createGeofeature("geo-new", "Rally", { type: "Point", coordinates: [-71, 42] })
+    ).rejects.toMatchObject({ status: 403 });
+    expect(fetchMock).toHaveBeenCalledExactlyOnceWith(
+      "https://core.test/entities",
+      expect.objectContaining({ method: "POST" })
+    );
+  });
+
   it("routes command and geometry writes through SDK cache notifications", async () => {
     const calls: Array<{ input: unknown; init: RequestInit }> = [];
     const createdTask = task("task-created", "asset-1", 2);

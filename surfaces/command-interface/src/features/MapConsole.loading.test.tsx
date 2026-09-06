@@ -33,6 +33,9 @@ const atlasValue: AtlasContextValue = {
   health: { running: false, healthy: false, degraded: false },
   reconnect: vi.fn(),
   submitCommand: vi.fn(),
+  createGeofeature: async () => {
+    throw new Error("Unexpected Geo Feature creation");
+  },
   updateGeometry: vi.fn()
 };
 

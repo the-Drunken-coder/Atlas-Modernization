@@ -7,6 +7,7 @@ import type { MapCameraCommand } from "../interaction/map-camera.js";
 import type { MapReticleTarget } from "../interaction/map-targets.js";
 import type { MapEditing } from "../rendering/map-editing.js";
 import { buildMapSources, type MapSources } from "../rendering/map-sources.js";
+import type { GeofeatureDrawing } from "./MapGeofeatureDrawing.js";
 import { type MapSpatialInteraction, MapView } from "./MapView.js";
 
 export type PointLike = { x: number; y: number };
@@ -26,6 +27,7 @@ let nextAnimationFrameId = 0;
 const maplibreMock = vi.hoisted(() => {
   const markerOperations = { created: 0, setLngLat: 0, addTo: 0, remove: 0 };
   const markerCoordinates = new WeakMap<HTMLElement, [number, number]>();
+  const markersByElement = new WeakMap<HTMLElement, FakeMarker>();
   let nextDetailMapStyleLoaded = true;
 
   class FakeMap {
@@ -122,6 +124,10 @@ const maplibreMock = vi.hoisted(() => {
       return this.options.container as HTMLElement;
     }
 
+    getCanvasContainer(): HTMLElement {
+      return this.getContainer();
+    }
+
     isStyleLoaded(): boolean {
       return this.loaded;
     }
@@ -161,6 +167,7 @@ const maplibreMock = vi.hoisted(() => {
 
     constructor(options?: { element?: HTMLElement; anchor?: string }) {
       this.element = options?.element;
+      if (this.element) markersByElement.set(this.element, this);
       this.element?.classList.add("maplibregl-marker", `maplibregl-marker-anchor-${options?.anchor ?? "center"}`);
       markerOperations.created += 1;
     }
@@ -183,7 +190,8 @@ const maplibreMock = vi.hoisted(() => {
       this.element?.remove();
     }
 
-    on(): this {
+    on(type: string, listener: () => void): this {
+      this.element?.addEventListener(type, listener);
       return this;
     }
 
@@ -199,6 +207,7 @@ const maplibreMock = vi.hoisted(() => {
     FakeMap,
     FakeMarker,
     markerCoordinates,
+    markersByElement,
     markerOperations,
     setNextDetailMapStyleLoaded: (loaded: boolean) => {
       nextDetailMapStyleLoaded = loaded;
@@ -291,6 +300,7 @@ afterEach(() => {
 type RenderMapViewProps = {
   cameraCommand?: MapCameraCommand | null;
   editing?: MapEditing;
+  drawing?: GeofeatureDrawing;
   focusTarget?: MapReticleTarget | null;
   mapSourceOptions?: MapSourceConfig[];
   placeDetailTarget?: MapReticleTarget | null;
@@ -322,6 +332,7 @@ export function renderMapView(props: RenderMapViewProps = {}) {
         mapSourceOptions={renderProps.mapSourceOptions}
         selectedId={renderProps.selectedId}
         editing={renderProps.editing}
+        drawing={renderProps.drawing}
         focusTarget={renderProps.focusTarget}
         placeDetailTarget={renderProps.placeDetailTarget}
         cameraCommand={renderProps.cameraCommand}
@@ -453,4 +464,11 @@ export function resetMarkerOperationCounts(): void {
   maplibreMock.markerOperations.setLngLat = 0;
   maplibreMock.markerOperations.addTo = 0;
   maplibreMock.markerOperations.remove = 0;
+}
+
+export function dragMarker(element: HTMLElement, coordinates: [number, number], phase: "drag" | "dragend") {
+  const marker = maplibreMock.markersByElement.get(element);
+  if (!marker) throw new Error("Expected a map marker");
+  marker.setLngLat(coordinates);
+  fireEvent(element, new Event(phase));
 }

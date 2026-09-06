@@ -104,6 +104,15 @@ export function registerSourcesAndLayers(map: MlMap): void {
       paint: { "fill-color": COLORS.editingFill }
     });
   }
+  if (!map.getLayer("editing-point")) {
+    map.addLayer({
+      id: "editing-point",
+      type: "circle",
+      source: "editing",
+      filter: ["==", ["geometry-type"], "Point"],
+      paint: circlePaint(COLORS.selected)
+    });
+  }
   if (!map.getLayer("editing-line")) {
     map.addLayer({
       id: "editing-line",
