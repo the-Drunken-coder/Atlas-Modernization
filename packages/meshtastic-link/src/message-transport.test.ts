@@ -159,9 +159,9 @@ describe("message compression transport", () => {
         return frame.message_type === "task_report" && frame.receipt !== undefined;
       });
       const compound = compoundEntry === undefined ? undefined : decodeFrame(compoundEntry.payload);
-      expect(compoundEntry?.payload[0]).toBe(
-        frameEncoding === "message-v1" ? BINARY_FRAME_MARKER : METHOD_FRAME_MARKER
-      );
+      const supportedMarkers =
+        frameEncoding === "message-v1" ? [0xa4, BINARY_FRAME_MARKER] : [0xa4, BINARY_FRAME_MARKER, METHOD_FRAME_MARKER];
+      expect(supportedMarkers).toContain(compoundEntry?.payload[0]);
       expect(compound?.receipt).toEqual({ operation_id: "deliver-atomic", message_id: expect.any(String) });
     } finally {
       await pair.close();

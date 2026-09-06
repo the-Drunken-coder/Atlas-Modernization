@@ -73,13 +73,21 @@ describe("deflate-v3 compound receipts", () => {
     assetRadio.receive(taskFrame);
     await clock.advanceBy(0);
 
-    expect(assetRadio.sends).toHaveLength(2);
-    expect(deserializeLinkMessage(decodeFrame(assetRadio.sends[0]!.payload).payload)).toMatchObject({
-      type: "control",
-      control: "confirmed"
-    });
+    const frames = assetRadio.sends.map(({ payload }) => decodeFrame(payload));
     expect(assetRadio.sends.every(({ payload }) => payload[0] === 0xa3)).toBe(true);
-    expect(decodeFrame(assetRadio.sends[1]!.payload).receipt).toBeUndefined();
+    expect(frames.every((frame) => frame.receipt === undefined)).toBe(true);
+    const messages = ["control", "task_report"].map((type) => {
+      const chunks = frames
+        .filter((frame) => frame.message_type === type)
+        .sort((a, b) => a.chunk_index - b.chunk_index);
+      expect(chunks.length).toBeGreaterThan(0);
+      expect(chunks.length).toBe(chunks[0]?.chunk_count);
+      return deserializeLinkMessage(Buffer.concat(chunks.map((frame) => frame.payload)));
+    });
+    expect(messages).toEqual([
+      expect.objectContaining({ type: "control", control: "confirmed" }),
+      largeReport("task-1")
+    ]);
   });
 
   it("does not pair a report that has already started", async () => {

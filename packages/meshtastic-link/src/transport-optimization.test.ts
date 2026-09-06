@@ -95,7 +95,11 @@ describe("optimized production transport", () => {
     const harness = pair({ stateDeltas: true });
     const accepted: LinkMessage[] = [];
     const sentPayloads: Uint8Array[] = [];
-    harness.gatewayRadio.onPacket((packet) => sentPayloads.push(decodeFrame(packet.payload).payload));
+    harness.gatewayRadio.onPacket((packet) => {
+      const frame = decodeFrame(packet.payload);
+      // Count complete-message starts; a full publication may span several radio packets.
+      if (frame.chunk_index === 0) sentPayloads.push(frame.payload);
+    });
     harness.gateway.onEvent((event) => {
       if (event.type === "message") accepted.push(event.message);
     });

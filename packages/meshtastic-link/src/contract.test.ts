@@ -116,14 +116,20 @@ describe("generated Radio contract", () => {
   });
 
   it("golden round trips a full identity and addressed Task report receipt in deflate-v3", () => {
-    const payload = serializeLinkMessage({
-      type: "task_report",
-      action: "complete",
-      task_id: "task-1",
-      runtime_id: "runtime-alpha",
-      observation_time: "2026-09-02T12:00:00Z",
-      body: { output: { surveyed: true } }
-    });
+    // The golden codec vector retains its original payload revision as the current contract evolves.
+    const payload = Buffer.from(
+      canonicalJSON({
+        r: "sha256:0b5b718f08bd7241f3ebc8ab87654d0a180e8cb3ea6dc36dd4377cda6d027108",
+        message: {
+          type: "task_report",
+          action: "complete",
+          task_id: "task-1",
+          runtime_id: "runtime-alpha",
+          observation_time: "2026-09-02T12:00:00Z",
+          body: { output: { surveyed: true } }
+        }
+      })
+    );
     const identity: FrameIdentity = {
       ...frameIdentity(),
       message_type: "task_report",

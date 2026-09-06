@@ -16,6 +16,8 @@ Future optimized encodings may shorten identifiers, use smaller field representa
 
 ## Measured compact encoding
 
+The codec dictionary and ordered token vocabularies are frozen in `packages/meshtastic-link/wire/codec-v1.json`, with their originating Protocol and Radio contract revisions. Contract generation follows the current Protocol schema while retaining these wire bytes. New field names and values use literal encoding until a separately versioned codec is introduced. Refreshing the Protocol must not reorder existing tokens or silently replace a pinned dictionary.
+
 `deflate-v1` is an opt-in lossless frame encoding. It compresses the complete canonical Atlas payload together with a binary Link header using raw DEFLATE. The dictionary is generated from Protocol property names and enums, the Radio contract revision, and fixed Link envelope vocabulary. No resource fields are dropped or rounded. Reassembly produces the original canonical bytes and uses the same Protocol validation as the JSON baseline.
 
 A frame starts with `a2` and the first eight SHA-256 bytes of its dictionary. Its compressed body contains seven unsigned base-128 integers (Link revision, message-family ASCII code, priority ASCII code, generation, sequence, chunk index, chunk count), five length-prefixed UTF-8 strings (source, destination or empty, session, operation ID, message ID), and the remaining payload chunk. The decoder bounds decompression, integers, string lengths, frame size, and aggregate reassembly. Unknown dictionaries are rejected. The dictionary identifier detects incompatible codecs; it is not authentication.
