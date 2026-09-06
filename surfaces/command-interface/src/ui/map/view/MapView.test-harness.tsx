@@ -123,6 +123,10 @@ const maplibreMock = vi.hoisted(() => {
       return this.options.container as HTMLElement;
     }
 
+    getCanvasContainer(): HTMLElement {
+      return this.getContainer();
+    }
+
     isStyleLoaded(): boolean {
       return this.loaded;
     }

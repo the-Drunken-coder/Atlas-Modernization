@@ -721,7 +721,7 @@
 .geofeature-create fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
 .geofeature-create__shapes { display: flex; gap: var(--space-1); flex-wrap: wrap; margin-bottom: var(--space-3); }
 .geofeature-create .row-actions { margin-top: var(--space-4); }
-.geofeature-drawing { position: absolute; inset: 0; z-index: 5; cursor: crosshair; }
+.geofeature-drawing { position: absolute; inset: 0; z-index: 1; cursor: crosshair; }
 
 @media (max-width: 640px) {
   .app-shell:has(.geofeature-create):has(.sidebar[data-collapsed="false"]) { grid-template-columns: 1fr; grid-template-rows: 45% 55%; }

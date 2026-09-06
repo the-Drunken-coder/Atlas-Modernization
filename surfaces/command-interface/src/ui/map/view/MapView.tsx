@@ -2,6 +2,7 @@ import { Callout } from "@blueprintjs/core";
 import type { MapArea } from "@the-drunken-coder/atlas-sdk";
 import { type MapMouseEvent, type Map as MlMap, type StyleSpecification } from "maplibre-gl";
 import { type MouseEvent as ReactMouseEvent, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { MapSourceConfig } from "../../../app/config.js";
 import { sanitizeConnectionError } from "../../../atlas/connection-error.js";
 import type { Position } from "../../../atlas/geometry.js";
@@ -539,31 +540,35 @@ export function MapView({
             suppressNextClick={reticleInteraction.mapActions.suppressNextClick}
           />
         ) : null}
-        {drawing ? (
-          <div
-            className="geofeature-drawing"
-            data-map-interaction-control
-            data-testid="geofeature-drawing"
-            onMouseDown={(event) => event.stopPropagation()}
-            onPointerMove={(event) => event.stopPropagation()}
-            onContextMenu={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-            }}
-            onClick={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              const map = mapRef.current;
-              if (!map || !mapReady || event.detail > 1) return;
-              const bounds = event.currentTarget.getBoundingClientRect();
-              const point = map.unproject([event.clientX - bounds.left, event.clientY - bounds.top]);
-              drawing.onPoint([
-                ((((point.lng + 180) % 360) + 360) % 360) - 180,
-                Math.max(-90, Math.min(90, point.lat))
-              ]);
-            }}
-          />
-        ) : null}
+        {/* MapLibre listens for zoom gestures on its canvas container. */}
+        {drawing && mapReady && mapRef.current
+          ? createPortal(
+              <div
+                className="geofeature-drawing"
+                data-map-interaction-control
+                data-testid="geofeature-drawing"
+                onMouseDown={(event) => event.stopPropagation()}
+                onPointerMove={(event) => event.stopPropagation()}
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                }}
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  const map = mapRef.current;
+                  if (!map || !mapReady || event.detail > 1) return;
+                  const bounds = event.currentTarget.getBoundingClientRect();
+                  const point = map.unproject([event.clientX - bounds.left, event.clientY - bounds.top]);
+                  drawing.onPoint([
+                    ((((point.lng + 180) % 360) + 360) % 360) - 180,
+                    Math.max(-90, Math.min(90, point.lat))
+                  ]);
+                }}
+              />,
+              mapRef.current.getCanvasContainer()
+            )
+          : null}
         {reticleInteraction.cursorOverlay ? <MapCursorOverlay {...reticleInteraction.cursorOverlay} /> : null}
         {reticleInteraction.visibleReticle ? (
           <MapReticle

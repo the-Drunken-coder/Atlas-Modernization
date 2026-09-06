@@ -19,6 +19,37 @@ describe("MapView geometry editing", () => {
     expect(onMapContextMenu).not.toHaveBeenCalled();
   });
 
+  it("delivers zoom gestures to MapLibre while retaining the polygon draft", async () => {
+    const onPoint = vi.fn();
+    const geometry: UiGeometry = {
+      type: "Polygon",
+      coordinates: [
+        [
+          [-71, 42],
+          [-70, 42],
+          [-70, 43],
+          [-71, 42]
+        ]
+      ]
+    };
+    const { map } = renderMapView({ drawing: { onPoint }, editing: { geometry, onChange: vi.fn(), readOnly: true } });
+    const drawing = await screen.findByTestId("geofeature-drawing");
+    const nativeWheel = vi.fn();
+    map.getCanvasContainer().addEventListener("wheel", nativeWheel);
+    fireEvent.wheel(drawing, { deltaY: -120, bubbles: true });
+    fireEvent.wheel(drawing, { deltaY: 120, bubbles: true });
+    fireEvent.wheel(drawing, { deltaY: -20, ctrlKey: true, bubbles: true });
+    expect(nativeWheel).toHaveBeenCalledTimes(3);
+    expect(onPoint).not.toHaveBeenCalled();
+    expect(map.getSource("editing")?.setData).toHaveBeenLastCalledWith({
+      type: "FeatureCollection",
+      features: [{ type: "Feature", geometry, properties: {} }]
+    });
+    fireEvent.click(drawing, { clientX: 80, clientY: 90 });
+    expect(onPoint).toHaveBeenCalledTimes(1);
+    map.getCanvasContainer().removeEventListener("wheel", nativeWheel);
+  });
+
   it("shows draft geometry without edit handles while drawing or saving", async () => {
     const geometry: UiGeometry = {
       type: "LineString",
