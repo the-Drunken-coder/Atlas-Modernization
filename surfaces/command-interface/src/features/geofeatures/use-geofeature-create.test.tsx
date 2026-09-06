@@ -1,4 +1,4 @@
-import { act, renderHook } from "@testing-library/react";
+import { act, fireEvent, renderHook } from "@testing-library/react";
 import type { EntityResource } from "@the-drunken-coder/atlas-sdk";
 import { describe, expect, it, vi } from "vitest";
 import { type DrawingShape, useGeofeatureCreate } from "./use-geofeature-create.js";
@@ -39,6 +39,33 @@ describe("Geo Feature creation", () => {
     act(() => result.current.redraw(shape));
     expect(result.current.draft?.geometry).toBeUndefined();
     expect(result.current.canSave).toBe(false);
+  });
+
+  it("undoes vertices through an empty draft and leaves text editing alone", () => {
+    const { result } = renderHook(() => useGeofeatureCreate(vi.fn(), vi.fn()));
+    act(() => result.current.start());
+    for (const position of [
+      [-71, 42],
+      [-70, 42],
+      [-70, 43]
+    ] as [number, number][])
+      act(() => result.current.addPoint(position));
+    expect(result.current.canFinish).toBe(true);
+    const input = document.createElement("input");
+    document.body.append(input);
+    fireEvent.keyDown(input, { key: "Backspace" });
+    expect(result.current.points).toHaveLength(3);
+    input.remove();
+    fireEvent.keyDown(document, { key: "Backspace" });
+    expect(result.current.points).toHaveLength(2);
+    expect(result.current.canFinish).toBe(false);
+    act(() => result.current.undo());
+    expect(result.current.draft?.geometry?.type).toBe("Point");
+    act(() => result.current.undo());
+    expect(result.current.draft?.geometry).toBeUndefined();
+    expect(result.current.canUndo).toBe(false);
+    act(() => result.current.addPoint([-72, 41]));
+    expect(result.current.points).toEqual([[-72, 41]]);
   });
 
   it("retains the draft after failure, prevents duplicate submissions, and retries with the same ID", async () => {

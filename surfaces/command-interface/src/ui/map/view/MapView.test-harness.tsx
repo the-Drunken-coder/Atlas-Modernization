@@ -3,11 +3,11 @@ import type { EntityResource } from "@the-drunken-coder/atlas-sdk";
 import type { StyleSpecification } from "maplibre-gl";
 import { afterEach, beforeEach, vi } from "vitest";
 import type { MapSourceConfig } from "../../../app/config.js";
-import type { Position } from "../../../atlas/geometry.js";
 import type { MapCameraCommand } from "../interaction/map-camera.js";
 import type { MapReticleTarget } from "../interaction/map-targets.js";
 import type { MapEditing } from "../rendering/map-editing.js";
 import { buildMapSources, type MapSources } from "../rendering/map-sources.js";
+import type { GeofeatureDrawing } from "./MapGeofeatureDrawing.js";
 import { type MapSpatialInteraction, MapView } from "./MapView.js";
 
 export type PointLike = { x: number; y: number };
@@ -300,7 +300,7 @@ afterEach(() => {
 type RenderMapViewProps = {
   cameraCommand?: MapCameraCommand | null;
   editing?: MapEditing;
-  drawing?: { onPoint: (position: Position) => void };
+  drawing?: GeofeatureDrawing;
   focusTarget?: MapReticleTarget | null;
   mapSourceOptions?: MapSourceConfig[];
   placeDetailTarget?: MapReticleTarget | null;

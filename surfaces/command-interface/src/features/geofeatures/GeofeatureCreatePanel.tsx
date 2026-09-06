@@ -22,7 +22,7 @@ export function GeofeatureCreatePanel({ creation }: { creation: GeofeatureCreati
         void creation.save();
       }}
     >
-      <fieldset disabled={saving}>
+      <fieldset disabled={saving} className="geofeature-create__fields">
         <TextField
           label="Name"
           autoFocus
@@ -48,13 +48,20 @@ export function GeofeatureCreatePanel({ creation }: { creation: GeofeatureCreati
                 ? "Click the map to place the center, then set the radius."
                 : draft.shape === "Point"
                   ? "Click the map to place the point."
-                  : "Click the map to add vertices, then finish drawing."}
+                  : draft.shape === "Polygon"
+                    ? "Click to add vertices. Click the first vertex or Finish drawing to close."
+                    : "Click to add vertices, then finish drawing."}
             </p>
             {draft.geometry ? <p className="field__hint">{geometrySummary(draft.geometry)}</p> : null}
             {draft.shape === "LineString" || draft.shape === "Polygon" ? (
-              <Button disabled={!creation.canFinish} onClick={creation.finish}>
-                Finish drawing
-              </Button>
+              <div className="row-actions">
+                <Button disabled={!creation.canFinish} onClick={creation.finish}>
+                  Finish drawing
+                </Button>
+                <Button disabled={!creation.canUndo} onClick={creation.undo} title="Undo last vertex (Backspace)">
+                  Undo
+                </Button>
+              </div>
             ) : null}
           </>
         ) : draft.geometry ? (
@@ -64,20 +71,22 @@ export function GeofeatureCreatePanel({ creation }: { creation: GeofeatureCreati
             <GeometryFields geometry={draft.geometry} onChange={creation.changeGeometry} />
           </>
         ) : null}
+      </fieldset>
+      <div className="geofeature-create__footer">
+        {error ? (
+          <Callout intent="danger" icon={null} role="alert">
+            {error}
+          </Callout>
+        ) : null}
         <div className="row-actions">
           <Button type="submit" variant="primary" disabled={!creation.canSave || saving}>
             {saving ? "Creating…" : "Create feature"}
           </Button>
-          <Button variant="ghost" onClick={creation.cancel}>
+          <Button variant="ghost" disabled={saving} onClick={creation.cancel}>
             Cancel
           </Button>
         </div>
-      </fieldset>
-      {error ? (
-        <Callout intent="danger" icon={null} role="alert">
-          {error}
-        </Callout>
-      ) : null}
+      </div>
     </form>
   );
 }

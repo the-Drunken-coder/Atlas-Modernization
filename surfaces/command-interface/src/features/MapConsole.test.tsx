@@ -1556,6 +1556,28 @@ describe("MapConsole", () => {
     expect(screen.queryByText("New Geo Feature")).not.toBeInTheDocument();
   });
 
+  it("preserves a named draft when declining tab navigation and discards it when confirmed", async () => {
+    const user = userEvent.setup();
+    const { fake } = makeFakeDataSource();
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    try {
+      renderConsole(fake);
+      await screen.findByText("Rover");
+      await user.click(screen.getByRole("button", { name: "Geo Features" }));
+      await user.click(screen.getByRole("button", { name: "Add Geo Feature" }));
+      await user.type(screen.getByRole("textbox", { name: "Name" }), "North boundary");
+      await user.click(screen.getByRole("button", { name: "Assets" }));
+      expect(confirm).toHaveBeenCalledWith("Discard this Geo Feature draft?");
+      expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue("North boundary");
+      confirm.mockReturnValue(true);
+      await user.click(screen.getByRole("button", { name: "Assets" }));
+      expect(screen.queryByText("New Geo Feature")).not.toBeInTheDocument();
+      expect(mapViewMock.lastProps?.drawing).toBeUndefined();
+    } finally {
+      confirm.mockRestore();
+    }
+  });
+
   it("keeps creation active on map selection and cancels without saving", async () => {
     const user = userEvent.setup();
     const { fake } = makeFakeDataSource();

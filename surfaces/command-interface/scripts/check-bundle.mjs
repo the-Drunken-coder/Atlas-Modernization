@@ -18,18 +18,19 @@ const budgets = {
   // SDK point-read generations and local-delete guards add 3.54 kB raw to the
   // initial graph. Keep enough gzip margin for Node's platform zlib variance.
   initialJavaScript: { raw: 418_000, gzip: 128_000 },
-  initialCss: { raw: 510_000, gzip: 55_000 },
+  initialCss: { raw: 511_000, gzip: 55_000 },
   // Includes the Geo Feature creation editor and draft lifecycle.
-  shellJavaScript: { raw: 146_000, gzip: 47_500 },
-  mapViewJavaScript: { raw: 71_000, gzip: 21_250 },
+  shellJavaScript: { raw: 147_000, gzip: 47_500 },
+  // Includes live drawing previews and the first-vertex close control.
+  mapViewJavaScript: { raw: 72_500, gzip: 21_750 },
   mapLibreJavaScript: { raw: 1_100_000, gzip: 300_000 },
   mapLibreWorkerJavaScript: { raw: 500_000, gzip: 140_000 },
   milsymbolJavaScript: { raw: 900_000, gzip: 240_000 },
   mapLibreCss: { raw: 85_000, gzip: 11_000 },
   mapRoute: { raw: 2_100_000, gzip: 550_000 },
   // Geo Feature creation adds the sidebar editor and map drawing interaction.
-  // The measured aggregate is 3,621 kB JS and 600.1 kB CSS; retain gzip variance margin.
-  allJavaScript: { raw: 3_622_000, gzip: 1_000_000 },
+  // The measured aggregate is 3,624 kB JS and 600.9 kB CSS; retain gzip variance margin.
+  allJavaScript: { raw: 3_625_000, gzip: 1_000_000 },
   allCss: { raw: 601_000, gzip: 67_000 }
 };
 

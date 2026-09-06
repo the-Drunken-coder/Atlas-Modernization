@@ -1,5 +1,5 @@
 import type { EntityResource } from "@the-drunken-coder/atlas-sdk";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { sanitizeConnectionError } from "../../atlas/connection-error.js";
 import type { AtlasDataSource } from "../../atlas/data-source.js";
 import { type Position, type UiGeometry, validateGeometry } from "../../atlas/geometry.js";
@@ -30,10 +30,12 @@ export function useGeofeatureCreate(
   }
 
   function cancel() {
-    if (savingRef.current) return;
+    if (savingRef.current) return false;
+    if ((draft?.name.trim() || draft?.geometry) && !window.confirm("Discard this Geo Feature draft?")) return false;
     setDraft(null);
     setError(undefined);
     points.current = [];
+    return true;
   }
 
   function redraw(shape: DrawingShape) {
@@ -47,20 +49,43 @@ export function useGeofeatureCreate(
     if (!draft?.drawing || savingRef.current) return;
     const next = [...points.current, position];
     points.current = next;
-    const geometry: UiGeometry =
-      draft.shape === "Circle"
-        ? {
-            type: "Feature",
-            geometry: { type: "Point", coordinates: position },
-            properties: { shape: "circle", radius_m: 100 }
-          }
-        : draft.shape === "Point" || next.length === 1
-          ? { type: "Point", coordinates: position }
-          : draft.shape === "Polygon" && next.length >= 3
-            ? { type: "Polygon", coordinates: [[...next, next[0]]] }
-            : { type: "LineString", coordinates: next };
-    setDraft({ ...draft, geometry, drawing: draft.shape === "Polygon" || draft.shape === "LineString" });
+    setDraft({
+      ...draft,
+      geometry: geometryFromPoints(draft.shape, next),
+      drawing: draft.shape === "Polygon" || draft.shape === "LineString"
+    });
   }
+
+  function undo() {
+    if (!draft?.drawing || savingRef.current || points.current.length === 0) return;
+    points.current = points.current.slice(0, -1);
+    setDraft({ ...draft, geometry: geometryFromPoints(draft.shape, points.current) });
+  }
+
+  useEffect(() => {
+    if (!draft?.drawing) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (
+        event.key !== "Backspace" ||
+        event.defaultPrevented ||
+        event.altKey ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.shiftKey
+      )
+        return;
+      if (
+        event.target instanceof HTMLElement &&
+        (event.target.isContentEditable ||
+          event.target.closest("input, textarea, select, [role='textbox'], [role='dialog']"))
+      )
+        return;
+      event.preventDefault();
+      undo();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  });
 
   const canFinish = Boolean(
     draft?.geometry && draft.geometry.type === draft.shape && validateGeometry(draft.geometry).valid
@@ -90,6 +115,9 @@ export function useGeofeatureCreate(
     draft,
     error,
     saving,
+    points: points.current,
+    undo,
+    canUndo: Boolean(draft?.drawing && points.current.length),
     canFinish,
     canSave,
     start,
@@ -110,3 +138,17 @@ export function useGeofeatureCreate(
 }
 
 export type GeofeatureCreation = ReturnType<typeof useGeofeatureCreate>;
+
+function geometryFromPoints(shape: DrawingShape, points: Position[]): UiGeometry | undefined {
+  const first = points[0];
+  if (!first) return undefined;
+  if (shape === "Circle")
+    return {
+      type: "Feature",
+      geometry: { type: "Point", coordinates: first },
+      properties: { shape: "circle", radius_m: 100 }
+    };
+  if (shape === "Point" || points.length === 1) return { type: "Point", coordinates: first };
+  if (shape === "Polygon" && points.length >= 3) return { type: "Polygon", coordinates: [[...points, first]] };
+  return { type: "LineString", coordinates: points };
+}

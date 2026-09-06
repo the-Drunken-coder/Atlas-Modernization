@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { UiGeometry } from "../../../atlas/geometry.js";
@@ -48,6 +48,35 @@ describe("MapView geometry editing", () => {
     fireEvent.click(drawing, { clientX: 80, clientY: 90 });
     expect(onPoint).toHaveBeenCalledTimes(1);
     map.getCanvasContainer().removeEventListener("wheel", nativeWheel);
+  });
+
+  it("previews the next polygon edges without placing a point and closes at the first vertex", async () => {
+    const onPoint = vi.fn();
+    const onClose = vi.fn();
+    const { map } = renderMapView({
+      drawing: {
+        onPoint,
+        onClose,
+        polygon: true,
+        points: [
+          [10, 20],
+          [30, 40],
+          [50, 60]
+        ]
+      }
+    });
+    const drawing = await screen.findByTestId("geofeature-drawing");
+    fireEvent.pointerMove(drawing, { clientX: 100, clientY: 110 });
+    await waitFor(() => expect(drawing.querySelector("polyline")?.getAttribute("points")).toBe("50,60 100,110 10,20"));
+    expect(onPoint).not.toHaveBeenCalled();
+    vi.spyOn(map, "project").mockImplementation(() => ({ x: 70, y: 80 }));
+    act(() => map.fire("move"));
+    expect(drawing.querySelector("polyline")?.getAttribute("points")).toBe("70,80 100,110 70,80");
+    fireEvent.click(screen.getByRole("button", { name: "Close polygon" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onPoint).not.toHaveBeenCalled();
+    fireEvent.pointerLeave(drawing);
+    expect(drawing.querySelector("polyline")?.getAttribute("points")).toBe("");
   });
 
   it("shows draft geometry without edit handles while drawing or saving", async () => {

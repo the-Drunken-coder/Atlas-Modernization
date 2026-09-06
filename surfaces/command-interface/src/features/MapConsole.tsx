@@ -315,7 +315,7 @@ export function MapConsole() {
   const placesActive = sidebar.view.mode === "list" && sidebar.view.list === "places";
   const selectSidebarList = (list: ListKind) => {
     if (creation.saving) return;
-    creation.cancel();
+    if (!creation.cancel()) return;
     if (list !== "places") {
       setPlacePreviewTarget(null);
       setCameraCommand((current) => (current?.intent === "commit" ? null : current));
@@ -552,7 +552,17 @@ export function MapConsole() {
                                 }
                               : undefined
                         }
-                        drawing={creation.draft?.drawing ? { onPoint: creation.addPoint } : undefined}
+                        drawing={
+                          creation.draft?.drawing
+                            ? {
+                                onPoint: creation.addPoint,
+                                points: creation.points,
+                                polygon: creation.draft.shape === "Polygon",
+                                onClose:
+                                  creation.canFinish && creation.draft.shape === "Polygon" ? creation.finish : undefined
+                              }
+                            : undefined
+                        }
                         focusTarget={creation.draft ? null : focusTarget}
                         placeDetailTarget={placePreviewTarget}
                         cameraCommand={cameraCommand}
