@@ -5,6 +5,8 @@ and semantic verdicts. Meshtastic Lab provides native firmware radios, directed
 connectivity, and packet observations through its existing API. No Atlas behavior
 or result interpretation needs to be added to Meshtastic Lab.
 
+See [current main-rebase validation](MAIN-REBASE-VALIDATION.md) for current-contract results. Other dated reports retain their original source fingerprints and describe earlier checkouts.
+
 ## Run
 
 Start Meshtastic Lab separately. Its web service must be reachable at

@@ -1,5 +1,7 @@
 # Further Meshtastic bandwidth improvements
 
+Historical results from the pre-rebase Radio contract. See [validation after rebasing onto main](MAIN-REBASE-VALIDATION.md) for the current contract and fresh comparison.
+
 This round builds on [the first optimization](BANDWIDTH-OPTIMIZATION.md). The workload stays A–Gateway–B–C: three Assets publish telemetry every five seconds, and the Gateway exchanges a command and Task report with one Asset every fifteen seconds. All radios remain CLIENT with hop limit 3. Atlas still distinguishes radio submission, application delivery, and application confirmation.
 
 ## Changes

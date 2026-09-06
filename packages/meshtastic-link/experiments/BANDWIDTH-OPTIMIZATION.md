@@ -1,5 +1,7 @@
 # Meshtastic bandwidth improvements, 2026-09-06
 
+Historical results from the pre-rebase Radio contract. See [validation after rebasing onto main](MAIN-REBASE-VALIDATION.md) for the current contract and fresh comparison.
+
 Implemented three changes from the [audit](BANDWIDTH-AUDIT.md): accurate native payload budgets, causal native response metadata, and a smaller lossless frame prefix. The measured wire change removes repeated codec metadata without dropping Atlas fields or relying on shared reassembly context.
 
 ## Implementation

@@ -1,5 +1,7 @@
 # Compression method comparison
 
+Historical results from the pre-rebase Radio contract. See [validation after rebasing onto main](MAIN-REBASE-VALIDATION.md) for the current contract and fresh comparison.
+
 Measured on 2026-09-06. The opt-in `message-v2` profile compares additional lossless value encodings and compressors against `message-v1`. Selection uses complete framed bytes and packet count. Every fixture reconstructs the exact original canonical Atlas payload.
 
 The strongest additional gains are in larger transfers: 17.4% fewer framed bytes for the large Entity and 20.4% for the structured Object. Routine fleet capacity barely changes. This comparison does not justify switching routine telemetry to the new profile solely for latency.

@@ -1,5 +1,7 @@
 # Latency and bandwidth optimization
 
+Historical results from the pre-rebase Radio contract. See [validation after rebasing onto main](MAIN-REBASE-VALIDATION.md) for the current contract and fresh comparison.
+
 This round implements the proposed Atlas-side improvements and compares them with the previous `deflate-v3` link. Binary encoding reduces airtime and median command latency, but the native runs do not establish a uniform improvement in tail latency or telemetry freshness. Adaptive retries and compact state updates remain optional.
 
 ## Implementation

@@ -1,5 +1,7 @@
 # Whole-message compression comparison
 
+Historical results from the pre-rebase Radio contract. See [validation after rebasing onto main](MAIN-REBASE-VALIDATION.md) for the current contract and fresh comparison.
+
 Measured on 2026-09-06. `message-v1` reduces the cost of fragmented Atlas messages while retaining the existing one-packet path. This is lossless compression: decoded canonical bytes match the original, including all Protocol fields and custom components.
 
 ## What changed
