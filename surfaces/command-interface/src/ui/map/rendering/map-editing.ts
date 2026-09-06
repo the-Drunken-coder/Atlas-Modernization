@@ -33,20 +33,32 @@ export function createEditingMarkers(
     return [];
   }
 
-  overlay?.setData({
-    type: "FeatureCollection",
-    features: [{ type: "Feature", geometry: displayGeometry(editing.geometry), properties: {} }]
-  });
+  const previewGeometry = (geometry: UiGeometry) =>
+    overlay?.setData({
+      type: "FeatureCollection",
+      features: [{ type: "Feature", geometry: displayGeometry(geometry), properties: {} }]
+    });
+  previewGeometry(editing.geometry);
 
   if (editing.readOnly) return [];
 
   const markers: InstanceType<MapLibreRuntime["Marker"]>[] = [];
+  const midpointMarkers: InstanceType<MapLibreRuntime["Marker"]>[] = [];
   const { geometry, onChange } = editing;
   for (const vertex of geometryVertices(geometry)) {
     const element = document.createElement("div");
     element.className = "vertex-handle";
     element.title = "Drag to move - right-click to remove";
     const marker = new MarkerConstructor({ element, draggable: true }).setLngLat([vertex.lng, vertex.lat]).addTo(map);
+    // Preview directly so React does not recreate the active drag handle.
+    marker.on("drag", () => {
+      const position = marker.getLngLat();
+      const next = moveVertex(geometry, vertex.ref, position.lng, position.lat);
+      previewGeometry(next);
+      for (const [index, midpoint] of midpoints(next).entries()) {
+        midpointMarkers[index]?.setLngLat([midpoint.position[0], midpoint.position[1]]);
+      }
+    });
     marker.on("dragend", () => {
       const next = marker.getLngLat();
       onChange(moveVertex(geometry, vertex.ref, next.lng, next.lat));
@@ -73,6 +85,7 @@ export function createEditingMarkers(
       onChange(addVertexAfter(geometry, mid.afterRef, mid.position));
     });
     markers.push(marker);
+    midpointMarkers.push(marker);
   }
   return markers;
 }

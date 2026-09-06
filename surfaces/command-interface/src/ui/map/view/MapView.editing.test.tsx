@@ -2,7 +2,7 @@ import { fireEvent, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { UiGeometry } from "../../../atlas/geometry.js";
-import { renderMapView } from "./MapView.test-harness.js";
+import { dragMarker, markerCoordinatesFor, renderMapView } from "./MapView.test-harness.js";
 
 describe("MapView geometry editing", () => {
   it("draws normalized coordinates without selecting entities or opening map commands", async () => {
@@ -62,6 +62,57 @@ describe("MapView geometry editing", () => {
     await waitFor(() => expect(map.getSource("editing")?.setData).toHaveBeenCalled());
     expect(screen.queryByRole("button", { name: "Add vertex" })).not.toBeInTheDocument();
     expect(document.querySelector(".vertex-handle")).toBeNull();
+  });
+
+  it("moves both polygon edges and their midpoint handles during a vertex drag", async () => {
+    const onChange = vi.fn();
+    const geometry: UiGeometry = {
+      type: "Polygon",
+      coordinates: [
+        [
+          [-71, 42],
+          [-70, 42],
+          [-70, 43],
+          [-71, 42]
+        ]
+      ]
+    };
+    const { map } = renderMapView({ editing: { geometry, onChange } });
+    await screen.findAllByRole("button", { name: "Add vertex" });
+    const vertex = document.querySelector<HTMLElement>(".vertex-handle:not(.vertex-handle--mid)")!;
+    const midpointHandles = screen.getAllByRole("button", { name: "Add vertex" });
+    for (const position of [
+      [-72, 41],
+      [-73, 40]
+    ] as [number, number][]) {
+      dragMarker(vertex, position, "drag");
+      expect(map.getSource("editing")?.setData).toHaveBeenLastCalledWith({
+        type: "FeatureCollection",
+        features: [
+          {
+            type: "Feature",
+            properties: {},
+            geometry: { type: "Polygon", coordinates: [[position, [-70, 42], [-70, 43], position]] }
+          }
+        ]
+      });
+      expect(markerCoordinatesFor(midpointHandles[0])).toEqual([(position[0] - 70) / 2, (position[1] + 42) / 2]);
+      expect(markerCoordinatesFor(midpointHandles[2])).toEqual([(position[0] - 70) / 2, (position[1] + 43) / 2]);
+      expect(vertex.isConnected).toBe(true);
+      expect(onChange).not.toHaveBeenCalled();
+    }
+    dragMarker(vertex, [-73, 40], "dragend");
+    expect(onChange).toHaveBeenCalledExactlyOnceWith({
+      type: "Polygon",
+      coordinates: [
+        [
+          [-73, 40],
+          [-70, 42],
+          [-70, 43],
+          [-73, 40]
+        ]
+      ]
+    });
   });
 
   it("renders midpoint actions as keyboard-operable buttons", async () => {
