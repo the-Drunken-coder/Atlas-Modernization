@@ -466,11 +466,10 @@ export function MapConsole() {
             onBack={currentPanelBack}
             autoFocusBack={sidebar.focusRequest?.id === selection?.id}
             headerAction={
-              activeList === "geofeatures" && !creation.draft ? (
+              activeList === "geofeatures" && !creation.draft && !edit ? (
                 <IconButton
                   label="Add Geo Feature"
                   onClick={() => {
-                    geometryEdit.cancelEdit();
                     spatial.closeTarget();
                     commandFlow.closeMapMenu();
                     setPlacePreviewTarget(null);

@@ -246,6 +246,7 @@ function CoordinateField({
     <TextField
       label={label}
       type="number"
+      required
       min={min}
       max={max}
       step="any"

@@ -623,6 +623,18 @@ describe("sdk data source", () => {
     }
   );
 
+  it("does not attempt recovery after a definitive permission denial", async () => {
+    const fetchMock = vi.fn(async () => Response.json({ error: "Forbidden" }, { status: 403 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(
+      createSdkDataSource(config).createGeofeature("geo-new", "Rally", { type: "Point", coordinates: [-71, 42] })
+    ).rejects.toMatchObject({ status: 403 });
+    expect(fetchMock).toHaveBeenCalledExactlyOnceWith(
+      "https://core.test/entities",
+      expect.objectContaining({ method: "POST" })
+    );
+  });
+
   it("routes command and geometry writes through SDK cache notifications", async () => {
     const calls: Array<{ input: unknown; init: RequestInit }> = [];
     const createdTask = task("task-created", "asset-1", 2);

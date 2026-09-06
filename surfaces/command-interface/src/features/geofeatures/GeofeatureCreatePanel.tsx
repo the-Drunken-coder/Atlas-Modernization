@@ -35,7 +35,9 @@ export function GeofeatureCreatePanel({ creation }: { creation: GeofeatureCreati
               key={shape.value}
               aria-pressed={draft.shape === shape.value}
               variant={draft.shape === shape.value ? "primary" : "default"}
-              onClick={() => creation.redraw(shape.value)}
+              onClick={() => {
+                if (shape.value !== draft.shape) creation.redraw(shape.value);
+              }}
             >
               {shape.label}
             </Button>

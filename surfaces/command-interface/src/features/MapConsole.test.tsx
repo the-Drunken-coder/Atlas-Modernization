@@ -1556,6 +1556,33 @@ describe("MapConsole", () => {
     expect(screen.queryByText("New Geo Feature")).not.toBeInTheDocument();
   });
 
+  it("blocks creation until an empty coordinate is corrected", async () => {
+    const user = userEvent.setup();
+    const { fake } = makeFakeDataSource();
+    const create = vi.spyOn(fake, "createGeofeature");
+    renderConsole(fake);
+    await screen.findByText("Rover");
+    await user.click(screen.getByRole("button", { name: "Geo Features" }));
+    await user.click(screen.getByRole("button", { name: "Add Geo Feature" }));
+    await user.type(screen.getByRole("textbox", { name: "Name" }), "Rally");
+    await user.click(screen.getByRole("button", { name: "Point" }));
+    act(() => mapViewMock.lastProps?.drawing?.onPoint([-71, 42]));
+    const longitude = screen.getByRole("spinbutton", { name: "Vertex 1 longitude" });
+    await user.clear(longitude);
+    await user.click(screen.getByRole("button", { name: "Create feature" }));
+    expect(longitude).toBeInvalid();
+    expect(create).not.toHaveBeenCalled();
+    expect(screen.getByText("New Geo Feature")).toBeInTheDocument();
+    await user.type(longitude, "-72");
+    await user.click(screen.getByRole("button", { name: "Create feature" }));
+    await waitFor(() =>
+      expect(create).toHaveBeenCalledExactlyOnceWith(expect.any(String), "Rally", {
+        type: "Point",
+        coordinates: [-72, 42]
+      })
+    );
+  });
+
   it("preserves creation edit handles across unrelated snapshot updates", async () => {
     const user = userEvent.setup();
     const { fake, emit } = makeFakeDataSource();
@@ -1567,6 +1594,8 @@ describe("MapConsole", () => {
     act(() => mapViewMock.lastProps?.drawing?.onPoint([-71, 42]));
     const editing = mapViewMock.lastProps?.editing;
     expect(editing).toBeDefined();
+    await user.click(screen.getByRole("button", { name: "Point" }));
+    expect(mapViewMock.lastProps?.editing).toBe(editing);
     act(() => emit({ ...fake.snapshot(), tasks: {} }));
     expect(mapViewMock.lastProps?.editing).toBe(editing);
     await user.type(screen.getByRole("textbox", { name: "Name" }), "Rally");
@@ -1621,6 +1650,7 @@ describe("MapConsole", () => {
     await user.click(await screen.findByText("Area Alpha"));
     await user.click(await screen.findByRole("button", { name: "Edit" }));
 
+    expect(screen.queryByRole("button", { name: "Add Geo Feature" })).not.toBeInTheDocument();
     const editing = mapViewMock.lastProps?.editing;
     act(() =>
       emit({
@@ -1637,6 +1667,7 @@ describe("MapConsole", () => {
 
     await waitFor(() => expect(geometryUpdates).toHaveLength(1));
     expect(geometryUpdates[0]).toEqual({ entityId: "geo-1", geometry: area.components.geometry, ifMatchVersion: 1 });
+    expect(await screen.findByRole("button", { name: "Add Geo Feature" })).toBeInTheDocument();
   });
 
   it("ignores a geometry save that settles after selection changes", async () => {
