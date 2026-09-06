@@ -3,6 +3,8 @@ import {
   type CommandCatalog,
   type CommandDefinition,
   type EntityResource,
+  isAtlasAPIError,
+  isAtlasTransportError,
   type JSONValue,
   type TaskResource
 } from "@the-drunken-coder/atlas-sdk";
@@ -150,12 +152,28 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
     },
 
     async createGeofeature(entityId, name, geometry) {
-      return client.entities.create({
-        entity_id: entityId,
-        entity_type: "geofeature",
-        alias: name,
-        components: { geometry }
-      });
+      try {
+        return await client.entities.create({
+          entity_id: entityId,
+          entity_type: "geofeature",
+          alias: name,
+          components: { geometry }
+        });
+      } catch (cause) {
+        if (!isAtlasTransportError(cause) && !(isAtlasAPIError(cause) && (cause.status === 409 || cause.status >= 500)))
+          throw cause;
+        // A committed POST can lose its response. Recover only the exact draft,
+        // including on a same-ID retry; a different entity remains a conflict.
+        const existing = await client.entities.get(entityId, { fresh: true }).catch(() => undefined);
+        if (
+          existing?.entity_id === entityId &&
+          existing.entity_type === "geofeature" &&
+          existing.alias === name &&
+          sameGeometry(existing.components.geometry, geometry)
+        )
+          return existing;
+        throw cause;
+      }
     },
 
     async updateGeometry(entityId, geometry, ifMatchVersion) {
@@ -202,4 +220,20 @@ function runtimeManifestVersionsAfterHydration(
     ...current,
     ...Object.fromEntries(changedEntities.map(([id, entity]) => [id, entity.metadata.version]))
   };
+}
+
+function sameGeometry(actual: UiGeometry | undefined, expected: UiGeometry): boolean {
+  if (!actual || actual.type !== expected.type) return false;
+  if (actual.type === "Feature" && expected.type === "Feature") {
+    return (
+      actual.properties.shape === expected.properties.shape &&
+      actual.properties.radius_m === expected.properties.radius_m &&
+      JSON.stringify(actual.geometry.coordinates) === JSON.stringify(expected.geometry.coordinates)
+    );
+  }
+  return (
+    actual.type !== "Feature" &&
+    expected.type !== "Feature" &&
+    JSON.stringify(actual.coordinates) === JSON.stringify(expected.coordinates)
+  );
 }

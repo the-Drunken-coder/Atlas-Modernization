@@ -1,5 +1,5 @@
 import type { EntityResource } from "@the-drunken-coder/atlas-sdk";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { sanitizeConnectionError } from "../../atlas/connection-error.js";
 import type { AtlasDataSource } from "../../atlas/data-source.js";
 import { type Position, type UiGeometry, validateGeometry } from "../../atlas/geometry.js";
@@ -111,6 +111,10 @@ export function useGeofeatureCreate(
     }
   }
 
+  const changeGeometry = useCallback((geometry: UiGeometry) => {
+    if (!savingRef.current) setDraft((current) => current && { ...current, geometry });
+  }, []);
+
   return {
     draft,
     error,
@@ -131,9 +135,7 @@ export function useGeofeatureCreate(
     setName: (name: string) => {
       if (!savingRef.current) setDraft((current) => current && { ...current, name });
     },
-    changeGeometry: (geometry: UiGeometry) => {
-      if (!savingRef.current) setDraft((current) => current && { ...current, geometry });
-    }
+    changeGeometry
   };
 }
 

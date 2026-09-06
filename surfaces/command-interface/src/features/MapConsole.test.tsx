@@ -1556,6 +1556,23 @@ describe("MapConsole", () => {
     expect(screen.queryByText("New Geo Feature")).not.toBeInTheDocument();
   });
 
+  it("preserves creation edit handles across unrelated snapshot updates", async () => {
+    const user = userEvent.setup();
+    const { fake, emit } = makeFakeDataSource();
+    renderConsole(fake);
+    await screen.findByText("Rover");
+    await user.click(screen.getByRole("button", { name: "Geo Features" }));
+    await user.click(screen.getByRole("button", { name: "Add Geo Feature" }));
+    await user.click(screen.getByRole("button", { name: "Point" }));
+    act(() => mapViewMock.lastProps?.drawing?.onPoint([-71, 42]));
+    const editing = mapViewMock.lastProps?.editing;
+    expect(editing).toBeDefined();
+    act(() => emit({ ...fake.snapshot(), tasks: {} }));
+    expect(mapViewMock.lastProps?.editing).toBe(editing);
+    await user.type(screen.getByRole("textbox", { name: "Name" }), "Rally");
+    expect(mapViewMock.lastProps?.editing).toBe(editing);
+  });
+
   it("preserves a named draft when declining tab navigation and discards it when confirmed", async () => {
     const user = userEvent.setup();
     const { fake } = makeFakeDataSource();
@@ -1604,10 +1621,17 @@ describe("MapConsole", () => {
     await user.click(await screen.findByText("Area Alpha"));
     await user.click(await screen.findByRole("button", { name: "Edit" }));
 
-    emit({
-      entities: { [rover.entity_id]: rover, [area.entity_id]: { ...area, metadata: { ...area.metadata, version: 7 } } },
-      tasks: {}
-    });
+    const editing = mapViewMock.lastProps?.editing;
+    act(() =>
+      emit({
+        entities: {
+          [rover.entity_id]: rover,
+          [area.entity_id]: { ...area, metadata: { ...area.metadata, version: 7 } }
+        },
+        tasks: {}
+      })
+    );
+    expect(mapViewMock.lastProps?.editing).toBe(editing);
 
     await user.click(screen.getByRole("button", { name: "Save" }));
 

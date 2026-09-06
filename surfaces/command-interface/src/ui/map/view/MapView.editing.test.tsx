@@ -93,6 +93,22 @@ describe("MapView geometry editing", () => {
     expect(document.querySelector(".vertex-handle")).toBeNull();
   });
 
+  it("renders a point without interactive handles while drawing, undoing, or saving", async () => {
+    const geometry: UiGeometry = { type: "Point", coordinates: [-71, 42] };
+    const { map } = renderMapView({ editing: { geometry, onChange: vi.fn(), readOnly: true } });
+    await waitFor(() => expect(map.getSource("editing")?.setData).toHaveBeenCalled());
+    expect(map.getLayer("editing-point")).toMatchObject({
+      type: "circle",
+      source: "editing",
+      filter: ["==", ["geometry-type"], "Point"]
+    });
+    expect(map.getSource("editing")?.setData).toHaveBeenLastCalledWith({
+      type: "FeatureCollection",
+      features: [{ type: "Feature", geometry, properties: {} }]
+    });
+    expect(document.querySelector(".vertex-handle")).toBeNull();
+  });
+
   it("moves both polygon edges and their midpoint handles during a vertex drag", async () => {
     const onChange = vi.fn();
     const geometry: UiGeometry = {
@@ -106,7 +122,8 @@ describe("MapView geometry editing", () => {
         ]
       ]
     };
-    const { map } = renderMapView({ editing: { geometry, onChange } });
+    const editing = { geometry, onChange };
+    const { map, rerenderMap } = renderMapView({ editing });
     await screen.findAllByRole("button", { name: "Add vertex" });
     const vertex = document.querySelector<HTMLElement>(".vertex-handle:not(.vertex-handle--mid)")!;
     const midpointHandles = screen.getAllByRole("button", { name: "Add vertex" });
@@ -130,6 +147,8 @@ describe("MapView geometry editing", () => {
       expect(vertex.isConnected).toBe(true);
       expect(onChange).not.toHaveBeenCalled();
     }
+    rerenderMap({ editing });
+    expect(document.querySelector(".vertex-handle")).toBe(vertex);
     dragMarker(vertex, [-73, 40], "dragend");
     expect(onChange).toHaveBeenCalledExactlyOnceWith({
       type: "Polygon",

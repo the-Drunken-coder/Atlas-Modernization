@@ -288,6 +288,21 @@ export function MapConsole() {
     dispatch({ type: "selectEntity", kind: "geofeature", id: entity.entity_id, origin: "sidebar" });
   });
   const { edit, saving, saveError } = geometryEdit;
+  const creationGeometry = creation.draft?.geometry;
+  const creationReadOnly = Boolean(creation.draft?.drawing || creation.saving);
+  const mapEditing = useMemo(
+    () =>
+      creationGeometry
+        ? {
+            geometry: creationGeometry,
+            onChange: creation.changeGeometry,
+            readOnly: creationReadOnly
+          }
+        : edit
+          ? { geometry: edit.draft, onChange: geometryEdit.changeDraft }
+          : undefined,
+    [creationGeometry, creation.changeGeometry, creationReadOnly, edit, geometryEdit.changeDraft]
+  );
   const { mapMenu, commandForm, submitting, submitError } = commandFlow;
 
   useEffect(() => {
@@ -538,20 +553,7 @@ export function MapConsole() {
                         style={selectedMapSource.style}
                         mapSourceOptions={atlas.config.mapSources}
                         selectedId={selectedId}
-                        editing={
-                          creation.draft?.geometry
-                            ? {
-                                geometry: creation.draft.geometry,
-                                onChange: creation.changeGeometry,
-                                readOnly: creation.draft.drawing || creation.saving
-                              }
-                            : edit
-                              ? {
-                                  geometry: edit.draft,
-                                  onChange: geometryEdit.changeDraft
-                                }
-                              : undefined
-                        }
+                        editing={mapEditing}
                         drawing={
                           creation.draft?.drawing
                             ? {
