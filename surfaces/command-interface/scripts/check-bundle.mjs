@@ -20,18 +20,18 @@ const budgets = {
   initialJavaScript: { raw: 418_000, gzip: 128_000 },
   initialCss: { raw: 511_000, gzip: 55_000 },
   // Includes the Geo Feature creation editor, command fixes, and draft lifecycle.
-  shellJavaScript: { raw: 150_000, gzip: 48_500 },
+  shellJavaScript: { raw: 148_000, gzip: 48_000 },
   // Includes live drawing previews, keyboard vertex controls, focus restoration,
   // heartbeat-qualified symbols, and the first-vertex close control.
-  mapViewJavaScript: { raw: 75_500, gzip: 23_000 },
+  mapViewJavaScript: { raw: 75_000, gzip: 22_750 },
   mapLibreJavaScript: { raw: 1_100_000, gzip: 300_000 },
   mapLibreWorkerJavaScript: { raw: 500_000, gzip: 140_000 },
   milsymbolJavaScript: { raw: 900_000, gzip: 240_000 },
   mapLibreCss: { raw: 85_000, gzip: 11_000 },
   mapRoute: { raw: 2_100_000, gzip: 550_000 },
-  // Geo Feature creation and the command and geometry fixes share the map shell.
-  // Retain enough aggregate margin for platform zlib variance.
-  allJavaScript: { raw: 3_629_000, gzip: 1_003_000 },
+  // The combined build is 3,627.43 kB raw / 1,000.24 kB gzip on macOS.
+  // Retain the existing allowance for Linux zlib variance.
+  allJavaScript: { raw: 3_628_000, gzip: 1_002_000 },
   allCss: { raw: 602_000, gzip: 67_000 }
 };
 

@@ -80,6 +80,7 @@ describe("MapConsole command revalidation", () => {
         reconnect: vi.fn(),
         submitCommand,
         loadEntityDetails,
+        createGeofeature: vi.fn(),
         updateGeometry: vi.fn()
       };
       const view = render(

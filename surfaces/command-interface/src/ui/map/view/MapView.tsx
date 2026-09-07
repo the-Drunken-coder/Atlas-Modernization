@@ -137,6 +137,7 @@ export function MapView({
   spatialRef.current = spatial;
   initialMapRef.current = { initialCenter, style, styleId };
   const editingGeometry = visibleEditing?.geometry;
+  const editingReadOnly = visibleEditing?.readOnly;
   const clearPendingCommit = useCallback(() => {
     if (pendingCommitTimeoutRef.current === undefined) return false;
     window.clearTimeout(pendingCommitTimeoutRef.current);
@@ -473,13 +474,14 @@ export function MapView({
       editingGeometry
         ? {
             geometry: editingGeometry,
+            readOnly: editingReadOnly,
             onChange: (nextGeometry) => editingRef.current?.onChange(nextGeometry)
           }
         : undefined,
       maplibre.Marker
     );
     if (activeVertexKey) focusEditingVertex(map, activeVertexKey);
-  }, [editingGeometry, mapReady]);
+  }, [editingGeometry, editingReadOnly, mapReady]);
 
   useEffect(() => {
     const map = mapRef.current;
