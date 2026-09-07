@@ -268,7 +268,7 @@ describe("state delta codec", () => {
     ).toEqual(publication);
   });
 
-  it("bounds full input and reconstructed state size", () => {
+  it("bounds full input size", () => {
     const oversized: Extract<ResourceStatePublication, { resource_type: "entity" }> = {
       ...positionPublication(1),
       resource: {

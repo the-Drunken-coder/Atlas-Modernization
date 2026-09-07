@@ -144,6 +144,11 @@ export class SharedPicture {
       sequence: context.source_sequence,
       receivedAt: context.received_at
     });
+    const rejectCapacity = () => {
+      if (sourceSequence === undefined) this.recordSourceSequences.delete(recordSourceKey);
+      else this.recordSourceSequences.set(recordSourceKey, sourceSequence);
+      return rejected("capacity");
+    };
     const tombstone = this.tombstones.get(key);
     if (
       current &&
@@ -174,7 +179,7 @@ export class SharedPicture {
         serviceSession: context.service_session,
         sourceSequence: context.source_sequence
       };
-      if (!this.canRetain(key, retainedEntryBytes(nextTombstone))) return rejected("capacity");
+      if (!this.canRetain(key, retainedEntryBytes(nextTombstone))) return rejectCapacity();
       if (current) this.degradeTasksForExpiredAsset(current);
       this.retainTombstone(key, nextTombstone);
       if (connectivityAssetID !== undefined) {
@@ -211,7 +216,7 @@ export class SharedPicture {
       path: publication.path,
       confirmation: publication.confirmation
     };
-    if (!this.canRetain(key, retainedEntryBytes(record))) return rejected("capacity");
+    if (!this.canRetain(key, retainedEntryBytes(record))) return rejectCapacity();
     this.retainRecord(key, record);
     if (connectivityAssetID !== undefined) {
       this.assetConnectivity.set(connectivityAssetID, { connected: true, receivedAt: context.received_at });

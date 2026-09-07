@@ -139,15 +139,21 @@ describe("Shared Picture", () => {
     const picture = new SharedPicture("picture-session");
     const largeHint = "x".repeat(100_000);
     let result = picture.apply(objectPublication(0, largeHint), context(1));
+    let rejectedIndex = 0;
     for (let index = 1; index < 200 && result.status === "applied"; index++) {
+      rejectedIndex = index;
       result = picture.apply(objectPublication(index, largeHint), context(index + 1));
     }
     expect(result).toEqual({ status: "rejected", reason: "capacity" });
+    expect(picture.apply(objectPublication(0), context(1_000))).toEqual({ status: "applied" });
+    expect(picture.apply(objectPublication(rejectedIndex, largeHint), context(rejectedIndex + 1))).toEqual({
+      status: "applied"
+    });
   });
 
   it("bounds remembered source identities", () => {
     const picture = new SharedPicture("picture-session");
-    for (let index = 0; index < 4_096; index++) {
+    for (let index = 0; index < LINK_SOURCE_IDENTITY_LIMIT; index++) {
       expect(picture.activateSource({ role: "asset", id: `asset-${index}` }, 1, `session-${index}`)).toBe(true);
     }
     expect(picture.activateSource({ role: "asset", id: "asset-overflow" }, 1, "overflow-session")).toBe(false);

@@ -2714,6 +2714,36 @@ describe("Link transport", () => {
         expect.objectContaining({ task_id: "task-old", status: "pending", updated_at: "2026-09-02T12:10:00Z" })
       ])
     );
+    asset.submit(
+      {
+        type: "task_report",
+        action: "progress",
+        task_id: "task-old",
+        runtime_id: "runtime-alpha",
+        observation_time: "2026-09-02T12:11:00Z",
+        body: { progress: 0.5 }
+      },
+      { destination: { role: "gateway", id: "gateway" }, operationID: "current-progress" }
+    );
+    await clock.runUntilIdle();
+    for (const action of ["acknowledge", "start"] as const) {
+      asset.submit(
+        {
+          type: "task_report",
+          action,
+          task_id: "task-old",
+          runtime_id: "runtime-alpha",
+          observation_time: "2026-09-02T12:12:00Z",
+          body: {}
+        },
+        { destination: { role: "gateway", id: "gateway" }, operationID: `late-${action}` }
+      );
+      await clock.runUntilIdle();
+      expect(gatewayPicture.snapshot().records.find((record) => record.id === "task-old")?.state).toMatchObject({
+        status: "in_progress",
+        progress: 0.5
+      });
+    }
   });
 });
 

@@ -629,6 +629,11 @@ export function decodeJoinMessage(payload: Uint8Array): JoinWireMessage | undefi
     value.n === "ATLAS" &&
     isNonEmptyString(value.k)
   ) {
+    try {
+      channelKeyBytes(value.k);
+    } catch {
+      return undefined;
+    }
     return {
       type: "accept",
       join_attempt_id: value.a,

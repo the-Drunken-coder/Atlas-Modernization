@@ -85,7 +85,7 @@ export class VirtualClock implements Clock {
   async runUntilIdle(maxCallbacks = 100_000): Promise<void> {
     for (let count = 0; this.scheduled.length > 0; count++) {
       if (count >= maxCallbacks) throw new Error("virtual clock did not become idle");
-      const nextAt = Math.min(...this.scheduled.map((item) => item.at));
+      const nextAt = this.scheduled.reduce((earliest, item) => Math.min(earliest, item.at), Infinity);
       await this.advanceTo(nextAt);
     }
   }

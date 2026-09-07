@@ -36,6 +36,19 @@ describe("serial transport", () => {
     reader.releaseLock();
   });
 
+  it("cancels a pending read before disconnecting", async () => {
+    SerialPortMock.binding.createPort("/dev/cu.atlas-cancel", { record: true });
+    const transport = await openSerialTransport("/dev/cu.atlas-cancel");
+    const reader = transport.fromDevice.getReader();
+    await reader.read();
+    const pending = reader.read();
+    await reader.cancel();
+    expect((await pending).done).toBe(true);
+    reader.releaseLock();
+    await transport.disconnect();
+    expect(observed.port?.isOpen).toBe(false);
+  });
+
   it("rejects opening a missing device", async () => {
     await expect(openSerialTransport("/dev/cu.missing")).rejects.toThrow();
   });

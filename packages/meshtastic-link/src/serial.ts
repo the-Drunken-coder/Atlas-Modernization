@@ -11,6 +11,7 @@ export async function openSerialTransport(path: string): Promise<Types.Transport
   port.open();
   await opened;
   let closed = false;
+  let cancelled = false;
   const reader = Readable.toWeb(port).pipeThrough(deviceFrameStream(true)).getReader();
   const fromDevice = new ReadableStream<Types.DeviceOutput>({
     async start(controller) {
@@ -18,16 +19,22 @@ export async function openSerialTransport(path: string): Promise<Types.Transport
       try {
         while (!closed) {
           const next = await reader.read();
-          if (next.done) break;
+          if (next.done || cancelled) break;
           controller.enqueue(next.value);
         }
       } catch {
         // The disconnected event rejects pending sends and configuration reads.
       } finally {
-        controller.enqueue({ type: "status", data: { status: Types.DeviceStatusEnum.DeviceDisconnected } });
-        controller.close();
         reader.releaseLock();
+        if (!cancelled) {
+          controller.enqueue({ type: "status", data: { status: Types.DeviceStatusEnum.DeviceDisconnected } });
+          controller.close();
+        }
       }
+    },
+    async cancel() {
+      cancelled = true;
+      await reader.cancel();
     }
   });
   const toDevice = new WritableStream<Uint8Array>({

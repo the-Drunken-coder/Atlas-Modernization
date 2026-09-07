@@ -261,16 +261,19 @@ export class LinkService {
     if (!isLinkMessage(report) || report.type !== "task_report") throw new TypeError("invalid Task report");
     const reportOperationID = operationIDValue ?? operationID(report);
     const target = destination ?? this.defaultDestination(report);
-    const failed = (reason: string): AtomicTaskSettlementResult => ({
-      accepted: false,
-      receipt: {
-        operation_id: `control_${randomUUID().replaceAll("-", "")}`,
-        status: "failed",
-        reason,
-        completed_at: this.clock.now()
-      },
-      report: { operation_id: reportOperationID, status: "failed", reason, completed_at: this.clock.now() }
-    });
+    const failed = (reason: string): AtomicTaskSettlementResult => {
+      const completedAt = this.clock.now();
+      return {
+        accepted: false,
+        receipt: {
+          operation_id: `control_${randomUUID().replaceAll("-", "")}`,
+          status: "failed",
+          reason,
+          completed_at: completedAt
+        },
+        report: { operation_id: reportOperationID, status: "failed", reason, completed_at: completedAt }
+      };
+    };
     if (this.lifecycle === "configuring" || this.lifecycle === "error") {
       return failed("Link service is not transmitting");
     }

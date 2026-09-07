@@ -241,7 +241,8 @@ function taskReportPublication(
     current.asset_id !== identity.source.id ||
     current.status === "completed" ||
     current.status === "failed" ||
-    current.status === "cancelled"
+    current.status === "cancelled" ||
+    (current.status === "in_progress" && (message.action === "acknowledge" || message.action === "start"))
   ) {
     return undefined;
   }

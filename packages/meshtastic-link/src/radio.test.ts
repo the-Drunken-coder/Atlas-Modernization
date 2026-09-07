@@ -1,3 +1,4 @@
+import { Types } from "@meshtastic/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => {
@@ -39,12 +40,13 @@ const mocks = vi.hoisted(() => {
     readonly disconnect = vi.fn(async () => undefined);
     readonly clearChannel = vi.fn(async () => 1);
     readonly commitEditSettings = vi.fn(async () => {
-      if (state.rebootOnCommit && this.index === 0) this.events.onDeviceStatus.dispatch(2);
+      if (state.rebootOnCommit && this.index === 0)
+        this.events.onDeviceStatus.dispatch(Types.DeviceStatusEnum.DeviceDisconnected);
       return 1;
     });
     readonly configure = vi.fn(async () => {
       if (state.configurationError) throw state.configurationError;
-      this.events.onDeviceStatus.dispatch(7);
+      this.events.onDeviceStatus.dispatch(Types.DeviceStatusEnum.DeviceConfigured);
       return 1;
     });
 
@@ -72,8 +74,7 @@ vi.mock("./serial.js", () => ({
 
 vi.mock("@meshtastic/core", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@meshtastic/core")>()),
-  MeshDevice: mocks.FakeMeshDevice,
-  Types: { DeviceStatusEnum: { DeviceDisconnected: 2, DeviceConfigured: 7 } }
+  MeshDevice: mocks.FakeMeshDevice
 }));
 
 describe("Meshtastic serial radio", () => {
@@ -82,6 +83,16 @@ describe("Meshtastic serial radio", () => {
     mocks.state.rebootOnCommit = false;
     mocks.state.devices.length = 0;
     mocks.transportCreate.mockClear();
+  });
+
+  it("rejects a send when the device omitted its LoRa configuration", async () => {
+    const { MeshtasticSerialRadio } = await import("./radio.js");
+    const radio = await MeshtasticSerialRadio.open("/dev/cu.test");
+    try {
+      await expect(radio.send(Uint8Array.of(1), { channel: 1 })).rejects.toThrow("lora");
+    } finally {
+      await radio.close();
+    }
   });
 
   it("disconnects the device when initial configuration fails", async () => {
@@ -115,7 +126,7 @@ describe("Meshtastic serial radio", () => {
     const device = mocks.state.devices[0];
     if (!device) throw new Error("test device was not opened");
 
-    device.events.onDeviceStatus.dispatch(2);
+    device.events.onDeviceStatus.dispatch(Types.DeviceStatusEnum.DeviceDisconnected);
 
     await expect(radio.readConfiguration()).rejects.toBeInstanceOf(RadioUnavailableError);
     await expect(radio.readPrivateMembership(1)).rejects.toBeInstanceOf(RadioUnavailableError);

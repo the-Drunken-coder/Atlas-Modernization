@@ -1,4 +1,4 @@
-import { mkdir, open, rename } from "node:fs/promises";
+import { mkdir, open, rename, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { readPrivateFile } from "./private-file.js";
 import type { PrivateChannelMembership } from "./profile.js";
@@ -119,13 +119,17 @@ export class GatewayMembershipStore {
     const temporary = join(dirname(this.path), `.${process.pid}-${Date.now()}-membership.tmp`);
     const handle = await open(temporary, "wx", 0o600);
     try {
-      await handle.writeFile(`${JSON.stringify(membership, null, 2)}\n`, "utf8");
-      await handle.sync();
+      try {
+        await handle.writeFile(`${JSON.stringify(membership, null, 2)}\n`, "utf8");
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
+      await rename(temporary, this.path);
+      await syncDirectory(dirname(this.path));
     } finally {
-      await handle.close();
+      await rm(temporary, { force: true });
     }
-    await rename(temporary, this.path);
-    await syncDirectory(dirname(this.path));
   }
 }
 

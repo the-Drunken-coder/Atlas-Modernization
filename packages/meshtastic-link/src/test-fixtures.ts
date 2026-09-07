@@ -1,7 +1,7 @@
 import type { ResourceStatePublication } from "./types.js";
 
 export function positionPublication(version: number): Extract<ResourceStatePublication, { resource_type: "entity" }> {
-  const timestamp = `2026-09-02T12:00:${String(version).padStart(2, "0")}Z`;
+  const timestamp = new Date(Date.parse("2026-09-02T12:00:00Z") + version * 1_000).toISOString().replace(".000Z", "Z");
   return {
     type: "state",
     resource_type: "entity",

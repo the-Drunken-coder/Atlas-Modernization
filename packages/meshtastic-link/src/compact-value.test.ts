@@ -85,8 +85,8 @@ describe("compact value v1", () => {
     expect(() => decodeCompactValue(Uint8Array.from(tooDeep))).toThrow("deep");
 
     const tooManyNodes = [0x01, 0x08, 0x80, 0x80, 0x04];
-    tooManyNodes.push(...new Array(65_536).fill(0x00));
-    expect(() => decodeCompactValue(Uint8Array.from(tooManyNodes))).toThrow();
+    for (let index = 0; index < 65_536; index++) tooManyNodes.push(0x00);
+    expect(() => decodeCompactValue(Uint8Array.from(tooManyNodes))).toThrow("Compact value exceeds 128 KiB");
 
     const tooLargeOutput = [0x01, 0x08, 66, 0x07, 0x00, 0xd0, 0x0f];
     for (let index = 0; index < 2_000; index++) tooLargeOutput.push(0x61);

@@ -9,7 +9,7 @@ describe("TelemetryPublisher", () => {
     const periodMs = 5_000;
     const phases = ["asset-alpha", "asset-bravo", "gateway"].map((nodeID) => telemetryPhaseMs(nodeID, periodMs));
 
-    expect(phases).toEqual([telemetryPhaseMs("asset-alpha", periodMs), ...phases.slice(1)]);
+    expect(phases).toEqual([3482, 394, 2057]);
     expect(phases.every((phase) => phase >= 0 && phase < periodMs)).toBe(true);
     expect(new Set(phases).size).toBe(3);
   });

@@ -68,6 +68,10 @@ describe("joining and Radio profile", () => {
         k: legacyKey
       })
     );
+    const legacyFields = JSON.parse(legacyPayload.toString());
+    for (const key of ["not base64!", Buffer.alloc(3).toString("base64")]) {
+      expect(decodeJoinMessage(Buffer.from(JSON.stringify({ ...legacyFields, k: key })))).toBeUndefined();
+    }
     expect(decodeJoinMessage(legacyPayload)).toEqual({
       type: "accept",
       join_attempt_id: "legacy-attempt",

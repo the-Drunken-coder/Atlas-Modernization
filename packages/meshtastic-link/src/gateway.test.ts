@@ -654,41 +654,64 @@ describe("Ordered Task dispatcher recovery", () => {
     }
   });
 
-  it("preserves a queued cancellation when a same-Task assignment is enqueued", async () => {
-    const { clock, dispatcher, gateway, asset, network } = disconnectedTaskPair(64, 1);
-    const cancellation = cancelledTask("same", "2026-09-05T12:00:00Z");
-    const assignment = pendingTask("same", "2026-09-05T12:00:00Z");
-    const delivered: Array<{ taskID: string; delivery: string }> = [];
-    asset.onEvent((event) => {
-      if (event.type !== "message" || !event.addressed_to_local || event.message.type !== "task_delivery") return;
-      delivered.push({ taskID: event.message.task.task_id, delivery: event.message.delivery });
-      asset.settleInbound(event.settlement_id, true);
-    });
-
+  it.each(["single", "batch"])("ignores an oversized %s replay behind an active cancellation", (mode) => {
+    const { dispatcher, gateway, asset } = disconnectedTaskPair(64, 4);
     try {
-      expect(
-        gateway.submit(
-          { type: "task_delivery", delivery: "assignment", task: pendingTask("occupied", "2026-09-05T11:00:00Z") },
-          { destination: { role: "asset", id: "asset-alpha" }, operationID: "occupied" }
-        )
-      ).toMatchObject({ status: "queued" });
-      dispatcher.enqueue("asset-alpha", cancellation, "cancellation");
-      expect(dispatcher.state("asset-alpha")).toEqual({ queued: ["same"] });
-
-      dispatcher.enqueue("asset-alpha", assignment);
-      expect(dispatcher.state("asset-alpha")).toEqual({ queued: ["same"] });
-
-      network.connect("gateway", "asset-alpha");
-      await clock.runUntilIdle();
-
-      expect(delivered).toContainEqual({ taskID: "same", delivery: "cancellation" });
-      expect(delivered).not.toContainEqual({ taskID: "same", delivery: "assignment" });
+      dispatcher.enqueue("asset-alpha", cancelledTask("same", "2026-09-05T12:00:00Z"), "cancellation");
+      expect(dispatcher.state("asset-alpha").cancellation?.task_id).toBe("same");
+      const stale = { ...pendingTask("same", "2026-09-05T12:00:00Z"), input: { text: "x".repeat(128 * 1024) } };
+      if (mode === "single") dispatcher.enqueue("asset-alpha", stale);
+      else {
+        dispatcher.enqueueAssignments("asset-alpha", [stale, pendingTask("next", "2026-09-05T12:01:00Z")]);
+        expect(dispatcher.state("asset-alpha").queued).toEqual(["next"]);
+      }
+      expect(dispatcher.state("asset-alpha").cancellation?.task_id).toBe("same");
     } finally {
       dispatcher.close();
       gateway.stop();
       asset.stop();
     }
   });
+
+  it.each(["single", "batch"])(
+    "preserves a queued cancellation when an oversized same-Task %s assignment is ignored",
+    async (mode) => {
+      const { clock, dispatcher, gateway, asset, network } = disconnectedTaskPair(64, 1);
+      const cancellation = cancelledTask("same", "2026-09-05T12:00:00Z");
+      const assignment = { ...pendingTask("same", "2026-09-05T12:00:00Z"), input: { text: "x".repeat(128 * 1024) } };
+      const delivered: Array<{ taskID: string; delivery: string }> = [];
+      asset.onEvent((event) => {
+        if (event.type !== "message" || !event.addressed_to_local || event.message.type !== "task_delivery") return;
+        delivered.push({ taskID: event.message.task.task_id, delivery: event.message.delivery });
+        asset.settleInbound(event.settlement_id, true);
+      });
+
+      try {
+        expect(
+          gateway.submit(
+            { type: "task_delivery", delivery: "assignment", task: pendingTask("occupied", "2026-09-05T11:00:00Z") },
+            { destination: { role: "asset", id: "asset-alpha" }, operationID: "occupied" }
+          )
+        ).toMatchObject({ status: "queued" });
+        dispatcher.enqueue("asset-alpha", cancellation, "cancellation");
+        expect(dispatcher.state("asset-alpha")).toEqual({ queued: ["same"] });
+
+        if (mode === "single") dispatcher.enqueue("asset-alpha", assignment);
+        else dispatcher.enqueueAssignments("asset-alpha", [assignment]);
+        expect(dispatcher.state("asset-alpha")).toEqual({ queued: ["same"] });
+
+        network.connect("gateway", "asset-alpha");
+        await clock.runUntilIdle();
+
+        expect(delivered).toContainEqual({ taskID: "same", delivery: "cancellation" });
+        expect(delivered).not.toContainEqual({ taskID: "same", delivery: "assignment" });
+      } finally {
+        dispatcher.close();
+        gateway.stop();
+        asset.stop();
+      }
+    }
+  );
 
   it("preserves a queued cancellation when a bulk assignment contains the same Task", async () => {
     const { clock, dispatcher, gateway, asset, network } = disconnectedTaskPair(64, 1);

@@ -12,6 +12,8 @@ describe("deflate-v3 compound receipts", () => {
     const { clock, gateway, asset, gatewayRadio, assetRadio, taskFrame } = await joinedPair();
     const assetEvents: string[] = [];
     const packetEvents: string[] = [];
+    let settled: boolean | undefined;
+    let reportStatus: string | undefined;
     gateway.onEvent((event) => {
       if (event.type === "message" && event.message.type === "task_report" && event.addressed_to_local) {
         gateway.settleInbound(event.settlement_id, true);
@@ -19,13 +21,11 @@ describe("deflate-v3 compound receipts", () => {
     });
     asset.onEvent((event) => {
       if (event.type === "message" && event.message.type === "task_delivery") {
-        expect(asset.settleInbound(event.settlement_id, true)).toBe(true);
-        expect(
-          asset.submit(report("task-1"), {
-            destination: { role: "gateway", id: "gateway" },
-            operationID: "report-1"
-          }).status
-        ).toBe("queued");
+        settled = asset.settleInbound(event.settlement_id, true);
+        reportStatus = asset.submit(report("task-1"), {
+          destination: { role: "gateway", id: "gateway" },
+          operationID: "report-1"
+        }).status;
       }
       if (event.type === "operation") assetEvents.push(`${event.result.operation_id}:${event.result.status}`);
       if (event.type === "packet_sent") packetEvents.push(event.operation_id);
@@ -34,6 +34,8 @@ describe("deflate-v3 compound receipts", () => {
     assetRadio.receive(taskFrame);
     await clock.advanceBy(0);
 
+    expect(settled).toBe(true);
+    expect(reportStatus).toBe("queued");
     expect(assetRadio.sends).toHaveLength(1);
     const combined = decodeFrame(assetRadio.sends[0]!.payload);
     expect(combined.message_type).toBe("task_report");
@@ -93,6 +95,7 @@ describe("deflate-v3 compound receipts", () => {
   it("does not pair a report that has already started", async () => {
     const { clock, asset, assetRadio, taskFrame, deferred } = await joinedPair(233, true);
     let settlementID: string | undefined;
+    let settled: boolean | undefined;
     asset.onEvent((event) => {
       if (event.type !== "message" || event.message.type !== "task_delivery") return;
       settlementID = event.settlement_id;
@@ -103,7 +106,7 @@ describe("deflate-v3 compound receipts", () => {
     });
     assetRadio.onSend = () => {
       if (settlementID !== undefined) {
-        expect(asset.settleInbound(settlementID, true)).toBe(true);
+        settled = asset.settleInbound(settlementID, true);
         settlementID = undefined;
       }
     };
@@ -117,6 +120,7 @@ describe("deflate-v3 compound receipts", () => {
     await pumping;
     await clock.advanceBy(0);
 
+    expect(settled).toBe(true);
     expect(assetRadio.sends).toHaveLength(2);
     expect(assetRadio.sends.every(({ payload }) => decodeFrame(payload).receipt === undefined)).toBe(true);
     expect(assetRadio.sends.every(({ payload }) => payload[0] === 0xa3)).toBe(true);
@@ -179,6 +183,7 @@ describe("deflate-v3 compound receipts", () => {
   it("sends a standalone receipt when a compound send is rejected after report cancellation", async () => {
     const { clock, asset, assetRadio, taskFrame, deferred } = await joinedPair(233, true);
     let cancelDuringSend = false;
+    let cancelled: boolean | undefined;
     asset.onEvent((event) => {
       if (event.type !== "message" || event.message.type !== "task_delivery") return;
       asset.settleInbound(event.settlement_id, true);
@@ -191,13 +196,14 @@ describe("deflate-v3 compound receipts", () => {
     assetRadio.onSend = (entry) => {
       if (!cancelDuringSend || entry.payload[0] !== 0xa4) return;
       cancelDuringSend = false;
-      expect(asset.cancel("report-1")).toBe(true);
+      cancelled = asset.cancel("report-1");
     };
 
     assetRadio.receive(taskFrame);
     const pumping = clock.advanceBy(0);
     await assetRadio.sendStarted;
     expect(assetRadio.sends).toHaveLength(1);
+    expect(cancelled).toBe(true);
     deferred.reject(new Error("queue rejected"));
     await pumping;
     await clock.advanceBy(0);
@@ -214,6 +220,7 @@ describe("deflate-v3 compound receipts", () => {
     const { clock, asset, assetRadio, taskFrame, deferred } = await joinedPair(233, true);
     const outcomes: string[] = [];
     let cancelDuringSend = false;
+    let cancelled: boolean | undefined;
     asset.onEvent((event) => {
       if (event.type === "operation") outcomes.push(`${event.result.operation_id}:${event.result.status}`);
       if (event.type !== "message" || event.message.type !== "task_delivery") return;
@@ -227,12 +234,13 @@ describe("deflate-v3 compound receipts", () => {
     assetRadio.onSend = (entry) => {
       if (!cancelDuringSend || entry.payload[0] !== 0xa4) return;
       cancelDuringSend = false;
-      expect(asset.cancel("report-1")).toBe(true);
+      cancelled = asset.cancel("report-1");
     };
 
     assetRadio.receive(taskFrame);
     const pumping = clock.advanceBy(0);
     await assetRadio.sendStarted;
+    expect(cancelled).toBe(true);
     expect(assetRadio.sends).toHaveLength(1);
     deferred.resolve();
     await pumping;
@@ -290,10 +298,11 @@ describe("deflate-v3 compound receipts", () => {
       createID: () => "report-frame"
     });
     let packetEvents = 0;
+    let cancelled: boolean | undefined;
     transport.onEvent((event) => {
       if (event.type !== "packet_sent") return;
       packetEvents++;
-      expect(transport.cancel("report-1")).toBe(true);
+      cancelled = transport.cancel("report-1");
     });
     try {
       expect(
@@ -304,6 +313,7 @@ describe("deflate-v3 compound receipts", () => {
       ).toBe("queued");
       await clock.advanceBy(0);
 
+      expect(cancelled).toBe(true);
       expect(packetEvents).toBe(1);
       expect(radio.sends).toHaveLength(1);
       expect(transport.status("report-1")?.status).toBe("failed");

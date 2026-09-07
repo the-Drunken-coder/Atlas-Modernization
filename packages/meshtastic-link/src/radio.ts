@@ -346,7 +346,8 @@ export class MeshtasticSerialRadio implements LinkRadio, RadioConfigurationAdapt
         throw new Error("public-key-only send requires a destination with a known public key");
       }
     }
-    const lora = this.configs.get("lora")?.payloadVariant;
+    const lora = this.requireConfig("lora").payloadVariant;
+    if (lora.case !== "lora") throw new Error("Meshtastic LoRa configuration is unavailable");
     const packetId = this.nextPacketId();
     const packet = create(Protobuf.Mesh.MeshPacketSchema, {
       from: this.localRadioNodeNumber ?? 0,
@@ -355,7 +356,7 @@ export class MeshtasticSerialRadio implements LinkRadio, RadioConfigurationAdapt
       wantAck: false,
       priority:
         options.priority === undefined ? Protobuf.Mesh.MeshPacket_Priority.UNSET : RADIO_PRIORITIES[options.priority],
-      hopLimit: lora?.case === "lora" ? lora.value.hopLimit : 0,
+      hopLimit: lora.value.hopLimit,
       channel: channelNumber(options.channel),
       payloadVariant: {
         case: "decoded",

@@ -177,6 +177,7 @@ export class OrderedTaskDispatcher {
 
   enqueue(assetID: string, task: TaskResource, delivery: TaskDelivery["delivery"] = "assignment"): void {
     if (!assetID) throw new TypeError("Task delivery requires an Asset ID");
+    if (delivery === "assignment" && this.ignoresAssignment(assetID, task)) return;
     this.transport.validateTaskDelivery(
       { type: "task_delivery", task, delivery },
       { role: "asset", id: assetID },
@@ -220,7 +221,8 @@ export class OrderedTaskDispatcher {
 
   enqueueAssignments(assetID: string, tasks: readonly TaskResource[]): void {
     if (!assetID) throw new TypeError("Task delivery requires an Asset ID");
-    for (const [index, task] of tasks.entries()) {
+    const admitted = tasks.filter((task) => !this.ignoresAssignment(assetID, task));
+    for (const [index, task] of admitted.entries()) {
       this.transport.validateTaskDelivery(
         { type: "task_delivery", task, delivery: "assignment" },
         { role: "asset", id: assetID },
@@ -257,6 +259,17 @@ export class OrderedTaskDispatcher {
     queue.sort(compareTasks);
     this.queued.set(assetID, queue);
     this.pump(assetID);
+  }
+
+  private ignoresAssignment(assetID: string, task: TaskResource): boolean {
+    const active = this.inFlight.get(assetID);
+    return (
+      (active?.task.task_id === task.task_id && !active.failed) ||
+      this.inFlightCancellations.get(assetID)?.task.task_id === task.task_id ||
+      (this.queued.get(assetID) ?? []).some(
+        (item) => item.task.task_id === task.task_id && item.delivery === "cancellation"
+      )
+    );
   }
 
   observeAuthoritativeTask(assetID: string, task: TaskResource): void {
