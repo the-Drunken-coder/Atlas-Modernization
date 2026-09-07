@@ -19,7 +19,8 @@ import {
   LocalSubscriptionDemand,
   SUBSCRIPTION_LEASE_MS,
   SUBSCRIPTION_RENEWAL_MS,
-  type SubscriptionTransition
+  type SubscriptionTransition,
+  selectorKey
 } from "./subscriptions.js";
 import {
   type AtomicTaskSettlementResult,
@@ -84,6 +85,7 @@ export class LinkService {
   private readonly eventListeners = new Set<(event: LinkServiceEvent) => void>();
   private readonly eventBuffer: LinkServiceEvent[] = [];
   private readonly localOperations = new Map<string, LinkOperationResult>();
+  private readonly pendingSubscriptionRemovals = new Map<string, FeedSelector>();
   private readonly clientLeaseTimers = new Map<string, TimerHandle>();
   private transport: LinkTransport | undefined;
   private taskDispatcher: OrderedTaskDispatcher | undefined;
@@ -312,6 +314,7 @@ export class LinkService {
         return { changed: false, active: this.subscriptions.aggregate().size, reason: failure };
       }
     }
+    this.pendingSubscriptionRemovals.delete(selectorKey(selector));
     if (action === "remove") {
       if (!this.subscriptions.hasClient(clientID)) this.cancelClientLease(clientID);
     } else {
@@ -324,7 +327,9 @@ export class LinkService {
   disconnectClient(clientID: string): void {
     this.cancelClientLease(clientID);
     for (const transition of this.subscriptions.disconnect(clientID)) {
-      this.dispatchSubscription(transition.action, transition.selector);
+      if (this.dispatchSubscription(transition.action, transition.selector) !== undefined) {
+        this.pendingSubscriptionRemovals.set(selectorKey(transition.selector), transition.selector);
+      }
     }
     this.scheduleRenewalIfNeeded();
   }
@@ -350,6 +355,7 @@ export class LinkService {
 
   async applyRadioProfile(): Promise<ConfigurationEvidence> {
     if (!this.profileManager) throw new Error("Radio profile management is unavailable");
+    const selectedProfile = this.profileManager.profile();
     const previous = this.profileApplyTail;
     let release!: () => void;
     this.profileApplyTail = new Promise<void>((resolve) => {
@@ -357,7 +363,7 @@ export class LinkService {
     });
     await previous;
     try {
-      return await this.applyRadioProfileOnce();
+      return await this.applyRadioProfileOnce(selectedProfile);
     } finally {
       release();
     }
@@ -460,7 +466,7 @@ export class LinkService {
       this.node.role === "gateway"
         ? this.options.onGatewaySubscriptionTransition !== undefined
         : this.transport !== undefined && this.gatewayNode !== undefined;
-    if (!canDispatch || this.subscriptions.aggregate().size === 0) {
+    if (!canDispatch || (this.subscriptions.aggregate().size === 0 && this.pendingSubscriptionRemovals.size === 0)) {
       if (this.renewalTimer) this.clock.cancel(this.renewalTimer);
       this.renewalTimer = undefined;
       return;
@@ -468,6 +474,9 @@ export class LinkService {
     if (this.renewalTimer) return;
     this.renewalTimer = this.clock.schedule(SUBSCRIPTION_RENEWAL_MS, () => {
       this.renewalTimer = undefined;
+      for (const [key, selector] of this.pendingSubscriptionRemovals) {
+        if (this.dispatchSubscription("remove", selector) === undefined) this.pendingSubscriptionRemovals.delete(key);
+      }
       for (const transition of this.subscriptions.renewals()) {
         this.dispatchSubscription("renew", transition.selector);
       }
@@ -538,7 +547,7 @@ export class LinkService {
     this.scheduleRenewalIfNeeded();
   }
 
-  private async applyRadioProfileOnce(): Promise<ConfigurationEvidence> {
+  private async applyRadioProfileOnce(selectedProfile: RadioProfile): Promise<ConfigurationEvidence> {
     if (this.lifecycle === "stopped") throw new Error("Link service is stopped");
     const profileManager = this.profileManager;
     if (!profileManager) throw new Error("Radio profile management is unavailable");
@@ -549,7 +558,6 @@ export class LinkService {
     const generation = ++this.profileApplyGeneration;
     const previousLifecycle = this.lifecycle;
     const hadTransport = this.transport !== undefined;
-    const selectedProfile = profileManager.profile();
     this.profileApplyActive = true;
     this.setLifecycle("configuring", "applying and verifying the radio profile");
     try {
@@ -809,7 +817,7 @@ export class LinkHTTPServer {
 
   private streamPicture(url: URL, request: IncomingMessage, response: ServerResponse): void {
     const session = url.searchParams.get("session") ?? "";
-    const revision = Number(url.searchParams.get("after"));
+    const revision = Number(request.headers["last-event-id"] ?? url.searchParams.get("after"));
     let unsubscribe: () => void = () => undefined;
     let writer!: SSEWriter;
     const subscription = this.service.picture.subscribeAfter(session, revision, (event) => writer.write(event));

@@ -4,6 +4,7 @@ import {
   BINARY_V1_VOCABULARY_SHA256,
   decodeBinaryPayload,
   decodeBinaryUtf8,
+  encodeBinaryPayload,
   encodeBinaryUtf8
 } from "./binary-codec.js";
 import { encodeCanonicalJSON } from "./canonical-json.js";
@@ -13,6 +14,13 @@ import { FRAME_BINARY_KEYS, FRAME_BINARY_STRINGS } from "./generated/radio-contr
 import { positionPublication } from "./test-fixtures.js";
 
 describe("binary-v1 Link frames", () => {
+  it("encodes near-limit strings without exceeding the function argument limit", () => {
+    const payload = Buffer.from(JSON.stringify({ data: "x".repeat(131_000) }));
+    const encoded = encodeBinaryPayload(payload);
+    expect(encoded).toBeDefined();
+    expect(Buffer.from(decodeBinaryPayload(encoded!, 0))).toEqual(payload);
+  });
+
   it("pins the ordered binary vocabulary", () => {
     const actual = createHash("sha256")
       .update(JSON.stringify([FRAME_BINARY_KEYS, FRAME_BINARY_STRINGS]))
@@ -53,7 +61,9 @@ describe("binary-v1 Link frames", () => {
   });
 
   it("keeps lone-surrogate identities on binary-v1 opaque fragments", () => {
-    const payload = randomBytes(1024);
+    const payload = Buffer.concat(
+      Array.from({ length: 32 }, (_, index) => createHash("sha256").update(String(index)).digest())
+    );
     const identity: FrameIdentity = {
       ...frameIdentity("state"),
       source: { role: "asset", id: "asset-\ud800-alpha" },
@@ -90,7 +100,9 @@ describe("binary-v1 Link frames", () => {
   });
 
   it("keeps arbitrary non-JSON payloads lossless through the adaptive fallback", () => {
-    const payload = randomBytes(1024);
+    const payload = Buffer.concat(
+      Array.from({ length: 32 }, (_, index) => createHash("sha256").update(String(index)).digest())
+    );
     const identity = frameIdentity("state");
     const adaptive = fragmentPayload(payload, identity, 200, "binary-v1");
     const fallback = fragmentPayload(payload, identity, 200, "deflate-v2");

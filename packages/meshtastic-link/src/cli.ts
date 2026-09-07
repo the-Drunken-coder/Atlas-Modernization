@@ -100,12 +100,12 @@ async function localJSON(
     signal: AbortSignal.timeout(timeoutMs),
     ...(body === undefined ? {} : { headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
   });
-  const result: unknown = await response.json();
   if (!response.ok) {
+    const result: unknown = await response.json().catch(() => undefined);
     const detail = isRecord(result) && typeof result.error === "string" ? result.error : response.statusText;
     throw new Error(`Link service returned ${response.status}: ${detail}`);
   }
-  return result;
+  return response.json();
 }
 
 async function serve(argv: string[]): Promise<void> {

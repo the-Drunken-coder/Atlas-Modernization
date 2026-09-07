@@ -40,6 +40,86 @@ describe("loopback Link service", () => {
     }
   });
 
+  it("reconnects picture streams using the latest SSE revision", async () => {
+    const service = new LinkService({ mode: "asset", nodeID: "asset-alpha", clock: new VirtualClock() });
+    const server = new LinkHTTPServer(service);
+    const address = await server.listen(0);
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+    try {
+      service.picture.apply(positionPublication(1), {
+        source: service.node,
+        source_generation: 1,
+        service_session: "test",
+        source_sequence: 1,
+        received_at: 0
+      });
+      service.picture.apply(positionPublication(2), {
+        source: service.node,
+        source_generation: 1,
+        service_session: "test",
+        source_sequence: 2,
+        received_at: 1
+      });
+      const response = await fetch(
+        `http://${address.host}:${address.port}/v1/picture/events?session=${service.picture.session}&after=0`,
+        { headers: { "Last-Event-ID": "1" } }
+      );
+      reader = response.body?.getReader();
+      if (!reader) throw new Error("missing picture reader");
+      const [record] = await readSSERecords(reader, 1);
+      expect(record?.id).toBe(2);
+    } finally {
+      await reader?.cancel();
+      await server.close();
+      service.stop();
+    }
+  });
+
+  it("retries a failed final disconnect removal without renewing unwanted demand", async () => {
+    const clock = new VirtualClock();
+    const transitions: string[] = [];
+    let fail = true;
+    const service = new LinkService({
+      mode: "gateway",
+      nodeID: "gateway",
+      clock,
+      onGatewaySubscriptionTransition: (transition) => {
+        transitions.push(transition.action);
+        if (transition.action === "remove" && fail) {
+          fail = false;
+          throw new Error("temporary bridge failure");
+        }
+      }
+    });
+    const selector = { kind: "resource_type", resource_type: "entity" } as const;
+    try {
+      service.updateLocalSubscription("client", "add", selector);
+      service.disconnectClient("client");
+      await clock.advanceBy(30_000);
+      expect(transitions).toEqual(["add", "remove", "remove"]);
+    } finally {
+      service.stop();
+    }
+  });
+
+  it.each(["single", "batch"])("rejects oversized Task admission through the %s route", async (mode) => {
+    const harness = await taskHarness({ connected: false });
+    const assetID = "asset-alpha";
+    const task = { ...pendingTask("oversized", "2026-09-05T12:00:00Z"), input: { data: "" } };
+    const body = mode === "batch" ? { tasks: [task] } : { task, delivery: "assignment" };
+    task.input.data = "x".repeat(128 * 1024 - 16 - JSON.stringify(body).length);
+    try {
+      const result = await postJSON(
+        `${harness.base}/v1/tasks/${assetID}${mode === "batch" ? "/assignments" : ""}`,
+        body
+      );
+      expect(result.response.status).toBe(400);
+      expect(harness.service.taskState(assetID)).toEqual({ queued: [] });
+    } finally {
+      await closeTaskHarness(harness);
+    }
+  });
+
   it("logs and removes throwing event listeners", () => {
     const service = new LinkService({ mode: "asset", nodeID: "asset-alpha", clock: new VirtualClock() });
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);

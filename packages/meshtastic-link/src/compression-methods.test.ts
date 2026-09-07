@@ -10,7 +10,7 @@ import { FRAME_DICTIONARY } from "./generated/radio-contract.generated.js";
 import { decodeMessagePayload } from "./message-codec.js";
 
 const MAX_MESSAGE_BYTES = 128 * 1024;
-const MAX_DECOMPRESSED_BYTES = MAX_MESSAGE_BYTES * 8 + 7 * 65538 + 64;
+const MAX_DECOMPRESSED_BYTES = MAX_MESSAGE_BYTES * 8 + 64;
 const dictionary = Buffer.from(FRAME_DICTIONARY);
 
 describe("message-v2 compression methods", () => {

@@ -370,6 +370,40 @@ export class LinkTransport {
     return this.commitOutbound(prepared.prepared);
   }
 
+  /** Validate queued Task wire data before the dispatcher acknowledges admission. */
+  validateTaskDelivery(
+    message: Extract<LinkMessage, { type: "task_delivery" }>,
+    destination: LinkNode,
+    operationID: string
+  ): void {
+    if (this.stopped) throw new Error("link service is stopped");
+    const identity = this.outboundIdentity(message, { destination }, operationID, this.sourceSequence + 1);
+    const sendOptions: RadioSendOptions = { channel: this.privateChannel, priority: identity.priority };
+    const limit = this.radio.maxPayloadBytes?.(sendOptions) ?? this.radio.max_payload_bytes;
+    const encoding = this.frameEncoding === "deflate-v3" ? "deflate-v2" : this.frameEncoding;
+    fragmentPayload(serializeLinkMessage(message), identity, limit, encoding);
+  }
+
+  private outboundIdentity(
+    message: LinkMessage,
+    options: SubmitOptions,
+    operationID: string,
+    sourceSequence: number
+  ): FrameIdentity {
+    return {
+      revision: 1,
+      message_type: message.type,
+      source: this.node,
+      ...(options.destination === undefined ? {} : { destination: options.destination }),
+      source_generation: this.sourceGeneration,
+      service_session: this.serviceSession,
+      source_sequence: sourceSequence,
+      operation_id: wireOperationIDFor(message, operationID),
+      message_id: this.createID(),
+      priority: messagePriority(message)
+    };
+  }
+
   private prepareOutbound(
     message: LinkMessage,
     options: SubmitOptions,
@@ -439,18 +473,7 @@ export class LinkTransport {
     } catch (error) {
       return failure(`Radio contract encoding failed: ${asErrorMessage(error)}`);
     }
-    const identity: FrameIdentity = {
-      revision: 1,
-      message_type: message.type,
-      source: this.node,
-      ...(options.destination === undefined ? {} : { destination: options.destination }),
-      source_generation: this.sourceGeneration,
-      service_session: this.serviceSession,
-      source_sequence: sourceSequence,
-      operation_id: wireOperationIDFor(message, operationID),
-      message_id: this.createID(),
-      priority: messagePriority(message)
-    };
+    const identity = this.outboundIdentity(message, options, operationID, sourceSequence);
     const replaceKey = coalescingKey(message);
     const sendOptions: RadioSendOptions = {
       channel: this.privateChannel,

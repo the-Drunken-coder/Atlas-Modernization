@@ -27,7 +27,7 @@ Other Link services may update their Shared Pictures from visible Task traffic. 
 
 The Gateway delivers eligible Task assignments and cancellations to the addressed Asset through this confirmed path whether or not any Link subscription exists. A `tasks_for_asset` feed is observational best-effort state. Receiving that feed may update a Shared Picture, but it never invokes the addressed Asset's Task handler, satisfies confirmed delivery, or acknowledges a Task.
 
-The Gateway dispatches confirmed Task assignments to each Asset in Atlas Protocol's authoritative order of ascending `created_at`, then `task_id`. It does not deliver a later assignment to the Asset application until the earlier assignment is acknowledged, rejected, or terminal. This waits only for application acceptance into local work state, not Task completion. The Asset application retains responsibility for executing accepted Tasks in that same order.
+The Gateway dispatches confirmed Task assignments to each Asset in Atlas Protocol's authoritative order of ascending `created_at`, then `task_id`. It does not deliver a later assignment to the Asset application until the earlier assignment is acknowledged, rejected, or terminal. This waits only for application acceptance into local work state, not Task completion. The Asset application owns execution order after acceptance.
 
 ## Missed shared state
 

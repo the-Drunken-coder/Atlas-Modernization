@@ -172,7 +172,7 @@ export function decodeFrame(bytes: Uint8Array): LinkFrame {
     bytes[0] !== MESSAGE_V1_MARKER &&
     bytes[0] !== METHOD_FRAME_MARKER
   )
-    throw new TypeError("Receipt metadata requires deflate-v3 or binary-v1");
+    throw new TypeError("Receipt metadata requires deflate-v3, binary-v1, message-v1, or message-v2");
   const source = decodeNode(value.s);
   const destination = value.d === undefined ? undefined : decodeNode(value.d);
   const payload = Buffer.from(value.p, "base64url");
@@ -266,6 +266,7 @@ function encodeCompactFrame(
     writeVarint(fields, value);
   for (const value of [compact.s, compact.d ?? "", compact.x, compact.o, compact.m]) {
     const bytes = Buffer.from(value);
+    if (bytes.toString("utf8") !== value) throw new TypeError("Link header text must be valid UTF-8");
     if (bytes.length > 65535) throw new RangeError("Link header field is too large");
     writeVarint(fields, bytes.length);
     fields.push(...bytes);
@@ -277,6 +278,7 @@ function encodeCompactFrame(
     if (compact.receipt !== undefined) {
       for (const value of [compact.receipt.operation_id, compact.receipt.message_id]) {
         const bytes = Buffer.from(value);
+        if (bytes.toString("utf8") !== value) throw new TypeError("Link header text must be valid UTF-8");
         if (bytes.length > 65535) throw new RangeError("Link receipt field is too large");
         writeVarint(fields, bytes.length);
         fields.push(...bytes);
@@ -706,7 +708,7 @@ function assertPinnedDictionary(encoding: "deflate-v2" | "deflate-v3", expected:
 function validateReceipt(identity: FrameIdentity, encoding: FrameEncoding, index: number, count: number): void {
   if (identity.receipt === undefined) return;
   if (encoding !== "deflate-v3" && encoding !== "binary-v1" && encoding !== "message-v1" && encoding !== "message-v2")
-    throw new TypeError("Receipt metadata requires deflate-v3 or binary-v1");
+    throw new TypeError("Receipt metadata requires deflate-v3, binary-v1, message-v1, or message-v2");
   if (identity.message_type !== "task_report" || identity.destination === undefined)
     throw new TypeError("Receipt metadata requires an addressed task_report frame");
   if (index !== 0 || count !== 1) throw new RangeError("Receipt metadata requires a single frame");

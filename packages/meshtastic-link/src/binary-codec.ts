@@ -130,7 +130,7 @@ function writeValue(output: number[], value: unknown, depth: number, state: { co
     output.push(TAG_NUMBER);
     const bytes = Buffer.allocUnsafe(8);
     bytes.writeDoubleLE(value, 0);
-    output.push(...bytes);
+    for (const byte of bytes) output.push(byte);
   } else if (typeof value === "string") {
     output.push(TAG_STRING);
     writeString(output, value, binaryStringIndexes);
@@ -161,7 +161,7 @@ function writeString(output: number[], value: string, indexes: Map<string, numbe
   if (bytes.byteLength > MAX_BINARY_BYTES) throw new RangeError("Binary payload string is too large");
   writeVarint(output, 0);
   writeVarint(output, bytes.byteLength);
-  output.push(...bytes);
+  for (const byte of bytes) output.push(byte);
 }
 
 function readValue(raw: Uint8Array, state: { offset: number; count: number }, depth: number): unknown {

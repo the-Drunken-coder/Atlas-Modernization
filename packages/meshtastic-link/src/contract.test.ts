@@ -33,6 +33,12 @@ describe("generated Radio contract", () => {
       );
     }
   );
+  it.each(["deflate-v1", "deflate-v2", "deflate-v3"] as const)("rejects lossy header text in %s", (encoding) => {
+    expect(() =>
+      fragmentPayload(new Uint8Array([1]), { ...frameIdentity(), service_session: "bad-\ud800" }, 233, encoding)
+    ).toThrow();
+  });
+
   it("caps outgoing frames at the wire limit when an adapter offers more capacity", () => {
     const frames = fragmentPayload(serializeLinkMessage(positionPublication(1)), frameIdentity(), 300);
     expect(frames.length).toBeGreaterThan(1);

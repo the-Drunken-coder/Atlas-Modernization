@@ -173,6 +173,26 @@ function setup() {
 }
 
 describe("Link service radio profile apply", () => {
+  it("captures each queued profile before waiting for an earlier apply", async () => {
+    const { adapter, service } = setup();
+    const desired = service.profile()!;
+    desired.frequency_slot = 21;
+    service.replaceProfile(desired);
+    adapter.blockWrites = true;
+    const first = service.applyRadioProfile();
+    await waitForApply(adapter);
+    const second = service.applyRadioProfile();
+    service.replaceProfile({ ...desired, frequency_slot: 22 });
+    adapter.blockWrites = false;
+    adapter.releaseWrites();
+    try {
+      await first;
+      await expect(second).resolves.toMatchObject({ selected_profile: { frequency_slot: 21 } });
+    } finally {
+      service.stop();
+    }
+  });
+
   it("reports an unavailable radio when cached profile reads lose the connection", async () => {
     const { adapter, service } = setup();
     adapter.readError = new RadioUnavailableError();

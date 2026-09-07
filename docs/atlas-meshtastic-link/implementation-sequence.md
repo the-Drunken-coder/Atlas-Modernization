@@ -87,8 +87,8 @@ After the first slice is correct and repeatable:
 7. Integrate Asset and Gateway applications without moving their policy into the Link.
 8. Run the canonical five-radio scenarios and record the unoptimized baseline.
 9. Attach physical radios, prove three-radio joining under `LOCAL_ONLY`, calibrate the simulation, and validate provisional field targets.
-10. Introduce compact generated encodings only after measurements identify their value.
+10. Evaluate the opt-in compact encodings against measured workloads and physical-radio results.
 
 Each phase uses the narrow correctness and documentation checks relevant to that phase. A later phase does not require speculative infrastructure in an earlier one.
 
-The package implementation covers the generated JSON baseline, typed radio SDK, transport behavior, ordered Task dispatcher, loopback service, USB serial adapter, profile convergence, durable Gateway membership, dynamic joining, and deterministic five-radio simulation. It exposes the documented Gateway and Asset application seams without moving either application's policy into the Link. Physical three-radio acceptance, simulator calibration, and any later compact encoding remain measurement-driven work rather than software claims.
+The package implementation covers the generated JSON baseline, typed radio SDK, transport behavior, ordered Task dispatcher, loopback service, USB serial adapter, profile convergence, durable Gateway membership, dynamic joining, and deterministic five-radio simulation. It exposes the documented Gateway and Asset application seams without moving either application's policy into the Link. Canonical JSON remains the default. Compact encodings are implemented and opt-in, but have not been field-validated. Physical three-radio acceptance and simulator calibration remain measurement-driven work.

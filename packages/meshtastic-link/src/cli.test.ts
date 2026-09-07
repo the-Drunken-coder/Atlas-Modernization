@@ -5,6 +5,18 @@ import { describe, expect, it, vi } from "vitest";
 import { main } from "./cli.js";
 
 describe("Meshtastic Link CLI", () => {
+  it("preserves HTTP status when the local service returns a non-JSON error", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("unavailable", { status: 503, statusText: "Service Unavailable" }))
+    );
+    try {
+      await expect(main(["radio", "show"])).rejects.toThrow("Link service returned 503: Service Unavailable");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("preflights actual join bytes before creating Gateway membership", async () => {
     const directory = await mkdtemp(join(tmpdir(), "atlas-join-preflight-"));
     const membership = join(directory, "membership.json");

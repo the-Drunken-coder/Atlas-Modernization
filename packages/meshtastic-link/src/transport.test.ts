@@ -1861,7 +1861,7 @@ describe("Link transport", () => {
     dispatcher.close();
   });
 
-  it("drops permanently invalid Task work instead of wedging its Asset queue", async () => {
+  it("rejects permanently invalid Task work before queue admission", async () => {
     const clock = new VirtualClock();
     const network = new SimulatedPacketNetwork({ seed: 77, clock });
     const gateway = new LinkTransport({
@@ -1871,10 +1871,12 @@ describe("Link transport", () => {
       clock
     });
     const dispatcher = new OrderedTaskDispatcher(gateway);
-    dispatcher.enqueue("asset-alpha", {
-      ...pendingTask("oversized-task", "2026-09-02T12:00:00Z"),
-      input: { payload: "x".repeat(MAX_LINK_MESSAGE_BYTES) }
-    });
+    expect(() =>
+      dispatcher.enqueue("asset-alpha", {
+        ...pendingTask("oversized-task", "2026-09-02T12:00:00Z"),
+        input: { payload: "x".repeat(MAX_LINK_MESSAGE_BYTES) }
+      })
+    ).toThrow("exceeds 128 KiB");
     await Promise.resolve();
 
     expect(dispatcher.state("asset-alpha")).toEqual({ queued: [] });
