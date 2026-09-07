@@ -40,7 +40,7 @@ export type PreparedStateDelta = {
   /** An optional candidate to compare after framing against fullPayload. */
   deltaPayload?: Uint8Array;
   baselineSourceSequence?: number;
-  commitFull: () => void;
+  commitFull: (sentAt: number) => void;
 };
 
 type SenderBaseline = {
@@ -91,11 +91,11 @@ export class StateDeltaEncoder {
       now - baseline.sentAt >= this.baselineIntervalMs ||
       baseline.source_sequence >= identity.source_sequence
     ) {
-      return this.fullPreparation(identity, publication, now, fullPayload, scope);
+      return this.fullPreparation(identity, publication, fullPayload, scope);
     }
 
     const patch = diffJSON(asJSONData(baseline.publication), asJSONData(publication));
-    const full = this.fullPreparation(identity, publication, now, fullPayload, scope);
+    const full = this.fullPreparation(identity, publication, fullPayload, scope);
     try {
       const deltaPayload = boundedDelta(encodeDelta(resourceType, resourceIDValue, baseline.source_sequence, patch));
       if (deltaPayload === undefined) return full;
@@ -109,7 +109,6 @@ export class StateDeltaEncoder {
   private fullPreparation(
     identity: StateDeltaIdentity,
     publication: StatePublication,
-    sentAt: number,
     fullPayload: Uint8Array,
     scope: string
   ): PreparedStateDelta {
@@ -118,7 +117,8 @@ export class StateDeltaEncoder {
     return {
       codec: STATE_DELTA_CODEC,
       fullPayload,
-      commitFull: () => {
+      commitFull: (committedAt) => {
+        if (!Number.isFinite(committedAt)) throw new RangeError("state delta time must be finite");
         if (committed) return;
         committed = true;
         const previous = this.baselines.get(scope);
@@ -127,7 +127,7 @@ export class StateDeltaEncoder {
         this.baselines.set(scope, {
           publication: snapshot,
           source_sequence: identity.source_sequence,
-          sentAt
+          sentAt: committedAt
         });
         while (this.baselines.size > this.maxResources) {
           const oldest = this.baselines.keys().next().value as string | undefined;
@@ -390,16 +390,7 @@ function isJSONData(value: unknown, seen = new Set<object>()): value is JSONData
 function diffJSON(left: JSONData, right: JSONData, path: string[] = []): StateDeltaPatch {
   if (left === right) return [];
   if (Array.isArray(left) && Array.isArray(right)) {
-    const operations: StateDeltaPatch = [];
-    const sharedLength = Math.min(left.length, right.length);
-    for (let index = 0; index < sharedLength; index++) {
-      operations.push(...diffJSON(left[index]!, right[index]!, [...path, String(index)]));
-    }
-    for (let index = left.length - 1; index >= right.length; index--)
-      operations.push({ op: "remove", path: [...path, String(index)] });
-    for (let index = left.length; index < right.length; index++)
-      operations.push({ op: "add", path: [...path, String(index)], value: right[index]! });
-    return operations;
+    return JSON.stringify(left) === JSON.stringify(right) ? [] : [{ op: "replace", path, value: right }];
   }
   if (isJSONObject(left) && isJSONObject(right)) {
     const operations: StateDeltaPatch = [];

@@ -14,6 +14,78 @@ import { LinkTransport } from "./transport.js";
 import type { LinkMessage } from "./types.js";
 
 describe("Link transport", () => {
+  it("retains the Task wire identity reserved before other dispatches", async () => {
+    const clock = new VirtualClock();
+    const radio = new InMemoryMeshRadio();
+    const sent = vi.spyOn(radio, "send");
+    let nextID = 0;
+    const gateway = new LinkTransport({
+      node: { role: "gateway", id: "gateway" },
+      sourceGeneration: 1,
+      radio,
+      clock,
+      serviceSession: "reserved-session",
+      createID: () => `frame-${++nextID}`
+    });
+    try {
+      const dispatch = gateway.reserveTaskDelivery(
+        { type: "task_delivery", delivery: "assignment", task: pendingTask("reserved", "2026-09-02T12:00:00Z") },
+        { role: "asset", id: "asset-alpha" },
+        "reserved"
+      );
+      gateway.submit(
+        { type: "task_delivery", delivery: "assignment", task: pendingTask("other", "2026-09-02T12:00:00Z") },
+        { destination: { role: "asset", id: "asset-alpha" }, operationID: "other" }
+      );
+      expect(dispatch().status).toBe("queued");
+      await clock.advanceBy(1_000);
+      const frames = sent.mock.calls.map(([payload]) => decodeFrame(payload));
+      expect(frames.filter((frame) => frame.operation_id === "reserved")).toContainEqual(
+        expect.objectContaining({ source_sequence: 1, message_id: "frame-1" })
+      );
+      expect(frames.filter((frame) => frame.operation_id === "other")).toContainEqual(
+        expect.objectContaining({ source_sequence: 2, message_id: "frame-2" })
+      );
+    } finally {
+      gateway.stop();
+    }
+  });
+
+  it.each([
+    { events: [], version: 4, has_more: false },
+    { events: [], version: 5, has_more: true, next_cursor: "cursor" },
+    {
+      events: [
+        { event: "delete", id: "asset-alpha", resource_type: "entity", version: 7 },
+        { event: "delete", id: "asset-alpha", resource_type: "entity", version: 6 }
+      ],
+      version: 7,
+      has_more: false
+    }
+  ])("rejects a changed-since response inconsistent with cursor 5: %j", async (output) => {
+    const { clock, gateway, asset, assetPicture } = directPair();
+    gateway.onEvent((event) => {
+      if (event.type !== "message" || event.message.type !== "data_request") return;
+      gateway.settleInbound(event.settlement_id, true);
+      gateway.submit(
+        { type: "data_response", operation: "query.changed_since", request_id: "changes", output },
+        { destination: asset.node, operationID: "invalid-changes" }
+      );
+    });
+    try {
+      asset.submit(
+        { type: "data_request", request_id: "changes", operation: "query.changed_since", since_version: 5 },
+        { destination: gateway.node, operationID: "changes" }
+      );
+      await clock.runUntilIdle();
+      expect(asset.status("changes")?.status).toBe("failed");
+      expect(assetPicture.snapshot().records).toEqual([]);
+    } finally {
+      gateway.stop();
+      asset.stop();
+    }
+  });
+
   it.each([
     { accepted: true, omitFinalID: false },
     { accepted: false, omitFinalID: false },
@@ -1625,7 +1697,7 @@ describe("Link transport", () => {
     expect(receiver.metrics().stale_messages_rejected).toBeGreaterThan(0);
   });
 
-  it("binds a new source generation when its first valid fragment arrives", () => {
+  it("binds a new source generation only after the complete payload validates", () => {
     const clock = new VirtualClock();
     const network = new SimulatedPacketNetwork({ seed: 73, clock });
     const radio = network.addRadio("receiver", 1);
@@ -1675,7 +1747,11 @@ describe("Link transport", () => {
       radio.receive({ payload, received_at: 1, radio_source: 2, channel: 1, public_key_encrypted: false });
     }
 
-    expect(picture.snapshot().records).toEqual([]);
+    expect(picture.snapshot().records).toMatchObject([{ source_generation: 1 }]);
+    for (const payload of newFrames.slice(1)) {
+      radio.receive({ payload, received_at: 2, radio_source: 2, channel: 1, public_key_encrypted: false });
+    }
+    expect(picture.snapshot().records).toMatchObject([{ source_generation: 2 }]);
   });
 
   it("schedules Task traffic ahead of queued Object chunks", async () => {
@@ -2004,7 +2080,7 @@ describe("Link transport", () => {
     expect(dispatcher.state("asset-alpha")).toEqual({
       in_flight: "task-first",
       in_flight_operation_id: "task_1",
-      cancellation: { task_id: "task-cancelled", operation_id: "task_2" },
+      cancellation: { task_id: "task-cancelled", operation_id: "task_4" },
       queued: []
     });
 

@@ -161,6 +161,10 @@ export class OrderedTaskDispatcher {
   private pumpingQueuedAssets = false;
   private wakingRetries = false;
   private dispatchSequence = 0;
+  private readonly reservedTasks = new WeakMap<
+    TaskResource,
+    Map<TaskDelivery["delivery"], () => ReturnType<LinkTransport["submit"]>>
+  >();
 
   constructor(
     private readonly transport: LinkTransport,
@@ -178,11 +182,7 @@ export class OrderedTaskDispatcher {
   enqueue(assetID: string, task: TaskResource, delivery: TaskDelivery["delivery"] = "assignment"): void {
     if (!assetID) throw new TypeError("Task delivery requires an Asset ID");
     if (delivery === "assignment" && this.ignoresAssignment(assetID, task)) return;
-    this.transport.validateTaskDelivery(
-      { type: "task_delivery", task, delivery },
-      { role: "asset", id: assetID },
-      `task_${this.dispatchSequence + 1}`
-    );
+    this.reserveTask(assetID, task, delivery);
     if (delivery === "cancellation") {
       const replacesQueued = (this.queued.get(assetID) ?? []).some((item) => item.task.task_id === task.task_id);
       this.reserveQueueSlots(replacesQueued ? 0 : 1);
@@ -222,13 +222,7 @@ export class OrderedTaskDispatcher {
   enqueueAssignments(assetID: string, tasks: readonly TaskResource[]): void {
     if (!assetID) throw new TypeError("Task delivery requires an Asset ID");
     const admitted = tasks.filter((task) => !this.ignoresAssignment(assetID, task));
-    for (const [index, task] of admitted.entries()) {
-      this.transport.validateTaskDelivery(
-        { type: "task_delivery", task, delivery: "assignment" },
-        { role: "asset", id: assetID },
-        `task_${this.dispatchSequence + index + 1}`
-      );
-    }
+    for (const task of admitted) this.reserveTask(assetID, task, "assignment");
     const active = this.inFlight.get(assetID);
     const replay = active?.failed ? tasks.find((task) => task.task_id === active.task.task_id) : undefined;
     const queue = this.queued.get(assetID) ?? [];
@@ -355,12 +349,26 @@ export class OrderedTaskDispatcher {
     else if (remaining.length !== queue.length) this.queued.set(assetID, remaining);
   }
 
-  private send(assetID: string, queued: QueuedTask) {
-    const operationID = `task_${++this.dispatchSequence}`;
-    return this.transport.submit(
-      { type: "task_delivery", delivery: queued.delivery, task: queued.task },
-      { destination: { role: "asset", id: assetID }, operationID }
+  private reserveTask(assetID: string, task: TaskResource, delivery: TaskDelivery["delivery"]): void {
+    const dispatch = this.transport.reserveTaskDelivery(
+      { type: "task_delivery", delivery, task },
+      { role: "asset", id: assetID },
+      `task_${++this.dispatchSequence}`
     );
+    const reservations = this.reservedTasks.get(task) ?? new Map();
+    reservations.set(delivery, dispatch);
+    this.reservedTasks.set(task, reservations);
+  }
+
+  private send(assetID: string, queued: QueuedTask) {
+    if (!this.reservedTasks.get(queued.task)?.has(queued.delivery))
+      this.reserveTask(assetID, queued.task, queued.delivery);
+    const dispatch = this.reservedTasks.get(queued.task)?.get(queued.delivery);
+    if (!dispatch) throw new Error("Task wire identity was not reserved");
+    const result = dispatch();
+    if (result.status !== "failed" || !isCapacityFailure(result.reason))
+      this.reservedTasks.get(queued.task)?.delete(queued.delivery);
+    return result;
   }
 
   private retryFailedAssignment(assetID: string, task: TaskResource): void {

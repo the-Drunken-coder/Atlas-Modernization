@@ -80,13 +80,13 @@ describe("optimized production transport", () => {
       if (event.type === "message") accepted.push(event.message);
     });
     try {
-      for (let version = 1; version <= 5; version++) {
+      for (let version = 1; version <= 6; version++) {
         harness.asset.submit(positionPublication(version));
         await harness.clock.advanceBy(5_000);
       }
       expect(harness.droppedPackets()).toBe(1);
-      expect(accepted).toEqual([positionPublication(4), positionPublication(5)]);
-      expect(harness.gateway.metrics().invalid_messages).toBe(2);
+      expect(accepted).toEqual([positionPublication(5), positionPublication(6)]);
+      expect(harness.gateway.metrics().invalid_messages).toBe(3);
     } finally {
       await harness.close();
     }

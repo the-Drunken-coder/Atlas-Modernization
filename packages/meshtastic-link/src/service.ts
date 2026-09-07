@@ -103,7 +103,7 @@ export class LinkService {
   private transportSubscriptionsDispatched = false;
 
   constructor(private readonly options: LinkServiceOptions) {
-    if (!options.nodeID || options.nodeID.includes(":")) throw new TypeError("Link node ID is invalid");
+    if (!options.nodeID.trim() || options.nodeID.includes(":")) throw new TypeError("Link node ID is invalid");
     this.clock = options.clock;
     this.picture = options.picture ?? new SharedPicture(this.serviceSession);
     this.node = { role: options.mode, id: options.nodeID };

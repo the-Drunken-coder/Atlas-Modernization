@@ -27,7 +27,7 @@ describe("state delta codec", () => {
     const encoder = new StateDeltaEncoder();
     const decoder = new StateDeltaDecoder();
     const first = encoder.prepare(positionPublication(1), identity(1), 0);
-    first.commitFull();
+    first.commitFull(0);
     const third = encoder.prepare(positionPublication(3), identity(3), 1);
     const fourth = encoder.prepare(positionPublication(4), identity(4), 2);
     expect(fourth.baselineSourceSequence).toBe(1);
@@ -51,7 +51,7 @@ describe("state delta codec", () => {
       throw new Error("expected valid state publications");
     }
     const first = encoder.prepare(firstPublication, identity(1), 0);
-    first.commitFull();
+    first.commitFull(0);
     const second = encoder.prepare(secondPublication, identity(2), 1);
     const expected = positionPublication(2);
     delete expected.runtime_id;
@@ -71,12 +71,12 @@ describe("state delta codec", () => {
 
     const uncommitted = encoder.prepare(secondPublication, identity(2), 1);
     expect(uncommitted.deltaPayload).toBeUndefined();
-    first.commitFull();
+    first.commitFull(0);
     const second = encoder.prepare(secondPublication, identity(2), 1);
     expect(second.deltaPayload).toBeDefined();
     expect(second.baselineSourceSequence).toBe(1);
     expect(second.deltaPayload!.byteLength).toBeLessThan(second.fullPayload.byteLength);
-    second.commitFull();
+    second.commitFull(1);
     const third = encoder.prepare(positionPublication(3), identity(3), 2);
     expect(third.baselineSourceSequence).toBe(2);
     expect(decoder.decode(first.fullPayload, identity(1))).toEqual(firstPublication);
@@ -89,7 +89,7 @@ describe("state delta codec", () => {
     const first = positionPublication(1);
     const prepared = encoder.prepare(first, identity(1), 0);
     first.resource.extra = { queued: true };
-    prepared.commitFull();
+    prepared.commitFull(0);
 
     const second = encoder.prepare(positionPublication(2), identity(2), 1);
     expect(second.deltaPayload).toBeDefined();
@@ -97,10 +97,28 @@ describe("state delta codec", () => {
     expect(decoder.decode(second.deltaPayload!, identity(2))).toEqual(positionPublication(2));
   });
 
+  it("starts baseline recovery time when queued full state is committed", () => {
+    const encoder = new StateDeltaEncoder();
+    const queued = encoder.prepare(positionPublication(1), identity(1), 0);
+    queued.commitFull(30_000);
+    expect(encoder.prepare(positionPublication(2), identity(2), 30_001).deltaPayload).toBeDefined();
+    expect(encoder.prepare(positionPublication(3), identity(3), 45_000).deltaPayload).toBeUndefined();
+  });
+
+  it("replaces a changed array as a single wire value", () => {
+    const encoder = new StateDeltaEncoder();
+    encoder.prepare(positionPublication(1), identity(1), 0).commitFull(0);
+    const delta = encoder.prepare(positionPublication(2), identity(2), 1).deltaPayload;
+    if (!delta) throw new Error("missing delta");
+    const text = Buffer.from(delta).toString("utf8");
+    expect(text).toContain('"path":["resource","components","geometry","coordinates"],"value":[-71.8,42.2,102]');
+    expect(text).not.toContain('"coordinates","2"');
+  });
+
   it("repeats full bytes at the bounded recovery interval", () => {
     const encoder = new StateDeltaEncoder();
     const first = encoder.prepare(positionPublication(1), identity(1), 0);
-    first.commitFull();
+    first.commitFull(0);
 
     expect(
       encoder.prepare(positionPublication(2), identity(2), STATE_DELTA_BASELINE_INTERVAL_MS - 1).deltaPayload
@@ -125,7 +143,7 @@ describe("state delta codec", () => {
       }
     };
     const baseline = encoder.prepare(first, identity(1), 0);
-    baseline.commitFull();
+    baseline.commitFull(0);
     const prepared = encoder.prepare(second, identity(2), 1);
 
     expect(prepared.deltaPayload).toBeDefined();
@@ -135,7 +153,7 @@ describe("state delta codec", () => {
   it("fails closed when the full baseline is missing after restart", () => {
     const encoder = new StateDeltaEncoder();
     const first = encoder.prepare(positionPublication(1), identity(1), 0);
-    first.commitFull();
+    first.commitFull(0);
     const delta = encoder.prepare(positionPublication(2), identity(2), 1);
 
     expect(delta.deltaPayload).toBeDefined();
@@ -149,10 +167,10 @@ describe("state delta codec", () => {
     const secondPublication = positionPublication(2);
     const thirdPublication = positionPublication(3);
     const first = encoder.prepare(firstPublication, identity(1), 0);
-    first.commitFull();
+    first.commitFull(0);
     const second = encoder.prepare(secondPublication, identity(2), STATE_DELTA_BASELINE_INTERVAL_MS);
     expect(second.deltaPayload).toBeUndefined();
-    second.commitFull();
+    second.commitFull(STATE_DELTA_BASELINE_INTERVAL_MS);
     const third = encoder.prepare(thirdPublication, identity(3), STATE_DELTA_BASELINE_INTERVAL_MS + 1);
     expect(third.deltaPayload).toBeDefined();
 
@@ -165,7 +183,7 @@ describe("state delta codec", () => {
   it("retains the previous baseline and evicts whole resource scopes", () => {
     const firstEncoder = new StateDeltaEncoder();
     const first = firstEncoder.prepare(positionPublication(1), identity(1), 0);
-    first.commitFull();
+    first.commitFull(0);
     const deltaAgainstFirst = firstEncoder.prepare(positionPublication(2), identity(2), 1);
     expect(deltaAgainstFirst.deltaPayload).toBeDefined();
     const unrelated = new StateDeltaEncoder().prepare(entityPublication("asset-bravo", 1), identity(3), 0);
@@ -180,7 +198,7 @@ describe("state delta codec", () => {
   it("keeps a target resource through repeated full updates to another resource", () => {
     const targetEncoder = new StateDeltaEncoder();
     const target = targetEncoder.prepare(positionPublication(1), identity(1), 0);
-    target.commitFull();
+    target.commitFull(0);
     const targetDelta = targetEncoder.prepare(positionPublication(2), identity(2), 1);
     const decoder = new StateDeltaDecoder();
     expect(decoder.decode(target.fullPayload, identity(1))).toBeDefined();
@@ -199,10 +217,10 @@ describe("state delta codec", () => {
   it("does not let a late old full refresh scope recency or displace the current base", () => {
     const encoder = new StateDeltaEncoder();
     const first = encoder.prepare(positionPublication(1), identity(1), 0);
-    first.commitFull();
+    first.commitFull(0);
     const second = encoder.prepare(positionPublication(2), identity(2), 1);
     expect(second.deltaPayload).toBeDefined();
-    second.commitFull();
+    second.commitFull(1);
     const third = encoder.prepare(positionPublication(3), identity(3), 2);
     expect(third.deltaPayload).toBeDefined();
 
@@ -220,7 +238,7 @@ describe("state delta codec", () => {
   it("accepts an old baseline that arrives after the current full", () => {
     const encoder = new StateDeltaEncoder();
     const first = encoder.prepare(positionPublication(1), identity(1), 0);
-    first.commitFull();
+    first.commitFull(0);
     const deltaAgainstFirst = encoder.prepare(positionPublication(2), identity(2), 1);
     expect(deltaAgainstFirst.deltaPayload).toBeDefined();
 
@@ -245,7 +263,7 @@ describe("state delta codec", () => {
       }
     };
     const baseline = encoder.prepare(first, identity(1), 0);
-    baseline.commitFull();
+    baseline.commitFull(0);
     const delta = encoder.prepare(second, identity(2), 1);
     expect(delta.deltaPayload).toBeDefined();
     expect(decoder.decode(baseline.fullPayload, identity(1))).toEqual(first);
@@ -286,7 +304,7 @@ it("retains full publications when a resource identity cannot be represented as 
   first.resource.entity_id = "asset-\ud800";
   const second = positionPublication(2);
   second.resource.entity_id = first.resource.entity_id;
-  encoder.prepare(first, identity(1), 0).commitFull();
+  encoder.prepare(first, identity(1), 0).commitFull(0);
   const next = encoder.prepare(second, identity(2), 1);
   expect(next.deltaPayload).toBeUndefined();
   expect(new StateDeltaDecoder().decode(next.fullPayload, identity(2))).toEqual(second);

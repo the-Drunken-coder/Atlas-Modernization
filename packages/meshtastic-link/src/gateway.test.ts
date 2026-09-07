@@ -383,7 +383,7 @@ describe("Ordered Task dispatcher recovery", () => {
       expect(delivered).toEqual(["first", "second"]);
       expect(dispatcher.state("asset-alpha")).toEqual({ queued: [] });
       expect(gateway.status("task_1")).toMatchObject({ status: "failed" });
-      expect(gateway.status("task_2")).toMatchObject({ status: "confirmed" });
+      expect(gateway.status("task_4")).toMatchObject({ status: "confirmed" });
       expect(gateway.status("task_3")).toMatchObject({ status: "confirmed" });
     } finally {
       dispatcher.close();

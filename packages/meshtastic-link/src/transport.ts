@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import {
+  changedSinceResponseValidator,
   isEntityCheckInResponse,
   isEntityResource,
   isObjectDetailResource,
@@ -359,9 +360,18 @@ export class LinkTransport {
     message: LinkMessage,
     options: SubmitOptions,
     useInboundReservation: boolean,
-    radioRequestID?: number
+    radioRequestID?: number,
+    reservedIdentity?: FrameIdentity
   ): LinkOperationResult {
-    const prepared = this.prepareOutbound(message, options, useInboundReservation, radioRequestID);
+    const prepared = this.prepareOutbound(
+      message,
+      options,
+      useInboundReservation,
+      radioRequestID,
+      undefined,
+      reservedIdentity?.source_sequence,
+      reservedIdentity
+    );
     if (prepared.kind === "existing") return prepared.result;
     if (prepared.kind === "failed") {
       if (prepared.confirmedOverload) this.mutableMetrics.confirmed_rejected_overload++;
@@ -370,18 +380,22 @@ export class LinkTransport {
     return this.commitOutbound(prepared.prepared);
   }
 
-  /** Validate queued Task wire data before the dispatcher acknowledges admission. */
-  validateTaskDelivery(
+  /** Reserve a validated Task identity without occupying the outbound radio queue. */
+  reserveTaskDelivery(
     message: Extract<LinkMessage, { type: "task_delivery" }>,
     destination: LinkNode,
     operationID: string
-  ): void {
+  ): () => LinkOperationResult {
     if (this.stopped) throw new Error("link service is stopped");
+    message = structuredClone(message);
+    destination = { ...destination };
     const identity = this.outboundIdentity(message, { destination }, operationID, this.sourceSequence + 1);
     const sendOptions: RadioSendOptions = { channel: this.privateChannel, priority: identity.priority };
     const limit = this.radio.maxPayloadBytes?.(sendOptions) ?? this.radio.max_payload_bytes;
     const encoding = this.frameEncoding === "deflate-v3" ? "deflate-v2" : this.frameEncoding;
     fragmentPayload(serializeLinkMessage(message), identity, limit, encoding);
+    this.sourceSequence = identity.source_sequence;
+    return () => this.submitWithCapacity(message, { destination, operationID }, false, undefined, identity);
   }
 
   private outboundIdentity(
@@ -414,7 +428,8 @@ export class LinkTransport {
       pendingInboundDelta: 0,
       additionalConfirmed: deliveryClass(message) === "confirmed" ? 1 : 0
     },
-    sourceSequence = this.sourceSequence + 1
+    sourceSequence = this.sourceSequence + 1,
+    reservedIdentity?: FrameIdentity
   ): OutboundPreparation {
     const operationID = options.operationID ?? operationIDFor(message, this.createID);
     const trackingKey = operationTrackingKey(message, options.destination, operationID);
@@ -473,7 +488,7 @@ export class LinkTransport {
     } catch (error) {
       return failure(`Radio contract encoding failed: ${asErrorMessage(error)}`);
     }
-    const identity = this.outboundIdentity(message, options, operationID, sourceSequence);
+    const identity = reservedIdentity ?? this.outboundIdentity(message, options, operationID, sourceSequence);
     const replaceKey = coalescingKey(message);
     const sendOptions: RadioSendOptions = {
       channel: this.privateChannel,
@@ -489,7 +504,7 @@ export class LinkTransport {
       frames = fragmentPayload(payload, identity, limit, frameEncoding);
       if (this.stateEncoder && message.type === "state") {
         const prepared = this.stateEncoder.prepare(message, identity, this.clock.now());
-        commitStateBaseline = prepared.commitFull;
+        commitStateBaseline = () => prepared.commitFull(this.clock.now());
         if (prepared.deltaPayload) {
           try {
             const deltaFrames = fragmentPayload(prepared.deltaPayload, identity, limit, frameEncoding);
@@ -1198,7 +1213,7 @@ export class LinkTransport {
     }
     if (
       sameNode(frame.source, this.node) ||
-      this.activateSourceFence(frame.source, frame.source_generation, frame.service_session) !== undefined
+      this.checkSourceFence(frame.source, frame.source_generation, frame.service_session) !== undefined
     )
       return;
     if (frame.message_type === "object_content" && !this.expectsObjectContent(frame)) return;
@@ -1548,11 +1563,7 @@ export class LinkTransport {
     );
   }
 
-  private activateSourceFence(
-    source: LinkNode,
-    generation: number,
-    session: string
-  ): SourceAdmissionFailure | undefined {
+  private checkSourceFence(source: LinkNode, generation: number, session: string): SourceAdmissionFailure | undefined {
     const key = `${source.role}:${source.id}`;
     const current = this.sourceFences.get(key);
     if (
@@ -1563,12 +1574,25 @@ export class LinkTransport {
       return "stale_source";
     }
     if (current === undefined && this.sourceFences.size >= LINK_SOURCE_IDENTITY_LIMIT) return "capacity";
+    return undefined;
+  }
+
+  private activateSourceFence(
+    source: LinkNode,
+    generation: number,
+    session: string
+  ): SourceAdmissionFailure | undefined {
+    const rejection = this.checkSourceFence(source, generation, session);
+    if (rejection !== undefined) return rejection;
+    const key = `${source.role}:${source.id}`;
+    const current = this.sourceFences.get(key);
     const changed = current === undefined || generation > current.generation;
     if (changed && this.picture && !this.picture.activateSource(source, generation, session)) return "picture_rejected";
     this.sourceFences.set(key, { generation, session });
     if (changed) {
       for (const [reassemblyKey, reassembly] of this.reassemblies) {
-        if (!sameNode(reassembly.identity.source, source)) continue;
+        if (!sameNode(reassembly.identity.source, source) || reassembly.identity.source_generation > generation)
+          continue;
         if (reassembly.identity.source_generation === generation && reassembly.identity.service_session === session) {
           continue;
         }
@@ -2196,6 +2220,8 @@ function responseMatchesRequest(
       );
     case "object.content":
       return false;
+    case "query.changed_since":
+      return changedSinceResponseValidator(request.since_version ?? 0)(response.output);
     default:
       return true;
   }

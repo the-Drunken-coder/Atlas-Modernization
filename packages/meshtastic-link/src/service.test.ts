@@ -12,6 +12,11 @@ import { LinkTransport } from "./transport.js";
 import type { ResourceStatePublication } from "./types.js";
 
 describe("loopback Link service", () => {
+  it.each(["", " ", "\t\n"])("rejects a blank service node ID %j before joining", (nodeID) => {
+    expect(() => new LinkService({ mode: "asset", nodeID, clock: new VirtualClock() })).toThrow(
+      "Link node ID is invalid"
+    );
+  });
   it.each(["", "?after=0"])("replays from Last-Event-ID on reconnect to /v1/events%s", async (query) => {
     const service = new LinkService({ mode: "asset", nodeID: "asset-alpha", clock: new VirtualClock() });
     service.setLifecycle("discovering");

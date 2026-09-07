@@ -143,6 +143,7 @@ export {
 export { mapAreaSquareMeters } from "./spatial.js";
 export { joinAtlasUrl, normalizeAtlasBaseUrl } from "./url.js";
 export {
+  changedSinceResponseValidator,
   isEntityResource,
   isFullDatasetResponse,
   isObjectDetailResource,
