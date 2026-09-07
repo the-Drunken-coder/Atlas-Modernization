@@ -12,6 +12,7 @@ This is the single entry point for project documentation. Docs are split into **
 | [`docs/atlas-core/`](atlas-core/) | Atlas Core packaging, ingress, and release operations. | "How is the installable Core deployed or released?" |
 | [`docs/atlas-change-feed/`](atlas-change-feed/) | Change feed design: websocket push contract, subscription filters, consumption rules, simulation-testing approach. | "How do clients learn about writes without polling?" |
 | [`docs/atlas-plugins/`](atlas-plugins/) | Plugin architecture: operations, datastreams, external sources, isolation, and Core ownership. | "How does Atlas add external-data and extension capabilities?" |
+| [`docs/atlas-meshtastic-link/`](atlas-meshtastic-link/) | Discovery and target architecture for moving Atlas data through Meshtastic. | "What should the Meshtastic communication method do?" |
 | [`docs/atlas-protocol/`](atlas-protocol/) | Atlas Protocol design decisions and reference docs. | "Why is the protocol shaped this way?" |
 | [`docs/atlas-sdk/`](atlas-sdk/) | Atlas SDK design: client architecture, sync engine/cache, unified reads, testing, known gaps. | "How do services talk to Atlas Core?" |
 | [`docs/design-decisions/`](design-decisions/) | Durable architectural/implementation choices across the whole project (Atlas Core, Atlas Protocol, Atlas SDK, …). | "What did we decide, and why?" |
