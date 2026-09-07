@@ -1,4 +1,6 @@
 import type { Marker } from "maplibre-gl";
+import type { ConnectionFreshness, LinkState } from "../../../atlas/entities.js";
+import { connectionStatusLabel } from "../../primitives/StatusPill.js";
 import { defaultSidcIconService } from "../../symbols/sidc-symbol-service.js";
 import type { MapFeature, MapSources } from "./map-sources.js";
 
@@ -16,7 +18,7 @@ export function createSymbolMarkerElement(feature: SymbolMarkerFeature): HTMLBut
 
 export function updateSymbolMarkerElement(element: HTMLButtonElement, feature: SymbolMarkerFeature): void {
   const { properties } = feature;
-  const opacity = properties.linkState === "disconnected" ? 0.58 : properties.linkState === "degraded" ? 0.82 : 1;
+  const opacity = markerOpacity(properties.linkState, properties.connectionFreshness);
   const rotation = properties.kind === "asset" ? properties.heading : undefined;
   const symbol =
     properties.kind === "track"
@@ -38,8 +40,9 @@ export function updateSymbolMarkerElement(element: HTMLButtonElement, feature: S
   element.classList.toggle("map-symbol-marker--track", properties.kind === "track");
   element.classList.toggle("map-symbol-marker--selected", properties.selected);
   element.classList.toggle("map-symbol-marker--fallback", rendered.isFallback);
-  element.title = properties.name;
-  element.setAttribute("aria-label", `${properties.name} ${properties.kind}`);
+  const statusLabel = markerStatusLabel(properties.kind, properties.linkState, properties.connectionFreshness);
+  element.title = statusLabel ? `${properties.name} · ${statusLabel}` : properties.name;
+  element.setAttribute("aria-label", `${properties.name} ${properties.kind}${statusLabel ? ` ${statusLabel}` : ""}`);
   element.dataset.entityId = properties.entityId;
   element.innerHTML = rendered.html;
 }
@@ -62,12 +65,28 @@ export function symbolMarkerPresentationsEqual(left: SymbolMarkerFeature, right:
     a.selected === b.selected &&
     a.classification === b.classification &&
     a.linkState === b.linkState &&
+    a.connectionFreshness === b.connectionFreshness &&
     a.heading === b.heading &&
     a.subtype === b.subtype &&
     a.modelId === b.modelId &&
     a.assetType === b.assetType &&
     a.symbolType === b.symbolType
   );
+}
+
+function markerOpacity(linkState: LinkState | undefined, freshness: ConnectionFreshness | undefined): number {
+  const linkOpacity = linkState === "disconnected" ? 0.58 : linkState === "degraded" ? 0.82 : 1;
+  const freshnessOpacity = freshness && freshness !== "fresh" ? 0.82 : 1;
+  return Math.min(linkOpacity, freshnessOpacity);
+}
+
+function markerStatusLabel(
+  kind: SymbolMarkerFeature["properties"]["kind"],
+  linkState: LinkState | undefined,
+  freshness: ConnectionFreshness | undefined
+): string | undefined {
+  if (kind !== "asset" || !linkState) return undefined;
+  return connectionStatusLabel({ reported: linkState, freshness: freshness ?? "missing" });
 }
 
 export function clearMarkers(markers: Marker[]): void {

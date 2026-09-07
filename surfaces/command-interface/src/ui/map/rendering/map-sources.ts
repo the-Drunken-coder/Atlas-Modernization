@@ -1,5 +1,6 @@
 import type { EntityResource } from "@the-drunken-coder/atlas-sdk";
 import {
+  type ConnectionFreshness,
   ENTITY_DESCRIPTORS,
   ENTITY_KINDS,
   type EntityKind,
@@ -8,9 +9,12 @@ import {
   entityDisplayName,
   entityGeometry,
   entityHeading,
+  entityHeartbeatLastSeen,
   entityKind,
   entityLinkState,
-  entityPosition
+  entityPosition,
+  heartbeatLevel,
+  type LinkState
 } from "../../../atlas/entities.js";
 import { displayGeometry, type UiPoint, type UiRawGeometry } from "../../../atlas/geometry.js";
 
@@ -21,7 +25,8 @@ export type MapFeatureProperties = {
   name: string;
   selected: boolean;
   classification?: string;
-  linkState?: string;
+  linkState?: LinkState;
+  connectionFreshness?: ConnectionFreshness;
   heading?: number;
   subtype?: string;
   modelId?: string;
@@ -51,7 +56,11 @@ export function emptyFeatureCollection(): MapFeatureCollection {
  * Turn the entity snapshot into one GeoJSON source per kind. Assets/tracks
  * render as points (telemetry preferred); geofeatures render their geometry.
  */
-export function buildMapSources(entities: EntityResource[], selectedId: string | undefined): MapSources {
+export function buildMapSources(
+  entities: EntityResource[],
+  selectedId: string | undefined,
+  now: number = Date.now()
+): MapSources {
   const sources = Object.fromEntries(
     ENTITY_KINDS.map((kind) => [ENTITY_DESCRIPTORS[kind].list, emptyFeatureCollection()])
   ) as MapSources;
@@ -76,6 +85,8 @@ export function buildMapSources(entities: EntityResource[], selectedId: string |
         selected: entity.entity_id === selectedId,
         classification: entityClassification(entity),
         linkState: entityLinkState(entity),
+        connectionFreshness:
+          kind === "asset" ? (heartbeatLevel(entityHeartbeatLastSeen(entity), now) ?? "missing") : undefined,
         heading: kind === "asset" ? entityHeading(entity) : undefined,
         subtype: entity.subtype ?? undefined,
         ...entitySymbolHints(entity)

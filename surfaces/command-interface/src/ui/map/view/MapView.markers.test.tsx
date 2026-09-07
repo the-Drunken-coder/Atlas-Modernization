@@ -19,6 +19,85 @@ vi.mock("../../symbols/sidc-runtime.js", () => ({
 const TRACK_COUNT = 256;
 
 describe("MapView symbol marker reconciliation", () => {
+  it("updates marker freshness at heartbeat thresholds without replacing the marker", async () => {
+    const renderSymbol = vi.spyOn(defaultSidcIconService, "render");
+    const baseNow = Date.parse("2026-06-20T00:10:00Z");
+    const rover = entity({
+      entity_id: "asset-1",
+      alias: "Rover",
+      components: {
+        communications: { link_state: "connected" },
+        heartbeat: { last_seen: "2026-06-20T00:09:50Z" },
+        telemetry: { latitude: 40, longitude: -74 }
+      }
+    });
+    const { canvas, rerenderMap } = renderMapView({
+      sources: buildMapSources([rover], undefined, baseNow)
+    });
+
+    await waitFor(() => expect(canvas.querySelectorAll(".map-symbol-marker")).toHaveLength(1));
+    const marker = markerFor(canvas, rover.entity_id);
+    expect(renderSymbol).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ opacity: 1 }));
+
+    renderSymbol.mockClear();
+    rerenderMap({ sources: buildMapSources([rover], undefined, baseNow + 10_000) });
+    expect(markerFor(canvas, rover.entity_id)).toBe(marker);
+    expect(renderSymbol).not.toHaveBeenCalled();
+
+    rerenderMap({ sources: buildMapSources([rover], undefined, baseNow + 30_000) });
+    expect(markerFor(canvas, rover.entity_id)).toBe(marker);
+    expect(renderSymbol).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ opacity: 0.82 }));
+    expect(marker).toHaveAttribute("title", "Rover · Reported connected: stale heartbeat");
+    expect(marker).toHaveAttribute("aria-label", "Rover asset Reported connected: stale heartbeat");
+
+    renderSymbol.mockClear();
+    rerenderMap({ sources: buildMapSources([rover], undefined, baseNow + 130_000) });
+    expect(markerFor(canvas, rover.entity_id)).toBe(marker);
+    expect(renderSymbol).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ opacity: 0.82 }));
+    expect(marker).toHaveAttribute("title", "Rover · Reported connected: offline");
+    expect(marker).toHaveAttribute("aria-label", "Rover asset Reported connected: offline");
+    expect(markerOperationCounts()).toEqual({ created: 1, setLngLat: 1, addTo: 1, remove: 0 });
+  });
+
+  it("dims stale assets even without a reported communications state", async () => {
+    const renderSymbol = vi.spyOn(defaultSidcIconService, "render");
+    const rover = entity({
+      entity_id: "asset-1",
+      components: {
+        heartbeat: { last_seen: "2026-06-20T00:09:00Z" },
+        telemetry: { latitude: 40, longitude: -74 }
+      }
+    });
+    const { canvas } = renderMapView({
+      sources: buildMapSources([rover], undefined, Date.parse("2026-06-20T00:10:00Z"))
+    });
+    await waitFor(() => expect(canvas.querySelectorAll(".map-symbol-marker")).toHaveLength(1));
+    expect(renderSymbol).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ opacity: 0.82 }));
+  });
+
+  it("keeps reported disconnected opacity when heartbeat freshness is also stale", async () => {
+    const renderSymbol = vi.spyOn(defaultSidcIconService, "render");
+    const now = Date.parse("2026-06-20T00:10:00Z");
+    const rover = entity({
+      entity_id: "asset-1",
+      alias: "Rover",
+      components: {
+        communications: { link_state: "disconnected" },
+        heartbeat: { last_seen: "2026-06-20T00:09:00Z" },
+        telemetry: { latitude: 40, longitude: -74 }
+      }
+    });
+
+    const { canvas } = renderMapView({ sources: buildMapSources([rover], undefined, now) });
+    await waitFor(() => expect(canvas.querySelectorAll(".map-symbol-marker")).toHaveLength(1));
+
+    expect(renderSymbol).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ opacity: 0.58 }));
+    expect(markerFor(canvas, rover.entity_id)).toHaveAttribute(
+      "aria-label",
+      "Rover asset Reported disconnected: stale heartbeat"
+    );
+  });
+
   it("does only one position write per changed track across full 256-track snapshots", async () => {
     const renderSymbol = vi.spyOn(defaultSidcIconService, "render");
     const tracks = Array.from({ length: TRACK_COUNT }, (_, index) => track(index));

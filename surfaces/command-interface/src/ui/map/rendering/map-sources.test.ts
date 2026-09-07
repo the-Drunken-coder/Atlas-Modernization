@@ -9,6 +9,30 @@ function entity(overrides: Partial<EntityResource>): EntityResource {
 }
 
 describe("buildMapSources", () => {
+  it.each([
+    ["fresh", "2026-06-20T00:09:50Z", "fresh"],
+    ["stale", "2026-06-20T00:09:00Z", "stale"],
+    ["offline", "2026-06-20T00:00:00Z", "offline"],
+    ["missing", undefined, "missing"],
+    ["invalid", "not-a-timestamp", "missing"],
+    ["clock error", "2026-06-20T00:10:31Z", "clock-error"]
+  ] as const)("carries %s connection freshness separately from the reported link", (_case, lastSeen, freshness) => {
+    const components: EntityResource["components"] = {
+      communications: { link_state: "connected" },
+      telemetry: { latitude: 40, longitude: -74 }
+    };
+    if (lastSeen) components.heartbeat = { last_seen: lastSeen };
+
+    const sources = buildMapSources(
+      [entity({ entity_id: "asset-1", components })],
+      undefined,
+      Date.parse("2026-06-20T00:10:00Z")
+    );
+    expect(sources.assets.features[0]?.properties).toEqual(
+      expect.objectContaining({ linkState: "connected", connectionFreshness: freshness })
+    );
+  });
+
   it("renders assets from telemetry as point features", () => {
     const sources = buildMapSources(
       [

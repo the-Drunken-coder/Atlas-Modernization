@@ -132,9 +132,12 @@ export function MapView({
   handlersRef.current = { onSelectEntity, onMapContextMenu };
   styleSwitchErrorRef.current = onStyleSwitchError;
   sourcesRef.current = sources;
-  editingRef.current = editing;
+  const visibleEditing = spatial?.drawing ? undefined : editing;
+  editingRef.current = visibleEditing;
   spatialRef.current = spatial;
   initialMapRef.current = { initialCenter, style, styleId };
+  const editingGeometry = visibleEditing?.geometry;
+  const editingReadOnly = visibleEditing?.readOnly;
   const clearPendingCommit = useCallback(() => {
     if (pendingCommitTimeoutRef.current === undefined) return false;
     window.clearTimeout(pendingCommitTimeoutRef.current);
@@ -457,9 +460,28 @@ export function MapView({
     const maplibre = mapLibreRef.current;
     if (!map || !mapReady || !maplibre) return;
 
+    const activeElement = document.activeElement;
+    const activeVertexKey =
+      activeElement instanceof HTMLElement &&
+      containerRef.current?.contains(activeElement) &&
+      activeElement.matches(".vertex-handle[data-vertex-key]")
+        ? activeElement.dataset.vertexKey
+        : undefined;
+
     clearMarkers(editMarkersRef.current);
-    editMarkersRef.current = createEditingMarkers(map, editing, maplibre.Marker);
-  }, [editing, mapReady]);
+    editMarkersRef.current = createEditingMarkers(
+      map,
+      editingGeometry
+        ? {
+            geometry: editingGeometry,
+            readOnly: editingReadOnly,
+            onChange: (nextGeometry) => editingRef.current?.onChange(nextGeometry)
+          }
+        : undefined,
+      maplibre.Marker
+    );
+    if (activeVertexKey) focusEditingVertex(map, activeVertexKey);
+  }, [editingGeometry, editingReadOnly, mapReady]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -517,7 +539,7 @@ export function MapView({
           baseSourceId={styleId}
           sourceOptions={mapSourceOptions}
           sources={sources}
-          editing={editing}
+          editing={visibleEditing}
           exclusiveDrawingActive={Boolean(drawing || spatial?.drawing)}
           onBeginRegionInteraction={beginRegionInteraction}
           onBeginDrawing={() => spatial?.onCancelDrawing()}
@@ -562,6 +584,25 @@ export function MapView({
       {placeDetailTarget ? <PlaceDetailLens key={styleId} target={placeDetailTarget} style={style} /> : null}
     </div>
   );
+}
+
+function focusEditingVertex(map: MlMap, previousKey: string): void {
+  const handles = [...map.getContainer().querySelectorAll<HTMLElement>(".vertex-handle[data-vertex-key]")];
+  const exact = handles.find((handle) => handle.dataset.vertexKey === previousKey);
+  if (exact) {
+    exact.focus();
+    return;
+  }
+
+  const lineMatch = /^line-(\d+)$/.exec(previousKey);
+  const polygonMatch = /^polygon-(\d+)-(\d+)$/.exec(previousKey);
+  if (!lineMatch && !polygonMatch) return;
+
+  const index = Number((lineMatch ?? polygonMatch)?.[lineMatch ? 1 : 2]);
+  const prefix = lineMatch ? "line-" : `polygon-${polygonMatch?.[1]}-`;
+  const sameRing = handles.filter((handle) => handle.dataset.vertexKey?.startsWith(prefix));
+  const fallback = sameRing[index] ?? sameRing.at(-1);
+  fallback?.focus();
 }
 
 function clearSymbolMarkers(markers: Map<string, SymbolMarkerEntry>): void {
