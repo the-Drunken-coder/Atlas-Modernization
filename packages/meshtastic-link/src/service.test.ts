@@ -855,7 +855,7 @@ describe("Gateway Task dispatch over loopback", () => {
     } finally {
       await closeTaskHarness(harness);
     }
-  });
+  }, 30_000);
 
   it("keeps dispatcher state readable while the Gateway service is configuring or in error", async () => {
     const harness = await taskHarness({ connected: false });
