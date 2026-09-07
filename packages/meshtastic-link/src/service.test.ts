@@ -759,13 +759,11 @@ describe("Gateway Task dispatch over loopback", () => {
   it("reports Task queue exhaustion as service overload", async () => {
     const harness = await taskHarness({ connected: false });
     try {
-      for (let index = 0; index < 4_097; index++) {
-        harness.service.enqueueTask(
-          "asset-alpha",
-          pendingTask(`queued-${index}`, "2026-09-05T12:00:00Z"),
-          "assignment"
-        );
-      }
+      harness.service.enqueueTask("asset-alpha", pendingTask("in-flight", "2026-09-05T12:00:00Z"), "assignment");
+      harness.service.enqueueTaskAssignments(
+        "asset-alpha",
+        Array.from({ length: 4_096 }, (_, index) => pendingTask(`queued-${index}`, "2026-09-05T12:00:00Z"))
+      );
 
       const result = await postJSON(`${harness.base}/v1/tasks/asset-alpha`, {
         task: pendingTask("overflow", "2026-09-05T12:00:00Z"),
