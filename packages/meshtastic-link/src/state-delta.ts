@@ -75,11 +75,13 @@ export class StateDeltaEncoder {
 
   prepare(publication: StatePublication, identity: StateDeltaIdentity, now = Date.now()): PreparedStateDelta {
     validateIdentity(identity);
-    validatePublication(publication);
     if (!Number.isFinite(now)) throw new RangeError("state delta time must be finite");
 
     const fullPayload = serializeLinkMessage(publication);
     if (fullPayload.byteLength > MAX_LINK_MESSAGE_BYTES) throw new RangeError("state publication exceeds 128 KiB");
+    const normalized = deserializeLinkMessage(fullPayload);
+    if (!isStatePublication(normalized)) throw new TypeError("state publication is invalid");
+    publication = normalized;
     const resourceType = publication.resource_type;
     const resourceIDValue = resourceID(publication);
     const scope = scopeKey(identity, resourceType, resourceIDValue);
@@ -195,7 +197,8 @@ export class StateDeltaDecoder {
     const key = scopeKey(identity, publication.resource_type, resourceID(publication));
     const incoming = { publication: structuredClone(publication), source_sequence: identity.source_sequence };
     const scope = this.baselines.get(key);
-    if (scope?.latest && identity.source_sequence <= scope.latest.source_sequence) {
+    if (scope?.latest && identity.source_sequence === scope.latest.source_sequence) return;
+    if (scope?.latest && identity.source_sequence < scope.latest.source_sequence) {
       if (scope.previous === undefined || identity.source_sequence > scope.previous.source_sequence)
         scope.previous = incoming;
       return;
@@ -248,10 +251,6 @@ function validateIdentity(identity: StateDeltaIdentity): void {
   ) {
     throw new TypeError("state delta identity is invalid");
   }
-}
-
-function validatePublication(publication: StatePublication): void {
-  if (!isStatePublication(publication) || !isJSONData(publication)) throw new TypeError("state publication is invalid");
 }
 
 function isStatePublication(value: unknown): value is StatePublication {

@@ -821,7 +821,7 @@ export class LinkHTTPServer {
   }
 
   private streamEvents(url: URL, request: IncomingMessage, response: ServerResponse): void {
-    const after = url.searchParams.get("after");
+    const after = request.headers["last-event-id"] ?? url.searchParams.get("after");
     const clientID = url.searchParams.get("client_id") ?? randomUUID();
     const replay = after === null ? [] : this.service.eventsAfter(Number(after));
     let unsubscribe: () => void = () => undefined;

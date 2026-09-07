@@ -6,6 +6,17 @@ import type { ResourceStatePublication } from "./types.js";
 import { LINK_SOURCE_IDENTITY_LIMIT } from "./types.js";
 
 describe("Shared Picture", () => {
+  it("expires Asset evidence after its Entity disappears while retaining active Tasks", () => {
+    const picture = new SharedPicture();
+    picture.apply(positionPublication(1), context(1));
+    picture.refresh(31_000);
+    expect(picture.snapshot().records).toEqual([]);
+    picture.apply(taskPublication("active"), { ...context(2), received_at: 32_000 });
+    expect(picture.snapshot().records[0]?.freshness).toBe("fresh");
+    picture.refresh(62_001);
+    expect(picture.snapshot().records).toMatchObject([{ id: "active", freshness: "degraded" }]);
+  });
+
   it("retains generation connectivity for Tasks before any Asset Entity arrives", () => {
     const picture = new SharedPicture();
     const asset = { role: "asset", id: "asset-alpha" } as const;

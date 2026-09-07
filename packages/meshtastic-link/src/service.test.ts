@@ -12,6 +12,34 @@ import { LinkTransport } from "./transport.js";
 import type { ResourceStatePublication } from "./types.js";
 
 describe("loopback Link service", () => {
+  it.each(["", "?after=0"])("replays from Last-Event-ID on reconnect to /v1/events%s", async (query) => {
+    const service = new LinkService({ mode: "asset", nodeID: "asset-alpha", clock: new VirtualClock() });
+    service.setLifecycle("discovering");
+    service.setLifecycle("active");
+    const server = new LinkHTTPServer(service);
+    const address = await server.listen(0);
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+    try {
+      const response = await fetch(`http://${address.host}:${address.port}/v1/events${query}`, {
+        headers: { "Last-Event-ID": "1" }
+      });
+      reader = response.body?.getReader();
+      if (!reader) throw new Error("missing event reader");
+      service.setLifecycle("error");
+      const [record] = await readSSERecords(reader, 1);
+      expect(record?.id).toBe(2);
+      const invalid = await fetch(`http://${address.host}:${address.port}/v1/events`, {
+        headers: { "Last-Event-ID": "invalid" }
+      });
+      expect(invalid.status).toBe(400);
+      await invalid.body?.cancel();
+    } finally {
+      await reader?.cancel();
+      await server.close();
+      service.stop();
+    }
+  });
+
   it("logs and removes throwing event listeners", () => {
     const service = new LinkService({ mode: "asset", nodeID: "asset-alpha", clock: new VirtualClock() });
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -542,14 +570,14 @@ describe("Gateway Task dispatch over loopback", () => {
       expect(submitted.response.status).toBe(202);
       await expect(getJSON(`${harness.base}/v1/tasks/asset-alpha`)).resolves.toEqual({
         in_flight: "first",
-        in_flight_operation_id: "task_first_assignment_1",
+        in_flight_operation_id: "task_1",
         queued: ["second"]
       });
 
       await harness.clock.advanceBy(15_001);
       await expect(getJSON(`${harness.base}/v1/tasks/asset-alpha`)).resolves.toEqual({
         in_flight: "first",
-        in_flight_operation_id: "task_first_assignment_1",
+        in_flight_operation_id: "task_1",
         queued: ["second"]
       });
 
@@ -593,7 +621,7 @@ describe("Gateway Task dispatch over loopback", () => {
         { delivery: "cancellation", taskID: "cancel-me" }
       ]);
       await expect(getJSON(`${harness.base}/v1/tasks/asset-alpha`)).resolves.toMatchObject({
-        cancellation: { task_id: "cancel-me", operation_id: "task_cancel-me_cancellation_2" },
+        cancellation: { task_id: "cancel-me", operation_id: "task_2" },
         queued: []
       });
       await waitForTaskIdle(harness);
@@ -764,7 +792,7 @@ describe("Gateway Task dispatch over loopback", () => {
         harness.service.setLifecycle(lifecycle);
         await expect(getJSON(`${harness.base}/v1/tasks/asset-alpha`)).resolves.toEqual({
           in_flight: "diagnostic",
-          in_flight_operation_id: "task_diagnostic_assignment_1",
+          in_flight_operation_id: "task_1",
           queued: []
         });
       }

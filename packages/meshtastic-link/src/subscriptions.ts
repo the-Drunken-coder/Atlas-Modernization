@@ -72,10 +72,11 @@ type Lease = {
 
 export class GatewaySubscriptionDemand {
   private readonly bySource = new Map<string, Map<string, Lease>>();
+  private readonly activeSelectors = new Map<string, FeedSelector>();
 
   apply(sourceNodeID: string, transition: SubscriptionTransition, now: number): boolean {
     const key = selectorKey(transition.selector);
-    const existed = this.isDemanded(key, now);
+    const existed = this.activeSelectors.has(key);
     const source = this.bySource.get(sourceNodeID) ?? new Map<string, Lease>();
     if (transition.action === "remove") {
       source.delete(key);
@@ -84,20 +85,21 @@ export class GatewaySubscriptionDemand {
     }
     if (source.size === 0) this.bySource.delete(sourceNodeID);
     else this.bySource.set(sourceNodeID, source);
-    return existed !== this.isDemanded(key, now);
+    const demanded = this.isDemanded(key, now);
+    if (demanded) this.activeSelectors.set(key, transition.selector);
+    else this.activeSelectors.delete(key);
+    return existed !== demanded;
   }
 
   expire(now: number): FeedSelector[] {
-    const before = new Map<string, FeedSelector>();
-    for (const source of this.bySource.values()) {
-      for (const [key, lease] of source) before.set(key, lease.selector);
-    }
     for (const [sourceID, source] of this.bySource) {
       for (const [key, lease] of source) if (lease.expiresAt <= now) source.delete(key);
       if (source.size === 0) this.bySource.delete(sourceID);
     }
     const after = this.aggregate(now);
-    return [...before].filter(([key]) => !after.has(key)).map(([, selector]) => selector);
+    const expired = [...this.activeSelectors].filter(([key]) => !after.has(key));
+    for (const [key] of expired) this.activeSelectors.delete(key);
+    return expired.map(([, selector]) => selector);
   }
 
   aggregate(now: number): ReadonlyMap<string, FeedSelector> {

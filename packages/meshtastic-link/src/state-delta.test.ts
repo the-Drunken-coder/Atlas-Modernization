@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { isLinkMessage } from "./contract.js";
 import {
   isStateDeltaPayload,
   STATE_DELTA_BASELINE_INTERVAL_MS,
@@ -22,6 +23,43 @@ const entityPublication = (entityID: string, version: number): ResourceStatePubl
 };
 
 describe("state delta codec", () => {
+  it("retains the previous baseline through a duplicate latest full snapshot", () => {
+    const encoder = new StateDeltaEncoder();
+    const decoder = new StateDeltaDecoder();
+    const first = encoder.prepare(positionPublication(1), identity(1), 0);
+    first.commitFull();
+    const third = encoder.prepare(positionPublication(3), identity(3), 1);
+    const fourth = encoder.prepare(positionPublication(4), identity(4), 2);
+    expect(fourth.baselineSourceSequence).toBe(1);
+    decoder.decode(first.fullPayload, identity(1));
+    decoder.decode(third.fullPayload, identity(3));
+    decoder.decode(third.fullPayload, identity(3));
+    expect(decoder.decode(fourth.deltaPayload!, identity(4))).toEqual(positionPublication(4));
+  });
+
+  it("normalizes undefined optional fields in full snapshots and delta baselines", () => {
+    const encoder = new StateDeltaEncoder();
+    const decoder = new StateDeltaDecoder();
+    const firstPublication: unknown = { ...positionPublication(1), runtime_id: undefined };
+    const secondPublication: unknown = { ...positionPublication(2), runtime_id: undefined };
+    if (
+      !isLinkMessage(firstPublication) ||
+      firstPublication.type !== "state" ||
+      !isLinkMessage(secondPublication) ||
+      secondPublication.type !== "state"
+    ) {
+      throw new Error("expected valid state publications");
+    }
+    const first = encoder.prepare(firstPublication, identity(1), 0);
+    first.commitFull();
+    const second = encoder.prepare(secondPublication, identity(2), 1);
+    const expected = positionPublication(2);
+    delete expected.runtime_id;
+    decoder.decode(first.fullPayload, identity(1));
+    expect(second.deltaPayload).toBeDefined();
+    expect(decoder.decode(second.deltaPayload!, identity(2))).toEqual(expected);
+  });
+
   it("returns normal full bytes and a delta against the last committed full", () => {
     const encoder = new StateDeltaEncoder();
     const decoder = new StateDeltaDecoder();

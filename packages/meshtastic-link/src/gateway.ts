@@ -331,7 +331,7 @@ export class OrderedTaskDispatcher {
   }
 
   private send(assetID: string, queued: QueuedTask) {
-    const operationID = `task_${queued.task.task_id}_${queued.delivery}_${++this.dispatchSequence}`;
+    const operationID = `task_${++this.dispatchSequence}`;
     return this.transport.submit(
       { type: "task_delivery", delivery: queued.delivery, task: queued.task },
       { destination: { role: "asset", id: assetID }, operationID }
@@ -480,6 +480,8 @@ function runtimeID(message: IntentionalFieldMessage): string | undefined {
 }
 
 function compareTasks(left: QueuedTask, right: QueuedTask): number {
+  if (left.delivery !== right.delivery) return left.delivery === "cancellation" ? -1 : 1;
+  if (left.delivery === "cancellation") return 0;
   return (
     compareRFC3339Timestamps(left.task.created_at, right.task.created_at) ||
     left.task.task_id.localeCompare(right.task.task_id)

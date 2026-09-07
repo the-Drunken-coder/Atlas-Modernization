@@ -92,7 +92,7 @@ export class SharedPicture {
   private readonly records = new Map<string, PictureRecord>();
   private readonly tombstones = new Map<string, PictureTombstone>();
   private readonly sources = new Map<string, SourcePosition>();
-  private readonly assetConnectivity = new Map<string, boolean>();
+  private readonly assetConnectivity = new Map<string, { connected: boolean; receivedAt?: number }>();
   private readonly recordSourceSequences = new Map<string, RecordSourceSequence>();
   private readonly entryBytes = new Map<string, number>();
   private readonly events: PictureEvent[] = [];
@@ -214,7 +214,7 @@ export class SharedPicture {
     if (!this.canRetain(key, retainedEntryBytes(record))) return rejected("capacity");
     this.retainRecord(key, record);
     if (connectivityAssetID !== undefined) {
-      this.assetConnectivity.set(connectivityAssetID, true);
+      this.assetConnectivity.set(connectivityAssetID, { connected: true, receivedAt: context.received_at });
     }
     this.emit({ type: "upsert", key, record });
     if (connectivityAssetID !== undefined) {
@@ -225,9 +225,8 @@ export class SharedPicture {
 
   markSourceConnectivity(source: LinkNode, connected: boolean): void {
     if (source.role !== "asset") return;
-    if (this.assetConnectivity.has(source.id)) {
-      this.assetConnectivity.set(source.id, connected);
-    }
+    const connectivity = this.assetConnectivity.get(source.id);
+    if (connectivity) connectivity.connected = connected;
     const freshness: PictureFreshness = connected ? "fresh" : "degraded";
     for (const [key, record] of this.records) {
       if (
@@ -245,6 +244,11 @@ export class SharedPicture {
 
   refresh(now: number): void {
     this.pruneRecordSourceSequences(now);
+    for (const [id, connectivity] of this.assetConnectivity) {
+      if (connectivity.connected && connectivity.receivedAt !== undefined && now - connectivity.receivedAt >= 30_000) {
+        this.markSourceConnectivity({ role: "asset", id }, false);
+      }
+    }
     for (const [key, record] of this.records) {
       const age = now - record.received_at;
       const thresholds = freshnessThresholds(record);
@@ -302,7 +306,7 @@ export class SharedPicture {
     }
     if (source.role === "asset" && !this.assetConnectivity.has(source.id)) {
       if (this.assetConnectivity.size >= LINK_SOURCE_IDENTITY_LIMIT) return false;
-      this.assetConnectivity.set(source.id, false);
+      this.assetConnectivity.set(source.id, { connected: false });
     }
     if (current && generation === current.generation && session === current.session) return true;
     if (current && generation > current.generation) {
@@ -377,7 +381,7 @@ export class SharedPicture {
     const asset = this.records.get(assetKey);
     if (asset !== undefined && asset.freshness !== "fresh") return "degraded";
     if (this.tombstones.has(assetKey)) return "degraded";
-    if (this.assetConnectivity.get(task.asset_id) === false) return "degraded";
+    if (this.assetConnectivity.get(task.asset_id)?.connected === false) return "degraded";
     return "fresh";
   }
 

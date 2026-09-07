@@ -121,7 +121,7 @@ telemetry.start();
 // Call telemetry.stop() when the owning application shuts down.
 ```
 
-Omit `after` from `GET /v1/events` to start with future events. Supply a previous event ID to replay retained events before following live changes. An explicit expired cursor returns HTTP 400; clients can query operation outcomes and reconnect without a cursor. Picture snapshot recovery uses the separate picture stream.
+Omit `after` from `GET /v1/events` to start with future events. Supply a previous event ID to replay retained events before following live changes. On SSE reconnection, `Last-Event-ID` takes precedence over the initial `after` query cursor and uses the same validation and expiry checks. An explicit expired cursor returns HTTP 400; clients can query operation outcomes and reconnect without a cursor. Picture snapshot recovery uses the separate picture stream.
 
 `POST /v1/messages` accepts `{ message, destination?, operation_id? }` for the ordinary Radio contract. A `task_delivery` message submitted there is rejected with guidance to the Task routes so Gateway callers cannot bypass ordered dispatch. A client retrying a confirmed write supplies the same `operation_id`; data requests and requested Object-content responses use their `request_id` as that stable identity. Task reports carry the Asset application's original `observation_time`, so radio delay does not make an old lifecycle report appear newer.
 

@@ -14,6 +14,82 @@ import { LinkTransport } from "./transport.js";
 import type { FeedSelector } from "./types.js";
 
 describe("Gateway application seams", () => {
+  it("delivers UUID-addressed Tasks with canonical frames at the native payload limit", async () => {
+    const clock = new VirtualClock();
+    const network = new SimulatedPacketNetwork({ seed: 42, clock });
+    const gatewayID = "11111111-1111-4111-8111-111111111111";
+    const assetID = "22222222-2222-4222-8222-222222222222";
+    const task = pendingTaskForAsset(assetID, "33333333-3333-4333-8333-333333333333");
+    const gateway = new LinkTransport({
+      node: { role: "gateway", id: gatewayID },
+      sourceGeneration: 1,
+      serviceSession: "1234567890123456",
+      radio: network.addRadio(gatewayID, 1),
+      clock
+    });
+    const asset = new LinkTransport({
+      node: { role: "asset", id: assetID },
+      sourceGeneration: 1,
+      serviceSession: "abcdefghijklmnop",
+      radio: network.addRadio(assetID, 2),
+      clock
+    });
+    network.connect(gatewayID, assetID);
+    const delivered: string[] = [];
+    asset.onEvent((event) => {
+      if (event.type !== "message" || event.message.type !== "task_delivery") return;
+      delivered.push(event.message.task.task_id);
+      asset.settleInbound(event.settlement_id, true);
+    });
+    const dispatcher = new OrderedTaskDispatcher(gateway);
+    try {
+      dispatcher.enqueue(assetID, task);
+      expect(gateway.status(dispatcher.state(assetID).in_flight_operation_id!)).toMatchObject({ status: "queued" });
+      await clock.runUntilIdle();
+      expect(delivered).toEqual([task.task_id]);
+    } finally {
+      dispatcher.close();
+      gateway.stop();
+      asset.stop();
+    }
+  });
+
+  it.each(["single", "batch"])("keeps waiting cancellations first after %s assignment enqueue", async (mode) => {
+    const { dispatcher, gateway, asset, network, clock } = disconnectedTaskPair();
+    const delivered: string[] = [];
+    asset.onEvent((event) => {
+      if (event.type !== "message" || event.message.type !== "task_delivery") return;
+      delivered.push(event.message.task.task_id);
+      if (event.message.delivery === "cancellation") asset.settleInbound(event.settlement_id, true);
+    });
+    try {
+      dispatcher.enqueue("asset-alpha", pendingTask("unresolved", "2026-09-05T10:00:00Z"));
+      dispatcher.enqueue("asset-alpha", cancelledTask("cancel-1", "2026-09-05T12:00:00Z"), "cancellation");
+      dispatcher.enqueue("asset-alpha", cancelledTask("cancel-2", "2026-09-05T12:01:00Z"), "cancellation");
+      const older = pendingTask("older", "2026-09-05T11:00:00Z");
+      if (mode === "single") dispatcher.enqueue("asset-alpha", older);
+      else dispatcher.enqueueAssignments("asset-alpha", [older]);
+      network.connect("gateway", "asset-alpha");
+      await clock.runUntilIdle();
+      expect(delivered).toContain("cancel-2");
+      expect(delivered).not.toContain("older");
+    } finally {
+      dispatcher.close();
+      gateway.stop();
+      asset.stop();
+    }
+  });
+
+  it("emits the final removal when a lease expires before the expiry sweep", () => {
+    const demand = new GatewayFeedDemand();
+    const selector = { kind: "resource_type", resource_type: "entity" } as const;
+    expect(demand.apply(subscriptionEvent("asset-alpha", "add", selector), 0)).toEqual({ active: true, selector });
+    expect(
+      demand.apply({ ...subscriptionEvent("asset-alpha", "remove", selector), source_sequence: 2 }, 90_001)
+    ).toEqual({ active: false, selector });
+    expect(demand.expire(90_002)).toEqual([]);
+  });
+
   it("deduplicates intentional Field reports and rejects Gateway feed loops", () => {
     const inbox = new GatewayFieldOperationInbox();
     const field = messageEvent(positionPublication(1));
@@ -225,12 +301,12 @@ describe("Gateway application seams", () => {
       expect(delivered).toEqual(["task-b"]);
       expect(dispatcher.state("asset-alpha")).toEqual({
         in_flight: "task-a",
-        in_flight_operation_id: "task_task-a_assignment_1",
+        in_flight_operation_id: "task_1",
         queued: []
       });
       expect(dispatcher.state("asset-bravo")).toEqual({ queued: [] });
       expect(gateway.diagnostics()).toMatchObject({ queue_depth: 0, confirmed_pending: 0 });
-      expect(gateway.status("task_task-a_assignment_1")).toMatchObject({
+      expect(gateway.status("task_1")).toMatchObject({
         status: "failed",
         reason: "confirmation deadline expired"
       });
@@ -296,7 +372,7 @@ describe("Ordered Task dispatcher recovery", () => {
       await clock.runUntilIdle();
       expect(dispatcher.state("asset-alpha")).toEqual({
         in_flight: "first",
-        in_flight_operation_id: "task_first_assignment_1",
+        in_flight_operation_id: "task_1",
         queued: ["second"]
       });
 
@@ -306,9 +382,9 @@ describe("Ordered Task dispatcher recovery", () => {
 
       expect(delivered).toEqual(["first", "second"]);
       expect(dispatcher.state("asset-alpha")).toEqual({ queued: [] });
-      expect(gateway.status("task_first_assignment_1")).toMatchObject({ status: "failed" });
-      expect(gateway.status("task_first_assignment_2")).toMatchObject({ status: "confirmed" });
-      expect(gateway.status("task_second_assignment_3")).toMatchObject({ status: "confirmed" });
+      expect(gateway.status("task_1")).toMatchObject({ status: "failed" });
+      expect(gateway.status("task_2")).toMatchObject({ status: "confirmed" });
+      expect(gateway.status("task_3")).toMatchObject({ status: "confirmed" });
     } finally {
       dispatcher.close();
       gateway.stop();
@@ -338,8 +414,8 @@ describe("Ordered Task dispatcher recovery", () => {
 
       expect(delivered).toEqual(["first", "second"]);
       expect(dispatcher.state("asset-alpha")).toEqual({ queued: [] });
-      expect(gateway.status("task_first_assignment_2")).toMatchObject({ status: "confirmed" });
-      expect(gateway.status("task_second_assignment_3")).toMatchObject({ status: "confirmed" });
+      expect(gateway.status("task_2")).toMatchObject({ status: "confirmed" });
+      expect(gateway.status("task_3")).toMatchObject({ status: "confirmed" });
     } finally {
       dispatcher.close();
       gateway.stop();
@@ -360,10 +436,10 @@ describe("Ordered Task dispatcher recovery", () => {
       network.connect("gateway", "asset-alpha");
 
       expect(() => dispatcher.enqueueAssignments("asset-alpha", [first, third])).toThrowError(TaskQueueCapacityError);
-      expect(gateway.status("task_first_assignment_2")).toBeUndefined();
+      expect(gateway.status("task_2")).toBeUndefined();
       expect(dispatcher.state("asset-alpha")).toEqual({
         in_flight: "first",
-        in_flight_operation_id: "task_first_assignment_1",
+        in_flight_operation_id: "task_1",
         queued: ["second"]
       });
     } finally {
@@ -414,7 +490,7 @@ describe("Ordered Task dispatcher recovery", () => {
       expect(firstDelivery).toBeDefined();
       expect(gateway.status(firstDelivery?.operationID ?? "")).toMatchObject({ status: "confirmed" });
       const firstOperations = operationEvents.filter(
-        (event) => event.type === "operation" && event.result.operation_id.startsWith("task_first_assignment_")
+        (event) => event.type === "operation" && event.result.operation_id.startsWith("task_")
       );
       expect(
         firstOperations.filter((event) => event.type === "operation" && event.result.status === "confirmed")
@@ -459,7 +535,7 @@ describe("Ordered Task dispatcher recovery", () => {
       dispatcher.enqueue("asset-alpha", first);
 
       const attemptsWhileFull = operationEvents.filter(
-        (event) => event.type === "operation" && event.result.operation_id.startsWith("task_first_assignment_")
+        (event) => event.type === "operation" && event.result.operation_id.startsWith("task_")
       );
       expect(attemptsWhileFull).toHaveLength(2);
       expect(
@@ -478,7 +554,7 @@ describe("Ordered Task dispatcher recovery", () => {
       expect(firstDelivery).toBeDefined();
       expect(gateway.status(firstDelivery?.operationID ?? "")).toMatchObject({ status: "confirmed" });
       const firstOperations = operationEvents.filter(
-        (event) => event.type === "operation" && event.result.operation_id.startsWith("task_first_assignment_")
+        (event) => event.type === "operation" && event.result.operation_id.startsWith("task_")
       );
       expect(
         firstOperations.filter((event) => event.type === "operation" && event.result.status === "confirmed")
@@ -561,8 +637,8 @@ describe("Ordered Task dispatcher recovery", () => {
       expect(delivered).toEqual(["safety"]);
       expect(dispatcher.state("asset-alpha")).toEqual({
         in_flight: "first",
-        in_flight_operation_id: "task_first_assignment_1",
-        cancellation: { task_id: "safety", operation_id: "task_safety_cancellation_2" },
+        in_flight_operation_id: "task_1",
+        cancellation: { task_id: "safety", operation_id: "task_2" },
         queued: []
       });
 
@@ -570,7 +646,7 @@ describe("Ordered Task dispatcher recovery", () => {
       await clock.runUntilIdle();
       expect(delivered).toEqual(["safety", "first"]);
       expect(dispatcher.state("asset-alpha")).toEqual({ queued: [] });
-      expect(gateway.status("task_first_assignment_3")).toMatchObject({ status: "confirmed" });
+      expect(gateway.status("task_3")).toMatchObject({ status: "confirmed" });
     } finally {
       dispatcher.close();
       gateway.stop();

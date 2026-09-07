@@ -1775,10 +1775,10 @@ describe("Link transport", () => {
 
     await clock.runUntilIdle();
 
-    expect(gateway.status("task_task-failed_assignment_1")).toMatchObject({ status: "failed" });
+    expect(gateway.status("task_1")).toMatchObject({ status: "failed" });
     expect(dispatcher.state("asset-alpha")).toEqual({
       in_flight: "task-failed",
-      in_flight_operation_id: "task_task-failed_assignment_1",
+      in_flight_operation_id: "task_1",
       queued: ["task-blocked"]
     });
     dispatcher.close();
@@ -1809,8 +1809,8 @@ describe("Link transport", () => {
     );
     expect(dispatcher.state("asset-alpha")).toEqual({
       in_flight: "task-unacknowledged",
-      in_flight_operation_id: "task_task-unacknowledged_assignment_1",
-      cancellation: { task_id: "task-safety", operation_id: "task_task-safety_cancellation_2" },
+      in_flight_operation_id: "task_1",
+      cancellation: { task_id: "task-safety", operation_id: "task_2" },
       queued: []
     });
     dispatcher.close();
@@ -1855,7 +1855,7 @@ describe("Link transport", () => {
     ).toThrow("Task delivery queue capacity is exhausted");
     expect(dispatcher.state("asset-alpha")).toEqual({
       in_flight: "task-active",
-      in_flight_operation_id: "task_task-active_assignment_1",
+      in_flight_operation_id: "task_1",
       queued: ["task-queued"]
     });
     dispatcher.close();
@@ -1977,7 +1977,7 @@ describe("Link transport", () => {
     for (let attempt = 0; attempt < 28 && delivered.length === 0; attempt++) await clock.advanceBy(500);
 
     expect(dispatcher.state("asset-alpha")).toEqual({
-      cancellation: { task_id: "task-cancel-in-flight", operation_id: "task_task-cancel-in-flight_cancellation_1" },
+      cancellation: { task_id: "task-cancel-in-flight", operation_id: "task_1" },
       queued: []
     });
     expect(delivered).toEqual(["cancellation"]);
@@ -2001,8 +2001,8 @@ describe("Link transport", () => {
     dispatcher.observeAuthoritativeTask("asset-alpha", terminal);
     expect(dispatcher.state("asset-alpha")).toEqual({
       in_flight: "task-first",
-      in_flight_operation_id: "task_task-first_assignment_1",
-      cancellation: { task_id: "task-cancelled", operation_id: "task_task-cancelled_cancellation_2" },
+      in_flight_operation_id: "task_1",
+      cancellation: { task_id: "task-cancelled", operation_id: "task_2" },
       queued: []
     });
 

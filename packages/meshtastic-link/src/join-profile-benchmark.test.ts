@@ -767,7 +767,7 @@ describe("deterministic baseline", () => {
     expect(result.feed_metrics).toEqual({
       active_subscriptions_at_window: 1,
       active_subscriptions_after_drain: 0,
-      subscriber_count_at_window: 2,
+      subscriber_count_at_window: 1,
       subscriber_count_after_drain: 0,
       core_publish_count: 1,
       gateway_publish_count: 1,
