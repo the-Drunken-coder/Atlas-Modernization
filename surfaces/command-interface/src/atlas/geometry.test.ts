@@ -6,6 +6,8 @@ import {
   geometryVertices,
   midpointPosition,
   moveVertex,
+  openRing,
+  type Position,
   removeVertex,
   representativePoint,
   type UiGeometry,
@@ -78,6 +80,30 @@ describe("editable vertices", () => {
 
   it("lists the center for a circle Feature", () => {
     expect(geometryVertices(circle)).toEqual([{ ref: { kind: "Circle" }, lng: -74.2, lat: 40.1 }]);
+  });
+});
+
+describe("polygon ring opening", () => {
+  it.each<[Position, number]>([
+    [[5e-10, -5e-10], 3],
+    [[1e-9, 0], 4],
+    [[0, -1e-9], 4],
+    [[2e-9, 0], 4],
+    [[0, 0, 99, 100], 3]
+  ])("uses strict XY tolerance for closing position %j", (closing, length) => {
+    expect(openRing([[0, 0, 1, 2], [1, 0], [0, 1], closing])).toHaveLength(length);
+  });
+
+  it("copies the array, preserves positions, and removes at most one closing coordinate", () => {
+    const first: Position = [0, 0, 1, 2];
+    const rings: Position[][] = [[], [first], [first, [1, 0]], [first, [1, 0], first, first]];
+    for (const ring of rings) {
+      Object.freeze(ring);
+      const opened = openRing(ring);
+      expect(opened).not.toBe(ring);
+      expect(opened).toEqual(ring.length === 4 ? [first, [1, 0], first] : ring);
+      if (opened.length) expect(opened[0]).toBe(first);
+    }
   });
 });
 

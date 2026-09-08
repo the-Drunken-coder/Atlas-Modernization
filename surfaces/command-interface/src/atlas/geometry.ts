@@ -237,7 +237,8 @@ function movePosition(position: Position, lng: number, lat: number): Position {
   return [lng, lat, ...position.slice(2)];
 }
 
-function openRing(ring: Position[]): Position[] {
+/** Shallow-copy a ring, omitting one closing position when both XY differences are below 1e-9. */
+export function openRing(ring: Position[]): Position[] {
   if (ring.length >= 2 && positionsEqual(ring[0], ring[ring.length - 1])) {
     return ring.slice(0, -1);
   }
