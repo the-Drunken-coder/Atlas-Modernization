@@ -64,6 +64,12 @@ export type AssertionResult = {
 
 export type RunStatus = "running" | "completed" | "failed" | "cancelled" | "abandoned";
 
+export function isRunStatus(value: unknown): value is RunStatus {
+  return (
+    value === "running" || value === "completed" || value === "failed" || value === "cancelled" || value === "abandoned"
+  );
+}
+
 type RunEventBase = {
   sequence: JSONNumber;
   runId: string;
