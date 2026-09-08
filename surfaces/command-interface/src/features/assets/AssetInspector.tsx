@@ -18,6 +18,7 @@ import type { AtlasSnapshot } from "../../atlas/store.js";
 import { JsonDrawer } from "../../ui/primitives/JsonDrawer.js";
 import { ConnectionStatusPill, heartbeatColor, StatusPill } from "../../ui/primitives/StatusPill.js";
 import { CommandList } from "../commands/CommandList.js";
+import { commandEmptyLabel } from "../commands/command-empty-label.js";
 import { FieldGrid, InspectorHeading, Section } from "../shared/panels.js";
 import { TaskHistoryItem, TaskRow } from "../shared/TaskRow.js";
 import { useHeartbeatClock } from "../useHeartbeatClock.js";
@@ -55,17 +56,6 @@ export function AssetInspector({
   const sidebarCommands = catalog
     ? [...commandsForTargeting(catalog, entity, "none"), ...commandsForTargeting(catalog, entity, "map_point")]
     : [];
-  const commandEmptyLabel = !catalog
-    ? "Command Catalog unavailable"
-    : catalog.length === 0
-      ? "No Commands are defined in Atlas Protocol"
-      : commandManifestStatus === "loading"
-        ? "Loading Asset Commands"
-        : commandManifestStatus === "unavailable"
-          ? "Asset Commands unavailable"
-          : !entity.command_manifest?.length
-            ? "This Asset has no Commands"
-            : "No operator inputs are available for this Asset's Commands";
 
   return (
     <div className="inspector">
@@ -118,7 +108,7 @@ export function AssetInspector({
         <CommandList
           availabilities={sidebarCommands}
           onPick={onPickCommand}
-          emptyLabel={commandEmptyLabel}
+          emptyLabel={commandEmptyLabel(catalog, entity.command_manifest, commandManifestStatus)}
           disabled={commandManifestStatus !== "ready"}
         />
       </Section>
