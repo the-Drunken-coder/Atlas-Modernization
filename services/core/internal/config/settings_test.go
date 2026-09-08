@@ -4,10 +4,66 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/the-drunken-coder/atlas/services/core/internal/config"
 )
+
+func TestLoadSettingsJSON(t *testing.T) {
+	tests := []struct {
+		name    string
+		body    string
+		wantErr string
+	}{
+		{name: "recognized key and trailing whitespace", body: "{\"max_view_size_mb\":7}\n\t "},
+		{name: "misspelled key", body: `{"max_view_size_mib":7}`, wantErr: `unknown field "max_view_size_mib"`},
+		{name: "invalid recognized value", body: `{"max_view_size_mb":-1}`, wantErr: "max_view_size_mb must be between"},
+		{name: "trailing object", body: `{"max_view_size_mb":7} {}`, wantErr: "trailing JSON"},
+		{name: "trailing null", body: `{"max_view_size_mb":7} null`, wantErr: "trailing JSON"},
+		{name: "trailing garbage", body: `{"max_view_size_mb":7} garbage`, wantErr: "trailing JSON"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			chdirToTemp(t)
+			isolateLoadEnv(t)
+			t.Setenv("ATLAS_PLUGIN_CONFIG_DIR", "")
+			if err := os.WriteFile("atlas_core.settings.json", []byte(tt.body), 0o600); err != nil {
+				t.Fatalf("write settings: %v", err)
+			}
+			cfg, err := config.Load()
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("load error = %v, want %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("load config: %v", err)
+			}
+			if cfg.MaxViewSizeMB != 7 {
+				t.Fatalf("MaxViewSizeMB = %d, want 7", cfg.MaxViewSizeMB)
+			}
+		})
+	}
+}
+
+func TestLoadShippedSettingsExample(t *testing.T) {
+	data, err := os.ReadFile("../../atlas_core.settings.json.example")
+	if err != nil {
+		t.Fatalf("read shipped settings example: %v", err)
+	}
+	chdirToTemp(t)
+	isolateLoadEnv(t)
+	t.Setenv("ATLAS_PLUGIN_CONFIG_DIR", "")
+	// #nosec G703 -- fixed filename in t.TempDir; example bytes are file contents, not a path.
+	if err := os.WriteFile("atlas_core.settings.json", data, 0o600); err != nil {
+		t.Fatalf("write settings: %v", err)
+	}
+	if _, err := config.Load(); err != nil {
+		t.Fatalf("load shipped settings example: %v", err)
+	}
+}
 
 func TestLoadAdminCookieSameSiteFromSettingsWithEnvPrecedence(t *testing.T) {
 	chdirToTemp(t)

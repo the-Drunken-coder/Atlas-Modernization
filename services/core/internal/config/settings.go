@@ -1,9 +1,11 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 )
@@ -32,9 +34,14 @@ func (c *Config) loadSettingsFile() error {
 		return fmt.Errorf("settings file is empty")
 	}
 
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
 	var settings SettingsFile
-	if err := json.Unmarshal(data, &settings); err != nil {
-		return err
+	if err := decoder.Decode(&settings); err != nil {
+		return fmt.Errorf("decode settings file: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return fmt.Errorf("settings file contains trailing JSON")
 	}
 	settings.applyTo(c)
 	return nil

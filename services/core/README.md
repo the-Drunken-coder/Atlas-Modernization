@@ -207,7 +207,10 @@ go vet ./...
 ## Configuration
 
 Configuration is loaded from environment variables plus optional `atlas_core.settings.json`.
-Environment values take precedence.
+Environment values take precedence. The settings file must contain a single JSON value with recognized settings keys;
+unknown keys or trailing content fail startup.
+
+Generate a strong random key and replace the example `api_auth_key` before setting `enable_api_auth` to `true`.
 
 Key environment variables:
 
