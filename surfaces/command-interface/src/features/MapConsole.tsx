@@ -268,12 +268,15 @@ export function MapConsole() {
           : currentCommandManifestStatus === "loading" || !selectedDetails || detailsNeedRefresh
             ? "loading"
             : "ready";
-  const selectedEntity =
-    selectedSnapshotEntity && selectedDetails
-      ? { ...selectedSnapshotEntity, command_manifest: selectedDetails.command_manifest }
-      : commandDetailsRequired
-        ? selectedSnapshotEntity && { ...selectedSnapshotEntity, command_manifest: undefined }
-        : selectedSnapshotEntity;
+  const selectedEntity = useMemo(
+    () =>
+      selectedSnapshotEntity && selectedDetails
+        ? { ...selectedSnapshotEntity, command_manifest: selectedDetails.command_manifest }
+        : commandDetailsRequired
+          ? selectedSnapshotEntity && { ...selectedSnapshotEntity, command_manifest: undefined }
+          : selectedSnapshotEntity,
+    [selectedSnapshotEntity, selectedDetails, commandDetailsRequired]
+  );
   const selectedId = selection?.id;
   const commandFlow = useCommandFlow({
     catalog,

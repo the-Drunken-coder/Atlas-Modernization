@@ -13,6 +13,7 @@ import { styleFixture as style } from "../../test/fixtures.js";
 import type { AppConfig } from "../app/config.js";
 import type { AtlasDataSource, CommandSubmission, ConnectionHealth } from "../atlas/data-source.js";
 import type { UiGeometry } from "../atlas/geometry.js";
+import * as selectors from "../atlas/selectors.js";
 import type { AtlasSnapshot } from "../atlas/store.js";
 import { type AtlasContextValue, AtlasProvider, AtlasStaticProvider } from "../state/atlas-context.js";
 import { COMMAND_INPUT_REGISTRY } from "./commands/command-input-registry.js";
@@ -363,6 +364,33 @@ function renderStaticConsole(overrides: Partial<AtlasContextValue> = {}) {
 }
 
 describe("MapConsole", () => {
+  it("reuses inspector task projections across heartbeat ticks after command details load", async () => {
+    vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
+    const derivations = [
+      vi.spyOn(selectors, "activeTasks"),
+      vi.spyOn(selectors, "queuedTasks"),
+      vi.spyOn(selectors, "tasksForAsset")
+    ];
+    const rendered = renderStaticConsole({
+      catalog: taskingCatalog,
+      loadEntityDetails: async () => ({ ...rover, command_manifest: [] })
+    });
+    try {
+      fireEvent.click(await screen.findByTestId("map-marker-select"));
+      expect(await screen.findByText("This Asset has no Commands")).toBeInTheDocument();
+      const calls = derivations.map((derive) => derive.mock.calls.length);
+      for (const count of calls) expect(count).toBeGreaterThan(0);
+
+      for (let tick = 0; tick < 3; tick++) act(() => vi.advanceTimersByTime(1_000));
+
+      expect(derivations.map((derive) => derive.mock.calls.length)).toEqual(calls);
+    } finally {
+      rendered.unmount();
+      for (const derive of derivations) derive.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
   it("updates map heartbeat freshness as time passes without a new snapshot", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-06-20T00:10:00Z"));
