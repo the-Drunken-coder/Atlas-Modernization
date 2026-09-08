@@ -2,6 +2,7 @@ package actions
 
 import (
 	"encoding/json"
+	"github.com/the-drunken-coder/atlas/services/core/internal/models"
 	"reflect"
 	"strings"
 	"testing"
@@ -274,5 +275,47 @@ func assertExactJSONNumber(t *testing.T, value interface{}, want string) {
 	}
 	if number.String() != want {
 		t.Fatalf("number = %s, want %s", number, want)
+	}
+}
+
+func TestObjectExtraFilteringPreservesDistinctReadAndWritePolicies(t *testing.T) {
+	promoted := []string{"path", "content_type", "type", "size_bytes", "usage_hints", "bucket", "referenced_by", "version"}
+	rowMetadata := []string{"object_id", "created_at", "updated_at"}
+	blob := map[string]interface{}{"custom": "original"}
+	extra := map[string]interface{}{"custom": "updated"}
+	for _, key := range append(append([]string{}, promoted...), rowMetadata...) {
+		blob[key] = "original"
+		extra[key] = "updated"
+	}
+	mergeBlobExtraFields(blob, extra, objectPromotedBlobFields)
+	for _, key := range promoted {
+		if blob[key] != "original" {
+			t.Fatalf("extra overwrote promoted field %q", key)
+		}
+	}
+	for _, key := range rowMetadata {
+		if blob[key] != "updated" {
+			t.Fatalf("write policy unexpectedly filtered metadata %q", key)
+		}
+	}
+	raw, err := json.Marshal(blob)
+	if err != nil {
+		t.Fatal(err)
+	}
+	object := models.MediaObject{JSON: raw}
+	if got := object.JSONSnapshot().Extra(); !reflect.DeepEqual(got, map[string]interface{}{"custom": "updated"}) {
+		t.Fatalf("read extras = %#v", got)
+	}
+	removeBlobExtraKeys(blob, objectPromotedBlobFields, append(append([]string{"custom"}, promoted...), rowMetadata...)...)
+	if len(blob) != len(promoted) {
+		t.Fatalf("remaining fields = %#v", blob)
+	}
+	raw, err = json.Marshal(blob)
+	if err != nil {
+		t.Fatal(err)
+	}
+	object.JSON = raw
+	if got := object.JSONSnapshot().Extra(); got != nil {
+		t.Fatalf("promoted-only extras = %#v, want nil", got)
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/the-drunken-coder/atlas/services/core/internal/jsondecode"
+	"github.com/the-drunken-coder/atlas/services/core/internal/models"
 )
 
 type jsonBlobField string
@@ -20,45 +21,27 @@ const (
 	entityBlobFieldSubtype jsonBlobField = "subtype"
 	entityBlobFieldAlias   jsonBlobField = "alias"
 
-	objectBlobFieldPath         jsonBlobField = "path"
-	objectBlobFieldContentType  jsonBlobField = "content_type"
-	objectBlobFieldType         jsonBlobField = "type"
 	objectBlobFieldSizeBytes    jsonBlobField = "size_bytes"
 	objectBlobFieldUsageHints   jsonBlobField = "usage_hints"
-	objectBlobFieldBucket       jsonBlobField = "bucket"
 	objectBlobFieldReferencedBy jsonBlobField = "referenced_by"
 )
 
-type jsonBlobFieldSet []jsonBlobField
+type jsonBlobFieldFilter func(string) bool
 
-func (s jsonBlobFieldSet) contains(key string) bool {
-	for _, field := range s {
-		if string(field) == key {
-			return true
-		}
-	}
-	return false
+func (f jsonBlobFieldFilter) contains(key string) bool {
+	return f != nil && f(key)
 }
 
-var (
-	entityPromotedBlobFields = jsonBlobFieldSet{
-		entityBlobFieldType,
-		entityBlobFieldSubtype,
-		entityBlobFieldAlias,
-		jsonBlobFieldComponents,
-		jsonBlobFieldVersion,
+var entityPromotedBlobFields jsonBlobFieldFilter = func(key string) bool {
+	switch jsonBlobField(key) {
+	case entityBlobFieldType, entityBlobFieldSubtype, entityBlobFieldAlias, jsonBlobFieldComponents, jsonBlobFieldVersion:
+		return true
+	default:
+		return false
 	}
-	objectPromotedBlobFields = jsonBlobFieldSet{
-		objectBlobFieldPath,
-		objectBlobFieldContentType,
-		objectBlobFieldType,
-		objectBlobFieldSizeBytes,
-		objectBlobFieldUsageHints,
-		objectBlobFieldBucket,
-		objectBlobFieldReferencedBy,
-		jsonBlobFieldVersion,
-	}
-)
+}
+
+var objectPromotedBlobFields jsonBlobFieldFilter = models.IsObjectPromotedJSONField
 
 type jsonBlobPatch struct {
 	rawMessage      json.RawMessage
@@ -67,7 +50,7 @@ type jsonBlobPatch struct {
 	mergeComponents func(map[string]interface{}, map[string]interface{}) error
 	extra           map[string]interface{}
 	removeExtraKeys []string
-	promotedFields  jsonBlobFieldSet
+	promotedFields  jsonBlobFieldFilter
 	apply           func(map[string]interface{}) error
 	validate        func(map[string]interface{}) error
 }
@@ -113,7 +96,7 @@ func decodeJSONBlobForPatch(raw json.RawMessage) (map[string]interface{}, error)
 	return data, nil
 }
 
-func mergeBlobExtraFields(blob map[string]interface{}, extra map[string]interface{}, promoted jsonBlobFieldSet) {
+func mergeBlobExtraFields(blob map[string]interface{}, extra map[string]interface{}, promoted jsonBlobFieldFilter) {
 	for key, value := range extra {
 		if !promoted.contains(key) {
 			blob[key] = value
@@ -121,7 +104,7 @@ func mergeBlobExtraFields(blob map[string]interface{}, extra map[string]interfac
 	}
 }
 
-func removeBlobExtraKeys(blob map[string]interface{}, promoted jsonBlobFieldSet, keys ...string) {
+func removeBlobExtraKeys(blob map[string]interface{}, promoted jsonBlobFieldFilter, keys ...string) {
 	for _, key := range keys {
 		if promoted.contains(key) {
 			continue
