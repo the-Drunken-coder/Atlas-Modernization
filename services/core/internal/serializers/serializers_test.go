@@ -748,3 +748,62 @@ func TestSerializedResourcesConformToAtlasProtocol(t *testing.T) {
 		})
 	}
 }
+
+func TestSerializedJSONResultsAreIsolated(t *testing.T) {
+	entity := &models.Entity{EntityID: "asset", Type: "asset", JSON: json.RawMessage(`{"components":{"status":{"value":"idle"}},"extension":{"values":[9007199254740993]}}`)}
+	object := &models.MediaObject{ObjectID: "object", JSON: json.RawMessage(`{"size_bytes":9007199254740993,"usage_hints":["inspection"],"bucket":"test","referenced_by":[{"entity_id":"asset"}],"extension":{"values":[9007199254740993]}}`)}
+	cases := []struct {
+		name      string
+		serialize func() interface{}
+	}{
+		{"entity", func() interface{} { return serializers.SerializeEntity(entity) }},
+		{"object detail", func() interface{} { return serializers.SerializeObject(object) }},
+		{"object list", func() interface{} { return serializers.SerializeObjectForList(object) }},
+		{"object feed", func() interface{} { return serializers.SerializeObjectForFeed(object) }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			baseline, err := json.Marshal(tc.serialize())
+			if err != nil {
+				t.Fatal(err)
+			}
+			checkAndMutate := func() {
+				result := tc.serialize()
+				encoded, err := json.Marshal(result)
+				if err != nil || !bytes.Equal(encoded, baseline) {
+					t.Errorf("serialization changed after result mutation: %s, error: %v", encoded, err)
+					return
+				}
+				switch value := result.(type) {
+				case *protocol.EntityResource:
+					value.Components["status"].(map[string]interface{})["value"] = "mutated"
+					value.Extra["extension"].(map[string]interface{})["values"].([]interface{})[0] = "mutated"
+				case *protocol.ObjectDetailResource:
+					value.Extra["extension"].(map[string]interface{})["values"].([]interface{})[0] = "mutated"
+					value.UsageHints[0] = "mutated"
+					*value.SizeBytes = 0
+					*value.Bucket = "mutated"
+					*value.ReferencedBy[0].EntityID = "mutated"
+				case *protocol.ObjectResource:
+					value.UsageHints[0] = "mutated"
+					*value.SizeBytes = 0
+					*value.Bucket = "mutated"
+					if len(value.ReferencedBy) > 0 {
+						*value.ReferencedBy[0].EntityID = "mutated"
+					}
+				}
+			}
+			checkAndMutate()
+			var workers sync.WaitGroup
+			for range 8 {
+				workers.Go(func() {
+					for range 20 {
+						checkAndMutate()
+					}
+				})
+			}
+			workers.Wait()
+			checkAndMutate()
+		})
+	}
+}

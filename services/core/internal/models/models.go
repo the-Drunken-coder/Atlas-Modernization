@@ -146,6 +146,18 @@ func (e *Entity) decodedJSON() map[string]interface{} {
 	return e.jsonCache.decoded(e.JSON, "entity_id", e.EntityID, "entity")
 }
 
+// EntityJSONSnapshot owns one defensive copy of a stored JSON document.
+// Maps and slices returned by its methods belong to this snapshot; mutating them
+// cannot change the model cache or another snapshot.
+type EntityJSONSnapshot struct {
+	data map[string]interface{}
+}
+
+// JSONSnapshot copies the decoded document once for reading multiple fields.
+func (e *Entity) JSONSnapshot() EntityJSONSnapshot {
+	return EntityJSONSnapshot{data: e.decodedJSON()}
+}
+
 // DecodedJSON returns a deep copy of the entity JSON blob.
 func (e *Entity) DecodedJSON() map[string]interface{} {
 	return e.decodedJSON()
@@ -153,7 +165,12 @@ func (e *Entity) DecodedJSON() map[string]interface{} {
 
 // GetComponents returns the components from the JSON blob.
 func (e *Entity) GetComponents() map[string]interface{} {
-	data := e.decodedJSON()
+	return e.JSONSnapshot().Components()
+}
+
+// Components reads components from the snapshot.
+func (s EntityJSONSnapshot) Components() map[string]interface{} {
+	data := s.data
 	if data == nil {
 		return nil
 	}
@@ -165,7 +182,12 @@ func (e *Entity) GetComponents() map[string]interface{} {
 
 // GetExtra returns extra fields from the JSON blob (excluding promoted fields).
 func (e *Entity) GetExtra() map[string]interface{} {
-	return jsonFieldsExcept(e.decodedJSON(),
+	return e.JSONSnapshot().Extra()
+}
+
+// Extra reads extra fields, excluding promoted fields, from the snapshot.
+func (s EntityJSONSnapshot) Extra() map[string]interface{} {
+	return jsonFieldsExcept(s.data,
 		"components", "type", "subtype", "alias",
 		"entity_id", "task_id", "object_id", "created_at", "updated_at", "version",
 	)
@@ -211,17 +233,32 @@ func (o *MediaObject) decodedJSON() map[string]interface{} {
 	return o.jsonCache.decoded(o.JSON, "object_id", o.ObjectID, "media object")
 }
 
+// ObjectJSONSnapshot owns one defensive copy of a stored JSON document.
+// Maps and slices returned by its methods belong to this snapshot; mutating them
+// cannot change the model cache or another snapshot.
+type ObjectJSONSnapshot struct {
+	data map[string]interface{}
+}
+
+// JSONSnapshot copies the decoded document once for reading multiple fields.
+func (o *MediaObject) JSONSnapshot() ObjectJSONSnapshot {
+	return ObjectJSONSnapshot{data: o.decodedJSON()}
+}
+
 // DecodedJSON returns a deep copy of the media object JSON blob.
 func (o *MediaObject) DecodedJSON() map[string]interface{} {
 	return o.decodedJSON()
 }
 
 // GetSizeBytes returns the size_bytes from the JSON blob.
-// decodedJSON decodes with UseNumber, so numeric values arrive as json.Number;
-// Int64 preserves full precision for large sizes. Values that overflow int64,
-// use a non-integer JSON literal, or are negative are rejected as invalid.
 func (o *MediaObject) GetSizeBytes() *int64 {
-	data := o.decodedJSON()
+	return o.JSONSnapshot().SizeBytes()
+}
+
+// SizeBytes preserves integer precision and rejects negative, non-integer,
+// or overflowing values.
+func (s ObjectJSONSnapshot) SizeBytes() *int64 {
+	data := s.data
 	if data == nil {
 		return nil
 	}
@@ -241,7 +278,12 @@ func (o *MediaObject) GetSizeBytes() *int64 {
 
 // GetUsageHints returns the usage_hints from the JSON blob.
 func (o *MediaObject) GetUsageHints() []string {
-	data := o.decodedJSON()
+	return o.JSONSnapshot().UsageHints()
+}
+
+// UsageHints reads string usage hints from the snapshot.
+func (s ObjectJSONSnapshot) UsageHints() []string {
+	data := s.data
 	if data == nil {
 		return nil
 	}
@@ -259,7 +301,12 @@ func (o *MediaObject) GetUsageHints() []string {
 
 // GetBucket returns the bucket from the JSON blob.
 func (o *MediaObject) GetBucket() *string {
-	data := o.decodedJSON()
+	return o.JSONSnapshot().Bucket()
+}
+
+// Bucket reads the storage bucket from the snapshot.
+func (s ObjectJSONSnapshot) Bucket() *string {
+	data := s.data
 	if data == nil {
 		return nil
 	}
@@ -271,7 +318,12 @@ func (o *MediaObject) GetBucket() *string {
 
 // GetExtra returns extra fields from the JSON blob (excluding promoted fields).
 func (o *MediaObject) GetExtra() map[string]interface{} {
-	return jsonFieldsExcept(o.decodedJSON(),
+	return o.JSONSnapshot().Extra()
+}
+
+// Extra reads extra fields, excluding promoted fields, from the snapshot.
+func (s ObjectJSONSnapshot) Extra() map[string]interface{} {
+	return jsonFieldsExcept(s.data,
 		"path", "content_type", "type", "size_bytes", "usage_hints", "bucket", "referenced_by",
 		"object_id", "created_at", "updated_at", "version",
 	)
@@ -279,7 +331,12 @@ func (o *MediaObject) GetExtra() map[string]interface{} {
 
 // GetReferencedBy returns the referenced_by from the JSON blob.
 func (o *MediaObject) GetReferencedBy() []map[string]interface{} {
-	data := o.decodedJSON()
+	return o.JSONSnapshot().ReferencedBy()
+}
+
+// ReferencedBy reads object reference maps from the snapshot.
+func (s ObjectJSONSnapshot) ReferencedBy() []map[string]interface{} {
+	data := s.data
 	if data == nil {
 		return nil
 	}
