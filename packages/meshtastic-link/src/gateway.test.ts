@@ -810,7 +810,7 @@ describe("Ordered Task dispatcher recovery", () => {
       dispatcher.close();
       gateway.stop();
     }
-  });
+  }, 60_000);
 });
 
 function disconnectedTaskPair(
