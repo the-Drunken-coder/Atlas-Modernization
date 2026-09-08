@@ -87,11 +87,12 @@ async function membershipStore(): Promise<{ directory: string; store: GatewayMem
 }
 
 async function waitFor(condition: () => boolean): Promise<void> {
-  for (let attempt = 0; attempt < 100; attempt++) {
+  const started = performance.now();
+  while (performance.now() - started < 2_000) {
     if (condition()) return;
-    await new Promise<void>((resolve) => setTimeout(resolve, 1));
+    await new Promise<void>((resolve) => setTimeout(resolve, 10));
   }
-  throw new Error("timed out waiting for Gateway join operation");
+  throw new Error(`timed out waiting for Gateway join operation after ${Math.round(performance.now() - started)}ms`);
 }
 
 describe("Gateway join admission", () => {

@@ -38,8 +38,11 @@ export class GatewayMembershipStore {
     try {
       await handle.writeFile(`${JSON.stringify(membership, null, 2)}\n`, "utf8");
       await handle.sync();
-    } finally {
       await handle.close();
+    } catch (error) {
+      await handle.close().catch(() => undefined);
+      await rm(this.path, { force: true }).catch(() => undefined);
+      throw error;
     }
     await syncDirectory(dirname(this.path));
   }

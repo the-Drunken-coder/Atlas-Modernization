@@ -13,6 +13,40 @@ import { LinkTransport } from "./transport.js";
 import type { LinkMessage, ResourceStatePublication } from "./types.js";
 
 describe("loopback Link service", () => {
+  it.each([
+    {
+      method: "POST",
+      path: "/v1/radio/profile/apply",
+      headers: { Origin: "https://example.invalid", "Content-Type": "application/x-www-form-urlencoded" }
+    },
+    {
+      method: "PUT",
+      path: "/v1/radio/profile",
+      headers: { Origin: "https://example.invalid", "Content-Type": "application/json" }
+    },
+    {
+      method: "POST",
+      path: "/v1/radio/profile/apply",
+      headers: { "Sec-Fetch-Site": "cross-site", "Content-Type": "application/json" }
+    }
+  ])("rejects browser-originated $method $path before profile mutation", async ({ method, path, headers }) => {
+    const service = new LinkService({ mode: "gateway", nodeID: "gateway", clock: new VirtualClock() });
+    const replace = vi.spyOn(service, "replaceProfile");
+    const apply = vi.spyOn(service, "applyRadioProfile");
+    const server = new LinkHTTPServer(service);
+    const address = await server.listen(0);
+    try {
+      const response = await fetch(`http://${address.host}:${address.port}${path}`, { method, headers, body: "{}" });
+      expect(response.status).toBe(403);
+      expect(await response.json()).toEqual({ error: "browser-originated mutations are not allowed" });
+      expect(replace).not.toHaveBeenCalled();
+      expect(apply).not.toHaveBeenCalled();
+    } finally {
+      await server.close();
+      service.stop();
+    }
+  });
+
   it.each<LinkMessage>([
     {
       type: "data_response",
