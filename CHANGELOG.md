@@ -3,6 +3,19 @@
 Atlas Core release notes are listed newest first. The manual release workflow writes each new section from the
 verified commit history with OpenCode Go, then pauses for approval before publishing.
 
+## 0.1.8 - 2026-09-08
+
+### Breaking changes
+
+- The CLI now requires state schema 3 and Docker resource names scoped to the Docker engine. Deployments created by earlier releases cannot update in place. Before installing this release, use the old package's Compose assets to stop and remove the old containers and paired PostgreSQL and MinIO volumes, then remove the matching `ATLAS_CORE_HOME`. This permanently deletes the old deployment's data. See `surfaces/core-cli/README.md` for the transition requirements.
+
+### Changed
+
+- Atlas Core lifecycle and Plugin operations now recover interrupted changes safely, preserve stopped deployments as stopped, and report operation progress in the terminal UI.
+- Production deployment startup verifies the paired PostgreSQL and MinIO storage set before stopping or starting containers; durable storage remains preserved by ordinary lifecycle commands.
+- Plugin endpoint origins and Source Gateway connector origins are validated before use, and Source Gateway reports admission timeouts separately from upstream timeouts.
+- The `Release Atlas Core` workflow now publishes after one approval and retries the authorization upload after creating the release tag. Its disposable-host acceptance test uses the current engine-scoped resource names.
+
 ## 0.1.7 - 2026-09-01
 
 ### Added

@@ -17,7 +17,11 @@ expected_image="$3"
 test_root="$(mktemp -d)"
 install_root="$test_root/install"
 core_home="$test_root/core-home"
-probe_container="atlas_core_production_api"
+engine_id="$(docker info --format '{{.ID}}')"
+test -n "$engine_id"
+engine_key="$(node -e 'process.stdout.write(require("node:crypto").createHash("sha256").update(process.argv[1]).digest("hex"))' "$engine_id")"
+project_name="atlas_core_production_$engine_key"
+probe_container="${project_name}_api"
 cli="$install_root/node_modules/.bin/atlas-core"
 
 cleanup() {
@@ -34,17 +38,17 @@ cleanup() {
 trap cleanup EXIT
 
 for resource in \
-  atlas_core_production_api \
-  atlas_core_production_source_gateway \
-  atlas_core_production_postgres \
-  atlas_core_production_minio \
-  atlas_core_production_minio_init; do
+  "${project_name}_api" \
+  "${project_name}_source_gateway" \
+  "${project_name}_postgres" \
+  "${project_name}_minio" \
+  "${project_name}_minio_init"; do
   if docker container inspect "$resource" >/dev/null 2>&1; then
     echo "Disposable runner already contains Atlas Core container $resource." >&2
     exit 1
   fi
 done
-for resource in atlas_core_production_postgres_data atlas_core_production_minio_data; do
+for resource in "${project_name}_postgres_data" "${project_name}_minio_data"; do
   if docker volume inspect "$resource" >/dev/null 2>&1; then
     echo "Disposable runner already contains Atlas Core volume $resource." >&2
     exit 1
@@ -64,8 +68,9 @@ fi
 docker pull "$expected_image"
 docker container create \
   --name "$probe_container" \
-  --label com.docker.compose.project=atlas_core_production \
+  --label "com.docker.compose.project=$project_name" \
   --label com.docker.compose.service=api \
+  --label "io.atlas.core.engine=$engine_id" \
   "$expected_image" >/dev/null
 
 probe_log="$test_root/existing-container.log"
@@ -93,10 +98,10 @@ node -e '
 ' "$core_home/state.json"
 ATLAS_CORE_HOME="$core_home" "$cli" __apply-core-update 0.0.0 "$expected_image"
 test "$(node -p "require(process.argv[1]).packageVersion" "$core_home/state.json")" = "$version"
-test "$(docker container inspect --format '{{.Config.Image}}' atlas_core_production_api)" = "$expected_image"
+test "$(docker container inspect --format '{{.Config.Image}}' "${project_name}_api")" = "$expected_image"
 ATLAS_CORE_HOME="$core_home" "$cli" status
-docker volume inspect atlas_core_production_postgres_data >/dev/null
-docker volume inspect atlas_core_production_minio_data >/dev/null
+docker volume inspect "${project_name}_postgres_data" >/dev/null
+docker volume inspect "${project_name}_minio_data" >/dev/null
 curl --fail --silent --show-error http://127.0.0.1:8000/readiness
 
 printf 'y\n' | ATLAS_CORE_HOME="$core_home" "$cli" reset
@@ -105,5 +110,5 @@ ATLAS_CORE_HOME="$core_home" "$cli" status
 curl --fail --silent --show-error http://127.0.0.1:8000/readiness
 ATLAS_CORE_HOME="$core_home" "$cli" stop
 
-docker volume inspect atlas_core_production_postgres_data >/dev/null
-docker volume inspect atlas_core_production_minio_data >/dev/null
+docker volume inspect "${project_name}_postgres_data" >/dev/null
+docker volume inspect "${project_name}_minio_data" >/dev/null
