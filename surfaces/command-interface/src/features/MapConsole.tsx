@@ -37,6 +37,7 @@ import type { PluginSelection } from "./admin/PluginsPanel.js";
 import { AssetInspector, type CommandManifestStatus } from "./assets/AssetInspector.js";
 import { CommandDetails } from "./commands/CommandDetails.js";
 import { CommandList } from "./commands/CommandList.js";
+import { commandEmptyLabel } from "./commands/command-empty-label.js";
 import { type CommandFormState, useCommandFlow } from "./commands/use-command-flow.js";
 import { EntityList } from "./EntityList.js";
 import { GeofeatureCreatePanel } from "./geofeatures/GeofeatureCreatePanel.js";
@@ -805,19 +806,7 @@ function ListBody({
             availabilities={catalog ? commandsForTargeting(catalog, selectedEntity, "none") : []}
             onPick={onPickCommand}
             disabled={commandManifestStatus !== "ready"}
-            emptyLabel={
-              !catalog
-                ? "Command Catalog unavailable"
-                : catalog.length === 0
-                  ? "No Commands are defined in Atlas Protocol"
-                  : commandManifestStatus === "loading"
-                    ? "Loading Asset Commands"
-                    : commandManifestStatus === "unavailable"
-                      ? "Asset Commands unavailable"
-                      : !selectedEntity.command_manifest?.length
-                        ? "This Asset has no Commands"
-                        : "No operator inputs are available for this Asset's Commands"
-            }
+            emptyLabel={commandEmptyLabel(catalog, selectedEntity.command_manifest, commandManifestStatus)}
           />
         </div>
       );
