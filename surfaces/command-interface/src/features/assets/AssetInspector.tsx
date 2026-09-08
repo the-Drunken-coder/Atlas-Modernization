@@ -1,4 +1,5 @@
 import type { CommandCatalog, EntityResource } from "@the-drunken-coder/atlas-sdk";
+import { useMemo } from "react";
 import { type CommandAvailability, commandsForTargeting } from "../../atlas/command-targeting.js";
 import {
   entityAltitude,
@@ -48,11 +49,16 @@ export function AssetInspector({
   const battery = entityBattery(entity);
   const lastSeen = entityHeartbeatLastSeen(entity);
   const level = heartbeatLevel(lastSeen, now);
-  const active = activeTasks(snapshot, entity);
-  const queued = queuedTasks(snapshot, entity);
-  const history = tasksForAsset(snapshot, entity.entity_id)
-    .filter((task) => task.status === "completed" || task.status === "failed" || task.status === "cancelled")
-    .slice(0, MAX_HISTORY);
+  const { active, queued, history } = useMemo(
+    () => ({
+      active: activeTasks(snapshot, entity),
+      queued: queuedTasks(snapshot, entity),
+      history: tasksForAsset(snapshot, entity.entity_id)
+        .filter((task) => task.status === "completed" || task.status === "failed" || task.status === "cancelled")
+        .slice(0, MAX_HISTORY)
+    }),
+    [snapshot, entity]
+  );
   const sidebarCommands = catalog
     ? [...commandsForTargeting(catalog, entity, "none"), ...commandsForTargeting(catalog, entity, "map_point")]
     : [];

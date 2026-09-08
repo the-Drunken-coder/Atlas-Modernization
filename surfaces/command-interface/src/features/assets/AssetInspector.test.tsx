@@ -1,7 +1,9 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import type { CommandCatalog, EntityResource, TaskResource } from "@the-drunken-coder/atlas-sdk";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { entityFixture, taskFixture } from "../../../test/fixtures.js";
+import * as selectors from "../../atlas/selectors.js";
+import type { AtlasSnapshot } from "../../atlas/store.js";
 import { AssetInspector, type CommandManifestStatus } from "./AssetInspector.js";
 
 const catalog: CommandCatalog = [
@@ -45,6 +47,88 @@ function renderInspector(
 }
 
 describe("AssetInspector", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  it("advances heartbeat and task ages without deriving unchanged task sections again", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-20T00:00:05Z"));
+    const derivations = [
+      vi.spyOn(selectors, "activeTasks"),
+      vi.spyOn(selectors, "queuedTasks"),
+      vi.spyOn(selectors, "tasksForAsset")
+    ];
+    const entity = entityFixture({
+      entity_id: "asset-1",
+      components: { heartbeat: { last_seen: "2026-06-20T00:00:00Z" } }
+    });
+    renderInspector(entity, { tasks: [taskFixture({ asset_id: entity.entity_id })] });
+    expect(screen.getAllByText("5s ago")).toHaveLength(2);
+    for (const derive of derivations) expect(derive).toHaveBeenCalledTimes(1);
+
+    for (let tick = 0; tick < 3; tick++) act(() => vi.advanceTimersByTime(1_000));
+
+    expect(screen.getAllByText("8s ago")).toHaveLength(2);
+    for (const derive of derivations) expect(derive).toHaveBeenCalledTimes(1);
+  });
+
+  it("refreshes task sections on snapshot and asset changes while keeping recent history capped at 25", () => {
+    const entity = asset();
+    const other = entityFixture({ entity_id: "asset-2" });
+    const queued = taskFixture({ task_id: "queued", asset_id: entity.entity_id, command: "queued.command" });
+    const otherTask = taskFixture({ task_id: "other", asset_id: other.entity_id, command: "other.command" });
+    const completed = Array.from({ length: 26 }, (_, index) => ({
+      ...taskFixture({ task_id: `history-${index}`, asset_id: entity.entity_id, command: `history.${index}` }),
+      status: "completed" as const,
+      acknowledged_at: "2026-06-20T00:00:00Z",
+      started_at: "2026-06-20T00:00:00Z",
+      finished_at: new Date(Date.parse("2026-06-20T00:01:00Z") + index * 1_000).toISOString(),
+      updated_at: new Date(Date.parse("2026-06-20T00:01:00Z") + index * 1_000).toISOString()
+    }));
+    let snapshot: AtlasSnapshot = {
+      entities: { [entity.entity_id]: entity, [other.entity_id]: other },
+      tasks: Object.fromEntries([...completed, queued, otherTask].map((task) => [task.task_id, task]))
+    };
+    const { rerender } = render(<AssetInspector entity={entity} snapshot={snapshot} onPickCommand={() => {}} />);
+    const sectionCommands = (title: string) =>
+      Array.from(
+        screen.getByText(title).closest("section")?.querySelectorAll(".task-row__title") ?? [],
+        (row) => row.textContent
+      );
+    const recentHistory = Array.from({ length: 25 }, (_, index) => `history.${25 - index}`);
+    expect(sectionCommands("Active & Queued Tasks")).toEqual(["queued.command"]);
+    expect(sectionCommands("Task History")).toEqual(recentHistory);
+
+    const active = {
+      ...queued,
+      status: "in_progress" as const,
+      acknowledged_at: "2026-06-20T00:02:00Z",
+      started_at: "2026-06-20T00:02:00Z"
+    } satisfies TaskResource;
+    snapshot = { ...snapshot, tasks: { ...snapshot.tasks, [active.task_id]: active } };
+    rerender(<AssetInspector entity={entity} snapshot={snapshot} onPickCommand={() => {}} />);
+    expect(screen.getByText("In progress")).toBeInTheDocument();
+    expect(sectionCommands("Active & Queued Tasks")).toEqual(["queued.command"]);
+    expect(sectionCommands("Task History")).toEqual(recentHistory);
+
+    const finished = {
+      ...active,
+      status: "completed" as const,
+      finished_at: "2026-06-20T00:03:00Z",
+      updated_at: "2026-06-20T00:03:00Z"
+    } satisfies TaskResource;
+    snapshot = { ...snapshot, tasks: { ...snapshot.tasks, [finished.task_id]: finished } };
+    rerender(<AssetInspector entity={entity} snapshot={snapshot} onPickCommand={() => {}} />);
+    expect(sectionCommands("Active & Queued Tasks")).toEqual([]);
+    expect(sectionCommands("Task History")).toEqual(["queued.command", ...recentHistory.slice(0, 24)]);
+
+    rerender(<AssetInspector entity={other} snapshot={snapshot} onPickCommand={() => {}} />);
+    expect(sectionCommands("Active & Queued Tasks")).toEqual(["other.command"]);
+    expect(sectionCommands("Task History")).toEqual([]);
+  });
+
   it.each([
     ["loading", "Loading Asset Commands"],
     ["unavailable", "Asset Commands unavailable"]
