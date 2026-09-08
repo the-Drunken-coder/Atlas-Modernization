@@ -1,4 +1,4 @@
-import { type CacheResourceOptions, ResourceCache } from "./cache.js";
+import { type CacheResourceOptions, embeddedResourceVersion, ResourceCache } from "./cache.js";
 import { sanitizeErrorMessage } from "./error-sanitizer.js";
 import { assertRevision, FeedConnectionManager } from "./feed-connection.js";
 import { AtlasAPIError, type HttpTransport, type ResponseValidator, resourceInstanceTokenHeaders } from "./http.js";
@@ -928,12 +928,6 @@ export class SyncEngine {
       }
     }
   }
-}
-
-function embeddedResourceVersion<TType extends ResourceType>(type: TType, resource: ResourceOf<TType>): number {
-  if (type === "task") return 0;
-  if (!("metadata" in resource)) return 0;
-  return resource.metadata.version;
 }
 
 function fullDatasetPath(cursors: FullDatasetCursors): string {
