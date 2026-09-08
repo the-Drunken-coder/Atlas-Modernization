@@ -29,7 +29,7 @@ type MockMapViewProps = {
   placeDetailTarget?: { id: string } | null;
   cameraCommand?:
     | { seq: number; intent: "world" }
-    | { seq: number; target: { id: string }; intent?: "focus" | "preview" | "commit" }
+    | { seq: number; target: { id: string }; intent?: "focus" | "commit" }
     | null;
   onMapContextMenu?: (info: { lat: number; lng: number; x: number; y: number; entityId?: string }) => void;
   onBackgroundClick?: () => void;

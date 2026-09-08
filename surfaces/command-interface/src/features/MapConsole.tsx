@@ -103,7 +103,7 @@ export function MapConsole() {
     return apiKey ? createMapTilerPlaceSearch(apiKey) : undefined;
   }, [atlas.config?.placeSearch?.apiKey]);
 
-  const issueCameraCommand = useCallback((target: MapTarget, intent: "focus" | "preview" | "commit" = "focus") => {
+  const issueCameraCommand = useCallback((target: MapTarget, intent: "focus" | "commit" = "focus") => {
     cameraSequenceRef.current += 1;
     setCameraCommand({ seq: cameraSequenceRef.current, target, intent });
   }, []);

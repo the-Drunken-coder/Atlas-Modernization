@@ -8,9 +8,6 @@ import {
   INITIAL_WORLD_BOUNDS,
   type MapCameraCommand,
   type MapTarget,
-  PREVIEW_DURATION_MS,
-  PREVIEW_POINT_ZOOM,
-  PREVIEW_RESTORE_MS,
   RETICLE_FLASH_MS
 } from "../interaction/map-camera.js";
 import { buildMapSources } from "../rendering/map-sources.js";
@@ -203,80 +200,14 @@ describe("MapView camera commands", () => {
     expect(map.setRenderWorldCopies).toHaveBeenLastCalledWith(false);
   });
 
-  it("previews a point from the current view and restores that view when the preview clears", async () => {
-    const { map, rerenderMap } = renderMapView();
-    map.flyTo.mockClear();
-    map.easeTo.mockClear();
-
-    rerenderMap({
-      cameraCommand: {
-        seq: 1,
-        intent: "preview",
-        target: { type: "point", id: "place-1", coordinates: [70, 80] }
-      }
-    });
-    await waitFor(() =>
-      expect(map.flyTo).toHaveBeenCalledWith(
-        expect.objectContaining({
-          center: [70, 80],
-          zoom: PREVIEW_POINT_ZOOM,
-          duration: expect.any(Number),
-          easing: expect.any(Function)
-        }),
-        { atlasCamera: true }
-      )
-    );
-
-    rerenderMap({ cameraCommand: null });
-
-    expect(map.easeTo).toHaveBeenCalledWith(
-      { center: [0, 0], zoom: 4, duration: PREVIEW_RESTORE_MS, easing: expect.any(Function) },
-      { atlasCamera: true }
-    );
-  });
-
-  it("uses the slower eased timing for area previews", async () => {
-    const { map, rerenderMap } = renderMapView();
-    map.fitBounds.mockClear();
-
-    rerenderMap({
-      cameraCommand: {
-        seq: 1,
-        intent: "preview",
-        target: {
-          type: "geometry",
-          id: "place-area-1",
-          geometry: {
-            type: "LineString",
-            coordinates: [
-              [-75, 40],
-              [-73, 42]
-            ]
-          }
-        }
-      }
-    });
-
-    await waitFor(() =>
-      expect(map.fitBounds).toHaveBeenCalledWith(
-        [
-          [-75, 40],
-          [-73, 42]
-        ],
-        expect.objectContaining({ duration: PREVIEW_DURATION_MS, easing: expect.any(Function) }),
-        { atlasCamera: true }
-      )
-    );
-  });
-
-  it("keeps the previewed view when a place focus is committed", async () => {
+  it("keeps the committed view when its command clears", async () => {
     const { map, rerenderMap } = renderMapView();
     map.easeTo.mockClear();
 
     rerenderMap({
       cameraCommand: {
         seq: 1,
-        intent: "preview",
+        intent: "focus",
         target: { type: "point", id: "place-1", coordinates: [70, 80] }
       }
     });
@@ -294,20 +225,18 @@ describe("MapView camera commands", () => {
     expect(map.easeTo).not.toHaveBeenCalled();
   });
 
-  it("stops a restoring preview as soon as place focus is committed", async () => {
+  it("stops an existing camera flight as soon as place focus is committed", async () => {
     const { map, rerenderMap } = renderMapView();
     map.easeTo.mockClear();
 
     rerenderMap({
       cameraCommand: {
         seq: 1,
-        intent: "preview",
+        intent: "focus",
         target: { type: "point", id: "place-1", coordinates: [70, 80] }
       }
     });
     await waitFor(() => expect(map.flyTo).toHaveBeenCalledTimes(1));
-    rerenderMap({ cameraCommand: null });
-    expect(map.easeTo).toHaveBeenCalledTimes(1);
     map.stop.mockClear();
 
     vi.useFakeTimers();
@@ -333,7 +262,7 @@ describe("MapView camera commands", () => {
       focusTarget: { type: "point", id: "place-1", coordinates: [70, 80] },
       cameraCommand: {
         seq: 1,
-        intent: "preview",
+        intent: "focus",
         target: { type: "point", id: "place-1", coordinates: [70, 80] }
       }
     });
@@ -456,7 +385,7 @@ describe("MapView camera commands", () => {
     const { map, rerenderMap } = renderMapView();
     map.setRenderWorldCopies.mockClear();
 
-    rerenderMap({ cameraCommand: { seq: 1, intent: "preview", target } });
+    rerenderMap({ cameraCommand: { seq: 1, intent: "focus", target } });
     await waitFor(() => expect(map.setRenderWorldCopies).toHaveBeenLastCalledWith(true));
 
     rerenderMap({ cameraCommand: null });
