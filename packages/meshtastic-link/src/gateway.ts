@@ -161,9 +161,9 @@ export class OrderedTaskDispatcher {
   private pumpingQueuedAssets = false;
   private wakingRetries = false;
   private dispatchSequence = 0;
-  private readonly reservedTasks = new WeakMap<
+  private readonly reservedTasks = new Map<
     TaskResource,
-    Map<TaskDelivery["delivery"], () => ReturnType<LinkTransport["submit"]>>
+    Map<TaskDelivery["delivery"], ReturnType<LinkTransport["reserveTaskDelivery"]>>
   >();
 
   constructor(
@@ -180,79 +180,87 @@ export class OrderedTaskDispatcher {
   }
 
   enqueue(assetID: string, task: TaskResource, delivery: TaskDelivery["delivery"] = "assignment"): void {
-    if (!assetID) throw new TypeError("Task delivery requires an Asset ID");
-    if (delivery === "assignment" && this.ignoresAssignment(assetID, task)) return;
-    this.reserveTask(assetID, task, delivery);
-    if (delivery === "cancellation") {
-      const replacesQueued = (this.queued.get(assetID) ?? []).some((item) => item.task.task_id === task.task_id);
-      this.reserveQueueSlots(replacesQueued ? 0 : 1);
-      this.removeQueuedTask(assetID, task.task_id);
+    try {
+      if (!assetID) throw new TypeError("Task delivery requires an Asset ID");
+      if (delivery === "assignment" && this.ignoresAssignment(assetID, task)) return;
+      this.reserveTask(assetID, task, delivery);
+      if (delivery === "cancellation") {
+        const replacesQueued = (this.queued.get(assetID) ?? []).some((item) => item.task.task_id === task.task_id);
+        this.reserveQueueSlots(replacesQueued ? 0 : 1);
+        this.removeQueuedTask(assetID, task.task_id);
+        const active = this.inFlight.get(assetID);
+        if (active?.task.task_id === task.task_id) this.retireInFlight(assetID, active, "superseded by cancellation");
+        const activeCancellation = this.inFlightCancellations.get(assetID);
+        if (activeCancellation?.task.task_id === task.task_id) {
+          this.retireInFlightCancellation(assetID, activeCancellation, "superseded by newer cancellation");
+        }
+        const queue = this.queued.get(assetID) ?? [];
+        queue.unshift({ task, delivery });
+        this.queued.set(assetID, queue);
+        this.pump(assetID);
+        return;
+      }
+      if (this.inFlightCancellations.get(assetID)?.task.task_id === task.task_id) return;
       const active = this.inFlight.get(assetID);
-      if (active?.task.task_id === task.task_id) this.retireInFlight(assetID, active, "superseded by cancellation");
-      const activeCancellation = this.inFlightCancellations.get(assetID);
-      if (activeCancellation?.task.task_id === task.task_id) {
-        this.retireInFlightCancellation(assetID, activeCancellation, "superseded by newer cancellation");
+      if (active?.task.task_id === task.task_id) {
+        if (!active.failed) return;
+        this.retryFailedAssignment(assetID, task);
+        return;
       }
       const queue = this.queued.get(assetID) ?? [];
-      queue.unshift({ task, delivery });
+      const existing = queue.findIndex((item) => item.task.task_id === task.task_id);
+      if (existing >= 0 && queue[existing]?.delivery === "cancellation") return;
+      if (existing >= 0) queue[existing] = { task, delivery };
+      else {
+        this.reserveQueueSlots(1);
+        queue.push({ task, delivery });
+      }
+      queue.sort(compareTasks);
       this.queued.set(assetID, queue);
       this.pump(assetID);
-      return;
+    } finally {
+      this.releaseUnusedReservations();
     }
-    if (this.inFlightCancellations.get(assetID)?.task.task_id === task.task_id) return;
-    const active = this.inFlight.get(assetID);
-    if (active?.task.task_id === task.task_id) {
-      if (!active.failed) return;
-      this.retryFailedAssignment(assetID, task);
-      return;
-    }
-    const queue = this.queued.get(assetID) ?? [];
-    const existing = queue.findIndex((item) => item.task.task_id === task.task_id);
-    if (existing >= 0 && queue[existing]?.delivery === "cancellation") return;
-    if (existing >= 0) queue[existing] = { task, delivery };
-    else {
-      this.reserveQueueSlots(1);
-      queue.push({ task, delivery });
-    }
-    queue.sort(compareTasks);
-    this.queued.set(assetID, queue);
-    this.pump(assetID);
   }
 
   enqueueAssignments(assetID: string, tasks: readonly TaskResource[]): void {
-    if (!assetID) throw new TypeError("Task delivery requires an Asset ID");
-    const admitted = tasks.filter((task) => !this.ignoresAssignment(assetID, task));
-    for (const task of admitted) this.reserveTask(assetID, task, "assignment");
-    const active = this.inFlight.get(assetID);
-    const replay = active?.failed ? tasks.find((task) => task.task_id === active.task.task_id) : undefined;
-    const queue = this.queued.get(assetID) ?? [];
-    const additions = new Set(
-      tasks
-        .filter(
-          (task) =>
-            this.inFlight.get(assetID)?.task.task_id !== task.task_id &&
-            this.inFlightCancellations.get(assetID)?.task.task_id !== task.task_id &&
-            !queue.some((item) => item.task.task_id === task.task_id)
-        )
-        .map((task) => task.task_id)
-    );
-    this.reserveQueueSlots(additions.size);
-    if (replay !== undefined) this.retryFailedAssignment(assetID, replay);
-    for (const task of tasks) {
-      if (
-        this.inFlight.get(assetID)?.task.task_id === task.task_id ||
-        this.inFlightCancellations.get(assetID)?.task.task_id === task.task_id
-      ) {
-        continue;
+    try {
+      if (!assetID) throw new TypeError("Task delivery requires an Asset ID");
+      const admitted = tasks.filter((task) => !this.ignoresAssignment(assetID, task));
+      const active = this.inFlight.get(assetID);
+      const replay = active?.failed ? tasks.find((task) => task.task_id === active.task.task_id) : undefined;
+      const queue = this.queued.get(assetID) ?? [];
+      const additions = new Set(
+        tasks
+          .filter(
+            (task) =>
+              this.inFlight.get(assetID)?.task.task_id !== task.task_id &&
+              this.inFlightCancellations.get(assetID)?.task.task_id !== task.task_id &&
+              !queue.some((item) => item.task.task_id === task.task_id)
+          )
+          .map((task) => task.task_id)
+      );
+      this.reserveQueueSlots(additions.size);
+      for (const task of admitted) this.reserveTask(assetID, task, "assignment");
+      if (replay !== undefined) this.retryFailedAssignment(assetID, replay);
+      for (const task of tasks) {
+        if (
+          this.inFlight.get(assetID)?.task.task_id === task.task_id ||
+          this.inFlightCancellations.get(assetID)?.task.task_id === task.task_id
+        ) {
+          continue;
+        }
+        const existing = queue.findIndex((item) => item.task.task_id === task.task_id);
+        if (existing >= 0 && queue[existing]?.delivery === "cancellation") continue;
+        if (existing >= 0) queue[existing] = { task, delivery: "assignment" };
+        else queue.push({ task, delivery: "assignment" });
       }
-      const existing = queue.findIndex((item) => item.task.task_id === task.task_id);
-      if (existing >= 0 && queue[existing]?.delivery === "cancellation") continue;
-      if (existing >= 0) queue[existing] = { task, delivery: "assignment" };
-      else queue.push({ task, delivery: "assignment" });
+      queue.sort(compareTasks);
+      this.queued.set(assetID, queue);
+      this.pump(assetID);
+    } finally {
+      this.releaseUnusedReservations();
     }
-    queue.sort(compareTasks);
-    this.queued.set(assetID, queue);
-    this.pump(assetID);
   }
 
   private ignoresAssignment(assetID: string, task: TaskResource): boolean {
@@ -278,6 +286,7 @@ export class OrderedTaskDispatcher {
       this.retireInFlightCancellation(assetID, cancellation, "superseded by authoritative terminal Task state");
     }
     this.pump(assetID);
+    this.releaseUnusedReservations();
   }
 
   state(assetID: string): {
@@ -302,6 +311,10 @@ export class OrderedTaskDispatcher {
   close(): void {
     this.unsubscribe();
     this.unsubscribeCapacity();
+    for (const reservations of this.reservedTasks.values()) {
+      for (const reservation of reservations.values()) reservation.cancel();
+    }
+    this.reservedTasks.clear();
     this.queued.clear();
     this.inFlight.clear();
     this.inFlightCancellations.clear();
@@ -349,6 +362,28 @@ export class OrderedTaskDispatcher {
     else if (remaining.length !== queue.length) this.queued.set(assetID, remaining);
   }
 
+  private releaseUnusedReservations(): void {
+    const retained = new Map<TaskResource, Set<TaskDelivery["delivery"]>>();
+    for (const queue of this.queued.values()) {
+      for (const { task, delivery } of queue) {
+        const deliveries = retained.get(task) ?? new Set();
+        deliveries.add(delivery);
+        retained.set(task, deliveries);
+      }
+    }
+    for (const active of this.inFlight.values()) {
+      if (active.retryQueued !== undefined) retained.set(active.retryQueued, new Set(["assignment"]));
+    }
+    for (const [task, reservations] of this.reservedTasks) {
+      for (const [delivery, reservation] of reservations) {
+        if (retained.get(task)?.has(delivery)) continue;
+        reservation.cancel();
+        reservations.delete(delivery);
+      }
+      if (reservations.size === 0) this.reservedTasks.delete(task);
+    }
+  }
+
   private reserveTask(assetID: string, task: TaskResource, delivery: TaskDelivery["delivery"]): void {
     const dispatch = this.transport.reserveTaskDelivery(
       { type: "task_delivery", delivery, task },
@@ -356,6 +391,7 @@ export class OrderedTaskDispatcher {
       `task_${++this.dispatchSequence}`
     );
     const reservations = this.reservedTasks.get(task) ?? new Map();
+    reservations.get(delivery)?.cancel();
     reservations.set(delivery, dispatch);
     this.reservedTasks.set(task, reservations);
   }
@@ -365,9 +401,13 @@ export class OrderedTaskDispatcher {
       this.reserveTask(assetID, queued.task, queued.delivery);
     const dispatch = this.reservedTasks.get(queued.task)?.get(queued.delivery);
     if (!dispatch) throw new Error("Task wire identity was not reserved");
-    const result = dispatch();
-    if (result.status !== "failed" || !isCapacityFailure(result.reason))
-      this.reservedTasks.get(queued.task)?.delete(queued.delivery);
+    const result = dispatch.dispatch();
+    if (result.status !== "failed" || !isCapacityFailure(result.reason)) {
+      dispatch.cancel();
+      const reservations = this.reservedTasks.get(queued.task);
+      reservations?.delete(queued.delivery);
+      if (reservations?.size === 0) this.reservedTasks.delete(queued.task);
+    }
     return result;
   }
 

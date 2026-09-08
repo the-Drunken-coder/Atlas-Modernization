@@ -14,6 +14,32 @@ import { LinkTransport } from "./transport.js";
 import type { LinkMessage } from "./types.js";
 
 describe("Link transport", () => {
+  it("keeps a queued Task identity exclusive until dispatch or cancellation", async () => {
+    const { gateway, clock } = directPair();
+    const message = {
+      type: "task_delivery",
+      delivery: "assignment",
+      task: pendingTask("reserved", "2026-09-02T12:00:00Z")
+    } as const;
+    const destination = { role: "asset", id: "asset-alpha" } as const;
+    const reservation = gateway.reserveTaskDelivery(message, destination, "reserved-task");
+    expect(gateway.submit(positionPublication(1), { operationID: "reserved-task" })).toMatchObject({
+      status: "failed",
+      reason: "operation ID is reserved for queued Task delivery"
+    });
+    expect(() => gateway.reserveTaskDelivery(message, destination, "reserved-task")).toThrow("already in use");
+    expect(reservation.dispatch()).toMatchObject({ operation_id: "reserved-task", status: "queued" });
+    await clock.runUntilIdle();
+    expect(gateway.status("reserved-task")?.status).not.toBe("sent");
+
+    const cancelled = gateway.reserveTaskDelivery(message, destination, "cancelled-task");
+    cancelled.cancel();
+    expect(gateway.submit(positionPublication(2), { operationID: "cancelled-task" }).status).toBe("queued");
+    expect(cancelled.dispatch().status).toBe("failed");
+    expect(gateway.status("cancelled-task")?.status).toBe("queued");
+    gateway.stop();
+  });
+
   it("retains the Task wire identity reserved before other dispatches", async () => {
     const clock = new VirtualClock();
     const radio = new InMemoryMeshRadio();
@@ -37,7 +63,7 @@ describe("Link transport", () => {
         { type: "task_delivery", delivery: "assignment", task: pendingTask("other", "2026-09-02T12:00:00Z") },
         { destination: { role: "asset", id: "asset-alpha" }, operationID: "other" }
       );
-      expect(dispatch().status).toBe("queued");
+      expect(dispatch.dispatch().status).toBe("queued");
       await clock.advanceBy(1_000);
       const frames = sent.mock.calls.map(([payload]) => decodeFrame(payload));
       expect(frames.filter((frame) => frame.operation_id === "reserved")).toContainEqual(
@@ -1317,10 +1343,13 @@ describe("Link transport", () => {
     });
     const requests = [alpha, bravo];
     let responses = 0;
+    const handles: string[] = [];
+    const outcomes = new Map<string, string>();
     gateway.onEvent((event) => {
+      if (event.type === "operation") outcomes.set(event.result.operation_id, event.result.status);
       if (event.type !== "message" || event.message.type !== "data_request" || !event.addressed_to_local) return;
       gateway.settleInbound(event.settlement_id, true);
-      gateway.submit(
+      const response = gateway.submit(
         {
           type: "data_response",
           request_id: event.message.request_id,
@@ -1329,12 +1358,13 @@ describe("Link transport", () => {
         },
         { destination: event.source }
       );
+      handles.push(response.operation_id);
     });
     for (const requester of requests) {
       requester.onEvent((event) => {
         if (event.type !== "message" || event.message.type !== "data_response" || !event.addressed_to_local) return;
         responses++;
-        requester.settleInbound(event.settlement_id, true);
+        requester.settleInbound(event.settlement_id, requester === alpha);
       });
       requester.submit(
         { type: "data_request", request_id: "shared-request", operation: "entity.get", target_id: "asset-alpha" },
@@ -1344,6 +1374,12 @@ describe("Link transport", () => {
     }
 
     expect(responses).toBe(2);
+    expect(new Set(handles).size).toBe(2);
+    expect(gateway.status(handles[0]!)?.status).toBe("confirmed");
+    expect(gateway.status(handles[1]!)?.status).toBe("rejected");
+    expect(outcomes.get(handles[0]!)).toBe("confirmed");
+    expect(outcomes.get(handles[1]!)).toBe("rejected");
+    expect(gateway.status("shared-request")).toBeUndefined();
     expect(alpha.status("shared-request")?.status).toBe("responded");
     expect(bravo.status("shared-request")?.status).toBe("responded");
   });

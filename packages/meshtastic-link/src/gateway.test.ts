@@ -749,6 +749,32 @@ describe("Ordered Task dispatcher recovery", () => {
     }
   });
 
+  it("releases reservations for rejected, retired, and closed queued Tasks", () => {
+    const { dispatcher, gateway, asset } = disconnectedTaskPair(1);
+    const createdAt = "2026-09-05T12:00:00Z";
+    try {
+      dispatcher.enqueue("asset-alpha", pendingTask("active", createdAt));
+      dispatcher.enqueue("asset-alpha", pendingTask("queued", createdAt));
+      expect(() => dispatcher.enqueue("asset-alpha", pendingTask("overflow", createdAt))).toThrow(
+        TaskQueueCapacityError
+      );
+      expect(gateway.submit(positionPublication(1), { operationID: "task_3" }).status).toBe("queued");
+      expect(gateway.submit(positionPublication(2), { operationID: "task_2" })).toMatchObject({
+        status: "failed",
+        reason: "operation ID is reserved for queued Task delivery"
+      });
+      dispatcher.observeAuthoritativeTask("asset-alpha", cancelledTask("queued", createdAt));
+      expect(gateway.submit(positionPublication(3), { operationID: "task_2" }).status).toBe("queued");
+      dispatcher.enqueue("asset-alpha", pendingTask("last", createdAt));
+      dispatcher.close();
+      expect(gateway.submit(positionPublication(4), { operationID: "task_4" }).status).toBe("queued");
+    } finally {
+      dispatcher.close();
+      gateway.stop();
+      asset.stop();
+    }
+  });
+
   it("retains a queued Task when confirmed operation identity capacity is exhausted", async () => {
     const clock = new VirtualClock();
     const network = new SimulatedPacketNetwork({ seed: 82, clock });

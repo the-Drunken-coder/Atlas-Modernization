@@ -95,6 +95,22 @@ async function waitFor(condition: () => boolean): Promise<void> {
 }
 
 describe("Gateway join admission", () => {
+  it.each(["", "   ", "invalid:asset"])(
+    "rejects invalid Link identity %j before preparing or storing membership",
+    async (assetID) => {
+      const { directory, store } = await membershipStore();
+      const prepare = vi.fn();
+      try {
+        const before = await store.load();
+        await expect(store.admitAsset(assetID, prepare)).rejects.toThrow("invalid Link node");
+        expect(prepare).not.toHaveBeenCalled();
+        expect(await store.load()).toEqual(before);
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
+    }
+  );
+
   it("rejects new identities at capacity while allowing generation updates", async () => {
     const { directory, store } = await membershipStore();
     try {

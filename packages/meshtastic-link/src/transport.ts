@@ -45,7 +45,7 @@ import type {
   SourceAdmissionFailure,
   TaskReport
 } from "./types.js";
-import { LINK_SOURCE_IDENTITY_LIMIT, SourceAdmissionError } from "./types.js";
+import { LINK_SOURCE_IDENTITY_LIMIT, SourceAdmissionError, validateLinkNode } from "./types.js";
 
 const PRIORITY_ORDER: Record<MessagePriority, number> = {
   safety: 0,
@@ -75,6 +75,8 @@ const RETRY_MS: Record<MessagePriority, number> = {
 };
 const OPERATION_RESULT_LIMIT = 4_096;
 const COMMITTED_OPERATION_ID_LIMIT = 4_096;
+// A batch may validate replacement identities before retiring the previous Task queue.
+const TASK_RESERVATION_LIMIT = 8_192;
 const COMMITTED_OPERATION_ID_RETENTION_MS = 10 * 60_000; // Twice the longest five-minute operation deadline.
 const SETTLED_INBOUND_LIMIT = 4_096;
 const TASK_DELIVERY_FENCE_LIMIT = 4_096;
@@ -266,6 +268,7 @@ export class LinkTransport {
       atomicTask?: { fingerprint: string; outcome: AtomicTaskSettlementResult };
     }
   >();
+  private readonly reservedTaskIDs = new Map<string, FrameIdentity>();
   private readonly operationResults = new Map<string, LinkOperationResult>();
   private readonly committedOperationIDs = new Map<string, CommittedOperation>();
   private readonly committedOperationExpiryQueue: CommittedOperationExpiry[] = [];
@@ -317,7 +320,7 @@ export class LinkTransport {
   };
 
   constructor(options: TransportOptions) {
-    validateNode(options.node);
+    validateLinkNode(options.node);
     if (!Number.isSafeInteger(options.sourceGeneration) || options.sourceGeneration < 0) {
       throw new RangeError("source generation must be a non-negative safe integer");
     }
@@ -385,7 +388,7 @@ export class LinkTransport {
     message: Extract<LinkMessage, { type: "task_delivery" }>,
     destination: LinkNode,
     operationID: string
-  ): () => LinkOperationResult {
+  ): { dispatch: () => LinkOperationResult; cancel: () => void } {
     if (this.stopped) throw new Error("link service is stopped");
     message = structuredClone(message);
     destination = { ...destination };
@@ -394,8 +397,37 @@ export class LinkTransport {
     const limit = this.radio.maxPayloadBytes?.(sendOptions) ?? this.radio.max_payload_bytes;
     const encoding = this.frameEncoding === "deflate-v3" ? "deflate-v2" : this.frameEncoding;
     fragmentPayload(serializeLinkMessage(message), identity, limit, encoding);
+    this.pruneCommittedOperationIDs();
+    const existing = this.operationResults.get(operationID);
+    if (
+      this.reservedTaskIDs.has(operationID) ||
+      this.committedOperationIDs.has(operationID) ||
+      (existing !== undefined && existing.status !== "failed")
+    ) {
+      throw new Error("Task operation ID is already in use");
+    }
+    if (this.reservedTaskIDs.size >= TASK_RESERVATION_LIMIT) {
+      throw new RangeError("confirmed operation identity capacity is exhausted");
+    }
     this.sourceSequence = identity.source_sequence;
-    return () => this.submitWithCapacity(message, { destination, operationID }, false, undefined, identity);
+    this.reservedTaskIDs.set(operationID, identity);
+    let cancelled = false;
+    return {
+      dispatch: () =>
+        cancelled
+          ? {
+              operation_id: operationID,
+              status: "failed",
+              reason: "Task reservation was cancelled",
+              completed_at: this.clock.now()
+            }
+          : this.submitWithCapacity(message, { destination, operationID }, false, undefined, identity),
+      cancel: () => {
+        if (this.reservedTaskIDs.get(operationID) !== identity) return;
+        this.reservedTaskIDs.delete(operationID);
+        cancelled = true;
+      }
+    };
   }
 
   private outboundIdentity(
@@ -431,8 +463,8 @@ export class LinkTransport {
     sourceSequence = this.sourceSequence + 1,
     reservedIdentity?: FrameIdentity
   ): OutboundPreparation {
-    const operationID = options.operationID ?? operationIDFor(message, this.createID);
-    const trackingKey = operationTrackingKey(message, options.destination, operationID);
+    const operationID = options.operationID ?? operationIDFor(message, this.createID, options.destination);
+    const trackingKey = operationID;
     const failure = (reason: string, confirmedOverload = false): OutboundPreparation => ({
       kind: "failed",
       operationID,
@@ -457,6 +489,10 @@ export class LinkTransport {
       return failure("Data request operation ID must match its request ID");
     }
     this.pruneCommittedOperationIDs();
+    const reservation = this.reservedTaskIDs.get(trackingKey);
+    if (reservation !== undefined && reservation !== reservedIdentity) {
+      return failure("operation ID is reserved for queued Task delivery");
+    }
     const existing = this.operationResults.get(trackingKey);
     if (existing) {
       if (existing.status !== "failed" || this.committedOperationIDs.has(trackingKey)) {
@@ -574,6 +610,7 @@ export class LinkTransport {
     if (outbound.delivery === "best_effort" && outbound.coalescingKey !== undefined) {
       this.replaceQueuedBestEffort(outbound);
     }
+    this.reservedTaskIDs.delete(outbound.trackingKey);
     this.queue.push(outbound);
     if (outbound.delivery === "confirmed") this.committedOperationIDs.set(outbound.trackingKey, {});
     if (outbound.delivery === "confirmed") {
@@ -756,7 +793,7 @@ export class LinkTransport {
     if (this.node.role !== "gateway" || source.role !== "asset") {
       throw new Error("only a Gateway may announce an Asset source activation");
     }
-    validateNode(source);
+    validateLinkNode(source);
     if (!Number.isSafeInteger(generation) || generation <= 0 || session.trim().length === 0) {
       throw new Error("source activation requires a positive generation and nonempty session");
     }
@@ -774,9 +811,7 @@ export class LinkTransport {
   }
 
   status(operationID: string): LinkOperationResult | undefined {
-    const result =
-      this.operationResults.get(operationID) ??
-      [...this.operationResults.values()].reverse().find((candidate) => candidate.operation_id === operationID);
+    const result = this.operationResults.get(operationID);
     return result === undefined ? undefined : structuredClone(result);
   }
 
@@ -833,6 +868,7 @@ export class LinkTransport {
     this.unsubscribeRadioDisconnect();
     for (const reassembly of this.reassemblies.values()) this.clock.cancel(reassembly.timer);
     this.reassemblies.clear();
+    this.reservedTaskIDs.clear();
     if (this.committedOperationExpiryTimer) this.clock.cancel(this.committedOperationExpiryTimer);
     this.committedOperationExpiryTimer = undefined;
     this.committedOperationExpiryAt = undefined;
@@ -2088,9 +2124,13 @@ function joinChunks(reassembly: Reassembly): Uint8Array {
   return output;
 }
 
-function operationIDFor(message: LinkMessage, createID: () => string): string {
-  if (message.type === "data_request" || message.type === "data_response") return message.request_id;
-  if (message.type === "object_content") return message.request_id;
+function operationIDFor(message: LinkMessage, createID: () => string, destination?: LinkNode): string {
+  if (message.type === "data_response" || message.type === "object_content") {
+    return destination === undefined
+      ? message.request_id
+      : `${destination.role}:${destination.id}:${message.request_id}`;
+  }
+  if (message.type === "data_request") return message.request_id;
   if (message.type === "control") return message.operation_id;
   if (message.type === "state" && message.operation_id) return message.operation_id;
   return createID();
@@ -2098,12 +2138,6 @@ function operationIDFor(message: LinkMessage, createID: () => string): string {
 
 function wireOperationIDFor(message: LinkMessage, operationID: string): string {
   return message.type === "data_response" || message.type === "object_content" ? message.request_id : operationID;
-}
-
-function operationTrackingKey(message: LinkMessage, destination: LinkNode | undefined, operationID: string): string {
-  return (message.type === "data_response" || message.type === "object_content") && destination !== undefined
-    ? `${destination.role}:${destination.id}:${operationID}`
-    : operationID;
 }
 
 function dataRequestID(outbound: Outbound): string | undefined {
@@ -2126,12 +2160,6 @@ function validStateSource(message: LinkMessage, source: LinkNode): boolean {
 
 function compactID(): string {
   return randomBytes(8).toString("base64url");
-}
-
-function validateNode(node: LinkNode): void {
-  if ((node.role !== "asset" && node.role !== "gateway") || !node.id.trim() || node.id.includes(":")) {
-    throw new TypeError("invalid Link node");
-  }
 }
 
 function sameNode(left: LinkNode, right: LinkNode): boolean {

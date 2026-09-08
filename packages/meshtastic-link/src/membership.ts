@@ -2,7 +2,7 @@ import { mkdir, open, rename, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { readPrivateFile } from "./private-file.js";
 import type { PrivateChannelMembership } from "./profile.js";
-import { LINK_SOURCE_IDENTITY_LIMIT, SourceAdmissionError } from "./types.js";
+import { LINK_SOURCE_IDENTITY_LIMIT, SourceAdmissionError, validateLinkNode } from "./types.js";
 
 const membershipMutationTails = new Map<string, Promise<void>>();
 
@@ -74,7 +74,7 @@ export class GatewayMembershipStore {
     assetID: string,
     prepare?: AdmissionPreparation<T>
   ): Promise<AssetAdmission & { prepared?: T }> {
-    if (!assetID.trim()) throw new TypeError("Asset ID must not be empty");
+    validateLinkNode({ role: "asset", id: assetID });
     return this.mutate(async () => {
       const membership = await this.load();
       const knownAsset = Object.hasOwn(membership.asset_generations, assetID);

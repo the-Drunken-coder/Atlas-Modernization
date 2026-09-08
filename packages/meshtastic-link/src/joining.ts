@@ -6,6 +6,7 @@ import { MESHTASTIC_APPLICATION_PAYLOAD_BYTES } from "./frame.js";
 import type { GatewayMembershipStore } from "./membership.js";
 import type { PrivateChannelMembership } from "./profile.js";
 import type { LinkRadio, RadioPacket, RadioSendOptions } from "./radio.js";
+import { validateLinkNode } from "./types.js";
 
 const JOIN_MARKER = "AJ1";
 const REQUIRED_CAPABILITIES = 0b111;
@@ -192,6 +193,7 @@ export class GatewayJoinService {
     if (!message) return;
     this.prunePending(packet.received_at);
     if (message.type === "discovery") {
+      validateLinkNode({ role: "asset", id: message.asset_id });
       this.pruneCompleted(packet.received_at);
       if (message.radio_node_id !== packet.radio_source) return;
       const completed = this.completed.get(message.join_attempt_id);
@@ -403,6 +405,7 @@ export class AssetJoinService {
   private currentStatus: AssetJoinStatus;
 
   constructor(options: AssetJoinOptions) {
+    validateLinkNode({ role: "asset", id: options.assetID });
     if (!options.assetID || !options.serviceSession || !Number.isSafeInteger(options.radioNodeID)) {
       throw new TypeError("Asset joining requires stable Asset, radio, and service session identities");
     }

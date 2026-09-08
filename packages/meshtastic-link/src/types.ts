@@ -25,6 +25,13 @@ import type {
   AtlasRadioRequestOperation
 } from "./generated/radio-contract.generated.js";
 
+// Shared admission and transport rules for identities used in Link frames.
+export function validateLinkNode(node: LinkNode): void {
+  if ((node.role !== "asset" && node.role !== "gateway") || !node.id.trim() || node.id.includes(":")) {
+    throw new TypeError("invalid Link node");
+  }
+}
+
 export const LINK_SOURCE_IDENTITY_LIMIT = 4096;
 export const MAX_LINK_FRAGMENTS = 4096;
 
