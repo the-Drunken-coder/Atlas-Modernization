@@ -322,10 +322,23 @@ export function MapConsole() {
     );
   }, [atlas.config]);
 
-  const sources = useMemo(
-    () => buildMapSources(Object.values(snapshot.entities), selectedId, now),
-    [snapshot.entities, selectedId, now]
+  const mapEntities = useMemo(() => {
+    const assets: EntityResource[] = [];
+    const staticEntities: EntityResource[] = [];
+    for (const entity of Object.values(snapshot.entities)) {
+      (entityKind(entity) === "asset" ? assets : staticEntities).push(entity);
+    }
+    return { assets, staticEntities };
+  }, [snapshot.entities]);
+  const staticSources = useMemo(
+    () => buildMapSources(mapEntities.staticEntities, selectedId),
+    [mapEntities, selectedId]
   );
+  const assetSource = useMemo(
+    () => buildMapSources(mapEntities.assets, selectedId, now).assets,
+    [mapEntities, selectedId, now]
+  );
+  const sources = useMemo(() => ({ ...staticSources, assets: assetSource }), [staticSources, assetSource]);
   const counts = useMemo(() => countsByKind(snapshot), [snapshot]);
   const handleMapStyleSwitchError = useCallback(
     ({ activeStyleId }: { failedStyleId: string; activeStyleId: string }) => {

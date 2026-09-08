@@ -396,13 +396,14 @@ export function MapView({
     };
   }, [styleId, style]);
 
-  // Sync entity sources.
+  // Clock-only asset updates leave the geofeature source unchanged.
+  const geofeatures = sources.geofeatures;
   useEffect(() => {
     const map = mapRef.current;
     if (map && readyRef.current) {
-      pushSources(map, sources);
+      pushSources(map, sourcesRef.current);
     }
-  }, [sources]);
+  }, [geofeatures]);
 
   // Reconcile asset/track DOM markers before reticles read their boxes for this snapshot.
   useLayoutEffect(() => {
