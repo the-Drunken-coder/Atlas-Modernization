@@ -30,7 +30,8 @@ func SerializeEntity(e *models.Entity) *protocol.EntityResource {
 		return nil
 	}
 
-	components := e.GetComponents()
+	snapshot := e.JSONSnapshot()
+	components := snapshot.Components()
 	if components == nil {
 		components = make(map[string]interface{})
 	}
@@ -46,7 +47,7 @@ func SerializeEntity(e *models.Entity) *protocol.EntityResource {
 			UpdatedAt: e.UpdatedAt.UTC().Format(APIMetadataTimeLayout),
 			Version:   e.Version,
 		},
-		Extra: e.GetExtra(),
+		Extra: snapshot.Extra(),
 	}
 }
 
@@ -115,11 +116,12 @@ func SerializeObject(o *models.MediaObject) *protocol.ObjectDetailResource {
 		return nil
 	}
 
-	usageHints := o.GetUsageHints()
+	snapshot := o.JSONSnapshot()
+	usageHints := snapshot.UsageHints()
 	if usageHints == nil {
 		usageHints = []string{}
 	}
-	extra := o.GetExtra()
+	extra := snapshot.Extra()
 	if extra == nil {
 		extra = map[string]interface{}{}
 	}
@@ -128,10 +130,10 @@ func SerializeObject(o *models.MediaObject) *protocol.ObjectDetailResource {
 		Path:         o.Path,
 		ContentType:  o.ContentType,
 		Type:         o.Type,
-		SizeBytes:    o.GetSizeBytes(),
+		SizeBytes:    snapshot.SizeBytes(),
 		UsageHints:   usageHints,
-		ReferencedBy: protocolObjectReferences(o.ObjectID, o.GetReferencedBy()),
-		Bucket:       o.GetBucket(),
+		ReferencedBy: protocolObjectReferences(o.ObjectID, snapshot.ReferencedBy()),
+		Bucket:       snapshot.Bucket(),
 		Metadata: MetadataBlock{
 			CreatedAt: o.CreatedAt.UTC().Format(APIMetadataTimeLayout),
 			UpdatedAt: o.UpdatedAt.UTC().Format(APIMetadataTimeLayout),
@@ -147,7 +149,8 @@ func SerializeObjectForList(o *models.MediaObject) *protocol.ObjectResource {
 		return nil
 	}
 
-	usageHints := o.GetUsageHints()
+	snapshot := o.JSONSnapshot()
+	usageHints := snapshot.UsageHints()
 	if usageHints == nil {
 		usageHints = []string{}
 	}
@@ -156,9 +159,9 @@ func SerializeObjectForList(o *models.MediaObject) *protocol.ObjectResource {
 		Path:        o.Path,
 		ContentType: o.ContentType,
 		Type:        o.Type,
-		SizeBytes:   o.GetSizeBytes(),
+		SizeBytes:   snapshot.SizeBytes(),
 		UsageHints:  usageHints,
-		Bucket:      o.GetBucket(),
+		Bucket:      snapshot.Bucket(),
 		Metadata: MetadataBlock{
 			CreatedAt: o.CreatedAt.UTC().Format(APIMetadataTimeLayout),
 			UpdatedAt: o.UpdatedAt.UTC().Format(APIMetadataTimeLayout),
@@ -173,7 +176,8 @@ func SerializeObjectForFeed(o *models.MediaObject) *protocol.ObjectResource {
 		return nil
 	}
 
-	usageHints := o.GetUsageHints()
+	snapshot := o.JSONSnapshot()
+	usageHints := snapshot.UsageHints()
 	if usageHints == nil {
 		usageHints = []string{}
 	}
@@ -182,10 +186,10 @@ func SerializeObjectForFeed(o *models.MediaObject) *protocol.ObjectResource {
 		Path:         o.Path,
 		ContentType:  o.ContentType,
 		Type:         o.Type,
-		SizeBytes:    o.GetSizeBytes(),
+		SizeBytes:    snapshot.SizeBytes(),
 		UsageHints:   usageHints,
-		ReferencedBy: protocolObjectReferences(o.ObjectID, o.GetReferencedBy()),
-		Bucket:       o.GetBucket(),
+		ReferencedBy: protocolObjectReferences(o.ObjectID, snapshot.ReferencedBy()),
+		Bucket:       snapshot.Bucket(),
 		Metadata: MetadataBlock{
 			CreatedAt: o.CreatedAt.UTC().Format(APIMetadataTimeLayout),
 			UpdatedAt: o.UpdatedAt.UTC().Format(APIMetadataTimeLayout),
