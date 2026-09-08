@@ -1,11 +1,12 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { CommandCatalog, EntityResource } from "@the-drunken-coder/atlas-sdk";
+import { memo } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { entityFixture, metadataFixture, styleFixture } from "../../test/fixtures.js";
 import type { AppConfig } from "../app/config.js";
 import type { AtlasDataSource, ConnectionHealth } from "../atlas/data-source.js";
 import type { AtlasSnapshot } from "../atlas/store.js";
-import { AtlasProvider, useAtlas } from "./atlas-context.js";
+import { type AtlasContextValue, AtlasProvider, useAtlas } from "./atlas-context.js";
 
 function StatusProbe() {
   const atlas = useAtlas();
@@ -128,6 +129,112 @@ function catalogDataSource(loadCommandCatalog: () => Promise<CommandCatalog>) {
 }
 
 describe("AtlasProvider", () => {
+  it.each<ConnectionHealth>([
+    { running: true, healthy: true, degraded: false },
+    { running: true, healthy: false, degraded: true },
+    { running: true, healthy: false, degraded: true, error: { source: "live-sync", message: "feed failed" } },
+    {
+      running: true,
+      healthy: false,
+      degraded: true,
+      error: { source: "live-sync", message: "feed failed: Bearer sample" }
+    }
+  ])("preserves context identity for equal published health: %j", async (sample) => {
+    vi.useFakeTimers();
+    const rendered = vi.fn<(value: AtlasContextValue) => void>();
+    const ConfigProbe = memo(function ConfigProbe() {
+      const atlas = useAtlas();
+      rendered(atlas);
+      return <span>{atlas.config?.atlasBaseUrl}</span>;
+    });
+    let polls = 0;
+    const dataSource: AtlasDataSource = {
+      ...catalogDataSource(async () => []).dataSource,
+      health: () => ({
+        ...sample,
+        ...(sample.error
+          ? { error: { ...sample.error, message: sample.error.message.replace("sample", `sample-${polls++}`) } }
+          : {})
+      })
+    };
+    const mounted = render(
+      <AtlasProvider config={config} createDataSource={() => dataSource}>
+        <ConfigProbe />
+      </AtlasProvider>
+    );
+    try {
+      await act(async () => {});
+      const published = rendered.mock.lastCall?.[0];
+      expect(published?.status).toBe("ready");
+      if (sample.error?.message.includes("Bearer")) {
+        expect(published?.health.error?.message).toBe("feed failed: Bearer [redacted]");
+        expect(published?.connectionError).toEqual(published?.health.error);
+      }
+      rendered.mockClear();
+      for (let poll = 0; poll < 3; poll++) {
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(3_000);
+        });
+        expect(rendered).not.toHaveBeenCalled();
+      }
+    } finally {
+      mounted.unmount();
+      vi.useRealTimers();
+    }
+  });
+
+  it("publishes every health field change and retains errors until full recovery", async () => {
+    vi.useFakeTimers();
+    let health: ConnectionHealth = { running: true, healthy: true, degraded: false };
+    const rendered = vi.fn<(value: AtlasContextValue) => void>();
+    function HealthProbe() {
+      rendered(useAtlas());
+      return null;
+    }
+    const dataSource: AtlasDataSource = {
+      ...catalogDataSource(async () => []).dataSource,
+      health: () => health
+    };
+    const mounted = render(
+      <AtlasProvider config={config} createDataSource={() => dataSource}>
+        <HealthProbe />
+      </AtlasProvider>
+    );
+    try {
+      await act(async () => {});
+      const changes: Partial<ConnectionHealth>[] = [
+        { running: false },
+        { healthy: false },
+        { degraded: true },
+        { error: { source: "live-sync", message: "feed failed" } },
+        { error: { source: "startup", message: "feed failed" } },
+        { error: { source: "startup", message: "startup failed" } },
+        { error: undefined },
+        { degraded: false },
+        { healthy: true },
+        { running: true }
+      ];
+      let retainedError: ConnectionHealth["error"];
+      for (const change of changes) {
+        const previous = rendered.mock.lastCall?.[0];
+        health = { ...health, ...change };
+        if (health.error) retainedError = health.error;
+        else if (health.healthy && !health.degraded) retainedError = undefined;
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(3_000);
+        });
+        const published = rendered.mock.lastCall?.[0];
+        expect(published).not.toBe(previous);
+        expect(published?.health).toEqual(health);
+        expect(published?.connectionError).toEqual(retainedError);
+        expect(published?.error).toBe(retainedError?.message);
+      }
+    } finally {
+      mounted.unmount();
+      vi.useRealTimers();
+    }
+  });
+
   it("forwards an Entity detail abort signal to the data source", async () => {
     const controller = new AbortController();
     const loadEntityDetails = vi.fn(async () => entity("Loaded", 2));

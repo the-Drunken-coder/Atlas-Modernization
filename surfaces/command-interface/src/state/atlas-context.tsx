@@ -87,9 +87,20 @@ export function AtlasProvider({
     const publishHealth = (next: ConnectionHealth) => {
       if (cancelled) return;
       const error = next.error ? { ...next.error, message: sanitizeConnectionError(next.error.message) } : undefined;
-      setHealth(error ? { ...next, error } : next);
+      const nextHealth = error ? { ...next, error } : next;
+      setHealth((current) =>
+        current.running === next.running &&
+        current.healthy === next.healthy &&
+        current.degraded === next.degraded &&
+        current.error?.source === error?.source &&
+        current.error?.message === error?.message
+          ? current
+          : nextHealth
+      );
       if (error) {
-        setConnectionError(error);
+        setConnectionError((current) =>
+          current?.source === error.source && current.message === error.message ? current : error
+        );
         setError(error.message);
       } else if (next.healthy && !next.degraded) {
         setConnectionError(undefined);
