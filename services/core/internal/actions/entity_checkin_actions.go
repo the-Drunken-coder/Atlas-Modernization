@@ -33,9 +33,6 @@ type EntityCheckinResult struct {
 // CheckIn applies observed state. Task delivery is push-driven and deliberately
 // absent from periodic telemetry check-in.
 func (a *EntityCheckinActions) CheckIn(ctx context.Context, params EntityCheckinParams) (*EntityCheckinResult, error) {
-	if err := a.entityActions.checkExpectedVersion(ctx, params.EntityID, params.ExpectedVersion); err != nil {
-		return nil, err
-	}
 	entity, err := a.entityActions.Update(ctx, params.EntityID, UpdateEntityParams{
 		Components:      params.Components,
 		ExpectedVersion: params.ExpectedVersion,
