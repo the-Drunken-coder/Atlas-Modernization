@@ -292,7 +292,7 @@ function sameResourceInstance(
   return observed.metadata.created_at === current.metadata.created_at;
 }
 
-function embeddedResourceVersion<TType extends ResourceType>(type: TType, value: ResourceOf<TType>): number {
+export function embeddedResourceVersion<TType extends ResourceType>(type: TType, value: ResourceOf<TType>): number {
   if (type === "task" || !("metadata" in value)) return 0;
   return value.metadata.version;
 }
