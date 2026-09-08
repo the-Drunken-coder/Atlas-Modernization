@@ -15,7 +15,9 @@ export function listEntities(snapshot: AtlasSnapshot): EntityResource[] {
 }
 
 export function entitiesByKind(snapshot: AtlasSnapshot, kind: EntityKind): EntityResource[] {
-  return listEntities(snapshot).filter((entity) => entityKind(entity) === kind);
+  return Object.values(snapshot.entities)
+    .filter((entity) => entityKind(entity) === kind)
+    .sort((a, b) => entityDisplayName(a).localeCompare(entityDisplayName(b)));
 }
 
 export function countsByKind(snapshot: AtlasSnapshot): Record<EntityKind, number> {
