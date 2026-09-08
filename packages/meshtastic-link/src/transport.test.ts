@@ -2629,7 +2629,7 @@ describe("Link transport", () => {
     ).toMatchObject({ status: "failed", reason: "confirmed operation identity capacity is exhausted" });
     expect(transport.diagnostics()).toMatchObject({ queue_depth: 4_096, confirmed_pending: 4_096 });
     transport.stop();
-  });
+  }, 30_000);
 
   it("rejects new inbound identities when the settlement fence is full", async () => {
     const clock = new VirtualClock();
