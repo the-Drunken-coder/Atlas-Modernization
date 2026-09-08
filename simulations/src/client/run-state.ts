@@ -3,6 +3,7 @@ import {
   type AssertionResult,
   type AtlasTargetSummary,
   isCreatedResource,
+  isRunStatus,
   type JSONValue,
   jsonNumber,
   type RunEvent,
@@ -220,12 +221,6 @@ function isCanonicalTimestamp(value: unknown): value is string {
   if (typeof value !== "string") return false;
   const milliseconds = Date.parse(value);
   return !Number.isNaN(milliseconds) && new Date(milliseconds).toISOString() === value;
-}
-
-function isRunStatus(value: unknown): value is RunSummary["status"] {
-  return (
-    value === "running" || value === "completed" || value === "failed" || value === "cancelled" || value === "abandoned"
-  );
 }
 
 function isJSONValue(value: unknown): value is JSONValue {

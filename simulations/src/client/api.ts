@@ -11,7 +11,7 @@ import type {
   StartRunResponse,
   TargetListResponse
 } from "../shared/types.js";
-import { isCreatedResource, jsonNumber } from "../shared/types.js";
+import { isCreatedResource, isRunStatus, jsonNumber } from "../shared/types.js";
 
 const TARGET_API_KEY_HEADER = "X-Atlas-Target-Api-Key";
 
@@ -272,12 +272,6 @@ function isRunSummary(value: unknown): value is RunSummary {
     value.assertions.every(isAssertionResult) &&
     typeof value.cleaned === "boolean" &&
     (value.lastError === undefined || typeof value.lastError === "string")
-  );
-}
-
-function isRunStatus(value: unknown): boolean {
-  return (
-    value === "running" || value === "completed" || value === "failed" || value === "cancelled" || value === "abandoned"
   );
 }
 
