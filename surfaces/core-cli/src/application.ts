@@ -1305,15 +1305,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
 
   async logs(service: "api" | "minio" | "postgres" | "source-gateway" | undefined, follow: boolean): Promise<void> {
     const state = this.#requireInitialized();
-    const runtime = await this.#preflight();
-    await this.#dockerRuntimeScope.run(runtime, async () => {
-      this.#assertStateMatchesEngine(state, runtime.engineId);
-      const args = ["logs", "--tail", "200"];
-      if (follow) args.push("--follow");
-      if (service) args.push(service);
-      const result = await this.#runCompose(args, true, state.enabledPlugins);
-      if (result.status !== 0) throw commandFailure("docker compose logs", result);
-    });
+    await this.#runLogs(state, service, follow);
   }
 
   async pluginStatuses(pluginId?: string): Promise<PluginDeploymentStatus[]> {
@@ -1355,12 +1347,16 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     const state = this.#requireInitialized();
     if (!state.enabledPlugins.includes(pluginId)) throw new Error(`Plugin ${pluginId} is not enabled.`);
     const plugin = this.#pluginForRead(pluginId, state);
+    await this.#runLogs(state, plugin.service, follow);
+  }
+
+  async #runLogs(state: DeploymentState, service: string | undefined, follow: boolean): Promise<void> {
     const runtime = await this.#preflight();
     await this.#dockerRuntimeScope.run(runtime, async () => {
       this.#assertStateMatchesEngine(state, runtime.engineId);
       const args = ["logs", "--tail", "200"];
       if (follow) args.push("--follow");
-      args.push(plugin.service);
+      if (service) args.push(service);
       const result = await this.#runCompose(args, true, state.enabledPlugins);
       if (result.status !== 0) throw commandFailure("docker compose logs", result);
     });
