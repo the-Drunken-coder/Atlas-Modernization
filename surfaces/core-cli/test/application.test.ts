@@ -2787,6 +2787,24 @@ describe("atlas-core CLI", () => {
     expect(logs && composeCommand(logs)).toEqual(["logs", "--tail", "200", "source-gateway"]);
   });
 
+  it.each(["core", "plugin"])("reports nonzero Compose log results for %s logs", async (target) => {
+    const test = runtime();
+    markInitialized(test);
+    const plugin = installTestPluginCatalog(test);
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
+    const run = test.runner.run.bind(test.runner);
+    vi.spyOn(test.runner, "run").mockImplementation(async (command, args, options) => {
+      if (command === "docker" && args[0] === "compose" && args.includes("logs")) {
+        return result(17, "", "log stream unavailable");
+      }
+      return await run(command, args, options);
+    });
+
+    const args = target === "core" ? ["logs", "core"] : ["plugins", "logs", plugin.pluginId];
+    expect(await runCLI(args, test.context)).toBe(1);
+    expect(test.stderr.join("")).toContain("docker compose logs failed with exit code 17: log stream unavailable");
+  });
+
   it("reports health and Docker performance for each service", async () => {
     const test = runtime();
     markInitialized(test);
@@ -4030,31 +4048,42 @@ describe("atlas-core CLI", () => {
     });
   });
 
-  it("uses staged metadata for Plugin status and logs across CLI-only catalog drift", async () => {
-    const test = runtime();
-    markInitialized(test);
-    const plugin = installTestPluginCatalog(test);
-    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
-    setCoreVersion(test, "0.1.2");
-    expect(await runCLI(["plugins", "disable", plugin.pluginId], test.context)).toBe(1);
-    expect(test.stderr.join("")).toContain("update all");
-    test.context.pluginCatalog = [
-      {
-        ...plugin,
-        displayName: "Renamed Spatial Fixture",
-        service: "renamed-spatial-fixture"
-      }
-    ];
-    test.stdout.length = 0;
-    test.runner.calls.length = 0;
+  it.each([false, true])(
+    "uses staged metadata for Plugin status and logs across CLI-only catalog drift, follow=%s",
+    async (follow) => {
+      const test = runtime();
+      markInitialized(test);
+      const plugin = installTestPluginCatalog(test);
+      expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
+      setCoreVersion(test, "0.1.2");
+      expect(await runCLI(["plugins", "disable", plugin.pluginId], test.context)).toBe(1);
+      expect(test.stderr.join("")).toContain("update all");
+      test.context.pluginCatalog = [
+        {
+          ...plugin,
+          displayName: "Renamed Spatial Fixture",
+          service: "renamed-spatial-fixture"
+        }
+      ];
+      test.stdout.length = 0;
+      test.runner.calls.length = 0;
 
-    expect(await runCLI(["plugins", "status"], test.context)).toBe(0);
-    expect(await runCLI(["plugins", "status", plugin.pluginId], test.context)).toBe(0);
-    expect(await runCLI(["plugins", "logs", plugin.pluginId], test.context)).toBe(0);
-    expect(test.stdout.join("")).toContain(`${plugin.pluginId}\t${plugin.displayName}\tenabled`);
-    expect(test.stdout.join("")).not.toContain("Renamed Spatial Fixture");
-    expect(test.runner.calls.map(composeCommand)).toContainEqual(["logs", "--tail", "200", plugin.service]);
-  });
+      expect(await runCLI(["plugins", "status"], test.context)).toBe(0);
+      expect(await runCLI(["plugins", "status", plugin.pluginId], test.context)).toBe(0);
+      expect(await runCLI(["plugins", "logs", plugin.pluginId, ...(follow ? ["--follow"] : [])], test.context)).toBe(0);
+      expect(test.stdout.join("")).toContain(`${plugin.pluginId}\t${plugin.displayName}\tenabled`);
+      expect(test.stdout.join("")).not.toContain("Renamed Spatial Fixture");
+      const logs = test.runner.calls.find((call) => composeCommand(call)[0] === "logs");
+      expect(logs && composeCommand(logs)).toEqual([
+        "logs",
+        "--tail",
+        "200",
+        ...(follow ? ["--follow"] : []),
+        plugin.service
+      ]);
+      expect(logs?.inherit).toBe(true);
+    }
+  );
 
   it("rejects arbitrary Plugin IDs and bundles", async () => {
     const test = runtime();
