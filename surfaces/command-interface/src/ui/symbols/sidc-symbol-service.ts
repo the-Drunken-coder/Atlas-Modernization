@@ -323,27 +323,10 @@ export function createSidcIconService(config: SidcSymbolServiceConfig) {
     return deriveSymbolInfo(mapTrackTypeToConfigKey(track.type, lookup, defaultKey), symbolCatalog, fallback);
   }
 
-  function preload(): void {
-    for (const entry of Object.values(symbolCatalog)) {
-      if (!entry.sidc) continue;
-      try {
-        renderSymbol(entry.sidc, { ...entry.options, size: entry.size ?? fallback.size });
-      } catch {
-        // Invalid optional catalog entries should not block the console shell.
-      }
-    }
-  }
-
   return {
     getAssetSymbol,
     getTrackSymbol,
-    getAvailableSymbols: () => Object.keys(typeMapping).filter((key) => key !== "default"),
-    getSymbolConfigs: () =>
-      Object.fromEntries(
-        Object.entries(symbolCatalog).map(([key, symbolConfig]) => [key, cloneSymbolConfig(symbolConfig)])
-      ),
-    render,
-    preload
+    render
   };
 }
 

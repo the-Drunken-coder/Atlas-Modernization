@@ -59,11 +59,7 @@ describe("SIDC symbol service", () => {
     );
   });
 
-  it("returns detached copies for configs and cached renders", () => {
-    const configs = service.getSymbolConfigs();
-    configs.DRONE.options = { fill: false, frame: false };
-    expect(service.getSymbolConfigs().DRONE.options).toEqual(DEFAULT_SYMBOL_CATALOG.DRONE.options);
-
+  it("returns detached copies for cached renders", () => {
     const first = service.render(service.getAssetSymbol({ subtype: "uas" }));
     first.size.width = 0;
     first.anchor.x = 0;
