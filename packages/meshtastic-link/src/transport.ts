@@ -439,8 +439,8 @@ export class LinkTransport {
     return {
       revision: 1,
       message_type: message.type,
-      source: this.node,
-      ...(options.destination === undefined ? {} : { destination: options.destination }),
+      source: { ...this.node },
+      ...(options.destination === undefined ? {} : { destination: { ...options.destination } }),
       source_generation: this.sourceGeneration,
       service_session: this.serviceSession,
       source_sequence: sourceSequence,
@@ -520,6 +520,7 @@ export class LinkTransport {
 
     let payload: Uint8Array;
     try {
+      message = structuredClone(message);
       payload = serializeLinkMessage(message);
     } catch (error) {
       return failure(`Radio contract encoding failed: ${asErrorMessage(error)}`);
@@ -2124,7 +2125,7 @@ function joinChunks(reassembly: Reassembly): Uint8Array {
   return output;
 }
 
-function operationIDFor(message: LinkMessage, createID: () => string, destination?: LinkNode): string {
+export function operationIDFor(message: LinkMessage, createID: () => string, destination?: LinkNode): string {
   if (message.type === "data_response" || message.type === "object_content") {
     return destination === undefined
       ? message.request_id

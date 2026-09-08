@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { once } from "node:events";
 import { connect, type Socket } from "node:net";
 import type { TaskResource } from "@the-drunken-coder/atlas-sdk";
@@ -9,9 +10,48 @@ import { SimulatedPacketNetwork } from "./simulation.js";
 import { SUBSCRIPTION_LEASE_MS } from "./subscriptions.js";
 import { positionPublication } from "./test-fixtures.js";
 import { LinkTransport } from "./transport.js";
-import type { ResourceStatePublication } from "./types.js";
+import type { LinkMessage, ResourceStatePublication } from "./types.js";
 
 describe("loopback Link service", () => {
+  it.each<LinkMessage>([
+    {
+      type: "data_response",
+      request_id: "shared-request",
+      operation: "entity.get",
+      output: positionPublication(1).resource
+    },
+    {
+      type: "object_content",
+      request_id: "shared-request",
+      object_id: "object-1",
+      content_base64: Buffer.from("hello").toString("base64"),
+      sha256: `sha256:${createHash("sha256").update("hello").digest("hex")}`
+    }
+  ])("returns destination-scoped HTTP operation handles for $type", async (message) => {
+    const clock = new VirtualClock();
+    const network = new SimulatedPacketNetwork({ seed: 93, clock });
+    const service = new LinkService({ mode: "gateway", nodeID: "gateway", clock });
+    service.attachTransport(
+      new LinkTransport({ node: service.node, sourceGeneration: 1, radio: network.addRadio("gateway", 1), clock })
+    );
+    const server = new LinkHTTPServer(service);
+    const address = await server.listen(0);
+    const url = `http://${address.host}:${address.port}`;
+    try {
+      for (const id of ["asset-alpha", "asset-bravo"]) {
+        const result = await postJSON(`${url}/v1/messages`, { message, destination: { role: "asset", id } });
+        expect(result.response.status).toBe(202);
+        expect(result.body).toMatchObject({ status: "queued", operation_id: `asset:${id}:shared-request` });
+        const status = await fetch(`${url}/v1/operations/${encodeURIComponent(`asset:${id}:shared-request`)}`);
+        expect(await status.json()).toEqual(result.body);
+      }
+      expect(service.operation("shared-request")).toBeUndefined();
+    } finally {
+      await server.close();
+      service.stop();
+    }
+  });
+
   it.each(["", " ", "\t\n"])("rejects a blank service node ID %j before joining", (nodeID) => {
     expect(() => new LinkService({ mode: "asset", nodeID, clock: new VirtualClock() })).toThrow(
       "Link node ID is invalid"

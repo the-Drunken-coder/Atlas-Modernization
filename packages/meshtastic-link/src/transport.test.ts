@@ -11,9 +11,51 @@ import type { LinkRadio, RadioPacket, RadioSendOptions } from "./radio.js";
 import { SimulatedPacketNetwork } from "./simulation.js";
 import { positionPublication } from "./test-fixtures.js";
 import { LinkTransport } from "./transport.js";
-import type { LinkMessage } from "./types.js";
+import type { DataRequest, LinkMessage } from "./types.js";
 
 describe("Link transport", () => {
+  it("keeps the submitted request snapshot when callers reuse their message and destination", async () => {
+    const { clock, gateway, asset } = directPair();
+    const message: DataRequest = {
+      type: "data_request",
+      request_id: "snapshot",
+      operation: "entity.get",
+      target_id: "asset-alpha"
+    };
+    const destination = { ...gateway.node };
+    gateway.onEvent((event) => {
+      if (event.type !== "message" || event.message.type !== "data_request") return;
+      expect(event.message).toMatchObject({
+        request_id: "snapshot",
+        operation: "entity.get",
+        target_id: "asset-alpha"
+      });
+      gateway.settleInbound(event.settlement_id, true);
+      gateway.submit(
+        {
+          type: "data_response",
+          request_id: "snapshot",
+          operation: "entity.get",
+          output: positionPublication(1).resource
+        },
+        { destination: asset.node }
+      );
+    });
+    try {
+      expect(asset.submit(message, { destination }).status).toBe("queued");
+      message.request_id = "next-request";
+      message.operation = "object.get";
+      message.target_id = "next-target";
+      destination.id = "next-gateway";
+      await clock.runUntilIdle();
+      expect(asset.status("snapshot")?.status).toBe("responded");
+      expect(asset.status("next-request")).toBeUndefined();
+    } finally {
+      gateway.stop();
+      asset.stop();
+    }
+  });
+
   it("keeps a queued Task identity exclusive until dispatch or cancellation", async () => {
     const { gateway, clock } = directPair();
     const message = {

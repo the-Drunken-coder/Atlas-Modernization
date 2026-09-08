@@ -173,6 +173,54 @@ function setup() {
 }
 
 describe("Link service radio profile apply", () => {
+  it("preserves pending operation outcomes when retried during profile apply and recovery", async () => {
+    const { adapter, service } = setup();
+    const message = {
+      type: "data_request",
+      request_id: "profile-retry",
+      operation: "entity.get",
+      target_id: "asset-alpha"
+    } as const;
+    const original = service.submit(message);
+    expect(original.status).toBe("queued");
+    const failures: string[] = [];
+    service.onEvent((event) => {
+      if (event.type === "transport" && event.event.type === "operation" && event.event.result.status === "failed") {
+        failures.push(event.event.result.operation_id);
+      }
+    });
+    const desired = service.profile()!;
+    desired.frequency_slot = 21;
+    service.replaceProfile(desired);
+    adapter.blockWrites = true;
+    adapter.ignoreWrites = true;
+    const apply = service.applyRadioProfile();
+    await waitForApply(adapter);
+    try {
+      expect(service.status().lifecycle).toBe("configuring");
+      expect(service.submit(message)).toEqual(original);
+      expect(failures).toEqual([]);
+      adapter.releaseWrites();
+      await apply;
+      adapter.blockWrites = false;
+      service.replaceProfile({ ...desired, frequency_slot: 22 });
+      await expect(service.applyRadioProfile()).rejects.toThrow("radio configuration did not converge");
+      expect(service.status().lifecycle).toBe("error");
+      expect(service.submit(message)).toEqual(original);
+      expect(failures).toEqual([]);
+      const fresh = { ...message, request_id: "retry-after-recovery" };
+      expect(service.submit(fresh).status).toBe("failed");
+      adapter.blockWrites = false;
+      adapter.ignoreWrites = false;
+      await service.applyRadioProfile();
+      expect(service.submit(message)).toEqual(original);
+      expect(service.submit(fresh).status).toBe("queued");
+    } finally {
+      adapter.releaseWrites();
+      service.stop();
+    }
+  });
+
   it("captures each queued profile before waiting for an earlier apply", async () => {
     const { adapter, service } = setup();
     const desired = service.profile()!;

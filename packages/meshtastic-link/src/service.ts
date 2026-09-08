@@ -25,6 +25,7 @@ import {
 import {
   type AtomicTaskSettlementResult,
   LinkTransport,
+  operationIDFor,
   type TransportDiagnostics,
   type TransportEvent,
   type TransportMessageEvent
@@ -225,15 +226,18 @@ export class LinkService {
 
   submit(message: LinkMessage, destination?: LinkNode, operationIDValue?: string): LinkOperationResult {
     if (!isLinkMessage(message)) throw new TypeError("invalid Radio contract message");
-    const stableOperationID = operationIDValue ?? operationID(message);
+    const target = destination ?? this.defaultDestination(message);
+    const stableOperationID =
+      operationIDValue ?? operationIDFor(message, () => randomUUID().replaceAll("-", ""), target);
     if (this.node.role === "gateway" && message.type === "task_delivery") {
       return this.failLocal(stableOperationID, "Gateway task_delivery must use the /v1/tasks routes");
     }
     if (this.lifecycle === "configuring" || this.lifecycle === "error") {
+      const existing = this.transport?.status(stableOperationID);
+      if (existing !== undefined) return existing;
       return this.failLocal(stableOperationID, "Link service is not transmitting");
     }
     if (!this.transport) return this.failLocal(stableOperationID, "Link transport is unavailable");
-    const target = destination ?? this.defaultDestination(message);
     if (this.node.role === "asset" && requiresGateway(message)) {
       if (target === undefined || this.gatewayNode === undefined) {
         return this.failLocal(stableOperationID, "Gateway is unavailable");
@@ -259,7 +263,7 @@ export class LinkService {
     operationIDValue?: string
   ): AtomicTaskSettlementResult {
     if (!isLinkMessage(report) || report.type !== "task_report") throw new TypeError("invalid Task report");
-    const reportOperationID = operationIDValue ?? operationID(report);
+    const reportOperationID = operationIDValue ?? operationIDFor(report, () => randomUUID().replaceAll("-", ""));
     const target = destination ?? this.defaultDestination(report);
     const failed = (reason: string): AtomicTaskSettlementResult => {
       const completedAt = this.clock.now();
@@ -878,14 +882,6 @@ function requiresGateway(message: LinkMessage): boolean {
 
 function sameNode(left: LinkNode, right: LinkNode): boolean {
   return left.role === right.role && left.id === right.id;
-}
-
-function operationID(message: LinkMessage): string {
-  if (message.type === "data_request" || message.type === "data_response") return message.request_id;
-  if (message.type === "object_content") return message.request_id;
-  if (message.type === "control") return message.operation_id;
-  if (message.type === "state" && message.operation_id) return message.operation_id;
-  return randomUUID().replaceAll("-", "");
 }
 
 function isLinkNode(value: unknown): value is LinkNode {
