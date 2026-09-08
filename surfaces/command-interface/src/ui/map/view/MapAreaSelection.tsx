@@ -11,14 +11,13 @@ import {
 import { foregroundEscapeOwner } from "../interaction/foreground-escape-owner.js";
 import { MapRegionSelection, type RegionTransform, type ScreenRect } from "./MapRegionSelection.js";
 import {
-  clampMovedRect,
-  clampResizedRect,
   DATE_LINE_CROSSING_MESSAGE,
   keyboardDelta,
   MIN_REGION_SIZE,
   pointInCanvas,
   projectedScreenRect,
   rectFromPoints,
+  regionAfterTransform,
   regionFromMapBounds,
   regionFromScreenRect,
   type ScreenPoint,
@@ -201,11 +200,13 @@ export function MapAreaSelection({
         return;
       }
       const delta = { x: point.x - drag.start.x, y: point.y - drag.start.y };
-      const next =
-        drag.transform === "move"
-          ? clampMovedRect(drag.initialRect, delta, mapCanvas.getBoundingClientRect())
-          : clampResizedRect(drag.initialRect, delta, drag.transform);
-      const nextArea = regionFromScreenRect(map, next);
+      const nextArea = regionAfterTransform(
+        map,
+        drag.initialRect,
+        delta,
+        drag.transform,
+        mapCanvas.getBoundingClientRect()
+      );
       if (!nextArea) {
         setSelectionError(DATE_LINE_CROSSING_MESSAGE);
         return;
@@ -303,17 +304,13 @@ export function MapAreaSelection({
 
   const transformWithKeyboard = (transform: RegionTransform, event: ReactKeyboardEvent<HTMLButtonElement>) => {
     if (!map || !mapCanvas || !area) return;
-    const delta = keyboardDelta(event.key, event.shiftKey ? 40 : 10, transform === "move" ? "both" : transform);
+    const delta = keyboardDelta(event.key, event.shiftKey, transform);
     if (!delta) return;
     event.preventDefault();
     event.stopPropagation();
     onBeginRegionInteraction();
     const initial = projectedScreenRect(map, area);
-    const next =
-      transform === "move"
-        ? clampMovedRect(initial, delta, mapCanvas.getBoundingClientRect())
-        : clampResizedRect(initial, delta, transform);
-    const nextArea = regionFromScreenRect(map, next);
+    const nextArea = regionAfterTransform(map, initial, delta, transform, mapCanvas.getBoundingClientRect());
     if (!nextArea) {
       setSelectionError(DATE_LINE_CROSSING_MESSAGE);
       return;

@@ -1,5 +1,5 @@
 import type { Map as MlMap } from "maplibre-gl";
-import type { ResizeAxes, ScreenRect } from "./MapRegionSelection.js";
+import type { RegionTransform, ResizeAxes, ScreenRect } from "./MapRegionSelection.js";
 
 export type { ScreenRect } from "./MapRegionSelection.js";
 
@@ -114,11 +114,23 @@ export function clampResizedRect(
   };
 }
 
-export function keyboardDelta(key: string, step: number, axes: ResizeAxes): ScreenPoint | null {
-  if (axes !== "height" && key === "ArrowLeft") return { x: -step, y: 0 };
-  if (axes !== "height" && key === "ArrowRight") return { x: step, y: 0 };
-  if (axes !== "width" && key === "ArrowUp") return { x: 0, y: -step };
-  if (axes !== "width" && key === "ArrowDown") return { x: 0, y: step };
+export function regionAfterTransform(
+  map: MlMap,
+  rect: ScreenRect,
+  delta: ScreenPoint,
+  transform: RegionTransform,
+  viewport: Pick<DOMRect, "width" | "height">
+): RegionBounds | null {
+  const next = transform === "move" ? clampMovedRect(rect, delta, viewport) : clampResizedRect(rect, delta, transform);
+  return regionFromScreenRect(map, next);
+}
+
+export function keyboardDelta(key: string, shiftKey: boolean, transform: RegionTransform): ScreenPoint | null {
+  const step = shiftKey ? 40 : 10;
+  if (transform !== "height" && key === "ArrowLeft") return { x: -step, y: 0 };
+  if (transform !== "height" && key === "ArrowRight") return { x: step, y: 0 };
+  if (transform !== "width" && key === "ArrowUp") return { x: 0, y: -step };
+  if (transform !== "width" && key === "ArrowDown") return { x: 0, y: step };
   return null;
 }
 

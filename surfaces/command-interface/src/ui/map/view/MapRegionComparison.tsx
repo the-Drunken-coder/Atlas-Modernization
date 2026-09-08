@@ -22,8 +22,6 @@ import type { MapSources } from "../rendering/map-sources.js";
 import type { MapLibreRuntime } from "../runtime/maplibre-runtime.js";
 import { MapRegionSelection, type RegionTransform, type ScreenRect } from "./MapRegionSelection.js";
 import {
-  clampMovedRect,
-  clampResizedRect,
   DATE_LINE_CROSSING_MESSAGE,
   keyboardDelta,
   MIN_REGION_SIZE,
@@ -31,6 +29,7 @@ import {
   projectedScreenRect,
   type RegionBounds,
   rectFromPoints,
+  regionAfterTransform,
   regionFromScreenRect,
   type ScreenPoint,
   screenRectsEqual,
@@ -230,11 +229,13 @@ export function MapRegionComparison({
         return;
       }
       const delta = { x: point.x - drag.start.x, y: point.y - drag.start.y };
-      const nextRect =
-        drag.transform === "move"
-          ? clampMovedRect(drag.initialRect, delta, mapCanvas.getBoundingClientRect())
-          : clampResizedRect(drag.initialRect, delta, drag.transform);
-      const nextRegion = regionFromScreenRect(primaryMap, nextRect);
+      const nextRegion = regionAfterTransform(
+        primaryMap,
+        drag.initialRect,
+        delta,
+        drag.transform,
+        mapCanvas.getBoundingClientRect()
+      );
       if (!nextRegion) {
         setSelectionError(DATE_LINE_CROSSING_MESSAGE);
         return;
@@ -474,7 +475,7 @@ export function MapRegionComparison({
 
   const transformWithKeyboard = (transform: RegionTransform, event: ReactKeyboardEvent<HTMLButtonElement>) => {
     if (!map || !mapCanvas || !region) return;
-    const delta = keyboardDelta(event.key, event.shiftKey ? 40 : 10, transform === "move" ? "both" : transform);
+    const delta = keyboardDelta(event.key, event.shiftKey, transform);
     if (!delta) return;
     event.preventDefault();
     event.stopPropagation();
@@ -483,11 +484,7 @@ export function MapRegionComparison({
     setSelectionError(null);
     const viewport = mapCanvas.getBoundingClientRect();
     const projectedRect = projectedScreenRect(map, region);
-    const nextRect =
-      transform === "move"
-        ? clampMovedRect(projectedRect, delta, viewport)
-        : clampResizedRect(projectedRect, delta, transform);
-    const nextRegion = regionFromScreenRect(map, nextRect);
+    const nextRegion = regionAfterTransform(map, projectedRect, delta, transform, viewport);
     if (!nextRegion) {
       setSelectionError(DATE_LINE_CROSSING_MESSAGE);
       return;
