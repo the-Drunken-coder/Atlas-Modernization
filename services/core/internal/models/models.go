@@ -321,12 +321,30 @@ func (o *MediaObject) GetExtra() map[string]interface{} {
 	return o.JSONSnapshot().Extra()
 }
 
-// Extra reads extra fields, excluding promoted fields, from the snapshot.
+// IsObjectPromotedJSONField identifies fields owned by the object blob contract.
+// Reads additionally exclude row metadata; writes retain their separate metadata policy.
+func IsObjectPromotedJSONField(key string) bool {
+	switch key {
+	case "path", "content_type", "type", "size_bytes", "usage_hints", "bucket", "referenced_by", "version":
+		return true
+	default:
+		return false
+	}
+}
+
+// Extra reads extra fields, excluding promoted fields and row metadata, from the snapshot.
 func (s ObjectJSONSnapshot) Extra() map[string]interface{} {
-	return jsonFieldsExcept(s.data,
-		"path", "content_type", "type", "size_bytes", "usage_hints", "bucket", "referenced_by",
-		"object_id", "created_at", "updated_at", "version",
-	)
+	var extra map[string]interface{}
+	for key, value := range s.data {
+		if IsObjectPromotedJSONField(key) || key == "object_id" || key == "created_at" || key == "updated_at" {
+			continue
+		}
+		if extra == nil {
+			extra = make(map[string]interface{})
+		}
+		extra[key] = value
+	}
+	return extra
 }
 
 // GetReferencedBy returns the referenced_by from the JSON blob.
