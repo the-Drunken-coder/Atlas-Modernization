@@ -16,7 +16,7 @@ export type MapTarget =
  */
 export type MapCameraCommand =
   | { seq: number; intent: "world" }
-  | { seq: number; target: MapTarget; intent?: "focus" | "preview" | "commit" };
+  | { seq: number; target: MapTarget; intent?: "focus" | "commit" };
 
 export const ASSET_VIEW_ZOOM = 15;
 export const FIT_MAX_ZOOM = 10;
@@ -24,10 +24,7 @@ export const FIT_BOUNDS_PADDING = 48;
 export const FIT_DURATION_MS = 450;
 export const PREVIEW_POINT_ZOOM = 13;
 export const PREVIEW_FIT_MAX_ZOOM = 14;
-export const PREVIEW_FIT_BOUNDS_PADDING = 80;
-export const PREVIEW_DURATION_MS = 900;
 export const COMMIT_FIT_MAX_ZOOM = 16;
-export const PREVIEW_RESTORE_MS = 1200;
 export const RETICLE_FLASH_MS = 240;
 export const FLY_MIN_DURATION_MS = 600;
 export const FLY_MAX_DURATION_MS = 1500;
@@ -52,26 +49,23 @@ export type CameraMove =
     };
 
 /**
- * Plan the camera move for a resolved geometry. Preview moves leave more
- * context around the target; committed place moves use the tighter view.
+ * Plan the camera move for a resolved geometry. Committed bounds use a
+ * tighter maximum zoom than focused bounds.
  */
 export function planFocusMove(
   geometry: UiRawGeometry,
   view: CameraView,
-  intent: "focus" | "preview" | "commit" = "focus"
+  intent: "focus" | "commit" = "focus"
 ): CameraMove | null {
   if (geometry.type === "Point") {
     if (!isLngLatPosition(geometry.coordinates)) return null;
     const center: [number, number] = [geometry.coordinates[0], geometry.coordinates[1]];
-    const zoom = intent === "preview" ? PREVIEW_POINT_ZOOM : ASSET_VIEW_ZOOM;
+    const zoom = ASSET_VIEW_ZOOM;
     return {
       kind: "fly-to",
       center,
       zoom,
-      durationMs:
-        intent === "preview"
-          ? Math.max(PREVIEW_DURATION_MS, flyDurationMs(view, { center, zoom }))
-          : flyDurationMs(view, { center, zoom })
+      durationMs: flyDurationMs(view, { center, zoom })
     };
   }
   const bounds = boundsForGeometry(geometry);
@@ -79,15 +73,10 @@ export function planFocusMove(
   return {
     kind: "fit-bounds",
     bounds,
-    maxZoom: intent === "focus" ? FIT_MAX_ZOOM : intent === "preview" ? PREVIEW_FIT_MAX_ZOOM : COMMIT_FIT_MAX_ZOOM,
-    padding: intent === "preview" ? PREVIEW_FIT_BOUNDS_PADDING : FIT_BOUNDS_PADDING,
-    durationMs: intent === "preview" ? PREVIEW_DURATION_MS : FIT_DURATION_MS
+    maxZoom: intent === "focus" ? FIT_MAX_ZOOM : COMMIT_FIT_MAX_ZOOM,
+    padding: FIT_BOUNDS_PADDING,
+    durationMs: FIT_DURATION_MS
   };
-}
-
-/** Smooth camera previews at both ends so tiles have time to catch up. */
-export function previewEasing(t: number): number {
-  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 }
 
 /**

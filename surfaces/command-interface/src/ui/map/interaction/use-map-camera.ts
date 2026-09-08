@@ -16,9 +16,7 @@ import {
   INITIAL_WORLD_BOUNDS,
   isLngLatPosition,
   type MapCameraCommand,
-  PREVIEW_RESTORE_MS,
-  planFocusMove,
-  previewEasing
+  planFocusMove
 } from "./map-camera.js";
 
 const FLY_SEQ_TAG = "atlasFlySeq";
@@ -41,11 +39,6 @@ export function useMapCamera(args: {
   const followRef = useRef<FollowState>(followIdle);
   const lastAppliedSeqRef = useRef(0);
   const lastFollowedCoordsRef = useRef<[number, number] | null>(null);
-  const previewOriginRef = useRef<{
-    center: [number, number];
-    zoom: number;
-    renderWorldCopies: boolean;
-  } | null>(null);
   const renderWorldCopiesOwnedRef = useRef(false);
   const sourcesRef = useRef(sources);
   sourcesRef.current = sources;
@@ -70,20 +63,13 @@ export function useMapCamera(args: {
   }, [mapRef]);
 
   const notifyUserGesture = useCallback(() => {
-    const origin = previewOriginRef.current;
-    if (origin) {
-      mapRef.current?.setRenderWorldCopies(origin.renderWorldCopies);
-      renderWorldCopiesOwnedRef.current = false;
-    }
-    previewOriginRef.current = null;
     onUserGesture?.();
     dispatch({ type: "user-gesture" });
-  }, [dispatch, mapRef, onUserGesture]);
+  }, [dispatch, onUserGesture]);
 
   // A staged commit owns the current view without leaving the previous
-  // preview or entity-follow command active during its reticle flash.
+  // entity-follow command active during its reticle flash.
   const releaseCameraOwnership = useCallback(() => {
-    previewOriginRef.current = null;
     dispatch({ type: "command-cleared" });
   }, [dispatch]);
 
@@ -129,16 +115,7 @@ export function useMapCamera(args: {
 
     if (!command) {
       dispatch({ type: "command-cleared" });
-      const origin = previewOriginRef.current;
-      if (origin) {
-        previewOriginRef.current = null;
-        map.setRenderWorldCopies(origin.renderWorldCopies);
-        renderWorldCopiesOwnedRef.current = false;
-        map.easeTo(
-          { center: origin.center, zoom: origin.zoom, duration: PREVIEW_RESTORE_MS, easing: previewEasing },
-          { [CAMERA_EVENT_TAG]: true }
-        );
-      } else if (renderWorldCopiesOwnedRef.current) {
+      if (renderWorldCopiesOwnedRef.current) {
         map.setRenderWorldCopies(false);
         renderWorldCopiesOwnedRef.current = false;
       }
@@ -147,7 +124,6 @@ export function useMapCamera(args: {
     if (command.seq <= lastAppliedSeqRef.current) return;
 
     if (command.intent === "world") {
-      previewOriginRef.current = null;
       lastAppliedSeqRef.current = command.seq;
       dispatch({ type: "command-geometry", seq: command.seq });
       map.setRenderWorldCopies(false);
@@ -163,10 +139,6 @@ export function useMapCamera(args: {
           return { center: [center.lng, center.lat] as [number, number], zoom: map.getZoom() };
         })()
       : undefined;
-    if (command.intent === "preview" && view && !previewOriginRef.current) {
-      previewOriginRef.current = { ...view, renderWorldCopies: map.getRenderWorldCopies() };
-    }
-    if (command.intent !== "preview") previewOriginRef.current = null;
     if (geometry) {
       map.setRenderWorldCopies(geometryUsesUnwrappedLongitudes(geometry));
       renderWorldCopiesOwnedRef.current = true;
@@ -195,8 +167,7 @@ export function useMapCamera(args: {
         {
           center: move.center,
           zoom: move.zoom,
-          duration: move.durationMs,
-          ...(command.intent === "preview" ? { easing: previewEasing } : {})
+          duration: move.durationMs
         },
         eventData
       );
@@ -208,8 +179,7 @@ export function useMapCamera(args: {
       {
         duration: move.durationMs,
         maxZoom: move.maxZoom,
-        padding: move.padding,
-        ...(command.intent === "preview" ? { easing: previewEasing } : {})
+        padding: move.padding
       },
       { [CAMERA_EVENT_TAG]: true }
     );
