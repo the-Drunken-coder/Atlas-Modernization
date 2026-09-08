@@ -391,6 +391,74 @@ describe("MapConsole", () => {
     }
   });
 
+  it("preserves static map projections on heartbeat ticks and refreshes selection and geometry", async () => {
+    vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
+    vi.setSystemTime(new Date("2026-06-20T00:10:00Z"));
+    const connectedRover: EntityResource = {
+      ...rover,
+      components: { ...rover.components, heartbeat: { last_seen: "2026-06-20T00:10:00Z" } }
+    };
+    const track: EntityResource = { ...scout, entity_type: "track" };
+    const snapshot = {
+      entities: {
+        [connectedRover.entity_id]: connectedRover,
+        [track.entity_id]: track,
+        [circleArea.entity_id]: circleArea
+      },
+      tasks: {}
+    };
+    const rendered = renderStaticConsole({ snapshot });
+    try {
+      await screen.findByTestId("map");
+      const initial = mapViewMock.lastProps!.sources;
+      for (let tick = 0; tick < 3; tick++) {
+        await act(async () => {
+          vi.advanceTimersByTime(1_000);
+        });
+        expect(mapViewMock.lastProps!.sources.geofeatures).toBe(initial.geofeatures);
+        expect(mapViewMock.lastProps!.sources.tracks).toBe(initial.tracks);
+      }
+      await act(async () => {
+        vi.advanceTimersByTime(27_000);
+      });
+      expect(mapViewMock.lastProps!.sources.assets.features[0].properties.connectionFreshness).toBe("stale");
+      expect(mapViewMock.lastProps!.sources.geofeatures).toBe(initial.geofeatures);
+      act(() => mapViewMock.lastProps!.onSelectEntity?.(circleArea.entity_id));
+      const selected = mapViewMock.lastProps!.sources.geofeatures;
+      expect(selected).not.toBe(initial.geofeatures);
+      expect(selected.features[0].properties.selected).toBe(true);
+
+      const changed: EntityResource = {
+        ...circleArea,
+        components: { geometry: { type: "Point", coordinates: [10, 20] } }
+      };
+      rendered.rerender(
+        <AtlasStaticProvider
+          value={{
+            status: "ready",
+            config: appConfig(),
+            catalog,
+            health: healthyConnection,
+            snapshot: { ...snapshot, entities: { ...snapshot.entities, [changed.entity_id]: changed } },
+            reconnect: vi.fn(),
+            submitCommand: vi.fn(),
+            createGeofeature: vi.fn(),
+            updateGeometry: vi.fn()
+          }}
+        >
+          <MapConsole />
+        </AtlasStaticProvider>
+      );
+      const updated = mapViewMock.lastProps!.sources.geofeatures;
+      expect(updated).not.toBe(selected);
+      expect(updated.features[0].geometry).toEqual({ type: "Point", coordinates: [10, 20] });
+      expect(updated.features[0].properties.selected).toBe(true);
+    } finally {
+      rendered.unmount();
+      vi.useRealTimers();
+    }
+  });
+
   it("updates map heartbeat freshness as time passes without a new snapshot", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-06-20T00:10:00Z"));
