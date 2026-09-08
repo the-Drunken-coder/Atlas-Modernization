@@ -1,0 +1,136 @@
+import { Types } from "@meshtastic/core";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const mocks = vi.hoisted(() => {
+  class FakeDispatcher {
+    private readonly handlers = new Set<(value: unknown) => void>();
+
+    subscribe(handler: (value: unknown) => void): void {
+      this.handlers.add(handler);
+    }
+
+    unsubscribe(handler: (value: unknown) => void): void {
+      this.handlers.delete(handler);
+    }
+
+    dispatch(value: unknown): void {
+      for (const handler of [...this.handlers]) handler(value);
+    }
+  }
+
+  const state = {
+    configurationError: undefined as Error | undefined,
+    rebootOnCommit: false,
+    devices: [] as FakeMeshDevice[]
+  };
+
+  class FakeMeshDevice {
+    readonly events = {
+      onMyNodeInfo: new FakeDispatcher(),
+      onConfigPacket: new FakeDispatcher(),
+      onModuleConfigPacket: new FakeDispatcher(),
+      onChannelPacket: new FakeDispatcher(),
+      onDeviceMetadataPacket: new FakeDispatcher(),
+      onNodeInfoPacket: new FakeDispatcher(),
+      onMeshPacket: new FakeDispatcher(),
+      onQueueStatus: new FakeDispatcher(),
+      onDeviceStatus: new FakeDispatcher()
+    };
+    readonly index = state.devices.length;
+    readonly disconnect = vi.fn(async () => undefined);
+    readonly clearChannel = vi.fn(async () => 1);
+    readonly commitEditSettings = vi.fn(async () => {
+      if (state.rebootOnCommit && this.index === 0)
+        this.events.onDeviceStatus.dispatch(Types.DeviceStatusEnum.DeviceDisconnected);
+      return 1;
+    });
+    readonly configure = vi.fn(async () => {
+      if (state.configurationError) throw state.configurationError;
+      this.events.onDeviceStatus.dispatch(Types.DeviceStatusEnum.DeviceConfigured);
+      return 1;
+    });
+
+    constructor(_transport: unknown) {
+      state.devices.push(this);
+    }
+
+    setHeartbeatInterval(): void {}
+  }
+
+  return {
+    state,
+    FakeMeshDevice,
+    transportCreate: vi.fn(async () => ({
+      fromDevice: new ReadableStream(),
+      toDevice: new WritableStream(),
+      disconnect: vi.fn(async () => undefined)
+    }))
+  };
+});
+
+vi.mock("./serial.js", () => ({
+  openSerialTransport: mocks.transportCreate
+}));
+
+vi.mock("@meshtastic/core", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@meshtastic/core")>()),
+  MeshDevice: mocks.FakeMeshDevice
+}));
+
+describe("Meshtastic serial radio", () => {
+  beforeEach(() => {
+    mocks.state.configurationError = undefined;
+    mocks.state.rebootOnCommit = false;
+    mocks.state.devices.length = 0;
+    mocks.transportCreate.mockClear();
+  });
+
+  it("rejects a send when the device omitted its LoRa configuration", async () => {
+    const { MeshtasticSerialRadio } = await import("./radio.js");
+    const radio = await MeshtasticSerialRadio.open("/dev/cu.test");
+    try {
+      await expect(radio.send(Uint8Array.of(1), { channel: 1 })).rejects.toThrow("lora");
+    } finally {
+      await radio.close();
+    }
+  });
+
+  it("disconnects the device when initial configuration fails", async () => {
+    const configurationError = new Error("configuration failed");
+    mocks.state.configurationError = configurationError;
+    const { MeshtasticSerialRadio } = await import("./radio.js");
+
+    await expect(MeshtasticSerialRadio.open("/dev/cu.test")).rejects.toBe(configurationError);
+    expect(mocks.state.devices[0]?.disconnect).toHaveBeenCalledOnce();
+  });
+
+  it("reopens and reconfigures the serial device after a configuration reboot", async () => {
+    const { MeshtasticSerialRadio } = await import("./radio.js");
+    const radio = await MeshtasticSerialRadio.open("/dev/cu.test");
+    const disconnected = vi.fn();
+    radio.onDisconnect(disconnected);
+    mocks.state.rebootOnCommit = true;
+
+    await radio.clearPrivateMembership(1);
+
+    expect(mocks.transportCreate).toHaveBeenCalledTimes(2);
+    expect(mocks.state.devices).toHaveLength(2);
+    expect(mocks.state.devices[1]?.configure).toHaveBeenCalledOnce();
+    expect(disconnected).not.toHaveBeenCalled();
+    await radio.close();
+  });
+
+  it("does not expose cached radio state after a physical disconnect", async () => {
+    const { MeshtasticSerialRadio, RadioUnavailableError } = await import("./radio.js");
+    const radio = await MeshtasticSerialRadio.open("/dev/cu.test");
+    const device = mocks.state.devices[0];
+    if (!device) throw new Error("test device was not opened");
+
+    device.events.onDeviceStatus.dispatch(Types.DeviceStatusEnum.DeviceDisconnected);
+
+    await expect(radio.readConfiguration()).rejects.toBeInstanceOf(RadioUnavailableError);
+    await expect(radio.readPrivateMembership(1)).rejects.toBeInstanceOf(RadioUnavailableError);
+    expect(() => radio.nodeNumber()).toThrow(RadioUnavailableError);
+    await radio.close();
+  });
+});

@@ -114,7 +114,7 @@ export {
   isEntityCheckInResponse,
   isEntityCreateRequest,
   isEntityUpdateRequest,
-  isFullDatasetResponse,
+  isFeedEvent,
   isGeometryComponent,
   isJSONValue,
   isMapArea,
@@ -142,3 +142,11 @@ export {
 } from "./protocol.js";
 export { mapAreaSquareMeters } from "./spatial.js";
 export { joinAtlasUrl, normalizeAtlasBaseUrl } from "./url.js";
+export {
+  changedSinceResponseValidator,
+  isEntityResource,
+  isFullDatasetResponse,
+  isObjectDetailResource,
+  isObjectResource,
+  isTaskResource
+} from "./validation.js";

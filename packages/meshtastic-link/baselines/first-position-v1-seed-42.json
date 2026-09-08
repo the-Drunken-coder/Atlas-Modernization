@@ -1,0 +1,290 @@
+{
+  "scenario": "first_position_vertical_slice",
+  "scenario_revision": 1,
+  "seed": 42,
+  "scenario_manifest": {
+    "scenario": "first_position_vertical_slice",
+    "scenario_revision": 1,
+    "seed": 42,
+    "measurement_window_ms": 0,
+    "regulatory_region": "US",
+    "radio_profile": {
+      "name": "SHORT_FAST",
+      "bandwidth_khz": 250,
+      "spreading_factor": 7,
+      "coding_rate_denominator": 5,
+      "preamble_symbols": 8,
+      "mesh_overhead_bytes": 32
+    },
+    "topology": {
+      "hop_limit": 3,
+      "radios": [
+        {
+          "id": "asset-alpha",
+          "role": "asset",
+          "radio_node_number": 101
+        },
+        {
+          "id": "gateway",
+          "role": "gateway",
+          "radio_node_number": 201
+        },
+        {
+          "id": "asset-bravo",
+          "role": "asset",
+          "radio_node_number": 102
+        }
+      ],
+      "links": [
+        [
+          "asset-alpha",
+          "gateway"
+        ],
+        [
+          "gateway",
+          "asset-bravo"
+        ]
+      ]
+    },
+    "network": {
+      "packet_loss": 0,
+      "duplicate_chance": 0,
+      "propagation_delay_ms": 2,
+      "relay_delay_ms": 20,
+      "contention_window_airtimes": 4,
+      "carrier_sense": true
+    },
+    "transport": {
+      "queue_limit": 64,
+      "confirmed_limit": 64,
+      "reassembly_limit": 64,
+      "reassembly_timeout_ms": 10000,
+      "deadline_ms_by_priority": {
+        "safety": 15000,
+        "task": 15000,
+        "request": 30000,
+        "live_state": 30000,
+        "resource": 30000,
+        "object_content": 300000
+      },
+      "retry_interval_ms_by_priority": {
+        "safety": 5000,
+        "task": 5000,
+        "request": 10000,
+        "live_state": 10000,
+        "resource": 10000,
+        "object_content": 15000
+      }
+    },
+    "gateway_limits": {
+      "task_queue_limit": 4096,
+      "feed_transition_fence_limit": 4096
+    },
+    "workload_schedule": {
+      "position_interval_ms": 1000,
+      "telemetry_interval_ms": 10000,
+      "track_interval_ms": 1000,
+      "task_interval_ms": 60000,
+      "subscription_renewal_interval_ms": 30000,
+      "subscription_setup_spacing_ms": 30000,
+      "small_data_request_interval_ms": 30000,
+      "stress_track_interval_ms": 1000,
+      "object_size_bytes": 32768,
+      "cancellation_delay_after_object_send_ms": 500,
+      "payload_fixture_revision": 1
+    },
+    "production_path": [
+      "AtlasRadioSDK",
+      "LinkTransport",
+      "SimulatedPacketNetwork",
+      "SharedPicture"
+    ],
+    "normal_workload": {
+      "position_publications": 1,
+      "telemetry_publications": 0,
+      "track_publications": 0,
+      "task_assignments": 0,
+      "task_reports_expected": 0,
+      "subscription_adds": 0,
+      "subscription_renewals": 0,
+      "small_data_requests": 0
+    },
+    "success_criteria": {
+      "preserve_delivered_atlas_semantics": true,
+      "performance_gate": false
+    },
+    "configuration_sha256": "sha256:4d13a13a876115e8244acb57d07c195aa981ff4642ce544c011a63e2fff9a4ff"
+  },
+  "semantic_result": {
+    "gateway_received": true,
+    "peer_asset_received": true,
+    "entity": {
+      "alias": "Alpha",
+      "entity_id": "asset-alpha",
+      "entity_type": "asset",
+      "subtype": null,
+      "components": {
+        "geometry": {
+          "type": "Point",
+          "coordinates": [
+            -71.8023,
+            42.2746,
+            110
+          ]
+        },
+        "telemetry": {
+          "speed_m_s": 4.5,
+          "heading_deg": 82
+        }
+      },
+      "metadata": {
+        "created_at": "2026-09-02T12:00:00Z",
+        "updated_at": "2026-09-02T12:00:00Z",
+        "version": 1
+      }
+    }
+  },
+  "source_metrics": {
+    "application_bytes": 598,
+    "packets_sent": 9,
+    "transmitted_bytes": 2072,
+    "packets_received": 0,
+    "malformed_frames": 0,
+    "invalid_messages": 0,
+    "duplicate_packets_suppressed": 0,
+    "stale_messages_rejected": 0,
+    "picture_rejected_capacity": 0,
+    "incomplete_reassemblies": 0,
+    "best_effort_replaced": 0,
+    "confirmed_rejected_overload": 0,
+    "retry_exhausted": 0,
+    "retransmitted_packets": 0,
+    "fragment_repair_requests_sent": 0,
+    "fragment_repair_requests_received": 0,
+    "radio_send_failures": 0,
+    "inbound_settlement_expired": 0,
+    "peak_queue_depth": 1,
+    "packets_sent_by_message_type": {
+      "state": 9,
+      "task_delivery": 0,
+      "task_report": 0,
+      "data_request": 0,
+      "data_response": 0,
+      "resource_operation": 0,
+      "subscription": 0,
+      "object_content": 0,
+      "control": 0
+    },
+    "transmitted_bytes_by_priority": {
+      "safety": 0,
+      "task": 0,
+      "request": 0,
+      "live_state": 2072,
+      "resource": 0,
+      "object_content": 0
+    },
+    "queue_wait_ms_by_priority": {
+      "safety": {
+        "samples": 0,
+        "total_ms": 0,
+        "maximum_ms": 0
+      },
+      "task": {
+        "samples": 0,
+        "total_ms": 0,
+        "maximum_ms": 0
+      },
+      "request": {
+        "samples": 0,
+        "total_ms": 0,
+        "maximum_ms": 0
+      },
+      "live_state": {
+        "samples": 1,
+        "total_ms": 0,
+        "maximum_ms": 0
+      },
+      "resource": {
+        "samples": 0,
+        "total_ms": 0,
+        "maximum_ms": 0
+      },
+      "object_content": {
+        "samples": 0,
+        "total_ms": 0,
+        "maximum_ms": 0
+      }
+    },
+    "operation_latency_ms_by_priority": {
+      "safety": {
+        "samples": 0,
+        "total_ms": 0,
+        "maximum_ms": 0
+      },
+      "task": {
+        "samples": 0,
+        "total_ms": 0,
+        "maximum_ms": 0
+      },
+      "request": {
+        "samples": 0,
+        "total_ms": 0,
+        "maximum_ms": 0
+      },
+      "live_state": {
+        "samples": 1,
+        "total_ms": 6250.3720703125,
+        "maximum_ms": 6250.3720703125
+      },
+      "resource": {
+        "samples": 0,
+        "total_ms": 0,
+        "maximum_ms": 0
+      },
+      "object_content": {
+        "samples": 0,
+        "total_ms": 0,
+        "maximum_ms": 0
+      }
+    },
+    "operation_outcomes": {
+      "sent": 1,
+      "confirmed": 0,
+      "responded": 0,
+      "rejected": 0,
+      "failed": 0
+    }
+  },
+  "network_metrics": {
+    "radio_submissions": 9,
+    "mesh_transmissions": 18,
+    "transmitted_bytes": 4144,
+    "modeled_airtime_ms": 3678.4639999999986,
+    "delivered_packets": 18,
+    "lost_packets": 0,
+    "collided_packets": 0,
+    "duplicate_deliveries": 0,
+    "modeled_airtime_ms_by_message_type": {
+      "state": 3678.4639999999986,
+      "task_delivery": 0,
+      "task_report": 0,
+      "data_request": 0,
+      "data_response": 0,
+      "resource_operation": 0,
+      "subscription": 0,
+      "object_content": 0,
+      "control": 0,
+      "non_link": 0
+    },
+    "modeled_airtime_ms_by_priority": {
+      "safety": 0,
+      "task": 0,
+      "request": 0,
+      "live_state": 3678.4639999999986,
+      "resource": 0,
+      "object_content": 0,
+      "non_link": 0
+    }
+  },
+  "delivery_latency_ms": 8139.409423828125
+}
