@@ -70,6 +70,7 @@ docker container create \
   --name "$probe_container" \
   --label "com.docker.compose.project=$project_name" \
   --label com.docker.compose.service=api \
+  --label "io.atlas.core.engine=$engine_id" \
   "$expected_image" >/dev/null
 
 probe_log="$test_root/existing-container.log"
