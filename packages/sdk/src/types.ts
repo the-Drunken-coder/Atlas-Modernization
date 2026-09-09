@@ -83,6 +83,7 @@ export type EntityCheckInTelemetry = {
 };
 
 type EntityCheckInBaseOptions = {
+  movementObservedAt?: string;
   status?: string;
   telemetry?: EntityCheckInTelemetry;
   components?: EntityComponents;
@@ -174,4 +175,14 @@ export type CacheEntry<T> = {
   version: number;
   deleted: boolean;
   detail?: boolean;
+};
+
+export type MovementHistoryQuery = {
+  entityCreatedAt: string;
+  from: string;
+  to: string;
+  cursor?: string;
+  limit?: number;
+  maxPoints?: number;
+  signal?: AbortSignal;
 };

@@ -107,7 +107,7 @@ The JSON blob may contain fields outside `components`:
 
 ## Component Catalog
 
-- **telemetry**: Position/motion data. Units are meters, meters-per-second, and degrees (WGS84). Fields: `latitude`, `longitude`, `altitude_m`, `speed_m_s`, `heading_deg`.
+- **telemetry**: Position/motion data. Latitude and longitude use WGS84 decimal degrees; speed uses meters per second. `altitude_m` means meters above mean sea level, consistent with Command positions. Sources using another vertical reference must convert before publishing it; Core's finite-number validation cannot verify that reference. Fields: `latitude`, `longitude`, `altitude_m`, `speed_m_s`, `heading_deg`. See the [altitude decision](../../../../docs/design-decisions/2026-09-09-movement-altitude-uses-mean-sea-level.md).
 - **geometry**: Spatial footprint for geofeatures. Supports GeoJSON geometries and the Atlas circle Feature convention (see [Geometry Formats](#geometry-formats) below).
 - **media_refs**: Array of references to objects in MinIO. Each entry has `object_id` (required) and `role` (required). Valid roles: `camera_feed`, `thumbnail`, `heatmap_data`.
 - **mil_view**: Tacsight classification plus the last observed timestamp. `classification` must be one of: `friendly`, `hostile`, `neutral`, `unknown`, `civilian`.
@@ -215,3 +215,7 @@ Validation is performed in `internal/actions/component_validation.go` and relate
 | Telemetry update body | Max 256 KB |
 | Checkin body | Max 256 KB |
 | Component keys | Must be in the known set or prefixed with `custom_` |
+
+## Movement samples
+
+Migration v10 stores Asset/Track movement reports in `entity_movement_samples`, separately from current Entity JSON. Each row binds `entity_id` and `entity_created_at`, stable `sample_id`, source/arrival/effective times, insertion sequence and nullable latitude/longitude, speed and MSL altitude. A check requires a full position pair when present and at least one supported quantity. Rows expire after 30 days; Entity deletion does not cascade into this table. Current writes and history-only imports serialize on the Entity row, while imports leave its version and the live change clock unchanged. See the [movement history contract](../../../../docs/movement-history-implementation.md).

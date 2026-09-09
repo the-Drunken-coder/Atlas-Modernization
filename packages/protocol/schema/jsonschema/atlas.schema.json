@@ -328,6 +328,9 @@
         },
         "updated_at": {
           "$ref": "#/$defs/RFC3339Timestamp"
+        },
+        "movement_observed_at": {
+          "$ref": "#/$defs/RFC3339Timestamp"
         }
       },
       "required": [
@@ -388,9 +391,13 @@
         },
         "status": {
           "$ref": "#/$defs/NonEmptyString"
+        },
+        "movement_observed_at": {
+          "$ref": "#/$defs/RFC3339Timestamp"
         }
       },
-      "type": "object"
+      "type": "object",
+      "description": "Altitude values (altitude_m) are meters above mean sea level. Sources must convert other vertical references before reporting."
     },
     "EntityCheckInResponse": {
       "anyOf": [
@@ -565,6 +572,9 @@
               "type": "string"
             }
           ]
+        },
+        "movement_observed_at": {
+          "$ref": "#/$defs/RFC3339Timestamp"
         }
       },
       "type": "object"
@@ -1233,7 +1243,7 @@
       "type": "object"
     },
     "NonEmptyString": {
-      "pattern": "[^\\t-\\r \u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF]",
+      "pattern": "[^\\t-\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]",
       "type": "string"
     },
     "ObjectBlob": {
@@ -2752,7 +2762,8 @@
           "type": "number"
         }
       },
-      "type": "object"
+      "type": "object",
+      "description": "Altitude values (altitude_m) are meters above mean sea level. Sources must convert other vertical references before reporting."
     },
     "UnsubscribeAllMessage": {
       "const": {
@@ -2890,6 +2901,256 @@
         "failed",
         "in_progress",
         "pending"
+      ]
+    },
+    "MovementSampleInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sample_id": {
+          "type": "string",
+          "maxLength": 128,
+          "$ref": "#/$defs/NonEmptyString"
+        },
+        "observed_at": {
+          "$ref": "#/$defs/RFC3339Timestamp"
+        },
+        "latitude": {
+          "type": "number",
+          "minimum": -90,
+          "maximum": 90
+        },
+        "longitude": {
+          "type": "number",
+          "minimum": -180,
+          "maximum": 180
+        },
+        "speed_m_s": {
+          "type": "number",
+          "minimum": 0
+        },
+        "altitude_m": {
+          "type": "number",
+          "description": "Meters above mean sea level."
+        }
+      },
+      "required": [
+        "sample_id"
+      ],
+      "description": "At least one movement quantity is required. Position requires both coordinates. Core validates these cross-field rules."
+    },
+    "MovementSample": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sample_id": {
+          "type": "string",
+          "maxLength": 128,
+          "$ref": "#/$defs/NonEmptyString"
+        },
+        "observed_at": {
+          "$ref": "#/$defs/RFC3339Timestamp"
+        },
+        "latitude": {
+          "type": "number",
+          "minimum": -90,
+          "maximum": 90
+        },
+        "longitude": {
+          "type": "number",
+          "minimum": -180,
+          "maximum": 180
+        },
+        "speed_m_s": {
+          "type": "number",
+          "minimum": 0
+        },
+        "altitude_m": {
+          "type": "number",
+          "description": "Meters above mean sea level."
+        },
+        "received_at": {
+          "$ref": "#/$defs/RFC3339Timestamp"
+        },
+        "time": {
+          "$ref": "#/$defs/RFC3339Timestamp"
+        },
+        "time_is_arrival": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "sample_id",
+        "received_at",
+        "time",
+        "time_is_arrival"
+      ]
+    },
+    "MovementHistoryBatchRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "entity_created_at": {
+          "$ref": "#/$defs/RFC3339Timestamp"
+        },
+        "samples": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MovementSampleInput"
+          },
+          "minItems": 1,
+          "maxItems": 500
+        }
+      },
+      "required": [
+        "entity_created_at",
+        "samples"
+      ]
+    },
+    "MovementHistoryBatchResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "inserted": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "duplicates": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "expired": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "inserted",
+        "duplicates",
+        "expired"
+      ]
+    },
+    "MovementHistoryPage": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "entity_created_at": {
+          "$ref": "#/$defs/RFC3339Timestamp"
+        },
+        "from": {
+          "$ref": "#/$defs/RFC3339Timestamp"
+        },
+        "to": {
+          "$ref": "#/$defs/RFC3339Timestamp"
+        },
+        "retained_from": {
+          "$ref": "#/$defs/RFC3339Timestamp"
+        },
+        "snapshot": {
+          "type": "string"
+        },
+        "samples": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MovementSample"
+          }
+        },
+        "next_cursor": {
+          "type": "string"
+        },
+        "retention_advanced": {
+          "type": "boolean",
+          "description": "True when retention advanced into this pagination interval; older reports may have expired. Omitted on the first page."
+        }
+      },
+      "required": [
+        "entity_created_at",
+        "from",
+        "to",
+        "retained_from",
+        "snapshot",
+        "samples"
+      ]
+    },
+    "MovementTrailPoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sample": {
+          "$ref": "#/$defs/MovementSample"
+        },
+        "gap_before": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "sample",
+        "gap_before"
+      ]
+    },
+    "MovementTrail": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "entity_created_at": {
+          "$ref": "#/$defs/RFC3339Timestamp"
+        },
+        "from": {
+          "$ref": "#/$defs/RFC3339Timestamp"
+        },
+        "to": {
+          "$ref": "#/$defs/RFC3339Timestamp"
+        },
+        "retained_from": {
+          "$ref": "#/$defs/RFC3339Timestamp"
+        },
+        "points": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MovementTrailPoint"
+          }
+        },
+        "position_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "simplified": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "entity_created_at",
+        "from",
+        "to",
+        "retained_from",
+        "points",
+        "position_count",
+        "simplified"
+      ]
+    },
+    "MovementInspection": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "entity_created_at": {
+          "$ref": "#/$defs/RFC3339Timestamp"
+        },
+        "time": {
+          "$ref": "#/$defs/RFC3339Timestamp"
+        },
+        "position": {
+          "$ref": "#/$defs/MovementSample"
+        },
+        "speed": {
+          "$ref": "#/$defs/MovementSample"
+        },
+        "altitude": {
+          "$ref": "#/$defs/MovementSample"
+        }
+      },
+      "required": [
+        "entity_created_at",
+        "time"
       ]
     }
   }

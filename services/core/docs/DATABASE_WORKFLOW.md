@@ -152,3 +152,7 @@ Never use scratch mode or `down -v` for production recovery.
 - durable MinIO initialization failure: restore storage availability before starting Core; do not bypass it while object metadata exists.
 
 The full backup, restore, and rollback sequence is in [DEPLOYMENT_RUNBOOK.md](DEPLOYMENT_RUNBOOK.md).
+
+### Movement retention (migration v10)
+
+`entity_movement_samples` is durable Atlas storage and participates in schema fingerprint checks and backups. Scratch reset clears it. The feed dispatcher prunes up to 10,000 samples older than 30 days per pass, at most once every 30 seconds. Reads enforce retention even before physical cleanup. Pruning does not update the live recovery clock. Deleted or replaced Entity records do not cascade-delete samples; current-Entity reads validate both ID and creation time. See [movement history](../../../docs/movement-history-implementation.md) for query limits and capacity measurements.

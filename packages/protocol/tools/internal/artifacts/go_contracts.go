@@ -33,6 +33,14 @@ type goTypeOverride struct {
 // types.go. definitions defaults to the Go type name. The exceptions describe
 // intentional projections that cannot be inferred from a single schema object.
 var goStructContracts = []goStructContract{
+	{goType: "MovementSampleInput", typeOverrides: map[string]goTypeOverride{"observed_at": {schemaType: "string", goType: "*string"}, "latitude": {schemaType: "float64", goType: "*float64"}, "longitude": {schemaType: "float64", goType: "*float64"}, "speed_m_s": {schemaType: "float64", goType: "*float64"}, "altitude_m": {schemaType: "float64", goType: "*float64"}}},
+	{goType: "MovementSample", typeOverrides: map[string]goTypeOverride{"observed_at": {schemaType: "string", goType: "*string"}, "latitude": {schemaType: "float64", goType: "*float64"}, "longitude": {schemaType: "float64", goType: "*float64"}, "speed_m_s": {schemaType: "float64", goType: "*float64"}, "altitude_m": {schemaType: "float64", goType: "*float64"}}},
+	{goType: "MovementHistoryBatchRequest"},
+	{goType: "MovementHistoryBatchResponse"},
+	{goType: "MovementHistoryPage"},
+	{goType: "MovementTrailPoint"},
+	{goType: "MovementTrail"},
+	{goType: "MovementInspection", typeOverrides: map[string]goTypeOverride{"position": {schemaType: "MovementSample", goType: "*MovementSample"}, "speed": {schemaType: "MovementSample", goType: "*MovementSample"}, "altitude": {schemaType: "MovementSample", goType: "*MovementSample"}}},
 	{goType: "ErrorResponse"},
 	{goType: "MetadataBlock"},
 	{goType: "CommandDefinition"},
@@ -54,12 +62,13 @@ var goStructContracts = []goStructContract{
 	{goType: "SpatialOperationResult"},
 	{goType: "ProtocolRevisionResponse"},
 	{goType: "EntityCheckInRequest", typeOverrides: map[string]goTypeOverride{
-		"status":      {schemaType: "string", goType: "*string"},
-		"latitude":    {schemaType: "float64", goType: "*float64"},
-		"longitude":   {schemaType: "float64", goType: "*float64"},
-		"altitude_m":  {schemaType: "float64", goType: "*float64"},
-		"speed_m_s":   {schemaType: "float64", goType: "*float64"},
-		"heading_deg": {schemaType: "float64", goType: "*float64"},
+		"movement_observed_at": {schemaType: "string", goType: "*string"},
+		"status":               {schemaType: "string", goType: "*string"},
+		"latitude":             {schemaType: "float64", goType: "*float64"},
+		"longitude":            {schemaType: "float64", goType: "*float64"},
+		"altitude_m":           {schemaType: "float64", goType: "*float64"},
+		"speed_m_s":            {schemaType: "float64", goType: "*float64"},
+		"heading_deg":          {schemaType: "float64", goType: "*float64"},
 	}},
 	{goType: "EntityResource", typeOverrides: map[string]goTypeOverride{
 		"command_manifest": {schemaType: "[]CommandManifestEntry", goType: "*CommandManifest"},

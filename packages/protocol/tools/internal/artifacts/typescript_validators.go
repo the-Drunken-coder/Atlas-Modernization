@@ -8,6 +8,7 @@ import (
 )
 
 var runtimeValidatorTypeNames = []string{
+	"MovementHistoryPage", "MovementHistoryBatchResponse", "MovementTrail", "MovementInspection",
 	"CommandCatalog",
 	"CommandManifest",
 	"PluginManifest",

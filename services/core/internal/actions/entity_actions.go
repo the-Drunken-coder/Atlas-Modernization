@@ -78,19 +78,24 @@ func (a *EntityActions) GetDetail(ctx context.Context, entityID string) (*Entity
 
 // CreateEntityParams holds parameters for creating an entity.
 type CreateEntityParams struct {
-	EntityID      string
-	EntityType    string
-	Subtype       string
-	Alias         *string
-	Components    map[string]interface{}
-	PublishedAt   *time.Time
-	UpdatedAt     *time.Time
-	Extra         map[string]interface{}
-	InstanceToken string
+	MovementObservedAt *string
+	MovementReceivedAt time.Time
+	EntityID           string
+	EntityType         string
+	Subtype            string
+	Alias              *string
+	Components         map[string]interface{}
+	PublishedAt        *time.Time
+	UpdatedAt          *time.Time
+	Extra              map[string]interface{}
+	InstanceToken      string
 }
 
 // Create creates a new entity.
 func (a *EntityActions) Create(ctx context.Context, params CreateEntityParams) (*models.Entity, error) {
+	if params.MovementReceivedAt.IsZero() {
+		params.MovementReceivedAt = time.Now()
+	}
 	// Validate entity ID
 	if err := ValidateEntityID(params.EntityID); err != nil {
 		return nil, err
@@ -186,6 +191,9 @@ func (a *EntityActions) Create(ctx context.Context, params CreateEntityParams) (
 		}
 		return nil, fmt.Errorf("failed to create entity: %w", err)
 	}
+	if err := captureMovement(ctx, tx, entity, params.Components, params.MovementObservedAt, params.MovementReceivedAt); err != nil {
+		return nil, err
+	}
 	if err := RecordResourceChange(ctx, tx, ResourceChange{
 		Event:        ChangeEventCreate,
 		ResourceType: ChangeResourceEntity,
@@ -267,12 +275,14 @@ func (a *EntityActions) List(ctx context.Context, limit int, cursor string) (*Li
 
 // UpdateEntityParams holds parameters for updating an entity.
 type UpdateEntityParams struct {
-	EntityType      *string
-	Subtype         *string
-	Alias           *string
-	Components      map[string]interface{}
-	Extra           map[string]interface{}
-	ExpectedVersion *int64
+	MovementObservedAt *string
+	MovementReceivedAt time.Time
+	EntityType         *string
+	Subtype            *string
+	Alias              *string
+	Components         map[string]interface{}
+	Extra              map[string]interface{}
+	ExpectedVersion    *int64
 }
 
 // EntityDeleteOptions controls optional identity preconditions on deletion.
@@ -301,6 +311,9 @@ func patchEntityJSON(rawMessage json.RawMessage, params UpdateEntityParams) ([]b
 
 // Update updates an entity.
 func (a *EntityActions) Update(ctx context.Context, entityID string, params UpdateEntityParams) (*models.Entity, error) {
+	if params.MovementReceivedAt.IsZero() {
+		params.MovementReceivedAt = time.Now()
+	}
 	if err := ValidateEntityID(entityID); err != nil {
 		return nil, err
 	}
@@ -433,6 +446,9 @@ func (a *EntityActions) Update(ctx context.Context, entityID string, params Upda
 		return nil, fmt.Errorf("failed to update entity: %w", err)
 	}
 
+	if err := captureMovement(ctx, tx, out, params.Components, params.MovementObservedAt, params.MovementReceivedAt); err != nil {
+		return nil, err
+	}
 	if err := RecordResourceChange(ctx, tx, ResourceChange{
 		Event:        ChangeEventUpdate,
 		ResourceType: ChangeResourceEntity,

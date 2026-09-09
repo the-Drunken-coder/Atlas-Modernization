@@ -44,6 +44,7 @@ import { GeofeatureCreatePanel } from "./geofeatures/GeofeatureCreatePanel.js";
 import { GeofeatureInspector } from "./geofeatures/GeofeatureInspector.js";
 import { useGeofeatureCreate } from "./geofeatures/use-geofeature-create.js";
 import { type GeometryEditState, useGeometryEdit } from "./geofeatures/use-geometry-edit.js";
+import { type MovementHistoryState, useMovementHistory } from "./history/use-movement-history.js";
 import { PlacesPanel } from "./places/PlacesPanel.js";
 import { createMapTilerPlaceSearch, type PlaceSearch } from "./places/place-search.js";
 import { type SpatialOperationRunner, useSpatialOperationRunner } from "./plugins/use-spatial-operation-runner.js";
@@ -125,6 +126,11 @@ export function MapConsole() {
   }, []);
 
   const selection = sidebar.selection;
+  const historyEntity =
+    sidebar.view.mode === "inspector" && selection && (selection.kind === "asset" || selection.kind === "track")
+      ? getEntity(snapshot, selection.id)
+      : undefined;
+  const movementHistory = useMovementHistory(historyEntity, atlas.movement);
   const selectedSnapshotEntity = getEntity(snapshot, selection?.id);
   const selectedSnapshotEntityId = selectedSnapshotEntity?.entity_id;
   const selectedRuntimeManifestVersion = selectedSnapshotEntityId
@@ -518,6 +524,7 @@ export function MapConsole() {
               <GeofeatureCreatePanel creation={creation} />
             ) : (
               <PanelBody
+                movementHistory={movementHistory}
                 snapshot={snapshot}
                 sidebar={sidebar}
                 entityQueries={entityQueries}
@@ -567,6 +574,23 @@ export function MapConsole() {
                       }
                     >
                       <MapView
+                        movement={
+                          movementHistory.open
+                            ? {
+                                trail: movementHistory.data?.trail,
+                                selected: movementHistory.sample,
+                                interactive:
+                                  !creation.draft &&
+                                  !edit &&
+                                  spatial.status !== "drawing" &&
+                                  !commandFlow.commandForm &&
+                                  !commandFlow.mapMenu,
+                                onPin: movementHistory.pin,
+                                onPreview: movementHistory.setPreview,
+                                onDismiss: movementHistory.dismiss
+                              }
+                            : undefined
+                        }
                         sources={sources}
                         styleId={selectedMapSource.id}
                         style={selectedMapSource.style}
@@ -722,6 +746,7 @@ function availableMapSource(source: MapSourceConfig | undefined): AvailableMapSo
 }
 
 type PanelBodyProps = {
+  movementHistory: MovementHistoryState;
   snapshot: AtlasSnapshot;
   sidebar: SidebarState;
   entityQueries: Record<EntityKind, string>;
@@ -765,6 +790,7 @@ function PanelBody(props: PanelBodyProps) {
     return (
       <AssetInspector
         entity={selectedEntity}
+        history={props.movementHistory}
         snapshot={snapshot}
         catalog={catalog}
         commandManifestStatus={props.commandManifestStatus}
@@ -773,7 +799,7 @@ function PanelBody(props: PanelBodyProps) {
     );
   }
   if (kind === "track") {
-    return <TrackInspector entity={selectedEntity} />;
+    return <TrackInspector entity={selectedEntity} history={props.movementHistory} />;
   }
   if (kind === "geofeature") {
     return (

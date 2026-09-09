@@ -2,6 +2,7 @@ package actions
 
 import (
 	"context"
+	"time"
 
 	"github.com/the-drunken-coder/atlas/services/core/internal/models"
 )
@@ -20,9 +21,11 @@ func NewEntityCheckinActions(entityActions *EntityActions) *EntityCheckinActions
 
 // EntityCheckinParams holds the non-HTTP inputs for an entity check-in.
 type EntityCheckinParams struct {
-	EntityID        string
-	Components      map[string]interface{}
-	ExpectedVersion *int64
+	MovementObservedAt *string
+	MovementReceivedAt time.Time
+	EntityID           string
+	Components         map[string]interface{}
+	ExpectedVersion    *int64
 }
 
 // EntityCheckinResult contains the updated telemetry Entity.
@@ -34,8 +37,10 @@ type EntityCheckinResult struct {
 // absent from periodic telemetry check-in.
 func (a *EntityCheckinActions) CheckIn(ctx context.Context, params EntityCheckinParams) (*EntityCheckinResult, error) {
 	entity, err := a.entityActions.Update(ctx, params.EntityID, UpdateEntityParams{
-		Components:      params.Components,
-		ExpectedVersion: params.ExpectedVersion,
+		Components:         params.Components,
+		MovementObservedAt: params.MovementObservedAt,
+		MovementReceivedAt: params.MovementReceivedAt,
+		ExpectedVersion:    params.ExpectedVersion,
 	})
 	if err != nil {
 		return nil, err

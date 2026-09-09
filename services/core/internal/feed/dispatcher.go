@@ -74,7 +74,14 @@ func (d *Dispatcher) runConnection(ctx context.Context) error {
 		return fmt.Errorf("listen for change events: %w", err)
 	}
 
+	var movementPruned time.Time
 	for {
+		if movementPruned.IsZero() || time.Since(movementPruned) >= 30*time.Second {
+			if err := actions.NewEntityActions(d.pool).PruneMovement(ctx); err != nil {
+				return err
+			}
+			movementPruned = time.Now()
+		}
 		if err := d.drain(ctx, conn); err != nil {
 			return err
 		}

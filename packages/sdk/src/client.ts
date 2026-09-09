@@ -12,6 +12,7 @@ import type {
   EntityUpdateRequest,
   JSONValue,
   MapArea,
+  MovementHistoryBatchRequest,
   ObjectCreateRequest,
   ObjectResource,
   ObjectUpdateRequest,
@@ -25,7 +26,16 @@ import type {
   TaskProgressRequest,
   TaskResource
 } from "./protocol.js";
-import { isJSONValue, isMapArea, isPluginDiscoveryResponse, isSpatialOperationResult } from "./protocol.js";
+import {
+  isJSONValue,
+  isMapArea,
+  isMovementHistoryBatchResponse,
+  isMovementHistoryPage,
+  isMovementInspection,
+  isMovementTrail,
+  isPluginDiscoveryResponse,
+  isSpatialOperationResult
+} from "./protocol.js";
 import { normalizeResourceID } from "./resource-id.js";
 import { SyncEngine } from "./sync-engine.js";
 import type {
@@ -35,6 +45,7 @@ import type {
   EntityCheckInOptions,
   FetchLike,
   FullDatasetQueryOptions,
+  MovementHistoryQuery,
   ReadOptions,
   ResourceCreateOptions,
   ResourceDeleteOptions,
@@ -81,6 +92,7 @@ export type {
   EntityCheckInOptions,
   EntityCheckInTelemetry,
   FullDatasetQueryOptions,
+  MovementHistoryQuery,
   ReadOptions,
   ResourceCreateOptions,
   ResourceDeleteOptions,
@@ -145,6 +157,45 @@ export class AtlasClient {
       return this.engine.deleteResource("entity", entityID, `/entities/${encodeURIComponent(entityID)}`, options);
     },
     checkIn: this.checkInEntity,
+    history: (id: string, query: MovementHistoryQuery) =>
+      this.transport.json(
+        "GET",
+        movementQueryPath(id, "movement-history", query),
+        isMovementHistoryPage,
+        undefined,
+        undefined,
+        query.signal
+      ),
+    trail: (id: string, query: MovementHistoryQuery) =>
+      this.transport.json(
+        "GET",
+        movementQueryPath(id, "trail", query),
+        isMovementTrail,
+        undefined,
+        undefined,
+        query.signal
+      ),
+    inspectMovement: (id: string, entityCreatedAt: string, at: string, signal?: AbortSignal) =>
+      this.transport.json(
+        "GET",
+        pathWithQuery(`/entities/${encodeURIComponent(normalizeEntityID(id))}/movement-history/at`, {
+          entity_created_at: entityCreatedAt,
+          at
+        }),
+        isMovementInspection,
+        undefined,
+        undefined,
+        signal
+      ),
+    importMovement: (id: string, batch: MovementHistoryBatchRequest, signal?: AbortSignal) =>
+      this.transport.json(
+        "POST",
+        `/entities/${encodeURIComponent(normalizeEntityID(id))}/movement-history`,
+        isMovementHistoryBatchResponse,
+        batch,
+        undefined,
+        signal
+      ),
     watch: (id: string, callback: WatchCallback<EntityResource>) =>
       this.engine.watch({ filter: "id", resource_type: "entity", id: normalizeEntityID(id) }, callback)
   };
@@ -455,6 +506,7 @@ export class AtlasClient {
 function checkInRequest(id: string, options?: EntityCheckInOptions): { path: string; body: EntityCheckInRequest } {
   const normalizedID = normalizeEntityID(id);
   const body: EntityCheckInRequest = {};
+  if (options?.movementObservedAt !== undefined) body.movement_observed_at = options.movementObservedAt;
   if (options?.status !== undefined) body.status = options.status;
   if (options?.components !== undefined) body.components = options.components;
   if (options?.telemetry) {
@@ -529,4 +581,15 @@ function normalizeOpaqueIdentifier(name: string, value: string): string {
   const normalized = value.trim();
   if (!normalized) throw new TypeError(`${name} must not be empty`);
   return normalized;
+}
+
+function movementQueryPath(id: string, operation: string, query: MovementHistoryQuery): string {
+  return pathWithQuery(`/entities/${encodeURIComponent(normalizeEntityID(id))}/${operation}`, {
+    entity_created_at: query.entityCreatedAt,
+    from: query.from,
+    to: query.to,
+    cursor: query.cursor,
+    limit: query.limit?.toString(),
+    max_points: query.maxPoints?.toString()
+  });
 }

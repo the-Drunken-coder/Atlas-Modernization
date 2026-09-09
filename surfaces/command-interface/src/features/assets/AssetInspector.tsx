@@ -20,6 +20,8 @@ import { JsonDrawer } from "../../ui/primitives/JsonDrawer.js";
 import { ConnectionStatusPill, heartbeatColor, StatusPill } from "../../ui/primitives/StatusPill.js";
 import { CommandList } from "../commands/CommandList.js";
 import { commandEmptyLabel } from "../commands/command-empty-label.js";
+import { MovementHistorySection } from "../history/MovementHistorySection.js";
+import type { MovementHistoryState } from "../history/use-movement-history.js";
 import { FieldGrid, InspectorHeading, Section } from "../shared/panels.js";
 import { TaskHistoryItem, TaskRow } from "../shared/TaskRow.js";
 import { useHeartbeatClock } from "../useHeartbeatClock.js";
@@ -29,6 +31,7 @@ const MAX_HISTORY = 25;
 export type CommandManifestStatus = "ready" | "loading" | "unavailable";
 
 type AssetInspectorProps = {
+  history?: MovementHistoryState;
   entity: EntityResource;
   snapshot: AtlasSnapshot;
   catalog?: CommandCatalog;
@@ -37,6 +40,7 @@ type AssetInspectorProps = {
 };
 
 export function AssetInspector({
+  history: movementHistory,
   entity,
   snapshot,
   catalog,
@@ -100,6 +104,8 @@ export function AssetInspector({
           ]}
         />
       </Section>
+
+      {movementHistory && <MovementHistorySection history={movementHistory} />}
 
       <Section title="Active & Queued Tasks">
         {active.length > 0 ? (

@@ -4,6 +4,26 @@ package atlasprotocol
 
 import "github.com/the-drunken-coder/atlas/packages/protocol/validator"
 
+func ValidateMovementHistoryBatchRequest(value any) []string {
+	return validator.ValidateDefinition("MovementHistoryBatchRequest", value)
+}
+
+func ValidateMovementHistoryBatchResponse(value any) []string {
+	return validator.ValidateDefinition("MovementHistoryBatchResponse", value)
+}
+
+func ValidateMovementHistoryPage(value any) []string {
+	return validator.ValidateDefinition("MovementHistoryPage", value)
+}
+
+func ValidateMovementTrail(value any) []string {
+	return validator.ValidateDefinition("MovementTrail", value)
+}
+
+func ValidateMovementInspection(value any) []string {
+	return validator.ValidateDefinition("MovementInspection", value)
+}
+
 func ValidateEntityBlob(value any) []string {
 	return validator.ValidateDefinition("EntityBlob", value)
 }
