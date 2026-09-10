@@ -80,7 +80,6 @@ func TestRootDockerignoreAllowsOnlyDockerfileInputs(t *testing.T) {
 		"!plugins/reference/src/**",
 		"!plugins/reference/fixture-source.mjs",
 		"!plugins/reference/Dockerfile",
-		"!packages/fieldlink/package.json",
 		"!surfaces/",
 		"!surfaces/command-interface/",
 		"!surfaces/command-interface/package.json",

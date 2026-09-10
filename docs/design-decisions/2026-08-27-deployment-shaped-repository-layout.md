@@ -1,5 +1,7 @@
 # Atlas modules follow deployment ownership
 
+**Updated 2026-09-10:** The FieldLink package retention below is superseded. Atlas retired `packages/fieldlink` and its MeshCore transport, hardware harness, workspace dependencies, and build/CI wiring. Meshtastic Link is the maintained radio communication method. FieldLink remains available in Git history; the deployment ownership rules still apply.
+
 1. **Time & Date:** 2026-08-27 EDT
 2. **Name:** Organize the Atlas monorepo by deployment role and ownership
 3. **Context:** Atlas had reusable packages, hosted software, operator software, field runtimes, and simulations as unrelated root folders. That layout hid dependency direction and encouraged FieldLink, Asset behavior, and Gateway synchronization to grow into one system. Atlas also needs communication methods besides FieldLink, and one logical Asset must remain one independently running Atlas process.

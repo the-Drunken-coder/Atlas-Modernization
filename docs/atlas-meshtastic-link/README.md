@@ -224,7 +224,7 @@ Each Link service maintains its own Shared Picture from state it receives. The G
 
 ## Implementation boundary
 
-Meshtastic Link is a separate TypeScript and Node 24 workspace at `packages/meshtastic-link`. It is not part of the MeshCore-specific FieldLink package. One Link service implementation and executable supports explicit `asset` and `gateway` modes while sharing configuration, framing, queues, Shared Picture behavior, simulation, and its local API. Core access remains in the Gateway application outside the package.
+Meshtastic Link is a separate TypeScript and Node 24 workspace at `packages/meshtastic-link`. One Link service implementation and executable supports explicit `asset` and `gateway` modes while sharing configuration, framing, queues, Shared Picture behavior, simulation, and its local API. Core access remains in the Gateway application outside the package.
 
 The package initially connects to Meshtastic radios only through USB serial. The official Meshtastic Node serial dependency remains behind an Atlas-owned adapter so the Link service and simulator do not depend directly on one client library throughout their code.
 
@@ -268,7 +268,6 @@ The product decisions needed for the first vertical slice are complete. Remainin
 
 - [`../../CONTEXT.md`](../../CONTEXT.md) defines Atlas-wide terms.
 - [`../atlas-protocol/`](../atlas-protocol/) defines Atlas Commands, Tasks, and shared data contracts.
-- [`../../packages/fieldlink/docs/system-architecture.md`](../../packages/fieldlink/docs/system-architecture.md) is the current MeshCore-specific radio architecture and a useful comparison.
 - [`../../edge/asset/README.md`](../../edge/asset/README.md) and [`../../edge/gateway/README.md`](../../edge/gateway/README.md) reserve the application roles that will integrate the link.
 - [`dynamic-joining.md`](dynamic-joining.md) records the restart-time discovery and joining flow.
 - [`shared-picture.md`](shared-picture.md) defines the ephemeral latest-known local view.

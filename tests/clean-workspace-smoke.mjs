@@ -10,8 +10,6 @@ const generatedPaths = [
   "packages/plugin-runtime/node_modules",
   "plugins/reference/dist",
   "plugins/reference/node_modules",
-  "packages/fieldlink/dist",
-  "packages/fieldlink/node_modules",
   "surfaces/command-interface/dist",
   "surfaces/command-interface/node_modules",
   "simulations/dist",
@@ -19,7 +17,6 @@ const generatedPaths = [
 ];
 const commands = [
   ["ci"],
-  ["run", "check", "--workspace", "atlas-fieldlink"],
   ["test", "--workspace", "@the-drunken-coder/atlas-plugin-runtime"],
   ["run", "build", "--workspace", "@the-drunken-coder/atlas-plugin-runtime"],
   ["run", "build", "--workspace", "@the-drunken-coder/atlas-reference-plugin"],

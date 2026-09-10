@@ -22,7 +22,6 @@ The package does not own:
 - Atlas Protocol resources or operation semantics
 - Asset publication cadence, physical behavior, autonomy, Command handlers, or durable Task-ID execution fences
 - Gateway Core credentials, Core writes, feed consumption, or durable Core reconciliation
-- MeshCore FieldLink behavior
 - Whole-system deployment policy
 
 ## One Link service, two modes
