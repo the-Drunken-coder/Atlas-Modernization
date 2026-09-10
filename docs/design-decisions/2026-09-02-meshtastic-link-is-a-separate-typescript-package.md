@@ -1,5 +1,7 @@
 # Meshtastic Link is a separate TypeScript package
 
+**Updated 2026-09-10:** FieldLink has been retired and removed from the active tree. Its mentions below describe the original comparison; the Meshtastic Link package boundary remains in effect. Retirement does not establish physical-radio acceptance or simulator calibration.
+
 1. **Time and date:** 2026-09-02, America/New_York
 2. **Name:** Build one Meshtastic Link service package with Asset and Gateway modes
 3. **Context:** Atlas already has a MeshCore-specific FieldLink package, a TypeScript workspace, a separate Atlas Protocol source of truth, reserved Asset and Gateway application boundaries, and whole-system simulations. Meshtastic Link needs production transport code, generated contracts, a local service and CLI, radio configuration, and a no-cheating simulator without coupling those responsibilities to MeshCore or Atlas Core.

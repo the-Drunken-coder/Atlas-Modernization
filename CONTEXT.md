@@ -41,12 +41,12 @@ _Avoid_: External source, data normalizer
 ## Edge communications
 
 **Communication method**:
-A way an Asset Host or Edge Gateway exchanges Atlas data with another Atlas node. FieldLink, IP, and future radio protocols are communication methods, not Asset capabilities.
-_Avoid_: FieldLink as the generic transport, Asset behavior
+A way an Asset Host or Edge Gateway exchanges Atlas data with another Atlas node. Meshtastic Link, IP, and future radio protocols are communication methods, not Asset capabilities.
+_Avoid_: Asset behavior
 
 **Meshtastic Link**:
 The accepted Atlas communication method that exchanges Atlas data through a shared Meshtastic radio mesh.
-_Avoid_: FieldLink, generic Meshtastic chat
+_Avoid_: generic Meshtastic chat
 
 **Meshtastic Link service**:
 The long-running local service that operates one Meshtastic Link, fulfills data requests, and exposes the node's Shared Picture to local software.
