@@ -18,6 +18,16 @@ import (
 
 const maxPrivateResponseBytes = 1 << 20
 
+// CoreToPluginProtocolMajor is the first independently released private
+// manifest contract. It is intentionally outside Atlas Protocol's
+// PluginManifest schema.
+const CoreToPluginProtocolMajor int64 = 1
+
+type privateManifest struct {
+	protocol.PluginManifest
+	CoreToPluginProtocolMajor int64 `json:"core_to_plugin_protocol_major"`
+}
+
 type clientFailure string
 
 const (
@@ -44,7 +54,7 @@ type remoteOperationError struct {
 }
 
 type privateClient interface {
-	manifest(context.Context, string) (protocol.PluginManifest, *clientError)
+	manifest(context.Context, string) (privateManifest, *clientError)
 	health(context.Context, string) (bool, *clientError)
 	invoke(context.Context, string, string, json.RawMessage) (protocol.JSONValue, *remoteOperationError, *clientError)
 }
@@ -64,34 +74,41 @@ func newHTTPClient(client *http.Client) *httpClient {
 	return &httpClient{client: &copy}
 }
 
-func (c *httpClient) manifest(ctx context.Context, baseURL string) (protocol.PluginManifest, *clientError) {
+func (c *httpClient) manifest(ctx context.Context, baseURL string) (privateManifest, *clientError) {
 	response, err := c.request(ctx, http.MethodGet, baseURL+"/manifest", nil)
 	if err != nil {
-		return protocol.PluginManifest{}, err
+		return privateManifest{}, err
 	}
 	defer func() { _ = response.Body.Close() }()
 	data, readErr := readPrivateResponse(ctx, response, failureInvalidManifest)
 	if readErr != nil {
-		return protocol.PluginManifest{}, readErr
+		return privateManifest{}, readErr
 	}
 	if response.StatusCode != http.StatusOK {
-		return protocol.PluginManifest{}, invalidManifest(fmt.Errorf("manifest status %d", response.StatusCode))
+		return privateManifest{}, invalidManifest(fmt.Errorf("manifest status %d", response.StatusCode))
 	}
-	var manifest protocol.PluginManifest
+	var manifest privateManifest
 	if err := decodeStrictJSON(data, &manifest); err != nil {
-		return protocol.PluginManifest{}, invalidManifest(err)
+		return privateManifest{}, invalidManifest(err)
 	}
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(data, &fields); err != nil || fields["operations"] == nil || manifest.Operations == nil {
-		return protocol.PluginManifest{}, invalidManifest(fmt.Errorf("manifest is missing required fields"))
+		return privateManifest{}, invalidManifest(fmt.Errorf("manifest is missing required fields"))
+	}
+	if !supportsCoreToPluginProtocolMajor(manifest.CoreToPluginProtocolMajor) {
+		return privateManifest{}, invalidManifest(fmt.Errorf("unsupported core_to_plugin_protocol_major %d", manifest.CoreToPluginProtocolMajor))
 	}
 	if raw, present := fields["tool_asset_id"]; present {
 		var toolAssetID string
 		if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) || json.Unmarshal(raw, &toolAssetID) != nil {
-			return protocol.PluginManifest{}, invalidManifest(fmt.Errorf("tool_asset_id must be a string"))
+			return privateManifest{}, invalidManifest(fmt.Errorf("tool_asset_id must be a string"))
 		}
 	}
 	return manifest, nil
+}
+
+func supportsCoreToPluginProtocolMajor(major int64) bool {
+	return major == CoreToPluginProtocolMajor
 }
 
 func (c *httpClient) health(ctx context.Context, baseURL string) (bool, *clientError) {

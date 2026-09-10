@@ -6,9 +6,6 @@ atlas_core_release_paths=(
   package-lock.json
   surfaces/core-cli/package.json
   surfaces/core-cli/src/package-metadata.ts
-  surfaces/core-cli/src/plugin-catalog.generated.ts
-  surfaces/core-cli/assets/plugin-catalog.json
-  surfaces/core-cli/assets/plugins
 )
 
 validate_atlas_core_release_paths() {
@@ -17,7 +14,7 @@ validate_atlas_core_release_paths() {
 
   while IFS= read -r path; do
     case "$path" in
-      CHANGELOG.md|package-lock.json|surfaces/core-cli/package.json|surfaces/core-cli/src/package-metadata.ts|surfaces/core-cli/src/plugin-catalog.generated.ts|surfaces/core-cli/assets/plugin-catalog.json|surfaces/core-cli/assets/plugins/*)
+      CHANGELOG.md|package-lock.json|surfaces/core-cli/package.json|surfaces/core-cli/src/package-metadata.ts)
         ;;
       *)
         printf '%s: %s\n' "$error_prefix" "$path" >&2

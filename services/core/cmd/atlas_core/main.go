@@ -106,6 +106,13 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Failed to load configuration: %v\n", err)
 		os.Exit(1)
 	}
+	if len(os.Args) > 1 && os.Args[1] == managedKeysCommand {
+		if err := runManagedKeysCommand(os.Args[2:], cfg, os.Stdout); err != nil {
+			fmt.Fprintf(os.Stderr, "managed-keys: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
 
 	zerolog.TimeFieldFormat = time.RFC3339
 	logLevel := zerolog.InfoLevel

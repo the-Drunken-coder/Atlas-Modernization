@@ -272,18 +272,22 @@ func (r *Registry) monitor(ctx context.Context, pluginID string) {
 	}
 }
 
-func validateManifest(configuredID string, manifest protocol.PluginManifest) error {
-	if validationErrors := protocol.ValidatePluginManifest(manifest); len(validationErrors) > 0 {
+func validateManifest(configuredID string, manifest privateManifest) error {
+	if !supportsCoreToPluginProtocolMajor(manifest.CoreToPluginProtocolMajor) {
+		return fmt.Errorf("unsupported core_to_plugin_protocol_major %d", manifest.CoreToPluginProtocolMajor)
+	}
+	publicManifest := manifest.PluginManifest
+	if validationErrors := protocol.ValidatePluginManifest(publicManifest); len(validationErrors) > 0 {
 		return fmt.Errorf("manifest does not conform to Atlas Protocol: %v", validationErrors)
 	}
-	if manifest.PluginID != configuredID {
-		return fmt.Errorf("manifest Plugin ID %q does not match configured ID %q", manifest.PluginID, configuredID)
+	if publicManifest.PluginID != configuredID {
+		return fmt.Errorf("manifest Plugin ID %q does not match configured ID %q", publicManifest.PluginID, configuredID)
 	}
-	if manifest.ToolAssetID != "" && manifest.ToolAssetID != pluginid.DeriveToolAssetID(configuredID) {
+	if publicManifest.ToolAssetID != "" && publicManifest.ToolAssetID != pluginid.DeriveToolAssetID(configuredID) {
 		return fmt.Errorf("manifest Tool Asset ID does not match Plugin ID")
 	}
-	seen := make(map[string]struct{}, len(manifest.Operations))
-	for _, operation := range manifest.Operations {
+	seen := make(map[string]struct{}, len(publicManifest.Operations))
+	for _, operation := range publicManifest.Operations {
 		if _, duplicate := seen[operation.OperationID]; duplicate {
 			return fmt.Errorf("operation %q appears more than once", operation.OperationID)
 		}
@@ -301,13 +305,16 @@ func (r *Registry) baseURL(pluginID string) string {
 	return r.entries[pluginID].endpoint.BaseURL
 }
 
-func (r *Registry) recordManifest(pluginID string, manifest protocol.PluginManifest) {
-	sort.Slice(manifest.Operations, func(i, j int) bool { return manifest.Operations[i].OperationID < manifest.Operations[j].OperationID })
+func (r *Registry) recordManifest(pluginID string, manifest privateManifest) {
+	publicManifest := manifest.PluginManifest
+	sort.Slice(publicManifest.Operations, func(i, j int) bool {
+		return publicManifest.Operations[i].OperationID < publicManifest.Operations[j].OperationID
+	})
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	now := r.options.Now().UTC()
 	state := r.entries[pluginID]
-	state.manifest = &manifest
+	state.manifest = &publicManifest
 	state.status = protocol.PluginStatusStateStarting
 	state.reason = nil
 	state.checkedAt = &now

@@ -84,10 +84,41 @@ docker container rm "$probe_container" >/dev/null
 rm -rf -- "$core_home"
 
 ATLAS_CORE_HOME="$core_home" "$cli" init
-ATLAS_CORE_HOME="$core_home" "$cli" start
+jq -e --arg image "$expected_image" '
+  .schema == 4 and
+  .resourceLayout == "engine-scoped-v1" and
+  .phase == "ready" and
+  .dockerEngineId != "" and
+  .baseDeployment.coreImage == $image and
+  (.baseDeployment.images | length) >= 1
+' "$core_home/state.json"
+jq -e '.schema == 1 and .desiredRunning == false' "$core_home/run-intent.json"
+test "$(stat -c '%a' "$core_home")" = "700"
+test "$(stat -c '%a' "$core_home/.env")" = "600"
+test "$(stat -c '%a' "$core_home/state.json")" = "600"
+test "$(stat -c '%a' "$core_home/run-intent.json")" = "600"
+grep -Eq '^ATLAS_PLUGIN_API_KEY=atlas_ak_[^[:space:]]+$' "$core_home/.env"
+docker volume inspect "${project_name}_postgres_data" >/dev/null
+docker volume inspect "${project_name}_minio_data" >/dev/null
+if docker container inspect "${project_name}_api" >/dev/null 2>&1 || \
+   docker container inspect "${project_name}_source_gateway" >/dev/null 2>&1 || \
+   docker container inspect "${project_name}_postgres" >/dev/null 2>&1 || \
+   docker container inspect "${project_name}_minio" >/dev/null 2>&1 || \
+   docker container inspect "${project_name}_minio_init" >/dev/null 2>&1; then
+  echo "atlas-core init left a Core container running despite the stopped run intent." >&2
+  exit 1
+fi
+
+ATLAS_CORE_HOME="$core_home" "$cli" start --manual
 ATLAS_CORE_HOME="$core_home" "$cli" doctor
 ATLAS_CORE_HOME="$core_home" "$cli" status
 curl --fail --silent --show-error http://127.0.0.1:8000/readiness
+plugin_api_key="$(sed -n 's/^ATLAS_PLUGIN_API_KEY=//p' "$core_home/.env")"
+protocol_revision="$(grep -Eo 'sha256:[0-9a-f]{64}' packages/protocol/generated/typescript/revision.ts)"
+curl --fail --silent --show-error \
+  --header "x-api-key: $plugin_api_key" \
+  http://127.0.0.1:8000/protocol/revision |
+  jq -e --arg revision "$protocol_revision" '.protocol_revision == $revision'
 
 node -e '
   const fs = require("node:fs");

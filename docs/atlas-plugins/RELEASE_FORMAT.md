@@ -1,7 +1,10 @@
 # Plugin release format
 
-Status: accepted target design, not yet implemented. The current Atlas Core release still builds and embeds first-party
-Plugin images and deployment files.
+Status: the independent Plugin release workflow and lifecycle implementation are present in this worktree, and
+local validation passes. The candidate-image Docker acceptance test still awaits CI. Already published Atlas Core packages may still contain bundled first-party Plugin images and
+deployment files. The first independent package supports only trusted query-only Plugins; general external-source
+credential configuration remains out of scope. Production catalog signing, trust bootstrap, and Pages rollout remain
+external setup steps. The terminal UI redesign awaits the user's selection from the proposed mocks.
 
 This document defines the independently versioned first-party Plugin release, the signed Atlas Plugin catalog, and the
 publication transaction. The first package schema supports trusted, query-only Plugins in one stable channel.
@@ -62,13 +65,17 @@ Field rules:
   A non-null connector ID must equal `plugin_id`. Package schema 1 rejects secret headers and defines no Plugin setting or
   secret injection model. A later package-schema major may add one when a concrete Plugin requires it.
 
-The repository's `atlas-plugin.json` file is authoring input, not part of the published release. The independent release
-workflow updates `scripts/plugins.mjs` so `source_connector` in that authoring file accepts `null` or one local filename.
+The repository's `atlas-plugin.json` file is authoring input, not part of the published release. It must explicitly set
+`uses_core_sdk` to `true` or `false`; the independent release workflow updates `scripts/plugins.mjs` so
+`source_connector` in that authoring file accepts `null` or one local filename.
 For a filename, the workflow loads the referenced JSON, validates it against the existing strict connector schema,
 requires its connector ID to equal `plugin_id`, rejects secret headers in package schema 1, and embeds the parsed policy
-object in the release document. A null authoring value produces a null release value. The published release never
-contains the filename or another repository path. The bundled-v1 generator keeps its current required-filename behavior
-until the independent workflow replaces it.
+object in the release document. A null authoring value produces a null release value. When `uses_core_sdk` is `true`,
+the workflow derives `atlas_protocol_revision` from the actual SDK and Protocol build used by the candidate; it does not
+accept a hand-entered revision that can drift from the image. When it is `false`, the generated revision is `null`. The
+published release never contains `uses_core_sdk`, the filename, or another repository path. The bundled-v1 generator
+keeps its required-filename behavior for the schema-3 transition; the independent workflow now owns new Plugin release
+documents and catalog entries.
 
 The release document does not contain Operations, health status, credentials, secret values, executable hooks, Compose,
 host paths, container names, networks, mounts, restart policy, resource limits, or another Plugin dependency. The manager
@@ -184,6 +191,12 @@ manager refuses a new install, enable, update, or manual rollback to that releas
 revoked release but does not stop or replace it without operator approval. Starting Atlas may continue an already
 Enabled revoked release from its locally verified state; it does not create a new enablement decision.
 
+Revocation is a catalog-only operation. Dispatch **Revoke Atlas Plugin Catalog Release** with the exact `plugin_id`,
+version, and a concise reason. The workflow verifies the current signed ledger, changes only `revoked: false` to `true`
+and records the reason, increments the monotonic sequence, signs the new bytes, compare-and-swap pushes the protected
+branch, deploys the complete Pages artifact, and verifies the stable URL. It never rewrites the GitHub Release asset or
+image. Repeating the same reason is idempotent; a different reason or an unknown release is a hard failure.
+
 Each trusted public key has an ordered epoch and initial sequence floor embedded in the CLI. Rotation first publishes a
 CLI that trusts the new key and its floor. The signed catalog's key epoch must match the embedded epoch for its `key_id`.
 Atlas then publishes the first catalog in that epoch at the floor. The higher authenticated epoch is accepted even when
@@ -198,6 +211,14 @@ for a fresh installation or after an explicit Atlas reset. Existing installation
 fresh installation can still accept a replay between its embedded checkpoint and the current catalog for at most the
 catalog's 30-day lifetime; short expiry is the bound for that remaining case.
 
+The repository supplies the verification and receipt implementation, but it does not invent or check in a production
+catalog key. First publication requires an operator to generate the Ed25519 key outside the repository, store the private
+key in the dedicated `plugin-catalog` GitHub environment, and add the matching `public_key_pem`, `key_id`,
+`key_epoch`, and `minimum_sequence` entry plus the `minimum_checkpoint` to `plugin-trust.json`. Record the generation
+and environment setup in the release provenance. Test fixtures may use a test key only; a fixture key must never be
+promoted to the stable catalog. Until that setup is complete, source implementation and passing local tests do not mean
+that a catalog can be published or trusted by a fresh installation.
+
 ## Publication transaction
 
 The Plugin release workflow acquires a non-cancelling concurrency group keyed by `plugin_id` and version before its first
@@ -206,13 +227,19 @@ publication side effect. It pins one reviewed source commit for every build and 
 1. verifies the selected Plugin folder and confirms its package version matches the requested release;
 2. runs its focused lint, format, type, test, build, Docker, and contract checks;
 3. builds and publishes the multi-architecture candidate image, then records its immutable index digest;
-4. generates the exact release document from authored Plugin metadata and that digest;
-5. publishes the immutable tag and GitHub Release with the release document;
-6. downloads and rechecks the public release document and image digest;
-7. enters the global non-cancelling catalog-publication group, validates and appends to the protected canonical ledger,
+4. runs the exact candidate image on a disposable network and verifies its private manifest identity, protocol major,
+   sorted operation descriptors, operation limits, declared interaction set, managed query-only fields, exact `/health`
+   response, and deterministic unknown-route response before promoting the candidate. Source connector policy is
+   validated from authored metadata while generating the release document; this candidate gate does not execute external
+   source requests or arbitrary SDK behavior;
+5. generates the exact release document from authored Plugin metadata and that digest, deriving the Protocol revision when
+   `uses_core_sdk` is true;
+6. publishes the immutable tag and GitHub Release with the release document;
+7. downloads and rechecks the public release document and image digest;
+8. enters the global non-cancelling catalog-publication group, validates and appends to the protected canonical ledger,
    signs the new catalog, and compare-and-swap pushes the ledger commit;
-8. publishes one GitHub Pages artifact containing `catalog.json` and `catalog.json.sig` from that exact ledger commit;
-9. verifies the stable catalog URL, signature, sequence, release-document hash, and public image.
+9. publishes one GitHub Pages artifact containing `catalog.json` and `catalog.json.sig` from that exact ledger commit;
+10. verifies the stable catalog URL, signature, sequence, release-document hash, and public image.
 
 Neither concurrency group cancels an in-progress publication. A failure before the ledger update leaves unlisted
 artifacts that no manager can install. A retry treats an existing tag, GitHub Release asset, image digest, release
@@ -227,6 +254,12 @@ dedicated `plugin-catalog` GitHub environment restricted to the default branch a
 does not reuse the manually approved Core `release` environment, because a scheduled renewal must not wait for a human
 reviewer. Trusted public keys are source-controlled in the CLI. The Pages deployment is replaced as one artifact so the
 catalog and detached signature cannot be published from different transactions.
+
+The first push to a new first-party GHCR repository creates that package as private. Before the catalog can be published,
+an operator must open the package named by the Plugin's `release.image_repository`, change that exact package to public,
+and rerun the same reviewed workflow. The workflow performs an anonymous image check before and after the Pages
+deployment; it never uses the publishing credential for that check. The immutable candidate digest, release document, and
+tag must remain the same.
 
 Atlas Core's release workflow does not build Plugin images, write Plugin digests into the CLI package, copy Plugin
 deployment files, promote Plugin tags, or verify Plugin package visibility. It may continue running Plugin source and

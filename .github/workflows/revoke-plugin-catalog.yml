@@ -1,0 +1,102 @@
+name: Revoke Atlas Plugin Catalog Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      plugin_id:
+        description: Plugin identifier in the signed catalog
+        required: true
+        type: string
+      version:
+        description: Stable Plugin SemVer without v or prerelease suffix
+        required: true
+        type: string
+      reason:
+        description: Concise reason for the catalog-only revocation
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: release-atlas-plugin-mutator
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  publish:
+    name: Revoke and publish signed Plugin catalog
+    runs-on: ubuntu-latest
+    environment: plugin-catalog
+    permissions:
+      contents: write
+      id-token: write
+      pages: write
+    steps:
+      - name: Checkout publisher source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Require the configured catalog signing key
+        env:
+          ATLAS_PLUGIN_CATALOG_KEY_EPOCH: ${{ vars.ATLAS_PLUGIN_CATALOG_KEY_EPOCH }}
+          ATLAS_PLUGIN_CATALOG_KEY_ID: ${{ vars.ATLAS_PLUGIN_CATALOG_KEY_ID }}
+          ATLAS_PLUGIN_CATALOG_PRIVATE_KEY: ${{ secrets.ATLAS_PLUGIN_CATALOG_PRIVATE_KEY }}
+        run: node scripts/plugin-release-catalog.mjs preflight
+
+      - name: Checkout the protected catalog ledger
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: plugin-catalog
+          path: catalog-ledger
+          persist-credentials: false
+
+      - name: Revoke and sign the catalog ledger
+        env:
+          ATLAS_PLUGIN_CATALOG_KEY_EPOCH: ${{ vars.ATLAS_PLUGIN_CATALOG_KEY_EPOCH }}
+          ATLAS_PLUGIN_CATALOG_KEY_ID: ${{ vars.ATLAS_PLUGIN_CATALOG_KEY_ID }}
+          ATLAS_PLUGIN_CATALOG_PRIVATE_KEY: ${{ secrets.ATLAS_PLUGIN_CATALOG_PRIVATE_KEY }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_SERVER_URL: ${{ github.server_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PLUGIN_ID: ${{ inputs.plugin_id }}
+          VERSION: ${{ inputs.version }}
+          REASON: ${{ inputs.reason }}
+        run: |
+          set -euo pipefail
+          git -C catalog-ledger remote set-url origin "https://x-access-token:${GH_TOKEN}@${GITHUB_SERVER_URL#https://}/${GITHUB_REPOSITORY}.git"
+          node scripts/plugin-release-catalog.mjs revoke "$PLUGIN_ID" "$VERSION" "$REASON" catalog-ledger
+          git -C catalog-ledger config user.name "atlas-plugin-catalog[bot]"
+          git -C catalog-ledger config user.email "atlas-plugin-catalog[bot]@users.noreply.github.com"
+          git -C catalog-ledger add catalog.json catalog.json.sig
+          if ! git -C catalog-ledger diff --cached --quiet; then
+            git -C catalog-ledger commit -m "catalog: revoke $PLUGIN_ID v$VERSION"
+            git -C catalog-ledger push origin HEAD:plugin-catalog
+          fi
+
+      - name: Build the Pages artifact from the ledger commit
+        run: |
+          mkdir -p pages
+          cp catalog-ledger/catalog.json catalog-ledger/catalog.json.sig pages/
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
+        with:
+          path: pages
+
+      - name: Publish Pages artifact
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4
+
+      - name: Verify stable revoked catalog publication
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_SERVER_URL: ${{ github.server_url }}
+          PLUGIN_ID: ${{ inputs.plugin_id }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          node scripts/plugin-release-catalog.mjs verify-published catalog-ledger \
+            --plugin-id "$PLUGIN_ID" \
+            --version "$VERSION" \
+            --revoked

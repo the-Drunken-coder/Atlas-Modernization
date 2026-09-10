@@ -54,6 +54,14 @@ export type PluginDeploymentStatus = {
   lifecycle: "query_only";
   enabled: boolean;
   packaged: boolean;
+  /** Independent-release state, omitted by the bundled-plugin compatibility path. */
+  installed?: boolean;
+  selectedVersion?: string | null | undefined;
+  previousVersion?: string | null | undefined;
+  availableVersions?: readonly string[];
+  compatibility?: "compatible" | "incompatible" | "unknown";
+  revoked?: boolean;
+  error?: string;
   state?: string;
   health?: string;
 };
@@ -78,7 +86,13 @@ export type AtlasCoreOperator = {
   logs(service: "api" | "minio" | "postgres" | "source-gateway" | undefined, follow: boolean): Promise<void>;
   pluginDisable(pluginId: string, reportActivity?: PluginActivityReporter): Promise<PluginOperationOutcome>;
   pluginEnable(pluginId: string, reportActivity?: PluginActivityReporter): Promise<PluginOperationOutcome>;
+  pluginInstall?(pluginId: string, version?: string): Promise<void>;
   pluginLogs(pluginId: string, follow: boolean): Promise<void>;
+  pluginUpdate?(pluginId: string): Promise<void>;
+  pluginRollback?(pluginId: string): Promise<void>;
+  pluginUninstall?(pluginId: string): Promise<void>;
+  pluginRefresh?(): Promise<void>;
+  pluginRotateCoreKey?(): Promise<void>;
   pluginStatuses(pluginId?: string): Promise<PluginDeploymentStatus[]>;
   resumeAfterCancellation(): void;
   reset(): Promise<void>;

@@ -31,8 +31,8 @@ describe("Atlas Core TUI preview operator", () => {
     await expect(operator.snapshot()).resolves.toMatchObject({ status: expectedStatus });
     await expect(operator.pluginStatuses()).resolves.toEqual([
       {
-        pluginId: "building_scan",
-        displayName: "Building Scan",
+        pluginId: "demo_plugin",
+        displayName: "Demo Plugin",
         lifecycle: "query_only",
         enabled: false,
         packaged: true
@@ -44,13 +44,13 @@ describe("Atlas Core TUI preview operator", () => {
     const { operator, output } = fixture();
     const activity: PluginActivity[] = [];
 
-    await expect(operator.pluginEnable("building_scan", (event) => activity.push(event))).resolves.toEqual({
+    await expect(operator.pluginEnable("demo_plugin", (event) => activity.push(event))).resolves.toEqual({
       status: "success"
     });
     await expect(operator.pluginStatuses()).resolves.toEqual([
       {
-        pluginId: "building_scan",
-        displayName: "Building Scan",
+        pluginId: "demo_plugin",
+        displayName: "Demo Plugin",
         lifecycle: "query_only",
         enabled: true,
         packaged: true,
@@ -59,19 +59,19 @@ describe("Atlas Core TUI preview operator", () => {
       }
     ]);
 
-    await operator.pluginLogs("building_scan", false);
-    expect(output.write).toHaveBeenCalledWith(expect.stringContaining("building-scan-plugin fixture query ready"));
+    await operator.pluginLogs("demo_plugin", false);
+    expect(output.write).toHaveBeenCalledWith(expect.stringContaining("demo-plugin fixture query ready"));
     expect(activity).toContainEqual({
       level: "success",
-      message: "Building Scan enabled in the fixture",
+      message: "Demo Plugin enabled in the fixture",
       stage: "operation"
     });
 
-    await expect(operator.pluginDisable("building_scan")).resolves.toEqual({ status: "success" });
+    await expect(operator.pluginDisable("demo_plugin")).resolves.toEqual({ status: "success" });
     await expect(operator.pluginStatuses()).resolves.toEqual([
       {
-        pluginId: "building_scan",
-        displayName: "Building Scan",
+        pluginId: "demo_plugin",
+        displayName: "Demo Plugin",
         lifecycle: "query_only",
         enabled: false,
         packaged: true
@@ -100,40 +100,40 @@ describe("Atlas Core TUI preview operator", () => {
 
   it("reports invalid fixture Plugin operations", async () => {
     const uninitialized = fixture("not-initialized").operator;
-    await expect(uninitialized.pluginEnable("building_scan")).rejects.toThrow(
+    await expect(uninitialized.pluginEnable("demo_plugin")).rejects.toThrow(
       "Atlas Core is not initialized. Run atlas-core init first."
     );
-    await expect(uninitialized.pluginLogs("building_scan", false)).rejects.toThrow(
+    await expect(uninitialized.pluginLogs("demo_plugin", false)).rejects.toThrow(
       "Atlas Core is not initialized. Run atlas-core init first."
     );
 
     const { operator } = fixture();
     await expect(operator.pluginEnable("missing_plugin")).rejects.toThrow("Unknown first-party Plugin: missing_plugin");
-    await expect(operator.pluginLogs("building_scan", false)).rejects.toThrow("Plugin building_scan is not enabled.");
+    await expect(operator.pluginLogs("demo_plugin", false)).rejects.toThrow("Plugin demo_plugin is not enabled.");
     await expect(operator.pluginLogs("missing_plugin", false)).rejects.toThrow("Plugin missing_plugin is not enabled.");
   });
 
   it("blocks state-changing Plugin operations while degraded", async () => {
     const { operator } = fixture("degraded");
 
-    await expect(operator.pluginEnable("building_scan")).rejects.toThrow(
+    await expect(operator.pluginEnable("demo_plugin")).rejects.toThrow(
       "Plugin changes require the current deployment to be fully healthy: minio is unhealthy."
     );
     await expect(operator.pluginStatuses()).resolves.toEqual([
-      expect.objectContaining({ pluginId: "building_scan", enabled: false })
+      expect.objectContaining({ pluginId: "demo_plugin", enabled: false })
     ]);
-    await expect(operator.pluginDisable("building_scan")).resolves.toEqual({ status: "success" });
+    await expect(operator.pluginDisable("demo_plugin")).resolves.toEqual({ status: "success" });
   });
 
   it("preserves the previous Plugin state when cancelled and works again after resume", async () => {
     const { operator } = fixture("ready", 25);
     const activity: PluginActivity[] = [];
-    const enable = operator.pluginEnable("building_scan", (event) => activity.push(event));
+    const enable = operator.pluginEnable("demo_plugin", (event) => activity.push(event));
 
     operator.cancelPending();
     await expect(enable).resolves.toEqual({ previousDeploymentPreserved: true, status: "cancelled" });
     await expect(operator.pluginStatuses()).resolves.toEqual([
-      expect.objectContaining({ pluginId: "building_scan", enabled: false })
+      expect.objectContaining({ pluginId: "demo_plugin", enabled: false })
     ]);
     expect(activity).toContainEqual({
       level: "success",
@@ -142,9 +142,9 @@ describe("Atlas Core TUI preview operator", () => {
     });
 
     operator.resumeAfterCancellation();
-    await expect(operator.pluginEnable("building_scan")).resolves.toEqual({ status: "success" });
+    await expect(operator.pluginEnable("demo_plugin")).resolves.toEqual({ status: "success" });
     await expect(operator.pluginStatuses()).resolves.toEqual([
-      expect.objectContaining({ pluginId: "building_scan", enabled: true })
+      expect.objectContaining({ pluginId: "demo_plugin", enabled: true })
     ]);
   });
 });

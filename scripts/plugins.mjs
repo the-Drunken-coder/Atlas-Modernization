@@ -1,23 +1,13 @@
 import { spawnSync } from "node:child_process";
-import {
-  cpSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-  writeFileSync
-} from "node:fs";
-import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { basename, dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repositoryRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const pluginsRoot = join(repositoryRoot, "plugins");
 const identifierPattern = /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/u;
 const imageRepositoryPattern = /^ghcr\.io\/the-drunken-coder\/[a-z0-9][a-z0-9-]*$/u;
-const packageImagePattern = /^ghcr\.io\/the-drunken-coder\/[a-z0-9][a-z0-9-]*@sha256:[0-9a-f]{64}$/u;
 const pluginImageToken = "@atlas/plugin-image@";
-const generatedCatalogLineWidth = 120;
 const sharedProductionRoots = [
   "packages/plugin-runtime/src",
   "packages/sdk/src",
@@ -26,7 +16,6 @@ const sharedProductionRoots = [
   "surfaces/command-interface/src",
   "surfaces/core-cli/src"
 ];
-const generatedSharedFiles = new Set(["surfaces/core-cli/src/plugin-catalog.generated.ts"]);
 
 const [command, ...args] = process.argv.slice(2);
 const plugins = discoverPlugins();
@@ -67,49 +56,13 @@ switch (command) {
       ]);
     }
     break;
-  case "generate-catalog": {
-    const packageRoot = packageRootArgument(args, "generate-catalog");
-    verifyPlugins(plugins, true);
-    generateCatalog(plugins, packageRoot, false, true);
-    break;
-  }
   case "check-seepage":
     verifyPlugins(plugins);
     checkSeepage(plugins);
     break;
-  case "release-plan":
-    verifyPlugins(plugins, true);
-    process.stdout.write(
-      `${JSON.stringify(
-        publishedPlugins(plugins).map((plugin) => ({
-          plugin_id: plugin.id,
-          image_repository: plugin.manifest.release.image_repository,
-          dockerfile: relative(repositoryRoot, join(plugin.directory, "Dockerfile")),
-          docker_target: plugin.manifest.docker_target
-        }))
-      )}\n`
-    );
-    break;
-  case "record-release-images": {
-    const packageRoot = packageRootArgument(args, "record-release-images");
-    const images = JSON.parse(process.env.ATLAS_PLUGIN_IMAGES_JSON ?? "");
-    validatePackageImages(plugins, images, `${packageRoot}/package.json atlasPluginImages`, true);
-    const packageJSONPath = join(packageRoot, "package.json");
-    const packageJSON = readJSON(packageJSONPath);
-    packageJSON.atlasPluginImages = images;
-    writeFileSync(packageJSONPath, `${JSON.stringify(packageJSON, null, 2)}\n`);
-    generateCatalog(plugins, packageRoot, true, true);
-    break;
-  }
-  case "verify-release-images": {
-    const packageRoot = packageRootArgument(args, "verify-release-images");
-    const packageJSON = readJSON(join(packageRoot, "package.json"));
-    validatePackageImages(plugins, packageJSON.atlasPluginImages, `${packageRoot}/package.json atlasPluginImages`, true);
-    break;
-  }
   default:
     throw new Error(
-      "Usage: node scripts/plugins.mjs <verify|build|test|check|docker-build|generate-catalog|check-seepage|release-plan|record-release-images|verify-release-images>"
+      "Usage: node scripts/plugins.mjs <verify|build|test|check|docker-build|check-seepage>"
     );
 }
 
@@ -132,6 +85,8 @@ function readPlugin(directory) {
       "plugin_id",
       "display_name",
       "lifecycle",
+      "uses_core_sdk",
+      "interactions",
       "package",
       "docker_target",
       "service",
@@ -150,10 +105,27 @@ function readPlugin(directory) {
   if (basename(directory) !== manifest.plugin_id) {
     throw new Error(`${manifestPath} plugin_id must match its folder name`);
   }
-  if (typeof manifest.display_name !== "string" || manifest.display_name.trim() !== manifest.display_name) {
+  if (
+    typeof manifest.display_name !== "string" ||
+    manifest.display_name.trim() !== manifest.display_name ||
+    !manifest.display_name ||
+    manifest.display_name.length > 100
+  ) {
     throw new Error(`${manifestPath} has an invalid display_name`);
   }
   if (manifest.lifecycle !== "query_only") throw new Error(`${manifestPath} lifecycle must be query_only`);
+  if (typeof manifest.uses_core_sdk !== "boolean") {
+    throw new Error(`${manifestPath} uses_core_sdk must be a boolean`);
+  }
+  if (!Array.isArray(manifest.interactions) || manifest.interactions.some((kind) => kind !== "map_area")) {
+    throw new Error(`${manifestPath} interactions must be a map_area array`);
+  }
+  if ([...manifest.interactions].sort().join("\u0000") !== manifest.interactions.join("\u0000")) {
+    throw new Error(`${manifestPath} interactions must be sorted`);
+  }
+  if (new Set(manifest.interactions).size !== manifest.interactions.length) {
+    throw new Error(`${manifestPath} interactions must not contain duplicates`);
+  }
   if (typeof manifest.package !== "string" || !manifest.package) throw new Error(`${manifestPath} package is invalid`);
   if (typeof manifest.docker_target !== "string" || !identifierPattern.test(manifest.docker_target)) {
     throw new Error(`${manifestPath} docker_target is invalid`);
@@ -161,9 +133,15 @@ function readPlugin(directory) {
   if (typeof manifest.service !== "string" || !/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/u.test(manifest.service)) {
     throw new Error(`${manifestPath} service is invalid`);
   }
-  for (const field of ["compose", "core_endpoint", "source_connector"]) {
+  for (const field of ["compose", "core_endpoint"]) {
     if (typeof manifest[field] !== "string" || !manifest[field]) throw new Error(`${manifestPath} ${field} is invalid`);
     assertLocalFileName(manifest[field], `${manifestPath} ${field}`);
+  }
+  if (manifest.source_connector !== null) {
+    if (typeof manifest.source_connector !== "string" || !manifest.source_connector) {
+      throw new Error(`${manifestPath} source_connector must be null or a local file name`);
+    }
+    assertLocalFileName(manifest.source_connector, `${manifestPath} source_connector`);
   }
   if (!Array.isArray(manifest.shared_code_forbidden_terms)) {
     throw new Error(`${manifestPath} shared_code_forbidden_terms must be an array`);
@@ -176,13 +154,19 @@ function readPlugin(directory) {
   assertRecord(manifest.release, `${manifestPath} release`);
   if (manifest.release.channel === "development") {
     assertExactKeys(manifest.release, ["channel"], `${manifestPath} release`);
-  } else if (manifest.release.channel === "atlas_core") {
+  } else if (manifest.release.channel === "independent") {
     assertExactKeys(manifest.release, ["channel", "image_repository"], `${manifestPath} release`);
     if (!imageRepositoryPattern.test(manifest.release.image_repository)) {
       throw new Error(`${manifestPath} release.image_repository must be a first-party GHCR repository`);
     }
+    if (manifest.release.channel === "independent") {
+      const expected = `ghcr.io/the-drunken-coder/atlas-${manifest.plugin_id.replaceAll("_", "-")}`;
+      if (manifest.release.image_repository !== expected) {
+        throw new Error(`${manifestPath} release.image_repository must be ${expected}`);
+      }
+    }
   } else {
-    throw new Error(`${manifestPath} release.channel must be development or atlas_core`);
+    throw new Error(`${manifestPath} release.channel must be development or independent`);
   }
   return {
     directory,
@@ -209,7 +193,7 @@ function verifyPlugins(entries, quiet = false) {
       "Dockerfile",
       plugin.manifest.compose,
       plugin.manifest.core_endpoint,
-      plugin.manifest.source_connector
+      ...(plugin.manifest.source_connector ? [plugin.manifest.source_connector] : [])
     ]) {
       if (!existsSync(join(plugin.directory, required))) {
         throw new Error(`${relative(repositoryRoot, plugin.directory)} is missing ${required}`);
@@ -226,12 +210,14 @@ function verifyPlugins(entries, quiet = false) {
     if (endpoint.id !== plugin.id || typeof endpoint.base_url !== "string") {
       throw new Error(`${plugin.id} Core endpoint fragment must contain its plugin_id and base_url`);
     }
-    const connector = readJSON(join(plugin.directory, plugin.manifest.source_connector));
-    assertRecord(connector, `${plugin.id} Source connector fragment`);
-    if (connector.id !== plugin.id) {
-      throw new Error(`${plugin.id} Source connector fragment must use its plugin_id`);
+    if (plugin.manifest.source_connector) {
+      const connector = readJSON(join(plugin.directory, plugin.manifest.source_connector));
+      assertRecord(connector, `${plugin.id} Source connector fragment`);
+      if (connector.id !== plugin.id) {
+        throw new Error(`${plugin.id} Source connector fragment must use its plugin_id`);
+      }
     }
-    if (plugin.manifest.release.channel === "atlas_core") {
+    if (plugin.manifest.release.channel === "independent") {
       const compose = readFileSync(join(plugin.directory, plugin.manifest.compose), "utf8");
       if (compose.split(pluginImageToken).length !== 2) {
         throw new Error(`${plugin.id} published Compose overlay must contain exactly one ${pluginImageToken} token`);
@@ -239,92 +225,6 @@ function verifyPlugins(entries, quiet = false) {
     }
   }
   if (!quiet) process.stdout.write(`Verified ${entries.length} plugin folder${entries.length === 1 ? "" : "s"}.\n`);
-}
-
-function generateCatalog(entries, packageRoot, requireAllImages = false, quiet = false) {
-  const packageJSONPath = join(packageRoot, "package.json");
-  const packageJSON = readJSON(packageJSONPath);
-  const images = packageJSON.atlasPluginImages ?? {};
-  validatePackageImages(entries, images, `${packageJSONPath} atlasPluginImages`, requireAllImages);
-  const published = publishedPlugins(entries);
-
-  const catalogDirectory = join(packageRoot, "assets", "plugins");
-  rmSync(catalogDirectory, { recursive: true, force: true });
-  mkdirSync(catalogDirectory, { recursive: true });
-  const catalog = published.map((plugin) => {
-    const destination = join(catalogDirectory, plugin.id);
-    mkdirSync(destination, { recursive: true });
-    const assets = {
-      compose: "compose.yml",
-      core_endpoint: "core-endpoint.json",
-      source_connector: "source-connector.json"
-    };
-    const composeSource = readFileSync(join(plugin.directory, plugin.manifest.compose), "utf8");
-    writeFileSync(
-      join(destination, assets.compose),
-      images[plugin.id] ? composeSource.replace(pluginImageToken, images[plugin.id]) : composeSource
-    );
-    cpSync(join(plugin.directory, plugin.manifest.core_endpoint), join(destination, assets.core_endpoint));
-    cpSync(join(plugin.directory, plugin.manifest.source_connector), join(destination, assets.source_connector));
-    return {
-      plugin_id: plugin.id,
-      display_name: plugin.manifest.display_name,
-      lifecycle: plugin.manifest.lifecycle,
-      service: plugin.manifest.service,
-      image: images[plugin.id] ?? null,
-      assets
-    };
-  });
-  writeFileSync(join(packageRoot, "assets", "plugin-catalog.json"), `${JSON.stringify({ schema: 1, plugins: catalog }, null, 2)}\n`);
-  const catalogLiteral = JSON.stringify(
-    catalog.map((entry) => ({
-      pluginId: entry.plugin_id,
-      displayName: entry.display_name,
-      lifecycle: entry.lifecycle,
-      service: entry.service,
-      image: entry.image,
-      assets: entry.assets
-    })),
-    null,
-    2
-  )
-    .replace(/"([A-Za-z_][A-Za-z0-9_]*)":/gu, "$1:")
-    .replace(/^(\s*)image: ("[^"]+"),$/gmu, (line, indentation, image) =>
-      line.length > generatedCatalogLineWidth ? `${indentation}image:\n${indentation}  ${image},` : line
-    );
-  const source = `// Generated by scripts/plugins.mjs. Do not edit.\nexport const PACKAGE_PLUGIN_CATALOG = ${catalogLiteral} as const;\n`;
-  writeFileSync(join(packageRoot, "src", "plugin-catalog.generated.ts"), source);
-  if (!quiet) process.stdout.write(`Generated a ${catalog.length}-plugin Atlas Core catalog.\n`);
-}
-
-function publishedPlugins(entries) {
-  return entries.filter((plugin) => plugin.manifest.release.channel === "atlas_core");
-}
-
-function validatePackageImages(entries, images, label, requireAll) {
-  assertRecord(images, label);
-  const published = publishedPlugins(entries);
-  const expectedIds = new Set(published.map((plugin) => plugin.id));
-  for (const [pluginId, image] of Object.entries(images)) {
-    if (!expectedIds.has(pluginId)) throw new Error(`atlasPluginImages contains unknown plugin ${pluginId}`);
-    if (typeof image !== "string" || !packageImagePattern.test(image)) {
-      throw new Error(`atlasPluginImages.${pluginId} must be an immutable first-party GHCR digest reference`);
-    }
-    const repository = published.find((plugin) => plugin.id === pluginId)?.manifest.release.image_repository;
-    if (!image.startsWith(`${repository}@`)) throw new Error(`atlasPluginImages.${pluginId} uses the wrong repository`);
-  }
-  if (requireAll) {
-    const missing = published.filter((plugin) => !(plugin.id in images)).map((plugin) => plugin.id);
-    if (missing.length > 0) throw new Error(`atlasPluginImages is missing published plugins: ${missing.join(", ")}`);
-  }
-}
-
-function packageRootArgument(commandArgs, commandName) {
-  const packageRootFlag = commandArgs.indexOf("--package-root");
-  if (packageRootFlag === -1 || !commandArgs[packageRootFlag + 1]) {
-    throw new Error(`${commandName} requires --package-root <directory>`);
-  }
-  return resolve(repositoryRoot, commandArgs[packageRootFlag + 1]);
 }
 
 function checkSeepage(entries) {
@@ -341,7 +241,6 @@ function checkSeepage(entries) {
     if (!existsSync(absoluteRoot)) continue;
     for (const file of walkFiles(absoluteRoot)) {
       const repositoryPath = relative(repositoryRoot, file).split(sep).join("/");
-      if (generatedSharedFiles.has(repositoryPath)) continue;
       if (/(?:^|\/)(?:test|tests)(?:\/|$)|_test\.go$|\.(?:test|spec)\.[cm]?[jt]sx?$/u.test(repositoryPath)) continue;
       const contents = readFileSync(file, "utf8");
       for (const match of contents.matchAll(/(?:from\s*|import\s*)["']([^"']+)["']/gu)) {

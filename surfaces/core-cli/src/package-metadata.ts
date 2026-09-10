@@ -2,3 +2,10 @@
 export const PACKAGE_NAME = "atlas-core";
 export const PACKAGE_VERSION = "0.1.8";
 export const PACKAGE_IMAGE: string | undefined = "ghcr.io/the-drunken-coder/atlas-core@sha256:a2817686af693d860b1886afb99ddba131d6910e8437cac25765857759e80dfb";
+export const PACKAGE_PLUGIN_CONTRACTS = {
+  coreToPluginProtocolMajors: [1],
+  pluginToSourceGatewayProtocolMajors: [1],
+  atlasProtocolRevision: "sha256:2722212b14f67b01dc185de162a27a18fbb10a3a29355866a7db8c7c281b71a6",
+  supportedPackageSchemaMajors: [1],
+  supportedInteractions: ["map_area"]
+} as const;

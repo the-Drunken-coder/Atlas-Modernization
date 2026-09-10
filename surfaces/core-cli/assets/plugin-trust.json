@@ -1,0 +1,9 @@
+{
+  "schema": 1,
+  "catalog_url": "https://the-drunken-coder.github.io/Atlas-Modernization/catalog.json",
+  "minimum_checkpoint": {
+    "key_epoch": 1,
+    "sequence": 1
+  },
+  "keys": []
+}

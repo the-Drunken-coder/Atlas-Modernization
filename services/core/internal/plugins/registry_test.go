@@ -13,19 +13,19 @@ import (
 
 type fakeClient struct {
 	mu               sync.Mutex
-	manifestValue    protocol.PluginManifest
+	manifestValue    privateManifest
 	manifestFailures []*clientError
 	healthFunc       func(context.Context) (bool, *clientError)
 	invokeFunc       func(context.Context) (protocol.JSONValue, *remoteOperationError, *clientError)
 }
 
-func (f *fakeClient) manifest(context.Context, string) (protocol.PluginManifest, *clientError) {
+func (f *fakeClient) manifest(context.Context, string) (privateManifest, *clientError) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if len(f.manifestFailures) > 0 {
 		err := f.manifestFailures[0]
 		f.manifestFailures = f.manifestFailures[1:]
-		return protocol.PluginManifest{}, err
+		return privateManifest{}, err
 	}
 	return cloneManifest(f.manifestValue), nil
 }
@@ -50,20 +50,23 @@ func (f *fakeClient) invoke(ctx context.Context, _, _ string, _ json.RawMessage)
 	return invoke(ctx)
 }
 
-func fixtureManifest(timeout time.Duration) protocol.PluginManifest {
-	return protocol.PluginManifest{
-		PluginID:    "reference",
-		DisplayName: "Reference",
-		Operations: []protocol.PluginOperationDescriptor{{
-			OperationID: "inspect_fixture",
-			DisplayName: "Inspect fixture",
-			TimeoutMs:   int64(timeout / time.Millisecond),
-		}},
+func fixtureManifest(timeout time.Duration) privateManifest {
+	return privateManifest{
+		PluginManifest: protocol.PluginManifest{
+			PluginID:    "reference",
+			DisplayName: "Reference",
+			Operations: []protocol.PluginOperationDescriptor{{
+				OperationID: "inspect_fixture",
+				DisplayName: "Inspect fixture",
+				TimeoutMs:   int64(timeout / time.Millisecond),
+			}},
+		},
+		CoreToPluginProtocolMajor: CoreToPluginProtocolMajor,
 	}
 }
 
-func cloneManifest(manifest protocol.PluginManifest) protocol.PluginManifest {
-	manifest.Operations = append([]protocol.PluginOperationDescriptor(nil), manifest.Operations...)
+func cloneManifest(manifest privateManifest) privateManifest {
+	manifest.PluginManifest.Operations = append([]protocol.PluginOperationDescriptor(nil), manifest.PluginManifest.Operations...)
 	return manifest
 }
 
@@ -212,6 +215,18 @@ func TestManifestIdentityOperationsAndToolAssetAreValidated(t *testing.T) {
 	manifest.PluginID = "other"
 	if err := validateManifest("reference", manifest); err == nil {
 		t.Fatal("identity mismatch was accepted")
+	}
+}
+
+func TestManifestRequiresSupportedCoreToPluginProtocolMajor(t *testing.T) {
+	manifest := fixtureManifest(time.Second)
+	manifest.CoreToPluginProtocolMajor = 0
+	if err := validateManifest("reference", manifest); err == nil {
+		t.Fatal("missing protocol major was accepted")
+	}
+	manifest.CoreToPluginProtocolMajor = CoreToPluginProtocolMajor + 1
+	if err := validateManifest("reference", manifest); err == nil {
+		t.Fatal("unsupported protocol major was accepted")
 	}
 }
 
