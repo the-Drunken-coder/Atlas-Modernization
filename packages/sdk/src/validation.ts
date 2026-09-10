@@ -143,7 +143,12 @@ function isSafeNonNegativeInteger(value: unknown): value is number {
 
 // Compare the instant without discarding the sub-millisecond precision of Core associations.
 function sameMovementInstant(left: string, right: string): boolean {
-  const fraction = (value: string) => /\.(\d+)/.exec(value)?.[1]?.replace(/0+$/, "") ?? "";
+  const fraction = (value: string) => {
+    const digits = /\.(\d+)/.exec(value)?.[1] ?? "";
+    let end = digits.length;
+    while (end > 0 && digits[end - 1] === "0") end--;
+    return digits.slice(0, end);
+  };
   return Date.parse(left) === Date.parse(right) && fraction(left) === fraction(right);
 }
 
