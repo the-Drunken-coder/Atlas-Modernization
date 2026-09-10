@@ -25,6 +25,7 @@ class CredentialHostStub implements ManagedPluginCredentialHost {
   failVerifyOnce = false;
   failRestoreOnce = false;
   starts = 0;
+  startIncludesPlugins: boolean[] = [];
   stops = 0;
   recreated = 0;
   verified = 0;
@@ -39,8 +40,9 @@ class CredentialHostStub implements ManagedPluginCredentialHost {
     return this.running;
   }
 
-  async startBase(): Promise<void> {
+  async startBase(includePluginFragments = false): Promise<void> {
     this.starts += 1;
+    this.startIncludesPlugins.push(includePluginFragments);
     this.running = true;
   }
 
@@ -283,6 +285,36 @@ describe("ManagedPluginCredentials", () => {
     await new ManagedPluginCredentials({ configDir, host, dockerEngineId: ENGINE_ID }).rotate();
 
     expect(host.starts).toBe(1);
+    expect(host.startIncludesPlugins).toEqual([false]);
+    expect(host.stops).toBe(1);
+    expect(host.recreated).toBe(0);
+    expect(host.verified).toBe(0);
+    expect(host.running).toBe(false);
+    expect(existsSync(join(configDir, "transaction"))).toBe(false);
+  });
+
+  it("does not recreate SDK Plugins while recovering a stopped rotation", async () => {
+    const configDir = mkdtempSync(join(tmpdir(), "atlas-host-credentials-"));
+    temporaryDirectories.push(configDir);
+    writeFileSync(join(configDir, ".env"), `ATLAS_PLUGIN_API_KEY=${OLD_KEY}\n`, { mode: 0o600 });
+    const host = new CredentialHostStub();
+    host.running = false;
+    host.failRevokeOnce = true;
+    const manager = new ManagedPluginCredentials({ configDir, host, dockerEngineId: ENGINE_ID });
+
+    await expect(manager.rotate()).rejects.toThrow("Managed Plugin key rotation did not complete");
+
+    expect(host.starts).toBe(1);
+    expect(host.startIncludesPlugins).toEqual([false]);
+    expect(host.stops).toBe(0);
+    expect(host.recreated).toBe(0);
+    expect(host.verified).toBe(0);
+    expect(DeploymentTransactionStore.open(configDir).read().phase).toBe("credentials-durable");
+
+    await manager.recover();
+
+    expect(host.recreated).toBe(0);
+    expect(host.verified).toBe(0);
     expect(host.stops).toBe(1);
     expect(host.running).toBe(false);
     expect(existsSync(join(configDir, "transaction"))).toBe(false);
@@ -299,6 +331,7 @@ describe("ManagedPluginCredentials", () => {
     await new ManagedPluginCredentials({ configDir, transactions, host, dockerEngineId: ENGINE_ID }).recover();
 
     expect(host.starts).toBe(1);
+    expect(host.startIncludesPlugins).toEqual([true]);
     expect(host.stops).toBe(1);
     expect(host.running).toBe(false);
     expect(existsSync(join(configDir, "transaction"))).toBe(false);

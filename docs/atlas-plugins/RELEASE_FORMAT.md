@@ -229,17 +229,23 @@ publication side effect. It pins one reviewed source commit for every build and 
 3. builds and publishes the multi-architecture candidate image, then records its immutable index digest;
 4. runs the exact candidate image on a disposable network and verifies its private manifest identity, protocol major,
    sorted operation descriptors, operation limits, declared interaction set, managed query-only fields, exact `/health`
-   response, and deterministic unknown-route response before promoting the candidate. Source connector policy is
+   response, and deterministic unknown-route `404 {"code":"route_not_found"}` response before promoting the candidate. Source connector policy is
    validated from authored metadata while generating the release document; this candidate gate does not execute external
    source requests or arbitrary SDK behavior;
 5. generates the exact release document from authored Plugin metadata and that digest, deriving the Protocol revision when
    `uses_core_sdk` is true;
 6. publishes the immutable tag and GitHub Release with the release document;
-7. downloads and rechecks the public release document and image digest;
+7. downloads and rechecks the public release document from its canonical URL anonymously, with bounded HTTPS redirects,
+   response size, and time, then rechecks the image digest;
 8. enters the global non-cancelling catalog-publication group, validates and appends to the protected canonical ledger,
    signs the new catalog, and compare-and-swap pushes the ledger commit;
 9. publishes one GitHub Pages artifact containing `catalog.json` and `catalog.json.sig` from that exact ledger commit;
 10. verifies the stable catalog URL, signature, sequence, release-document hash, and public image.
+
+Stable catalog verification allows a bounded two-minute Pages propagation window for structurally valid catalog and
+signature responses whose bytes are from different generations. It retries that byte skew, including a valid signature
+whose catalog is still old or a valid catalog whose signature is still old, then requires the exact catalog/signature
+pair and verifies its signature. Malformed catalog or signature responses fail immediately.
 
 Neither concurrency group cancels an in-progress publication. A failure before the ledger update leaves unlisted
 artifacts that no manager can install. A retry treats an existing tag, GitHub Release asset, image digest, release

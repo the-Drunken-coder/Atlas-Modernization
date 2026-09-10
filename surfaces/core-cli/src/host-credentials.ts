@@ -17,7 +17,8 @@ export type ManagedKeyAction = "create" | "list" | "revoke";
 /** The host authority used to operate the already-running Core container. */
 export type ManagedPluginCredentialHost = {
   isRunning(): Promise<boolean>;
-  startBase(): Promise<void>;
+  /** Start base services, optionally including the active SDK Plugin fragments. */
+  startBase(includePluginFragments?: boolean): Promise<void>;
   stopBase(): Promise<void>;
   runManagedKeys(action: ManagedKeyAction, value: string): Promise<unknown>;
   /** `apiKey` is the complete one-time `id.secret` value returned by create. */
@@ -128,7 +129,7 @@ export class ManagedPluginCredentials {
       // storage. Keep it rollback-capable until the candidate .env is durable.
       transactions.advance("runtime-changing");
       if (!previousRunning) {
-        await this.#host.startBase();
+        await this.#host.startBase(false);
       }
       await this.#ensure(transactions, true);
       if (!desiredRunning) await this.#host.stopBase();
@@ -193,7 +194,7 @@ export class ManagedPluginCredentials {
       if (!running) {
         const phase = transactions.read().phase;
         if (phase === "prepared" || phase === "runtime-changing") transactions.advance("core-started");
-        await this.#host.startBase();
+        await this.#host.startBase(journal.previousRunning);
       }
     }
 
@@ -210,7 +211,9 @@ export class ManagedPluginCredentials {
   }
 
   async #ensure(transactions: DeploymentTransactionStore, forceRotation: boolean): Promise<void> {
-    const standaloneRotation = transactions.read().operation === "plugin-key-rotation";
+    const transaction = transactions.read();
+    const standaloneRotation = transaction.operation === "plugin-key-rotation";
+    const recreateSDKPlugins = !standaloneRotation || transaction.previousRunning;
     let intent = this.#readIntent(transactions);
     if (!intent) {
       const previous = readCurrentAPIKey(this.#configDir);
@@ -242,7 +245,7 @@ export class ManagedPluginCredentials {
       }
     }
 
-    if (!intent.pluginsVerified) {
+    if (recreateSDKPlugins && !intent.pluginsVerified) {
       if (standaloneRotation && !intent.pluginsRecreated) {
         intent = { ...intent, pluginsRecreated: true, pluginsRestored: false };
         this.#persistIntent(transactions, intent);
@@ -396,7 +399,7 @@ export class ManagedPluginCredentials {
         // Core must be running for managed-key revoke. A stopped deployment
         // may therefore need a temporary base start before its final stop.
         if (!running) {
-          await this.#host.startBase();
+          await this.#host.startBase(journal.previousRunning);
           running = true;
         }
         if (intent.candidateKeyId) await this.#revoke(intent.candidateKeyId);
@@ -407,7 +410,7 @@ export class ManagedPluginCredentials {
 
       if (shouldRun && intent?.pluginsRecreated && !intent.pluginsRestored) {
         if (!running) {
-          await this.#host.startBase();
+          await this.#host.startBase(journal.previousRunning);
           running = true;
         }
         await this.#host.restoreSDKPlugins();

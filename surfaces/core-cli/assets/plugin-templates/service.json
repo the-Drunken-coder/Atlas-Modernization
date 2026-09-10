@@ -10,7 +10,7 @@
     },
     "source-gateway": {
       "environment": {
-        "ATLAS_SOURCE_CONNECTOR_CONFIG_DIR": "/app/source-connectors"
+        "ATLAS_SOURCE_CONNECTOR_CONFIG_DIR": "@atlas/source-connector-config-dir@"
       },
       "volumes": [
         "@atlas/source-connector-mount@"

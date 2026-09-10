@@ -10,7 +10,7 @@ const repositoryRoot = fileURLToPath(new URL("..", import.meta.url));
 const script = join(repositoryRoot, "scripts", "plugin-release.mjs");
 const image = `ghcr.io/the-drunken-coder/atlas-building-scan@sha256:${"a".repeat(64)}`;
 
-function runCandidate(manifest) {
+function runCandidate(manifest, routeBody = '{"code":"route_not_found"}') {
   const directory = mkdtempSync(join(tmpdir(), "atlas-plugin-candidate-"));
   const bin = join(directory, "bin");
   const docker = join(bin, "docker");
@@ -33,7 +33,7 @@ else process.exit(1);
 const url = process.argv.at(-1);
 if (url.endsWith("/manifest")) process.stdout.write(process.env.CANDIDATE_MANIFEST + "\\n200\\n");
 else if (url.endsWith("/health")) process.stdout.write('{"status":"ok"}\\n200\\n');
-else process.stdout.write("404\\n");
+else process.stdout.write((process.env.CANDIDATE_ROUTE_BODY ?? '{"code":"route_not_found"}') + "\\n404\\n");
 `
   );
   chmodSync(docker, 0o755);
@@ -42,7 +42,7 @@ else process.stdout.write("404\\n");
     return spawnSync(process.execPath, [script, "check-candidate", "building_scan", image], {
       cwd: repositoryRoot,
       encoding: "utf8",
-      env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, CANDIDATE_MANIFEST: JSON.stringify(manifest) }
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, CANDIDATE_MANIFEST: JSON.stringify(manifest), CANDIDATE_ROUTE_BODY: routeBody }
     });
   } finally {
     rmSync(directory, { recursive: true, force: true });
@@ -54,6 +54,21 @@ function runReleaseDocument(imageReference) {
     cwd: repositoryRoot,
     encoding: "utf8",
     env: process.env
+  });
+}
+
+function runPublicRelease(localPath, preloadPath, url, mode) {
+  return spawnSync(process.execPath, [script, "verify-public-release", url, localPath], {
+    cwd: repositoryRoot,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      GITHUB_REPOSITORY: "the-Drunken-coder/Atlas-Modernization",
+      GITHUB_SERVER_URL: "https://github.com",
+      NODE_OPTIONS: `--import=${preloadPath}`,
+      ATLAS_TEST_RELEASE_BYTES: localPath,
+      ATLAS_TEST_PUBLIC_RELEASE_MODE: mode
+    }
   });
 }
 
@@ -69,6 +84,22 @@ test("embeds the strict source connector and generated SDK Protocol revision", (
     allow_link_local: false
   });
   assert.match(document.atlas_protocol_revision, /^sha256:[0-9a-f]{64}$/u);
+});
+
+test("rejects a source connector origin array before release publication", () => {
+  const directory = mkdtempSync(join(tmpdir(), "atlas-plugin-release-document-"));
+  try {
+    const validResult = runReleaseDocument(image);
+    assert.equal(validResult.status, 0, validResult.stderr);
+    const valid = JSON.parse(validResult.stdout);
+    const documentPath = join(directory, "invalid.atlas-plugin");
+    writeFileSync(documentPath, `${JSON.stringify({ ...valid, source_connector: { ...valid.source_connector, origin: [valid.source_connector.origin] } }, null, 2)}\n`);
+    const result = spawnSync(process.execPath, [script, "verify-document", documentPath], { cwd: repositoryRoot, encoding: "utf8" });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /origin must be a string/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test("accepts a candidate only when its private manifest matches the authored interaction contract", () => {
@@ -105,4 +136,79 @@ test("rejects candidate manifest fields that can change the managed query-only c
   });
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /must not expose tool_asset_id/);
+});
+
+test("requires the missing candidate route to return the exact JSON error", () => {
+  const result = runCandidate({
+    plugin_id: "building_scan",
+    display_name: "Building Scan",
+    core_to_plugin_protocol_major: 1,
+    operations: [
+      {
+        operation_id: "search_buildings",
+        display_name: "Search buildings",
+        timeout_ms: 15_000,
+        interaction: { kind: "map_area" }
+      }
+    ]
+  }, '{"code":"wrong_route"}');
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /route_not_found/);
+});
+
+test("verifies the anonymous release URL and bounded redirect", () => {
+  const directory = mkdtempSync(join(tmpdir(), "atlas-plugin-public-release-"));
+  try {
+    const releasePath = join(directory, "building_scan.atlas-plugin");
+    const documentResult = runReleaseDocument(image);
+    assert.equal(documentResult.status, 0, documentResult.stderr);
+    writeFileSync(releasePath, documentResult.stdout);
+    const preloadPath = join(directory, "fetch.mjs");
+    writeFileSync(preloadPath, `
+import { readFileSync } from "node:fs";
+const bytes = readFileSync(process.env.ATLAS_TEST_RELEASE_BYTES);
+let calls = 0;
+globalThis.fetch = async (_url) => {
+  calls += 1;
+  if (process.env.ATLAS_TEST_PUBLIC_RELEASE_MODE === "oversized") return new Response(Buffer.alloc((1 << 20) + 1), { status: 200 });
+  if (process.env.ATLAS_TEST_PUBLIC_RELEASE_MODE === "evil") return new Response(null, { status: 302, headers: { location: "https://evil.example/release" } });
+  if (calls === 1) return new Response(null, { status: 302, headers: { location: "https://objects.githubusercontent.com/release?X-Amz-Signature=test" } });
+  return new Response(bytes, { status: 200 });
+};
+`);
+    const url = "https://github.com/the-Drunken-coder/Atlas-Modernization/releases/download/atlas-plugin-building_scan-v0.1.0/building_scan-0.1.0.atlas-plugin";
+    const result = runPublicRelease(releasePath, preloadPath, url);
+    assert.equal(result.status, 0, result.stderr);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("bounds anonymous release downloads and rejects untrusted redirects", () => {
+  const directory = mkdtempSync(join(tmpdir(), "atlas-plugin-public-release-bounds-"));
+  try {
+    const releasePath = join(directory, "building_scan.atlas-plugin");
+    const documentResult = runReleaseDocument(image);
+    assert.equal(documentResult.status, 0, documentResult.stderr);
+    writeFileSync(releasePath, documentResult.stdout);
+    const preloadPath = join(directory, "fetch.mjs");
+    writeFileSync(preloadPath, `
+import { readFileSync } from "node:fs";
+const bytes = readFileSync(process.env.ATLAS_TEST_RELEASE_BYTES);
+globalThis.fetch = async () => {
+  if (process.env.ATLAS_TEST_PUBLIC_RELEASE_MODE === "oversized") return new Response(Buffer.alloc((1 << 20) + 1), { status: 200 });
+  return new Response(null, { status: 302, headers: { location: "https://evil.example/release" } });
+};
+void bytes;
+`);
+    const url = "https://github.com/the-Drunken-coder/Atlas-Modernization/releases/download/atlas-plugin-building_scan-v0.1.0/building_scan-0.1.0.atlas-plugin";
+    const oversized = runPublicRelease(releasePath, preloadPath, url, "oversized");
+    assert.notEqual(oversized.status, 0);
+    assert.match(oversized.stderr, /size limit/);
+    const evil = runPublicRelease(releasePath, preloadPath, url, "evil");
+    assert.notEqual(evil.status, 0);
+    assert.match(evil.stderr, /allowlisted/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });

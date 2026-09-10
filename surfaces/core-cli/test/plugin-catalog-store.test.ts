@@ -7,8 +7,9 @@ import { PluginCatalogStore } from "../src/plugin-catalog-store.js";
 import { type PluginTrust, parsePluginRelease, parsePluginTrustConfiguration } from "../src/plugin-distribution.js";
 
 const pluginId = "building_scan";
-const releaseURL = (version: string): string =>
-  `https://github.com/the-Drunken-coder/Atlas-Modernization/releases/download/atlas-plugin-${pluginId}-v${version}/${pluginId}-${version}.atlas-plugin`;
+const releaseURLFor = (id: string, version: string): string =>
+  `https://github.com/the-Drunken-coder/Atlas-Modernization/releases/download/atlas-plugin-${id}-v${version}/${id}-${version}.atlas-plugin`;
+const releaseURL = (version: string): string => releaseURLFor(pluginId, version);
 const releaseBytes = (version: string): Uint8Array =>
   new TextEncoder().encode(
     JSON.stringify({
@@ -58,6 +59,38 @@ function catalogBytes(
           }))
         }
       ]
+    })
+  );
+}
+
+function nearMaximumCatalogBytes(sequence: number, previousCatalogSha256: string | null, issuedAt: string): Uint8Array {
+  const plugins = Array.from({ length: 7 }, (_, pluginIndex) => {
+    const id = `plugin_${pluginIndex}`;
+    return {
+      plugin_id: id,
+      releases: Array.from({ length: 256 }, (_, releaseIndex) => {
+        const version = `1.${releaseIndex}.0`;
+        return {
+          version,
+          display_name: `Plugin ${pluginIndex}`,
+          document_url: releaseURLFor(id, version),
+          document_sha256: `sha256:${"0".repeat(64)}`,
+          revoked: true,
+          revocation_reason: "x".repeat(2010)
+        };
+      })
+    };
+  });
+  return new TextEncoder().encode(
+    JSON.stringify({
+      schema: 1,
+      sequence,
+      previous_catalog_sha256: previousCatalogSha256,
+      issued_at: issuedAt,
+      expires_at: "2026-09-20T12:00:00Z",
+      key_epoch: 1,
+      key_id: "test-key",
+      plugins
     })
   );
 }
@@ -348,6 +381,34 @@ describe("PluginCatalogStore", () => {
     await expect(() => store.read()).toThrow(/expired/i);
     now = new Date("2026-09-02T12:01:00Z");
     await expect(() => store.read()).toThrow(/expired/i);
+  });
+
+  it("round-trips a near-maximum catalog receipt and preserves anti-rollback state", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "atlas-catalog-store-"));
+    directories.push(directory);
+    const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+    const first = nearMaximumCatalogBytes(1, null, "2026-09-01T12:00:00Z");
+    expect(first.byteLength).toBeGreaterThan((4 << 20) - 5000);
+    expect(first.byteLength).toBeLessThanOrEqual(4 << 20);
+    let current = first;
+    const store = new PluginCatalogStore({
+      configDir: directory,
+      catalogURL: "https://catalog.example/catalog.json",
+      trust: trust(publicKey),
+      fetchImpl: async (url) =>
+        new Response(String(url).endsWith(".sig") ? signatureBytes(current, privateKey) : current),
+      now: () => new Date("2026-09-02T12:00:00Z")
+    });
+    const firstReceipt = await store.refresh();
+    expect(store.read().catalogSha256).toBe(firstReceipt.catalogSha256);
+
+    current = nearMaximumCatalogBytes(2, firstReceipt.catalogSha256, "2026-09-02T12:00:00Z");
+    const secondReceipt = await store.refresh();
+    expect(store.read().catalogSha256).toBe(secondReceipt.catalogSha256);
+
+    current = first;
+    await expect(store.refresh()).rejects.toThrow(/older|sequence/i);
+    expect(store.read().catalogSha256).toBe(secondReceipt.catalogSha256);
   });
 
   it("accepts the checked-in trust configuration shape without signer fallback", () => {

@@ -22,11 +22,13 @@ describe("DeploymentTransactionStore", () => {
       operation: "start",
       dockerEngineId: "engine-0",
       previousRunning: false,
-      desiredRunning: true
+      desiredRunning: true,
+      recovery: { priorBackupIdentity: `sha256:${"a".repeat(64)}` }
     });
     expect(existsSync(join(root, "transaction", "journal.json"))).toBe(true);
     expect(existsSync(abandoned)).toBe(false);
     expect(store.journal.phase).toBe("prepared");
+    expect(store.journal.recovery?.priorBackupIdentity).toBe(`sha256:${"a".repeat(64)}`);
   });
 
   it("persists a typed journal, restores files, and removes absent-before files", () => {

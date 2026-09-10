@@ -33,6 +33,7 @@ const CONTRACTS = {
   supportedPackageSchemaMajors: [1],
   supportedInteractions: ["map_area"]
 } as const;
+const BACKUP_IDENTITY = `sha256:${"9".repeat(64)}` as const;
 
 type Call = { args: readonly string[]; pluginIds: readonly string[]; coreImage: string; cleanup?: boolean };
 
@@ -107,6 +108,7 @@ function makeOptions(
     preflightPlugins: async () => undefined,
     ensureCredential: async () => undefined,
     readMigrationLedger: async () => "migration-ledger-v1",
+    readBackupIdentity: async () => BACKUP_IDENTITY,
     ...overrides
   };
 }
@@ -199,6 +201,57 @@ describe("ManagedCoreManager", () => {
     expect((recovered as ManagedCoreState).phase).toBe("ready");
     expect(existsSync(join(configDir, "transaction"))).toBe(false);
     expect(calls.some((call) => call.coreImage === NEXT_IMAGE && call.args[0] === "up")).toBe(true);
+  });
+
+  it("requires the restored paired backup identity before accepting a rollback", async () => {
+    const configDir = temporaryDirectory();
+    writeFileSync(join(configDir, ".env"), "POSTGRES_PASSWORD=secret\n", { mode: 0o600 });
+    const stateRef = { current: undefined as ManagedCoreState | undefined };
+    const calls: Call[] = [];
+    const initial = new ManagedCoreManager(
+      makeOptions(configDir, packageDirectory(IMAGE, "restore-old"), IMAGE, stateRef, calls, RECEIPT, {
+        desiredRunning: false
+      })
+    );
+    stateRef.current = await initial.initialize();
+    calls.length = 0;
+
+    const failed = new ManagedCoreManager(
+      makeOptions(configDir, packageDirectory(NEXT_IMAGE, "restore-next"), NEXT_IMAGE, stateRef, calls, NEXT_RECEIPT, {
+        previousRunning: false,
+        desiredRunning: true,
+        runCompose: async (args, pluginIds, options) => {
+          calls.push({ args, pluginIds, coreImage: options.coreImage, ...(options.cleanup ? { cleanup: true } : {}) });
+          if (args[0] === "up" && args.includes("api") && options.coreImage === NEXT_IMAGE) {
+            return { status: 1, stdout: "", stderr: "target failed" };
+          }
+          return { status: 0, stdout: "", stderr: "" };
+        }
+      })
+    );
+    await expect(failed.update(stateRef.current)).rejects.toThrow("target failed");
+
+    const mismatched = new ManagedCoreManager(
+      makeOptions(
+        configDir,
+        packageDirectory(NEXT_IMAGE, "restore-mismatch"),
+        NEXT_IMAGE,
+        stateRef,
+        calls,
+        NEXT_RECEIPT,
+        {
+          readBackupIdentity: async () => `sha256:${"8".repeat(64)}`
+        }
+      )
+    );
+    await expect(mismatched.recover("restored", { confirmPairedRestore: true })).rejects.toThrow(
+      /backup identity does not match/
+    );
+    expect(existsSync(join(configDir, "transaction", "journal.json"))).toBe(true);
+
+    const restored = await failed.recover("restored", { confirmPairedRestore: true });
+    expect((restored as ManagedCoreState).packageVersion).toBe("0.1.8");
+    expect(existsSync(join(configDir, "transaction"))).toBe(false);
   });
 
   it("restores the prior composition when an update fails after stopping it", async () => {
@@ -312,6 +365,68 @@ describe("ManagedCoreManager", () => {
     expect(pluginStart?.pluginIds).toEqual(["building_scan"]);
     expect(pluginStart?.args).toContain("atlas-plugin-building-scan");
     expect(pluginStart?.args).not.toContain("api");
+  });
+
+  it("does not gate normal Core start on Plugin health", async () => {
+    const configDir = temporaryDirectory();
+    writeFileSync(join(configDir, ".env"), "POSTGRES_PASSWORD=secret\n", { mode: 0o600 });
+    const stateRef = { current: undefined as ManagedCoreState | undefined };
+    const calls: Call[] = [];
+    const initial = new ManagedCoreManager(
+      makeOptions(configDir, packageDirectory(IMAGE, "normal-start"), IMAGE, stateRef, calls, RECEIPT, {
+        desiredRunning: false
+      })
+    );
+    stateRef.current = await initial.initialize();
+    const state = { ...stateRef.current, enabledPlugins: ["building_scan"] };
+    let requireHealth: boolean | undefined;
+    const manager = new ManagedCoreManager(
+      makeOptions(configDir, packageDirectory(IMAGE, "normal-start-run"), IMAGE, stateRef, calls, RECEIPT, {
+        verifyPlugins: async (_state, options) => {
+          requireHealth = options.requireHealth;
+          if (options.requireHealth) throw new Error("Plugin health should not gate normal start");
+        }
+      })
+    );
+
+    await manager.start(state);
+    expect(requireHealth).toBe(false);
+    const pluginStart = calls.find((call) => call.args.includes("--no-deps"));
+    expect(pluginStart?.args).not.toContain("--wait");
+  });
+
+  it("gates a Core update on enabled Plugin health before commit", async () => {
+    const configDir = temporaryDirectory();
+    writeFileSync(join(configDir, ".env"), "POSTGRES_PASSWORD=secret\n", { mode: 0o600 });
+    const stateRef = { current: undefined as ManagedCoreState | undefined };
+    const calls: Call[] = [];
+    const initial = new ManagedCoreManager(
+      makeOptions(configDir, packageDirectory(IMAGE, "health-old"), IMAGE, stateRef, calls, RECEIPT, {
+        desiredRunning: false
+      })
+    );
+    stateRef.current = await initial.initialize();
+    const state = { ...stateRef.current, enabledPlugins: ["building_scan"] };
+    let requireHealth: boolean | undefined;
+    const manager = new ManagedCoreManager(
+      makeOptions(configDir, packageDirectory(NEXT_IMAGE, "health-next"), NEXT_IMAGE, stateRef, calls, NEXT_RECEIPT, {
+        previousRunning: false,
+        desiredRunning: false,
+        verifyPlugins: async (_state, options) => {
+          requireHealth = options.requireHealth;
+          if (options.requireHealth) throw new Error("Plugin is unhealthy");
+        }
+      })
+    );
+
+    await expect(manager.update(state)).rejects.toThrow("Plugin is unhealthy");
+    expect(requireHealth).toBe(true);
+    const pluginStart = calls.find((call) => call.args.includes("--no-deps"));
+    expect(pluginStart?.args).toContain("--wait");
+    expect(await manager.recover("status")).toMatchObject({
+      pending: true,
+      journal: { phase: "credentials-durable" }
+    });
   });
 
   it("repairs only when the current package reproduces the recorded bundle hash", async () => {

@@ -162,6 +162,10 @@ and available release before changing anything. Choose one of two update scopes:
 Core releases may carry schema migrations. Before a Core update, create and validate the paired PostgreSQL and MinIO
 backup described in the [deployment runbook](https://github.com/the-Drunken-coder/Atlas-Modernization/blob/main/services/core/docs/DEPLOYMENT_RUNBOOK.md#pre-deploy-backup).
 The menu review screen and `atlas-core update all` both require confirmation that a current paired backup exists.
+Set `ATLAS_CORE_BACKUP_DIR` to that backup directory’s absolute path before updating. The CLI records a content hash of
+the dump, bucket mirror, and runbook metadata. Preserve the pair and select it again with the same environment variable
+when running `recover restored --confirm-paired-restore`; recovery requires the recorded hash to match. This identifies
+the backup artifacts and does not prove that the operator restored them.
 CLI-only updates do not require a deployment backup because they do not change the running Core or its stores.
 
 CLI-only updates may leave the CLI newer than the running Core. Status, logs, diagnostics, stop, reset, and the explicit

@@ -16,6 +16,7 @@ import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type CLIContext, type CommandRunner, ProcessCommandRunner, runCLI } from "../src/application.js";
+import { DeploymentTransactionStore } from "../src/deployment-transaction.js";
 import { OperationCleanupError } from "../src/operation-errors.js";
 import { PACKAGE_NAME, PACKAGE_VERSION } from "../src/package-metadata.js";
 import type { PluginCatalogEntry } from "../src/plugin-catalog.js";
@@ -111,10 +112,12 @@ class FakeRunner implements CommandRunner {
   globalRoot = "";
   readonly managedKeys = new Map<string, { id: string; secret: string }>();
   managedKeySequence = 0;
+  runtimeProbeOutput: string | undefined;
   readonly legacyPackageArchives = new Map<string, string>();
   latestVersion = PACKAGE_VERSION;
   latestImage = TEST_IMAGE;
   runningCoreImage = TEST_IMAGE;
+  wrongPluginContainerImage = false;
   installedVersion = PACKAGE_VERSION;
   missingNetworkError = (name: string): string => `Error: No such network: ${name}`;
   nextNetworkRemovalError: ((name: string) => string) | undefined;
@@ -323,6 +326,9 @@ class FakeRunner implements CommandRunner {
       }
       return result(1, "", `unknown managed key action ${action ?? ""}`);
     }
+    if (args[0] === "exec" && args[2] === "node" && args[3] === "-e" && this.runtimeProbeOutput !== undefined) {
+      return result(0, this.runtimeProbeOutput);
+    }
     if (args[0] === "exec" && args.some((arg) => arg.includes("psql"))) {
       return result(
         0,
@@ -420,9 +426,16 @@ class FakeRunner implements CommandRunner {
               ? "minio-init"
               : "minio";
       if (args[args.indexOf("--format") + 1] === "{{json .}}") {
-        const isPlugin = name.endsWith("_spatial_fixture");
-        const image = isPlugin
+        const pluginImage = name.endsWith("_spatial_fixture")
           ? TEST_PLUGIN_IMAGE
+          : name.endsWith("_atlas-plugin-alpha-fixture")
+            ? TEST_ALPHA_PLUGIN_IMAGE
+            : name.endsWith("_atlas-plugin-zeta-fixture")
+              ? TEST_ZETA_PLUGIN_IMAGE
+              : undefined;
+        const isPlugin = pluginImage !== undefined;
+        const image = pluginImage
+          ? pluginImage
           : service === "postgres"
             ? TEST_POSTGRES_IMAGE
             : service === "minio"
@@ -438,7 +451,13 @@ class FakeRunner implements CommandRunner {
         ) {
           return result(1, "", `Error: No such container: ${name}`);
         }
-        return result(0, JSON.stringify({ Config: { Image: image }, Image: identity.localId }));
+        return result(
+          0,
+          JSON.stringify({
+            Config: { Image: image },
+            Image: isPlugin && this.wrongPluginContainerImage ? TEST_IMAGE_LOCAL_ID : identity.localId
+          })
+        );
       }
       if (args[args.indexOf("--format") + 1] === "{{json .Config.Image}}") {
         if (!this.serviceStates.some((candidate) => candidate.Service === service)) {
@@ -595,9 +614,24 @@ afterEach(() => {
   for (const directory of temporaryDirectories.splice(0)) rmSync(directory, { recursive: true, force: true });
 });
 
+function pairedBackupFixture(): string {
+  const root = mkdtempSync(join(tmpdir(), "atlas-core-backup-test-"));
+  temporaryDirectories.push(root);
+  mkdirSync(join(root, "minio", "atlas-media"), { recursive: true });
+  writeFileSync(join(root, "app-revision.txt"), "revision-1\n");
+  writeFileSync(join(root, "minio.complete"), "atlas-media\n");
+  writeFileSync(join(root, "minio.contents.txt"), "atlas-media/object.bin\n");
+  writeFileSync(join(root, "postgres.contents.txt"), "; Archive created at 2026-09-10\n");
+  writeFileSync(join(root, "postgres.dump"), "PGDMP\x01custom archive bytes\n");
+  writeFileSync(join(root, "schema-migrations.txt"), "1 baseline sha256:abc 1\n");
+  writeFileSync(join(root, "minio", "atlas-media", "object.bin"), "paired object bytes\n");
+  return root;
+}
+
 function runtime(): TestRuntime {
   const home = mkdtempSync(join(tmpdir(), "atlas-core-test-"));
   temporaryDirectories.push(home);
+  const backupDirectory = pairedBackupFixture();
   const runner = new FakeRunner();
   runner.globalRoot = join(home, "npm-global", "lib", "node_modules");
   const installedPackage = join(runner.globalRoot, PACKAGE_NAME);
@@ -619,7 +653,7 @@ function runtime(): TestRuntime {
       runner,
       stdout: { write: (data) => stdout.push(data) },
       stderr: { write: (data) => stderr.push(data) },
-      env: {},
+      env: { ATLAS_CORE_BACKUP_DIR: backupDirectory },
       platform: "darwin",
       architecture: "arm64",
       nodeVersion: "24.19.0",
@@ -705,6 +739,48 @@ function independentReleaseBytes(plugin: IndependentPluginFixture, version: stri
       source_connector: null
     })}\n`
   );
+}
+
+function installIndependentRuntimeFixture(test: TestRuntime, plugin: IndependentPluginFixture): void {
+  const operations = [
+    {
+      operation_id: "inspect_area",
+      display_name: "Inspect area",
+      timeout_ms: 5_000,
+      interaction: { kind: "map_area" }
+    }
+  ];
+  const manifest = {
+    plugin_id: plugin.pluginId,
+    display_name: plugin.displayName,
+    core_to_plugin_protocol_major: 1,
+    operations
+  };
+  test.runner.runtimeProbeOutput = JSON.stringify([
+    { status: 200, body: JSON.stringify(manifest) },
+    { status: 200, body: JSON.stringify({ status: "ok" }) },
+    { status: 404, body: JSON.stringify({ code: "route_not_found" }) }
+  ]);
+  const previousFetch = test.context.fetch;
+  if (!previousFetch) throw new Error("Test runtime is missing its fetch adapter.");
+  test.context.fetch = async (input, init) => {
+    if (String(input) === "http://127.0.0.1:8000/plugins") {
+      return new Response(
+        JSON.stringify([
+          {
+            checked_at: "2026-09-10T12:00:00Z",
+            display_name: plugin.displayName,
+            operations,
+            plugin_id: plugin.pluginId,
+            reason_code: null,
+            status: "available",
+            tool_asset_id: null
+          }
+        ])
+      );
+    }
+    return await previousFetch(input, init);
+  };
 }
 
 function installSignedIndependentCatalog(test: TestRuntime, plugins = INDEPENDENT_UPDATE_FIXTURES): void {
@@ -1962,7 +2038,7 @@ describe("atlas-core CLI", () => {
     writeFileSync(lock, `${JSON.stringify({ pid: 2_147_483_647 })}\n`, { mode: 0o600 });
 
     expect(await runCLI(["init"], test.context)).toBe(1);
-    expect(test.stderr.join("")).toContain("If no atlas-core process is changing the deployment, remove that file");
+    expect(test.stderr.join("")).toContain("do not remove deployment locks independently");
     expect(existsSync(lock)).toBe(true);
   });
 
@@ -2216,6 +2292,10 @@ describe("atlas-core CLI", () => {
     }
     const state = JSON.parse(readFileSync(join(test.home, ".atlas", "core", "state.json"), "utf8"));
     expect(state).toMatchObject({ phase: "ready", packageVersion: PACKAGE_VERSION, dockerEngineId: "test-engine-id" });
+    expect(JSON.parse(readFileSync(join(test.home, ".atlas", "core", "run-intent.json"), "utf8"))).toEqual({
+      schema: 1,
+      desiredRunning: true
+    });
     expect(test.stdout.join("")).toContain(`Atlas Core ${PACKAGE_VERSION} reset is complete`);
   });
 
@@ -2371,6 +2451,38 @@ describe("atlas-core CLI", () => {
     expect(JSON.parse(readFileSync(join(test.home, ".atlas", "core", "state.json"), "utf8"))).toMatchObject({
       startedAt: "2026-08-28T12:00:00.000Z"
     });
+  });
+
+  it("repairs only retained base images and the selected image for enabled Plugins", async () => {
+    const test = runtime();
+    await installIndependentUpdateFixtures(test);
+    expect(await runCLI(["plugins", "update", "alpha_fixture"], test.context)).toBe(0);
+
+    const statePath = join(test.home, ".atlas", "core", "state.json");
+    const state = JSON.parse(readFileSync(statePath, "utf8"));
+    writeFileSync(statePath, `${JSON.stringify({ ...state, enabledPlugins: ["alpha_fixture"] })}\n`, { mode: 0o600 });
+    test.runner.calls.length = 0;
+
+    expect(await runCLI(["start", "--manual", "--repair-images"], test.context)).toBe(0);
+
+    const repairedPluginImages = test.runner.calls
+      .filter((call) => call.command === "docker" && call.args[0] === "pull" && call.args[1] === "--platform")
+      .map((call) => call.args.at(-1));
+    expect(repairedPluginImages.filter((image) => image === TEST_ALPHA_PLUGIN_IMAGE)).toHaveLength(1);
+    expect(repairedPluginImages).not.toContain(TEST_ZETA_PLUGIN_IMAGE);
+  });
+
+  it("rejects an enabled Plugin container whose image does not match the retained receipt on normal start", async () => {
+    const test = runtime();
+    await installIndependentUpdateFixtures(test);
+    const statePath = join(test.home, ".atlas", "core", "state.json");
+    const state = JSON.parse(readFileSync(statePath, "utf8"));
+    writeFileSync(statePath, `${JSON.stringify({ ...state, enabledPlugins: ["alpha_fixture"] })}\n`, { mode: 0o600 });
+    test.runner.wrongPluginContainerImage = true;
+
+    expect(await runCLI(["start", "--manual"], test.context)).toBe(1);
+    expect(test.stderr.join("")).toContain("atlas-plugin-alpha-fixture does not use its retained image identity");
+    expect(test.runner.calls.map(composeCommand)).toContainEqual(["down", "--remove-orphans"]);
   });
 
   it("refuses to start from an unreleased package without a pinned image", async () => {
@@ -3098,6 +3210,18 @@ describe("atlas-core CLI", () => {
     expect(readFileSync(envPath, "utf8")).toBe(configuredEnvironment);
   });
 
+  it("refuses an in-place Core update without a validated paired backup", async () => {
+    const test = runtime();
+    await markManagedInitialized(test);
+    setCoreVersion(test, "0.1.2");
+    test.context.confirmCoreUpdate = async () => true;
+    test.context.env = {};
+
+    expect(await runCLI(["update", "all"], test.context)).toBe(1);
+    expect(test.stderr.join("")).toContain("ATLAS_CORE_BACKUP_DIR");
+    expect(test.runner.calls.map(composeCommand)).not.toContainEqual(expect.arrayContaining(["down"]));
+  });
+
   it("refuses a Core update when the installed package pins another image", async () => {
     const test = runtime();
     markInitialized(test);
@@ -3641,6 +3765,86 @@ describe("atlas-core CLI", () => {
       expect(test.runner.existingNetworks.has(MUTATION_LOCK_NETWORK)).toBe(false);
       expect(test.runner.calls.map(composeCommand)).toContainEqual(["rm", "-s", "-f", plugin.service]);
     }
+  });
+
+  it("restores an interrupted Plugin runtime transaction before rebuilding its private Compose services", async () => {
+    const test = runtime();
+    await installIndependentUpdateFixtures(test);
+    const plugin = INDEPENDENT_UPDATE_FIXTURES[0];
+    if (!plugin) throw new Error("Independent Plugin fixture is missing.");
+    const config = join(test.home, ".atlas", "core");
+    const statePath = join(config, "state.json");
+    const state = JSON.parse(readFileSync(statePath, "utf8"));
+    writeFileSync(statePath, `${JSON.stringify({ ...state, enabledPlugins: [plugin.pluginId] })}\n`, { mode: 0o600 });
+    installIndependentRuntimeFixture(test, plugin);
+    expect(await runCLI(["start", "--manual"], test.context)).toBe(0);
+
+    const activeCompose = join(config, "plugins", plugin.pluginId, "active", "compose.yml");
+    const transaction = DeploymentTransactionStore.begin(config, {
+      operation: "plugin-disable",
+      dockerEngineId: TEST_ENGINE_ID,
+      previousRunning: true,
+      desiredRunning: true,
+      now: new Date("2026-09-10T12:00:00.000Z")
+    });
+    transaction.snapshotTree(`plugins/${plugin.pluginId}`);
+    transaction.remove(`plugins/${plugin.pluginId}/active/compose.yml`);
+    transaction.advance("runtime-changing");
+    expect(existsSync(activeCompose)).toBe(false);
+
+    let composeSawRestoredFiles = false;
+    test.runner.calls.length = 0;
+    test.runner.onRun = (call) => {
+      const compose = composeCommand(call);
+      if (compose[0] !== "up" || !compose.includes("--no-deps")) return;
+      composeSawRestoredFiles = existsSync(activeCompose);
+      expect(compose).not.toContain("postgres");
+      expect(compose).not.toContain("minio");
+      expect(compose).toContain("api");
+      expect(compose).toContain("source-gateway");
+      expect(compose).toContain("atlas-plugin-alpha-fixture");
+    };
+
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
+    expect(composeSawRestoredFiles).toBe(true);
+    expect(existsSync(join(config, "transaction"))).toBe(false);
+    expect(JSON.parse(readFileSync(statePath, "utf8"))).toMatchObject({ enabledPlugins: [plugin.pluginId] });
+  });
+
+  it("retains a rollback-complete Plugin journal until runtime restoration succeeds", async () => {
+    const test = runtime();
+    await installIndependentUpdateFixtures(test);
+    const plugin = INDEPENDENT_UPDATE_FIXTURES[0];
+    if (!plugin) throw new Error("Independent Plugin fixture is missing.");
+    const config = join(test.home, ".atlas", "core");
+    const statePath = join(config, "state.json");
+    const state = JSON.parse(readFileSync(statePath, "utf8"));
+    writeFileSync(statePath, `${JSON.stringify({ ...state, enabledPlugins: [plugin.pluginId] })}\n`, { mode: 0o600 });
+    installIndependentRuntimeFixture(test, plugin);
+    expect(await runCLI(["start", "--manual"], test.context)).toBe(0);
+
+    const activeCompose = join(config, "plugins", plugin.pluginId, "active", "compose.yml");
+    const transaction = DeploymentTransactionStore.begin(config, {
+      operation: "plugin-disable",
+      dockerEngineId: TEST_ENGINE_ID,
+      previousRunning: true,
+      desiredRunning: true,
+      now: new Date("2026-09-10T12:00:00.000Z")
+    });
+    transaction.snapshotTree(`plugins/${plugin.pluginId}`);
+    transaction.remove(`plugins/${plugin.pluginId}/active/compose.yml`);
+    transaction.advance("runtime-changing");
+    transaction.rollback();
+    expect(existsSync(activeCompose)).toBe(true);
+    expect(DeploymentTransactionStore.open(config).journal.phase).toBe("rollback-complete");
+
+    test.runner.failComposeUp = true;
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(1);
+    expect(DeploymentTransactionStore.open(config).journal.phase).toBe("rollback-complete");
+
+    test.runner.failComposeUp = false;
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
+    expect(existsSync(join(config, "transaction"))).toBe(false);
   });
 
   it("does not reclaim an interrupted disable while its fenced Docker process group is alive", async () => {

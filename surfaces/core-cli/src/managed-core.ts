@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, lstatSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { isAbsolute, join, normalize, sep } from "node:path";
+import type { PairedBackupIdentity } from "./backup-receipt.js";
 import {
   DeploymentTransactionStore,
   type TransactionJournal,
@@ -104,7 +105,7 @@ export type ManagedCoreOptions = ManagedCorePackage & {
   preflightPlugins: (contracts: PluginContracts) => void | Promise<void>;
   ensureCredential: (transaction: DeploymentTransactionStore) => void | Promise<void>;
   readMigrationLedger?: () => Promise<string>;
-  verifyPairedRestore?: (options: { backupIdentity?: string }) => void | Promise<void>;
+  readBackupIdentity?: () => Promise<PairedBackupIdentity>;
   readRunIntent?: () => boolean | undefined;
   previousRunning?: boolean;
   desiredRunning?: boolean;
@@ -128,7 +129,6 @@ export type RecoveryStatus = {
 export type RecoveryOptions = {
   target?: CoreTarget;
   confirmPairedRestore?: boolean;
-  backupIdentity?: string;
 };
 
 type Candidate = {
@@ -217,6 +217,7 @@ export class ManagedCoreManager {
         "The first independent-release Core update cannot migrate enabled bundled Plugins. Disable them with the matching v1 CLI first."
       );
     }
+    const priorBackupIdentity = await this.#readBackupIdentity();
     await this.#options.preflightPlugins?.(target.packageContracts);
     const transaction = DeploymentTransactionStore.begin(this.#configDir, {
       operation: "core-update",
@@ -230,6 +231,7 @@ export class ManagedCoreManager {
         fromPackageVersion: state.packageVersion,
         targetPackageVersion: target.packageVersion,
         targetCoreImage: target.packageImage,
+        priorBackupIdentity,
         ...(await this.#priorLedger(true))
       });
       return await this.#runTransaction(transaction, state, target, "core-update");
@@ -445,7 +447,12 @@ export class ManagedCoreManager {
       await this.#options.regeneratePlugins?.(initialisingState);
       await this.#verifyLocalReceipt(targetImage);
       transaction.advance("core-started");
-      await this.#startComposition(initialisingState, target.packageImage, `start Atlas Core ${target.packageVersion}`);
+      await this.#startComposition(
+        initialisingState,
+        target.packageImage,
+        `start Atlas Core ${target.packageVersion}`,
+        true
+      );
       await this.#verifyRunningCore(targetImage, initialisingState.baseDeployment?.images);
       if (this.#options.ensureCredential) await this.#options.ensureCredential(transaction);
       transaction.advance("credentials-durable");
@@ -492,7 +499,8 @@ export class ManagedCoreManager {
       await this.#startComposition(
         stagedState,
         stagedState.baseDeployment.coreImage,
-        `retry Atlas Core ${stagedState.packageVersion}`
+        `retry Atlas Core ${stagedState.packageVersion}`,
+        true
       );
       await this.#verifyRunningCore(targetImage, stagedState.baseDeployment.images);
       if (journal.phase === "core-started" && this.#options.ensureCredential)
@@ -563,9 +571,13 @@ export class ManagedCoreManager {
     if (!journal.recovery?.priorMigrationLedger || !this.#options.readMigrationLedger) {
       throw new Error("Pending Core recovery has no prior migration ledger to compare with the paired restore.");
     }
-    if (this.#options.verifyPairedRestore) {
-      const restoreOptions = options.backupIdentity ? { backupIdentity: options.backupIdentity } : {};
-      await this.#options.verifyPairedRestore(restoreOptions);
+    const recordedBackupIdentity = journal.recovery.priorBackupIdentity;
+    if (!recordedBackupIdentity) {
+      throw new Error("Pending Core recovery has no prior paired backup identity to compare with the restored backup.");
+    }
+    const restoredBackupIdentity = await this.#readBackupIdentity();
+    if (restoredBackupIdentity !== recordedBackupIdentity) {
+      throw new Error("The restored paired backup identity does not match the pre-update backup.");
     }
     const currentLedger = await this.#options.readMigrationLedger();
     await this.#stopAfterFailure(
@@ -582,7 +594,7 @@ export class ManagedCoreManager {
     if (!oldImage) throw new Error("Pending Core recovery has no retained prior Core image.");
     const priorBase = await this.#verifyCommittedState(priorState);
     if (this.#desiredRunning(journal)) {
-      await this.#startComposition(priorState, oldImage, "restore the prior Atlas Core");
+      await this.#startComposition(priorState, oldImage, "restore the prior Atlas Core", true);
       await this.#verifyRunningCore(receiptFromBase(priorBase), priorBase.images);
       await this.#options.verifyPlugins?.(priorState, { requireHealth: true });
     }
@@ -758,7 +770,12 @@ export class ManagedCoreManager {
     }
   }
 
-  async #startComposition(state: ManagedCoreState, coreImage: string, operation: string): Promise<void> {
+  async #startComposition(
+    state: ManagedCoreState,
+    coreImage: string,
+    operation: string,
+    waitForPluginHealth = false
+  ): Promise<void> {
     const base = await this.#options.runCompose(
       [
         "up",
@@ -778,12 +795,12 @@ export class ManagedCoreManager {
       { baseDirectory: this.#baseDir, coreImage }
     );
     assertComposeSuccess(operation, base);
-    await this.#startPluginServices(state);
+    await this.#startPluginServices(state, waitForPluginHealth);
   }
 
   async #startVerifiedComposition(state: ManagedCoreState, coreImage: string, operation: string): Promise<void> {
     const base = await this.#verifyCommittedState(state);
-    await this.#startComposition(state, coreImage, operation);
+    await this.#startComposition(state, coreImage, operation, true);
     await this.#verifyRunningCore(receiptFromBase(base), base.images);
     await this.#options.verifyPlugins?.(state, { requireHealth: true });
   }
@@ -797,16 +814,15 @@ export class ManagedCoreManager {
     return state.baseDeployment;
   }
 
-  async #startPluginServices(state: ManagedCoreState): Promise<void> {
+  async #startPluginServices(state: ManagedCoreState, waitForHealth = false): Promise<void> {
     if (state.enabledPlugins.length === 0) return;
-    const plugins = await this.#options.runCompose(
-      ["up", "-d", "--pull", "never", "--no-deps", ...state.enabledPlugins.map(pluginServiceName)],
-      state.enabledPlugins,
-      {
-        baseDirectory: this.#baseDir,
-        coreImage: state.baseDeployment?.coreImage ?? this.#options.packageImage
-      }
-    );
+    const args = ["up", "-d", "--pull", "never", "--no-deps"];
+    if (waitForHealth) args.push("--wait", "--wait-timeout", COMPOSE_WAIT_SECONDS);
+    args.push(...state.enabledPlugins.map(pluginServiceName));
+    const plugins = await this.#options.runCompose(args, state.enabledPlugins, {
+      baseDirectory: this.#baseDir,
+      coreImage: state.baseDeployment?.coreImage ?? this.#options.packageImage
+    });
     assertComposeSuccess("start enabled Atlas Plugins", plugins);
   }
 
@@ -888,6 +904,19 @@ export class ManagedCoreManager {
     if (required && ledger.length === 0)
       throw new Error("Core update requires a non-empty pre-update migration ledger.");
     return ledger.length > 0 ? { priorMigrationLedger: ledger } : {};
+  }
+
+  async #readBackupIdentity(): Promise<PairedBackupIdentity> {
+    if (!this.#options.readBackupIdentity) {
+      throw new Error(
+        "Core update recovery requires a validated paired PostgreSQL and MinIO backup (set ATLAS_CORE_BACKUP_DIR)."
+      );
+    }
+    const identity = await this.#options.readBackupIdentity();
+    if (typeof identity !== "string" || !DIGEST_PATTERN.test(identity)) {
+      throw new Error("The paired backup identity is missing or malformed.");
+    }
+    return identity;
   }
 
   #targetFromOptions(): CoreTarget {

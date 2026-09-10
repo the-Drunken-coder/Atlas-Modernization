@@ -25,16 +25,29 @@ import { appendFileSync, readFileSync } from "node:fs";
 const catalog = readFileSync(process.env.ATLAS_TEST_REMOTE_CATALOG);
 const signature = readFileSync(process.env.ATLAS_TEST_REMOTE_SIGNATURE);
 const staleCatalog = process.env.ATLAS_TEST_STALE_CATALOG ? readFileSync(process.env.ATLAS_TEST_STALE_CATALOG) : null;
+const staleSignature = process.env.ATLAS_TEST_STALE_SIGNATURE ? readFileSync(process.env.ATLAS_TEST_STALE_SIGNATURE) : null;
 let calls = 0;
+let forceExpired = false;
+if (process.env.ATLAS_TEST_REMOTE_MODE === "expired-mismatch") {
+  const originalDateNow = Date.now.bind(Date);
+  const startTime = originalDateNow();
+  Date.now = () => {
+    return forceExpired ? startTime + 121_000 : originalDateNow();
+  };
+}
 globalThis.fetch = async (url) => {
   calls += 1;
   if (process.env.ATLAS_TEST_FETCH_LOG) appendFileSync(process.env.ATLAS_TEST_FETCH_LOG, calls + ": " + String(url) + "\\n");
   if (process.env.ATLAS_TEST_REMOTE_MODE === "oversized") {
     return new Response(Buffer.alloc(4 * 1024 * 1024 + 1), { status: 200 });
   }
-  if (process.env.ATLAS_TEST_REMOTE_MODE === "stale-once" && calls === 1 && !String(url).endsWith(".sig") && staleCatalog) {
+  if (process.env.ATLAS_TEST_REMOTE_MODE === "stale-once" && calls === 1 && staleCatalog) {
     return new Response(staleCatalog, { status: 200 });
   }
+  if (process.env.ATLAS_TEST_REMOTE_MODE === "stale-signature-once" && calls === 2 && staleSignature) {
+    return new Response(staleSignature, { status: 200 });
+  }
+  if (process.env.ATLAS_TEST_REMOTE_MODE === "expired-mismatch" && calls === 2) forceExpired = true;
   return new Response(String(url).endsWith(".sig") ? signature : catalog, { status: 200 });
 };
 `);
@@ -90,7 +103,8 @@ test("publishes and renews a signed append-only catalog with exact release URLs"
     const signaturePath = join(ledgerPath, "catalog.json.sig");
     const firstBytes = readFileSync(catalogPath);
     const firstCatalog = JSON.parse(firstBytes);
-    const firstSignature = JSON.parse(readFileSync(signaturePath));
+    const firstSignatureBytes = readFileSync(signaturePath);
+    const firstSignature = JSON.parse(firstSignatureBytes);
     assert.equal(firstCatalog.sequence, 1);
     assert.equal(firstCatalog.previous_catalog_sha256, null);
     assert.equal(firstCatalog.plugins[0].releases[0].document_url, "https://github.com/the-Drunken-coder/Atlas-Modernization/releases/download/atlas-plugin-fixture-v1.0.0/fixture-1.0.0.atlas-plugin");
@@ -110,13 +124,7 @@ test("publishes and renews a signed append-only catalog with exact release URLs"
     const published = run(["verify-published", ledgerPath, "--plugin-id", "fixture", "--version", "1.0.0", "--release-document", releasePath], fetchEnvironment);
     assert.equal(published.status, 0, published.stderr);
     const alteredRemotePath = join(directory, "altered-catalog.json");
-    writeFileSync(alteredRemotePath, Buffer.from(firstBytes.toString().replace('"display_name": "Fixture"', '"display_name": "Altered"')));
-    const staleOnce = run(["verify-published", ledgerPath], {
-      ...fetchEnvironment,
-      ATLAS_TEST_STALE_CATALOG: alteredRemotePath,
-      ATLAS_TEST_REMOTE_MODE: "stale-once"
-    });
-    assert.equal(staleOnce.status, 0, staleOnce.stderr);
+    writeFileSync(alteredRemotePath, Buffer.from("{}"));
     const alteredFetchLog = join(directory, "altered-fetch.log");
     const altered = run(["verify-published", ledgerPath], {
       ...fetchEnvironment,
@@ -124,8 +132,19 @@ test("publishes and renews a signed append-only catalog with exact release URLs"
       ATLAS_TEST_FETCH_LOG: alteredFetchLog
     });
     assert.notEqual(altered.status, 0);
-    assert.match(altered.stderr, /catalog bytes do not match/);
-    assert.equal(readFileSync(alteredFetchLog, "utf8").trim().split("\n").length, 6);
+    assert.match(altered.stderr, /Catalog ledger must contain exactly|Catalog ledger has invalid identity/);
+    assert.equal(readFileSync(alteredFetchLog, "utf8").trim().split("\n").length, 2);
+    const malformedSignaturePath = join(directory, "malformed-catalog.json.sig");
+    const malformedSignatureFetchLog = join(directory, "malformed-signature-fetch.log");
+    writeFileSync(malformedSignaturePath, Buffer.from("{}"));
+    const malformedSignature = run(["verify-published", ledgerPath], {
+      ...fetchEnvironment,
+      ATLAS_TEST_REMOTE_SIGNATURE: malformedSignaturePath,
+      ATLAS_TEST_FETCH_LOG: malformedSignatureFetchLog
+    });
+    assert.notEqual(malformedSignature.status, 0);
+    assert.match(malformedSignature.stderr, /Catalog ledger signature must contain exactly/);
+    assert.equal(readFileSync(malformedSignatureFetchLog, "utf8").trim().split("\n").length, 2);
     const wrongReleasePath = join(directory, "wrong.atlas-plugin");
     writeFileSync(wrongReleasePath, `${JSON.stringify({ ...releaseDocument(), display_name: "Wrong" }, null, 2)}\n`);
     const wrongRelease = run(["verify-published", ledgerPath, "--plugin-id", "fixture", "--version", "1.0.0", "--release-document", wrongReleasePath], fetchEnvironment);
@@ -159,6 +178,34 @@ test("publishes and renews a signed append-only catalog with exact release URLs"
     assert.equal(renewedCatalog.previous_catalog_sha256, `sha256:${createHash("sha256").update(firstBytes).digest("hex")}`);
     const renewedSignature = JSON.parse(readFileSync(signaturePath));
     assert.equal(verify(null, readFileSync(catalogPath), createPublicKey(publicKey), Buffer.from(renewedSignature.signature, "base64")), true);
+    const staleCatalogPath = join(directory, "stale-catalog.json");
+    const staleSignaturePath = join(directory, "stale-catalog.json.sig");
+    writeFileSync(staleCatalogPath, firstBytes);
+    writeFileSync(staleSignaturePath, firstSignatureBytes);
+    const staleSignatureOnly = run(["verify-published", ledgerPath], {
+      ...fetchEnvironment,
+      ATLAS_TEST_STALE_SIGNATURE: staleSignaturePath,
+      ATLAS_TEST_REMOTE_MODE: "stale-signature-once"
+    });
+    assert.equal(staleSignatureOnly.status, 0, staleSignatureOnly.stderr);
+    const staleOnce = run(["verify-published", ledgerPath], {
+      ...fetchEnvironment,
+      ATLAS_TEST_STALE_CATALOG: staleCatalogPath,
+      ATLAS_TEST_STALE_SIGNATURE: staleSignaturePath,
+      ATLAS_TEST_REMOTE_MODE: "stale-once"
+    });
+    assert.equal(staleOnce.status, 0, staleOnce.stderr);
+    const boundedFetchLog = join(directory, "bounded-fetch.log");
+    const boundedMismatch = run(["verify-published", ledgerPath], {
+      ...fetchEnvironment,
+      ATLAS_TEST_REMOTE_CATALOG: staleCatalogPath,
+      ATLAS_TEST_REMOTE_SIGNATURE: staleSignaturePath,
+      ATLAS_TEST_REMOTE_MODE: "expired-mismatch",
+      ATLAS_TEST_FETCH_LOG: boundedFetchLog
+    });
+    assert.notEqual(boundedMismatch.status, 0);
+    assert.match(boundedMismatch.stderr, /within 120 seconds/);
+    assert.equal(readFileSync(boundedFetchLog, "utf8").trim().split("\n").length, 2);
 
     writeFileSync(releasePath, `${JSON.stringify(releaseDocument("1.1.0"), null, 2)}\n`);
     const second = run(["append", releasePath, ledgerPath], environment);

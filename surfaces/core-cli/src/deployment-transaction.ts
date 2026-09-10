@@ -80,6 +80,7 @@ export type TransactionRecoveryMetadata = {
   targetPackageVersion?: string;
   targetCoreImage?: string;
   priorMigrationLedger?: string;
+  priorBackupIdentity?: `sha256:${string}`;
   targetStatePath?: string;
 };
 
@@ -758,13 +759,23 @@ function isStagedMap(value: unknown): value is Record<string, TransactionStagedF
 
 function isRecoveryMetadata(value: unknown): value is TransactionRecoveryMetadata {
   if (!isRecord(value)) return false;
-  return [
-    "fromPackageVersion",
-    "targetPackageVersion",
-    "targetCoreImage",
-    "priorMigrationLedger",
-    "targetStatePath"
-  ].every((key) => value[key] === undefined || typeof value[key] === "string");
+  if (
+    ![
+      "fromPackageVersion",
+      "targetPackageVersion",
+      "targetCoreImage",
+      "priorMigrationLedger",
+      "priorBackupIdentity",
+      "targetStatePath"
+    ].every((key) => value[key] === undefined || typeof value[key] === "string")
+  ) {
+    return false;
+  }
+  const priorBackupIdentity = value.priorBackupIdentity;
+  return (
+    priorBackupIdentity === undefined ||
+    (typeof priorBackupIdentity === "string" && SHA256_PATTERN.test(priorBackupIdentity))
+  );
 }
 
 function assertPhaseTransition(from: TransactionPhase, to: TransactionPhase): void {

@@ -291,7 +291,7 @@ from `start` or `supervise`.
 `rotate-core-key` replaces only the shared managed key used by SDK-backed Plugins. It is available without a fresh catalog
 and uses the root transaction plus the exact running Core container's host-only `managed-keys` command. Before each
 key-creation request, the manager writes and fsyncs a unique
-`atlas-plugin-rotation-<transaction_id>-<attempt>` managed-key name in the journal. It never retries a request with an
+`atlas-plugin-key-<transaction_id>-<attempt>` managed-key name in the journal. It never retries a request with an
 uncertain result. Recovery lists active keys by that exact name, revokes any match whose one-time secret was not durably
 staged, records a fresh attempt name, and only then tries again. After a successful response, the journal records the
 candidate key ID but no secret; the candidate secret exists only in the private staged `.env`.
@@ -418,6 +418,8 @@ Plugin may remain Installed but cannot later be Enabled against that Core.
 When an SDK-using Plugin blocks a Core revision change, the operator disables it, updates Core, updates that disabled
 Plugin to a release declaring the new revision, then enables it. Atlas does not pretend that one SDK build can use two
 exact generated Protocol revisions.
+
+Before `atlas-core update`, export `ATLAS_CORE_BACKUP_DIR` as the absolute path to the validated paired backup directory from the [deployment runbook](../../services/core/docs/DEPLOYMENT_RUNBOOK.md#pre-deploy-backup). The CLI validates its layout and hashes the PostgreSQL dump, MinIO mirror, and companion metadata before starting the update. Keep the pair unchanged. For `recover restored --confirm-paired-restore`, set the variable to that same pair (its directory may have moved). Recovery compares its content hash with the pre-update journal. This check identifies the selected backup; the operator's confirmation still attests that both stores were restored. The CLI does not create or restore backups.
 
 The Core update uses the same durable root transaction and the existing paired-backup confirmation from the deployment
 runbook. Before changing containers, its journal records the prior migration version and checksums as well as the prior

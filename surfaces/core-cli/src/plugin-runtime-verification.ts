@@ -77,6 +77,60 @@ export function assertPluginRuntime(release: PluginRelease, responses: unknown):
   }
 }
 
+/**
+ * Verifies the authenticated public discovery projection against the private
+ * manifest that produced it. The private contract major is deliberately not
+ * part of the public response, so the exact public entry shape below also
+ * prevents that private field from leaking through the discovery endpoint.
+ */
+export function assertPluginDiscovery(release: PluginRelease, privateResponses: unknown, publicValue: unknown): void {
+  const [manifestResponse] = parseResponses(privateResponses);
+  const manifest = parseJSON(manifestResponse.body, "Plugin /manifest");
+  assertManifest(release, manifest);
+  if (!isRecord(manifest) || !Array.isArray(manifest.operations)) {
+    throw new Error("Plugin runtime manifest operations are unavailable for discovery verification.");
+  }
+
+  if (!Array.isArray(publicValue)) {
+    throw new Error("Plugin public discovery response is not an array.");
+  }
+  const matches = publicValue.filter((entry) => isRecord(entry) && entry.plugin_id === release.pluginId);
+  if (matches.length !== 1) {
+    throw new Error(`Plugin public discovery must contain exactly one entry for ${release.pluginId}.`);
+  }
+
+  const entry = matches[0];
+  if (!isRecord(entry)) {
+    throw new Error("Plugin public discovery entry is invalid.");
+  }
+  const expectedKeys = [
+    "checked_at",
+    "display_name",
+    "operations",
+    "plugin_id",
+    "reason_code",
+    "status",
+    "tool_asset_id"
+  ];
+  if (Object.keys(entry).sort().join(",") !== expectedKeys.join(",")) {
+    throw new Error("Plugin public discovery entry contains an unknown or missing field.");
+  }
+  if (
+    entry.plugin_id !== release.pluginId ||
+    entry.display_name !== release.displayName ||
+    entry.status !== "available" ||
+    entry.reason_code !== null ||
+    typeof entry.checked_at !== "string" ||
+    Number.isNaN(Date.parse(entry.checked_at)) ||
+    entry.tool_asset_id !== null
+  ) {
+    throw new Error("Plugin public discovery status does not match its verified runtime.");
+  }
+  if (!deepEqual(entry.operations, manifest.operations)) {
+    throw new Error("Plugin public discovery operations do not match its private runtime manifest.");
+  }
+}
+
 function parseResponses(value: unknown): [RuntimeResponse, RuntimeResponse, RuntimeResponse] {
   if (!Array.isArray(value) || value.length !== 3) {
     throw new Error("Plugin runtime acceptance returned an invalid response set.");
@@ -193,4 +247,21 @@ function parseJSON(body: string, label: string): unknown {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function deepEqual(left: unknown, right: unknown): boolean {
+  if (left === right) return true;
+  if (Array.isArray(left) && Array.isArray(right)) {
+    return left.length === right.length && left.every((value, index) => deepEqual(value, right[index]));
+  }
+  if (isRecord(left) && isRecord(right)) {
+    const leftKeys = Object.keys(left).sort();
+    const rightKeys = Object.keys(right).sort();
+    return (
+      leftKeys.length === rightKeys.length &&
+      leftKeys.every((key, index) => key === rightKeys[index]) &&
+      leftKeys.every((key) => deepEqual(left[key], right[key]))
+    );
+  }
+  return false;
 }

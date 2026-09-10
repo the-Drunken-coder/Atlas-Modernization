@@ -298,19 +298,18 @@ jobs:
 
       - name: Verify public release bytes and image digest
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_SERVER_URL: ${{ github.server_url }}
           IMAGE_REFERENCE: ${{ needs.build.outputs.image_reference }}
           PLUGIN_ID: ${{ inputs.plugin_id }}
           VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          tag="atlas-plugin-${PLUGIN_ID}-v${VERSION}"
-          temporary="$(mktemp -d)"
-          trap 'rm -rf -- "$temporary"' EXIT
-          gh release download "$tag" --pattern "${PLUGIN_ID}-${VERSION}.atlas-plugin" --dir "$temporary"
-          cmp "release-artifacts/${PLUGIN_ID}-${VERSION}.atlas-plugin" "$temporary/${PLUGIN_ID}-${VERSION}.atlas-plugin"
-          node scripts/plugin-release.mjs verify-document "$temporary/${PLUGIN_ID}-${VERSION}.atlas-plugin"
-          docker logout ghcr.io >/dev/null 2>&1 || true
+          release_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/download/atlas-plugin-${PLUGIN_ID}-v${VERSION}/${PLUGIN_ID}-${VERSION}.atlas-plugin"
+          node scripts/plugin-release.mjs verify-public-release \
+            "$release_url" \
+            "release-artifacts/${PLUGIN_ID}-${VERSION}.atlas-plugin"
+          docker logout ghcr.io
           docker manifest inspect "$IMAGE_REFERENCE" >/dev/null
 
       - name: Checkout the protected catalog ledger
@@ -363,10 +362,14 @@ jobs:
           VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
+          release_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/download/atlas-plugin-${PLUGIN_ID}-v${VERSION}/${PLUGIN_ID}-${VERSION}.atlas-plugin"
+          node scripts/plugin-release.mjs verify-public-release \
+            "$release_url" \
+            "release-artifacts/${PLUGIN_ID}-${VERSION}.atlas-plugin"
           node scripts/plugin-release-catalog.mjs verify-published catalog-ledger \
             --plugin-id "$PLUGIN_ID" \
             --version "$VERSION" \
             --release-document "release-artifacts/${PLUGIN_ID}-${VERSION}.atlas-plugin"
-          docker logout ghcr.io >/dev/null 2>&1 || true
+          docker logout ghcr.io
           digest="$(timeout 30s docker buildx imagetools inspect "$IMAGE_REFERENCE" --format '{{json .Manifest}}' | jq -er '.digest | select(test("^sha256:[0-9a-f]{64}$"))')"
           test "$digest" = "${IMAGE_REFERENCE##*@}"

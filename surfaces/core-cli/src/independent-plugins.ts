@@ -130,6 +130,7 @@ const TEMPLATE_MARKERS = new Set([
   "@atlas/api-auth-key@",
   "@atlas/source-gateway-protocol-major@",
   "@atlas/atlas-protocol-revision@",
+  "@atlas/source-connector-config-dir@",
   "@atlas/source-connector-mount@",
   "@atlas/source-connector-json@"
 ]);
@@ -193,6 +194,23 @@ function receiptFor(
 
 function serviceName(pluginId: string): string {
   return `atlas-plugin-${pluginId.replaceAll("_", "-")}`;
+}
+
+function recreateServices(services: readonly string[], removeOrphans = false): string[] {
+  return [
+    "up",
+    "-d",
+    "--no-build",
+    "--pull",
+    "never",
+    "--no-deps",
+    ...(removeOrphans ? ["--remove-orphans"] : []),
+    "--force-recreate",
+    "--wait",
+    "--wait-timeout",
+    "120",
+    ...services
+  ];
 }
 
 function assertSafeRelativePath(root: string, path: string): string {
@@ -527,14 +545,13 @@ export class IndependentPluginManager {
         await this.#host.writeEnabled(next);
         if (wasRunning) {
           await this.#markRuntimeChanging();
-          await this.#host.runCompose(["down", "--remove-orphans"], enabled, true);
-          await this.#host.runCompose(["up", "-d", "--no-build", "--pull", "never"], next);
+          await this.#host.runCompose(recreateServices(["api", "source-gateway", serviceName(pluginId)]), next);
           await this.#host.verifyRuntime(release, receipt);
         }
       },
       async () => {
         await this.#host.writeEnabled(enabled);
-        if (this.#runtimeChanged) await this.#restoreRuntime(enabled, wasRunning);
+        if (this.#runtimeChanged) await this.#restoreRuntime(enabled, wasRunning, pluginId);
       }
     );
     return {
@@ -567,20 +584,18 @@ export class IndependentPluginManager {
       async () => {
         if (wasRunning) await this.#host.verifyRetainedBundle();
         await this.#stageSnapshot(this.#pluginDir(pluginId), true);
+        if (wasRunning) await this.#markRuntimeChanging();
+        await this.#host.removePlugin(pluginId);
         await this.#removeActive(pluginId);
         await this.#host.runCompose(["config", "--quiet"], next);
         await this.#host.writeEnabled(next);
         if (wasRunning) {
-          await this.#markRuntimeChanging();
-          await this.#host.runCompose(["down", "--remove-orphans"], enabled, true);
-          await this.#host.runCompose(["up", "-d", "--no-build", "--pull", "never"], next);
-        } else {
-          await this.#host.removePlugin(pluginId);
+          await this.#host.runCompose(recreateServices(["api", "source-gateway"]), next);
         }
       },
       async () => {
         await this.#host.writeEnabled(enabled);
-        if (this.#runtimeChanged) await this.#restoreRuntime(enabled, wasRunning);
+        if (this.#runtimeChanged) await this.#restoreRuntime(enabled, wasRunning, pluginId);
       }
     );
     return {
@@ -671,15 +686,15 @@ export class IndependentPluginManager {
           await this.#host.runCompose(["config", "--quiet"], enabled);
           await this.#host.writeEnabled(enabled);
           await this.#markRuntimeChanging();
-          await this.#host.runCompose(["down", "--remove-orphans"], enabled, true);
-          await this.#host.runCompose(["up", "-d", "--no-build", "--pull", "never"], enabled);
+          await this.#host.removePlugin(pluginId);
+          await this.#host.runCompose(recreateServices(["api", "source-gateway", serviceName(pluginId)]), enabled);
           await this.#host.verifyRuntime(release, image);
         }
         await this.#pruneReleases(pluginId, nextRecord);
       },
       async () => {
         await this.#host.writeEnabled(enabled);
-        if (this.#runtimeChanged) await this.#restoreRuntime(enabled, wasRunning);
+        if (this.#runtimeChanged) await this.#restoreRuntime(enabled, wasRunning, pluginId);
       }
     );
     const remediationDowngrade = currentRevoked && comparePluginVersions(release.version, current.version) < 0;
@@ -735,14 +750,14 @@ export class IndependentPluginManager {
           await this.#writeActive(previousRelease, image, transaction);
           await this.#host.runCompose(["config", "--quiet"], enabled);
           await this.#markRuntimeChanging();
-          await this.#host.runCompose(["down", "--remove-orphans"], enabled, true);
-          await this.#host.runCompose(["up", "-d", "--no-build", "--pull", "never"], enabled);
+          await this.#host.removePlugin(pluginId);
+          await this.#host.runCompose(recreateServices(["api", "source-gateway", serviceName(pluginId)]), enabled);
           await this.#host.verifyRuntime(previousRelease, image);
         }
       },
       async () => {
         await this.#host.writeEnabled(enabled);
-        if (this.#runtimeChanged) await this.#restoreRuntime(enabled, wasRunning);
+        if (this.#runtimeChanged) await this.#restoreRuntime(enabled, wasRunning, pluginId);
       }
     );
     return {
@@ -1081,6 +1096,7 @@ export class IndependentPluginManager {
       ["@atlas/api-auth-key@", release.atlasProtocolRevision === null ? null : "${ATLAS_PLUGIN_API_KEY}"],
       ["@atlas/source-gateway-protocol-major@", release.pluginToSourceGatewayProtocolMajor],
       ["@atlas/atlas-protocol-revision@", release.atlasProtocolRevision ?? ""],
+      ["@atlas/source-connector-config-dir@", release.sourceConnector === null ? null : "/app/source-connectors"],
       [
         "@atlas/source-connector-mount@",
         release.sourceConnector === null
@@ -1178,10 +1194,16 @@ export class IndependentPluginManager {
     this.#runtimeChanged = true;
   }
 
-  async #restoreRuntime(pluginIds: readonly string[], wasRunning: boolean): Promise<void> {
+  async #restoreRuntime(pluginIds: readonly string[], wasRunning: boolean, affectedPluginId: string): Promise<void> {
     if (!wasRunning) return;
-    await this.#host.runCompose(["down", "--remove-orphans"], pluginIds, true);
-    await this.#host.runCompose(["up", "-d", "--no-build", "--pull", "never"], pluginIds);
+    await this.#host.runCompose(
+      recreateServices(
+        ["api", "source-gateway", ...(pluginIds.includes(affectedPluginId) ? [serviceName(affectedPluginId)] : [])],
+        true
+      ),
+      pluginIds,
+      true
+    );
   }
 
   async #runTransaction(

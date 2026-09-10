@@ -30,7 +30,11 @@ import {
 const CATALOG_LIMIT = 4 << 20;
 const SIGNATURE_LIMIT = 1 << 10;
 const RELEASE_LIMIT = 1 << 20;
-const STATE_LIMIT = 5 << 20;
+// catalog_bytes_base64 expands a 4 MiB catalog to 5,592,408 bytes. Leave
+// room for the detached signature and bounded receipt metadata too, without
+// allowing a state file to grow without relation to the authenticated inputs.
+const STATE_METADATA_LIMIT = 32 << 10;
+const STATE_LIMIT = Math.ceil(CATALOG_LIMIT / 3) * 4 + Math.ceil(SIGNATURE_LIMIT / 3) * 4 + STATE_METADATA_LIMIT;
 const DEFAULT_RELEASE_HOSTS = [
   "github.com",
   "objects.githubusercontent.com",
@@ -353,8 +357,23 @@ function persistedState(value: unknown): PersistedCatalogState {
 }
 
 function decodeBase64(value: string, maximum: number, name: string): Uint8Array {
-  if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(value))
-    throw new Error(`${name} must be standard base64`);
+  const maximumEncodedLength = Math.ceil(maximum / 3) * 4;
+  if (value.length > maximumEncodedLength || value.length % 4 !== 0) throw new Error(`${name} must be standard base64`);
+  let padding = 0;
+  if (value.endsWith("==")) padding = 2;
+  else if (value.endsWith("=")) padding = 1;
+  const contentLength = value.length - padding;
+  for (let index = 0; index < contentLength; index++) {
+    const code = value.charCodeAt(index);
+    const isUpper = code >= 0x41 && code <= 0x5a;
+    const isLower = code >= 0x61 && code <= 0x7a;
+    const isDigit = code >= 0x30 && code <= 0x39;
+    if (!isUpper && !isLower && !isDigit && code !== 0x2b && code !== 0x2f)
+      throw new Error(`${name} must be standard base64`);
+  }
+  for (let index = contentLength; index < value.length; index++) {
+    if (value[index] !== "=") throw new Error(`${name} must be standard base64`);
+  }
   const bytes = Buffer.from(value, "base64");
   if (bytes.length > maximum || bytes.toString("base64") !== value)
     throw new Error(`${name} exceeds its limit or is not canonical`);

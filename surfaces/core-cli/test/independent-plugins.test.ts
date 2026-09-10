@@ -79,6 +79,7 @@ class FakeHost {
   readonly enabled = new Set<string>();
   readonly compose: string[][] = [];
   readonly removed: string[] = [];
+  readonly removalSnapshots: { pluginId: string; activeExists: boolean }[] = [];
   running = false;
   failRuntime = false;
   catalogIsFresh = true;
@@ -116,6 +117,10 @@ class FakeHost {
       assertReleaseTrusted: () => undefined,
       removePlugin: (pluginId) => {
         this.removed.push(pluginId);
+        this.removalSnapshots.push({
+          pluginId,
+          activeExists: existsSync(join(this.configDir, "plugins", pluginId, "active"))
+        });
       },
       catalogFresh: () => this.catalogIsFresh
     };
@@ -186,6 +191,23 @@ function setup(): { host: FakeHost; manager: IndependentPluginManager; transacti
   };
 }
 
+function installFullServiceTemplate(configDir: string): void {
+  writeFileSync(
+    join(configDir, "base/plugin-templates/service.json"),
+    `${JSON.stringify({
+      services: {
+        api: { volumes: ["@atlas/core-endpoint-mount@"] },
+        "source-gateway": {
+          environment: { ATLAS_SOURCE_CONNECTOR_CONFIG_DIR: "@atlas/source-connector-config-dir@" },
+          volumes: ["@atlas/source-connector-mount@"]
+        },
+        "@atlas/plugin-service@": { image: "@atlas/plugin-image@" }
+      }
+    })}\n`,
+    { mode: 0o600 }
+  );
+}
+
 describe("IndependentPluginManager", () => {
   it("installs an exact release and enables it without starting a stopped deployment", async () => {
     const { host, manager, transaction } = setup();
@@ -204,6 +226,114 @@ describe("IndependentPluginManager", () => {
     );
   });
 
+  it("omits Source Gateway connector configuration when the release has no connector", async () => {
+    const { host, manager } = setup();
+    installFullServiceTemplate(host.configDir);
+    await manager.install(release("0.1.0"));
+    await manager.enable("building_scan");
+
+    const compose = JSON.parse(
+      readFileSync(join(host.configDir, "plugins/building_scan/active/compose.yml"), "utf8")
+    ) as {
+      services: { "source-gateway": { environment?: Record<string, unknown>; volumes?: unknown[] } };
+    };
+    expect(compose.services["source-gateway"].environment).not.toHaveProperty("ATLAS_SOURCE_CONNECTOR_CONFIG_DIR");
+    expect(compose.services["source-gateway"].volumes).toBeUndefined();
+  });
+
+  it("enables a Plugin in a running deployment with scoped readiness", async () => {
+    const { host, manager } = setup();
+    await manager.install(release("0.1.0"));
+    host.running = true;
+
+    await manager.enable("building_scan");
+
+    expect(host.compose).toEqual([
+      ["config", "--quiet"],
+      [
+        "up",
+        "-d",
+        "--no-build",
+        "--pull",
+        "never",
+        "--no-deps",
+        "--force-recreate",
+        "--wait",
+        "--wait-timeout",
+        "120",
+        "api",
+        "source-gateway",
+        "atlas-plugin-building-scan"
+      ]
+    ]);
+    expect(host.compose.some(([command]) => command === "down")).toBe(false);
+  });
+
+  it("removes a disabled running Plugin before deleting active files and preserves base storage", async () => {
+    const { host, manager } = setup();
+    await manager.install(release("0.1.0"));
+    await manager.enable("building_scan");
+    host.running = true;
+    host.compose.length = 0;
+    host.removed.length = 0;
+    host.removalSnapshots.length = 0;
+
+    await manager.disable("building_scan");
+
+    expect(host.removed).toEqual(["building_scan"]);
+    expect(host.removalSnapshots).toEqual([{ pluginId: "building_scan", activeExists: true }]);
+    expect(host.compose).toEqual([
+      ["config", "--quiet"],
+      [
+        "up",
+        "-d",
+        "--no-build",
+        "--pull",
+        "never",
+        "--no-deps",
+        "--force-recreate",
+        "--wait",
+        "--wait-timeout",
+        "120",
+        "api",
+        "source-gateway"
+      ]
+    ]);
+    expect(host.compose.some(([command]) => command === "down")).toBe(false);
+  });
+
+  it("updates only the affected running Plugin services and waits for readiness", async () => {
+    const { host, manager } = setup();
+    await manager.install(release("0.1.0"));
+    await manager.enable("building_scan");
+    host.running = true;
+    host.compose.length = 0;
+    host.removed.length = 0;
+
+    await manager.update("building_scan", release("0.2.0"));
+
+    expect(host.removed).toEqual(["building_scan"]);
+    expect(host.compose).toEqual([
+      ["config", "--quiet"],
+      [
+        "up",
+        "-d",
+        "--no-build",
+        "--pull",
+        "never",
+        "--no-deps",
+        "--force-recreate",
+        "--wait",
+        "--wait-timeout",
+        "120",
+        "api",
+        "source-gateway",
+        "atlas-plugin-building-scan"
+      ]
+    ]);
+    expect(host.compose.some(([command]) => command === "down")).toBe(false);
+  });
+
   it("restores selected release and enabled state when runtime verification fails", async () => {
     const { host, manager, transaction } = setup();
     await manager.install(release("0.1.0"));
@@ -218,6 +348,40 @@ describe("IndependentPluginManager", () => {
     expect(transaction.cleaned).toBe(true);
     expect(transaction.phases).toContain("runtime-changing");
     expect(transaction.phases).toContain("rollback-complete");
+    expect(host.compose.some(([command]) => command === "down")).toBe(false);
+    expect(host.compose.filter(([command]) => command === "up")).toEqual([
+      [
+        "up",
+        "-d",
+        "--no-build",
+        "--pull",
+        "never",
+        "--no-deps",
+        "--force-recreate",
+        "--wait",
+        "--wait-timeout",
+        "120",
+        "api",
+        "source-gateway",
+        "atlas-plugin-building-scan"
+      ],
+      [
+        "up",
+        "-d",
+        "--no-build",
+        "--pull",
+        "never",
+        "--no-deps",
+        "--remove-orphans",
+        "--force-recreate",
+        "--wait",
+        "--wait-timeout",
+        "120",
+        "api",
+        "source-gateway",
+        "atlas-plugin-building-scan"
+      ]
+    ]);
   });
 
   it("rejects expired catalog mutations before downloading a release", async () => {

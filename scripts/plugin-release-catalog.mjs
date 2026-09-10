@@ -13,6 +13,8 @@ const semverPattern = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u;
 const identifierPattern = /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/u;
 const hashPattern = /^sha256:[0-9a-f]{64}$/u;
 const catalogKeyIdPattern = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
+const publishedVerificationGraceMs = 120_000;
+const publishedVerificationRetryDelayMs = 5_000;
 
 const [command, ...args] = process.argv.slice(2);
 
@@ -287,7 +289,12 @@ function validateRelease(value) {
   if (!positiveSafeInteger(value.core_to_plugin_protocol_major) || !positiveSafeInteger(value.plugin_to_source_gateway_protocol_major)) throw new Error("Plugin release protocol majors must be positive safe integers");
   if (value.atlas_protocol_revision !== null && !hashPattern.test(value.atlas_protocol_revision)) throw new Error("Plugin release has an invalid Atlas Protocol revision");
   if (!Array.isArray(value.interactions) || new Set(value.interactions).size !== value.interactions.length || value.interactions.some((kind) => kind !== "map_area") || [...value.interactions].sort().join("\u0000") !== value.interactions.join("\u0000")) throw new Error("Plugin release has invalid interactions");
-  if (value.source_connector !== null && (!isRecord(value.source_connector) || value.source_connector.id !== value.plugin_id)) throw new Error("Plugin release connector has the wrong identity");
+  if (
+    value.source_connector !== null &&
+    (!isRecord(value.source_connector) || value.source_connector.id !== value.plugin_id || typeof value.source_connector.origin !== "string")
+  ) {
+    throw new Error("Plugin release connector has the wrong identity or origin type");
+  }
 }
 
 function validateCatalog(catalog) {
@@ -336,16 +343,10 @@ function verifyLedgerSignature(ledgerDirectory, catalog, catalogBytes) {
 
 function verifyCatalogSignature(catalog, catalogBytes, signatureBytes) {
   const signature = parseSignature(signatureBytes);
-  if (signature.algorithm !== "ed25519" || signature.key_id !== catalog.key_id || typeof signature.signature !== "string") {
+  if (signature.key_id !== catalog.key_id) {
     throw new Error("Catalog ledger signature does not match catalog identity");
   }
-  if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(signature.signature)) {
-    throw new Error("Catalog ledger signature is not standard base64");
-  }
   const signatureValue = Buffer.from(signature.signature, "base64");
-  if (signatureValue.length !== 64 || signatureValue.toString("base64") !== signature.signature) {
-    throw new Error("Catalog ledger signature must encode exactly 64 bytes");
-  }
   const trust = readTrust();
   const key = trust.keys.find((entry) => entry.key_id === catalog.key_id && entry.key_epoch === catalog.key_epoch);
   if (!key) throw new Error(`Catalog ledger key ${catalog.key_id} epoch ${catalog.key_epoch} is not trusted`);
@@ -372,6 +373,16 @@ function parseSignature(bytes) {
     throw new Error(`Catalog ledger signature is not valid JSON: ${error instanceof Error ? error.message : error}`);
   }
   assertExactKeys(signature, ["algorithm", "key_id", "signature"], "Catalog ledger signature");
+  if (signature.algorithm !== "ed25519" || typeof signature.key_id !== "string" || !catalogKeyIdPattern.test(signature.key_id)) {
+    throw new Error("Catalog ledger signature has invalid identity");
+  }
+  if (typeof signature.signature !== "string" || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(signature.signature)) {
+    throw new Error("Catalog ledger signature is not standard base64");
+  }
+  const signatureValue = Buffer.from(signature.signature, "base64");
+  if (signatureValue.length !== 64 || signatureValue.toString("base64") !== signature.signature) {
+    throw new Error("Catalog ledger signature must encode exactly 64 bytes");
+  }
   return signature;
 }
 
@@ -428,15 +439,33 @@ async function verifyPublishedCatalog(ledgerDirectory, options) {
   remoteSignatureURL.pathname = `${remoteSignatureURL.pathname}.sig`;
   let remoteBytes;
   let remoteSignatureBytes;
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
-    remoteBytes = await fetchBounded(remoteCatalogURL, 4 * 1024 * 1024, "stable catalog");
-    remoteSignatureBytes = await fetchBounded(remoteSignatureURL, 1024, "stable catalog signature");
-    if (remoteBytes.equals(localBytes) && remoteSignatureBytes.equals(localSignatureBytes)) break;
-    if (attempt === 3) {
-      if (!remoteBytes.equals(localBytes)) throw new Error("Stable catalog bytes do not match the protected ledger");
-      throw new Error("Stable catalog signature bytes do not match the protected ledger");
+  let lastCatalogMatches = false;
+  let lastSignatureMatches = false;
+  const deadline = Date.now() + publishedVerificationGraceMs;
+  while (true) {
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) {
+      if (lastCatalogMatches && !lastSignatureMatches) {
+        throw new Error("Stable catalog signature bytes did not catch up with the protected ledger within 120 seconds");
+      }
+      throw new Error("Stable catalog bytes did not catch up with the protected ledger within 120 seconds");
     }
-    await new Promise((resolvePromise) => setTimeout(resolvePromise, 1000));
+    try {
+      const timeoutMs = Math.min(15_000, remainingMs);
+      remoteBytes = await fetchBounded(remoteCatalogURL, 4 * 1024 * 1024, "stable catalog", timeoutMs);
+      remoteSignatureBytes = await fetchBounded(remoteSignatureURL, 1024, "stable catalog signature", Math.min(15_000, deadline - Date.now()));
+    } catch (error) {
+      if (!retryablePublishedFetchError(error) || deadline - Date.now() <= 0) throw error;
+      await waitForPublishedRetry(deadline);
+      continue;
+    }
+    lastCatalogMatches = remoteBytes.equals(localBytes);
+    lastSignatureMatches = remoteSignatureBytes.equals(localSignatureBytes);
+    if (lastCatalogMatches && lastSignatureMatches) break;
+    const staleCatalog = parseJSONBytes(remoteBytes, "stable catalog");
+    validateCatalog(staleCatalog);
+    parseSignature(remoteSignatureBytes);
+    await waitForPublishedRetry(deadline);
   }
   const remoteCatalog = parseJSONBytes(remoteBytes, "stable catalog");
   validateCatalog(remoteCatalog);
@@ -462,30 +491,49 @@ async function verifyPublishedCatalog(ledgerDirectory, options) {
   process.stdout.write(`Verified stable catalog sequence ${remoteCatalog.sequence} at ${trust.catalog_url}.\n`);
 }
 
-async function fetchBounded(url, limit, label) {
+async function fetchBounded(url, limit, label, timeoutMs = 15_000) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15_000);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(url, { signal: controller.signal, redirect: "error" });
-    if (!response.ok) throw new Error(`${label} returned HTTP ${response.status}`);
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw new Error(`${label} returned HTTP ${response.status}`);
+    }
     if (!response.body) throw new Error(`${label} returned an empty body`);
     const chunks = [];
     let size = 0;
     const reader = response.body.getReader();
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      size += value.byteLength;
-      if (size > limit) throw new Error(`${label} exceeded the ${limit}-byte response limit`);
-      chunks.push(Buffer.from(value));
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        size += value.byteLength;
+        if (size > limit) {
+          await reader.cancel();
+          throw new Error(`${label} exceeded the ${limit}-byte response limit`);
+        }
+        chunks.push(Buffer.from(value));
+      }
+      return Buffer.concat(chunks);
+    } finally {
+      reader.releaseLock();
     }
-    return Buffer.concat(chunks);
   } catch (error) {
-    if (error instanceof Error && error.name === "AbortError") throw new Error(`${label} request timed out after 15 seconds`);
+    if (error instanceof Error && error.name === "AbortError") throw new Error(`${label} request timed out after ${timeoutMs} milliseconds`);
     throw error;
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function retryablePublishedFetchError(error) {
+  return error instanceof Error && (/returned HTTP [45]\d\d/u.test(error.message) || /request timed out/u.test(error.message));
+}
+
+async function waitForPublishedRetry(deadline) {
+  const delay = Math.min(publishedVerificationRetryDelayMs, deadline - Date.now());
+  if (delay > 0) await new Promise((resolvePromise) => setTimeout(resolvePromise, delay));
 }
 
 function parseJSONBytes(bytes, label) {

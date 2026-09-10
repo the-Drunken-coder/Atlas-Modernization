@@ -23,6 +23,7 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
+import { readPairedBackupIdentity } from "./backup-receipt.js";
 import { createOwnerIdentity, DeploymentTransactionStore, ownerLiveness } from "./deployment-transaction.js";
 import { ManagedPluginCredentials } from "./host-credentials.js";
 import { type ImageReceipt, pullImageReceipt, verifyContainerImage, verifyLocalImage } from "./image-receipts.js";
@@ -46,7 +47,11 @@ import {
   parsePluginTrustConfiguration,
   selectPluginRelease
 } from "./plugin-distribution.js";
-import { assertPluginRuntime, PLUGIN_RUNTIME_PROBE_SCRIPT } from "./plugin-runtime-verification.js";
+import {
+  assertPluginDiscovery,
+  assertPluginRuntime,
+  PLUGIN_RUNTIME_PROBE_SCRIPT
+} from "./plugin-runtime-verification.js";
 import { createRetainedBundleManifest, verifyRetainedBundle } from "./retained-bundle.js";
 import { getSupervisorStatus, installSupervisor, runSupervisor, uninstallSupervisor } from "./supervision.js";
 import {
@@ -686,6 +691,11 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       ...runState,
       now: this.#now,
       readRunIntent: () => this.#desiredRunning(),
+      readBackupIdentity: async () => {
+        const directory = this.#env.ATLAS_CORE_BACKUP_DIR;
+        if (!directory) throw new Error("Set ATLAS_CORE_BACKUP_DIR to the validated paired backup directory.");
+        return await readPairedBackupIdentity(directory);
+      },
       architecture: this.#architecture === "arm64" ? "arm64" : "amd64",
       readState: () => this.#readState(),
       writeState: (state) => this.#writeDeploymentState(state),
@@ -798,7 +808,54 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       this.#dockerRunOptions()
     );
     if (result.status !== 0) throw new Error(`Plugin ${release.pluginId} did not pass runtime acceptance.`);
-    assertPluginRuntime(release, JSON.parse(result.stdout) as unknown);
+    const responses: unknown = JSON.parse(result.stdout);
+    assertPluginRuntime(release, responses);
+    await this.#waitForPluginDiscovery(release, responses);
+  }
+
+  async #waitForPluginDiscovery(release: PluginRelease, privateResponses: unknown): Promise<void> {
+    const key = this.#readConfigValue("ATLAS_PLUGIN_API_KEY");
+    if (!key) throw new Error("Public Plugin discovery requires the managed Core API key.");
+    const deadline = Date.now() + 30_000;
+    let failure: unknown;
+    do {
+      try {
+        const response = await this.#fetch("http://127.0.0.1:8000/plugins", {
+          headers: { "x-api-key": key },
+          signal: AbortSignal.timeout(Math.max(1, Math.min(5_000, deadline - Date.now()))),
+          redirect: "error"
+        });
+        if (!response.ok || !response.body) {
+          await response.body?.cancel();
+          throw new Error(`Core Plugin discovery returned HTTP ${response.status}.`);
+        }
+        const reader = response.body.getReader();
+        const chunks: Uint8Array[] = [];
+        let length = 0;
+        try {
+          while (true) {
+            const next = await reader.read();
+            if (next.done) break;
+            length += next.value.byteLength;
+            if (length > 4 << 20) {
+              await reader.cancel();
+              throw new Error("Core Plugin discovery exceeds 4 MiB.");
+            }
+            chunks.push(next.value);
+          }
+        } finally {
+          reader.releaseLock();
+        }
+        const discovery: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+        assertPluginDiscovery(release, privateResponses, discovery);
+        return;
+      } catch (error) {
+        failure = error;
+      }
+      if (Date.now() >= deadline) break;
+      await new Promise((resolve) => setTimeout(resolve, Math.min(500, deadline - Date.now())));
+    } while (Date.now() < deadline);
+    throw new Error(`Plugin ${release.pluginId} failed public discovery: ${errorMessage(failure)}`);
   }
 
   async #verifyEnabledPlugins(state: ManagedCoreState, requireHealth: boolean): Promise<void> {
@@ -808,6 +865,10 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       const release = manager.readSelected(id);
       await verifyLocalImage(this.#imageCommand, receipt);
       if (requireHealth) await this.#verifyPluginRuntime(release, receipt);
+      else {
+        const container = `${this.#deploymentIdentity().projectName}_${pluginServiceName(id)}`;
+        await verifyContainerImage(this.#imageCommand, container, receipt);
+      }
     }
   }
 
@@ -819,7 +880,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
             throw new Error("Missing deployment state.");
           })()
       );
-    const compose = async (args: string[]) => {
+    const compose = async (args: string[], includePluginFragments = false) => {
       const state = current();
       this.#verifyBundle(state);
       const result = await this.#runComposeFile(
@@ -827,7 +888,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
         args,
         false,
         false,
-        state.enabledPlugins,
+        includePluginFragments ? state.enabledPlugins : [],
         state.baseDeployment?.coreImage
       );
       if (result.status !== 0) throw commandFailure("credential provisioning Compose", result);
@@ -847,7 +908,18 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       await this.#plugins(state).regenerateActiveFiles();
       const recreate = async () =>
         await this.#runComposeChecked(
-          ["up", "-d", "--pull", "never", "--no-deps", "--force-recreate", ...ids.map(pluginServiceName)],
+          [
+            "up",
+            "-d",
+            "--pull",
+            "never",
+            "--no-deps",
+            "--force-recreate",
+            "--wait",
+            "--wait-timeout",
+            COMPOSE_WAIT_SECONDS,
+            ...ids.map(pluginServiceName)
+          ],
           state.enabledPlugins
         );
       if (apiKey) await this.#pluginCredentialScope.run(apiKey, recreate);
@@ -861,8 +933,11 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       host: {
         withRecovery: async (operation) => await this.#recoveryCommandScope.run(true, operation),
         isRunning: async () => (await this.#deploymentSnapshot(current().enabledPlugins)).status !== "stopped",
-        startBase: async () =>
-          await compose(["up", "-d", "--pull", "never", "--wait", "api", "source-gateway", "postgres", "minio"]),
+        startBase: async (includePluginFragments = false) =>
+          await compose(
+            ["up", "-d", "--pull", "never", "--wait", "api", "source-gateway", "postgres", "minio"],
+            includePluginFragments
+          ),
         stopBase: async () => await compose(["down", "--remove-orphans"]),
         runManagedKeys: async (action, value) => {
           const state = current();
@@ -1015,12 +1090,8 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     this.#verifyBundle(state);
     const receipts = [...(state.baseDeployment?.images ?? [])];
     const manager = this.#plugins(state);
-    for (const plugin of await manager.list()) {
-      if (plugin.installed) {
-        const installed = manager.readInstalled(plugin.pluginId);
-        receipts.push(installed.selected);
-        if (installed.previous) receipts.push(installed.previous);
-      }
+    for (const id of state.enabledPlugins) {
+      receipts.push(manager.readInstalled(id).selected);
     }
     for (const receipt of receipts) {
       const repaired = await pullImageReceipt(
@@ -1309,6 +1380,56 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
         throw new Error("Pending transaction belongs to another Docker engine.");
       if (tx.journal.operation === "plugin-key-rotation") {
         await this.#credentials(engineId, tx).recover();
+        return;
+      }
+      const pluginRuntimeOperation = ["plugin-enable", "plugin-disable", "plugin-update", "plugin-rollback"].includes(
+        tx.journal.operation
+      );
+      if (
+        pluginRuntimeOperation &&
+        (tx.journal.phase === "runtime-changing" || tx.journal.phase === "rollback-complete")
+      ) {
+        // File rollback completes before runtime restoration. Keep the journal until both
+        // succeed, and restore active files before constructing any Compose command.
+        const affectedIds = new Set(
+          Object.keys(tx.journal.snapshots).flatMap((path) => {
+            const match = /^plugins\/([^/]+)\//u.exec(path);
+            return match?.[1] ? [match[1]] : [];
+          })
+        );
+        tx.rollback();
+        const restored = this.#requireManaged(this.#requireInitialized());
+        if (tx.journal.previousRunning && this.#desiredRunning()) {
+          this.#verifyBundle(restored);
+          const manager = this.#plugins(restored);
+          await manager.regenerateActiveFiles();
+          const restoredIds = restored.enabledPlugins.filter((id) => affectedIds.has(id));
+          await this.#runComposeChecked(
+            [
+              "up",
+              "-d",
+              "--pull",
+              "never",
+              "--no-build",
+              "--no-deps",
+              "--remove-orphans",
+              "--force-recreate",
+              "--wait",
+              "--wait-timeout",
+              COMPOSE_WAIT_SECONDS,
+              "api",
+              "source-gateway",
+              ...restoredIds.map(pluginServiceName)
+            ],
+            restored.enabledPlugins
+          );
+          for (const id of restoredIds) {
+            await this.#verifyPluginRuntime(manager.readSelected(id), manager.readInstalled(id).selected);
+          }
+        } else if (tx.journal.previousRunning) {
+          await this.#runComposeChecked(["down", "--remove-orphans"], restored.enabledPlugins);
+        }
+        tx.cleanup();
         return;
       }
       if (tx.journal.phase === "committed" || tx.journal.phase === "rollback-complete") {
@@ -1668,6 +1789,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
 
     this.#stdout.write(`Reinitializing Atlas Core ${PACKAGE_VERSION} with new credentials and empty storage.\n`);
     await this.#initialize(dockerEngineId);
+    this.#writeRunIntent(true);
     await this.#start(this.#requireInitialized(), dockerEngineId);
     this.#stdout.write(`Atlas Core ${PACKAGE_VERSION} reset is complete.\n`);
   }
@@ -2614,7 +2736,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
           : "";
       throw new Error(
         `Atlas Core deployment mutation is locked${ownerDescription} at ${this.#mutationLockFile}. ` +
-          `If no atlas-core process is changing the deployment, remove that file and retry.${identityDescription}`
+          `Wait for its owner to finish. If recovery is pending, inspect atlas-core recover status; do not remove deployment locks independently.${identityDescription}`
       );
     }
   }
@@ -2933,7 +3055,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     this.#assertResourceLabels("deployment mutation lock", mutationLockNetwork, inspection.stdout, ownershipLabels);
     throw new Error(
       `Atlas Core deployment mutation is already locked on Docker engine ${dockerEngineId}. ` +
-        `If no atlas-core process is changing the deployment, remove ${mutationLockNetwork} with docker network rm and retry.`
+        "Wait for its owner to finish. If recovery is pending, inspect atlas-core recover status; do not remove deployment locks independently."
     );
   }
 

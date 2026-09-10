@@ -11,6 +11,14 @@ const identifierPattern = /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/u;
 const semverPattern = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u;
 const imagePattern = /^ghcr\.io\/the-drunken-coder\/[a-z0-9][a-z0-9-]*@sha256:[0-9a-f]{64}$/u;
 const protocolRevisionPattern = /^sha256:[0-9a-f]{64}$/u;
+const releaseDocumentLimit = 1 << 20;
+const releaseRedirectLimit = 5;
+const releaseHosts = new Set([
+  "github.com",
+  "objects.githubusercontent.com",
+  "release-assets.githubusercontent.com",
+  "github-releases.githubusercontent.com"
+]);
 const privateManifestKeys = ["plugin_id", "display_name", "core_to_plugin_protocol_major", "operations", "tool_asset_id"];
 
 const [command, ...rawArgs] = process.argv.slice(2);
@@ -52,6 +60,9 @@ switch (command) {
   case "verify-document":
     verifyReleaseDocument(readJSON(resolve(repositoryRoot, required(rawArgs[0], "document path"))));
     break;
+  case "verify-public-release":
+    await verifyPublicRelease(required(rawArgs[0], "release URL"), resolve(repositoryRoot, required(rawArgs[1], "local document path")));
+    break;
   case "check-candidate": {
     const plugin = readPlugin(required(rawArgs[0], "plugin_id"));
     validatePlugin(plugin);
@@ -60,7 +71,7 @@ switch (command) {
   }
   default:
     throw new Error(
-      "Usage: node scripts/plugin-release.mjs <validate-version|validate-plugin|protocol-revision|release-document|verify-document|check-candidate> ..."
+      "Usage: node scripts/plugin-release.mjs <validate-version|validate-plugin|protocol-revision|release-document|verify-document|verify-public-release|check-candidate> ..."
     );
 }
 
@@ -231,13 +242,127 @@ function checkCandidate(plugin, image) {
     if (!isRecord(health) || Object.keys(health).length !== 1 || health.status !== "ok") {
       throw new Error("Candidate /health did not return {\"status\":\"ok\"}");
     }
-    const route = runCapture("curl", ["--silent", "--show-error", "--output", "/dev/null", "--write-out", "%{http_code}", `http://127.0.0.1:${port}/__atlas_candidate_missing__`], true).trim();
-    if (route !== "404") throw new Error(`Candidate missing route returned HTTP ${route}, expected 404`);
+    const routeResponse = runCapture("curl", ["--silent", "--show-error", "--max-time", "2", "--write-out", "\n%{http_code}", `http://127.0.0.1:${port}/__atlas_candidate_missing__`], true).trimEnd();
+    const routeLines = routeResponse.split("\n");
+    const routeStatus = routeLines.pop();
+    if (routeStatus !== "404" || routeLines.join("\n") !== '{"code":"route_not_found"}') {
+      throw new Error(`Candidate missing route must return {"code":"route_not_found"} with HTTP 404; got HTTP ${routeStatus}`);
+    }
   } finally {
     if (containerId) spawnSync("docker", ["rm", "--force", containerId], { cwd: repositoryRoot, stdio: "ignore" });
     spawnSync("docker", ["network", "rm", networkName], { cwd: repositoryRoot, stdio: "ignore" });
   }
   process.stdout.write(`Candidate ${image} passed the ${plugin.id} runtime contract checks.\n`);
+}
+
+async function verifyPublicRelease(url, localPath) {
+  const localBytes = readFileSync(localPath);
+  const document = verifyReleaseDocument(readJSON(localPath));
+  const expectedURL = releaseDocumentURL(document.plugin_id, document.version);
+  if (url !== expectedURL) throw new Error(`Release URL must exactly equal ${expectedURL}`);
+  const remoteBytes = await fetchPublicRelease(url);
+  if (!remoteBytes.equals(localBytes)) throw new Error("Public release document bytes do not match the reviewed release document");
+  process.stdout.write(`Verified anonymous public release document at ${url}.\n`);
+}
+
+async function fetchPublicRelease(url) {
+  let expectedHost;
+  try {
+    expectedHost = new URL(url).hostname.toLowerCase();
+  } catch {
+    throw new Error("Public release URL is invalid");
+  }
+  if (!releaseHosts.has(expectedHost)) throw new Error("Public release URL is not an allowlisted GitHub URL");
+  const allowedHosts = releaseHosts;
+  let current = checkedReleaseURL(url, allowedHosts);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
+  try {
+    for (let redirect = 0; redirect <= releaseRedirectLimit; redirect += 1) {
+      const response = await fetch(current, { method: "GET", redirect: "manual", signal: controller.signal });
+      if (response.status >= 300 && response.status < 400) {
+        await cancelResponseBody(response);
+        if (redirect === releaseRedirectLimit) {
+          throw new Error("Public release download exceeded redirect limit");
+        }
+        const location = response.headers.get("location");
+        if (!location) {
+          throw new Error("Public release download redirect has no Location header");
+        }
+        current = checkedReleaseURL(new URL(location, current).toString(), allowedHosts, true);
+        continue;
+      }
+      if (!response.ok) {
+        await cancelResponseBody(response);
+        throw new Error(`Public release download returned HTTP ${response.status}`);
+      }
+      const declaredLength = response.headers.get("content-length");
+      if (declaredLength !== null && /^\d+$/u.test(declaredLength) && Number(declaredLength) > releaseDocumentLimit) {
+        await cancelResponseBody(response);
+        throw new Error("Public release download exceeds the 1 MiB size limit");
+      }
+      if (!response.body) throw new Error("Public release download returned an empty body");
+      const reader = response.body.getReader();
+      const chunks = [];
+      let total = 0;
+      try {
+        while (true) {
+          const next = await reader.read();
+          if (next.done) break;
+          total += next.value.byteLength;
+          if (total > releaseDocumentLimit) {
+            await reader.cancel();
+            throw new Error("Public release download exceeds the 1 MiB size limit");
+          }
+          chunks.push(Buffer.from(next.value));
+        }
+        return Buffer.concat(chunks);
+      } finally {
+        reader.releaseLock();
+      }
+    }
+    throw new Error("Public release download failed");
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") throw new Error("Public release download timed out after 30 seconds");
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function cancelResponseBody(response) {
+  if (!response.body) return;
+  try {
+    await response.body.cancel();
+  } catch {
+    // The response is already being discarded; cancellation failures do not change validation.
+  }
+}
+
+function checkedReleaseURL(value, allowedHosts, allowQuery = false) {
+  let parsed;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error("Public release URL is invalid");
+  }
+  if (
+    parsed.protocol !== "https:" ||
+    parsed.username ||
+    parsed.password ||
+    (!allowQuery && parsed.search) ||
+    parsed.hash ||
+    !allowedHosts.has(parsed.hostname.toLowerCase())
+  ) {
+    throw new Error("Public release URL is not an allowlisted HTTPS URL");
+  }
+  return parsed.toString();
+}
+
+function releaseDocumentURL(pluginId, version) {
+  const server = process.env.GITHUB_SERVER_URL ?? "https://github.com";
+  const repository = process.env.GITHUB_REPOSITORY ?? "the-Drunken-coder/Atlas-Modernization";
+  return `${server}/${repository}/releases/download/atlas-plugin-${pluginId}-v${version}/${pluginId}-${version}.atlas-plugin`;
 }
 
 function validateCandidateManifest(plugin, value) {
@@ -344,26 +469,23 @@ function validateSourceConnector(value, pluginId) {
   if (typeof value.id !== "string" || value.id !== pluginId || !identifierPattern.test(value.id) || value.id.length > 50) {
     throw new Error(`${pluginId} source connector must use its plugin_id`);
   }
-  if (!isRecord(value.origin)) {
-    let origin;
-    try {
-      origin = new URL(value.origin);
-    } catch {
-      throw new Error(`${pluginId} source connector origin must be an HTTP origin`);
-    }
-    if (
-      !origin.hostname ||
-      !["http:", "https:"].includes(origin.protocol) ||
-      origin.username ||
-      origin.password ||
-      (origin.pathname !== "/" && origin.pathname !== "") ||
-      origin.search ||
-      origin.hash
-    ) {
-      throw new Error(`${pluginId} source connector origin must be an HTTP origin without credentials or path`);
-    }
-  } else {
-    throw new Error(`${pluginId} source connector origin must be a string`);
+  if (typeof value.origin !== "string") throw new Error(`${pluginId} source connector origin must be a string`);
+  let origin;
+  try {
+    origin = new URL(value.origin);
+  } catch {
+    throw new Error(`${pluginId} source connector origin must be an HTTP origin`);
+  }
+  if (
+    !origin.hostname ||
+    !["http:", "https:"].includes(origin.protocol) ||
+    origin.username ||
+    origin.password ||
+    (origin.pathname !== "/" && origin.pathname !== "") ||
+    origin.search ||
+    origin.hash
+  ) {
+    throw new Error(`${pluginId} source connector origin must be an HTTP origin without credentials or path`);
   }
   assertExactKeys(value.secret_headers, [], `${pluginId} source connector secret_headers`);
   const routes = value.routes;

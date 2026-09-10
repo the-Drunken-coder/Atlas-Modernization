@@ -1,7 +1,11 @@
 import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
 import { type PluginRelease, parsePluginRelease } from "../src/plugin-distribution.js";
-import { assertPluginRuntime, PLUGIN_RUNTIME_PROBE_SCRIPT } from "../src/plugin-runtime-verification.js";
+import {
+  assertPluginDiscovery,
+  assertPluginRuntime,
+  PLUGIN_RUNTIME_PROBE_SCRIPT
+} from "../src/plugin-runtime-verification.js";
 
 const operation = {
   operation_id: "search_buildings",
@@ -46,6 +50,21 @@ function responses(manifest: unknown = runtimeManifest()): unknown[] {
     { status: 200, body: JSON.stringify(manifest) },
     { status: 200, body: JSON.stringify({ status: "ok" }) },
     { status: 404, body: JSON.stringify({ code: "route_not_found" }) }
+  ];
+}
+
+function discovery(overrides: Record<string, unknown> = {}): unknown[] {
+  return [
+    {
+      checked_at: "2026-09-10T12:00:00Z",
+      display_name: "Building Scan",
+      operations: [operation],
+      plugin_id: "building_scan",
+      reason_code: null,
+      status: "available",
+      tool_asset_id: null,
+      ...overrides
+    }
   ];
 }
 
@@ -104,6 +123,45 @@ describe("Plugin runtime verification", () => {
     expect(() =>
       assertPluginRuntime(release(), responses({ ...runtimeManifest(), operations: [operation, secondOperation] }))
     ).not.toThrow();
+  });
+
+  it("accepts the verified private manifest projected into public discovery", () => {
+    expect(() => assertPluginDiscovery(release(), responses(), discovery())).not.toThrow();
+  });
+
+  it.each([
+    ["starting status", { status: "starting" }],
+    ["unavailable status", { status: "unavailable", reason_code: "transport_unreachable" }],
+    ["display name", { display_name: "Other plugin" }],
+    ["tool asset", { tool_asset_id: "plugin_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }],
+    ["private protocol field", { core_to_plugin_protocol_major: 1 }]
+  ])("rejects public discovery with a %s", (_label, override) => {
+    expect(() => assertPluginDiscovery(release(), responses(), discovery(override))).toThrow(/discovery|status|field/i);
+  });
+
+  it("rejects discovery with duplicate matching entries", () => {
+    expect(() => assertPluginDiscovery(release(), responses(), [...discovery(), ...discovery()])).toThrow(
+      /exactly one/i
+    );
+  });
+
+  it("rejects discovery operations that differ from the private manifest", () => {
+    const alteredOperation = { ...operation, timeout_ms: 10_000 };
+    expect(() => assertPluginDiscovery(release(), responses(), discovery({ operations: [alteredOperation] }))).toThrow(
+      /operations/i
+    );
+  });
+
+  it("rejects discovery operations that are not in canonical private order", () => {
+    const secondOperation = { ...operation, operation_id: "zoom_buildings" };
+    const privateManifest = { ...runtimeManifest(), operations: [operation, secondOperation] };
+    expect(() =>
+      assertPluginDiscovery(
+        release(),
+        responses(privateManifest),
+        discovery({ operations: [secondOperation, operation] })
+      )
+    ).toThrow(/operations|sorted/i);
   });
 
   it("rejects a runtime tool asset identity even when its value is correctly derived", () => {
