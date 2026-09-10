@@ -115,7 +115,7 @@ func (a *EntityActions) MovementHistory(ctx context.Context, id string, q Moveme
 	}
 	result := &protocol.MovementHistoryPage{EntityCreatedAt: movementTime(q.EntityCreatedAt), From: movementTime(q.From), To: movementTime(q.To), RetainedFrom: movementTime(cutoff), RetentionAdvanced: q.Cursor != "" && q.From.Before(cutoff) && c.RetainedFrom.Before(cutoff), Snapshot: strconv.FormatInt(c.Upper, 10), Samples: []protocol.MovementSample{}}
 	sql := `SELECT ` + movementColumns + ` FROM entity_movement_samples WHERE entity_id=$1 AND entity_created_at=$2 AND sample_time >= $3 AND sample_time <= $4 AND sample_time >= $5 AND sequence <= $6`
-	args := []any{id, q.EntityCreatedAt, q.From, q.To, cutoff, c.Upper}
+	args := []any{id, q.EntityCreatedAt, movementLowerBound(q.From), q.To, movementLowerBound(cutoff), c.Upper}
 	if q.Cursor != "" {
 		sql += ` AND (sample_time,sequence)<($7,$8)`
 		args = append(args, c.AfterTime, c.AfterSequence)
@@ -166,7 +166,7 @@ func (a *EntityActions) InspectMovement(ctx context.Context, id string, created,
 		column string
 		target **protocol.MovementSample
 	}{{"latitude", &result.Position}, {"speed_m_s", &result.Speed}, {"altitude_m", &result.Altitude}} {
-		sample, _, err := scanMovement(tx.QueryRow(ctx, `SELECT `+movementColumns+` FROM entity_movement_samples WHERE entity_id=$1 AND entity_created_at=$2 AND sample_time >= $3 AND sample_time <= $4 AND `+field.column+` IS NOT NULL ORDER BY sample_time DESC,sequence DESC LIMIT 1`, id, created, cutoff, at))
+		sample, _, err := scanMovement(tx.QueryRow(ctx, `SELECT `+movementColumns+` FROM entity_movement_samples WHERE entity_id=$1 AND entity_created_at=$2 AND sample_time >= $3 AND sample_time <= $4 AND `+field.column+` IS NOT NULL ORDER BY sample_time DESC,sequence DESC LIMIT 1`, id, created, movementLowerBound(cutoff), at))
 		if errors.Is(err, pgx.ErrNoRows) {
 			continue
 		}
@@ -201,7 +201,7 @@ func (a *EntityActions) MovementTrail(ctx context.Context, id string, q Movement
 	defer func() { _ = tx.Rollback(ctx) }()
 	cutoff := time.Now().Add(-MovementRetention)
 	result := &protocol.MovementTrail{EntityCreatedAt: movementTime(q.EntityCreatedAt), From: movementTime(q.From), To: movementTime(q.To), RetainedFrom: movementTime(cutoff), Points: []protocol.MovementTrailPoint{}}
-	rows, err := tx.Query(ctx, `SELECT `+movementColumns+` FROM entity_movement_samples WHERE entity_id=$1 AND entity_created_at=$2 AND sample_time >= $3 AND sample_time <= $4 AND sample_time >= $5 AND latitude IS NOT NULL ORDER BY sample_time,sequence LIMIT $6`, id, q.EntityCreatedAt, q.From, q.To, cutoff, movementScanBudget+1)
+	rows, err := tx.Query(ctx, `SELECT `+movementColumns+` FROM entity_movement_samples WHERE entity_id=$1 AND entity_created_at=$2 AND sample_time >= $3 AND sample_time <= $4 AND sample_time >= $5 AND latitude IS NOT NULL ORDER BY sample_time,sequence LIMIT $6`, id, q.EntityCreatedAt, movementLowerBound(q.From), q.To, movementLowerBound(cutoff), movementScanBudget+1)
 	if err != nil {
 		return nil, movementTrailError(err)
 	}
@@ -262,4 +262,14 @@ func movementTrailError(err error) error {
 		return NewValidationError("history interval exceeds the query time budget; choose a shorter interval")
 	}
 	return err
+}
+
+// PostgreSQL stores microseconds. Round lower bounds up so pgx truncation cannot
+// include a report earlier than the requested nanosecond-precision interval.
+func movementLowerBound(value time.Time) time.Time {
+	lower := value.Truncate(time.Microsecond)
+	if lower.Before(value) {
+		return lower.Add(time.Microsecond)
+	}
+	return lower
 }

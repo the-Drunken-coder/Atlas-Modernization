@@ -27,16 +27,19 @@ import {
   isMovementHistoryBatchResponse,
   isMovementHistoryPage,
   isMovementInspection,
+  isMovementTrail,
   type MovementHistoryBatchResponse,
   type MovementHistoryPage,
   type MovementInspection,
+  type MovementSample,
+  type MovementTrail,
   type ObjectDetailResource,
   type ObjectResource,
   type ProtocolRevisionResponse,
   type RuntimeTaskDeliveryResponse,
   type TaskResource
 } from "./protocol.js";
-import type { EntityCheckInFields, MovementHistoryQuery } from "./types.js";
+import type { EntityCheckInFields, MovementHistoryQuery, MovementTrailQuery } from "./types.js";
 
 export const isCommandCatalog: ResponseValidator<CommandCatalog> = isGeneratedCommandCatalog;
 
@@ -171,9 +174,37 @@ export function movementHistoryResponseValidator(query: MovementHistoryQuery): R
     validate(value) &&
     value.samples.every(
       (sample, index, samples) =>
+        coherentMovementSample(sample) &&
         compareMovementInstants(sample.time, query.from) >= 0 &&
         compareMovementInstants(sample.time, query.to) <= 0 &&
         (index === 0 || compareMovementInstants(samples[index - 1]!.time, sample.time) >= 0)
+    );
+}
+
+function coherentMovementSample(sample: MovementSample): boolean {
+  return (
+    sample.time_is_arrival === (sample.observed_at === undefined) &&
+    sameMovementInstant(sample.time, sample.observed_at ?? sample.received_at)
+  );
+}
+
+export function movementTrailResponseValidator(query: MovementTrailQuery): ResponseValidator<MovementTrail> {
+  const validate = movementWindowResponseValidator(isMovementTrail, query);
+  return (value): value is MovementTrail =>
+    validate(value) &&
+    isSafeNonNegativeInteger(value.position_count) &&
+    value.position_count >= value.points.length &&
+    (value.position_count === 0) === (value.points.length === 0) &&
+    value.points.length <= (query.maxPoints ?? 1000) &&
+    value.simplified === value.points.length < value.position_count &&
+    value.points.every(
+      ({ sample }, index, points) =>
+        coherentMovementSample(sample) &&
+        sample.latitude !== undefined &&
+        sample.longitude !== undefined &&
+        compareMovementInstants(sample.time, query.from) >= 0 &&
+        compareMovementInstants(sample.time, query.to) <= 0 &&
+        (index === 0 || compareMovementInstants(points[index - 1]!.sample.time, sample.time) <= 0)
     );
 }
 
@@ -200,5 +231,13 @@ export function movementInspectionResponseValidator(
   return (value): value is MovementInspection =>
     isMovementInspection(value) &&
     sameMovementInstant(value.entity_created_at, entityCreatedAt) &&
-    sameMovementInstant(value.time, at);
+    sameMovementInstant(value.time, at) &&
+    (value.position === undefined ||
+      (value.position.latitude !== undefined && value.position.longitude !== undefined)) &&
+    (value.speed === undefined || value.speed.speed_m_s !== undefined) &&
+    (value.altitude === undefined || value.altitude.altitude_m !== undefined) &&
+    [value.position, value.speed, value.altitude].every(
+      (sample) =>
+        sample === undefined || (coherentMovementSample(sample) && compareMovementInstants(sample.time, at) <= 0)
+    );
 }

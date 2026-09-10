@@ -4,14 +4,13 @@ import {
   isEntityCheckInResponse,
   isEntityResource,
   isMovementHistoryBatchRequest,
-  isMovementTrail,
   isObjectDetailResource,
   isRuntimeTaskDeliveryResponse,
   isTaskResource,
   movementHistoryResponseValidator,
   movementImportResponseValidator,
   movementInspectionResponseValidator,
-  movementWindowResponseValidator
+  movementTrailResponseValidator
 } from "@the-drunken-coder/atlas-sdk";
 import type { Clock, TimerHandle } from "./clock.js";
 import {
@@ -2252,7 +2251,7 @@ function responseMatchesRequest(
       return (
         request.operation === "entity.history"
           ? movementHistoryResponseValidator(query)
-          : movementWindowResponseValidator(isMovementTrail, query)
+          : movementTrailResponseValidator({ ...query, maxPoints: request.max_points ?? 1000 })
       )(response.output);
     }
     case "entity.inspect_movement":

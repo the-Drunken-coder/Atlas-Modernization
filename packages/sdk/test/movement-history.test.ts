@@ -183,7 +183,12 @@ it("checks sample bounds and descending ordering at nanosecond precision", async
   const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl });
   for (const times of [[from, to], ["2026-09-09T12:00:00Z"], ["2026-09-09T12:00:00.000004Z"]]) {
     fetchImpl.mockResolvedValueOnce(
-      Response.json({ ...page, from, to, samples: times.map((time) => ({ ...page.samples[0], time })) })
+      Response.json({
+        ...page,
+        from,
+        to,
+        samples: times.map((time) => ({ ...page.samples[0], time, received_at: time }))
+      })
     );
     await expect(client.entities.history("asset-1", { ...query, from, to })).rejects.toThrow();
   }
@@ -192,7 +197,7 @@ it("checks sample bounds and descending ordering at nanosecond precision", async
       ...page,
       from,
       to,
-      samples: [to, middle, middle, from].map((time) => ({ ...page.samples[0], time }))
+      samples: [to, middle, middle, from].map((time) => ({ ...page.samples[0], time, received_at: time }))
     })
   );
   await expect(client.entities.history("asset-1", { ...query, from, to })).resolves.toBeDefined();
@@ -206,4 +211,53 @@ it("matches canonical lowercase and leap-second query timestamps", async () => {
   await expect(
     client.entities.inspectMovement("asset-1", "2026-01-02t23:59:60z", "2026-01-02T23:59:60Z")
   ).resolves.toBeDefined();
+});
+
+it.each(["positionless", "outside", "descending", "count"])("rejects incoherent trail %s", async (issue) => {
+  const to = "2026-09-09T12:00:01Z";
+  const point = (time: string) => ({
+    sample: { ...page.samples[0], sample_id: time, time, received_at: time, latitude: 1, longitude: 2 },
+    gap_before: false
+  });
+  const response = { ...trail, to, points: [point(time), point(to)], position_count: 2 };
+  if (issue === "positionless")
+    Object.assign(response.points[0]!.sample, { latitude: undefined, longitude: undefined });
+  if (issue === "outside") response.points = [point("2026-09-09T12:00:02Z"), point(to)];
+  if (issue === "descending") response.points.reverse();
+  if (issue === "count") response.position_count = 1;
+  const fetchImpl = vi
+    .fn<typeof fetch>()
+    .mockResolvedValueOnce(Response.json(response))
+    .mockResolvedValueOnce(Response.json({ ...trail, to, points: [point(time), point(to)], position_count: 2 }));
+  const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl });
+  await expect(client.entities.trail("asset-1", { ...query, to })).rejects.toThrow();
+  await expect(client.entities.trail("asset-1", { ...query, to })).resolves.toBeDefined();
+});
+
+it.each(["position", "speed", "altitude", "future"])("rejects incoherent inspection %s", async (issue) => {
+  const future = "2026-09-09T12:00:01Z";
+  const response = {
+    entity_created_at: time,
+    time,
+    [issue === "future" ? "position" : issue]:
+      issue === "future"
+        ? { ...page.samples[0], time: future, received_at: future, latitude: 1, longitude: 2 }
+        : issue === "speed"
+          ? { sample_id: "altitude", time, received_at: time, time_is_arrival: true, altitude_m: 1 }
+          : page.samples[0]
+  };
+  const client = new AtlasClient({
+    baseUrl: "http://atlas.test",
+    fetch: vi.fn<typeof fetch>().mockResolvedValue(Response.json(response))
+  });
+  await expect(client.entities.inspectMovement("asset-1", time, time)).rejects.toThrow();
+});
+
+it("rejects a report whose time source contradicts its timestamps", async () => {
+  const response = { ...page, samples: [{ ...page.samples[0], observed_at: time }] };
+  const client = new AtlasClient({
+    baseUrl: "http://atlas.test",
+    fetch: vi.fn<typeof fetch>().mockResolvedValue(Response.json(response))
+  });
+  await expect(client.entities.history("asset-1", query)).rejects.toThrow();
 });

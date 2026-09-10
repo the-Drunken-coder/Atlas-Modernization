@@ -26,13 +26,7 @@ import type {
   TaskProgressRequest,
   TaskResource
 } from "./protocol.js";
-import {
-  isJSONValue,
-  isMapArea,
-  isMovementTrail,
-  isPluginDiscoveryResponse,
-  isSpatialOperationResult
-} from "./protocol.js";
+import { isJSONValue, isMapArea, isPluginDiscoveryResponse, isSpatialOperationResult } from "./protocol.js";
 import { normalizeResourceID } from "./resource-id.js";
 import { SyncEngine } from "./sync-engine.js";
 import type {
@@ -70,7 +64,7 @@ import {
   movementHistoryResponseValidator,
   movementImportResponseValidator,
   movementInspectionResponseValidator,
-  movementWindowResponseValidator
+  movementTrailResponseValidator
 } from "./validation.js";
 
 export { ProtocolMismatchError } from "./feed-connection.js";
@@ -173,7 +167,7 @@ export class AtlasClient {
       this.transport.json(
         "GET",
         movementQueryPath(id, "trail", query, { max_points: query.maxPoints?.toString() }),
-        movementWindowResponseValidator(isMovementTrail, query),
+        movementTrailResponseValidator(query),
         undefined,
         undefined,
         query.signal

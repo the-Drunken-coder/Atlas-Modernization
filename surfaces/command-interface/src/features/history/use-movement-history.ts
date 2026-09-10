@@ -22,7 +22,7 @@ type View = {
   refresh: number;
   dismissed?: boolean;
 };
-type HistoryData = { key: string; window: Window; page: MovementHistoryPage };
+type HistoryData = { key: string; window: Window; page: MovementHistoryPage; cursor?: string };
 const initial = (key: string): View => ({
   key,
   open: false,
@@ -84,7 +84,7 @@ export function useMovementHistory(entity: EntityResource | undefined, reader: M
             .history(id, { ...query, cursor: view.cursor, limit: 100 })
             .then((page) => {
               if (controller.signal.aborted) return;
-              setData({ key, window, page });
+              setData({ key, window, page, cursor: view.cursor });
               setError(undefined);
             })
             .catch((cause) => {
@@ -205,20 +205,24 @@ export function useMovementHistory(entity: EntityResource | undefined, reader: M
     }));
   };
   const navigatePage = (older: boolean) => {
-    if (!current) return;
+    if (!current || current.cursor !== view.cursor) return;
     const cursor = older ? current.page.next_cursor : view.cursors.at(-1);
     if (older && !cursor) return;
     setPreview(undefined);
     setInspection(undefined);
-    setView((v) => ({
-      ...v,
-      window: current.window,
-      dismissed: false,
-      following: false,
-      pinned: undefined,
-      cursor,
-      cursors: older ? [...v.cursors, v.cursor] : v.cursors.slice(0, -1)
-    }));
+    setView((v) =>
+      v.cursor !== current.cursor
+        ? v
+        : {
+            ...v,
+            window: current.window,
+            dismissed: false,
+            following: false,
+            pinned: undefined,
+            cursor,
+            cursors: older ? [...v.cursors, v.cursor] : v.cursors.slice(0, -1)
+          }
+    );
   };
   // Keep the last complete live report visible while its successor is inspected.
   // Pinning or previewing an earlier report must never reuse later readings.
@@ -251,6 +255,7 @@ export function useMovementHistory(entity: EntityResource | undefined, reader: M
     inspectionLoading: Boolean(sample && !inspectionError && displayedInspection?.at !== at),
     inspectionError,
     canGoNewer: view.cursors.length > 0,
+    navigationLoading: current?.cursor !== view.cursor,
     toggle: () => {
       setPreview(undefined);
       setView((v) => ({ ...v, open: !v.open }));

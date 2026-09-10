@@ -360,3 +360,33 @@ it("keeps an in-flight trail request alive across page navigation", async () => 
   await act(async () => resolve(trail));
   expect(result.current.data?.trail).toEqual(trail);
 });
+
+it("accepts only one page transition until that page arrives", async () => {
+  const api = reader();
+  api.history.mockResolvedValueOnce({ ...page, next_cursor: "older" });
+  const { result } = renderHook(() => useMovementHistory(entity, api));
+  act(() => result.current.toggle());
+  await settle();
+  let resolve!: (value: MovementHistoryPage) => void;
+  api.history.mockImplementation(
+    () =>
+      new Promise((r) => {
+        resolve = r;
+      })
+  );
+  act(() => {
+    result.current.navigatePage(true);
+    result.current.navigatePage(true);
+  });
+  await settle();
+  expect(result.current.navigationLoading).toBe(true);
+  act(() => result.current.navigatePage(false));
+  expect(api.history).toHaveBeenCalledTimes(2);
+  await act(async () => resolve({ ...page, next_cursor: "oldest" }));
+  act(() => {
+    result.current.navigatePage(false);
+    result.current.navigatePage(false);
+  });
+  await settle();
+  expect(api.history.mock.calls.at(-1)?.[1].cursor).toBeUndefined();
+});

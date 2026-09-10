@@ -230,10 +230,14 @@ export function MovementHistorySection({ history: h }: { history: MovementHistor
                 </>
               )}
               <div className="movement-history__row">
-                <Button small disabled={!h.canGoNewer} onClick={() => h.navigatePage(false)}>
+                <Button small disabled={h.navigationLoading || !h.canGoNewer} onClick={() => h.navigatePage(false)}>
                   Newer reports
                 </Button>
-                <Button small disabled={!h.data?.page.next_cursor} onClick={() => h.navigatePage(true)}>
+                <Button
+                  small
+                  disabled={h.navigationLoading || !h.data?.page.next_cursor}
+                  onClick={() => h.navigatePage(true)}
+                >
                   Older reports
                 </Button>
               </div>

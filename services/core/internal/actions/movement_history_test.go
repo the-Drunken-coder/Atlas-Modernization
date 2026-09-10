@@ -54,6 +54,14 @@ func TestMovementCaptureBackfillAndAssociation(t *testing.T) {
 	if err != nil || len(page.Samples) != 1 || page.Samples[0].Latitude == nil || *page.Samples[0].Latitude != 0 {
 		t.Fatalf("capture zero: %+v %v", page, err)
 	}
+	precise := q
+	precise.From = now.Add(-time.Minute).Add(time.Nanosecond)
+	if result, err := a.MovementHistory(ctx, id, precise); err != nil || len(result.Samples) != 0 {
+		t.Fatalf("history included report before precise lower bound: %+v %v", result, err)
+	}
+	if result, err := a.MovementTrail(ctx, id, precise); err != nil || len(result.Points) != 0 {
+		t.Fatalf("trail included report before precise lower bound: %+v %v", result, err)
+	}
 	oldID := page.Samples[0].SampleID
 	_, err = a.Update(ctx, id, UpdateEntityParams{Components: map[string]interface{}{"telemetry": map[string]interface{}{"heading_deg": 90.0}, "heartbeat": map[string]interface{}{"last_seen": movementTime(now)}}})
 	if err != nil {

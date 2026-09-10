@@ -169,5 +169,6 @@ export {
   movementHistoryResponseValidator,
   movementImportResponseValidator,
   movementInspectionResponseValidator,
+  movementTrailResponseValidator,
   movementWindowResponseValidator
 } from "./validation.js";
