@@ -111,6 +111,14 @@ describe("generated Radio contract", () => {
       expect(deserializeLinkMessage(serializeLinkMessage(request))).toEqual(request);
       expect(isLinkMessage({ ...request, entity_created_at: undefined })).toBe(false);
       expect(isLinkMessage({ ...request, from: "invalid" })).toBe(false);
+      expect(
+        isLinkMessage({
+          ...request,
+          entity_created_at: "2026-01-02t23:59:60z",
+          from: "2026-01-02t23:59:60z",
+          to: "2026-01-03T00:00:00Z"
+        })
+      ).toBe(true);
       expect(isLinkMessage({ ...request, max_points: 1 })).toBe(false);
       expect(isLinkMessage({ ...request, max_points: 5001 })).toBe(false);
       const from = "2026-08-01T00:00:00.000000001Z";
@@ -611,3 +619,16 @@ function mutateV3Receipt(frame: Uint8Array, mutate: (body: Buffer, receiptOffset
   mutate(body, offset);
   return Buffer.concat([Buffer.from([0xa4]), deflateRawSync(body, { dictionary: Buffer.from(FRAME_DICTIONARY) })]);
 }
+
+it("accepts canonical lowercase and leap-second movement inspection instants", () => {
+  expect(
+    isLinkMessage({
+      type: "data_request",
+      request_id: "inspect-leap",
+      operation: "entity.inspect_movement",
+      target_id: "asset-1",
+      entity_created_at: "2026-01-02t23:59:60z",
+      at: "2026-01-03T00:00:00Z"
+    })
+  ).toBe(true);
+});

@@ -150,3 +150,10 @@ it.each([180, -180])("connects equivalent dateline endpoints at %i without inval
     ]
   ]);
 });
+
+it("clears a history preview when the camera starts moving", () => {
+  const movement = overlay();
+  const { map } = renderMapView({ movement, selectedId: "asset-1" });
+  act(() => map.fire("movestart"));
+  expect(movement.onPreview).toHaveBeenLastCalledWith(undefined);
+});

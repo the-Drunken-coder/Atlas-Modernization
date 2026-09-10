@@ -1243,7 +1243,7 @@
       "type": "object"
     },
     "NonEmptyString": {
-      "pattern": "[^\\t-\\r    -     　﻿]",
+      "pattern": "[^\\t-\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]",
       "type": "string"
     },
     "ObjectBlob": {
@@ -2943,6 +2943,14 @@
           "anyOf": [
             {
               "type": "object",
+              "properties": {
+                "latitude": {
+                  "type": "number"
+                },
+                "longitude": {
+                  "type": "number"
+                }
+              },
               "required": [
                 "latitude",
                 "longitude"
@@ -2950,43 +2958,39 @@
             },
             {
               "type": "object",
+              "properties": {
+                "latitude": {
+                  "not": {}
+                },
+                "longitude": {
+                  "not": {}
+                },
+                "speed_m_s": {
+                  "type": "number"
+                }
+              },
               "required": [
                 "speed_m_s"
               ]
             },
             {
               "type": "object",
+              "properties": {
+                "latitude": {
+                  "not": {}
+                },
+                "longitude": {
+                  "not": {}
+                },
+                "altitude_m": {
+                  "type": "number"
+                }
+              },
               "required": [
                 "altitude_m"
               ]
             }
           ]
-        },
-        {
-          "if": {
-            "type": "object",
-            "anyOf": [
-              {
-                "type": "object",
-                "required": [
-                  "latitude"
-                ]
-              },
-              {
-                "type": "object",
-                "required": [
-                  "longitude"
-                ]
-              }
-            ]
-          },
-          "then": {
-            "type": "object",
-            "required": [
-              "latitude",
-              "longitude"
-            ]
-          }
         }
       ]
     },

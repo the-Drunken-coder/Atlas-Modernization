@@ -26,7 +26,7 @@ func (h *Handler) ImportMovement(w http.ResponseWriter, r *http.Request) {
 }
 
 func movementTimestamp(r *http.Request, name string) (time.Time, error) {
-	t, err := time.Parse(time.RFC3339Nano, r.URL.Query().Get(name))
+	t, err := actions.ParseMovementTimestamp(r.URL.Query().Get(name))
 	if err != nil {
 		return t, actions.NewValidationError(name + " must be an RFC3339 timestamp")
 	}

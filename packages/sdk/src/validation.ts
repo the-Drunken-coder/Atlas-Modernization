@@ -147,12 +147,18 @@ function isSafeNonNegativeInteger(value: unknown): value is number {
 
 // Go accepts longer RFC3339 fractions but normalizes them to nanoseconds.
 export function compareMovementInstants(left: string, right: string, rightOffsetMilliseconds = 0): number {
-  const milliseconds = Date.parse(left) - Date.parse(right) - rightOffsetMilliseconds;
+  const milliseconds = movementMilliseconds(left) - movementMilliseconds(right) - rightOffsetMilliseconds;
   if (milliseconds !== 0) return milliseconds;
   const fraction = (value: string) => (/\.(\d+)/.exec(value)?.[1] ?? "").slice(0, 9).padEnd(9, "0");
   const a = fraction(left);
   const b = fraction(right);
   return a === b ? 0 : a < b ? -1 : 1;
+}
+
+// Match Core's normalization for the Protocol's accepted leap-second notation.
+function movementMilliseconds(value: string): number {
+  const leap = value.slice(17, 19) === "60";
+  return Date.parse(leap ? `${value.slice(0, 17)}59${value.slice(19)}` : value) + (leap ? 1000 : 0);
 }
 
 function sameMovementInstant(left: string, right: string): boolean {

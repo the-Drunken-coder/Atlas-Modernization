@@ -197,3 +197,13 @@ it("checks sample bounds and descending ordering at nanosecond precision", async
   );
   await expect(client.entities.history("asset-1", { ...query, from, to })).resolves.toBeDefined();
 });
+
+it("matches canonical lowercase and leap-second query timestamps", async () => {
+  const fetchImpl = vi
+    .fn<typeof fetch>()
+    .mockResolvedValue(Response.json({ entity_created_at: "2026-01-03T00:00:00Z", time: "2026-01-03T00:00:00Z" }));
+  const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl });
+  await expect(
+    client.entities.inspectMovement("asset-1", "2026-01-02t23:59:60z", "2026-01-02T23:59:60Z")
+  ).resolves.toBeDefined();
+});

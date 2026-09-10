@@ -330,3 +330,21 @@ func TestMovementTrailErrorMapping(t *testing.T) {
 		t.Fatal("changed a non-timeout error")
 	}
 }
+
+func TestParseMovementTimestampCanonicalForms(t *testing.T) {
+	for input, expected := range map[string]string{
+		"2026-01-02t03:04:05z":              "2026-01-02T03:04:05Z",
+		"2026-01-02T23:59:60.123456789012Z": "2026-01-03T00:00:00.123456789Z",
+		"2026-01-02T00:59:60+01:00":         "2026-01-02T00:00:00Z",
+	} {
+		got, err := ParseMovementTimestamp(input)
+		if err != nil || movementTime(got) != expected {
+			t.Errorf("parse %q: %s, %v", input, got, err)
+		}
+	}
+	for _, input := range []string{"", "bad", "2026-01-02T03:04:60Z"} {
+		if _, err := ParseMovementTimestamp(input); err == nil {
+			t.Errorf("accepted %q", input)
+		}
+	}
+}

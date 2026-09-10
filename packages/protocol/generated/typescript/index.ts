@@ -339,7 +339,18 @@ export type MovementSampleInput = {
   "observed_at"?: RFC3339Timestamp;
   "sample_id": NonEmptyString;
   "speed_m_s"?: number;
-} & Record<string, unknown>;
+} & ({
+  "latitude": number;
+  "longitude": number;
+} | {
+  "latitude"?: never;
+  "longitude"?: never;
+  "speed_m_s": number;
+} | {
+  "altitude_m": number;
+  "latitude"?: never;
+  "longitude"?: never;
+});
 
 export type MovementTrail = {
   "entity_created_at": RFC3339Timestamp;
@@ -939,7 +950,7 @@ export function isRFC3339Timestamp(value: unknown): value is RFC3339Timestamp {
 }
 
 export function isMovementHistoryBatchRequest(value: unknown): value is MovementHistoryBatchRequest {
-  return (atlasProtocolIsRecord(value) && (atlasProtocolHasOwn(value, "entity_created_at") && isRFC3339Timestamp(value["entity_created_at"])) && (atlasProtocolHasOwn(value, "samples") && Array.isArray(value["samples"]) && value["samples"].length >= 1 && value["samples"].length <= 500 && value["samples"].every((item) => ((atlasProtocolIsRecord(item) && (!atlasProtocolHasOwn(item, "altitude_m") || typeof item["altitude_m"] === "number" && Number.isFinite(item["altitude_m"])) && (!atlasProtocolHasOwn(item, "latitude") || typeof item["latitude"] === "number" && Number.isFinite(item["latitude"]) && item["latitude"] >= -90 && item["latitude"] <= 90) && (!atlasProtocolHasOwn(item, "longitude") || typeof item["longitude"] === "number" && Number.isFinite(item["longitude"]) && item["longitude"] >= -180 && item["longitude"] <= 180) && (!atlasProtocolHasOwn(item, "observed_at") || isRFC3339Timestamp(item["observed_at"])) && (atlasProtocolHasOwn(item, "sample_id") && (atlasProtocolIsNonEmptyString(item["sample_id"]) && typeof item["sample_id"] === "string" && Array.from(item["sample_id"]).length <= 128)) && (!atlasProtocolHasOwn(item, "speed_m_s") || typeof item["speed_m_s"] === "number" && Number.isFinite(item["speed_m_s"]) && item["speed_m_s"] >= 0) && Object.keys(item).every((key) => atlasProtocolKnownKeys(["altitude_m","latitude","longitude","observed_at","sample_id","speed_m_s"], key))) && ((atlasProtocolIsRecord(item) && atlasProtocolHasOwn(item, "latitude") && atlasProtocolHasOwn(item, "longitude")) || (atlasProtocolIsRecord(item) && atlasProtocolHasOwn(item, "speed_m_s")) || (atlasProtocolIsRecord(item) && atlasProtocolHasOwn(item, "altitude_m"))) && ((!(((atlasProtocolIsRecord(item) && atlasProtocolHasOwn(item, "latitude")) || (atlasProtocolIsRecord(item) && atlasProtocolHasOwn(item, "longitude")))) || ((atlasProtocolIsRecord(item) && atlasProtocolHasOwn(item, "latitude") && atlasProtocolHasOwn(item, "longitude")))))))) && Object.keys(value).every((key) => atlasProtocolKnownKeys(["entity_created_at","samples"], key)));
+  return (atlasProtocolIsRecord(value) && (atlasProtocolHasOwn(value, "entity_created_at") && isRFC3339Timestamp(value["entity_created_at"])) && (atlasProtocolHasOwn(value, "samples") && Array.isArray(value["samples"]) && value["samples"].length >= 1 && value["samples"].length <= 500 && value["samples"].every((item) => ((atlasProtocolIsRecord(item) && (!atlasProtocolHasOwn(item, "altitude_m") || typeof item["altitude_m"] === "number" && Number.isFinite(item["altitude_m"])) && (!atlasProtocolHasOwn(item, "latitude") || typeof item["latitude"] === "number" && Number.isFinite(item["latitude"]) && item["latitude"] >= -90 && item["latitude"] <= 90) && (!atlasProtocolHasOwn(item, "longitude") || typeof item["longitude"] === "number" && Number.isFinite(item["longitude"]) && item["longitude"] >= -180 && item["longitude"] <= 180) && (!atlasProtocolHasOwn(item, "observed_at") || isRFC3339Timestamp(item["observed_at"])) && (atlasProtocolHasOwn(item, "sample_id") && (atlasProtocolIsNonEmptyString(item["sample_id"]) && typeof item["sample_id"] === "string" && Array.from(item["sample_id"]).length <= 128)) && (!atlasProtocolHasOwn(item, "speed_m_s") || typeof item["speed_m_s"] === "number" && Number.isFinite(item["speed_m_s"]) && item["speed_m_s"] >= 0) && Object.keys(item).every((key) => atlasProtocolKnownKeys(["altitude_m","latitude","longitude","observed_at","sample_id","speed_m_s"], key))) && ((atlasProtocolIsRecord(item) && (atlasProtocolHasOwn(item, "latitude") && typeof item["latitude"] === "number" && Number.isFinite(item["latitude"])) && (atlasProtocolHasOwn(item, "longitude") && typeof item["longitude"] === "number" && Number.isFinite(item["longitude"]))) || (atlasProtocolIsRecord(item) && (!atlasProtocolHasOwn(item, "latitude") || !(true)) && (!atlasProtocolHasOwn(item, "longitude") || !(true)) && (atlasProtocolHasOwn(item, "speed_m_s") && typeof item["speed_m_s"] === "number" && Number.isFinite(item["speed_m_s"]))) || (atlasProtocolIsRecord(item) && (atlasProtocolHasOwn(item, "altitude_m") && typeof item["altitude_m"] === "number" && Number.isFinite(item["altitude_m"])) && (!atlasProtocolHasOwn(item, "latitude") || !(true)) && (!atlasProtocolHasOwn(item, "longitude") || !(true))))))) && Object.keys(value).every((key) => atlasProtocolKnownKeys(["entity_created_at","samples"], key)));
 }
 
 function atlasProtocolHasOwn(value: Record<string, unknown>, key: string): boolean {

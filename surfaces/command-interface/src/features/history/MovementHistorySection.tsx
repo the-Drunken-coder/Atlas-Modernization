@@ -17,6 +17,8 @@ export function MovementHistorySection({ history: h }: { history: MovementHistor
   const [customTo, setCustomTo] = useState("");
   const [customDraft, setCustomDraft] = useState(false);
   const [rangeError, setRangeError] = useState<string>();
+  const retentionLimited = h.data && compareMovementInstants(h.data.page.retained_from, h.data.window.from) > 0;
+  const retentionUnavailable = h.data && compareMovementInstants(h.data.page.retained_from, h.data.window.to) > 0;
   const samples = h.data?.page.samples ?? [];
   const selectedIndex = samples.findIndex((s) => s.sample_id === h.sample?.sample_id);
   const choose = (index: number) => {
@@ -105,10 +107,10 @@ export function MovementHistorySection({ history: h }: { history: MovementHistor
               <Button type="submit">Apply interval</Button>
             </form>
           )}
-          {h.data?.page.retention_advanced && (
+          {h.data && (retentionLimited || h.data.page.retention_advanced) && (
             <div className="movement-history__meta">
-              Retention advanced while browsing. Reports before {reportTime(h.data.page.retained_from)} UTC are
-              unavailable.
+              {h.data.page.retention_advanced && "Retention advanced while browsing. "}
+              Reports before {reportTime(h.data.page.retained_from)} UTC are unavailable.
             </div>
           )}
           {h.loading && <div role="status">{h.data ? "Refreshing history…" : "Loading history…"}</div>}
@@ -122,7 +124,13 @@ export function MovementHistorySection({ history: h }: { history: MovementHistor
             </div>
           )}
           {h.trailError && <div role="alert">Trail unavailable: {h.trailError} Use a shorter interval or Refresh.</div>}
-          {!h.loading && !h.error && !samples.length && <div>No movement reports in this interval.</div>}
+          {!h.loading && !h.error && !samples.length && (
+            <div>
+              {retentionUnavailable
+                ? "This interval is outside retained history."
+                : "No movement reports in this interval."}
+            </div>
+          )}
           {(samples.length > 0 || h.data || h.canGoNewer) && (
             <>
               {samples.length > 0 && (

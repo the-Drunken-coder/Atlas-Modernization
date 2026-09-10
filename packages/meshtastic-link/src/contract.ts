@@ -21,6 +21,7 @@ import {
   isObjectResource,
   isObjectUpdateRequest,
   isPluginDiscoveryResponse,
+  isRFC3339Timestamp,
   isRuntimeReadyRequest,
   isRuntimeRegistrationRequest,
   isRuntimeStopRequest,
@@ -333,7 +334,9 @@ function validOperationContext(operation: AtlasRadioOperationName, value: Record
           (Number.isSafeInteger(value.max_points) && Number(value.max_points) >= 2 && Number(value.max_points) <= 5000))
       );
     case "entity.inspect_movement":
-      return isNonEmptyString(value.target_id) && isRFC3339(value.entity_created_at) && isRFC3339(value.at);
+      return (
+        isNonEmptyString(value.target_id) && isRFC3339Timestamp(value.entity_created_at) && isRFC3339Timestamp(value.at)
+      );
     case "entity.import_movement":
     case "entity.get":
     case "entity.update":
@@ -583,9 +586,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function validMovementWindow(value: Record<string, unknown>): boolean {
   return (
     isNonEmptyString(value.target_id) &&
-    isRFC3339(value.entity_created_at) &&
-    isRFC3339(value.from) &&
-    isRFC3339(value.to) &&
+    isRFC3339Timestamp(value.entity_created_at) &&
+    isRFC3339Timestamp(value.from) &&
+    isRFC3339Timestamp(value.to) &&
     compareMovementInstants(String(value.from), String(value.to)) <= 0 &&
     compareMovementInstants(String(value.to), String(value.from), 2592000000) <= 0
   );

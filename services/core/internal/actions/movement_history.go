@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	protocol "github.com/the-drunken-coder/atlas/packages/protocol/generated/go/atlasprotocol"
+	protocolvalidator "github.com/the-drunken-coder/atlas/packages/protocol/validator"
 	"github.com/the-drunken-coder/atlas/services/core/internal/models"
 )
 
@@ -19,6 +20,24 @@ const MovementRetention = 30 * 24 * time.Hour
 const movementClockSkew = 5 * time.Minute
 
 func movementTime(t time.Time) string { return t.UTC().Format(time.RFC3339Nano) }
+
+// ParseMovementTimestamp accepts the canonical Protocol forms. Leap seconds fold
+// onto the following second because Go and PostgreSQL do not represent them.
+func ParseMovementTimestamp(value string) (time.Time, error) {
+	if issues := protocolvalidator.ValidateDefinition("RFC3339Timestamp", value); len(issues) > 0 {
+		return time.Time{}, NewValidationError("invalid RFC3339 timestamp")
+	}
+	normalized := strings.ToUpper(value)
+	leap := normalized[17:19] == "60"
+	if leap {
+		normalized = normalized[:17] + "59" + normalized[19:]
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, normalized)
+	if leap {
+		parsed = parsed.Add(time.Second)
+	}
+	return parsed, err
+}
 
 // Normalize once to PostgreSQL precision so retries compare canonical values.
 func validateMovement(input protocol.MovementSampleInput, received time.Time) (*time.Time, time.Time, error) {
@@ -48,7 +67,7 @@ func validateMovement(input protocol.MovementSampleInput, received time.Time) (*
 	if input.ObservedAt == nil {
 		return nil, received, nil
 	}
-	observed, err := time.Parse(time.RFC3339Nano, *input.ObservedAt)
+	observed, err := ParseMovementTimestamp(*input.ObservedAt)
 	if err != nil || observed.After(received.Add(movementClockSkew)) {
 		return nil, time.Time{}, NewValidationError("observed_at must be RFC3339 and at most five minutes ahead of arrival")
 	}
@@ -150,7 +169,7 @@ func movementEntity(ctx context.Context, tx pgx.Tx, id string, created time.Time
 }
 
 func (a *EntityActions) ImportMovement(ctx context.Context, id string, request protocol.MovementHistoryBatchRequest, received time.Time) (*protocol.MovementHistoryBatchResponse, error) {
-	created, err := time.Parse(time.RFC3339Nano, request.EntityCreatedAt)
+	created, err := ParseMovementTimestamp(request.EntityCreatedAt)
 	if err != nil {
 		return nil, NewValidationError("entity_created_at must identify the current Entity record")
 	}

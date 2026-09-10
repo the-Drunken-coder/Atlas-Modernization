@@ -140,6 +140,7 @@ export {
   isPluginStatus,
   isProtocolRevisionResponse,
   isResourceType,
+  isRFC3339Timestamp,
   isRuntimeReadyRequest,
   isRuntimeRegistrationRequest,
   isRuntimeStopRequest,

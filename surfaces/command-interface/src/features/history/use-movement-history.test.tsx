@@ -299,3 +299,64 @@ it("lets preview-only Escape fall through to Entity selection", async () => {
   act(() => expect(result.current.dismiss()).toBe(false));
   expect(result.current.following).toBe(true);
 });
+
+it("keeps a fixed interval trail across raw-page navigation", async () => {
+  const api = reader();
+  api.history.mockResolvedValue({ ...page, next_cursor: "older" });
+  const { result } = renderHook(() => useMovementHistory(entity, api));
+  act(() => {
+    result.current.toggle();
+    result.current.changeRange(2592000000);
+  });
+  await settle();
+  act(() => result.current.navigatePage(true));
+  expect(result.current.data?.trail).toEqual(trail);
+  await settle();
+  act(() => result.current.navigatePage(false));
+  await settle();
+  expect(api.trail).toHaveBeenCalledTimes(1);
+  act(() => result.current.refresh());
+  await settle();
+  expect(api.trail).toHaveBeenCalledTimes(2);
+});
+
+it.each(["2026-09-09T11:59:00Z", "2026-09-09T12:01:00Z"])(
+  "labels retention coverage on a first page with cutoff %s",
+  async (cutoff) => {
+    const api = reader();
+    api.history.mockResolvedValue({ ...page, samples: [], retained_from: cutoff });
+    function Panel() {
+      return <MovementHistorySection history={useMovementHistory(entity, api)} />;
+    }
+    render(<Panel />);
+    fireEvent.click(screen.getByRole("button", { name: "Show" }));
+    await settle();
+    expect(screen.getByText(/Reports before .* are unavailable/)).toBeInTheDocument();
+    if (cutoff > time) expect(screen.getByText("This interval is outside retained history.")).toBeInTheDocument();
+  }
+);
+
+it("keeps an in-flight trail request alive across page navigation", async () => {
+  const api = reader();
+  api.history.mockResolvedValue({ ...page, next_cursor: "older" });
+  let resolve!: (value: MovementTrail) => void;
+  api.trail.mockImplementation(
+    () =>
+      new Promise((r) => {
+        resolve = r;
+      })
+  );
+  const { result } = renderHook(() => useMovementHistory(entity, api));
+  act(() => {
+    result.current.toggle();
+    result.current.changeRange(2592000000);
+  });
+  await settle();
+  const signal = api.trail.mock.calls[0]?.[1].signal;
+  act(() => result.current.navigatePage(true));
+  await settle();
+  expect(api.trail).toHaveBeenCalledTimes(1);
+  expect(signal?.aborted).toBe(false);
+  await act(async () => resolve(trail));
+  expect(result.current.data?.trail).toEqual(trail);
+});

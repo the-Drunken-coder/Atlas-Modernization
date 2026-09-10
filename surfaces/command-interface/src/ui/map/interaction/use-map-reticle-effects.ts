@@ -81,6 +81,7 @@ export function useMapReticleEffects({ options, stateStore, pointer, zooming, re
       return;
     }
     const start = () => {
+      optionsRef.current.onHistoryHover?.(undefined);
       if (cameraSettleFrameRef.current !== undefined) cancelAnimationFrame(cameraSettleFrameRef.current);
       cameraSettleFrameRef.current = undefined;
       setCameraMoving(true);
@@ -100,7 +101,7 @@ export function useMapReticleEffects({ options, stateStore, pointer, zooming, re
       if (cameraSettleFrameRef.current !== undefined) cancelAnimationFrame(cameraSettleFrameRef.current);
       cameraSettleFrameRef.current = undefined;
     };
-  }, [mapReady, mapRef, setCameraMoving]);
+  }, [mapReady, mapRef, setCameraMoving, optionsRef]);
 
   useLayoutEffect(() => {
     if (!reticleVisible && !selectedEntityId) return;

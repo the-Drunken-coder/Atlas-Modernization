@@ -5,7 +5,7 @@ import type {
   MovementSample,
   MovementTrail
 } from "@the-drunken-coder/atlas-sdk";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { sanitizeConnectionError } from "../../atlas/connection-error.js";
 import type { MovementHistoryReader } from "../../atlas/data-source.js";
 
@@ -39,6 +39,9 @@ export function useMovementHistory(entity: EntityResource | undefined, reader: M
   const [view, setView] = useState(() => initial(key));
   const [data, setData] = useState<HistoryData>();
   const [trailData, setTrailData] = useState<{ key: string; value: MovementTrail }>();
+  const trailRequest = useRef<{ key: string; controller: AbortController; promise: Promise<void> } | undefined>(
+    undefined
+  );
   const [trailError, setTrailError] = useState<string>();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>();
@@ -87,18 +90,24 @@ export function useMovementHistory(entity: EntityResource | undefined, reader: M
             .catch((cause) => {
               if (!controller.signal.aborted) setError(sanitizeConnectionError(cause));
             }),
-          reader
-            .trail(id, { ...query, maxPoints: 1000 })
-            .then((value) => {
-              if (controller.signal.aborted) return;
-              setTrailData({ key, value });
-              setTrailError(undefined);
-            })
-            .catch((cause) => {
-              if (!controller.signal.aborted) {
-                setTrailError(sanitizeConnectionError(cause));
-              }
-            })
+          (() => {
+            const trailKey = `${key}/${window.from}/${window.to}/${view.refresh}`;
+            if (trailRequest.current?.key === trailKey) return trailRequest.current.promise;
+            trailRequest.current?.controller.abort();
+            const trailController = new AbortController();
+            const promise = reader
+              .trail(id, { ...query, signal: trailController.signal, maxPoints: 1000 })
+              .then((value) => {
+                if (trailController.signal.aborted) return;
+                setTrailData({ key, value });
+                setTrailError(undefined);
+              })
+              .catch((cause) => {
+                if (!trailController.signal.aborted) setTrailError(sanitizeConnectionError(cause));
+              });
+            trailRequest.current = { key: trailKey, controller: trailController, promise };
+            return promise;
+          })()
         ]);
       } catch (cause) {
         if (!controller.signal.aborted) setError(sanitizeConnectionError(cause));
@@ -115,6 +124,14 @@ export function useMovementHistory(entity: EntityResource | undefined, reader: M
       clearTimeout(timer);
     };
   }, [open, id, created, key, reader, view.duration, view.window, view.following, view.cursor, view.refresh]);
+
+  useEffect(
+    () => () => {
+      trailRequest.current?.controller.abort();
+      trailRequest.current = undefined;
+    },
+    [open, key, reader]
+  );
 
   const sample = preview ?? view.pinned ?? (!view.dismissed ? current?.page.samples[0] : undefined);
   const at = sample?.time;
@@ -168,6 +185,8 @@ export function useMovementHistory(entity: EntityResource | undefined, reader: M
     setPreview(undefined);
     setData(undefined);
     setInspection(undefined);
+    trailRequest.current?.controller.abort();
+    trailRequest.current = undefined;
     setTrailData(undefined);
     setTrailError(undefined);
     setView((v) => ({
@@ -190,10 +209,7 @@ export function useMovementHistory(entity: EntityResource | undefined, reader: M
     const cursor = older ? current.page.next_cursor : view.cursors.at(-1);
     if (older && !cursor) return;
     setPreview(undefined);
-    setData(undefined);
     setInspection(undefined);
-    setTrailData(undefined);
-    setTrailError(undefined);
     setView((v) => ({
       ...v,
       window: current.window,
@@ -244,6 +260,8 @@ export function useMovementHistory(entity: EntityResource | undefined, reader: M
       setPreview(undefined);
       setInspection(undefined);
       setData(undefined);
+      trailRequest.current?.controller.abort();
+      trailRequest.current = undefined;
       setTrailData(undefined);
       setTrailError(undefined);
       setView((v) => ({
