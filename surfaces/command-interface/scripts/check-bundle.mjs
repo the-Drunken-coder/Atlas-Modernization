@@ -16,7 +16,7 @@ const budgets = {
   // Blueprint Core is a deliberate shell dependency. These limits include its
   // shared component styles and icon-path chunks. Map budgets remain scoped separately.
   // Movement history adds SDK response validators, sidebar controls and trail
-  // layers. With cross-field validators: initial 429.03 kB, shell 159.16 kB, map 75.75 kB raw.
+  // layers. With cross-field validators: initial 429.08 kB, shell 159.16 kB, map 75.75 kB raw.
   // Keep a small margin plus gzip allowance for platform zlib variance.
   initialJavaScript: { raw: 430_000, gzip: 130_000 },
   initialCss: { raw: 512_000, gzip: 55_000 },
@@ -32,7 +32,7 @@ const budgets = {
   mapRoute: { raw: 2_100_000, gzip: 550_000 },
   // Movement history brings the combined build to about 3,652 kB raw / 1,006 kB gzip.
   // Retain the existing allowance for Linux zlib variance.
-  allJavaScript: { raw: 3_652_000, gzip: 1_008_000 },
+  allJavaScript: { raw: 3_653_000, gzip: 1_008_000 },
   allCss: { raw: 603_000, gzip: 67_000 }
 };
 

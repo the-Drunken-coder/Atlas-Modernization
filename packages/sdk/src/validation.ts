@@ -175,6 +175,7 @@ export function movementHistoryResponseValidator(query: MovementHistoryQuery): R
     value.samples.every(
       (sample, index, samples) =>
         coherentMovementSample(sample) &&
+        compareMovementInstants(sample.time, value.retained_from) >= 0 &&
         compareMovementInstants(sample.time, query.from) >= 0 &&
         compareMovementInstants(sample.time, query.to) <= 0 &&
         (index === 0 || compareMovementInstants(samples[index - 1]!.time, sample.time) >= 0)
@@ -202,6 +203,7 @@ export function movementTrailResponseValidator(query: MovementTrailQuery): Respo
         coherentMovementSample(sample) &&
         sample.latitude !== undefined &&
         sample.longitude !== undefined &&
+        compareMovementInstants(sample.time, value.retained_from) >= 0 &&
         compareMovementInstants(sample.time, query.from) >= 0 &&
         compareMovementInstants(sample.time, query.to) <= 0 &&
         (index === 0 || compareMovementInstants(points[index - 1]!.sample.time, sample.time) <= 0) &&

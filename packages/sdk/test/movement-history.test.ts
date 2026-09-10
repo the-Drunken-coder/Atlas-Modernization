@@ -294,3 +294,17 @@ it("rejects a report whose time source contradicts its timestamps", async () => 
   });
   await expect(client.entities.history("asset-1", query)).rejects.toThrow();
 });
+
+it.each(["history", "trail"] as const)("enforces the returned retention cutoff for %s", async (method) => {
+  const fetchImpl = vi.fn<typeof fetch>();
+  const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl });
+  const sample = { ...page.samples[0], latitude: 1, longitude: 2 };
+  const response =
+    method === "history"
+      ? { ...page, samples: [sample] }
+      : { ...trail, points: [{ sample, gap_before: false }], position_count: 1 };
+  fetchImpl.mockResolvedValueOnce(Response.json(response));
+  await expect(client.entities[method]("asset-1", query)).resolves.toEqual(response);
+  fetchImpl.mockResolvedValueOnce(Response.json({ ...response, retained_from: "2026-09-09T12:00:00.000000001Z" }));
+  await expect(client.entities[method]("asset-1", query)).rejects.toThrow();
+});

@@ -177,7 +177,6 @@ func (a *EntityActions) ImportMovement(ctx context.Context, id string, request p
 		return nil, NewValidationError("movement batches require 1 to 500 samples")
 	}
 	received = received.UTC().Truncate(time.Microsecond)
-	cutoff := time.Now().Add(-MovementRetention)
 	// Validate the entire batch before skipping expired reports or changing rows.
 	for _, sample := range request.Samples {
 		if _, _, err := validateMovement(sample, received); err != nil {
@@ -194,6 +193,7 @@ func (a *EntityActions) ImportMovement(ctx context.Context, id string, request p
 		return nil, err
 	}
 	result := &protocol.MovementHistoryBatchResponse{}
+	cutoff := time.Now().Add(-MovementRetention)
 	for _, sample := range request.Samples {
 		_, t, _ := validateMovement(sample, received)
 		if t.Before(cutoff) {
