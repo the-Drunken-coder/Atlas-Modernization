@@ -158,11 +158,11 @@ export function useMovementHistory(entity: EntityResource | undefined, reader: M
     [current?.window]
   );
   const dismiss = useCallback(() => {
-    if (!view.pinned && !preview) return false;
+    if (!view.pinned) return false;
     setPreview(undefined);
     setView((v) => ({ ...v, pinned: undefined, dismissed: true }));
     return true;
-  }, [view.pinned, preview]);
+  }, [view.pinned]);
   const changeRange = (duration: number, window?: Window) => {
     const now = Date.now();
     setPreview(undefined);

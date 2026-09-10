@@ -1,12 +1,12 @@
 import { HTMLSelect } from "@blueprintjs/core";
-import type { MovementSample } from "@the-drunken-coder/atlas-sdk";
+import { compareMovementInstants, type MovementSample } from "@the-drunken-coder/atlas-sdk";
 import { useState } from "react";
 import { Button, TextField } from "../../ui/primitives/controls.js";
 import { FieldGrid, Section } from "../shared/panels.js";
 import type { MovementHistoryState } from "./use-movement-history.js";
 
 export function movementAge(sample: MovementSample | undefined, at: string) {
-  return sample && Date.parse(at) - Date.parse(sample.time) > 60000
+  return sample && compareMovementInstants(at, sample.time, 60000) > 0
     ? `${Math.floor((Date.parse(at) - Date.parse(sample.time)) / 60000)} min old`
     : undefined;
 }

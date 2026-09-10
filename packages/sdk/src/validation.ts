@@ -146,8 +146,8 @@ function isSafeNonNegativeInteger(value: unknown): value is number {
 }
 
 // Go accepts longer RFC3339 fractions but normalizes them to nanoseconds.
-function compareMovementInstants(left: string, right: string): number {
-  const milliseconds = Date.parse(left) - Date.parse(right);
+export function compareMovementInstants(left: string, right: string, rightOffsetMilliseconds = 0): number {
+  const milliseconds = Date.parse(left) - Date.parse(right) - rightOffsetMilliseconds;
   if (milliseconds !== 0) return milliseconds;
   const fraction = (value: string) => (/\.(\d+)/.exec(value)?.[1] ?? "").slice(0, 9).padEnd(9, "0");
   const a = fraction(left);

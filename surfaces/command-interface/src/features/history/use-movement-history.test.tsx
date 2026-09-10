@@ -124,6 +124,10 @@ it("uses historical time and only labels quantities older than 60 seconds", () =
   expect(movementAge(sample, "2026-09-09T12:01:00Z")).toBeUndefined();
   expect(movementAge(sample, "2026-09-09T12:01:01Z")).toBe("1 min old");
   expect(movementAge(undefined, time)).toBeUndefined();
+  expect(movementAge(sample, "2026-09-09T12:01:00.000001Z")).toBe("1 min old");
+  expect(
+    movementAge({ ...sample, time: "2026-09-09T12:00:00.000001Z" }, "2026-09-09T12:01:00.000001Z")
+  ).toBeUndefined();
 });
 
 it("steps actual reports from focused sidebar controls and Escape dismisses the pin", async () => {
@@ -284,4 +288,14 @@ it("does not label a completed hover inspection as following when returning to l
   expect(result.current.sample).toEqual(sample);
   expect(result.current.inspection).toBeUndefined();
   expect(result.current.inspectionError).toBeDefined();
+});
+
+it("lets preview-only Escape fall through to Entity selection", async () => {
+  const api = reader();
+  const { result } = renderHook(() => useMovementHistory(entity, api));
+  act(() => result.current.toggle());
+  await settle();
+  act(() => result.current.setPreview({ ...sample, sample_id: "hover" }));
+  act(() => expect(result.current.dismiss()).toBe(false));
+  expect(result.current.following).toBe(true);
 });

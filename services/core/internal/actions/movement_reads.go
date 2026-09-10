@@ -160,12 +160,13 @@ func (a *EntityActions) InspectMovement(ctx context.Context, id string, created,
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	result := &protocol.MovementInspection{EntityCreatedAt: movementTime(created), Time: movementTime(at)}
+	cutoff := time.Now().Add(-MovementRetention)
 	// Fixed column names match partial indexes; never interpolate request values.
 	for _, field := range []struct {
 		column string
 		target **protocol.MovementSample
 	}{{"latitude", &result.Position}, {"speed_m_s", &result.Speed}, {"altitude_m", &result.Altitude}} {
-		sample, _, err := scanMovement(tx.QueryRow(ctx, `SELECT `+movementColumns+` FROM entity_movement_samples WHERE entity_id=$1 AND entity_created_at=$2 AND sample_time >= $3 AND sample_time <= $4 AND `+field.column+` IS NOT NULL ORDER BY sample_time DESC,sequence DESC LIMIT 1`, id, created, time.Now().Add(-MovementRetention), at))
+		sample, _, err := scanMovement(tx.QueryRow(ctx, `SELECT `+movementColumns+` FROM entity_movement_samples WHERE entity_id=$1 AND entity_created_at=$2 AND sample_time >= $3 AND sample_time <= $4 AND `+field.column+` IS NOT NULL ORDER BY sample_time DESC,sequence DESC LIMIT 1`, id, created, cutoff, at))
 		if errors.Is(err, pgx.ErrNoRows) {
 			continue
 		}

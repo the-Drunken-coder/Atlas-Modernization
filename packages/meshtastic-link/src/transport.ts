@@ -3,13 +3,13 @@ import {
   changedSinceResponseValidator,
   isEntityCheckInResponse,
   isEntityResource,
-  isMovementHistoryPage,
+  isMovementHistoryBatchRequest,
   isMovementTrail,
   isObjectDetailResource,
   isRuntimeTaskDeliveryResponse,
   isTaskResource,
-  type MovementHistoryPage,
-  type MovementTrail,
+  movementHistoryResponseValidator,
+  movementImportResponseValidator,
   movementInspectionResponseValidator,
   movementWindowResponseValidator
 } from "@the-drunken-coder/atlas-sdk";
@@ -2243,15 +2243,18 @@ function responseMatchesRequest(
   if (response.operation !== request.operation) return false;
   switch (request.operation) {
     case "entity.history":
-    case "entity.trail":
-      return movementWindowResponseValidator<MovementHistoryPage | MovementTrail>(
-        request.operation === "entity.history" ? isMovementHistoryPage : isMovementTrail,
-        {
-          entityCreatedAt: request.entity_created_at ?? "",
-          from: request.from ?? "",
-          to: request.to ?? ""
-        }
+    case "entity.trail": {
+      const query = {
+        entityCreatedAt: request.entity_created_at ?? "",
+        from: request.from ?? "",
+        to: request.to ?? ""
+      };
+      return (
+        request.operation === "entity.history"
+          ? movementHistoryResponseValidator(query)
+          : movementWindowResponseValidator(isMovementTrail, query)
       )(response.output);
+    }
     case "entity.inspect_movement":
       return movementInspectionResponseValidator(request.entity_created_at ?? "", request.at ?? "")(response.output);
     case "entity.get":
@@ -2277,6 +2280,11 @@ function responseMatchesRequest(
 function responseMatchesMutation(request: ResourceOperation, response: DataResponse): boolean {
   if (response.operation !== request.operation) return false;
   switch (request.operation) {
+    case "entity.import_movement":
+      return (
+        isMovementHistoryBatchRequest(request.input) &&
+        movementImportResponseValidator(request.input.samples.length)(response.output)
+      );
     case "entity.update":
       return isEntityResource(response.output) && response.output.entity_id === request.target_id;
     case "entity.check_in":

@@ -159,11 +159,14 @@ export { mapAreaSquareMeters } from "./spatial.js";
 export { joinAtlasUrl, normalizeAtlasBaseUrl } from "./url.js";
 export {
   changedSinceResponseValidator,
+  compareMovementInstants,
   isEntityResource,
   isFullDatasetResponse,
   isObjectDetailResource,
   isObjectResource,
   isTaskResource,
+  movementHistoryResponseValidator,
+  movementImportResponseValidator,
   movementInspectionResponseValidator,
   movementWindowResponseValidator
 } from "./validation.js";

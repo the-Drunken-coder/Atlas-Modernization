@@ -114,6 +114,13 @@ describe("generated Radio contract", () => {
       expect(isLinkMessage({ ...request, max_points: 1 })).toBe(false);
       expect(isLinkMessage({ ...request, max_points: 5001 })).toBe(false);
       const from = "2026-08-01T00:00:00.000000001Z";
+      expect(
+        isLinkMessage({
+          ...request,
+          from: "2026-08-01T00:00:00.000000000001Z",
+          to: "2026-08-31T00:00:00.000000000002Z"
+        })
+      ).toBe(true);
       expect(isLinkMessage({ ...request, from, to: "2026-08-31T00:00:00.000000001Z" })).toBe(true);
       expect(isLinkMessage({ ...request, from, to: "2026-08-31T00:00:00.000000002Z" })).toBe(false);
       expect(isLinkMessage({ ...request, from, to: "2026-08-01T00:00:00.000000000Z" })).toBe(false);
