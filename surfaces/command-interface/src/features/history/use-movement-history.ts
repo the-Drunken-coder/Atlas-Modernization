@@ -69,8 +69,8 @@ export function useMovementHistory(entity: EntityResource | undefined, reader: M
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     setError(undefined);
-    const read = async () => {
-      setLoading(true);
+    const read = async (background = false) => {
+      if (!background) setLoading(true);
       try {
         if (!reader) throw new Error("Movement history is unavailable");
         const now = Date.now();
@@ -114,7 +114,7 @@ export function useMovementHistory(entity: EntityResource | undefined, reader: M
       } finally {
         if (!controller.signal.aborted) {
           setLoading(false);
-          if (view.following) timer = setTimeout(() => void read(), 5000);
+          if (view.following) timer = setTimeout(() => void read(true), 5000);
         }
       }
     };

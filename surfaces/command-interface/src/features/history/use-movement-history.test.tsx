@@ -390,3 +390,31 @@ it("accepts only one page transition until that page arrives", async () => {
   await settle();
   expect(api.history.mock.calls.at(-1)?.[1].cursor).toBeUndefined();
 });
+
+it("keeps automatic refresh quiet while explicit refresh still reports progress", async () => {
+  const api = reader();
+  let resolve!: (value: MovementHistoryPage) => void;
+  api.history.mockImplementation(
+    () =>
+      new Promise((r) => {
+        resolve = r;
+      })
+  );
+  function Panel() {
+    return <MovementHistorySection history={useMovementHistory(entity, api)} />;
+  }
+  render(<Panel />);
+  fireEvent.click(screen.getByRole("button", { name: "Show" }));
+  expect(screen.getByRole("status")).toHaveTextContent("Loading history");
+  await act(async () => resolve(page));
+  await settle();
+  await act(async () => vi.advanceTimersByTimeAsync(5001));
+  expect(api.history).toHaveBeenCalledTimes(2);
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  expect(screen.getByRole("combobox", { name: "Historical report" })).toBeInTheDocument();
+  await act(async () => resolve(page));
+  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  expect(screen.getByRole("status")).toHaveTextContent("Refreshing history");
+  await act(async () => resolve(page));
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+});

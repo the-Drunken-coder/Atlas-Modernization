@@ -356,3 +356,53 @@ func TestParseMovementTimestampCanonicalForms(t *testing.T) {
 		}
 	}
 }
+
+func TestMovementBulkImportDuplicatesAndRollback(t *testing.T) {
+	pool := openActionsTestPool(t)
+	ctx := context.Background()
+	a := NewEntityActions(pool)
+	id := fmt.Sprintf("movement-bulk-%d", time.Now().UnixNano())
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, `DELETE FROM entity_movement_samples WHERE entity_id=$1`, id)
+		_, _ = pool.Exec(ctx, `DELETE FROM entities WHERE entity_id=$1`, id)
+	})
+	e, err := a.Create(ctx, CreateEntityParams{EntityID: id, EntityType: "track"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	batch := protocol.MovementHistoryBatchRequest{EntityCreatedAt: movementTime(e.CreatedAt)}
+	for i := range 498 {
+		batch.Samples = append(batch.Samples, protocol.MovementSampleInput{SampleID: fmt.Sprint(i), SpeedMS: movementPtr(float64(i))})
+	}
+	// Equivalent timestamps normalize before duplicate comparison, even within one batch.
+	batch.Samples = append(batch.Samples,
+		protocol.MovementSampleInput{SampleID: "normalized", ObservedAt: movementPtr(movementTime(now)), AltitudeM: movementPtr(0.0)},
+		protocol.MovementSampleInput{SampleID: "normalized", ObservedAt: movementPtr(movementTime(now.Add(time.Nanosecond))), AltitudeM: movementPtr(0.0)})
+	result, err := a.ImportMovement(ctx, id, batch, now)
+	if err != nil || result.Inserted != 499 || result.Duplicates != 1 || result.Expired != 0 {
+		t.Fatalf("bulk import: %+v %v", result, err)
+	}
+	result, err = a.ImportMovement(ctx, id, batch, now.Add(time.Second))
+	if err != nil || result.Inserted != 0 || result.Duplicates != 500 {
+		t.Fatalf("bulk retry: %+v %v", result, err)
+	}
+	var received time.Time
+	if err := pool.QueryRow(ctx, `SELECT received_at FROM entity_movement_samples WHERE entity_id=$1 AND sample_id='0'`, id).Scan(&received); err != nil || !received.Equal(now) {
+		t.Fatalf("retry changed arrival: %v %v", received, err)
+	}
+	batch.Samples = []protocol.MovementSampleInput{
+		{SampleID: "new", SpeedMS: movementPtr(1.0)},
+		{SampleID: "conflict", SpeedMS: movementPtr(1.0)},
+		{SampleID: "conflict", SpeedMS: movementPtr(2.0)},
+	}
+	_, err = a.ImportMovement(ctx, id, batch, now)
+	var conflict *ConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("within-batch conflict: %v", err)
+	}
+	var count int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM entity_movement_samples WHERE entity_id=$1`, id).Scan(&count); err != nil || count != 499 {
+		t.Fatalf("conflict changed stored rows: %d %v", count, err)
+	}
+}

@@ -168,6 +168,13 @@ func movementEntity(ctx context.Context, tx pgx.Tx, id string, created time.Time
 	return entity, nil
 }
 
+// A prepared import keeps the normalized observation time alongside its retention
+// time. Validate before locking so malformed and expired inputs behave consistently.
+type movementImportSample struct {
+	protocol.MovementSampleInput
+	time time.Time
+}
+
 func (a *EntityActions) ImportMovement(ctx context.Context, id string, request protocol.MovementHistoryBatchRequest, received time.Time) (*protocol.MovementHistoryBatchResponse, error) {
 	created, err := ParseMovementTimestamp(request.EntityCreatedAt)
 	if err != nil {
@@ -178,10 +185,17 @@ func (a *EntityActions) ImportMovement(ctx context.Context, id string, request p
 	}
 	received = received.UTC().Truncate(time.Microsecond)
 	// Validate the entire batch before skipping expired reports or changing rows.
+	prepared := make([]movementImportSample, 0, len(request.Samples))
 	for _, sample := range request.Samples {
-		if _, _, err := validateMovement(sample, received); err != nil {
+		observed, at, err := validateMovement(sample, received)
+		if err != nil {
 			return nil, err
 		}
+		if observed != nil {
+			normalized := movementTime(*observed)
+			sample.ObservedAt = &normalized
+		}
+		prepared = append(prepared, movementImportSample{MovementSampleInput: sample, time: at})
 	}
 	tx, err := a.pool.Begin(ctx)
 	if err != nil {
@@ -194,21 +208,49 @@ func (a *EntityActions) ImportMovement(ctx context.Context, id string, request p
 	}
 	result := &protocol.MovementHistoryBatchResponse{}
 	cutoff := time.Now().Add(-MovementRetention)
-	for _, sample := range request.Samples {
-		_, t, _ := validateMovement(sample, received)
-		if t.Before(cutoff) {
+	eligible := prepared[:0]
+	for _, sample := range prepared {
+		if sample.time.Before(cutoff) {
 			result.Expired++
-			continue
-		}
-		inserted, err := insertMovement(ctx, tx, entity, sample, received)
-		if err != nil {
-			return nil, err
-		}
-		if inserted {
-			result.Inserted++
 		} else {
-			result.Duplicates++
+			eligible = append(eligible, sample)
 		}
+	}
+	if len(eligible) > 0 {
+		encoded, err := json.Marshal(eligible)
+		if err != nil {
+			return nil, fmt.Errorf("encode movement import: %w", err)
+		}
+		// The Entity lock serializes sample allocation, including live capture.
+		// Send the complete batch once instead of holding that lock across hundreds
+		// of client/server round trips. A conflict rolls back the whole transaction.
+		var conflict bool
+		err = tx.QueryRow(ctx, `WITH incoming AS (
+ SELECT DISTINCT * FROM jsonb_to_recordset($3::jsonb) AS sample(
+  sample_id text, observed_at timestamptz, latitude double precision,
+  longitude double precision, speed_m_s double precision, altitude_m double precision)
+), conflicts AS (
+ SELECT sample_id FROM incoming GROUP BY sample_id HAVING count(*) > 1
+ UNION ALL
+ SELECT incoming.sample_id FROM incoming JOIN entity_movement_samples stored
+  ON stored.entity_id=$1 AND stored.entity_created_at=$2 AND stored.sample_id=incoming.sample_id
+ WHERE ROW(stored.observed_at,stored.latitude,stored.longitude,stored.speed_m_s,stored.altitude_m)
+  IS DISTINCT FROM ROW(incoming.observed_at,incoming.latitude,incoming.longitude,incoming.speed_m_s,incoming.altitude_m)
+), inserted AS (
+ INSERT INTO entity_movement_samples
+  (entity_id,entity_created_at,sample_id,observed_at,received_at,sample_time,latitude,longitude,speed_m_s,altitude_m)
+ SELECT $1,$2,sample_id,observed_at,$4,COALESCE(observed_at,$4),latitude,longitude,speed_m_s,altitude_m
+ FROM incoming ON CONFLICT (entity_id,entity_created_at,sample_id) DO NOTHING
+ RETURNING sample_id
+)
+SELECT (SELECT count(*) FROM inserted), EXISTS(SELECT 1 FROM conflicts)`, entity.EntityID, entity.CreatedAt, encoded, received).Scan(&result.Inserted, &conflict)
+		if err != nil {
+			return nil, fmt.Errorf("import movement batch: %w", err)
+		}
+		if conflict {
+			return nil, &ConflictError{ActionError: ActionError{Message: "sample_id already belongs to a different movement report", Code: protocol.ErrorCodeValidationError}}
+		}
+		result.Duplicates = int64(len(eligible)) - result.Inserted
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
