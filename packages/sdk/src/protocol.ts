@@ -100,6 +100,7 @@ export {
   isGeometryComponent,
   isJSONValue,
   isMapArea,
+  isMovementHistoryBatchRequest,
   isMovementHistoryBatchResponse,
   isMovementHistoryPage,
   isMovementInspection,

@@ -121,58 +121,61 @@ export function MovementHistorySection({ history: h }: { history: MovementHistor
               </Button>
             </div>
           )}
+          {h.trailError && <div role="alert">Trail unavailable: {h.trailError} Use a shorter interval or Refresh.</div>}
           {!h.loading && !h.error && !samples.length && <div>No movement reports in this interval.</div>}
-          {samples.length > 0 && (
+          {(samples.length > 0 || h.data || h.canGoNewer) && (
             <>
-              <div
-                className="movement-history__row"
-                role="group"
-                aria-label="Historical report controls"
-                onKeyDown={(event) => {
-                  if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    choose(selectedIndex + (event.key === "ArrowLeft" ? 1 : -1));
-                  }
-                }}
-              >
-                <span>Report</span>
-                <Button
-                  small
-                  aria-label="Previous report"
-                  disabled={selectedIndex >= samples.length - 1}
-                  onClick={() => choose(selectedIndex + 1)}
-                >
-                  ←
-                </Button>
-                <HTMLSelect
-                  aria-label="Historical report"
-                  value={h.sample?.sample_id ?? ""}
-                  onChange={(event) => {
-                    const s = samples.find((s) => s.sample_id === event.target.value);
-                    if (s) h.pin(s);
+              {samples.length > 0 && (
+                <div
+                  className="movement-history__row"
+                  role="group"
+                  aria-label="Historical report controls"
+                  onKeyDown={(event) => {
+                    if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      choose(selectedIndex + (event.key === "ArrowLeft" ? 1 : -1));
+                    }
                   }}
                 >
-                  {!h.sample && <option value="">Select report</option>}
-                  {h.sample && selectedIndex < 0 && (
-                    <option value={h.sample.sample_id}>{reportTime(h.sample.time)}</option>
-                  )}
-                  {samples.map((s) => (
-                    <option key={s.sample_id} value={s.sample_id}>
-                      {reportTime(s.time)}
-                      {s.latitude === undefined ? " · reading" : ""}
-                    </option>
-                  ))}
-                </HTMLSelect>
-                <Button
-                  small
-                  aria-label="Next report"
-                  disabled={selectedIndex <= 0}
-                  onClick={() => choose(selectedIndex - 1)}
-                >
-                  →
-                </Button>
-              </div>
+                  <span>Report</span>
+                  <Button
+                    small
+                    aria-label="Previous report"
+                    disabled={selectedIndex >= samples.length - 1}
+                    onClick={() => choose(selectedIndex + 1)}
+                  >
+                    ←
+                  </Button>
+                  <HTMLSelect
+                    aria-label="Historical report"
+                    value={h.sample?.sample_id ?? ""}
+                    onChange={(event) => {
+                      const s = samples.find((s) => s.sample_id === event.target.value);
+                      if (s) h.pin(s);
+                    }}
+                  >
+                    {!h.sample && <option value="">Select report</option>}
+                    {h.sample && selectedIndex < 0 && (
+                      <option value={h.sample.sample_id}>{reportTime(h.sample.time)}</option>
+                    )}
+                    {samples.map((s) => (
+                      <option key={s.sample_id} value={s.sample_id}>
+                        {reportTime(s.time)}
+                        {s.latitude === undefined ? " · reading" : ""}
+                      </option>
+                    ))}
+                  </HTMLSelect>
+                  <Button
+                    small
+                    aria-label="Next report"
+                    disabled={selectedIndex <= 0}
+                    onClick={() => choose(selectedIndex - 1)}
+                  >
+                    →
+                  </Button>
+                </div>
+              )}
               <div className="movement-history__row movement-history__meta">
                 <span>
                   {h.preview ? "Preview" : h.following ? "Following" : h.sample ? "Pinned" : "Past interval"} · UTC
@@ -196,7 +199,9 @@ export function MovementHistorySection({ history: h }: { history: MovementHistor
                       ["Speed", reading(readings?.speed?.speed_m_s, readings?.speed, "m/s")]
                     ]}
                   />
-                  {!readings && <div role="status">{h.inspectionError ?? "Loading report…"}</div>}
+                  {h.inspectionLoading && (
+                    <div role="status">{h.inspectionError ?? (readings ? "Updating report…" : "Loading report…")}</div>
+                  )}
                   <details>
                     <summary>Report times</summary>
                     <FieldGrid
@@ -225,10 +230,10 @@ export function MovementHistorySection({ history: h }: { history: MovementHistor
                   Older reports
                 </Button>
               </div>
-              {h.data?.trail.simplified && (
+              {h.data?.trail?.simplified && (
                 <div className="movement-history__meta">Reduced detail across the interval.</div>
               )}
-              {!h.data?.trail.points.length && <div>No reported positions in this interval.</div>}
+              {h.data?.trail && !h.data.trail.points.length && <div>No reported positions in this interval.</div>}
               <div className="movement-history__legend">
                 <span>━━ Reported trail</span>
                 <span>···· Position gap</span>

@@ -58,9 +58,11 @@ await client.entities.importMovement(entity.entity_id, {
 });
 ```
 
+The Meshtastic Link adapters include all four movement operations to preserve SDK parity. History responses never enter the live Shared Picture. Existing Link message limits still apply; Gateway applications choose bounded pages and point budgets.
+
 ## Command behavior
 
-Movement History sits immediately after Location & Movement in the existing Asset/Track sidebar. It uses Section, FieldGrid and existing controls. Opening starts with the last hour; presets and a custom UTC interval cover retained history. Recent history refreshes five seconds after the preceding request completes. Pinning a report or choosing a past interval stops automatic refresh. Explicit Refresh discovers backfill without requiring a live feed event. Return to recent resumes following.
+Movement History sits immediately after Location & Movement in the existing Asset/Track sidebar. It uses Section, FieldGrid and existing controls. Opening starts with the last hour; presets and a custom UTC interval cover retained history. The last-hour view refreshes five seconds after the preceding request completes. The 24-hour, 30-day and custom intervals are fixed snapshots refreshed explicitly, avoiding repeated month-long scans. Pinning a report stops automatic refresh. Raw reports and inspection remain available if the trail fails or exceeds its point budget. Following keeps the last complete report and its readings together while the next inspection loads. Explicit Refresh discovers backfill without requiring a live feed event. Return to recent resumes following the last hour.
 
 Hovering a reported trail point previews its readings; clicking pins them. The current Entity marker takes priority over overlapping history points. Reports remain accessible through the sidebar dropdown and raw-page controls. Left/right steps reports only in focused report controls. Escape dismisses pinned detail before clearing the Entity, preserving tool/dialog ownership. Closing the sidebar or selecting another Entity cancels obsolete requests and clears its overlay. Historical data never replaces current Entity data.
 

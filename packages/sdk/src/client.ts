@@ -31,7 +31,6 @@ import {
   isMapArea,
   isMovementHistoryBatchResponse,
   isMovementHistoryPage,
-  isMovementInspection,
   isMovementTrail,
   isPluginDiscoveryResponse,
   isSpatialOperationResult
@@ -68,7 +67,9 @@ import {
   isEntityResource,
   isFullDatasetResponse,
   isObjectDetailResource,
-  isRuntimeTaskDeliveryResponse
+  isRuntimeTaskDeliveryResponse,
+  movementInspectionResponseValidator,
+  movementWindowResponseValidator
 } from "./validation.js";
 
 export { ProtocolMismatchError } from "./feed-connection.js";
@@ -161,7 +162,7 @@ export class AtlasClient {
       this.transport.json(
         "GET",
         movementQueryPath(id, "movement-history", query),
-        isMovementHistoryPage,
+        movementWindowResponseValidator(isMovementHistoryPage, query),
         undefined,
         undefined,
         query.signal
@@ -170,7 +171,7 @@ export class AtlasClient {
       this.transport.json(
         "GET",
         movementQueryPath(id, "trail", query),
-        isMovementTrail,
+        movementWindowResponseValidator(isMovementTrail, query),
         undefined,
         undefined,
         query.signal
@@ -182,7 +183,7 @@ export class AtlasClient {
           entity_created_at: entityCreatedAt,
           at
         }),
-        isMovementInspection,
+        movementInspectionResponseValidator(entityCreatedAt, at),
         undefined,
         undefined,
         signal

@@ -19,7 +19,10 @@ import {
   MAX_LINK_MESSAGE_BYTES
 } from "./frame.js";
 import { FRAME_DICTIONARY } from "./generated/radio-contract.generated.js";
+import { SharedPicture } from "./picture.js";
+import { messagePublications } from "./picture-projection.js";
 import { positionPublication } from "./test-fixtures.js";
+import type { DataResponse } from "./types.js";
 
 describe("generated Radio contract", () => {
   it.each(["deflate-v1", "deflate-v2", "deflate-v3"] as const)(
@@ -91,6 +94,83 @@ describe("generated Radio contract", () => {
     expect(typeof client.commandCatalog).toBe("function");
     operations.push("command_catalog.get");
     expect(Object.keys(ATLAS_RADIO_OPERATIONS)).toEqual(operations.sort());
+  });
+
+  it("carries movement requests and responses without publishing historical positions", () => {
+    const time = "2026-09-09T12:00:00Z";
+    const context = { target_id: "track-1", entity_created_at: time, from: time, to: time };
+    const sample = { sample_id: "report", time, received_at: time, time_is_arrival: true, latitude: 1, longitude: 2 };
+    for (const operation of ["entity.history", "entity.trail"] as const) {
+      const request = {
+        type: "data_request" as const,
+        request_id: "history",
+        operation,
+        ...context,
+        limit: 10,
+        max_points: 10
+      };
+      expect(deserializeLinkMessage(serializeLinkMessage(request))).toEqual(request);
+      expect(isLinkMessage({ ...request, entity_created_at: undefined })).toBe(false);
+      expect(isLinkMessage({ ...request, from: "invalid" })).toBe(false);
+      expect(isLinkMessage({ ...request, max_points: 1 })).toBe(false);
+    }
+    const inspect = {
+      type: "data_request" as const,
+      request_id: "inspect",
+      operation: "entity.inspect_movement" as const,
+      target_id: "track-1",
+      entity_created_at: time,
+      at: time
+    };
+    expect(isLinkMessage(inspect)).toBe(true);
+    expect(isLinkMessage({ ...inspect, at: undefined })).toBe(false);
+    const imported = {
+      type: "resource_operation" as const,
+      operation: "entity.import_movement" as const,
+      target_id: "track-1",
+      input: { entity_created_at: time, samples: [{ sample_id: "old", latitude: 1, longitude: 2 }] }
+    };
+    expect(deserializeLinkMessage(serializeLinkMessage(imported))).toEqual(imported);
+    expect(isLinkMessage({ ...imported, input: {} })).toBe(false);
+    const responses: DataResponse[] = [
+      {
+        type: "data_response",
+        request_id: "history",
+        operation: "entity.history",
+        output: { entity_created_at: time, from: time, to: time, retained_from: time, snapshot: "1", samples: [sample] }
+      },
+      {
+        type: "data_response",
+        request_id: "trail",
+        operation: "entity.trail",
+        output: {
+          entity_created_at: time,
+          from: time,
+          to: time,
+          retained_from: time,
+          points: [{ sample, gap_before: false }],
+          position_count: 1,
+          simplified: false
+        }
+      },
+      {
+        type: "data_response",
+        request_id: "inspect",
+        operation: "entity.inspect_movement",
+        output: { entity_created_at: time, time, position: sample }
+      },
+      {
+        type: "data_response",
+        request_id: "import",
+        operation: "entity.import_movement",
+        output: { inserted: 1, duplicates: 0, expired: 0 }
+      }
+    ];
+    for (const response of responses) {
+      expect(deserializeLinkMessage(serializeLinkMessage(response))).toEqual(response);
+      expect(messagePublications(response, frameIdentity(), new SharedPicture(), Date.parse(time))).toEqual([]);
+      expect(isLinkMessage({ ...response, output: {} })).toBe(false);
+    }
   });
 
   it("serializes Atlas state as deterministic compact JSON", () => {

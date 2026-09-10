@@ -10,6 +10,11 @@ import {
   isFullDatasetResponse,
   isJSONValue,
   isMapArea,
+  isMovementHistoryBatchRequest,
+  isMovementHistoryBatchResponse,
+  isMovementHistoryPage,
+  isMovementInspection,
+  isMovementTrail,
   isObjectCreateRequest,
   isObjectDetailResource,
   isObjectResource,
@@ -311,6 +316,21 @@ function validOperationContext(operation: AtlasRadioOperationName, value: Record
     case "task.fail":
     case "runtime.tasks":
       return isNonEmptyString(value.target_id) && isNonEmptyString(value.runtime_id);
+    case "entity.history":
+    case "entity.trail":
+      return (
+        isNonEmptyString(value.target_id) &&
+        isRFC3339(value.entity_created_at) &&
+        isRFC3339(value.from) &&
+        isRFC3339(value.to) &&
+        Date.parse(String(value.from)) <= Date.parse(String(value.to)) &&
+        Date.parse(String(value.to)) - Date.parse(String(value.from)) <= 2592000000 &&
+        (value.max_points === undefined ||
+          (Number.isSafeInteger(value.max_points) && Number(value.max_points) >= 2 && Number(value.max_points) <= 5000))
+      );
+    case "entity.inspect_movement":
+      return isNonEmptyString(value.target_id) && isRFC3339(value.entity_created_at) && isRFC3339(value.at);
+    case "entity.import_movement":
     case "entity.get":
     case "entity.update":
     case "entity.delete":
@@ -344,6 +364,8 @@ function validOperationContext(operation: AtlasRadioOperationName, value: Record
 
 function validOperationInput(operation: AtlasRadioOperationName, input: unknown): boolean {
   switch (operation) {
+    case "entity.import_movement":
+      return isMovementHistoryBatchRequest(input);
     case "entity.create":
       return isEntityCreateRequest(input);
     case "entity.update":
@@ -378,6 +400,9 @@ function validOperationInput(operation: AtlasRadioOperationName, input: unknown)
       return isJSONValue(input);
     case "plugin.invoke_spatial":
       return isMapArea(input);
+    case "entity.history":
+    case "entity.trail":
+    case "entity.inspect_movement":
     case "entity.get":
     case "entity.delete":
     case "task.get":
@@ -396,6 +421,14 @@ function validOperationInput(operation: AtlasRadioOperationName, input: unknown)
 
 function validOperationOutput(operation: AtlasRadioOperationName, output: unknown): boolean {
   switch (operation) {
+    case "entity.history":
+      return isMovementHistoryPage(output);
+    case "entity.trail":
+      return isMovementTrail(output);
+    case "entity.inspect_movement":
+      return isMovementInspection(output);
+    case "entity.import_movement":
+      return isMovementHistoryBatchResponse(output);
     case "entity.get":
     case "entity.create":
     case "entity.update":

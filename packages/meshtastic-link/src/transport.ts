@@ -3,9 +3,15 @@ import {
   changedSinceResponseValidator,
   isEntityCheckInResponse,
   isEntityResource,
+  isMovementHistoryPage,
+  isMovementTrail,
   isObjectDetailResource,
   isRuntimeTaskDeliveryResponse,
-  isTaskResource
+  isTaskResource,
+  type MovementHistoryPage,
+  type MovementTrail,
+  movementInspectionResponseValidator,
+  movementWindowResponseValidator
 } from "@the-drunken-coder/atlas-sdk";
 import type { Clock, TimerHandle } from "./clock.js";
 import {
@@ -2236,6 +2242,18 @@ function responseMatchesRequest(
   }
   if (response.operation !== request.operation) return false;
   switch (request.operation) {
+    case "entity.history":
+    case "entity.trail":
+      return movementWindowResponseValidator<MovementHistoryPage | MovementTrail>(
+        request.operation === "entity.history" ? isMovementHistoryPage : isMovementTrail,
+        {
+          entityCreatedAt: request.entity_created_at ?? "",
+          from: request.from ?? "",
+          to: request.to ?? ""
+        }
+      )(response.output);
+    case "entity.inspect_movement":
+      return movementInspectionResponseValidator(request.entity_created_at ?? "", request.at ?? "")(response.output);
     case "entity.get":
       return isEntityResource(response.output) && response.output.entity_id === request.target_id;
     case "task.get":

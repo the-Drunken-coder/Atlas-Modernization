@@ -127,6 +127,11 @@ export {
   isGeometryComponent,
   isJSONValue,
   isMapArea,
+  isMovementHistoryBatchRequest,
+  isMovementHistoryBatchResponse,
+  isMovementHistoryPage,
+  isMovementInspection,
+  isMovementTrail,
   isObjectCreateRequest,
   isObjectUpdateRequest,
   isPluginDiscoveryResponse,
@@ -157,5 +162,7 @@ export {
   isFullDatasetResponse,
   isObjectDetailResource,
   isObjectResource,
-  isTaskResource
+  isTaskResource,
+  movementInspectionResponseValidator,
+  movementWindowResponseValidator
 } from "./validation.js";

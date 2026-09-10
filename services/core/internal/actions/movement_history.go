@@ -22,8 +22,11 @@ func movementTime(t time.Time) string { return t.UTC().Format(time.RFC3339Nano) 
 
 // Normalize once to PostgreSQL precision so retries compare canonical values.
 func validateMovement(input protocol.MovementSampleInput, received time.Time) (*time.Time, time.Time, error) {
-	if strings.TrimSpace(input.SampleID) == "" || len(input.SampleID) > 128 {
-		return nil, time.Time{}, NewValidationError("sample_id must contain 1 to 128 bytes")
+	if err := validateStringMaxLength("sample_id", input.SampleID, 128); err != nil {
+		return nil, time.Time{}, err
+	}
+	if strings.TrimSpace(input.SampleID) == "" {
+		return nil, time.Time{}, NewValidationError("sample_id is required")
 	}
 	if (input.Latitude == nil) != (input.Longitude == nil) {
 		return nil, time.Time{}, NewValidationError("movement position requires latitude and longitude")

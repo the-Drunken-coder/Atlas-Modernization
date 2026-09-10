@@ -132,6 +132,10 @@ function responsePublications(
             ];
           })
         : [];
+    case "entity.history":
+    case "entity.trail":
+    case "entity.inspect_movement":
+    case "entity.import_movement":
     case "object.content":
     case "entity.delete":
     case "runtime.begin":

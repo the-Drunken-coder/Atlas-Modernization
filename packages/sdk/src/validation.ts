@@ -24,13 +24,15 @@ import {
   isProtocolRevisionResponse as isGeneratedProtocolRevisionResponse,
   isRuntimeTaskDeliveryResponse as isGeneratedRuntimeTaskDeliveryResponse,
   isTaskResource as isGeneratedTaskResource,
+  isMovementInspection,
+  type MovementInspection,
   type ObjectDetailResource,
   type ObjectResource,
   type ProtocolRevisionResponse,
   type RuntimeTaskDeliveryResponse,
   type TaskResource
 } from "./protocol.js";
-import type { EntityCheckInFields } from "./types.js";
+import type { EntityCheckInFields, MovementHistoryQuery } from "./types.js";
 
 export const isCommandCatalog: ResponseValidator<CommandCatalog> = isGeneratedCommandCatalog;
 
@@ -137,4 +139,31 @@ function isFeedVersion(value: unknown): value is number {
 
 function isSafeNonNegativeInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+// Compare the instant without discarding the sub-millisecond precision of Core associations.
+function sameMovementInstant(left: string, right: string): boolean {
+  const fraction = (value: string) => /\.(\d+)/.exec(value)?.[1]?.replace(/0+$/, "") ?? "";
+  return Date.parse(left) === Date.parse(right) && fraction(left) === fraction(right);
+}
+
+export function movementWindowResponseValidator<T extends { entity_created_at: string; from: string; to: string }>(
+  validate: ResponseValidator<T>,
+  query: MovementHistoryQuery
+): ResponseValidator<T> {
+  return (value): value is T =>
+    validate(value) &&
+    sameMovementInstant(value.entity_created_at, query.entityCreatedAt) &&
+    sameMovementInstant(value.from, query.from) &&
+    sameMovementInstant(value.to, query.to);
+}
+
+export function movementInspectionResponseValidator(
+  entityCreatedAt: string,
+  at: string
+): ResponseValidator<MovementInspection> {
+  return (value): value is MovementInspection =>
+    isMovementInspection(value) &&
+    sameMovementInstant(value.entity_created_at, entityCreatedAt) &&
+    sameMovementInstant(value.time, at);
 }

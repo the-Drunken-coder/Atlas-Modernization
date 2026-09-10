@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,6 +19,7 @@ func movementPtr[T any](value T) *T { return &value }
 func TestMovementValidation(t *testing.T) {
 	now := time.Now().UTC()
 	for _, sample := range []protocol.MovementSampleInput{
+		{SampleID: strings.Repeat("é", 129), SpeedMS: movementPtr(0.0)},
 		{SampleID: "missing"}, {SampleID: "half", Latitude: movementPtr(1.0)},
 		{SampleID: "negative", SpeedMS: movementPtr(-1.0)}, {SampleID: "nan", AltitudeM: movementPtr(math.NaN())},
 		{SampleID: "future", SpeedMS: movementPtr(0.0), ObservedAt: movementPtr(movementTime(now.Add(6 * time.Minute)))},
@@ -26,7 +28,7 @@ func TestMovementValidation(t *testing.T) {
 			t.Errorf("accepted invalid sample %s", sample.SampleID)
 		}
 	}
-	if observed, at, err := validateMovement(protocol.MovementSampleInput{SampleID: "zero", SpeedMS: movementPtr(0.0)}, now); err != nil || observed != nil || !at.Equal(now) {
+	if observed, at, err := validateMovement(protocol.MovementSampleInput{SampleID: strings.Repeat("é", 128), SpeedMS: movementPtr(0.0)}, now); err != nil || observed != nil || !at.Equal(now) {
 		t.Fatalf("arrival fallback: %v %v %v", observed, at, err)
 	}
 }

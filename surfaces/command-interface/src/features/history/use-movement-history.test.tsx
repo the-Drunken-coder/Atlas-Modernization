@@ -1,5 +1,10 @@
 import { act, fireEvent, render, renderHook, screen } from "@testing-library/react";
-import type { MovementHistoryPage, MovementSample, MovementTrail } from "@the-drunken-coder/atlas-sdk";
+import type {
+  MovementHistoryPage,
+  MovementInspection,
+  MovementSample,
+  MovementTrail
+} from "@the-drunken-coder/atlas-sdk";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { entityFixture } from "../../../test/fixtures.js";
 import type { MovementHistoryReader } from "../../atlas/data-source.js";
@@ -140,4 +145,95 @@ it("steps actual reports from focused sidebar controls and Escape dismisses the 
   expect(screen.getByText("Pinned · UTC")).toBeInTheDocument();
   fireEvent.keyDown(control, { key: "Escape" });
   expect(control).toHaveValue("");
+});
+
+it("shows reports before a slow trail completes and preserves inspection when the trail fails", async () => {
+  const api = reader();
+  let reject!: (reason: Error) => void;
+  api.trail.mockImplementation(
+    () =>
+      new Promise((_, r) => {
+        reject = r;
+      })
+  );
+  const { result } = renderHook(() => useMovementHistory(entity, api));
+  act(() => result.current.toggle());
+  await settle();
+  expect(result.current.sample).toEqual(sample);
+  expect(result.current.inspection?.position).toEqual(sample);
+  await act(async () => reject(new Error("Trail point budget exceeded")));
+  expect(result.current.error).toBeUndefined();
+  expect(result.current.trailError).toContain("budget");
+  expect(result.current.data?.trail).toBeUndefined();
+  expect(result.current.inspection?.position).toEqual(sample);
+});
+
+it.each([86400000, 2592000000])("holds the %i ms interval until explicit refresh", async (duration) => {
+  const api = reader();
+  const { result } = renderHook(() => useMovementHistory(entity, api));
+  act(() => {
+    result.current.toggle();
+    result.current.changeRange(duration);
+  });
+  await settle();
+  const from = api.history.mock.calls[0]?.[1].from;
+  await act(async () => vi.advanceTimersByTimeAsync(20000));
+  expect(api.trail).toHaveBeenCalledTimes(1);
+  expect(result.current.following).toBe(false);
+  act(() => result.current.refresh());
+  await settle();
+  expect(api.history.mock.calls[1]?.[1].from).toBe(from);
+  act(() => result.current.recent());
+  await settle();
+  expect(result.current.duration).toBe(3600000);
+  expect(result.current.following).toBe(true);
+});
+
+it("keeps live report and readings together while inspecting a successor without leaking them into older selections", async () => {
+  const api = reader();
+  const { result } = renderHook(() => useMovementHistory(entity, api));
+  act(() => result.current.toggle());
+  await settle();
+  const newer = { ...sample, sample_id: "newer", time: "2026-09-09T12:00:05Z", latitude: 5 };
+  api.history.mockResolvedValue({ ...page, samples: [newer, sample] });
+  let resolve!: (inspection: MovementInspection) => void;
+  api.inspectMovement.mockImplementation(
+    () =>
+      new Promise((r) => {
+        resolve = r;
+      })
+  );
+  await act(async () => vi.advanceTimersByTimeAsync(5001));
+  expect(result.current.sample).toEqual(sample);
+  expect(result.current.inspection?.position).toEqual(sample);
+  expect(result.current.inspectionLoading).toBe(true);
+  await settle();
+  await act(async () => resolve({ entity_created_at: entity.metadata.created_at, time: newer.time, position: newer }));
+  expect(result.current.sample).toEqual(newer);
+  expect(result.current.inspection?.position).toEqual(newer);
+  act(() => result.current.pin(sample));
+  expect(result.current.sample).toEqual(sample);
+  expect(result.current.inspection).toBeUndefined();
+});
+
+it("retains navigation and recovery on an empty continuation page", async () => {
+  const api = reader();
+  api.history
+    .mockResolvedValueOnce({ ...page, next_cursor: "older" })
+    .mockResolvedValue({ ...page, samples: [], retention_advanced: true });
+  function Panel() {
+    return <MovementHistorySection history={useMovementHistory(entity, api)} />;
+  }
+  render(<Panel />);
+  fireEvent.click(screen.getByRole("button", { name: "Show" }));
+  await settle();
+  fireEvent.click(screen.getByRole("button", { name: "Older reports" }));
+  await settle();
+  expect(screen.getByRole("button", { name: "Newer reports" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Return to recent" })).toBeEnabled();
+  expect(screen.queryByRole("combobox", { name: "Historical report" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Newer reports" }));
+  await settle();
+  expect(api.history.mock.calls.at(-1)?.[1].cursor).toBeUndefined();
 });
