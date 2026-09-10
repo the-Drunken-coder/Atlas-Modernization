@@ -64,9 +64,18 @@ type OperationContext<Operation extends AtlasRadioOperationName> = Operation ext
         to: string;
         cursor?: string;
         limit?: number;
+        max_points?: never;
       }
     : Operation extends "entity.trail"
-      ? { target_id: string; entity_created_at: string; from: string; to: string; max_points?: number }
+      ? {
+          target_id: string;
+          entity_created_at: string;
+          from: string;
+          to: string;
+          max_points?: number;
+          cursor?: never;
+          limit?: never;
+        }
       : Operation extends "entity.inspect_movement"
         ? { target_id: string; entity_created_at: string; at: string }
         : Operation extends "entity.check_in"

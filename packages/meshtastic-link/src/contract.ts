@@ -41,6 +41,7 @@ import {
   RADIO_CONTRACT_REVISION
 } from "./generated/radio-contract.generated.js";
 import { decodeMessagePayload } from "./message-codec.js";
+import { compareRFC3339Timestamps } from "./timestamps.js";
 import type {
   ControlMessage,
   DataRequest,
@@ -585,7 +586,7 @@ function validMovementWindow(value: Record<string, unknown>): boolean {
     isRFC3339(value.entity_created_at) &&
     isRFC3339(value.from) &&
     isRFC3339(value.to) &&
-    Date.parse(String(value.from)) <= Date.parse(String(value.to)) &&
-    Date.parse(String(value.to)) - Date.parse(String(value.from)) <= 2592000000
+    compareRFC3339Timestamps(String(value.from), String(value.to)) <= 0 &&
+    compareRFC3339Timestamps(String(value.to), String(value.from), 2592000000) <= 0
   );
 }

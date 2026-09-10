@@ -75,6 +75,9 @@ func TestMovementCaptureBackfillAndAssociation(t *testing.T) {
 		raw, _ := base64.RawURLEncoding.DecodeString(page.NextCursor)
 		var fields map[string]any
 		_ = json.Unmarshal(raw, &fields)
+		if _, ok := fields[missing]; !ok {
+			t.Fatalf("cursor did not contain %s", missing)
+		}
 		delete(fields, missing)
 		malformed, _ := json.Marshal(fields)
 		invalid := q

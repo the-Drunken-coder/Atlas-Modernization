@@ -112,6 +112,11 @@ describe("generated Radio contract", () => {
       expect(isLinkMessage({ ...request, entity_created_at: undefined })).toBe(false);
       expect(isLinkMessage({ ...request, from: "invalid" })).toBe(false);
       expect(isLinkMessage({ ...request, max_points: 1 })).toBe(false);
+      expect(isLinkMessage({ ...request, max_points: 5001 })).toBe(false);
+      const from = "2026-08-01T00:00:00.000000001Z";
+      expect(isLinkMessage({ ...request, from, to: "2026-08-31T00:00:00.000000001Z" })).toBe(true);
+      expect(isLinkMessage({ ...request, from, to: "2026-08-31T00:00:00.000000002Z" })).toBe(false);
+      expect(isLinkMessage({ ...request, from, to: "2026-08-01T00:00:00.000000000Z" })).toBe(false);
       expect(isLinkMessage({ ...request, limit: 501 })).toBe(false);
       expect(
         isLinkMessage(operation === "entity.history" ? { ...request, max_points: 10 } : { ...request, limit: 10 })
