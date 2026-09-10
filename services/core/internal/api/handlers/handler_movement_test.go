@@ -26,7 +26,8 @@ func TestMovementRoutes(t *testing.T) {
 	r.Get("/entities/{entity_id}/trail", h.GetMovementTrail)
 	r.Get("/entities/{entity_id}/movement-history/at", h.InspectMovement)
 	created := e.CreatedAt.Format(time.RFC3339Nano)
-	at := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339Nano)
+	// Use a stored-precision instant for the inclusive lower-bound fixture.
+	at := time.Now().UTC().Add(-time.Hour).Truncate(time.Microsecond).Format(time.RFC3339Nano)
 	path := "/entities/history-routes/movement-history"
 	var imported protocol.MovementHistoryBatchResponse
 	requestTaskingRoute(t, r, http.MethodPost, path, map[string]any{"entity_created_at": created, "samples": []map[string]any{{"sample_id": "past", "observed_at": at, "latitude": 0, "longitude": 0}}}, nil, http.StatusOK, &imported)
