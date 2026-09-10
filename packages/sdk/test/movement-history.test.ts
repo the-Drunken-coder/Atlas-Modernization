@@ -308,3 +308,26 @@ it.each(["history", "trail"] as const)("enforces the returned retention cutoff f
   fetchImpl.mockResolvedValueOnce(Response.json({ ...response, retained_from: "2026-09-09T12:00:00.000000001Z" }));
   await expect(client.entities[method]("asset-1", query)).rejects.toThrow();
 });
+
+it.each([
+  { limit: 1, count: 2, cursor: undefined, accepted: false },
+  { limit: undefined, count: 101, cursor: undefined, accepted: false },
+  { limit: 2, count: 1, cursor: "next", accepted: false },
+  { limit: 1, count: 0, cursor: "next", accepted: false },
+  { limit: 1, count: 1, cursor: " ", accepted: false },
+  { limit: 1, count: 1, cursor: "next", accepted: true },
+  { limit: 2, count: 1, cursor: undefined, accepted: true }
+])("checks history page size and continuation: %j", async ({ limit, count, cursor, accepted }) => {
+  const response = {
+    ...page,
+    samples: Array.from({ length: count }, (_, index) => ({ ...page.samples[0], sample_id: String(index) })),
+    ...(cursor === undefined ? {} : { next_cursor: cursor })
+  };
+  const client = new AtlasClient({
+    baseUrl: "http://atlas.test",
+    fetch: vi.fn<typeof fetch>().mockResolvedValue(Response.json(response))
+  });
+  const result = client.entities.history("asset-1", { ...query, ...(limit === undefined ? {} : { limit }) });
+  if (accepted) await expect(result).resolves.toEqual(response);
+  else await expect(result).rejects.toThrow();
+});

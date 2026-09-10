@@ -170,8 +170,11 @@ function sameMovementInstant(left: string, right: string): boolean {
 
 export function movementHistoryResponseValidator(query: MovementHistoryQuery): ResponseValidator<MovementHistoryPage> {
   const validate = movementWindowResponseValidator(isMovementHistoryPage, query);
+  const limit = query.limit ?? 100;
   return (value): value is MovementHistoryPage =>
     validate(value) &&
+    value.samples.length <= limit &&
+    (value.next_cursor === undefined || (isNonEmptyString(value.next_cursor) && value.samples.length === limit)) &&
     value.samples.every(
       (sample, index, samples) =>
         coherentMovementSample(sample) &&
