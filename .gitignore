@@ -87,3 +87,7 @@ logs/
 # --- Agent / personal tooling ---
 .claude/
 .benchmarks/
+
+# --- Movement history design and local test artifacts ---
+/docs/mockups/movement-history/
+/services/core/.history-review-tmp/
