@@ -798,52 +798,57 @@ describe("Link transport", () => {
     expect(asset.metrics().operation_outcomes).toMatchObject({ confirmed: 0, responded: 1, failed: 0 });
   });
 
-  it.each(["valid", "ascending", "outside"] as const)("checks Radio history sample coherence: %s", async (order) => {
-    const { clock, gateway, asset } = directPair();
-    const from = "2026-09-09T12:00:00Z";
-    const to = "2026-09-09T12:00:01Z";
-    gateway.onEvent((event) => {
-      if (event.type !== "message" || event.message.type !== "data_request") return;
-      gateway.settleInbound(event.settlement_id, true);
-      const times = order === "valid" ? [to, from] : order === "ascending" ? [from, to] : ["2026-09-09T12:00:02Z"];
-      gateway.submit(
+  it.each(["valid", "ascending", "outside", "oversized"] as const)(
+    "checks Radio history sample coherence: %s",
+    async (order) => {
+      const { clock, gateway, asset } = directPair();
+      const from = "2026-09-09T12:00:00Z";
+      const to = "2026-09-09T12:00:01Z";
+      gateway.onEvent((event) => {
+        if (event.type !== "message" || event.message.type !== "data_request") return;
+        gateway.settleInbound(event.settlement_id, true);
+        const times = order === "ascending" ? [from, to] : order === "outside" ? ["2026-09-09T12:00:02Z"] : [to, from];
+        gateway.submit(
+          {
+            type: "data_response",
+            request_id: event.message.request_id,
+            operation: "entity.history",
+            output: {
+              entity_created_at: from,
+              from,
+              to,
+              retained_from: from,
+              snapshot: "1",
+              ...(order === "valid" ? { next_cursor: "next" } : {}),
+              samples: times.map((time, index) => ({
+                sample_id: String(index),
+                time,
+                received_at: time,
+                time_is_arrival: true,
+                speed_m_s: 1
+              }))
+            }
+          },
+          { destination: event.source }
+        );
+      });
+      asset.submit(
         {
-          type: "data_response",
-          request_id: event.message.request_id,
+          type: "data_request",
+          request_id: "history",
           operation: "entity.history",
-          output: {
-            entity_created_at: from,
-            from,
-            to,
-            retained_from: from,
-            snapshot: "1",
-            samples: times.map((time, index) => ({
-              sample_id: String(index),
-              time,
-              received_at: time,
-              time_is_arrival: true,
-              speed_m_s: 1
-            }))
-          }
+          target_id: "asset-alpha",
+          entity_created_at: from,
+          from,
+          to,
+          limit: order === "oversized" ? 1 : 2
         },
-        { destination: event.source }
+        { destination: gateway.node, operationID: "history" }
       );
-    });
-    asset.submit(
-      {
-        type: "data_request",
-        request_id: "history",
-        operation: "entity.history",
-        target_id: "asset-alpha",
-        entity_created_at: from,
-        from,
-        to
-      },
-      { destination: gateway.node, operationID: "history" }
-    );
-    await clock.runUntilIdle();
-    expect(asset.status("history")?.status).toBe(order === "valid" ? "responded" : "failed");
-  });
+      await clock.runUntilIdle();
+      expect(asset.status("history")?.status).toBe(order === "valid" ? "responded" : "failed");
+    }
+  );
 
   it.each([0, 1, 2])("checks Radio import total %i against the batch", async (inserted) => {
     const { clock, gateway, asset } = directPair();

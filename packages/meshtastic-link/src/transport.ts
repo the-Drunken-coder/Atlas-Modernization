@@ -2250,7 +2250,7 @@ function responseMatchesRequest(
       };
       return (
         request.operation === "entity.history"
-          ? movementHistoryResponseValidator(query)
+          ? movementHistoryResponseValidator({ ...query, limit: request.limit ?? 100 })
           : movementTrailResponseValidator({ ...query, maxPoints: request.max_points ?? 1000 })
       )(response.output);
     }
