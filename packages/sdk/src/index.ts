@@ -16,6 +16,7 @@ export {
   isAtlasAPIError,
   isAtlasTransportError,
   type MovementHistoryQuery,
+  type MovementTrailQuery,
   ProtocolMismatchError,
   type ReadOptions,
   type ResourceCreateOptions,

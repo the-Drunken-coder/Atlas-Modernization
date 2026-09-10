@@ -317,14 +317,17 @@ function validOperationContext(operation: AtlasRadioOperationName, value: Record
     case "runtime.tasks":
       return isNonEmptyString(value.target_id) && isNonEmptyString(value.runtime_id);
     case "entity.history":
+      return (
+        validMovementWindow(value) &&
+        value.max_points === undefined &&
+        (value.limit === undefined ||
+          (Number.isSafeInteger(value.limit) && Number(value.limit) >= 1 && Number(value.limit) <= 500))
+      );
     case "entity.trail":
       return (
-        isNonEmptyString(value.target_id) &&
-        isRFC3339(value.entity_created_at) &&
-        isRFC3339(value.from) &&
-        isRFC3339(value.to) &&
-        Date.parse(String(value.from)) <= Date.parse(String(value.to)) &&
-        Date.parse(String(value.to)) - Date.parse(String(value.from)) <= 2592000000 &&
+        validMovementWindow(value) &&
+        value.cursor === undefined &&
+        value.limit === undefined &&
         (value.max_points === undefined ||
           (Number.isSafeInteger(value.max_points) && Number(value.max_points) >= 2 && Number(value.max_points) <= 5000))
       );
@@ -574,4 +577,15 @@ function isNonEmptyString(value: unknown): value is string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function validMovementWindow(value: Record<string, unknown>): boolean {
+  return (
+    isNonEmptyString(value.target_id) &&
+    isRFC3339(value.entity_created_at) &&
+    isRFC3339(value.from) &&
+    isRFC3339(value.to) &&
+    Date.parse(String(value.from)) <= Date.parse(String(value.to)) &&
+    Date.parse(String(value.to)) - Date.parse(String(value.from)) <= 2592000000
+  );
 }

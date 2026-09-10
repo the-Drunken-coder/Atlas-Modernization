@@ -21,10 +21,11 @@ const changePruneInterval = time.Hour
 // Dispatcher tails the durable change log in commit order. LISTEN/NOTIFY is
 // only a wake-up mechanism; every delivered payload comes from PostgreSQL.
 type Dispatcher struct {
-	pool       *pgxpool.Pool
-	hub        *Hub
-	cursor     int64
-	lastPruned time.Time
+	pool                   *pgxpool.Pool
+	hub                    *Hub
+	cursor                 int64
+	lastPruned             time.Time
+	movementPruneAttempted time.Time
 }
 
 func NewDispatcher(pool *pgxpool.Pool, hub *Hub, startAfterVersion int64) *Dispatcher {
@@ -74,16 +75,18 @@ func (d *Dispatcher) runConnection(ctx context.Context) error {
 		return fmt.Errorf("listen for change events: %w", err)
 	}
 
-	var movementPruned time.Time
 	for {
-		if movementPruned.IsZero() || time.Since(movementPruned) >= 30*time.Second {
-			if err := actions.NewEntityActions(d.pool).PruneMovement(ctx); err != nil {
-				return err
-			}
-			movementPruned = time.Now()
-		}
 		if err := d.drain(ctx, conn); err != nil {
 			return err
+		}
+		if d.movementPruneAttempted.IsZero() || time.Since(d.movementPruneAttempted) >= 30*time.Second {
+			d.movementPruneAttempted = time.Now()
+			pruneCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			err := actions.NewEntityActions(d.pool).PruneMovement(pruneCtx)
+			cancel()
+			if err != nil {
+				log.Error().Err(err).Msg("Movement history retention cleanup failed")
+			}
 		}
 		if d.lastPruned.IsZero() || time.Since(d.lastPruned) >= changePruneInterval {
 			if _, err := actions.PruneChangeRecords(ctx, d.pool, time.Now().Add(-actions.ChangeRecordRetention)); err != nil {

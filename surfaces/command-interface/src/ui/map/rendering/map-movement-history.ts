@@ -18,6 +18,7 @@ export function movementConnector(a: [number, number], b: [number, number]): Arr
   const delta = b[0] - a[0];
   if (Math.abs(delta) <= 180) return [[a, b]];
   const end = b[0] + (delta > 180 ? -360 : 360);
+  if (end === a[0]) return [[a, [a[0], b[1]]]];
   const edge = end > 180 ? 180 : -180;
   const latitude = a[1] + ((edge - a[0]) / (end - a[0])) * (b[1] - a[1]);
   return [

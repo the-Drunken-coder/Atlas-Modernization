@@ -106,13 +106,16 @@ describe("generated Radio contract", () => {
         request_id: "history",
         operation,
         ...context,
-        limit: 10,
-        max_points: 10
+        ...(operation === "entity.history" ? { limit: 10 } : { max_points: 10 })
       };
       expect(deserializeLinkMessage(serializeLinkMessage(request))).toEqual(request);
       expect(isLinkMessage({ ...request, entity_created_at: undefined })).toBe(false);
       expect(isLinkMessage({ ...request, from: "invalid" })).toBe(false);
       expect(isLinkMessage({ ...request, max_points: 1 })).toBe(false);
+      expect(isLinkMessage({ ...request, limit: 501 })).toBe(false);
+      expect(
+        isLinkMessage(operation === "entity.history" ? { ...request, max_points: 10 } : { ...request, limit: 10 })
+      ).toBe(false);
     }
     const inspect = {
       type: "data_request" as const,

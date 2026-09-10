@@ -56,7 +56,7 @@ type OperationContext<Operation extends AtlasRadioOperationName> = Operation ext
   | "object.delete"
   | "object.content"
   ? { target_id: string }
-  : Operation extends "entity.history" | "entity.trail"
+  : Operation extends "entity.history"
     ? {
         target_id: string;
         entity_created_at: string;
@@ -64,34 +64,35 @@ type OperationContext<Operation extends AtlasRadioOperationName> = Operation ext
         to: string;
         cursor?: string;
         limit?: number;
-        max_points?: number;
       }
-    : Operation extends "entity.inspect_movement"
-      ? { target_id: string; entity_created_at: string; at: string }
-      : Operation extends "entity.check_in"
-        ? { target_id: string; fields?: "full" | "minimal" }
-        : Operation extends "task.acknowledge" | "task.start" | "task.progress" | "task.complete" | "task.fail"
-          ? { target_id: string; runtime_id: string }
-          : Operation extends "runtime.begin" | "runtime.stop" | "runtime.ready"
-            ? { target_id: string }
-            : Operation extends "runtime.tasks"
-              ? { target_id: string; runtime_id: string }
-              : Operation extends "task.create"
-                ? { idempotency_key: string }
-                : Operation extends "query.changed_since"
-                  ? { since_version: number; cursor?: string; limit?: number }
-                  : Operation extends "query.full"
-                    ? {
-                        entity_cursor?: string;
-                        task_cursor?: string;
-                        object_cursor?: string;
-                        entity_limit?: number;
-                        task_limit?: number;
-                        object_limit?: number;
-                      }
-                    : Operation extends "plugin.invoke" | "plugin.invoke_spatial"
-                      ? { plugin_id: string; plugin_operation_id: string }
-                      : Record<never, never>;
+    : Operation extends "entity.trail"
+      ? { target_id: string; entity_created_at: string; from: string; to: string; max_points?: number }
+      : Operation extends "entity.inspect_movement"
+        ? { target_id: string; entity_created_at: string; at: string }
+        : Operation extends "entity.check_in"
+          ? { target_id: string; fields?: "full" | "minimal" }
+          : Operation extends "task.acknowledge" | "task.start" | "task.progress" | "task.complete" | "task.fail"
+            ? { target_id: string; runtime_id: string }
+            : Operation extends "runtime.begin" | "runtime.stop" | "runtime.ready"
+              ? { target_id: string }
+              : Operation extends "runtime.tasks"
+                ? { target_id: string; runtime_id: string }
+                : Operation extends "task.create"
+                  ? { idempotency_key: string }
+                  : Operation extends "query.changed_since"
+                    ? { since_version: number; cursor?: string; limit?: number }
+                    : Operation extends "query.full"
+                      ? {
+                          entity_cursor?: string;
+                          task_cursor?: string;
+                          object_cursor?: string;
+                          entity_limit?: number;
+                          task_limit?: number;
+                          object_limit?: number;
+                        }
+                      : Operation extends "plugin.invoke" | "plugin.invoke_spatial"
+                        ? { plugin_id: string; plugin_operation_id: string }
+                        : Record<never, never>;
 
 export interface RadioOperationSubmitter {
   submit(message: LinkMessage, options?: SubmitOptions): LinkOperationResult;

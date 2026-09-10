@@ -345,6 +345,7 @@ export function MapView({
             pushSources(mapInstance, sourcesRef.current);
             pushEditingOverlay(mapInstance, editingRef.current);
             pushSpatialOverlay(mapInstance, spatialRef.current);
+            if (movementRef.current) pushMovementOverlay(mapInstance, movementRef.current);
           }
           styleSwitchErrorRef.current?.({ failedStyleId, activeStyleId: currentStyleIdRef.current ?? failedStyleId });
         } else if (!readyRef.current) {
@@ -406,6 +407,7 @@ export function MapView({
         pushSources(map, sourcesRef.current);
         pushEditingOverlay(map, editingRef.current);
         pushSpatialOverlay(map, spatialRef.current);
+        if (movementRef.current) pushMovementOverlay(map, movementRef.current);
       }
       styleSwitchErrorRef.current?.({ failedStyleId: styleId, activeStyleId: currentStyleIdRef.current ?? styleId });
     };

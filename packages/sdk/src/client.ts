@@ -29,8 +29,6 @@ import type {
 import {
   isJSONValue,
   isMapArea,
-  isMovementHistoryBatchResponse,
-  isMovementHistoryPage,
   isMovementTrail,
   isPluginDiscoveryResponse,
   isSpatialOperationResult
@@ -45,6 +43,7 @@ import type {
   FetchLike,
   FullDatasetQueryOptions,
   MovementHistoryQuery,
+  MovementTrailQuery,
   ReadOptions,
   ResourceCreateOptions,
   ResourceDeleteOptions,
@@ -68,6 +67,8 @@ import {
   isFullDatasetResponse,
   isObjectDetailResource,
   isRuntimeTaskDeliveryResponse,
+  movementHistoryResponseValidator,
+  movementImportResponseValidator,
   movementInspectionResponseValidator,
   movementWindowResponseValidator
 } from "./validation.js";
@@ -94,6 +95,7 @@ export type {
   EntityCheckInTelemetry,
   FullDatasetQueryOptions,
   MovementHistoryQuery,
+  MovementTrailQuery,
   ReadOptions,
   ResourceCreateOptions,
   ResourceDeleteOptions,
@@ -161,16 +163,16 @@ export class AtlasClient {
     history: (id: string, query: MovementHistoryQuery) =>
       this.transport.json(
         "GET",
-        movementQueryPath(id, "movement-history", query),
-        movementWindowResponseValidator(isMovementHistoryPage, query),
+        movementQueryPath(id, "movement-history", query, { cursor: query.cursor, limit: query.limit?.toString() }),
+        movementHistoryResponseValidator(query),
         undefined,
         undefined,
         query.signal
       ),
-    trail: (id: string, query: MovementHistoryQuery) =>
+    trail: (id: string, query: MovementTrailQuery) =>
       this.transport.json(
         "GET",
-        movementQueryPath(id, "trail", query),
+        movementQueryPath(id, "trail", query, { max_points: query.maxPoints?.toString() }),
         movementWindowResponseValidator(isMovementTrail, query),
         undefined,
         undefined,
@@ -192,7 +194,7 @@ export class AtlasClient {
       this.transport.json(
         "POST",
         `/entities/${encodeURIComponent(normalizeEntityID(id))}/movement-history`,
-        isMovementHistoryBatchResponse,
+        movementImportResponseValidator(batch.samples.length),
         batch,
         undefined,
         signal
@@ -584,13 +586,16 @@ function normalizeOpaqueIdentifier(name: string, value: string): string {
   return normalized;
 }
 
-function movementQueryPath(id: string, operation: string, query: MovementHistoryQuery): string {
+function movementQueryPath(
+  id: string,
+  operation: string,
+  query: MovementHistoryQuery,
+  pagination: Record<string, string | undefined>
+): string {
   return pathWithQuery(`/entities/${encodeURIComponent(normalizeEntityID(id))}/${operation}`, {
     entity_created_at: query.entityCreatedAt,
     from: query.from,
     to: query.to,
-    cursor: query.cursor,
-    limit: query.limit?.toString(),
-    max_points: query.maxPoints?.toString()
+    ...pagination
   });
 }

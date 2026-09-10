@@ -118,3 +118,35 @@ it("dismisses history before selection, respects dialogs, and restores layers af
     features: []
   });
 });
+
+it("republishes unchanged history after a synchronous style-switch failure", () => {
+  const movement = overlay();
+  const { map, rerenderMap } = renderMapView({ movement, styleId: "a", style: style("a") });
+  const sink = map.getSource("movement-history")!.setData;
+  sink.mockClear();
+  rerenderMap({ styleId: "b", style: style("b", { throwOnSetStyle: true }) });
+  expect(sink).toHaveBeenCalledExactlyOnceWith(movementFeatures(movement));
+});
+
+it("republishes history when asynchronous style recovery completes without a style-load event", () => {
+  const movement = overlay();
+  const { map, rerenderMap } = renderMapView({ movement, styleId: "a", style: style("a") });
+  map.setStyle.mockImplementation(() => {
+    map.sources.clear();
+    map.layers.clear();
+    map.loaded = true;
+    return map;
+  });
+  rerenderMap({ styleId: "b", style: style("b") });
+  act(() => map.fire("error", { error: new Error("style failed") }));
+  expect(map.getSource("movement-history")?.setData).toHaveBeenLastCalledWith(movementFeatures(movement));
+});
+
+it.each([180, -180])("connects equivalent dateline endpoints at %i without invalid coordinates", (longitude) => {
+  expect(movementConnector([longitude, 10], [-longitude, 12])).toEqual([
+    [
+      [longitude, 10],
+      [longitude, 12]
+    ]
+  ]);
+});

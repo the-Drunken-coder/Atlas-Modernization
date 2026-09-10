@@ -78,7 +78,7 @@ func insertMovement(ctx context.Context, tx pgx.Tx, entity *models.Entity, input
  AND speed_m_s IS NOT DISTINCT FROM $7::float8 AND altitude_m IS NOT DISTINCT FROM $8::float8
  FROM entity_movement_samples WHERE entity_id=$1 AND entity_created_at=$2 AND sample_id=$3`, entity.EntityID, entity.CreatedAt, input.SampleID, observed, input.Latitude, input.Longitude, input.SpeedMS, input.AltitudeM).Scan(&equal)
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("compare existing movement report: %w", err)
 	}
 	if !equal {
 		return false, &ConflictError{ActionError: ActionError{Message: "sample_id already belongs to a different movement report", Code: protocol.ErrorCodeValidationError}}

@@ -48,6 +48,7 @@ export function useMovementHistory(entity: EntityResource | undefined, reader: M
     at: string;
     sample: MovementSample;
     value: MovementInspection;
+    following: boolean;
   }>();
   const [inspectionError, setInspectionError] = useState<string>();
   if (view.key !== key) {
@@ -95,7 +96,6 @@ export function useMovementHistory(entity: EntityResource | undefined, reader: M
             })
             .catch((cause) => {
               if (!controller.signal.aborted) {
-                setTrailData(undefined);
                 setTrailError(sanitizeConnectionError(cause));
               }
             })
@@ -128,7 +128,7 @@ export function useMovementHistory(entity: EntityResource | undefined, reader: M
           .inspectMovement(id, created, at, controller.signal)
           .then((value) => {
             if (!controller.signal.aborted) {
-              setInspection({ key, at, sample, value });
+              setInspection({ key, at, sample, value, following: view.following && !preview });
               setInspectionError(undefined);
             }
           })
@@ -142,7 +142,7 @@ export function useMovementHistory(entity: EntityResource | undefined, reader: M
       clearTimeout(timer);
       controller.abort();
     };
-  }, [open, id, created, key, at, sample, reader, preview, view.refresh]);
+  }, [open, id, created, key, at, sample, reader, preview, view.following, view.refresh]);
 
   const pin = useCallback(
     (sample: MovementSample) => {
@@ -209,7 +209,11 @@ export function useMovementHistory(entity: EntityResource | undefined, reader: M
   const displayedInspection =
     inspection?.key === key &&
     (inspection.at === at ||
-      (view.following && !preview && sample && Date.parse(inspection.at) <= Date.parse(sample.time)))
+      (inspection.following &&
+        view.following &&
+        !preview &&
+        sample &&
+        Date.parse(inspection.at) <= Date.parse(sample.time)))
       ? inspection
       : undefined;
   const displayedSample = displayedInspection && displayedInspection.at !== at ? displayedInspection.sample : sample;
@@ -228,7 +232,7 @@ export function useMovementHistory(entity: EntityResource | undefined, reader: M
     duration: view.duration,
     custom: view.window !== undefined && view.duration === 0,
     inspection: displayedInspection?.value,
-    inspectionLoading: Boolean(sample && displayedInspection?.at !== at),
+    inspectionLoading: Boolean(sample && !inspectionError && displayedInspection?.at !== at),
     inspectionError,
     canGoNewer: view.cursors.length > 0,
     toggle: () => {

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	protocol "github.com/the-drunken-coder/atlas/packages/protocol/generated/go/atlasprotocol"
 )
 
@@ -97,16 +98,17 @@ func (a *EntityActions) MovementHistory(ctx context.Context, id string, q Moveme
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	cutoff := time.Now().UTC().Add(-MovementRetention)
-	c := movementCursor{EntityID: id, Created: q.EntityCreatedAt, From: q.From, To: q.To, RetainedFrom: cutoff}
+	var c movementCursor
 	if q.Cursor != "" {
 		raw, err := base64.RawURLEncoding.DecodeString(q.Cursor)
-		if err != nil || len(raw) > 2048 || json.Unmarshal(raw, &c) != nil || c.EntityID != id || !c.Created.Equal(q.EntityCreatedAt) || !c.From.Equal(q.From) || !c.To.Equal(q.To) || c.Upper < 1 || c.AfterSequence < 1 || c.AfterSequence > c.Upper || c.AfterTime.Before(q.From) || c.AfterTime.After(q.To) {
+		if err != nil || len(raw) > 2048 || json.Unmarshal(raw, &c) != nil || c.RetainedFrom.IsZero() || c.AfterTime.IsZero() || c.EntityID != id || !c.Created.Equal(q.EntityCreatedAt) || !c.From.Equal(q.From) || !c.To.Equal(q.To) || c.Upper < 1 || c.AfterSequence < 1 || c.AfterSequence > c.Upper || c.AfterTime.Before(q.From) || c.AfterTime.After(q.To) {
 			return nil, NewValidationError("invalid movement cursor")
 		}
 		if c.AfterTime.Before(cutoff) {
 			return nil, &CursorExpiredError{ActionError: ActionError{Message: "Movement history cursor expired; refresh the interval", Code: protocol.ErrorCodeCursorExpired}}
 		}
 	} else {
+		c = movementCursor{EntityID: id, Created: q.EntityCreatedAt, From: q.From, To: q.To, RetainedFrom: cutoff}
 		if err := tx.QueryRow(ctx, `SELECT COALESCE((SELECT sequence FROM entity_movement_samples WHERE entity_id=$1 AND entity_created_at=$2 ORDER BY sequence DESC LIMIT 1),0)`, id, q.EntityCreatedAt).Scan(&c.Upper); err != nil {
 			return nil, err
 		}
@@ -181,7 +183,7 @@ func (a *EntityActions) InspectMovement(ctx context.Context, id string, created,
 func (a *EntityActions) MovementTrail(ctx context.Context, id string, q MovementQuery) (*protocol.MovementTrail, error) {
 	id = SanitizeID(id)
 	if err := validateMovementRange(q); err != nil {
-		return nil, err
+		return nil, movementTrailError(err)
 	}
 	if q.MaxPoints == 0 {
 		q.MaxPoints = 1000
@@ -193,14 +195,14 @@ func (a *EntityActions) MovementTrail(ctx context.Context, id string, q Movement
 	defer cancel()
 	tx, err := a.movementReadTx(ctx, id, q.EntityCreatedAt)
 	if err != nil {
-		return nil, err
+		return nil, movementTrailError(err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	cutoff := time.Now().Add(-MovementRetention)
 	result := &protocol.MovementTrail{EntityCreatedAt: movementTime(q.EntityCreatedAt), From: movementTime(q.From), To: movementTime(q.To), RetainedFrom: movementTime(cutoff), Points: []protocol.MovementTrailPoint{}}
 	rows, err := tx.Query(ctx, `SELECT `+movementColumns+` FROM entity_movement_samples WHERE entity_id=$1 AND entity_created_at=$2 AND sample_time >= $3 AND sample_time <= $4 AND sample_time >= $5 AND latitude IS NOT NULL ORDER BY sample_time,sequence LIMIT $6`, id, q.EntityCreatedAt, q.From, q.To, cutoff, movementScanBudget+1)
 	if err != nil {
-		return nil, err
+		return nil, movementTrailError(err)
 	}
 	defer rows.Close()
 	bucketWidth := q.To.Sub(q.From) / time.Duration(max(1, q.MaxPoints/2))
@@ -218,7 +220,7 @@ func (a *EntityActions) MovementTrail(ctx context.Context, id string, q Movement
 	for rows.Next() {
 		sample, _, err := scanMovement(rows)
 		if err != nil {
-			return nil, err
+			return nil, movementTrailError(err)
 		}
 		result.PositionCount++
 		if result.PositionCount > movementScanBudget {
@@ -241,7 +243,7 @@ func (a *EntityActions) MovementTrail(ctx context.Context, id string, q Movement
 		lastBucket = bucket
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, movementTrailError(err)
 	}
 	if !previousTime.IsZero() {
 		appendPoint(previous, false)
@@ -251,4 +253,12 @@ func (a *EntityActions) MovementTrail(ctx context.Context, id string, q Movement
 	}
 	result.Simplified = int64(len(result.Points)) < result.PositionCount
 	return result, nil
+}
+
+func movementTrailError(err error) error {
+	var postgresError *pgconn.PgError
+	if errors.As(err, &postgresError) && postgresError.Code == "57014" {
+		return NewValidationError("history interval exceeds the query time budget; choose a shorter interval")
+	}
+	return err
 }

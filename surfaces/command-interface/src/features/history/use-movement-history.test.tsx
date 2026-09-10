@@ -237,3 +237,51 @@ it("retains navigation and recovery on an empty continuation page", async () => 
   await settle();
   expect(api.history.mock.calls.at(-1)?.[1].cursor).toBeUndefined();
 });
+
+it("reports a failed inspection without claiming it is still loading", async () => {
+  const api = reader();
+  api.inspectMovement.mockRejectedValue(new Error("Inspection unavailable"));
+  const { result } = renderHook(() => useMovementHistory(entity, api));
+  act(() => result.current.toggle());
+  await settle();
+  expect(result.current.inspectionError).toBeDefined();
+  expect(result.current.inspectionLoading).toBe(false);
+  expect(result.current.inspection).toBeUndefined();
+});
+
+it("retains the last successful trail after refresh failure", async () => {
+  const api = reader();
+  const { result } = renderHook(() => useMovementHistory(entity, api));
+  act(() => result.current.toggle());
+  await settle();
+  api.trail.mockRejectedValue(new Error("Trail unavailable"));
+  act(() => result.current.refresh());
+  await settle();
+  expect(result.current.data?.trail).toEqual(trail);
+  expect(result.current.trailError).toBeDefined();
+  act(() => result.current.changeRange(86400000));
+  expect(result.current.data).toBeUndefined();
+});
+
+it("does not label a completed hover inspection as following when returning to live fails", async () => {
+  const api = reader();
+  const { result } = renderHook(() => useMovementHistory(entity, api));
+  act(() => result.current.toggle());
+  await settle();
+  const older = { ...sample, sample_id: "hover", time: "2026-09-09T11:59:00Z" };
+  api.inspectMovement.mockResolvedValue({
+    entity_created_at: entity.metadata.created_at,
+    time: older.time,
+    position: older
+  });
+  act(() => result.current.setPreview(older));
+  await act(async () => vi.advanceTimersByTimeAsync(101));
+  expect(result.current.inspection?.position).toEqual(older);
+  api.inspectMovement.mockRejectedValue(new Error("Inspection unavailable"));
+  act(() => result.current.setPreview(undefined));
+  await settle();
+  expect(result.current.following).toBe(true);
+  expect(result.current.sample).toEqual(sample);
+  expect(result.current.inspection).toBeUndefined();
+  expect(result.current.inspectionError).toBeDefined();
+});

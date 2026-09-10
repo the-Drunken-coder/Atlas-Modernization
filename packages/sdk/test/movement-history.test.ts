@@ -116,3 +116,84 @@ it("compares response instants across offsets without losing association precisi
     await expect(client.entities.inspectMovement("asset-1", created, time)).rejects.toThrow();
   }
 });
+
+it("sends only the pagination fields supported by each movement endpoint", async () => {
+  const fetchImpl = vi
+    .fn<typeof fetch>()
+    .mockResolvedValueOnce(Response.json(page))
+    .mockResolvedValueOnce(Response.json(trail));
+  const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl });
+  const options = { ...query, cursor: "page", limit: 10, maxPoints: 20 };
+  await client.entities.history("asset-1", options);
+  await client.entities.trail("asset-1", options);
+  const historyURL = new URL(String(fetchImpl.mock.calls[0]?.[0]));
+  const trailURL = new URL(String(fetchImpl.mock.calls[1]?.[0]));
+  expect(historyURL.searchParams.get("limit")).toBe("10");
+  expect(historyURL.searchParams.has("max_points")).toBe(false);
+  expect(trailURL.searchParams.get("max_points")).toBe("20");
+  expect(trailURL.searchParams.has("cursor")).toBe(false);
+  expect(trailURL.searchParams.has("limit")).toBe(false);
+});
+it.each([{}, { latitude: 0 }, { longitude: 0 }, { latitude: 0, speed_m_s: 1 }])(
+  "rejects incomplete movement sample %j in requests and responses",
+  (quantities) => {
+    expect(
+      isMovementHistoryBatchRequest({ entity_created_at: time, samples: [{ sample_id: "incomplete", ...quantities }] })
+    ).toBe(false);
+    expect(
+      isMovementHistoryPage({
+        ...page,
+        samples: [{ sample_id: "incomplete", time, received_at: time, time_is_arrival: true, ...quantities }]
+      })
+    ).toBe(false);
+  }
+);
+
+it("matches Core's nanosecond normalization for longer fractions", async () => {
+  const long = "2026-09-09T12:00:00.123456789012Z";
+  const normalized = "2026-09-09T12:00:00.123456789Z";
+  const fetchImpl = vi
+    .fn<typeof fetch>()
+    .mockResolvedValue(Response.json({ entity_created_at: normalized, time: normalized }));
+  const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl });
+  await expect(client.entities.inspectMovement("asset-1", long, long)).resolves.toBeDefined();
+});
+
+it.each([
+  { inserted: 0, duplicates: 0, expired: 0 },
+  { inserted: 2, duplicates: 0, expired: 0 }
+])("rejects incoherent import counts %j", async (response) => {
+  const client = new AtlasClient({
+    baseUrl: "http://atlas.test",
+    fetch: vi.fn<typeof fetch>().mockResolvedValue(Response.json(response))
+  });
+  await expect(
+    client.entities.importMovement("asset-1", {
+      entity_created_at: time,
+      samples: [{ sample_id: "one", speed_m_s: 1 }]
+    })
+  ).rejects.toThrow();
+});
+
+it("checks sample bounds and descending ordering at nanosecond precision", async () => {
+  const from = "2026-09-09T12:00:00.000001Z";
+  const to = "2026-09-09T12:00:00.000003Z";
+  const middle = "2026-09-09T12:00:00.000002Z";
+  const fetchImpl = vi.fn<typeof fetch>();
+  const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl });
+  for (const times of [[from, to], ["2026-09-09T12:00:00Z"], ["2026-09-09T12:00:00.000004Z"]]) {
+    fetchImpl.mockResolvedValueOnce(
+      Response.json({ ...page, from, to, samples: times.map((time) => ({ ...page.samples[0], time })) })
+    );
+    await expect(client.entities.history("asset-1", { ...query, from, to })).rejects.toThrow();
+  }
+  fetchImpl.mockResolvedValueOnce(
+    Response.json({
+      ...page,
+      from,
+      to,
+      samples: [to, middle, middle, from].map((time) => ({ ...page.samples[0], time }))
+    })
+  );
+  await expect(client.entities.history("asset-1", { ...query, from, to })).resolves.toBeDefined();
+});

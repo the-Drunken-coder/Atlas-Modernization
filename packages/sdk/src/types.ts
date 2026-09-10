@@ -183,6 +183,7 @@ export type MovementHistoryQuery = {
   to: string;
   cursor?: string;
   limit?: number;
-  maxPoints?: number;
   signal?: AbortSignal;
 };
+
+export type MovementTrailQuery = Omit<MovementHistoryQuery, "cursor" | "limit"> & { maxPoints?: number };

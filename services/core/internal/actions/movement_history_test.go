@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
 	protocol "github.com/the-drunken-coder/atlas/packages/protocol/generated/go/atlasprotocol"
 )
 
@@ -68,6 +70,18 @@ func TestMovementCaptureBackfillAndAssociation(t *testing.T) {
 	page, err = a.MovementHistory(ctx, id, q)
 	if err != nil || page.Samples[0].Latitude != nil || page.NextCursor == "" {
 		t.Fatalf("sparse capture: %+v %v", page, err)
+	}
+	for _, missing := range []string{"entity", "created", "from", "to", "retained_from", "after_time", "after_sequence", "upper"} {
+		raw, _ := base64.RawURLEncoding.DecodeString(page.NextCursor)
+		var fields map[string]any
+		_ = json.Unmarshal(raw, &fields)
+		delete(fields, missing)
+		malformed, _ := json.Marshal(fields)
+		invalid := q
+		invalid.Cursor = base64.RawURLEncoding.EncodeToString(malformed)
+		if _, err := a.MovementHistory(ctx, id, invalid); err == nil {
+			t.Fatalf("accepted cursor missing %s", missing)
+		}
 	}
 	cursor := page.NextCursor
 	// A full-retention window remains pageable when the cutoff advances, while
@@ -227,20 +241,28 @@ func TestMovementConcurrentWritersAndSnapshot(t *testing.T) {
 	if _, err = insertMovement(ctx, tx, locked, protocol.MovementSampleInput{SampleID: "uncommitted", SpeedMS: movementPtr(1.0)}, now); err != nil {
 		t.Fatal(err)
 	}
+	writerConfig := pool.Config().Copy()
+	writerConfig.ConnConfig.RuntimeParams["application_name"] = id
+	writers, err := pgxpool.NewWithConfig(ctx, writerConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(writers.Close)
+	writerActions := NewEntityActions(writers)
 	done := make(chan error, 2)
 	go func() {
-		_, err := a.ImportMovement(ctx, id, protocol.MovementHistoryBatchRequest{EntityCreatedAt: movementTime(e.CreatedAt), Samples: []protocol.MovementSampleInput{{SampleID: "waiting-import", SpeedMS: movementPtr(2.0)}}}, now)
+		_, err := writerActions.ImportMovement(ctx, id, protocol.MovementHistoryBatchRequest{EntityCreatedAt: movementTime(e.CreatedAt), Samples: []protocol.MovementSampleInput{{SampleID: "waiting-import", SpeedMS: movementPtr(2.0)}}}, now)
 		done <- err
 	}()
 	go func() {
-		_, err := a.Update(ctx, id, UpdateEntityParams{Components: map[string]interface{}{"telemetry": map[string]interface{}{"speed_m_s": 3.0}}})
+		_, err := writerActions.Update(ctx, id, UpdateEntityParams{Components: map[string]interface{}{"telemetry": map[string]interface{}{"speed_m_s": 3.0}}})
 		done <- err
 	}()
 	// Wait until PostgreSQL observes both writers waiting, rather than using
 	// elapsed time as evidence that they respected the lock.
 	for {
 		var waiting int
-		err = pool.QueryRow(ctx, `SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock'`).Scan(&waiting)
+		err = pool.QueryRow(ctx, `SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND application_name=$1`, id).Scan(&waiting)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -292,5 +314,16 @@ func TestMovementConcurrentWritersAndSnapshot(t *testing.T) {
 	}
 	if len(seen) != 3 {
 		t.Fatalf("missing concurrent samples: %v", seen)
+	}
+}
+
+func TestMovementTrailErrorMapping(t *testing.T) {
+	var validation *ValidationError
+	if !errors.As(movementTrailError(fmt.Errorf("query: %w", &pgconn.PgError{Code: "57014"})), &validation) {
+		t.Fatal("statement timeout did not explain the query budget")
+	}
+	original := errors.New("storage unavailable")
+	if !errors.Is(movementTrailError(original), original) {
+		t.Fatal("changed a non-timeout error")
 	}
 }

@@ -199,9 +199,8 @@ export function MovementHistorySection({ history: h }: { history: MovementHistor
                       ["Speed", reading(readings?.speed?.speed_m_s, readings?.speed, "m/s")]
                     ]}
                   />
-                  {h.inspectionLoading && (
-                    <div role="status">{h.inspectionError ?? (readings ? "Updating report…" : "Loading report…")}</div>
-                  )}
+                  {h.inspectionError && <div role="alert">{h.inspectionError}</div>}
+                  {h.inspectionLoading && <div role="status">{readings ? "Updating report…" : "Loading report…"}</div>}
                   <details>
                     <summary>Report times</summary>
                     <FieldGrid

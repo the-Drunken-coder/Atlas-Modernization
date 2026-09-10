@@ -24,7 +24,11 @@ import {
   isProtocolRevisionResponse as isGeneratedProtocolRevisionResponse,
   isRuntimeTaskDeliveryResponse as isGeneratedRuntimeTaskDeliveryResponse,
   isTaskResource as isGeneratedTaskResource,
+  isMovementHistoryBatchResponse,
+  isMovementHistoryPage,
   isMovementInspection,
+  type MovementHistoryBatchResponse,
+  type MovementHistoryPage,
   type MovementInspection,
   type ObjectDetailResource,
   type ObjectResource,
@@ -141,15 +145,35 @@ function isSafeNonNegativeInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
 
-// Compare the instant without discarding the sub-millisecond precision of Core associations.
+// Go accepts longer RFC3339 fractions but normalizes them to nanoseconds.
+function compareMovementInstants(left: string, right: string): number {
+  const milliseconds = Date.parse(left) - Date.parse(right);
+  if (milliseconds !== 0) return milliseconds;
+  const fraction = (value: string) => (/\.(\d+)/.exec(value)?.[1] ?? "").slice(0, 9).padEnd(9, "0");
+  const a = fraction(left);
+  const b = fraction(right);
+  return a === b ? 0 : a < b ? -1 : 1;
+}
+
 function sameMovementInstant(left: string, right: string): boolean {
-  const fraction = (value: string) => {
-    const digits = /\.(\d+)/.exec(value)?.[1] ?? "";
-    let end = digits.length;
-    while (end > 0 && digits[end - 1] === "0") end--;
-    return digits.slice(0, end);
-  };
-  return Date.parse(left) === Date.parse(right) && fraction(left) === fraction(right);
+  return compareMovementInstants(left, right) === 0;
+}
+
+export function movementHistoryResponseValidator(query: MovementHistoryQuery): ResponseValidator<MovementHistoryPage> {
+  const validate = movementWindowResponseValidator(isMovementHistoryPage, query);
+  return (value): value is MovementHistoryPage =>
+    validate(value) &&
+    value.samples.every(
+      (sample, index, samples) =>
+        compareMovementInstants(sample.time, query.from) >= 0 &&
+        compareMovementInstants(sample.time, query.to) <= 0 &&
+        (index === 0 || compareMovementInstants(samples[index - 1]!.time, sample.time) >= 0)
+    );
+}
+
+export function movementImportResponseValidator(count: number): ResponseValidator<MovementHistoryBatchResponse> {
+  return (value): value is MovementHistoryBatchResponse =>
+    isMovementHistoryBatchResponse(value) && value.inserted + value.duplicates + value.expired === count;
 }
 
 export function movementWindowResponseValidator<T extends { entity_created_at: string; from: string; to: string }>(

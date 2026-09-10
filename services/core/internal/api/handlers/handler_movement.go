@@ -32,7 +32,7 @@ func movementTimestamp(r *http.Request, name string) (time.Time, error) {
 	}
 	return t, nil
 }
-func movementQuery(r *http.Request) (actions.MovementQuery, error) {
+func movementQuery(r *http.Request, trail bool) (actions.MovementQuery, error) {
 	var q actions.MovementQuery
 	var err error
 	if q.EntityCreatedAt, err = movementTimestamp(r, "entity_created_at"); err != nil {
@@ -44,25 +44,25 @@ func movementQuery(r *http.Request) (actions.MovementQuery, error) {
 	if q.To, err = movementTimestamp(r, "to"); err != nil {
 		return q, err
 	}
-	q.Cursor = r.URL.Query().Get("cursor")
-	if len(q.Cursor) > 4096 {
-		return q, actions.NewValidationError("movement cursor is too long")
+	field, target := "limit", &q.Limit
+	if trail {
+		field, target = "max_points", &q.MaxPoints
+	} else {
+		q.Cursor = r.URL.Query().Get("cursor")
+		if len(q.Cursor) > 4096 {
+			return q, actions.NewValidationError("movement cursor is too long")
+		}
 	}
-	for _, field := range []struct {
-		name  string
-		value *int
-	}{{"limit", &q.Limit}, {"max_points", &q.MaxPoints}} {
-		if raw := r.URL.Query().Get(field.name); raw != "" {
-			*field.value, err = strconv.Atoi(raw)
-			if err != nil || *field.value < 1 {
-				return q, actions.NewValidationError(field.name + " must be positive")
-			}
+	if raw := r.URL.Query().Get(field); raw != "" {
+		*target, err = strconv.Atoi(raw)
+		if err != nil || *target < 1 {
+			return q, actions.NewValidationError(field + " must be positive")
 		}
 	}
 	return q, nil
 }
 func (h *Handler) GetMovementHistory(w http.ResponseWriter, r *http.Request) {
-	q, err := movementQuery(r)
+	q, err := movementQuery(r, false)
 	if err != nil {
 		h.handleActionError(w, r, err)
 		return
@@ -75,7 +75,7 @@ func (h *Handler) GetMovementHistory(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, r, http.StatusOK, result)
 }
 func (h *Handler) GetMovementTrail(w http.ResponseWriter, r *http.Request) {
-	q, err := movementQuery(r)
+	q, err := movementQuery(r, true)
 	if err != nil {
 		h.handleActionError(w, r, err)
 		return
