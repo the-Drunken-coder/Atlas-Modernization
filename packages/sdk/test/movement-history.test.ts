@@ -234,6 +234,39 @@ it.each(["positionless", "outside", "descending", "count"])("rejects incoherent 
   await expect(client.entities.trail("asset-1", { ...query, to })).resolves.toBeDefined();
 });
 
+it.each([
+  { firstGap: true, to: "2026-09-09T12:01:01Z", gap: true, accepted: false },
+  { firstGap: false, to: "2026-09-09T12:00:59.999999999Z", gap: true, accepted: false },
+  { firstGap: false, to: "2026-09-09T12:01:00Z", gap: true, accepted: false },
+  { firstGap: false, to: "2026-09-09T12:01:00.000000001Z", gap: true, accepted: true },
+  { firstGap: false, to: "2026-09-09T12:01:01Z", gap: false, accepted: true }
+])("validates raw gap claims without inferring gaps from reduction: %j", async ({ firstGap, to, gap, accepted }) => {
+  const response = {
+    ...trail,
+    to,
+    position_count: 3,
+    simplified: true,
+    points: [time, to].map((instant, index) => ({
+      sample: {
+        ...page.samples[0],
+        sample_id: instant,
+        time: instant,
+        received_at: instant,
+        latitude: 1,
+        longitude: 2
+      },
+      gap_before: index === 0 ? firstGap : gap
+    }))
+  };
+  const client = new AtlasClient({
+    baseUrl: "http://atlas.test",
+    fetch: vi.fn<typeof fetch>().mockResolvedValue(Response.json(response))
+  });
+  const result = client.entities.trail("asset-1", { ...query, to });
+  if (accepted) await expect(result).resolves.toEqual(response);
+  else await expect(result).rejects.toThrow();
+});
+
 it.each(["position", "speed", "altitude", "future"])("rejects incoherent inspection %s", async (issue) => {
   const future = "2026-09-09T12:00:01Z";
   const response = {

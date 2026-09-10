@@ -198,13 +198,14 @@ export function movementTrailResponseValidator(query: MovementTrailQuery): Respo
     value.points.length <= (query.maxPoints ?? 1000) &&
     value.simplified === value.points.length < value.position_count &&
     value.points.every(
-      ({ sample }, index, points) =>
+      ({ sample, gap_before }, index, points) =>
         coherentMovementSample(sample) &&
         sample.latitude !== undefined &&
         sample.longitude !== undefined &&
         compareMovementInstants(sample.time, query.from) >= 0 &&
         compareMovementInstants(sample.time, query.to) <= 0 &&
-        (index === 0 || compareMovementInstants(points[index - 1]!.sample.time, sample.time) <= 0)
+        (index === 0 || compareMovementInstants(points[index - 1]!.sample.time, sample.time) <= 0) &&
+        (!gap_before || (index > 0 && compareMovementInstants(sample.time, points[index - 1]!.sample.time, 60_000) > 0))
     );
 }
 
