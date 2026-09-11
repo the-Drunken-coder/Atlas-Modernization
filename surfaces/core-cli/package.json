@@ -49,8 +49,8 @@
     "check": "npm run format:check && npm run lint && npm run typecheck && npm test && npm run build && npm run test:package"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.11",
-    "@types/node": "^26.4.1",
+    "@biomejs/biome": "2.5.12",
+    "@types/node": "^26.5.0",
     "@types/react": "19.2.18",
     "typescript": "^7.0.2",
     "vitest": "^4.1.11"
