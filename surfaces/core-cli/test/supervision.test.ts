@@ -10,6 +10,7 @@ import {
   type SupervisorCommandResult,
   type SupervisorFileSystem,
   type SupervisorInstallOptions,
+  type SupervisorServiceDefinition,
   uninstallSupervisor
 } from "../src/supervision.js";
 
@@ -160,6 +161,26 @@ describe("supervisor installation adapters", () => {
     expect(await options.filesystem.exists(installed.definition.servicePath)).toBe(false);
   });
 
+  it("matches the current user's loaded LaunchAgent target", async () => {
+    const root = await makeTempDirectory();
+    let definition: SupervisorServiceDefinition | undefined;
+    const runner = fakeRunner({
+      launchctl: (args) =>
+        args[0] === "print" && definition ? result(0, launchdLiveConfiguration(definition)) : result(0)
+    });
+    const options = installationOptions(root, "darwin", runner);
+    definition = generateSupervisorDefinition(options);
+
+    await installSupervisor(options);
+
+    await expect(getSupervisorStatus(options)).resolves.toMatchObject({
+      installed: true,
+      loaded: true,
+      running: true,
+      userManagerAvailable: true
+    });
+  });
+
   it("installs a systemd user unit without enabling lingering", async () => {
     const root = await makeTempDirectory();
     const runner = fakeRunner();
@@ -180,6 +201,7 @@ describe("supervisor installation adapters", () => {
     const runner = fakeRunner({
       systemctl: (args) => {
         if (args[1] === "is-active") return result(0);
+        if (args[1] === "show") return result(0, systemdLiveConfiguration(root));
         return result(0);
       }
     });
@@ -196,8 +218,67 @@ describe("supervisor installation adapters", () => {
       sessionRequired: true,
       startsWithoutLogin: false
     });
-    expect(runner.calls.at(-2)).toEqual(["systemctl", ["--user", "is-active", "atlas-core-supervisor.service"]]);
-    expect(runner.calls.at(-1)).toEqual(["systemctl", ["--user", "is-enabled", "atlas-core-supervisor.service"]]);
+    expect(runner.calls.at(-3)).toEqual(["systemctl", ["--user", "is-active", "atlas-core-supervisor.service"]]);
+    expect(runner.calls.at(-2)).toEqual(["systemctl", ["--user", "is-enabled", "atlas-core-supervisor.service"]]);
+    expect(runner.calls.at(-1)).toEqual([
+      "systemctl",
+      ["--user", "show", "atlas-core-supervisor.service", "--property", "ExecStart", "--property", "Environment"]
+    ]);
+  });
+
+  it("rejects a loaded systemd service targeting another CLI installation", async () => {
+    const root = await makeTempDirectory();
+    const runner = fakeRunner({
+      systemctl: (args) => {
+        if (args[1] === "show") return result(0, systemdLiveConfiguration(root, "/opt/other-atlas-core/dist/cli.js"));
+        return result(0);
+      }
+    });
+    const options = installationOptions(root, "linux", runner);
+    await installSupervisor(options);
+
+    const status = await getSupervisorStatus(options);
+    expect(status).toMatchObject({ loaded: false, running: false, enabled: true, userManagerAvailable: true });
+    expect(status.message).toMatch(/does not target this CLI installation/i);
+  });
+
+  it("matches systemd live properties with escaped spaces in paths", async () => {
+    const root = await makeTempDirectory();
+    const runner = fakeRunner({
+      systemctl: (args) => {
+        if (args[1] === "show")
+          return result(
+            0,
+            systemdLiveConfiguration(root, "/opt/Atlas User/dist/cli.js", join(root, "Atlas User", ".atlas-core"))
+          );
+        return result(0);
+      }
+    });
+    const options = {
+      ...installationOptions(root, "linux", runner),
+      coreHome: join(root, "Atlas User", ".atlas-core"),
+      cliScript: "/opt/Atlas User/dist/cli.js"
+    };
+    await installSupervisor(options);
+
+    await expect(getSupervisorStatus(options)).resolves.toMatchObject({ loaded: true, running: true });
+  });
+
+  it("rejects a stale on-disk supervisor definition", async () => {
+    const root = await makeTempDirectory();
+    const runner = fakeRunner({
+      systemctl: (args) => {
+        if (args[1] === "show") return result(0, systemdLiveConfiguration(root));
+        return result(0);
+      }
+    });
+    const options = installationOptions(root, "linux", runner);
+    const installed = await installSupervisor(options);
+    await options.filesystem.writeFile(installed.definition.servicePath, "stale definition\n");
+
+    const status = await getSupervisorStatus(options);
+    expect(status).toMatchObject({ loaded: false, running: false, enabled: true });
+    expect(status.message).toMatch(/does not target this CLI installation/i);
   });
 });
 
@@ -239,6 +320,43 @@ function installationOptions(
   };
 }
 
+function systemdLiveConfiguration(
+  root: string,
+  cliScript = "/opt/atlas-core/dist/cli.js",
+  coreHome = join(root, ".atlas-core")
+): string {
+  const path = [
+    "/opt/node/bin",
+    join(root, ".docker", "bin"),
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+    "/usr/bin",
+    "/bin",
+    "/usr/sbin",
+    "/sbin"
+  ].join(":");
+  const escape = (value: string): string => value.replaceAll(" ", "\\x20");
+  return `ExecStart={ path=${escape("/opt/node/bin/node")} ; argv[]=${escape("/opt/node/bin/node")} ${escape(cliScript)} supervise ; ignore_errors=no ; }\nEnvironment=ATLAS_CORE_HOME=${escape(coreHome)} PATH=${escape(path)}\n`;
+}
+
+function launchdLiveConfiguration(definition: SupervisorServiceDefinition): string {
+  return `gui/501/${definition.serviceName} = {
+\tpath = ${definition.servicePath}
+\tstate = running
+\tprogram = ${definition.command[0]}
+\targuments = {
+\t\t${definition.command[0]}
+\t\t${definition.command[1]}
+\t\tsupervise
+\t}
+\tenvironment = {
+\t\tATLAS_CORE_HOME => ${definition.environment.ATLAS_CORE_HOME}
+\t\tPATH => ${definition.environment.PATH}
+\t}
+}
+`;
+}
+
 const filesystem: SupervisorFileSystem = {
   async mkdir(path, options) {
     const { mkdir } = await import("node:fs/promises");
@@ -251,6 +369,10 @@ const filesystem: SupervisorFileSystem = {
   async rm(path, options) {
     const { rm } = await import("node:fs/promises");
     await rm(path, { force: options?.force ?? false });
+  },
+  async read(path) {
+    const { readFile } = await import("node:fs/promises");
+    return await readFile(path, "utf8");
   },
   async exists(path) {
     try {

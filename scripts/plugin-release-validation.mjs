@@ -2,6 +2,7 @@ const identifierPattern = /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/u;
 const semverPattern = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u;
 const imagePattern = /^ghcr\.io\/the-drunken-coder\/[a-z0-9][a-z0-9-]*@sha256:[0-9a-f]{64}$/u;
 const protocolRevisionPattern = /^sha256:[0-9a-f]{64}$/u;
+const maxStringBytes = 2048;
 
 /**
  * Validate the release document contract shared by the publisher and catalog.
@@ -29,22 +30,22 @@ export function validateReleaseDocument(document) {
     label
   );
   if (document.schema !== 1) throw new Error(`${label} schema must be 1`);
-  if (typeof document.plugin_id !== "string" || !identifierPattern.test(document.plugin_id) || document.plugin_id.length > 50) {
+  if (!boundedString(document.plugin_id) || !identifierPattern.test(document.plugin_id) || document.plugin_id.length > 50) {
     throw new Error(`${label} has an invalid plugin_id`);
   }
-  if (typeof document.version !== "string" || !semverPattern.test(document.version)) {
+  if (!boundedString(document.version) || !semverPattern.test(document.version)) {
     throw new Error(`${label} has an invalid version`);
   }
-  if (typeof document.display_name !== "string" || document.display_name.trim() !== document.display_name || !document.display_name || document.display_name.length > 100) {
+  if (!boundedString(document.display_name) || document.display_name.trim() !== document.display_name || !document.display_name || document.display_name.length > 100) {
     throw new Error(`${label} has an invalid display_name`);
   }
   if (document.lifecycle !== "query_only") throw new Error(`${label} lifecycle must be query_only`);
   const expectedImage = `ghcr.io/the-drunken-coder/atlas-${document.plugin_id.replaceAll("_", "-")}@`;
-  if (!document.image.startsWith(expectedImage) || !imagePattern.test(document.image)) throw new Error(`${label} image must be the expected immutable first-party digest reference`);
+  if (!boundedString(document.image) || !document.image.startsWith(expectedImage) || !imagePattern.test(document.image)) throw new Error(`${label} image must be the expected immutable first-party digest reference`);
   if (!positiveSafeInteger(document.core_to_plugin_protocol_major) || !positiveSafeInteger(document.plugin_to_source_gateway_protocol_major)) {
     throw new Error(`${label} protocol majors must be positive safe integers`);
   }
-  if (document.atlas_protocol_revision !== null && !protocolRevisionPattern.test(document.atlas_protocol_revision)) {
+  if (document.atlas_protocol_revision !== null && (!boundedString(document.atlas_protocol_revision) || !protocolRevisionPattern.test(document.atlas_protocol_revision))) {
     throw new Error(`${label} has an invalid atlas_protocol_revision`);
   }
   if (!Array.isArray(document.interactions) || new Set(document.interactions).size !== document.interactions.length || document.interactions.some((kind) => kind !== "map_area")) {
@@ -59,10 +60,10 @@ export function validateReleaseDocument(document) {
 
 export function validateSourceConnector(value, pluginId) {
   assertExactKeys(value, ["id", "origin", "routes", "secret_headers", "egress", "limits", "rate", "circuit_breaker"], `${pluginId} source connector`);
-  if (typeof value.id !== "string" || value.id !== pluginId || !identifierPattern.test(value.id) || value.id.length > 50) {
+  if (!boundedString(value.id) || value.id !== pluginId || !identifierPattern.test(value.id) || value.id.length > 50) {
     throw new Error(`${pluginId} source connector must use its plugin_id`);
   }
-  if (typeof value.origin !== "string") throw new Error(`${pluginId} source connector origin must be a string`);
+  if (!boundedString(value.origin)) throw new Error(`${pluginId} source connector origin must be a string`);
   let origin;
   try {
     origin = new URL(value.origin);
@@ -116,10 +117,10 @@ function validateSourceRoute(value, index, seenRoutes) {
     ["method", "path_prefix", "allowed_query_names", "allowed_request_headers", "allowed_response_headers", "read_only", "cache", "retry"],
     label
   );
-  if (typeof value.method !== "string") throw new Error(`${label} method must be a string`);
+  if (!boundedString(value.method)) throw new Error(`${label} method must be a string`);
   const method = value.method.trim().toUpperCase();
   if (!["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"].includes(method)) throw new Error(`${label} method is unsupported`);
-  if (typeof value.path_prefix !== "string" || !value.path_prefix.startsWith("/") || value.path_prefix.startsWith("//") || /[\\?#\u0000]/u.test(value.path_prefix) || value.path_prefix.split("/").some((part) => part === "." || part === "..")) {
+  if (!boundedString(value.path_prefix) || !value.path_prefix.startsWith("/") || value.path_prefix.startsWith("//") || /[\\?#\u0000]/u.test(value.path_prefix) || value.path_prefix.split("/").some((part) => part === "." || part === "..")) {
     throw new Error(`${label} path_prefix is invalid`);
   }
   const routeKey = `${method} ${value.path_prefix}`;
@@ -146,13 +147,13 @@ function validateSourceRoute(value, index, seenRoutes) {
   if (new Set(statuses).size !== statuses.length) throw new Error(`${label} retry.statuses contain duplicates`);
   if (!Array.isArray(value.retry.failures)) throw new Error(`${label} retry.failures must be an array`);
   const failures = value.retry.failures.map((failure) => {
-    if (typeof failure !== "string" || !["upstream_timeout", "upstream_unreachable"].includes(failure.trim())) {
+    if (!boundedString(failure) || !["upstream_timeout", "upstream_unreachable"].includes(failure.trim())) {
       throw new Error(`${label} retry.failures contain an unsupported failure`);
     }
     return failure.trim();
   });
   if (new Set(failures).size !== failures.length) throw new Error(`${label} retry.failures contain duplicates`);
-  if (typeof value.retry.idempotency_header !== "string" || value.retry.idempotency_header.trim() !== value.retry.idempotency_header || (value.retry.idempotency_header && !headerName(value.retry.idempotency_header.toLowerCase()))) {
+  if (!boundedString(value.retry.idempotency_header) || value.retry.idempotency_header.trim() !== value.retry.idempotency_header || (value.retry.idempotency_header && !headerName(value.retry.idempotency_header.toLowerCase()))) {
     throw new Error(`${label} retry.idempotency_header is invalid`);
   }
   if (value.retry.max_retries > 0 && !value.read_only && !value.retry.idempotency_header) throw new Error(`${label} mutating retries require idempotency_header`);
@@ -164,7 +165,7 @@ function validateSourceRoute(value, index, seenRoutes) {
 function validateNames(value, headers, label) {
   if (!Array.isArray(value)) throw new Error(`${label} must be an array`);
   const names = value.map((entry) => {
-    if (typeof entry !== "string" || !entry.trim()) throw new Error(`${label} contains an invalid name`);
+    if (!boundedString(entry) || !entry.trim()) throw new Error(`${label} contains an invalid name`);
     const name = headers ? entry.trim().toLowerCase() : entry.trim();
     if (headers && !headerName(name)) throw new Error(`${label} contains an invalid name`);
     return name;
@@ -187,6 +188,10 @@ function positiveSafeInteger(value) {
 
 function isRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function boundedString(value) {
+  return typeof value === "string" && Buffer.byteLength(value, "utf8") <= maxStringBytes;
 }
 
 function assertExactKeys(value, keys, label) {

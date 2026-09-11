@@ -241,8 +241,7 @@ export class ManagedCoreManager {
         fromPackageVersion: state.packageVersion,
         targetPackageVersion: target.packageVersion,
         targetCoreImage: target.packageImage,
-        priorBackupIdentity,
-        ...(await this.#priorLedger(true))
+        priorBackupIdentity
       });
       return await this.#runTransaction(transaction, state, target, "core-update");
     } catch (error) {
@@ -434,15 +433,14 @@ export class ManagedCoreManager {
       );
       transaction.stage("state.json", encodeState(initialisingState));
       transaction.applyStaged("state.json");
-      const priorMigrationLedger =
-        operation === "core-update"
-          ? (transaction.read().recovery?.priorMigrationLedger ?? (await this.#priorLedger(true)).priorMigrationLedger)
-          : undefined;
       transaction.advance("runtime-changing", {
         targetPackageVersion: target.packageVersion,
-        targetCoreImage: target.packageImage,
-        ...(priorMigrationLedger ? { priorMigrationLedger } : {})
+        targetCoreImage: target.packageImage
       });
+      if (operation === "core-update" && transaction.read().recovery?.priorMigrationLedger === undefined) {
+        const priorMigrationLedger = (await this.#priorLedger(true)).priorMigrationLedger;
+        if (priorMigrationLedger) transaction.advance("runtime-changing", { priorMigrationLedger });
+      }
 
       if (previousRunning) {
         const oldPluginIds = previousState?.enabledPlugins ?? [];

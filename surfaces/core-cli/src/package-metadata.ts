@@ -5,7 +5,7 @@ export const PACKAGE_IMAGE: string | undefined = "ghcr.io/the-drunken-coder/atla
 export const PACKAGE_PLUGIN_CONTRACTS = {
   coreToPluginProtocolMajors: [1],
   pluginToSourceGatewayProtocolMajors: [1],
-  atlasProtocolRevision: "sha256:2722212b14f67b01dc185de162a27a18fbb10a3a29355866a7db8c7c281b71a6",
+  atlasProtocolRevision: "sha256:4cd40a5b37578ecfceb1d094f611c2ff9f369dfa8659238c56489f1c94814b44",
   supportedPackageSchemaMajors: [1],
   supportedInteractions: ["map_area"]
 } as const;

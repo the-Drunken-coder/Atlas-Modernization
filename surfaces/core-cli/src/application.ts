@@ -1229,6 +1229,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
         rm: async (path: string, options?: { force?: boolean }) => {
           rmSync(path, options);
         },
+        read: async (path: string) => readFileSync(path, "utf8"),
         exists: async (path: string) => existsSync(path)
       }
     };
@@ -3428,6 +3429,10 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     this.#assertStateMatchesEngine(state, dockerEngineId);
     const managed = this.#requireManaged(state);
     this.#verifyBundle(managed);
+    const snapshot = await this.#deploymentSnapshot(managed.enabledPlugins);
+    if (snapshot.status === "stopped") {
+      throw new Error("Atlas Core is stopped; run atlas-core start instead of atlas-core restart.");
+    }
     await this.#assertStartIsSafe(managed);
     for (const receipt of managed.baseDeployment?.images ?? []) await verifyLocalImage(this.#imageCommand, receipt);
     await this.#verifyEnabledPlugins(managed, false);

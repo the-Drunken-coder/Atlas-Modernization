@@ -287,9 +287,10 @@ function reuseExistingPublication(pluginId, version, sourceSha, releaseDirectory
     }
     if (release.assets.some((candidate) => candidate.name === asset)) {
       runCapture("gh", ["release", "download", releaseTag, "--repo", githubRepository, "--pattern", asset, "--dir", releaseDirectory]);
+      const downloadedBytes = readFileSync(assetPath);
       const downloaded = readJSON(assetPath);
       validateReleaseDocument(downloaded);
-      assertReleaseDocumentMatches(plugin, version, imageReference, downloaded);
+      assertReleaseDocumentMatches(plugin, version, imageReference, downloadedBytes);
       reusedAsset = true;
     }
   }
@@ -351,17 +352,11 @@ function readGitHubRelease(repository, tag) {
   return release;
 }
 
-function assertReleaseDocumentMatches(plugin, version, image, actual) {
-  const expected = createReleaseDocument(plugin, version, image);
-  if (JSON.stringify(canonicalJSON(actual)) !== JSON.stringify(canonicalJSON(expected))) {
+function assertReleaseDocumentMatches(plugin, version, image, actualBytes) {
+  const expectedBytes = Buffer.from(`${JSON.stringify(createReleaseDocument(plugin, version, image), null, 2)}\n`);
+  if (!actualBytes.equals(expectedBytes)) {
     throw new Error("Existing GitHub Release document does not match the reviewed plugin metadata and image digest");
   }
-}
-
-function canonicalJSON(value) {
-  if (Array.isArray(value)) return value.map(canonicalJSON);
-  if (isRecord(value)) return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonicalJSON(value[key])]));
-  return value;
 }
 
 function readRemoteReleaseTag(repository, tag) {

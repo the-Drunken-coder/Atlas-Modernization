@@ -222,6 +222,11 @@ test("publishes and renews a signed append-only catalog with exact release URLs"
     assert.match(invalidPolicy.stderr, /must appear in allowed_request_headers/);
     assert.deepEqual(readFileSync(catalogPath), catalogBeforeInvalidRelease);
 
+    const oversizedReason = run(["revoke", "fixture", "1.0.0", "é".repeat(1025), ledgerPath], environment);
+    assert.notEqual(oversizedReason.status, 0);
+    assert.match(oversizedReason.stderr, /2048 UTF-8 bytes/);
+    assert.deepEqual(readFileSync(catalogPath), catalogBeforeInvalidRelease);
+
     const renewed = run(["renew", ledgerPath], environment);
     assert.equal(renewed.status, 0, renewed.stderr);
     const renewedCatalog = JSON.parse(readFileSync(catalogPath));
@@ -276,6 +281,13 @@ test("publishes and renews a signed append-only catalog with exact release URLs"
     assert.equal(revokedCatalog.plugins[0].releases[0].revocation_reason, "security issue");
     assert.equal(revokedCatalog.plugins[0].releases[0].document_sha256, multiVersionCatalog.plugins[0].releases[0].document_sha256);
     assert.equal(revokedCatalog.plugins[0].releases[0].document_url, multiVersionCatalog.plugins[0].releases[0].document_url);
+    const malformedReasonCatalog = JSON.parse(revokedBytes);
+    malformedReasonCatalog.plugins[0].releases[0].revocation_reason = "é".repeat(1025);
+    writeFileSync(catalogPath, `${JSON.stringify(malformedReasonCatalog, null, 2)}\n`);
+    const malformedReason = run(["renew", ledgerPath], environment);
+    assert.notEqual(malformedReason.status, 0);
+    assert.match(malformedReason.stderr, /malformed fixture release/);
+    writeFileSync(catalogPath, revokedBytes);
     const repeatedRevoke = run(["revoke", "fixture", "1.0.0", "security issue", ledgerPath], environment);
     assert.equal(repeatedRevoke.status, 0, repeatedRevoke.stderr);
     assert.deepEqual(readFileSync(catalogPath), revokedBytes);

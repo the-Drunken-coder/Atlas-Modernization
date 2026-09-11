@@ -213,6 +213,51 @@ describe("ManagedCoreManager", () => {
     expect(calls.some((call) => call.coreImage === NEXT_IMAGE && call.args[0] === "up")).toBe(true);
   });
 
+  it("keeps a stopped update recoverable when migration-ledger setup starts storage", async () => {
+    const configDir = temporaryDirectory();
+    writeFileSync(join(configDir, ".env"), "POSTGRES_PASSWORD=secret\n", { mode: 0o600 });
+    const stateRef = { current: undefined as ManagedCoreState | undefined };
+    const calls: Call[] = [];
+    const initial = new ManagedCoreManager(
+      makeOptions(configDir, packageDirectory(IMAGE, "ledger-old"), IMAGE, stateRef, calls, RECEIPT, {
+        desiredRunning: false
+      })
+    );
+    stateRef.current = await initial.initialize();
+    calls.length = 0;
+
+    let postgresRunning = false;
+    let stopFails = true;
+    const next = new ManagedCoreManager(
+      makeOptions(configDir, packageDirectory(NEXT_IMAGE, "ledger-next"), NEXT_IMAGE, stateRef, calls, NEXT_RECEIPT, {
+        previousRunning: false,
+        desiredRunning: false,
+        readMigrationLedger: async () => {
+          postgresRunning = true;
+          throw new Error("migration ledger read interrupted");
+        },
+        runCompose: async (args, pluginIds, options) => {
+          calls.push({ args, pluginIds, coreImage: options.coreImage, ...(options.cleanup ? { cleanup: true } : {}) });
+          if (options.cleanup && args[0] === "down" && stopFails) {
+            return { status: 1, stdout: "", stderr: "storage stop interrupted" };
+          }
+          if (options.cleanup && args[0] === "down") postgresRunning = false;
+          return { status: 0, stdout: "", stderr: "" };
+        }
+      })
+    );
+
+    await expect(next.update(stateRef.current)).rejects.toThrow(/Recovery also failed/);
+    expect(postgresRunning).toBe(true);
+    expect(DeploymentTransactionStore.open(configDir).journal.phase).toBe("runtime-changing");
+
+    stopFails = false;
+    const recovered = await next.recover("retry");
+    expect((recovered as ManagedCoreState).packageVersion).toBe("0.1.8");
+    expect(postgresRunning).toBe(false);
+    expect(existsSync(join(configDir, "transaction"))).toBe(false);
+  });
+
   it("replaces the staged bundle when forward recovery removes a file", async () => {
     const configDir = temporaryDirectory();
     writeFileSync(join(configDir, ".env"), "POSTGRES_PASSWORD=secret\n", { mode: 0o600 });

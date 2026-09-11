@@ -114,3 +114,6 @@ Codex reviewed `f44a8353779abbb26d62509f9dbd4801e97ea41b` after an explicit revi
 - Bundle repair used the installed CLI's assets even when Core retained an older package version. Repair now fetches the exact recorded npm package as data, checks its version and image, and requires the candidate bundle hash to match before replacement.
 
 Focused tests cover removed-file recovery followed by startup, retired-key and lower-epoch replay rejection, publication retry states, and repairing a damaged bundle after a CLI upgrade. No merge is authorized by this follow-up.
+
+
+Codex's next review of `6ee771948ebbe81ac95df397bdd73654987c5a20` identified seven further cases. Restart now refuses a stopped deployment so operators use the supervised or explicit manual start path. Supervisor status verifies the installed and loaded definition targets the selected deployment and CLI. Core updates journal temporary PostgreSQL startup before reading the migration ledger. Publication compares reused documents byte for byte, and both release and catalog validation enforce the CLI's UTF-8 string limits. Legacy import and repair enforce archive, decompression, entry-count, and per-entry size limits before extraction. The generated CLI Protocol revision is also refreshed after the rebase onto movement-history main.

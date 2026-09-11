@@ -87,6 +87,7 @@ export type SupervisorFileSystem = {
   mkdir(path: string, options?: { recursive?: boolean; mode?: number }): Promise<void>;
   writeFile(path: string, contents: string, options?: { mode?: number }): Promise<void>;
   rm(path: string, options?: { force?: boolean }): Promise<void>;
+  read(path: string): Promise<string>;
   exists(path: string): Promise<boolean>;
 };
 
@@ -368,9 +369,14 @@ export async function uninstallSupervisor(options: SupervisorUninstallOptions): 
 export async function getSupervisorStatus(options: SupervisorInstallOptions): Promise<SupervisorStatus> {
   const definition = generateSupervisorDefinition(options);
   const installed = await options.filesystem.exists(definition.servicePath);
+  const diskDefinitionMatches =
+    installed && (await readDefinition(options.filesystem, definition)) === definition.content;
   if (definition.platform === "darwin") {
     const result = await options.runner("launchctl", ["print", `gui/${options.userId}/${definition.serviceName}`]);
-    const loaded = result.status === 0;
+    const serviceLoaded = result.status === 0;
+    const targetMatches =
+      diskDefinitionMatches && serviceLoaded && launchdTargetMatches(result.stdout ?? "", definition);
+    const loaded = serviceLoaded && targetMatches;
     const userManagerAvailable =
       result.status === 0 ||
       !/could not find service|domain does not exist|unknown service|not found/i.test(result.stderr ?? "");
@@ -378,24 +384,42 @@ export async function getSupervisorStatus(options: SupervisorInstallOptions): Pr
       definition,
       installed,
       loaded,
-      running: loaded ? /\bstate\s*=\s*running\b/.test(result.stdout ?? "") : undefined,
+      running: serviceLoaded ? targetMatches && /\bstate\s*=\s*running\b/.test(result.stdout ?? "") : undefined,
       enabled: undefined,
       userManagerAvailable,
       sessionRequired: true,
       startsWithoutLogin: false,
-      message: loaded
-        ? "The Atlas Core LaunchAgent is loaded in the current user's GUI session."
-        : installed
-          ? "The LaunchAgent file exists but is not loaded; a logged-in GUI session is required."
-          : "The Atlas Core LaunchAgent is not installed."
+      message:
+        serviceLoaded && !targetMatches
+          ? "The loaded Atlas Core LaunchAgent does not target this CLI installation."
+          : loaded
+            ? "The Atlas Core LaunchAgent is loaded in the current user's GUI session."
+            : installed
+              ? "The LaunchAgent file exists but is not loaded; a logged-in GUI session is required."
+              : "The Atlas Core LaunchAgent is not installed."
     };
   }
 
   const active = await options.runner("systemctl", ["--user", "is-active", definition.serviceName]);
   const enabled = await options.runner("systemctl", ["--user", "is-enabled", definition.serviceName]);
   const userManagerAvailable = userManagerAvailability(active, enabled);
-  const loaded = active.status === 0 || enabled.status === 0;
-  const running = active.status === 0 ? true : active.status === 3 ? false : undefined;
+  const serviceLoaded = active.status === 0 || enabled.status === 0;
+  const liveConfiguration = await options.runner("systemctl", [
+    "--user",
+    "show",
+    definition.serviceName,
+    "--property",
+    "ExecStart",
+    "--property",
+    "Environment"
+  ]);
+  const targetMatches =
+    diskDefinitionMatches &&
+    serviceLoaded &&
+    liveConfiguration.status === 0 &&
+    systemdTargetMatches(liveConfiguration.stdout ?? "", options);
+  const loaded = serviceLoaded && targetMatches;
+  const running = active.status === 0 ? targetMatches : active.status === 3 ? false : undefined;
   return {
     definition,
     installed,
@@ -407,14 +431,149 @@ export async function getSupervisorStatus(options: SupervisorInstallOptions): Pr
     startsWithoutLogin: false,
     message: !userManagerAvailable
       ? "The systemd user manager is unavailable for this user; login or user lingering is required."
-      : loaded
-        ? running
-          ? "The Atlas Core systemd user service is running."
-          : "The Atlas Core systemd user service is installed but inactive."
-        : installed
-          ? "The systemd user unit exists but is not enabled or loaded."
-          : "The Atlas Core systemd user service is not installed."
+      : serviceLoaded && !targetMatches
+        ? "The loaded Atlas Core systemd user service does not target this CLI installation."
+        : loaded
+          ? running
+            ? "The Atlas Core systemd user service is running."
+            : "The Atlas Core systemd user service is installed but inactive."
+          : installed
+            ? "The systemd user unit exists but is not enabled or loaded."
+            : "The Atlas Core systemd user service is not installed."
   };
+}
+
+function launchdTargetMatches(output: string, definition: SupervisorServiceDefinition): boolean {
+  const path = propertyValue(output, "path")?.trim();
+  if (path !== definition.servicePath) return false;
+  const argumentsBlock = blockValue(output, "arguments");
+  const argumentsList =
+    argumentsBlock
+      ?.split(/\r?\n/u)
+      .map((line) => line.trim())
+      .filter((line) => line && !line.endsWith("{")) ?? [];
+  if (argumentsList.length !== definition.command.length) return false;
+  if (!definition.command.every((argument, index) => argumentsList[index] === argument)) return false;
+  const environment = launchdEnvironment(output);
+  return (
+    environment.get("ATLAS_CORE_HOME") === definition.environment.ATLAS_CORE_HOME &&
+    environment.get("PATH") === definition.environment.PATH
+  );
+}
+
+function systemdTargetMatches(output: string, options: SupervisorDefinitionOptions): boolean {
+  const execStart = propertyValue(output, "ExecStart");
+  const argv = execStart ? blockPropertyValue(execStart, "argv[]") : undefined;
+  const argumentsList = argv ? splitSystemdWords(argv) : [];
+  if (
+    argumentsList.length !== 3 ||
+    argumentsList[0] !== options.nodeExecutable ||
+    argumentsList[1] !== options.cliScript ||
+    argumentsList[2] !== "supervise"
+  ) {
+    return false;
+  }
+  const environmentValue = propertyValue(output, "Environment");
+  const environment = environmentValue ? parseSystemdEnvironment(environmentValue) : new Map<string, string>();
+  return environment.get("ATLAS_CORE_HOME") === options.coreHome && environment.get("PATH") === supervisorPath(options);
+}
+
+function propertyValue(output: string, property: string): string | undefined {
+  return output.match(new RegExp(`^\\s*${escapeRegExp(property)}\\s*=\\s*(.*)$`, "mu"))?.[1];
+}
+
+function blockValue(output: string, property: string): string | undefined {
+  return output.match(new RegExp(`^\\s*${escapeRegExp(property)}\\s*=\\s*\\{([\\s\\S]*?)^\\s*\\}`, "mu"))?.[1];
+}
+
+function blockPropertyValue(value: string, property: string): string | undefined {
+  return value.match(new RegExp(`(?:^|\\s)${escapeRegExp(property)}=([^;]*?)(?:\\s*;|$)`, "u"))?.[1]?.trim();
+}
+
+function launchdEnvironment(output: string): Map<string, string> {
+  const environment = new Map<string, string>();
+  for (const line of blockValue(output, "environment")?.split(/\r?\n/u) ?? []) {
+    const match = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:=>|=)\s*(.*?)\s*$/u.exec(line);
+    if (match) environment.set(match[1]!, match[2]!);
+  }
+  return environment;
+}
+
+function parseSystemdEnvironment(value: string): Map<string, string> {
+  const environment = new Map<string, string>();
+  for (const token of splitSystemdWords(value)) {
+    const separator = token.indexOf("=");
+    if (separator > 0) environment.set(token.slice(0, separator), token.slice(separator + 1));
+  }
+  return environment;
+}
+
+function splitSystemdWords(value: string): string[] {
+  const words: string[] = [];
+  let current = "";
+  let quoted = false;
+  for (let index = 0; index < value.length; ) {
+    const character = value[index]!;
+    if (character === "\\") {
+      const hex = /^\\x([0-9a-f]{2})/iu.exec(value.slice(index));
+      if (hex) {
+        current += String.fromCodePoint(Number.parseInt(hex[1]!, 16));
+        index += hex[0].length;
+      } else if (index + 1 < value.length) {
+        current += decodeSystemdEscape(value[index + 1]!);
+        index += 2;
+      } else {
+        current += character;
+        index++;
+      }
+      continue;
+    }
+    if (character === '"') {
+      quoted = !quoted;
+      index++;
+      continue;
+    }
+    if (!quoted && /\s/u.test(character)) {
+      if (current) {
+        words.push(current);
+        current = "";
+      }
+      index++;
+      continue;
+    }
+    current += character;
+    index++;
+  }
+  if (current) words.push(current);
+  return words;
+}
+
+function decodeSystemdEscape(value: string): string {
+  switch (value) {
+    case "s":
+      return " ";
+    case "n":
+      return "\n";
+    case "t":
+      return "\t";
+    default:
+      return value;
+  }
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
+async function readDefinition(
+  filesystem: SupervisorFileSystem,
+  definition: SupervisorServiceDefinition
+): Promise<string | undefined> {
+  try {
+    return await filesystem.read(definition.servicePath);
+  } catch {
+    return undefined;
+  }
 }
 
 function userManagerAvailability(

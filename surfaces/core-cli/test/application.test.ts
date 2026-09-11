@@ -15,6 +15,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
+import { gzipSync } from "node:zlib";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type CLIContext, type CommandRunner, ProcessCommandRunner, runCLI } from "../src/application.js";
 import { DeploymentTransactionStore } from "../src/deployment-transaction.js";
@@ -191,9 +192,12 @@ class FakeRunner implements CommandRunner {
       const version = packageSpec.slice(packageSpec.lastIndexOf("@") + 1);
       const archive = join(destination ?? "", `atlas-core-${version}.tgz`);
       mkdirSync(destination ?? "", { recursive: true });
-      writeFileSync(archive, "fake atlas-core package archive\n");
+      writeFileSync(archive, gzipSync(Buffer.alloc(1024)));
       this.legacyPackageArchives.set(archive, version);
-      return result(0, `${JSON.stringify([{ name: "atlas-core", version, filename: basename(archive) }])}\n`);
+      return result(
+        0,
+        `${JSON.stringify([{ name: "atlas-core", version, filename: basename(archive), size: statSync(archive).size, unpackedSize: 1024 * 1024, entryCount: 10 }])}\n`
+      );
     }
     if (command === "tar" && args[0] === "-tf") {
       const archive = args[1] ?? "";
@@ -2532,8 +2536,20 @@ describe("atlas-core CLI", () => {
         packs.push([...args]);
         const destination = args[args.indexOf("--pack-destination") + 1] ?? "";
         const filename = `atlas-core-${recordedVersion}.tgz`;
-        execFileSync("tar", ["-czf", join(destination, filename), "-C", archiveRoot, "package"]);
-        return result(0, JSON.stringify([{ name: "atlas-core", version: recordedVersion, filename }]));
+        execFileSync("tar", ["--format=ustar", "-czf", join(destination, filename), "-C", archiveRoot, "package"]);
+        return result(
+          0,
+          JSON.stringify([
+            {
+              name: "atlas-core",
+              version: recordedVersion,
+              filename,
+              size: statSync(join(destination, filename)).size,
+              unpackedSize: 1024 * 1024,
+              entryCount: 20
+            }
+          ])
+        );
       }
       if (command === "tar") return result(0, execFileSync(command, [...args], { encoding: "utf8" }));
       return await run(command, args, options);
@@ -2643,6 +2659,17 @@ describe("atlas-core CLI", () => {
       "postgres",
       "minio"
     ]);
+  });
+
+  it("refuses to restart a stopped deployment", async () => {
+    const test = runtime();
+    await markManagedInitialized(test, false);
+    test.runner.serviceStates = [];
+
+    expect(await runCLI(["restart"], test.context)).toBe(1);
+    expect(test.stderr.join("")).toContain("is stopped");
+    expect(test.runner.calls.map(composeCommand)).not.toContainEqual(expect.arrayContaining(["down"]));
+    expect(test.runner.calls.map(composeCommand)).not.toContainEqual(expect.arrayContaining(["up"]));
   });
 
   it("changes only the admin password and defers applying it while stopped", async () => {

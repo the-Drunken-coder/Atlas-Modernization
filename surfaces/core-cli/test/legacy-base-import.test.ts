@@ -1,8 +1,18 @@
 import { execFileSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  statSync,
+  symlinkSync,
+  writeFileSync
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { gzipSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 import type { ImageReceipt } from "../src/image-receipts.js";
 import { type LegacyCommandResult, prepareLegacyBase, prepareRepairPackage } from "../src/legacy-base-import.js";
@@ -57,6 +67,100 @@ describe("exact Core repair package", () => {
       ).rejects.toThrow(/does not match|symbolic or hard link/);
       expect(fixture.lastCandidate && existsSync(fixture.lastCandidate)).toBe(false);
     }
+  });
+});
+
+describe("downloaded Core package bounds", () => {
+  it.each(["size", "unpackedSize", "entryCount"])(
+    "rejects oversized npm %s metadata before invoking tar",
+    async (field) => {
+      const fixture = createPackageFixture();
+      const calls: string[][] = [];
+      const run = fixture.runCommand(calls);
+      await expect(
+        prepareRepairPackage({
+          configDir: mkdtempSync(join(tmpdir(), "atlas-repair-config-")),
+          packageVersion: VERSION,
+          packageImage: CORE_IMAGE,
+          runCommand: async (command, args) => {
+            const result = await run(command, args);
+            if (command !== "npm") return result;
+            const records = JSON.parse(result.stdout);
+            records[0][field] = 128 * 1024 * 1024;
+            return { ...result, stdout: JSON.stringify(records) };
+          }
+        })
+      ).rejects.toThrow(/exceeds its limit/);
+      expect(calls.some(([command]) => command === "tar")).toBe(false);
+      expect(fixture.lastCandidate && existsSync(fixture.lastCandidate)).toBe(false);
+    }
+  );
+
+  it("bounds decompression independently of npm's reported unpacked size", async () => {
+    const fixture = createPackageFixture();
+    const calls: string[][] = [];
+    const run = fixture.runCommand(calls);
+    await expect(
+      prepareRepairPackage({
+        configDir: mkdtempSync(join(tmpdir(), "atlas-repair-config-")),
+        packageVersion: VERSION,
+        packageImage: CORE_IMAGE,
+        runCommand: async (command, args) => {
+          const result = await run(command, args);
+          if (command === "npm") {
+            const destination = args[args.indexOf("--pack-destination") + 1] ?? "";
+            writeFileSync(join(destination, `atlas-core-${VERSION}.tgz`), gzipSync(Buffer.alloc(64 * 1024 * 1024 + 1)));
+          }
+          return result;
+        }
+      })
+    ).rejects.toThrow(/larger than|size|output/i);
+    expect(calls.some(([command]) => command === "tar")).toBe(false);
+  });
+
+  it.each(["oversized-file", "too-many-entries"])("rejects actual tar %s despite small npm metadata", async (kind) => {
+    const fixture = createPackageFixture();
+    if (kind === "oversized-file") {
+      writeFileSync(join(fixture.root, "package", "assets", "oversized.txt"), Buffer.alloc(8 * 1024 * 1024 + 1));
+    }
+    const calls: string[][] = [];
+    const run = fixture.runCommand(calls);
+    await expect(
+      prepareRepairPackage({
+        configDir: mkdtempSync(join(tmpdir(), "atlas-repair-config-")),
+        packageVersion: VERSION,
+        packageImage: CORE_IMAGE,
+        runCommand: async (command, args) => {
+          const result = await run(command, args);
+          if (command === "npm" && kind === "too-many-entries") {
+            const headers = Array.from({ length: 1025 }, (_, index) => {
+              const header = Buffer.alloc(512);
+              header.write(`package/entry-${index}`);
+              header.write("0000644\0", 100);
+              header.write("0000000\0", 108);
+              header.write("0000000\0", 116);
+              header.write("00000000000\0", 124);
+              header.write("00000000000\0", 136);
+              header.fill(32, 148, 156);
+              header.write("0", 156);
+              header.write("ustar\0", 257);
+              header.write("00", 263);
+              const checksum = header.reduce((sum, byte) => sum + byte, 0);
+              header.write(`${checksum.toString(8).padStart(6, "0")}\0 `, 148);
+              return header;
+            });
+            const destination = args[args.indexOf("--pack-destination") + 1] ?? "";
+            writeFileSync(
+              join(destination, `atlas-core-${VERSION}.tgz`),
+              gzipSync(Buffer.concat([...headers, Buffer.alloc(1024)]))
+            );
+          }
+          return result;
+        }
+      })
+    ).rejects.toThrow(/entry exceeds its size limit|too many entries/);
+    expect(calls.some(([command]) => command === "tar")).toBe(false);
+    expect(fixture.lastCandidate && existsSync(fixture.lastCandidate)).toBe(false);
   });
 });
 
@@ -291,11 +395,20 @@ function createPackageFixture(
         if (!destination) throw new Error("test fixture missing pack destination");
         mkdirSync(destination, { recursive: true });
         const archivePath = join(destination, `atlas-core-${VERSION}.tgz`);
-        execFileSync("tar", ["-czf", archivePath, "-C", root, "package"]);
+        execFileSync("tar", ["--format=ustar", "-czf", archivePath, "-C", root, "package"]);
         fixture.lastCandidate = destination;
         return {
           status: 0,
-          stdout: JSON.stringify([{ name: "atlas-core", version: VERSION, filename: `atlas-core-${VERSION}.tgz` }]),
+          stdout: JSON.stringify([
+            {
+              name: "atlas-core",
+              version: VERSION,
+              filename: `atlas-core-${VERSION}.tgz`,
+              size: statSync(archivePath).size,
+              unpackedSize: 1024 * 1024,
+              entryCount: 20
+            }
+          ]),
           stderr: ""
         };
       }

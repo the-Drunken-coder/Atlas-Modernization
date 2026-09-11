@@ -244,6 +244,23 @@ test("rejects a source connector origin array before release publication", () =>
   }
 });
 
+test("rejects source connector strings above the client UTF-8 byte limit", () => {
+  const directory = mkdtempSync(join(tmpdir(), "atlas-plugin-release-string-limit-"));
+  try {
+    const validResult = runReleaseDocument(image);
+    assert.equal(validResult.status, 0, validResult.stderr);
+    const document = JSON.parse(validResult.stdout);
+    document.source_connector.routes[0].path_prefix = "/" + "é".repeat(1024);
+    const documentPath = join(directory, "oversized-path.atlas-plugin");
+    writeFileSync(documentPath, `${JSON.stringify(document, null, 2)}\n`);
+    const result = spawnSync(process.execPath, [script, "verify-document", documentPath], { cwd: repositoryRoot, encoding: "utf8" });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /path_prefix is invalid/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("rejects a mutating retry whose idempotency header is not allowed", () => {
   const result = runMutatingRetryDocument("idempotency-key", []);
   assert.notEqual(result.status, 0);
@@ -432,6 +449,18 @@ test("rejects a reused release asset whose metadata differs from the reviewed pl
   const altered = JSON.parse(documentResult.stdout);
   altered.display_name = "Tampered";
   const reuse = runReusePublication("asset", `${JSON.stringify(altered)}\n`);
+  assert.notEqual(reuse.result.status, 0);
+  assert.match(reuse.result.stderr, /does not match the reviewed plugin metadata/);
+});
+
+test("rejects a reused release asset with duplicate JSON keys", () => {
+  const documentResult = runReleaseDocument(image);
+  assert.equal(documentResult.status, 0, documentResult.stderr);
+  const duplicateKeyDocument = documentResult.stdout.replace(
+    '  "display_name": "Building Scan",\n',
+    '  "display_name": "Building Scan",\n  "display_name": "Building Scan",\n'
+  );
+  const reuse = runReusePublication("asset", duplicateKeyDocument);
   assert.notEqual(reuse.result.status, 0);
   assert.match(reuse.result.stderr, /does not match the reviewed plugin metadata/);
 });

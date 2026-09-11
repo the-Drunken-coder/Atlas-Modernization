@@ -14,6 +14,7 @@ const semverPattern = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u;
 const identifierPattern = /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/u;
 const hashPattern = /^sha256:[0-9a-f]{64}$/u;
 const catalogKeyIdPattern = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
+const maxStringBytes = 2048;
 const publishedVerificationGraceMs = 120_000;
 const publishedVerificationRetryDelayMs = 5_000;
 
@@ -231,7 +232,7 @@ function renewCatalog(ledgerDirectory) {
 function revokeCatalog(pluginId, version, reason, ledgerDirectory) {
   if (!identifierPattern.test(pluginId) || pluginId.length > 50) throw new Error("plugin_id is invalid");
   if (!semverPattern.test(version)) throw new Error("version must be a stable Semantic Version");
-  if (reason.trim() !== reason || !reason || reason.length > 2048) throw new Error("revocation reason must be trimmed, non-empty, and at most 2048 characters");
+  if (reason.trim() !== reason || !reason || Buffer.byteLength(reason, "utf8") > maxStringBytes) throw new Error("revocation reason must be trimmed, non-empty, and at most 2048 UTF-8 bytes");
   const signing = preflight();
   const ledgerPath = join(ledgerDirectory, "catalog.json");
   if (!existsSync(ledgerPath)) throw new Error("Cannot revoke a release before its catalog entry is published");
@@ -287,7 +288,7 @@ function writeSignedCatalog(catalog, ledgerDirectory, signing) {
 
 function validateCatalog(catalog) {
   assertExactKeys(catalog, ["schema", "sequence", "previous_catalog_sha256", "issued_at", "expires_at", "key_epoch", "key_id", "plugins"], "Catalog ledger");
-  if (catalog.schema !== 1 || !positiveSafeInteger(catalog.sequence) || !positiveSafeInteger(catalog.key_epoch) || typeof catalog.key_id !== "string" || !catalogKeyIdPattern.test(catalog.key_id) || !Array.isArray(catalog.plugins) || catalog.plugins.length > 128) throw new Error("Catalog ledger has invalid identity");
+  if (catalog.schema !== 1 || !positiveSafeInteger(catalog.sequence) || !positiveSafeInteger(catalog.key_epoch) || !boundedString(catalog.key_id) || !catalogKeyIdPattern.test(catalog.key_id) || !Array.isArray(catalog.plugins) || catalog.plugins.length > 128) throw new Error("Catalog ledger has invalid identity");
   validateTimestamp(catalog.issued_at, "Catalog ledger issued_at");
   validateTimestamp(catalog.expires_at, "Catalog ledger expires_at");
   if (Date.parse(catalog.issued_at) > Date.now() + 5 * 60 * 1000) throw new Error("Catalog ledger issued_at is too far ahead of the publisher clock");
@@ -298,12 +299,12 @@ function validateCatalog(catalog) {
   const seen = new Set();
   for (const plugin of catalog.plugins) {
     assertExactKeys(plugin, ["plugin_id", "releases"], "Catalog Plugin entry");
-    if (typeof plugin.plugin_id !== "string" || !identifierPattern.test(plugin.plugin_id) || plugin.plugin_id.length > 50 || !Array.isArray(plugin.releases) || plugin.releases.length > 256 || seen.has(plugin.plugin_id)) throw new Error("Catalog contains duplicate or malformed Plugin entries");
+    if (!boundedString(plugin.plugin_id) || !identifierPattern.test(plugin.plugin_id) || plugin.plugin_id.length > 50 || !Array.isArray(plugin.releases) || plugin.releases.length > 256 || seen.has(plugin.plugin_id)) throw new Error("Catalog contains duplicate or malformed Plugin entries");
     seen.add(plugin.plugin_id);
     const versions = new Set();
     for (const release of plugin.releases) {
       assertExactKeys(release, ["version", "display_name", "document_url", "document_sha256", "revoked", "revocation_reason"], `Catalog ${plugin.plugin_id} release`);
-      if (!semverPattern.test(release.version) || versions.has(release.version) || typeof release.display_name !== "string" || !release.display_name || release.display_name.trim() !== release.display_name || release.display_name.length > 100 || !hashPattern.test(release.document_sha256) || typeof release.document_url !== "string" || typeof release.revoked !== "boolean" || (release.revoked ? typeof release.revocation_reason !== "string" || !release.revocation_reason.trim() : release.revocation_reason !== null)) throw new Error(`Catalog contains malformed ${plugin.plugin_id} release`);
+      if (!boundedString(release.version) || !semverPattern.test(release.version) || versions.has(release.version) || !boundedString(release.display_name) || !release.display_name || release.display_name.trim() !== release.display_name || [...release.display_name].length > 100 || !boundedString(release.document_sha256) || !hashPattern.test(release.document_sha256) || !boundedString(release.document_url) || typeof release.revoked !== "boolean" || (release.revoked ? !boundedString(release.revocation_reason) || !release.revocation_reason.trim() : release.revocation_reason !== null)) throw new Error(`Catalog contains malformed ${plugin.plugin_id} release`);
       validateDocumentUrl(release.document_url, plugin.plugin_id, release.version);
       versions.add(release.version);
     }
@@ -633,6 +634,8 @@ function readJSON(path) {
 }
 
 function isRecord(value) { return typeof value === "object" && value !== null && !Array.isArray(value); }
+
+function boundedString(value) { return typeof value === "string" && Buffer.byteLength(value, "utf8") <= maxStringBytes; }
 
 function assertExactKeys(value, keys, label) {
   if (!isRecord(value) || Object.keys(value).sort().join("\u0000") !== [...keys].sort().join("\u0000")) throw new Error(`${label} must contain exactly: ${keys.join(", ")}`);

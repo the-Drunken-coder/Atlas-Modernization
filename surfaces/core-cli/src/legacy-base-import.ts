@@ -1,10 +1,27 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  constants,
+  existsSync,
+  fstatSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  rmSync,
+  writeFileSync
+} from "node:fs";
 import { join } from "node:path";
+import { gunzipSync } from "node:zlib";
 import { type ImageReceipt, parseImageReceipt } from "./image-receipts.js";
 import { copyRetainedBundle, type RetainedBundleManifest } from "./retained-bundle.js";
 
 const PACKAGE_NAME = "atlas-core";
+const MAX_ARCHIVE_BYTES = 16 * 1024 * 1024;
+const MAX_UNPACKED_BYTES = 64 * 1024 * 1024;
+const MAX_ENTRY_BYTES = 8 * 1024 * 1024;
+const MAX_ARCHIVE_ENTRIES = 1024;
 const VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u;
 const REPOSITORY_PATTERN = /^[a-z0-9][a-z0-9./:_-]*$/u;
 const TAG_PATTERN = /^[A-Za-z0-9_][A-Za-z0-9_.-]*$/u;
@@ -216,16 +233,59 @@ async function packExactCorePackage(
   ) {
     throw new Error("npm pack returned an unsafe archive filename.");
   }
+  for (const [field, limit] of [
+    ["size", MAX_ARCHIVE_BYTES],
+    ["unpackedSize", MAX_UNPACKED_BYTES],
+    ["entryCount", MAX_ARCHIVE_ENTRIES]
+  ] as const) {
+    const amount = record[field];
+    if (typeof amount !== "number" || !Number.isSafeInteger(amount) || amount < 0 || amount > limit) {
+      throw new Error(`npm package ${field} exceeds its limit or is invalid.`);
+    }
+  }
   const archivePath = join(packDirectory, record.filename);
   assertRegularFile(archivePath, "npm package archive");
+  if (lstatSync(archivePath).size > MAX_ARCHIVE_BYTES) throw new Error("npm package archive exceeds its size limit.");
   return archivePath;
 }
 
 async function inspectArchive(runCommand: LegacyCommandRunner, archivePath: string): Promise<readonly string[]> {
+  // Bound decompression and actual tar headers independently of npm's metadata
+  // before any archive entries can be extracted or read as complete files.
+  const descriptor = openSync(archivePath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+  let archive: Buffer;
+  try {
+    const stats = fstatSync(descriptor);
+    if (!stats.isFile() || stats.size > MAX_ARCHIVE_BYTES)
+      throw new Error("npm package archive exceeds its size limit or is not a regular file.");
+    archive = gunzipSync(readFileSync(descriptor), { maxOutputLength: MAX_UNPACKED_BYTES });
+  } finally {
+    closeSync(descriptor);
+  }
+  let entryCount = 0;
+  for (let offset = 0; offset + 512 <= archive.length; ) {
+    const header = archive.subarray(offset, offset + 512);
+    if (header.every((byte) => byte === 0)) break;
+    const type = header.toString("ascii", 156, 157);
+    if (type === "1" || type === "2") throw new Error("Legacy Core package contains a symbolic or hard link.");
+    // PAX and sparse extensions can override header sizes; npm's portable
+    // package archives need only ordinary files and directories.
+    if (type !== "\0" && type !== "0" && type !== "5")
+      throw new Error("npm package archive has an unsupported entry type.");
+    if (++entryCount > MAX_ARCHIVE_ENTRIES) throw new Error("npm package archive contains too many entries.");
+    const sizeField = header.subarray(124, 136).toString("ascii").replace(/\0.*$/u, "").trim();
+    if (!/^[0-7]+$/u.test(sizeField)) throw new Error("npm package archive has an unsupported entry size.");
+    const size = Number.parseInt(sizeField, 8);
+    if (!Number.isSafeInteger(size) || size > MAX_ENTRY_BYTES)
+      throw new Error("npm package archive entry exceeds its size limit.");
+    offset += 512 + Math.ceil(size / 512) * 512;
+    if (offset > archive.length) throw new Error("npm package archive entry is truncated.");
+  }
   const list = await runCommand("tar", ["-tf", archivePath]);
   assertCommandSuccess("tar list", list);
   const entries = list.stdout.split(/\r?\n/u).filter((entry) => entry.length > 0);
   if (entries.length === 0) throw new Error("Legacy Core package archive is empty.");
+  if (entries.length > MAX_ARCHIVE_ENTRIES) throw new Error("npm package archive contains too many entries.");
   if (new Set(entries).size !== entries.length)
     throw new Error("Legacy Core package archive contains duplicate entries.");
 
@@ -260,7 +320,12 @@ async function extractArchive(
     ...entries
   ]);
   assertCommandSuccess("tar extract", result);
-  for (const entry of entries) assertRegularFile(join(destination, entry), entry);
+  for (const entry of entries) {
+    const path = join(destination, entry);
+    assertRegularFile(path, entry);
+    if (lstatSync(path).size > MAX_ENTRY_BYTES)
+      throw new Error(`Extracted package entry ${entry} exceeds its size limit.`);
+  }
 }
 
 function readPackageJson(path: string): { name: string; version: string; atlasCoreImage: string } {

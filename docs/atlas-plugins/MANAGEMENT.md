@@ -459,7 +459,9 @@ After a Docker daemon or host restart, this same path is the only supported way 
 The bundle-repair form holds the same locks and reads `state.packageVersion` plus the recorded `bundleSha256`. It uses
 matching assets from the current CLI package when available; otherwise it downloads the exact public
 `atlas-core@<state.packageVersion>` npm archive into a private temporary directory without installing it or executing
-package code. It rejects symlinks, path escapes, missing relative Compose assets, and size-limit violations, builds the
+package code. Both legacy import and repair limit the compressed archive to 16 MiB, the decompressed tar to 64 MiB,
+archive entries to 1,024, and each entry to 8 MiB. They check npm metadata and actual tar headers before extraction.
+Repair rejects symlinks, path escapes, missing relative Compose assets, and size-limit violations, builds the
 complete candidate `base/`, and requires its deterministic hash to equal the recorded hash. It atomically replaces
 `base/`, then performs the normal start without changing the CLI, Core, or Plugin version. npm failure or a hash mismatch
 leaves the prior bundle and stopped deployment unchanged. `--repair-bundle` and `--repair-images` may be supplied together.
