@@ -248,7 +248,10 @@ describe("MapView wheel interaction", () => {
 
     firePointerMove(canvas, { clientX: 80, clientY: 100 });
     await waitFor(() => expect(document.querySelector(".map-reticle")).toBeInTheDocument());
-    expect(document.querySelector(".map-reticle")).not.toHaveClass("map-reticle--targeted");
+    const reticle = document.querySelector<HTMLElement>(".map-reticle");
+    expect(reticle).not.toHaveClass("map-reticle--targeted");
+    expect(reticle?.style.getPropertyValue("--map-reticle-x")).toBe("70px");
+    expect(reticle?.style.getPropertyValue("--map-reticle-y")).toBe("80px");
 
     vi.useFakeTimers();
     try {
