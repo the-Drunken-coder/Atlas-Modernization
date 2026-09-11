@@ -164,9 +164,17 @@ describe("plugin distribution", () => {
       idempotency_header: "idempotency-key"
     };
     expect(() => parsePluginRelease(new TextEncoder().encode(JSON.stringify(connectorObject)))).toThrow(
-      /allowed_request_headers/i
+      /query.only.*read_only/i
     );
     route.allowed_request_headers = ["idempotency-key"];
+    for (const method of ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"]) {
+      route.method = method;
+      expect(() => parsePluginRelease(new TextEncoder().encode(JSON.stringify(connectorObject)))).toThrow(
+        /query.only.*read_only/i
+      );
+    }
+    route.method = "POST";
+    route.read_only = true;
     expect(() => parsePluginRelease(new TextEncoder().encode(JSON.stringify(connectorObject)))).not.toThrow();
   });
 

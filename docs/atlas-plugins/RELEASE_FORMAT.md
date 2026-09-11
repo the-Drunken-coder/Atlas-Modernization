@@ -64,6 +64,8 @@ Field rules:
 - `source_connector` is either `null` or one strict Source Gateway connector policy using the existing connector schema.
   A non-null connector ID must equal `plugin_id`. Package schema 1 rejects secret headers and defines no Plugin setting or
   secret injection model. A later package-schema major may add one when a concrete Plugin requires it.
+  Every schema-1 connector route must set `read_only` to `true`; this describes the provider operation's mutation
+  behavior and does not restrict the HTTP method, so a read-only `POST` remains valid.
 
 The repository's `atlas-plugin.json` file is authoring input, not part of the published release. It must explicitly set
 `uses_core_sdk` to `true` or `false`; the independent release workflow updates `scripts/plugins.mjs` so
@@ -267,8 +269,9 @@ revocation uses that same renewal path after the CLI trusts the next epoch; it p
 the new epoch's configured sequence floor, and rejects skipped epochs. The Ed25519 private key lives in a
 dedicated `plugin-catalog` GitHub environment. Its deployment branch and tag rules must allow the default branch
 (`main`) and tags matching `atlas-plugin-*-v*`: catalog renewal runs from the default branch, while an incomplete Plugin
-publication may need to retry from its immutable tag after `main` advances. The release workflow requires the exact tag
-for the requested Plugin/version and verifies its source commit before publication. Restrict signing-key access to the
+publication may need to retry from its immutable tag after `main` advances. Such a retry keeps the immutable tag as the
+artifact source, then resolves and pins the current default-branch publisher and trust checkout for catalog controls.
+The release workflow requires the exact tag for the requested Plugin/version and verifies its source commit before publication. Restrict signing-key access to the
 Plugin publication and catalog workflows. This environment does not reuse the manually approved Core `release` environment, because a scheduled renewal must not wait for a human
 reviewer. Trusted public keys are source-controlled in the CLI. The Pages deployment is replaced as one artifact so the
 catalog and detached signature cannot be published from different transactions.

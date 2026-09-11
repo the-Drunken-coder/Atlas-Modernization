@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { validateAuthoredManifest } from "./plugin-manifest-validation.mjs";
 import { validateReleaseDocument, validateSourceConnector } from "./plugin-release-validation.mjs";
 
 const repositoryRoot = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -119,59 +120,14 @@ function readPlugin(pluginId) {
   const manifestPath = join(directory, "atlas-plugin.json");
   if (!existsSync(manifestPath)) throw new Error(`Plugin ${pluginId} has no atlas-plugin.json`);
   const manifest = readJSON(manifestPath);
-  if (!isRecord(manifest)) throw new Error(`${relative(repositoryRoot, manifestPath)} must be an object`);
-  assertExactKeys(
-    manifest,
-    [
-      "schema",
-      "plugin_id",
-      "display_name",
-      "lifecycle",
-      "uses_core_sdk",
-      "interactions",
-      "package",
-      "docker_target",
-      "service",
-      "compose",
-      "core_endpoint",
-      "source_connector",
-      "release",
-      "shared_code_forbidden_terms"
-    ],
-    manifestPath
-  );
+  validateAuthoredManifest(manifest, manifestPath);
+  if (manifest.plugin_id !== pluginId) throw new Error(`${manifestPath} plugin_id does not match its folder`);
   return { directory, id: pluginId, manifest, manifestPath };
 }
 
 function validatePlugin(plugin) {
   const { manifest } = plugin;
-  if (manifest.schema !== 1) throw new Error(`${plugin.manifestPath} must use schema 1`);
-  if (manifest.plugin_id !== plugin.id) throw new Error(`${plugin.manifestPath} plugin_id does not match its folder`);
-  if (typeof manifest.display_name !== "string" || manifest.display_name.trim() !== manifest.display_name || !manifest.display_name) {
-    throw new Error(`${plugin.manifestPath} display_name must be a trimmed non-empty string`);
-  }
-  if (manifest.display_name.length > 100) throw new Error(`${plugin.manifestPath} display_name is too long`);
-  if (manifest.lifecycle !== "query_only") throw new Error(`${plugin.manifestPath} lifecycle must be query_only`);
-  if (typeof manifest.uses_core_sdk !== "boolean") throw new Error(`${plugin.manifestPath} uses_core_sdk must be a boolean`);
-  if (!Array.isArray(manifest.interactions) || new Set(manifest.interactions).size !== manifest.interactions.length) {
-    throw new Error(`${plugin.manifestPath} interactions must be a duplicate-free array`);
-  }
-  if (manifest.interactions.some((kind) => kind !== "map_area")) {
-    throw new Error(`${plugin.manifestPath} interactions contains an unsupported kind`);
-  }
-  if ([...manifest.interactions].sort().join("\u0000") !== manifest.interactions.join("\u0000")) {
-    throw new Error(`${plugin.manifestPath} interactions must be sorted`);
-  }
-  if (typeof manifest.package !== "string" || !manifest.package) throw new Error(`${plugin.manifestPath} package is invalid`);
-  for (const field of ["compose", "core_endpoint"]) {
-    if (typeof manifest[field] !== "string" || !isLocalFileName(manifest[field])) {
-      throw new Error(`${plugin.manifestPath} ${field} must name a local file`);
-    }
-  }
-  if (manifest.source_connector !== null && (typeof manifest.source_connector !== "string" || !isLocalFileName(manifest.source_connector))) {
-    throw new Error(`${plugin.manifestPath} source_connector must be null or a local file name`);
-  }
-  if (!isRecord(manifest.release) || manifest.release.channel !== "independent" || !imageRepository(plugin)) {
+  if (manifest.release.channel !== "independent") {
     throw new Error(`${plugin.manifestPath} must declare an independent first-party release repository`);
   }
   const packageJSON = readJSON(join(plugin.directory, "package.json"));
@@ -737,10 +693,6 @@ function positiveSafeInteger(value) {
   return Number.isSafeInteger(value) && value > 0;
 }
 
-function isLocalFileName(value) {
-  return typeof value === "string" && value.length > 0 && value !== "." && value !== ".." && !value.includes("/") && !value.includes("\\");
-}
-
 function runCapture(commandName, args, allowFailure = false) {
   const result = spawnSync(commandName, args, { cwd: repositoryRoot, encoding: "utf8", stdio: "pipe" });
   if (!allowFailure && result.status !== 0) {
@@ -769,12 +721,4 @@ function readJSON(path) {
 
 function isRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function assertExactKeys(value, keys, label) {
-  const actual = Object.keys(value).sort();
-  const expected = [...keys].sort();
-  if (actual.length !== expected.length || actual.some((key, index) => key !== expected[index])) {
-    throw new Error(`${label} must contain exactly: ${expected.join(", ")}`);
-  }
 }

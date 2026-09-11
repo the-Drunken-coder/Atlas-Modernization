@@ -19,7 +19,7 @@ export type PluginSourceRoute = {
   allowed_query_names: readonly string[];
   allowed_request_headers: readonly string[];
   allowed_response_headers: readonly string[];
-  read_only: boolean;
+  read_only: true;
   cache: { ttl_ms: number };
   retry: {
     max_retries: number;
@@ -739,10 +739,9 @@ function routeValue(value: unknown, index: number, seenRoutes: Set<string>): Plu
     )
   )
     throw new Error("route has a forbidden response header");
-  const readOnly = booleanValue(object.read_only, "route.read_only");
+  if (object.read_only !== true) throw new Error("query_only releases require read_only: true");
   const cacheObject = exactObject(object.cache, ["ttl_ms"], "route.cache");
   const ttl = boundedInteger(cacheObject.ttl_ms, "route.cache.ttl_ms", 0, 3_600_000);
-  if (ttl > 0 && !readOnly) throw new Error("cached routes must be read_only");
   const retryObject = exactObject(
     object.retry,
     ["max_retries", "statuses", "failures", "idempotency_header"],
@@ -765,19 +764,13 @@ function routeValue(value: unknown, index: number, seenRoutes: Set<string>): Plu
     .trim()
     .toLowerCase();
   if (idempotencyHeader && !headerName(idempotencyHeader)) throw new Error("route retry idempotency_header is invalid");
-  if (maxRetries > 0 && !readOnly) {
-    if (!idempotencyHeader) throw new Error("mutating retries require idempotency_header");
-    if (!requestHeaders.includes(idempotencyHeader)) {
-      throw new Error("route retry idempotency_header must appear in allowed_request_headers");
-    }
-  }
   return {
     method,
     path_prefix: pathPrefix,
     allowed_query_names: queryNames,
     allowed_request_headers: requestHeaders,
     allowed_response_headers: responseHeaders,
-    read_only: readOnly,
+    read_only: true,
     cache: { ttl_ms: ttl },
     retry: { max_retries: maxRetries, statuses, failures, idempotency_header: idempotencyHeader }
   };

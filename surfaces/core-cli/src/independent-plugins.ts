@@ -693,30 +693,14 @@ export class IndependentPluginManager {
       selected: image,
       previous: installed.selected
     };
-    await this.#runTransaction(
-      "plugin-update",
+    await this.#replaceSelectedRelease({
+      operation: "update",
+      release,
+      nextRecord,
+      enabled,
       wasRunning,
-      wasRunning,
-      async (transaction) => {
-        await this.#stageSnapshot(this.#pluginDir(pluginId), true);
-        if (enabled.includes(pluginId)) {
-          await this.#host.verifyRetainedBundle();
-        }
-        await this.#writeStaged(`plugins/${pluginId}/releases/${release.version}.atlas-plugin`, releaseBytes(release));
-        await this.#writeStaged(`plugins/${pluginId}/installed.json`, jsonBytes(nextRecord));
-        if (enabled.includes(pluginId)) {
-          await this.#writeActive(release, image, transaction);
-          await this.#host.runCompose(["config", "--quiet"], enabled);
-          await this.#host.writeEnabled(enabled);
-          await this.#markRuntimeChanging();
-          await this.#host.removePlugin(pluginId);
-          await this.#host.runCompose(recreateServices(["api", "source-gateway", serviceName(pluginId)]), enabled);
-          await this.#host.verifyRuntime(release, image);
-        }
-        await this.#pruneReleases(pluginId, nextRecord);
-      },
-      priorPluginHealthy === undefined ? undefined : { priorPluginHealthy }
-    );
+      priorPluginHealthy
+    });
     const remediationDowngrade = currentRevoked && comparePluginVersions(release.version, current.version) < 0;
     return {
       pluginId,
@@ -760,27 +744,14 @@ export class IndependentPluginManager {
       selected: image,
       previous: installed.selected
     };
-    await this.#runTransaction(
-      "plugin-rollback",
+    await this.#replaceSelectedRelease({
+      operation: "rollback",
+      release: previousRelease,
+      nextRecord,
+      enabled,
       wasRunning,
-      wasRunning,
-      async (transaction) => {
-        await this.#stageSnapshot(this.#pluginDir(pluginId), true);
-        if (enabled.includes(pluginId)) {
-          await this.#host.verifyRetainedBundle();
-        }
-        await this.#writeStaged(`plugins/${pluginId}/installed.json`, jsonBytes(nextRecord));
-        if (enabled.includes(pluginId)) {
-          await this.#writeActive(previousRelease, image, transaction);
-          await this.#host.runCompose(["config", "--quiet"], enabled);
-          await this.#markRuntimeChanging();
-          await this.#host.removePlugin(pluginId);
-          await this.#host.runCompose(recreateServices(["api", "source-gateway", serviceName(pluginId)]), enabled);
-          await this.#host.verifyRuntime(previousRelease, image);
-        }
-      },
-      priorPluginHealthy === undefined ? undefined : { priorPluginHealthy }
-    );
+      priorPluginHealthy
+    });
     return {
       pluginId,
       operation: "rollback",
@@ -789,6 +760,53 @@ export class IndependentPluginManager {
       previousVersion: installed.selected.version,
       message: `Rolled ${previousRelease.displayName} back to ${previousRelease.version}.`
     };
+  }
+
+  // Update and rollback share the same replacement/verification transaction.
+  // Only updates introduce release bytes and prune the retained history.
+  async #replaceSelectedRelease({
+    operation,
+    release,
+    nextRecord,
+    enabled,
+    wasRunning,
+    priorPluginHealthy
+  }: {
+    operation: "update" | "rollback";
+    release: IndependentPluginRelease;
+    nextRecord: InstalledPluginReceipt;
+    enabled: string[];
+    wasRunning: boolean;
+    priorPluginHealthy: boolean | undefined;
+  }): Promise<void> {
+    const pluginId = release.pluginId;
+    await this.#runTransaction(
+      operation === "update" ? "plugin-update" : "plugin-rollback",
+      wasRunning,
+      wasRunning,
+      async (transaction) => {
+        await this.#stageSnapshot(this.#pluginDir(pluginId), true);
+        if (enabled.includes(pluginId)) await this.#host.verifyRetainedBundle();
+        if (operation === "update") {
+          await this.#writeStaged(
+            `plugins/${pluginId}/releases/${release.version}.atlas-plugin`,
+            releaseBytes(release)
+          );
+        }
+        await this.#writeStaged(`plugins/${pluginId}/installed.json`, jsonBytes(nextRecord));
+        if (enabled.includes(pluginId)) {
+          await this.#writeActive(release, nextRecord.selected, transaction);
+          await this.#host.runCompose(["config", "--quiet"], enabled);
+          if (operation === "update") await this.#host.writeEnabled(enabled);
+          await this.#markRuntimeChanging();
+          await this.#host.removePlugin(pluginId);
+          await this.#host.runCompose(recreateServices(["api", "source-gateway", serviceName(pluginId)]), enabled);
+          await this.#host.verifyRuntime(release, nextRecord.selected);
+        }
+        if (operation === "update") await this.#pruneReleases(pluginId, nextRecord);
+      },
+      priorPluginHealthy === undefined ? undefined : { priorPluginHealthy }
+    );
   }
 
   async uninstall(pluginId: string): Promise<PluginLifecycleOutcome> {

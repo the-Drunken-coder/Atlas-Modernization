@@ -294,12 +294,34 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Resolve current default-branch catalog publisher
+        id: publisher
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          publisher_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${DEFAULT_BRANCH}" --jq '.object.sha')"
+          if [[ ! "$publisher_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "The default branch ref did not resolve to a commit SHA." >&2
+            exit 1
+          fi
+          echo "sha=$publisher_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout pinned default-branch catalog publisher and trust
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.publisher.outputs.sha }}
+          path: catalog-publisher
+          fetch-depth: 1
+          persist-credentials: false
+
       - name: Require the configured catalog signing key
         env:
           ATLAS_PLUGIN_CATALOG_KEY_EPOCH: ${{ vars.ATLAS_PLUGIN_CATALOG_KEY_EPOCH }}
           ATLAS_PLUGIN_CATALOG_KEY_ID: ${{ vars.ATLAS_PLUGIN_CATALOG_KEY_ID }}
           ATLAS_PLUGIN_CATALOG_PRIVATE_KEY: ${{ secrets.ATLAS_PLUGIN_CATALOG_PRIVATE_KEY }}
-        run: node scripts/plugin-release-catalog.mjs preflight
+        run: node catalog-publisher/scripts/plugin-release-catalog.mjs preflight
 
       - name: Verify release tag provenance
         env:
@@ -412,9 +434,9 @@ jobs:
           GITHUB_SERVER_URL: ${{ github.server_url }}
         run: |
           git -C catalog-ledger remote set-url origin "https://x-access-token:${GH_TOKEN}@${GITHUB_SERVER_URL#https://}/${GITHUB_REPOSITORY}.git"
-          node scripts/plugin-release-catalog.mjs append \
-            "release-artifacts/${{ inputs.plugin_id }}-${{ inputs.version }}.atlas-plugin" \
-            catalog-ledger
+          node "$GITHUB_WORKSPACE/catalog-publisher/scripts/plugin-release-catalog.mjs" append \
+            "$GITHUB_WORKSPACE/release-artifacts/${{ inputs.plugin_id }}-${{ inputs.version }}.atlas-plugin" \
+            "$GITHUB_WORKSPACE/catalog-ledger"
           git -C catalog-ledger config user.name "atlas-plugin-release[bot]"
           git -C catalog-ledger config user.email "atlas-plugin-release[bot]@users.noreply.github.com"
           git -C catalog-ledger add catalog.json catalog.json.sig
@@ -449,10 +471,11 @@ jobs:
           node scripts/plugin-release.mjs verify-public-release \
             "$release_url" \
             "release-artifacts/${PLUGIN_ID}-${VERSION}.atlas-plugin"
-          node scripts/plugin-release-catalog.mjs verify-published catalog-ledger \
+          node "$GITHUB_WORKSPACE/catalog-publisher/scripts/plugin-release-catalog.mjs" verify-published \
+            "$GITHUB_WORKSPACE/catalog-ledger" \
             --plugin-id "$PLUGIN_ID" \
             --version "$VERSION" \
-            --release-document "release-artifacts/${PLUGIN_ID}-${VERSION}.atlas-plugin"
+            --release-document "$GITHUB_WORKSPACE/release-artifacts/${PLUGIN_ID}-${VERSION}.atlas-plugin"
           docker logout ghcr.io
           digest="$(timeout 30s docker buildx imagetools inspect "$IMAGE_REFERENCE" --format '{{json .Manifest}}' | jq -er '.digest | select(test("^sha256:[0-9a-f]{64}$"))')"
           test "$digest" = "${IMAGE_REFERENCE##*@}"

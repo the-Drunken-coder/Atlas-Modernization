@@ -1,5 +1,5 @@
 import { createHash, createPublicKey, generateKeyPairSync, sign, verify } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,8 +10,8 @@ import { spawnSync } from "node:child_process";
 const repositoryRoot = fileURLToPath(new URL("..", import.meta.url));
 const script = join(repositoryRoot, "scripts", "plugin-release-catalog.mjs");
 
-function run(args, environment) {
-  return spawnSync(process.execPath, [script, ...args], {
+function run(args, environment, scriptPath = script) {
+  return spawnSync(process.execPath, [scriptPath, ...args], {
     cwd: repositoryRoot,
     encoding: "utf8",
     env: { ...process.env, ...environment, GITHUB_REPOSITORY: "the-Drunken-coder/Atlas-Modernization" }
@@ -123,7 +123,17 @@ function catalogFixture(directory) {
     ATLAS_PLUGIN_CATALOG_KEY_EPOCH: "1",
     ATLAS_PLUGIN_CATALOG_PRIVATE_KEY: privateKey
   };
-  return { ledgerPath, releasePath, privateKey, publicKey, environment };
+  return { ledgerPath, releasePath, trustPath, privateKey, publicKey, environment };
+}
+
+function catalogPublisherCheckout(directory, trustPath, name) {
+  const publisherRoot = join(directory, name);
+  mkdirSync(join(publisherRoot, "scripts"), { recursive: true });
+  mkdirSync(join(publisherRoot, "surfaces", "core-cli", "assets"), { recursive: true });
+  copyFileSync(join(repositoryRoot, "scripts", "plugin-release-catalog.mjs"), join(publisherRoot, "scripts", "plugin-release-catalog.mjs"));
+  copyFileSync(join(repositoryRoot, "scripts", "plugin-release-validation.mjs"), join(publisherRoot, "scripts", "plugin-release-validation.mjs"));
+  copyFileSync(trustPath, join(publisherRoot, "surfaces", "core-cli", "assets", "plugin-trust.json"));
+  return join(publisherRoot, "scripts", "plugin-release-catalog.mjs");
 }
 
 function expireCatalog(fixture) {
@@ -360,7 +370,7 @@ test("publishes and renews a signed append-only catalog with exact release URLs"
     writeFileSync(invalidPolicyPath, `${JSON.stringify(invalidPolicyDocument, null, 2)}\n`);
     const invalidPolicy = run(["append", invalidPolicyPath, ledgerPath], environment);
     assert.notEqual(invalidPolicy.status, 0);
-    assert.match(invalidPolicy.stderr, /must appear in allowed_request_headers/);
+    assert.match(invalidPolicy.stderr, /query_only.*read_only/);
     assert.deepEqual(readFileSync(catalogPath), catalogBeforeInvalidRelease);
 
     const oversizedReason = run(["revoke", "fixture", "1.0.0", "é".repeat(1025), ledgerPath], environment);
@@ -521,6 +531,73 @@ test("fails clearly when stable catalog trust is unconfigured", () => {
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /publishing is unconfigured/);
   assert.match(result.stderr, /no trusted Ed25519 key/);
+});
+
+test("allows a retry to use current publisher trust after the reviewed source advances", () => {
+  const directory = mkdtempSync(join(tmpdir(), "atlas-plugin-catalog-retry-trust-"));
+  try {
+    const fixture = catalogFixture(directory);
+    assert.equal(run(["append", fixture.releasePath, fixture.ledgerPath], fixture.environment).status, 0);
+    const firstReleaseBytes = readFileSync(fixture.releasePath);
+
+    const reviewedTrustPath = join(directory, "reviewed-plugin-trust.json");
+    writeFileSync(reviewedTrustPath, readFileSync(fixture.trustPath));
+    const { privateKey: currentPrivateKey, publicKey: currentPublicKey } = generateKeyPairSync("ed25519", {
+      privateKeyEncoding: { format: "pem", type: "pkcs8" },
+      publicKeyEncoding: { format: "pem", type: "spki" }
+    });
+    const currentTrust = JSON.parse(readFileSync(fixture.trustPath, "utf8"));
+    currentTrust.keys.push({
+      key_id: "current-key",
+      key_epoch: 2,
+      public_key_pem: currentPublicKey,
+      minimum_sequence: 7
+    });
+    writeFileSync(fixture.trustPath, JSON.stringify(currentTrust));
+    writeFileSync(fixture.releasePath, `${JSON.stringify(releaseDocument("1.1.0"), null, 2)}\n`);
+
+    const rotatedEnvironment = {
+      ...fixture.environment,
+      ATLAS_PLUGIN_CATALOG_KEY_ID: "current-key",
+      ATLAS_PLUGIN_CATALOG_KEY_EPOCH: "2",
+      ATLAS_PLUGIN_CATALOG_PRIVATE_KEY: currentPrivateKey
+    };
+    const stalePublisherScript = catalogPublisherCheckout(directory, reviewedTrustPath, "reviewed-source");
+    const currentPublisherScript = catalogPublisherCheckout(directory, fixture.trustPath, "current-main");
+    const publisherEnvironment = { ...rotatedEnvironment };
+    delete publisherEnvironment.ATLAS_PLUGIN_CATALOG_TRUST_PATH;
+
+    const rotated = run(["renew", fixture.ledgerPath], publisherEnvironment, currentPublisherScript);
+    assert.equal(rotated.status, 0, rotated.stderr);
+    const rotatedCatalog = JSON.parse(readFileSync(join(fixture.ledgerPath, "catalog.json")));
+    assert.equal(rotatedCatalog.key_epoch, 2);
+    assert.equal(rotatedCatalog.sequence, 7);
+
+    const staleSourceAttempt = run(["append", fixture.releasePath, fixture.ledgerPath], publisherEnvironment, stalePublisherScript);
+    assert.notEqual(staleSourceAttempt.status, 0);
+    assert.match(staleSourceAttempt.stderr, /is not present/);
+
+    const retry = run(["append", fixture.releasePath, fixture.ledgerPath], publisherEnvironment, currentPublisherScript);
+    assert.equal(retry.status, 0, retry.stderr);
+    const catalog = JSON.parse(readFileSync(join(fixture.ledgerPath, "catalog.json")));
+    assert.equal(catalog.key_epoch, 2);
+    assert.equal(catalog.key_id, "current-key");
+    assert.equal(catalog.sequence, 8);
+    assert.deepEqual(catalog.plugins[0].releases.map((release) => release.version), ["1.0.0", "1.1.0"]);
+    assert.equal(catalog.plugins[0].releases[0].document_sha256, `sha256:${createHash("sha256").update(firstReleaseBytes).digest("hex")}`);
+
+    const catalogPath = join(fixture.ledgerPath, "catalog.json");
+    const signaturePath = join(fixture.ledgerPath, "catalog.json.sig");
+    const verified = run(["verify-published", fixture.ledgerPath, "--plugin-id", "fixture", "--version", "1.1.0", "--release-document", fixture.releasePath], {
+      ...publisherEnvironment,
+      ATLAS_TEST_REMOTE_CATALOG: catalogPath,
+      ATLAS_TEST_REMOTE_SIGNATURE: signaturePath,
+      NODE_OPTIONS: mockFetchPreload(directory)
+    }, currentPublisherScript);
+    assert.equal(verified.status, 0, verified.stderr);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test("refuses to publish below the configured trust checkpoint", () => {

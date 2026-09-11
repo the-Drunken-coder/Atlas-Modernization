@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 
 const repositoryRoot = fileURLToPath(new URL("..", import.meta.url));
 const script = join(repositoryRoot, "scripts", "plugin-release.mjs");
+const pluginsScript = join(repositoryRoot, "scripts", "plugins.mjs");
 const image = `ghcr.io/the-drunken-coder/atlas-building-scan@sha256:${"a".repeat(64)}`;
 
 const candidateManifest = {
@@ -121,20 +122,73 @@ function runReleaseDocument(imageReference) {
   });
 }
 
+function runReleaseValidationWithManifest(pluginId, mutateManifest) {
+  return withTemporaryPlugin(pluginId, mutateManifest, () => spawnSync(process.execPath, [script, "validate-plugin", pluginId, "0.1.0"], {
+    cwd: repositoryRoot,
+    encoding: "utf8"
+  }));
+}
+
+function runDevelopmentPluginVerification(pluginId) {
+  return withTemporaryPlugin(pluginId, (manifest) => {
+    manifest.release = { channel: "development" };
+  }, () => spawnSync(process.execPath, [pluginsScript, "verify"], {
+    cwd: repositoryRoot,
+    encoding: "utf8"
+  }));
+}
+
+function withTemporaryPlugin(pluginId, mutateManifest, callback) {
+  const pluginDirectory = join(repositoryRoot, "plugins", pluginId);
+  if (existsSync(pluginDirectory)) throw new Error(`Temporary test plugin already exists: ${pluginId}`);
+  try {
+    cpSync(join(repositoryRoot, "plugins", "building_scan"), pluginDirectory, { recursive: true });
+    const manifestPath = join(pluginDirectory, "atlas-plugin.json");
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    manifest.plugin_id = pluginId;
+    manifest.package = `@the-drunken-coder/atlas-${pluginId.replaceAll("_", "-")}-plugin`;
+    manifest.release = {
+      channel: "independent",
+      image_repository: `ghcr.io/the-drunken-coder/atlas-${pluginId.replaceAll("_", "-")}`
+    };
+    mutateManifest(manifest);
+    writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+
+    const packagePath = join(pluginDirectory, "package.json");
+    const packageJSON = JSON.parse(readFileSync(packagePath, "utf8"));
+    packageJSON.name = manifest.package;
+    writeFileSync(packagePath, `${JSON.stringify(packageJSON, null, 2)}\n`);
+
+    const endpointPath = join(pluginDirectory, manifest.core_endpoint);
+    const endpoint = JSON.parse(readFileSync(endpointPath, "utf8"));
+    endpoint.id = pluginId;
+    writeFileSync(endpointPath, `${JSON.stringify(endpoint, null, 2)}\n`);
+    const connectorPath = join(pluginDirectory, manifest.source_connector);
+    const connector = JSON.parse(readFileSync(connectorPath, "utf8"));
+    connector.id = pluginId;
+    writeFileSync(connectorPath, `${JSON.stringify(connector, null, 2)}\n`);
+
+    return callback({ manifest, pluginDirectory });
+  } finally {
+    rmSync(pluginDirectory, { recursive: true, force: true });
+  }
+}
+
 function makeOversizedReleaseDocument(document) {
   const oversized = structuredClone(document);
   oversized.source_connector.routes[0].allowed_query_names = Array.from({ length: 100_000 }, (_, index) => `query_${index}`);
   return Buffer.from(`${JSON.stringify(oversized, null, 2)}\n`);
 }
 
-function runMutatingRetryDocument(idempotencyHeader, allowedRequestHeaders) {
+function runRetryDocument(idempotencyHeader, allowedRequestHeaders, readOnly = false) {
   const directory = mkdtempSync(join(tmpdir(), "atlas-plugin-mutating-retry-"));
   try {
     const validResult = runReleaseDocument(image);
     assert.equal(validResult.status, 0, validResult.stderr);
     const document = JSON.parse(validResult.stdout);
     const route = document.source_connector.routes[0];
-    route.read_only = false;
+    route.method = "POST";
+    route.read_only = readOnly;
     route.allowed_request_headers = allowedRequestHeaders;
     route.retry = { max_retries: 1, statuses: [503], failures: [], idempotency_header: idempotencyHeader };
     const documentPath = join(directory, "mutating-retry.atlas-plugin");
@@ -309,6 +363,26 @@ test("embeds the strict source connector and generated SDK Protocol revision", (
   assert.match(document.atlas_protocol_revision, /^sha256:[0-9a-f]{64}$/u);
 });
 
+test("shares authored manifest validation with development plugin verification", () => {
+  const result = runDevelopmentPluginVerification("development_validation");
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Verified \d+ plugin folders?\./u);
+});
+
+test("rejects malformed authored fields before independent release publication", () => {
+  const cases = [
+    ["docker_target", (manifest) => { manifest.docker_target = "../plugin"; }],
+    ["service", (manifest) => { manifest.service = "Building Scan"; }],
+    ["shared_code_forbidden_terms", (manifest) => { manifest.shared_code_forbidden_terms = ["x"]; }]
+  ];
+  for (const [field, mutateManifest] of cases) {
+    const pluginId = `invalid_${field}`;
+    const result = runReleaseValidationWithManifest(pluginId, mutateManifest);
+    assert.notEqual(result.status, 0, `${field} unexpectedly passed`);
+    assert.match(result.stderr, new RegExp(field));
+  }
+});
+
 test("rejects a source connector origin array before release publication", () => {
   const directory = mkdtempSync(join(tmpdir(), "atlas-plugin-release-document-"));
   try {
@@ -404,13 +478,19 @@ test("rejects an oversized generated release before touching an existing output"
 });
 
 test("rejects a mutating retry whose idempotency header is not allowed", () => {
-  const result = runMutatingRetryDocument("idempotency-key", []);
+  const result = runRetryDocument("idempotency-key", []);
   assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /must appear in allowed_request_headers/);
+  assert.match(result.stderr, /query.only.*read_only/);
 });
 
-test("accepts a mutating retry with a case-normalized allowed idempotency header", () => {
-  const result = runMutatingRetryDocument("Idempotency-Key", ["IDEMPOTENCY-KEY"]);
+test("rejects a mutating route even with an allowed idempotency header", () => {
+  const result = runRetryDocument("Idempotency-Key", ["IDEMPOTENCY-KEY"]);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /query.only.*read_only/);
+});
+
+test("accepts read-only POST queries without an idempotency header", () => {
+  const result = runRetryDocument("", [], true);
   assert.equal(result.status, 0, result.stderr);
 });
 

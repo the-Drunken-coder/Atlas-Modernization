@@ -133,10 +133,9 @@ function validateSourceRoute(value, index, seenRoutes) {
   const forbiddenResponse = new Set(["connection", "content-length", "keep-alive", "proxy-authenticate", "proxy-authorization", "proxy-connection", "te", "trailer", "transfer-encoding", "upgrade", "authorization", "cookie", "set-cookie"]);
   if (requestHeaders.some((header) => forbiddenRequest.has(header))) throw new Error(`${label} has a forbidden request header`);
   if (responseHeaders.some((header) => forbiddenResponse.has(header))) throw new Error(`${label} has a forbidden response header`);
-  if (typeof value.read_only !== "boolean") throw new Error(`${label} read_only must be boolean`);
+  if (value.read_only !== true) throw new Error(`${label} query_only releases require read_only: true`);
   assertExactKeys(value.cache, ["ttl_ms"], `${label} cache`);
   boundedInteger(value.cache.ttl_ms, 0, 3_600_000, `${label} cache.ttl_ms`);
-  if (value.cache.ttl_ms > 0 && !value.read_only) throw new Error(`${label} cached routes must be read_only`);
   assertExactKeys(value.retry, ["max_retries", "statuses", "failures", "idempotency_header"], `${label} retry`);
   boundedInteger(value.retry.max_retries, 0, 3, `${label} retry.max_retries`);
   if (!Array.isArray(value.retry.statuses)) throw new Error(`${label} retry.statuses must be an array`);
@@ -156,10 +155,7 @@ function validateSourceRoute(value, index, seenRoutes) {
   if (!boundedString(value.retry.idempotency_header) || value.retry.idempotency_header.trim() !== value.retry.idempotency_header || (value.retry.idempotency_header && !headerName(value.retry.idempotency_header.toLowerCase()))) {
     throw new Error(`${label} retry.idempotency_header is invalid`);
   }
-  if (value.retry.max_retries > 0 && !value.read_only && !value.retry.idempotency_header) throw new Error(`${label} mutating retries require idempotency_header`);
-  if (value.retry.max_retries > 0 && !value.read_only && !requestHeaders.includes(value.retry.idempotency_header.toLowerCase())) {
-    throw new Error(`${label} retry.idempotency_header must appear in allowed_request_headers`);
-  }
+
 }
 
 function validateNames(value, headers, label) {

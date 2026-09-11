@@ -636,7 +636,22 @@ function parseCredentialIntent(contents: Buffer, transactions: DeploymentTransac
   ) {
     throw new Error("Managed Plugin credential intent is invalid.");
   }
-  return value as unknown as CredentialIntent;
+  return {
+    schema: value.schema,
+    operation: transactions.journal.operation,
+    transactionId: transactions.id,
+    attempt: value.attempt,
+    attemptName: value.attemptName,
+    ...(value.previousKeyId === undefined ? {} : { previousKeyId: value.previousKeyId }),
+    ...(value.candidateKeyId === undefined ? {} : { candidateKeyId: value.candidateKeyId }),
+    candidateAuthenticated: value.candidateAuthenticated,
+    envApplied: value.envApplied,
+    pluginsRecreated: value.pluginsRecreated,
+    pluginsVerified: value.pluginsVerified,
+    pluginsRestored: value.pluginsRestored,
+    candidateRevoked: value.candidateRevoked,
+    previousKeyRevoked: value.previousKeyRevoked
+  };
 }
 
 function readString(value: Record<string, unknown>, key: string): string {
