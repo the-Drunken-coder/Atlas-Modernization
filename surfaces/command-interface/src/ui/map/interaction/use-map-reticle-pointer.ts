@@ -192,9 +192,11 @@ export function useMapReticlePointer({ options, stateStore }: PointerHookOptions
     );
     optionsRef.current.onHistoryHover?.(target ? undefined : rawPoint);
     // Geo Features remain clickable without pulling the cursor around their geometry.
-    const isGeofeature = optionsRef.current.sources.geofeatures.features.some(
-      (feature) => feature.properties.entityId === target?.entityId
-    );
+    const isGeofeature =
+      target &&
+      optionsRef.current.sources.geofeatures.features.some(
+        (feature) => feature.properties.entityId === target.entityId
+      );
     const next =
       target && !isGeofeature
         ? reticleForTarget(target)
