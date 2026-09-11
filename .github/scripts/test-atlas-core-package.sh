@@ -120,14 +120,35 @@ curl --fail --silent --show-error \
   http://127.0.0.1:8000/protocol/revision |
   jq -e --arg revision "$protocol_revision" '.protocol_revision == $revision'
 
+# Exercise the update with a real paired backup of this disposable deployment.
+backup_dir="$test_root/pre-update-backup"
+mkdir -p "$backup_dir/minio"
+chmod 0700 "$backup_dir"
+docker stop "${project_name}_api" "${project_name}_source_gateway" >/dev/null
+git rev-parse HEAD > "$backup_dir/app-revision.txt"
+docker exec "${project_name}_postgres" sh -c 'PGPASSWORD="$POSTGRES_PASSWORD" pg_dump -U atlas -d atlas_core --format=custom --no-owner --no-privileges' > "$backup_dir/postgres.dump"
+docker exec -i "${project_name}_postgres" pg_restore --list < "$backup_dir/postgres.dump" > "$backup_dir/postgres.contents.txt"
+docker exec "${project_name}_postgres" sh -c 'PGPASSWORD="$POSTGRES_PASSWORD" psql -At -U atlas -d atlas_core -c "SELECT concat_ws(chr(32), version, name, checksum, fingerprint_version) FROM atlas_schema_migrations ORDER BY version"' > "$backup_dir/schema-migrations.txt"
+mc_image="minio/mc:RELEASE.2024-01-31T08-59-40Z@sha256:c084c9a67c7a9ed5f37cc7f2a905010861aaa882bec76da10352305c9709b6d2"
+docker run --rm --network "${project_name}_atlas_core_network" \
+  --env-file "$core_home/.env" --volume "$backup_dir:/backup" \
+  --entrypoint /bin/sh "$mc_image" -ec '
+    mc alias set atlas http://minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null
+    mkdir -p "/backup/minio/$MINIO_BUCKET"
+    mc mirror --overwrite "atlas/$MINIO_BUCKET" "/backup/minio/$MINIO_BUCKET"
+    mc ls --recursive "atlas/$MINIO_BUCKET" > /backup/minio.contents.txt
+    printf "%s\n" "$MINIO_BUCKET" > /backup/minio.complete
+  '
+ATLAS_CORE_HOME="$core_home" "$cli" start --manual
+
 node -e '
   const fs = require("node:fs");
   const path = process.argv[1];
   const state = JSON.parse(fs.readFileSync(path, "utf8"));
   state.packageVersion = "0.0.0";
-  fs.writeFileSync(path, `${JSON.stringify(state, null, 2)}\n`);
+  fs.writeFileSync(path, JSON.stringify(state, null, 2) + "\n");
 ' "$core_home/state.json"
-ATLAS_CORE_HOME="$core_home" "$cli" __apply-core-update 0.0.0 "$expected_image"
+ATLAS_CORE_BACKUP_DIR="$backup_dir" ATLAS_CORE_HOME="$core_home" "$cli" __apply-core-update 0.0.0 "$expected_image"
 test "$(node -p "require(process.argv[1]).packageVersion" "$core_home/state.json")" = "$version"
 test "$(docker container inspect --format '{{.Config.Image}}' "${project_name}_api")" = "$expected_image"
 ATLAS_CORE_HOME="$core_home" "$cli" status
