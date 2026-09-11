@@ -24,14 +24,22 @@ const candidateManifest = {
   ]
 };
 
-function runCandidate(manifest, routeBody = '{"code":"route_not_found"}', contentType = "application/json", failingPlatform = "") {
+function runCandidate(
+  manifest,
+  routeBody = '{"code":"route_not_found"}',
+  contentType = "application/json",
+  failingPlatform = "",
+  missingWget = false
+) {
   const directory = mkdtempSync(join(tmpdir(), "atlas-plugin-candidate-"));
   const bin = join(directory, "bin");
   const docker = join(bin, "docker");
   const curl = join(bin, "curl");
   const platformLog = join(directory, "platforms.log");
+  const healthcheckLog = join(directory, "healthchecks.log");
   mkdirSync(bin, { recursive: true });
   writeFileSync(platformLog, "");
+  writeFileSync(healthcheckLog, "");
   writeFileSync(
     docker,
     `#!/usr/bin/env node
@@ -45,6 +53,19 @@ if (args[0] === "run") {
     process.exit(1);
   }
   process.stdout.write("abcdef123456\\n");
+}
+else if (args[0] === "exec") {
+  const healthcheck = args.slice(2);
+  appendFileSync(process.env.CANDIDATE_HEALTHCHECK_LOG, JSON.stringify(healthcheck) + "\\n");
+  if (JSON.stringify(healthcheck) !== JSON.stringify(["wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health"])) {
+    process.stderr.write("candidate healthcheck command did not match the generated service contract\\n");
+    process.exit(1);
+  }
+  if (process.env.CANDIDATE_MISSING_WGET === "true") {
+    process.stderr.write("candidate image does not include wget\\n");
+    process.exit(127);
+  }
+  process.stdout.write("");
 }
 else if (args[0] === "port") process.stdout.write("0.0.0.0:12345\\n");
 else if (args[0] === "network" && args[1] === "create") process.stdout.write("network123\\n");
@@ -75,10 +96,17 @@ else process.stdout.write((process.env.CANDIDATE_ROUTE_BODY ?? '{"code":"route_n
         CANDIDATE_ROUTE_BODY: routeBody,
         CANDIDATE_CONTENT_TYPE: contentType,
         CANDIDATE_FAIL_PLATFORM: failingPlatform,
-        CANDIDATE_PLATFORM_LOG: platformLog
+        CANDIDATE_PLATFORM_LOG: platformLog,
+        CANDIDATE_HEALTHCHECK_LOG: healthcheckLog,
+        CANDIDATE_MISSING_WGET: missingWget ? "true" : "false"
       }
     });
     result.platforms = readFileSync(platformLog, "utf8").trim().split("\n").filter(Boolean);
+    result.healthchecks = readFileSync(healthcheckLog, "utf8")
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line));
     return result;
   } finally {
     rmSync(directory, { recursive: true, force: true });
@@ -390,6 +418,10 @@ test("accepts a candidate only when its private manifest matches the authored in
   const result = runCandidate(candidateManifest);
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(result.platforms, ["linux/amd64", "linux/arm64"]);
+  assert.deepEqual(result.healthchecks, [
+    ["wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health"],
+    ["wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health"]
+  ]);
 });
 
 test("fails candidate acceptance when either published platform fails its contract probe", () => {
@@ -397,6 +429,12 @@ test("fails candidate acceptance when either published platform fails its contra
   assert.notEqual(result.status, 0);
   assert.deepEqual(result.platforms, ["linux/amd64", "linux/arm64"]);
   assert.match(result.stderr, /linux\/arm64.*candidate platform failed|candidate platform failed.*linux\/arm64/);
+});
+
+test("rejects a candidate whose HTTP health endpoint works without the generated wget healthcheck", () => {
+  const result = runCandidate(candidateManifest, undefined, undefined, "", true);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /wget/);
 });
 
 test("requires candidate JSON probes to advertise an application/json media type", () => {

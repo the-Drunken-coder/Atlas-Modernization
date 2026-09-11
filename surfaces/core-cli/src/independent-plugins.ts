@@ -867,15 +867,15 @@ export class IndependentPluginManager {
     return await this.#host.refreshCatalog();
   }
 
-  /** Regenerate disposable active files for normal start and Core-update preflight. */
-  async regenerateActiveFiles(): Promise<void> {
+  /** Regenerate disposable active files without contacting a registry by default. */
+  async regenerateActiveFiles(options: { allowImageRepull?: boolean } = {}): Promise<void> {
     await this.#host.verifyRetainedBundle();
     const enabled = [...(await this.#host.readEnabled())];
     for (const pluginId of enabled) {
       const installed = this.#readInstalled(pluginId);
       const release = this.#readSelectedRelease(installed);
       this.#assertCompatible(release);
-      const image = await this.#ensureImageReceipt(release, installed.selected);
+      const image = await this.#ensureImageReceipt(release, installed.selected, options.allowImageRepull ?? false);
       await this.#writeActive(release, image);
     }
   }
@@ -1047,7 +1047,8 @@ export class IndependentPluginManager {
 
   async #ensureImageReceipt(
     release: IndependentPluginRelease,
-    recorded: InstalledPluginReceipt["selected"]
+    recorded: InstalledPluginReceipt["selected"],
+    allowImageRepull = true
   ): Promise<InstalledPluginReceipt["selected"]> {
     if (recorded.image_index !== release.image)
       throw new Error(`Recorded image for Plugin ${release.pluginId} does not match its release.`);
@@ -1058,6 +1059,9 @@ export class IndependentPluginManager {
       } catch (error) {
         if (!isMissingLocalImageError(error)) throw error;
       }
+    }
+    if (!allowImageRepull) {
+      throw new Error(`Retained image ${recorded.image_index} is unavailable. Run atlas-core start --repair-images.`);
     }
     const image = await this.#host.pullAndInspectImage(recorded.image_index);
     if (
@@ -1255,7 +1259,7 @@ export class IndependentPluginManager {
     const enabled = [...(await this.#host.readEnabled())];
     if (restoreRuntime && journal.previousRunning) {
       if (this.#host.readDesiredRunning?.() ?? journal.desiredRunning) {
-        await this.regenerateActiveFiles();
+        await this.regenerateActiveFiles({ allowImageRepull: true });
         const restoredIds = enabled.filter((id) => affectedIds.has(id));
         const restoredUnhealthyIds = journal.recovery?.priorPluginHealthy === false ? restoredIds : [];
         const restoredHealthyIds = restoredIds.filter((id) => !restoredUnhealthyIds.includes(id));

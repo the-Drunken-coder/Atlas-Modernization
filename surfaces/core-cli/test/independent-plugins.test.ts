@@ -128,6 +128,7 @@ class FakeHost {
       isRunning: () => this.running,
       withRecovery: async (operation) => await operation(),
       pullAndInspectImage: async (imageIndex) => ({ ...this.imageReceipt, image_index: imageIndex }),
+      verifyImage: () => undefined,
       verifyRetainedBundle: () => undefined,
       runCompose: async (args) => {
         this.compose.push([...args]);
@@ -296,6 +297,23 @@ describe("IndependentPluginManager", () => {
     };
 
     await expect(manager.enable("building_scan")).rejects.toThrow("missing or changed");
+    expect(pullCount).toBe(0);
+  });
+
+  it("does not repull a missing image during active-file regeneration", async () => {
+    const { host, manager } = setup();
+    await manager.install(release("0.1.0"));
+    await manager.enable("building_scan");
+    let pullCount = 0;
+    host.host.verifyImage = () => {
+      throw new Error("Docker image failed: Error response from daemon: No such image: retained image");
+    };
+    host.host.pullAndInspectImage = async (imageIndex) => {
+      pullCount += 1;
+      return { ...host.imageReceipt, image_index: imageIndex };
+    };
+
+    await expect(manager.regenerateActiveFiles()).rejects.toThrow("atlas-core start --repair-images");
     expect(pullCount).toBe(0);
   });
 

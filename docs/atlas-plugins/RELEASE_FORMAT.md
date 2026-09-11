@@ -232,9 +232,11 @@ publication side effect. It pins one reviewed source commit for every build and 
 1. verifies the selected Plugin folder and confirms its package version matches the requested release;
 2. runs its focused lint, format, type, test, build, Docker, and contract checks;
 3. builds and publishes the multi-architecture candidate image, then records its immutable index digest;
-4. runs the exact candidate image on a disposable network and verifies its private manifest identity, protocol major,
-   sorted operation descriptors, operation limits, declared interaction set, managed query-only fields, exact `/health`
-   response, and deterministic unknown-route `404 {"code":"route_not_found"}` response before promoting the candidate. Source connector policy is
+4. runs the exact candidate image on a disposable network for each supported platform and verifies its private manifest
+   identity, protocol major, sorted operation descriptors, operation limits, declared interaction set, managed query-only
+   fields, exact `/health` response, and deterministic unknown-route `404 {"code":"route_not_found"}` response. It also
+   executes the deployed `wget -q -O /dev/null http://127.0.0.1:8080/health` probe inside each container, so images must
+   include `wget`. These checks pass before candidate promotion. Source connector policy is
    validated from authored metadata while generating the release document; this candidate gate does not execute external
    source requests or arbitrary SDK behavior;
 5. generates the exact release document from authored Plugin metadata and that digest, deriving the Protocol revision when
@@ -263,8 +265,11 @@ non-cancelling concurrency group, increments the sequence, renews the issue and 
 key, compare-and-swap updates the ledger, and publishes one complete Pages artifact. A key rotation with no release or
 revocation uses that same renewal path after the CLI trusts the next epoch; it preserves the catalog contents, starts at
 the new epoch's configured sequence floor, and rejects skipped epochs. The Ed25519 private key lives in a
-dedicated `plugin-catalog` GitHub environment restricted to the default branch and narrowly scoped catalog workflow. It
-does not reuse the manually approved Core `release` environment, because a scheduled renewal must not wait for a human
+dedicated `plugin-catalog` GitHub environment. Its deployment branch and tag rules must allow the default branch
+(`main`) and tags matching `atlas-plugin-*-v*`: catalog renewal runs from the default branch, while an incomplete Plugin
+publication may need to retry from its immutable tag after `main` advances. The release workflow requires the exact tag
+for the requested Plugin/version and verifies its source commit before publication. Restrict signing-key access to the
+Plugin publication and catalog workflows. This environment does not reuse the manually approved Core `release` environment, because a scheduled renewal must not wait for a human
 reviewer. Trusted public keys are source-controlled in the CLI. The Pages deployment is replaced as one artifact so the
 catalog and detached signature cannot be published from different transactions.
 

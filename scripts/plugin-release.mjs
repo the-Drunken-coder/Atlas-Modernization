@@ -15,6 +15,7 @@ const releaseDocumentLimit = 1 << 20;
 const releaseRedirectLimit = 5;
 const maxCandidateOperations = 128;
 const candidatePlatforms = ["linux/amd64", "linux/arm64"];
+const candidateHealthcheck = ["wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health"];
 const releaseHosts = new Set([
   "github.com",
   "objects.githubusercontent.com",
@@ -234,6 +235,7 @@ function checkCandidate(plugin, image) {
         if (!isRecord(health) || Object.keys(health).length !== 1 || health.status !== "ok") {
           throw new Error(`${platform} candidate /health did not return {\"status\":\"ok\"}`);
         }
+        runCapture("docker", ["exec", containerId, ...candidateHealthcheck]);
         const routeResponse = runCapture("curl", ["--silent", "--show-error", "--max-time", "2", "--write-out", "\n%{content_type}\n%{http_code}", `http://127.0.0.1:${port}/__atlas_candidate_missing__`], true).trimEnd();
         const routeLines = routeResponse.split("\n");
         const routeStatus = routeLines.pop();
