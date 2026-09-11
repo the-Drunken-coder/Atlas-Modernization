@@ -648,6 +648,73 @@ describe("ManagedCoreManager", () => {
     });
   });
 
+  it("stops a started target while retaining the journal when cleanup fails", async () => {
+    const configDir = temporaryDirectory();
+    writeFileSync(join(configDir, ".env"), "POSTGRES_PASSWORD=secret\n", { mode: 0o600 });
+    const stateRef = { current: undefined as ManagedCoreState | undefined };
+    const calls: Call[] = [];
+    const initial = new ManagedCoreManager(
+      makeOptions(configDir, packageDirectory(IMAGE, "stop-target-old"), IMAGE, stateRef, calls, RECEIPT, {
+        desiredRunning: false
+      })
+    );
+    stateRef.current = await initial.initialize();
+    const priorState = { ...stateRef.current, enabledPlugins: ["building_scan"] };
+    calls.length = 0;
+
+    let stopFails = true;
+    const failed = new ManagedCoreManager(
+      makeOptions(
+        configDir,
+        packageDirectory(NEXT_IMAGE, "stop-target-next"),
+        NEXT_IMAGE,
+        stateRef,
+        calls,
+        NEXT_RECEIPT,
+        {
+          previousRunning: false,
+          desiredRunning: true,
+          ensureCredential: async () => {
+            throw new Error("credential setup failed");
+          },
+          runCompose: async (args, pluginIds, options) => {
+            calls.push({
+              args,
+              pluginIds,
+              coreImage: options.coreImage,
+              ...(options.cleanup ? { cleanup: true } : {})
+            });
+            if (stopFails && args[0] === "down") return { status: 1, stdout: "", stderr: "stop failed" };
+            return { status: 0, stdout: "", stderr: "" };
+          }
+        }
+      )
+    );
+
+    await expect(failed.update(priorState)).rejects.toThrow(/Recovery also failed/);
+    expect(DeploymentTransactionStore.open(configDir).journal.phase).toBe("core-started");
+    expect(calls.at(-1)).toMatchObject({
+      args: ["down", "--remove-orphans"],
+      pluginIds: ["building_scan"],
+      coreImage: NEXT_IMAGE,
+      cleanup: true
+    });
+
+    await expect(failed.stopPendingTarget()).rejects.toThrow("Could not stop Atlas Core");
+    expect(DeploymentTransactionStore.open(configDir).journal.phase).toBe("core-started");
+
+    stopFails = false;
+    await expect(failed.stopPendingTarget()).resolves.toBeUndefined();
+    expect(DeploymentTransactionStore.open(configDir).journal.phase).toBe("core-started");
+    expect(calls.at(-1)).toMatchObject({
+      args: ["down", "--remove-orphans"],
+      pluginIds: ["building_scan"],
+      coreImage: NEXT_IMAGE,
+      cleanup: true
+    });
+    expect(existsSync(join(configDir, "transaction"))).toBe(true);
+  });
+
   it("rejects a running Core update before mutation when an enabled Plugin is unhealthy", async () => {
     const configDir = temporaryDirectory();
     writeFileSync(join(configDir, ".env"), "POSTGRES_PASSWORD=secret\n", { mode: 0o600 });

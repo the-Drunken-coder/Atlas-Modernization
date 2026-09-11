@@ -152,6 +152,7 @@ function operator(snapshot: DeploymentSnapshot = { status: "ready", detail: "Eve
       })
     ),
     pluginLogs: vi.fn(async () => undefined),
+    pluginRefresh: vi.fn(async () => undefined),
     pluginStatuses: vi.fn(async (_pluginId?: string): Promise<PluginDeploymentStatus[]> => []),
     resumeAfterCancellation: vi.fn(),
     reset: vi.fn(async () => undefined),
@@ -642,6 +643,95 @@ describe("Atlas Core terminal UI", () => {
     await terminal.waitForRawChange(beforeExpansion);
     await vi.waitFor(() => expect(stripAnsi(terminal.raw.slice(beforeExpansion))).toContain("↑/↓ 1-18/19"));
     terminal.write("\r");
+    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
+    terminal.write("q");
+    await menu;
+  });
+
+  it("refreshes the Plugin catalog on open and falls back to the verified cache", async () => {
+    const terminal = new TestTerminal();
+    const deployment = operator();
+    const plugin = {
+      pluginId: "building_scan",
+      displayName: "Building Scan",
+      lifecycle: "query_only" as const,
+      enabled: false,
+      packaged: false,
+      installed: true,
+      selectedVersion: "1.0.0"
+    };
+    deployment.pluginRefresh.mockRejectedValueOnce(new Error("catalog network unavailable"));
+    deployment.pluginStatuses.mockResolvedValue([plugin]);
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("View status");
+    terminal.write("plugins");
+    await terminal.waitFor("Filter: plugins");
+    terminal.write("\r");
+    await terminal.waitFor("PLUGIN CATALOG");
+    await vi.waitFor(() => expect(deployment.pluginRefresh).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(deployment.pluginStatuses).toHaveBeenCalledOnce());
+    expect(terminal.text).not.toContain("image unavailable");
+
+    terminal.write("r");
+    await vi.waitFor(() => expect(deployment.pluginRefresh).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(deployment.pluginStatuses).toHaveBeenCalledTimes(2));
+    terminal.write("q");
+    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
+    terminal.write("q");
+    await menu;
+  });
+
+  it("allows toggling an installed independent Plugin without a packaged image", async () => {
+    const terminal = new TestTerminal();
+    const deployment = operator();
+    const plugin = {
+      pluginId: "building_scan",
+      displayName: "Building Scan",
+      lifecycle: "query_only" as const,
+      enabled: false,
+      packaged: false,
+      installed: true,
+      selectedVersion: "1.0.0"
+    };
+    deployment.pluginStatuses
+      .mockResolvedValueOnce([plugin])
+      .mockResolvedValueOnce([{ ...plugin, enabled: true, state: "running", health: "healthy" }]);
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("View status");
+    terminal.write("plugins");
+    await terminal.waitFor("Filter: plugins");
+    terminal.write("\r");
+    await terminal.waitFor("PLUGIN CATALOG");
+    expect(terminal.text).not.toContain("image unavailable");
+    terminal.write("\r");
+    await terminal.waitFor("Enable requested");
+    await terminal.waitFor("Enter return to Plugins");
+    terminal.write("\r");
+    await vi.waitFor(() => expect(deployment.pluginStatuses).toHaveBeenCalledTimes(2));
+    terminal.write("q");
+    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
+    terminal.write("q");
+    await menu;
+
+    expect(deployment.pluginEnable).toHaveBeenCalledWith(plugin.pluginId, expect.any(Function));
+  });
+
+  it("shows the catalog refresh error when no verified cache is available", async () => {
+    const terminal = new TestTerminal();
+    const deployment = operator();
+    deployment.pluginRefresh.mockRejectedValueOnce(new Error("catalog network unavailable"));
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("View status");
+    terminal.write("plugins");
+    await terminal.waitFor("Filter: plugins");
+    terminal.write("\r");
+    await terminal.waitFor("catalog network unavailable");
+    expect(deployment.pluginRefresh).toHaveBeenCalledOnce();
+    expect(deployment.pluginStatuses).toHaveBeenCalledOnce();
+    terminal.write("q");
     await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
     terminal.write("q");
     await menu;

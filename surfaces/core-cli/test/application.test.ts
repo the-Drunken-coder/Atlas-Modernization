@@ -3388,6 +3388,54 @@ describe("atlas-core CLI", () => {
     expect(test.stderr.join("")).toContain("running Atlas Core has an invalid Atlas Core version: legacy");
   });
 
+  it.each([false, true])("disables legacy restart policies before committing import (failure: %s)", async (fail) => {
+    const test = runtime();
+    markInitialized(test);
+    setCoreVersion(test, "0.1.2");
+    test.runner.existingContainers.add(API_CONTAINER);
+    test.context.confirmCoreUpdate = async () => true;
+    const config = join(test.home, ".atlas", "core");
+    let checked = false;
+    test.runner.onRun = (call) => {
+      if (call.command !== "docker" || call.args[0] !== "update" || !call.args.includes("--restart=no")) return;
+      checked = true;
+      expect(DeploymentTransactionStore.open(config).journal).toMatchObject({ operation: "repair", phase: "prepared" });
+      expect(JSON.parse(readFileSync(join(config, "state.json"), "utf8")).baseDeployment).toBeUndefined();
+      if (fail) throw new Error("injected restart policy failure");
+    };
+    expect(await runCLI(["update", "all"], test.context), test.stderr.join("")).toBe(fail ? 1 : 0);
+    expect(checked).toBe(true);
+    if (fail) {
+      expect(JSON.parse(readFileSync(join(config, "state.json"), "utf8")).baseDeployment).toBeUndefined();
+      expect(test.runner.calls.map(composeCommand).some((args) => args[0] === "up")).toBe(false);
+    }
+  });
+
+  it.each(["core-started", "credentials-durable"] as const)(
+    "stops an interrupted target before blocking automatic recovery at %s",
+    async (phase) => {
+      const test = runtime();
+      await markManagedInitialized(test);
+      const config = join(test.home, ".atlas", "core");
+      const transaction = DeploymentTransactionStore.begin(config, {
+        operation: "core-update",
+        dockerEngineId: TEST_ENGINE_ID,
+        previousRunning: true,
+        desiredRunning: true,
+        recovery: { targetCoreImage: TEST_IMAGE }
+      });
+      transaction.stage("state.json", readFileSync(join(config, "state.json")));
+      transaction.advance(phase);
+      test.runner.calls.length = 0;
+
+      expect(await runCLI(["start", "--manual"], test.context)).toBe(1);
+      expect(test.stderr.join("")).toContain("Core recovery is pending");
+      expect(test.runner.calls.map(composeCommand)).toContainEqual(["down", "--remove-orphans"]);
+      expect(test.runner.calls.map(composeCommand).some((args) => args[0] === "up")).toBe(false);
+      expect(DeploymentTransactionStore.open(config).journal.phase).toBe(phase);
+    }
+  );
+
   it("retains a failed Core update candidate for explicit recovery", async () => {
     const test = runtime();
     markInitialized(test);
@@ -4948,6 +4996,14 @@ describe("atlas-core CLI", () => {
       expect(test.runner.existingContainers.has(container)).toBe(foreign);
     }
   );
+
+  it("rejects unknown independent Plugin status IDs", async () => {
+    const test = runtime();
+    await installIndependentUpdateFixtures(test);
+    expect(await runCLI(["plugins", "status", "not_cataloged"], test.context)).toBe(1);
+    expect(test.stderr.join("")).toContain("Unknown Plugin not_cataloged");
+    expect(await runCLI(["plugins", "status", "alpha_fixture"], test.context)).toBe(0);
+  });
 
   it("updates all installed independent Plugins in sorted order, including disabled Plugins", async () => {
     const test = runtime();

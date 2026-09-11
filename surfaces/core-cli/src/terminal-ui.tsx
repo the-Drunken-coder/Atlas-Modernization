@@ -294,7 +294,18 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
   const loadPlugins = useCallback(async () => {
     setScreen({ kind: "busy", label: "Loading Plugins..." });
     try {
-      setScreen({ kind: "plugins", view: await operator.pluginStatuses() });
+      // Refresh the signed catalog before showing the menu. If the network is
+      // unavailable, pluginStatuses still reads the last verified receipt.
+      let refreshFailure: Error | undefined;
+      try {
+        await operator.pluginRefresh?.();
+      } catch (error) {
+        // A verified local catalog is sufficient for an inspection view.
+        refreshFailure = new Error(errorMessage(error));
+      }
+      const statuses = await operator.pluginStatuses();
+      if (refreshFailure && statuses.length === 0) throw refreshFailure;
+      setScreen({ kind: "plugins", view: statuses });
     } catch (error) {
       setScreen({ kind: "plugins", view: new Error(errorMessage(error)) });
     }
@@ -1399,7 +1410,7 @@ function PluginsMenu({
       const next = (Math.min(selectedRef.current, plugins.length - 1) + 1) % plugins.length;
       selectedRef.current = next;
       setSelected(next);
-    } else if (key.return && plugin?.packaged) {
+    } else if (key.return && plugin && (plugin.packaged || plugin.installed === true)) {
       actionPending.current = true;
       onToggle(plugin);
     } else if (input === "l" && plugin?.enabled) {
@@ -1421,7 +1432,7 @@ function PluginsMenu({
           <Text bold>PLUGIN CATALOG</Text>
           {plugins.map((candidate, candidateIndex) => {
             const runtime = candidate.state ? `  ${candidate.state}/${candidate.health || "unknown"}` : "";
-            const availability = candidate.packaged ? "" : "  image unavailable";
+            const availability = candidate.packaged || candidate.installed === true ? "" : "  image unavailable";
             return (
               <Text inverse={candidateIndex === index} key={candidate.pluginId}>
                 {pad(

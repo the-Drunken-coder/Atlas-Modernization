@@ -10,7 +10,21 @@ const repositoryRoot = fileURLToPath(new URL("..", import.meta.url));
 const script = join(repositoryRoot, "scripts", "plugin-release.mjs");
 const image = `ghcr.io/the-drunken-coder/atlas-building-scan@sha256:${"a".repeat(64)}`;
 
-function runCandidate(manifest, routeBody = '{"code":"route_not_found"}') {
+const candidateManifest = {
+  plugin_id: "building_scan",
+  display_name: "Building Scan",
+  core_to_plugin_protocol_major: 1,
+  operations: [
+    {
+      operation_id: "search_buildings",
+      display_name: "Search buildings",
+      timeout_ms: 15_000,
+      interaction: { kind: "map_area" }
+    }
+  ]
+};
+
+function runCandidate(manifest, routeBody = '{"code":"route_not_found"}', contentType = "application/json") {
   const directory = mkdtempSync(join(tmpdir(), "atlas-plugin-candidate-"));
   const bin = join(directory, "bin");
   const docker = join(bin, "docker");
@@ -31,9 +45,10 @@ else process.exit(1);
     curl,
     `#!/usr/bin/env node
 const url = process.argv.at(-1);
-if (url.endsWith("/manifest")) process.stdout.write(process.env.CANDIDATE_MANIFEST + "\\n200\\n");
-else if (url.endsWith("/health")) process.stdout.write('{"status":"ok"}\\n200\\n');
-else process.stdout.write((process.env.CANDIDATE_ROUTE_BODY ?? '{"code":"route_not_found"}') + "\\n404\\n");
+const contentType = process.env.CANDIDATE_CONTENT_TYPE ?? "application/json";
+if (url.endsWith("/manifest")) process.stdout.write(process.env.CANDIDATE_MANIFEST + "\\n" + contentType + "\\n200\\n");
+else if (url.endsWith("/health")) process.stdout.write('{"status":"ok"}\\n' + contentType + "\\n200\\n");
+else process.stdout.write((process.env.CANDIDATE_ROUTE_BODY ?? '{"code":"route_not_found"}') + "\\n" + contentType + "\\n404\\n");
 `
   );
   chmodSync(docker, 0o755);
@@ -42,7 +57,13 @@ else process.stdout.write((process.env.CANDIDATE_ROUTE_BODY ?? '{"code":"route_n
     return spawnSync(process.execPath, [script, "check-candidate", "building_scan", image], {
       cwd: repositoryRoot,
       encoding: "utf8",
-      env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, CANDIDATE_MANIFEST: JSON.stringify(manifest), CANDIDATE_ROUTE_BODY: routeBody }
+      env: {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH}`,
+        CANDIDATE_MANIFEST: JSON.stringify(manifest),
+        CANDIDATE_ROUTE_BODY: routeBody,
+        CANDIDATE_CONTENT_TYPE: contentType
+      }
     });
   } finally {
     rmSync(directory, { recursive: true, force: true });
@@ -340,20 +361,25 @@ test("accepts a mutating retry with a case-normalized allowed idempotency header
 });
 
 test("accepts a candidate only when its private manifest matches the authored interaction contract", () => {
-  const result = runCandidate({
-    plugin_id: "building_scan",
-    display_name: "Building Scan",
-    core_to_plugin_protocol_major: 1,
-    operations: [
-      {
-        operation_id: "search_buildings",
-        display_name: "Search buildings",
-        timeout_ms: 15_000,
-        interaction: { kind: "map_area" }
-      }
-    ]
-  });
+  const result = runCandidate(candidateManifest);
   assert.equal(result.status, 0, result.stderr);
+});
+
+test("requires candidate JSON probes to advertise an application/json media type", () => {
+  const result = runCandidate(candidateManifest, undefined, "text/plain");
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /candidate manifest returned text\/plain; expected application\/json/);
+});
+
+test("accepts candidate JSON media types with valid parameters", () => {
+  const result = runCandidate(candidateManifest, undefined, "Application/JSON; Charset=UTF-8");
+  assert.equal(result.status, 0, result.stderr);
+});
+
+test("rejects malformed application/json media parameters", () => {
+  const result = runCandidate(candidateManifest, undefined, "application/json; malformed");
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /expected application\/json/);
 });
 
 test("rejects candidate manifest fields that can change the managed query-only contract", () => {

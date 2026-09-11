@@ -409,6 +409,37 @@ export class ManagedCoreManager {
     return await this.#retryStartedTarget(transaction, targetStopped);
   }
 
+  /**
+   * Stop a target composition left running by a failed started-phase mutation.
+   * This preserves the transaction for the operator's explicit recovery choice.
+   */
+  async stopPendingTarget(): Promise<void> {
+    if (!DeploymentTransactionStore.exists(this.#configDir)) {
+      throw new Error("Atlas Core has no pending deployment transaction.");
+    }
+    const transaction = DeploymentTransactionStore.open(this.#configDir);
+    const journal = transaction.read();
+    if (journal.owner.dockerEngineId !== this.#options.dockerEngineId) {
+      throw new Error("Pending transaction belongs to another Docker engine.");
+    }
+    if (journal.operation !== "core-update" && journal.operation !== "init") {
+      throw new Error("Pending transaction is not a Core mutation.");
+    }
+    if (journal.phase !== "core-started" && journal.phase !== "credentials-durable") {
+      throw new Error("Pending Core target can only be stopped after the target Core has started.");
+    }
+    const stagedState = parseStateBuffer(transaction.readStaged("state.json"));
+    if (!stagedState || stagedState.schema !== STATE_SCHEMA || !stagedState.baseDeployment) {
+      throw new Error("Pending Core transaction has no valid staged target state.");
+    }
+    const stagedImage = stagedState.baseDeployment.coreImage;
+    const recordedImage = journal.recovery?.targetCoreImage;
+    if (recordedImage && recordedImage !== stagedImage) {
+      throw new Error("Pending Core transaction target image does not match its staged state.");
+    }
+    await this.#stopAfterFailure(stagedState.enabledPlugins, recordedImage ?? stagedImage);
+  }
+
   async #runTransaction(
     transaction: DeploymentTransactionStore,
     previousState: ManagedCoreState | undefined,

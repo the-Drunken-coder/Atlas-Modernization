@@ -1069,6 +1069,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
           now: this.#now()
         });
         try {
+          await this.#disableLegacyRestarts();
           for (const file of prepared.manifest.files) {
             transaction.stage(`base/${file.path}`, readFileSync(join(prepared.baseDirectory, file.path)), {
               mode: file.mode
@@ -1088,7 +1089,13 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       } finally {
         prepared.cleanup();
       }
+    } else {
+      await this.#disableLegacyRestarts();
     }
+    return state;
+  }
+
+  async #disableLegacyRestarts(): Promise<void> {
     const identity = this.#deploymentIdentity();
     const containers: string[] = [];
     for (const name of [
@@ -1101,7 +1108,6 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       if (await this.#containerExists(name)) containers.push(name);
     }
     if (containers.length) await this.#checkCommand("docker", ["update", "--restart=no", ...containers]);
-    return state;
   }
 
   async #repairImages(state: ManagedCoreState): Promise<void> {
@@ -1421,6 +1427,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
           await this.#managedCore(engineId).recover("retry");
           return;
         }
+        await this.#managedCore(engineId).stopPendingTarget();
         throw new Error(
           "Core recovery is pending. Use atlas-core recover status and an explicit retry, forward, or restored recovery action."
         );
@@ -2173,6 +2180,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       ]
         .filter((id) => !pluginId || id === pluginId)
         .sort();
+      if (pluginId && ids.length === 0) throw new Error(`Unknown Plugin ${pluginId}.`);
       const runtime = await this.#preflight();
       const serviceStates = await this.#dockerRuntimeScope.run(runtime, async () => {
         this.#assertStateMatchesEngine(state, runtime.engineId);

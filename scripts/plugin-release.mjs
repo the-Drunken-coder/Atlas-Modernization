@@ -222,11 +222,16 @@ function checkCandidate(plugin, image) {
     if (!isRecord(health) || Object.keys(health).length !== 1 || health.status !== "ok") {
       throw new Error("Candidate /health did not return {\"status\":\"ok\"}");
     }
-    const routeResponse = runCapture("curl", ["--silent", "--show-error", "--max-time", "2", "--write-out", "\n%{http_code}", `http://127.0.0.1:${port}/__atlas_candidate_missing__`], true).trimEnd();
+    const routeResponse = runCapture("curl", ["--silent", "--show-error", "--max-time", "2", "--write-out", "\n%{content_type}\n%{http_code}", `http://127.0.0.1:${port}/__atlas_candidate_missing__`], true).trimEnd();
     const routeLines = routeResponse.split("\n");
     const routeStatus = routeLines.pop();
-    if (routeStatus !== "404" || routeLines.join("\n") !== '{"code":"route_not_found"}') {
-      throw new Error(`Candidate missing route must return {"code":"route_not_found"} with HTTP 404; got HTTP ${routeStatus}`);
+    const routeContentType = routeLines.pop() ?? "";
+    if (
+      routeStatus !== "404" ||
+      !isJSONContentType(routeContentType) ||
+      routeLines.join("\n") !== '{"code":"route_not_found"}'
+    ) {
+      throw new Error(`Candidate missing route must return {"code":"route_not_found"} as application/json with HTTP 404; got ${routeContentType || "no Content-Type"} HTTP ${routeStatus}`);
     }
   } finally {
     if (containerId) spawnSync("docker", ["rm", "--force", containerId], { cwd: repositoryRoot, stdio: "ignore" });
@@ -582,7 +587,7 @@ function waitForCandidatePort(containerId) {
 
 function waitForJSON(url, expectedStatus, label) {
   for (let attempt = 0; attempt < 60; attempt += 1) {
-    const result = spawnSync("curl", ["--silent", "--show-error", "--max-time", "2", "--write-out", "\n%{http_code}", url], {
+    const result = spawnSync("curl", ["--silent", "--show-error", "--max-time", "2", "--write-out", "\n%{content_type}\n%{http_code}", url], {
       cwd: repositoryRoot,
       encoding: "utf8",
       stdio: "pipe"
@@ -591,6 +596,10 @@ function waitForJSON(url, expectedStatus, label) {
       const lines = result.stdout.trimEnd().split("\n");
       const status = Number(lines.pop());
       if (status === expectedStatus) {
+        const contentType = lines.pop() ?? "";
+        if (!isJSONContentType(contentType)) {
+          throw new Error(`${label} returned ${contentType || "no Content-Type"}; expected application/json`);
+        }
         try {
           return JSON.parse(lines.join("\n"));
         } catch {
@@ -601,6 +610,61 @@ function waitForJSON(url, expectedStatus, label) {
     sleep(500);
   }
   throw new Error(`Timed out waiting for ${label}`);
+}
+
+function isJSONContentType(value) {
+  if (typeof value !== "string") return false;
+  const separator = value.indexOf(";");
+  const mediaType = (separator < 0 ? value : value.slice(0, separator)).trim().toLowerCase();
+  if (!/^[!#$%&'*+\-.^_`|~0-9A-Za-z]+\/[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/u.test(mediaType) || mediaType !== "application/json") return false;
+  if (separator < 0) return true;
+
+  const parameterNames = new Set();
+  let index = separator + 1;
+  while (index < value.length) {
+    while (index < value.length && /[ \t]/u.test(value[index])) index += 1;
+    if (index === value.length) return true;
+    const nameStart = index;
+    while (index < value.length && /[!#$%&'*+\-.^_`|~0-9A-Za-z]/u.test(value[index])) index += 1;
+    if (nameStart === index) return false;
+    const name = value.slice(nameStart, index).toLowerCase();
+    if (parameterNames.has(name)) return false;
+    parameterNames.add(name);
+    while (index < value.length && /[ \t]/u.test(value[index])) index += 1;
+    if (value[index] !== "=") return false;
+    index += 1;
+    while (index < value.length && /[ \t]/u.test(value[index])) index += 1;
+    if (value[index] === '"') {
+      index += 1;
+      let closed = false;
+      while (index < value.length) {
+        const character = value[index];
+        if (character === "\\") {
+          index += 1;
+          if (index >= value.length || /[\r\n]/u.test(value[index])) return false;
+          index += 1;
+        } else if (character === '"') {
+          index += 1;
+          closed = true;
+          break;
+        } else {
+          if (character !== "\t" && character.charCodeAt(0) < 0x20) return false;
+          index += 1;
+        }
+      }
+      if (!closed) return false;
+    } else {
+      const valueStart = index;
+      while (index < value.length && /[!#$%&'*+\-.^_`|~0-9A-Za-z]/u.test(value[index])) index += 1;
+      if (valueStart === index) return false;
+    }
+    while (index < value.length && /[ \t]/u.test(value[index])) index += 1;
+    if (index < value.length) {
+      if (value[index] !== ";") return false;
+      index += 1;
+    }
+  }
+  return true;
 }
 
 function readBuiltProtocolRevision(plugin) {
