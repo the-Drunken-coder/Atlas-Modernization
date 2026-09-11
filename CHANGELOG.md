@@ -3,6 +3,14 @@
 Atlas Core release notes are listed newest first. The manual release workflow writes each new section from the
 verified commit history with OpenCode Go, then pauses for approval before publishing.
 
+## 0.2.1 - 2026-09-11
+
+### Fixed
+
+- Generated Plugin endpoint and Source Gateway connector files are now readable by container users. Credentials and release receipts remain owner-only.
+- Retained deployment files no longer inherit group or world write permissions from npm installations, preventing Plugin template rejection under umask `0002`.
+- Release verification allows five minutes of retry delays for npm to expose an accepted package and its provenance.
+
 ## 0.2.0 - 2026-09-11
 
 ### Added

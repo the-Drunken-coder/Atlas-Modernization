@@ -7,6 +7,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync
 } from "node:fs";
@@ -247,6 +248,8 @@ describe("IndependentPluginManager", () => {
     expect(host.compose).toContainEqual(["config", "--quiet"]);
     expect(host.compose).not.toContainEqual(["up", "-d", "--no-build", "--pull", "never"]);
     expect(transaction.cleaned).toBe(true);
+    expect(statSync(join(host.configDir, "plugins/building_scan/active/core-endpoint.json")).mode & 0o777).toBe(0o644);
+    expect(statSync(join(host.configDir, "plugins/building_scan/active/deployment.json")).mode & 0o777).toBe(0o600);
     expect(existsSync(join(host.configDir, "plugins/building_scan/active/deployment.json"))).toBe(true);
     expect(readFileSync(join(host.configDir, "plugins/building_scan/active/compose.yml"), "utf8")).not.toContain(
       "source-connector.json"
@@ -685,6 +688,9 @@ describe("IndependentPluginManager", () => {
       expect(rendered).toContain("atlas_plugin_test_atlas-plugin-building-scan");
       expect(rendered).toContain("source-connector.json");
       expect(existsSync(join(host.configDir, "plugins/building_scan/active/source-connector.json"))).toBe(true);
+      expect(statSync(join(host.configDir, "plugins/building_scan/active/source-connector.json")).mode & 0o777).toBe(
+        0o644
+      );
     }
   );
 

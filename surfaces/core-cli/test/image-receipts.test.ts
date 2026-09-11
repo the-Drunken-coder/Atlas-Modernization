@@ -10,7 +10,7 @@ import {
 const image = "ghcr.io/the-drunken-coder/atlas-reference@sha256:" + "a".repeat(64);
 const taggedDockerHubImage = "postgres:15@sha256:" + "a".repeat(64);
 const bundledMinioImage =
-  "minio/minio:RELEASE.2024-01-31T20-20-33Z@sha256:4092433a77e510826874b36f369696df43407a763d7f901a61d74e83e6fd95bc";
+  "quay.io/minio/minio:RELEASE.2024-01-31T20-20-33Z@sha256:4092433a77e510826874b36f369696df43407a763d7f901a61d74e83e6fd95bc";
 const platformDigest = "sha256:" + "b".repeat(64);
 const localImageID = "sha256:" + "c".repeat(64);
 
@@ -198,7 +198,7 @@ describe("Docker image receipts", () => {
   });
 
   it("accepts the bundled MinIO image with its uppercase release tag", async () => {
-    const platformReference = "minio/minio@" + bundledMinioImage.slice(bundledMinioImage.lastIndexOf("@") + 1);
+    const platformReference = "quay.io/minio/minio@" + bundledMinioImage.slice(bundledMinioImage.lastIndexOf("@") + 1);
     const docker = fakeDocker({
       [`manifest\u0000inspect\u0000${bundledMinioImage}`]: JSON.stringify({
         schemaVersion: 2,
@@ -208,7 +208,7 @@ describe("Docker image receipts", () => {
         Id: localImageID,
         Os: "linux",
         Architecture: "amd64",
-        RepoDigests: ["docker.io/minio/minio@" + bundledMinioImage.slice(bundledMinioImage.lastIndexOf("@") + 1)]
+        RepoDigests: ["quay.io/minio/minio@" + bundledMinioImage.slice(bundledMinioImage.lastIndexOf("@") + 1)]
       }),
       [`manifest\u0000inspect\u0000${platformReference}`]: JSON.stringify({
         schemaVersion: 2,

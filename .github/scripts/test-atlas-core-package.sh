@@ -129,7 +129,7 @@ git rev-parse HEAD > "$backup_dir/app-revision.txt"
 docker exec "${project_name}_postgres" sh -c 'PGPASSWORD="$POSTGRES_PASSWORD" pg_dump -U atlas -d atlas_core --format=custom --no-owner --no-privileges' > "$backup_dir/postgres.dump"
 docker exec -i "${project_name}_postgres" pg_restore --list < "$backup_dir/postgres.dump" > "$backup_dir/postgres.contents.txt"
 docker exec "${project_name}_postgres" sh -c 'PGPASSWORD="$POSTGRES_PASSWORD" psql -At -U atlas -d atlas_core -c "SELECT concat_ws(chr(32), version, name, checksum, fingerprint_version) FROM atlas_schema_migrations ORDER BY version"' > "$backup_dir/schema-migrations.txt"
-mc_image="minio/mc:RELEASE.2024-01-31T08-59-40Z@sha256:c084c9a67c7a9ed5f37cc7f2a905010861aaa882bec76da10352305c9709b6d2"
+mc_image="quay.io/minio/mc:RELEASE.2024-01-31T08-59-40Z@sha256:c084c9a67c7a9ed5f37cc7f2a905010861aaa882bec76da10352305c9709b6d2"
 docker run --rm --network "${project_name}_atlas_core_network" \
   --env-file "$core_home/.env" --volume "$backup_dir:/backup" \
   --entrypoint /bin/sh "$mc_image" -ec '

@@ -4,6 +4,7 @@ import {
   closeSync,
   constants,
   existsSync,
+  fchmodSync,
   fstatSync,
   fsyncSync,
   lstatSync,
@@ -291,13 +292,14 @@ function ensureDirectory(path: string): void {
   chmodSync(path, 0o700);
 }
 
-function atomicWrite(path: string, bytes: Uint8Array): void {
+function atomicWrite(path: string, bytes: Uint8Array, mode = 0o600): void {
   ensureDirectory(dirname(path));
   assertNoSymlink(path);
   const temporary = join(dirname(path), `.${path.split(sep).at(-1) ?? "file"}.tmp-${randomBytes(8).toString("hex")}`);
   const descriptor = openSync(temporary, "wx", 0o600);
   try {
     writeFileSync(descriptor, bytes);
+    fchmodSync(descriptor, mode);
     fsyncSync(descriptor);
   } finally {
     closeSync(descriptor);
@@ -1196,15 +1198,22 @@ export class IndependentPluginManager {
       // startup. Walk them first so a symlink cannot be silently replaced.
       walkFiles(active);
     }
-    for (const [name, bytes] of generated) {
+    // These two non-secret files are bind-mounted into containers running under another UID.
+    // The host directories and receipts remain private.
+    const generatedFiles = [...generated].map(([name, bytes]) => ({
+      name,
+      bytes,
+      mode: name === "core-endpoint.json" || name === "source-connector.json" ? 0o644 : 0o600
+    }));
+    for (const { name, bytes, mode } of generatedFiles) {
       const relativePath = relative(this.#configDir, join(active, name));
       if (transaction) {
         await transaction.snapshot(relativePath);
-        await transaction.stage(relativePath, bytes);
+        await transaction.stage(relativePath, bytes, { mode });
       }
     }
     if (existsSync(active)) rmSync(active, { recursive: true, force: true });
-    for (const [name, bytes] of generated) atomicWrite(join(active, name), bytes);
+    for (const { name, bytes, mode } of generatedFiles) atomicWrite(join(active, name), bytes, mode);
   }
 
   async #removeActive(pluginId: string): Promise<void> {
