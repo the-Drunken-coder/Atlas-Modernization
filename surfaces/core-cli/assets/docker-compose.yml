@@ -93,7 +93,7 @@ services:
       - atlas_core_network
 
   minio:
-    image: minio/minio:RELEASE.2024-01-31T20-20-33Z@sha256:4092433a77e510826874b36f369696df43407a763d7f901a61d74e83e6fd95bc
+    image: quay.io/minio/minio:RELEASE.2024-01-31T20-20-33Z@sha256:4092433a77e510826874b36f369696df43407a763d7f901a61d74e83e6fd95bc
     container_name: ${ATLAS_CORE_PROJECT:-atlas_core_production}_minio
     labels:
       io.atlas.core.engine: ${ATLAS_CORE_ENGINE_ID:-direct-compose}
@@ -117,7 +117,7 @@ services:
       - atlas_core_network
 
   minio-init:
-    image: minio/mc:RELEASE.2024-01-31T08-59-40Z@sha256:c084c9a67c7a9ed5f37cc7f2a905010861aaa882bec76da10352305c9709b6d2
+    image: quay.io/minio/mc:RELEASE.2024-01-31T08-59-40Z@sha256:c084c9a67c7a9ed5f37cc7f2a905010861aaa882bec76da10352305c9709b6d2
     container_name: ${ATLAS_CORE_PROJECT:-atlas_core_production}_minio_init
     labels:
       io.atlas.core.engine: ${ATLAS_CORE_ENGINE_ID:-direct-compose}

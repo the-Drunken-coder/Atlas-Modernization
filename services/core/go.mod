@@ -1,6 +1,6 @@
 module github.com/the-drunken-coder/atlas/services/core
 
-go 1.26
+go 1.26.0
 
 toolchain go1.26.5
 
@@ -9,11 +9,11 @@ require (
 	github.com/go-chi/chi/v5 v5.3.2
 	github.com/go-chi/cors v1.2.2
 	github.com/google/uuid v1.6.0
-	github.com/jackc/pgx/v5 v5.10.0
+	github.com/jackc/pgx/v5 v5.11.0
 	github.com/minio/minio-go/v7 v7.3.0
 	github.com/rs/zerolog v1.35.1
 	github.com/the-drunken-coder/atlas/packages/protocol v0.0.0
-	golang.org/x/crypto v0.55.0
+	golang.org/x/crypto v0.56.0
 	golang.org/x/net v0.58.0
 	golang.org/x/text v0.41.0
 )
