@@ -552,10 +552,13 @@ describe("PluginCatalogStore", () => {
     await store.refresh();
     now = new Date("2026-09-05T12:00:00Z");
     const beforeInspect = readFileSync(join(directory, "catalog-state.json"));
-    expect(store.inspect().sequence).toBe(1);
+    expect(store.inspect()).toMatchObject({ sequence: 1, expired: true });
     expect(readFileSync(join(directory, "catalog-state.json"))).toEqual(beforeInspect);
     await expect(() => store.read()).toThrow(/expired/i);
     now = new Date("2026-09-02T12:01:00Z");
+    const beforeRollbackInspect = readFileSync(join(directory, "catalog-state.json"));
+    expect(store.inspect()).toMatchObject({ sequence: 1, expired: true });
+    expect(readFileSync(join(directory, "catalog-state.json"))).toEqual(beforeRollbackInspect);
     await expect(() => store.read()).toThrow(/expired/i);
   });
 

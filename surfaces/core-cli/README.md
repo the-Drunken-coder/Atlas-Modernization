@@ -38,7 +38,8 @@ Initialization generates strong local credentials and provisions the MinIO bucke
 is new. It refuses to create new credentials over existing Atlas containers or volumes. Configuration is stored in
 `~/.atlas/core` with owner-only permissions. Set `ATLAS_CORE_HOME` before the first command to choose another location.
 After initialization, install and load the recovery service with `atlas-core supervision install` before using the
-default `atlas-core start`; use `atlas-core start --manual` only when an intentional one-shot start is acceptable.
+default `atlas-core start` or `atlas-core restart`; use `--manual` only when an intentional one-shot start or restart
+is acceptable.
 
 The menu is a user-friendly layer over the same commands shown below. Those commands remain available for scripts and
 direct operation.
@@ -51,7 +52,7 @@ atlas-core help
 atlas-core init
 atlas-core start [--manual]
 atlas-core stop
-atlas-core restart
+atlas-core restart [--manual]
 atlas-core reset [--manual]
 atlas-core config
 atlas-core update [cli|all]
@@ -129,9 +130,9 @@ automatic resume from `start` or `supervise`.
 
 Retained base and generated Plugin services use `restart: "no"`, so Compose and Docker cannot start around recovery.
 `atlas-core supervise` is the recovery-aware long-lived startup path. A Linux user service needs lingering enabled for
-boot-time recovery. A macOS LaunchAgent runs after login and cannot provide pre-login recovery. The default `start`
-requires an installed and loaded supervisor; `start --manual` is the explicit one-shot exception and reports that the
-deployment has no automatic recovery guarantee.
+boot-time recovery. A macOS LaunchAgent runs after login and cannot provide pre-login recovery. The default `start` and
+`restart` require an installed and loaded supervisor; `start --manual` and `restart --manual` are the explicit one-shot
+exceptions without an automatic recovery guarantee.
 The Plugins menu keeps the operation in an activity view with elapsed timestamps, reports rollback status, and returns
 to the Plugin catalog after safe cancellation.
 

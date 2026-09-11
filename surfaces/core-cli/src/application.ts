@@ -134,7 +134,7 @@ Usage:
   atlas-core start
   atlas-core start [--manual] [--repair-bundle] [--repair-images]
   atlas-core stop
-  atlas-core restart
+  atlas-core restart [--manual]
   atlas-core reset [--manual]
   atlas-core config
   atlas-core update [cli|all]
@@ -221,7 +221,7 @@ type Command =
   | { kind: "plugins"; action: "update" | "rollback" | "uninstall"; pluginId: string }
   | { kind: "plugins"; action: "enable" | "disable" | "status" | "logs"; pluginId: string; follow?: boolean }
   | { kind: "reset"; manual?: boolean }
-  | { kind: "restart" }
+  | { kind: "restart"; manual?: boolean }
   | { kind: "start"; manual: boolean; repairBundle: boolean; repairImages: boolean }
   | { kind: "supervise" }
   | { kind: "supervision"; action: "install" | "uninstall" | "status" }
@@ -1681,7 +1681,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     this.#stdout.write("Run atlas-core start to start the deployment.\n");
   }
 
-  async #requireSupervision(command: "start" | "reset"): Promise<void> {
+  async #requireSupervision(command: "start" | "restart" | "reset"): Promise<void> {
     const supervision = await getSupervisorStatus(this.#supervisorOptions());
     if (
       !supervision.installed ||
@@ -1690,7 +1690,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       supervision.userManagerAvailable !== true
     ) {
       throw new Error(
-        `Start or reinstall recovery supervision with atlas-core supervision install, or explicitly use atlas-core ${command} --manual.`
+        `Install or reinstall recovery supervision with atlas-core supervision install, or explicitly use atlas-core ${command} --manual.`
       );
     }
   }
@@ -1786,13 +1786,14 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
         existsSync(join(this.#pluginConfigRoot, pluginId, "compose.yml"))
       ) ?? [];
     this.#completeRecoverableMutationLockHandoff();
-    if (existsSync(this.#envFile)) {
+    const composeFile = previousState?.baseDeployment
+      ? join(this.#configDir, "base", "docker-compose.yml")
+      : this.#composeFile;
+    if (existsSync(this.#envFile) && existsSync(composeFile)) {
       await this.#runComposeChecked(["down", "--remove-orphans"], resetPluginIds);
     }
 
-    for (const name of [...existingContainers].sort()) {
-      await this.#checkCommand("docker", ["container", "rm", "--force", name]);
-    }
+    await this.#removeContainers(existingContainers);
     for (const name of existingVolumes) {
       await this.#checkCommand("docker", ["volume", "rm", name]);
     }
@@ -1821,7 +1822,14 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
             const state = this.#readState();
             if (!state) throw new Error("Atlas Core is not initialized.");
             this.#assertStateMatchesEngine(state, runtime.engineId);
-            await this.#runComposeChecked(["down", "--remove-orphans"], state.enabledPlugins);
+            const composeFile = state.baseDeployment
+              ? join(this.#configDir, "base", "docker-compose.yml")
+              : this.#composeFile;
+            if (existsSync(composeFile)) {
+              await this.#runComposeChecked(["down", "--remove-orphans"], state.enabledPlugins);
+            } else {
+              await this.#removeContainers(await this.#projectContainerNames());
+            }
             this.#settlePluginDisableIntents(state);
             this.#stdout.write("Atlas Core stopped. Durable volumes were preserved.\n");
           },
@@ -1830,7 +1838,8 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     );
   }
 
-  async restart(): Promise<void> {
+  async restart(options: { manual?: boolean } = {}): Promise<void> {
+    if (!options.manual) await this.#requireSupervision("restart");
     await this.#withInitializedMutation(
       async (state, dockerEngineId) => await this.#restart(state, dockerEngineId),
       "start"
@@ -2183,7 +2192,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       try {
         const receipt = this.#catalogStore.inspect();
         catalog = receipt.catalog.plugins;
-        if (Date.parse(receipt.expiresAt) <= this.#now().getTime()) {
+        if (receipt.expired) {
           catalogError = "Plugin catalog expired; refresh before installing or enabling Plugins.";
         }
       } catch (error) {
@@ -3398,6 +3407,12 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     }
   }
 
+  async #removeContainers(containers: Iterable<string>): Promise<void> {
+    for (const name of [...containers].sort()) {
+      await this.#checkCommand("docker", ["container", "rm", "--force", name]);
+    }
+  }
+
   async #ownedResourceExists(
     kind: "container" | "volume",
     name: string,
@@ -4341,7 +4356,7 @@ export async function runCLI(argv: string[], context: CLIContext = {}): Promise<
         await deployment.reset({ manual: command.manual ?? false });
         return 0;
       case "restart":
-        await deployment.restart();
+        await deployment.restart({ manual: command.manual === true });
         return 0;
       case "start":
         await deployment.start({
@@ -4432,12 +4447,16 @@ export function parseCommand(argv: string[]): Command {
     case "doctor":
     case "config":
     case "init":
-    case "restart":
     case "status":
     case "stop":
     case "version":
       if (args.length > 0) throw new UsageError(`${name} does not accept arguments`);
       return { kind: name };
+    case "restart":
+      if (args.length > 1 || (args.length === 1 && args[0] !== "--manual")) {
+        throw new UsageError("restart accepts only --manual");
+      }
+      return args.length ? { kind: "restart", manual: true } : { kind: "restart" };
     case "update":
       if (args.length === 0) return { kind: "update" };
       if (args.length === 1 && (args[0] === "cli" || args[0] === "all")) {

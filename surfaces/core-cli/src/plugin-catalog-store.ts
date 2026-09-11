@@ -180,12 +180,15 @@ export class PluginCatalogStore {
     return stored.receipt;
   }
 
-  /** Inspect authenticated history, including expired receipts, without admitting mutations or writing observed_at. */
-  inspect(): SignedCatalogReceipt {
+  /** Inspect authenticated history, including expiry, without admitting mutations or writing observed_at. */
+  inspect(): SignedCatalogReceipt & { expired: boolean } {
     const stored = this.#readStoredReceipt(true);
     if (!stored) throw new Error("No verified Plugin catalog is installed. Run atlas-core plugins refresh and retry.");
-    this.#observedNow(stored.observedAt);
-    return stored.receipt;
+    const observedAt = this.#observedNow(stored.observedAt);
+    return {
+      ...stored.receipt,
+      expired: Date.parse(stored.receipt.expiresAt) <= observedAt.getTime()
+    };
   }
 
   async candidates(pluginId: string, options: PluginCatalogCandidatesOptions = {}): Promise<PluginReleaseCandidate[]> {

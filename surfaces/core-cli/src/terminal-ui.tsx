@@ -1434,13 +1434,14 @@ function PluginsMenu({
           {plugins.map((candidate, candidateIndex) => {
             const runtime = candidate.state ? `  ${candidate.state}/${candidate.health || "unknown"}` : "";
             const availability = candidate.packaged || candidate.installed === true ? "" : "  image unavailable";
+            const error = candidate.error ? "  ERROR" : "";
             const revocation = candidate.revoked
               ? `  REVOKED${candidate.revocationReason ? `: ${candidate.revocationReason}` : ""}`
               : "";
             return (
               <Text inverse={candidateIndex === index} key={candidate.pluginId}>
                 {pad(
-                  `${candidateIndex === index ? ">" : " "} ${candidate.displayName}  ${candidate.enabled ? "enabled" : "disabled"}${runtime}${availability}${revocation}`,
+                  `${candidateIndex === index ? ">" : " "} ${candidate.displayName}  ${candidate.enabled ? "enabled" : "disabled"}${runtime}${availability}${error}${revocation}`,
                   columns
                 )}
               </Text>
@@ -1452,6 +1453,7 @@ function PluginsMenu({
           {plugin?.revoked ? (
             <Text color="red">{`REVOKED${plugin.revocationReason ? `: ${plugin.revocationReason}` : ""}`}</Text>
           ) : null}
+          {plugin?.error ? <Text color="red">{`ERROR: ${plugin.error}`}</Text> : null}
         </>
       )}
       <Rule width={columns} />

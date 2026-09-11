@@ -751,6 +751,35 @@ describe("Atlas Core terminal UI", () => {
     await menu;
   });
 
+  it("shows an installed Plugin status error in the details", async () => {
+    const terminal = new TestTerminal();
+    const deployment = operator();
+    deployment.pluginStatuses.mockResolvedValue([
+      {
+        pluginId: "building_scan",
+        displayName: "Building Scan",
+        lifecycle: "query_only",
+        enabled: false,
+        packaged: false,
+        installed: true,
+        selectedVersion: "1.0.0",
+        error: "Plugin catalog expired; refresh before installing or enabling Plugins."
+      }
+    ]);
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("View status");
+    terminal.write("plugins");
+    await terminal.waitFor("Filter: plugins");
+    terminal.write("\r");
+    await terminal.waitFor("ERROR: Plugin catalog expired; refresh before installing or enabling Plugins.");
+    expect(terminal.text).toContain("ERROR");
+    terminal.write("q");
+    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
+    terminal.write("q");
+    await menu;
+  });
+
   it("shows the selected Plugin revocation reason", async () => {
     const terminal = new TestTerminal();
     const deployment = operator();

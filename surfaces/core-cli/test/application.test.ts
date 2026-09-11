@@ -1162,6 +1162,32 @@ describe("atlas-core CLI", () => {
     expect(test.stdout.join("")).toContain("Atlas Core stopped");
   });
 
+  it("stops by removing verified containers when its retained Compose file is missing", async () => {
+    const test = runtime();
+    await markManagedInitialized(test);
+    const config = join(test.home, ".atlas", "core");
+    rmSync(join(config, "base", "docker-compose.yml"));
+    const containers = [
+      API_CONTAINER,
+      SOURCE_GATEWAY_CONTAINER,
+      POSTGRES_CONTAINER,
+      MINIO_CONTAINER,
+      MINIO_INIT_CONTAINER,
+      `${PROJECT_NAME}_atlas-plugin-building-scan`
+    ];
+    for (const container of containers) test.runner.existingContainers.add(container);
+    const volumesBefore = [...test.runner.existingVolumes].sort();
+
+    expect(await runCLI(["stop"], test.context), test.stderr.join("")).toBe(0);
+    expect(test.runner.existingContainers).toEqual(new Set());
+    expect([...test.runner.existingVolumes].sort()).toEqual(volumesBefore);
+    expect(test.runner.calls).toContainEqual(
+      expect.objectContaining({ command: "docker", args: ["container", "rm", "--force", containers[0]] })
+    );
+    expect(test.runner.calls.map(composeCommand)).not.toContainEqual(["down", "--remove-orphans"]);
+    expect(test.stdout.join("")).toContain("Atlas Core stopped. Durable volumes were preserved.");
+  });
+
   it("propagates non-missing Docker network removal failures", async () => {
     const test = runtime();
     markInitialized(test);
@@ -1478,7 +1504,8 @@ describe("atlas-core CLI", () => {
         };
         const firstMutation = operator.stop();
         await started;
-        await expect(operator.restart()).rejects.toThrow("deployment mutation is locked by PID");
+        expect(await runCLI(["restart", "--manual"], test.context)).toBe(1);
+        expect(test.stderr.join("")).toContain("deployment mutation is locked by PID");
         releaseFirst?.();
         await expect(firstMutation).resolves.toBeUndefined();
       }
@@ -2410,6 +2437,33 @@ describe("atlas-core CLI", () => {
     );
   });
 
+  it("resets by removing verified containers when its retained Compose file is missing", async () => {
+    const test = runtime();
+    test.context.confirmReset = async () => true;
+    await markManagedInitialized(test);
+    const config = join(test.home, ".atlas", "core");
+    rmSync(join(config, "base", "docker-compose.yml"));
+    const containers = [
+      API_CONTAINER,
+      SOURCE_GATEWAY_CONTAINER,
+      POSTGRES_CONTAINER,
+      MINIO_CONTAINER,
+      MINIO_INIT_CONTAINER,
+      `${PROJECT_NAME}_atlas-plugin-building-scan`
+    ];
+    for (const container of containers) test.runner.existingContainers.add(container);
+    test.runner.volumeUsers.set(POSTGRES_VOLUME, new Set([POSTGRES_CONTAINER]));
+    test.runner.volumeUsers.set(MINIO_VOLUME, new Set([MINIO_CONTAINER]));
+
+    expect(await runCLI(["reset", "--manual"], test.context), test.stderr.join("")).toBe(0);
+    expect(test.runner.existingContainers).toEqual(new Set());
+    expect(test.stdout.join("")).toContain(`Atlas Core ${PACKAGE_VERSION} reset is complete`);
+    expect(JSON.parse(readFileSync(join(config, "state.json"), "utf8"))).toMatchObject({
+      phase: "ready",
+      packageVersion: PACKAGE_VERSION
+    });
+  });
+
   it("refuses to reset a same-name resource without matching ownership labels", async () => {
     const test = runtime();
     markInitialized(test);
@@ -2507,6 +2561,20 @@ describe("atlas-core CLI", () => {
 
     expect(await runCLI(["start"], test.context)).toBe(1);
     expect(test.stderr.join("")).toContain("atlas-core supervision install");
+    expect(test.runner.calls).toEqual([
+      expect.objectContaining({
+        command: "launchctl",
+        args: ["print", `gui/${process.getuid?.() ?? 0}/com.the-drunken-coder.atlas-core.supervisor`]
+      })
+    ]);
+  });
+
+  it("requires installed supervision for unattended restart", async () => {
+    const test = runtime();
+    await markManagedInitialized(test, false);
+
+    expect(await runCLI(["restart"], test.context)).toBe(1);
+    expect(test.stderr.join("")).toContain("atlas-core restart --manual");
     expect(test.runner.calls).toEqual([
       expect.objectContaining({
         command: "launchctl",
@@ -2745,7 +2813,7 @@ describe("atlas-core CLI", () => {
     const test = runtime();
     await markManagedInitialized(test);
 
-    expect(await runCLI(["restart"], test.context)).toBe(0);
+    expect(await runCLI(["restart", "--manual"], test.context)).toBe(0);
     const composeCalls = test.runner.calls.map(composeCommand).filter((args) => args.length > 0);
     expect(composeCalls.some((args) => args[0] === "down")).toBe(true);
     expect(composeCalls).toContainEqual([
@@ -2769,7 +2837,7 @@ describe("atlas-core CLI", () => {
     await markManagedInitialized(test, false);
     test.runner.serviceStates = [];
 
-    expect(await runCLI(["restart"], test.context)).toBe(1);
+    expect(await runCLI(["restart", "--manual"], test.context)).toBe(1);
     expect(test.stderr.join("")).toContain("is stopped");
     expect(test.runner.calls.map(composeCommand)).not.toContainEqual(expect.arrayContaining(["down"]));
     expect(test.runner.calls.map(composeCommand)).not.toContainEqual(expect.arrayContaining(["up"]));
@@ -4466,7 +4534,7 @@ describe("atlas-core CLI", () => {
     simulateInterruptedPluginDisable(test, plugin, true);
     test.runner.calls.length = 0;
 
-    expect(await runCLI(command === "start" ? [command, "--manual"] : [command], test.context)).toBe(1);
+    expect(await runCLI([command, "--manual"], test.context)).toBe(1);
     expect(test.stderr.join("")).toContain("explicit Core update");
     expect(test.runner.calls.map(composeCommand).some((args) => args[0] === "up")).toBe(false);
   });

@@ -113,9 +113,9 @@ entry point for an OS service; it may invoke the manager only after the recovery
 lingering enabled for boot-time operation. A macOS LaunchAgent runs after the user logs in, so it cannot provide
 pre-login boot recovery. Compose and Docker must not be installed as a competing auto-start path.
 
-The default `atlas-core start` path requires the recovery-aware supervisor to be installed and active. An operator who
-intentionally wants a one-shot start may use `atlas-core start --manual`; the CLI reports that this deployment is running
-without automatic recovery and does not imply the supervisor is available.
+The default `atlas-core start` and `atlas-core restart` paths require the recovery-aware supervisor to be installed and
+active. An operator who intentionally wants a one-shot operation may use `atlas-core start --manual` or
+`atlas-core restart --manual`; this does not provide automatic recovery or imply the supervisor is available.
 
 Schema-4 initialization or upgrade provisions one full-access managed Core API key and stores its one-time value as
 `ATLAS_PLUGIN_API_KEY` in the existing owner-only root `.env`. The generated service for an SDK-using Plugin receives that

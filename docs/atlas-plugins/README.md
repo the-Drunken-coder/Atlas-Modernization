@@ -199,8 +199,8 @@ The request uses `Content-Type: application/json` and `Accept: application/json`
 ```
 
 `plugin_to_source_gateway_protocol_major` is a positive integer and is exactly `1` for the first independent-release
-contract. The implemented v1 request does not yet send this field. After migration, a missing or unsupported value is a
-malformed request and produces HTTP `400` with `request_rejected`. `method` is an uppercase HTTP method. `path` begins
+contract. The runtime sends this field on every request. A missing or unsupported value is a malformed request and
+produces HTTP `400` with `request_rejected`. `method` is an uppercase HTTP method. `path` begins
 with `/` and contains no scheme, authority, query, or fragment. The path and query tuple strings are decoded UTF-8 text,
 never pre-encoded URL text. The Gateway evaluates connector policy against those decoded values, rejects NUL, backslash,
 and `.` or `..` path segments, then percent-encodes UTF-8 bytes exactly once. A literal `%` is data and becomes `%25`.
@@ -305,8 +305,8 @@ Core sends `Accept: application/json` on every call and `Content-Type: applicati
 
 `plugin_id`, `display_name`, `core_to_plugin_protocol_major`, and `operations` are required, and each display name is a
 nonempty string. Initial independent releases require major `1`; a later Core may explicitly support more than one major
-during a transition. The implemented v1 manifest does not yet send this field. After migration, a missing or unsupported
-value invalidates the manifest and uses Core's existing `invalid_manifest` status reason. This private transport field
+during a transition. The runtime includes this field in every manifest. A missing or unsupported value invalidates the
+manifest and uses Core's `invalid_manifest` status reason. This private transport field
 stays outside the generated Atlas Protocol `PluginManifest` shape and revision token. `tool_asset_id` is optional and
 omitted for a query-only Plugin. Each
 Operation requires `operation_id`, `display_name`, and a positive integer `timeout_ms`, measured in milliseconds and no
