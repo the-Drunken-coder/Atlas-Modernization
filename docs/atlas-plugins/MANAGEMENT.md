@@ -1,6 +1,6 @@
 # Plugin management
 
-Status: the independent Plugin lifecycle and release workflow are implemented in this worktree, and local validation passes. The candidate-image Docker acceptance test still awaits CI. The terminal UI redesign still awaits the user's selection from the proposed mocks. Existing published Core
+Status: the independent Plugin lifecycle and release workflow are implemented in this worktree, and local validation passes. The candidate-image Docker acceptance test still awaits CI. Menu controls for update, rollback, uninstall, and shared-key rotation await the user's selection from the proposed mocks; these operations are available through direct CLI commands. Existing published Core
 packages may still contain the bundled catalog; the source implementation uses independent catalog state for schema-4
 deployments. Production catalog signing, trust bootstrap, and Pages rollout remain external prerequisites; this
 repository does not contain a production catalog key.
@@ -305,8 +305,9 @@ old key. Cleanup treats an old key that an administrator already revoked as abse
 When Atlas is stopped, the command starts the exact retained base composition without Plugin fragments, creates and
 authenticates the replacement, makes the new `.env` durable, and revokes the old key while that temporary Core is still
 running. It then stops the base composition and marks the transaction complete. Recovery keeps or restarts that exact
-base composition until mandatory old-key revocation succeeds, then restores the prior stopped state. The interactive menu
-explains that every SDK-using Plugin shares this credential and confirms rotation.
+base composition until mandatory old-key revocation succeeds, then restores the prior stopped state. The planned menu
+rotation action will explain that every SDK-using Plugin shares this credential and request confirmation. That menu action
+awaits the approved UI design; use `atlas-core plugins rotate-core-key` through the direct CLI in this implementation.
 
 ## Compatibility
 

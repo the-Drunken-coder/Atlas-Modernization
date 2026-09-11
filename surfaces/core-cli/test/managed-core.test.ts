@@ -8,6 +8,7 @@ import {
   ManagedCoreManager,
   type ManagedCoreOptions,
   type ManagedCoreState,
+  type MigrationLedgerOptions,
   parseManagedCoreState
 } from "../src/managed-core.js";
 
@@ -381,6 +382,88 @@ describe("ManagedCoreManager", () => {
 
     const restored = await failed.recover("restored", { confirmPairedRestore: true });
     expect((restored as ManagedCoreState).packageVersion).toBe("0.1.8");
+    expect(existsSync(join(configDir, "transaction"))).toBe(false);
+  });
+
+  it("reads a restored ledger through a verified copy of the prior bundle", async () => {
+    const configDir = temporaryDirectory();
+    writeFileSync(join(configDir, ".env"), "POSTGRES_PASSWORD=secret\n", { mode: 0o600 });
+    const stateRef = { current: undefined as ManagedCoreState | undefined };
+    const calls: Call[] = [];
+    const initial = new ManagedCoreManager(
+      makeOptions(configDir, packageDirectory(IMAGE, "restored-ledger-old"), IMAGE, stateRef, calls, RECEIPT, {
+        desiredRunning: false
+      })
+    );
+    stateRef.current = await initial.initialize();
+    calls.length = 0;
+
+    const ledgerReads: MigrationLedgerOptions[] = [];
+    let priorComposeAtRead: string | undefined;
+    let restoredLedger = "wrong-ledger";
+    const verifiedImages: string[] = [];
+    const failed = new ManagedCoreManager(
+      makeOptions(
+        configDir,
+        packageDirectory(NEXT_IMAGE, "restored-ledger-next", NEXT_POSTGRES_IMAGE),
+        NEXT_IMAGE,
+        stateRef,
+        calls,
+        NEXT_RECEIPT,
+        {
+          previousRunning: false,
+          desiredRunning: true,
+          verifyLocalImage: async (receipt) => {
+            verifiedImages.push(receipt.image_index);
+          },
+          readMigrationLedger: async (options) => {
+            if (options) {
+              ledgerReads.push(options);
+              priorComposeAtRead = readFileSync(join(options.baseDirectory, "docker-compose.yml"), "utf8");
+            }
+            return options ? restoredLedger : "migration-ledger-v1";
+          },
+          runCompose: async (args, pluginIds, options) => {
+            calls.push({
+              args,
+              pluginIds,
+              coreImage: options.coreImage,
+              ...(options.cleanup ? { cleanup: true } : {})
+            });
+            if (args[0] === "up" && args.includes("api") && options.coreImage === NEXT_IMAGE) {
+              return { status: 1, stdout: "", stderr: "target failed" };
+            }
+            return { status: 0, stdout: "", stderr: "" };
+          }
+        }
+      )
+    );
+
+    await expect(failed.update(stateRef.current)).rejects.toThrow("target failed");
+    verifiedImages.length = 0;
+    ledgerReads.length = 0;
+
+    await expect(failed.recover("restored", { confirmPairedRestore: true })).rejects.toThrow(
+      /migration ledger does not match/
+    );
+    expect(DeploymentTransactionStore.open(configDir).journal.phase).toBe("core-started");
+    expect(readFileSync(join(configDir, "base", "docker-compose.yml"), "utf8")).toContain(
+      `image: ${NEXT_POSTGRES_IMAGE}`
+    );
+    expect(existsSync(join(configDir, "transaction"))).toBe(true);
+
+    restoredLedger = "migration-ledger-v1";
+    const restored = await failed.recover("restored", { confirmPairedRestore: true });
+    expect((restored as ManagedCoreState).packageVersion).toBe("0.1.8");
+    expect(ledgerReads).toHaveLength(2);
+    const ledgerOptions = ledgerReads.at(-1);
+    expect(ledgerOptions?.state.baseDeployment?.coreImage).toBe(IMAGE);
+    expect(ledgerOptions?.postgresReceipt.image_index).toBe(POSTGRES_IMAGE);
+    expect(ledgerOptions?.baseDirectory).toBeTruthy();
+    expect(priorComposeAtRead).toContain(`image: ${POSTGRES_IMAGE}`);
+    expect(priorComposeAtRead).not.toContain(`image: ${NEXT_POSTGRES_IMAGE}`);
+    expect(verifiedImages).toContain(POSTGRES_IMAGE);
+    expect(existsSync(ledgerOptions!.baseDirectory)).toBe(false);
     expect(existsSync(join(configDir, "transaction"))).toBe(false);
   });
 

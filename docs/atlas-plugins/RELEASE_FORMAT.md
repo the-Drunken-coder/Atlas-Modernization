@@ -4,7 +4,7 @@ Status: the independent Plugin release workflow and lifecycle implementation are
 local validation passes. The candidate-image Docker acceptance test still awaits CI. Already published Atlas Core packages may still contain bundled first-party Plugin images and
 deployment files. The first independent package supports only trusted query-only Plugins; general external-source
 credential configuration remains out of scope. Production catalog signing, trust bootstrap, and Pages rollout remain
-external setup steps. The terminal UI redesign awaits the user's selection from the proposed mocks.
+external setup steps. Menu controls for update, rollback, uninstall, and shared-key rotation await the user's selection from the proposed mocks; these operations are available through direct CLI commands.
 
 This document defines the independently versioned first-party Plugin release, the signed Atlas Plugin catalog, and the
 publication transaction. The first package schema supports trusted, query-only Plugins in one stable channel.

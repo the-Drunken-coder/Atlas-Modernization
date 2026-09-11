@@ -6,7 +6,7 @@ Release and installation details:
 - [`MANAGEMENT.md`](MANAGEMENT.md) defines local Installed Plugin state, compatibility, commands, and transactions.
 
 Status: Plugin platform v1 and the independent lifecycle and release workflow are implemented in this worktree, and
-local validation passes. The candidate-image Docker acceptance test still awaits CI. The terminal UI redesign still awaits the user's selection from the proposed mocks. Existing
+local validation passes. The candidate-image Docker acceptance test still awaits CI. Menu controls for update, rollback, uninstall, and shared-key rotation await the user's selection from the proposed mocks; these operations are available through direct CLI commands. Existing
 published Core packages may still contain the bundled catalog; schema-4 deployments use independent catalog state.
 Production catalog signing, trust bootstrap, and Pages rollout are separate deployment prerequisites and are not supplied
 by this source change. Datastream delivery, executable UI Plugins, third-party installation, hot upgrades, untrusted

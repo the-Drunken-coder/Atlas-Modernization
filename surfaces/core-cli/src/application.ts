@@ -32,6 +32,7 @@ import { prepareLegacyBase, prepareRepairPackage } from "./legacy-base-import.js
 import {
   ManagedCoreManager,
   type ManagedCoreState,
+  type MigrationLedgerOptions,
   parseBaseDeployment,
   parseManagedCoreState
 } from "./managed-core.js";
@@ -41,6 +42,7 @@ import { PLUGIN_CATALOG, type PluginCatalogEntry } from "./plugin-catalog.js";
 import { PluginCatalogStore } from "./plugin-catalog-store.js";
 import {
   assertPluginCompatible,
+  comparePluginVersions,
   type PluginCatalogPlugin,
   type PluginRelease,
   type PluginTrust,
@@ -681,7 +683,10 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   }
 
   #verifyBundle(state: ManagedCoreState): void {
-    const root = join(this.#configDir, "base");
+    this.#verifyBundleAt(state, join(this.#configDir, "base"));
+  }
+
+  #verifyBundleAt(state: ManagedCoreState, root: string): void {
     const manifest = createRetainedBundleManifest(root);
     if (manifest.bundleSha256 !== state.baseDeployment?.bundleSha256) {
       throw new Error(
@@ -754,7 +759,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
         for (const id of state.enabledPlugins) assertPluginCompatible(manager.readSelected(id), contracts);
       },
       ensureCredential: async (tx) => await this.#credentials(dockerEngineId, tx).ensureWithinTransaction(),
-      readMigrationLedger: async () => await this.#migrationLedger()
+      readMigrationLedger: async (options) => await this.#migrationLedger(options)
     });
   }
 
@@ -1003,16 +1008,33 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     });
   }
 
-  async #migrationLedger(): Promise<string> {
-    const state = this.#readState();
+  async #migrationLedger(options?: MigrationLedgerOptions): Promise<string> {
+    const state = options?.state ?? this.#readState();
     if (!state) throw new Error("Missing deployment state for migration ledger.");
-    const prior = (await this.#composeServiceStates(state.enabledPlugins)).find(
-      (service) => service.Service === "postgres"
-    );
+    const baseDirectory = options?.baseDirectory ?? join(this.#configDir, "base");
+    if (options) this.#verifyBundleAt(state, baseDirectory);
+    const composeFile = join(baseDirectory, "docker-compose.yml");
+    const coreImage = state.baseDeployment?.coreImage ?? this.#imageReference ?? UNRELEASED_IMAGE;
+    const compose = async (args: string[], cleanup = false): Promise<CommandResult> =>
+      await this.#runComposeFile(composeFile, args, false, cleanup, [], coreImage);
+    const priorResult = await compose(["ps", "--all", "--format", "json"]);
+    if (priorResult.status !== 0) throw commandFailure("docker compose ps", priorResult);
+    const prior = parseComposeServiceStates(priorResult.stdout).find((service) => service.Service === "postgres");
     const alreadyRunning = prior?.State === "running";
+    let startedPostgres = false;
     const readLedger = async (): Promise<string> => {
-      if (!alreadyRunning)
-        await this.#runComposeChecked(["up", "-d", "--pull", "never", "--wait", "postgres"], state.enabledPlugins);
+      if (options) await verifyLocalImage(this.#imageCommand, options.postgresReceipt);
+      if (!alreadyRunning) {
+        startedPostgres = true;
+        const result = await compose(["up", "-d", "--pull", "never", "--wait", "postgres"]);
+        if (result.status !== 0) throw commandFailure("docker compose up postgres", result);
+      }
+      if (options)
+        await verifyContainerImage(
+          this.#imageCommand,
+          this.#deploymentIdentity().postgresContainer,
+          options.postgresReceipt
+        );
       const sql =
         "SELECT COALESCE(json_agg(m ORDER BY version)::text, '[]') FROM (SELECT version,name,checksum,fingerprint_version,schema_fingerprint FROM atlas_schema_migrations) m";
       const result = await this.#runDockerCommand(
@@ -1034,11 +1056,8 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       return JSON.stringify(ledger);
     };
     const restorePostgres = async (): Promise<void> => {
-      if (alreadyRunning) return;
-      const result = await this.#runComposeCleanup(
-        prior ? ["stop", "postgres"] : ["rm", "--stop", "--force", "postgres"],
-        state.enabledPlugins
-      );
+      if (!startedPostgres) return;
+      const result = await compose(prior ? ["stop", "postgres"] : ["rm", "--stop", "--force", "postgres"], true);
       if (result.status !== 0)
         throw new Error("Could not restore PostgreSQL's stopped state after reading the migration ledger.");
     };
@@ -2304,6 +2323,10 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       return ids.map((id): PluginDeploymentStatus => {
         const plugin = installed.find((entry) => entry.pluginId === id);
         const available = catalog.find((entry) => entry.pluginId === id)?.releases ?? [];
+        const orderedAvailable = [...available].sort((left, right) =>
+          comparePluginVersions(right.version, left.version)
+        );
+        const newestNonRevoked = orderedAvailable.find((release) => !release.revoked);
         const service = serviceStates.find((candidate) => candidate.Service === pluginServiceName(id));
         const selected = available.find((release) => release.version === plugin?.selected);
         let compatibility: "compatible" | "incompatible" | "unknown" = "unknown";
@@ -2317,7 +2340,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
         }
         return {
           pluginId: id,
-          displayName: plugin?.displayName ?? available[0]?.displayName ?? id,
+          displayName: plugin?.displayName ?? newestNonRevoked?.displayName ?? orderedAvailable[0]?.displayName ?? id,
           lifecycle: "query_only",
           enabled: plugin?.enabled ?? false,
           packaged: false,

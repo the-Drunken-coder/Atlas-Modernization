@@ -91,6 +91,17 @@ export type ComposeRunner = (
 export type ManagedCoreImageVerifier = (receipt: ImageReceipt) => void | Promise<void>;
 export type ManagedCoreContainerImageVerifier = (service: string, receipt: ImageReceipt) => void | Promise<void>;
 
+/**
+ * Inputs for reading a restored migration ledger. Recovery supplies the
+ * prior state and a disposable copy of its retained bundle so the adapter
+ * cannot accidentally inspect the still-live target composition.
+ */
+export type MigrationLedgerOptions = {
+  state: ManagedCoreState;
+  baseDirectory: string;
+  postgresReceipt: ImageReceipt;
+};
+
 export type StorageSafetyResult = {
   createPostgresVolume?: boolean;
 };
@@ -114,7 +125,7 @@ export type ManagedCoreOptions = ManagedCorePackage & {
   verifyPlugins: (state: ManagedCoreState, options: PluginVerificationOptions) => void | Promise<void>;
   preflightPlugins: (contracts: PluginContracts) => void | Promise<void>;
   ensureCredential: (transaction: DeploymentTransactionStore) => void | Promise<void>;
-  readMigrationLedger?: () => Promise<string>;
+  readMigrationLedger?: (options?: MigrationLedgerOptions) => Promise<string>;
   readBackupIdentity?: () => Promise<PairedBackupIdentity>;
   readRunIntent?: () => boolean | undefined;
   previousRunning?: boolean;
@@ -620,18 +631,67 @@ export class ManagedCoreManager {
     if (restoredBackupIdentity !== recordedBackupIdentity) {
       throw new Error("The restored paired backup identity does not match the pre-update backup.");
     }
-    const currentLedger = await this.#options.readMigrationLedger();
-    await this.#stopAfterFailure(
-      stagedState?.enabledPlugins ?? [],
-      journal.recovery.targetCoreImage ?? stagedState?.baseDeployment?.coreImage ?? this.#options.packageImage
-    );
-    if (currentLedger !== journal.recovery.priorMigrationLedger) {
-      throw new Error("The restored PostgreSQL migration ledger does not match the pre-update ledger.");
-    }
     const priorState = this.#readBeforeState(transaction);
     if (!priorState) throw new Error("Pending Core recovery has no prior state to restore.");
-    transaction.restoreAfterPairedBackup();
-    return await this.#finishRollback(transaction);
+    const priorBaseDirectory = this.#materializePriorBase(transaction, priorState);
+    try {
+      const postgresImage = imageForService("postgres", priorBaseDirectory);
+      const postgresReceipt = priorState.baseDeployment?.images?.find(
+        (receipt) => receipt.image_index === postgresImage
+      );
+      if (!postgresImage || !postgresReceipt) {
+        throw new Error("Pending Core recovery has no retained PostgreSQL image receipt.");
+      }
+      await this.#verifyLocalReceipt(postgresReceipt);
+      const currentLedger = await this.#options.readMigrationLedger({
+        state: priorState,
+        baseDirectory: priorBaseDirectory,
+        postgresReceipt
+      });
+      if (currentLedger !== journal.recovery.priorMigrationLedger) {
+        throw new Error("The restored PostgreSQL migration ledger does not match the pre-update ledger.");
+      }
+      transaction.restoreAfterPairedBackup();
+      return await this.#finishRollback(transaction);
+    } finally {
+      rmSync(priorBaseDirectory, { recursive: true, force: true });
+    }
+  }
+
+  #materializePriorBase(transaction: DeploymentTransactionStore, priorState: ManagedCoreState): string {
+    const priorBase = priorState.baseDeployment;
+    if (!priorBase) throw new Error("Pending Core recovery has no retained prior Core bundle.");
+    const source = join(this.#configDir, "transaction", "before", "base");
+    if (!existsSync(source)) throw new Error("Pending Core recovery is missing its prior retained Core bundle.");
+    const sourceManifest = createRetainedBundleManifest(source);
+    if (sourceManifest.bundleSha256 !== priorBase.bundleSha256) {
+      throw new Error("Pending Core prior retained bundle failed its state hash check.");
+    }
+    const target = join(this.#configDir, `.prior-base-${transaction.id}-${randomUUID()}`);
+    try {
+      const manifest = copyRetainedBundle({
+        sourceRoot: source,
+        targetRoot: target,
+        files: sourceManifest.files.map((file) => file.path),
+        requiredFiles: [
+          "docker-compose.yml",
+          "docker-compose.init.yml",
+          "source_gateway.production.json",
+          "plugin-templates/service.json",
+          "plugin-templates/core-endpoint.json",
+          "plugin-templates/source-connector.json"
+        ],
+        composeFiles: ["docker-compose.yml", "docker-compose.init.yml"]
+      });
+      if (manifest.bundleSha256 !== priorBase.bundleSha256) {
+        throw new Error("Pending Core prior retained bundle failed its copy hash check.");
+      }
+      assertComposeRestartPolicy(target);
+      return target;
+    } catch (error) {
+      if (existsSync(target)) rmSync(target, { recursive: true, force: true });
+      throw error;
+    }
   }
 
   /**
@@ -1383,6 +1443,24 @@ function serviceForImage(image: string, baseDirectory: string): string | undefin
       }
       const imageMatch = /^    image:\s*(.*?)\s*$/u.exec(line);
       if (service && imageMatch && parseComposeImageScalar(imageMatch[1] ?? "") === image) return service;
+    }
+  }
+  return undefined;
+}
+
+function imageForService(serviceName: string, baseDirectory: string): string | undefined {
+  for (const composeName of ["docker-compose.yml", "docker-compose.init.yml"]) {
+    const path = join(baseDirectory, composeName);
+    if (!existsSync(path)) continue;
+    let service: string | undefined;
+    for (const line of readFileSync(path, "utf8").split(/\r?\n/u)) {
+      const serviceMatch = /^  ([a-z][a-z0-9-]*):\s*$/u.exec(line);
+      if (serviceMatch?.[1]) {
+        service = serviceMatch[1];
+        continue;
+      }
+      const imageMatch = /^    image:\s*(.*?)\s*$/u.exec(line);
+      if (service === serviceName && imageMatch) return parseComposeImageScalar(imageMatch[1] ?? "");
     }
   }
   return undefined;

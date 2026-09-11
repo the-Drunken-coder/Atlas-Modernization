@@ -3735,6 +3735,36 @@ describe("atlas-core CLI", () => {
     expect(test.runner.existingVolumes).toContain(MINIO_VOLUME);
   });
 
+  it("reads paired restore state from the retained Core bundle before recovery", async () => {
+    const test = runtime();
+    await markManagedInitialized(test);
+    setCoreVersion(test, "0.1.2");
+    test.runner.failComposeUp = true;
+    test.context.confirmCoreUpdate = async () => true;
+
+    expect(await runCLI(["update", "all"], test.context)).toBe(1);
+    test.runner.failComposeUp = false;
+    test.runner.calls.length = 0;
+    test.stderr.length = 0;
+
+    expect(await runCLI(["recover", "restored", "--confirm-paired-restore"], test.context), test.stderr.join("")).toBe(
+      0
+    );
+
+    const priorLedgerProbe = test.runner.calls.find(
+      (call) => composeCommand(call)[0] === "ps" && composeFile(call)?.includes(".prior-base-")
+    );
+    expect(priorLedgerProbe?.env.ATLAS_CORE_IMAGE).toBe(TEST_IMAGE);
+    const psqlIndex = test.runner.calls.findIndex(
+      (call) => call.command === "docker" && call.args.some((argument) => argument.includes("psql"))
+    );
+    const postgresInspectIndex = test.runner.calls.findIndex(
+      (call) => call.command === "docker" && call.args[0] === "container" && call.args[1] === "inspect"
+    );
+    expect(psqlIndex).toBeGreaterThan(postgresInspectIndex);
+    expect(existsSync(join(test.home, ".atlas", "core", "transaction"))).toBe(false);
+  });
+
   it("uses the previous Core image only when rolling back a disrupted update", async () => {
     const test = runtime();
     const previousImage = `ghcr.io/the-drunken-coder/atlas-core@sha256:${"c".repeat(64)}`;
@@ -5540,6 +5570,40 @@ describe("atlas-core CLI", () => {
     expect(test.stdout.join("")).toContain("Plugin catalog is below the CLI trust checkpoint");
     expect(await runCLI(["plugins", "enable", "alpha_fixture"], test.context)).toBe(1);
     expect(test.stderr.join("")).toContain("checkpoint");
+  });
+
+  it("uses the newest non-revoked catalog release name for an uninstalled Plugin", async () => {
+    const test = runtime();
+    await markManagedInitialized(test, false);
+    const plugin = INDEPENDENT_UPDATE_FIXTURES[0];
+    if (!plugin) throw new Error("Independent Plugin fixture is missing.");
+    const { catalogBytes, privateKey, catalogURL } = installSignedIndependentCatalog(test, [plugin]);
+    const catalog = JSON.parse(new TextDecoder().decode(catalogBytes));
+    const releases = catalog.plugins[0].releases;
+    releases[0].display_name = "Old Revoked Name";
+    releases[0].revoked = true;
+    releases[0].revocation_reason = "withdrawn";
+    releases[1].display_name = "Current Name";
+    const bytes = Buffer.from(JSON.stringify(catalog));
+    const signature = JSON.stringify({
+      algorithm: "ed25519",
+      key_id: "test-key",
+      signature: sign(null, bytes, privateKey).toString("base64")
+    });
+    const fetch = test.context.fetch;
+    if (!fetch) throw new Error("Missing test fetch");
+    test.context.fetch = async (input, init) =>
+      String(input) === catalogURL
+        ? new Response(bytes)
+        : String(input) === `${catalogURL}.sig`
+          ? new Response(signature)
+          : await fetch(input, init);
+
+    expect(await runCLI(["plugins", "refresh"], test.context), test.stderr.join("")).toBe(0);
+    test.stdout.length = 0;
+    expect(await runCLI(["plugins", "status", plugin.pluginId], test.context), test.stderr.join("")).toBe(0);
+    expect(test.stdout.join("")).toContain(`${plugin.pluginId}\tCurrent Name\tdisabled`);
+    expect(test.stdout.join("")).not.toContain("Old Revoked Name");
   });
 
   it("rejects unknown independent Plugin status IDs", async () => {
