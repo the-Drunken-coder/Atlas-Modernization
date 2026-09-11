@@ -11,6 +11,11 @@ private Plugin protocol.
 
 ## Local state
 
+Generated `active/core-endpoint.json` and `active/source-connector.json` use mode `0644` because Core and Source Gateway
+read these non-secret files through individual bind mounts under a different container UID. Host directories remain
+`0700`; credentials, release receipts, and other generated files remain `0600`. Retaining a package bundle removes group
+and world write permissions so npm installations under umask `0002` do not produce unusable templates.
+
 The manager stores Plugin state under the existing private Atlas Core configuration directory:
 
 ```text

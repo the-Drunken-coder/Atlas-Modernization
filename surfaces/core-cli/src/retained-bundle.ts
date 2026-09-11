@@ -71,7 +71,8 @@ export function copyRetainedBundle(options: RetainedBundleOptions): RetainedBund
       const destination = containedPath(candidate, path);
       assertNoSymlinkAncestors(candidate, path, `bundle candidate ${path}`);
       ensureDirectory(dirname(destination), "retained bundle candidate directory");
-      copyFileDurably(source, destination, sourceStats.mode & 0o777);
+      // npm installations can be group-writable; retained deployment files must not be.
+      copyFileDurably(source, destination, sourceStats.mode & 0o755);
     }
     const manifest = createRetainedBundleManifest(candidate);
     if (manifest.files.length !== paths.length || manifest.files.some((file, index) => file.path !== paths[index])) {
