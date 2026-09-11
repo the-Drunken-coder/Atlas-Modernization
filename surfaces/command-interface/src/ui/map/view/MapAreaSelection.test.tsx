@@ -167,7 +167,7 @@ describe("MapAreaSelection", () => {
 
     expect(spatial.onAreaChange).not.toHaveBeenCalled();
     expect(spatial.onDrawingComplete).not.toHaveBeenCalled();
-    expect(await screen.findByRole("status")).toHaveTextContent(/date-line crossings are not supported/i);
+    expect((await screen.findByRole("status")).textContent).toMatch(/date-line crossings are not supported/i);
     expect(screen.getByText(/date-line crossings are not supported/i)).toBeInTheDocument();
 
     map.unproject.mockImplementation((point: [number, number] | { x: number; y: number }) => {

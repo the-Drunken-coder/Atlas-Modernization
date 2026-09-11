@@ -73,7 +73,7 @@ describe("MapView region comparison", () => {
     fireEvent.pointerUp(window, { pointerId: 14, pointerType: "mouse", clientX: 260, clientY: 160 });
 
     expect(screen.queryByTestId("map-comparison-region")).not.toBeInTheDocument();
-    expect(await screen.findByRole("status")).toHaveTextContent(/date-line crossings are not supported/i);
+    expect((await screen.findByRole("status")).textContent).toMatch(/date-line crossings are not supported/i);
   });
 
   it("cancels an active comparison transform when spatial drawing starts", async () => {
