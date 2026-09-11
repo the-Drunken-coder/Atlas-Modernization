@@ -191,9 +191,14 @@ export function useMapReticlePointer({ options, stateStore }: PointerHookOptions
       markerBoxCacheRef.current
     );
     optionsRef.current.onHistoryHover?.(target ? undefined : rawPoint);
-    const next = target
-      ? reticleForTarget(target)
-      : { ...visualPoint, target: squareAround(visualPoint, RETICLE_TARGET_SIZE) };
+    // Geo Features remain clickable without pulling the cursor around their geometry.
+    const isGeofeature = optionsRef.current.sources.geofeatures.features.some(
+      (feature) => feature.properties.entityId === target?.entityId
+    );
+    const next =
+      target && !isGeofeature
+        ? reticleForTarget(target)
+        : { ...visualPoint, target: squareAround(visualPoint, RETICLE_TARGET_SIZE) };
     if (handoff) cursorHandoffRef.current = { nativePoint: rawPoint, visualPoint: { x: next.x, y: next.y } };
     setPointerPoint(rawPoint);
     setReticle(next);
