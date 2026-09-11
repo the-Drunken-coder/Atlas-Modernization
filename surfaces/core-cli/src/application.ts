@@ -4238,6 +4238,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       const active = join(this.#pluginConfigRoot, pluginId, "active", "compose.yml");
       if (existsSync(active)) composeArgs.push("--file", active);
       else if (this.#readState()?.schema === 4) {
+        if (args[0] === "down" && args.includes("--remove-orphans")) continue;
         throw new Error(
           `Plugin ${pluginId} active deployment files are missing. Run atlas-core start --manual to regenerate them from its retained release.`
         );

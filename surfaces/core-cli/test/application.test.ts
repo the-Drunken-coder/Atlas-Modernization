@@ -3920,6 +3920,46 @@ describe("atlas-core CLI", () => {
     }
   });
 
+  it.each([false, true])(
+    "stops containers with a missing disposable Plugin overlay (pending recovery: %s)",
+    async (pending) => {
+      const test = runtime();
+      await installIndependentUpdateFixtures(test);
+      const plugin = INDEPENDENT_UPDATE_FIXTURES[0];
+      if (!plugin) throw new Error("Independent Plugin fixture is missing.");
+      installIndependentRuntimeFixture(test, plugin);
+      expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
+      const config = join(test.home, ".atlas", "core");
+      const missingOverlay = join(config, "plugins", plugin.pluginId, "active", "compose.yml");
+      rmSync(missingOverlay);
+      if (pending) {
+        const transaction = DeploymentTransactionStore.begin(config, {
+          operation: "core-update",
+          dockerEngineId: TEST_ENGINE_ID,
+          previousRunning: true,
+          desiredRunning: true,
+          recovery: { targetCoreImage: TEST_IMAGE }
+        });
+        transaction.stage("state.json", readFileSync(join(config, "state.json")));
+        transaction.advance("core-started");
+      }
+      test.runner.calls.length = 0;
+      expect(await runCLI(pending ? ["start", "--manual"] : ["stop"], test.context), test.stderr.join("")).toBe(
+        pending ? 1 : 0
+      );
+      const down = test.runner.calls.find((call) => composeCommand(call)[0] === "down");
+      expect(down).toBeDefined();
+      expect(down?.args).not.toContain(missingOverlay);
+      expect(down && composeCommand(down)).toEqual(["down", "--remove-orphans"]);
+      expect(test.runner.existingVolumes).toContain(POSTGRES_VOLUME);
+      expect(test.runner.existingVolumes).toContain(MINIO_VOLUME);
+      if (pending) {
+        expect(test.stderr.join("")).toContain("Core recovery is pending");
+        expect(DeploymentTransactionStore.open(config).journal.phase).toBe("core-started");
+      }
+    }
+  );
+
   it("handles SIGINT for direct Plugin changes and exits after rollback", async () => {
     const test = runtime();
     markInitialized(test);
