@@ -1617,15 +1617,13 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       );
     }
 
-    const [hasPostgres, hasMinio, hasApiContainer, hasPostgresContainer, hasMinioContainer, hasMinioInitContainer] =
-      await Promise.all([
-        this.#volumeExists(deployment.postgresVolume),
-        this.#volumeExists(deployment.minioVolume),
-        this.#containerExists(deployment.apiContainer),
-        this.#containerExists(deployment.postgresContainer),
-        this.#containerExists(deployment.minioContainer),
-        this.#containerExists(deployment.minioInitContainer)
-      ]);
+    // Mutation-scoped Docker commands share one durable process-group fence.
+    const hasPostgres = await this.#volumeExists(deployment.postgresVolume);
+    const hasMinio = await this.#volumeExists(deployment.minioVolume);
+    const hasApiContainer = await this.#containerExists(deployment.apiContainer);
+    const hasPostgresContainer = await this.#containerExists(deployment.postgresContainer);
+    const hasMinioContainer = await this.#containerExists(deployment.minioContainer);
+    const hasMinioInitContainer = await this.#containerExists(deployment.minioInitContainer);
     if (
       !hasEnv &&
       (hasPostgres || hasMinio || hasApiContainer || hasPostgresContainer || hasMinioContainer || hasMinioInitContainer)

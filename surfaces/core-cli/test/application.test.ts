@@ -1941,6 +1941,37 @@ describe("atlas-core CLI", () => {
     expect(existsSync(join(test.home, ".atlas", "core"))).toBe(false);
   });
 
+  it("serializes initialization probes under the Docker process-group fence", async () => {
+    const test = runtime();
+    test.runner.existingContainers.add(API_CONTAINER);
+    let activeProcessGroups = 0;
+    let maximumActiveProcessGroups = 0;
+    let nextProcessGroupId = 40_000;
+    const originalRun = test.runner.run.bind(test.runner);
+    test.runner.run = async (command, args, options = {}) => {
+      const processGroup = options.processGroup;
+      if (!processGroup) return await originalRun(command, args, options);
+
+      activeProcessGroups += 1;
+      maximumActiveProcessGroups = Math.max(maximumActiveProcessGroups, activeProcessGroups);
+      let started = false;
+      const processGroupId = nextProcessGroupId++;
+      try {
+        processGroup.started(processGroupId);
+        started = true;
+        return await originalRun(command, args, options);
+      } finally {
+        if (started) processGroup.finished(processGroupId);
+        activeProcessGroups -= 1;
+      }
+    };
+
+    expect(await runCLI(["init"], test.context)).toBe(1);
+    expect(test.stderr.join("")).toContain("containers or durable volumes without matching CLI configuration");
+    expect(maximumActiveProcessGroups).toBe(1);
+    expect(activeProcessGroups).toBe(0);
+  });
+
   it("initializes only a new durable deployment", async () => {
     const test = runtime();
     const initStatus = await runCLI(["init"], test.context);
