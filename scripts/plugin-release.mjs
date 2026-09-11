@@ -206,6 +206,9 @@ function checkCandidate(plugin, image) {
       } finally {
         if (containerId) spawnSync("docker", ["rm", "--force", containerId], { cwd: repositoryRoot, stdio: "ignore" });
       }
+      // Classic Docker image stores cannot bind one index digest to two platform images.
+      // Remove the completed probe's local reference before pulling the next platform.
+      runCapture("docker", ["image", "rm", image]);
     }
   } finally {
     spawnSync("docker", ["network", "rm", networkName], { cwd: repositoryRoot, stdio: "ignore" });

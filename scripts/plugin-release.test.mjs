@@ -44,9 +44,15 @@ function runCandidate(
   writeFileSync(
     docker,
     `#!/usr/bin/env node
-import { appendFileSync } from "node:fs";
+import { appendFileSync, existsSync, unlinkSync, writeFileSync } from "node:fs";
 const args = process.argv.slice(2);
+const cachedImage = process.env.CANDIDATE_PLATFORM_LOG + ".image";
 if (args[0] === "run") {
+  if (existsSync(cachedImage)) {
+    process.stderr.write("cannot overwrite digest\\n");
+    process.exit(1);
+  }
+  writeFileSync(cachedImage, args.at(-1));
   const platform = args[args.indexOf("--platform") + 1];
   appendFileSync(process.env.CANDIDATE_PLATFORM_LOG, platform + "\\n");
   if (platform === process.env.CANDIDATE_FAIL_PLATFORM) {
@@ -68,6 +74,7 @@ else if (args[0] === "exec") {
   }
   process.stdout.write("");
 }
+else if (args[0] === "image" && args[1] === "rm") unlinkSync(cachedImage);
 else if (args[0] === "port") process.stdout.write("0.0.0.0:12345\\n");
 else if (args[0] === "network" && args[1] === "create") process.stdout.write("network123\\n");
 else if (args[0] === "rm" || (args[0] === "network" && args[1] === "rm")) process.stdout.write("");
