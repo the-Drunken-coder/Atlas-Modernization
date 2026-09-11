@@ -1,7 +1,8 @@
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import {
   chmodSync,
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -2503,6 +2504,47 @@ describe("atlas-core CLI", () => {
     expect(test.runner.existingVolumes).toContain(POSTGRES_VOLUME);
     expect(JSON.parse(readFileSync(join(test.home, ".atlas", "core", "state.json"), "utf8"))).toMatchObject({
       startedAt: "2026-08-28T12:00:00.000Z"
+    });
+  });
+
+  it("repairs an older retained bundle from its recorded npm package after a CLI upgrade", async () => {
+    const test = runtime();
+    expect(await runCLI(["init"], test.context)).toBe(0);
+    const config = join(test.home, ".atlas", "core");
+    const statePath = join(config, "state.json");
+    const state = JSON.parse(readFileSync(statePath, "utf8"));
+    const recordedVersion = "0.1.0";
+    writeFileSync(statePath, JSON.stringify({ ...state, packageVersion: recordedVersion }), { mode: 0o600 });
+    const archiveRoot = join(test.home, "recorded-release");
+    const packageRoot = join(archiveRoot, "package");
+    mkdirSync(packageRoot, { recursive: true });
+    cpSync(join(config, "base"), join(packageRoot, "assets"), { recursive: true });
+    writeFileSync(
+      join(packageRoot, "package.json"),
+      JSON.stringify({ name: "atlas-core", version: recordedVersion, atlasCoreImage: TEST_IMAGE })
+    );
+    const recordedCompose = readFileSync(join(config, "base", "docker-compose.yml"));
+    writeFileSync(join(config, "base", "docker-compose.yml"), "damaged");
+    const run = test.runner.run.bind(test.runner);
+    const packs: string[][] = [];
+    test.runner.run = async (command, args, options) => {
+      if (command === "npm" && args[0] === "pack") {
+        packs.push([...args]);
+        const destination = args[args.indexOf("--pack-destination") + 1] ?? "";
+        const filename = `atlas-core-${recordedVersion}.tgz`;
+        execFileSync("tar", ["-czf", join(destination, filename), "-C", archiveRoot, "package"]);
+        return result(0, JSON.stringify([{ name: "atlas-core", version: recordedVersion, filename }]));
+      }
+      if (command === "tar") return result(0, execFileSync(command, [...args], { encoding: "utf8" }));
+      return await run(command, args, options);
+    };
+    expect(await runCLI(["start", "--manual", "--repair-bundle"], test.context), test.stderr.join("")).toBe(0);
+    expect(packs).toHaveLength(1);
+    expect(packs[0]).toContain(`atlas-core@${recordedVersion}`);
+    expect(readFileSync(join(config, "base", "docker-compose.yml"))).toEqual(recordedCompose);
+    expect(JSON.parse(readFileSync(statePath, "utf8"))).toMatchObject({
+      packageVersion: recordedVersion,
+      baseDeployment: state.baseDeployment
     });
   });
 

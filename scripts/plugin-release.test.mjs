@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -106,6 +106,7 @@ if (mode === "missing") {
   process.stderr.write("gh: Not Found (HTTP 404)\\n");
   process.exit(1);
 }
+
 if (endpoint.endsWith("/git/ref/tags/atlas-plugin-building_scan-v0.1.0")) {
   if (mode === "annotated") process.stdout.write(JSON.stringify({ object: { type: "tag", sha: "b".repeat(40) } }));
   else process.stdout.write(JSON.stringify({ object: { type: "commit", sha: mode === "wrong" ? "f".repeat(40) : expected } }));
@@ -124,6 +125,90 @@ if (endpoint.endsWith("/git/ref/tags/atlas-plugin-building_scan-v0.1.0")) {
       encoding: "utf8",
       env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, ATLAS_TEST_TAG_MODE: mode, ATLAS_TEST_TAG_EXPECTED: expected }
     });
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
+
+function runReusePublication(mode, releaseBytes) {
+  const directory = mkdtempSync(join(tmpdir(), "atlas-plugin-reuse-publication-"));
+  const bin = join(directory, "bin");
+  const docker = join(bin, "docker");
+  const gh = join(bin, "gh");
+  const outputDirectory = join(directory, "release-artifacts");
+  const releaseSource = join(directory, "existing.atlas-plugin");
+  const ghLog = join(directory, "gh.log");
+  const sourceSha = "b".repeat(40);
+  mkdirSync(bin, { recursive: true });
+  mkdirSync(outputDirectory, { recursive: true });
+  writeFileSync(releaseSource, releaseBytes);
+  writeFileSync(ghLog, "");
+  writeFileSync(
+    docker,
+    `#!/usr/bin/env node
+const args = process.argv.slice(2);
+if (args[0] === "buildx" && args[1] === "imagetools" && process.env.ATLAS_TEST_REUSE_MODE !== "missing-image") {
+  process.stdout.write(JSON.stringify({ digest: process.env.ATLAS_TEST_DIGEST }) + "\\n");
+} else {
+  process.stderr.write("ERROR: manifest unknown\\n");
+  process.exit(1);
+}
+`
+  );
+  writeFileSync(
+    gh,
+    `#!/usr/bin/env node
+import { appendFileSync, copyFileSync } from "node:fs";
+import { join } from "node:path";
+const args = process.argv.slice(2);
+appendFileSync(process.env.ATLAS_TEST_GH_LOG, args.join(" ") + "\\n");
+if (args[0] === "api" && args.at(-1).includes("/git/ref/tags/")) {
+  process.stdout.write(JSON.stringify({ object: { type: "commit", sha: process.env.ATLAS_TEST_SOURCE_SHA } }));
+} else if (args[0] === "release" && args[1] === "view") {
+  if (process.env.ATLAS_TEST_REUSE_MODE === "missing-release") {
+    process.stderr.write("release not found\\n");
+    process.exit(1);
+  }
+  const assets = process.env.ATLAS_TEST_REUSE_MODE === "missing-asset" ? [] : [{ name: "building_scan-0.1.0.atlas-plugin" }];
+  process.stdout.write(JSON.stringify({ name: "Atlas Plugin building_scan 0.1.0", targetCommitish: process.env.ATLAS_TEST_SOURCE_SHA, assets }));
+} else if (args[0] === "release" && args[1] === "download") {
+  const outputDirectory = args[args.indexOf("--dir") + 1];
+  copyFileSync(process.env.ATLAS_TEST_RELEASE_SOURCE, join(outputDirectory, "building_scan-0.1.0.atlas-plugin"));
+} else {
+  process.stderr.write("unexpected gh invocation\\n");
+  process.exit(1);
+}
+`
+  );
+  chmodSync(docker, 0o755);
+  chmodSync(gh, 0o755);
+  try {
+    const result = spawnSync(
+      process.execPath,
+      [script, "reuse-publication", "building_scan", "0.1.0", sourceSha, outputDirectory],
+      {
+        cwd: repositoryRoot,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          PATH: `${bin}:${process.env.PATH}`,
+          GH_TOKEN: "test-token",
+          GITHUB_REPOSITORY: "the-Drunken-coder/Atlas-Modernization",
+          ATLAS_TEST_DIGEST: "sha256:" + "a".repeat(64),
+          ATLAS_TEST_GH_LOG: ghLog,
+          ATLAS_TEST_RELEASE_SOURCE: releaseSource,
+          ATLAS_TEST_REUSE_MODE: mode,
+          ATLAS_TEST_SOURCE_SHA: sourceSha
+        }
+      }
+    );
+    return {
+      result,
+      bytes: existsSync(join(outputDirectory, "building_scan-0.1.0.atlas-plugin"))
+        ? readFileSync(join(outputDirectory, "building_scan-0.1.0.atlas-plugin"))
+        : undefined,
+      ghCalls: readFileSync(ghLog, "utf8")
+    };
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -320,6 +405,37 @@ test("reports a missing release tag without treating it as valid", () => {
   assert.equal(result.status, 2, result.stderr);
 });
 
+test("reuses the authenticated release asset only after verifying its source tag and exact metadata", () => {
+  const documentResult = runReleaseDocument(image);
+  assert.equal(documentResult.status, 0, documentResult.stderr);
+  const reuse = runReusePublication("asset", documentResult.stdout);
+  assert.equal(reuse.result.status, 0, reuse.result.stderr);
+  assert.deepEqual(reuse.bytes, Buffer.from(documentResult.stdout));
+  assert.match(reuse.ghCalls, /api repos\/the-Drunken-coder\/Atlas-Modernization\/git\/ref\/tags\/atlas-plugin-building_scan-v0\.1\.0/);
+  assert.match(reuse.ghCalls, /release download atlas-plugin-building_scan-v0\.1\.0/);
+  assert.match(reuse.result.stdout, /"image_reference":"ghcr\.io\/the-drunken-coder\/atlas-building-scan@sha256:/);
+});
+
+test("regenerates a release document for an already promoted image when publication stopped before release creation", () => {
+  const documentResult = runReleaseDocument(image);
+  assert.equal(documentResult.status, 0, documentResult.stderr);
+  const reuse = runReusePublication("missing-release", Buffer.from("unused"));
+  assert.equal(reuse.result.status, 0, reuse.result.stderr);
+  assert.deepEqual(JSON.parse(reuse.bytes), JSON.parse(documentResult.stdout));
+  assert.match(reuse.ghCalls, /release view atlas-plugin-building_scan-v0\.1\.0/);
+  assert.doesNotMatch(reuse.ghCalls, /release download/);
+});
+
+test("rejects a reused release asset whose metadata differs from the reviewed plugin", () => {
+  const documentResult = runReleaseDocument(image);
+  assert.equal(documentResult.status, 0, documentResult.stderr);
+  const altered = JSON.parse(documentResult.stdout);
+  altered.display_name = "Tampered";
+  const reuse = runReusePublication("asset", `${JSON.stringify(altered)}\n`);
+  assert.notEqual(reuse.result.status, 0);
+  assert.match(reuse.result.stderr, /does not match the reviewed plugin metadata/);
+});
+
 test("checks release tag provenance before promoting the version image", () => {
   const workflow = readFileSync(join(repositoryRoot, ".github", "workflows", "release-atlas-plugin.yml"), "utf8");
   const guard = workflow.indexOf("- name: Verify release tag provenance");
@@ -327,4 +443,20 @@ test("checks release tag provenance before promoting the version image", () => {
   assert.ok(guard >= 0 && guard < promotion);
   assert.match(workflow.slice(guard, promotion), /verify-release-tag/);
   assert.match(workflow, /gh release create "\$tag" --verify-tag --target "\$SOURCE_SHA"/);
+});
+
+test("reuses a promoted image and release document before rebuilding on a publication retry", () => {
+  const workflow = readFileSync(join(repositoryRoot, ".github", "workflows", "release-atlas-plugin.yml"), "utf8");
+  const reuse = workflow.indexOf("- name: Reuse a previously promoted immutable image when available");
+  const build = workflow.indexOf("- name: Publish candidate image");
+  const select = workflow.indexOf("- name: Select immutable candidate image");
+  const document = workflow.indexOf("- name: Generate and verify immutable release document");
+  assert.ok(reuse >= 0 && reuse < build);
+  assert.ok(build < select && select < document);
+  assert.match(workflow.slice(reuse, build), /node scripts\/plugin-release\.mjs reuse-publication/);
+  assert.match(workflow.slice(reuse, build), /\"\$SOURCE_SHA\" release-artifacts/);
+  assert.match(workflow.slice(build, select), /if: steps\.reuse\.outputs\.found != 'true'/);
+  assert.match(workflow.slice(select, document), /REUSED_REFERENCE/);
+  assert.match(workflow.slice(document), /if \[ \"\$\{\{ steps\.reuse\.outputs\.found \}\}\" != \"true\" \]/);
+  assert.match(workflow.slice(document), /sha256sum .*release-artifacts\/SHA256SUMS/);
 });

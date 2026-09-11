@@ -125,11 +125,39 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Reuse a previously promoted immutable image when available
+        id: reuse
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PLUGIN_ID: ${{ inputs.plugin_id }}
+          SOURCE_SHA: ${{ needs.validate.outputs.source_sha }}
+          VERSION: ${{ inputs.version }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          reuse_status=0
+          reuse_result="$(node scripts/plugin-release.mjs reuse-publication \
+            "$PLUGIN_ID" "$VERSION" "$SOURCE_SHA" release-artifacts \
+          )" || reuse_status=$?
+          if [ "$reuse_status" -eq 2 ]; then
+            echo "No previously promoted immutable publication exists."
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$reuse_status" -ne 0 ]; then
+            exit "$reuse_status"
+          fi
+          image_reference="$(jq -er '.image_reference | select(type == "string")' <<< "$reuse_result")"
+          echo "Found a verified immutable publication for $image_reference."
+          echo "reference=$image_reference" >> "$GITHUB_OUTPUT"
+          echo "found=true" >> "$GITHUB_OUTPUT"
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a # v4.3.0
 
       - name: Publish candidate image
         id: candidate
+        if: steps.reuse.outputs.found != 'true'
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
@@ -148,7 +176,13 @@ jobs:
         env:
           DIGEST: ${{ steps.candidate.outputs.digest }}
           IMAGE_REPOSITORY: ${{ needs.validate.outputs.image_repository }}
+          REUSED_REFERENCE: ${{ steps.reuse.outputs.reference }}
+          REUSED: ${{ steps.reuse.outputs.found }}
         run: |
+          if [ "$REUSED" = "true" ]; then
+            echo "reference=$REUSED_REFERENCE" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           if [[ ! "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
             echo "Candidate build did not return an immutable image index digest." >&2
             exit 1
@@ -181,8 +215,10 @@ jobs:
           VERSION: ${{ inputs.version }}
         run: |
           mkdir -p release-artifacts
-          node scripts/plugin-release.mjs release-document "$PLUGIN_ID" "$VERSION" "$IMAGE_REFERENCE" \
-            "release-artifacts/${PLUGIN_ID}-${VERSION}.atlas-plugin"
+          if [ "${{ steps.reuse.outputs.found }}" != "true" ]; then
+            node scripts/plugin-release.mjs release-document "$PLUGIN_ID" "$VERSION" "$IMAGE_REFERENCE" \
+              "release-artifacts/${PLUGIN_ID}-${VERSION}.atlas-plugin"
+          fi
           node scripts/plugin-release.mjs verify-document \
             "release-artifacts/${PLUGIN_ID}-${VERSION}.atlas-plugin"
           sha256sum "release-artifacts/${PLUGIN_ID}-${VERSION}.atlas-plugin" > release-artifacts/SHA256SUMS

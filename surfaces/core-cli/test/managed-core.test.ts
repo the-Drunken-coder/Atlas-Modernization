@@ -35,6 +35,15 @@ const CONTRACTS = {
   supportedInteractions: ["map_area"]
 } as const;
 const BACKUP_IDENTITY = `sha256:${"9".repeat(64)}` as const;
+const BUNDLE_FILES_WITH_OBSOLETE = [
+  "docker-compose.yml",
+  "docker-compose.init.yml",
+  "source_gateway.production.json",
+  "plugin-templates/service.json",
+  "plugin-templates/core-endpoint.json",
+  "plugin-templates/source-connector.json",
+  "obsolete.txt"
+] as const;
 
 type Call = { args: readonly string[]; pluginIds: readonly string[]; coreImage: string; cleanup?: boolean };
 
@@ -202,6 +211,53 @@ describe("ManagedCoreManager", () => {
     expect((recovered as ManagedCoreState).phase).toBe("ready");
     expect(existsSync(join(configDir, "transaction"))).toBe(false);
     expect(calls.some((call) => call.coreImage === NEXT_IMAGE && call.args[0] === "up")).toBe(true);
+  });
+
+  it("replaces the staged bundle when forward recovery removes a file", async () => {
+    const configDir = temporaryDirectory();
+    writeFileSync(join(configDir, ".env"), "POSTGRES_PASSWORD=secret\n", { mode: 0o600 });
+    const stateRef = { current: undefined as ManagedCoreState | undefined };
+    const calls: Call[] = [];
+    const initial = new ManagedCoreManager(
+      makeOptions(configDir, packageDirectory(IMAGE, "forward-old"), IMAGE, stateRef, calls, RECEIPT, {
+        desiredRunning: false
+      })
+    );
+    stateRef.current = await initial.initialize();
+    calls.length = 0;
+
+    const failedPackage = packageDirectory(NEXT_IMAGE, "forward-failed");
+    writeFileSync(join(failedPackage, "assets", "obsolete.txt"), "obsolete\n");
+    const failed = new ManagedCoreManager(
+      makeOptions(configDir, failedPackage, NEXT_IMAGE, stateRef, calls, NEXT_RECEIPT, {
+        previousRunning: false,
+        desiredRunning: true,
+        bundleFiles: BUNDLE_FILES_WITH_OBSOLETE,
+        verifyPlugins: async (_state, options) => {
+          if (options.requireHealth) throw new Error("failed target Plugin health check");
+        }
+      })
+    );
+
+    await expect(failed.update(stateRef.current)).rejects.toThrow("failed target Plugin health check");
+    expect(existsSync(join(configDir, "base", "obsolete.txt"))).toBe(true);
+
+    const forwardPackage = packageDirectory(NEXT_IMAGE, "forward-final");
+    const finalManager = new ManagedCoreManager(
+      makeOptions(configDir, forwardPackage, NEXT_IMAGE, stateRef, calls, NEXT_RECEIPT)
+    );
+    const recovered = await finalManager.recover("forward", {
+      target: {
+        packageRoot: forwardPackage,
+        packageVersion: "0.1.9",
+        packageImage: NEXT_IMAGE,
+        packageContracts: CONTRACTS
+      }
+    });
+
+    expect((recovered as ManagedCoreState).phase).toBe("ready");
+    expect(existsSync(join(configDir, "base", "obsolete.txt"))).toBe(false);
+    await finalManager.start(recovered as ManagedCoreState);
   });
 
   it("requires the restored paired backup identity before accepting a rollback", async () => {
@@ -577,6 +633,33 @@ describe("ManagedCoreManager", () => {
     await expect(wrongPackage.repairBundle(stateRef.current)).rejects.toThrow(/recorded bundle/);
     expect(readFileSync(join(configDir, "base", "docker-compose.yml"))).toEqual(before);
     expect(existsSync(join(configDir, "transaction"))).toBe(false);
+  });
+
+  it("repairs a damaged bundle from the recorded package when the CLI package changed", async () => {
+    const configDir = temporaryDirectory();
+    writeFileSync(join(configDir, ".env"), "POSTGRES_PASSWORD=secret\n", { mode: 0o600 });
+    const stateRef = { current: undefined as ManagedCoreState | undefined };
+    const calls: Call[] = [];
+    const recordedPackage = packageDirectory(IMAGE, "recorded-repair");
+    const initial = new ManagedCoreManager(
+      makeOptions(configDir, recordedPackage, IMAGE, stateRef, calls, RECEIPT, { desiredRunning: false })
+    );
+    stateRef.current = await initial.initialize();
+    const expectedCompose = readFileSync(join(configDir, "base", "docker-compose.yml"));
+    writeFileSync(join(configDir, "base", "docker-compose.yml"), "damaged\n");
+
+    const newerPackage = packageDirectory(NEXT_IMAGE, "newer-repair");
+    const newer = new ManagedCoreManager(
+      makeOptions(configDir, newerPackage, NEXT_IMAGE, stateRef, calls, NEXT_RECEIPT)
+    );
+    await newer.repairBundle(stateRef.current, {
+      packageRoot: recordedPackage,
+      packageVersion: "0.1.8",
+      packageImage: IMAGE,
+      packageContracts: CONTRACTS
+    });
+
+    expect(readFileSync(join(configDir, "base", "docker-compose.yml"))).toEqual(expectedCompose);
   });
 
   it("does not invoke Compose when start storage safety rejects the deployment", async () => {

@@ -102,3 +102,15 @@ Final validation:
 - Independent Plugin recovery recheck: no confirmed defects.
 
 These checks do not exercise the Docker acceptance job against a live registry locally; that remains a GitHub CI check. The earlier local-only status above records the preceding review pass. This follow-up is authorized for commit, push, and updating PR #339.
+
+
+## Latest-commit Codex review follow-up
+
+Codex reviewed `f44a8353779abbb26d62509f9dbd4801e97ea41b` after an explicit review request and reported four confirmed defects:
+
+- Forward recovery retained staged files removed by the replacement Core bundle. The replacement now prunes stale staged base entries before applying and committing the bundle.
+- Removing an old catalog signing key blocked refresh from a cached receipt using that key. Refresh can now accept a catalog signed by a strictly newer trusted epoch, preserving the local clock floor and embedded checkpoint checks.
+- A publication retry rebuilt an image even after its version digest had been promoted. The workflow now reuses the promoted digest, verifies the source tag, and validates any existing release document against the reviewed metadata before resuming publication.
+- Bundle repair used the installed CLI's assets even when Core retained an older package version. Repair now fetches the exact recorded npm package as data, checks its version and image, and requires the candidate bundle hash to match before replacement.
+
+Focused tests cover removed-file recovery followed by startup, retired-key and lower-epoch replay rejection, publication retry states, and repairing a damaged bundle after a CLI upgrade. No merge is authorized by this follow-up.

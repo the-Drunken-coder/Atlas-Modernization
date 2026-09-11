@@ -206,7 +206,10 @@ its sequence is lower than the prior epoch's accepted sequence. After accepting 
 epochs even when they carry a higher sequence. A later CLI may remove the old key. Older CLIs that do not trust the new
 key cannot mutate Plugin state after their last catalog expires and must update. Compromise of the active signing key
 requires a CLI update that removes that key and trusts a newer epoch. An attacker-created high sequence in the
-compromised epoch cannot block the newer epoch. Installed Plugins remain operable while catalog mutations fail closed.
+compromised epoch cannot block the newer epoch. If the cached receipt still uses the removed key, refresh preserves its
+local clock floor but requires a fresh catalog signed by a strictly newer trusted epoch and meeting the embedded
+checkpoint. It does not use the retired receipt as authenticated release history. Failed refresh leaves the cached file
+unchanged. Installed Plugins remain operable while catalog mutations fail closed.
 
 Every CLI release embeds the newest `(key_epoch, sequence)` pair it verified while building. This checkpoint limits replay
 for a fresh installation or after an explicit Atlas reset. Existing installations retain their stronger local pair. A

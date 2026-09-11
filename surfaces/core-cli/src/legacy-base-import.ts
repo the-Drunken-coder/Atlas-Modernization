@@ -135,7 +135,51 @@ export async function prepareLegacyBase(options: PrepareLegacyBaseOptions): Prom
   }
 }
 
-async function packExactCorePackage(options: PrepareLegacyBaseOptions, packDirectory: string): Promise<string> {
+/** Fetches vetted retained assets as data for hash-checked repair, without running package code. */
+export async function prepareRepairPackage(options: {
+  configDir: string;
+  packageVersion: string;
+  packageImage: string;
+  runCommand: LegacyCommandRunner;
+}): Promise<{ packageRoot: string; cleanup: () => void }> {
+  assertVersion(options.packageVersion);
+  const root = mkdtempSync(join(options.configDir, ".repair-package-"));
+  const packDirectory = join(root, "pack");
+  const unpackDirectory = join(root, "unpacked");
+  mkdirSync(packDirectory, { mode: 0o700 });
+  mkdirSync(unpackDirectory, { mode: 0o700 });
+  try {
+    const archive = await packExactCorePackage(options, packDirectory);
+    const entries = await inspectArchive(options.runCommand, archive);
+    const selected = entries.filter(
+      (entry) =>
+        REQUIRED_ARCHIVE_FILES.has(entry) ||
+        (entry.startsWith("package/assets/plugin-templates/") && !entry.endsWith("/"))
+    );
+    for (const required of REQUIRED_ARCHIVE_FILES) {
+      if (!selected.includes(required)) throw new Error(`Core package is missing vetted archive entry: ${required}`);
+    }
+    await extractArchive(options.runCommand, archive, unpackDirectory, selected);
+    const packageRoot = join(unpackDirectory, "package");
+    const metadata = readPackageJson(join(packageRoot, "package.json"));
+    if (
+      metadata.name !== PACKAGE_NAME ||
+      metadata.version !== options.packageVersion ||
+      metadata.atlasCoreImage !== options.packageImage
+    ) {
+      throw new Error("Downloaded Core repair package does not match the recorded version and image.");
+    }
+    return { packageRoot, cleanup: () => rmSync(root, { recursive: true, force: true }) };
+  } catch (error) {
+    rmSync(root, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+async function packExactCorePackage(
+  options: Pick<PrepareLegacyBaseOptions, "packageVersion" | "runCommand">,
+  packDirectory: string
+): Promise<string> {
   const result = await options.runCommand("npm", [
     "pack",
     "--ignore-scripts",

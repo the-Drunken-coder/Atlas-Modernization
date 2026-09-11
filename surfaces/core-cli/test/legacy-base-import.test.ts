@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import type { ImageReceipt } from "../src/image-receipts.js";
-import { type LegacyCommandResult, prepareLegacyBase } from "../src/legacy-base-import.js";
+import { type LegacyCommandResult, prepareLegacyBase, prepareRepairPackage } from "../src/legacy-base-import.js";
 
 const VERSION = "0.1.8";
 const CORE_IMAGE = `ghcr.io/the-drunken-coder/atlas-core@sha256:${"a".repeat(64)}`;
@@ -17,6 +17,48 @@ const PRODUCTION_MINIO_IMAGE =
   "minio/minio:RELEASE.2024-01-31T20-20-33Z@sha256:4092433a77e510826874b36f369696df43407a763d7f901a61d74e83e6fd95bc";
 const PRODUCTION_MINIO_CLIENT_IMAGE =
   "minio/mc:RELEASE.2024-01-31T08-59-40Z@sha256:c084c9a67c7a9ed5f37cc7f2a905010861aaa882bec76da10352305c9709b6d2";
+
+describe("exact Core repair package", () => {
+  it("fetches recorded assets and templates without extracting package code or changing bytes", async () => {
+    const fixture = createPackageFixture({ productionAssets: true, extraFile: true });
+    const templates = join(fixture.root, "package", "assets", "plugin-templates");
+    mkdirSync(templates);
+    writeFileSync(join(templates, "service.json"), '{"recorded":true}\n');
+    const calls: string[][] = [];
+    const prepared = await prepareRepairPackage({
+      configDir: mkdtempSync(join(tmpdir(), "atlas-repair-config-")),
+      packageVersion: VERSION,
+      packageImage: CORE_IMAGE,
+      runCommand: fixture.runCommand(calls)
+    });
+    expect(calls[0]).toContain(`atlas-core@${VERSION}`);
+    expect(calls[0]).toContain("--ignore-scripts");
+    expect(readFileSync(join(prepared.packageRoot, "assets", "plugin-templates", "service.json"), "utf8")).toBe(
+      '{"recorded":true}\n'
+    );
+    expect(readFileSync(join(prepared.packageRoot, "assets", "docker-compose.yml"))).toEqual(
+      readFileSync(join(fixture.root, "package", "assets", "docker-compose.yml"))
+    );
+    expect(existsSync(join(prepared.packageRoot, "dist"))).toBe(false);
+    prepared.cleanup();
+    expect(existsSync(prepared.packageRoot)).toBe(false);
+  });
+
+  it("rejects a substituted release or linked archive before supplying repair assets", async () => {
+    for (const options of [{ packageVersion: "0.1.7" }, { coreImage: POSTGRES_IMAGE }, { symlink: true }]) {
+      const fixture = createPackageFixture(options);
+      await expect(
+        prepareRepairPackage({
+          configDir: mkdtempSync(join(tmpdir(), "atlas-repair-config-")),
+          packageVersion: VERSION,
+          packageImage: CORE_IMAGE,
+          runCommand: fixture.runCommand([])
+        })
+      ).rejects.toThrow(/does not match|symbolic or hard link/);
+      expect(fixture.lastCandidate && existsSync(fixture.lastCandidate)).toBe(false);
+    }
+  });
+});
 
 describe("legacy Core base import", () => {
   it("packs the exact old release, normalizes restart policy, pulls every base image, and leaves live state alone", async () => {

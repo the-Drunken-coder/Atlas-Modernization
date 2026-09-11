@@ -297,7 +297,7 @@ export class ManagedCoreManager {
   }
 
   /** Repair the retained base from the exact package currently supplied by the caller. */
-  async repairBundle(state = this.#options.readState()): Promise<void> {
+  async repairBundle(state = this.#options.readState(), target: CoreTarget = this.#targetFromOptions()): Promise<void> {
     if (!state || state.schema !== STATE_SCHEMA || !state.baseDeployment) {
       throw new Error("Atlas Core has no committed schema-4 bundle to repair.");
     }
@@ -309,11 +309,11 @@ export class ManagedCoreManager {
       now: this.#now()
     });
     try {
-      const candidate = this.#createCandidate(this.#targetFromOptions(), transaction.id);
+      const candidate = this.#createCandidate(target, transaction.id);
       try {
         if (candidate.manifest.bundleSha256 !== state.baseDeployment.bundleSha256) {
           throw new Error(
-            `Current Atlas Core package ${this.#options.packageVersion} does not contain the recorded bundle ${state.baseDeployment.bundleSha256}.`
+            `Atlas Core package ${target.packageVersion} does not contain the recorded bundle ${state.baseDeployment.bundleSha256}.`
           );
         }
         await this.#stageCandidate(transaction, candidate);
@@ -634,7 +634,7 @@ export class ManagedCoreManager {
       if (!receipt) throw new Error("Core image receipt was not returned for the target package image.");
       await this.#options.preflightPlugins?.(target.packageContracts);
       await this.#snapshotMutationFiles(transaction, candidate);
-      await this.#stageCandidate(transaction, candidate);
+      await this.#stageCandidate(transaction, candidate, true);
       const priorState = this.#readBeforeState(transaction);
       const staged = this.#createTargetState(
         priorState,
@@ -662,7 +662,11 @@ export class ManagedCoreManager {
     for (const path of candidate.files) transaction.snapshot(`base/${path}`);
   }
 
-  async #stageCandidate(transaction: DeploymentTransactionStore, candidate: Candidate): Promise<void> {
+  async #stageCandidate(
+    transaction: DeploymentTransactionStore,
+    candidate: Candidate,
+    replaceStagedSubtree = false
+  ): Promise<void> {
     try {
       for (const path of candidate.files) {
         const absolute = join(candidate.root, path);
@@ -674,6 +678,9 @@ export class ManagedCoreManager {
         } finally {
           closeSync(descriptor);
         }
+      }
+      if (replaceStagedSubtree) {
+        transaction.removeStagedSubtreeEntriesNotIn("base", candidate.files);
       }
     } finally {
       rmSync(candidate.root, { recursive: true, force: true });

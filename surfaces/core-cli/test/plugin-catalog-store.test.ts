@@ -35,7 +35,9 @@ function catalogBytes(
   previousCatalogSha256: string | null,
   releases: readonly { version: string; documentSha256: string; revoked?: boolean }[],
   issuedAt = "2026-09-01T12:00:00Z",
-  expiresAt = "2026-09-20T12:00:00Z"
+  expiresAt = "2026-09-20T12:00:00Z",
+  keyEpoch = 1,
+  keyId = "test-key"
 ): Uint8Array {
   return new TextEncoder().encode(
     JSON.stringify({
@@ -44,8 +46,8 @@ function catalogBytes(
       previous_catalog_sha256: previousCatalogSha256,
       issued_at: issuedAt,
       expires_at: expiresAt,
-      key_epoch: 1,
-      key_id: "test-key",
+      key_epoch: keyEpoch,
+      key_id: keyId,
       plugins: [
         {
           plugin_id: pluginId,
@@ -95,11 +97,11 @@ function nearMaximumCatalogBytes(sequence: number, previousCatalogSha256: string
   );
 }
 
-function signatureBytes(bytes: Uint8Array, privateKey: KeyObject): Uint8Array {
+function signatureBytes(bytes: Uint8Array, privateKey: KeyObject, keyId = "test-key"): Uint8Array {
   return new TextEncoder().encode(
     JSON.stringify({
       algorithm: "ed25519",
-      key_id: "test-key",
+      key_id: keyId,
       signature: sign(null, bytes, privateKey).toString("base64")
     })
   );
@@ -110,6 +112,15 @@ function trust(
   minimumCheckpoint: { keyEpoch: number; sequence: number } = { keyEpoch: 1, sequence: 1 }
 ): PluginTrust {
   return { keys: [{ keyId: "test-key", keyEpoch: 1, publicKey }], minimumCheckpoint };
+}
+
+function trustKey(
+  publicKey: KeyObject,
+  keyId: string,
+  keyEpoch: number,
+  minimumCheckpoint: { keyEpoch: number; sequence: number } = { keyEpoch, sequence: 1 }
+): PluginTrust {
+  return { keys: [{ keyId, keyEpoch, publicKey }], minimumCheckpoint };
 }
 
 const directories: string[] = [];
@@ -243,6 +254,136 @@ describe("PluginCatalogStore", () => {
     state.catalog_bytes_base64 = Buffer.from("tampered catalog bytes").toString("base64");
     writeFileSync(statePath, `${JSON.stringify(state)}\n`, { mode: 0o600 });
     expect(() => upgraded.read()).toThrow(/signature|receipt|invalid JSON/i);
+  });
+
+  it("refreshes through a retired signing key with a newer trusted epoch", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "atlas-catalog-store-"));
+    directories.push(directory);
+    const oldKeys = generateKeyPairSync("ed25519");
+    const nextKeys = generateKeyPairSync("ed25519");
+    const oldCatalog = catalogBytes(1, null, []);
+    const oldStore = new PluginCatalogStore({
+      configDir: directory,
+      catalogURL: "https://catalog.example/catalog.json",
+      trust: trust(oldKeys.publicKey),
+      fetchImpl: async (url) =>
+        new Response(String(url).endsWith(".sig") ? signatureBytes(oldCatalog, oldKeys.privateKey) : oldCatalog),
+      now: () => new Date("2026-09-02T12:00:00Z")
+    });
+    const oldReceipt = await oldStore.refresh();
+    const nextCatalog = catalogBytes(
+      1,
+      oldReceipt.catalogSha256,
+      [],
+      "2026-09-03T12:00:00Z",
+      "2026-09-20T12:00:00Z",
+      2,
+      "next-key"
+    );
+    const calls: string[] = [];
+    const upgraded = new PluginCatalogStore({
+      configDir: directory,
+      catalogURL: "https://catalog.example/catalog.json",
+      trust: trustKey(nextKeys.publicKey, "next-key", 2),
+      fetchImpl: async (url) => {
+        calls.push(String(url));
+        return new Response(
+          String(url).endsWith(".sig") ? signatureBytes(nextCatalog, nextKeys.privateKey, "next-key") : nextCatalog
+        );
+      },
+      now: () => new Date("2026-09-03T12:01:00Z")
+    });
+
+    await expect(upgraded.refresh()).resolves.toMatchObject({ keyEpoch: 2, keyId: "next-key", sequence: 1 });
+    expect(calls).toEqual(["https://catalog.example/catalog.json", "https://catalog.example/catalog.json.sig"]);
+    expect(upgraded.read()).toMatchObject({ keyEpoch: 2, keyId: "next-key", sequence: 1 });
+  });
+
+  it("never accepts a retired-key catalog while recovering a retired receipt", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "atlas-catalog-store-"));
+    directories.push(directory);
+    const oldKeys = generateKeyPairSync("ed25519");
+    const nextKeys = generateKeyPairSync("ed25519");
+    const oldCatalog = catalogBytes(1, null, []);
+    const oldStore = new PluginCatalogStore({
+      configDir: directory,
+      catalogURL: "https://catalog.example/catalog.json",
+      trust: trust(oldKeys.publicKey),
+      fetchImpl: async (url) =>
+        new Response(String(url).endsWith(".sig") ? signatureBytes(oldCatalog, oldKeys.privateKey) : oldCatalog),
+      now: () => new Date("2026-09-02T12:00:00Z")
+    });
+    await oldStore.refresh();
+    const upgraded = new PluginCatalogStore({
+      configDir: directory,
+      catalogURL: "https://catalog.example/catalog.json",
+      trust: trustKey(nextKeys.publicKey, "next-key", 2),
+      fetchImpl: async (url) =>
+        new Response(String(url).endsWith(".sig") ? signatureBytes(oldCatalog, oldKeys.privateKey) : oldCatalog),
+      now: () => new Date("2026-09-03T12:00:00Z")
+    });
+
+    await expect(upgraded.refresh()).rejects.toThrow(/signing key|trusted/i);
+    expect(() => upgraded.read()).toThrow(/signing key|trusted/i);
+  });
+
+  it("rejects a trusted lower-epoch catalog while replacing a retired receipt", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "atlas-catalog-store-"));
+    directories.push(directory);
+    const retiredKeys = generateKeyPairSync("ed25519");
+    const legacyKeys = generateKeyPairSync("ed25519");
+    const nextKeys = generateKeyPairSync("ed25519");
+    const retiredCatalog = catalogBytes(
+      1,
+      `sha256:${"0".repeat(64)}`,
+      [],
+      "2026-09-01T12:00:00Z",
+      "2026-09-20T12:00:00Z",
+      2,
+      "retired-key"
+    );
+    const oldStore = new PluginCatalogStore({
+      configDir: directory,
+      catalogURL: "https://catalog.example/catalog.json",
+      trust: trustKey(retiredKeys.publicKey, "retired-key", 2),
+      fetchImpl: async (url) =>
+        new Response(
+          String(url).endsWith(".sig")
+            ? signatureBytes(retiredCatalog, retiredKeys.privateKey, "retired-key")
+            : retiredCatalog
+        ),
+      now: () => new Date("2026-09-02T12:00:00Z")
+    });
+    await oldStore.refresh();
+    const lowerEpochCatalog = catalogBytes(
+      1,
+      null,
+      [],
+      "2026-09-03T12:00:00Z",
+      "2026-09-20T12:00:00Z",
+      1,
+      "legacy-key"
+    );
+    const upgraded = new PluginCatalogStore({
+      configDir: directory,
+      catalogURL: "https://catalog.example/catalog.json",
+      trust: {
+        keys: [
+          { keyId: "legacy-key", keyEpoch: 1, publicKey: legacyKeys.publicKey },
+          { keyId: "next-key", keyEpoch: 3, publicKey: nextKeys.publicKey }
+        ],
+        minimumCheckpoint: { keyEpoch: 1, sequence: 1 }
+      },
+      fetchImpl: async (url) =>
+        new Response(
+          String(url).endsWith(".sig")
+            ? signatureBytes(lowerEpochCatalog, legacyKeys.privateKey, "legacy-key")
+            : lowerEpochCatalog
+        ),
+      now: () => new Date("2026-09-03T12:01:00Z")
+    });
+
+    await expect(upgraded.refresh()).rejects.toThrow(/newer signing-key epoch/i);
   });
 
   it("fetches newest-first release documents and verifies their exact hashes and metadata", async () => {

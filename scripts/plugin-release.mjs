@@ -79,9 +79,23 @@ switch (command) {
     checkCandidate(plugin, required(rawArgs[1], "image reference"));
     break;
   }
+  case "reuse-publication": {
+    const publication = reuseExistingPublication(
+      required(rawArgs[0], "plugin_id"),
+      required(rawArgs[1], "version"),
+      required(rawArgs[2], "source commit"),
+      resolve(repositoryRoot, rawArgs[3] ?? "release-artifacts")
+    );
+    if (publication === null) {
+      process.exitCode = 2;
+    } else {
+      process.stdout.write(`${JSON.stringify(publication)}\n`);
+    }
+    break;
+  }
   default:
     throw new Error(
-      "Usage: node scripts/plugin-release.mjs <validate-version|validate-plugin|protocol-revision|release-document|verify-document|verify-public-release|verify-release-tag|check-candidate> ..."
+      "Usage: node scripts/plugin-release.mjs <validate-version|validate-plugin|protocol-revision|release-document|verify-document|verify-public-release|verify-release-tag|check-candidate|reuse-publication> ..."
     );
 }
 
@@ -228,7 +242,7 @@ async function verifyPublicRelease(url, localPath) {
   process.stdout.write(`Verified anonymous public release document at ${url}.\n`);
 }
 
-function verifyRemoteReleaseTag(repository, tag, expectedSha) {
+function verifyRemoteReleaseTag(repository, tag, expectedSha, quiet = false) {
   if (!/^[^/\s]+\/[^/\s]+$/u.test(repository)) throw new Error(`GitHub repository is invalid: ${repository}`);
   if (!/^atlas-plugin-[a-z][a-z0-9]*(?:_[a-z0-9]+)*-v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/u.test(tag)) {
     throw new Error(`Plugin release tag is invalid: ${tag}`);
@@ -239,8 +253,115 @@ function verifyRemoteReleaseTag(repository, tag, expectedSha) {
   if (actualSha !== expectedSha) {
     throw new Error(`Plugin release tag ${tag} resolves to ${actualSha}, not ${expectedSha}`);
   }
-  process.stdout.write(`Plugin release tag ${tag} resolves to ${expectedSha}.\n`);
+  if (!quiet) process.stdout.write(`Plugin release tag ${tag} resolves to ${expectedSha}.\n`);
   return true;
+}
+
+function reuseExistingPublication(pluginId, version, sourceSha, releaseDirectory) {
+  const plugin = readPlugin(pluginId);
+  validatePlugin(plugin);
+  validateReleaseVersion(plugin, version);
+  if (!/^[0-9a-f]{40}$/u.test(sourceSha)) throw new Error(`Release commit is invalid: ${sourceSha}`);
+
+  const repository = imageRepository(plugin);
+  const finalImage = `${repository}:${version}`;
+  const digest = readImmutableImageDigest(finalImage);
+  if (digest === null) return null;
+
+  const imageReference = `${repository}@${digest}`;
+  const releaseTag = `atlas-plugin-${pluginId}-v${version}`;
+  const githubRepository = required(process.env.GITHUB_REPOSITORY, "GITHUB_REPOSITORY");
+  if (!verifyRemoteReleaseTag(githubRepository, releaseTag, sourceSha, true)) {
+    throw new Error(`Cannot reuse ${finalImage} without a release tag resolving to ${sourceSha}`);
+  }
+
+  mkdirSync(releaseDirectory, { recursive: true });
+  const asset = `${pluginId}-${version}.atlas-plugin`;
+  const assetPath = join(releaseDirectory, asset);
+  const release = readGitHubRelease(githubRepository, releaseTag);
+  let reusedAsset = false;
+  if (release !== null) {
+    const expectedTitle = `Atlas Plugin ${pluginId} ${version}`;
+    if (release.name !== expectedTitle || release.targetCommitish !== sourceSha) {
+      throw new Error(`GitHub Release ${releaseTag} does not identify the reviewed source commit`);
+    }
+    if (release.assets.some((candidate) => candidate.name === asset)) {
+      runCapture("gh", ["release", "download", releaseTag, "--repo", githubRepository, "--pattern", asset, "--dir", releaseDirectory]);
+      const downloaded = readJSON(assetPath);
+      validateReleaseDocument(downloaded);
+      assertReleaseDocumentMatches(plugin, version, imageReference, downloaded);
+      reusedAsset = true;
+    }
+  }
+  if (!reusedAsset) {
+    writeFileSync(assetPath, `${JSON.stringify(createReleaseDocument(plugin, version, imageReference), null, 2)}\n`);
+  }
+  return { image_reference: imageReference, release_document: relative(repositoryRoot, assetPath) };
+}
+
+function readImmutableImageDigest(image) {
+  const result = spawnSync("docker", ["buildx", "imagetools", "inspect", image, "--format", "{{json .Manifest}}"], {
+    cwd: repositoryRoot,
+    encoding: "utf8",
+    stdio: "pipe"
+  });
+  if (result.status !== 0) {
+    const detail = `${result.stderr || ""}\n${result.stdout || ""}`.trim();
+    if (/manifest unknown|not found|no such manifest/iu.test(detail)) return null;
+    throw new Error(`docker buildx imagetools inspect ${image} failed: ${detail || "unknown error"}`);
+  }
+  let manifest;
+  try {
+    manifest = JSON.parse(result.stdout);
+  } catch (error) {
+    throw new Error(`docker buildx imagetools inspect ${image} returned invalid JSON: ${error instanceof Error ? error.message : error}`);
+  }
+  if (!isRecord(manifest) || typeof manifest.digest !== "string" || !/^sha256:[0-9a-f]{64}$/u.test(manifest.digest)) {
+    throw new Error(`Existing image ${image} did not resolve to an immutable manifest digest`);
+  }
+  return manifest.digest;
+}
+
+function readGitHubRelease(repository, tag) {
+  const result = spawnSync("gh", ["release", "view", tag, "--repo", repository, "--json", "name,targetCommitish,assets"], {
+    cwd: repositoryRoot,
+    encoding: "utf8",
+    stdio: "pipe"
+  });
+  if (result.status !== 0) {
+    const detail = `${result.stderr || ""}\n${result.stdout || ""}`.trim();
+    if (/not found|release not found|HTTP 404/iu.test(detail)) return null;
+    throw new Error(`gh release view ${tag} failed: ${detail || "unknown error"}`);
+  }
+  let release;
+  try {
+    release = JSON.parse(result.stdout);
+  } catch (error) {
+    throw new Error(`gh release view ${tag} returned invalid JSON: ${error instanceof Error ? error.message : error}`);
+  }
+  if (
+    !isRecord(release) ||
+    typeof release.name !== "string" ||
+    typeof release.targetCommitish !== "string" ||
+    !Array.isArray(release.assets) ||
+    release.assets.some((asset) => !isRecord(asset) || typeof asset.name !== "string")
+  ) {
+    throw new Error(`gh release view ${tag} returned an invalid release`);
+  }
+  return release;
+}
+
+function assertReleaseDocumentMatches(plugin, version, image, actual) {
+  const expected = createReleaseDocument(plugin, version, image);
+  if (JSON.stringify(canonicalJSON(actual)) !== JSON.stringify(canonicalJSON(expected))) {
+    throw new Error("Existing GitHub Release document does not match the reviewed plugin metadata and image digest");
+  }
+}
+
+function canonicalJSON(value) {
+  if (Array.isArray(value)) return value.map(canonicalJSON);
+  if (isRecord(value)) return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonicalJSON(value[key])]));
+  return value;
 }
 
 function readRemoteReleaseTag(repository, tag) {

@@ -75,6 +75,18 @@ type PersistedCatalogState = {
   observed_at: string;
 };
 
+class RetiredCatalogReceiptError extends Error {
+  readonly keyEpoch: number;
+  readonly observedAt: Date;
+
+  constructor(keyEpoch: number, observedAt: Date) {
+    super("The stored Plugin catalog was signed by a retired key");
+    this.name = "RetiredCatalogReceiptError";
+    this.keyEpoch = keyEpoch;
+    this.observedAt = observedAt;
+  }
+}
+
 /** Owns the verified catalog receipt. It never returns an unverified static or bundled catalog. */
 export class PluginCatalogStore {
   readonly #configDir: string;
@@ -114,8 +126,17 @@ export class PluginCatalogStore {
     // A cached receipt below a newly embedded checkpoint is still needed as
     // authenticated history for the next refresh. Fresh network acceptance
     // below the checkpoint remains fail-closed in verifyCatalog.
-    const previous = this.#readStoredReceipt(true, true);
-    const current = this.#observedNow(previous?.observedAt);
+    let previous: { receipt: SignedCatalogReceipt; observedAt: Date } | undefined;
+    let retiredObservedAt: Date | undefined;
+    let retiredKeyEpoch: number | undefined;
+    try {
+      previous = this.#readStoredReceipt(true, true);
+    } catch (error) {
+      if (!(error instanceof RetiredCatalogReceiptError)) throw error;
+      retiredKeyEpoch = error.keyEpoch;
+      retiredObservedAt = error.observedAt;
+    }
+    const current = this.#observedNow(previous?.observedAt ?? retiredObservedAt);
     if (previous && current.getTime() > previous.observedAt.getTime()) this.#writeState(previous.receipt, current);
     const catalogBytes = await fetchBounded(this.#catalogURL, {
       maxBytes: CATALOG_LIMIT,
@@ -128,7 +149,10 @@ export class PluginCatalogStore {
       fetchImpl: this.#fetchImpl
     });
     const receipt = verifyCatalog(catalogBytes, signatureBytes, this.#trust, previous?.receipt, current);
-    const observedAt = maxDate(current, previous?.observedAt);
+    if (retiredKeyEpoch !== undefined && receipt.keyEpoch <= retiredKeyEpoch) {
+      throw new Error("The refreshed Plugin catalog must use a newer signing-key epoch than the retired receipt");
+    }
+    const observedAt = maxDate(current, previous?.observedAt ?? retiredObservedAt);
     this.#writeState(receipt, observedAt);
     return receipt;
   }
@@ -260,6 +284,16 @@ export class PluginCatalogStore {
     const verificationNow = allowExpired
       ? new Date(Math.max(issuedAt.getTime(), Math.min(current.getTime(), expiresAt.getTime() - 1)))
       : current;
+    if (
+      historical &&
+      !this.#trust.keys.some((key) => key.keyId === state.key_id && key.keyEpoch === state.key_epoch) &&
+      this.#trust.keys.some((key) => key.keyEpoch > state.key_epoch)
+    ) {
+      // A later CLI may intentionally remove a compromised key. The receipt
+      // still provides the local clock floor, but the fresh catalog must be
+      // verified by a newer embedded key before it can replace this state.
+      throw new RetiredCatalogReceiptError(state.key_epoch, observedAt);
+    }
     const verificationTrust = historical ? trustForHistoricalReceipt(this.#trust) : this.#trust;
     const receipt = verifyCatalog(catalogBytes, signatureBytes, verificationTrust, undefined, verificationNow);
     if (

@@ -306,6 +306,21 @@ export class DeploymentTransactionStore {
     return { ...staged };
   }
 
+  /** Remove stale staged entries after the replacement files have been staged. */
+  removeStagedSubtreeEntriesNotIn(relativeDirectory: string, retainedPaths: readonly string[]): void {
+    const rootPath = this.#validateRootRelativePath(relativeDirectory);
+    const prefix = `${rootPath}${sep}`;
+    const retained = new Set(retainedPaths.map((path) => this.#validateRootRelativePath(join(rootPath, path))));
+    const stalePaths = Object.keys(this.#journal.staged).filter(
+      (path) => path.startsWith(prefix) && !retained.has(path)
+    );
+    const nextStaged = Object.fromEntries(
+      Object.entries(this.#journal.staged).filter(([path]) => !stalePaths.includes(path))
+    );
+    this.#journal = { ...this.#journal, staged: nextStaged };
+    this.#persist();
+  }
+
   stagedPath(relativePath: string): string {
     const path = this.#validateRootRelativePath(relativePath);
     const metadata = this.#journal.staged[path];

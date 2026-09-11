@@ -28,7 +28,7 @@ import { createOwnerIdentity, DeploymentTransactionStore, ownerLiveness } from "
 import { ManagedPluginCredentials, ManagedPluginKeyRejectedError } from "./host-credentials.js";
 import { type ImageReceipt, pullImageReceipt, verifyContainerImage, verifyLocalImage } from "./image-receipts.js";
 import { IndependentPluginManager, isPluginLifecycleOperation, pluginServiceName } from "./independent-plugins.js";
-import { prepareLegacyBase } from "./legacy-base-import.js";
+import { prepareLegacyBase, prepareRepairPackage } from "./legacy-base-import.js";
 import {
   ManagedCoreManager,
   type ManagedCoreState,
@@ -1684,7 +1684,29 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     await this.#withInitializedMutation(async (state, dockerEngineId) => {
       const managed = this.#requireManaged(state);
       const manager = this.#managedCore(dockerEngineId);
-      if (options.repairBundle) await manager.repairBundle(managed);
+      if (options.repairBundle) {
+        if (managed.packageVersion === PACKAGE_VERSION) {
+          await manager.repairBundle(managed);
+        } else {
+          if (!managed.baseDeployment) throw new Error("Atlas Core has no committed bundle to repair.");
+          const prepared = await prepareRepairPackage({
+            configDir: this.#configDir,
+            packageVersion: managed.packageVersion,
+            packageImage: managed.baseDeployment.coreImage,
+            runCommand: async (command, args) => await this.#runner.run(command, [...args], { env: this.#env })
+          });
+          try {
+            await manager.repairBundle(managed, {
+              packageRoot: prepared.packageRoot,
+              packageVersion: managed.packageVersion,
+              packageImage: managed.baseDeployment.coreImage,
+              packageContracts: managed.pluginContracts ?? PACKAGE_PLUGIN_CONTRACTS
+            });
+          } finally {
+            prepared.cleanup();
+          }
+        }
+      }
       if (options.repairImages) await this.#repairImages(managed);
       this.#writeRunIntent(true);
       await this.#start(managed, dockerEngineId);
