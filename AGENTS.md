@@ -56,3 +56,21 @@ git diff --check
 ```
 
 For documentation-only changes, check affected links and paths plus `git diff --check`; do not run the full stack unless the edit affects generated artifacts, module wiring, or runtime behavior.
+
+## Agent skills
+
+### Issue tracker
+
+GitHub Issues track persistent product work; `docs/problems/` holds verified, short-lived implementation defects. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The default canonical labels are used: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, and `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Atlas uses multi-context domain documentation. See `docs/agents/domain.md`.
+
+### Workflow
+
+Choose the planning, implementation, or defect workflow that fits the work. See `docs/agents/workflow.md`.
