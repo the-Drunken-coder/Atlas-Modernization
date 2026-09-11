@@ -37,7 +37,8 @@ function releaseDocument(version = "0.2.0"): Uint8Array {
 function catalogDocument(
   sequence: number,
   previousCatalogSha256: string | null,
-  issuedAt = "2026-09-09T12:00:00Z"
+  issuedAt = "2026-09-09T12:00:00Z",
+  revoked = false
 ): Uint8Array {
   return new TextEncoder().encode(
     JSON.stringify({
@@ -57,8 +58,8 @@ function catalogDocument(
               display_name: "Building Scan",
               document_url: releaseUrl("0.2.0"),
               document_sha256: `sha256:${"b".repeat(64)}`,
-              revoked: false,
-              revocation_reason: null
+              revoked,
+              revocation_reason: revoked ? "security issue" : null
             }
           ]
         }
@@ -111,7 +112,7 @@ describe("plugin distribution", () => {
     expect(() => parsePluginRelease(new TextEncoder().encode(JSON.stringify(object)))).toThrow(/unknown|missing/i);
   });
 
-  it("rejects unstable versions, non-first-party images, and secret connector headers", () => {
+  it("rejects unstable versions, non-first-party images, secret connector headers, and unsafe mutation retries", () => {
     const prerelease = new TextDecoder().decode(releaseDocument()).replace('"0.2.0"', '"0.2.0-beta.1"');
     expect(() => parsePluginRelease(new TextEncoder().encode(prerelease))).toThrow(/Semantic Version/i);
     const imageObject = JSON.parse(new TextDecoder().decode(releaseDocument())) as Record<string, unknown>;
@@ -153,6 +154,20 @@ describe("plugin distribution", () => {
     expect(parsePluginRelease(new TextEncoder().encode(JSON.stringify(connectorObject))).sourceConnector?.id).toBe(
       pluginId
     );
+    const route = (connectorObject.source_connector as { routes: Array<Record<string, unknown>> }).routes[0]!;
+    route.method = "POST";
+    route.read_only = false;
+    route.retry = {
+      max_retries: 1,
+      statuses: [503],
+      failures: ["upstream_timeout"],
+      idempotency_header: "idempotency-key"
+    };
+    expect(() => parsePluginRelease(new TextEncoder().encode(JSON.stringify(connectorObject)))).toThrow(
+      /allowed_request_headers/i
+    );
+    route.allowed_request_headers = ["idempotency-key"];
+    expect(() => parsePluginRelease(new TextEncoder().encode(JSON.stringify(connectorObject)))).not.toThrow();
   });
 
   it("verifies an Ed25519 catalog and persists exact byte receipts", () => {
@@ -348,6 +363,48 @@ describe("plugin distribution", () => {
     expect(() =>
       verifyCatalog(expired, signedCatalog(expired, privateKey), trust, undefined, new Date("2026-09-09T12:01:00Z"))
     ).toThrow(/expired/i);
+  });
+
+  it("preserves observed releases and one-way revocations across catalog updates", () => {
+    const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+    const trust = {
+      keys: [{ keyId: "test-key", keyEpoch: 1, publicKey }],
+      minimumCheckpoint: { keyEpoch: 1, sequence: 1 }
+    };
+    const firstBytes = catalogDocument(1, null, "2026-09-09T12:00:00Z", true);
+    const first = verifyCatalog(
+      firstBytes,
+      signedCatalog(firstBytes, privateKey),
+      trust,
+      undefined,
+      new Date("2026-09-09T12:01:00Z")
+    );
+
+    const removed = JSON.parse(
+      new TextDecoder().decode(catalogDocument(2, first.catalogSha256, "2026-09-10T12:00:00Z", true))
+    ) as { plugins: unknown[] };
+    removed.plugins = [];
+    const removedBytes = new TextEncoder().encode(JSON.stringify(removed));
+    expect(() =>
+      verifyCatalog(
+        removedBytes,
+        signedCatalog(removedBytes, privateKey),
+        trust,
+        first,
+        new Date("2026-09-10T12:01:00Z")
+      )
+    ).toThrow(/removed/i);
+
+    const unrevokedBytes = catalogDocument(2, first.catalogSha256, "2026-09-10T12:00:00Z", false);
+    expect(() =>
+      verifyCatalog(
+        unrevokedBytes,
+        signedCatalog(unrevokedBytes, privateKey),
+        trust,
+        first,
+        new Date("2026-09-10T12:01:00Z")
+      )
+    ).toThrow(/unrevoked/i);
   });
 
   it("selects the greatest permitted stable release and remediates revocation", () => {

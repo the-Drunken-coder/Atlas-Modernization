@@ -19,6 +19,7 @@ import {
   type IndependentPluginRelease,
   type PluginImageReceipt,
   type PluginLifecycleHost,
+  type TransactionFactory,
   type TransactionPhase
 } from "../src/independent-plugins.js";
 
@@ -41,6 +42,15 @@ class FakeTransaction {
   readonly phases: TransactionPhase[] = [];
   committed = false;
   cleaned = false;
+  options!: Parameters<TransactionFactory>[0];
+  read() {
+    return {
+      ...this.options,
+      phase: this.phases.at(-1) ?? "prepared",
+      owner: { dockerEngineId: this.options.dockerEngineId },
+      snapshots: Object.fromEntries([...this.snapshots.keys()].map((path) => [path, {}]))
+    };
+  }
   constructor(readonly configDir: string) {}
 
   snapshot(path: string): void {
@@ -100,12 +110,19 @@ class FakeHost {
         pluginToSourceGatewayProtocolMajors: [1],
         atlasProtocolRevision: revision
       },
-      readEnabled: () => [...this.enabled],
+      readEnabled: () => {
+        const state = JSON.parse(readFileSync(join(configDir, "state.json"), "utf8"));
+        this.enabled.clear();
+        for (const id of state.enabledPlugins) this.enabled.add(id);
+        return [...this.enabled];
+      },
       writeEnabled: (pluginIds) => {
         this.enabled.clear();
         for (const pluginId of pluginIds) this.enabled.add(pluginId);
+        writeFileSync(join(configDir, "state.json"), JSON.stringify({ enabledPlugins: pluginIds }), { mode: 0o600 });
       },
       isRunning: () => this.running,
+      withRecovery: async (operation) => await operation(),
       pullAndInspectImage: async (imageIndex) => ({ ...this.imageReceipt, image_index: imageIndex }),
       verifyRetainedBundle: () => undefined,
       runCompose: async (args) => {
@@ -175,11 +192,13 @@ function setup(): { host: FakeHost; manager: IndependentPluginManager; transacti
     writeFileSync(path, `${JSON.stringify(template)}\n`, { mode: 0o600 });
     chmodSync(path, 0o600);
   }
+  writeFileSync(join(configDir, "state.json"), JSON.stringify({ enabledPlugins: [] }), { mode: 0o600 });
   const host = new FakeHost(configDir);
   const transaction = new FakeTransaction(configDir);
   return {
     host,
-    manager: new IndependentPluginManager(host.host, () => {
+    manager: new IndependentPluginManager(host.host, (options) => {
+      transaction.options = options;
       transaction.snapshots.clear();
       transaction.staged.length = 0;
       transaction.phases.length = 0;
@@ -345,7 +364,7 @@ describe("IndependentPluginManager", () => {
     expect(manager.readInstalled("building_scan").selected.version).toBe("0.1.0");
     expect(manager.readInstalled("building_scan").previous).toBeNull();
     expect([...host.enabled]).toEqual(["building_scan"]);
-    expect(transaction.cleaned).toBe(true);
+    expect(transaction.cleaned).toBe(false);
     expect(transaction.phases).toContain("runtime-changing");
     expect(transaction.phases).toContain("rollback-complete");
     expect(host.compose.some(([command]) => command === "down")).toBe(false);
@@ -382,6 +401,10 @@ describe("IndependentPluginManager", () => {
         "atlas-plugin-building-scan"
       ]
     ]);
+    host.failRuntime = false;
+    await manager.recover(transaction as unknown as DeploymentTransaction);
+    expect(transaction.cleaned).toBe(true);
+    expect(host.compose.filter(([command]) => command === "up")).toHaveLength(3);
   });
 
   it("rejects expired catalog mutations before downloading a release", async () => {

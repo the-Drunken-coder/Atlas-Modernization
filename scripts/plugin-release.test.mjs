@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -57,6 +57,24 @@ function runReleaseDocument(imageReference) {
   });
 }
 
+function runMutatingRetryDocument(idempotencyHeader, allowedRequestHeaders) {
+  const directory = mkdtempSync(join(tmpdir(), "atlas-plugin-mutating-retry-"));
+  try {
+    const validResult = runReleaseDocument(image);
+    assert.equal(validResult.status, 0, validResult.stderr);
+    const document = JSON.parse(validResult.stdout);
+    const route = document.source_connector.routes[0];
+    route.read_only = false;
+    route.allowed_request_headers = allowedRequestHeaders;
+    route.retry = { max_retries: 1, statuses: [503], failures: [], idempotency_header: idempotencyHeader };
+    const documentPath = join(directory, "mutating-retry.atlas-plugin");
+    writeFileSync(documentPath, `${JSON.stringify(document)}\n`);
+    return spawnSync(process.execPath, [script, "verify-document", documentPath], { cwd: repositoryRoot, encoding: "utf8" });
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
+
 function runPublicRelease(localPath, preloadPath, url, mode) {
   return spawnSync(process.execPath, [script, "verify-public-release", url, localPath], {
     cwd: repositoryRoot,
@@ -70,6 +88,45 @@ function runPublicRelease(localPath, preloadPath, url, mode) {
       ATLAS_TEST_PUBLIC_RELEASE_MODE: mode
     }
   });
+}
+
+function runTagVerification(mode) {
+  const directory = mkdtempSync(join(tmpdir(), "atlas-plugin-release-tag-"));
+  const bin = join(directory, "bin");
+  const gh = join(bin, "gh");
+  const expected = "a".repeat(40);
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(
+    gh,
+    `#!/usr/bin/env node
+const endpoint = process.argv.at(-1);
+const expected = process.env.ATLAS_TEST_TAG_EXPECTED;
+const mode = process.env.ATLAS_TEST_TAG_MODE;
+if (mode === "missing") {
+  process.stderr.write("gh: Not Found (HTTP 404)\\n");
+  process.exit(1);
+}
+if (endpoint.endsWith("/git/ref/tags/atlas-plugin-building_scan-v0.1.0")) {
+  if (mode === "annotated") process.stdout.write(JSON.stringify({ object: { type: "tag", sha: "b".repeat(40) } }));
+  else process.stdout.write(JSON.stringify({ object: { type: "commit", sha: mode === "wrong" ? "f".repeat(40) : expected } }));
+} else if (endpoint.endsWith("/git/tags/" + "b".repeat(40))) {
+  process.stdout.write(JSON.stringify({ object: { type: "commit", sha: expected } }));
+} else {
+  process.stderr.write("unexpected endpoint\\n");
+  process.exit(1);
+}
+`
+  );
+  chmodSync(gh, 0o755);
+  try {
+    return spawnSync(process.execPath, [script, "verify-release-tag", "the-Drunken-coder/Atlas-Modernization", "atlas-plugin-building_scan-v0.1.0", expected], {
+      cwd: repositoryRoot,
+      encoding: "utf8",
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, ATLAS_TEST_TAG_MODE: mode, ATLAS_TEST_TAG_EXPECTED: expected }
+    });
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 }
 
 test("embeds the strict source connector and generated SDK Protocol revision", () => {
@@ -100,6 +157,17 @@ test("rejects a source connector origin array before release publication", () =>
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test("rejects a mutating retry whose idempotency header is not allowed", () => {
+  const result = runMutatingRetryDocument("idempotency-key", []);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /must appear in allowed_request_headers/);
+});
+
+test("accepts a mutating retry with a case-normalized allowed idempotency header", () => {
+  const result = runMutatingRetryDocument("Idempotency-Key", ["IDEMPOTENCY-KEY"]);
+  assert.equal(result.status, 0, result.stderr);
 });
 
 test("accepts a candidate only when its private manifest matches the authored interaction contract", () => {
@@ -136,6 +204,23 @@ test("rejects candidate manifest fields that can change the managed query-only c
   });
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /must not expose tool_asset_id/);
+});
+
+test("rejects candidate manifests above the runtime operation limit", () => {
+  const operations = Array.from({ length: 129 }, (_, index) => ({
+    operation_id: `operation_${String(index).padStart(3, "0")}`,
+    display_name: `Operation ${index}`,
+    timeout_ms: 15_000,
+    ...(index === 0 ? { interaction: { kind: "map_area" } } : {})
+  }));
+  const result = runCandidate({
+    plugin_id: "building_scan",
+    display_name: "Building Scan",
+    core_to_plugin_protocol_major: 1,
+    operations
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /too many operations/);
 });
 
 test("requires the missing candidate route to return the exact JSON error", () => {
@@ -211,4 +296,35 @@ void bytes;
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test("accepts a lightweight release tag that resolves to the reviewed commit", () => {
+  const result = runTagVerification("lightweight");
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /resolves to/);
+});
+
+test("peels an annotated release tag before accepting its commit", () => {
+  const result = runTagVerification("annotated");
+  assert.equal(result.status, 0, result.stderr);
+});
+
+test("rejects a release tag that resolves to a different commit", () => {
+  const result = runTagVerification("wrong");
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /resolves to/);
+});
+
+test("reports a missing release tag without treating it as valid", () => {
+  const result = runTagVerification("missing");
+  assert.equal(result.status, 2, result.stderr);
+});
+
+test("checks release tag provenance before promoting the version image", () => {
+  const workflow = readFileSync(join(repositoryRoot, ".github", "workflows", "release-atlas-plugin.yml"), "utf8");
+  const guard = workflow.indexOf("- name: Verify release tag provenance");
+  const promotion = workflow.indexOf("- name: Promote immutable image to the version tag");
+  assert.ok(guard >= 0 && guard < promotion);
+  assert.match(workflow.slice(guard, promotion), /verify-release-tag/);
+  assert.match(workflow, /gh release create "\$tag" --verify-tag --target "\$SOURCE_SHA"/);
 });

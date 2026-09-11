@@ -138,7 +138,7 @@ uses the journaled attempt name to revoke an uncertain creation before recording
 and stops the composition. An unrecoverable API, storage, or image failure leaves Atlas stopped with the journal intact;
 the explicit destructive reset remains the only abandon path. An upgrade provisions through the already-running Core
 inside the Core-update transaction. The manager does not commit schema 4 until the returned secret is durably staged and
-authenticated. It owns later rotation as described below.
+authenticated. It owns later rotation as described below. If Core definitively rejects the stored key during an update, the existing transaction creates and verifies a replacement instead of blocking recovery. A malformed stored key follows the same replacement path. Transport failures and server errors remain retryable failures and do not trigger rotation.
 
 `catalog-state.json` is one atomically replaced object. It is catalog trust state, not deployment state: transaction
 rollback never restores an older copy or moves its high-water mark backward. The encoded byte fields are abbreviated in
@@ -340,6 +340,8 @@ longer require it.
 
 ## Transactions
 
+Independent Plugin changes require either a stopped deployment or healthy Core API, Source Gateway, PostgreSQL, and MinIO services. A broken Plugin does not block its own disable or update. If a base service is missing or unhealthy, repair the base deployment before changing Plugins.
+
 Every mutation uses the one root-level `transaction/` directory before it changes files, deployment membership, or
 containers. `journal.json` records a transaction ID, operation, Docker engine ID, PID, host boot identity, process-start
 identity, prior running status, and phase. `before/` contains the complete previous root state and byte-for-byte copies of
@@ -496,3 +498,8 @@ under the fresh catalog that admitted that update, while preserving the newer ca
 
 Revoked Installed Plugins appear with the catalog reason and explicit update and disable actions. Atlas never updates,
 disables, or uninstalls them without operator approval.
+
+
+### Recovery completion
+
+A completed file rollback does not complete recovery. The CLI retains the transaction until the restored runtime passes the required checks, and retries those checks after a failed restart. This applies to paired Core restore as well as Plugin changes. Plugin failures in the running CLI and recovery after a process restart use the same manager-owned rollback path.

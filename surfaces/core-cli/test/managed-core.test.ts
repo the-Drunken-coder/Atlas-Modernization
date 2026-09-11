@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { DeploymentTransactionStore } from "../src/deployment-transaction.js";
 import type { ImageReceipt } from "../src/image-receipts.js";
 import {
   ManagedCoreManager,
@@ -251,6 +252,123 @@ describe("ManagedCoreManager", () => {
 
     const restored = await failed.recover("restored", { confirmPairedRestore: true });
     expect((restored as ManagedCoreState).packageVersion).toBe("0.1.8");
+    expect(existsSync(join(configDir, "transaction"))).toBe(false);
+  });
+
+  it("retains a paired rollback journal until the prior Core is healthy", async () => {
+    const configDir = temporaryDirectory();
+    writeFileSync(join(configDir, ".env"), "POSTGRES_PASSWORD=secret\n", { mode: 0o600 });
+    const oldPackage = packageDirectory(IMAGE, "paired-retry-old");
+    const stateRef = { current: undefined as ManagedCoreState | undefined };
+    const calls: Call[] = [];
+    const initial = new ManagedCoreManager(
+      makeOptions(configDir, oldPackage, IMAGE, stateRef, calls, RECEIPT, { desiredRunning: false })
+    );
+    stateRef.current = await initial.initialize();
+    calls.length = 0;
+
+    let failTarget = true;
+    let failPrior = true;
+    const failed = new ManagedCoreManager(
+      makeOptions(
+        configDir,
+        packageDirectory(NEXT_IMAGE, "paired-retry-next"),
+        NEXT_IMAGE,
+        stateRef,
+        calls,
+        NEXT_RECEIPT,
+        {
+          previousRunning: false,
+          desiredRunning: true,
+          runCompose: async (args, pluginIds, options) => {
+            calls.push({
+              args,
+              pluginIds,
+              coreImage: options.coreImage,
+              ...(options.cleanup ? { cleanup: true } : {})
+            });
+            if (failTarget && args[0] === "up" && options.coreImage === NEXT_IMAGE) {
+              failTarget = false;
+              return { status: 1, stdout: "", stderr: "target failed" };
+            }
+            if (failPrior && args[0] === "up" && options.coreImage === IMAGE) {
+              failPrior = false;
+              return { status: 1, stdout: "", stderr: "prior failed" };
+            }
+            return { status: 0, stdout: "", stderr: "" };
+          }
+        }
+      )
+    );
+
+    await expect(failed.update(stateRef.current)).rejects.toThrow("target failed");
+    await expect(failed.recover("restored", { confirmPairedRestore: true })).rejects.toThrow("prior failed");
+    expect(DeploymentTransactionStore.open(configDir).journal.phase).toBe("rollback-complete");
+
+    const recovered = await failed.recover("retry");
+    expect((recovered as ManagedCoreState).packageVersion).toBe("0.1.8");
+    expect(calls.filter((call) => call.args[0] === "up" && call.coreImage === IMAGE)).toHaveLength(2);
+    expect(existsSync(join(configDir, "transaction"))).toBe(false);
+  });
+
+  it("stops a partially restored prior Core when run intent changes to stopped", async () => {
+    const configDir = temporaryDirectory();
+    writeFileSync(join(configDir, ".env"), "POSTGRES_PASSWORD=secret\n", { mode: 0o600 });
+    const stateRef = { current: undefined as ManagedCoreState | undefined };
+    const calls: Call[] = [];
+    const initial = new ManagedCoreManager(
+      makeOptions(configDir, packageDirectory(IMAGE, "paired-stopped-old"), IMAGE, stateRef, calls, RECEIPT, {
+        desiredRunning: false
+      })
+    );
+    stateRef.current = await initial.initialize();
+    calls.length = 0;
+
+    let failTarget = true;
+    let failPrior = true;
+    let runIntent = true;
+    const failed = new ManagedCoreManager(
+      makeOptions(
+        configDir,
+        packageDirectory(NEXT_IMAGE, "paired-stopped-next"),
+        NEXT_IMAGE,
+        stateRef,
+        calls,
+        NEXT_RECEIPT,
+        {
+          previousRunning: false,
+          desiredRunning: true,
+          readRunIntent: () => runIntent,
+          runCompose: async (args, pluginIds, options) => {
+            calls.push({
+              args,
+              pluginIds,
+              coreImage: options.coreImage,
+              ...(options.cleanup ? { cleanup: true } : {})
+            });
+            if (failTarget && args[0] === "up" && options.coreImage === NEXT_IMAGE) {
+              failTarget = false;
+              return { status: 1, stdout: "", stderr: "target failed" };
+            }
+            if (failPrior && args[0] === "up" && options.coreImage === IMAGE) {
+              failPrior = false;
+              return { status: 1, stdout: "", stderr: "prior failed" };
+            }
+            return { status: 0, stdout: "", stderr: "" };
+          }
+        }
+      )
+    );
+
+    await expect(failed.update(stateRef.current)).rejects.toThrow("target failed");
+    await expect(failed.recover("restored", { confirmPairedRestore: true })).rejects.toThrow("prior failed");
+    expect(DeploymentTransactionStore.open(configDir).journal.phase).toBe("rollback-complete");
+    runIntent = false;
+
+    const restored = await failed.recover("retry");
+    expect((restored as ManagedCoreState).packageVersion).toBe("0.1.8");
+    expect(calls.filter((call) => call.args[0] === "up" && call.coreImage === IMAGE)).toHaveLength(1);
+    expect(calls.some((call) => call.args[0] === "down" && call.coreImage === IMAGE)).toBe(true);
     expect(existsSync(join(configDir, "transaction"))).toBe(false);
   });
 

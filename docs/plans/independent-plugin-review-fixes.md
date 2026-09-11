@@ -49,3 +49,44 @@ Coverage includes persistence/trust, runtime contracts, transaction/crash recove
 - `git diff --check`: passed.
 - Fresh runtime and recovery/publication reviews completed; confirmed follow-up findings were fixed and rechecked.
 - Validated repair targets `codex/implement-independent-plugins` on baseline `719b7ac59c144dcee824cc55f24264ebdf49b772`.
+
+## ChatGPT Extra High review
+
+Review: https://chatgpt.com/c/6aa33b97-93c4-83ea-81b5-4bd8e00a97d2
+
+Reviewed PR #339 at `108c19c1c8dbff688fe0a4752e66f8008bbe9a17`; the live head matched before verification. The completed review returned nine claims. This repair remains local and does not push, comment on, resolve, or merge the PR.
+
+| Claim | Disposition | Evidence and correction |
+| --- | --- | --- |
+| Catalog jumps can rewrite observed releases or undo revocations | fixed | Every newer checkpoint must preserve previously observed release identities and revocations; skipped generations remain supported. |
+| Catalog renewal cannot rotate to the next trusted key epoch | fixed | Next-epoch renewal preserves the ledger and prior hash, signs with the new key, and uses its configured sequence floor. |
+| Existing release tags can point to a different source commit | fixed | Verify the remote tag's peeled commit before version-image promotion and again before release creation or reuse; missing tags are explicitly created at the source SHA. |
+| Plugin mutations proceed with degraded base services | fixed | Adapter checks required base health before lifecycle mutation. Stopped deployments and unhealthy target Plugins remain supported. |
+| Invalid stored credentials wedge pending Core recovery | fixed | Definitive HTTP 401/403 rejection and malformed local keys trigger journaled replacement in the existing transaction; transport/server failures remain retryable. |
+| Restored recovery must prove the live MinIO volume was restored | rejected | MANAGEMENT.md explicitly requires operator-confirmed paired restore and says the backup identity does not independently prove it. Adding live attestation changes the approved contract; a copied receipt alone would not prove all live objects match. |
+| Unattended start accepts an inactive supervisor | fixed | Both macOS and Linux tests reproduce the old acceptance. Start now requires a running supervisor and available user manager unless manual mode is selected. |
+| Connector retry idempotency header need not be allowed | fixed | Publisher and host now match the Go gateway's normalized allowed-request-header requirement. Tests reject omitted headers and accept case-normalized inclusion. |
+| Publisher accepts more operations than host runtime allows | fixed | Candidate acceptance enforces the host's 128-operation maximum, with boundary tests. |
+
+Validation on the repaired worktree:
+
+- `node --test .github/scripts/atlas-core-release.test.mjs scripts/plugin-release*.test.mjs`: 42 tests passed after the final publisher fix.
+- `git diff --check`: passed.
+- Node 24 `npm run check --workspace atlas-core`: passed, including 397 tests across 17 files, formatting, lint, typecheck, build, and packed-install check.
+- Release workflow Actionlint passed with only the known unsupported `concurrency.queue` schema diagnostic excluded.
+- Fresh independent runtime/credential review passed; the publication recheck caught the missing publisher half of the header check, which was then added with focused rejection and normalization tests. The final independent publication recheck passed with no remaining finding.
+- The PR head still matched `108c19c1c8dbff688fe0a4752e66f8008bbe9a17` after implementation. Existing GitHub CI failures are not cleared by these local checks.
+- Local changes are uncommitted and unpushed.
+
+
+## Thermos follow-up
+
+The combined correctness and maintainability review identified three scoped changes:
+
+- Core rollback must retain its journal until prior-runtime startup and verification succeed. Paired-restore recovery and pre-start rollback now resume through one completion path, including retries after failure.
+- Catalog append and release generation must enforce the same release contract. Both now use `scripts/plugin-release-validation.mjs`; malformed connector input fails before changing the signed ledger.
+- Plugin exception handling and crash recovery must have one owner. `IndependentPluginManager.recover` now restores files, reconstructs affected services, verifies the restored runtime, and cleans up only after success. `application.ts` delegates Plugin recovery and routes unfinished Core rollback to the Core manager. The duplicated per-operation restore callbacks and runtime-change flag are removed.
+
+The recovery changes preserve cancellation-resistant compensation and stopped run intent. Broader application decomposition is limited here to removing duplicated recovery ownership; legacy migration behavior remains documented and supported.
+
+The PR update also corrects the observed workflow quoting diagnostics, the Go test's redundant embedded-field selector, and the CI registry digest lookup that incorrectly used HTTP against its TLS-only registry. Final validation follows the rebase onto current `main`.

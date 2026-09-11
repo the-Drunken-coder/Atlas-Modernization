@@ -4,6 +4,7 @@ import { createPrivateKey, createPublicKey, createHash, generateKeyPairSync, sig
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { validateReleaseDocument } from "./plugin-release-validation.mjs";
 
 const repositoryRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const trustPath = process.env.ATLAS_PLUGIN_CATALOG_TRUST_PATH
@@ -115,7 +116,7 @@ function preflight() {
 function appendCatalog(releasePath, ledgerDirectory, documentUrl) {
   const signing = preflight();
   const release = readJSON(resolve(repositoryRoot, releasePath));
-  validateRelease(release);
+  validateReleaseDocument(release);
   const keyId = signing.keyId;
   const keyEpoch = signing.keyEpoch;
   const ledgerPath = join(ledgerDirectory, "catalog.json");
@@ -206,16 +207,22 @@ function renewCatalog(ledgerDirectory) {
   const previous = readJSON(ledgerPath);
   validateCatalog(previous);
   verifyLedgerSignature(ledgerDirectory, previous, previousBytes);
-  if (signing.keyEpoch !== previous.key_epoch || signing.keyId !== previous.key_id) {
-    throw new Error(`Catalog renewal key ${signing.keyId} epoch ${signing.keyEpoch} does not match ledger ${previous.key_id} epoch ${previous.key_epoch}`);
+  if (signing.keyEpoch < previous.key_epoch || signing.keyEpoch > previous.key_epoch + 1) {
+    throw new Error(`Catalog renewal key epoch ${signing.keyEpoch} must be the current or immediately next epoch after ${previous.key_epoch}`);
   }
+  if (signing.keyEpoch === previous.key_epoch && signing.keyId !== previous.key_id) {
+    throw new Error(`Catalog renewal key ${signing.keyId} does not match the ledger's current key ${previous.key_id}`);
+  }
+  const rotated = signing.keyEpoch !== previous.key_epoch;
   const { issuedAt, expiresAt } = nextCatalogTimes(previous);
   const catalog = {
     ...previous,
-    sequence: previous.sequence + 1,
+    sequence: rotated ? signing.minimumSequence : previous.sequence + 1,
     previous_catalog_sha256: sha256(previousBytes),
     issued_at: issuedAt,
-    expires_at: expiresAt
+    expires_at: expiresAt,
+    key_epoch: signing.keyEpoch,
+    key_id: signing.keyId
   };
   writeSignedCatalog(catalog, ledgerDirectory, signing);
   process.stdout.write(`Renewed catalog sequence ${catalog.sequence}.\n`);
@@ -276,25 +283,6 @@ function writeSignedCatalog(catalog, ledgerDirectory, signing) {
   mkdirSync(ledgerDirectory, { recursive: true });
   writeFileSync(join(ledgerDirectory, "catalog.json"), bytes);
   writeFileSync(join(ledgerDirectory, "catalog.json.sig"), signatureBytes);
-}
-
-function validateRelease(value) {
-  const keys = ["schema", "plugin_id", "version", "display_name", "lifecycle", "image", "core_to_plugin_protocol_major", "plugin_to_source_gateway_protocol_major", "atlas_protocol_revision", "interactions", "source_connector"];
-  assertExactKeys(value, keys, "Plugin release");
-  if (value.schema !== 1 || typeof value.plugin_id !== "string" || !/^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/u.test(value.plugin_id) || value.plugin_id.length > 50 || !semverPattern.test(value.version) || typeof value.display_name !== "string" || value.display_name.trim() !== value.display_name || !value.display_name || value.display_name.length > 100 || value.lifecycle !== "query_only") {
-    throw new Error("Plugin release has invalid identity or lifecycle");
-  }
-  const expectedImage = `ghcr.io/the-drunken-coder/atlas-${value.plugin_id.replaceAll("_", "-")}@`;
-  if (!value.image.startsWith(expectedImage) || !/^ghcr\.io\/the-drunken-coder\/atlas-[a-z0-9]+(?:-[a-z0-9]+)*@sha256:[0-9a-f]{64}$/u.test(value.image)) throw new Error("Plugin release image is not the expected first-party digest reference");
-  if (!positiveSafeInteger(value.core_to_plugin_protocol_major) || !positiveSafeInteger(value.plugin_to_source_gateway_protocol_major)) throw new Error("Plugin release protocol majors must be positive safe integers");
-  if (value.atlas_protocol_revision !== null && !hashPattern.test(value.atlas_protocol_revision)) throw new Error("Plugin release has an invalid Atlas Protocol revision");
-  if (!Array.isArray(value.interactions) || new Set(value.interactions).size !== value.interactions.length || value.interactions.some((kind) => kind !== "map_area") || [...value.interactions].sort().join("\u0000") !== value.interactions.join("\u0000")) throw new Error("Plugin release has invalid interactions");
-  if (
-    value.source_connector !== null &&
-    (!isRecord(value.source_connector) || value.source_connector.id !== value.plugin_id || typeof value.source_connector.origin !== "string")
-  ) {
-    throw new Error("Plugin release connector has the wrong identity or origin type");
-  }
 }
 
 function validateCatalog(catalog) {
@@ -481,7 +469,7 @@ async function verifyPublishedCatalog(ledgerDirectory, options) {
       const releasePath = resolve(repositoryRoot, options.releaseDocument);
       const releaseBytes = readFileSync(releasePath);
       const releaseDocument = parseJSONBytes(releaseBytes, "release document");
-      validateRelease(releaseDocument);
+      validateReleaseDocument(releaseDocument);
       if (releaseDocument.plugin_id !== options.pluginId || releaseDocument.version !== options.version) throw new Error("Release document identity does not match the requested catalog entry");
       if (sha256(releaseBytes) !== release.document_sha256 || releaseDocument.display_name !== release.display_name || defaultDocumentUrl(options.pluginId, options.version) !== release.document_url) {
         throw new Error("Stable catalog release metadata does not match the release document");

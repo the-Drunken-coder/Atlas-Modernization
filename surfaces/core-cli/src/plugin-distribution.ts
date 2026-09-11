@@ -301,6 +301,7 @@ export function verifyCatalog(
           throw new Error("Plugin catalog does not chain from the previous catalog");
         }
       }
+      assertCatalogTransition(catalog, previous);
     }
   }
 
@@ -318,6 +319,40 @@ export function verifyCatalog(
     signatureBytesBase64: Buffer.from(signatureBytes).toString("base64"),
     catalog
   };
+}
+
+function assertCatalogTransition(next: PluginCatalog, previous: SignedCatalogReceipt): void {
+  const nextPlugins = new Map(next.plugins.map((plugin) => [plugin.pluginId, plugin]));
+  for (const previousPlugin of previous.catalog.plugins) {
+    const nextPlugin = nextPlugins.get(previousPlugin.pluginId);
+    if (!nextPlugin) throw new Error(`Plugin catalog removed Plugin ${previousPlugin.pluginId}`);
+    const nextReleases = new Map(nextPlugin.releases.map((release) => [release.version, release]));
+    for (const previousRelease of previousPlugin.releases) {
+      const nextRelease = nextReleases.get(previousRelease.version);
+      if (!nextRelease) {
+        throw new Error(`Plugin catalog removed ${previousPlugin.pluginId} ${previousRelease.version}`);
+      }
+      if (
+        nextRelease.displayName !== previousRelease.displayName ||
+        nextRelease.documentUrl !== previousRelease.documentUrl ||
+        nextRelease.documentSha256 !== previousRelease.documentSha256
+      ) {
+        throw new Error(
+          `Plugin catalog changed immutable metadata for ${previousPlugin.pluginId} ${previousRelease.version}`
+        );
+      }
+      if (previousRelease.revoked) {
+        if (!nextRelease.revoked) {
+          throw new Error(`Plugin catalog unrevoked ${previousPlugin.pluginId} ${previousRelease.version}`);
+        }
+        if (nextRelease.revocationReason !== previousRelease.revocationReason) {
+          throw new Error(
+            `Plugin catalog changed the revocation reason for ${previousPlugin.pluginId} ${previousRelease.version}`
+          );
+        }
+      }
+    }
+  }
 }
 
 export function assertPluginCompatible(release: PluginRelease, contracts: PluginContracts): void {
@@ -730,7 +765,12 @@ function routeValue(value: unknown, index: number, seenRoutes: Set<string>): Plu
     .trim()
     .toLowerCase();
   if (idempotencyHeader && !headerName(idempotencyHeader)) throw new Error("route retry idempotency_header is invalid");
-  if (maxRetries > 0 && !readOnly && !idempotencyHeader) throw new Error("mutating retries require idempotency_header");
+  if (maxRetries > 0 && !readOnly) {
+    if (!idempotencyHeader) throw new Error("mutating retries require idempotency_header");
+    if (!requestHeaders.includes(idempotencyHeader)) {
+      throw new Error("route retry idempotency_header must appear in allowed_request_headers");
+    }
+  }
   return {
     method,
     path_prefix: pathPrefix,

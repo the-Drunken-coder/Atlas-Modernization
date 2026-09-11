@@ -65,8 +65,8 @@ jobs:
         env:
           PLUGIN_ID: ${{ inputs.plugin_id }}
         run: |
-          package_name="$(node -p 'JSON.parse(require("fs").readFileSync(`plugins/${process.env.PLUGIN_ID}/atlas-plugin.json`)).package')"
-          image_repository="$(node -p 'JSON.parse(require("fs").readFileSync(`plugins/${process.env.PLUGIN_ID}/atlas-plugin.json`)).release.image_repository')"
+          package_name="$(node -p 'JSON.parse(require("fs").readFileSync("plugins/" + process.env.PLUGIN_ID + "/atlas-plugin.json")).package')"
+          image_repository="$(node -p 'JSON.parse(require("fs").readFileSync("plugins/" + process.env.PLUGIN_ID + "/atlas-plugin.json")).release.image_repository')"
           echo "package_name=$package_name" >> "$GITHUB_OUTPUT"
           echo "image_repository=$image_repository" >> "$GITHUB_OUTPUT"
 
@@ -103,10 +103,10 @@ jobs:
           PLUGIN_ID: ${{ inputs.plugin_id }}
           PACKAGE_NAME: ${{ needs.validate.outputs.package_name }}
         run: |
-          if node -e 'process.exit(JSON.parse(require("fs").readFileSync(`plugins/${process.env.PLUGIN_ID}/package.json`)).scripts?.lint ? 0 : 1)'; then
+          if node -e 'process.exit(JSON.parse(require("fs").readFileSync("plugins/" + process.env.PLUGIN_ID + "/package.json")).scripts?.lint ? 0 : 1)'; then
             npm run lint --workspace "$PACKAGE_NAME"
           fi
-          if node -e 'process.exit(JSON.parse(require("fs").readFileSync(`plugins/${process.env.PLUGIN_ID}/package.json`)).scripts?.["format:check"] ? 0 : 1)'; then
+          if node -e 'process.exit(JSON.parse(require("fs").readFileSync("plugins/" + process.env.PLUGIN_ID + "/package.json")).scripts?.["format:check"] ? 0 : 1)'; then
             npm run format:check --workspace "$PACKAGE_NAME"
           fi
           npm test --workspace "$PACKAGE_NAME"
@@ -182,10 +182,10 @@ jobs:
         run: |
           mkdir -p release-artifacts
           node scripts/plugin-release.mjs release-document "$PLUGIN_ID" "$VERSION" "$IMAGE_REFERENCE" \
-            release-artifacts/${PLUGIN_ID}-${VERSION}.atlas-plugin
+            "release-artifacts/${PLUGIN_ID}-${VERSION}.atlas-plugin"
           node scripts/plugin-release.mjs verify-document \
-            release-artifacts/${PLUGIN_ID}-${VERSION}.atlas-plugin
-          sha256sum release-artifacts/${PLUGIN_ID}-${VERSION}.atlas-plugin > release-artifacts/SHA256SUMS
+            "release-artifacts/${PLUGIN_ID}-${VERSION}.atlas-plugin"
+          sha256sum "release-artifacts/${PLUGIN_ID}-${VERSION}.atlas-plugin" > release-artifacts/SHA256SUMS
 
       - name: Upload reviewed Plugin release
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -253,6 +253,27 @@ jobs:
           ATLAS_PLUGIN_CATALOG_PRIVATE_KEY: ${{ secrets.ATLAS_PLUGIN_CATALOG_PRIVATE_KEY }}
         run: node scripts/plugin-release-catalog.mjs preflight
 
+      - name: Verify release tag provenance
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PLUGIN_ID: ${{ inputs.plugin_id }}
+          SOURCE_SHA: ${{ needs.validate.outputs.source_sha }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          tag="atlas-plugin-${PLUGIN_ID}-v${VERSION}"
+          tag_check_status=0
+          node scripts/plugin-release.mjs verify-release-tag "$GITHUB_REPOSITORY" "$tag" "$SOURCE_SHA" || tag_check_status=$?
+          if [ "$tag_check_status" -ne 0 ] && [ "$tag_check_status" -ne 2 ]; then
+            exit "$tag_check_status"
+          fi
+          if [ "$tag_check_status" -eq 2 ]; then
+            gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
+              -f "ref=refs/tags/$tag" \
+              -f "sha=$SOURCE_SHA"
+            node scripts/plugin-release.mjs verify-release-tag "$GITHUB_REPOSITORY" "$tag" "$SOURCE_SHA"
+          fi
+
       - name: Promote immutable image to the version tag
         env:
           IMAGE_REFERENCE: ${{ needs.build.outputs.image_reference }}
@@ -277,8 +298,10 @@ jobs:
           SOURCE_SHA: ${{ needs.validate.outputs.source_sha }}
           VERSION: ${{ inputs.version }}
         run: |
+          set -euo pipefail
           tag="atlas-plugin-${PLUGIN_ID}-v${VERSION}"
           title="Atlas Plugin ${PLUGIN_ID} ${VERSION}"
+          node scripts/plugin-release.mjs verify-release-tag "$GITHUB_REPOSITORY" "$tag" "$SOURCE_SHA"
           if gh release view "$tag" >/dev/null 2>&1; then
             test "$(gh release view "$tag" --json name --jq .name)" = "$title"
             test "$(gh release view "$tag" --json targetCommitish --jq .targetCommitish)" = "$SOURCE_SHA"
@@ -292,7 +315,7 @@ jobs:
               gh release upload "$tag" "release-artifacts/$asset#$asset"
             fi
           else
-            gh release create "$tag" --target "${{ needs.validate.outputs.source_sha }}" --title "$title" --notes "Independent Atlas Plugin release ${PLUGIN_ID} ${VERSION}." \
+            gh release create "$tag" --verify-tag --target "$SOURCE_SHA" --title "$title" --notes "Independent Atlas Plugin release ${PLUGIN_ID} ${VERSION}." \
               "release-artifacts/${PLUGIN_ID}-${VERSION}.atlas-plugin#${PLUGIN_ID}-${VERSION}.atlas-plugin"
           fi
 

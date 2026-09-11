@@ -70,6 +70,35 @@ function releaseDocument(version = "1.0.0") {
   };
 }
 
+function sourceConnector() {
+  return {
+    id: "fixture",
+    origin: "https://example.test",
+    routes: [{
+      method: "GET",
+      path_prefix: "/records",
+      allowed_query_names: [],
+      allowed_request_headers: [],
+      allowed_response_headers: ["content-type"],
+      read_only: true,
+      cache: { ttl_ms: 0 },
+      retry: { max_retries: 0, statuses: [], failures: [], idempotency_header: "" }
+    }],
+    secret_headers: {},
+    egress: { allow_private: false, allow_loopback: false, allow_link_local: false },
+    limits: {
+      timeout_ms: 15_000,
+      max_request_bytes: 65_536,
+      max_response_bytes: 16 << 20,
+      max_concurrency: 1,
+      max_header_count: 64,
+      max_header_bytes: 65_536
+    },
+    rate: { requests_per_second: 1 },
+    circuit_breaker: { failures: 3, open_ms: 30_000 }
+  };
+}
+
 test("publishes and renews a signed append-only catalog with exact release URLs", () => {
   const directory = mkdtempSync(join(tmpdir(), "atlas-plugin-catalog-"));
   try {
@@ -171,6 +200,28 @@ test("publishes and renews a signed append-only catalog with exact release URLs"
     assert.notEqual(wrongURL.status, 0);
     assert.match(wrongURL.stderr, /document URL must exactly equal/);
 
+    const catalogBeforeInvalidRelease = readFileSync(catalogPath);
+    const invalidRoutePath = join(directory, "invalid-route.atlas-plugin");
+    const invalidRouteDocument = { ...releaseDocument("1.0.1"), source_connector: sourceConnector() };
+    invalidRouteDocument.source_connector.routes[0].path_prefix = "//records";
+    writeFileSync(invalidRoutePath, `${JSON.stringify(invalidRouteDocument, null, 2)}\n`);
+    const invalidRoute = run(["append", invalidRoutePath, ledgerPath], environment);
+    assert.notEqual(invalidRoute.status, 0);
+    assert.match(invalidRoute.stderr, /path_prefix is invalid/);
+    assert.deepEqual(readFileSync(catalogPath), catalogBeforeInvalidRelease);
+
+    const invalidPolicyPath = join(directory, "invalid-policy.atlas-plugin");
+    const invalidPolicyDocument = { ...releaseDocument("1.0.1"), source_connector: sourceConnector() };
+    const invalidPolicyRoute = invalidPolicyDocument.source_connector.routes[0];
+    invalidPolicyRoute.read_only = false;
+    invalidPolicyRoute.allowed_request_headers = [];
+    invalidPolicyRoute.retry = { max_retries: 1, statuses: [503], failures: [], idempotency_header: "idempotency-key" };
+    writeFileSync(invalidPolicyPath, `${JSON.stringify(invalidPolicyDocument, null, 2)}\n`);
+    const invalidPolicy = run(["append", invalidPolicyPath, ledgerPath], environment);
+    assert.notEqual(invalidPolicy.status, 0);
+    assert.match(invalidPolicy.stderr, /must appear in allowed_request_headers/);
+    assert.deepEqual(readFileSync(catalogPath), catalogBeforeInvalidRelease);
+
     const renewed = run(["renew", ledgerPath], environment);
     assert.equal(renewed.status, 0, renewed.stderr);
     const renewedCatalog = JSON.parse(readFileSync(catalogPath));
@@ -231,6 +282,42 @@ test("publishes and renews a signed append-only catalog with exact release URLs"
     const conflictingRevoke = run(["revoke", "fixture", "1.0.0", "different reason", ledgerPath], environment);
     assert.notEqual(conflictingRevoke.status, 0);
     assert.match(conflictingRevoke.stderr, /different reason/);
+
+    const { privateKey: rotatedPrivateKey, publicKey: rotatedPublicKey } = generateKeyPairSync("ed25519", {
+      privateKeyEncoding: { format: "pem", type: "pkcs8" },
+      publicKeyEncoding: { format: "pem", type: "spki" }
+    });
+    const trust = JSON.parse(readFileSync(trustPath, "utf8"));
+    trust.keys.push({
+      key_id: "rotated-key",
+      key_epoch: 2,
+      public_key_pem: rotatedPublicKey,
+      minimum_sequence: 7
+    });
+    writeFileSync(trustPath, JSON.stringify(trust));
+    const rotated = run(["renew", ledgerPath], {
+      ...environment,
+      ATLAS_PLUGIN_CATALOG_KEY_ID: "rotated-key",
+      ATLAS_PLUGIN_CATALOG_KEY_EPOCH: "2",
+      ATLAS_PLUGIN_CATALOG_PRIVATE_KEY: rotatedPrivateKey
+    });
+    assert.equal(rotated.status, 0, rotated.stderr);
+    const rotatedCatalog = JSON.parse(readFileSync(catalogPath));
+    assert.equal(rotatedCatalog.sequence, 7);
+    assert.equal(rotatedCatalog.key_epoch, 2);
+    assert.equal(rotatedCatalog.key_id, "rotated-key");
+    assert.equal(rotatedCatalog.previous_catalog_sha256, `sha256:${createHash("sha256").update(revokedBytes).digest("hex")}`);
+    const rotatedSignature = JSON.parse(readFileSync(signaturePath));
+    assert.equal(
+      verify(
+        null,
+        readFileSync(catalogPath),
+        createPublicKey(rotatedPublicKey),
+        Buffer.from(rotatedSignature.signature, "base64")
+      ),
+      true
+    );
+    assert.deepEqual(rotatedCatalog.plugins, revokedCatalog.plugins);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

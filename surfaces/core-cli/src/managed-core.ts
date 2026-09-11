@@ -349,6 +349,9 @@ export class ManagedCoreManager {
       return state;
     }
     if (journal.phase === "rollback-complete") {
+      if (journal.operation === "core-update" || journal.operation === "init") {
+        return await this.#finishRollback(transaction, true);
+      }
       transaction.cleanup();
       const state = this.#options.readState();
       if (!state) throw new Error("Completed Core rollback has no state.json.");
@@ -547,12 +550,7 @@ export class ManagedCoreManager {
       );
     }
     transaction.rollback();
-    transaction.cleanup();
-    if (this.#desiredRunning(journal) && priorState) {
-      const image = priorState.baseDeployment?.coreImage ?? this.#options.previousCoreImage;
-      if (image && priorState.baseDeployment)
-        await this.#startVerifiedComposition(priorState, image, "restore Atlas Core after pre-start failure");
-    }
+    await this.#finishRollback(transaction);
   }
 
   async #recoverRestored(transaction: DeploymentTransactionStore, options: RecoveryOptions): Promise<ManagedCoreState> {
@@ -590,10 +588,28 @@ export class ManagedCoreManager {
     const priorState = this.#readBeforeState(transaction);
     if (!priorState) throw new Error("Pending Core recovery has no prior state to restore.");
     transaction.restoreAfterPairedBackup();
+    return await this.#finishRollback(transaction);
+  }
+
+  /**
+   * Complete a file rollback only after the restored Core has passed its
+   * runtime checks. Keeping the journal through those checks lets recovery
+   * retry after a failed prior-Core startup instead of treating the file
+   * rollback as the whole operation.
+   */
+  async #finishRollback(transaction: DeploymentTransactionStore, retrying = false): Promise<ManagedCoreState> {
+    const priorState = this.#readBeforeState(transaction);
+    if (!priorState) {
+      transaction.cleanup();
+      const state = this.#options.readState();
+      if (!state) throw new Error("Completed Core rollback has no state.json.");
+      return state;
+    }
     const oldImage = priorState.baseDeployment?.coreImage ?? this.#options.previousCoreImage;
     if (!oldImage) throw new Error("Pending Core recovery has no retained prior Core image.");
+    if (retrying) await this.#stopAfterFailure(priorState.enabledPlugins, oldImage);
     const priorBase = await this.#verifyCommittedState(priorState);
-    if (this.#desiredRunning(journal)) {
+    if (this.#desiredRunning(transaction.read())) {
       await this.#startComposition(priorState, oldImage, "restore the prior Atlas Core", true);
       await this.#verifyRunningCore(receiptFromBase(priorBase), priorBase.images);
       await this.#options.verifyPlugins?.(priorState, { requireHealth: true });

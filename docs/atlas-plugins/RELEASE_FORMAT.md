@@ -180,9 +180,11 @@ The manager atomically stores the accepted catalog bytes, signature bytes, seque
 issue time, and expiry as described in `MANAGEMENT.md`. It compares `(key_epoch, sequence)` lexicographically. It rejects
 an older epoch, a lower sequence within the accepted epoch, the same pair with different bytes, or a pair below the
 minimum checkpoint embedded in its CLI. A higher trusted epoch supersedes every sequence from an older epoch. It may use
-a cached catalog until `expires_at`. After expiry, installed Plugins continue to run and the operator may inspect,
-disable, or uninstall them. Install, enable, update, and manual rollback require a fresh catalog. The menu checks
-when opened and exposes a manual refresh; no background updater runs.
+a cached catalog until `expires_at`. When accepting a newer pair, it also preserves every previously observed Plugin,
+release identity, display name, release-document URL and hash, and true revocation; a skipped sequence does not permit
+deletion, metadata mutation, or unrevocation. After expiry, installed Plugins continue to run and the operator may
+inspect, disable, or uninstall them. Install, enable, update, and manual rollback require a fresh catalog. The menu
+checks when opened and exposes a manual refresh; no background updater runs.
 
 ## Revocation and key rotation
 
@@ -255,7 +257,9 @@ release artifacts.
 
 A scheduled catalog workflow runs weekly even when no Plugin release or revocation occurred. It enters the same
 non-cancelling concurrency group, increments the sequence, renews the issue and expiry timestamps, signs with the current
-key, compare-and-swap updates the ledger, and publishes one complete Pages artifact. The Ed25519 private key lives in a
+key, compare-and-swap updates the ledger, and publishes one complete Pages artifact. A key rotation with no release or
+revocation uses that same renewal path after the CLI trusts the next epoch; it preserves the catalog contents, starts at
+the new epoch's configured sequence floor, and rejects skipped epochs. The Ed25519 private key lives in a
 dedicated `plugin-catalog` GitHub environment restricted to the default branch and narrowly scoped catalog workflow. It
 does not reuse the manually approved Core `release` environment, because a scheduled renewal must not wait for a human
 reviewer. Trusted public keys are source-controlled in the CLI. The Pages deployment is replaced as one artifact so the

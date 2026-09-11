@@ -14,6 +14,14 @@ const KEY_ATTEMPT_PREFIX = "atlas-plugin-key";
 
 export type ManagedKeyAction = "create" | "list" | "revoke";
 
+/** Signals that Core definitively rejected the presented managed key. */
+export class ManagedPluginKeyRejectedError extends Error {
+  constructor() {
+    super("The managed Plugin key was rejected by Core.");
+    this.name = "ManagedPluginKeyRejectedError";
+  }
+}
+
 /** The host authority used to operate the already-running Core container. */
 export type ManagedPluginCredentialHost = {
   isRunning(): Promise<boolean>;
@@ -216,10 +224,19 @@ export class ManagedPluginCredentials {
     const recreateSDKPlugins = !standaloneRotation || transaction.previousRunning;
     let intent = this.#readIntent(transactions);
     if (!intent) {
-      const previous = readCurrentAPIKey(this.#configDir);
+      let previous: ParsedAPIKey | undefined;
+      try {
+        previous = readCurrentAPIKey(this.#configDir);
+      } catch (error) {
+        if (!(error instanceof InvalidManagedPluginKeyError)) throw error;
+      }
       if (previous && !forceRotation) {
-        await this.#authenticate(previous.apiKey);
-        return;
+        try {
+          await this.#authenticate(previous.apiKey);
+          return;
+        } catch (error) {
+          if (!(error instanceof ManagedPluginKeyRejectedError)) throw error;
+        }
       }
       intent = this.#newIntent(transactions, previous?.id);
       this.#persistIntent(transactions, intent);
@@ -283,10 +300,19 @@ export class ManagedPluginCredentials {
     intent: CredentialIntent
   ): Promise<{ intent: CredentialIntent; apiKey: string; id: string }> {
     if (intent.candidateKeyId) {
-      const current = readCurrentAPIKey(this.#configDir);
+      let current: ParsedAPIKey | undefined;
+      try {
+        current = readCurrentAPIKey(this.#configDir);
+      } catch (error) {
+        if (!(error instanceof InvalidManagedPluginKeyError)) throw error;
+      }
       if (current?.id === intent.candidateKeyId && intent.candidateAuthenticated) {
-        await this.#authenticate(current.apiKey);
-        return { intent, apiKey: current.apiKey, id: current.id };
+        try {
+          await this.#authenticate(current.apiKey);
+          return { intent, apiKey: current.apiKey, id: current.id };
+        } catch (error) {
+          if (!(error instanceof ManagedPluginKeyRejectedError)) throw error;
+        }
       }
       if (current?.id === intent.candidateKeyId && !intent.candidateAuthenticated) {
         return { intent, apiKey: current.apiKey, id: current.id };
@@ -348,6 +374,7 @@ export class ManagedPluginCredentials {
     try {
       await this.#host.authenticateKey(apiKey);
     } catch (error) {
+      if (error instanceof ManagedPluginKeyRejectedError) throw error;
       throw safeCredentialError("The managed Plugin key was rejected by Core", error);
     }
   }
@@ -513,14 +540,19 @@ function unquoteEnvValue(value: string): string {
 function parseAPIKey(value: string): ParsedAPIKey {
   const separator = value.indexOf(".");
   if (separator <= 0 || separator === value.length - 1 || value.indexOf(".", separator + 1) >= 0) {
-    throw new Error("Core returned an invalid managed-key value.");
+    throw new InvalidManagedPluginKeyError();
   }
   const id = value.slice(0, separator);
   const secret = value.slice(separator + 1);
-  if (!isManagedKeyID(id) || /[\s\0]/u.test(secret)) {
-    throw new Error("Core returned an invalid managed-key value.");
-  }
+  if (!isManagedKeyID(id) || /[\s\0]/u.test(secret)) throw new InvalidManagedPluginKeyError();
   return { id, apiKey: `${id}.${secret}` };
+}
+
+class InvalidManagedPluginKeyError extends Error {
+  constructor() {
+    super("Core returned an invalid managed-key value.");
+    this.name = "InvalidManagedPluginKeyError";
+  }
 }
 
 function parseManagedKeyObject(value: unknown): Record<string, unknown> {

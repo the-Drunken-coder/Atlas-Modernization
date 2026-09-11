@@ -66,7 +66,7 @@ func fixtureManifest(timeout time.Duration) privateManifest {
 }
 
 func cloneManifest(manifest privateManifest) privateManifest {
-	manifest.PluginManifest.Operations = append([]protocol.PluginOperationDescriptor(nil), manifest.PluginManifest.Operations...)
+	manifest.Operations = append([]protocol.PluginOperationDescriptor(nil), manifest.Operations...)
 	return manifest
 }
 

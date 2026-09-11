@@ -2425,6 +2425,59 @@ describe("atlas-core CLI", () => {
     ]);
   });
 
+  it.each(["darwin", "linux"] as const)("rejects an installed but inactive %s supervisor", async (platform) => {
+    const test = runtime();
+    await markManagedInitialized(test, false);
+    test.context.platform = platform;
+    const servicePath =
+      platform === "darwin"
+        ? join(test.home, "Library", "LaunchAgents", "com.the-drunken-coder.atlas-core.supervisor.plist")
+        : join(test.home, ".config", "systemd", "user", "atlas-core-supervisor.service");
+    mkdirSync(resolve(servicePath, ".."), { recursive: true });
+    writeFileSync(servicePath, "installed fixture");
+    const run = test.runner.run.bind(test.runner);
+    vi.spyOn(test.runner, "run").mockImplementation(async (command, args, options) => {
+      if (command === "launchctl") return { status: 0, stdout: "state = exited", stderr: "" };
+      if (command === "systemctl")
+        return args.includes("is-active")
+          ? { status: 3, stdout: "inactive", stderr: "" }
+          : { status: 0, stdout: "enabled", stderr: "" };
+      return await run(command, args, options);
+    });
+    expect(await runCLI(["start"], test.context)).toBe(1);
+    expect(test.stderr.join("")).toContain("supervision");
+    expect(test.runner.calls.some((call) => composeCommand(call)[0] === "up")).toBe(false);
+  });
+
+  it("rejects Plugin changes before mutation when base services are degraded", async () => {
+    const test = runtime();
+    await installIndependentUpdateFixtures(test);
+    const config = join(test.home, ".atlas", "core");
+    test.runner.serviceStates = [{ Service: "api", State: "running", Health: "healthy" }];
+    test.runner.calls.length = 0;
+    expect(await runCLI(["plugins", "enable", "alpha_fixture"], test.context)).toBe(1);
+    expect(test.stderr.join("")).toContain("base services");
+    expect(existsSync(join(config, "transaction"))).toBe(false);
+    expect(test.runner.calls.some((call) => composeCommand(call)[0] === "up")).toBe(false);
+    expect(JSON.parse(readFileSync(join(config, "state.json"), "utf8")).enabledPlugins).not.toContain("alpha_fixture");
+  });
+
+  it("allows disabling a broken Plugin when the base services are healthy", async () => {
+    const test = runtime();
+    await installIndependentUpdateFixtures(test);
+    test.runner.serviceStates = [];
+    expect(await runCLI(["plugins", "enable", "alpha_fixture"], test.context)).toBe(0);
+    test.runner.serviceStates = ["api", "source-gateway", "postgres", "minio"].map((Service) => ({
+      Service,
+      State: "running",
+      Health: "healthy"
+    }));
+    test.runner.serviceStates.push({ Service: "atlas-plugin-alpha-fixture", State: "running", Health: "unhealthy" });
+    expect(await runCLI(["plugins", "disable", "alpha_fixture"], test.context)).toBe(0);
+    const statePath = join(test.home, ".atlas", "core", "state.json");
+    expect(JSON.parse(readFileSync(statePath, "utf8")).enabledPlugins).not.toContain("alpha_fixture");
+  });
+
   it("starts the package-matched Core image", async () => {
     const test = runtime();
     await markManagedInitialized(test, false);

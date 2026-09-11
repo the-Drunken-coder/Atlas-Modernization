@@ -6,7 +6,8 @@ import { DeploymentTransactionStore } from "../src/deployment-transaction.js";
 import {
   type ManagedKeyAction,
   type ManagedPluginCredentialHost,
-  ManagedPluginCredentials
+  ManagedPluginCredentials,
+  ManagedPluginKeyRejectedError
 } from "../src/host-credentials.js";
 
 const OLD_KEY = "atlas_ak_aaaaaaaaaaaaaaaa.old-secret";
@@ -24,6 +25,8 @@ class CredentialHostStub implements ManagedPluginCredentialHost {
   failRevokeOnce = false;
   failVerifyOnce = false;
   failRestoreOnce = false;
+  rejectOldKeyOnce = false;
+  failAuthenticationOnce = false;
   starts = 0;
   startIncludesPlugins: boolean[] = [];
   stops = 0;
@@ -83,6 +86,14 @@ class CredentialHostStub implements ManagedPluginCredentialHost {
 
   async authenticateKey(apiKey: string): Promise<void> {
     this.authenticated.push(apiKey);
+    if (this.failAuthenticationOnce) {
+      this.failAuthenticationOnce = false;
+      throw new Error("temporary authentication failure");
+    }
+    if (this.rejectOldKeyOnce && apiKey === OLD_KEY) {
+      this.rejectOldKeyOnce = false;
+      throw new ManagedPluginKeyRejectedError();
+    }
     if (apiKey !== OLD_KEY && ![...this.records.values()].some((record) => record.apiKey === apiKey)) {
       throw new Error("unknown key");
     }
@@ -156,6 +167,56 @@ describe("ManagedPluginCredentials", () => {
     expect(host.actions).toEqual([]);
     expect(host.recreated).toBe(0);
     expect(transactions.read().staged).toEqual({});
+  });
+
+  it("starts a journaled replacement when Core definitively rejects the existing key", async () => {
+    const { configDir, transactions } = setupTransaction("core-update", OLD_KEY);
+    const host = new CredentialHostStub();
+    host.rejectOldKeyOnce = true;
+
+    await new ManagedPluginCredentials({
+      configDir,
+      transactions,
+      host,
+      dockerEngineId: ENGINE_ID
+    }).ensureWithinTransaction();
+
+    expect(host.actions).toContainEqual({ action: "create", value: expect.stringMatching(/^atlas-plugin-key-/u) });
+    expect(host.actions).toContainEqual({ action: "revoke", value: OLD_KEY.split(".")[0] ?? "" });
+    expect(readFileSync(join(configDir, ".env"), "utf8")).toContain(
+      "ATLAS_PLUGIN_API_KEY=atlas_ak_0000000000000001.secret-1"
+    );
+    expect(transactions.read().staged).toHaveProperty("credential-intent.json");
+  });
+
+  it("leaves a transaction retryable when existing-key authentication is transiently unavailable", async () => {
+    const { configDir, transactions } = setupTransaction("core-update", OLD_KEY);
+    const host = new CredentialHostStub();
+    host.failAuthenticationOnce = true;
+    const manager = new ManagedPluginCredentials({ configDir, transactions, host, dockerEngineId: ENGINE_ID });
+
+    await expect(manager.ensureWithinTransaction()).rejects.toThrow("The managed Plugin key was rejected by Core");
+
+    expect(host.actions).toEqual([]);
+    expect(transactions.read().staged).toEqual({});
+  });
+
+  it("starts a journaled replacement when the stored key is malformed", async () => {
+    const { configDir, transactions } = setupTransaction("core-update", "malformed-key");
+    const host = new CredentialHostStub();
+
+    await new ManagedPluginCredentials({
+      configDir,
+      transactions,
+      host,
+      dockerEngineId: ENGINE_ID
+    }).ensureWithinTransaction();
+
+    expect(host.actions).toContainEqual({ action: "create", value: expect.stringMatching(/^atlas-plugin-key-/u) });
+    expect(host.actions.some((action) => action.action === "revoke")).toBe(false);
+    expect(readFileSync(join(configDir, ".env"), "utf8")).toContain(
+      "ATLAS_PLUGIN_API_KEY=atlas_ak_0000000000000001.secret-1"
+    );
   });
 
   it("provisions a key without advancing an init transaction past core-started", async () => {

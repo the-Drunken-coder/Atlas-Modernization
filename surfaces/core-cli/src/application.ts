@@ -25,9 +25,9 @@ import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import { readPairedBackupIdentity } from "./backup-receipt.js";
 import { createOwnerIdentity, DeploymentTransactionStore, ownerLiveness } from "./deployment-transaction.js";
-import { ManagedPluginCredentials } from "./host-credentials.js";
+import { ManagedPluginCredentials, ManagedPluginKeyRejectedError } from "./host-credentials.js";
 import { type ImageReceipt, pullImageReceipt, verifyContainerImage, verifyLocalImage } from "./image-receipts.js";
-import { IndependentPluginManager, pluginServiceName } from "./independent-plugins.js";
+import { IndependentPluginManager, isPluginLifecycleOperation, pluginServiceName } from "./independent-plugins.js";
 import { prepareLegacyBase } from "./legacy-base-import.js";
 import {
   ManagedCoreManager,
@@ -751,9 +751,19 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       dockerEngineId: state.dockerEngineId,
       contracts: state.pluginContracts ?? PACKAGE_PLUGIN_CONTRACTS,
       readEnabled: () => this.#readState()?.enabledPlugins ?? [],
+      readDesiredRunning: () => this.#desiredRunning(),
+      withRecovery: async (operation) => await this.#recoveryCommandScope.run(true, operation),
       writeEnabled: (ids) =>
         this.#writeDeploymentState({ ...this.#requireManaged(this.#requireInitialized()), enabledPlugins: [...ids] }),
-      isRunning: async () => (await this.#deploymentSnapshot(state.enabledPlugins)).status !== "stopped",
+      isRunning: async () => {
+        const services = await this.#composeServiceStates(state.enabledPlugins);
+        if (services.length === 0) return false;
+        const failures = unhealthyServices(services, REQUIRED_SERVICES);
+        if (failures.length) {
+          throw new Error(`Restore healthy Atlas Core base services before changing Plugins: ${failures.join(", ")}.`);
+        }
+        return true;
+      },
       pullAndInspectImage: async (image) =>
         await pullImageReceipt(this.#imageCommand, image, this.#architecture === "arm64" ? "arm64" : "amd64"),
       verifyImage: async (receipt) => await verifyLocalImage(this.#imageCommand, receipt),
@@ -960,6 +970,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
             redirect: "error"
           });
           await response.body?.cancel();
+          if (response.status === 401 || response.status === 403) throw new ManagedPluginKeyRejectedError();
           if (!response.ok) throw new Error("Managed Plugin key authentication failed.");
         },
         recreateSDKPlugins,
@@ -1382,54 +1393,15 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
         await this.#credentials(engineId, tx).recover();
         return;
       }
-      const pluginRuntimeOperation = ["plugin-enable", "plugin-disable", "plugin-update", "plugin-rollback"].includes(
-        tx.journal.operation
-      );
+      if (isPluginLifecycleOperation(tx.journal.operation)) {
+        await this.#plugins(this.#requireManaged(this.#requireInitialized())).recover(tx);
+        return;
+      }
       if (
-        pluginRuntimeOperation &&
-        (tx.journal.phase === "runtime-changing" || tx.journal.phase === "rollback-complete")
+        (tx.journal.operation === "core-update" || tx.journal.operation === "init") &&
+        tx.journal.phase === "rollback-complete"
       ) {
-        // File rollback completes before runtime restoration. Keep the journal until both
-        // succeed, and restore active files before constructing any Compose command.
-        const affectedIds = new Set(
-          Object.keys(tx.journal.snapshots).flatMap((path) => {
-            const match = /^plugins\/([^/]+)\//u.exec(path);
-            return match?.[1] ? [match[1]] : [];
-          })
-        );
-        tx.rollback();
-        const restored = this.#requireManaged(this.#requireInitialized());
-        if (tx.journal.previousRunning && this.#desiredRunning()) {
-          this.#verifyBundle(restored);
-          const manager = this.#plugins(restored);
-          await manager.regenerateActiveFiles();
-          const restoredIds = restored.enabledPlugins.filter((id) => affectedIds.has(id));
-          await this.#runComposeChecked(
-            [
-              "up",
-              "-d",
-              "--pull",
-              "never",
-              "--no-build",
-              "--no-deps",
-              "--remove-orphans",
-              "--force-recreate",
-              "--wait",
-              "--wait-timeout",
-              COMPOSE_WAIT_SECONDS,
-              "api",
-              "source-gateway",
-              ...restoredIds.map(pluginServiceName)
-            ],
-            restored.enabledPlugins
-          );
-          for (const id of restoredIds) {
-            await this.#verifyPluginRuntime(manager.readSelected(id), manager.readInstalled(id).selected);
-          }
-        } else if (tx.journal.previousRunning) {
-          await this.#runComposeChecked(["down", "--remove-orphans"], restored.enabledPlugins);
-        }
-        tx.cleanup();
+        await this.#managedCore(engineId).recover("retry");
         return;
       }
       if (tx.journal.phase === "committed" || tx.journal.phase === "rollback-complete") {
@@ -1698,9 +1670,14 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   async start(options: { manual?: boolean; repairBundle?: boolean; repairImages?: boolean } = {}): Promise<void> {
     if (!options.manual) {
       const supervision = await getSupervisorStatus(this.#supervisorOptions());
-      if (!supervision.installed || !supervision.loaded) {
+      if (
+        !supervision.installed ||
+        !supervision.loaded ||
+        supervision.running !== true ||
+        supervision.userManagerAvailable !== true
+      ) {
         throw new Error(
-          "Install recovery supervision with atlas-core supervision install, or explicitly use atlas-core start --manual."
+          "Start or reinstall recovery supervision with atlas-core supervision install, or explicitly use atlas-core start --manual."
         );
       }
     }

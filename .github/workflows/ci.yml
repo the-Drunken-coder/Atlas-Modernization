@@ -348,7 +348,7 @@ jobs:
             --tag "$image_tag" \
             --file services/core/docker/Dockerfile .
           docker push "$image_tag"
-          digest="$(docker buildx imagetools inspect "$image_tag" --format '{{json .Manifest}}' | jq -er '.digest | select(test("^sha256:[0-9a-f]{64}$"))')"
+          digest="$(docker image inspect "$image_tag" --format '{{json .RepoDigests}}' | jq -er '.[] | select(startswith("localhost:5000/atlas-core@")) | split("@")[1] | select(test("^sha256:[0-9a-f]{64}$"))')"
           echo "image_reference=localhost:5000/atlas-core@$digest" >> "$GITHUB_OUTPUT"
 
       - name: Exercise the current Core package initialization against Docker
