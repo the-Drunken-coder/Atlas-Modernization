@@ -1,4 +1,4 @@
-import { createHash, createPublicKey, generateKeyPairSync, verify } from "node:crypto";
+import { createHash, createPublicKey, generateKeyPairSync, sign, verify } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -201,6 +201,21 @@ test("publishes and renews a signed append-only catalog with exact release URLs"
     assert.match(wrongURL.stderr, /document URL must exactly equal/);
 
     const catalogBeforeInvalidRelease = readFileSync(catalogPath);
+    const oversizedReleasePath = join(directory, "oversized-release.atlas-plugin");
+    const oversizedRelease = releaseDocument("1.0.1");
+    oversizedRelease.source_connector = sourceConnector();
+    oversizedRelease.source_connector.routes[0].allowed_query_names = Array.from({ length: 100_000 }, (_, index) => `query_${index}`);
+    const oversizedReleaseBytes = Buffer.from(`${JSON.stringify(oversizedRelease, null, 2)}\n`);
+    assert.ok(oversizedReleaseBytes.byteLength > 1 << 20);
+    writeFileSync(oversizedReleasePath, oversizedReleaseBytes);
+    const catalogBeforeOversizedRelease = readFileSync(catalogPath);
+    const signatureBeforeOversizedRelease = readFileSync(signaturePath);
+    const oversizedReleaseResult = run(["append", oversizedReleasePath, ledgerPath], environment);
+    assert.notEqual(oversizedReleaseResult.status, 0);
+    assert.match(oversizedReleaseResult.stderr, /Release document exceeds the 1048576-byte limit/);
+    assert.deepEqual(readFileSync(catalogPath), catalogBeforeOversizedRelease);
+    assert.deepEqual(readFileSync(signaturePath), signatureBeforeOversizedRelease);
+
     const invalidRoutePath = join(directory, "invalid-route.atlas-plugin");
     const invalidRouteDocument = { ...releaseDocument("1.0.1"), source_connector: sourceConnector() };
     invalidRouteDocument.source_connector.routes[0].path_prefix = "//records";
@@ -294,6 +309,46 @@ test("publishes and renews a signed append-only catalog with exact release URLs"
     const conflictingRevoke = run(["revoke", "fixture", "1.0.0", "different reason", ledgerPath], environment);
     assert.notEqual(conflictingRevoke.status, 0);
     assert.match(conflictingRevoke.stderr, /different reason/);
+
+    const revokedSignatureBytes = readFileSync(signaturePath);
+    const oversizedCatalog = {
+      ...revokedCatalog,
+      plugins: Array.from({ length: 128 }, (_, pluginIndex) => {
+        const pluginId = `plugin_${String(pluginIndex).padStart(3, "0")}`;
+        return {
+          plugin_id: pluginId,
+          releases: Array.from({ length: 256 }, (_, releaseIndex) => {
+            const version = `1.${Math.floor(releaseIndex / 100)}.${releaseIndex % 100}`;
+            return {
+              version,
+              display_name: `Plugin ${pluginIndex}`,
+              document_url: `https://github.com/the-Drunken-coder/Atlas-Modernization/releases/download/atlas-plugin-${pluginId}-v${version}/${pluginId}-${version}.atlas-plugin`,
+              document_sha256: `sha256:${"a".repeat(64)}`,
+              revoked: false,
+              revocation_reason: null
+            };
+          })
+        };
+      })
+    };
+    const oversizedCatalogBytes = Buffer.from(`${JSON.stringify(oversizedCatalog, null, 2)}\n`);
+    assert.ok(oversizedCatalogBytes.byteLength > 4 * 1024 * 1024);
+    const oversizedCatalogSignatureBytes = Buffer.from(`${JSON.stringify({
+      algorithm: "ed25519",
+      key_id: "test-key",
+      signature: sign(null, oversizedCatalogBytes, privateKey).toString("base64")
+    }, null, 2)}\n`);
+    writeFileSync(catalogPath, oversizedCatalogBytes);
+    writeFileSync(signaturePath, oversizedCatalogSignatureBytes);
+    const oversizedCatalogBeforeRenew = readFileSync(catalogPath);
+    const oversizedSignatureBeforeRenew = readFileSync(signaturePath);
+    const oversizedRenew = run(["renew", ledgerPath], environment);
+    assert.notEqual(oversizedRenew.status, 0);
+    assert.match(oversizedRenew.stderr, /Catalog ledger exceeds the 4194304-byte limit/);
+    assert.deepEqual(readFileSync(catalogPath), oversizedCatalogBeforeRenew);
+    assert.deepEqual(readFileSync(signaturePath), oversizedSignatureBeforeRenew);
+    writeFileSync(catalogPath, revokedBytes);
+    writeFileSync(signaturePath, revokedSignatureBytes);
 
     const { privateKey: rotatedPrivateKey, publicKey: rotatedPublicKey } = generateKeyPairSync("ed25519", {
       privateKeyEncoding: { format: "pem", type: "pkcs8" },

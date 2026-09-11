@@ -485,7 +485,9 @@ compatibility bridge.
 ## Catalog and offline behavior
 
 Opening the Plugins menu checks the catalog once; `refresh` checks again. There is no background updater. A valid cached
-catalog may be used until its expiry. Catalog network or signature failure never stops Installed Plugins.
+catalog may be used until its expiry. Install and update attempt a refresh first, then may use that verified unexpired
+receipt if fetching or verification fails. Explicit refresh still reports the failure; a failed receipt write aborts the
+operation. Catalog network or signature failure never stops Installed Plugins.
 
 Catalog refresh verifies the new catalog completely, then atomically replaces `catalog-state.json`. The
 `(key_epoch, sequence)` pair and catalog hash advance with the cached bytes in that one write, so a crash cannot separate

@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -55,6 +55,12 @@ function runReleaseDocument(imageReference) {
     encoding: "utf8",
     env: process.env
   });
+}
+
+function makeOversizedReleaseDocument(document) {
+  const oversized = structuredClone(document);
+  oversized.source_connector.routes[0].allowed_query_names = Array.from({ length: 100_000 }, (_, index) => `query_${index}`);
+  return Buffer.from(`${JSON.stringify(oversized, null, 2)}\n`);
 }
 
 function runMutatingRetryDocument(idempotencyHeader, allowedRequestHeaders) {
@@ -258,6 +264,67 @@ test("rejects source connector strings above the client UTF-8 byte limit", () =>
     assert.match(result.stderr, /path_prefix is invalid/);
   } finally {
     rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("rejects an oversized release document before verify-document accepts it", () => {
+  const directory = mkdtempSync(join(tmpdir(), "atlas-plugin-release-document-size-"));
+  try {
+    const validResult = runReleaseDocument(image);
+    assert.equal(validResult.status, 0, validResult.stderr);
+    const oversizedBytes = makeOversizedReleaseDocument(JSON.parse(validResult.stdout));
+    assert.ok(oversizedBytes.byteLength > 1 << 20);
+    const documentPath = join(directory, "oversized.atlas-plugin");
+    writeFileSync(documentPath, oversizedBytes);
+    const result = spawnSync(process.execPath, [script, "verify-document", documentPath], { cwd: repositoryRoot, encoding: "utf8" });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /Release document exceeds the 1048576-byte limit/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("rejects an oversized generated release before touching an existing output", () => {
+  const pluginId = "oversized_release";
+  const pluginDirectory = join(repositoryRoot, "plugins", pluginId);
+  const outputDirectory = mkdtempSync(join(tmpdir(), "atlas-plugin-release-output-"));
+  const outputPath = join(outputDirectory, "release.atlas-plugin");
+  const sentinel = Buffer.from("existing release bytes\n");
+  const generatedImage = `ghcr.io/the-drunken-coder/atlas-oversized-release@sha256:${"b".repeat(64)}`;
+  try {
+    cpSync(join(repositoryRoot, "plugins", "building_scan"), pluginDirectory, { recursive: true });
+    const manifestPath = join(pluginDirectory, "atlas-plugin.json");
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    manifest.plugin_id = pluginId;
+    manifest.package = "@the-drunken-coder/atlas-oversized-release-plugin";
+    manifest.release.image_repository = "ghcr.io/the-drunken-coder/atlas-oversized-release";
+    writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+    const packagePath = join(pluginDirectory, "package.json");
+    const packageJSON = JSON.parse(readFileSync(packagePath, "utf8"));
+    packageJSON.name = manifest.package;
+    writeFileSync(packagePath, `${JSON.stringify(packageJSON, null, 2)}\n`);
+    const endpointPath = join(pluginDirectory, manifest.core_endpoint);
+    const endpoint = JSON.parse(readFileSync(endpointPath, "utf8"));
+    endpoint.id = pluginId;
+    writeFileSync(endpointPath, `${JSON.stringify(endpoint, null, 2)}\n`);
+    const connectorPath = join(pluginDirectory, manifest.source_connector);
+    const connector = JSON.parse(readFileSync(connectorPath, "utf8"));
+    connector.id = pluginId;
+    connector.routes[0].allowed_query_names = Array.from({ length: 100_000 }, (_, index) => `query_${index}`);
+    writeFileSync(connectorPath, `${JSON.stringify(connector, null, 2)}\n`);
+    writeFileSync(outputPath, sentinel);
+
+    const result = spawnSync(
+      process.execPath,
+      [script, "release-document", pluginId, "0.1.0", generatedImage, outputPath],
+      { cwd: repositoryRoot, encoding: "utf8" }
+    );
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /Release document exceeds the 1048576-byte limit/);
+    assert.deepEqual(readFileSync(outputPath), sentinel);
+  } finally {
+    rmSync(pluginDirectory, { recursive: true, force: true });
+    rmSync(outputDirectory, { recursive: true, force: true });
   }
 });
 

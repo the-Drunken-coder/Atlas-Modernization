@@ -2564,6 +2564,24 @@ describe("atlas-core CLI", () => {
     });
   });
 
+  it("installs and updates from an unexpired catalog when its endpoint is unavailable", async () => {
+    const test = runtime();
+    await markManagedInitialized(test);
+    installSignedIndependentCatalog(test);
+    expect(await runCLI(["plugins", "refresh"], test.context)).toBe(0);
+    const online = test.context.fetch;
+    if (!online) throw new Error("missing test fetch adapter");
+    test.context.fetch = async (input, init) =>
+      String(input).startsWith("https://catalog.example/")
+        ? new Response("unavailable", { status: 503 })
+        : await online(input, init);
+    expect(await runCLI(["plugins", "install", "alpha_fixture", "0.1.0"], test.context), test.stderr.join("")).toBe(0);
+    expect(await runCLI(["plugins", "update", "alpha_fixture"], test.context), test.stderr.join("")).toBe(0);
+    expect(installedPluginVersion(test, "alpha_fixture")).toBe("0.2.0");
+    test.context.now = () => new Date("2026-09-21T12:00:00Z");
+    expect(await runCLI(["plugins", "install", "zeta_fixture"], test.context)).toBe(1);
+  });
+
   it("repairs only retained base images and the selected image for enabled Plugins", async () => {
     const test = runtime();
     await installIndependentUpdateFixtures(test);

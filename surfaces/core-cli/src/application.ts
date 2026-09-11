@@ -1129,7 +1129,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   async pluginInstall(pluginId: string, version?: string): Promise<void> {
     await this.#withInitializedMutation(async (raw) => {
       const state = this.#requireManaged(raw);
-      await this.#catalogStore.refresh();
+      await this.#catalogStore.refresh({ allowCachedOnFailure: true });
       const candidates = (
         await this.#catalogStore.candidates(pluginId, {
           ...(version ? { version } : {}),
@@ -1168,7 +1168,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
         this.#stdout.write("No installed Plugins to update.\n");
         return;
       }
-      await this.#catalogStore.refresh();
+      await this.#catalogStore.refresh({ allowCachedOnFailure: true });
       const updated: string[] = [];
       for (const id of pluginIds) {
         try {

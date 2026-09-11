@@ -122,7 +122,7 @@ export class PluginCatalogStore {
   }
 
   /** Refresh mutates the monotonic receipt and must run under the deployment coordinator lock. */
-  async refresh(): Promise<SignedCatalogReceipt> {
+  async refresh(options: { allowCachedOnFailure?: boolean } = {}): Promise<SignedCatalogReceipt> {
     // A cached receipt below a newly embedded checkpoint is still needed as
     // authenticated history for the next refresh. Fresh network acceptance
     // below the checkpoint remains fail-closed in verifyCatalog.
@@ -138,19 +138,31 @@ export class PluginCatalogStore {
     }
     const current = this.#observedNow(previous?.observedAt ?? retiredObservedAt);
     if (previous && current.getTime() > previous.observedAt.getTime()) this.#writeState(previous.receipt, current);
-    const catalogBytes = await fetchBounded(this.#catalogURL, {
-      maxBytes: CATALOG_LIMIT,
-      allowedHosts: this.#allowedHosts,
-      fetchImpl: this.#fetchImpl
-    });
-    const signatureBytes = await fetchBounded(`${this.#catalogURL}.sig`, {
-      maxBytes: SIGNATURE_LIMIT,
-      allowedHosts: this.#allowedHosts,
-      fetchImpl: this.#fetchImpl
-    });
-    const receipt = verifyCatalog(catalogBytes, signatureBytes, this.#trust, previous?.receipt, current);
-    if (retiredKeyEpoch !== undefined && receipt.keyEpoch <= retiredKeyEpoch) {
-      throw new Error("The refreshed Plugin catalog must use a newer signing-key epoch than the retired receipt");
+    let receipt: SignedCatalogReceipt;
+    try {
+      const catalogBytes = await fetchBounded(this.#catalogURL, {
+        maxBytes: CATALOG_LIMIT,
+        allowedHosts: this.#allowedHosts,
+        fetchImpl: this.#fetchImpl
+      });
+      const signatureBytes = await fetchBounded(`${this.#catalogURL}.sig`, {
+        maxBytes: SIGNATURE_LIMIT,
+        allowedHosts: this.#allowedHosts,
+        fetchImpl: this.#fetchImpl
+      });
+      receipt = verifyCatalog(catalogBytes, signatureBytes, this.#trust, previous?.receipt, current);
+      if (retiredKeyEpoch !== undefined && receipt.keyEpoch <= retiredKeyEpoch) {
+        throw new Error("The refreshed Plugin catalog must use a newer signing-key epoch than the retired receipt");
+      }
+    } catch (error) {
+      if (options.allowCachedOnFailure) {
+        try {
+          return this.read();
+        } catch {
+          // Missing, expired, or no-longer-trusted cache cannot admit a mutation.
+        }
+      }
+      throw error;
     }
     const observedAt = maxDate(current, previous?.observedAt ?? retiredObservedAt);
     this.#writeState(receipt, observedAt);

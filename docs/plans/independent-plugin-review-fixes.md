@@ -117,3 +117,6 @@ Focused tests cover removed-file recovery followed by startup, retired-key and l
 
 
 Codex's next review of `6ee771948ebbe81ac95df397bdd73654987c5a20` identified seven further cases. Restart now refuses a stopped deployment so operators use the supervised or explicit manual start path. Supervisor status verifies the installed and loaded definition targets the selected deployment and CLI. Core updates journal temporary PostgreSQL startup before reading the migration ledger. Publication compares reused documents byte for byte, and both release and catalog validation enforce the CLI's UTF-8 string limits. Legacy import and repair enforce archive, decompression, entry-count, and per-entry size limits before extraction. The generated CLI Protocol revision is also refreshed after the rebase onto movement-history main.
+
+
+The review of `3716bdc0b2dbb610664b1b318a0fd05df9d86f4f` confirmed four remaining boundaries: publication must reject serialized release documents above 1 MiB and catalogs above 4 MiB before writing or publishing them; a running Core update must check existing Enabled Plugin health before beginning its transaction; and install/update may use a verified unexpired catalog when refresh fails. The fixes preserve explicit refresh errors, fail closed after cache expiry, and keep the post-update Plugin health gate.

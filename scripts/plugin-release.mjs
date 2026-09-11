@@ -49,18 +49,21 @@ switch (command) {
     const image = required(rawArgs[2], "image reference");
     validateReleaseVersion(plugin, version);
     const document = createReleaseDocument(plugin, version, image);
+    const bytes = serializeReleaseDocument(document);
     const output = rawArgs[3] ? resolve(repositoryRoot, rawArgs[3]) : undefined;
     if (output) {
       mkdirSync(dirname(output), { recursive: true });
-      writeFileSync(output, `${JSON.stringify(document, null, 2)}\n`);
+      writeFileSync(output, bytes);
     } else {
-      process.stdout.write(`${JSON.stringify(document, null, 2)}\n`);
+      process.stdout.write(bytes);
     }
     break;
   }
-  case "verify-document":
-    validateReleaseDocument(readJSON(resolve(repositoryRoot, required(rawArgs[0], "document path"))));
+  case "verify-document": {
+    const { document } = readReleaseDocument(resolve(repositoryRoot, required(rawArgs[0], "document path")));
+    validateReleaseDocument(document);
     break;
+  }
   case "verify-public-release":
     await verifyPublicRelease(required(rawArgs[0], "release URL"), resolve(repositoryRoot, required(rawArgs[1], "local document path")));
     break;
@@ -233,8 +236,8 @@ function checkCandidate(plugin, image) {
 }
 
 async function verifyPublicRelease(url, localPath) {
-  const localBytes = readFileSync(localPath);
-  const document = validateReleaseDocument(readJSON(localPath));
+  const { bytes: localBytes, document: localDocument } = readReleaseDocument(localPath);
+  const document = validateReleaseDocument(localDocument);
   const expectedURL = releaseDocumentURL(document.plugin_id, document.version);
   if (url !== expectedURL) throw new Error(`Release URL must exactly equal ${expectedURL}`);
   const remoteBytes = await fetchPublicRelease(url);
@@ -287,15 +290,14 @@ function reuseExistingPublication(pluginId, version, sourceSha, releaseDirectory
     }
     if (release.assets.some((candidate) => candidate.name === asset)) {
       runCapture("gh", ["release", "download", releaseTag, "--repo", githubRepository, "--pattern", asset, "--dir", releaseDirectory]);
-      const downloadedBytes = readFileSync(assetPath);
-      const downloaded = readJSON(assetPath);
+      const { bytes: downloadedBytes, document: downloaded } = readReleaseDocument(assetPath);
       validateReleaseDocument(downloaded);
       assertReleaseDocumentMatches(plugin, version, imageReference, downloadedBytes);
       reusedAsset = true;
     }
   }
   if (!reusedAsset) {
-    writeFileSync(assetPath, `${JSON.stringify(createReleaseDocument(plugin, version, imageReference), null, 2)}\n`);
+    writeFileSync(assetPath, serializeReleaseDocument(createReleaseDocument(plugin, version, imageReference)));
   }
   return { image_reference: imageReference, release_document: relative(repositoryRoot, assetPath) };
 }
@@ -353,10 +355,32 @@ function readGitHubRelease(repository, tag) {
 }
 
 function assertReleaseDocumentMatches(plugin, version, image, actualBytes) {
-  const expectedBytes = Buffer.from(`${JSON.stringify(createReleaseDocument(plugin, version, image), null, 2)}\n`);
+  const expectedBytes = serializeReleaseDocument(createReleaseDocument(plugin, version, image));
   if (!actualBytes.equals(expectedBytes)) {
     throw new Error("Existing GitHub Release document does not match the reviewed plugin metadata and image digest");
   }
+}
+
+function serializeReleaseDocument(document) {
+  const bytes = Buffer.from(`${JSON.stringify(document, null, 2)}\n`);
+  assertReleaseDocumentSize(bytes);
+  return bytes;
+}
+
+function readReleaseDocument(path) {
+  const bytes = readFileSync(path);
+  assertReleaseDocumentSize(bytes);
+  let document;
+  try {
+    document = JSON.parse(bytes.toString("utf8"));
+  } catch (error) {
+    throw new Error(`${relative(repositoryRoot, path)} is not valid JSON: ${error instanceof Error ? error.message : error}`);
+  }
+  return { bytes, document };
+}
+
+function assertReleaseDocumentSize(bytes) {
+  if (bytes.byteLength > releaseDocumentLimit) throw new Error(`Release document exceeds the ${releaseDocumentLimit}-byte limit`);
 }
 
 function readRemoteReleaseTag(repository, tag) {

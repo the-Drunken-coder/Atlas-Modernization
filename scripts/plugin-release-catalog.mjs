@@ -15,6 +15,8 @@ const identifierPattern = /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/u;
 const hashPattern = /^sha256:[0-9a-f]{64}$/u;
 const catalogKeyIdPattern = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 const maxStringBytes = 2048;
+const releaseDocumentLimit = 1 << 20;
+const catalogLimit = 4 << 20;
 const publishedVerificationGraceMs = 120_000;
 const publishedVerificationRetryDelayMs = 5_000;
 
@@ -116,7 +118,7 @@ function preflight() {
 
 function appendCatalog(releasePath, ledgerDirectory, documentUrl) {
   const signing = preflight();
-  const release = readJSON(resolve(repositoryRoot, releasePath));
+  const { bytes: releaseBytes, document: release } = readReleaseDocument(resolve(repositoryRoot, releasePath));
   validateReleaseDocument(release);
   const keyId = signing.keyId;
   const keyEpoch = signing.keyEpoch;
@@ -147,7 +149,6 @@ function appendCatalog(releasePath, ledgerDirectory, documentUrl) {
   const version = release.version;
   const resolvedUrl = documentUrl ?? defaultDocumentUrl(pluginId, version);
   validateDocumentUrl(resolvedUrl, pluginId, version);
-  const releaseBytes = readFileSync(resolve(repositoryRoot, releasePath));
   const releaseHash = sha256(releaseBytes);
   const previousPlugin = previous?.plugins.find((entry) => entry.plugin_id === pluginId);
   const previousRelease = previousPlugin?.releases.find((entry) => entry.version === version);
@@ -278,6 +279,7 @@ function writeSignedCatalog(catalog, ledgerDirectory, signing) {
   normalizeCatalog(catalog);
   validateCatalog(catalog);
   const bytes = Buffer.from(`${JSON.stringify(catalog, null, 2)}\n`, "utf8");
+  assertByteLimit(bytes, catalogLimit, "Catalog ledger");
   const privateKey = parsePrivateKey(required(process.env.ATLAS_PLUGIN_CATALOG_PRIVATE_KEY, "ATLAS_PLUGIN_CATALOG_PRIVATE_KEY"));
   const signature = sign(null, bytes, privateKey).toString("base64");
   const signatureBytes = Buffer.from(`${JSON.stringify({ algorithm: "ed25519", key_id: signing.keyId, signature }, null, 2)}\n`, "utf8");
@@ -418,6 +420,7 @@ async function verifyPublishedCatalog(ledgerDirectory, options) {
   const signaturePath = join(ledgerDirectory, "catalog.json.sig");
   if (!existsSync(ledgerPath) || !existsSync(signaturePath)) throw new Error("Catalog ledger is missing catalog.json or catalog.json.sig");
   const localBytes = readFileSync(ledgerPath);
+  assertByteLimit(localBytes, catalogLimit, "Catalog ledger");
   const localSignatureBytes = readFileSync(signaturePath);
   const localCatalog = readJSON(ledgerPath);
   validateCatalog(localCatalog);
@@ -469,6 +472,7 @@ async function verifyPublishedCatalog(ledgerDirectory, options) {
     if (options.releaseDocument !== null) {
       const releasePath = resolve(repositoryRoot, options.releaseDocument);
       const releaseBytes = readFileSync(releasePath);
+      assertByteLimit(releaseBytes, releaseDocumentLimit, "Release document");
       const releaseDocument = parseJSONBytes(releaseBytes, "release document");
       validateReleaseDocument(releaseDocument);
       if (releaseDocument.plugin_id !== options.pluginId || releaseDocument.version !== options.version) throw new Error("Release document identity does not match the requested catalog entry");
@@ -631,6 +635,16 @@ function required(value, label) {
 function readJSON(path) {
   try { return JSON.parse(readFileSync(path, "utf8")); }
   catch (error) { throw new Error(`${relative(repositoryRoot, path)} is not valid JSON: ${error instanceof Error ? error.message : error}`); }
+}
+
+function readReleaseDocument(path) {
+  const bytes = readFileSync(path);
+  assertByteLimit(bytes, releaseDocumentLimit, "Release document");
+  return { bytes, document: parseJSONBytes(bytes, "release document") };
+}
+
+function assertByteLimit(bytes, limit, label) {
+  if (bytes.byteLength > limit) throw new Error(`${label} exceeds the ${limit}-byte limit`);
 }
 
 function isRecord(value) { return typeof value === "object" && value !== null && !Array.isArray(value); }

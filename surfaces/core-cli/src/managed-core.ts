@@ -229,6 +229,9 @@ export class ManagedCoreManager {
     }
     const priorBackupIdentity = await this.#readBackupIdentity();
     await this.#options.preflightPlugins?.(target.packageContracts);
+    if ((this.#options.previousRunning ?? true) && state.enabledPlugins.length > 0) {
+      await this.#options.verifyPlugins?.(state, { requireHealth: true });
+    }
     const transaction = DeploymentTransactionStore.begin(this.#configDir, {
       operation: "core-update",
       dockerEngineId: this.#options.dockerEngineId,

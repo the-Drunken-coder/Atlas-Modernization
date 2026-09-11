@@ -165,6 +165,38 @@ describe("PluginCatalogStore", () => {
     await expect(offline.candidates("missing_plugin")).resolves.toEqual([]);
   });
 
+  it.each(["network", "signature"])(
+    "uses only an unexpired verified cache after a %s refresh failure",
+    async (failure) => {
+      const directory = mkdtempSync(join(tmpdir(), "atlas-catalog-store-"));
+      directories.push(directory);
+      const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+      const first = catalogBytes(1, null, []);
+      let offline = false;
+      let now = new Date("2026-09-02T12:00:00Z");
+      const store = new PluginCatalogStore({
+        configDir: directory,
+        catalogURL: "https://catalog.example/catalog.json",
+        trust: trust(publicKey),
+        fetchImpl: async (url) => {
+          if (offline && failure === "network") throw new Error("catalog unavailable");
+          if (String(url).endsWith(".sig")) return new Response(offline ? "{}" : signatureBytes(first, privateKey));
+          return new Response(first);
+        },
+        now: () => now
+      });
+      const accepted = await store.refresh();
+      offline = true;
+      await expect(store.refresh()).rejects.toThrow();
+      expect((await store.refresh({ allowCachedOnFailure: true })).catalogSha256).toBe(accepted.catalogSha256);
+      now = new Date("2026-09-21T12:00:00Z");
+      await expect(store.refresh({ allowCachedOnFailure: true })).rejects.toThrow();
+      expect(() => store.read()).toThrow(/expired/);
+      rmSync(join(directory, "catalog-state.json"));
+      await expect(store.refresh({ allowCachedOnFailure: true })).rejects.toThrow();
+    }
+  );
+
   it("inspects without writing a stale receipt over a later refresh", async () => {
     const directory = mkdtempSync(join(tmpdir(), "atlas-catalog-store-"));
     directories.push(directory);

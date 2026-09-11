@@ -648,6 +648,44 @@ describe("ManagedCoreManager", () => {
     });
   });
 
+  it("rejects a running Core update before mutation when an enabled Plugin is unhealthy", async () => {
+    const configDir = temporaryDirectory();
+    writeFileSync(join(configDir, ".env"), "POSTGRES_PASSWORD=secret\n", { mode: 0o600 });
+    const stateRef = { current: undefined as ManagedCoreState | undefined };
+    const calls: Call[] = [];
+    const initial = new ManagedCoreManager(
+      makeOptions(configDir, packageDirectory(IMAGE, "preflight-health-old"), IMAGE, stateRef, calls, RECEIPT, {
+        desiredRunning: false
+      })
+    );
+    stateRef.current = await initial.initialize();
+    const state = { ...stateRef.current, enabledPlugins: ["building_scan"] };
+    calls.length = 0;
+
+    const next = new ManagedCoreManager(
+      makeOptions(
+        configDir,
+        packageDirectory(NEXT_IMAGE, "preflight-health-next"),
+        NEXT_IMAGE,
+        stateRef,
+        calls,
+        NEXT_RECEIPT,
+        {
+          previousRunning: true,
+          desiredRunning: true,
+          verifyPlugins: async (_state, options) => {
+            if (options.requireHealth) throw new Error("enabled Plugin is unavailable");
+          }
+        }
+      )
+    );
+
+    await expect(next.update(state)).rejects.toThrow("enabled Plugin is unavailable");
+    expect(calls).toEqual([]);
+    expect(DeploymentTransactionStore.exists(configDir)).toBe(false);
+    expect(stateRef.current?.packageVersion).toBe("0.1.8");
+  });
+
   it("repairs only when the current package reproduces the recorded bundle hash", async () => {
     const configDir = temporaryDirectory();
     writeFileSync(join(configDir, ".env"), "POSTGRES_PASSWORD=secret\n", { mode: 0o600 });
