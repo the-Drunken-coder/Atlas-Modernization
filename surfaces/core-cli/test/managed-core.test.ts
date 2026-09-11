@@ -17,8 +17,8 @@ const IMAGE = `ghcr.io/the-drunken-coder/atlas-core@sha256:${"a".repeat(64)}`;
 const NEXT_IMAGE = `ghcr.io/the-drunken-coder/atlas-core@sha256:${"b".repeat(64)}`;
 const POSTGRES_IMAGE = `postgres:15@sha256:${"1".repeat(64)}`;
 const NEXT_POSTGRES_IMAGE = `postgres:15@sha256:${"4".repeat(64)}`;
-const MINIO_IMAGE = `minio/minio:RELEASE.2024-01-31T20-20-33Z@sha256:${"2".repeat(64)}`;
-const MC_IMAGE = `minio/mc:RELEASE.2024-01-31T08-59-40Z@sha256:${"3".repeat(64)}`;
+const MINIO_IMAGE = `quay.io/minio/minio:RELEASE.2024-01-31T20-20-33Z@sha256:${"2".repeat(64)}`;
+const MC_IMAGE = `quay.io/minio/mc:RELEASE.2024-01-31T08-59-40Z@sha256:${"3".repeat(64)}`;
 const RECEIPT: ImageReceipt = {
   image_index: IMAGE,
   platform_manifest_sha256: `sha256:${"c".repeat(64)}`,
@@ -165,9 +165,9 @@ describe("ManagedCoreManager", () => {
     expect(state.baseDeployment?.coreImage).toBe(IMAGE);
     expect(state.baseDeployment?.images?.map((image) => image.image_index)).toEqual([
       IMAGE,
+      POSTGRES_IMAGE,
       MC_IMAGE,
-      MINIO_IMAGE,
-      POSTGRES_IMAGE
+      MINIO_IMAGE
     ]);
     expect(calls.map((call) => call.args[0])).toEqual(["up", "down"]);
     expect(calls[0]?.args).toContain("api");

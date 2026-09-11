@@ -60,12 +60,12 @@ installed Core release:
         "local_image_id": "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
       },
       {
-        "image_index": "minio/mc:RELEASE.2024-01-31T08-59-40Z@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "image_index": "quay.io/minio/mc:RELEASE.2024-01-31T08-59-40Z@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
         "platform_manifest_sha256": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
         "local_image_id": "sha256:123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0"
       },
       {
-        "image_index": "minio/minio:RELEASE.2024-01-31T20-20-33Z@sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+        "image_index": "quay.io/minio/minio:RELEASE.2024-01-31T20-20-33Z@sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
         "platform_manifest_sha256": "sha256:123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0",
         "local_image_id": "sha256:23456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef01"
       },

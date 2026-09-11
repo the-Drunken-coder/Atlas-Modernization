@@ -35,9 +35,9 @@ const TEST_PLUGIN_PLATFORM_DIGEST = `sha256:${"e".repeat(64)}`;
 const TEST_PLUGIN_LOCAL_ID = `sha256:${"f".repeat(64)}`;
 const TEST_POSTGRES_IMAGE = "postgres:15@sha256:1b92e7a80c021647bf70f5d3eb66066a998e4f5cf43c07bb9dc9f729782cf88e";
 const TEST_MINIO_IMAGE =
-  "minio/minio:RELEASE.2024-01-31T20-20-33Z@sha256:4092433a77e510826874b36f369696df43407a763d7f901a61d74e83e6fd95bc";
+  "quay.io/minio/minio:RELEASE.2024-01-31T20-20-33Z@sha256:4092433a77e510826874b36f369696df43407a763d7f901a61d74e83e6fd95bc";
 const TEST_MINIO_MC_IMAGE =
-  "minio/mc:RELEASE.2024-01-31T08-59-40Z@sha256:c084c9a67c7a9ed5f37cc7f2a905010861aaa882bec76da10352305c9709b6d2";
+  "quay.io/minio/mc:RELEASE.2024-01-31T08-59-40Z@sha256:c084c9a67c7a9ed5f37cc7f2a905010861aaa882bec76da10352305c9709b6d2";
 const TEST_ENGINE_ID = "test-engine-id";
 const projectName = (engineId: string): string =>
   `atlas_core_production_${createHash("sha256").update(engineId).digest("hex")}`;
