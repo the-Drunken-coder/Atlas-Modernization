@@ -2177,7 +2177,11 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       let catalog: readonly PluginCatalogPlugin[] = [];
       let catalogError: string | undefined;
       try {
-        catalog = this.#catalogStore.inspect().catalog.plugins;
+        const receipt = this.#catalogStore.inspect();
+        catalog = receipt.catalog.plugins;
+        if (Date.parse(receipt.expiresAt) <= this.#now().getTime()) {
+          catalogError = "Plugin catalog expired; refresh before installing or enabling Plugins.";
+        }
       } catch (error) {
         catalogError = errorMessage(error);
       }

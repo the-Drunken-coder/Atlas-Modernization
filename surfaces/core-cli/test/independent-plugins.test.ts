@@ -252,6 +252,53 @@ describe("IndependentPluginManager", () => {
     );
   });
 
+  it("repulls an exact image when local verification reports a missing image", async () => {
+    const { host, manager } = setup();
+    await manager.install(release("0.1.0"));
+    let pullCount = 0;
+    host.host.verifyImage = () => {
+      throw new Error("Docker image failed: Error response from daemon: No such image: retained image");
+    };
+    host.host.pullAndInspectImage = async (imageIndex) => {
+      pullCount += 1;
+      return { ...host.imageReceipt, image_index: imageIndex };
+    };
+
+    await expect(manager.enable("building_scan")).resolves.toMatchObject({ changed: true });
+    expect(pullCount).toBe(1);
+  });
+
+  it("rejects a repulled image whose identity differs from the recorded receipt", async () => {
+    const { host, manager } = setup();
+    await manager.install(release("0.1.0"));
+    host.host.verifyImage = () => {
+      throw new Error("Docker image failed: Error response from daemon: No such image: retained image");
+    };
+    host.host.pullAndInspectImage = async (imageIndex) => ({
+      ...host.imageReceipt,
+      image_index: imageIndex,
+      local_image_id: "sha256:" + "e".repeat(64)
+    });
+
+    await expect(manager.enable("building_scan")).rejects.toThrow("does not match its recorded receipt");
+  });
+
+  it("does not repull when local verification finds a changed image", async () => {
+    const { host, manager } = setup();
+    await manager.install(release("0.1.0"));
+    let pullCount = 0;
+    host.host.verifyImage = () => {
+      throw new Error("Retained image for Plugin building_scan is missing or changed.");
+    };
+    host.host.pullAndInspectImage = async (imageIndex) => {
+      pullCount += 1;
+      return { ...host.imageReceipt, image_index: imageIndex };
+    };
+
+    await expect(manager.enable("building_scan")).rejects.toThrow("missing or changed");
+    expect(pullCount).toBe(0);
+  });
+
   it("omits Source Gateway connector configuration when the release has no connector", async () => {
     const { host, manager } = setup();
     installFullServiceTemplate(host.configDir);

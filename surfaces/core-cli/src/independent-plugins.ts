@@ -154,6 +154,10 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function isMissingLocalImageError(error: unknown): boolean {
+  return /\bno such image\b/iu.test(errorMessage(error));
+}
+
 function toBytes(bytes: Uint8Array): Uint8Array {
   return new Uint8Array(bytes);
 }
@@ -1048,11 +1052,16 @@ export class IndependentPluginManager {
     if (recorded.image_index !== release.image)
       throw new Error(`Recorded image for Plugin ${release.pluginId} does not match its release.`);
     if (this.#host.verifyImage) {
-      await this.#host.verifyImage(recorded);
-      return recorded;
+      try {
+        await this.#host.verifyImage(recorded);
+        return recorded;
+      } catch (error) {
+        if (!isMissingLocalImageError(error)) throw error;
+      }
     }
     const image = await this.#host.pullAndInspectImage(recorded.image_index);
     if (
+      image.image_index !== recorded.image_index ||
       image.platform_manifest_sha256 !== recorded.platform_manifest_sha256 ||
       image.local_image_id !== recorded.local_image_id
     ) {

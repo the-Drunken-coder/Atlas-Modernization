@@ -655,3 +655,14 @@ test("sets up QEMU before probing every published candidate platform", () => {
   assert.match(script, /const candidatePlatforms = \["linux\/amd64", "linux\/arm64"\]/);
   assert.match(script, /\["run", "--platform", platform/);
 });
+
+test("builds workspace runtime dependencies before running plugin tests", () => {
+  const workflow = readFileSync(join(repositoryRoot, ".github", "workflows", "release-atlas-plugin.yml"), "utf8");
+  const install = workflow.indexOf("npm ci --ignore-scripts");
+  const sdk = workflow.indexOf("npm run build:sdk");
+  const runtime = workflow.indexOf("npm run build:plugin-runtime");
+  const pluginTests = workflow.indexOf('npm test --workspace "$PACKAGE_NAME"');
+  assert.ok(install >= 0 && install < sdk);
+  assert.ok(sdk >= 0 && sdk < runtime);
+  assert.ok(runtime >= 0 && runtime < pluginTests);
+});

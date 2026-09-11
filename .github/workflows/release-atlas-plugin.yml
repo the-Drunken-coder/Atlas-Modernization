@@ -104,7 +104,7 @@ jobs:
           npm --version | grep -Fx "$NPM_VERSION"
           npm ci --ignore-scripts
 
-      - name: Run Plugin checks and build the SDK bundle
+      - name: Run Plugin checks and build dependency bundles
         env:
           PLUGIN_ID: ${{ inputs.plugin_id }}
           PACKAGE_NAME: ${{ needs.validate.outputs.package_name }}
@@ -115,9 +115,9 @@ jobs:
           if node -e 'process.exit(JSON.parse(require("fs").readFileSync("plugins/" + process.env.PLUGIN_ID + "/package.json")).scripts?.["format:check"] ? 0 : 1)'; then
             npm run format:check --workspace "$PACKAGE_NAME"
           fi
-          npm test --workspace "$PACKAGE_NAME"
           npm run build:sdk
           npm run build:plugin-runtime
+          npm test --workspace "$PACKAGE_NAME"
           npm run build --workspace "$PACKAGE_NAME"
           node scripts/plugin-release.mjs validate-plugin "$PLUGIN_ID" "${{ inputs.version }}"
 

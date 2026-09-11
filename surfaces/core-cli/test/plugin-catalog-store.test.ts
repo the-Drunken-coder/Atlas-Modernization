@@ -551,6 +551,9 @@ describe("PluginCatalogStore", () => {
     });
     await store.refresh();
     now = new Date("2026-09-05T12:00:00Z");
+    const beforeInspect = readFileSync(join(directory, "catalog-state.json"));
+    expect(store.inspect().sequence).toBe(1);
+    expect(readFileSync(join(directory, "catalog-state.json"))).toEqual(beforeInspect);
     await expect(() => store.read()).toThrow(/expired/i);
     now = new Date("2026-09-02T12:01:00Z");
     await expect(() => store.read()).toThrow(/expired/i);

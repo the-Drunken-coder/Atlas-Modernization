@@ -180,13 +180,11 @@ export class PluginCatalogStore {
     return stored.receipt;
   }
 
-  /** Verify current persisted state without writing observed_at. Safe for status and list views. */
+  /** Inspect authenticated history, including expired receipts, without admitting mutations or writing observed_at. */
   inspect(): SignedCatalogReceipt {
     const stored = this.#readStoredReceipt(true);
     if (!stored) throw new Error("No verified Plugin catalog is installed. Run atlas-core plugins refresh and retry.");
-    const current = this.#observedNow(stored.observedAt);
-    if (Date.parse(stored.receipt.expiresAt) <= current.getTime())
-      throw new Error("The Plugin catalog is expired; run atlas-core plugins refresh and retry.");
+    this.#observedNow(stored.observedAt);
     return stored.receipt;
   }
 

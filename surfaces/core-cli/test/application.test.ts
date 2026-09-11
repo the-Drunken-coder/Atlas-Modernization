@@ -5175,6 +5175,14 @@ describe("atlas-core CLI", () => {
     expect(await runCLI(["plugins", "refresh"], test.context), test.stderr.join("")).toBe(0);
     expect(await runCLI(["plugins", "status", "alpha_fixture"], test.context), test.stderr.join("")).toBe(0);
     expect(test.stdout.join("")).toContain("REVOKED: Credential exposure in this release");
+    test.context.now = () => new Date("2026-09-21T00:00:00Z");
+    test.context.fetch = async () => new Response("offline", { status: 503 });
+    test.stdout.length = 0;
+    expect(await runCLI(["plugins", "status", "alpha_fixture"], test.context)).toBe(0);
+    expect(test.stdout.join("")).toContain("REVOKED: Credential exposure in this release");
+    expect(test.stdout.join("")).toContain("Plugin catalog expired");
+    expect(await runCLI(["plugins", "enable", "alpha_fixture"], test.context)).toBe(1);
+    expect(test.stderr.join("")).toContain("expired");
   });
 
   it("rejects unknown independent Plugin status IDs", async () => {
