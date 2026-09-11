@@ -425,7 +425,10 @@ export class ManagedPluginCredentials {
       if (intent && !intent.candidateRevoked) {
         // Core must be running for managed-key revoke. A stopped deployment
         // may therefore need a temporary base start before its final stop.
-        if (!running) await this.#host.startBase(journal.previousRunning);
+        if (!running) {
+          await this.#host.startBase(journal.previousRunning);
+          running = true;
+        }
         if (intent.candidateKeyId) await this.#revoke(intent.candidateKeyId);
         else await this.#revokeAttemptMatches(intent.attemptName);
         intent = { ...intent, candidateRevoked: true };
@@ -433,10 +436,7 @@ export class ManagedPluginCredentials {
       }
 
       if (shouldRun && intent?.pluginsRecreated && !intent.pluginsRestored) {
-        if (!running) {
-          await this.#host.startBase(journal.previousRunning);
-          running = true;
-        }
+        if (!running) await this.#host.startBase(journal.previousRunning);
         await this.#host.restoreSDKPlugins();
         intent = { ...intent, pluginsRestored: true };
         this.#persistIntent(transactions, intent);
