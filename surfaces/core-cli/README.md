@@ -133,6 +133,9 @@ Retained base and generated Plugin services use `restart: "no"`, so Compose and 
 boot-time recovery. A macOS LaunchAgent runs after login and cannot provide pre-login recovery. The default `start` and
 `restart` require an installed and loaded supervisor; `start --manual` and `restart --manual` are the explicit one-shot
 exceptions without an automatic recovery guarantee.
+Supervisor definitions pin the validated local Docker socket, clear inherited Docker context overrides, and record the
+CLI version. A CLI upgrade reinstalls active matching supervision with the newly installed CLI before updating Core.
+An active service whose definition does not match the selected deployment must be reinstalled explicitly first.
 The Plugins menu keeps the operation in an activity view with elapsed timestamps, reports rollback status, and returns
 to the Plugin catalog after safe cancellation.
 

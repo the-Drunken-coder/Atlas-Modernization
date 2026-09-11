@@ -88,7 +88,9 @@ describe("supervisor service definitions", () => {
     homeDirectory: "/Users/lane/Atlas User",
     coreHome: "/Users/lane/Atlas User/.atlas-core",
     nodeExecutable: "/opt/node/bin/node",
-    cliScript: "/opt/atlas-core/node_modules/atlas-core/dist/cli.js"
+    cliScript: "/opt/atlas-core/node_modules/atlas-core/dist/cli.js",
+    dockerHost: "unix:///var/run/docker.sock",
+    cliVersion: "0.1.8"
   };
 
   it("generates a shell-free macOS LaunchAgent with deterministic executable paths", () => {
@@ -106,6 +108,11 @@ describe("supervisor service definitions", () => {
     expect(definition.environment.PATH).toBe(
       "/opt/node/bin:/Users/lane/Atlas User/.docker/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
     );
+    expect(definition.environment.DOCKER_CONTEXT).toBe("");
+    expect(definition.environment.DOCKER_HOST).toBe("unix:///var/run/docker.sock");
+    expect(definition.environment.ATLAS_CORE_CLI_VERSION).toBe("0.1.8");
+    expect(definition.content).toContain("<key>DOCKER_CONTEXT</key>");
+    expect(definition.content).toContain("<key>DOCKER_HOST</key>");
     expect(definition.content).toContain("<key>PATH</key>");
     expect(definition.content).toContain(
       "<string>/opt/node/bin:/Users/lane/Atlas User/.docker/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>"
@@ -122,6 +129,9 @@ describe("supervisor service definitions", () => {
       'ExecStart="/opt/node/bin/node" "/opt/atlas-core/node_modules/atlas-core/dist/cli.js" "supervise"'
     );
     expect(definition.content).toContain('Environment="ATLAS_CORE_HOME=/Users/lane/Atlas User/.atlas-core"');
+    expect(definition.content).toContain('Environment="ATLAS_CORE_CLI_VERSION=0.1.8"');
+    expect(definition.content).toContain('Environment="DOCKER_CONTEXT="');
+    expect(definition.content).toContain('Environment="DOCKER_HOST=unix:///var/run/docker.sock"');
     expect(definition.environment.PATH).toBe(
       "/opt/node/bin:/Users/lane/Atlas User/.docker/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
     );
@@ -137,6 +147,9 @@ describe("supervisor service definitions", () => {
       /cliScript must be an absolute path/
     );
     expect(() => generateSupervisorDefinition({ ...paths, platform: "darwin" })).toThrow(/userId is required/);
+    expect(() =>
+      generateSupervisorDefinition({ ...paths, platform: "linux", dockerHost: "tcp://127.0.0.1:2375" })
+    ).toThrow(/local Unix socket endpoint/);
   });
 });
 
@@ -238,7 +251,34 @@ describe("supervisor installation adapters", () => {
     await installSupervisor(options);
 
     const status = await getSupervisorStatus(options);
-    expect(status).toMatchObject({ loaded: false, running: false, enabled: true, userManagerAvailable: true });
+    expect(status).toMatchObject({
+      loaded: false,
+      serviceRunning: true,
+      running: false,
+      enabled: true,
+      userManagerAvailable: true
+    });
+    expect(status.message).toMatch(/does not target this CLI installation/i);
+  });
+
+  it("rejects a running Linux supervisor from an older CLI version", async () => {
+    const root = await makeTempDirectory();
+    const options = installationOptions(root, "linux", fakeRunner());
+    const runner = fakeRunner({
+      systemctl: (args) =>
+        args[1] === "show" ? result(0, systemdLiveConfiguration(root, undefined, undefined, "0.1.7")) : result(0)
+    });
+    const current = { ...options, runner };
+    await installSupervisor(current);
+
+    const status = await getSupervisorStatus(current);
+    expect(status).toMatchObject({
+      loaded: false,
+      serviceRunning: true,
+      running: false,
+      enabled: true,
+      userManagerAvailable: true
+    });
     expect(status.message).toMatch(/does not target this CLI installation/i);
   });
 
@@ -314,6 +354,8 @@ function installationOptions(
     coreHome: join(root, ".atlas-core"),
     nodeExecutable: "/opt/node/bin/node",
     cliScript: "/opt/atlas-core/dist/cli.js",
+    dockerHost: "unix:///var/run/docker.sock",
+    cliVersion: "0.1.8",
     ...(platform === "darwin" ? { userId: "501" } : {}),
     filesystem: filesystem,
     runner
@@ -323,7 +365,9 @@ function installationOptions(
 function systemdLiveConfiguration(
   root: string,
   cliScript = "/opt/atlas-core/dist/cli.js",
-  coreHome = join(root, ".atlas-core")
+  coreHome = join(root, ".atlas-core"),
+  cliVersion = "0.1.8",
+  dockerHost = "unix:///var/run/docker.sock"
 ): string {
   const path = [
     "/opt/node/bin",
@@ -336,7 +380,7 @@ function systemdLiveConfiguration(
     "/sbin"
   ].join(":");
   const escape = (value: string): string => value.replaceAll(" ", "\\x20");
-  return `ExecStart={ path=${escape("/opt/node/bin/node")} ; argv[]=${escape("/opt/node/bin/node")} ${escape(cliScript)} supervise ; ignore_errors=no ; }\nEnvironment=ATLAS_CORE_HOME=${escape(coreHome)} PATH=${escape(path)}\n`;
+  return `ExecStart={ path=${escape("/opt/node/bin/node")} ; argv[]=${escape("/opt/node/bin/node")} ${escape(cliScript)} supervise ; ignore_errors=no ; }\nEnvironment=ATLAS_CORE_HOME=${escape(coreHome)} ATLAS_CORE_CLI_VERSION=${escape(cliVersion)} DOCKER_CONTEXT= DOCKER_HOST=${escape(dockerHost)} PATH=${escape(path)}\n`;
 }
 
 function launchdLiveConfiguration(definition: SupervisorServiceDefinition): string {
@@ -351,6 +395,9 @@ function launchdLiveConfiguration(definition: SupervisorServiceDefinition): stri
 \t}
 \tenvironment = {
 \t\tATLAS_CORE_HOME => ${definition.environment.ATLAS_CORE_HOME}
+\t\tATLAS_CORE_CLI_VERSION => ${definition.environment.ATLAS_CORE_CLI_VERSION}
+\t\tDOCKER_CONTEXT => ${definition.environment.DOCKER_CONTEXT}
+\t\tDOCKER_HOST => ${definition.environment.DOCKER_HOST}
 \t\tPATH => ${definition.environment.PATH}
 \t}
 }

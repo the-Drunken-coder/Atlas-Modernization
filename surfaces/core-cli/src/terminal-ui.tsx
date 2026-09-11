@@ -306,7 +306,12 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
       }
       const statuses = await operator.pluginStatuses();
       if (refreshFailure && statuses.length === 0) throw refreshFailure;
-      setScreen({ kind: "plugins", view: statuses });
+      setScreen({
+        kind: "plugins",
+        view: refreshFailure
+          ? statuses.map((status) => ({ ...status, error: status.error ?? refreshFailure.message }))
+          : statuses
+      });
     } catch (error) {
       setScreen({ kind: "plugins", view: new Error(errorMessage(error)) });
     }
@@ -528,6 +533,17 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
     [loadPlugins, operator, runVisibleOperation]
   );
 
+  const installPlugin = useCallback(
+    async (plugin: PluginDeploymentStatus) => {
+      if (!operator.pluginInstall) return;
+      await runVisibleOperation(`Installing ${plugin.displayName}`, async () => {
+        await operator.pluginInstall?.(plugin.pluginId);
+      });
+      await loadPlugins();
+    },
+    [loadPlugins, operator, runVisibleOperation]
+  );
+
   const showLogs = useCallback(
     async (service: "api" | "minio" | "postgres" | "source-gateway" | undefined, returnTo: "menu" | "status") => {
       await runVisibleOperation("Loading logs", async () => {
@@ -618,6 +634,7 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
     return (
       <PluginsMenu
         onBack={() => void loadMenu()}
+        onInstall={operator.pluginInstall ? (plugin) => void installPlugin(plugin) : undefined}
         onLogs={(plugin) => void showPluginLogs(plugin)}
         onReload={() => void loadPlugins()}
         onToggle={(plugin) => void togglePlugin(plugin)}
@@ -1374,12 +1391,14 @@ function formatActivityTime(milliseconds: number): string {
 
 function PluginsMenu({
   onBack,
+  onInstall,
   onLogs,
   onReload,
   onToggle,
   view
 }: {
   onBack(): void;
+  onInstall: ((plugin: PluginDeploymentStatus) => void) | undefined;
   onLogs(plugin: PluginDeploymentStatus): void;
   onReload(): void;
   onToggle(plugin: PluginDeploymentStatus): void;
@@ -1411,6 +1430,9 @@ function PluginsMenu({
       const next = (Math.min(selectedRef.current, plugins.length - 1) + 1) % plugins.length;
       selectedRef.current = next;
       setSelected(next);
+    } else if (key.return && plugin?.installed === false && onInstall) {
+      actionPending.current = true;
+      onInstall(plugin);
     } else if (key.return && plugin && (plugin.packaged || plugin.installed === true)) {
       actionPending.current = true;
       onToggle(plugin);
@@ -1433,7 +1455,12 @@ function PluginsMenu({
           <Text bold>PLUGIN CATALOG</Text>
           {plugins.map((candidate, candidateIndex) => {
             const runtime = candidate.state ? `  ${candidate.state}/${candidate.health || "unknown"}` : "";
-            const availability = candidate.packaged || candidate.installed === true ? "" : "  image unavailable";
+            const availability =
+              candidate.installed === false
+                ? "  not installed"
+                : candidate.packaged || candidate.installed === true
+                  ? ""
+                  : "  image unavailable";
             const error = candidate.error ? "  ERROR" : "";
             const revocation = candidate.revoked
               ? `  REVOKED${candidate.revocationReason ? `: ${candidate.revocationReason}` : ""}`
@@ -1457,7 +1484,7 @@ function PluginsMenu({
         </>
       )}
       <Rule width={columns} />
-      <Text dimColor>{"↑/↓ move   Enter enable/disable   l logs   r refresh   Esc back"}</Text>
+      <Text dimColor>{"↑/↓ move   Enter install/enable/disable   l logs   r refresh   Esc back"}</Text>
     </Box>
   );
 }

@@ -152,6 +152,7 @@ function operator(snapshot: DeploymentSnapshot = { status: "ready", detail: "Eve
       })
     ),
     pluginLogs: vi.fn(async () => undefined),
+    pluginInstall: vi.fn(async (_pluginId: string, _version?: string) => undefined),
     pluginRefresh: vi.fn(async () => undefined),
     pluginStatuses: vi.fn(async (_pluginId?: string): Promise<PluginDeploymentStatus[]> => []),
     resumeAfterCancellation: vi.fn(),
@@ -686,6 +687,7 @@ describe("Atlas Core terminal UI", () => {
     await vi.waitFor(() => expect(deployment.pluginRefresh).toHaveBeenCalledOnce());
     await vi.waitFor(() => expect(deployment.pluginStatuses).toHaveBeenCalledOnce());
     expect(terminal.text).not.toContain("image unavailable");
+    expect(terminal.text).toContain("ERROR: catalog network unavailable");
 
     terminal.write("r");
     await vi.waitFor(() => expect(deployment.pluginRefresh).toHaveBeenCalledTimes(2));
@@ -730,6 +732,42 @@ describe("Atlas Core terminal UI", () => {
     await menu;
 
     expect(deployment.pluginEnable).toHaveBeenCalledWith(plugin.pluginId, expect.any(Function));
+  });
+
+  it("installs a catalog-only Plugin from the selected row", async () => {
+    const terminal = new TestTerminal();
+    const deployment = operator();
+    const plugin = {
+      pluginId: "building_scan",
+      displayName: "Building Scan",
+      lifecycle: "query_only" as const,
+      enabled: false,
+      packaged: false,
+      installed: false,
+      availableVersions: ["1.2.0", "1.1.0"]
+    };
+    deployment.pluginStatuses
+      .mockResolvedValueOnce([plugin])
+      .mockResolvedValueOnce([{ ...plugin, installed: true, selectedVersion: "1.2.0" }]);
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("View status");
+    terminal.write("plugins");
+    await terminal.waitFor("Filter: plugins");
+    terminal.write("\r");
+    await terminal.waitFor("PLUGIN CATALOG");
+    expect(terminal.text).toContain("not installed");
+    terminal.write("\r");
+    await terminal.waitFor("Installing Building Scan...");
+    await terminal.waitFor("Press Enter to return to Atlas Core.");
+    terminal.write("\r");
+    await vi.waitFor(() => expect(deployment.pluginStatuses).toHaveBeenCalledTimes(2));
+    terminal.write("q");
+    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
+    terminal.write("q");
+    await menu;
+
+    expect(deployment.pluginInstall).toHaveBeenCalledWith(plugin.pluginId);
   });
 
   it("shows the catalog refresh error when no verified cache is available", async () => {

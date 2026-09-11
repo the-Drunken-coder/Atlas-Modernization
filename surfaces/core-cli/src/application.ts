@@ -53,7 +53,15 @@ import {
   PLUGIN_RUNTIME_PROBE_SCRIPT
 } from "./plugin-runtime-verification.js";
 import { createRetainedBundleManifest, verifyRetainedBundle } from "./retained-bundle.js";
-import { getSupervisorStatus, installSupervisor, runSupervisor, uninstallSupervisor } from "./supervision.js";
+import {
+  getSupervisorStatus,
+  installSupervisor,
+  LINUX_SERVICE_NAME,
+  MACOS_SERVICE_NAME,
+  runSupervisor,
+  type SupervisorInstallOptions,
+  uninstallSupervisor
+} from "./supervision.js";
 import {
   type AtlasCoreOperator,
   createInteractiveCLI,
@@ -1221,14 +1229,20 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     this.#stdout.write("Managed Plugin key rotated.\n");
   }
 
-  #supervisorOptions() {
+  #supervisorOptions(
+    dockerHost: string,
+    cliVersion = PACKAGE_VERSION,
+    cliScript = join(this.#packageRoot, "dist", "cli.js")
+  ) {
     if (this.#platform !== "darwin" && this.#platform !== "linux") throw new Error("Unsupported supervisor platform.");
     return {
       platform: this.#platform,
       homeDirectory: this.#homeDir,
       coreHome: this.#configDir,
       nodeExecutable: process.execPath,
-      cliScript: join(this.#packageRoot, "dist", "cli.js"),
+      cliScript,
+      dockerHost,
+      cliVersion,
       userId: String(process.getuid?.() ?? 0),
       runner: async (command: string, args: readonly string[]) =>
         await this.#runner.run(command, [...args], { env: this.#env }),
@@ -1248,11 +1262,59 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     };
   }
 
+  #supervisorServicePath(): string {
+    return this.#platform === "darwin"
+      ? join(this.#homeDir, "Library", "LaunchAgents", `${MACOS_SERVICE_NAME}.plist`)
+      : join(this.#homeDir, ".config", "systemd", "user", LINUX_SERVICE_NAME);
+  }
+
+  async #supervisorState() {
+    const initialOptions = this.#supervisorOptions("unix:///var/run/docker.sock");
+    const initialStatus = await getSupervisorStatus(initialOptions);
+    if (!initialStatus.installed || !existsSync(this.#supervisorServicePath())) {
+      return { options: initialOptions, status: initialStatus };
+    }
+
+    const runtime = await this.#preflight();
+    const options = this.#supervisorOptions(runtime.host);
+    return { options, status: await getSupervisorStatus(options) };
+  }
+
+  async #supervisionBeforeCLIUpdate(updateCore: boolean): Promise<{
+    active?: SupervisorInstallOptions;
+    dockerHost?: string;
+  }> {
+    const supervision = await this.#supervisorState();
+    if (!supervision.status.installed) {
+      return updateCore ? { dockerHost: (await this.#preflight()).host } : {};
+    }
+    if (supervision.status.serviceRunning && !supervision.status.loaded) {
+      throw new Error(
+        "Recovery supervision is running an older or mismatched installation. Reinstall it with atlas-core supervision install before updating the CLI."
+      );
+    }
+    const active = supervision.status.loaded && supervision.status.running === true;
+    return {
+      dockerHost: supervision.options.dockerHost,
+      ...(active ? { active: supervision.options } : {})
+    };
+  }
+
+  async #restartActiveSupervision(options: SupervisorInstallOptions | undefined, cliVersion: string): Promise<void> {
+    if (options) {
+      const cliScript = await this.#installedCLIPath();
+      await installSupervisor(this.#supervisorOptions(options.dockerHost, cliVersion, cliScript));
+    }
+  }
+
   async supervision(action: "install" | "uninstall" | "status"): Promise<void> {
-    const options = this.#supervisorOptions();
-    if (action === "install") await installSupervisor(options);
-    else if (action === "uninstall") await uninstallSupervisor(options);
-    const status = await getSupervisorStatus(options);
+    let options = this.#supervisorOptions("unix:///var/run/docker.sock");
+    if (action === "install") {
+      const runtime = await this.#preflight();
+      options = this.#supervisorOptions(runtime.host);
+      await installSupervisor(options);
+    } else if (action === "uninstall") await uninstallSupervisor(options);
+    const status = action === "status" ? (await this.#supervisorState()).status : await getSupervisorStatus(options);
     this.#stdout.write(`${status.message}\n${status.definition.limitations.join("\n")}\n`);
   }
 
@@ -1693,7 +1755,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   }
 
   async #requireSupervision(command: "start" | "restart" | "reset"): Promise<void> {
-    const supervision = await getSupervisorStatus(this.#supervisorOptions());
+    const supervision = (await this.#supervisorState()).status;
     if (
       !supervision.installed ||
       !supervision.loaded ||
@@ -1939,7 +2001,9 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
         this.#stdout.write(`Atlas Core CLI ${PACKAGE_VERSION} is already current.\n`);
         return;
       }
+      const supervision = await this.#supervisionBeforeCLIUpdate(false);
       await this.#installCLI(release.version);
+      await this.#restartActiveSupervision(supervision.active, release.version);
       this.#stdout.write(`Atlas Core CLI ${release.version} installed. The running Core was not changed.\n`);
       return;
     }
@@ -1953,7 +2017,11 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     const updateCore =
       state !== undefined && compareVersions(state.packageVersion, release.version, "running Atlas Core", "npm") < 0;
     if (!state) {
-      if (updateCLI) await this.#installCLI(release.version);
+      if (updateCLI) {
+        const supervision = await this.#supervisionBeforeCLIUpdate(false);
+        await this.#installCLI(release.version);
+        await this.#restartActiveSupervision(supervision.active, release.version);
+      }
       this.#stdout.write(
         "Atlas Core is not initialized. The CLI is current and there is no Core deployment to update.\n"
       );
@@ -1973,9 +2041,17 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
         return;
       }
     }
+    const supervision = updateCLI ? await this.#supervisionBeforeCLIUpdate(updateCore) : undefined;
     if (updateCLI) {
       await this.#installCLI(release.version);
-      if (updateCore) await this.#runInstalledCoreUpdate(release.version, release.image, state.packageVersion);
+      await this.#restartActiveSupervision(supervision?.active, release.version);
+      if (updateCore)
+        await this.#runInstalledCoreUpdate(
+          release.version,
+          release.image,
+          state.packageVersion,
+          supervision?.dockerHost
+        );
       return;
     }
     if (updateCore) await this.applyCoreUpdate(state.packageVersion, release.image);
@@ -3996,13 +4072,22 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     if (result.status !== 0) throw commandFailure(`npm install --global ${PACKAGE_NAME}@${version}`, result);
   }
 
-  async #runInstalledCoreUpdate(version: string, expectedImage: string, fromVersion: string): Promise<void> {
+  async #installedCLIPath(): Promise<string> {
     const rootResult = await this.#runner.run("npm", ["root", "--global"], { env: this.#env });
     if (rootResult.status !== 0) throw commandFailure("npm root --global", rootResult);
     const globalRoot = oneLine(rootResult.stdout);
     if (!globalRoot) throw new Error("npm did not report its global package directory after the CLI update.");
-    const installedCLI = resolveInstalledCLI(join(globalRoot, PACKAGE_NAME));
-    const childEnvironment = { ...this.#env, ATLAS_CORE_HOME: this.#configDir };
+    return resolveInstalledCLI(join(globalRoot, PACKAGE_NAME));
+  }
+
+  async #runInstalledCoreUpdate(
+    version: string,
+    expectedImage: string,
+    fromVersion: string,
+    dockerHost?: string
+  ): Promise<void> {
+    const installedCLI = await this.#installedCLIPath();
+    const childEnvironment = { ...this.#dockerEnvironment(dockerHost), ATLAS_CORE_HOME: this.#configDir };
     const versionResult = await this.#runner.run(process.execPath, [installedCLI, "version"], {
       env: childEnvironment
     });

@@ -97,6 +97,10 @@ export type SupervisorDefinitionOptions = {
   coreHome: string;
   nodeExecutable: string;
   cliScript: string;
+  /** The validated local Docker Unix-socket endpoint to pin for the service. */
+  dockerHost: string;
+  /** The installed CLI version expected to execute the supervisor. */
+  cliVersion: string;
   userId?: string;
 };
 
@@ -105,7 +109,13 @@ export type SupervisorServiceDefinition = {
   serviceName: string;
   servicePath: string;
   command: readonly [string, string, "supervise"];
-  environment: Readonly<{ ATLAS_CORE_HOME: string; PATH: string }>;
+  environment: Readonly<{
+    ATLAS_CORE_HOME: string;
+    ATLAS_CORE_CLI_VERSION: string;
+    DOCKER_CONTEXT: string;
+    DOCKER_HOST: string;
+    PATH: string;
+  }>;
   content: string;
   sessionScope: "user";
   startsWithoutLogin: boolean;
@@ -125,6 +135,9 @@ export function generateSupervisorDefinition(options: SupervisorDefinitionOption
   validateDefinitionOptions(options);
   const environment = {
     ATLAS_CORE_HOME: options.coreHome,
+    ATLAS_CORE_CLI_VERSION: options.cliVersion,
+    DOCKER_CONTEXT: "",
+    DOCKER_HOST: options.dockerHost,
     PATH: supervisorPath(options)
   } as const;
   if (options.platform === "darwin") {
@@ -190,6 +203,12 @@ function validateDefinitionOptions(options: SupervisorDefinitionOptions): void {
       throw new Error(`Supervisor ${name} contains an invalid path character.`);
     }
   }
+  if (!/^unix:\/\/\/.+/u.test(options.dockerHost)) {
+    throw new Error("Supervisor dockerHost must be a validated local Unix socket endpoint.");
+  }
+  if (options.cliVersion.length === 0 || options.cliVersion.includes("\0") || /[\n\r]/u.test(options.cliVersion)) {
+    throw new Error("Supervisor cliVersion must be a non-empty value without control characters.");
+  }
   if (options.platform === "darwin" && !options.userId) {
     throw new Error("Supervisor userId is required for a macOS LaunchAgent.");
   }
@@ -200,7 +219,7 @@ function validateDefinitionOptions(options: SupervisorDefinitionOptions): void {
 
 function generateLaunchdPlist(
   options: SupervisorDefinitionOptions,
-  environment: Readonly<{ ATLAS_CORE_HOME: string; PATH: string }>
+  environment: SupervisorServiceDefinition["environment"]
 ): string {
   const args: readonly [string, string, "supervise"] = [options.nodeExecutable, options.cliScript, "supervise"];
   const argumentsXml = args.map((value) => `    <string>${escapeXml(value)}</string>`).join("\n");
@@ -218,6 +237,12 @@ ${argumentsXml}
   <dict>
     <key>ATLAS_CORE_HOME</key>
     <string>${escapeXml(environment.ATLAS_CORE_HOME)}</string>
+    <key>ATLAS_CORE_CLI_VERSION</key>
+    <string>${escapeXml(environment.ATLAS_CORE_CLI_VERSION)}</string>
+    <key>DOCKER_CONTEXT</key>
+    <string>${escapeXml(environment.DOCKER_CONTEXT)}</string>
+    <key>DOCKER_HOST</key>
+    <string>${escapeXml(environment.DOCKER_HOST)}</string>
     <key>PATH</key>
     <string>${escapeXml(environment.PATH)}</string>
   </dict>
@@ -236,7 +261,7 @@ ${argumentsXml}
 
 function generateSystemdUnit(
   options: SupervisorDefinitionOptions,
-  environment: Readonly<{ ATLAS_CORE_HOME: string; PATH: string }>
+  environment: SupervisorServiceDefinition["environment"]
 ): string {
   const command = [options.nodeExecutable, options.cliScript, "supervise"].map(escapeSystemdExecArg).join(" ");
   return `[Unit]
@@ -246,6 +271,9 @@ Description=Atlas Core supervisor
 Type=simple
 ExecStart=${command}
 Environment=${escapeSystemdEnvironment("ATLAS_CORE_HOME", environment.ATLAS_CORE_HOME)}
+Environment=${escapeSystemdEnvironment("ATLAS_CORE_CLI_VERSION", environment.ATLAS_CORE_CLI_VERSION)}
+Environment=${escapeSystemdEnvironment("DOCKER_CONTEXT", environment.DOCKER_CONTEXT)}
+Environment=${escapeSystemdEnvironment("DOCKER_HOST", environment.DOCKER_HOST)}
 Environment=${escapeSystemdEnvironment("PATH", environment.PATH)}
 Restart=always
 RestartSec=10s
@@ -286,6 +314,8 @@ export type SupervisorStatus = {
   definition: SupervisorServiceDefinition;
   installed: boolean;
   loaded: boolean;
+  /** Whether the service manager reports the unit/process as active, regardless of target matching. */
+  serviceRunning: boolean | undefined;
   running: boolean | undefined;
   enabled: boolean | undefined;
   userManagerAvailable: boolean | undefined;
@@ -377,6 +407,7 @@ export async function getSupervisorStatus(options: SupervisorInstallOptions): Pr
     const targetMatches =
       diskDefinitionMatches && serviceLoaded && launchdTargetMatches(result.stdout ?? "", definition);
     const loaded = serviceLoaded && targetMatches;
+    const serviceRunning = serviceLoaded ? /\bstate\s*=\s*running\b/.test(result.stdout ?? "") : undefined;
     const userManagerAvailable =
       result.status === 0 ||
       !/could not find service|domain does not exist|unknown service|not found/i.test(result.stderr ?? "");
@@ -384,7 +415,8 @@ export async function getSupervisorStatus(options: SupervisorInstallOptions): Pr
       definition,
       installed,
       loaded,
-      running: serviceLoaded ? targetMatches && /\bstate\s*=\s*running\b/.test(result.stdout ?? "") : undefined,
+      serviceRunning,
+      running: serviceRunning === undefined ? undefined : serviceRunning && targetMatches,
       enabled: undefined,
       userManagerAvailable,
       sessionRequired: true,
@@ -419,11 +451,13 @@ export async function getSupervisorStatus(options: SupervisorInstallOptions): Pr
     liveConfiguration.status === 0 &&
     systemdTargetMatches(liveConfiguration.stdout ?? "", options);
   const loaded = serviceLoaded && targetMatches;
-  const running = active.status === 0 ? targetMatches : active.status === 3 ? false : undefined;
+  const serviceRunning = active.status === 0 ? true : active.status === 3 ? false : undefined;
+  const running = serviceRunning === undefined ? undefined : serviceRunning && targetMatches;
   return {
     definition,
     installed,
     loaded,
+    serviceRunning,
     running,
     enabled: enabled.status === 0 ? true : enabled.status === 1 || enabled.status === 3 ? false : undefined,
     userManagerAvailable,
@@ -457,6 +491,9 @@ function launchdTargetMatches(output: string, definition: SupervisorServiceDefin
   const environment = launchdEnvironment(output);
   return (
     environment.get("ATLAS_CORE_HOME") === definition.environment.ATLAS_CORE_HOME &&
+    environment.get("ATLAS_CORE_CLI_VERSION") === definition.environment.ATLAS_CORE_CLI_VERSION &&
+    environment.get("DOCKER_CONTEXT") === definition.environment.DOCKER_CONTEXT &&
+    environment.get("DOCKER_HOST") === definition.environment.DOCKER_HOST &&
     environment.get("PATH") === definition.environment.PATH
   );
 }
@@ -475,7 +512,13 @@ function systemdTargetMatches(output: string, options: SupervisorDefinitionOptio
   }
   const environmentValue = propertyValue(output, "Environment");
   const environment = environmentValue ? parseSystemdEnvironment(environmentValue) : new Map<string, string>();
-  return environment.get("ATLAS_CORE_HOME") === options.coreHome && environment.get("PATH") === supervisorPath(options);
+  return (
+    environment.get("ATLAS_CORE_HOME") === options.coreHome &&
+    environment.get("ATLAS_CORE_CLI_VERSION") === options.cliVersion &&
+    environment.get("DOCKER_CONTEXT") === "" &&
+    environment.get("DOCKER_HOST") === options.dockerHost &&
+    environment.get("PATH") === supervisorPath(options)
+  );
 }
 
 function propertyValue(output: string, property: string): string | undefined {

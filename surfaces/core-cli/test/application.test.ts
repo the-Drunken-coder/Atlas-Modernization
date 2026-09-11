@@ -14,7 +14,7 @@ import {
   writeFileSync
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { gzipSync } from "node:zlib";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type CLIContext, type CommandRunner, ProcessCommandRunner, runCLI } from "../src/application.js";
@@ -866,6 +866,26 @@ function installedPluginVersion(test: TestRuntime, pluginId: string): string {
 function composeFile(call: Call): string | undefined {
   const fileFlagIndex = call.args.indexOf("--file");
   return fileFlagIndex === -1 ? undefined : call.args[fileFlagIndex + 1];
+}
+
+function applicationSystemdLiveConfiguration(
+  home: string,
+  cliScript: string,
+  cliVersion: string,
+  dockerHost: string
+): string {
+  const path = [
+    dirname(process.execPath),
+    join(home, ".docker", "bin"),
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+    "/usr/bin",
+    "/bin",
+    "/usr/sbin",
+    "/sbin"
+  ].join(":");
+  const escape = (value: string): string => value.replaceAll(" ", "\\x20");
+  return `ExecStart={ path=${escape(process.execPath)} ; argv[]=${escape(process.execPath)} ${escape(cliScript)} supervise ; ignore_errors=no ; }\nEnvironment=ATLAS_CORE_HOME=${escape(join(home, ".atlas", "core"))} ATLAS_CORE_CLI_VERSION=${escape(cliVersion)} DOCKER_CONTEXT= DOCKER_HOST=${escape(dockerHost)} PATH=${escape(path)}\n`;
 }
 
 function markInitialized(test: TestRuntime, started = true): void {
@@ -3473,6 +3493,93 @@ describe("atlas-core CLI", () => {
         inherit: true
       })
     );
+  });
+
+  it("reinstalls active supervision with the new CLI and selected Docker endpoint", async () => {
+    const test = runtime();
+    markInitialized(test);
+    test.context.platform = "linux";
+    test.context.env = { ...test.context.env, DOCKER_CONTEXT: "desktop" };
+    const supervisorPath = join(test.home, ".config", "systemd", "user", "atlas-core-supervisor.service");
+    const packageRoot = resolve(".");
+    const oldCLI = join(packageRoot, "dist", "cli.js");
+    const liveConfiguration = (): string =>
+      applicationSystemdLiveConfiguration(test.home, oldCLI, PACKAGE_VERSION, test.runner.contextHost);
+    const run = test.runner.run.bind(test.runner);
+    const supervisorRunner = vi.spyOn(test.runner, "run").mockImplementation(async (command, args, options) => {
+      if (command === "systemctl") {
+        if (args[1] === "is-active") return result(0, "active\n");
+        if (args[1] === "is-enabled") return result(0, "enabled\n");
+        if (args[1] === "show") return result(0, liveConfiguration());
+      }
+      return await run(command, args, options);
+    });
+    try {
+      expect(await runCLI(["supervision", "install"], test.context), test.stderr.join("")).toBe(0);
+      test.runner.calls.length = 0;
+      test.runner.latestVersion = NEXT_PACKAGE_VERSION;
+      test.context.confirmCoreUpdate = async () => true;
+
+      expect(await runCLI(["update", "all"], test.context), test.stderr.join("")).toBe(0);
+    } finally {
+      supervisorRunner.mockRestore();
+    }
+
+    const installedCLI = join(test.runner.globalRoot, PACKAGE_NAME, "dist", "cli.js");
+    const service = readFileSync(supervisorPath, "utf8");
+    expect(service).toContain(`ExecStart="${process.execPath}" "${installedCLI}" "supervise"`);
+    expect(service).toContain(`Environment="ATLAS_CORE_CLI_VERSION=${NEXT_PACKAGE_VERSION}"`);
+    expect(service).toContain(`Environment="DOCKER_HOST=${test.runner.contextHost}"`);
+    expect(service).toContain('Environment="DOCKER_CONTEXT="');
+
+    const installIndex = test.runner.calls.findIndex(
+      (call) => call.command === "npm" && call.args[0] === "install" && call.args[1] === "--global"
+    );
+    const restartIndex = test.runner.calls.findIndex(
+      (call) => call.command === "systemctl" && call.args.includes("restart")
+    );
+    const updateIndex = test.runner.calls.findIndex(
+      (call) => call.command === process.execPath && call.args.includes("__apply-core-update")
+    );
+    expect(installIndex).toBeGreaterThanOrEqual(0);
+    expect(restartIndex).toBeGreaterThan(installIndex);
+    expect(updateIndex).toBeGreaterThan(restartIndex);
+    for (const call of test.runner.calls.filter(
+      (candidate) => candidate.command === process.execPath && candidate.args.at(-1) !== "version"
+    )) {
+      expect(call.env.DOCKER_HOST).toBe(test.runner.contextHost);
+      expect(call.env.DOCKER_CONTEXT).toBeUndefined();
+    }
+  });
+
+  it("blocks a CLI update when an active supervisor targets an older installation", async () => {
+    const test = runtime();
+    markInitialized(test);
+    test.context.platform = "linux";
+    const supervisorPath = join(test.home, ".config", "systemd", "user", "atlas-core-supervisor.service");
+    mkdirSync(resolve(supervisorPath, ".."), { recursive: true });
+    writeFileSync(supervisorPath, "stale supervisor definition\n", { mode: 0o600 });
+    const oldCLI = join(resolve("."), "dist", "cli.js");
+    const run = test.runner.run.bind(test.runner);
+    const supervisorRunner = vi.spyOn(test.runner, "run").mockImplementation(async (command, args, options) => {
+      if (command === "systemctl") {
+        if (args[1] === "is-active") return result(0, "active\n");
+        if (args[1] === "is-enabled") return result(0, "enabled\n");
+        if (args[1] === "show")
+          return result(0, applicationSystemdLiveConfiguration(test.home, oldCLI, "0.1.7", test.runner.contextHost));
+      }
+      return await run(command, args, options);
+    });
+    try {
+      test.runner.latestVersion = NEXT_PACKAGE_VERSION;
+      test.context.confirmCoreUpdate = async () => true;
+      expect(await runCLI(["update", "all"], test.context)).toBe(1);
+    } finally {
+      supervisorRunner.mockRestore();
+    }
+
+    expect(test.stderr.join("")).toContain("Reinstall it with atlas-core supervision install");
+    expect(test.runner.calls.some((call) => call.command === "npm" && call.args[0] === "install")).toBe(false);
   });
 
   it("reports a failure from the newly installed Core updater", async () => {
