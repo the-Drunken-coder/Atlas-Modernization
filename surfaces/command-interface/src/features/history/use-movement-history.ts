@@ -38,6 +38,7 @@ export function useMovementHistory(entity: EntityResource | undefined, reader: M
   const key = `${id ?? ""}/${created ?? ""}`;
   const [view, setView] = useState(() => initial(key));
   const [data, setData] = useState<HistoryData>();
+  const historyRequest = useRef<AbortController | undefined>(undefined);
   const [trailData, setTrailData] = useState<{ key: string; value: MovementTrail }>();
   const trailRequest = useRef<{ key: string; controller: AbortController; promise: Promise<void> } | undefined>(
     undefined
@@ -67,9 +68,11 @@ export function useMovementHistory(entity: EntityResource | undefined, reader: M
   useEffect(() => {
     if (!open || !id || !created) return;
     const controller = new AbortController();
+    historyRequest.current = controller;
     let timer: ReturnType<typeof setTimeout> | undefined;
     setError(undefined);
     const read = async (background = false) => {
+      if (controller.signal.aborted) return;
       if (!background) setLoading(true);
       try {
         if (!reader) throw new Error("Movement history is unavailable");
@@ -182,6 +185,7 @@ export function useMovementHistory(entity: EntityResource | undefined, reader: M
   }, [view.pinned]);
   const changeRange = (duration: number, window?: Window) => {
     const now = Date.now();
+    historyRequest.current?.abort();
     setPreview(undefined);
     setData(undefined);
     setInspection(undefined);
@@ -192,6 +196,7 @@ export function useMovementHistory(entity: EntityResource | undefined, reader: M
     setView((v) => ({
       ...v,
       duration,
+      refresh: v.refresh + 1,
       dismissed: false,
       window:
         window ??
@@ -208,6 +213,7 @@ export function useMovementHistory(entity: EntityResource | undefined, reader: M
     if (!current || current.cursor !== view.cursor) return;
     const cursor = older ? current.page.next_cursor : view.cursors.at(-1);
     if (older && !cursor) return;
+    historyRequest.current?.abort();
     setPreview(undefined);
     setInspection(undefined);
     setView((v) =>
@@ -257,29 +263,15 @@ export function useMovementHistory(entity: EntityResource | undefined, reader: M
     canGoNewer: view.cursors.length > 0,
     navigationLoading: current?.cursor !== view.cursor,
     toggle: () => {
+      historyRequest.current?.abort();
       setPreview(undefined);
       setView((v) => ({ ...v, open: !v.open }));
     },
-    refresh: () => setView((v) => ({ ...v, cursor: undefined, cursors: [], refresh: v.refresh + 1 })),
-    recent: () => {
-      setPreview(undefined);
-      setInspection(undefined);
-      setData(undefined);
-      trailRequest.current?.controller.abort();
-      trailRequest.current = undefined;
-      setTrailData(undefined);
-      setTrailError(undefined);
-      setView((v) => ({
-        ...v,
-        window: undefined,
-        dismissed: false,
-        following: true,
-        pinned: undefined,
-        cursor: undefined,
-        cursors: [],
-        duration: 3600000
-      }));
+    refresh: () => {
+      historyRequest.current?.abort();
+      setView((v) => ({ ...v, cursor: undefined, cursors: [], refresh: v.refresh + 1 }));
     },
+    recent: () => changeRange(3600000),
     changeRange,
     navigatePage,
     pin,

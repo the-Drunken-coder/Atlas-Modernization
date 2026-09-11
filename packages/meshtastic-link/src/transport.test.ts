@@ -921,6 +921,7 @@ describe("Link transport", () => {
         operation: "entity.trail",
         target_id: "asset-alpha",
         entity_created_at: time,
+        max_points: 100,
         from: time,
         to: time
       },

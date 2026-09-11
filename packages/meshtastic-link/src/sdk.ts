@@ -72,7 +72,7 @@ type OperationContext<Operation extends AtlasRadioOperationName> = Operation ext
           entity_created_at: string;
           from: string;
           to: string;
-          max_points?: number;
+          max_points: number;
           cursor?: never;
           limit?: never;
         }

@@ -207,25 +207,21 @@ func (a *EntityActions) ImportMovement(ctx context.Context, id string, request p
 		return nil, err
 	}
 	result := &protocol.MovementHistoryBatchResponse{}
-	cutoff := time.Now().Add(-MovementRetention)
-	eligible := prepared[:0]
+	cutoff := movementLowerBound(time.Now().Add(-MovementRetention))
 	for _, sample := range prepared {
 		if sample.time.Before(cutoff) {
 			result.Expired++
-		} else {
-			eligible = append(eligible, sample)
 		}
 	}
-	if len(eligible) > 0 {
-		encoded, err := json.Marshal(eligible)
-		if err != nil {
-			return nil, fmt.Errorf("encode movement import: %w", err)
-		}
-		// The Entity lock serializes sample allocation, including live capture.
-		// Send the complete batch once instead of holding that lock across hundreds
-		// of client/server round trips. A conflict rolls back the whole transaction.
-		var conflict bool
-		err = tx.QueryRow(ctx, `WITH incoming AS (
+	encoded, err := json.Marshal(prepared)
+	if err != nil {
+		return nil, fmt.Errorf("encode movement import: %w", err)
+	}
+	// The Entity lock serializes sample allocation, including live capture.
+	// Send the complete batch once instead of holding that lock across hundreds
+	// of client/server round trips. A conflict rolls back the whole transaction.
+	var conflict bool
+	err = tx.QueryRow(ctx, `WITH incoming AS (
  SELECT DISTINCT * FROM jsonb_to_recordset($3::jsonb) AS sample(
   sample_id text, observed_at timestamptz, latitude double precision,
   longitude double precision, speed_m_s double precision, altitude_m double precision)
@@ -240,18 +236,18 @@ func (a *EntityActions) ImportMovement(ctx context.Context, id string, request p
  INSERT INTO entity_movement_samples
   (entity_id,entity_created_at,sample_id,observed_at,received_at,sample_time,latitude,longitude,speed_m_s,altitude_m)
  SELECT $1,$2,sample_id,observed_at,$4,COALESCE(observed_at,$4),latitude,longitude,speed_m_s,altitude_m
- FROM incoming ON CONFLICT (entity_id,entity_created_at,sample_id) DO NOTHING
+ FROM incoming WHERE COALESCE(observed_at,$4) >= $5
+ ON CONFLICT (entity_id,entity_created_at,sample_id) DO NOTHING
  RETURNING sample_id
 )
-SELECT (SELECT count(*) FROM inserted), EXISTS(SELECT 1 FROM conflicts)`, entity.EntityID, entity.CreatedAt, encoded, received).Scan(&result.Inserted, &conflict)
-		if err != nil {
-			return nil, fmt.Errorf("import movement batch: %w", err)
-		}
-		if conflict {
-			return nil, &ConflictError{ActionError: ActionError{Message: "sample_id already belongs to a different movement report", Code: protocol.ErrorCodeValidationError}}
-		}
-		result.Duplicates = int64(len(eligible)) - result.Inserted
+SELECT (SELECT count(*) FROM inserted), EXISTS(SELECT 1 FROM conflicts)`, entity.EntityID, entity.CreatedAt, encoded, received, cutoff).Scan(&result.Inserted, &conflict)
+	if err != nil {
+		return nil, fmt.Errorf("import movement batch: %w", err)
 	}
+	if conflict {
+		return nil, &ConflictError{ActionError: ActionError{Message: "sample_id already belongs to a different movement report", Code: protocol.ErrorCodeValidationError}}
+	}
+	result.Duplicates = int64(len(prepared)) - result.Expired - result.Inserted
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}

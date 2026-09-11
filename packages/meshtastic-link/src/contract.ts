@@ -78,6 +78,9 @@ export {
 
 export const LINK_PROTOCOL_REVISION = 1 as const;
 export const MAX_OBJECT_CONTENT_BYTES = 32 * 1024;
+// Leave room below the 128 KiB message limit for long sample IDs and cursors.
+export const MAX_RADIO_MOVEMENT_SAMPLES = 100;
+export const MAX_RADIO_TRAIL_POINTS = 100;
 
 export function serializeLinkMessage(message: LinkMessage): Uint8Array {
   if (!isLinkMessage(message)) throw new TypeError("Invalid Atlas Radio contract message");
@@ -323,15 +326,18 @@ function validOperationContext(operation: AtlasRadioOperationName, value: Record
         validMovementWindow(value) &&
         value.max_points === undefined &&
         (value.limit === undefined ||
-          (Number.isSafeInteger(value.limit) && Number(value.limit) >= 1 && Number(value.limit) <= 500))
+          (Number.isSafeInteger(value.limit) &&
+            Number(value.limit) >= 1 &&
+            Number(value.limit) <= MAX_RADIO_MOVEMENT_SAMPLES))
       );
     case "entity.trail":
       return (
         validMovementWindow(value) &&
         value.cursor === undefined &&
         value.limit === undefined &&
-        (value.max_points === undefined ||
-          (Number.isSafeInteger(value.max_points) && Number(value.max_points) >= 2 && Number(value.max_points) <= 5000))
+        Number.isSafeInteger(value.max_points) &&
+        Number(value.max_points) >= 2 &&
+        Number(value.max_points) <= MAX_RADIO_TRAIL_POINTS
       );
     case "entity.inspect_movement":
       return (

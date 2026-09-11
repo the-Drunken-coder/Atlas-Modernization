@@ -156,6 +156,27 @@ func TestMovementCaptureBackfillAndAssociation(t *testing.T) {
 	if count != 0 {
 		t.Fatal("conflict did not roll back batch")
 	}
+	for name, samples := range map[string][]protocol.MovementSampleInput{
+		"mixed-age ID within batch": {
+			{SampleID: "reused", ObservedAt: movementPtr(movementTime(now.Add(-31 * 24 * time.Hour))), SpeedMS: movementPtr(1.0)},
+			{SampleID: "reused", SpeedMS: movementPtr(2.0)},
+		},
+		"expired conflict with stored report": {
+			{SampleID: "earlier", ObservedAt: movementPtr(movementTime(now.Add(-31 * 24 * time.Hour))), SpeedMS: movementPtr(1.0)},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			batch.Samples = samples
+			_, err := a.ImportMovement(ctx, id, batch, now)
+			var conflict *ConflictError
+			if !errors.As(err, &conflict) {
+				t.Fatalf("expired input bypassed conflict validation: %v", err)
+			}
+			if err := pool.QueryRow(ctx, `SELECT count(*) FROM entity_movement_samples WHERE entity_id=$1 AND sample_id='reused'`, id).Scan(&count); err != nil || count != 0 {
+				t.Fatalf("mixed-age conflict did not roll back: %d %v", count, err)
+			}
+		})
+	}
 	if err = a.Delete(ctx, id); err != nil {
 		t.Fatal(err)
 	}

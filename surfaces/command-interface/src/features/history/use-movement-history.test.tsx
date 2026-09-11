@@ -99,6 +99,31 @@ it("aborts old association reads and ignores a response that arrives after repla
   expect(result.current.sample).toBeUndefined();
 });
 
+it.each(["range", "recent"] as const)("ignores an old response before %s effect cleanup", async (transition) => {
+  const api = reader();
+  let resolve!: (value: MovementHistoryPage) => void;
+  api.history.mockImplementationOnce(
+    () =>
+      new Promise((r) => {
+        resolve = r;
+      })
+  );
+  const { result } = renderHook(() => useMovementHistory(entity, api));
+  act(() => result.current.toggle());
+  api.history.mockRejectedValue(new Error("Replacement failed"));
+  // Resolve inside the same batch, before React commits the new view and cleans up effects.
+  await act(async () => {
+    if (transition === "range") result.current.changeRange(86400000);
+    else result.current.recent();
+    resolve(page);
+    await Promise.resolve();
+  });
+  await settle();
+  expect(result.current.data).toBeUndefined();
+  expect(result.current.sample).toBeUndefined();
+  expect(result.current.error).toContain("Replacement failed");
+});
+
 it("previews without unpinning and cancels obsolete inspection requests", async () => {
   const api = reader();
   const { result } = renderHook(() => useMovementHistory(entity, api));

@@ -203,6 +203,92 @@ describe("generated Radio contract", () => {
     expect(new TextDecoder().decode(serializeLinkMessage(message))).not.toContain("\n");
   });
 
+  it.each(["entity.history", "entity.trail"] as const)(
+    "bounds %s requests for the radio message budget",
+    (operation) => {
+      const time = "2026-09-09T12:00:00.999999Z";
+      const budget = operation === "entity.history" ? "limit" : "max_points";
+      const request = {
+        type: "data_request",
+        request_id: "history",
+        operation,
+        target_id: "track-1",
+        entity_created_at: time,
+        from: time,
+        to: time
+      };
+      expect(isLinkMessage({ ...request, [budget]: 100 })).toBe(true);
+      expect(isLinkMessage({ ...request, [budget]: 101 })).toBe(false);
+      expect(isLinkMessage(request)).toBe(operation === "entity.history");
+      // Core emits microsecond UTC times. Escaped IDs and long finite numbers
+      // exercise the large end of its sparse-report representation.
+      const sample = {
+        sample_id: "\u0001".repeat(128),
+        time,
+        observed_at: time,
+        received_at: time,
+        time_is_arrival: false,
+        latitude: -0.0000012345678901234567,
+        longitude: -0.0000012345678901234567,
+        speed_m_s: Number.MAX_VALUE,
+        altitude_m: -Number.MAX_VALUE
+      };
+      const samples = Array.from({ length: 100 }, () => sample);
+      const interval = { entity_created_at: time, from: time, to: time, retained_from: time };
+      const response: DataResponse =
+        operation === "entity.history"
+          ? {
+              type: "data_response",
+              request_id: "r".repeat(256),
+              operation,
+              output: {
+                ...interval,
+                samples,
+                snapshot: "9223372036854775807",
+                next_cursor: "a".repeat(2732),
+                retention_advanced: true
+              },
+              next_cursor: "a".repeat(2732)
+            }
+          : {
+              type: "data_response",
+              request_id: "r".repeat(256),
+              operation,
+              output: {
+                ...interval,
+                points: samples.map((sample) => ({ sample, gap_before: true })),
+                position_count: Number.MAX_SAFE_INTEGER,
+                simplified: true
+              }
+            };
+      const payload = serializeLinkMessage(response);
+      expect(payload.byteLength).toBeLessThan(MAX_LINK_MESSAGE_BYTES);
+      expect(() => fragmentPayload(payload, frameIdentity())).not.toThrow();
+      const largeResponse: DataResponse =
+        operation === "entity.history"
+          ? {
+              type: "data_response",
+              request_id: "history",
+              operation,
+              output: { ...interval, samples: Array.from({ length: 500 }, () => sample), snapshot: "1" }
+            }
+          : {
+              type: "data_response",
+              request_id: "trail",
+              operation,
+              output: {
+                ...interval,
+                points: Array.from({ length: 5000 }, () => ({ sample, gap_before: false })),
+                position_count: 5000,
+                simplified: false
+              }
+            };
+      expect(() => fragmentPayload(serializeLinkMessage(largeResponse), frameIdentity())).toThrow(
+        "Link payload exceeds 128 KiB"
+      );
+    }
+  );
+
   it("fragments and reconstructs the exact production payload within Meshtastic limits", () => {
     const payload = serializeLinkMessage(positionPublication(1));
     const frames = fragmentPayload(payload, frameIdentity(), 233);

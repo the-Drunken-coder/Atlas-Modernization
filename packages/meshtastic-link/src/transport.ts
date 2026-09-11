@@ -18,6 +18,7 @@ import {
   deliveryClass,
   deserializeLinkMessage,
   isLinkMessage,
+  MAX_RADIO_TRAIL_POINTS,
   messagePriority,
   serializeLinkMessage
 } from "./contract.js";
@@ -2251,7 +2252,7 @@ function responseMatchesRequest(
       return (
         request.operation === "entity.history"
           ? movementHistoryResponseValidator({ ...query, limit: request.limit ?? 100 })
-          : movementTrailResponseValidator({ ...query, maxPoints: request.max_points ?? 1000 })
+          : movementTrailResponseValidator({ ...query, maxPoints: request.max_points ?? MAX_RADIO_TRAIL_POINTS })
       )(response.output);
     }
     case "entity.inspect_movement":

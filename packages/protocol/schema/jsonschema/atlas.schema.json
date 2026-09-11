@@ -3045,6 +3045,14 @@
           "anyOf": [
             {
               "type": "object",
+              "properties": {
+                "latitude": {
+                  "type": "number"
+                },
+                "longitude": {
+                  "type": "number"
+                }
+              },
               "required": [
                 "latitude",
                 "longitude"
@@ -3052,43 +3060,39 @@
             },
             {
               "type": "object",
+              "properties": {
+                "latitude": {
+                  "not": {}
+                },
+                "longitude": {
+                  "not": {}
+                },
+                "speed_m_s": {
+                  "type": "number"
+                }
+              },
               "required": [
                 "speed_m_s"
               ]
             },
             {
               "type": "object",
+              "properties": {
+                "latitude": {
+                  "not": {}
+                },
+                "longitude": {
+                  "not": {}
+                },
+                "altitude_m": {
+                  "type": "number"
+                }
+              },
               "required": [
                 "altitude_m"
               ]
             }
           ]
-        },
-        {
-          "if": {
-            "type": "object",
-            "anyOf": [
-              {
-                "type": "object",
-                "required": [
-                  "latitude"
-                ]
-              },
-              {
-                "type": "object",
-                "required": [
-                  "longitude"
-                ]
-              }
-            ]
-          },
-          "then": {
-            "type": "object",
-            "required": [
-              "latitude",
-              "longitude"
-            ]
-          }
         }
       ]
     },
