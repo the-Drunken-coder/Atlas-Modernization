@@ -25,6 +25,11 @@ import {
   SPATIAL_RESULT_LAYERS,
   type SpatialMapOverlay
 } from "../rendering/map-layers.js";
+import {
+  MOVEMENT_POINTS_LAYER,
+  type MovementMapOverlay,
+  pushMovementOverlay
+} from "../rendering/map-movement-history.js";
 import { type MapSources } from "../rendering/map-sources.js";
 import {
   clearMarkers,
@@ -50,6 +55,7 @@ export type { MapEditing } from "../rendering/map-editing.js";
 export { buildMapSources } from "../rendering/map-sources.js";
 
 type MapViewProps = {
+  movement?: MovementMapOverlay;
   sources: MapSources;
   styleId: string;
   style: StyleSpecification;
@@ -86,6 +92,7 @@ type SymbolMarkerEntry = {
 };
 
 export function MapView({
+  movement,
   sources,
   styleId,
   style,
@@ -108,6 +115,8 @@ export function MapView({
   const mapRef = useRef<MlMap | undefined>(undefined);
   const mapLibreRef = useRef<MapLibreRuntime | undefined>(undefined);
   const sourcesRef = useRef(sources);
+  const movementRef = useRef(movement);
+  movementRef.current = movement;
   const editingRef = useRef(editing);
   const spatialRef = useRef(spatial);
   const initialMapRef = useRef({ initialCenter, style, styleId });
@@ -154,6 +163,19 @@ export function MapView({
     command: appliedCameraCommand,
     onUserGesture: cancelPendingCommit
   });
+  const historySampleAt = (point: { x: number; y: number } | undefined) => {
+    const map = mapRef.current;
+    const history = movementRef.current;
+    if (!point || !map || !history?.interactive || !map.getLayer(MOVEMENT_POINTS_LAYER)) return undefined;
+    const hit = map.queryRenderedFeatures(
+      [
+        [point.x - 5, point.y - 5],
+        [point.x + 5, point.y + 5]
+      ],
+      { layers: [MOVEMENT_POINTS_LAYER] }
+    )[0];
+    return history.trail?.points.find((p) => p.sample.sample_id === hit?.properties?.sampleId)?.sample;
+  };
   const reticleInteraction = useMapReticleInteraction({
     mapCanvasRef,
     mapRef,
@@ -163,7 +185,15 @@ export function MapView({
     focusTarget,
     notifyUserGesture,
     onSelectEntity,
-    onBackgroundClick
+    onBackgroundClick,
+    onHistoryClick: (point) => {
+      const sample = historySampleAt(point);
+      if (!sample) return false;
+      movementRef.current?.onPin(sample);
+      return true;
+    },
+    onHistoryHover: (point) => movementRef.current?.onPreview(historySampleAt(point)),
+    onDismissHistory: () => (movementRef.current?.interactive ? movementRef.current.onDismiss() : false)
   });
   const mapActionsRef = useRef(reticleInteraction.mapActions);
   mapActionsRef.current = reticleInteraction.mapActions;
@@ -266,6 +296,7 @@ export function MapView({
         pushSources(mapInstance, sourcesRef.current);
         pushEditingOverlay(mapInstance, editingRef.current);
         pushSpatialOverlay(mapInstance, spatialRef.current);
+        if (movementRef.current) pushMovementOverlay(mapInstance, movementRef.current);
         fitWorldOnce(mapInstance, fitWorldOnceRef);
 
         if (!eventsRegisteredRef.current) {
@@ -314,6 +345,7 @@ export function MapView({
             pushSources(mapInstance, sourcesRef.current);
             pushEditingOverlay(mapInstance, editingRef.current);
             pushSpatialOverlay(mapInstance, spatialRef.current);
+            if (movementRef.current) pushMovementOverlay(mapInstance, movementRef.current);
           }
           styleSwitchErrorRef.current?.({ failedStyleId, activeStyleId: currentStyleIdRef.current ?? failedStyleId });
         } else if (!readyRef.current) {
@@ -375,6 +407,7 @@ export function MapView({
         pushSources(map, sourcesRef.current);
         pushEditingOverlay(map, editingRef.current);
         pushSpatialOverlay(map, spatialRef.current);
+        if (movementRef.current) pushMovementOverlay(map, movementRef.current);
       }
       styleSwitchErrorRef.current?.({ failedStyleId: styleId, activeStyleId: currentStyleIdRef.current ?? styleId });
     };
@@ -488,6 +521,14 @@ export function MapView({
     const map = mapRef.current;
     if (map && readyRef.current) pushSpatialOverlay(map, spatial);
   }, [spatial]);
+
+  const movementTrail = movement?.trail;
+  const movementSelection = movement?.selected;
+  useEffect(() => {
+    const map = mapRef.current;
+    if (map && readyRef.current && (movementTrail || movementSelection || map.getSource("movement-history")))
+      pushMovementOverlay(map, { trail: movementTrail, selected: movementSelection });
+  }, [movementTrail, movementSelection, mapReady]);
 
   const handleCanvasClick = (event: ReactMouseEvent<HTMLDivElement>) => {
     if (reticleInteraction.mapActions.consumeSuppressedClick()) {

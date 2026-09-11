@@ -61,6 +61,7 @@ export function useMapReticlePointer({ options, stateStore }: PointerHookOptions
 
   const cancelPendingPointer = useCallback(() => {
     pendingPointerRef.current = null;
+    optionsRef.current.onHistoryHover?.(undefined);
     if (pointerFrameRef.current === undefined) return;
     cancelAnimationFrame(pointerFrameRef.current);
     pointerFrameRef.current = undefined;
@@ -189,6 +190,7 @@ export function useMapReticlePointer({ options, stateStore }: PointerHookOptions
       optionsRef.current.mapRef.current,
       markerBoxCacheRef.current
     );
+    optionsRef.current.onHistoryHover?.(target ? undefined : rawPoint);
     const next = target
       ? reticleForTarget(target)
       : { ...visualPoint, target: squareAround(visualPoint, RETICLE_TARGET_SIZE) };
@@ -298,6 +300,7 @@ export function useMapReticlePointer({ options, stateStore }: PointerHookOptions
         onSelectEntity(clickTargets[(selectedIndex + 1) % clickTargets.length].entityId);
         return;
       }
+      if (optionsRef.current.onHistoryClick?.(point)) return;
       onBackgroundClick?.();
     },
     [consumeSuppressedClick, stateRef]

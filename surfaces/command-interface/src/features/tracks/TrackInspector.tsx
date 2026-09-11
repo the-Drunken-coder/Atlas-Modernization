@@ -11,9 +11,11 @@ import {
 import { formatNumber, formatRelativeTime } from "../../atlas/format.js";
 import { JsonDrawer } from "../../ui/primitives/JsonDrawer.js";
 import { ClassificationPill } from "../../ui/primitives/StatusPill.js";
+import { MovementHistorySection } from "../history/MovementHistorySection.js";
+import type { MovementHistoryState } from "../history/use-movement-history.js";
 import { FieldGrid, InspectorHeading, Section } from "../shared/panels.js";
 
-export function TrackInspector({ entity }: { entity: EntityResource }) {
+export function TrackInspector({ entity, history }: { entity: EntityResource; history?: MovementHistoryState }) {
   const position = entityPosition(entity);
   const classification = entityClassification(entity);
   return (
@@ -32,6 +34,8 @@ export function TrackInspector({ entity }: { entity: EntityResource }) {
           ]}
         />
       </Section>
+
+      {history && <MovementHistorySection history={history} />}
 
       <Section title="Classification">
         {classification ? (

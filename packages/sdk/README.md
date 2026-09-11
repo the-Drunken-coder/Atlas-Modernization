@@ -71,3 +71,7 @@ npm test --workspace @the-drunken-coder/atlas-sdk
 ```
 
 The package smoke test builds a clean tarball, installs it into a temporary consumer, compiles its public types, and exercises the root, focused browser entries, CLI, and generated protocol paths. See the [full SDK design documentation](https://github.com/the-Drunken-coder/Atlas-Modernization/blob/main/docs/atlas-sdk/README.md) for sync, cache, feed, and reconciliation details.
+
+### Movement history
+
+Use `client.entities.history(id, query)` for original reports, `trail(id, query)` for a reduced trail, and `inspectMovement(id, entityCreatedAt, at, signal?)` for historical position, speed and altitude. The query includes `entityCreatedAt`, `from`, `to` and optional `signal`; raw reads also accept `cursor`/`limit`, while trails accept `maxPoints`. `importMovement(id, { entity_created_at, samples }, signal?)` attaches earlier reports without modifying the live Entity or SDK cache. Samples use stable IDs for retries and retain only supplied quantities. See [the complete contract and example](../../docs/movement-history-implementation.md).

@@ -9,6 +9,10 @@ const revisionPath = join(packageRoot, "../protocol/generated/revision.txt");
 const outputPath = join(packageRoot, "src/generated/radio-contract.generated.ts");
 
 const operations = [
+  ["entity.history", "request", undefined, "MovementHistoryPage"],
+  ["entity.trail", "request", undefined, "MovementTrail"],
+  ["entity.inspect_movement", "request", undefined, "MovementInspection"],
+  ["entity.import_movement", "mutation", "MovementHistoryBatchRequest", "MovementHistoryBatchResponse"],
   ["entity.get", "request", undefined, "EntityResource"],
   ["entity.create", "mutation", "EntityCreateRequest", "EntityResource"],
   ["entity.update", "mutation", "EntityUpdateRequest", "EntityResource"],

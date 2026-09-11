@@ -9,6 +9,7 @@ import (
 // publicGoValidatorDefinitions is the deliberate generated Go facade. Schema
 // helpers do not become public validators merely by appearing in $defs.
 var publicGoValidatorDefinitions = []string{
+	"MovementHistoryBatchRequest", "MovementHistoryBatchResponse", "MovementHistoryPage", "MovementTrail", "MovementInspection",
 	"EntityBlob",
 	"ObjectBlob",
 	"EntityResource",

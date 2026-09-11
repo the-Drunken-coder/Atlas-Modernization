@@ -8,45 +8,49 @@ import (
 )
 
 type createEntityRequest struct {
-	EntityID    string                 `json:"entity_id"`
-	EntityType  string                 `json:"entity_type"`
-	Subtype     string                 `json:"subtype"`
-	Alias       *string                `json:"alias,omitempty"`
-	Components  map[string]interface{} `json:"components,omitempty"`
-	PublishedAt *time.Time             `json:"published_at,omitempty"`
-	UpdatedAt   *time.Time             `json:"updated_at,omitempty"`
-	Extra       map[string]interface{} `json:"extra,omitempty"`
+	MovementObservedAt *string                `json:"movement_observed_at,omitempty"`
+	EntityID           string                 `json:"entity_id"`
+	EntityType         string                 `json:"entity_type"`
+	Subtype            string                 `json:"subtype"`
+	Alias              *string                `json:"alias,omitempty"`
+	Components         map[string]interface{} `json:"components,omitempty"`
+	PublishedAt        *time.Time             `json:"published_at,omitempty"`
+	UpdatedAt          *time.Time             `json:"updated_at,omitempty"`
+	Extra              map[string]interface{} `json:"extra,omitempty"`
 }
 
 func (r createEntityRequest) actionParams() actions.CreateEntityParams {
 	return actions.CreateEntityParams{
-		EntityID:    r.EntityID,
-		EntityType:  r.EntityType,
-		Subtype:     r.Subtype,
-		Alias:       r.Alias,
-		Components:  r.Components,
-		PublishedAt: r.PublishedAt,
-		UpdatedAt:   r.UpdatedAt,
-		Extra:       r.Extra,
+		EntityID:           r.EntityID,
+		EntityType:         r.EntityType,
+		Subtype:            r.Subtype,
+		Alias:              r.Alias,
+		Components:         r.Components,
+		MovementObservedAt: r.MovementObservedAt,
+		PublishedAt:        r.PublishedAt,
+		UpdatedAt:          r.UpdatedAt,
+		Extra:              r.Extra,
 	}
 }
 
 type updateEntityRequest struct {
-	EntityType *string                `json:"entity_type,omitempty"`
-	Subtype    nullablePatchString    `json:"subtype,omitempty"`
-	Alias      nullablePatchString    `json:"alias,omitempty"`
-	Components map[string]interface{} `json:"components,omitempty"`
-	Extra      map[string]interface{} `json:"extra,omitempty"`
+	MovementObservedAt *string                `json:"movement_observed_at,omitempty"`
+	EntityType         *string                `json:"entity_type,omitempty"`
+	Subtype            nullablePatchString    `json:"subtype,omitempty"`
+	Alias              nullablePatchString    `json:"alias,omitempty"`
+	Components         map[string]interface{} `json:"components,omitempty"`
+	Extra              map[string]interface{} `json:"extra,omitempty"`
 }
 
 func (r updateEntityRequest) actionParams(expectedVersion *int64) actions.UpdateEntityParams {
 	return actions.UpdateEntityParams{
-		EntityType:      r.EntityType,
-		Subtype:         r.Subtype.actionValue(),
-		Alias:           r.Alias.actionValue(),
-		Components:      r.Components,
-		Extra:           r.Extra,
-		ExpectedVersion: expectedVersion,
+		EntityType:         r.EntityType,
+		Subtype:            r.Subtype.actionValue(),
+		Alias:              r.Alias.actionValue(),
+		Components:         r.Components,
+		MovementObservedAt: r.MovementObservedAt,
+		Extra:              r.Extra,
+		ExpectedVersion:    expectedVersion,
 	}
 }
 

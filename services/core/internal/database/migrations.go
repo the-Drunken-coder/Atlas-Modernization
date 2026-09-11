@@ -276,6 +276,41 @@ func coreSchemaMigrations() []schemaMigration {
 					CHECK (instance_token_hash IS NULL OR length(instance_token_hash) = 64)`,
 			},
 		},
+		{
+			version:            10,
+			name:               "entity_movement_history",
+			checksum:           "7495104b8c36eece0eb6dec2ea5f6c838fb9e9f288974625993ef31811040a4a",
+			fingerprintVersion: fingerprintVersionV2,
+			statements: []string{
+				`CREATE TABLE entity_movement_samples (
+ sequence BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+ entity_id VARCHAR(50) NOT NULL,
+ entity_created_at TIMESTAMPTZ NOT NULL,
+ sample_id VARCHAR(128) NOT NULL,
+ observed_at TIMESTAMPTZ,
+ received_at TIMESTAMPTZ NOT NULL,
+ sample_time TIMESTAMPTZ NOT NULL,
+ latitude DOUBLE PRECISION,
+ longitude DOUBLE PRECISION,
+ speed_m_s DOUBLE PRECISION,
+ altitude_m DOUBLE PRECISION,
+ UNIQUE (entity_id, entity_created_at, sample_id),
+ CHECK ((latitude IS NULL) = (longitude IS NULL)),
+ CHECK (latitude IS NOT NULL OR speed_m_s IS NOT NULL OR altitude_m IS NOT NULL),
+ CHECK (latitude BETWEEN -90 AND 90),
+ CHECK (longitude BETWEEN -180 AND 180),
+ CHECK (speed_m_s >= 0 AND speed_m_s < 'Infinity'::float8),
+ CHECK (altitude_m > '-Infinity'::float8 AND altitude_m < 'Infinity'::float8),
+ CHECK (sample_time = COALESCE(observed_at, received_at))
+)`,
+				`CREATE INDEX idx_movement_time ON entity_movement_samples(entity_id, entity_created_at, sample_time, sequence)`,
+				`CREATE INDEX idx_movement_sequence ON entity_movement_samples(entity_id, entity_created_at, sequence)`,
+				`CREATE INDEX idx_movement_retention ON entity_movement_samples(sample_time, sequence)`,
+				`CREATE INDEX idx_movement_position ON entity_movement_samples(entity_id, entity_created_at, sample_time DESC, sequence DESC) WHERE latitude IS NOT NULL`,
+				`CREATE INDEX idx_movement_speed ON entity_movement_samples(entity_id, entity_created_at, sample_time DESC, sequence DESC) WHERE speed_m_s IS NOT NULL`,
+				`CREATE INDEX idx_movement_altitude ON entity_movement_samples(entity_id, entity_created_at, sample_time DESC, sequence DESC) WHERE altitude_m IS NOT NULL`,
+			},
+		},
 	}
 }
 

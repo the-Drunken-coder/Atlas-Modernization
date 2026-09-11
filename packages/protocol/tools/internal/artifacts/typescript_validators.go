@@ -8,6 +8,7 @@ import (
 )
 
 var runtimeValidatorTypeNames = []string{
+	"MovementHistoryPage", "MovementHistoryBatchResponse", "MovementTrail", "MovementInspection",
 	"CommandCatalog",
 	"CommandManifest",
 	"PluginManifest",
@@ -129,6 +130,9 @@ func hasRuntimeValidator(typeName string) bool {
 }
 
 func (g *typeScriptGenerator) runtimeValidatorExpressionWithRefs(valueExpr string, schema typeScriptSchema, seenRefs map[string]bool) (string, error) {
+	if len(schema) == 0 {
+		return "true", nil
+	}
 	if ref, ok := schema["$ref"].(string); ok {
 		refExpression, err := g.runtimeRefValidatorExpression(valueExpr, ref, seenRefs)
 		if err != nil {

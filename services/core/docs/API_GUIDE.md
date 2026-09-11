@@ -287,7 +287,7 @@ Check-in body is optional. When present, it can include:
 }
 ```
 
-The body is the Protocol `EntityCheckInRequest`: unknown fields are rejected; `status` must be non-empty; latitude is `-90` through `90`; longitude is `-180` through `180`; altitude must be finite; speed cannot be negative; heading is at least `0` and less than `360`; and `components` must satisfy the canonical `EntityComponents` contract. An empty body is equivalent to `{}`. Malformed or trailing JSON returns `INVALID_JSON`; a structurally invalid body returns `VALIDATION_ERROR`. Body rejection happens before Core writes the Entity.
+The body is the Protocol `EntityCheckInRequest`: unknown fields are rejected; `status` must be non-empty; latitude is `-90` through `90`; longitude is `-180` through `180`; altitude must be finite and represents meters above mean sea level; speed cannot be negative; heading is at least `0` and less than `360`; and `components` must satisfy the canonical `EntityComponents` contract. An empty body is equivalent to `{}`. Malformed or trailing JSON returns `INVALID_JSON`; a structurally invalid body returns `VALIDATION_ERROR`. Body rejection happens before Core writes the Entity.
 
 Check-in response:
 
@@ -664,3 +664,17 @@ Log out; the `EXIT` trap removes the cookie jar even if logout fails:
 curl -fsS -b "$COOKIE_JAR" -X POST "$CORE_URL/admin/auth/logout" \
   -H "Origin: $UI_ORIGIN"
 ```
+
+## Movement history
+
+Asset and Track create/update/check-in requests accept optional `movement_observed_at` (RFC3339). Core captures only movement quantities explicitly present in the incoming telemetry; missing values are not filled from current state. Without source time, arrival time is retained and labeled. Altitude uses meters above mean sea level.
+
+History-only uploads use `POST /entities/{entity_id}/movement-history` with the current `entity_created_at` and 1–500 samples containing `sample_id`, optional `observed_at`, and position, speed or altitude. Position requires latitude and longitude together. Eligible records are atomic; expired records are counted and skipped. Identical retries return duplicate counts; conflicting reuse of a sample ID returns 409. Backfill never modifies current Entity state or the feed clock.
+
+Authenticated reads:
+
+- `GET /entities/{entity_id}/movement-history?entity_created_at=<UTC>&from=<UTC>&to=<UTC>&limit=100` returns original reports and an opaque continuation cursor.
+- `GET /entities/{entity_id}/trail?entity_created_at=<UTC>&from=<UTC>&to=<UTC>&max_points=1000` returns a reduced whole-interval trail, original position count and gap flags.
+- `GET /entities/{entity_id}/movement-history/at?entity_created_at=<UTC>&at=<UTC>` returns independent latest retained quantities at or before the inspected time.
+
+Raw retention is 30 days. Ranges span at most 30 days; raw pages cap at 500, imports at 500 samples/256 KiB, and trails at 5,000 points/3,000,000 scanned position reports. A stale association returns 412. Retention can expire a pagination cursor; refresh the interval. Requests that exceed work limits fail explicitly. See [implementation details and measurements](../../../docs/movement-history-implementation.md).

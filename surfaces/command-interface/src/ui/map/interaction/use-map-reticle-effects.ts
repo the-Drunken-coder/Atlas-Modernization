@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef } from "react";
 import { flushSync } from "react-dom";
 import { clientPointInsideRect, reticlesEqual } from "../view/map-view-utils.js";
+import { foregroundEscapeOwner } from "./foreground-escape-owner.js";
 import { pointFromClient } from "./map-reticle.js";
 import type { InteractionStateStore } from "./map-reticle-interaction-state.js";
 import type { MapReticleInteractionOptions } from "./map-reticle-interaction-types.js";
@@ -80,6 +81,7 @@ export function useMapReticleEffects({ options, stateStore, pointer, zooming, re
       return;
     }
     const start = () => {
+      optionsRef.current.onHistoryHover?.(undefined);
       if (cameraSettleFrameRef.current !== undefined) cancelAnimationFrame(cameraSettleFrameRef.current);
       cameraSettleFrameRef.current = undefined;
       setCameraMoving(true);
@@ -99,14 +101,22 @@ export function useMapReticleEffects({ options, stateStore, pointer, zooming, re
       if (cameraSettleFrameRef.current !== undefined) cancelAnimationFrame(cameraSettleFrameRef.current);
       cameraSettleFrameRef.current = undefined;
     };
-  }, [mapReady, mapRef, setCameraMoving]);
+  }, [mapReady, mapRef, setCameraMoving, optionsRef]);
 
   useLayoutEffect(() => {
     if (!reticleVisible && !selectedEntityId) return;
     const releaseOnEscape = (event: globalThis.KeyboardEvent) => {
-      if (event.key !== "Escape" || stateRef.current.zoomOverlay || isEditableTarget(event.target)) return;
+      if (
+        event.key !== "Escape" ||
+        event.defaultPrevented ||
+        foregroundEscapeOwner(event.target) ||
+        stateRef.current.zoomOverlay ||
+        isEditableTarget(event.target)
+      )
+        return;
       event.preventDefault();
       event.stopPropagation();
+      if (optionsRef.current.onDismissHistory?.()) return;
       if (optionsRef.current.selectedEntityId) optionsRef.current.onBackgroundClick?.();
       else clearPointer();
     };

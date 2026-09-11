@@ -1,4 +1,5 @@
 import {
+  type AtlasClient,
   type AtlasWatchEvent,
   type CommandCatalog,
   type CommandDefinition,
@@ -25,7 +26,10 @@ export type CommandSubmission = {
 export type ConnectionError = { source: "startup" | "live-sync"; message: string };
 export type ConnectionHealth = { running: boolean; healthy: boolean; degraded: boolean; error?: ConnectionError };
 
+export type MovementHistoryReader = Pick<AtlasClient["entities"], "history" | "trail" | "inspectMovement">;
+
 export interface AtlasDataSource {
+  movement?: MovementHistoryReader;
   snapshot(): AtlasSnapshot;
   loadCommandCatalog(): Promise<CommandCatalog>;
   loadEntityDetails?(entityId: string, signal?: AbortSignal): Promise<EntityResource>;
@@ -59,6 +63,7 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
 
   return {
     snapshot,
+    movement: client.entities,
 
     loadCommandCatalog: () => client.commandCatalog(),
 

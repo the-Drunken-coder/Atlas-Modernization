@@ -4,6 +4,8 @@ This Node 24 workspace implements the Atlas Meshtastic Link described in [`docs/
 
 The Radio contract generator checks Protocol definitions and revisions. Operation coverage is checked against the public Atlas SDK, with exhaustive input, output, and context validation; see the [generation boundary](../../docs/atlas-meshtastic-link/wire-protocol.md#source-of-truth).
 
+Movement reads use smaller response budgets over Radio. `entity.history` accepts `limit` from 1 to 100, defaulting to 100. `entity.trail` requires `max_points` from 2 to 100; Core's default of 1,000 points is too large for a Radio response. Use smaller time windows when the trail cannot preserve its gaps within that budget. These caps leave room for long report IDs and cursors below the 128 KiB message limit. Applications must still handle submission failures for oversized envelopes, and a byte limit does not guarantee delivery within a deadline on a constrained link.
+
 ## What runs
 
 One `atlas-meshtastic-link` service runs on each Asset Host and on the Gateway. Both modes use the same static Radio profile and USB serial adapter.

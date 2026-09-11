@@ -6,6 +6,7 @@ import type { MapSourceConfig } from "../../../app/config.js";
 import type { MapCameraCommand } from "../interaction/map-camera.js";
 import type { MapReticleTarget } from "../interaction/map-targets.js";
 import type { MapEditing } from "../rendering/map-editing.js";
+import type { MovementMapOverlay } from "../rendering/map-movement-history.js";
 import { buildMapSources, type MapSources } from "../rendering/map-sources.js";
 import type { GeofeatureDrawing } from "./MapGeofeatureDrawing.js";
 import { type MapSpatialInteraction, MapView } from "./MapView.js";
@@ -16,7 +17,7 @@ type Listener = (event?: unknown) => void;
 type ListenerEntry = { listener: Listener; once: boolean };
 type RenderedFeature = {
   geometry: { type: string; coordinates: unknown };
-  properties?: { entityId?: string; featureId?: string };
+  properties?: { entityId?: string; featureId?: string; sampleId?: string };
 };
 type ResizeObserverRecord = { active: boolean; callback: ResizeObserverCallback; targets: Set<Element> };
 
@@ -298,6 +299,7 @@ afterEach(() => {
 });
 
 type RenderMapViewProps = {
+  movement?: MovementMapOverlay;
   cameraCommand?: MapCameraCommand | null;
   editing?: MapEditing;
   drawing?: GeofeatureDrawing;
@@ -337,6 +339,7 @@ export function renderMapView(props: RenderMapViewProps = {}) {
         placeDetailTarget={renderProps.placeDetailTarget}
         cameraCommand={renderProps.cameraCommand}
         spatial={renderProps.spatial}
+        movement={renderProps.movement}
         onBackgroundClick={onBackgroundClick}
         onMapContextMenu={onMapContextMenu}
         onSelectEntity={onSelectEntity}
