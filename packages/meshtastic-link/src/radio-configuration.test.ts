@@ -82,7 +82,7 @@ describe("radio configuration readback", () => {
     const device = configuredDevice();
     const channel = device.channels.get(1);
     if (!channel?.settings) throw new Error("Missing test channel");
-    channel.settings.moduleSettings = undefined;
+    delete channel.settings.moduleSettings;
     harness.device = device;
     const radio = await MeshtasticSerialRadio.open("/dev/cu.test");
     try {
