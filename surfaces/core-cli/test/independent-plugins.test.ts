@@ -42,13 +42,15 @@ class FakeTransaction {
   readonly phases: TransactionPhase[] = [];
   committed = false;
   cleaned = false;
+  recovery: { priorPluginHealthy?: boolean } | undefined;
   options!: Parameters<TransactionFactory>[0];
   read() {
     return {
       ...this.options,
       phase: this.phases.at(-1) ?? "prepared",
       owner: { dockerEngineId: this.options.dockerEngineId },
-      snapshots: Object.fromEntries([...this.snapshots.keys()].map((path) => [path, {}]))
+      snapshots: Object.fromEntries([...this.snapshots.keys()].map((path) => [path, {}])),
+      ...(this.recovery ? { recovery: this.recovery } : {})
     };
   }
   constructor(readonly configDir: string) {}
@@ -63,8 +65,9 @@ class FakeTransaction {
     this.staged.push(path);
   }
 
-  advance(phase: TransactionPhase): void {
+  advance(phase: TransactionPhase, recovery?: { priorPluginHealthy?: boolean }): void {
     this.phases.push(phase);
+    if (recovery) this.recovery = { ...this.recovery, ...recovery };
   }
 
   markCommitted(): void {
@@ -92,6 +95,7 @@ class FakeHost {
   readonly removalSnapshots: { pluginId: string; activeExists: boolean }[] = [];
   running = false;
   failRuntime = false;
+  failRuntimeForVersion: string | undefined;
   catalogIsFresh = true;
   readonly imageReceipt: PluginImageReceipt = {
     image_index: image,
@@ -128,8 +132,10 @@ class FakeHost {
       runCompose: async (args) => {
         this.compose.push([...args]);
       },
-      verifyRuntime: () => {
-        if (this.failRuntime) throw new Error("plugin health failed");
+      verifyRuntime: (release, _receipt, options) => {
+        if (options?.requireHealth !== false && (this.failRuntime || release.version === this.failRuntimeForVersion)) {
+          throw new Error("plugin health failed");
+        }
       },
       assertReleaseTrusted: () => undefined,
       removePlugin: (pluginId) => {
@@ -204,6 +210,7 @@ function setup(): { host: FakeHost; manager: IndependentPluginManager; transacti
       transaction.phases.length = 0;
       transaction.committed = false;
       transaction.cleaned = false;
+      transaction.recovery = undefined;
       return transaction as unknown as DeploymentTransaction;
     }),
     transaction
@@ -364,10 +371,72 @@ describe("IndependentPluginManager", () => {
     expect(manager.readInstalled("building_scan").selected.version).toBe("0.1.0");
     expect(manager.readInstalled("building_scan").previous).toBeNull();
     expect([...host.enabled]).toEqual(["building_scan"]);
-    expect(transaction.cleaned).toBe(false);
+    expect(transaction.cleaned).toBe(true);
+    expect(transaction.recovery).toEqual({ priorPluginHealthy: false });
     expect(transaction.phases).toContain("runtime-changing");
     expect(transaction.phases).toContain("rollback-complete");
     expect(host.compose.some(([command]) => command === "down")).toBe(false);
+    expect(host.compose.filter(([command]) => command === "up")).toEqual([
+      [
+        "up",
+        "-d",
+        "--no-build",
+        "--pull",
+        "never",
+        "--no-deps",
+        "--force-recreate",
+        "--wait",
+        "--wait-timeout",
+        "120",
+        "api",
+        "source-gateway",
+        "atlas-plugin-building-scan"
+      ],
+      [
+        "up",
+        "-d",
+        "--no-build",
+        "--pull",
+        "never",
+        "--no-deps",
+        "--remove-orphans",
+        "--force-recreate",
+        "--wait",
+        "--wait-timeout",
+        "120",
+        "api",
+        "source-gateway"
+      ],
+      [
+        "up",
+        "-d",
+        "--no-build",
+        "--pull",
+        "never",
+        "--no-deps",
+        "--remove-orphans",
+        "--force-recreate",
+        "atlas-plugin-building-scan"
+      ]
+    ]);
+    host.failRuntime = false;
+    await expect(manager.update("building_scan", release("0.2.0"))).resolves.toMatchObject({
+      changed: true,
+      version: "0.2.0"
+    });
+    expect(manager.readInstalled("building_scan").selected.version).toBe("0.2.0");
+  });
+
+  it("keeps health verification strict when the prior Plugin was healthy", async () => {
+    const { host, manager, transaction } = setup();
+    await manager.install(release("0.1.0"));
+    await manager.enable("building_scan");
+    host.running = true;
+    host.failRuntimeForVersion = "0.2.0";
+
+    await expect(manager.update("building_scan", release("0.2.0"))).rejects.toThrow("plugin health failed");
+    expect(transaction.recovery).toEqual({ priorPluginHealthy: true });
+    expect(transaction.cleaned).toBe(true);
     expect(host.compose.filter(([command]) => command === "up")).toEqual([
       [
         "up",
@@ -401,10 +470,6 @@ describe("IndependentPluginManager", () => {
         "atlas-plugin-building-scan"
       ]
     ]);
-    host.failRuntime = false;
-    await manager.recover(transaction as unknown as DeploymentTransaction);
-    expect(transaction.cleaned).toBe(true);
-    expect(host.compose.filter(([command]) => command === "up")).toHaveLength(3);
   });
 
   it("rejects expired catalog mutations before downloading a release", async () => {

@@ -780,10 +780,12 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
         if (result.status !== 0) throw commandFailure("Plugin Docker Compose", result);
         return result;
       },
-      verifyRuntime: async (release, receipt) => await this.#verifyPluginRuntime(release, receipt),
+      verifyRuntime: async (release, receipt, options) => await this.#verifyPluginRuntime(release, receipt, options),
       removePlugin: async (id) => {
         const name = `${this.#deploymentIdentity().projectName}_${pluginServiceName(id)}`;
-        if (await this.#containerExists(name)) await this.#checkCommand("docker", ["container", "rm", "--force", name]);
+        if (await this.#containerExists(name, pluginServiceName(id))) {
+          await this.#checkCommand("docker", ["container", "rm", "--force", name]);
+        }
       },
       assertReleaseTrusted: (release, documentHash) => {
         const catalog = this.#catalogStore.read().catalog;
@@ -810,9 +812,14 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     });
   }
 
-  async #verifyPluginRuntime(release: PluginRelease, receipt?: ImageReceipt): Promise<void> {
+  async #verifyPluginRuntime(
+    release: PluginRelease,
+    receipt?: ImageReceipt,
+    options: { requireHealth?: boolean } = {}
+  ): Promise<void> {
     const container = `${this.#deploymentIdentity().projectName}_${pluginServiceName(release.pluginId)}`;
     if (receipt) await verifyContainerImage(this.#imageCommand, container, receipt);
+    if (options.requireHealth === false) return;
     const result = await this.#runDockerCommand(
       ["exec", container, "node", "-e", PLUGIN_RUNTIME_PROBE_SCRIPT],
       this.#dockerRunOptions()
@@ -3253,7 +3260,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     }
   }
 
-  async #containerExists(name: string): Promise<boolean> {
+  async #containerExists(name: string, expectedService?: string): Promise<boolean> {
     const runtime = this.#dockerRuntimeScope.getStore();
     if (!runtime) throw new Error("Atlas Core Docker runtime is unavailable while inspecting containers.");
     const deployment = runtime.deployment;
@@ -3269,7 +3276,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
               : "minio";
     return await this.#ownedResourceExists("container", name, {
       "com.docker.compose.project": deployment.projectName,
-      "com.docker.compose.service": service,
+      "com.docker.compose.service": expectedService ?? service,
       "io.atlas.core.engine": runtime.engineId
     });
   }

@@ -429,7 +429,9 @@ class FakeRunner implements CommandRunner {
             ? "postgres"
             : name.endsWith("_minio_init")
               ? "minio-init"
-              : "minio";
+              : name.startsWith(`${PROJECT_NAME}_atlas-plugin-`)
+                ? name.slice(PROJECT_NAME.length + 1)
+                : "minio";
       if (args[args.indexOf("--format") + 1] === "{{json .}}") {
         const pluginImage = name.endsWith("_spatial_fixture")
           ? TEST_PLUGIN_IMAGE
@@ -3951,6 +3953,44 @@ describe("atlas-core CLI", () => {
     expect(JSON.parse(readFileSync(statePath, "utf8"))).toMatchObject({ enabledPlugins: [plugin.pluginId] });
   });
 
+  it.each([false, true])(
+    "recovers an unavailable Plugin without relaxing image identity (wrong image: %s)",
+    async (wrongImage) => {
+      const test = runtime();
+      await installIndependentUpdateFixtures(test);
+      const plugin = INDEPENDENT_UPDATE_FIXTURES[0];
+      if (!plugin) throw new Error("Independent Plugin fixture is missing.");
+      const config = join(test.home, ".atlas", "core");
+      const statePath = join(config, "state.json");
+      const state = JSON.parse(readFileSync(statePath, "utf8"));
+      writeFileSync(statePath, `${JSON.stringify({ ...state, enabledPlugins: [plugin.pluginId] })}\n`, { mode: 0o600 });
+      installIndependentRuntimeFixture(test, plugin);
+      expect(await runCLI(["start", "--manual"], test.context)).toBe(0);
+      const transaction = DeploymentTransactionStore.begin(config, {
+        operation: "plugin-disable",
+        dockerEngineId: TEST_ENGINE_ID,
+        previousRunning: true,
+        desiredRunning: true,
+        recovery: { priorPluginHealthy: false }
+      });
+      transaction.snapshotTree(`plugins/${plugin.pluginId}`);
+      transaction.remove(`plugins/${plugin.pluginId}/active/compose.yml`);
+      transaction.advance("runtime-changing");
+      test.runner.runtimeProbeOutput = "unavailable";
+      test.runner.wrongPluginContainerImage = wrongImage;
+      test.runner.calls.length = 0;
+
+      expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context), test.stderr.join("")).toBe(
+        wrongImage ? 1 : 0
+      );
+      expect(existsSync(join(config, "transaction"))).toBe(wrongImage);
+      expect(test.runner.calls.some((call) => call.args[0] === "exec" && call.args.includes("node"))).toBe(false);
+      const starts = test.runner.calls.map(composeCommand).filter((args) => args[0] === "up");
+      expect(starts.some((args) => args.includes("api") && args.includes("--wait"))).toBe(true);
+      expect(starts.some((args) => args.includes("atlas-plugin-alpha-fixture") && !args.includes("--wait"))).toBe(true);
+    }
+  );
+
   it("retains a rollback-complete Plugin journal until runtime restoration succeeds", async () => {
     const test = runtime();
     await installIndependentUpdateFixtures(test);
@@ -4883,6 +4923,31 @@ describe("atlas-core CLI", () => {
     expect(await runCLI(["plugins", "enable", "not_cataloged"], test.context)).toBe(1);
     expect(await runCLI(["plugins", "enable", "spatial_fixture", "/tmp/bundle"], test.context)).toBe(2);
   });
+
+  it.each([false, true])(
+    "checks the actual Plugin service ownership before removal (foreign project: %s)",
+    async (foreign) => {
+      const test = runtime();
+      await installIndependentUpdateFixtures(test);
+      const plugin = INDEPENDENT_UPDATE_FIXTURES[0];
+      if (!plugin) throw new Error("Independent Plugin fixture is missing.");
+      installIndependentRuntimeFixture(test, plugin);
+      expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context), test.stderr.join("")).toBe(0);
+      const container = `${PROJECT_NAME}_atlas-plugin-alpha-fixture`;
+      test.runner.existingContainers.add(container);
+      if (foreign) test.runner.mismatchedResources.add(container);
+      test.runner.calls.length = 0;
+      expect(await runCLI(["plugins", "disable", plugin.pluginId], test.context), test.stderr.join("")).toBe(
+        foreign ? 1 : 0
+      );
+      expect(
+        test.runner.calls.some(
+          (call) => call.args[0] === "container" && call.args[1] === "rm" && call.args.includes(container)
+        )
+      ).toBe(!foreign);
+      expect(test.runner.existingContainers.has(container)).toBe(foreign);
+    }
+  );
 
   it("updates all installed independent Plugins in sorted order, including disabled Plugins", async () => {
     const test = runtime();

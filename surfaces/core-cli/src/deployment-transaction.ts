@@ -82,6 +82,8 @@ export type TransactionRecoveryMetadata = {
   priorMigrationLedger?: string;
   priorBackupIdentity?: `sha256:${string}`;
   targetStatePath?: string;
+  /** Whether the affected Plugin passed runtime health before the mutation. */
+  priorPluginHealthy?: boolean;
 };
 
 export type TransactionJournal = {
@@ -781,8 +783,13 @@ function isRecoveryMetadata(value: unknown): value is TransactionRecoveryMetadat
       "targetCoreImage",
       "priorMigrationLedger",
       "priorBackupIdentity",
-      "targetStatePath"
-    ].every((key) => value[key] === undefined || typeof value[key] === "string")
+      "targetStatePath",
+      "priorPluginHealthy"
+    ].every(
+      (key) =>
+        value[key] === undefined ||
+        (key === "priorPluginHealthy" ? typeof value[key] === "boolean" : typeof value[key] === "string")
+    )
   ) {
     return false;
   }

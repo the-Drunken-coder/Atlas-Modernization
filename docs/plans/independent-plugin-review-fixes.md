@@ -120,3 +120,5 @@ Codex's next review of `6ee771948ebbe81ac95df397bdd73654987c5a20` identified sev
 
 
 The review of `3716bdc0b2dbb610664b1b318a0fd05df9d86f4f` confirmed four remaining boundaries: publication must reject serialized release documents above 1 MiB and catalogs above 4 MiB before writing or publishing them; a running Core update must check existing Enabled Plugin health before beginning its transaction; and install/update may use a verified unexpired catalog when refresh fails. The fixes preserve explicit refresh errors, fail closed after cache expiry, and keep the post-update Plugin health gate.
+
+Codex review of `2f7f0688` found two further runtime defects: Plugin removal used the base MinIO service label, and automatic rollback required a previously unhealthy Plugin to become healthy. Removal now checks the actual Plugin service label with the existing project and engine ownership checks. Transactions retain prior Plugin health, allowing recovery of an already-unavailable Plugin while preserving base readiness and exact image verification.

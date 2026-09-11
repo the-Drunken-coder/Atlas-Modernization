@@ -507,3 +507,5 @@ disables, or uninstalls them without operator approval.
 ### Recovery completion
 
 A completed file rollback does not complete recovery. The CLI retains the transaction until the restored runtime passes the required checks, and retries those checks after a failed restart. This applies to paired Core restore as well as Plugin changes. Plugin failures in the running CLI and recovery after a process restart use the same manager-owned rollback path.
+
+Before changing a running Enabled Plugin, the transaction records whether it passes runtime acceptance. Recovery waits for base services and verifies the restored Plugin image in every case. A Plugin that was already unavailable is restarted without waiting for its health or discovery, so another disable or update can repair it. Previously healthy Plugins must pass runtime acceptance before recovery completes.

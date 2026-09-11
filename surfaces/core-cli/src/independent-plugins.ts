@@ -21,7 +21,8 @@ import type {
   DeploymentTransactionStore,
   TransactionPhase as DurableTransactionPhase,
   TransactionJournal,
-  TransactionOperation
+  TransactionOperation,
+  TransactionRecoveryMetadata
 } from "./deployment-transaction.js";
 import { DeploymentTransactionStore as DurableDeploymentTransactionStore } from "./deployment-transaction.js";
 import type { ImageReceipt } from "./image-receipts.js";
@@ -62,7 +63,11 @@ export type PluginLifecycleHost = {
     pluginIds: readonly string[],
     cleanup?: boolean
   ): Promise<void | { status?: number; stdout?: string; stderr?: string }>;
-  verifyRuntime(release: IndependentPluginRelease, receipt?: PluginImageReceipt): Promise<void> | void;
+  verifyRuntime(
+    release: IndependentPluginRelease,
+    receipt?: PluginImageReceipt,
+    options?: { requireHealth?: boolean }
+  ): Promise<void> | void;
   /** Verify the exact retained release remains trusted by the accepted catalog. */
   assertReleaseTrusted(release: IndependentPluginRelease, documentSha256: string): Promise<void> | void;
   /** Remove the plugin container while leaving downloaded image layers intact. */
@@ -79,7 +84,7 @@ export type DeploymentTransaction = Pick<
 > & {
   read(): Pick<
     TransactionJournal,
-    "operation" | "phase" | "previousRunning" | "desiredRunning" | "owner" | "snapshots"
+    "operation" | "phase" | "previousRunning" | "desiredRunning" | "owner" | "snapshots" | "recovery"
   >;
   snapshotTree?(relativeDirectory: string): readonly string[];
 };
@@ -206,7 +211,7 @@ function serviceName(pluginId: string): string {
   return `atlas-plugin-${pluginId.replaceAll("_", "-")}`;
 }
 
-function recreateServices(services: readonly string[], removeOrphans = false): string[] {
+function recreateServices(services: readonly string[], removeOrphans = false, wait = true): string[] {
   return [
     "up",
     "-d",
@@ -216,9 +221,7 @@ function recreateServices(services: readonly string[], removeOrphans = false): s
     "--no-deps",
     ...(removeOrphans ? ["--remove-orphans"] : []),
     "--force-recreate",
-    "--wait",
-    "--wait-timeout",
-    "120",
+    ...(wait ? ["--wait", "--wait-timeout", "120"] : []),
     ...services
   ];
 }
@@ -591,18 +594,25 @@ export class IndependentPluginManager {
       };
     const wasRunning = await this.#host.isRunning();
     const next = enabled.filter((candidate) => candidate !== pluginId);
-    await this.#runTransaction("plugin-disable", wasRunning, wasRunning, async () => {
-      if (wasRunning) await this.#host.verifyRetainedBundle();
-      await this.#stageSnapshot(this.#pluginDir(pluginId), true);
-      if (wasRunning) await this.#markRuntimeChanging();
-      await this.#host.removePlugin(pluginId);
-      await this.#removeActive(pluginId);
-      await this.#host.runCompose(["config", "--quiet"], next);
-      await this.#host.writeEnabled(next);
-      if (wasRunning) {
-        await this.#host.runCompose(recreateServices(["api", "source-gateway"]), next);
-      }
-    });
+    const priorPluginHealthy = wasRunning ? await this.#readPriorPluginHealth(release, installed.selected) : undefined;
+    await this.#runTransaction(
+      "plugin-disable",
+      wasRunning,
+      wasRunning,
+      async () => {
+        if (wasRunning) await this.#host.verifyRetainedBundle();
+        await this.#stageSnapshot(this.#pluginDir(pluginId), true);
+        if (wasRunning) await this.#markRuntimeChanging();
+        await this.#host.removePlugin(pluginId);
+        await this.#removeActive(pluginId);
+        await this.#host.runCompose(["config", "--quiet"], next);
+        await this.#host.writeEnabled(next);
+        if (wasRunning) {
+          await this.#host.runCompose(recreateServices(["api", "source-gateway"]), next);
+        }
+      },
+      priorPluginHealthy === undefined ? undefined : { priorPluginHealthy }
+    );
     return {
       pluginId,
       operation: "disable",
@@ -669,30 +679,40 @@ export class IndependentPluginManager {
     const wasRunning = await this.#host.isRunning();
     if (enabled.includes(pluginId) && !wasRunning)
       throw new Error(`Cannot update enabled Plugin ${pluginId} while Atlas is stopped.`);
+    const priorPluginHealthy =
+      enabled.includes(pluginId) && wasRunning
+        ? await this.#readPriorPluginHealth(current, installed.selected)
+        : undefined;
     const nextRecord: InstalledPluginReceipt = {
       schema: 1,
       plugin_id: pluginId,
       selected: image,
       previous: installed.selected
     };
-    await this.#runTransaction("plugin-update", wasRunning, wasRunning, async (transaction) => {
-      await this.#stageSnapshot(this.#pluginDir(pluginId), true);
-      if (enabled.includes(pluginId)) {
-        await this.#host.verifyRetainedBundle();
-      }
-      await this.#writeStaged(`plugins/${pluginId}/releases/${release.version}.atlas-plugin`, releaseBytes(release));
-      await this.#writeStaged(`plugins/${pluginId}/installed.json`, jsonBytes(nextRecord));
-      if (enabled.includes(pluginId)) {
-        await this.#writeActive(release, image, transaction);
-        await this.#host.runCompose(["config", "--quiet"], enabled);
-        await this.#host.writeEnabled(enabled);
-        await this.#markRuntimeChanging();
-        await this.#host.removePlugin(pluginId);
-        await this.#host.runCompose(recreateServices(["api", "source-gateway", serviceName(pluginId)]), enabled);
-        await this.#host.verifyRuntime(release, image);
-      }
-      await this.#pruneReleases(pluginId, nextRecord);
-    });
+    await this.#runTransaction(
+      "plugin-update",
+      wasRunning,
+      wasRunning,
+      async (transaction) => {
+        await this.#stageSnapshot(this.#pluginDir(pluginId), true);
+        if (enabled.includes(pluginId)) {
+          await this.#host.verifyRetainedBundle();
+        }
+        await this.#writeStaged(`plugins/${pluginId}/releases/${release.version}.atlas-plugin`, releaseBytes(release));
+        await this.#writeStaged(`plugins/${pluginId}/installed.json`, jsonBytes(nextRecord));
+        if (enabled.includes(pluginId)) {
+          await this.#writeActive(release, image, transaction);
+          await this.#host.runCompose(["config", "--quiet"], enabled);
+          await this.#host.writeEnabled(enabled);
+          await this.#markRuntimeChanging();
+          await this.#host.removePlugin(pluginId);
+          await this.#host.runCompose(recreateServices(["api", "source-gateway", serviceName(pluginId)]), enabled);
+          await this.#host.verifyRuntime(release, image);
+        }
+        await this.#pruneReleases(pluginId, nextRecord);
+      },
+      priorPluginHealthy === undefined ? undefined : { priorPluginHealthy }
+    );
     const remediationDowngrade = currentRevoked && comparePluginVersions(release.version, current.version) < 0;
     return {
       pluginId,
@@ -721,6 +741,10 @@ export class IndependentPluginManager {
     const wasRunning = await this.#host.isRunning();
     if (enabled.includes(pluginId) && !wasRunning)
       throw new Error(`Cannot roll back enabled Plugin ${pluginId} while Atlas is stopped.`);
+    const priorPluginHealthy =
+      enabled.includes(pluginId) && wasRunning
+        ? await this.#readPriorPluginHealth(this.#readSelectedRelease(installed), installed.selected)
+        : undefined;
     const image = receiptFor(
       previousRelease,
       await this.#ensureImageReceipt(previousRelease, installed.previous),
@@ -732,21 +756,27 @@ export class IndependentPluginManager {
       selected: image,
       previous: installed.selected
     };
-    await this.#runTransaction("plugin-rollback", wasRunning, wasRunning, async (transaction) => {
-      await this.#stageSnapshot(this.#pluginDir(pluginId), true);
-      if (enabled.includes(pluginId)) {
-        await this.#host.verifyRetainedBundle();
-      }
-      await this.#writeStaged(`plugins/${pluginId}/installed.json`, jsonBytes(nextRecord));
-      if (enabled.includes(pluginId)) {
-        await this.#writeActive(previousRelease, image, transaction);
-        await this.#host.runCompose(["config", "--quiet"], enabled);
-        await this.#markRuntimeChanging();
-        await this.#host.removePlugin(pluginId);
-        await this.#host.runCompose(recreateServices(["api", "source-gateway", serviceName(pluginId)]), enabled);
-        await this.#host.verifyRuntime(previousRelease, image);
-      }
-    });
+    await this.#runTransaction(
+      "plugin-rollback",
+      wasRunning,
+      wasRunning,
+      async (transaction) => {
+        await this.#stageSnapshot(this.#pluginDir(pluginId), true);
+        if (enabled.includes(pluginId)) {
+          await this.#host.verifyRetainedBundle();
+        }
+        await this.#writeStaged(`plugins/${pluginId}/installed.json`, jsonBytes(nextRecord));
+        if (enabled.includes(pluginId)) {
+          await this.#writeActive(previousRelease, image, transaction);
+          await this.#host.runCompose(["config", "--quiet"], enabled);
+          await this.#markRuntimeChanging();
+          await this.#host.removePlugin(pluginId);
+          await this.#host.runCompose(recreateServices(["api", "source-gateway", serviceName(pluginId)]), enabled);
+          await this.#host.verifyRuntime(previousRelease, image);
+        }
+      },
+      priorPluginHealthy === undefined ? undefined : { priorPluginHealthy }
+    );
     return {
       pluginId,
       operation: "rollback",
@@ -1180,6 +1210,16 @@ export class IndependentPluginManager {
     await this.#requireActiveTransaction().advance("runtime-changing");
   }
 
+  /** Sample current Plugin availability without blocking repair of a broken container. */
+  async #readPriorPluginHealth(release: IndependentPluginRelease, receipt: PluginImageReceipt): Promise<boolean> {
+    try {
+      await this.#host.verifyRuntime(release, receipt, { requireHealth: true });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   /** Finish the same file and runtime rollback after an exception or a process restart. */
   async recover(transaction: DeploymentTransaction): Promise<void> {
     const journal = transaction.read();
@@ -1208,14 +1248,25 @@ export class IndependentPluginManager {
       if (this.#host.readDesiredRunning?.() ?? journal.desiredRunning) {
         await this.regenerateActiveFiles();
         const restoredIds = enabled.filter((id) => affectedIds.has(id));
+        const restoredUnhealthyIds = journal.recovery?.priorPluginHealthy === false ? restoredIds : [];
+        const restoredHealthyIds = restoredIds.filter((id) => !restoredUnhealthyIds.includes(id));
         await this.#host.runCompose(
-          recreateServices(["api", "source-gateway", ...restoredIds.map(serviceName)], true),
+          recreateServices(["api", "source-gateway", ...restoredHealthyIds.map(serviceName)], true),
           enabled,
           true
         );
+        if (restoredUnhealthyIds.length) {
+          await this.#host.runCompose(
+            recreateServices(restoredUnhealthyIds.map(serviceName), true, false),
+            enabled,
+            true
+          );
+        }
         for (const id of restoredIds) {
           const selected = this.readSelectedRecord(id);
-          await this.#host.verifyRuntime(selected.release, selected.receipt);
+          await this.#host.verifyRuntime(selected.release, selected.receipt, {
+            requireHealth: !restoredUnhealthyIds.includes(id)
+          });
         }
       } else {
         await this.#host.runCompose(["down", "--remove-orphans"], enabled, true);
@@ -1228,7 +1279,8 @@ export class IndependentPluginManager {
     operation: TransactionOperation,
     desiredRunning: boolean,
     previousRunning: boolean,
-    action: (transaction: DeploymentTransaction) => Promise<void>
+    action: (transaction: DeploymentTransaction) => Promise<void>,
+    recovery?: Pick<TransactionRecoveryMetadata, "priorPluginHealthy">
   ): Promise<void> {
     const transaction = this.#transactionFactory({
       operation,
@@ -1238,7 +1290,7 @@ export class IndependentPluginManager {
     });
     this.#activeTransaction = transaction;
     try {
-      await transaction.advance("prepared");
+      await transaction.advance("prepared", recovery);
       await action(transaction);
       await transaction.markCommitted();
       await transaction.cleanup();
