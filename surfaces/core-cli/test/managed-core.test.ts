@@ -15,6 +15,7 @@ const ENGINE = "managed-core-test-engine";
 const IMAGE = `ghcr.io/the-drunken-coder/atlas-core@sha256:${"a".repeat(64)}`;
 const NEXT_IMAGE = `ghcr.io/the-drunken-coder/atlas-core@sha256:${"b".repeat(64)}`;
 const POSTGRES_IMAGE = `postgres:15@sha256:${"1".repeat(64)}`;
+const NEXT_POSTGRES_IMAGE = `postgres:15@sha256:${"4".repeat(64)}`;
 const MINIO_IMAGE = `minio/minio:RELEASE.2024-01-31T20-20-33Z@sha256:${"2".repeat(64)}`;
 const MC_IMAGE = `minio/mc:RELEASE.2024-01-31T08-59-40Z@sha256:${"3".repeat(64)}`;
 const RECEIPT: ImageReceipt = {
@@ -51,13 +52,13 @@ function temporaryDirectory(): string {
   return mkdtempSync(join(tmpdir(), "atlas-managed-core-test-"));
 }
 
-function packageDirectory(image: string, suffix = "package"): string {
+function packageDirectory(image: string, suffix = "package", postgresImage = POSTGRES_IMAGE): string {
   const root = join(temporaryDirectory(), suffix);
   const assets = join(root, "assets");
   mkdirSync(assets, { recursive: true });
   writeFileSync(
     join(assets, "docker-compose.yml"),
-    `services:\n  api:\n    image: \${ATLAS_CORE_IMAGE}\n    restart: "no"\n    volumes: ["./source_gateway.production.json:/app/source.json:ro"]\n  postgres:\n    image: ${POSTGRES_IMAGE}\n    restart: "no"\n  minio:\n    image: ${MINIO_IMAGE}\n    restart: "no"\n  minio-init:\n    image: ${MC_IMAGE}\n    restart: "no"\n`
+    `services:\n  api:\n    image: \${ATLAS_CORE_IMAGE}\n    restart: "no"\n    volumes: ["./source_gateway.production.json:/app/source.json:ro"]\n  postgres:\n    image: ${postgresImage}\n    restart: "no"\n  minio:\n    image: ${MINIO_IMAGE}\n    restart: "no"\n  minio-init:\n    image: ${MC_IMAGE}\n    restart: "no"\n`
   );
   writeFileSync(
     join(assets, "docker-compose.init.yml"),
@@ -227,27 +228,44 @@ describe("ManagedCoreManager", () => {
     calls.length = 0;
 
     let postgresRunning = false;
+    let composeAtLedgerRead: string | undefined;
     let stopFails = true;
     const next = new ManagedCoreManager(
-      makeOptions(configDir, packageDirectory(NEXT_IMAGE, "ledger-next"), NEXT_IMAGE, stateRef, calls, NEXT_RECEIPT, {
-        previousRunning: false,
-        desiredRunning: false,
-        readMigrationLedger: async () => {
-          postgresRunning = true;
-          throw new Error("migration ledger read interrupted");
-        },
-        runCompose: async (args, pluginIds, options) => {
-          calls.push({ args, pluginIds, coreImage: options.coreImage, ...(options.cleanup ? { cleanup: true } : {}) });
-          if (options.cleanup && args[0] === "down" && stopFails) {
-            return { status: 1, stdout: "", stderr: "storage stop interrupted" };
+      makeOptions(
+        configDir,
+        packageDirectory(NEXT_IMAGE, "ledger-next", NEXT_POSTGRES_IMAGE),
+        NEXT_IMAGE,
+        stateRef,
+        calls,
+        NEXT_RECEIPT,
+        {
+          previousRunning: false,
+          desiredRunning: false,
+          readMigrationLedger: async () => {
+            composeAtLedgerRead = readFileSync(join(configDir, "base", "docker-compose.yml"), "utf8");
+            postgresRunning = true;
+            throw new Error("migration ledger read interrupted");
+          },
+          runCompose: async (args, pluginIds, options) => {
+            calls.push({
+              args,
+              pluginIds,
+              coreImage: options.coreImage,
+              ...(options.cleanup ? { cleanup: true } : {})
+            });
+            if (options.cleanup && args[0] === "down" && stopFails) {
+              return { status: 1, stdout: "", stderr: "storage stop interrupted" };
+            }
+            if (options.cleanup && args[0] === "down") postgresRunning = false;
+            return { status: 0, stdout: "", stderr: "" };
           }
-          if (options.cleanup && args[0] === "down") postgresRunning = false;
-          return { status: 0, stdout: "", stderr: "" };
         }
-      })
+      )
     );
 
     await expect(next.update(stateRef.current)).rejects.toThrow(/Recovery also failed/);
+    expect(composeAtLedgerRead).toContain(`image: ${POSTGRES_IMAGE}`);
+    expect(composeAtLedgerRead).not.toContain(`image: ${NEXT_POSTGRES_IMAGE}`);
     expect(postgresRunning).toBe(true);
     expect(DeploymentTransactionStore.open(configDir).journal.phase).toBe("runtime-changing");
 

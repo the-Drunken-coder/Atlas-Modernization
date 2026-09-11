@@ -4056,6 +4056,65 @@ describe("atlas-core CLI", () => {
     }
   });
 
+  it("regenerates a missing enabled Plugin overlay before probing Compose", async () => {
+    const test = runtime();
+    await installIndependentUpdateFixtures(test);
+    const plugin = INDEPENDENT_UPDATE_FIXTURES[0];
+    if (!plugin) throw new Error("Independent Plugin fixture is missing.");
+    installIndependentRuntimeFixture(test, plugin);
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context), test.stderr.join("")).toBe(0);
+
+    const overlay = join(test.home, ".atlas", "core", "plugins", plugin.pluginId, "active", "compose.yml");
+    expect(existsSync(overlay)).toBe(true);
+    rmSync(overlay);
+    test.runner.calls.length = 0;
+
+    const loop = vi.spyOn(supervision, "runSupervisor").mockImplementation(async (options) => {
+      await options.tick();
+    });
+    try {
+      expect(await runCLI(["supervise"], test.context), test.stderr.join("")).toBe(0);
+    } finally {
+      loop.mockRestore();
+    }
+
+    expect(existsSync(overlay)).toBe(true);
+    expect(test.runner.calls.map(composeCommand)).toContainEqual(
+      expect.arrayContaining(["ps", "--all", "--format", "json"])
+    );
+  });
+
+  it("lets a stopped supervisor clean up with a missing overlay and image", async () => {
+    const test = runtime();
+    await installIndependentUpdateFixtures(test);
+    const plugin = INDEPENDENT_UPDATE_FIXTURES[0];
+    if (!plugin) throw new Error("Independent Plugin fixture is missing.");
+    installIndependentRuntimeFixture(test, plugin);
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context), test.stderr.join("")).toBe(0);
+
+    const config = join(test.home, ".atlas", "core");
+    rmSync(join(config, "plugins", plugin.pluginId, "active", "compose.yml"));
+    writeFileSync(join(config, "run-intent.json"), `${JSON.stringify({ schema: 1, desiredRunning: false })}\n`, {
+      mode: 0o600
+    });
+    test.runner.missingImage = plugin.image;
+    test.runner.calls.length = 0;
+
+    const loop = vi.spyOn(supervision, "runSupervisor").mockImplementation(async (options) => {
+      await options.tick();
+    });
+    try {
+      expect(await runCLI(["supervise"], test.context), test.stderr.join("")).toBe(0);
+    } finally {
+      loop.mockRestore();
+    }
+
+    expect(test.runner.calls.map(composeCommand)).toContainEqual(
+      expect.arrayContaining(["ps", "--all", "--format", "json"])
+    );
+    expect(test.runner.calls.map(composeCommand)).toContainEqual(expect.arrayContaining(["down", "--remove-orphans"]));
+  });
+
   it.each([false, true])(
     "stops containers with a missing disposable Plugin overlay (pending recovery: %s)",
     async (pending) => {
@@ -5362,14 +5421,18 @@ describe("atlas-core CLI", () => {
     expect(await runCLI(["plugins", "refresh"], test.context), test.stderr.join("")).toBe(0);
     expect(await runCLI(["plugins", "status", "alpha_fixture"], test.context), test.stderr.join("")).toBe(0);
     expect(test.stdout.join("")).toContain("REVOKED: Credential exposure in this release");
+    const pluginTrust = test.context.pluginTrust;
+    if (!pluginTrust) throw new Error("Plugin trust is missing from the signed fixture.");
+    test.context.pluginTrust = { ...pluginTrust, minimumCheckpoint: { keyEpoch: 1, sequence: 3 } };
     test.context.now = () => new Date("2026-09-21T00:00:00Z");
     test.context.fetch = async () => new Response("offline", { status: 503 });
     test.stdout.length = 0;
     expect(await runCLI(["plugins", "status", "alpha_fixture"], test.context)).toBe(0);
     expect(test.stdout.join("")).toContain("REVOKED: Credential exposure in this release");
     expect(test.stdout.join("")).toContain("Plugin catalog expired");
+    expect(test.stdout.join("")).toContain("Plugin catalog is below the CLI trust checkpoint");
     expect(await runCLI(["plugins", "enable", "alpha_fixture"], test.context)).toBe(1);
-    expect(test.stderr.join("")).toContain("expired");
+    expect(test.stderr.join("")).toContain("checkpoint");
   });
 
   it("rejects unknown independent Plugin status IDs", async () => {

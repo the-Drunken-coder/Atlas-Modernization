@@ -180,14 +180,15 @@ export class PluginCatalogStore {
     return stored.receipt;
   }
 
-  /** Inspect authenticated history, including expiry, without admitting mutations or writing observed_at. */
-  inspect(): SignedCatalogReceipt & { expired: boolean } {
-    const stored = this.#readStoredReceipt(true);
+  /** Inspect authenticated history, including expiry and checkpoint warnings, without admitting mutations or writing observed_at. */
+  inspect(): SignedCatalogReceipt & { expired: boolean; belowCheckpoint: boolean } {
+    const stored = this.#readStoredReceipt(true, true);
     if (!stored) throw new Error("No verified Plugin catalog is installed. Run atlas-core plugins refresh and retry.");
     const observedAt = this.#observedNow(stored.observedAt);
     return {
       ...stored.receipt,
-      expired: Date.parse(stored.receipt.expiresAt) <= observedAt.getTime()
+      expired: Date.parse(stored.receipt.expiresAt) <= observedAt.getTime(),
+      belowCheckpoint: isBelowCheckpoint(stored.receipt, this.#trust.minimumCheckpoint)
     };
   }
 
@@ -446,6 +447,14 @@ function sha256(bytes: Uint8Array): string {
 
 function maxDate(left: Date, right: Date | undefined): Date {
   return right && right.getTime() > left.getTime() ? new Date(right.getTime()) : new Date(left.getTime());
+}
+
+function isBelowCheckpoint(receipt: SignedCatalogReceipt, checkpoint: PluginTrust["minimumCheckpoint"]): boolean {
+  if (!checkpoint) return false;
+  return (
+    receipt.keyEpoch < checkpoint.keyEpoch ||
+    (receipt.keyEpoch === checkpoint.keyEpoch && receipt.sequence < checkpoint.sequence)
+  );
 }
 
 function trustForHistoricalReceipt(trust: PluginTrust): PluginTrust {

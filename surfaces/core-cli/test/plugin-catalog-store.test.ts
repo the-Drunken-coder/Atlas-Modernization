@@ -288,6 +288,46 @@ describe("PluginCatalogStore", () => {
     expect(() => upgraded.read()).toThrow(/signature|receipt|invalid JSON/i);
   });
 
+  it("preserves an authenticated revoked release for offline status after a checkpoint advances", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "atlas-catalog-store-"));
+    directories.push(directory);
+    const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+    const release = releaseBytes("0.1.0");
+    const revokedCatalog = catalogBytes(1, null, [
+      { version: "0.1.0", documentSha256: realDigest(release), revoked: true }
+    ]);
+    const initial = new PluginCatalogStore({
+      configDir: directory,
+      catalogURL: "https://catalog.example/catalog.json",
+      trust: trust(publicKey),
+      fetchImpl: async (url) =>
+        new Response(String(url).endsWith(".sig") ? signatureBytes(revokedCatalog, privateKey) : revokedCatalog),
+      now: () => new Date("2026-09-02T12:00:00Z")
+    });
+    await initial.refresh();
+    const stateBeforeInspect = readFileSync(join(directory, "catalog-state.json"));
+    const upgraded = new PluginCatalogStore({
+      configDir: directory,
+      catalogURL: "https://catalog.example/catalog.json",
+      trust: trust(publicKey, { keyEpoch: 1, sequence: 2 }),
+      fetchImpl: async () => {
+        throw new Error("catalog unavailable");
+      },
+      now: () => new Date("2026-09-02T12:00:00Z")
+    });
+
+    const inspected = upgraded.inspect();
+    expect(inspected).toMatchObject({
+      belowCheckpoint: true,
+      expired: false,
+      catalog: {
+        plugins: [{ releases: [{ revoked: true, revocationReason: "withdrawn" }] }]
+      }
+    });
+    expect(readFileSync(join(directory, "catalog-state.json"))).toEqual(stateBeforeInspect);
+    expect(() => upgraded.read()).toThrow(/checkpoint/i);
+  });
+
   it("refreshes through a retired signing key with a newer trusted epoch", async () => {
     const directory = mkdtempSync(join(tmpdir(), "atlas-catalog-store-"));
     directories.push(directory);

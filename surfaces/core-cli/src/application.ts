@@ -1280,8 +1280,19 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
                   await this.#recoverPending(runtime.engineId);
                   const state = this.#requireManaged(this.#requireInitialized());
                   this.#assertStateMatchesEngine(state, runtime.engineId);
+                  const desiredRunning = this.#desiredRunning();
+                  if (
+                    desiredRunning &&
+                    state.enabledPlugins.some(
+                      (pluginId) => !existsSync(join(this.#pluginConfigRoot, pluginId, "active", "compose.yml"))
+                    )
+                  ) {
+                    // Active Plugin files are disposable. Rebuild them from the retained, verified release before
+                    // the first Compose probe so a missing overlay does not prevent supervisor recovery.
+                    await this.#plugins(state).regenerateActiveFiles();
+                  }
                   const services = await this.#composeServiceStates(state.enabledPlugins);
-                  if (this.#desiredRunning()) {
+                  if (desiredRunning) {
                     const baseFailures = unhealthyServices(services, REQUIRED_SERVICES);
                     if (baseFailures.length > 0) await this.#managedCore(runtime.engineId).start(state);
                     else {
@@ -2192,9 +2203,14 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       try {
         const receipt = this.#catalogStore.inspect();
         catalog = receipt.catalog.plugins;
-        if (receipt.expired) {
-          catalogError = "Plugin catalog expired; refresh before installing or enabling Plugins.";
-        }
+        const catalogWarnings: string[] = [];
+        if (receipt.expired)
+          catalogWarnings.push("Plugin catalog expired; refresh before installing or enabling Plugins.");
+        if (receipt.belowCheckpoint)
+          catalogWarnings.push(
+            "Plugin catalog is below the CLI trust checkpoint; refresh before installing or enabling Plugins."
+          );
+        if (catalogWarnings.length > 0) catalogError = catalogWarnings.join(" ");
       } catch (error) {
         catalogError = errorMessage(error);
       }
@@ -4258,7 +4274,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       const active = join(this.#pluginConfigRoot, pluginId, "active", "compose.yml");
       if (existsSync(active)) composeArgs.push("--file", active);
       else if (this.#readState()?.schema === 4) {
-        if (args[0] === "down" && args.includes("--remove-orphans")) continue;
+        if (args[0] === "ps" || (args[0] === "down" && args.includes("--remove-orphans"))) continue;
         throw new Error(
           `Plugin ${pluginId} active deployment files are missing. Run atlas-core start --manual to regenerate them from its retained release.`
         );
