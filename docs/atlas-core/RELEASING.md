@@ -2,8 +2,8 @@
 
 Implementation status: the Core-only release workflow and independent Plugin release workflow are implemented in this
 worktree, and local validation passes. The candidate-image Docker acceptance test still awaits CI. Existing published Core packages may still use the bundled catalog. The terminal
-UI redesign still awaits the user's selection from the proposed mocks. Production Plugin catalog signing, trust bootstrap,
-and Pages rollout remain external setup steps. [`2026-09-01-plugins-release-independently-from-atlas-core.md`](../design-decisions/2026-09-01-plugins-release-independently-from-atlas-core.md)
+UI redesign still awaits the user's selection from the proposed mocks. Production Plugin signing trust and Pages configuration are recorded in
+[bootstrap provenance](../atlas-plugins/CATALOG_BOOTSTRAP.md); the first signed catalog publication is still required. [`2026-09-01-plugins-release-independently-from-atlas-core.md`](../design-decisions/2026-09-01-plugins-release-independently-from-atlas-core.md)
 records the independent release decision and the schema-3 transition to schema 4.
 
 After that transition, every immutable npm Core version must continue carrying its complete base deployment bundle,

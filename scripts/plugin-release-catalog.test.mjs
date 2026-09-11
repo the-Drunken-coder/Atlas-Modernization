@@ -527,10 +527,19 @@ test("publishes and renews a signed append-only catalog with exact release URLs"
 });
 
 test("fails clearly when stable catalog trust is unconfigured", () => {
-  const result = run(["preflight"]);
-  assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /publishing is unconfigured/);
-  assert.match(result.stderr, /no trusted Ed25519 key/);
+  const directory = mkdtempSync(join(tmpdir(), "atlas-plugin-catalog-unconfigured-"));
+  try {
+    const fixture = catalogFixture(directory);
+    const trust = JSON.parse(readFileSync(fixture.trustPath, "utf8"));
+    trust.keys = [];
+    writeFileSync(fixture.trustPath, JSON.stringify(trust));
+    const result = run(["preflight"], fixture.environment);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /publishing is unconfigured/);
+    assert.match(result.stderr, /no trusted Ed25519 key/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test("allows a retry to use current publisher trust after the reviewed source advances", () => {

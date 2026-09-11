@@ -8,8 +8,8 @@ Release and installation details:
 Status: Plugin platform v1 and the independent lifecycle and release workflow are implemented in this worktree, and
 local validation passes. The candidate-image Docker acceptance test still awaits CI. Menu controls for update, rollback, uninstall, and shared-key rotation await the user's selection from the proposed mocks; these operations are available through direct CLI commands. Existing
 published Core packages may still contain the bundled catalog; schema-4 deployments use independent catalog state.
-Production catalog signing, trust bootstrap, and Pages rollout are separate deployment prerequisites and are not supplied
-by this source change. Datastream delivery, executable UI Plugins, third-party installation, hot upgrades, untrusted
+Production signing trust and Pages configuration are recorded in [bootstrap provenance](CATALOG_BOOTSTRAP.md).
+The first signed catalog publication is still required. Datastream delivery, executable UI Plugins, third-party installation, hot upgrades, untrusted
 Plugin isolation, scoped Plugin credentials, persistent Plugin storage, and taskable-Plugin lifecycle management remain
 deferred.
 

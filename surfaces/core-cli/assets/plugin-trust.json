@@ -5,5 +5,12 @@
     "key_epoch": 1,
     "sequence": 1
   },
-  "keys": []
+  "keys": [
+    {
+      "key_id": "atlas-plugin-catalog-2026-09",
+      "key_epoch": 1,
+      "public_key_pem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA6cPB3GB3zRV6GjCNuTNatsL7gUfN0bdWuiqQEppXoQ0=\n-----END PUBLIC KEY-----\n",
+      "minimum_sequence": 1
+    }
+  ]
 }
