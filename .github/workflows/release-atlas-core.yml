@@ -684,7 +684,7 @@ jobs:
           fi
           while IFS= read -r path; do
             case "$path" in
-              CHANGELOG.md|package-lock.json|surfaces/core-cli/package.json|surfaces/core-cli/src/package-metadata.ts|surfaces/core-cli/src/plugin-catalog.generated.ts|surfaces/core-cli/assets/plugin-catalog.json|surfaces/core-cli/assets/plugins/*|release-artifacts/atlas-core-"$VERSION".tgz|release-artifacts/npm-pack.json|release-artifacts/SHA256SUMS|release-artifacts/release.diff|release-artifacts/release-notes.md)
+              CHANGELOG.md|package-lock.json|surfaces/core-cli/package.json|surfaces/core-cli/src/package-metadata.ts|release-artifacts/atlas-core-"$VERSION".tgz|release-artifacts/npm-pack.json|release-artifacts/SHA256SUMS|release-artifacts/release.diff|release-artifacts/release-notes.md)
                 ;;
               *)
                 echo "Unexpected coordinator release artifact file: $path" >&2
@@ -692,18 +692,9 @@ jobs:
                 ;;
             esac
           done < <(find coordinator-release -type f -print | sed 's#^coordinator-release/##' | sort)
-          for path in \
-            CHANGELOG.md \
-            package-lock.json \
-            surfaces/core-cli/package.json \
-            surfaces/core-cli/src/package-metadata.ts \
-            surfaces/core-cli/src/plugin-catalog.generated.ts \
-            surfaces/core-cli/assets/plugin-catalog.json; do
+          for path in CHANGELOG.md package-lock.json surfaces/core-cli/package.json surfaces/core-cli/src/package-metadata.ts; do
             cmp "$path" "coordinator-release/$path"
           done
-          diff --no-dereference --recursive \
-            surfaces/core-cli/assets/plugins \
-            coordinator-release/surfaces/core-cli/assets/plugins
           rm -rf release-artifacts
           cp -R coordinator-release/release-artifacts release-artifacts
 
@@ -871,38 +862,6 @@ jobs:
             org.opencontainers.image.revision=${{ needs.changelog.outputs.source_sha }}
             org.opencontainers.image.version=${{ inputs.version }}
 
-      - name: Publish candidate catalog Plugin images
-        id: built_plugins
-        if: needs.changelog.outputs.mode == 'prepare'
-        env:
-          SOURCE_SHA: ${{ needs.changelog.outputs.source_sha }}
-          VERSION: ${{ inputs.version }}
-        run: |
-          set -euo pipefail
-          plan="$(node scripts/plugins.mjs release-plan)"
-          images='{}'
-          count="$(jq 'length' <<< "$plan")"
-          for ((index = 0; index < count; index += 1)); do
-            plugin_id="$(jq -r ".[$index].plugin_id" <<< "$plan")"
-            repository="$(jq -r ".[$index].image_repository" <<< "$plan")"
-            dockerfile="$(jq -r ".[$index].dockerfile" <<< "$plan")"
-            target="$(jq -r ".[$index].docker_target" <<< "$plan")"
-            metadata="$(mktemp)"
-            docker buildx build . \
-              --file "$dockerfile" \
-              --target "$target" \
-              --platform linux/amd64,linux/arm64 \
-              --push \
-              --tag "$repository:candidate-$VERSION-${{ github.sha }}" \
-              --label org.opencontainers.image.source=https://github.com/the-Drunken-coder/Atlas-Modernization \
-              --label "org.opencontainers.image.revision=$SOURCE_SHA" \
-              --label "org.opencontainers.image.version=$VERSION" \
-              --metadata-file "$metadata"
-            digest="$(jq -er '."containerimage.digest" | select(test("^sha256:[0-9a-f]{64}$"))' "$metadata")"
-            images="$(jq -c --arg id "$plugin_id" --arg image "$repository@$digest" '. + {($id): $image}' <<< "$images")"
-          done
-          echo "images=$images" >> "$GITHUB_OUTPUT"
-
       - name: Select immutable Atlas Core image
         id: image
         env:
@@ -923,17 +882,6 @@ jobs:
           fi
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
           echo "reference=$reference" >> "$GITHUB_OUTPUT"
-
-      - name: Select immutable catalog Plugin images
-        env:
-          ATLAS_PLUGIN_IMAGES_JSON: ${{ steps.built_plugins.outputs.images }}
-          MODE: ${{ needs.changelog.outputs.mode }}
-        run: |
-          if [ "$MODE" = "prepare" ]; then
-            node scripts/plugins.mjs record-release-images --package-root surfaces/core-cli
-          else
-            node scripts/plugins.mjs verify-release-images --package-root surfaces/core-cli
-          fi
 
       - name: Verify immutable Atlas Core image
         env:
@@ -962,35 +910,6 @@ jobs:
             echo "$IMAGE_REFERENCE resolved to unexpected digest $actual_digest." >&2
             exit 1
           fi
-
-      - name: Verify immutable catalog Plugin images
-        env:
-          SOURCE_SHA: ${{ needs.changelog.outputs.source_sha }}
-          VERSION: ${{ inputs.version }}
-        run: |
-          set -euo pipefail
-          images="$(node -p 'JSON.stringify(require("./surfaces/core-cli/package.json").atlasPluginImages)')"
-          count="$(jq 'length' <<< "$images")"
-          for ((index = 0; index < count; index += 1)); do
-            reference="$(jq -r "to_entries[$index].value" <<< "$images")"
-            for platform in linux/amd64 linux/arm64; do
-              config="$(docker buildx imagetools inspect "$reference" --format "{{json (index .Image \"$platform\")}}")"
-              revision="$(jq -r '.config.Labels["org.opencontainers.image.revision"] // empty' <<< "$config")"
-              version="$(jq -r '.config.Labels["org.opencontainers.image.version"] // empty' <<< "$config")"
-              if [ "$revision" != "$SOURCE_SHA" ] || [ "$version" != "$VERSION" ]; then
-                echo "$reference has unexpected release labels for $platform." >&2
-                exit 1
-              fi
-            done
-            actual_digest="$(
-              docker buildx imagetools inspect "$reference" --format '{{json .Manifest}}' |
-                jq -er '.digest | select(test("^sha256:[0-9a-f]{64}$"))'
-            )"
-            if [ "$actual_digest" != "${reference##*@}" ]; then
-              echo "$reference resolved to unexpected digest $actual_digest." >&2
-              exit 1
-            fi
-          done
 
       - name: Record immutable image in the npm package
         if: needs.changelog.outputs.mode == 'prepare'
@@ -1065,9 +984,6 @@ jobs:
             package-lock.json
             surfaces/core-cli/package.json
             surfaces/core-cli/src/package-metadata.ts
-            surfaces/core-cli/src/plugin-catalog.generated.ts
-            surfaces/core-cli/assets/plugin-catalog.json
-            surfaces/core-cli/assets/plugins/
             release-artifacts/
           if-no-files-found: error
           retention-days: 90
@@ -1105,51 +1021,13 @@ jobs:
             exit 1
           fi
 
-      - name: Promote catalog Plugin digests to the version tag
-        if: needs.changelog.outputs.mode == 'publish'
-        env:
-          VERSION: ${{ inputs.version }}
-        run: |
-          set -euo pipefail
-          images="$(node -p 'JSON.stringify(require("./surfaces/core-cli/package.json").atlasPluginImages)')"
-          count="$(jq 'length' <<< "$images")"
-          for ((index = 0; index < count; index += 1)); do
-            reference="$(jq -r "to_entries[$index].value" <<< "$images")"
-            repository="${reference%@*}"
-            pinned_digest="${reference##*@}"
-            final_image="$repository:$VERSION"
-            inspect_error="$(mktemp)"
-            if final_digest="$(
-              docker buildx imagetools inspect "$final_image" --format '{{json .Manifest}}' 2>"$inspect_error" |
-                jq -er '.digest | select(test("^sha256:[0-9a-f]{64}$"))'
-            )"; then
-              if [ "$final_digest" != "$pinned_digest" ]; then
-                echo "$final_image already identifies $final_digest, not $pinned_digest." >&2
-                exit 1
-              fi
-            elif grep -Eiq 'manifest unknown|name unknown|not found' "$inspect_error"; then
-              docker buildx imagetools create --tag "$final_image" "$reference"
-            else
-              cat "$inspect_error" >&2
-              exit 1
-            fi
-            promoted_digest="$(
-              docker buildx imagetools inspect "$final_image" --format '{{json .Manifest}}' |
-                jq -er '.digest | select(test("^sha256:[0-9a-f]{64}$"))'
-            )"
-            if [ "$promoted_digest" != "$pinned_digest" ]; then
-              echo "$final_image resolved to $promoted_digest after promotion." >&2
-              exit 1
-            fi
-          done
-
       - name: Verify the exact image digest is publicly pullable
         if: needs.changelog.outputs.mode == 'publish'
         env:
           IMAGE_REFERENCE: ${{ steps.image.outputs.reference }}
         run: |
           docker logout ghcr.io >/dev/null 2>&1 || true
-          images="$(node -p 'JSON.stringify([require("./surfaces/core-cli/package.json").atlasCoreImage, ...Object.values(require("./surfaces/core-cli/package.json").atlasPluginImages)])')"
+          images="$(node -p 'JSON.stringify([require("./surfaces/core-cli/package.json").atlasCoreImage])')"
           while IFS= read -r reference; do
             if ! docker manifest inspect "$reference" >/dev/null; then
               echo "$reference is not anonymously pullable." >&2
@@ -1407,7 +1285,7 @@ jobs:
           fi
           while IFS= read -r path; do
             case "$path" in
-              CHANGELOG.md|package-lock.json|surfaces/core-cli/package.json|surfaces/core-cli/src/package-metadata.ts|surfaces/core-cli/src/plugin-catalog.generated.ts|surfaces/core-cli/assets/plugin-catalog.json|surfaces/core-cli/assets/plugins/*|release-artifacts/atlas-core-"$VERSION".tgz|release-artifacts/npm-pack.json|release-artifacts/SHA256SUMS|release-artifacts/release.diff|release-artifacts/release-notes.md)
+              CHANGELOG.md|package-lock.json|surfaces/core-cli/package.json|surfaces/core-cli/src/package-metadata.ts|release-artifacts/atlas-core-"$VERSION".tgz|release-artifacts/npm-pack.json|release-artifacts/SHA256SUMS|release-artifacts/release.diff|release-artifacts/release-notes.md)
                 ;;
               *)
                 echo "Unexpected approved release artifact file: $path" >&2
@@ -1420,8 +1298,6 @@ jobs:
             package-lock.json \
             surfaces/core-cli/package.json \
             surfaces/core-cli/src/package-metadata.ts \
-            surfaces/core-cli/src/plugin-catalog.generated.ts \
-            surfaces/core-cli/assets/plugin-catalog.json \
             release-artifacts/atlas-core-$VERSION.tgz \
             release-artifacts/npm-pack.json \
             release-artifacts/SHA256SUMS \
@@ -1429,10 +1305,6 @@ jobs:
             release-artifacts/release-notes.md; do
             test -f "$artifact_root/$path"
           done
-          if ! find "$artifact_root/surfaces/core-cli/assets/plugins" -type f -print -quit | grep -q .; then
-            echo "The approved release artifact contains no catalog Plugin assets." >&2
-            exit 1
-          fi
           (
             cd "$artifact_root/release-artifacts"
             sha256sum --check SHA256SUMS
@@ -1454,15 +1326,10 @@ jobs:
             package-lock.json
             surfaces/core-cli/package.json
             surfaces/core-cli/src/package-metadata.ts
-            surfaces/core-cli/src/plugin-catalog.generated.ts
-            surfaces/core-cli/assets/plugin-catalog.json
-            surfaces/core-cli/assets/plugins
           )
-          for path in "${release_paths[@]:0:6}"; do
+          for path in "${release_paths[@]}"; do
             cp "$artifact_root/$path" "$path"
           done
-          rm -rf surfaces/core-cli/assets/plugins
-          cp -R "$artifact_root/surfaces/core-cli/assets/plugins" surfaces/core-cli/assets/plugins
           git -c core.hooksPath=/dev/null add -- "${release_paths[@]}"
           staged="$(git diff --cached --name-only)"
           if [ -z "$staged" ]; then
@@ -1471,7 +1338,7 @@ jobs:
           fi
           while IFS= read -r path; do
             case "$path" in
-              CHANGELOG.md|package-lock.json|surfaces/core-cli/package.json|surfaces/core-cli/src/package-metadata.ts|surfaces/core-cli/src/plugin-catalog.generated.ts|surfaces/core-cli/assets/plugin-catalog.json|surfaces/core-cli/assets/plugins/*)
+              CHANGELOG.md|package-lock.json|surfaces/core-cli/package.json|surfaces/core-cli/src/package-metadata.ts)
                 ;;
               *)
                 echo "Unexpected staged release file: $path" >&2
@@ -1538,7 +1405,7 @@ jobs:
           fi
           while IFS= read -r path; do
             case "$path" in
-              CHANGELOG.md|package-lock.json|surfaces/core-cli/package.json|surfaces/core-cli/src/package-metadata.ts|surfaces/core-cli/src/plugin-catalog.generated.ts|surfaces/core-cli/assets/plugin-catalog.json|surfaces/core-cli/assets/plugins/*)
+              CHANGELOG.md|package-lock.json|surfaces/core-cli/package.json|surfaces/core-cli/src/package-metadata.ts)
                 ;;
               *)
                 echo "The existing release commit changed an unexpected file: $path" >&2

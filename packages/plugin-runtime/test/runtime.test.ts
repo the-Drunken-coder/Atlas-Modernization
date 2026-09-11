@@ -32,6 +32,7 @@ describe("Atlas Plugin runtime", () => {
     expect(plugin.manifest).toEqual({
       plugin_id: "adsb",
       display_name: "ADS-B",
+      core_to_plugin_protocol_major: 1,
       operations: [
         {
           operation_id: "inspect_aircraft",
@@ -901,6 +902,7 @@ describe("Atlas Plugin runtime", () => {
       expect(init?.redirect).toBe("manual");
       const request = JSON.parse(String(init?.body));
       expect(request).toEqual({
+        plugin_to_source_gateway_protocol_major: 1,
         method: "POST",
         path: "/binary",
         query: [
@@ -986,7 +988,11 @@ describe("Atlas Plugin runtime", () => {
       status: 204,
       body: new Uint8Array()
     });
-    expect(requestBodies[0]).toMatchObject({ method: "GET", body_base64: null });
+    expect(requestBodies[0]).toMatchObject({
+      plugin_to_source_gateway_protocol_major: 1,
+      method: "GET",
+      body_base64: null
+    });
     await expect(client.request("reference", { method: "get", path: "/" })).rejects.toThrow("uppercase");
 
     for (const response of [

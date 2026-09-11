@@ -1,0 +1,47 @@
+{
+  "services": {
+    "api": {
+      "environment": {
+        "ATLAS_PLUGIN_CONFIG_DIR": "/app/plugin-endpoints"
+      },
+      "volumes": [
+        "@atlas/core-endpoint-mount@"
+      ]
+    },
+    "source-gateway": {
+      "environment": {
+        "ATLAS_SOURCE_CONNECTOR_CONFIG_DIR": "@atlas/source-connector-config-dir@"
+      },
+      "volumes": [
+        "@atlas/source-connector-mount@"
+      ]
+    },
+    "@atlas/plugin-service@": {
+      "image": "@atlas/plugin-image@",
+      "container_name": "${ATLAS_CORE_PROJECT:-atlas_core_production}_@atlas/plugin-service@",
+      "labels": {
+        "io.atlas.core.engine": "${ATLAS_CORE_ENGINE_ID:-direct-compose}"
+      },
+      "restart": "no",
+      "environment": {
+        "ATLAS_SOURCE_GATEWAY_ORIGIN": "http://source-gateway:8080",
+        "ATLAS_CORE_ORIGIN": "@atlas/core-origin@",
+        "ATLAS_API_AUTH_KEY": "@atlas/api-auth-key@"
+      },
+      "depends_on": {
+        "source-gateway": {
+          "condition": "service_started"
+        }
+      },
+      "healthcheck": {
+        "test": ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health"],
+        "interval": "10s",
+        "timeout": "5s",
+        "retries": 5
+      },
+      "networks": [
+        "atlas_core_network"
+      ]
+    }
+  }
+}

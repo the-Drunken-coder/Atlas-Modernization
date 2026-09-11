@@ -2,11 +2,11 @@ import { createHash } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { Socket } from "node:net";
 import type {
+  PluginManifest as AtlasPluginManifest,
   EntityCreateRequest,
   EntityResource,
   JSONValue,
   MapArea,
-  PluginManifest,
   PluginOperationInteraction,
   SpatialOperationResult
 } from "@the-drunken-coder/atlas-sdk";
@@ -22,6 +22,12 @@ import {
 const identifierPattern = /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/;
 const maxBodyBytes = 1 << 20;
 const earlyBodyDrainTimeoutMs = 25;
+
+/** The first independently released Core-to-Plugin private manifest contract. */
+export const CORE_TO_PLUGIN_PROTOCOL_MAJOR = 1 as const;
+
+/** The first independently released Plugin-to-Source-Gateway private request contract. */
+export const PLUGIN_TO_SOURCE_GATEWAY_PROTOCOL_MAJOR = 1 as const;
 
 class InvalidRequestBodyError extends Error {}
 
@@ -59,6 +65,11 @@ export function defineSpatialOperation(definition: Omit<SpatialOperation, "inter
 
 export type OperationMap = Record<string, Operation>;
 
+/** The private manifest served to Core. The protocol major is deliberately outside Atlas Protocol. */
+export type PrivatePluginManifest = AtlasPluginManifest & {
+  core_to_plugin_protocol_major: typeof CORE_TO_PLUGIN_PROTOCOL_MAJOR;
+};
+
 export type PluginDefinition<Operations extends OperationMap> = {
   pluginId: string;
   displayName: string;
@@ -68,7 +79,7 @@ export type PluginDefinition<Operations extends OperationMap> = {
 };
 
 export type DefinedPlugin<Operations extends OperationMap> = PluginDefinition<Operations> & {
-  manifest: PluginManifest;
+  manifest: PrivatePluginManifest;
 };
 
 export function definePlugin<const Operations extends OperationMap>(
@@ -108,9 +119,10 @@ export function definePlugin<const Operations extends OperationMap>(
       ])
     )
   ) as Operations;
-  const manifest: PluginManifest = {
+  const manifest: PrivatePluginManifest = {
     plugin_id: definition.pluginId,
     display_name: definition.displayName.trim(),
+    core_to_plugin_protocol_major: CORE_TO_PLUGIN_PROTOCOL_MAJOR,
     operations,
     ...(definition.taskable ? { tool_asset_id: deriveToolAssetId(definition.pluginId) } : {})
   };
@@ -335,6 +347,7 @@ export class SourceGatewayClient {
           Accept: "application/json"
         },
         body: JSON.stringify({
+          plugin_to_source_gateway_protocol_major: PLUGIN_TO_SOURCE_GATEWAY_PROTOCOL_MAJOR,
           method: request.method,
           path: request.path,
           query: request.query ?? [],

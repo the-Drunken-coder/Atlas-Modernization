@@ -25,6 +25,11 @@ const (
 	FailureUpstreamTimeout     FailureCode = "upstream_timeout"
 )
 
+// PluginToSourceGatewayProtocolMajor is the first independently released
+// private request contract. It is checked on every decoded request and stays
+// outside the generated Atlas Protocol schema.
+const PluginToSourceGatewayProtocolMajor int64 = 1
+
 type HeaderTuple [2]string
 
 func (h *HeaderTuple) UnmarshalJSON(data []byte) error {
@@ -44,14 +49,20 @@ func (r *ConnectorRequest) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &fields); err != nil {
 		return err
 	}
-	required := []string{"method", "path", "query", "headers", "body_base64"}
+	required := []string{"plugin_to_source_gateway_protocol_major", "method", "path", "query", "headers", "body_base64"}
 	if len(fields) != len(required) {
-		return errors.New("connector request must contain exactly the five documented fields")
+		return errors.New("connector request must contain exactly the six documented fields")
 	}
 	for _, name := range required {
 		if _, present := fields[name]; !present {
 			return fmt.Errorf("connector request is missing %s", name)
 		}
+	}
+	if err := json.Unmarshal(fields["plugin_to_source_gateway_protocol_major"], &r.PluginToSourceGatewayProtocolMajor); err != nil {
+		return errors.New("plugin_to_source_gateway_protocol_major must be an integer")
+	}
+	if !supportsPluginToSourceGatewayProtocolMajor(r.PluginToSourceGatewayProtocolMajor) {
+		return fmt.Errorf("unsupported plugin_to_source_gateway_protocol_major %d", r.PluginToSourceGatewayProtocolMajor)
 	}
 	if err := json.Unmarshal(fields["method"], &r.Method); err != nil {
 		return errors.New("method must be a string")
@@ -81,11 +92,16 @@ func (r *ConnectorRequest) UnmarshalJSON(data []byte) error {
 }
 
 type ConnectorRequest struct {
-	Method     string        `json:"method"`
-	Path       string        `json:"path"`
-	Query      []HeaderTuple `json:"query"`
-	Headers    []HeaderTuple `json:"headers"`
-	BodyBase64 *string       `json:"body_base64"`
+	PluginToSourceGatewayProtocolMajor int64         `json:"plugin_to_source_gateway_protocol_major"`
+	Method                             string        `json:"method"`
+	Path                               string        `json:"path"`
+	Query                              []HeaderTuple `json:"query"`
+	Headers                            []HeaderTuple `json:"headers"`
+	BodyBase64                         *string       `json:"body_base64"`
+}
+
+func supportsPluginToSourceGatewayProtocolMajor(major int64) bool {
+	return major == PluginToSourceGatewayProtocolMajor
 }
 
 type ConnectorResponse struct {

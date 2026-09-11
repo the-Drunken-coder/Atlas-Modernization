@@ -1,0 +1,481 @@
+name: Release Atlas Plugin
+run-name: Atlas Plugin ${{ inputs.plugin_id }} v${{ inputs.version }} from ${{ github.ref_name }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      plugin_id:
+        description: Plugin folder and identifier, for example building_scan
+        required: true
+        type: string
+      version:
+        description: Stable Plugin SemVer without v or prerelease suffix
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: release-atlas-plugin-${{ inputs.plugin_id }}-${{ inputs.version }}
+  cancel-in-progress: false
+  queue: max
+
+env:
+  NPM_VERSION: 11.6.2
+
+jobs:
+  validate:
+    name: Validate Plugin release inputs
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      source_sha: ${{ steps.source.outputs.sha }}
+      package_name: ${{ steps.plugin.outputs.package_name }}
+      image_repository: ${{ steps.plugin.outputs.image_repository }}
+    steps:
+      - name: Checkout dispatched commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+
+      - name: Verify source commit and release ref
+        id: source
+        env:
+          VERSION: ${{ inputs.version }}
+          PLUGIN_ID: ${{ inputs.plugin_id }}
+        run: |
+          set -euo pipefail
+          node scripts/plugin-release.mjs validate-version "$VERSION"
+          node scripts/plugin-release.mjs validate-plugin "$PLUGIN_ID" "$VERSION"
+          expected_tag="refs/tags/atlas-plugin-${PLUGIN_ID}-v${VERSION}"
+          if [ "$GITHUB_REF" != "refs/heads/main" ] && [ "$GITHUB_REF" != "$expected_tag" ]; then
+            echo "Dispatch Plugin releases from main or $expected_tag." >&2
+            exit 1
+          fi
+          if [ "$(git rev-parse HEAD)" != "$GITHUB_SHA" ]; then
+            echo "The checked-out commit does not match the dispatched commit." >&2
+            exit 1
+          fi
+          echo "sha=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Read release metadata
+        id: plugin
+        env:
+          PLUGIN_ID: ${{ inputs.plugin_id }}
+        run: |
+          package_name="$(node -p 'JSON.parse(require("fs").readFileSync("plugins/" + process.env.PLUGIN_ID + "/atlas-plugin.json")).package')"
+          image_repository="$(node -p 'JSON.parse(require("fs").readFileSync("plugins/" + process.env.PLUGIN_ID + "/atlas-plugin.json")).release.image_repository')"
+          echo "package_name=$package_name" >> "$GITHUB_OUTPUT"
+          echo "image_repository=$image_repository" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build and verify candidate image
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image_reference: ${{ steps.image.outputs.reference }}
+    steps:
+      - name: Checkout reviewed commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.validate.outputs.source_sha }}
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+
+      - name: Install exact npm and workspace dependencies
+        run: |
+          npm install --global --ignore-scripts "npm@$NPM_VERSION"
+          npm --version | grep -Fx "$NPM_VERSION"
+          npm ci --ignore-scripts
+
+      - name: Run Plugin checks and build dependency bundles
+        env:
+          PLUGIN_ID: ${{ inputs.plugin_id }}
+          PACKAGE_NAME: ${{ needs.validate.outputs.package_name }}
+        run: |
+          if node -e 'process.exit(JSON.parse(require("fs").readFileSync("plugins/" + process.env.PLUGIN_ID + "/package.json")).scripts?.lint ? 0 : 1)'; then
+            npm run lint --workspace "$PACKAGE_NAME"
+          fi
+          if node -e 'process.exit(JSON.parse(require("fs").readFileSync("plugins/" + process.env.PLUGIN_ID + "/package.json")).scripts?.["format:check"] ? 0 : 1)'; then
+            npm run format:check --workspace "$PACKAGE_NAME"
+          fi
+          npm run build:sdk
+          npm run build:plugin-runtime
+          npm test --workspace "$PACKAGE_NAME"
+          npm run build --workspace "$PACKAGE_NAME"
+          node scripts/plugin-release.mjs validate-plugin "$PLUGIN_ID" "${{ inputs.version }}"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+
+      - name: Sign in to GitHub Container Registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Reuse a previously promoted immutable image when available
+        id: reuse
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PLUGIN_ID: ${{ inputs.plugin_id }}
+          SOURCE_SHA: ${{ needs.validate.outputs.source_sha }}
+          VERSION: ${{ inputs.version }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          reuse_status=0
+          reuse_result="$(node scripts/plugin-release.mjs reuse-publication \
+            "$PLUGIN_ID" "$VERSION" "$SOURCE_SHA" release-artifacts \
+          )" || reuse_status=$?
+          if [ "$reuse_status" -eq 2 ]; then
+            echo "No previously promoted immutable publication exists."
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$reuse_status" -ne 0 ]; then
+            exit "$reuse_status"
+          fi
+          image_reference="$(jq -er '.image_reference | select(type == "string")' <<< "$reuse_result")"
+          echo "Found a verified immutable publication for $image_reference."
+          echo "reference=$image_reference" >> "$GITHUB_OUTPUT"
+          echo "found=true" >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a # v4.3.0
+
+      - name: Publish candidate image
+        id: candidate
+        if: steps.reuse.outputs.found != 'true'
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        with:
+          context: .
+          file: plugins/${{ inputs.plugin_id }}/Dockerfile
+          target: plugin
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ needs.validate.outputs.image_repository }}:candidate-${{ inputs.version }}-${{ needs.validate.outputs.source_sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/the-Drunken-coder/Atlas-Modernization
+            org.opencontainers.image.revision=${{ needs.validate.outputs.source_sha }}
+            org.opencontainers.image.version=${{ inputs.version }}
+
+      - name: Select immutable candidate image
+        id: image
+        env:
+          DIGEST: ${{ steps.candidate.outputs.digest }}
+          IMAGE_REPOSITORY: ${{ needs.validate.outputs.image_repository }}
+          REUSED_REFERENCE: ${{ steps.reuse.outputs.reference }}
+          REUSED: ${{ steps.reuse.outputs.found }}
+        run: |
+          if [ "$REUSED" = "true" ]; then
+            echo "reference=$REUSED_REFERENCE" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ ! "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "Candidate build did not return an immutable image index digest." >&2
+            exit 1
+          fi
+          echo "reference=$IMAGE_REPOSITORY@$DIGEST" >> "$GITHUB_OUTPUT"
+
+      - name: Verify candidate image labels
+        env:
+          IMAGE_REFERENCE: ${{ steps.image.outputs.reference }}
+          SOURCE_SHA: ${{ needs.validate.outputs.source_sha }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          for platform in linux/amd64 linux/arm64; do
+            config="$(docker buildx imagetools inspect "$IMAGE_REFERENCE" --format "{{json (index .Image \"$platform\")}}")"
+            test "$(jq -r '.config.Labels["org.opencontainers.image.revision"] // empty' <<< "$config")" = "$SOURCE_SHA"
+            test "$(jq -r '.config.Labels["org.opencontainers.image.version"] // empty' <<< "$config")" = "$VERSION"
+          done
+
+      - name: Run candidate image contract checks
+        env:
+          IMAGE_REFERENCE: ${{ steps.image.outputs.reference }}
+          PLUGIN_ID: ${{ inputs.plugin_id }}
+        run: node scripts/plugin-release.mjs check-candidate "$PLUGIN_ID" "$IMAGE_REFERENCE"
+
+      - name: Generate and verify immutable release document
+        env:
+          IMAGE_REFERENCE: ${{ steps.image.outputs.reference }}
+          PLUGIN_ID: ${{ inputs.plugin_id }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          mkdir -p release-artifacts
+          if [ "${{ steps.reuse.outputs.found }}" != "true" ]; then
+            node scripts/plugin-release.mjs release-document "$PLUGIN_ID" "$VERSION" "$IMAGE_REFERENCE" \
+              "release-artifacts/${PLUGIN_ID}-${VERSION}.atlas-plugin"
+          fi
+          node scripts/plugin-release.mjs verify-document \
+            "release-artifacts/${PLUGIN_ID}-${VERSION}.atlas-plugin"
+          sha256sum "release-artifacts/${PLUGIN_ID}-${VERSION}.atlas-plugin" > release-artifacts/SHA256SUMS
+
+      - name: Upload reviewed Plugin release
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: atlas-plugin-${{ inputs.plugin_id }}-${{ inputs.version }}
+          path: release-artifacts/
+          if-no-files-found: error
+          retention-days: 90
+
+  publish:
+    name: Publish Plugin release and catalog entry
+    needs: [validate, build]
+    runs-on: ubuntu-latest
+    environment: plugin-catalog
+    permissions:
+      contents: write
+      id-token: write
+      pages: write
+      packages: write
+    concurrency:
+      group: release-atlas-plugin-mutator
+      cancel-in-progress: false
+      queue: max
+    steps:
+      - name: Checkout reviewed source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.validate.outputs.source_sha }}
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+
+      - name: Download reviewed release document
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: atlas-plugin-${{ inputs.plugin_id }}-${{ inputs.version }}
+          path: release-artifacts
+
+      - name: Verify reviewed release bytes and source
+        env:
+          IMAGE_REFERENCE: ${{ needs.build.outputs.image_reference }}
+          PLUGIN_ID: ${{ inputs.plugin_id }}
+          SOURCE_SHA: ${{ needs.validate.outputs.source_sha }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          sha256sum --check release-artifacts/SHA256SUMS
+          node scripts/plugin-release.mjs validate-plugin "$PLUGIN_ID" "$VERSION"
+          node scripts/plugin-release.mjs verify-document "release-artifacts/${PLUGIN_ID}-${VERSION}.atlas-plugin"
+          test "$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1])).image' "release-artifacts/${PLUGIN_ID}-${VERSION}.atlas-plugin")" = "$IMAGE_REFERENCE"
+
+      - name: Set up Docker Buildx and registry access
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+
+      - name: Sign in to GitHub Container Registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve current default-branch catalog publisher
+        id: publisher
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          publisher_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${DEFAULT_BRANCH}" --jq '.object.sha')"
+          if [[ ! "$publisher_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "The default branch ref did not resolve to a commit SHA." >&2
+            exit 1
+          fi
+          echo "sha=$publisher_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout pinned default-branch catalog publisher and trust
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.publisher.outputs.sha }}
+          path: catalog-publisher
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Require the configured catalog signing key
+        env:
+          ATLAS_PLUGIN_CATALOG_KEY_EPOCH: ${{ vars.ATLAS_PLUGIN_CATALOG_KEY_EPOCH }}
+          ATLAS_PLUGIN_CATALOG_KEY_ID: ${{ vars.ATLAS_PLUGIN_CATALOG_KEY_ID }}
+          ATLAS_PLUGIN_CATALOG_PRIVATE_KEY: ${{ secrets.ATLAS_PLUGIN_CATALOG_PRIVATE_KEY }}
+        run: node catalog-publisher/scripts/plugin-release-catalog.mjs preflight
+
+      - name: Verify release tag provenance
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PLUGIN_ID: ${{ inputs.plugin_id }}
+          SOURCE_SHA: ${{ needs.validate.outputs.source_sha }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          tag="atlas-plugin-${PLUGIN_ID}-v${VERSION}"
+          tag_check_status=0
+          node scripts/plugin-release.mjs verify-release-tag "$GITHUB_REPOSITORY" "$tag" "$SOURCE_SHA" || tag_check_status=$?
+          if [ "$tag_check_status" -ne 0 ] && [ "$tag_check_status" -ne 2 ]; then
+            exit "$tag_check_status"
+          fi
+          if [ "$tag_check_status" -eq 2 ]; then
+            gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
+              -f "ref=refs/tags/$tag" \
+              -f "sha=$SOURCE_SHA"
+            node scripts/plugin-release.mjs verify-release-tag "$GITHUB_REPOSITORY" "$tag" "$SOURCE_SHA"
+          fi
+
+      - name: Promote immutable image to the version tag
+        env:
+          IMAGE_REFERENCE: ${{ needs.build.outputs.image_reference }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          repository="${IMAGE_REFERENCE%@*}"
+          final_image="$repository:$VERSION"
+          existing_status=0
+          digest="$(node scripts/plugin-release.mjs image-digest "$final_image")" || existing_status=$?
+          if [ "$existing_status" -eq 0 ]; then
+            test "$digest" = "${IMAGE_REFERENCE##*@}" || {
+              echo "$final_image already points at $digest, not ${IMAGE_REFERENCE##*@}." >&2
+              exit 1
+            }
+          elif [ "$existing_status" -eq 2 ]; then
+            docker buildx imagetools create --tag "$final_image" "$IMAGE_REFERENCE"
+          else
+            echo "Unable to determine whether $final_image already exists; refusing to overwrite it." >&2
+            exit "$existing_status"
+          fi
+          final_status=0
+          final_digest="$(node scripts/plugin-release.mjs image-digest "$final_image")" || final_status=$?
+          if [ "$final_status" -ne 0 ]; then
+            echo "Promoted image $final_image could not be verified." >&2
+            exit "$final_status"
+          fi
+          test "$final_digest" = "${IMAGE_REFERENCE##*@}"
+
+      - name: Create or verify immutable GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PLUGIN_ID: ${{ inputs.plugin_id }}
+          SOURCE_SHA: ${{ needs.validate.outputs.source_sha }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          tag="atlas-plugin-${PLUGIN_ID}-v${VERSION}"
+          title="Atlas Plugin ${PLUGIN_ID} ${VERSION}"
+          node scripts/plugin-release.mjs verify-release-tag "$GITHUB_REPOSITORY" "$tag" "$SOURCE_SHA"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            test "$(gh release view "$tag" --json name --jq .name)" = "$title"
+            test "$(gh release view "$tag" --json targetCommitish --jq .targetCommitish)" = "$SOURCE_SHA"
+            asset="${PLUGIN_ID}-${VERSION}.atlas-plugin"
+            if gh release view "$tag" --json assets --jq '.assets[].name' | grep -Fx "$asset" >/dev/null; then
+              temporary="$(mktemp -d)"
+              trap 'rm -rf -- "$temporary"' EXIT
+              gh release download "$tag" --pattern "$asset" --dir "$temporary"
+              cmp "release-artifacts/$asset" "$temporary/$asset"
+            else
+              gh release upload "$tag" "release-artifacts/$asset#$asset"
+            fi
+          else
+            gh release create "$tag" --verify-tag --target "$SOURCE_SHA" --title "$title" --notes "Independent Atlas Plugin release ${PLUGIN_ID} ${VERSION}." \
+              "release-artifacts/${PLUGIN_ID}-${VERSION}.atlas-plugin#${PLUGIN_ID}-${VERSION}.atlas-plugin"
+          fi
+
+      - name: Verify public release bytes and image digest
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_SERVER_URL: ${{ github.server_url }}
+          IMAGE_REFERENCE: ${{ needs.build.outputs.image_reference }}
+          PLUGIN_ID: ${{ inputs.plugin_id }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          release_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/download/atlas-plugin-${PLUGIN_ID}-v${VERSION}/${PLUGIN_ID}-${VERSION}.atlas-plugin"
+          node scripts/plugin-release.mjs verify-public-release \
+            "$release_url" \
+            "release-artifacts/${PLUGIN_ID}-${VERSION}.atlas-plugin"
+          docker logout ghcr.io
+          docker manifest inspect "$IMAGE_REFERENCE" >/dev/null
+
+      - name: Checkout the protected catalog ledger
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: plugin-catalog
+          path: catalog-ledger
+          persist-credentials: false
+
+      - name: Append and sign the catalog ledger
+        env:
+          ATLAS_PLUGIN_CATALOG_KEY_EPOCH: ${{ vars.ATLAS_PLUGIN_CATALOG_KEY_EPOCH }}
+          ATLAS_PLUGIN_CATALOG_KEY_ID: ${{ vars.ATLAS_PLUGIN_CATALOG_KEY_ID }}
+          ATLAS_PLUGIN_CATALOG_PRIVATE_KEY: ${{ secrets.ATLAS_PLUGIN_CATALOG_PRIVATE_KEY }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_SERVER_URL: ${{ github.server_url }}
+        run: |
+          git -C catalog-ledger remote set-url origin "https://x-access-token:${GH_TOKEN}@${GITHUB_SERVER_URL#https://}/${GITHUB_REPOSITORY}.git"
+          node "$GITHUB_WORKSPACE/catalog-publisher/scripts/plugin-release-catalog.mjs" append \
+            "$GITHUB_WORKSPACE/release-artifacts/${{ inputs.plugin_id }}-${{ inputs.version }}.atlas-plugin" \
+            "$GITHUB_WORKSPACE/catalog-ledger"
+          git -C catalog-ledger config user.name "atlas-plugin-release[bot]"
+          git -C catalog-ledger config user.email "atlas-plugin-release[bot]@users.noreply.github.com"
+          git -C catalog-ledger add catalog.json catalog.json.sig
+          if ! git -C catalog-ledger diff --cached --quiet; then
+            git -C catalog-ledger commit -m "catalog: publish ${{ inputs.plugin_id }} v${{ inputs.version }}"
+            git -C catalog-ledger push origin HEAD:plugin-catalog
+          fi
+
+      - name: Build the Pages artifact from the ledger commit
+        run: |
+          mkdir -p pages
+          cp catalog-ledger/catalog.json catalog-ledger/catalog.json.sig pages/
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
+        with:
+          path: pages
+
+      - name: Publish Pages artifact
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4
+
+      - name: Verify stable catalog publication
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_SERVER_URL: ${{ github.server_url }}
+          IMAGE_REFERENCE: ${{ needs.build.outputs.image_reference }}
+          PLUGIN_ID: ${{ inputs.plugin_id }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          release_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/download/atlas-plugin-${PLUGIN_ID}-v${VERSION}/${PLUGIN_ID}-${VERSION}.atlas-plugin"
+          node scripts/plugin-release.mjs verify-public-release \
+            "$release_url" \
+            "release-artifacts/${PLUGIN_ID}-${VERSION}.atlas-plugin"
+          node "$GITHUB_WORKSPACE/catalog-publisher/scripts/plugin-release-catalog.mjs" verify-published \
+            "$GITHUB_WORKSPACE/catalog-ledger" \
+            --plugin-id "$PLUGIN_ID" \
+            --version "$VERSION" \
+            --release-document "$GITHUB_WORKSPACE/release-artifacts/${PLUGIN_ID}-${VERSION}.atlas-plugin"
+          docker logout ghcr.io
+          digest="$(timeout 30s docker buildx imagetools inspect "$IMAGE_REFERENCE" --format '{{json .Manifest}}' | jq -er '.digest | select(test("^sha256:[0-9a-f]{64}$"))')"
+          test "$digest" = "${IMAGE_REFERENCE##*@}"

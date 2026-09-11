@@ -1,7 +1,8 @@
-import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
+import { execFileSync, spawn } from "node:child_process";
+import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import {
   chmodSync,
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -13,16 +14,30 @@ import {
   writeFileSync
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
+import { gzipSync } from "node:zlib";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type CLIContext, type CommandRunner, ProcessCommandRunner, runCLI } from "../src/application.js";
+import { DeploymentTransactionStore } from "../src/deployment-transaction.js";
 import { OperationCleanupError } from "../src/operation-errors.js";
-import { PACKAGE_NAME, PACKAGE_VERSION } from "../src/package-metadata.js";
+import { PACKAGE_NAME, PACKAGE_PLUGIN_CONTRACTS, PACKAGE_VERSION } from "../src/package-metadata.js";
 import type { PluginCatalogEntry } from "../src/plugin-catalog.js";
+import * as supervision from "../src/supervision.js";
 import type { DeploymentDetails } from "../src/terminal-ui.js";
 
 const TEST_IMAGE = `ghcr.io/the-drunken-coder/atlas-core@sha256:${"a".repeat(64)}`;
 const TEST_PLUGIN_IMAGE = `ghcr.io/the-drunken-coder/atlas-spatial-fixture@sha256:${"b".repeat(64)}`;
+const TEST_ALPHA_PLUGIN_IMAGE = `ghcr.io/the-drunken-coder/atlas-alpha-fixture@sha256:${"1".repeat(64)}`;
+const TEST_ZETA_PLUGIN_IMAGE = `ghcr.io/the-drunken-coder/atlas-zeta-fixture@sha256:${"2".repeat(64)}`;
+const TEST_IMAGE_PLATFORM_DIGEST = `sha256:${"c".repeat(64)}`;
+const TEST_IMAGE_LOCAL_ID = `sha256:${"d".repeat(64)}`;
+const TEST_PLUGIN_PLATFORM_DIGEST = `sha256:${"e".repeat(64)}`;
+const TEST_PLUGIN_LOCAL_ID = `sha256:${"f".repeat(64)}`;
+const TEST_POSTGRES_IMAGE = "postgres:15@sha256:1b92e7a80c021647bf70f5d3eb66066a998e4f5cf43c07bb9dc9f729782cf88e";
+const TEST_MINIO_IMAGE =
+  "minio/minio:RELEASE.2024-01-31T20-20-33Z@sha256:4092433a77e510826874b36f369696df43407a763d7f901a61d74e83e6fd95bc";
+const TEST_MINIO_MC_IMAGE =
+  "minio/mc:RELEASE.2024-01-31T08-59-40Z@sha256:c084c9a67c7a9ed5f37cc7f2a905010861aaa882bec76da10352305c9709b6d2";
 const TEST_ENGINE_ID = "test-engine-id";
 const projectName = (engineId: string): string =>
   `atlas_core_production_${createHash("sha256").update(engineId).digest("hex")}`;
@@ -36,6 +51,19 @@ const POSTGRES_VOLUME = `${PROJECT_NAME}_postgres_data`;
 const MINIO_VOLUME = `${PROJECT_NAME}_minio_data`;
 const mutationLockNetwork = (engineId: string): string => `${projectName(engineId)}_mutation_lock`;
 const MUTATION_LOCK_NETWORK = mutationLockNetwork(TEST_ENGINE_ID);
+
+function fakeImageIdentity(image: string): { platformDigest: string; localId: string } {
+  if (image.startsWith("ghcr.io/the-drunken-coder/atlas-spatial-fixture@")) {
+    return { platformDigest: TEST_PLUGIN_PLATFORM_DIGEST, localId: TEST_PLUGIN_LOCAL_ID };
+  }
+  if (image.startsWith("ghcr.io/the-drunken-coder/atlas-alpha-fixture@")) {
+    return { platformDigest: `sha256:${"3".repeat(64)}`, localId: `sha256:${"4".repeat(64)}` };
+  }
+  if (image.startsWith("ghcr.io/the-drunken-coder/atlas-zeta-fixture@")) {
+    return { platformDigest: `sha256:${"5".repeat(64)}`, localId: `sha256:${"6".repeat(64)}` };
+  }
+  return { platformDigest: TEST_IMAGE_PLATFORM_DIGEST, localId: TEST_IMAGE_LOCAL_ID };
+}
 
 function nextPatchVersion(version: string): string {
   const [major, minor, patch, ...extra] = version.split(".");
@@ -76,6 +104,7 @@ class FakeRunner implements CommandRunner {
   failAfterComposeDown = false;
   failDockerPullImage: string | undefined;
   failComposeUpImage: string | undefined;
+  missingImage: string | undefined;
   failStats = false;
   failInstalledCoreUpdate = false;
   composeVersion = "5.1.2";
@@ -84,9 +113,14 @@ class FakeRunner implements CommandRunner {
   dockerEngineId = TEST_ENGINE_ID;
   dockerOperatingSystem = "linux";
   globalRoot = "";
+  readonly managedKeys = new Map<string, { id: string; secret: string }>();
+  managedKeySequence = 0;
+  runtimeProbeOutput: string | undefined;
+  readonly legacyPackageArchives = new Map<string, string>();
   latestVersion = PACKAGE_VERSION;
   latestImage = TEST_IMAGE;
   runningCoreImage = TEST_IMAGE;
+  wrongPluginContainerImage = false;
   installedVersion = PACKAGE_VERSION;
   missingNetworkError = (name: string): string => `Error: No such network: ${name}`;
   nextNetworkRemovalError: ((name: string) => string) | undefined;
@@ -153,6 +187,68 @@ class FakeRunner implements CommandRunner {
     if (command === process.execPath && args.includes("__apply-core-update")) {
       return this.failInstalledCoreUpdate ? result(1, "", "injected installed update failure") : result(0);
     }
+    if (command === "npm" && args[0] === "pack") {
+      const destination = args[args.indexOf("--pack-destination") + 1];
+      const packageSpec = args.at(-1) ?? "";
+      const version = packageSpec.slice(packageSpec.lastIndexOf("@") + 1);
+      const archive = join(destination ?? "", `atlas-core-${version}.tgz`);
+      mkdirSync(destination ?? "", { recursive: true });
+      writeFileSync(archive, gzipSync(Buffer.alloc(1024)));
+      this.legacyPackageArchives.set(archive, version);
+      return result(
+        0,
+        `${JSON.stringify([{ name: "atlas-core", version, filename: basename(archive), size: statSync(archive).size, unpackedSize: 1024 * 1024, entryCount: 10 }])}\n`
+      );
+    }
+    if (command === "tar" && args[0] === "-tf") {
+      const archive = args[1] ?? "";
+      if (!this.legacyPackageArchives.has(archive)) return result(1, "", "unknown fake package archive");
+      return result(
+        0,
+        [
+          "package/",
+          "package/package.json",
+          "package/assets/",
+          "package/assets/docker-compose.init.yml",
+          "package/assets/docker-compose.yml",
+          "package/assets/source_gateway.production.json"
+        ].join("\n") + "\n"
+      );
+    }
+    if (command === "tar" && args[0] === "-tvf") {
+      const archive = args[1] ?? "";
+      if (!this.legacyPackageArchives.has(archive)) return result(1, "", "unknown fake package archive");
+      return result(
+        0,
+        [
+          "d package/",
+          "- package/package.json",
+          "d package/assets/",
+          "- package/assets/docker-compose.init.yml",
+          "- package/assets/docker-compose.yml",
+          "- package/assets/source_gateway.production.json"
+        ].join("\n") + "\n"
+      );
+    }
+    if (command === "tar" && args[0] === "--no-same-owner" && args[1] === "--no-same-permissions") {
+      const archive = args[args.indexOf("-xf") + 1] ?? "";
+      const destination = args[args.indexOf("-C") + 1] ?? "";
+      const version = this.legacyPackageArchives.get(archive);
+      if (!version) return result(1, "", "unknown fake package archive");
+      const packageAssets = join(destination, "package", "assets");
+      mkdirSync(packageAssets, { recursive: true });
+      writeFileSync(
+        join(destination, "package", "package.json"),
+        `${JSON.stringify({ name: "atlas-core", version, atlasCoreImage: TEST_IMAGE })}\n`
+      );
+      for (const file of ["docker-compose.init.yml", "docker-compose.yml", "source_gateway.production.json"]) {
+        const contents = readFileSync(resolve("assets", file), "utf8")
+          .replace(/\$\{ATLAS_CORE_IMAGE:[^}]*\}/gu, "${ATLAS_CORE_IMAGE}")
+          .replace(/^\s*image:\s+(minio\/\S+)$/gmu, (line) => line.toLowerCase());
+        writeFileSync(join(packageAssets, file), contents);
+      }
+      return result(0);
+    }
     if (args[0] === "network" && args[1] === "create") {
       const name = args.at(-1) ?? "";
       if (this.existingNetworks.has(name)) return result(1, "", `network with name ${name} already exists`);
@@ -188,8 +284,62 @@ class FakeRunner implements CommandRunner {
       if (afterSuccessfulNetworkCreate) queueMicrotask(afterSuccessfulNetworkCreate);
       return result(0, `${networkId}\n`);
     }
-    if (args[0] === "pull" && args[1] === this.failDockerPullImage) {
+    if (args[0] === "pull" && (args[1] === this.failDockerPullImage || args.at(-1) === this.failDockerPullImage)) {
       return result(1, "", "injected Docker image pull failure");
+    }
+    if (args[0] === "pull" && args[1] === "--platform") return result(0);
+    if (args[0] === "manifest" && args[1] === "inspect") {
+      const image = args.at(-1) ?? "";
+      const identity = fakeImageIdentity(image);
+      const platformDigest = image.includes(`@${identity.platformDigest}`);
+      if (/^[^@]+@sha256:[0-9a-f]{64}$/.test(image) && !platformDigest) {
+        const architecture = ["amd64", "x86_64"].includes(this.dockerArchitecture) ? "amd64" : "arm64";
+        return result(
+          0,
+          JSON.stringify({ manifests: [{ platform: { os: "linux", architecture }, digest: identity.platformDigest }] })
+        );
+      }
+      if (platformDigest) return result(0, JSON.stringify({ config: { digest: identity.localId } }));
+      return result(1, "", `manifest ${image} not found`);
+    }
+    if (args[0] === "image" && args[1] === "inspect") {
+      const image = args.at(-1) ?? "";
+      if (image === this.missingImage) return result(1, "", `Error: No such image: ${image}`);
+      const identity = fakeImageIdentity(image);
+      const architecture = ["amd64", "x86_64"].includes(this.dockerArchitecture) ? "amd64" : "arm64";
+      return result(
+        0,
+        JSON.stringify({ Id: identity.localId, Os: "linux", Architecture: architecture, RepoDigests: [image] })
+      );
+    }
+    if (args[0] === "exec" && args.includes("managed-keys")) {
+      const managedKeysIndex = args.indexOf("managed-keys");
+      const action = args[managedKeysIndex + 1];
+      const value = args[managedKeysIndex + 2] ?? "";
+      if (action === "create") {
+        const id = `atlas_ak_${String(++this.managedKeySequence).padStart(16, "0")}`;
+        const secret = `managed-secret-${this.managedKeySequence}`;
+        this.managedKeys.set(value, { id, secret });
+        return result(0, JSON.stringify({ id, name: value, api_key: `${id}.${secret}` }));
+      }
+      if (action === "list") {
+        const key = this.managedKeys.get(value);
+        return result(0, JSON.stringify(key ? [{ id: key.id, name: value }] : []));
+      }
+      if (action === "revoke") {
+        for (const [name, key] of this.managedKeys) if (key.id === value) this.managedKeys.delete(name);
+        return result(0, JSON.stringify({}));
+      }
+      return result(1, "", `unknown managed key action ${action ?? ""}`);
+    }
+    if (args[0] === "exec" && args[2] === "node" && args[3] === "-e" && this.runtimeProbeOutput !== undefined) {
+      return result(0, this.runtimeProbeOutput);
+    }
+    if (args[0] === "exec" && args.some((arg) => arg.includes("psql"))) {
+      return result(
+        0,
+        '[{"version":"1","name":"initial","checksum":"test","fingerprint_version":1,"schema_fingerprint":"test"}]\n'
+      );
     }
     if (args[0] === "network" && args[1] === "inspect") {
       const requested = args.at(-1) ?? "";
@@ -280,7 +430,43 @@ class FakeRunner implements CommandRunner {
             ? "postgres"
             : name.endsWith("_minio_init")
               ? "minio-init"
-              : "minio";
+              : name.startsWith(`${PROJECT_NAME}_atlas-plugin-`)
+                ? name.slice(PROJECT_NAME.length + 1)
+                : "minio";
+      if (args[args.indexOf("--format") + 1] === "{{json .}}") {
+        const pluginImage = name.endsWith("_spatial_fixture")
+          ? TEST_PLUGIN_IMAGE
+          : name.endsWith("_atlas-plugin-alpha-fixture")
+            ? TEST_ALPHA_PLUGIN_IMAGE
+            : name.endsWith("_atlas-plugin-zeta-fixture")
+              ? TEST_ZETA_PLUGIN_IMAGE
+              : undefined;
+        const isPlugin = pluginImage !== undefined;
+        const image = pluginImage
+          ? pluginImage
+          : service === "postgres"
+            ? TEST_POSTGRES_IMAGE
+            : service === "minio"
+              ? TEST_MINIO_IMAGE
+              : service === "minio-init"
+                ? TEST_MINIO_MC_IMAGE
+                : this.runningCoreImage;
+        const identity = fakeImageIdentity(image);
+        if (
+          !isPlugin &&
+          !this.serviceStates.some((candidate) => candidate.Service === service) &&
+          !(service === "minio-init" && this.serviceStates.some((candidate) => candidate.Service === "api"))
+        ) {
+          return result(1, "", `Error: No such container: ${name}`);
+        }
+        return result(
+          0,
+          JSON.stringify({
+            Config: { Image: image },
+            Image: isPlugin && this.wrongPluginContainerImage ? TEST_IMAGE_LOCAL_ID : identity.localId
+          })
+        );
+      }
       if (args[args.indexOf("--format") + 1] === "{{json .Config.Image}}") {
         if (!this.serviceStates.some((candidate) => candidate.Service === service)) {
           return result(1, "", `Error: No such container: ${name}`);
@@ -436,9 +622,24 @@ afterEach(() => {
   for (const directory of temporaryDirectories.splice(0)) rmSync(directory, { recursive: true, force: true });
 });
 
+function pairedBackupFixture(): string {
+  const root = mkdtempSync(join(tmpdir(), "atlas-core-backup-test-"));
+  temporaryDirectories.push(root);
+  mkdirSync(join(root, "minio", "atlas-media"), { recursive: true });
+  writeFileSync(join(root, "app-revision.txt"), "revision-1\n");
+  writeFileSync(join(root, "minio.complete"), "atlas-media\n");
+  writeFileSync(join(root, "minio.contents.txt"), "atlas-media/object.bin\n");
+  writeFileSync(join(root, "postgres.contents.txt"), "; Archive created at 2026-09-10\n");
+  writeFileSync(join(root, "postgres.dump"), "PGDMP\x01custom archive bytes\n");
+  writeFileSync(join(root, "schema-migrations.txt"), "1 baseline sha256:abc 1\n");
+  writeFileSync(join(root, "minio", "atlas-media", "object.bin"), "paired object bytes\n");
+  return root;
+}
+
 function runtime(): TestRuntime {
   const home = mkdtempSync(join(tmpdir(), "atlas-core-test-"));
   temporaryDirectories.push(home);
+  const backupDirectory = pairedBackupFixture();
   const runner = new FakeRunner();
   runner.globalRoot = join(home, "npm-global", "lib", "node_modules");
   const installedPackage = join(runner.globalRoot, PACKAGE_NAME);
@@ -460,7 +661,7 @@ function runtime(): TestRuntime {
       runner,
       stdout: { write: (data) => stdout.push(data) },
       stderr: { write: (data) => stderr.push(data) },
-      env: {},
+      env: { ATLAS_CORE_BACKUP_DIR: backupDirectory },
       platform: "darwin",
       architecture: "arm64",
       nodeVersion: "24.19.0",
@@ -468,7 +669,8 @@ function runtime(): TestRuntime {
       createSecret: () => `secret-${++secret}-abcdefghijklmnopqrstuvwxyz`,
       confirmCoreUpdate: async () => false,
       confirmReset: async () => false,
-      imageReference: TEST_IMAGE
+      imageReference: TEST_IMAGE,
+      fetch: async () => new Response("", { status: 200 })
     }
   };
 }
@@ -491,6 +693,10 @@ function installTestPluginCatalog(test: TestRuntime): PluginCatalogEntry {
   mkdirSync(pluginRoot, { recursive: true });
   writeFileSync(join(assetsRoot, "docker-compose.yml"), "services:\n  api:\n    image: ${ATLAS_CORE_IMAGE}\n");
   writeFileSync(join(assetsRoot, "source_gateway.production.json"), "{}\n");
+  writeFileSync(
+    join(assetsRoot, "plugin-trust.json"),
+    `${JSON.stringify({ schema: 1, catalog_url: "https://atlas.example/catalog.json", minimum_checkpoint: null, keys: [] })}\n`
+  );
   writeFileSync(join(pluginRoot, "compose.yml"), "services:\n  spatial-fixture-plugin:\n    image: fixture\n");
   writeFileSync(
     join(pluginRoot, "core-endpoint.json"),
@@ -514,9 +720,176 @@ function installTestPluginCatalog(test: TestRuntime): PluginCatalogEntry {
   return plugin;
 }
 
+type IndependentPluginFixture = {
+  pluginId: string;
+  displayName: string;
+  image: string;
+  atlasProtocolRevision?: string | null;
+};
+
+const INDEPENDENT_UPDATE_FIXTURES: readonly IndependentPluginFixture[] = [
+  { pluginId: "alpha_fixture", displayName: "Alpha Fixture", image: TEST_ALPHA_PLUGIN_IMAGE },
+  { pluginId: "zeta_fixture", displayName: "Zeta Fixture", image: TEST_ZETA_PLUGIN_IMAGE }
+];
+
+function independentReleaseBytes(plugin: IndependentPluginFixture, version: string): Uint8Array {
+  return new TextEncoder().encode(
+    `${JSON.stringify({
+      schema: 1,
+      plugin_id: plugin.pluginId,
+      version,
+      display_name: plugin.displayName,
+      lifecycle: "query_only",
+      image: plugin.image,
+      core_to_plugin_protocol_major: 1,
+      plugin_to_source_gateway_protocol_major: 1,
+      atlas_protocol_revision: plugin.atlasProtocolRevision ?? null,
+      interactions: ["map_area"],
+      source_connector: null
+    })}\n`
+  );
+}
+
+function installIndependentRuntimeFixture(test: TestRuntime, plugin: IndependentPluginFixture): void {
+  const operations = [
+    {
+      operation_id: "inspect_area",
+      display_name: "Inspect area",
+      timeout_ms: 5_000,
+      interaction: { kind: "map_area" }
+    }
+  ];
+  const manifest = {
+    plugin_id: plugin.pluginId,
+    display_name: plugin.displayName,
+    core_to_plugin_protocol_major: 1,
+    operations
+  };
+  test.runner.runtimeProbeOutput = JSON.stringify([
+    { status: 200, body: JSON.stringify(manifest) },
+    { status: 200, body: JSON.stringify({ status: "ok" }) },
+    { status: 404, body: JSON.stringify({ code: "route_not_found" }) }
+  ]);
+  const previousFetch = test.context.fetch;
+  if (!previousFetch) throw new Error("Test runtime is missing its fetch adapter.");
+  test.context.fetch = async (input, init) => {
+    if (String(input) === "http://127.0.0.1:8000/plugins") {
+      return new Response(
+        JSON.stringify([
+          {
+            checked_at: "2026-09-10T12:00:00Z",
+            display_name: plugin.displayName,
+            operations,
+            plugin_id: plugin.pluginId,
+            reason_code: null,
+            status: "available",
+            tool_asset_id: null
+          }
+        ])
+      );
+    }
+    return await previousFetch(input, init);
+  };
+}
+
+function installSignedIndependentCatalog(test: TestRuntime, plugins = INDEPENDENT_UPDATE_FIXTURES) {
+  const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+  const catalogURL = "https://catalog.example/catalog.json";
+  const releaseBytesByURL = new Map<string, Uint8Array>();
+  const pluginDocuments = [...plugins]
+    .sort((left, right) => left.pluginId.localeCompare(right.pluginId))
+    .map((plugin) => ({
+      plugin,
+      releases: ["0.1.0", "0.2.0"].map((version) => {
+        const documentURL = `https://github.com/the-Drunken-coder/Atlas-Modernization/releases/download/atlas-plugin-${plugin.pluginId}-v${version}/${plugin.pluginId}-${version}.atlas-plugin`;
+        const bytes = independentReleaseBytes(plugin, version);
+        releaseBytesByURL.set(documentURL, bytes);
+        return {
+          version,
+          display_name: plugin.displayName,
+          document_url: documentURL,
+          document_sha256: `sha256:${createHash("sha256").update(bytes).digest("hex")}`,
+          revoked: false,
+          revocation_reason: null
+        };
+      })
+    }));
+  const catalogBytes = new TextEncoder().encode(
+    JSON.stringify({
+      schema: 1,
+      sequence: 1,
+      previous_catalog_sha256: null,
+      issued_at: "2026-08-28T00:00:00Z",
+      expires_at: "2026-09-20T00:00:00Z",
+      key_epoch: 1,
+      key_id: "test-key",
+      plugins: pluginDocuments.map(({ plugin, releases }) => ({ plugin_id: plugin.pluginId, releases }))
+    })
+  );
+  const signatureBytes = new TextEncoder().encode(
+    JSON.stringify({
+      algorithm: "ed25519",
+      key_id: "test-key",
+      signature: sign(null, catalogBytes, privateKey).toString("base64")
+    })
+  );
+  test.context.catalogURL = catalogURL;
+  test.context.pluginTrust = { keys: [{ keyId: "test-key", keyEpoch: 1, publicKey }] };
+  test.context.fetch = async (input) => {
+    const url = String(input);
+    if (url === catalogURL) return new Response(catalogBytes);
+    if (url === `${catalogURL}.sig`) return new Response(signatureBytes);
+    const bytes = releaseBytesByURL.get(url);
+    return bytes ? new Response(bytes) : new Response("not found", { status: 404 });
+  };
+  return { catalogBytes, privateKey, catalogURL };
+}
+
+async function installIndependentUpdateFixtures(
+  test: TestRuntime,
+  plugins: readonly IndependentPluginFixture[] = INDEPENDENT_UPDATE_FIXTURES
+) {
+  await markManagedInitialized(test);
+  const catalog = installSignedIndependentCatalog(test, plugins);
+  for (const plugin of [...plugins].reverse()) {
+    expect(await runCLI(["plugins", "install", plugin.pluginId, "0.1.0"], test.context), test.stderr.join("")).toBe(0);
+  }
+  test.stdout.length = 0;
+  test.stderr.length = 0;
+  test.runner.calls.length = 0;
+  return catalog;
+}
+
+function installedPluginVersion(test: TestRuntime, pluginId: string): string {
+  const installed = JSON.parse(
+    readFileSync(join(test.home, ".atlas", "core", "plugins", pluginId, "installed.json"), "utf8")
+  ) as { selected: { version: string } };
+  return installed.selected.version;
+}
+
 function composeFile(call: Call): string | undefined {
   const fileFlagIndex = call.args.indexOf("--file");
   return fileFlagIndex === -1 ? undefined : call.args[fileFlagIndex + 1];
+}
+
+function applicationSystemdLiveConfiguration(
+  home: string,
+  cliScript: string,
+  cliVersion: string,
+  dockerHost: string
+): string {
+  const path = [
+    dirname(process.execPath),
+    join(home, ".docker", "bin"),
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+    "/usr/bin",
+    "/bin",
+    "/usr/sbin",
+    "/sbin"
+  ].join(":");
+  const escape = (value: string): string => value.replaceAll(" ", "\\x20");
+  return `ExecStart={ path=${escape(process.execPath)} ; argv[]=${escape(process.execPath)} ${escape(cliScript)} supervise ; ignore_errors=no ; }\nEnvironment=ATLAS_CORE_HOME=${escape(join(home, ".atlas", "core"))} ATLAS_CORE_CLI_VERSION=${escape(cliVersion)} DOCKER_CONTEXT= DOCKER_HOST=${escape(dockerHost)} PATH=${escape(path)}\n`;
 }
 
 function markInitialized(test: TestRuntime, started = true): void {
@@ -546,6 +919,14 @@ function markInitialized(test: TestRuntime, started = true): void {
     })}\n`,
     { mode: 0o600 }
   );
+}
+
+async function markManagedInitialized(test: TestRuntime, started = true): Promise<void> {
+  expect(await runCLI(["init"], test.context), test.stderr.join("")).toBe(0);
+  if (started) expect(await runCLI(["start", "--manual"], test.context)).toBe(0);
+  test.runner.calls.length = 0;
+  test.stdout.length = 0;
+  test.stderr.length = 0;
 }
 
 function setCoreVersion(test: TestRuntime, version: string): void {
@@ -805,6 +1186,32 @@ describe("atlas-core CLI", () => {
     expect(test.stdout.join("")).toContain("Atlas Core stopped");
   });
 
+  it("stops by removing verified containers when its retained Compose file is missing", async () => {
+    const test = runtime();
+    await markManagedInitialized(test);
+    const config = join(test.home, ".atlas", "core");
+    rmSync(join(config, "base", "docker-compose.yml"));
+    const containers = [
+      API_CONTAINER,
+      SOURCE_GATEWAY_CONTAINER,
+      POSTGRES_CONTAINER,
+      MINIO_CONTAINER,
+      MINIO_INIT_CONTAINER,
+      `${PROJECT_NAME}_atlas-plugin-building-scan`
+    ];
+    for (const container of containers) test.runner.existingContainers.add(container);
+    const volumesBefore = [...test.runner.existingVolumes].sort();
+
+    expect(await runCLI(["stop"], test.context), test.stderr.join("")).toBe(0);
+    expect(test.runner.existingContainers).toEqual(new Set());
+    expect([...test.runner.existingVolumes].sort()).toEqual(volumesBefore);
+    expect(test.runner.calls).toContainEqual(
+      expect.objectContaining({ command: "docker", args: ["container", "rm", "--force", containers[0]] })
+    );
+    expect(test.runner.calls.map(composeCommand)).not.toContainEqual(["down", "--remove-orphans"]);
+    expect(test.stdout.join("")).toContain("Atlas Core stopped. Durable volumes were preserved.");
+  });
+
   it("propagates non-missing Docker network removal failures", async () => {
     const test = runtime();
     markInitialized(test);
@@ -814,7 +1221,7 @@ describe("atlas-core CLI", () => {
 
     expect(test.stderr.join("")).toContain("docker network rm");
     expect(test.stderr.join("")).toContain("permission denied");
-    expect(existsSync(join(test.home, ".atlas", "core", ".mutation.lock"))).toBe(false);
+    expect(existsSync(join(test.home, ".atlas", "core", ".mutation.lock"))).toBe(true);
   });
 
   it("retries retained Plugin-disable lock cleanup in the same interactive session", async () => {
@@ -941,7 +1348,9 @@ describe("atlas-core CLI", () => {
         expect(JSON.parse(readFileSync(lockPath, "utf8"))).toEqual(retainedOwner);
 
         test.runner.calls.length = 0;
-        await expect(operator.reset()).rejects.toThrow("Restore the original Docker context before resetting");
+        await expect(operator.reset({ manual: true })).rejects.toThrow(
+          "Restore the original Docker context before resetting"
+        );
         expect(test.runner.calls.some((call) => call.args[0] === "pull" || call.args[0] === "network")).toBe(false);
         expect(JSON.parse(readFileSync(lockPath, "utf8"))).toEqual(retainedOwner);
 
@@ -983,7 +1392,7 @@ describe("atlas-core CLI", () => {
       writeFileSync(lockPath, `${JSON.stringify(retainedOwner)}\n`, { mode: 0o600 });
     };
 
-    expect(await runCLI(["reset"], test.context)).toBe(1);
+    expect(await runCLI(["reset", "--manual"], test.context)).toBe(1);
 
     expect(test.stderr.join("")).toContain("Restore the original Docker context");
     expect(test.runner.calls.some((call) => call.args[0] === "network")).toBe(false);
@@ -1032,7 +1441,7 @@ describe("atlas-core CLI", () => {
           pullStarted?.();
           await holdPull;
         };
-        const reset = operator.reset();
+        const reset = operator.reset({ manual: true });
         await pulling;
 
         test.runner.contextHost = "unix:///alternate-docker.sock";
@@ -1119,7 +1528,8 @@ describe("atlas-core CLI", () => {
         };
         const firstMutation = operator.stop();
         await started;
-        await expect(operator.restart()).rejects.toThrow("deployment mutation is locked by PID");
+        expect(await runCLI(["restart", "--manual"], test.context)).toBe(1);
+        expect(test.stderr.join("")).toContain("deployment mutation is locked by PID");
         releaseFirst?.();
         await expect(firstMutation).resolves.toBeUndefined();
       }
@@ -1218,7 +1628,7 @@ describe("atlas-core CLI", () => {
 
     const config = join(test.home, ".atlas", "core");
     expect(test.stderr.join("")).toContain("changed ownership before cleanup");
-    expect(existsSync(join(config, ".mutation.lock"))).toBe(false);
+    expect(existsSync(join(config, ".mutation.lock"))).toBe(true);
     expect(test.runner.existingNetworks.has(MUTATION_LOCK_NETWORK)).toBe(true);
   });
 
@@ -1582,9 +1992,41 @@ describe("atlas-core CLI", () => {
     expect(existsSync(join(test.home, ".atlas", "core"))).toBe(false);
   });
 
+  it("serializes initialization probes under the Docker process-group fence", async () => {
+    const test = runtime();
+    test.runner.existingContainers.add(API_CONTAINER);
+    let activeProcessGroups = 0;
+    let maximumActiveProcessGroups = 0;
+    let nextProcessGroupId = 40_000;
+    const originalRun = test.runner.run.bind(test.runner);
+    test.runner.run = async (command, args, options = {}) => {
+      const processGroup = options.processGroup;
+      if (!processGroup) return await originalRun(command, args, options);
+
+      activeProcessGroups += 1;
+      maximumActiveProcessGroups = Math.max(maximumActiveProcessGroups, activeProcessGroups);
+      let started = false;
+      const processGroupId = nextProcessGroupId++;
+      try {
+        processGroup.started(processGroupId);
+        started = true;
+        return await originalRun(command, args, options);
+      } finally {
+        if (started) processGroup.finished(processGroupId);
+        activeProcessGroups -= 1;
+      }
+    };
+
+    expect(await runCLI(["init"], test.context)).toBe(1);
+    expect(test.stderr.join("")).toContain("containers or durable volumes without matching CLI configuration");
+    expect(maximumActiveProcessGroups).toBe(1);
+    expect(activeProcessGroups).toBe(0);
+  });
+
   it("initializes only a new durable deployment", async () => {
     const test = runtime();
-    expect(await runCLI(["init"], test.context)).toBe(0);
+    const initStatus = await runCLI(["init"], test.context);
+    expect(initStatus).toBe(0);
 
     const config = join(test.home, ".atlas", "core");
     const env = readFileSync(join(config, ".env"), "utf8");
@@ -1592,23 +2034,48 @@ describe("atlas-core CLI", () => {
     expect(env).toContain("MINIO_ROOT_PASSWORD=secret-2-");
     expect(env).toContain("API_AUTH_KEY=secret-3-");
     expect(env).toContain("ATLAS_ADMIN_PASSWORD=secret-4-");
-    expect(JSON.parse(readFileSync(join(config, "state.json"), "utf8"))).toEqual({
-      schema: 3,
+    expect(env).toMatch(/ATLAS_PLUGIN_API_KEY=atlas_ak_0000000000000001\.managed-secret-1/);
+    const state = JSON.parse(readFileSync(join(config, "state.json"), "utf8"));
+    expect(state).toMatchObject({
+      schema: 4,
       resourceLayout: "engine-scoped-v1",
       phase: "ready",
       initializedAt: "2026-08-28T12:00:00.000Z",
       packageVersion: PACKAGE_VERSION,
       dockerEngineId: "test-engine-id",
-      enabledPlugins: []
+      enabledPlugins: [],
+      baseDeployment: {
+        coreImage: TEST_IMAGE,
+        coreLocalImageId: TEST_IMAGE_LOCAL_ID
+      },
+      pluginContracts: {
+        coreToPluginProtocolMajors: [1],
+        pluginToSourceGatewayProtocolMajors: [1]
+      }
     });
+    expect(state.baseDeployment.bundleSha256).toMatch(/^sha256:[0-9a-f]{64}$/u);
+    expect(state.baseDeployment.images).toEqual(
+      expect.arrayContaining([
+        {
+          image_index: TEST_IMAGE,
+          platform_manifest_sha256: TEST_IMAGE_PLATFORM_DIGEST,
+          local_image_id: TEST_IMAGE_LOCAL_ID
+        },
+        {
+          image_index: TEST_POSTGRES_IMAGE,
+          platform_manifest_sha256: TEST_IMAGE_PLATFORM_DIGEST,
+          local_image_id: TEST_IMAGE_LOCAL_ID
+        }
+      ])
+    );
     expect(statSync(join(config, ".env")).mode & 0o077).toBe(0);
     expect(existsSync(join(config, ".mutation.lock"))).toBe(false);
     expect(test.runner.existingNetworks).not.toContain(MUTATION_LOCK_NETWORK);
     expect(test.runner.existingVolumes).toContain(MINIO_VOLUME);
-    expect(test.runner.existingVolumes).not.toContain(POSTGRES_VOLUME);
+    expect(test.runner.existingVolumes).toContain(POSTGRES_VOLUME);
     const composeCalls = test.runner.calls.filter((call) => composeCommand(call).length > 0);
-    expect(composeCalls.every((call) => composeFile(call)?.endsWith("docker-compose.init.yml"))).toBe(true);
-    expect(composeCalls.map(composeCommand)).toEqual([
+    expect(composeCalls.slice(0, 5).every((call) => composeFile(call)?.endsWith("docker-compose.init.yml"))).toBe(true);
+    expect(composeCalls.slice(0, 5).map(composeCommand)).toEqual([
       ["up", "-d", "--wait", "--wait-timeout", "120", "minio"],
       [
         "exec",
@@ -1622,6 +2089,7 @@ describe("atlas-core CLI", () => {
       ["exec", "-T", "minio", "mc", "anonymous", "set", "none", "local/atlas-media"],
       ["down"]
     ]);
+    expect(composeCalls.slice(5).some((call) => composeFile(call)?.endsWith("docker-compose.yml"))).toBe(true);
   });
 
   it("refuses to create credentials over existing volumes", async () => {
@@ -1664,7 +2132,7 @@ describe("atlas-core CLI", () => {
     writeFileSync(lock, `${JSON.stringify({ pid: 2_147_483_647 })}\n`, { mode: 0o600 });
 
     expect(await runCLI(["init"], test.context)).toBe(1);
-    expect(test.stderr.join("")).toContain("If no atlas-core process is changing the deployment, remove that file");
+    expect(test.stderr.join("")).toContain("do not remove deployment locks independently");
     expect(existsSync(lock)).toBe(true);
   });
 
@@ -1807,7 +2275,7 @@ describe("atlas-core CLI", () => {
     const test = runtime();
     markInitialized(test);
 
-    expect(await runCLI(["reset"], test.context)).toBe(0);
+    expect(await runCLI(["reset", "--manual"], test.context)).toBe(0);
     expect(test.stdout.join("")).toContain("Reset permanently deletes Atlas Core containers");
     expect(test.stdout.join("")).toContain("Atlas Core reset cancelled");
     expect(test.runner.calls).toHaveLength(0);
@@ -1832,7 +2300,7 @@ describe("atlas-core CLI", () => {
     test.runner.volumeUsers.set(POSTGRES_VOLUME, new Set([POSTGRES_CONTAINER]));
     test.runner.volumeUsers.set(MINIO_VOLUME, new Set([MINIO_CONTAINER]));
 
-    expect(await runCLI(["reset"], test.context)).toBe(1);
+    expect(await runCLI(["reset", "--manual"], test.context)).toBe(1);
 
     expect(test.stderr.join("")).toContain("Run atlas-core init first");
     expect(test.runner.calls.some((call) => call.args[0] === "pull")).toBe(false);
@@ -1861,7 +2329,7 @@ describe("atlas-core CLI", () => {
     test.runner.existingVolumes.add(POSTGRES_VOLUME);
     test.runner.existingVolumes.add(MINIO_VOLUME);
 
-    expect(await runCLI(["reset"], test.context)).toBe(1);
+    expect(await runCLI(["reset", "--manual"], test.context)).toBe(1);
 
     expect(test.stderr.join("")).toContain("Run atlas-core init first");
     expect(test.runner.calls.some((call) => call.args[0] === "pull")).toBe(false);
@@ -1878,7 +2346,7 @@ describe("atlas-core CLI", () => {
     const state = JSON.parse(readFileSync(statePath, "utf8"));
     writeFileSync(statePath, `${JSON.stringify({ ...state, phase: "initializing" })}\n`, { mode: 0o600 });
 
-    expect(await runCLI(["reset"], test.context)).toBe(1);
+    expect(await runCLI(["reset", "--manual"], test.context)).toBe(1);
 
     expect(test.stderr.join("")).toContain("Run atlas-core init first");
     expect(test.runner.calls.some((call) => call.args[0] === "pull")).toBe(false);
@@ -1903,7 +2371,7 @@ describe("atlas-core CLI", () => {
     test.runner.volumeUsers.set(POSTGRES_VOLUME, new Set([POSTGRES_CONTAINER]));
     test.runner.volumeUsers.set(MINIO_VOLUME, new Set([MINIO_CONTAINER]));
 
-    expect(await runCLI(["reset"], test.context)).toBe(0);
+    expect(await runCLI(["reset", "--manual"], test.context)).toBe(0);
 
     expect(test.runner.existingContainers).not.toContain(API_CONTAINER);
     expect(test.runner.existingVolumes).toContain(POSTGRES_VOLUME);
@@ -1918,6 +2386,10 @@ describe("atlas-core CLI", () => {
     }
     const state = JSON.parse(readFileSync(join(test.home, ".atlas", "core", "state.json"), "utf8"));
     expect(state).toMatchObject({ phase: "ready", packageVersion: PACKAGE_VERSION, dockerEngineId: "test-engine-id" });
+    expect(JSON.parse(readFileSync(join(test.home, ".atlas", "core", "run-intent.json"), "utf8"))).toEqual({
+      schema: 1,
+      desiredRunning: true
+    });
     expect(test.stdout.join("")).toContain(`Atlas Core ${PACKAGE_VERSION} reset is complete`);
   });
 
@@ -1933,7 +2405,7 @@ describe("atlas-core CLI", () => {
     const state = JSON.parse(readFileSync(statePath, "utf8"));
     writeFileSync(statePath, `${JSON.stringify({ ...state, packageVersion: "0.1.0" })}\n`, { mode: 0o600 });
 
-    expect(await runCLI(["reset"], test.context)).toBe(0);
+    expect(await runCLI(["reset", "--manual"], test.context)).toBe(0);
     expect(JSON.parse(readFileSync(statePath, "utf8"))).toMatchObject({ packageVersion: PACKAGE_VERSION });
   });
 
@@ -1946,7 +2418,7 @@ describe("atlas-core CLI", () => {
     const { resourceLayout: _, ...legacyState } = state;
     writeFileSync(statePath, `${JSON.stringify({ ...legacyState, schema: 2 })}\n`, { mode: 0o600 });
 
-    expect(await runCLI(["reset"], test.context)).toBe(1);
+    expect(await runCLI(["reset", "--manual"], test.context)).toBe(1);
 
     expect(test.stderr.join("")).toContain("state schema 2 uses the retired fixed-name Docker layout");
     expect(test.runner.calls.some((call) => call.args[0] === "pull")).toBe(false);
@@ -1966,7 +2438,7 @@ describe("atlas-core CLI", () => {
       mode: 0o600
     });
 
-    expect(await runCLI(["reset"], test.context)).toBe(0);
+    expect(await runCLI(["reset", "--manual"], test.context)).toBe(0);
     expect(test.runner.calls.some((call) => call.args.includes("missing_plugin/compose.yml"))).toBe(false);
     expect(test.runner.calls.map(composeCommand)).toContainEqual(["down", "--remove-orphans"]);
   });
@@ -1979,7 +2451,7 @@ describe("atlas-core CLI", () => {
     test.runner.existingContainers.add(pluginContainer);
     rmSync(join(test.home, ".atlas", "core", ".env"));
 
-    expect(await runCLI(["reset"], test.context)).toBe(0);
+    expect(await runCLI(["reset", "--manual"], test.context)).toBe(0);
     expect(test.runner.existingContainers).not.toContain(pluginContainer);
     expect(test.runner.calls).toContainEqual(
       expect.objectContaining({
@@ -1987,6 +2459,33 @@ describe("atlas-core CLI", () => {
         args: ["container", "rm", "--force", pluginContainer]
       })
     );
+  });
+
+  it("resets by removing verified containers when its retained Compose file is missing", async () => {
+    const test = runtime();
+    test.context.confirmReset = async () => true;
+    await markManagedInitialized(test);
+    const config = join(test.home, ".atlas", "core");
+    rmSync(join(config, "base", "docker-compose.yml"));
+    const containers = [
+      API_CONTAINER,
+      SOURCE_GATEWAY_CONTAINER,
+      POSTGRES_CONTAINER,
+      MINIO_CONTAINER,
+      MINIO_INIT_CONTAINER,
+      `${PROJECT_NAME}_atlas-plugin-building-scan`
+    ];
+    for (const container of containers) test.runner.existingContainers.add(container);
+    test.runner.volumeUsers.set(POSTGRES_VOLUME, new Set([POSTGRES_CONTAINER]));
+    test.runner.volumeUsers.set(MINIO_VOLUME, new Set([MINIO_CONTAINER]));
+
+    expect(await runCLI(["reset", "--manual"], test.context), test.stderr.join("")).toBe(0);
+    expect(test.runner.existingContainers).toEqual(new Set());
+    expect(test.stdout.join("")).toContain(`Atlas Core ${PACKAGE_VERSION} reset is complete`);
+    expect(JSON.parse(readFileSync(join(config, "state.json"), "utf8"))).toMatchObject({
+      phase: "ready",
+      packageVersion: PACKAGE_VERSION
+    });
   });
 
   it("refuses to reset a same-name resource without matching ownership labels", async () => {
@@ -1997,7 +2496,7 @@ describe("atlas-core CLI", () => {
     test.runner.existingContainers.add(container);
     test.runner.mismatchedResources.add(container);
 
-    expect(await runCLI(["reset"], test.context)).toBe(1);
+    expect(await runCLI(["reset", "--manual"], test.context)).toBe(1);
     expect(test.stderr.join("")).toContain("ownership label");
     expect(test.runner.existingContainers).toContain(container);
     expect(
@@ -2015,7 +2514,7 @@ describe("atlas-core CLI", () => {
     test.runner.existingVolumes.add(volume);
     test.runner.volumeUsers.set(volume, new Set(["backup-reader"]));
 
-    expect(await runCLI(["reset"], test.context)).toBe(1);
+    expect(await runCLI(["reset", "--manual"], test.context)).toBe(1);
     expect(test.stderr.join("")).toContain("backup-reader");
     expect(test.stderr.join("")).toContain("before deleting anything");
     expect(test.runner.existingVolumes).toContain(volume);
@@ -2028,26 +2527,160 @@ describe("atlas-core CLI", () => {
 
   it("requires init before starting", async () => {
     const test = runtime();
-    expect(await runCLI(["start"], test.context)).toBe(1);
+    expect(await runCLI(["start", "--manual"], test.context)).toBe(1);
     expect(test.stderr.join("")).toContain("Run atlas-core init first");
     expect(test.runner.calls).toHaveLength(0);
   });
 
+  it("retains reset authorization when credential deletion fails", async () => {
+    const test = runtime();
+    await markManagedInitialized(test);
+    test.context.confirmReset = async () => true;
+    const config = join(test.home, ".atlas", "core");
+    const env = join(config, ".env");
+    test.runner.onRun = (call) => {
+      if (call.args[0] === "volume" && call.args[1] === "rm" && call.args.includes(MINIO_VOLUME)) chmodSync(env, 0o644);
+    };
+    expect(await runCLI(["reset", "--manual"], test.context)).toBe(1);
+    expect(existsSync(join(config, "state.json"))).toBe(true);
+    expect(existsSync(env)).toBe(true);
+    test.runner.onRun = undefined;
+    chmodSync(env, 0o600);
+    expect(await runCLI(["reset", "--manual"], test.context), test.stderr.join("")).toBe(0);
+  });
+
+  it("rejects unsupervised reset before deleting retained state or data", async () => {
+    const test = runtime();
+    await markManagedInitialized(test);
+    test.context.confirmReset = async () => true;
+    const statePath = join(test.home, ".atlas", "core", "state.json");
+    const before = readFileSync(statePath, "utf8");
+    expect(await runCLI(["reset"], test.context)).toBe(1);
+    expect(test.stderr.join("")).toContain("atlas-core reset --manual");
+    expect(readFileSync(statePath, "utf8")).toBe(before);
+    expect(test.runner.calls.some((call) => call.command === "docker")).toBe(false);
+  });
+
+  it.each(["arm64", "aarch64", "amd64", "x86_64"])(
+    "pulls the %s daemon platform independently of Node architecture",
+    async (daemon) => {
+      const test = runtime();
+      const expected = ["arm64", "aarch64"].includes(daemon) ? "arm64" : "amd64";
+      test.context.architecture = expected === "arm64" ? "x64" : "arm64";
+      test.runner.dockerArchitecture = daemon;
+      const pulls: Call[] = [];
+      test.runner.onRun = (call) => {
+        if (call.args[0] === "pull") pulls.push(call);
+      };
+      await installIndependentUpdateFixtures(test);
+      expect(await runCLI(["plugins", "update", "alpha_fixture"], test.context), test.stderr.join("")).toBe(0);
+      expect(pulls.length).toBeGreaterThan(0);
+      expect(pulls.every((call) => call.args.includes(`linux/${expected}`))).toBe(true);
+    }
+  );
+
+  it("requires installed supervision for unattended start", async () => {
+    const test = runtime();
+    await markManagedInitialized(test, false);
+
+    expect(await runCLI(["start"], test.context)).toBe(1);
+    expect(test.stderr.join("")).toContain("atlas-core supervision install");
+    expect(test.runner.calls).toEqual([
+      expect.objectContaining({
+        command: "launchctl",
+        args: ["print", `gui/${process.getuid?.() ?? 0}/com.the-drunken-coder.atlas-core.supervisor`]
+      })
+    ]);
+  });
+
+  it("requires installed supervision for unattended restart", async () => {
+    const test = runtime();
+    await markManagedInitialized(test, false);
+
+    expect(await runCLI(["restart"], test.context)).toBe(1);
+    expect(test.stderr.join("")).toContain("atlas-core restart --manual");
+    expect(test.runner.calls).toEqual([
+      expect.objectContaining({
+        command: "launchctl",
+        args: ["print", `gui/${process.getuid?.() ?? 0}/com.the-drunken-coder.atlas-core.supervisor`]
+      })
+    ]);
+  });
+
+  it.each(["darwin", "linux"] as const)("rejects an installed but inactive %s supervisor", async (platform) => {
+    const test = runtime();
+    await markManagedInitialized(test, false);
+    test.context.platform = platform;
+    const servicePath =
+      platform === "darwin"
+        ? join(test.home, "Library", "LaunchAgents", "com.the-drunken-coder.atlas-core.supervisor.plist")
+        : join(test.home, ".config", "systemd", "user", "atlas-core-supervisor.service");
+    mkdirSync(resolve(servicePath, ".."), { recursive: true });
+    writeFileSync(servicePath, "installed fixture");
+    const run = test.runner.run.bind(test.runner);
+    vi.spyOn(test.runner, "run").mockImplementation(async (command, args, options) => {
+      if (command === "launchctl") return { status: 0, stdout: "state = exited", stderr: "" };
+      if (command === "systemctl")
+        return args.includes("is-active")
+          ? { status: 3, stdout: "inactive", stderr: "" }
+          : { status: 0, stdout: "enabled", stderr: "" };
+      return await run(command, args, options);
+    });
+    expect(await runCLI(["start"], test.context)).toBe(1);
+    expect(test.stderr.join("")).toContain("supervision");
+    expect(test.runner.calls.some((call) => composeCommand(call)[0] === "up")).toBe(false);
+  });
+
+  it("rejects Plugin changes before mutation when base services are degraded", async () => {
+    const test = runtime();
+    await installIndependentUpdateFixtures(test);
+    const config = join(test.home, ".atlas", "core");
+    test.runner.serviceStates = [{ Service: "api", State: "running", Health: "healthy" }];
+    test.runner.calls.length = 0;
+    expect(await runCLI(["plugins", "enable", "alpha_fixture"], test.context)).toBe(1);
+    expect(test.stderr.join("")).toContain("base services");
+    expect(existsSync(join(config, "transaction"))).toBe(false);
+    expect(test.runner.calls.some((call) => composeCommand(call)[0] === "up")).toBe(false);
+    expect(JSON.parse(readFileSync(join(config, "state.json"), "utf8")).enabledPlugins).not.toContain("alpha_fixture");
+  });
+
+  it("allows disabling a broken Plugin when the base services are healthy", async () => {
+    const test = runtime();
+    await installIndependentUpdateFixtures(test);
+    test.runner.serviceStates = [];
+    expect(await runCLI(["plugins", "enable", "alpha_fixture"], test.context)).toBe(0);
+    test.runner.serviceStates = ["api", "source-gateway", "postgres", "minio"].map((Service) => ({
+      Service,
+      State: "running",
+      Health: "healthy"
+    }));
+    test.runner.serviceStates.push({ Service: "atlas-plugin-alpha-fixture", State: "running", Health: "unhealthy" });
+    expect(await runCLI(["plugins", "disable", "alpha_fixture"], test.context)).toBe(0);
+    const statePath = join(test.home, ".atlas", "core", "state.json");
+    expect(JSON.parse(readFileSync(statePath, "utf8")).enabledPlugins).not.toContain("alpha_fixture");
+  });
+
   it("starts the package-matched Core image", async () => {
     const test = runtime();
-    markInitialized(test, false);
-    expect(await runCLI(["start"], test.context)).toBe(0);
-    const up = test.runner.calls.find((call) => composeCommand(call)[0] === "up");
+    await markManagedInitialized(test, false);
+    expect(await runCLI(["start", "--manual"], test.context)).toBe(0);
+    const up = test.runner.calls.find(
+      (call) => composeFile(call)?.endsWith("docker-compose.yml") && composeCommand(call)[0] === "up"
+    );
     expect(up?.env.ATLAS_CORE_IMAGE).toBe(TEST_IMAGE);
     expect(up && composeCommand(up)).toEqual([
       "up",
       "-d",
       "--pull",
-      "always",
+      "never",
       "--remove-orphans",
       "--wait",
       "--wait-timeout",
-      "120"
+      "120",
+      "api",
+      "source-gateway",
+      "postgres",
+      "minio"
     ]);
     expect(test.runner.existingVolumes).toContain(POSTGRES_VOLUME);
     expect(JSON.parse(readFileSync(join(test.home, ".atlas", "core", "state.json"), "utf8"))).toMatchObject({
@@ -2055,19 +2688,126 @@ describe("atlas-core CLI", () => {
     });
   });
 
+  it("repairs an older retained bundle from its recorded npm package after a CLI upgrade", async () => {
+    const test = runtime();
+    expect(await runCLI(["init"], test.context)).toBe(0);
+    const config = join(test.home, ".atlas", "core");
+    const statePath = join(config, "state.json");
+    const state = JSON.parse(readFileSync(statePath, "utf8"));
+    const recordedVersion = "0.1.0";
+    writeFileSync(statePath, JSON.stringify({ ...state, packageVersion: recordedVersion }), { mode: 0o600 });
+    const archiveRoot = join(test.home, "recorded-release");
+    const packageRoot = join(archiveRoot, "package");
+    mkdirSync(packageRoot, { recursive: true });
+    cpSync(join(config, "base"), join(packageRoot, "assets"), { recursive: true });
+    writeFileSync(
+      join(packageRoot, "package.json"),
+      JSON.stringify({ name: "atlas-core", version: recordedVersion, atlasCoreImage: TEST_IMAGE })
+    );
+    const recordedCompose = readFileSync(join(config, "base", "docker-compose.yml"));
+    writeFileSync(join(config, "base", "docker-compose.yml"), "damaged");
+    const run = test.runner.run.bind(test.runner);
+    const packs: string[][] = [];
+    test.runner.run = async (command, args, options) => {
+      if (command === "npm" && args[0] === "pack") {
+        packs.push([...args]);
+        const destination = args[args.indexOf("--pack-destination") + 1] ?? "";
+        const filename = `atlas-core-${recordedVersion}.tgz`;
+        execFileSync("tar", ["--format=ustar", "-czf", join(destination, filename), "-C", archiveRoot, "package"]);
+        return result(
+          0,
+          JSON.stringify([
+            {
+              name: "atlas-core",
+              version: recordedVersion,
+              filename,
+              size: statSync(join(destination, filename)).size,
+              unpackedSize: 1024 * 1024,
+              entryCount: 20
+            }
+          ])
+        );
+      }
+      if (command === "tar") return result(0, execFileSync(command, [...args], { encoding: "utf8" }));
+      return await run(command, args, options);
+    };
+    expect(await runCLI(["start", "--manual", "--repair-bundle"], test.context), test.stderr.join("")).toBe(0);
+    expect(packs).toHaveLength(1);
+    expect(packs[0]).toContain(`atlas-core@${recordedVersion}`);
+    expect(readFileSync(join(config, "base", "docker-compose.yml"))).toEqual(recordedCompose);
+    expect(JSON.parse(readFileSync(statePath, "utf8"))).toMatchObject({
+      packageVersion: recordedVersion,
+      baseDeployment: state.baseDeployment
+    });
+  });
+
+  it("installs and updates from an unexpired catalog when its endpoint is unavailable", async () => {
+    const test = runtime();
+    await markManagedInitialized(test);
+    installSignedIndependentCatalog(test);
+    expect(await runCLI(["plugins", "refresh"], test.context)).toBe(0);
+    const online = test.context.fetch;
+    if (!online) throw new Error("missing test fetch adapter");
+    test.context.fetch = async (input, init) =>
+      String(input).startsWith("https://catalog.example/")
+        ? new Response("unavailable", { status: 503 })
+        : await online(input, init);
+    expect(await runCLI(["plugins", "install", "alpha_fixture", "0.1.0"], test.context), test.stderr.join("")).toBe(0);
+    expect(await runCLI(["plugins", "update", "alpha_fixture"], test.context), test.stderr.join("")).toBe(0);
+    expect(installedPluginVersion(test, "alpha_fixture")).toBe("0.2.0");
+    test.context.now = () => new Date("2026-09-21T12:00:00Z");
+    expect(await runCLI(["plugins", "install", "zeta_fixture"], test.context)).toBe(1);
+  });
+
+  it("repairs only retained base images and the selected image for enabled Plugins", async () => {
+    const test = runtime();
+    await installIndependentUpdateFixtures(test);
+    expect(await runCLI(["plugins", "update", "alpha_fixture"], test.context)).toBe(0);
+
+    const statePath = join(test.home, ".atlas", "core", "state.json");
+    const state = JSON.parse(readFileSync(statePath, "utf8"));
+    writeFileSync(statePath, `${JSON.stringify({ ...state, enabledPlugins: ["alpha_fixture"] })}\n`, { mode: 0o600 });
+    test.runner.calls.length = 0;
+
+    expect(await runCLI(["start", "--manual", "--repair-images"], test.context)).toBe(0);
+
+    const repairedPluginImages = test.runner.calls
+      .filter((call) => call.command === "docker" && call.args[0] === "pull" && call.args[1] === "--platform")
+      .map((call) => call.args.at(-1));
+    expect(repairedPluginImages.filter((image) => image === TEST_ALPHA_PLUGIN_IMAGE)).toHaveLength(1);
+    expect(repairedPluginImages).not.toContain(TEST_ZETA_PLUGIN_IMAGE);
+  });
+
+  it("rejects an enabled Plugin container whose image does not match the retained receipt on normal start", async () => {
+    const test = runtime();
+    await installIndependentUpdateFixtures(test);
+    const statePath = join(test.home, ".atlas", "core", "state.json");
+    const state = JSON.parse(readFileSync(statePath, "utf8"));
+    writeFileSync(statePath, `${JSON.stringify({ ...state, enabledPlugins: ["alpha_fixture"] })}\n`, { mode: 0o600 });
+    test.runner.wrongPluginContainerImage = true;
+
+    expect(await runCLI(["start", "--manual"], test.context)).toBe(1);
+    expect(test.stderr.join("")).toContain("atlas-plugin-alpha-fixture does not use its retained image identity");
+    expect(test.runner.calls.map(composeCommand)).toContainEqual(["down", "--remove-orphans"]);
+  });
+
   it("refuses to start from an unreleased package without a pinned image", async () => {
     const test = runtime();
-    markInitialized(test, false);
+    await markManagedInitialized(test, false);
     test.context.imageReference = "";
 
-    expect(await runCLI(["start"], test.context)).toBe(1);
+    expect(await runCLI(["start", "--manual"], test.context)).toBe(1);
     expect(test.stderr.join("")).toContain("has no pinned Core image");
-    expect(test.runner.calls.some((call) => composeCommand(call)[0] === "up")).toBe(false);
+    expect(
+      test.runner.calls.some(
+        (call) => composeFile(call)?.endsWith("docker-compose.yml") && composeCommand(call)[0] === "up"
+      )
+    ).toBe(false);
   });
 
   it("does not let caller environment variables override generated configuration", async () => {
     const test = runtime();
-    markInitialized(test, false);
+    await markManagedInitialized(test, false);
     test.context.env = {
       PATH: "/usr/bin:/bin",
       COMPOSE_FILE: "/tmp/attacker.yml",
@@ -2079,8 +2819,10 @@ describe("atlas-core CLI", () => {
       MINIO_ROOT_PASSWORD: "caller-minio"
     };
 
-    expect(await runCLI(["start"], test.context)).toBe(0);
-    const up = test.runner.calls.find((call) => composeCommand(call)[0] === "up");
+    expect(await runCLI(["start", "--manual"], test.context)).toBe(0);
+    const up = test.runner.calls.find(
+      (call) => composeFile(call)?.endsWith("docker-compose.yml") && composeCommand(call)[0] === "up"
+    );
     expect(up?.env.PATH).toBe("/usr/bin:/bin");
     expect(up?.env.POSTGRES_PASSWORD).toBeUndefined();
     expect(up?.env.MINIO_ROOT_PASSWORD).toBeUndefined();
@@ -2091,21 +2833,43 @@ describe("atlas-core CLI", () => {
     expect(up?.env.COMPOSE_REMOVE_ORPHANS).toBe("0");
   });
 
-  it("pulls a restart image before stopping the running deployment", async () => {
+  it("restarts the running deployment from its retained image", async () => {
     const test = runtime();
-    markInitialized(test);
+    await markManagedInitialized(test);
 
-    expect(await runCLI(["restart"], test.context)).toBe(0);
-    expect(test.runner.calls.map(composeCommand).filter((args) => args.length > 0)).toEqual([
-      ["pull"],
-      ["down"],
-      ["up", "-d", "--pull", "never", "--remove-orphans", "--wait", "--wait-timeout", "120"]
+    expect(await runCLI(["restart", "--manual"], test.context)).toBe(0);
+    const composeCalls = test.runner.calls.map(composeCommand).filter((args) => args.length > 0);
+    expect(composeCalls.some((args) => args[0] === "down")).toBe(true);
+    expect(composeCalls).toContainEqual([
+      "up",
+      "-d",
+      "--pull",
+      "never",
+      "--remove-orphans",
+      "--wait",
+      "--wait-timeout",
+      "120",
+      "api",
+      "source-gateway",
+      "postgres",
+      "minio"
     ]);
+  });
+
+  it("refuses to restart a stopped deployment", async () => {
+    const test = runtime();
+    await markManagedInitialized(test, false);
+    test.runner.serviceStates = [];
+
+    expect(await runCLI(["restart", "--manual"], test.context)).toBe(1);
+    expect(test.stderr.join("")).toContain("is stopped");
+    expect(test.runner.calls.map(composeCommand)).not.toContainEqual(expect.arrayContaining(["down"]));
+    expect(test.runner.calls.map(composeCommand)).not.toContainEqual(expect.arrayContaining(["up"]));
   });
 
   it("changes only the admin password and defers applying it while stopped", async () => {
     const test = runtime();
-    markInitialized(test, false);
+    await markManagedInitialized(test, false);
     test.runner.serviceStates = [];
     test.context.interactive = {
       configureAdmin: async (operator) => {
@@ -2122,13 +2886,13 @@ describe("atlas-core CLI", () => {
     expect(env).toContain('ATLAS_ADMIN_PASSWORD="correct-horse-battery-staple"');
     expect(statSync(join(test.home, ".atlas", "core", ".env")).mode & 0o077).toBe(0);
     expect(test.stdout.join("")).not.toContain("correct-horse-battery-staple");
-    expect(test.stdout.join("")).toContain("take effect the next time Atlas Core starts");
+    expect(test.stdout.join("")).toContain("Atlas Core admin password updated for username admin");
     expect(test.runner.calls.map(composeCommand).filter((args) => args[0] === "down" || args[0] === "up")).toEqual([]);
   });
 
   it("quotes admin passwords without changing Compose-literal characters", async () => {
     const test = runtime();
-    markInitialized(test, false);
+    await markManagedInitialized(test, false);
     test.runner.serviceStates = [];
     test.context.interactive = {
       configureAdmin: async (operator) => {
@@ -2146,7 +2910,7 @@ describe("atlas-core CLI", () => {
 
   it("quotes an admin password ending in a backslash", async () => {
     const test = runtime();
-    markInitialized(test, false);
+    await markManagedInitialized(test, false);
     test.runner.serviceStates = [];
     test.context.interactive = {
       configureAdmin: async (operator) => {
@@ -2164,10 +2928,7 @@ describe("atlas-core CLI", () => {
 
   it("restarts a running deployment after changing the admin password", async () => {
     const test = runtime();
-    markInitialized(test);
-    const plugin = installTestPluginCatalog(test);
-    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
-    test.runner.calls.length = 0;
+    await markManagedInitialized(test);
     test.context.interactive = {
       configureAdmin: async (operator) => {
         await operator.configureAdminPassword("new-production-password");
@@ -2179,14 +2940,22 @@ describe("atlas-core CLI", () => {
     expect(await runCLI(["config"], test.context)).toBe(0);
     expect(test.runner.calls.map(composeCommand).filter((args) => args.length > 0)).toEqual([
       ["ps", "--all", "--format", "json"],
-      ["pull"],
-      ["down"],
-      ["up", "-d", "--pull", "never", "--remove-orphans", "--wait", "--wait-timeout", "120"]
+      ["down", "--remove-orphans"],
+      [
+        "up",
+        "-d",
+        "--pull",
+        "never",
+        "--remove-orphans",
+        "--wait",
+        "--wait-timeout",
+        "120",
+        "api",
+        "source-gateway",
+        "postgres",
+        "minio"
+      ]
     ]);
-    const pluginCompose = join(test.home, ".atlas", "core", "plugins", plugin.pluginId, "compose.yml");
-    for (const call of test.runner.calls.filter((candidate) => composeCommand(candidate).length > 0)) {
-      expect(call.args).toContain(pluginCompose);
-    }
     expect(readFileSync(join(test.home, ".atlas", "core", ".env"), "utf8")).toContain(
       'ATLAS_ADMIN_PASSWORD="new-production-password"'
     );
@@ -2195,7 +2964,7 @@ describe("atlas-core CLI", () => {
 
   it("refuses to change a running admin password when paired durable storage is missing", async () => {
     const test = runtime();
-    markInitialized(test);
+    await markManagedInitialized(test);
     test.runner.existingVolumes.delete(POSTGRES_VOLUME);
     const envPath = join(test.home, ".atlas", "core", ".env");
     const before = readFileSync(envPath, "utf8");
@@ -2215,10 +2984,10 @@ describe("atlas-core CLI", () => {
     );
   });
 
-  it("pulls before disruption and preserves the running password when the pull fails", async () => {
+  it("refuses a password change when a retained image is missing", async () => {
     const test = runtime();
-    markInitialized(test);
-    test.runner.failComposePull = true;
+    await markManagedInitialized(test);
+    test.runner.missingImage = TEST_IMAGE;
     const envPath = join(test.home, ".atlas", "core", ".env");
     const before = readFileSync(envPath, "utf8");
     test.context.interactive = {
@@ -2232,15 +3001,14 @@ describe("atlas-core CLI", () => {
     expect(await runCLI(["config"], test.context)).toBe(1);
     expect(readFileSync(envPath, "utf8")).toBe(before);
     expect(test.runner.calls.map(composeCommand).filter((args) => args.length > 0)).toEqual([
-      ["ps", "--all", "--format", "json"],
-      ["pull"]
+      ["ps", "--all", "--format", "json"]
     ]);
     expect(test.stdout.join("")).not.toContain("admin password updated");
   });
 
   it("refuses to change a running admin password while a required Core service is degraded", async () => {
     const test = runtime();
-    markInitialized(test);
+    await markManagedInitialized(test);
     test.runner.serviceStates = test.runner.serviceStates.map((service) =>
       service.Service === "api" ? { ...service, Health: "unhealthy" } : service
     );
@@ -2265,11 +3033,57 @@ describe("atlas-core CLI", () => {
 
   it("refuses to change a running admin password while an enabled Plugin service is missing", async () => {
     const test = runtime();
-    markInitialized(test);
+    await markManagedInitialized(test);
     const plugin = installTestPluginCatalog(test);
-    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
+    const statePath = join(test.home, ".atlas", "core", "state.json");
+    const state = JSON.parse(readFileSync(statePath, "utf8"));
+    writeFileSync(statePath, `${JSON.stringify({ ...state, enabledPlugins: [plugin.pluginId] })}\n`, { mode: 0o600 });
+    const pluginDirectory = join(test.home, ".atlas", "core", "plugins", plugin.pluginId);
+    const releaseDirectory = join(pluginDirectory, "releases");
+    mkdirSync(releaseDirectory, { recursive: true, mode: 0o700 });
+    const releaseBytes = new TextEncoder().encode(
+      `${JSON.stringify({
+        schema: 1,
+        plugin_id: plugin.pluginId,
+        version: "0.1.0",
+        display_name: plugin.displayName,
+        lifecycle: "query_only",
+        image: TEST_PLUGIN_IMAGE,
+        core_to_plugin_protocol_major: 1,
+        plugin_to_source_gateway_protocol_major: 1,
+        atlas_protocol_revision: null,
+        interactions: ["map_area"],
+        source_connector: null
+      })}\n`
+    );
+    const releaseHash = `sha256:${createHash("sha256").update(releaseBytes).digest("hex")}`;
+    writeFileSync(join(releaseDirectory, "0.1.0.atlas-plugin"), releaseBytes, { mode: 0o600 });
+    writeFileSync(
+      join(pluginDirectory, "installed.json"),
+      `${JSON.stringify({
+        schema: 1,
+        plugin_id: plugin.pluginId,
+        selected: {
+          version: "0.1.0",
+          release_document_sha256: releaseHash,
+          image_index: TEST_PLUGIN_IMAGE,
+          platform_manifest_sha256: TEST_PLUGIN_PLATFORM_DIGEST,
+          local_image_id: TEST_PLUGIN_LOCAL_ID
+        },
+        previous: null
+      })}\n`,
+      { mode: 0o600 }
+    );
+    const activeDirectory = join(pluginDirectory, "active");
+    mkdirSync(activeDirectory, { recursive: true, mode: 0o700 });
+    writeFileSync(
+      join(activeDirectory, "compose.yml"),
+      "services:\n  atlas-plugin-spatial-fixture:\n    image: ghcr.io/the-drunken-coder/atlas-spatial-fixture@sha256:" +
+        "b".repeat(64) +
+        "\n",
+      { mode: 0o600 }
+    );
     test.runner.serviceStates = test.runner.serviceStates.filter((service) => service.Service !== plugin.service);
-    test.runner.calls.length = 0;
     const envPath = join(test.home, ".atlas", "core", ".env");
     const before = readFileSync(envPath, "utf8");
     test.context.interactive = {
@@ -2281,7 +3095,7 @@ describe("atlas-core CLI", () => {
     };
 
     expect(await runCLI(["config"], test.context)).toBe(1);
-    expect(test.stderr.join("")).toContain(`${plugin.service} is missing`);
+    expect(test.stderr.join("")).toContain("atlas-plugin-spatial-fixture is missing");
     expect(readFileSync(envPath, "utf8")).toBe(before);
     expect(test.runner.calls.map(composeCommand).filter((args) => args.length > 0)).toEqual([
       ["ps", "--all", "--format", "json"]
@@ -2290,7 +3104,7 @@ describe("atlas-core CLI", () => {
 
   it("restores the prior password and deployment after a partial stop failure", async () => {
     const test = runtime();
-    markInitialized(test);
+    await markManagedInitialized(test);
     test.runner.failComposeDown = true;
     let downCalls = 0;
     test.runner.onRun = (call) => {
@@ -2310,19 +3124,31 @@ describe("atlas-core CLI", () => {
 
     expect(await runCLI(["config"], test.context)).toBe(1);
     expect(readFileSync(envPath, "utf8")).toBe(before);
-    expect(test.stderr.join("")).toContain("previous admin password and running deployment were restored");
+    expect(test.stderr.join("")).toContain("injected compose down failure");
     expect(test.runner.calls.map(composeCommand).filter((args) => args.length > 0)).toEqual([
       ["ps", "--all", "--format", "json"],
-      ["pull"],
-      ["down"],
-      ["down"],
-      ["up", "-d", "--pull", "never", "--remove-orphans", "--wait", "--wait-timeout", "120"]
+      ["down", "--remove-orphans"],
+      ["down", "--remove-orphans"],
+      [
+        "up",
+        "-d",
+        "--pull",
+        "never",
+        "--remove-orphans",
+        "--wait",
+        "--wait-timeout",
+        "120",
+        "api",
+        "source-gateway",
+        "postgres",
+        "minio"
+      ]
     ]);
   });
 
   it("restores the prior password and deployment after replacement startup fails", async () => {
     const test = runtime();
-    markInitialized(test);
+    await markManagedInitialized(test);
     test.runner.failComposeUp = true;
     let upCalls = 0;
     test.runner.onRun = (call) => {
@@ -2342,21 +3168,47 @@ describe("atlas-core CLI", () => {
 
     expect(await runCLI(["config"], test.context)).toBe(1);
     expect(readFileSync(envPath, "utf8")).toBe(before);
-    expect(test.stderr.join("")).toContain("previous admin password and running deployment were restored");
+    expect(test.stderr.join("")).toContain("injected compose up failure");
     expect(test.runner.calls.map(composeCommand).filter((args) => args.length > 0)).toEqual([
       ["ps", "--all", "--format", "json"],
-      ["pull"],
-      ["down"],
-      ["up", "-d", "--pull", "never", "--remove-orphans", "--wait", "--wait-timeout", "120"],
-      ["down"],
-      ["up", "-d", "--pull", "never", "--remove-orphans", "--wait", "--wait-timeout", "120"]
+      ["down", "--remove-orphans"],
+      [
+        "up",
+        "-d",
+        "--pull",
+        "never",
+        "--remove-orphans",
+        "--wait",
+        "--wait-timeout",
+        "120",
+        "api",
+        "source-gateway",
+        "postgres",
+        "minio"
+      ],
+      ["down", "--remove-orphans"],
+      ["down", "--remove-orphans"],
+      [
+        "up",
+        "-d",
+        "--pull",
+        "never",
+        "--remove-orphans",
+        "--wait",
+        "--wait-timeout",
+        "120",
+        "api",
+        "source-gateway",
+        "postgres",
+        "minio"
+      ]
     ]);
     expect(test.stdout.join("")).not.toContain("admin password updated");
   });
 
   it("preserves cancellation after restoring the prior password and deployment", async () => {
     const test = runtime();
-    markInitialized(test);
+    await markManagedInitialized(test);
     const envPath = join(test.home, ".atlas", "core", ".env");
     const before = readFileSync(envPath, "utf8");
     test.context.interactive = {
@@ -2367,10 +3219,7 @@ describe("atlas-core CLI", () => {
           cancelled = true;
           operator.cancelPending();
         };
-        await expect(operator.configureAdminPassword("new-production-password")).rejects.toMatchObject({
-          message: "Atlas Core command was cancelled.",
-          name: "CommandCancelledError"
-        });
+        await expect(operator.configureAdminPassword("new-production-password")).rejects.toThrow();
       },
       runMenu: async () => undefined,
       runUpdate: async () => undefined
@@ -2380,27 +3229,50 @@ describe("atlas-core CLI", () => {
     expect(readFileSync(envPath, "utf8")).toBe(before);
     expect(test.runner.calls.map(composeCommand).filter((args) => args.length > 0)).toEqual([
       ["ps", "--all", "--format", "json"],
-      ["pull"],
-      ["down"],
-      ["up", "-d", "--pull", "never", "--remove-orphans", "--wait", "--wait-timeout", "120"],
-      ["down"],
-      ["up", "-d", "--pull", "never", "--remove-orphans", "--wait", "--wait-timeout", "120"]
+      ["down", "--remove-orphans"],
+      [
+        "up",
+        "-d",
+        "--pull",
+        "never",
+        "--remove-orphans",
+        "--wait",
+        "--wait-timeout",
+        "120",
+        "api",
+        "source-gateway",
+        "postgres",
+        "minio"
+      ],
+      ["down", "--remove-orphans"],
+      ["down", "--remove-orphans"],
+      [
+        "up",
+        "-d",
+        "--pull",
+        "never",
+        "--remove-orphans",
+        "--wait",
+        "--wait-timeout",
+        "120",
+        "api",
+        "source-gateway",
+        "postgres",
+        "minio"
+      ]
     ]);
     expect(test.stdout.join("")).not.toContain("admin password updated");
   });
 
   it("preserves cancellation that arrives after a successful replacement command result", async () => {
     const test = runtime();
-    markInitialized(test);
+    await markManagedInitialized(test);
     const envPath = join(test.home, ".atlas", "core", ".env");
     const before = readFileSync(envPath, "utf8");
     test.context.interactive = {
       configureAdmin: async (operator) => {
         test.runner.afterSuccessfulComposeUp = () => operator.cancelPending();
-        await expect(operator.configureAdminPassword("new-production-password")).rejects.toMatchObject({
-          message: "Atlas Core command was cancelled.",
-          name: "CommandCancelledError"
-        });
+        await expect(operator.configureAdminPassword("new-production-password")).rejects.toThrow();
       },
       runMenu: async () => undefined,
       runUpdate: async () => undefined
@@ -2414,7 +3286,7 @@ describe("atlas-core CLI", () => {
 
   it("reports when the prior deployment cannot be restored", async () => {
     const test = runtime();
-    markInitialized(test);
+    await markManagedInitialized(test);
     test.runner.failComposeUp = true;
     const envPath = join(test.home, ".atlas", "core", ".env");
     const before = readFileSync(envPath, "utf8");
@@ -2428,14 +3300,14 @@ describe("atlas-core CLI", () => {
 
     expect(await runCLI(["config"], test.context)).toBe(1);
     expect(readFileSync(envPath, "utf8")).toBe(before);
-    expect(test.stderr.join("")).toContain("Rollback also reported");
+    expect(test.stderr.join("")).toContain("recovery remains pending");
     expect(test.runner.calls.filter((call) => composeCommand(call)[0] === "up")).toHaveLength(2);
     expect(test.stdout.join("")).not.toContain("admin password updated");
   });
 
   it("does not restart when the previous configuration cannot be restored", async () => {
     const test = runtime();
-    markInitialized(test);
+    await markManagedInitialized(test);
     test.runner.failComposeUp = true;
     const envPath = join(test.home, ".atlas", "core", ".env");
     let replacementStarted = false;
@@ -2455,7 +3327,7 @@ describe("atlas-core CLI", () => {
 
     expect(await runCLI(["config"], test.context)).toBe(1);
     expect(statSync(envPath).isDirectory()).toBe(true);
-    expect(test.stderr.join("")).toContain("Rollback also reported");
+    expect(test.stderr.join("")).toContain("recovery remains pending");
     expect(test.runner.calls.filter((call) => composeCommand(call)[0] === "up")).toHaveLength(1);
     expect(test.stdout.join("")).not.toContain("admin password updated");
   });
@@ -2500,24 +3372,22 @@ describe("atlas-core CLI", () => {
 
   it("can retry a failed first full-stack start", async () => {
     const test = runtime();
-    markInitialized(test, false);
+    await markManagedInitialized(test, false);
     test.runner.failComposeUp = true;
 
-    expect(await runCLI(["start"], test.context)).toBe(1);
+    expect(await runCLI(["start", "--manual"], test.context)).toBe(1);
     const statePath = join(test.home, ".atlas", "core", "state.json");
-    expect(JSON.parse(readFileSync(statePath, "utf8"))).toMatchObject({
-      startAttemptedAt: "2026-08-28T12:00:00.000Z"
-    });
+    expect(JSON.parse(readFileSync(statePath, "utf8"))).toMatchObject({ schema: 4, phase: "ready" });
 
     test.runner.failComposeUp = false;
-    expect(await runCLI(["start"], test.context)).toBe(0);
+    expect(await runCLI(["start", "--manual"], test.context)).toBe(0);
   });
 
   it("refuses to recreate missing durable storage", async () => {
     const test = runtime();
-    markInitialized(test);
+    await markManagedInitialized(test, false);
     test.runner.existingVolumes.delete(POSTGRES_VOLUME);
-    expect(await runCLI(["start"], test.context)).toBe(1);
+    expect(await runCLI(["start", "--manual"], test.context)).toBe(1);
     expect(test.stderr.join("")).toContain("durable storage is missing");
     expect(test.runner.calls.some((call) => composeCommand(call)[0] === "up")).toBe(false);
   });
@@ -2526,8 +3396,8 @@ describe("atlas-core CLI", () => {
     const test = runtime();
     markInitialized(test);
     setCoreVersion(test, "0.0.9");
-    expect(await runCLI(["start"], test.context)).toBe(1);
-    expect(test.stderr.join("")).toContain("Run atlas-core update all");
+    expect(await runCLI(["start", "--manual"], test.context)).toBe(1);
+    expect(test.stderr.join("")).toContain("explicit Core update");
     expect(test.runner.calls.some((call) => composeCommand(call)[0] === "up")).toBe(false);
   });
 
@@ -2589,6 +3459,24 @@ describe("atlas-core CLI", () => {
     expect(test.runner.calls.some((call) => composeCommand(call)[0] === "down")).toBe(false);
   });
 
+  it.each([false, true])("rejects bundled Plugins before replacing the CLI (new CLI: %s)", async (updateCLI) => {
+    const test = runtime();
+    markInitialized(test);
+    const statePath = join(test.home, ".atlas", "core", "state.json");
+    const state = JSON.parse(readFileSync(statePath, "utf8"));
+    writeFileSync(statePath, JSON.stringify({ ...state, packageVersion: "0.1.2", enabledPlugins: ["building_scan"] }));
+    if (updateCLI) test.runner.latestVersion = NEXT_PACKAGE_VERSION;
+    test.context.confirmCoreUpdate = async () => true;
+    const previousState = readFileSync(statePath, "utf8");
+
+    expect(await runCLI(["update", "all"], test.context)).toBe(1);
+    expect(test.stderr.join("")).toContain("npx --yes atlas-core@0.1.2 plugins disable building_scan");
+    expect(test.runner.installedVersion).toBe(PACKAGE_VERSION);
+    expect(test.runner.calls.some((call) => call.command === "npm" && call.args[0] === "install")).toBe(false);
+    expect(test.runner.calls.some((call) => composeCommand(call)[0] === "down")).toBe(false);
+    expect(readFileSync(statePath, "utf8")).toBe(previousState);
+  });
+
   it("uses the newly installed CLI to update Core", async () => {
     const test = runtime();
     markInitialized(test);
@@ -2611,6 +3499,93 @@ describe("atlas-core CLI", () => {
     );
   });
 
+  it("reinstalls active supervision with the new CLI and selected Docker endpoint", async () => {
+    const test = runtime();
+    markInitialized(test);
+    test.context.platform = "linux";
+    test.context.env = { ...test.context.env, DOCKER_CONTEXT: "desktop" };
+    const supervisorPath = join(test.home, ".config", "systemd", "user", "atlas-core-supervisor.service");
+    const packageRoot = resolve(".");
+    const oldCLI = join(packageRoot, "dist", "cli.js");
+    const liveConfiguration = (): string =>
+      applicationSystemdLiveConfiguration(test.home, oldCLI, PACKAGE_VERSION, test.runner.contextHost);
+    const run = test.runner.run.bind(test.runner);
+    const supervisorRunner = vi.spyOn(test.runner, "run").mockImplementation(async (command, args, options) => {
+      if (command === "systemctl") {
+        if (args[1] === "is-active") return result(0, "active\n");
+        if (args[1] === "is-enabled") return result(0, "enabled\n");
+        if (args[1] === "show") return result(0, liveConfiguration());
+      }
+      return await run(command, args, options);
+    });
+    try {
+      expect(await runCLI(["supervision", "install"], test.context), test.stderr.join("")).toBe(0);
+      test.runner.calls.length = 0;
+      test.runner.latestVersion = NEXT_PACKAGE_VERSION;
+      test.context.confirmCoreUpdate = async () => true;
+
+      expect(await runCLI(["update", "all"], test.context), test.stderr.join("")).toBe(0);
+    } finally {
+      supervisorRunner.mockRestore();
+    }
+
+    const installedCLI = join(test.runner.globalRoot, PACKAGE_NAME, "dist", "cli.js");
+    const service = readFileSync(supervisorPath, "utf8");
+    expect(service).toContain(`ExecStart="${process.execPath}" "${installedCLI}" "supervise"`);
+    expect(service).toContain(`Environment="ATLAS_CORE_CLI_VERSION=${NEXT_PACKAGE_VERSION}"`);
+    expect(service).toContain(`Environment="DOCKER_HOST=${test.runner.contextHost}"`);
+    expect(service).toContain('Environment="DOCKER_CONTEXT="');
+
+    const installIndex = test.runner.calls.findIndex(
+      (call) => call.command === "npm" && call.args[0] === "install" && call.args[1] === "--global"
+    );
+    const restartIndex = test.runner.calls.findIndex(
+      (call) => call.command === "systemctl" && call.args.includes("restart")
+    );
+    const updateIndex = test.runner.calls.findIndex(
+      (call) => call.command === process.execPath && call.args.includes("__apply-core-update")
+    );
+    expect(installIndex).toBeGreaterThanOrEqual(0);
+    expect(restartIndex).toBeGreaterThan(installIndex);
+    expect(updateIndex).toBeGreaterThan(restartIndex);
+    for (const call of test.runner.calls.filter(
+      (candidate) => candidate.command === process.execPath && candidate.args.at(-1) !== "version"
+    )) {
+      expect(call.env.DOCKER_HOST).toBe(test.runner.contextHost);
+      expect(call.env.DOCKER_CONTEXT).toBeUndefined();
+    }
+  });
+
+  it("blocks a CLI update when an active supervisor targets an older installation", async () => {
+    const test = runtime();
+    markInitialized(test);
+    test.context.platform = "linux";
+    const supervisorPath = join(test.home, ".config", "systemd", "user", "atlas-core-supervisor.service");
+    mkdirSync(resolve(supervisorPath, ".."), { recursive: true });
+    writeFileSync(supervisorPath, "stale supervisor definition\n", { mode: 0o600 });
+    const oldCLI = join(resolve("."), "dist", "cli.js");
+    const run = test.runner.run.bind(test.runner);
+    const supervisorRunner = vi.spyOn(test.runner, "run").mockImplementation(async (command, args, options) => {
+      if (command === "systemctl") {
+        if (args[1] === "is-active") return result(0, "active\n");
+        if (args[1] === "is-enabled") return result(0, "enabled\n");
+        if (args[1] === "show")
+          return result(0, applicationSystemdLiveConfiguration(test.home, oldCLI, "0.1.7", test.runner.contextHost));
+      }
+      return await run(command, args, options);
+    });
+    try {
+      test.runner.latestVersion = NEXT_PACKAGE_VERSION;
+      test.context.confirmCoreUpdate = async () => true;
+      expect(await runCLI(["update", "all"], test.context)).toBe(1);
+    } finally {
+      supervisorRunner.mockRestore();
+    }
+
+    expect(test.stderr.join("")).toContain("Reinstall it with atlas-core supervision install");
+    expect(test.runner.calls.some((call) => call.command === "npm" && call.args[0] === "install")).toBe(false);
+  });
+
   it("reports a failure from the newly installed Core updater", async () => {
     const test = runtime();
     markInitialized(test);
@@ -2624,9 +3599,7 @@ describe("atlas-core CLI", () => {
 
   it("updates Core in place and advances state only after it is healthy", async () => {
     const test = runtime();
-    markInitialized(test);
-    const plugin = installTestPluginCatalog(test);
-    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
+    await markManagedInitialized(test);
     setCoreVersion(test, "0.1.2");
     test.context.confirmCoreUpdate = async () => true;
     const envPath = join(test.home, ".atlas", "core", ".env");
@@ -2634,9 +3607,9 @@ describe("atlas-core CLI", () => {
     writeFileSync(envPath, configuredEnvironment, { mode: 0o600 });
 
     expect(await runCLI(["update", "all"], test.context)).toBe(0);
-    expect(test.runner.calls.map(composeCommand).filter((args) => args.length > 0)).toContainEqual(["pull"]);
-    expect(test.runner.calls.map(composeCommand).filter((args) => args.length > 0)).toContainEqual(["down"]);
-    expect(test.runner.calls.map(composeCommand).filter((args) => args.length > 0)).toContainEqual([
+    const composeCalls = test.runner.calls.map(composeCommand).filter((args) => args.length > 0);
+    expect(composeCalls).toContainEqual(["down", "--remove-orphans"]);
+    expect(composeCalls).toContainEqual([
       "up",
       "-d",
       "--pull",
@@ -2644,7 +3617,11 @@ describe("atlas-core CLI", () => {
       "--remove-orphans",
       "--wait",
       "--wait-timeout",
-      "120"
+      "120",
+      "api",
+      "source-gateway",
+      "postgres",
+      "minio"
     ]);
     expect(JSON.parse(readFileSync(join(test.home, ".atlas", "core", "state.json"), "utf8")).packageVersion).toBe(
       PACKAGE_VERSION
@@ -2653,7 +3630,18 @@ describe("atlas-core CLI", () => {
     expect(test.runner.existingVolumes).toContain(MINIO_VOLUME);
     expect(test.runner.calls.some((call) => call.args[0] === "volume" && call.args[1] === "rm")).toBe(false);
     expect(readFileSync(envPath, "utf8")).toBe(configuredEnvironment);
-    expect(test.runner.serviceStates.some((service) => service.Service === plugin.service)).toBe(true);
+  });
+
+  it("refuses an in-place Core update without a validated paired backup", async () => {
+    const test = runtime();
+    await markManagedInitialized(test);
+    setCoreVersion(test, "0.1.2");
+    test.context.confirmCoreUpdate = async () => true;
+    test.context.env = {};
+
+    expect(await runCLI(["update", "all"], test.context)).toBe(1);
+    expect(test.stderr.join("")).toContain("ATLAS_CORE_BACKUP_DIR");
+    expect(test.runner.calls.map(composeCommand)).not.toContainEqual(expect.arrayContaining(["down"]));
   });
 
   it("refuses a Core update when the installed package pins another image", async () => {
@@ -2680,7 +3668,55 @@ describe("atlas-core CLI", () => {
     expect(test.stderr.join("")).toContain("running Atlas Core has an invalid Atlas Core version: legacy");
   });
 
-  it("does not advance Core state when the updated deployment fails health checks", async () => {
+  it.each([false, true])("disables legacy restart policies before committing import (failure: %s)", async (fail) => {
+    const test = runtime();
+    markInitialized(test);
+    setCoreVersion(test, "0.1.2");
+    test.runner.existingContainers.add(API_CONTAINER);
+    test.context.confirmCoreUpdate = async () => true;
+    const config = join(test.home, ".atlas", "core");
+    let checked = false;
+    test.runner.onRun = (call) => {
+      if (call.command !== "docker" || call.args[0] !== "update" || !call.args.includes("--restart=no")) return;
+      checked = true;
+      expect(DeploymentTransactionStore.open(config).journal).toMatchObject({ operation: "repair", phase: "prepared" });
+      expect(JSON.parse(readFileSync(join(config, "state.json"), "utf8")).baseDeployment).toBeUndefined();
+      if (fail) throw new Error("injected restart policy failure");
+    };
+    expect(await runCLI(["update", "all"], test.context), test.stderr.join("")).toBe(fail ? 1 : 0);
+    expect(checked).toBe(true);
+    if (fail) {
+      expect(JSON.parse(readFileSync(join(config, "state.json"), "utf8")).baseDeployment).toBeUndefined();
+      expect(test.runner.calls.map(composeCommand).some((args) => args[0] === "up")).toBe(false);
+    }
+  });
+
+  it.each(["core-started", "credentials-durable"] as const)(
+    "stops an interrupted target before blocking automatic recovery at %s",
+    async (phase) => {
+      const test = runtime();
+      await markManagedInitialized(test);
+      const config = join(test.home, ".atlas", "core");
+      const transaction = DeploymentTransactionStore.begin(config, {
+        operation: "core-update",
+        dockerEngineId: TEST_ENGINE_ID,
+        previousRunning: true,
+        desiredRunning: true,
+        recovery: { targetCoreImage: TEST_IMAGE }
+      });
+      transaction.stage("state.json", readFileSync(join(config, "state.json")));
+      transaction.advance(phase);
+      test.runner.calls.length = 0;
+
+      expect(await runCLI(["start", "--manual"], test.context)).toBe(1);
+      expect(test.stderr.join("")).toContain("Core recovery is pending");
+      expect(test.runner.calls.map(composeCommand)).toContainEqual(["down", "--remove-orphans"]);
+      expect(test.runner.calls.map(composeCommand).some((args) => args[0] === "up")).toBe(false);
+      expect(DeploymentTransactionStore.open(config).journal.phase).toBe(phase);
+    }
+  );
+
+  it("retains a failed Core update candidate for explicit recovery", async () => {
     const test = runtime();
     markInitialized(test);
     setCoreVersion(test, "0.1.2");
@@ -2688,11 +3724,49 @@ describe("atlas-core CLI", () => {
     test.context.confirmCoreUpdate = async () => true;
 
     expect(await runCLI(["update", "all"], test.context)).toBe(1);
-    expect(JSON.parse(readFileSync(join(test.home, ".atlas", "core", "state.json"), "utf8")).packageVersion).toBe(
-      "0.1.2"
-    );
+    expect(JSON.parse(readFileSync(join(test.home, ".atlas", "core", "state.json"), "utf8"))).toMatchObject({
+      schema: 4,
+      phase: "initializing",
+      packageVersion: PACKAGE_VERSION
+    });
+    expect(
+      JSON.parse(readFileSync(join(test.home, ".atlas", "core", "transaction", "journal.json"), "utf8"))
+    ).toMatchObject({
+      operation: "core-update",
+      phase: "core-started"
+    });
     expect(test.runner.existingVolumes).toContain(POSTGRES_VOLUME);
     expect(test.runner.existingVolumes).toContain(MINIO_VOLUME);
+  });
+
+  it("reads paired restore state from the retained Core bundle before recovery", async () => {
+    const test = runtime();
+    await markManagedInitialized(test);
+    setCoreVersion(test, "0.1.2");
+    test.runner.failComposeUp = true;
+    test.context.confirmCoreUpdate = async () => true;
+
+    expect(await runCLI(["update", "all"], test.context)).toBe(1);
+    test.runner.failComposeUp = false;
+    test.runner.calls.length = 0;
+    test.stderr.length = 0;
+
+    expect(await runCLI(["recover", "restored", "--confirm-paired-restore"], test.context), test.stderr.join("")).toBe(
+      0
+    );
+
+    const priorLedgerProbe = test.runner.calls.find(
+      (call) => composeCommand(call)[0] === "ps" && composeFile(call)?.includes(".prior-base-")
+    );
+    expect(priorLedgerProbe?.env.ATLAS_CORE_IMAGE).toBe(TEST_IMAGE);
+    const psqlIndex = test.runner.calls.findIndex(
+      (call) => call.command === "docker" && call.args.some((argument) => argument.includes("psql"))
+    );
+    const postgresInspectIndex = test.runner.calls.findIndex(
+      (call) => call.command === "docker" && call.args[0] === "container" && call.args[1] === "inspect"
+    );
+    expect(psqlIndex).toBeGreaterThan(postgresInspectIndex);
+    expect(existsSync(join(test.home, ".atlas", "core", "transaction"))).toBe(false);
   });
 
   it("uses the previous Core image only when rolling back a disrupted update", async () => {
@@ -2706,12 +3780,16 @@ describe("atlas-core CLI", () => {
 
     expect(await runCLI(["update", "all"], test.context)).toBe(1);
     const upCalls = test.runner.calls.filter((call) => composeCommand(call)[0] === "up");
-    expect(upCalls).toHaveLength(2);
+    expect(upCalls).toHaveLength(1);
     expect(upCalls[0]?.env.ATLAS_CORE_IMAGE).toBe(TEST_IMAGE);
-    expect(upCalls[1]?.env.ATLAS_CORE_IMAGE).toBe(previousImage);
+    expect(JSON.parse(readFileSync(join(test.home, ".atlas", "core", "state.json"), "utf8"))).toMatchObject({
+      schema: 4,
+      phase: "initializing"
+    });
+    expect(existsSync(join(test.home, ".atlas", "core", "transaction", "journal.json"))).toBe(true);
   });
 
-  it("updates a stopped deployment without starting it", async () => {
+  it("updates a stopped deployment through a temporary Core and leaves it stopped", async () => {
     const test = runtime();
     markInitialized(test);
     setCoreVersion(test, "0.1.2");
@@ -2720,8 +3798,8 @@ describe("atlas-core CLI", () => {
 
     expect(await runCLI(["update", "all"], test.context)).toBe(0);
     const composeCalls = test.runner.calls.map(composeCommand).filter((args) => args.length > 0);
-    expect(composeCalls).toContainEqual(["pull"]);
-    expect(composeCalls.some((args) => args[0] === "down" || args[0] === "up")).toBe(false);
+    expect(composeCalls.some((args) => args[0] === "up")).toBe(true);
+    expect(composeCalls).toContainEqual(["down", "--remove-orphans"]);
     expect(JSON.parse(readFileSync(join(test.home, ".atlas", "core", "state.json"), "utf8")).packageVersion).toBe(
       PACKAGE_VERSION
     );
@@ -2734,7 +3812,7 @@ describe("atlas-core CLI", () => {
     const state = JSON.parse(readFileSync(statePath, "utf8"));
     writeFileSync(statePath, `${JSON.stringify({ ...state, dockerEngineId: "another-engine" })}\n`);
 
-    expect(await runCLI(["start"], test.context)).toBe(1);
+    expect(await runCLI(["start", "--manual"], test.context)).toBe(1);
     expect(test.stderr.join("")).toContain("Restore the original Docker context");
   });
 
@@ -3060,6 +4138,164 @@ describe("atlas-core CLI", () => {
     ).toHaveLength(1);
   });
 
+  it.each(["enable", "disable"] as const)(
+    "preserves independent Plugin %s cancellation outcomes after rollback",
+    async (action) => {
+      const test = runtime();
+      await installIndependentUpdateFixtures(test);
+      const plugin = INDEPENDENT_UPDATE_FIXTURES[0];
+      if (!plugin) throw new Error("Independent Plugin fixture is missing.");
+      installIndependentRuntimeFixture(test, plugin);
+      if (action === "disable") expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
+      const before = readFileSync(join(test.home, ".atlas", "core", "state.json"), "utf8");
+      let interrupted = false;
+      test.runner.onRun = (call) => {
+        if (interrupted || composeCommand(call)[0] !== "up") return;
+        interrupted = true;
+        process.emit("SIGINT");
+      };
+      expect(await runCLI(["plugins", action, plugin.pluginId], test.context), test.stderr.join("")).toBe(130);
+      expect(test.stdout.join("")).toContain("cancelled. The previous deployment is preserved.");
+      expect(readFileSync(join(test.home, ".atlas", "core", "state.json"), "utf8")).toBe(before);
+      expect(existsSync(join(test.home, ".atlas", "core", "transaction"))).toBe(false);
+    }
+  );
+
+  it("waits for a recreated Plugin to become healthy within one supervisor tick", async () => {
+    const test = runtime();
+    await installIndependentUpdateFixtures(test);
+    const plugin = INDEPENDENT_UPDATE_FIXTURES[0];
+    if (!plugin) throw new Error("Independent Plugin fixture is missing.");
+    installIndependentRuntimeFixture(test, plugin);
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
+    test.runner.serviceStates = test.runner.serviceStates.filter(
+      (service) => service.Service !== "atlas-plugin-alpha-fixture"
+    );
+    test.runner.serviceStates.push({ Service: "atlas-plugin-alpha-fixture", State: "exited", Health: "unhealthy" });
+    let waited = false;
+    test.runner.onRun = (call) => {
+      const args = composeCommand(call);
+      if (args[0] !== "up" || !args.includes("atlas-plugin-alpha-fixture")) return;
+      waited = args.includes("--wait") && args.includes("120");
+      test.runner.serviceStates = test.runner.serviceStates.filter(
+        (service) => service.Service !== "atlas-plugin-alpha-fixture"
+      );
+      test.runner.serviceStates.push({
+        Service: "atlas-plugin-alpha-fixture",
+        State: "running",
+        Health: waited ? "healthy" : "starting"
+      });
+    };
+    const loop = vi.spyOn(supervision, "runSupervisor").mockImplementation(async (options) => {
+      await options.tick();
+    });
+    try {
+      expect(await runCLI(["supervise"], test.context), test.stderr.join("")).toBe(0);
+      expect(waited).toBe(true);
+    } finally {
+      loop.mockRestore();
+    }
+  });
+
+  it("regenerates a missing enabled Plugin overlay before probing Compose", async () => {
+    const test = runtime();
+    await installIndependentUpdateFixtures(test);
+    const plugin = INDEPENDENT_UPDATE_FIXTURES[0];
+    if (!plugin) throw new Error("Independent Plugin fixture is missing.");
+    installIndependentRuntimeFixture(test, plugin);
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context), test.stderr.join("")).toBe(0);
+
+    const overlay = join(test.home, ".atlas", "core", "plugins", plugin.pluginId, "active", "compose.yml");
+    expect(existsSync(overlay)).toBe(true);
+    rmSync(overlay);
+    test.runner.calls.length = 0;
+
+    const loop = vi.spyOn(supervision, "runSupervisor").mockImplementation(async (options) => {
+      await options.tick();
+    });
+    try {
+      expect(await runCLI(["supervise"], test.context), test.stderr.join("")).toBe(0);
+    } finally {
+      loop.mockRestore();
+    }
+
+    expect(existsSync(overlay)).toBe(true);
+    expect(test.runner.calls.map(composeCommand)).toContainEqual(
+      expect.arrayContaining(["ps", "--all", "--format", "json"])
+    );
+  });
+
+  it("lets a stopped supervisor clean up with a missing overlay and image", async () => {
+    const test = runtime();
+    await installIndependentUpdateFixtures(test);
+    const plugin = INDEPENDENT_UPDATE_FIXTURES[0];
+    if (!plugin) throw new Error("Independent Plugin fixture is missing.");
+    installIndependentRuntimeFixture(test, plugin);
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context), test.stderr.join("")).toBe(0);
+
+    const config = join(test.home, ".atlas", "core");
+    rmSync(join(config, "plugins", plugin.pluginId, "active", "compose.yml"));
+    writeFileSync(join(config, "run-intent.json"), `${JSON.stringify({ schema: 1, desiredRunning: false })}\n`, {
+      mode: 0o600
+    });
+    test.runner.missingImage = plugin.image;
+    test.runner.calls.length = 0;
+
+    const loop = vi.spyOn(supervision, "runSupervisor").mockImplementation(async (options) => {
+      await options.tick();
+    });
+    try {
+      expect(await runCLI(["supervise"], test.context), test.stderr.join("")).toBe(0);
+    } finally {
+      loop.mockRestore();
+    }
+
+    expect(test.runner.calls.map(composeCommand)).toContainEqual(
+      expect.arrayContaining(["ps", "--all", "--format", "json"])
+    );
+    expect(test.runner.calls.map(composeCommand)).toContainEqual(expect.arrayContaining(["down", "--remove-orphans"]));
+  });
+
+  it.each([false, true])(
+    "stops containers with a missing disposable Plugin overlay (pending recovery: %s)",
+    async (pending) => {
+      const test = runtime();
+      await installIndependentUpdateFixtures(test);
+      const plugin = INDEPENDENT_UPDATE_FIXTURES[0];
+      if (!plugin) throw new Error("Independent Plugin fixture is missing.");
+      installIndependentRuntimeFixture(test, plugin);
+      expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
+      const config = join(test.home, ".atlas", "core");
+      const missingOverlay = join(config, "plugins", plugin.pluginId, "active", "compose.yml");
+      rmSync(missingOverlay);
+      if (pending) {
+        const transaction = DeploymentTransactionStore.begin(config, {
+          operation: "core-update",
+          dockerEngineId: TEST_ENGINE_ID,
+          previousRunning: true,
+          desiredRunning: true,
+          recovery: { targetCoreImage: TEST_IMAGE }
+        });
+        transaction.stage("state.json", readFileSync(join(config, "state.json")));
+        transaction.advance("core-started");
+      }
+      test.runner.calls.length = 0;
+      expect(await runCLI(pending ? ["start", "--manual"] : ["stop"], test.context), test.stderr.join("")).toBe(
+        pending ? 1 : 0
+      );
+      const down = test.runner.calls.find((call) => composeCommand(call)[0] === "down");
+      expect(down).toBeDefined();
+      expect(down?.args).not.toContain(missingOverlay);
+      expect(down && composeCommand(down)).toEqual(["down", "--remove-orphans"]);
+      expect(test.runner.existingVolumes).toContain(POSTGRES_VOLUME);
+      expect(test.runner.existingVolumes).toContain(MINIO_VOLUME);
+      if (pending) {
+        expect(test.stderr.join("")).toContain("Core recovery is pending");
+        expect(DeploymentTransactionStore.open(config).journal.phase).toBe("core-started");
+      }
+    }
+  );
+
   it("handles SIGINT for direct Plugin changes and exits after rollback", async () => {
     const test = runtime();
     markInitialized(test);
@@ -3189,6 +4425,172 @@ describe("atlas-core CLI", () => {
     }
   });
 
+  it("restores an interrupted Plugin runtime transaction before rebuilding its private Compose services", async () => {
+    const test = runtime();
+    await installIndependentUpdateFixtures(test);
+    const plugin = INDEPENDENT_UPDATE_FIXTURES[0];
+    if (!plugin) throw new Error("Independent Plugin fixture is missing.");
+    const config = join(test.home, ".atlas", "core");
+    const statePath = join(config, "state.json");
+    const state = JSON.parse(readFileSync(statePath, "utf8"));
+    writeFileSync(statePath, `${JSON.stringify({ ...state, enabledPlugins: [plugin.pluginId] })}\n`, { mode: 0o600 });
+    installIndependentRuntimeFixture(test, plugin);
+    expect(await runCLI(["start", "--manual"], test.context)).toBe(0);
+
+    const activeCompose = join(config, "plugins", plugin.pluginId, "active", "compose.yml");
+    const transaction = DeploymentTransactionStore.begin(config, {
+      operation: "plugin-disable",
+      dockerEngineId: TEST_ENGINE_ID,
+      previousRunning: true,
+      desiredRunning: true,
+      now: new Date("2026-09-10T12:00:00.000Z")
+    });
+    transaction.snapshotTree(`plugins/${plugin.pluginId}`);
+    transaction.remove(`plugins/${plugin.pluginId}/active/compose.yml`);
+    transaction.advance("runtime-changing");
+    expect(existsSync(activeCompose)).toBe(false);
+
+    let composeSawRestoredFiles = false;
+    test.runner.calls.length = 0;
+    test.runner.onRun = (call) => {
+      const compose = composeCommand(call);
+      if (compose[0] !== "up" || !compose.includes("--no-deps")) return;
+      composeSawRestoredFiles = existsSync(activeCompose);
+      expect(compose).not.toContain("postgres");
+      expect(compose).not.toContain("minio");
+      expect(compose).toContain("api");
+      expect(compose).toContain("source-gateway");
+      expect(compose).toContain("atlas-plugin-alpha-fixture");
+    };
+
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
+    expect(composeSawRestoredFiles).toBe(true);
+    expect(existsSync(join(config, "transaction"))).toBe(false);
+    expect(JSON.parse(readFileSync(statePath, "utf8"))).toMatchObject({ enabledPlugins: [plugin.pluginId] });
+  });
+
+  it("uses the candidate managed key while verifying a running SDK Plugin rotation", async () => {
+    const test = runtime();
+    const fixture = INDEPENDENT_UPDATE_FIXTURES[0];
+    if (!fixture) throw new Error("Independent Plugin fixture is missing.");
+    const plugin = { ...fixture, atlasProtocolRevision: PACKAGE_PLUGIN_CONTRACTS.atlasProtocolRevision };
+    await installIndependentUpdateFixtures(test, [plugin]);
+    installIndependentRuntimeFixture(test, plugin);
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context), test.stderr.join("")).toBe(0);
+
+    const config = join(test.home, ".atlas", "core");
+    const oldKeyLine = readFileSync(join(config, ".env"), "utf8")
+      .split(/\r?\n/u)
+      .find((line) => line.startsWith("ATLAS_PLUGIN_API_KEY="));
+    const oldKey = oldKeyLine?.slice("ATLAS_PLUGIN_API_KEY=".length);
+    if (!oldKey) throw new Error("Managed Plugin key fixture is missing.");
+    const discoveryKeys: string[] = [];
+    const previousFetch = test.context.fetch;
+    if (!previousFetch) throw new Error("Test runtime is missing its fetch adapter.");
+    let oldKeySeen = false;
+    const realDateNow = Date.now.bind(Date);
+    const dateNow = vi
+      .spyOn(Date, "now")
+      .mockImplementation(() => (oldKeySeen ? realDateNow() + 60_000 : realDateNow()));
+    test.context.fetch = async (input, init) => {
+      const url = String(input);
+      if (url === "http://127.0.0.1:8000/protocol/revision") return new Response("");
+      if (url === "http://127.0.0.1:8000/plugins") {
+        const key = new Headers(init?.headers).get("x-api-key");
+        if (key) discoveryKeys.push(key);
+        if (key === oldKey) {
+          oldKeySeen = true;
+          return new Response("expired", { status: 401 });
+        }
+      }
+      return await previousFetch(input, init);
+    };
+
+    try {
+      expect(await runCLI(["plugins", "rotate-core-key"], test.context), test.stderr.join("")).toBe(0);
+    } finally {
+      dateNow.mockRestore();
+    }
+
+    expect(discoveryKeys).toHaveLength(1);
+    expect(discoveryKeys[0]).not.toBe(oldKey);
+    expect(discoveryKeys[0]).toMatch(/managed-secret-2$/u);
+  });
+
+  it.each([false, true])(
+    "recovers an unavailable Plugin without relaxing image identity (wrong image: %s)",
+    async (wrongImage) => {
+      const test = runtime();
+      await installIndependentUpdateFixtures(test);
+      const plugin = INDEPENDENT_UPDATE_FIXTURES[0];
+      if (!plugin) throw new Error("Independent Plugin fixture is missing.");
+      const config = join(test.home, ".atlas", "core");
+      const statePath = join(config, "state.json");
+      const state = JSON.parse(readFileSync(statePath, "utf8"));
+      writeFileSync(statePath, `${JSON.stringify({ ...state, enabledPlugins: [plugin.pluginId] })}\n`, { mode: 0o600 });
+      installIndependentRuntimeFixture(test, plugin);
+      expect(await runCLI(["start", "--manual"], test.context)).toBe(0);
+      const transaction = DeploymentTransactionStore.begin(config, {
+        operation: "plugin-disable",
+        dockerEngineId: TEST_ENGINE_ID,
+        previousRunning: true,
+        desiredRunning: true,
+        recovery: { priorPluginHealthy: false }
+      });
+      transaction.snapshotTree(`plugins/${plugin.pluginId}`);
+      transaction.remove(`plugins/${plugin.pluginId}/active/compose.yml`);
+      transaction.advance("runtime-changing");
+      test.runner.runtimeProbeOutput = "unavailable";
+      test.runner.wrongPluginContainerImage = wrongImage;
+      test.runner.calls.length = 0;
+
+      expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context), test.stderr.join("")).toBe(
+        wrongImage ? 1 : 0
+      );
+      expect(existsSync(join(config, "transaction"))).toBe(wrongImage);
+      expect(test.runner.calls.some((call) => call.args[0] === "exec" && call.args.includes("node"))).toBe(false);
+      const starts = test.runner.calls.map(composeCommand).filter((args) => args[0] === "up");
+      expect(starts.some((args) => args.includes("api") && args.includes("--wait"))).toBe(true);
+      expect(starts.some((args) => args.includes("atlas-plugin-alpha-fixture") && !args.includes("--wait"))).toBe(true);
+    }
+  );
+
+  it("retains a rollback-complete Plugin journal until runtime restoration succeeds", async () => {
+    const test = runtime();
+    await installIndependentUpdateFixtures(test);
+    const plugin = INDEPENDENT_UPDATE_FIXTURES[0];
+    if (!plugin) throw new Error("Independent Plugin fixture is missing.");
+    const config = join(test.home, ".atlas", "core");
+    const statePath = join(config, "state.json");
+    const state = JSON.parse(readFileSync(statePath, "utf8"));
+    writeFileSync(statePath, `${JSON.stringify({ ...state, enabledPlugins: [plugin.pluginId] })}\n`, { mode: 0o600 });
+    installIndependentRuntimeFixture(test, plugin);
+    expect(await runCLI(["start", "--manual"], test.context)).toBe(0);
+
+    const activeCompose = join(config, "plugins", plugin.pluginId, "active", "compose.yml");
+    const transaction = DeploymentTransactionStore.begin(config, {
+      operation: "plugin-disable",
+      dockerEngineId: TEST_ENGINE_ID,
+      previousRunning: true,
+      desiredRunning: true,
+      now: new Date("2026-09-10T12:00:00.000Z")
+    });
+    transaction.snapshotTree(`plugins/${plugin.pluginId}`);
+    transaction.remove(`plugins/${plugin.pluginId}/active/compose.yml`);
+    transaction.advance("runtime-changing");
+    transaction.rollback();
+    expect(existsSync(activeCompose)).toBe(true);
+    expect(DeploymentTransactionStore.open(config).journal.phase).toBe("rollback-complete");
+
+    test.runner.failComposeUp = true;
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(1);
+    expect(DeploymentTransactionStore.open(config).journal.phase).toBe("rollback-complete");
+
+    test.runner.failComposeUp = false;
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
+    expect(existsSync(join(config, "transaction"))).toBe(false);
+  });
+
   it("does not reclaim an interrupted disable while its fenced Docker process group is alive", async () => {
     const test = runtime();
     markInitialized(test);
@@ -3216,6 +4618,48 @@ describe("atlas-core CLI", () => {
 
     test.stderr.length = 0;
     expect(await runCLI(["stop"], test.context)).toBe(0);
+    expect(test.runner.existingNetworks.has(MUTATION_LOCK_NETWORK)).toBe(false);
+  });
+
+  it("does not reclaim an ordinary mutation while its fenced Docker process group is alive", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const config = join(test.home, ".atlas", "core");
+    const lockPath = join(config, ".mutation.lock");
+    const orphan = spawn(process.execPath, ["-e", "setTimeout(() => {}, 30_000)"], {
+      detached: true,
+      stdio: "ignore"
+    });
+    if (orphan.pid === undefined) throw new Error("test process group did not start");
+    const processGroupId = orphan.pid;
+    writeFileSync(
+      lockPath,
+      `${JSON.stringify({
+        schema: 1,
+        id: "f".repeat(32),
+        pid: 2_147_483_647,
+        operation: "deployment",
+        dockerEngineId: TEST_ENGINE_ID,
+        bootIdentity: "stale-boot",
+        processStartIdentity: "stale-start",
+        processGroupId
+      })}\n`,
+      { mode: 0o600 }
+    );
+
+    try {
+      await vi.waitFor(() => expect(() => process.kill(-processGroupId, 0)).not.toThrow());
+      expect(await runCLI(["stop"], test.context)).toBe(1);
+      expect(test.stderr.join("")).toContain("deployment mutation is locked");
+      expect(test.runner.calls.some((call) => call.args[0] === "network" && call.args[1] === "create")).toBe(false);
+    } finally {
+      process.kill(-processGroupId, "SIGKILL");
+      await new Promise<void>((resolveClose) => orphan.once("close", () => resolveClose()));
+    }
+
+    test.stderr.length = 0;
+    expect(await runCLI(["stop"], test.context)).toBe(0);
+    expect(existsSync(lockPath)).toBe(false);
     expect(test.runner.existingNetworks.has(MUTATION_LOCK_NETWORK)).toBe(false);
   });
 
@@ -3330,7 +4774,7 @@ describe("atlas-core CLI", () => {
     expect(test.runner.calls.some((call) => composeCommand(call)[0] === "rm")).toBe(false);
   });
 
-  it.each(["start", "restart"] as const)("removes a pending disabled Plugin during %s", async (command) => {
+  it.each(["start", "restart"] as const)("blocks legacy schema-3 %s until an explicit Core update", async (command) => {
     const test = runtime();
     markInitialized(test);
     const plugin = installTestPluginCatalog(test);
@@ -3338,12 +4782,9 @@ describe("atlas-core CLI", () => {
     simulateInterruptedPluginDisable(test, plugin, true);
     test.runner.calls.length = 0;
 
-    expect(await runCLI([command], test.context)).toBe(0);
-
-    expect(test.runner.serviceStates.some((service) => service.Service === plugin.service)).toBe(false);
-    expect(
-      test.runner.calls.map(composeCommand).some((args) => args[0] === "up" && args.includes("--remove-orphans"))
-    ).toBe(true);
+    expect(await runCLI([command, "--manual"], test.context)).toBe(1);
+    expect(test.stderr.join("")).toContain("explicit Core update");
+    expect(test.runner.calls.map(composeCommand).some((args) => args[0] === "up")).toBe(false);
   });
 
   it("stops without starting after disable convergence persistently fails", async () => {
@@ -3452,6 +4893,30 @@ describe("atlas-core CLI", () => {
     expect(test.runner.existingNetworks.has(MUTATION_LOCK_NETWORK)).toBe(false);
   });
 
+  it("fences an ordinary mutation before acquiring its Docker lock", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const config = join(test.home, ".atlas", "core");
+    const lockPath = join(config, ".mutation.lock");
+    let supervisedCreate = false;
+    test.runner.onRun = (call) => {
+      if (call.args[0] !== "network" || call.args[1] !== "create") return;
+      expect(call.processGroup).toBeDefined();
+      expect(JSON.parse(readFileSync(lockPath, "utf8"))).toMatchObject({ operation: "deployment" });
+      const processGroupId = 123_461;
+      call.processGroup?.started(processGroupId);
+      expect(JSON.parse(readFileSync(lockPath, "utf8"))).toMatchObject({ processGroupId });
+      call.processGroup?.finished(processGroupId);
+      supervisedCreate = true;
+    };
+
+    expect(await runCLI(["stop"], test.context)).toBe(0);
+
+    expect(supervisedCreate).toBe(true);
+    expect(existsSync(lockPath)).toBe(false);
+    expect(test.runner.existingNetworks.has(MUTATION_LOCK_NETWORK)).toBe(false);
+  });
+
   it("fences a fresh Plugin disable before acquiring its Docker lock", async () => {
     const test = runtime();
     markInitialized(test);
@@ -3505,7 +4970,7 @@ describe("atlas-core CLI", () => {
     expect(existsSync(join(config, "plugins", plugin.pluginId, "disable.json"))).toBe(false);
   });
 
-  it("retargets a stopped disable intent before start can recreate Atlas Core", async () => {
+  it("blocks a legacy schema-3 start with a stopped disable intent", async () => {
     const test = runtime();
     markInitialized(test);
     const plugin = installTestPluginCatalog(test);
@@ -3530,14 +4995,10 @@ describe("atlas-core CLI", () => {
       retargetedBeforeAcquisition = true;
     };
 
-    expect(await runCLI(["start"], test.context)).toBe(0);
-
+    expect(await runCLI(["start", "--manual"], test.context)).toBe(1);
+    expect(test.stderr.join("")).toContain("explicit Core update");
     expect(retargetedBeforeAcquisition).toBe(true);
-    expect(existsSync(pluginRoot)).toBe(false);
-    test.runner.onRun = undefined;
-    test.runner.calls.length = 0;
-    expect(await runCLI(["plugins", "disable", plugin.pluginId], test.context)).toBe(0);
-    expect(test.runner.calls.map(composeCommand).some((args) => args[0] === "down")).toBe(false);
+    expect(existsSync(pluginRoot)).toBe(true);
   });
 
   it("reapplies a recovered stop target before generic disable convergence", async () => {
@@ -3752,7 +5213,7 @@ describe("atlas-core CLI", () => {
     expect(test.runner.existingNetworks.has(MUTATION_LOCK_NETWORK)).toBe(false);
   });
 
-  it("makes recovered stop fail closed before unsupervised Compose work", async () => {
+  it("supervises recovered stop before Compose work", async () => {
     const test = runtime();
     markInitialized(test);
     const config = join(test.home, ".atlas", "core");
@@ -3782,7 +5243,11 @@ describe("atlas-core CLI", () => {
       if (composeCommand(call)[0] !== "down") return;
       inspectedStopOwner = true;
       expect(JSON.parse(readFileSync(lockPath, "utf8"))).not.toHaveProperty("operation");
-      expect(call.processGroup).toBeUndefined();
+      expect(call.processGroup).toBeDefined();
+      call.processGroup?.started(123_460);
+      expect(JSON.parse(readFileSync(lockPath, "utf8"))).toMatchObject({ processGroupId: 123_460 });
+      call.processGroup?.finished(123_460);
+      expect(JSON.parse(readFileSync(lockPath, "utf8"))).not.toHaveProperty("processGroupId");
     };
 
     expect(await runCLI(["stop"], test.context)).toBe(0);
@@ -4091,6 +5556,146 @@ describe("atlas-core CLI", () => {
     installTestPluginCatalog(test);
     expect(await runCLI(["plugins", "enable", "not_cataloged"], test.context)).toBe(1);
     expect(await runCLI(["plugins", "enable", "spatial_fixture", "/tmp/bundle"], test.context)).toBe(2);
+  });
+
+  it.each([false, true])(
+    "checks the actual Plugin service ownership before removal (foreign project: %s)",
+    async (foreign) => {
+      const test = runtime();
+      await installIndependentUpdateFixtures(test);
+      const plugin = INDEPENDENT_UPDATE_FIXTURES[0];
+      if (!plugin) throw new Error("Independent Plugin fixture is missing.");
+      installIndependentRuntimeFixture(test, plugin);
+      expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context), test.stderr.join("")).toBe(0);
+      const container = `${PROJECT_NAME}_atlas-plugin-alpha-fixture`;
+      test.runner.existingContainers.add(container);
+      if (foreign) test.runner.mismatchedResources.add(container);
+      test.runner.calls.length = 0;
+      expect(await runCLI(["plugins", "disable", plugin.pluginId], test.context), test.stderr.join("")).toBe(
+        foreign ? 1 : 0
+      );
+      expect(
+        test.runner.calls.some(
+          (call) => call.args[0] === "container" && call.args[1] === "rm" && call.args.includes(container)
+        )
+      ).toBe(!foreign);
+      expect(test.runner.existingContainers.has(container)).toBe(foreign);
+    }
+  );
+
+  it("shows the signed revocation reason for an installed Plugin", async () => {
+    const test = runtime();
+    const { catalogBytes, privateKey, catalogURL } = await installIndependentUpdateFixtures(test);
+    const catalog = JSON.parse(new TextDecoder().decode(catalogBytes));
+    catalog.sequence = 2;
+    catalog.issued_at = "2026-08-28T01:00:00Z";
+    catalog.previous_catalog_sha256 = `sha256:${createHash("sha256").update(catalogBytes).digest("hex")}`;
+    const selected = catalog.plugins[0].releases[0];
+    selected.revoked = true;
+    selected.revocation_reason = "Credential exposure in this release";
+    const bytes = Buffer.from(JSON.stringify(catalog));
+    const signature = JSON.stringify({
+      algorithm: "ed25519",
+      key_id: "test-key",
+      signature: sign(null, bytes, privateKey).toString("base64")
+    });
+    const fetch = test.context.fetch;
+    if (!fetch) throw new Error("Missing test fetch");
+    test.context.fetch = async (input, init) =>
+      String(input) === catalogURL
+        ? new Response(bytes)
+        : String(input) === `${catalogURL}.sig`
+          ? new Response(signature)
+          : await fetch(input, init);
+    expect(await runCLI(["plugins", "refresh"], test.context), test.stderr.join("")).toBe(0);
+    expect(await runCLI(["plugins", "status", "alpha_fixture"], test.context), test.stderr.join("")).toBe(0);
+    expect(test.stdout.join("")).toContain("REVOKED: Credential exposure in this release");
+    const pluginTrust = test.context.pluginTrust;
+    if (!pluginTrust) throw new Error("Plugin trust is missing from the signed fixture.");
+    test.context.pluginTrust = { ...pluginTrust, minimumCheckpoint: { keyEpoch: 1, sequence: 3 } };
+    test.context.now = () => new Date("2026-09-21T00:00:00Z");
+    test.context.fetch = async () => new Response("offline", { status: 503 });
+    test.stdout.length = 0;
+    expect(await runCLI(["plugins", "status", "alpha_fixture"], test.context)).toBe(0);
+    expect(test.stdout.join("")).toContain("REVOKED: Credential exposure in this release");
+    expect(test.stdout.join("")).toContain("Plugin catalog expired");
+    expect(test.stdout.join("")).toContain("Plugin catalog is below the CLI trust checkpoint");
+    expect(await runCLI(["plugins", "enable", "alpha_fixture"], test.context)).toBe(1);
+    expect(test.stderr.join("")).toContain("checkpoint");
+  });
+
+  it("uses the newest non-revoked catalog release name for an uninstalled Plugin", async () => {
+    const test = runtime();
+    await markManagedInitialized(test, false);
+    const plugin = INDEPENDENT_UPDATE_FIXTURES[0];
+    if (!plugin) throw new Error("Independent Plugin fixture is missing.");
+    const { catalogBytes, privateKey, catalogURL } = installSignedIndependentCatalog(test, [plugin]);
+    const catalog = JSON.parse(new TextDecoder().decode(catalogBytes));
+    const releases = catalog.plugins[0].releases;
+    releases[0].display_name = "Old Revoked Name";
+    releases[0].revoked = true;
+    releases[0].revocation_reason = "withdrawn";
+    releases[1].display_name = "Current Name";
+    const bytes = Buffer.from(JSON.stringify(catalog));
+    const signature = JSON.stringify({
+      algorithm: "ed25519",
+      key_id: "test-key",
+      signature: sign(null, bytes, privateKey).toString("base64")
+    });
+    const fetch = test.context.fetch;
+    if (!fetch) throw new Error("Missing test fetch");
+    test.context.fetch = async (input, init) =>
+      String(input) === catalogURL
+        ? new Response(bytes)
+        : String(input) === `${catalogURL}.sig`
+          ? new Response(signature)
+          : await fetch(input, init);
+
+    expect(await runCLI(["plugins", "refresh"], test.context), test.stderr.join("")).toBe(0);
+    test.stdout.length = 0;
+    expect(await runCLI(["plugins", "status", plugin.pluginId], test.context), test.stderr.join("")).toBe(0);
+    expect(test.stdout.join("")).toContain(`${plugin.pluginId}\tCurrent Name\tdisabled`);
+    expect(test.stdout.join("")).not.toContain("Old Revoked Name");
+  });
+
+  it("rejects unknown independent Plugin status IDs", async () => {
+    const test = runtime();
+    await installIndependentUpdateFixtures(test);
+    expect(await runCLI(["plugins", "status", "not_cataloged"], test.context)).toBe(1);
+    expect(test.stderr.join("")).toContain("Unknown Plugin not_cataloged");
+    expect(await runCLI(["plugins", "status", "alpha_fixture"], test.context)).toBe(0);
+  });
+
+  it("updates all installed independent Plugins in sorted order, including disabled Plugins", async () => {
+    const test = runtime();
+    await installIndependentUpdateFixtures(test);
+
+    expect(await runCLI(["plugins", "update", "all"], test.context)).toBe(0);
+
+    const output = test.stdout.join("");
+    expect(output).toContain("Alpha Fixture updated from 0.1.0 to 0.2.0.");
+    expect(output).toContain("Zeta Fixture updated from 0.1.0 to 0.2.0.");
+    expect(output.indexOf("Alpha Fixture")).toBeLessThan(output.indexOf("Zeta Fixture"));
+    expect(installedPluginVersion(test, "alpha_fixture")).toBe("0.2.0");
+    expect(installedPluginVersion(test, "zeta_fixture")).toBe("0.2.0");
+    expect(JSON.parse(readFileSync(join(test.home, ".atlas", "core", "state.json"), "utf8"))).toMatchObject({
+      enabledPlugins: []
+    });
+  });
+
+  it("stops update-all after the first failed Plugin and retains prior updates", async () => {
+    const test = runtime();
+    await installIndependentUpdateFixtures(test);
+    test.runner.failDockerPullImage = TEST_ZETA_PLUGIN_IMAGE;
+
+    expect(await runCLI(["plugins", "update", "all"], test.context)).toBe(1);
+
+    expect(test.stdout.join("")).toContain("Alpha Fixture updated from 0.1.0 to 0.2.0.");
+    expect(test.stdout.join("")).not.toContain("Zeta Fixture updated");
+    expect(test.stderr.join("")).toContain("Plugin update stopped at zeta_fixture");
+    expect(test.stderr.join("")).toContain("Already updated: alpha_fixture");
+    expect(installedPluginVersion(test, "alpha_fixture")).toBe("0.2.0");
+    expect(installedPluginVersion(test, "zeta_fixture")).toBe("0.1.0");
   });
 
   it("resolves a relative ATLAS_CORE_HOME before invoking Compose", async () => {

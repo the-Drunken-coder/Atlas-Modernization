@@ -14,7 +14,11 @@
     }
   ],
   "secret_headers": {},
-  "egress": {},
+  "egress": {
+    "allow_private": false,
+    "allow_loopback": false,
+    "allow_link_local": false
+  },
   "limits": {
     "timeout_ms": 15000,
     "max_request_bytes": 65536,

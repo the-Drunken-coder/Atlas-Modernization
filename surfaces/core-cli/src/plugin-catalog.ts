@@ -1,5 +1,3 @@
-import { PACKAGE_PLUGIN_CATALOG } from "./plugin-catalog.generated.js";
-
 export type PluginCatalogEntry = {
   pluginId: string;
   displayName: string;
@@ -13,4 +11,5 @@ export type PluginCatalogEntry = {
   };
 };
 
-export const PLUGIN_CATALOG: readonly PluginCatalogEntry[] = PACKAGE_PLUGIN_CATALOG;
+// Legacy type surface retained while independent catalog loading is migrated into PluginCatalogStore.
+export const PLUGIN_CATALOG: readonly PluginCatalogEntry[] = [];

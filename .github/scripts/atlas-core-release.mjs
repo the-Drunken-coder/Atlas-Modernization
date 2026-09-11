@@ -78,7 +78,6 @@ function preparePackage(version, path) {
   validateVersion(packageJSON.version);
   if (packageJSON.version !== version) {
     packageJSON.atlasCoreImage = null;
-    packageJSON.atlasPluginImages = {};
   }
   writeFileSync(path, `${JSON.stringify(packageJSON, null, 2)}\n`);
 }

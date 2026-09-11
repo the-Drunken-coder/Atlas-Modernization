@@ -221,11 +221,7 @@ jobs:
           npm run plugins:verify
           npm run plugins:check-seepage
           npm run plugins:check
-          npm run plugins:catalog
-          git diff --exit-code -- \
-            surfaces/core-cli/src/plugin-catalog.generated.ts \
-            surfaces/core-cli/assets/plugin-catalog.json \
-            surfaces/core-cli/assets/plugins
+          npm run plugins:release:test
 
   atlas-core-package:
     name: atlas-core-package
@@ -313,56 +309,84 @@ jobs:
             .volumes.minio_data.name == $volume
           ' <<< "$init_config_json"
 
-      - name: Exercise packaged initialization against Docker
+      - name: Build the current Core candidate in an isolated registry
+        id: candidate
         shell: bash
         run: |
           set -euo pipefail
-          test_root="$(mktemp -d)"
-          config_dir="$test_root/core-home"
-          package_dir="$test_root/package"
-          consumer="$test_root/consumer"
-          engine_id="$(docker info --format '{{.ID}}')"
-          engine_key="$(printf '%s' "$engine_id" | sha256sum | cut -c1-64)"
-          project="atlas_core_production_${engine_key}"
-          minio_volume="${project}_minio_data"
-          postgres_volume="${project}_postgres_data"
-          cleanup() {
-            docker container rm --force \
-              "${project}_api" \
-              "${project}_source_gateway" \
-              "${project}_postgres" \
-              "${project}_minio" \
-              "${project}_minio_init" >/dev/null 2>&1 || true
-            docker network rm "${project}_default" atlas_core_production_mutation_lock >/dev/null 2>&1 || true
-            docker volume rm --force "$minio_volume" "$postgres_volume" >/dev/null 2>&1 || true
-            rm -rf "$test_root"
-          }
-          trap cleanup EXIT
-          if docker volume inspect "$minio_volume" >/dev/null 2>&1 || \
-             docker volume inspect "$postgres_volume" >/dev/null 2>&1; then
-            echo "The isolated runner already has an Atlas Core test volume." >&2
-            exit 1
-          fi
+          registry_root="$RUNNER_TEMP/atlas-core-ci-registry"
+          registry_container="atlas-core-ci-registry"
+          mkdir -p "$registry_root"
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+            -keyout "$registry_root/registry.key" \
+            -out "$registry_root/registry.crt" \
+            -subj "/CN=localhost" \
+            -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
+          sudo install -d -m 0755 /etc/docker/certs.d/localhost:5000
+          sudo install -m 0644 "$registry_root/registry.crt" /etc/docker/certs.d/localhost:5000/ca.crt
+          sudo install -m 0644 "$registry_root/registry.crt" /usr/local/share/ca-certificates/atlas-core-ci.crt
+          sudo update-ca-certificates >/dev/null
+          docker run --detach --name "$registry_container" \
+            --publish 127.0.0.1:5000:5000 \
+            --volume "$registry_root:/certs:ro" \
+            --env REGISTRY_HTTP_ADDR=0.0.0.0:5000 \
+            --env REGISTRY_HTTP_TLS_CERTIFICATE=/certs/registry.crt \
+            --env REGISTRY_HTTP_TLS_KEY=/certs/registry.key \
+            registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373
+          for attempt in {1..30}; do
+            if curl --fail --silent --show-error --cacert "$registry_root/registry.crt" https://localhost:5000/v2/ >/dev/null; then
+              break
+            fi
+            if [ "$attempt" -eq 30 ]; then
+              echo "The isolated Core registry did not become ready." >&2
+              exit 1
+            fi
+            sleep 1
+          done
+          image_tag="localhost:5000/atlas-core:ci-${GITHUB_SHA}"
+          docker build --platform linux/amd64 --target production \
+            --tag "$image_tag" \
+            --file services/core/docker/Dockerfile .
+          docker push "$image_tag"
+          digest="$(docker image inspect "$image_tag" --format '{{json .RepoDigests}}' | jq -er '.[] | select(startswith("localhost:5000/atlas-core@")) | split("@")[1] | select(test("^sha256:[0-9a-f]{64}$"))')"
+          echo "image_reference=localhost:5000/atlas-core@$digest" >> "$GITHUB_OUTPUT"
 
-          mkdir -p "$package_dir" "$consumer"
-          pack_json="$(npm pack --workspace atlas-core --pack-destination "$package_dir" --json --silent)"
-          filename="$(jq -er '.[0].filename' <<< "$pack_json")"
-          (
-            cd "$consumer"
-            npm init --yes --silent >/dev/null
-            npm install --ignore-scripts "$package_dir/$filename" --silent
-          )
-          ATLAS_CORE_HOME="$config_dir" "$consumer/node_modules/.bin/atlas-core" init
-          jq -e '.phase == "ready" and .dockerEngineId != ""' "$config_dir/state.json"
-          docker volume inspect "$minio_volume" --format '{{json .Labels}}' |
-            jq -e --arg project "$project" --arg engine "$engine_id" \
-              '."com.docker.compose.project" == $project and
-               ."com.docker.compose.volume" == "minio_data" and
-               ."io.atlas.core.engine" == $engine'
-          if docker volume inspect "$postgres_volume" >/dev/null 2>&1; then
-            echo "atlas-core init created PostgreSQL storage before the first start." >&2
-            exit 1
-          fi
+      - name: Exercise the current Core package initialization against Docker
+        shell: bash
+        env:
+          IMAGE_REFERENCE: ${{ steps.candidate.outputs.image_reference }}
+          ATLAS_CORE_ACCEPTANCE_DISPOSABLE: "1"
+        run: |
+          set -euo pipefail
+          test -n "$IMAGE_REFERENCE"
+          node --input-type=module - "$IMAGE_REFERENCE" <<'NODE'
+          import { readFileSync, writeFileSync } from "node:fs";
+          const image = process.argv[2];
+          const packagePath = "surfaces/core-cli/package.json";
+          const packageJSON = JSON.parse(readFileSync(packagePath, "utf8"));
+          packageJSON.atlasCoreImage = image;
+          writeFileSync(packagePath, `${JSON.stringify(packageJSON, null, 2)}\n`);
+          const metadataPath = "surfaces/core-cli/dist/package-metadata.js";
+          const metadata = readFileSync(metadataPath, "utf8");
+          const updated = metadata.replace(/ghcr\.io\/the-drunken-coder\/atlas-core@sha256:[0-9a-f]{64}/u, image);
+          if (updated === metadata) throw new Error("Built Core package metadata did not contain its image pin.");
+          writeFileSync(metadataPath, updated);
+          NODE
+          package_dir="$RUNNER_TEMP/atlas-core-ci-package"
+          mkdir -p "$package_dir"
+          pack_json="$(npm pack --workspace atlas-core --ignore-scripts --pack-destination "$package_dir" --json --silent)"
+          package_path="$package_dir/$(jq -er '.[0].filename' <<< "$pack_json")"
+          version="$(node -p "require('./surfaces/core-cli/package.json').version")"
+          bash .github/scripts/test-atlas-core-package.sh "$package_path" "$version" "$IMAGE_REFERENCE"
+
+      - name: Clean up the isolated Core registry
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set +e
+          docker rm --force atlas-core-ci-registry >/dev/null 2>&1
+          sudo rm -f /etc/docker/certs.d/localhost:5000/ca.crt /usr/local/share/ca-certificates/atlas-core-ci.crt
+          sudo update-ca-certificates >/dev/null 2>&1
 
   meshtastic-link:
     name: meshtastic-link

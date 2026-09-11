@@ -119,7 +119,7 @@ func TestGatewayPreservesBinaryTuplesAndEncodesDecodedURLOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := base64.StdEncoding.EncodeToString([]byte{0, 1, 255})
-	request := ConnectorRequest{
+	request := ConnectorRequest{PluginToSourceGatewayProtocolMajor: PluginToSourceGatewayProtocolMajor,
 		Method: "GET", Path: "/literal%/café", Query: []HeaderTuple{{"tag", "one"}, {"tag", "two"}, {"space", "a b"}},
 		Headers: []HeaderTuple{{"x-request", "a"}, {"x-request", "b"}}, BodyBase64: &body,
 	}
@@ -157,7 +157,7 @@ func TestGatewayHandlerMapsFailuresAndCachesSafeResponses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	input := `{"method":"GET","path":"/fixture","query":[["key","alpha"]],"headers":[],"body_base64":null}`
+	input := `{"plugin_to_source_gateway_protocol_major":1,"method":"GET","path":"/fixture","query":[["key","alpha"]],"headers":[],"body_base64":null}`
 	for range 2 {
 		request := httptest.NewRequest(http.MethodPost, "/connectors/reference/requests", strings.NewReader(input))
 		request.Header.Set("Content-Type", "application/json")
@@ -204,7 +204,7 @@ func TestGatewayDoesNotReplayResponsesWhenCacheIsDisabled(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := ConnectorRequest{Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{}}
+	request := ConnectorRequest{PluginToSourceGatewayProtocolMajor: PluginToSourceGatewayProtocolMajor, Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{}}
 	first, firstAttempts, firstCache, failure := gateway.execute(context.Background(), gateway.connectors["reference"], request)
 	if failure != nil || firstAttempts != 1 || firstCache != "bypass" {
 		t.Fatalf("first response=%+v attempts=%d cache=%s failure=%v", first, firstAttempts, firstCache, failure)
@@ -236,7 +236,7 @@ func TestGatewayDoesNotCacheAnExhaustedRetryStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := ConnectorRequest{Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{}}
+	request := ConnectorRequest{PluginToSourceGatewayProtocolMajor: PluginToSourceGatewayProtocolMajor, Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{}}
 	response, attempts, cacheResult, failure := gateway.execute(context.Background(), gateway.connectors["reference"], request)
 	if failure != nil || attempts != 2 || response.Status != http.StatusServiceUnavailable || cacheResult != "miss" {
 		t.Fatalf("unexpected exhausted retry response=%+v attempts=%d cache=%s failure=%v", response, attempts, cacheResult, failure)
@@ -268,7 +268,7 @@ func TestGatewayDoesNotCacheTransientHTTPResponsesWithoutRetries(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			request := ConnectorRequest{Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{}}
+			request := ConnectorRequest{PluginToSourceGatewayProtocolMajor: PluginToSourceGatewayProtocolMajor, Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{}}
 			first, _, cacheResult, failure := gateway.execute(context.Background(), gateway.connectors["reference"], request)
 			if failure != nil || first.Status != status || cacheResult != "miss" {
 				t.Fatalf("transient response=%+v cache=%s failure=%v", first, cacheResult, failure)
@@ -295,7 +295,7 @@ func TestGatewayBoundsRetriesCircuitAndCancellation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := ConnectorRequest{Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{}}
+	request := ConnectorRequest{PluginToSourceGatewayProtocolMajor: PluginToSourceGatewayProtocolMajor, Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{}}
 	_, attempts, _, failure := gateway.execute(context.Background(), gateway.connectors["reference"], request)
 	if failure == nil || failure.code != FailureUpstreamTimeout || attempts != 2 {
 		t.Fatalf("unexpected retry result attempts=%d failure=%v", attempts, failure)
@@ -335,7 +335,7 @@ func TestGatewayRecordsRetryFailureBeforeAdmissionTimeout(t *testing.T) {
 		t.Fatal(err)
 	}
 	connector := gateway.connectors["reference"]
-	request := ConnectorRequest{Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{}}
+	request := ConnectorRequest{PluginToSourceGatewayProtocolMajor: PluginToSourceGatewayProtocolMajor, Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{}}
 	_, attempts, _, failure := gateway.execute(context.Background(), connector, request)
 	if failure == nil || failure.code != FailureAdmissionTimeout || attempts != 1 || calls.Load() != 1 {
 		t.Fatalf("first attempts=%d calls=%d failure=%v", attempts, calls.Load(), failure)
@@ -374,7 +374,7 @@ func TestGatewayRecordsRetryFailureBeforeCircuitOpen(t *testing.T) {
 		failure  *gatewayError
 	}, 1)
 	go func() {
-		_, attempts, _, failure := gateway.execute(context.Background(), connector, ConnectorRequest{
+		_, attempts, _, failure := gateway.execute(context.Background(), connector, ConnectorRequest{PluginToSourceGatewayProtocolMajor: PluginToSourceGatewayProtocolMajor,
 			Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{},
 		})
 		result <- struct {
@@ -429,7 +429,7 @@ func TestReachableResponseClearsOlderPendingRetryFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	connector := gateway.connectors["reference"]
-	request := ConnectorRequest{Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{}}
+	request := ConnectorRequest{PluginToSourceGatewayProtocolMajor: PluginToSourceGatewayProtocolMajor, Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{}}
 	result := make(chan struct {
 		attempts int
 		failure  *gatewayError
@@ -482,7 +482,7 @@ func TestCanceledRequestAccountsForCompletedRetryResponse(t *testing.T) {
 		t.Fatal(err)
 	}
 	connector := gateway.connectors["reference"]
-	request := ConnectorRequest{Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{}}
+	request := ConnectorRequest{PluginToSourceGatewayProtocolMajor: PluginToSourceGatewayProtocolMajor, Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{}}
 	_, attempts, _, failure := gateway.execute(ctx, connector, request)
 	if failure == nil || failure.code != failureRequestCanceled || attempts != 2 || calls.Load() != 2 {
 		t.Fatalf("canceled attempts=%d calls=%d failure=%v", attempts, calls.Load(), failure)
@@ -520,7 +520,7 @@ func TestCanceledRequestAccountsForIndependentRetryFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	connector := gateway.connectors["reference"]
-	request := ConnectorRequest{Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{}}
+	request := ConnectorRequest{PluginToSourceGatewayProtocolMajor: PluginToSourceGatewayProtocolMajor, Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{}}
 	result := make(chan struct {
 		attempts int
 		failure  *gatewayError
@@ -571,7 +571,7 @@ func TestCustomCanceledRequestDoesNotOpenCircuit(t *testing.T) {
 		t.Fatal(err)
 	}
 	connector := gateway.connectors["reference"]
-	request := ConnectorRequest{Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{}}
+	request := ConnectorRequest{PluginToSourceGatewayProtocolMajor: PluginToSourceGatewayProtocolMajor, Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{}}
 	_, attempts, _, failure := gateway.execute(ctx, connector, request)
 	if failure == nil || failure.code != failureRequestCanceled || attempts != 1 || calls.Load() != 1 {
 		t.Fatalf("canceled attempts=%d calls=%d failure=%v", attempts, calls.Load(), failure)
@@ -603,7 +603,7 @@ func TestManualParentCancellationWithLaterDeadlineDoesNotOpenCircuit(t *testing.
 		t.Fatal(err)
 	}
 	connector := gateway.connectors["reference"]
-	request := ConnectorRequest{Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{}}
+	request := ConnectorRequest{PluginToSourceGatewayProtocolMajor: PluginToSourceGatewayProtocolMajor, Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{}}
 	parent, cancel := context.WithTimeout(context.Background(), time.Second)
 	result := make(chan *gatewayError, 1)
 	go func() {
@@ -1096,7 +1096,7 @@ func TestEarlierParentDeadlineDoesNotChargeConnectorBreakerBeforeDone(t *testing
 		t.Fatal(err)
 	}
 	connector := gateway.connectors["reference"]
-	request := ConnectorRequest{Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{}}
+	request := ConnectorRequest{PluginToSourceGatewayProtocolMajor: PluginToSourceGatewayProtocolMajor, Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{}}
 	_, attempts, _, failure := gateway.execute(parent, connector, request)
 	if failure == nil || failure.code != failureRequestCanceled || attempts != 1 || calls.Load() != 1 {
 		t.Fatalf("first attempts=%d calls=%d failure=%v", attempts, calls.Load(), failure)
@@ -1130,7 +1130,7 @@ func TestNilParentCauseDoesNotHideIndependentFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	connector := gateway.connectors["reference"]
-	request := ConnectorRequest{Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{}}
+	request := ConnectorRequest{PluginToSourceGatewayProtocolMajor: PluginToSourceGatewayProtocolMajor, Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{}}
 	_, attempts, _, failure := gateway.execute(parent, connector, request)
 	if failure == nil || failure.code != failureRequestCanceled || attempts != 1 || calls.Load() != 1 {
 		t.Fatalf("first attempts=%d calls=%d failure=%v", attempts, calls.Load(), failure)
@@ -1160,7 +1160,7 @@ func TestConnectorDeadlineWinsLaterParentDeadlineForCircuitAccounting(t *testing
 		t.Fatal(err)
 	}
 	connector := gateway.connectors["reference"]
-	request := ConnectorRequest{Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{}}
+	request := ConnectorRequest{PluginToSourceGatewayProtocolMajor: PluginToSourceGatewayProtocolMajor, Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{}}
 	_, attempts, _, failure := gateway.execute(parent, connector, request)
 	if failure == nil || failure.code != failureRequestCanceled || attempts != 1 || calls.Load() != 1 {
 		t.Fatalf("first attempts=%d calls=%d failure=%v", attempts, calls.Load(), failure)
@@ -1187,7 +1187,7 @@ func TestConnectorDeadlineAccountsForLateResponse(t *testing.T) {
 		t.Fatal(err)
 	}
 	connector := gateway.connectors["reference"]
-	request := ConnectorRequest{Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{}}
+	request := ConnectorRequest{PluginToSourceGatewayProtocolMajor: PluginToSourceGatewayProtocolMajor, Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{}}
 	_, attempts, _, failure := gateway.execute(context.Background(), connector, request)
 	if failure == nil || failure.code != FailureUpstreamTimeout || attempts != 1 || calls.Load() != 1 {
 		t.Fatalf("first attempts=%d calls=%d failure=%v", attempts, calls.Load(), failure)
@@ -1220,7 +1220,7 @@ func TestGatewayReturnsBufferedResponseWhenLocalCleanupCrossesDeadline(t *testin
 	response, attempts, _, failure := gateway.execute(
 		context.Background(),
 		gateway.connectors["reference"],
-		ConnectorRequest{Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{}},
+		ConnectorRequest{PluginToSourceGatewayProtocolMajor: PluginToSourceGatewayProtocolMajor, Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{}},
 	)
 	if failure != nil || attempts != 1 || response.Status != http.StatusOK || response.BodyBase64 != "b2s=" {
 		t.Fatalf("response=%+v attempts=%d failure=%v", response, attempts, failure)
@@ -1268,7 +1268,7 @@ func TestGatewayReturnsBufferedResponseWhenCompletionOrderingCrossesDeadline(t *
 		attempts int
 		failure  *gatewayError
 	}
-	request := ConnectorRequest{Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{}}
+	request := ConnectorRequest{PluginToSourceGatewayProtocolMajor: PluginToSourceGatewayProtocolMajor, Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{}}
 	resultCh := make(chan result, 1)
 	go func() {
 		response, attempts, _, failure := gateway.execute(context.Background(), connector, request)
@@ -1363,7 +1363,7 @@ func TestGatewayPreservesUpstreamFailureWhenCompletionOrderingCrossesDeadline(t 
 				_, attempts, _, failure := gateway.execute(
 					context.Background(),
 					connector,
-					ConnectorRequest{Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{}},
+					ConnectorRequest{PluginToSourceGatewayProtocolMajor: PluginToSourceGatewayProtocolMajor, Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{}},
 				)
 				resultCh <- result{attempts: attempts, failure: failure}
 			}()
@@ -1422,7 +1422,7 @@ func TestLateConnectorDeadlineCannotOverwriteNewerReachability(t *testing.T) {
 		t.Fatal(err)
 	}
 	connector := gateway.connectors["reference"]
-	request := ConnectorRequest{Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{}}
+	request := ConnectorRequest{PluginToSourceGatewayProtocolMajor: PluginToSourceGatewayProtocolMajor, Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{}}
 	type result struct {
 		attempts int
 		failure  *gatewayError
@@ -1541,7 +1541,7 @@ func TestQueuedRequestRechecksCircuitAfterConcurrencyWait(t *testing.T) {
 	connector.semaphore <- struct{}{}
 	result := make(chan *gatewayError, 1)
 	go func() {
-		_, _, _, failure := gateway.execute(context.Background(), connector, ConnectorRequest{
+		_, _, _, failure := gateway.execute(context.Background(), connector, ConnectorRequest{PluginToSourceGatewayProtocolMajor: PluginToSourceGatewayProtocolMajor,
 			Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{},
 		})
 		result <- failure
@@ -1589,7 +1589,7 @@ func TestQueuedRequestRechecksCircuitAfterRateWait(t *testing.T) {
 		failure  *gatewayError
 	}, 1)
 	go func() {
-		_, attempts, _, failure := gateway.execute(context.Background(), connector, ConnectorRequest{
+		_, attempts, _, failure := gateway.execute(context.Background(), connector, ConnectorRequest{PluginToSourceGatewayProtocolMajor: PluginToSourceGatewayProtocolMajor,
 			Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{},
 		})
 		result <- struct {
@@ -1643,7 +1643,7 @@ func TestCancellationWinsPostSemaphoreCircuitCheck(t *testing.T) {
 	}
 	resultCh := make(chan result, 1)
 	go func() {
-		_, attempts, _, failure := gateway.execute(ctx, connector, ConnectorRequest{
+		_, attempts, _, failure := gateway.execute(ctx, connector, ConnectorRequest{PluginToSourceGatewayProtocolMajor: PluginToSourceGatewayProtocolMajor,
 			Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{},
 		})
 		resultCh <- result{attempts: attempts, failure: failure}
@@ -1697,7 +1697,7 @@ func TestGatewayAdmissionTimeoutMakesNoUpstreamAttempt(t *testing.T) {
 			}
 			test.block(gateway.connectors["reference"])
 
-			_, attempts, _, failure := gateway.execute(context.Background(), gateway.connectors["reference"], ConnectorRequest{
+			_, attempts, _, failure := gateway.execute(context.Background(), gateway.connectors["reference"], ConnectorRequest{PluginToSourceGatewayProtocolMajor: PluginToSourceGatewayProtocolMajor,
 				Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{},
 			})
 			if failure == nil || failure.code != FailureAdmissionTimeout || attempts != 0 || calls.Load() != 0 {
@@ -1727,7 +1727,7 @@ func TestRateLimitCountsRetriesAndCanceledWaitersDoNotReserveCapacity(t *testing
 		t.Fatal(err)
 	}
 	connector := gateway.connectors["reference"]
-	_, attempts, _, failure := gateway.execute(context.Background(), connector, ConnectorRequest{
+	_, attempts, _, failure := gateway.execute(context.Background(), connector, ConnectorRequest{PluginToSourceGatewayProtocolMajor: PluginToSourceGatewayProtocolMajor,
 		Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{},
 	})
 	if failure != nil || attempts != 3 || !connector.nextRequest.Equal(now.Add(3*time.Millisecond)) {
@@ -1821,13 +1821,13 @@ func TestGatewayClassifiesBodyDeadlineAndDoesNotRetry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, attempts, _, failure := gateway.execute(context.Background(), gateway.connectors["reference"], ConnectorRequest{
+	_, attempts, _, failure := gateway.execute(context.Background(), gateway.connectors["reference"], ConnectorRequest{PluginToSourceGatewayProtocolMajor: PluginToSourceGatewayProtocolMajor,
 		Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{},
 	})
 	if failure == nil || failure.code != FailureUpstreamTimeout || attempts != 1 || calls.Load() != 1 {
 		t.Fatalf("attempts=%d calls=%d failure=%v", attempts, calls.Load(), failure)
 	}
-	_, attempts, _, failure = gateway.execute(context.Background(), gateway.connectors["reference"], ConnectorRequest{
+	_, attempts, _, failure = gateway.execute(context.Background(), gateway.connectors["reference"], ConnectorRequest{PluginToSourceGatewayProtocolMajor: PluginToSourceGatewayProtocolMajor,
 		Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{},
 	})
 	if failure == nil || failure.code != FailureCircuitOpen || attempts != 0 || calls.Load() != 1 {
@@ -1856,7 +1856,7 @@ func TestDefaultTransportPreservesCompressedBytesAndAddsNoImplicitHeaders(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	response, _, _, failure := gateway.execute(context.Background(), gateway.connectors["reference"], ConnectorRequest{
+	response, _, _, failure := gateway.execute(context.Background(), gateway.connectors["reference"], ConnectorRequest{PluginToSourceGatewayProtocolMajor: PluginToSourceGatewayProtocolMajor,
 		Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{},
 	})
 	if failure != nil {
@@ -1883,7 +1883,7 @@ func TestDefaultTransportPreservesAllowedUserAgent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _, _, failure := gateway.execute(context.Background(), gateway.connectors["reference"], ConnectorRequest{
+	_, _, _, failure := gateway.execute(context.Background(), gateway.connectors["reference"], ConnectorRequest{PluginToSourceGatewayProtocolMajor: PluginToSourceGatewayProtocolMajor,
 		Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{{"user-agent", "Atlas Plugin/1"}},
 	})
 	if failure != nil {
@@ -1896,9 +1896,11 @@ func TestDefaultTransportPreservesAllowedUserAgent(t *testing.T) {
 
 func TestWireRejectsUnknownFieldsMalformedTuplesAndPaths(t *testing.T) {
 	for _, input := range []string{
-		`{"method":"GET","path":"/","query":[],"headers":[],"body_base64":null,"extra":true}`,
-		`{"method":"GET","path":"/","query":[["one"]],"headers":[],"body_base64":null}`,
-		`{"method":"GET","path":"/","query":[],"headers":[],"body_base64":""}`,
+		`{"plugin_to_source_gateway_protocol_major":1,"method":"GET","path":"/","query":[],"headers":[],"body_base64":null,"extra":true}`,
+		`{"plugin_to_source_gateway_protocol_major":1,"method":"GET","path":"/","query":[["one"]],"headers":[],"body_base64":null}`,
+		`{"plugin_to_source_gateway_protocol_major":1,"method":"GET","path":"/","query":[],"headers":[],"body_base64":""}`,
+		`{"method":"GET","path":"/","query":[],"headers":[],"body_base64":null}`,
+		`{"plugin_to_source_gateway_protocol_major":2,"method":"GET","path":"/","query":[],"headers":[],"body_base64":null}`,
 	} {
 		if _, err := decodeRequest(strings.NewReader(input)); err == nil {
 			t.Fatalf("expected strict decode failure for %s", input)
@@ -1916,14 +1918,14 @@ func TestWireRejectsUnknownFieldsMalformedTuplesAndPaths(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _, _, failure := gateway.execute(context.Background(), gateway.connectors["reference"], ConnectorRequest{
+	_, _, _, failure := gateway.execute(context.Background(), gateway.connectors["reference"], ConnectorRequest{PluginToSourceGatewayProtocolMajor: PluginToSourceGatewayProtocolMajor,
 		Method: "get", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{},
 	})
 	if failure == nil || failure.code != FailureRequestRejected {
 		t.Fatalf("lowercase method = %v", failure)
 	}
 	nonCanonicalBase64 := "Zh=="
-	_, _, _, failure = gateway.execute(context.Background(), gateway.connectors["reference"], ConnectorRequest{
+	_, _, _, failure = gateway.execute(context.Background(), gateway.connectors["reference"], ConnectorRequest{PluginToSourceGatewayProtocolMajor: PluginToSourceGatewayProtocolMajor,
 		Method: "GET", Path: "/fixture", Query: []HeaderTuple{}, Headers: []HeaderTuple{}, BodyBase64: &nonCanonicalBase64,
 	})
 	if failure == nil || failure.code != FailureRequestRejected {
