@@ -89,4 +89,16 @@ The combined correctness and maintainability review identified three scoped chan
 
 The recovery changes preserve cancellation-resistant compensation and stopped run intent. Broader application decomposition is limited here to removing duplicated recovery ownership; legacy migration behavior remains documented and supported.
 
-The PR update also corrects the observed workflow quoting diagnostics, the Go test's redundant embedded-field selector, and the CI registry digest lookup that incorrectly used HTTP against its TLS-only registry. Final validation follows the rebase onto current `main`.
+The PR update also corrects the observed workflow quoting diagnostics, the Go test's redundant embedded-field selector, and the CI registry digest lookup that incorrectly used HTTP against its TLS-only registry. Rebased onto `331ac6c535eb0b37aad71e9db1a53d2659a9edb9`, preserving the retirement of FieldLink and its dependency update.
+
+Final validation:
+
+- Node 24 `npm run check --workspace atlas-core`: 399 tests in 17 files, formatting, lint, typecheck, build, and packed installation passed.
+- Core and Plugin release script tests: 42 passed.
+- Workflow lint passed with ShellCheck enabled and only the known unsupported `concurrency.queue` schema diagnostic excluded.
+- `go test ./internal/plugins`: passed.
+- `npm audit --audit-level=high`: zero vulnerabilities.
+- Ignore checks and `git diff --check`: passed.
+- Independent Plugin recovery recheck: no confirmed defects.
+
+These checks do not exercise the Docker acceptance job against a live registry locally; that remains a GitHub CI check. The earlier local-only status above records the preceding review pass. This follow-up is authorized for commit, push, and updating PR #339.
