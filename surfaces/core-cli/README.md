@@ -52,7 +52,7 @@ atlas-core init
 atlas-core start [--manual]
 atlas-core stop
 atlas-core restart
-atlas-core reset
+atlas-core reset [--manual]
 atlas-core config
 atlas-core update [cli|all]
 atlas-core status
@@ -198,6 +198,8 @@ volumes, and the credentials and state in that home before creating new credenti
 image pinned by the installed CLI package. Reset is for intentionally discarding an initialized deployment, not for
 updates. Use `atlas-core update all` to move an existing deployment to the newest release without deleting its data.
 
+Before deleting anything, reset requires active recovery supervision. Use `atlas-core reset --manual` to explicitly acknowledge running without automatic recovery, as with `start --manual`.
+
 Reset lists what it will delete and asks `Continue? [y/N]`. It proceeds only after `y` or `yes`. Reset verifies
 ownership labels and stops before deleting anything if another container uses either durable volume. It does not remove
 separately managed tunnels, reverse proxies, or their credentials.
@@ -233,3 +235,5 @@ different configuration directories cannot initialize the same deployment concur
 If `init` finds existing Atlas volumes without its matching configuration, it stops. Recover the credentials and paired
 storage unless you intend to discard the deployment. Use the confirmed `reset` command only when permanent deletion is
 the desired outcome.
+
+Image platform selection uses the local Docker daemon architecture, including when Node runs under Rosetta.

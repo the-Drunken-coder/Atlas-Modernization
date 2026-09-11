@@ -135,7 +135,7 @@ Usage:
   atlas-core start [--manual] [--repair-bundle] [--repair-images]
   atlas-core stop
   atlas-core restart
-  atlas-core reset
+  atlas-core reset [--manual]
   atlas-core config
   atlas-core update [cli|all]
   atlas-core plugins
@@ -220,7 +220,7 @@ type Command =
   | { kind: "plugins"; action: "install"; pluginId: string; version?: string }
   | { kind: "plugins"; action: "update" | "rollback" | "uninstall"; pluginId: string }
   | { kind: "plugins"; action: "enable" | "disable" | "status" | "logs"; pluginId: string; follow?: boolean }
-  | { kind: "reset" }
+  | { kind: "reset"; manual?: boolean }
   | { kind: "restart" }
   | { kind: "start"; manual: boolean; repairBundle: boolean; repairImages: boolean }
   | { kind: "supervise" }
@@ -279,7 +279,7 @@ type ReadablePlugin = DeployedPluginMetadata & {
 };
 
 type DockerRuntime = {
-  architecture: string;
+  architecture: "amd64" | "arm64";
   deployment: DockerDeploymentIdentity;
   engineId: string;
   host: string;
@@ -666,6 +666,12 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   #imageCommand = async (args: string[]): Promise<CommandResult> =>
     await this.#runDockerCommand(args, this.#dockerRunOptions());
 
+  #imageArchitecture(): "amd64" | "arm64" {
+    const runtime = this.#dockerRuntimeScope.getStore();
+    if (!runtime) throw new Error("Docker runtime is unavailable while selecting the image platform.");
+    return runtime.architecture;
+  }
+
   #verifyBundle(state: ManagedCoreState): void {
     const root = join(this.#configDir, "base");
     const manifest = createRetainedBundleManifest(root);
@@ -696,7 +702,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
         if (!directory) throw new Error("Set ATLAS_CORE_BACKUP_DIR to the validated paired backup directory.");
         return await readPairedBackupIdentity(directory);
       },
-      architecture: this.#architecture === "arm64" ? "arm64" : "amd64",
+      architecture: this.#imageArchitecture(),
       readState: () => this.#readState(),
       writeState: (state) => this.#writeDeploymentState(state),
       runCompose: async (args, pluginIds, options) => {
@@ -711,8 +717,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
         if (result.status !== 0) throw commandFailure("managed Docker Compose", result);
         return result;
       },
-      pullImage: async (image) =>
-        await pullImageReceipt(this.#imageCommand, image, this.#architecture === "arm64" ? "arm64" : "amd64"),
+      pullImage: async (image) => await pullImageReceipt(this.#imageCommand, image, this.#imageArchitecture()),
       verifyLocalImage: async (receipt) => await verifyLocalImage(this.#imageCommand, receipt),
       verifyContainerImage: async (container, receipt) => {
         const identity = this.#deploymentIdentity();
@@ -765,7 +770,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
         return true;
       },
       pullAndInspectImage: async (image) =>
-        await pullImageReceipt(this.#imageCommand, image, this.#architecture === "arm64" ? "arm64" : "amd64"),
+        await pullImageReceipt(this.#imageCommand, image, this.#imageArchitecture()),
       verifyImage: async (receipt) => await verifyLocalImage(this.#imageCommand, receipt),
       verifyRetainedBundle: () => this.#verifyBundle(state),
       runCompose: async (args, ids, cleanup) => {
@@ -1057,8 +1062,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
         configDir: this.#configDir,
         packageVersion: state.packageVersion,
         runCommand: async (command, args) => await this.#runner.run(command, [...args], { env: this.#env }),
-        pullImage: async (image) =>
-          await pullImageReceipt(this.#imageCommand, image, this.#architecture === "arm64" ? "arm64" : "amd64")
+        pullImage: async (image) => await pullImageReceipt(this.#imageCommand, image, this.#imageArchitecture())
       });
       try {
         const transaction = DeploymentTransactionStore.begin(this.#configDir, {
@@ -1118,11 +1122,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       receipts.push(manager.readInstalled(id).selected);
     }
     for (const receipt of receipts) {
-      const repaired = await pullImageReceipt(
-        this.#imageCommand,
-        receipt.image_index,
-        this.#architecture === "arm64" ? "arm64" : "amd64"
-      );
+      const repaired = await pullImageReceipt(this.#imageCommand, receipt.image_index, this.#imageArchitecture());
       if (
         repaired.platform_manifest_sha256 !== receipt.platform_manifest_sha256 ||
         repaired.local_image_id !== receipt.local_image_id
@@ -1682,20 +1682,22 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     this.#stdout.write("Run atlas-core start to start the deployment.\n");
   }
 
-  async start(options: { manual?: boolean; repairBundle?: boolean; repairImages?: boolean } = {}): Promise<void> {
-    if (!options.manual) {
-      const supervision = await getSupervisorStatus(this.#supervisorOptions());
-      if (
-        !supervision.installed ||
-        !supervision.loaded ||
-        supervision.running !== true ||
-        supervision.userManagerAvailable !== true
-      ) {
-        throw new Error(
-          "Start or reinstall recovery supervision with atlas-core supervision install, or explicitly use atlas-core start --manual."
-        );
-      }
+  async #requireSupervision(command: "start" | "reset"): Promise<void> {
+    const supervision = await getSupervisorStatus(this.#supervisorOptions());
+    if (
+      !supervision.installed ||
+      !supervision.loaded ||
+      supervision.running !== true ||
+      supervision.userManagerAvailable !== true
+    ) {
+      throw new Error(
+        `Start or reinstall recovery supervision with atlas-core supervision install, or explicitly use atlas-core ${command} --manual.`
+      );
     }
+  }
+
+  async start(options: { manual?: boolean; repairBundle?: boolean; repairImages?: boolean } = {}): Promise<void> {
+    if (!options.manual) await this.#requireSupervision("start");
     await this.#withInitializedMutation(async (state, dockerEngineId) => {
       const managed = this.#requireManaged(state);
       const manager = this.#managedCore(dockerEngineId);
@@ -1734,7 +1736,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     this.#stdout.write(`Atlas Core ${state.packageVersion} is ready.\nAPI: http://127.0.0.1:8000\n`);
   }
 
-  async reset(): Promise<void> {
+  async reset(options: { manual?: boolean } = {}): Promise<void> {
     this.#stdout.write(
       `Reset permanently deletes Atlas Core containers, PostgreSQL and MinIO data, and configuration at ${this.#configDir}.\n`
     );
@@ -1742,6 +1744,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       this.#stdout.write("Atlas Core reset cancelled.\n");
       return;
     }
+    if (!options.manual) await this.#requireSupervision("reset");
     const imageReference = this.#requirePublishedImage();
     const runtime = await this.#preflight();
     await this.#dockerRuntimeScope.run(runtime, async () => {
@@ -2642,7 +2645,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       throw new Error(`Atlas Core supports amd64 and arm64 Docker daemons. Detected ${info.Architecture}.`);
     }
     return {
-      architecture: info.Architecture,
+      architecture: info.Architecture === "arm64" || info.Architecture === "aarch64" ? "arm64" : "amd64",
       deployment: dockerDeploymentIdentity(info.ID),
       engineId: info.ID,
       host: dockerHost,
@@ -4312,7 +4315,7 @@ export async function runCLI(argv: string[], context: CLIContext = {}): Promise<
           );
         return 0;
       case "reset":
-        await deployment.reset();
+        await deployment.reset({ manual: command.manual ?? false });
         return 0;
       case "restart":
         await deployment.restart();
@@ -4388,6 +4391,11 @@ export function parseCommand(argv: string[]): Command {
   switch (name) {
     case "start":
       return parseStart(args);
+    case "reset":
+      if (args.length > 1 || (args.length === 1 && args[0] !== "--manual")) {
+        throw new UsageError("reset accepts only --manual");
+      }
+      return args.length ? { kind: "reset", manual: true } : { kind: "reset" };
     case "supervise":
       if (args.length > 0) throw new UsageError("supervise does not accept arguments");
       return { kind: "supervise" };
@@ -4401,7 +4409,6 @@ export function parseCommand(argv: string[]): Command {
     case "doctor":
     case "config":
     case "init":
-    case "reset":
     case "restart":
     case "status":
     case "stop":

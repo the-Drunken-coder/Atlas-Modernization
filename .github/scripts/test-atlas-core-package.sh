@@ -156,7 +156,7 @@ docker volume inspect "${project_name}_postgres_data" >/dev/null
 docker volume inspect "${project_name}_minio_data" >/dev/null
 curl --fail --silent --show-error http://127.0.0.1:8000/readiness
 
-printf 'y\n' | ATLAS_CORE_HOME="$core_home" "$cli" reset
+printf 'y\n' | ATLAS_CORE_HOME="$core_home" "$cli" reset --manual
 ATLAS_CORE_HOME="$core_home" "$cli" doctor
 ATLAS_CORE_HOME="$core_home" "$cli" status
 curl --fail --silent --show-error http://127.0.0.1:8000/readiness

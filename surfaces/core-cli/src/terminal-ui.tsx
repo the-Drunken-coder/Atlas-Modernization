@@ -95,7 +95,7 @@ export type AtlasCoreOperator = {
   pluginRotateCoreKey?(): Promise<void>;
   pluginStatuses(pluginId?: string): Promise<PluginDeploymentStatus[]>;
   resumeAfterCancellation(): void;
-  reset(): Promise<void>;
+  reset(options?: { manual?: boolean }): Promise<void>;
   restart(): Promise<void>;
   snapshot(): Promise<DeploymentSnapshot>;
   start(): Promise<void>;

@@ -292,7 +292,7 @@ class FakeRunner implements CommandRunner {
       const identity = fakeImageIdentity(image);
       const platformDigest = image.includes(`@${identity.platformDigest}`);
       if (/^[^@]+@sha256:[0-9a-f]{64}$/.test(image) && !platformDigest) {
-        const architecture = this.dockerArchitecture === "amd64" ? "amd64" : "arm64";
+        const architecture = ["amd64", "x86_64"].includes(this.dockerArchitecture) ? "amd64" : "arm64";
         return result(
           0,
           JSON.stringify({ manifests: [{ platform: { os: "linux", architecture }, digest: identity.platformDigest }] })
@@ -305,7 +305,7 @@ class FakeRunner implements CommandRunner {
       const image = args.at(-1) ?? "";
       if (image === this.missingImage) return result(1, "", `Error: No such image: ${image}`);
       const identity = fakeImageIdentity(image);
-      const architecture = this.dockerArchitecture === "amd64" ? "amd64" : "arm64";
+      const architecture = ["amd64", "x86_64"].includes(this.dockerArchitecture) ? "amd64" : "arm64";
       return result(
         0,
         JSON.stringify({ Id: identity.localId, Os: "linux", Architecture: architecture, RepoDigests: [image] })
@@ -1295,7 +1295,9 @@ describe("atlas-core CLI", () => {
         expect(JSON.parse(readFileSync(lockPath, "utf8"))).toEqual(retainedOwner);
 
         test.runner.calls.length = 0;
-        await expect(operator.reset()).rejects.toThrow("Restore the original Docker context before resetting");
+        await expect(operator.reset({ manual: true })).rejects.toThrow(
+          "Restore the original Docker context before resetting"
+        );
         expect(test.runner.calls.some((call) => call.args[0] === "pull" || call.args[0] === "network")).toBe(false);
         expect(JSON.parse(readFileSync(lockPath, "utf8"))).toEqual(retainedOwner);
 
@@ -1337,7 +1339,7 @@ describe("atlas-core CLI", () => {
       writeFileSync(lockPath, `${JSON.stringify(retainedOwner)}\n`, { mode: 0o600 });
     };
 
-    expect(await runCLI(["reset"], test.context)).toBe(1);
+    expect(await runCLI(["reset", "--manual"], test.context)).toBe(1);
 
     expect(test.stderr.join("")).toContain("Restore the original Docker context");
     expect(test.runner.calls.some((call) => call.args[0] === "network")).toBe(false);
@@ -1386,7 +1388,7 @@ describe("atlas-core CLI", () => {
           pullStarted?.();
           await holdPull;
         };
-        const reset = operator.reset();
+        const reset = operator.reset({ manual: true });
         await pulling;
 
         test.runner.contextHost = "unix:///alternate-docker.sock";
@@ -2188,7 +2190,7 @@ describe("atlas-core CLI", () => {
     const test = runtime();
     markInitialized(test);
 
-    expect(await runCLI(["reset"], test.context)).toBe(0);
+    expect(await runCLI(["reset", "--manual"], test.context)).toBe(0);
     expect(test.stdout.join("")).toContain("Reset permanently deletes Atlas Core containers");
     expect(test.stdout.join("")).toContain("Atlas Core reset cancelled");
     expect(test.runner.calls).toHaveLength(0);
@@ -2213,7 +2215,7 @@ describe("atlas-core CLI", () => {
     test.runner.volumeUsers.set(POSTGRES_VOLUME, new Set([POSTGRES_CONTAINER]));
     test.runner.volumeUsers.set(MINIO_VOLUME, new Set([MINIO_CONTAINER]));
 
-    expect(await runCLI(["reset"], test.context)).toBe(1);
+    expect(await runCLI(["reset", "--manual"], test.context)).toBe(1);
 
     expect(test.stderr.join("")).toContain("Run atlas-core init first");
     expect(test.runner.calls.some((call) => call.args[0] === "pull")).toBe(false);
@@ -2242,7 +2244,7 @@ describe("atlas-core CLI", () => {
     test.runner.existingVolumes.add(POSTGRES_VOLUME);
     test.runner.existingVolumes.add(MINIO_VOLUME);
 
-    expect(await runCLI(["reset"], test.context)).toBe(1);
+    expect(await runCLI(["reset", "--manual"], test.context)).toBe(1);
 
     expect(test.stderr.join("")).toContain("Run atlas-core init first");
     expect(test.runner.calls.some((call) => call.args[0] === "pull")).toBe(false);
@@ -2259,7 +2261,7 @@ describe("atlas-core CLI", () => {
     const state = JSON.parse(readFileSync(statePath, "utf8"));
     writeFileSync(statePath, `${JSON.stringify({ ...state, phase: "initializing" })}\n`, { mode: 0o600 });
 
-    expect(await runCLI(["reset"], test.context)).toBe(1);
+    expect(await runCLI(["reset", "--manual"], test.context)).toBe(1);
 
     expect(test.stderr.join("")).toContain("Run atlas-core init first");
     expect(test.runner.calls.some((call) => call.args[0] === "pull")).toBe(false);
@@ -2284,7 +2286,7 @@ describe("atlas-core CLI", () => {
     test.runner.volumeUsers.set(POSTGRES_VOLUME, new Set([POSTGRES_CONTAINER]));
     test.runner.volumeUsers.set(MINIO_VOLUME, new Set([MINIO_CONTAINER]));
 
-    expect(await runCLI(["reset"], test.context)).toBe(0);
+    expect(await runCLI(["reset", "--manual"], test.context)).toBe(0);
 
     expect(test.runner.existingContainers).not.toContain(API_CONTAINER);
     expect(test.runner.existingVolumes).toContain(POSTGRES_VOLUME);
@@ -2318,7 +2320,7 @@ describe("atlas-core CLI", () => {
     const state = JSON.parse(readFileSync(statePath, "utf8"));
     writeFileSync(statePath, `${JSON.stringify({ ...state, packageVersion: "0.1.0" })}\n`, { mode: 0o600 });
 
-    expect(await runCLI(["reset"], test.context)).toBe(0);
+    expect(await runCLI(["reset", "--manual"], test.context)).toBe(0);
     expect(JSON.parse(readFileSync(statePath, "utf8"))).toMatchObject({ packageVersion: PACKAGE_VERSION });
   });
 
@@ -2331,7 +2333,7 @@ describe("atlas-core CLI", () => {
     const { resourceLayout: _, ...legacyState } = state;
     writeFileSync(statePath, `${JSON.stringify({ ...legacyState, schema: 2 })}\n`, { mode: 0o600 });
 
-    expect(await runCLI(["reset"], test.context)).toBe(1);
+    expect(await runCLI(["reset", "--manual"], test.context)).toBe(1);
 
     expect(test.stderr.join("")).toContain("state schema 2 uses the retired fixed-name Docker layout");
     expect(test.runner.calls.some((call) => call.args[0] === "pull")).toBe(false);
@@ -2351,7 +2353,7 @@ describe("atlas-core CLI", () => {
       mode: 0o600
     });
 
-    expect(await runCLI(["reset"], test.context)).toBe(0);
+    expect(await runCLI(["reset", "--manual"], test.context)).toBe(0);
     expect(test.runner.calls.some((call) => call.args.includes("missing_plugin/compose.yml"))).toBe(false);
     expect(test.runner.calls.map(composeCommand)).toContainEqual(["down", "--remove-orphans"]);
   });
@@ -2364,7 +2366,7 @@ describe("atlas-core CLI", () => {
     test.runner.existingContainers.add(pluginContainer);
     rmSync(join(test.home, ".atlas", "core", ".env"));
 
-    expect(await runCLI(["reset"], test.context)).toBe(0);
+    expect(await runCLI(["reset", "--manual"], test.context)).toBe(0);
     expect(test.runner.existingContainers).not.toContain(pluginContainer);
     expect(test.runner.calls).toContainEqual(
       expect.objectContaining({
@@ -2382,7 +2384,7 @@ describe("atlas-core CLI", () => {
     test.runner.existingContainers.add(container);
     test.runner.mismatchedResources.add(container);
 
-    expect(await runCLI(["reset"], test.context)).toBe(1);
+    expect(await runCLI(["reset", "--manual"], test.context)).toBe(1);
     expect(test.stderr.join("")).toContain("ownership label");
     expect(test.runner.existingContainers).toContain(container);
     expect(
@@ -2400,7 +2402,7 @@ describe("atlas-core CLI", () => {
     test.runner.existingVolumes.add(volume);
     test.runner.volumeUsers.set(volume, new Set(["backup-reader"]));
 
-    expect(await runCLI(["reset"], test.context)).toBe(1);
+    expect(await runCLI(["reset", "--manual"], test.context)).toBe(1);
     expect(test.stderr.join("")).toContain("backup-reader");
     expect(test.stderr.join("")).toContain("before deleting anything");
     expect(test.runner.existingVolumes).toContain(volume);
@@ -2417,6 +2419,36 @@ describe("atlas-core CLI", () => {
     expect(test.stderr.join("")).toContain("Run atlas-core init first");
     expect(test.runner.calls).toHaveLength(0);
   });
+
+  it("rejects unsupervised reset before deleting retained state or data", async () => {
+    const test = runtime();
+    await markManagedInitialized(test);
+    test.context.confirmReset = async () => true;
+    const statePath = join(test.home, ".atlas", "core", "state.json");
+    const before = readFileSync(statePath, "utf8");
+    expect(await runCLI(["reset"], test.context)).toBe(1);
+    expect(test.stderr.join("")).toContain("atlas-core reset --manual");
+    expect(readFileSync(statePath, "utf8")).toBe(before);
+    expect(test.runner.calls.some((call) => call.command === "docker")).toBe(false);
+  });
+
+  it.each(["arm64", "aarch64", "amd64", "x86_64"])(
+    "pulls the %s daemon platform independently of Node architecture",
+    async (daemon) => {
+      const test = runtime();
+      const expected = ["arm64", "aarch64"].includes(daemon) ? "arm64" : "amd64";
+      test.context.architecture = expected === "arm64" ? "x64" : "arm64";
+      test.runner.dockerArchitecture = daemon;
+      const pulls: Call[] = [];
+      test.runner.onRun = (call) => {
+        if (call.args[0] === "pull") pulls.push(call);
+      };
+      await installIndependentUpdateFixtures(test);
+      expect(await runCLI(["plugins", "update", "alpha_fixture"], test.context), test.stderr.join("")).toBe(0);
+      expect(pulls.length).toBeGreaterThan(0);
+      expect(pulls.every((call) => call.args.includes(`linux/${expected}`))).toBe(true);
+    }
+  );
 
   it("requires installed supervision for unattended start", async () => {
     const test = runtime();
