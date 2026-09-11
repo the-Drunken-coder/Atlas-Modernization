@@ -90,8 +90,8 @@ describe("MapView external reticle targets", () => {
       expect(tether).toBeInTheDocument();
       expect(Number(tether?.getAttribute("x1"))).toBeLessThan(Number(tether?.getAttribute("x2")));
       expect(readout).toHaveTextContent("CURSOR 80.00000, 70.00000");
-      expect(readout).toHaveTextContent(/RANGE\s+[\d,.]+ mi/);
-      expect(readout).toHaveTextContent(/BEARING\s+\d+°/);
+      expect(readout?.textContent).toMatch(/RANGE\s+[\d,.]+ mi/);
+      expect(readout?.textContent).toMatch(/BEARING\s+\d+°/);
     });
 
     fireEvent.pointerLeave(canvas);
