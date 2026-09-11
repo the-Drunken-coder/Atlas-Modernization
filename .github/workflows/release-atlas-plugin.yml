@@ -40,6 +40,12 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+
       - name: Verify source commit and release ref
         id: source
         env:
@@ -252,6 +258,12 @@ jobs:
           ref: ${{ needs.validate.outputs.source_sha }}
           persist-credentials: false
 
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+
       - name: Download reviewed release document
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -315,17 +327,29 @@ jobs:
           IMAGE_REFERENCE: ${{ needs.build.outputs.image_reference }}
           VERSION: ${{ inputs.version }}
         run: |
+          set -euo pipefail
           repository="${IMAGE_REFERENCE%@*}"
           final_image="$repository:$VERSION"
-          if digest="$(docker buildx imagetools inspect "$final_image" --format '{{json .Manifest}}' 2>/dev/null | jq -er '.digest | select(test("^sha256:[0-9a-f]{64}$"))')"; then
+          existing_status=0
+          digest="$(node scripts/plugin-release.mjs image-digest "$final_image")" || existing_status=$?
+          if [ "$existing_status" -eq 0 ]; then
             test "$digest" = "${IMAGE_REFERENCE##*@}" || {
               echo "$final_image already points at $digest, not ${IMAGE_REFERENCE##*@}." >&2
               exit 1
             }
-          else
+          elif [ "$existing_status" -eq 2 ]; then
             docker buildx imagetools create --tag "$final_image" "$IMAGE_REFERENCE"
+          else
+            echo "Unable to determine whether $final_image already exists; refusing to overwrite it." >&2
+            exit "$existing_status"
           fi
-          test "$(docker buildx imagetools inspect "$final_image" --format '{{json .Manifest}}' | jq -er '.digest')" = "${IMAGE_REFERENCE##*@}"
+          final_status=0
+          final_digest="$(node scripts/plugin-release.mjs image-digest "$final_image")" || final_status=$?
+          if [ "$final_status" -ne 0 ]; then
+            echo "Promoted image $final_image could not be verified." >&2
+            exit "$final_status"
+          fi
+          test "$final_digest" = "${IMAGE_REFERENCE##*@}"
 
       - name: Create or verify immutable GitHub release
         env:

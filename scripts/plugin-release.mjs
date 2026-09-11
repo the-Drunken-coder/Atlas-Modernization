@@ -82,6 +82,15 @@ switch (command) {
     checkCandidate(plugin, required(rawArgs[1], "image reference"));
     break;
   }
+  case "image-digest": {
+    const digest = readImmutableImageDigest(required(rawArgs[0], "image reference"));
+    if (digest === null) {
+      process.exitCode = 2;
+    } else {
+      process.stdout.write(`${digest}\n`);
+    }
+    break;
+  }
   case "reuse-publication": {
     const publication = reuseExistingPublication(
       required(rawArgs[0], "plugin_id"),
@@ -98,7 +107,7 @@ switch (command) {
   }
   default:
     throw new Error(
-      "Usage: node scripts/plugin-release.mjs <validate-version|validate-plugin|protocol-revision|release-document|verify-document|verify-public-release|verify-release-tag|check-candidate|reuse-publication> ..."
+      "Usage: node scripts/plugin-release.mjs <validate-version|validate-plugin|protocol-revision|release-document|verify-document|verify-public-release|verify-release-tag|check-candidate|image-digest|reuse-publication> ..."
     );
 }
 
@@ -315,7 +324,7 @@ function readImmutableImageDigest(image) {
   });
   if (result.status !== 0) {
     const detail = `${result.stderr || ""}\n${result.stdout || ""}`.trim();
-    if (/manifest unknown|not found|no such manifest/iu.test(detail)) return null;
+    if (isConfirmedMissingImageError(image, detail)) return null;
     throw new Error(`docker buildx imagetools inspect ${image} failed: ${detail || "unknown error"}`);
   }
   let manifest;
@@ -328,6 +337,16 @@ function readImmutableImageDigest(image) {
     throw new Error(`Existing image ${image} did not resolve to an immutable manifest digest`);
   }
   return manifest.digest;
+}
+
+function isConfirmedMissingImageError(image, detail) {
+  const normalized = detail.trim();
+  const requestedReferenceNotFound = new RegExp(`^error:\\s*${escapeRegExp(image)}:\\s*not found$`, "iu").test(normalized);
+  return requestedReferenceNotFound || /^(?:error:\s*)?(?:manifest unknown|no such manifest)(?::.*)?$/iu.test(normalized);
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }
 
 function readGitHubRelease(repository, tag) {

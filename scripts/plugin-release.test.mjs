@@ -174,10 +174,21 @@ function runReusePublication(mode, releaseBytes) {
     docker,
     `#!/usr/bin/env node
 const args = process.argv.slice(2);
-if (args[0] === "buildx" && args[1] === "imagetools" && process.env.ATLAS_TEST_REUSE_MODE !== "missing-image") {
+if (args[0] === "buildx" && args[1] === "imagetools" && process.env.ATLAS_TEST_REUSE_MODE === "registry-error") {
+  process.stderr.write("ERROR: unexpected EOF while contacting the registry\\n");
+  process.exit(1);
+} else if (args[0] === "buildx" && args[1] === "imagetools" && process.env.ATLAS_TEST_REUSE_MODE === "missing-image") {
+  process.stderr.write("ERROR: manifest unknown\\n");
+  process.exit(1);
+} else if (args[0] === "buildx" && args[1] === "imagetools" && process.env.ATLAS_TEST_REUSE_MODE === "missing-reference") {
+  process.stderr.write("ERROR: ghcr.io/the-drunken-coder/atlas-building-scan:0.1.0: not found\\n");
+  process.exit(1);
+} else if (args[0] === "buildx" && args[1] === "imagetools" && process.env.ATLAS_TEST_REUSE_MODE === "malformed-image") {
+  process.stdout.write(JSON.stringify({ digest: "sha256:not-a-valid-digest" }) + "\\n");
+} else if (args[0] === "buildx" && args[1] === "imagetools") {
   process.stdout.write(JSON.stringify({ digest: process.env.ATLAS_TEST_DIGEST }) + "\\n");
 } else {
-  process.stderr.write("ERROR: manifest unknown\\n");
+  process.stderr.write("unexpected docker invocation\\n");
   process.exit(1);
 }
 `
@@ -515,6 +526,22 @@ test("reports a missing release tag without treating it as valid", () => {
   assert.equal(result.status, 2, result.stderr);
 });
 
+test("treats only a confirmed missing image manifest as an absent publication", () => {
+  const missing = runReusePublication("missing-image", Buffer.from("unused"));
+  assert.equal(missing.result.status, 2, missing.result.stderr);
+  const missingReference = runReusePublication("missing-reference", Buffer.from("unused"));
+  assert.equal(missingReference.result.status, 2, missingReference.result.stderr);
+
+  const registryError = runReusePublication("registry-error", Buffer.from("unused"));
+  assert.notEqual(registryError.result.status, 0);
+  assert.notEqual(registryError.result.status, 2);
+  assert.match(registryError.result.stderr, /imagetools inspect .* failed/);
+
+  const malformed = runReusePublication("malformed-image", Buffer.from("unused"));
+  assert.notEqual(malformed.result.status, 0);
+  assert.match(malformed.result.stderr, /did not resolve to an immutable manifest digest/);
+});
+
 test("reuses the authenticated release asset only after verifying its source tag and exact metadata", () => {
   const documentResult = runReleaseDocument(image);
   assert.equal(documentResult.status, 0, documentResult.stderr);
@@ -565,6 +592,19 @@ test("checks release tag provenance before promoting the version image", () => {
   assert.ok(guard >= 0 && guard < promotion);
   assert.match(workflow.slice(guard, promotion), /verify-release-tag/);
   assert.match(workflow, /gh release create "\$tag" --verify-tag --target "\$SOURCE_SHA"/);
+});
+
+test("fails closed when checking an existing version image before promotion", () => {
+  const workflow = readFileSync(join(repositoryRoot, ".github", "workflows", "release-atlas-plugin.yml"), "utf8");
+  const promotion = workflow.indexOf("- name: Promote immutable image to the version tag");
+  const release = workflow.indexOf("- name: Create or verify immutable GitHub release");
+  assert.ok(promotion >= 0 && promotion < release);
+  const block = workflow.slice(promotion, release);
+  assert.match(block, /node scripts\/plugin-release\.mjs image-digest "\$final_image"/);
+  assert.match(block, /existing_status.*-eq 2/);
+  assert.match(block, /exit "\$existing_status"/);
+  assert.match(block, /final_status.*-ne 0/);
+  assert.match(block, /node scripts\/plugin-release\.mjs image-digest "\$final_image"/g);
 });
 
 test("reuses a promoted image and release document before rebuilding on a publication retry", () => {

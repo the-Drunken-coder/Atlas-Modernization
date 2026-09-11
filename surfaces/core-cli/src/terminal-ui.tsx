@@ -1919,8 +1919,14 @@ function menuActions(snapshot: DeploymentSnapshot): Action[] {
     } else {
       actions.push({ id: "start", label: "Start Atlas Core", detail: "Start the deployment from its pinned image." });
     }
+    if (snapshot.status !== "stopped") {
+      actions.push({
+        id: "restart",
+        label: "Restart Atlas Core",
+        detail: "Pull the pinned image, then restart the deployment."
+      });
+    }
     actions.push(
-      { id: "restart", label: "Restart Atlas Core", detail: "Pull the pinned image, then restart the deployment." },
       {
         id: "update",
         label: "Update",

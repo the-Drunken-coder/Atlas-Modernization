@@ -1299,6 +1299,9 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
                             "never",
                             "--no-deps",
                             "--force-recreate",
+                            "--wait",
+                            "--wait-timeout",
+                            COMPOSE_WAIT_SECONDS,
                             ...failedPlugins.map(pluginServiceName)
                           ],
                           state.enabledPlugins
@@ -2274,11 +2277,18 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
 
   async pluginEnable(pluginId: string, reportActivity?: PluginActivityReporter): Promise<PluginOperationOutcome> {
     if (this.#readState()?.schema === 4) {
-      await this.#withInitializedMutation(async (raw) => {
-        const result = await this.#plugins(this.#requireManaged(raw)).enable(pluginId);
-        this.#stdout.write(`${result.message}\n`);
-      });
-      return { status: "success" };
+      try {
+        await this.#withInitializedMutation(async (raw) => {
+          const result = await this.#plugins(this.#requireManaged(raw)).enable(pluginId);
+          this.#stdout.write(`${result.message}\n`);
+        });
+        return { status: "success" };
+      } catch (error) {
+        if (error instanceof CommandCancelledError) {
+          return { previousDeploymentPreserved: true, status: "cancelled" };
+        }
+        throw error;
+      }
     }
     const plugin = this.#requireCatalogPlugin(pluginId, true);
     const report = this.#pluginReporter(reportActivity);
@@ -2411,11 +2421,18 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
 
   async pluginDisable(pluginId: string, reportActivity?: PluginActivityReporter): Promise<PluginOperationOutcome> {
     if (this.#readState()?.schema === 4) {
-      await this.#withInitializedMutation(async (raw) => {
-        const result = await this.#plugins(this.#requireManaged(raw)).disable(pluginId);
-        this.#stdout.write(`${result.message}\n`);
-      });
-      return { status: "success" };
+      try {
+        await this.#withInitializedMutation(async (raw) => {
+          const result = await this.#plugins(this.#requireManaged(raw)).disable(pluginId);
+          this.#stdout.write(`${result.message}\n`);
+        });
+        return { status: "success" };
+      } catch (error) {
+        if (error instanceof CommandCancelledError) {
+          return { previousDeploymentPreserved: true, status: "cancelled" };
+        }
+        throw error;
+      }
     }
     const report = this.#pluginReporter(reportActivity);
     report({ level: "working", message: "Checking Atlas Core and Docker", stage: "operation" });

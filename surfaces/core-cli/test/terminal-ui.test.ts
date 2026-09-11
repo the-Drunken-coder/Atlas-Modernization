@@ -175,6 +175,7 @@ describe("Atlas Core terminal UI", () => {
     expect(terminal.text).toContain("ACTIONS");
     expect(terminal.text).toContain("DETAILS");
     expect(terminal.text).toContain("Everything is healthy.");
+    expect(terminal.text).toContain("Restart Atlas Core");
     terminal.write("q");
     await menu;
 
@@ -289,6 +290,19 @@ describe("Atlas Core terminal UI", () => {
     const before = terminal.raw.length;
     terminal.write("\u001b[B");
     await terminal.waitForRawChange(before);
+    terminal.write("q");
+    await menu;
+  });
+
+  it("hides restart for a stopped deployment", async () => {
+    const terminal = new TestTerminal();
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(
+      operator({ status: "stopped", detail: "Atlas Core is stopped." })
+    );
+
+    await terminal.waitFor("Reset Atlas Core");
+    expect(terminal.text).toContain("Start Atlas Core");
+    expect(terminal.text).not.toContain("Restart Atlas Core");
     terminal.write("q");
     await menu;
   });

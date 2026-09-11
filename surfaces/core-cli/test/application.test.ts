@@ -22,6 +22,7 @@ import { DeploymentTransactionStore } from "../src/deployment-transaction.js";
 import { OperationCleanupError } from "../src/operation-errors.js";
 import { PACKAGE_NAME, PACKAGE_VERSION } from "../src/package-metadata.js";
 import type { PluginCatalogEntry } from "../src/plugin-catalog.js";
+import * as supervision from "../src/supervision.js";
 import type { DeploymentDetails } from "../src/terminal-ui.js";
 
 const TEST_IMAGE = `ghcr.io/the-drunken-coder/atlas-core@sha256:${"a".repeat(64)}`;
@@ -3858,6 +3859,65 @@ describe("atlas-core CLI", () => {
         .map(composeCommand)
         .filter((args) => args[0] === "up" && args.includes("api") && !args.includes(plugin.service))
     ).toHaveLength(1);
+  });
+
+  it.each(["enable", "disable"] as const)(
+    "preserves independent Plugin %s cancellation outcomes after rollback",
+    async (action) => {
+      const test = runtime();
+      await installIndependentUpdateFixtures(test);
+      const plugin = INDEPENDENT_UPDATE_FIXTURES[0];
+      if (!plugin) throw new Error("Independent Plugin fixture is missing.");
+      installIndependentRuntimeFixture(test, plugin);
+      if (action === "disable") expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
+      const before = readFileSync(join(test.home, ".atlas", "core", "state.json"), "utf8");
+      let interrupted = false;
+      test.runner.onRun = (call) => {
+        if (interrupted || composeCommand(call)[0] !== "up") return;
+        interrupted = true;
+        process.emit("SIGINT");
+      };
+      expect(await runCLI(["plugins", action, plugin.pluginId], test.context), test.stderr.join("")).toBe(130);
+      expect(test.stdout.join("")).toContain("cancelled. The previous deployment is preserved.");
+      expect(readFileSync(join(test.home, ".atlas", "core", "state.json"), "utf8")).toBe(before);
+      expect(existsSync(join(test.home, ".atlas", "core", "transaction"))).toBe(false);
+    }
+  );
+
+  it("waits for a recreated Plugin to become healthy within one supervisor tick", async () => {
+    const test = runtime();
+    await installIndependentUpdateFixtures(test);
+    const plugin = INDEPENDENT_UPDATE_FIXTURES[0];
+    if (!plugin) throw new Error("Independent Plugin fixture is missing.");
+    installIndependentRuntimeFixture(test, plugin);
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
+    test.runner.serviceStates = test.runner.serviceStates.filter(
+      (service) => service.Service !== "atlas-plugin-alpha-fixture"
+    );
+    test.runner.serviceStates.push({ Service: "atlas-plugin-alpha-fixture", State: "exited", Health: "unhealthy" });
+    let waited = false;
+    test.runner.onRun = (call) => {
+      const args = composeCommand(call);
+      if (args[0] !== "up" || !args.includes("atlas-plugin-alpha-fixture")) return;
+      waited = args.includes("--wait") && args.includes("120");
+      test.runner.serviceStates = test.runner.serviceStates.filter(
+        (service) => service.Service !== "atlas-plugin-alpha-fixture"
+      );
+      test.runner.serviceStates.push({
+        Service: "atlas-plugin-alpha-fixture",
+        State: "running",
+        Health: waited ? "healthy" : "starting"
+      });
+    };
+    const loop = vi.spyOn(supervision, "runSupervisor").mockImplementation(async (options) => {
+      await options.tick();
+    });
+    try {
+      expect(await runCLI(["supervise"], test.context), test.stderr.join("")).toBe(0);
+      expect(waited).toBe(true);
+    } finally {
+      loop.mockRestore();
+    }
   });
 
   it("handles SIGINT for direct Plugin changes and exits after rollback", async () => {
