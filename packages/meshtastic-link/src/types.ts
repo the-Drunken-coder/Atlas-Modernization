@@ -5,6 +5,10 @@ import type {
   EntityResource,
   FullDatasetResponse,
   JSONValue,
+  MovementHistoryBatchResponse,
+  MovementHistoryPage,
+  MovementInspection,
+  MovementTrail,
   ObjectDetailResource,
   ObjectResource,
   PluginDiscoveryResponse,
@@ -119,6 +123,11 @@ export type DataRequest = {
   runtime_id?: string;
   plugin_id?: string;
   plugin_operation_id?: string;
+  entity_created_at?: string;
+  from?: string;
+  to?: string;
+  at?: string;
+  max_points?: number;
   since_version?: number;
   input?: JSONValue;
   cursor?: string;
@@ -221,6 +230,10 @@ export type LinkTimingMetric = {
 };
 
 export type AtlasRadioOutput =
+  | MovementHistoryPage
+  | MovementTrail
+  | MovementInspection
+  | MovementHistoryBatchResponse
   | JSONValue
   | EntityCheckInResponse
   | EntityResource

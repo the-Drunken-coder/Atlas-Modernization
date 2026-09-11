@@ -6,7 +6,8 @@ import {
   type AtlasDataSource,
   type CommandSubmission,
   type ConnectionError,
-  type ConnectionHealth
+  type ConnectionHealth,
+  type MovementHistoryReader
 } from "../atlas/data-source.js";
 import type { UiGeometry } from "../atlas/geometry.js";
 import { type AtlasSnapshot, emptySnapshot } from "../atlas/store.js";
@@ -14,6 +15,7 @@ import { type AtlasSnapshot, emptySnapshot } from "../atlas/store.js";
 export type AtlasStatus = "loading" | "ready" | "error";
 
 export type AtlasContextValue = {
+  movement?: MovementHistoryReader;
   status: AtlasStatus;
   error?: string;
   connectionError?: ConnectionError;
@@ -188,6 +190,26 @@ export function AtlasProvider({
     return dataSource.loadEntityDetails(entityId, signal);
   }, []);
 
+  const movement = useMemo<MovementHistoryReader>(
+    () => ({
+      history: async (...args) => {
+        const api = dataSourceRef.current?.movement;
+        if (!api) throw new Error("Movement history unavailable");
+        return api.history(...args);
+      },
+      trail: async (...args) => {
+        const api = dataSourceRef.current?.movement;
+        if (!api) throw new Error("Movement history unavailable");
+        return api.trail(...args);
+      },
+      inspectMovement: async (...args) => {
+        const api = dataSourceRef.current?.movement;
+        if (!api) throw new Error("Movement history unavailable");
+        return api.inspectMovement(...args);
+      }
+    }),
+    []
+  );
   const value = useMemo<AtlasContextValue>(
     () => ({
       status,
@@ -198,6 +220,7 @@ export function AtlasProvider({
       catalog,
       health,
       reconnect,
+      movement,
       loadEntityDetails: entityDetailsAvailable ? loadEntityDetails : undefined,
       submitCommand: async (submission) => {
         const dataSource = dataSourceRef.current;
@@ -225,7 +248,8 @@ export function AtlasProvider({
       health,
       reconnect,
       entityDetailsAvailable,
-      loadEntityDetails
+      loadEntityDetails,
+      movement
     ]
   );
 

@@ -24,13 +24,22 @@ import {
   isProtocolRevisionResponse as isGeneratedProtocolRevisionResponse,
   isRuntimeTaskDeliveryResponse as isGeneratedRuntimeTaskDeliveryResponse,
   isTaskResource as isGeneratedTaskResource,
+  isMovementHistoryBatchResponse,
+  isMovementHistoryPage,
+  isMovementInspection,
+  isMovementTrail,
+  type MovementHistoryBatchResponse,
+  type MovementHistoryPage,
+  type MovementInspection,
+  type MovementSample,
+  type MovementTrail,
   type ObjectDetailResource,
   type ObjectResource,
   type ProtocolRevisionResponse,
   type RuntimeTaskDeliveryResponse,
   type TaskResource
 } from "./protocol.js";
-import type { EntityCheckInFields } from "./types.js";
+import type { EntityCheckInFields, MovementHistoryQuery, MovementTrailQuery } from "./types.js";
 
 export const isCommandCatalog: ResponseValidator<CommandCatalog> = isGeneratedCommandCatalog;
 
@@ -137,4 +146,104 @@ function isFeedVersion(value: unknown): value is number {
 
 function isSafeNonNegativeInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+// Go accepts longer RFC3339 fractions but normalizes them to nanoseconds.
+export function compareMovementInstants(left: string, right: string, rightOffsetMilliseconds = 0): number {
+  const milliseconds = movementMilliseconds(left) - movementMilliseconds(right) - rightOffsetMilliseconds;
+  if (milliseconds !== 0) return milliseconds;
+  const fraction = (value: string) => (/\.(\d+)/.exec(value)?.[1] ?? "").slice(0, 9).padEnd(9, "0");
+  const a = fraction(left);
+  const b = fraction(right);
+  return a === b ? 0 : a < b ? -1 : 1;
+}
+
+// Match Core's normalization for the Protocol's accepted leap-second notation.
+function movementMilliseconds(value: string): number {
+  const leap = value.slice(17, 19) === "60";
+  return Date.parse(leap ? `${value.slice(0, 17)}59${value.slice(19)}` : value) + (leap ? 1000 : 0);
+}
+
+function sameMovementInstant(left: string, right: string): boolean {
+  return compareMovementInstants(left, right) === 0;
+}
+
+export function movementHistoryResponseValidator(query: MovementHistoryQuery): ResponseValidator<MovementHistoryPage> {
+  const validate = movementWindowResponseValidator(isMovementHistoryPage, query);
+  const limit = query.limit ?? 100;
+  return (value): value is MovementHistoryPage =>
+    validate(value) &&
+    value.samples.length <= limit &&
+    (value.next_cursor === undefined || (isNonEmptyString(value.next_cursor) && value.samples.length === limit)) &&
+    value.samples.every(
+      (sample, index, samples) =>
+        coherentMovementSample(sample) &&
+        compareMovementInstants(sample.time, value.retained_from) >= 0 &&
+        compareMovementInstants(sample.time, query.from) >= 0 &&
+        compareMovementInstants(sample.time, query.to) <= 0 &&
+        (index === 0 || compareMovementInstants(samples[index - 1]!.time, sample.time) >= 0)
+    );
+}
+
+function coherentMovementSample(sample: MovementSample): boolean {
+  return (
+    sample.time_is_arrival === (sample.observed_at === undefined) &&
+    sameMovementInstant(sample.time, sample.observed_at ?? sample.received_at)
+  );
+}
+
+export function movementTrailResponseValidator(query: MovementTrailQuery): ResponseValidator<MovementTrail> {
+  const validate = movementWindowResponseValidator(isMovementTrail, query);
+  return (value): value is MovementTrail =>
+    validate(value) &&
+    isSafeNonNegativeInteger(value.position_count) &&
+    value.position_count >= value.points.length &&
+    (value.position_count === 0) === (value.points.length === 0) &&
+    value.points.length <= (query.maxPoints ?? 1000) &&
+    value.simplified === value.points.length < value.position_count &&
+    value.points.every(
+      ({ sample, gap_before }, index, points) =>
+        coherentMovementSample(sample) &&
+        sample.latitude !== undefined &&
+        sample.longitude !== undefined &&
+        compareMovementInstants(sample.time, value.retained_from) >= 0 &&
+        compareMovementInstants(sample.time, query.from) >= 0 &&
+        compareMovementInstants(sample.time, query.to) <= 0 &&
+        (index === 0 || compareMovementInstants(points[index - 1]!.sample.time, sample.time) <= 0) &&
+        (!gap_before || (index > 0 && compareMovementInstants(sample.time, points[index - 1]!.sample.time, 60_000) > 0))
+    );
+}
+
+export function movementImportResponseValidator(count: number): ResponseValidator<MovementHistoryBatchResponse> {
+  return (value): value is MovementHistoryBatchResponse =>
+    isMovementHistoryBatchResponse(value) && value.inserted + value.duplicates + value.expired === count;
+}
+
+export function movementWindowResponseValidator<T extends { entity_created_at: string; from: string; to: string }>(
+  validate: ResponseValidator<T>,
+  query: MovementHistoryQuery
+): ResponseValidator<T> {
+  return (value): value is T =>
+    validate(value) &&
+    sameMovementInstant(value.entity_created_at, query.entityCreatedAt) &&
+    sameMovementInstant(value.from, query.from) &&
+    sameMovementInstant(value.to, query.to);
+}
+
+export function movementInspectionResponseValidator(
+  entityCreatedAt: string,
+  at: string
+): ResponseValidator<MovementInspection> {
+  return (value): value is MovementInspection =>
+    isMovementInspection(value) &&
+    sameMovementInstant(value.entity_created_at, entityCreatedAt) &&
+    sameMovementInstant(value.time, at) &&
+    (value.position === undefined ||
+      (value.position.latitude !== undefined && value.position.longitude !== undefined)) &&
+    (value.speed === undefined || value.speed.speed_m_s !== undefined) &&
+    (value.altitude === undefined || value.altitude.altitude_m !== undefined) &&
+    [value.position, value.speed, value.altitude].every(
+      (sample) =>
+        sample === undefined || (coherentMovementSample(sample) && compareMovementInstants(sample.time, at) <= 0)
+    );
 }

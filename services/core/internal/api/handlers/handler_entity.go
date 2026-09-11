@@ -33,6 +33,7 @@ func (h *Handler) ListEntities(w http.ResponseWriter, r *http.Request) {
 
 // CreateEntity handles POST /entities.
 func (h *Handler) CreateEntity(w http.ResponseWriter, r *http.Request) {
+	received := time.Now()
 	// Limit request body to 1MB for entity operations
 	r.Body = http.MaxBytesReader(w, r.Body, 1*1024*1024)
 
@@ -46,6 +47,7 @@ func (h *Handler) CreateEntity(w http.ResponseWriter, r *http.Request) {
 	}
 
 	params := req.actionParams()
+	params.MovementReceivedAt = received
 	if instanceToken != nil {
 		params.InstanceToken = *instanceToken
 	}
@@ -93,6 +95,7 @@ func (h *Handler) GetEntityByAlias(w http.ResponseWriter, r *http.Request) {
 
 // UpdateEntity handles PATCH /entities/{entity_id}.
 func (h *Handler) UpdateEntity(w http.ResponseWriter, r *http.Request) {
+	received := time.Now()
 	entityID := chi.URLParam(r, "entity_id")
 
 	// Limit request body to 1MB for entity operations
@@ -107,7 +110,9 @@ func (h *Handler) UpdateEntity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entity, err := h.entityActions.Update(r.Context(), entityID, req.actionParams(expectedVersion))
+	params := req.actionParams(expectedVersion)
+	params.MovementReceivedAt = received
+	entity, err := h.entityActions.Update(r.Context(), entityID, params)
 	if err != nil {
 		h.handleActionError(w, r, err)
 		return
@@ -165,6 +170,7 @@ func (h *Handler) DeleteEntity(w http.ResponseWriter, r *http.Request) {
 
 // EntityCheckin handles POST /entities/{entity_id}/checkin.
 func (h *Handler) EntityCheckin(w http.ResponseWriter, r *http.Request) {
+	received := time.Now()
 	entityID := chi.URLParam(r, "entity_id")
 
 	// Limit request body to 256KB for telemetry updates
@@ -181,9 +187,11 @@ func (h *Handler) EntityCheckin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result, err := h.checkinActions.CheckIn(r.Context(), actions.EntityCheckinParams{
-		EntityID:        entityID,
-		Components:      checkinComponentUpdate(req, time.Now()),
-		ExpectedVersion: expectedVersion,
+		EntityID:           entityID,
+		Components:         checkinComponentUpdate(req, received),
+		MovementObservedAt: req.MovementObservedAt,
+		MovementReceivedAt: received,
+		ExpectedVersion:    expectedVersion,
 	})
 	if err != nil {
 		h.handleActionError(w, r, err)

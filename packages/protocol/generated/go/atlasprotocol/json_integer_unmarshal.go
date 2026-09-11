@@ -378,6 +378,48 @@ func (value *MetadataBlock) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+func (value *MovementHistoryBatchResponse) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(bytes.Trim(data, " \t\r\n"), []byte("null")) {
+		return nil
+	}
+	type alias MovementHistoryBatchResponse
+	raw, err := atlasProtocolCanonicalizeIntegerFields(data, map[string]struct{}{"duplicates": {}, "expired": {}, "inserted": {}}, map[string]bool{"duplicates": false, "expired": false, "inserted": false})
+	if err != nil {
+		return err
+	}
+	canonical, err := json.Marshal(raw)
+	if err != nil {
+		return err
+	}
+	decoded := alias(*value)
+	if err := atlasProtocolDecodeCanonicalJSON(canonical, &decoded); err != nil {
+		return err
+	}
+	*value = MovementHistoryBatchResponse(decoded)
+	return nil
+}
+
+func (value *MovementTrail) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(bytes.Trim(data, " \t\r\n"), []byte("null")) {
+		return nil
+	}
+	type alias MovementTrail
+	raw, err := atlasProtocolCanonicalizeIntegerFields(data, map[string]struct{}{"entity_created_at": {}, "from": {}, "points": {}, "position_count": {}, "retained_from": {}, "simplified": {}, "to": {}}, map[string]bool{"position_count": false})
+	if err != nil {
+		return err
+	}
+	canonical, err := json.Marshal(raw)
+	if err != nil {
+		return err
+	}
+	decoded := alias(*value)
+	if err := atlasProtocolDecodeCanonicalJSON(canonical, &decoded); err != nil {
+		return err
+	}
+	*value = MovementTrail(decoded)
+	return nil
+}
+
 func (value *ObjectDeleteEvent) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(bytes.Trim(data, " \t\r\n"), []byte("null")) {
 		return nil

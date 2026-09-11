@@ -11,6 +11,11 @@ import type {
   FullDatasetResponse,
   JSONValue,
   MapArea,
+  MovementHistoryBatchRequest,
+  MovementHistoryBatchResponse,
+  MovementHistoryPage,
+  MovementInspection,
+  MovementTrail,
   ObjectCreateRequest,
   ObjectDetailResource,
   ObjectUpdateRequest,
@@ -30,8 +35,8 @@ import type {
   TaskStartRequest
 } from "@the-drunken-coder/atlas-sdk";
 
-export const ATLAS_PROTOCOL_REVISION = "sha256:2722212b14f67b01dc185de162a27a18fbb10a3a29355866a7db8c7c281b71a6" as const;
-export const RADIO_CONTRACT_REVISION = "sha256:08ef2ee02f2a082846348570fe57c997f8bbf47451de6d9bf942bbadb47b1786" as const;
+export const ATLAS_PROTOCOL_REVISION = "sha256:4cd40a5b37578ecfceb1d094f611c2ff9f369dfa8659238c56489f1c94814b44" as const;
+export const RADIO_CONTRACT_REVISION = "sha256:367a0cd9d7a80bbe08cc82f81dc8f71c832aa1d36f2cf505bc1090fd5c1ca6c5" as const;
 
 export const FRAME_DICTIONARY = "\"$ref\",\"BODY_TOO_LARGE\",\"BUCKET_NOT_FOUND\",\"CONTENT_TYPE_NOT_VIEWABLE\",\"CURSOR_EXPIRED\",\"ENTITY_ALIAS_NOT_FOUND\",\"ENTITY_ALREADY_EXISTS\",\"ENTITY_NOT_FOUND\",\"FEED_UNAVAILABLE\",\"FILE_TOO_LARGE\",\"INTERNAL_SERVER_ERROR\",\"INVALID_FORM\",\"INVALID_JSON\",\"OBJECT_ALREADY_EXISTS\",\"OBJECT_NOT_FOUND\",\"OBJECT_PATH_CONFLICT\",\"PLUGIN_FAILURE\",\"PLUGIN_INPUT_REJECTED\",\"PLUGIN_NOT_FOUND\",\"PLUGIN_TIMEOUT\",\"PLUGIN_UNAVAILABLE\",\"PRECONDITION_FAILED\",\"READ_ERROR\",\"STORAGE_ERROR\",\"STORAGE_UNAVAILABLE\",\"TASK_ALREADY_EXISTS\",\"TASK_NOT_FOUND\",\"TOO_MANY_ATTEMPTS\",\"UNAUTHORIZED\",\"VALIDATION_ERROR\",\"accepted\",\"acknowledged\",\"acknowledged_at\",\"action\",\"alias\",\"altitude_m\",\"api_key\",\"application_unhealthy\",\"asset_id\",\"asset_restarted\",\"asset_stopped\",\"assignment\",\"attribution\",\"available\",\"awaiting_core\",\"battery_percent\",\"body\",\"bucket\",\"camera_feed\",\"cancellation\",\"cancelled\",\"checked_at\",\"civilian\",\"classification\",\"code\",\"command\",\"command_manifest\",\"communications\",\"complete\",\"completed\",\"components\",\"confirmation\",\"connected\",\"connector_id\",\"content_type\",\"control\",\"coordinates\",\"core_confirmed\",\"created_at\",\"custom_plugin\",\"degraded\",\"delivery\",\"description\",\"details\",\"disconnected\",\"display_name\",\"east\",\"entities\",\"entity\",\"entity_id\",\"entity_type\",\"error_code\",\"error_id\",\"event\",\"events\",\"execution_failed\",\"extra\",\"failed\",\"failure\",\"feature_limit\",\"features\",\"field\",\"fields\",\"filter\",\"finished_at\",\"friendly\",\"geometry\",\"has_more\",\"has_more_entities\",\"has_more_objects\",\"has_more_tasks\",\"heading_deg\",\"health\",\"heartbeat\",\"heatmap_data\",\"horizontal_fov\",\"horizontal_orientation\",\"hostile\",\"id\",\"immediate\",\"immediate_start_timeout\",\"in_progress\",\"input\",\"input_schema\",\"interaction\",\"invalid_manifest\",\"invalid_output\",\"invalid_response\",\"kind\",\"label\",\"last_seen\",\"last_update\",\"latitude\",\"link_state\",\"longitude\",\"manifest\",\"media_refs\",\"message\",\"message_id\",\"metadata\",\"mil_view\",\"name\",\"neutral\",\"next_cursor\",\"next_entity_cursor\",\"next_object_cursor\",\"next_task_cursor\",\"north\",\"object\",\"object_id\",\"objects\",\"observation_time\",\"operation_id\",\"operations\",\"output\",\"output_schema\",\"path\",\"pending\",\"plugin_id\",\"precondition_failed\",\"progress\",\"properties\",\"protocol_revision\",\"provenance\",\"published_at\",\"queued\",\"r\",\"radius_m\",\"reason\",\"reason_code\",\"referenced_by\",\"requested\",\"resource\",\"resource_type\",\"response_budget\",\"result\",\"retrieved_at\",\"role\",\"runtime_id\",\"scheduling\",\"sensor_id\",\"sensor_refs\",\"service_session\",\"shape\",\"size_bytes\",\"source\",\"source_generation\",\"source_sequence\",\"south\",\"speed_m_s\",\"started_at\",\"starting\",\"state\",\"status\",\"subtype\",\"success\",\"superseded\",\"supports_cancel\",\"supports_progress\",\"task\",\"task_delivery\",\"task_id\",\"task_report\",\"tasks\",\"telemetry\",\"text\",\"thumbnail\",\"timeout_ms\",\"timestamp\",\"title\",\"tool_asset_id\",\"transport_timeout\",\"transport_unreachable\",\"truncation\",\"type\",\"unavailable\",\"unknown\",\"unsupported_command\",\"updated_at\",\"url\",\"usage_hints\",\"value\",\"version\",\"vertical_fov\",\"vertical_orientation\",\"west\",sha256:0b5b718f08bd7241f3ebc8ab87654d0a180e8cb3ea6dc36dd4377cda6d027108" as const;
 export const FRAME_BINARY_KEYS = ["$ref","acknowledged_at","action","alias","altitude_m","api_key","asset_id","attribution","battery_percent","bucket","cancellation","checked_at","classification","code","command","command_manifest","communications","components","connector_id","content_type","coordinates","created_at","custom_plugin","description","details","display_name","east","entities","entity","entity_id","entity_type","error_code","error_id","event","events","extra","failure","features","fields","filter","finished_at","geometry","has_more","has_more_entities","has_more_objects","has_more_tasks","heading_deg","health","heartbeat","horizontal_fov","horizontal_orientation","id","input","input_schema","interaction","kind","label","last_seen","last_update","latitude","link_state","longitude","manifest","media_refs","message","metadata","mil_view","name","next_cursor","next_entity_cursor","next_object_cursor","next_task_cursor","north","object_id","objects","operation_id","operations","output","output_schema","path","plugin_id","progress","properties","protocol_revision","provenance","published_at","radius_m","reason","reason_code","referenced_by","resource","resource_type","result","retrieved_at","role","runtime_id","scheduling","sensor_id","sensor_refs","shape","size_bytes","source","south","speed_m_s","started_at","status","subtype","success","supports_cancel","supports_progress","task_id","tasks","telemetry","text","timeout_ms","timestamp","title","tool_asset_id","truncation","type","updated_at","url","usage_hints","value","version","vertical_fov","vertical_orientation","west"] as const;
@@ -97,6 +102,14 @@ export const ATLAS_PROTOCOL_DEFINITIONS = [
   "MediaRole",
   "MetadataBlock",
   "MilViewComponent",
+  "MovementHistoryBatchRequest",
+  "MovementHistoryBatchResponse",
+  "MovementHistoryPage",
+  "MovementInspection",
+  "MovementSample",
+  "MovementSampleInput",
+  "MovementTrail",
+  "MovementTrailPoint",
   "NonEmptyString",
   "ObjectBlob",
   "ObjectCreateEvent",
@@ -183,6 +196,23 @@ export const ATLAS_RADIO_OPERATIONS = {
   "entity.get": {
     "kind": "request",
     "output": "EntityResource"
+  },
+  "entity.history": {
+    "kind": "request",
+    "output": "MovementHistoryPage"
+  },
+  "entity.import_movement": {
+    "kind": "mutation",
+    "input": "MovementHistoryBatchRequest",
+    "output": "MovementHistoryBatchResponse"
+  },
+  "entity.inspect_movement": {
+    "kind": "request",
+    "output": "MovementInspection"
+  },
+  "entity.trail": {
+    "kind": "request",
+    "output": "MovementTrail"
   },
   "entity.update": {
     "kind": "mutation",
@@ -300,6 +330,10 @@ export type AtlasRadioInputByOperation = {
   "entity.create": EntityCreateRequest;
   "entity.delete": undefined;
   "entity.get": undefined;
+  "entity.history": undefined;
+  "entity.import_movement": MovementHistoryBatchRequest;
+  "entity.inspect_movement": undefined;
+  "entity.trail": undefined;
   "entity.update": EntityUpdateRequest;
   "object.content": undefined;
   "object.create": ObjectCreateRequest;
@@ -330,6 +364,10 @@ export type AtlasRadioOutputByOperation = {
   "entity.create": EntityResource;
   "entity.delete": undefined;
   "entity.get": EntityResource;
+  "entity.history": MovementHistoryPage;
+  "entity.import_movement": MovementHistoryBatchResponse;
+  "entity.inspect_movement": MovementInspection;
+  "entity.trail": MovementTrail;
   "entity.update": EntityResource;
   "object.content": undefined;
   "object.create": ObjectDetailResource;

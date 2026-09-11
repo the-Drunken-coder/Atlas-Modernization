@@ -3,6 +3,8 @@
   "plugin_id": "reference",
   "display_name": "Reference Fixture",
   "lifecycle": "query_only",
+  "uses_core_sdk": false,
+  "interactions": [],
   "package": "@the-drunken-coder/atlas-reference-plugin",
   "docker_target": "plugin",
   "service": "reference-plugin",

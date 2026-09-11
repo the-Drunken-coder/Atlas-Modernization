@@ -106,6 +106,13 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Failed to load configuration: %v\n", err)
 		os.Exit(1)
 	}
+	if len(os.Args) > 1 && os.Args[1] == managedKeysCommand {
+		if err := runManagedKeysCommand(os.Args[2:], cfg, os.Stdout); err != nil {
+			fmt.Fprintf(os.Stderr, "managed-keys: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
 
 	zerolog.TimeFieldFormat = time.RFC3339
 	logLevel := zerolog.InfoLevel
@@ -258,6 +265,10 @@ func main() {
 	r.Delete("/entities/{entity_id}", handler.DeleteEntity)
 	r.Get("/entities/alias/{alias}", handler.GetEntityByAlias)
 	r.Post("/entities/{entity_id}/checkin", handler.EntityCheckin)
+	r.Post("/entities/{entity_id}/movement-history", handler.ImportMovement)
+	r.Get("/entities/{entity_id}/movement-history", handler.GetMovementHistory)
+	r.Get("/entities/{entity_id}/movement-history/at", handler.InspectMovement)
+	r.Get("/entities/{entity_id}/trail", handler.GetMovementTrail)
 	r.Post("/entities/{entity_id}/runtime", handler.BeginAssetRuntime)
 	r.Post("/entities/{entity_id}/runtime/stop", handler.StopAssetRuntime)
 	r.Post("/entities/{entity_id}/runtime/ready", handler.ReadyAssetRuntime)

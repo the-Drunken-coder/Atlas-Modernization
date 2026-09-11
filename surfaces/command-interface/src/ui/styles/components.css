@@ -778,3 +778,13 @@
 .geofeature-drawing svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 .geofeature-drawing polyline { fill: none; stroke: var(--accent-strong); stroke-width: 2; stroke-dasharray: 5 4; }
 .geofeature-drawing__close { position: absolute; width: 18px; height: 18px; padding: 0; transform: translate(-50%, -50%); border: 2px solid var(--accent-strong); border-radius: 50%; background: var(--surface-1); cursor: pointer; }
+
+/* Movement history extends the selected Entity inspector. */
+.movement-history { display: flex; flex-direction: column; gap: 8px; }
+.movement-history__row { display: flex; align-items: center; justify-content: space-between; gap: 4px; min-width: 0; }
+.movement-history__row .bp6-html-select { min-width: 0; max-width: 170px; }
+.movement-history__row select { width: 100%; min-width: 0; }
+.movement-history__meta, .movement-history details { color: var(--text-3); font-size: 10px; }
+.movement-history details .field-grid { margin-top: 8px; overflow-wrap: anywhere; }
+.movement-history__age { color: var(--accent-strong); font-size: 10px; }
+.movement-history__legend { display: flex; flex-wrap: wrap; gap: 8px; border-top: 1px solid var(--border); padding-top: 8px; font-size: 9px; color: var(--text-3); }

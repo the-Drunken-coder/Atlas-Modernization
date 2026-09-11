@@ -64,6 +64,12 @@ coverage/
 /simulations/dist/
 /simulations/.atlas-simulations/
 
+# --- Atlas deployment state and release staging ---
+.atlas/
+/release-artifacts/
+/catalog-ledger/
+/pages/
+
 # --- Python tooling (services/core/scripts/) ---
 __pycache__/
 *.py[cod]
@@ -87,3 +93,7 @@ logs/
 # --- Agent / personal tooling ---
 .claude/
 .benchmarks/
+
+# --- Movement history design and local test artifacts ---
+/docs/mockups/movement-history/
+/services/core/.history-review-tmp/

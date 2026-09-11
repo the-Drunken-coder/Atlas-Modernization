@@ -10,6 +10,26 @@ import type {
 type PreviewState = DeploymentSnapshot["status"];
 type PreviewOutput = { write(data: string): unknown };
 type PreviewOptions = { pluginStepDelayMs?: number };
+type PreviewInstalledPlugin = { selectedVersion: string; previousVersion: string | null };
+
+const PREVIEW_PLUGIN_VERSIONS = ["0.2.0", "0.1.0"] as const;
+const PREVIEW_CATALOG: readonly PluginCatalogEntry[] =
+  PLUGIN_CATALOG.length > 0
+    ? PLUGIN_CATALOG
+    : [
+        {
+          pluginId: "demo_plugin",
+          displayName: "Demo Plugin",
+          lifecycle: "query_only",
+          service: "demo-plugin",
+          image: "preview/demo-plugin:fixture",
+          assets: {
+            compose: "compose.yml",
+            core_endpoint: "core-endpoint.json",
+            source_connector: "source-connector.json"
+          }
+        }
+      ];
 
 const previewStates = {
   degraded: true,
@@ -29,6 +49,7 @@ export function createPreviewOperator(
 ): AtlasCoreOperator {
   let deploymentState = initialState;
   const enabledPlugins = new Set<string>();
+  const installedPlugins = new Map<string, PreviewInstalledPlugin>();
   let cancellationRequested = false;
   let cancelPendingPluginStep: (() => void) | undefined;
   const pluginStepDelayMs = options.pluginStepDelayMs ?? 1_500;
@@ -188,6 +209,7 @@ export function createPreviewOperator(
       preview("Initialization simulated. No credentials, containers, or volumes were created.");
       deploymentState = "ready";
       enabledPlugins.clear();
+      installedPlugins.clear();
     },
     async logs(serviceId, _follow) {
       const label = serviceId ?? "all services";
@@ -207,6 +229,19 @@ export function createPreviewOperator(
     async pluginEnable(pluginId, reportActivity) {
       return await mutatePlugin(true, pluginId, reportActivity);
     },
+    async pluginInstall(pluginId, version) {
+      const plugin = requirePreviewPlugin(pluginId);
+      if (deploymentState === "not-initialized") {
+        throw new Error("Atlas Core is not initialized. Run atlas-core init first.");
+      }
+      if (installedPlugins.has(pluginId)) throw new Error(`Plugin ${pluginId} is already installed; use update.`);
+      const selectedVersion = version ?? PREVIEW_PLUGIN_VERSIONS[0];
+      if (!PREVIEW_PLUGIN_VERSIONS.includes(selectedVersion as (typeof PREVIEW_PLUGIN_VERSIONS)[number])) {
+        throw new Error(`Unknown fixture Plugin release ${pluginId} ${selectedVersion}.`);
+      }
+      installedPlugins.set(pluginId, { previousVersion: null, selectedVersion });
+      preview(`Installed ${plugin.displayName} ${selectedVersion}.`);
+    },
     async pluginLogs(pluginId, _follow) {
       if (deploymentState === "not-initialized") {
         throw new Error("Atlas Core is not initialized. Run atlas-core init first.");
@@ -218,19 +253,65 @@ export function createPreviewOperator(
       output.write(`2026-08-30T14:12:08Z ${plugin.service} fixture index healthy\n`);
     },
     async pluginStatuses(pluginId) {
-      const plugins = pluginId === undefined ? PLUGIN_CATALOG : [requirePreviewPlugin(pluginId)];
+      const plugins = pluginId === undefined ? PREVIEW_CATALOG : [requirePreviewPlugin(pluginId)];
       return plugins.map((plugin) => {
         const enabled = enabledPlugins.has(plugin.pluginId);
         const running = enabled && deploymentState !== "stopped" && deploymentState !== "not-initialized";
+        const installed = installedPlugins.get(plugin.pluginId);
         return {
           pluginId: plugin.pluginId,
           displayName: plugin.displayName,
           lifecycle: plugin.lifecycle,
           enabled,
           packaged: plugin.image !== null,
+          ...(installed
+            ? {
+                installed: true,
+                selectedVersion: installed.selectedVersion,
+                previousVersion: installed.previousVersion,
+                availableVersions: PREVIEW_PLUGIN_VERSIONS,
+                compatibility: "compatible" as const,
+                revoked: false
+              }
+            : {}),
           ...(running ? { state: "running", health: "healthy" } : {})
         };
       });
+    },
+    async pluginUpdate(pluginId) {
+      const plugin = requirePreviewPlugin(pluginId);
+      const installed = installedPlugins.get(pluginId);
+      if (!installed) throw new Error(`Plugin ${pluginId} is not installed.`);
+      const nextVersion = PREVIEW_PLUGIN_VERSIONS[0];
+      if (installed.selectedVersion === nextVersion) {
+        preview(`${plugin.displayName} ${installed.selectedVersion} is current.`);
+        return;
+      }
+      installedPlugins.set(pluginId, { previousVersion: installed.selectedVersion, selectedVersion: nextVersion });
+      preview(`Updated ${plugin.displayName} to ${nextVersion}.`);
+    },
+    async pluginRollback(pluginId) {
+      const plugin = requirePreviewPlugin(pluginId);
+      const installed = installedPlugins.get(pluginId);
+      if (!installed) throw new Error(`Plugin ${pluginId} is not installed.`);
+      if (!installed.previousVersion) throw new Error(`Plugin ${pluginId} has no previous release to roll back to.`);
+      installedPlugins.set(pluginId, {
+        previousVersion: installed.selectedVersion,
+        selectedVersion: installed.previousVersion
+      });
+      preview(`Rolled back ${plugin.displayName} to ${installed.previousVersion}.`);
+    },
+    async pluginUninstall(pluginId) {
+      const plugin = requirePreviewPlugin(pluginId);
+      if (enabledPlugins.has(pluginId)) throw new Error(`Plugin ${pluginId} must be disabled before uninstall.`);
+      if (!installedPlugins.delete(pluginId)) throw new Error(`Plugin ${pluginId} is not installed.`);
+      preview(`Uninstalled ${plugin.displayName}.`);
+    },
+    async pluginRefresh() {
+      preview("Plugin catalog refreshed.");
+    },
+    async pluginRotateCoreKey() {
+      preview("Managed Plugin key rotated.");
     },
     resumeAfterCancellation() {
       cancellationRequested = false;
@@ -239,6 +320,7 @@ export function createPreviewOperator(
       preview("Reset simulated. No credentials, containers, or volumes were deleted.");
       deploymentState = "ready";
       enabledPlugins.clear();
+      installedPlugins.clear();
     },
     async restart() {
       preview("Restart simulated. No images were pulled and no containers changed.");
@@ -266,7 +348,7 @@ export function createPreviewOperator(
 }
 
 function requirePreviewPlugin(pluginId: string): PluginCatalogEntry {
-  const plugin = PLUGIN_CATALOG.find((candidate) => candidate.pluginId === pluginId);
+  const plugin = PREVIEW_CATALOG.find((candidate) => candidate.pluginId === pluginId);
   if (!plugin) throw new Error(`Unknown first-party Plugin: ${pluginId}`);
   return plugin;
 }

@@ -1,6 +1,6 @@
 # Atlas Core CLI
 
-`atlas-core` installs and operates one durable Atlas Core deployment on an arm64 or x64 macOS or Linux host with Docker Compose.
+`atlas-core` installs and operates one durable Atlas Core deployment on an arm64 or x64 macOS or Linux host with Docker Compose. Docker Buildx is also required to read raw OCI manifests when Docker's manifest inspection cannot verify their serialization.
 The npm package is the operator interface. Atlas Core itself runs from the matching
 `ghcr.io/the-drunken-coder/atlas-core` container image.
 
@@ -37,6 +37,9 @@ reuse the current `surfaces/core-cli/dist` output while iterating on visual chan
 Initialization generates strong local credentials and provisions the MinIO bucket only when it can prove the deployment
 is new. It refuses to create new credentials over existing Atlas containers or volumes. Configuration is stored in
 `~/.atlas/core` with owner-only permissions. Set `ATLAS_CORE_HOME` before the first command to choose another location.
+After initialization, install and load the recovery service with `atlas-core supervision install` before using the
+default `atlas-core start` or `atlas-core restart`; use `--manual` only when an intentional one-shot start or restart
+is acceptable.
 
 The menu is a user-friendly layer over the same commands shown below. Those commands remain available for scripts and
 direct operation.
@@ -47,34 +50,49 @@ direct operation.
 atlas-core
 atlas-core help
 atlas-core init
-atlas-core start
+atlas-core start [--manual]
 atlas-core stop
-atlas-core restart
-atlas-core reset
+atlas-core restart [--manual]
+atlas-core reset [--manual]
 atlas-core config
 atlas-core update [cli|all]
 atlas-core status
 atlas-core logs [core|source-gateway|postgres|minio] [--follow]
 atlas-core doctor
+atlas-core supervision [install|uninstall|status]
 atlas-core version
 atlas-core plugins
 atlas-core plugins enable <plugin_id>
 atlas-core plugins disable <plugin_id>
 atlas-core plugins status [plugin_id]
 atlas-core plugins logs <plugin_id> [--follow]
+atlas-core plugins install <plugin_id> [version]
+atlas-core plugins update <plugin_id|all>
+atlas-core plugins rollback <plugin_id>
+atlas-core plugins uninstall <plugin_id>
+atlas-core plugins refresh
+atlas-core plugins rotate-core-key
+atlas-core recover status
+atlas-core recover retry
+atlas-core recover forward <version>
+atlas-core recover restored --confirm-paired-restore
+atlas-core supervise
 ```
 
 ## Plugins
 
-Implementation status: the commands below describe the current Core-packaged Plugin catalog. The accepted independent
-release design is documented in
-[`../../docs/design-decisions/2026-09-01-plugins-release-independently-from-atlas-core.md`](../../docs/design-decisions/2026-09-01-plugins-release-independently-from-atlas-core.md).
-Until that design is implemented, the CLI does not yet install, update, roll back, or uninstall independently
-versioned Plugins.
+Implementation status: the independent Plugin lifecycle and release workflow are implemented in this worktree, and
+local validation passes. The candidate-image Docker acceptance test still awaits CI. The terminal UI redesign still awaits the user's selection from the proposed mocks. Existing
+published Core packages may still use the bundled Plugin catalog; schema-4 deployments use independent catalog state.
+Production catalog signing, trust bootstrap, and Pages rollout remain external setup. The accepted independent release
+design is documented in [`../../docs/design-decisions/2026-09-01-plugins-release-independently-from-atlas-core.md`](../../docs/design-decisions/2026-09-01-plugins-release-independently-from-atlas-core.md).
+The independent command behavior is specified in [`../../docs/atlas-plugins/MANAGEMENT.md`](../../docs/atlas-plugins/MANAGEMENT.md).
 
-The `Plugins` menu and matching commands manage trusted, query-only Plugins published in the installed Atlas Core
-catalog. Building Scan is available as an opt-in first-party Plugin; no Plugin is enabled by default. The CLI does not
-accept arbitrary paths, images, or third-party bundles.
+The `Plugins` menu and matching commands manage trusted, query-only Plugins. Schema-4 deployments read the signed catalog
+and local Installed Plugin records. Schema-3 deployments retain the bundled catalog only for the explicit transition:
+disable bundled Plugins with the matching v1 CLI, update Core, and install independent releases afterward. Building Scan
+is available as an opt-in first-party Plugin; no Plugin is enabled by default. The CLI does not accept arbitrary paths,
+images, or third-party bundles.
 
 Enabling a Plugin pulls the catalog's immutable image digest, stages its private Compose and configuration fragments,
 validates the complete Compose model, and then commits the new state. A running deployment starts the Plugin and
@@ -92,8 +110,32 @@ verify the exact Docker network lock ID before removal. The CLI pins the validat
 in a mutation and verifies the daemon ID again after every Docker or Compose command. If the socket starts serving a
 different daemon, the CLI retains an engine-bound recovery owner and refuses local state changes. Restore the original
 daemon and retry the command to remove its lock and continue.
-Disabling keeps the cached image. Plugin mutations require the CLI and deployment versions to match; status and logs
-remain available after a CLI-only update. Direct commands print each mutation stage.
+Disabling keeps the cached image. Independent Plugin mutations use the installed Core's retained bundle and exact image,
+so a Plugin update does not publish or install a new Core version. Status and logs remain available after a CLI-only
+update. Direct commands print each mutation stage.
+
+The host manager provisions and rotates its shared SDK Plugin key through the host-only `atlas_core managed-keys`
+executable inside the exact running Core container. The subcommands are `create <name>`, `list <name>`, and
+`revoke <key_id>`. They call Core's existing admin domain operations and do not add an HTTP or CORS bypass, accept an
+API-key management credential, or run migrations. Operators use `atlas-core plugins rotate-core-key`; the container
+executable is an internal transaction step.
+
+If a process dies during a mutation, `atlas-core recover status` reports the phase and required action. `recover retry`
+uses the same exact staged candidate. `recover forward <version>` stages a newly verified compatible Core target while
+stopped, without the ordinary running-deployment guard. After an operator restores the paired PostgreSQL and MinIO
+backup, `recover restored --confirm-paired-restore` compares the prior migration ledger, retained image and bundle
+receipts, and backup identity before completing; it does not perform the restore. Once a target Core has started, the CLI
+never auto-restores the old Core image. An explicit `atlas-core stop` records a stopped `run-intent.json` and wins over
+automatic resume from `start` or `supervise`.
+
+Retained base and generated Plugin services use `restart: "no"`, so Compose and Docker cannot start around recovery.
+`atlas-core supervise` is the recovery-aware long-lived startup path. A Linux user service needs lingering enabled for
+boot-time recovery. A macOS LaunchAgent runs after login and cannot provide pre-login recovery. The default `start` and
+`restart` require an installed and loaded supervisor; `start --manual` and `restart --manual` are the explicit one-shot
+exceptions without an automatic recovery guarantee.
+Supervisor definitions pin the validated local Docker socket, clear inherited Docker context overrides, and record the
+CLI version. A CLI upgrade reinstalls active matching supervision with the newly installed CLI before updating Core.
+An active service whose definition does not match the selected deployment must be reinstalled explicitly first.
 The Plugins menu keeps the operation in an activity view with elapsed timestamps, reports rollback status, and returns
 to the Plugin catalog after safe cancellation.
 
@@ -116,22 +158,32 @@ and available release before changing anything. Choose one of two update scopes:
 - `Update CLI only` or `atlas-core update cli` installs the latest global CLI through the current npm prefix. The
   running Atlas Core containers, credentials, and durable storage stay unchanged.
 - `Update CLI + Atlas Core` or `atlas-core update all` installs the latest CLI, pulls that release's digest-pinned Core
-  image plus every enabled Plugin image, and restarts a running deployment against the existing PostgreSQL and MinIO
-  volumes. A stopped deployment stays stopped. The update refuses a target catalog that no longer contains an enabled
-  Plugin and pulls every target digest before changing the deployment.
+  image, and restarts a running deployment against the existing PostgreSQL and MinIO volumes. It does not select or
+  publish Plugin releases; Plugin updates use `atlas-core plugins update <plugin_id|all>` and the retained Core bundle.
+  A stopped deployment stays stopped. A schema-3 deployment still follows its bundled-catalog transition rules and
+  refuses a target catalog that no longer contains an enabled Plugin.
 
 Core releases may carry schema migrations. Before a Core update, create and validate the paired PostgreSQL and MinIO
 backup described in the [deployment runbook](https://github.com/the-Drunken-coder/Atlas-Modernization/blob/main/services/core/docs/DEPLOYMENT_RUNBOOK.md#pre-deploy-backup).
 The menu review screen and `atlas-core update all` both require confirmation that a current paired backup exists.
+Set `ATLAS_CORE_BACKUP_DIR` to that backup directory’s absolute path before updating. The CLI records a content hash of
+the dump, bucket mirror, and runbook metadata. Preserve the pair and select it again with the same environment variable
+when running `recover restored --confirm-paired-restore`; recovery requires the recorded hash to match. This identifies
+the backup artifacts and does not prove that the operator restored them.
 CLI-only updates do not require a deployment backup because they do not change the running Core or its stores.
 
 CLI-only updates may leave the CLI newer than the running Core. Status, logs, diagnostics, stop, reset, and the explicit
 update flow remain available in that state. Start and restart refuse to change Core implicitly and direct the operator
 to `atlas-core update all`. This applies only when both releases use the current engine-scoped resource layout.
 
-State schemas 1 and 2 belong to the retired fixed-name experimental layout. This CLI accepts only state schema 3 with
-the `engine-scoped-v1` layout. It does not migrate the old layout, and even `reset` refuses old state so it cannot delete
-the wrong namespace. Before replacing a CLI that wrote schema 1 or 2, stop and remove that experiment's fixed-name
+State schemas 1 and 2 belong to the retired fixed-name experimental layout. Schema 3 is the current bundled deployment
+state with the `engine-scoped-v1` layout. Independent Plugin management uses schema 4. The first independent Core
+transition does not infer receipts from enabled bundled Plugins; disable them with the matching v1 CLI first. This CLI
+does not migrate the old fixed-name layout, and even `reset` refuses old state so it cannot delete the wrong namespace.
+That first schema-3 transition applies an engine-locked Docker `restart=no` preflight to the recorded legacy containers
+before stopping the old Compose project; its imported base candidate also normalizes legacy Compose restart fields. This
+prevents an old `unless-stopped` policy from racing the transition without changing live state or durable volumes.
+Before replacing a CLI that wrote schema 1 or 2, stop and remove that experiment's fixed-name
 containers and paired volumes with the old package's Compose assets, then remove its matching `ATLAS_CORE_HOME`.
 That cleanup permanently deletes the old PostgreSQL and MinIO data. Install this CLI and run `atlas-core init` only
 after the old deployment and configuration are gone.
@@ -149,6 +201,8 @@ that matches the current Docker engine. It then permanently deletes the known At
 volumes, and the credentials and state in that home before creating new credentials and empty storage and starting the
 image pinned by the installed CLI package. Reset is for intentionally discarding an initialized deployment, not for
 updates. Use `atlas-core update all` to move an existing deployment to the newest release without deleting its data.
+
+Before deleting anything, reset requires active recovery supervision. Use `atlas-core reset --manual` to explicitly acknowledge running without automatic recovery, as with `start --manual`.
 
 Reset lists what it will delete and asks `Continue? [y/N]`. It proceeds only after `y` or `yes`. Reset verifies
 ownership labels and stops before deleting anything if another container uses either durable volume. It does not remove
@@ -185,3 +239,5 @@ different configuration directories cannot initialize the same deployment concur
 If `init` finds existing Atlas volumes without its matching configuration, it stops. Recover the credentials and paired
 storage unless you intend to discard the deployment. Use the confirmed `reset` command only when permanent deletion is
 the desired outcome.
+
+Image platform selection uses the local Docker daemon architecture, including when Node runs under Rosetta.

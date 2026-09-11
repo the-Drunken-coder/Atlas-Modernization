@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import {
+  compareMovementInstants,
   isChangedSinceResponse,
   isCommandCatalog,
   isEntityCheckInRequest,
@@ -10,11 +11,17 @@ import {
   isFullDatasetResponse,
   isJSONValue,
   isMapArea,
+  isMovementHistoryBatchRequest,
+  isMovementHistoryBatchResponse,
+  isMovementHistoryPage,
+  isMovementInspection,
+  isMovementTrail,
   isObjectCreateRequest,
   isObjectDetailResource,
   isObjectResource,
   isObjectUpdateRequest,
   isPluginDiscoveryResponse,
+  isRFC3339Timestamp,
   isRuntimeReadyRequest,
   isRuntimeRegistrationRequest,
   isRuntimeStopRequest,
@@ -71,6 +78,9 @@ export {
 
 export const LINK_PROTOCOL_REVISION = 1 as const;
 export const MAX_OBJECT_CONTENT_BYTES = 32 * 1024;
+// Leave room below the 128 KiB message limit for long sample IDs and cursors.
+export const MAX_RADIO_MOVEMENT_SAMPLES = 100;
+export const MAX_RADIO_TRAIL_POINTS = 100;
 
 export function serializeLinkMessage(message: LinkMessage): Uint8Array {
   if (!isLinkMessage(message)) throw new TypeError("Invalid Atlas Radio contract message");
@@ -311,6 +321,29 @@ function validOperationContext(operation: AtlasRadioOperationName, value: Record
     case "task.fail":
     case "runtime.tasks":
       return isNonEmptyString(value.target_id) && isNonEmptyString(value.runtime_id);
+    case "entity.history":
+      return (
+        validMovementWindow(value) &&
+        value.max_points === undefined &&
+        (value.limit === undefined ||
+          (Number.isSafeInteger(value.limit) &&
+            Number(value.limit) >= 1 &&
+            Number(value.limit) <= MAX_RADIO_MOVEMENT_SAMPLES))
+      );
+    case "entity.trail":
+      return (
+        validMovementWindow(value) &&
+        value.cursor === undefined &&
+        value.limit === undefined &&
+        Number.isSafeInteger(value.max_points) &&
+        Number(value.max_points) >= 2 &&
+        Number(value.max_points) <= MAX_RADIO_TRAIL_POINTS
+      );
+    case "entity.inspect_movement":
+      return (
+        isNonEmptyString(value.target_id) && isRFC3339Timestamp(value.entity_created_at) && isRFC3339Timestamp(value.at)
+      );
+    case "entity.import_movement":
     case "entity.get":
     case "entity.update":
     case "entity.delete":
@@ -344,6 +377,8 @@ function validOperationContext(operation: AtlasRadioOperationName, value: Record
 
 function validOperationInput(operation: AtlasRadioOperationName, input: unknown): boolean {
   switch (operation) {
+    case "entity.import_movement":
+      return isMovementHistoryBatchRequest(input);
     case "entity.create":
       return isEntityCreateRequest(input);
     case "entity.update":
@@ -378,6 +413,9 @@ function validOperationInput(operation: AtlasRadioOperationName, input: unknown)
       return isJSONValue(input);
     case "plugin.invoke_spatial":
       return isMapArea(input);
+    case "entity.history":
+    case "entity.trail":
+    case "entity.inspect_movement":
     case "entity.get":
     case "entity.delete":
     case "task.get":
@@ -396,6 +434,14 @@ function validOperationInput(operation: AtlasRadioOperationName, input: unknown)
 
 function validOperationOutput(operation: AtlasRadioOperationName, output: unknown): boolean {
   switch (operation) {
+    case "entity.history":
+      return isMovementHistoryPage(output);
+    case "entity.trail":
+      return isMovementTrail(output);
+    case "entity.inspect_movement":
+      return isMovementInspection(output);
+    case "entity.import_movement":
+      return isMovementHistoryBatchResponse(output);
     case "entity.get":
     case "entity.create":
     case "entity.update":
@@ -541,4 +587,15 @@ function isNonEmptyString(value: unknown): value is string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function validMovementWindow(value: Record<string, unknown>): boolean {
+  return (
+    isNonEmptyString(value.target_id) &&
+    isRFC3339Timestamp(value.entity_created_at) &&
+    isRFC3339Timestamp(value.from) &&
+    isRFC3339Timestamp(value.to) &&
+    compareMovementInstants(String(value.from), String(value.to)) <= 0 &&
+    compareMovementInstants(String(value.to), String(value.from), 2592000000) <= 0
+  );
 }

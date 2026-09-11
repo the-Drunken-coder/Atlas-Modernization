@@ -1,11 +1,10 @@
 # Releasing Atlas Core
 
-Implementation status: this guide describes the current v1 workflow, which still releases catalog Plugin images with
-Core. [`2026-09-01-plugins-release-independently-from-atlas-core.md`](../design-decisions/2026-09-01-plugins-release-independently-from-atlas-core.md)
-supersedes that coupling. Keep following this guide until the independent Plugin workflow and catalog are implemented;
-then this guide must remove every Plugin build, digest, visibility, and package-asset step. That first decoupled Core
-update must refuse to proceed while a bundled-v1 Plugin remains enabled; `docs/atlas-plugins/MANAGEMENT.md` defines the
-greenfield transition.
+Implementation status: the Core-only release workflow and independent Plugin release workflow are released with Atlas Core 0.2.0 and Building Scan 0.1.0.
+Candidate-image checks passed on linux/amd64 and linux/arm64. Existing published Core packages may still use the bundled catalog. The terminal
+UI redesign still awaits the user's selection from the proposed mocks. Production Plugin signing trust and Pages configuration are recorded in
+[bootstrap provenance](../atlas-plugins/CATALOG_BOOTSTRAP.md); the signed stable catalog is published. [`2026-09-01-plugins-release-independently-from-atlas-core.md`](../design-decisions/2026-09-01-plugins-release-independently-from-atlas-core.md)
+records the independent release decision and the schema-3 transition to schema 4.
 
 After that transition, every immutable npm Core version must continue carrying its complete base deployment bundle,
 including the declarative templates and placeholder schema used to generate Plugin deployment files. The host manager may
@@ -15,11 +14,13 @@ the candidate only when its complete bundle hash matches deployment state.
 The first independent-release package must change every retained production base service and the Plugin generation
 template to Compose `restart: "no"`. Package validation rejects another policy. Its disposable-host acceptance test must
 restart the Docker daemon during a pending transaction, prove that no base or Plugin container starts automatically, then
-prove that `atlas-core start` recovers the journal before starting the verified composition.
+prove that `atlas-core start` or the recovery-aware `atlas-core supervise` path recovers the journal before starting the
+verified composition. Linux user-service setup requires linger; a macOS LaunchAgent starts only after login.
 
-Atlas Core uses one version for the npm CLI, Core and catalog Plugin images, git tag, and GitHub Release. A normal
-release starts from `main`. Its coordinator stays open until the automatically queued immutable-tag run publishes and
-verifies the release.
+Before the transition, Atlas Core uses one version for the npm CLI, Core and catalog Plugin images, git tag, and GitHub
+Release. After the transition, Core uses one version for the npm CLI, Core image, git tag, and GitHub Release; Plugin
+versions and catalog publication are independent. A normal release starts from `main`. Its coordinator stays open until
+the automatically queued immutable-tag run publishes and verifies the release.
 
 ## Normal release
 
@@ -36,11 +37,28 @@ verifies the release.
    The tag run verifies the coordinator's release authorization and exact final package, promotes the reviewed image
    digests, publishes that package to npm with provenance, and makes the GitHub Release public. A normal newest release
    becomes latest.
-7. Confirm the npm version, GHCR image tags, and GitHub Release are public. Confirm every new catalog Plugin image is
-   also anonymously pullable.
+7. Confirm the npm version, GHCR image tags, and GitHub Release are public. Before the transition, confirm every new
+   catalog Plugin image is also anonymously pullable; after the transition, verify Plugin publication separately using
+   [`RELEASE_FORMAT.md`](../atlas-plugins/RELEASE_FORMAT.md).
 
 The main run and tag run share the coordinator run ID in their titles. The main run contains the only approval and links
 to the tag run that completed publication.
+
+## Independent Plugin releases
+
+After the transition, a Plugin release does not run **Release Atlas Core**. The Plugin workflow pins one reviewed source
+commit, runs its focused checks, builds the multi-architecture candidate image, runs the exact candidate runtime gate,
+generates the strict `.atlas-plugin` document, then publishes its immutable tag and GitHub Release asset. A separate
+catalog publication group appends the release to the protected ledger, signs the catalog, and publishes the matching
+GitHub Pages artifact. The full transaction and retry rules are in
+[`docs/atlas-plugins/RELEASE_FORMAT.md`](../atlas-plugins/RELEASE_FORMAT.md).
+Catalog-only revocation uses the separate **Revoke Atlas Plugin Catalog Release** workflow described there and does not
+rewrite a published Plugin release asset or image. A first push to a new Plugin GHCR repository creates a private package;
+make that exact package public and rerun the unchanged reviewed Plugin workflow before catalog publication.
+
+The repository contains the source workflow and verification code only. Before the first live catalog publication,
+bootstrap the Ed25519 key, trusted public-key metadata, GitHub environments, and Pages deployment described in that
+document. Record their provenance; do not add a production private key or promote a test fixture key from the checkout.
 
 ## Moving from the two-approval workflow
 
@@ -97,10 +115,13 @@ Before release approval, the workflow:
 - runs the Core CLI checks, release helper tests, Protocol checks and tests, Core tests, and npm audit;
 - restricts the prepared diff to release-owned files.
 
-After approval, it builds `linux/amd64` and `linux/arm64` Core and catalog Plugin images, verifies their labels and
-digests, records the immutable digests in the package, packs the final npm archive once, and exercises that exact archive
-on a disposable Docker host. The acceptance test covers refusal to adopt unknown containers, initialization, start,
-diagnostics, status, update, reset, and stop while confirming that ordinary stop preserves both durable volumes.
+After approval, the current workflow builds `linux/amd64` and `linux/arm64` Core and catalog Plugin images. During the
+transition it continues to verify their labels and digests, records the immutable digests in the package, packs the final
+npm archive once, and exercises that exact archive on a disposable Docker host. After the transition, it builds and
+verifies only the Core image and retained base bundle; the Plugin workflow owns candidate runtime gates, immutable Plugin
+tags, release documents, and catalog publication. The acceptance test covers refusal to adopt unknown containers,
+initialization, start, diagnostics, status, update, reset, and stop while confirming that ordinary stop preserves both
+durable volumes.
 
 The workflow refuses to push if `main` moved. A separate `release-commit` job starts on a clean runner, downloads only the
 approved release artifact, rejects unexpected or unstaged files, rebuilds an empty release index, checks the tag rulesets,

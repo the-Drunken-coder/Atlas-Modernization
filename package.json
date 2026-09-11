@@ -25,7 +25,10 @@
     "plugins:check": "node scripts/plugins.mjs check",
     "plugins:check-seepage": "node scripts/plugins.mjs check-seepage",
     "plugins:docker-build": "node scripts/plugins.mjs docker-build",
-    "plugins:catalog": "node scripts/plugins.mjs generate-catalog --package-root surfaces/core-cli",
+    "plugins:release:validate": "node scripts/plugin-release.mjs validate-plugin",
+    "plugins:release:document": "node scripts/plugin-release.mjs release-document",
+    "plugins:release:candidate": "node scripts/plugin-release.mjs check-candidate",
+    "plugins:release:test": "node --test scripts/plugin-release.test.mjs scripts/plugin-release-catalog.test.mjs",
     "build:meshtastic-link": "npm run build --workspace @the-drunken-coder/atlas-meshtastic-link",
     "build:core-cli": "npm run build --workspace atlas-core",
     "meshtastic-link": "npm run link --workspace @the-drunken-coder/atlas-meshtastic-link --",
@@ -43,6 +46,7 @@
     "react-dom": "19.2.8"
   },
   "overrides": {
-    "undici@7.28.0": "7.29.0"
+    "undici@7.28.0": "7.29.0",
+    "sharp": "0.35.4"
   }
 }

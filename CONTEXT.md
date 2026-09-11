@@ -24,6 +24,28 @@ _Avoid_: Asset, stream item
 An Entity that represents a spatial feature or area, such as a building footprint or an area selected for monitoring.
 _Avoid_: Asset, Track
 
+## Movement history
+
+**Movement history**:
+Retained reports of an Entity's position, speed, and altitude over time.
+_Avoid_: complete Entity history, Task history
+
+**Movement sample**:
+A report containing one or more of an Entity's position, speed, or altitude. It records the values actually reported, with their observation time when known and the time Atlas received them.
+_Avoid_: complete Entity snapshot, heartbeat
+
+**Altitude**:
+An Entity's height above mean sea level, measured in meters.
+_Avoid_: height above ground, height relative to launch
+
+**Trail**:
+A visual representation of an Entity's past reported positions.
+_Avoid_: complete movement history, measured continuous path
+
+**Backfill**:
+Attaching earlier movement reports to an Entity after those reports were collected, including reports collected before the Entity was identified or created.
+_Avoid_: live position update, Track identification
+
 ## Plugins and external data
 
 **External source**:

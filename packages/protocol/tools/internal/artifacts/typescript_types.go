@@ -6,6 +6,9 @@ import (
 )
 
 func (g *typeScriptGenerator) typeFor(schema typeScriptSchema, current string, indent int) string {
+	if excluded, ok := schema["not"].(map[string]any); ok && len(excluded) == 0 {
+		return "never"
+	}
 	if ref, ok := schema["$ref"].(string); ok {
 		return typeNameFromRef(ref)
 	}

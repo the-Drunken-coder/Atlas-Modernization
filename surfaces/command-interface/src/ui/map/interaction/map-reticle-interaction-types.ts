@@ -13,4 +13,7 @@ export type MapReticleInteractionOptions = {
   notifyUserGesture: () => void;
   onSelectEntity: (id: string) => void;
   onBackgroundClick?: () => void;
+  onHistoryClick?: (point: { x: number; y: number }) => boolean;
+  onHistoryHover?: (point: { x: number; y: number } | undefined) => void;
+  onDismissHistory?: () => boolean;
 };

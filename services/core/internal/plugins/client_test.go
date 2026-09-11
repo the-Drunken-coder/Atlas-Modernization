@@ -17,7 +17,7 @@ func TestHTTPClientDecodesExactPrivateProtocol(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/manifest":
-			_, _ = w.Write([]byte(`{"plugin_id":"reference","display_name":"Reference","operations":[{"operation_id":"inspect_fixture","display_name":"Inspect fixture","timeout_ms":5000}]}`))
+			_, _ = w.Write([]byte(`{"plugin_id":"reference","display_name":"Reference","core_to_plugin_protocol_major":1,"operations":[{"operation_id":"inspect_fixture","display_name":"Inspect fixture","timeout_ms":5000}]}`))
 		case "/health":
 			_, _ = w.Write([]byte(`{"status":"ok"}`))
 		case "/operations/inspect_fixture":
@@ -30,7 +30,7 @@ func TestHTTPClientDecodesExactPrivateProtocol(t *testing.T) {
 	client := newHTTPClient(server.Client())
 
 	manifest, clientErr := client.manifest(context.Background(), server.URL)
-	if clientErr != nil || manifest.PluginID != "reference" || len(manifest.Operations) != 1 {
+	if clientErr != nil || manifest.PluginID != "reference" || manifest.CoreToPluginProtocolMajor != CoreToPluginProtocolMajor || len(manifest.Operations) != 1 {
 		t.Fatalf("manifest = %#v, %v", manifest, clientErr)
 	}
 	healthy, clientErr := client.health(context.Background(), server.URL)
@@ -95,6 +95,22 @@ func TestHTTPClientRejectsMalformedAndOversizedPrivateResponses(t *testing.T) {
 		},
 		{
 			name: "manifest null tool asset", body: `{"plugin_id":"reference","display_name":"Reference","operations":[],"tool_asset_id":null}`,
+			call: func(client *httpClient, origin string) *clientError {
+				_, err := client.manifest(context.Background(), origin)
+				return err
+			},
+			wantKind: failureInvalidManifest,
+		},
+		{
+			name: "manifest missing protocol major", body: `{"plugin_id":"reference","display_name":"Reference","operations":[]}`,
+			call: func(client *httpClient, origin string) *clientError {
+				_, err := client.manifest(context.Background(), origin)
+				return err
+			},
+			wantKind: failureInvalidManifest,
+		},
+		{
+			name: "manifest unsupported protocol major", body: `{"plugin_id":"reference","display_name":"Reference","core_to_plugin_protocol_major":2,"operations":[]}`,
 			call: func(client *httpClient, origin string) *clientError {
 				_, err := client.manifest(context.Background(), origin)
 				return err

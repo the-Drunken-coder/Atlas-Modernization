@@ -5,14 +5,20 @@ Release and installation details:
 - [`RELEASE_FORMAT.md`](RELEASE_FORMAT.md) defines independent Plugin artifacts, catalog trust, and publication.
 - [`MANAGEMENT.md`](MANAGEMENT.md) defines local Installed Plugin state, compatibility, commands, and transactions.
 
-Status: Plugin platform v1 and the first-party query-only catalog are implemented. Datastream delivery, executable UI
-Plugins, third-party installation, hot upgrades, untrusted-Plugin isolation, scoped Plugin credentials, persistent
-Plugin storage, and taskable-Plugin lifecycle management remain deferred.
+Status: Plugin platform v1 and the independent lifecycle and release workflow are released with Atlas Core 0.2.0 and Building Scan 0.1.0.
+Candidate-image checks passed on linux/amd64 and linux/arm64. Menu controls for update, rollback, uninstall, and shared-key rotation await the user's selection from the proposed mocks; these operations are available through direct CLI commands. Existing
+published Core packages may still contain the bundled catalog; schema-4 deployments use independent catalog state.
+Production signing trust and Pages configuration are recorded in [bootstrap provenance](CATALOG_BOOTSTRAP.md).
+The signed stable catalog is published. Datastream delivery, executable UI Plugins, third-party installation, hot upgrades, untrusted
+Plugin isolation, scoped Plugin credentials, persistent Plugin storage, and taskable-Plugin lifecycle management remain
+deferred.
 
 ## Independent Plugin releases
 
-The implemented v1 remains the current behavior until this design is implemented. Its Core-packaged catalog and
-matching Core and Plugin release versions are superseded as an architectural direction.
+The independent lifecycle is now implemented for schema-4 deployments. Schema-3 deployments retain the bundled catalog
+only as the explicit transition path: operators disable bundled Plugins, update Core, and install independent releases
+from the signed catalog. The Core-packaged catalog and matching Core and Plugin release versions remain a legacy release
+format for already published packages.
 
 The replacement design has these settled requirements:
 
@@ -33,6 +39,9 @@ The replacement design has these settled requirements:
 - Plugin compatibility follows the Plugin package schema, membership in the deployed Core-to-Plugin and
   Plugin-to-Source-Gateway supported-major sets, the existing Atlas Protocol revision when the Plugin uses the SDK, and
   fixed Command Interface interactions. Atlas Core SemVer is not the primary compatibility check.
+- SDK-backed Plugins remain coupled to the exact Atlas Protocol revision used by their SDK build. Independent packaging
+  removes the Core release coupling, but a Protocol revision change still requires a compatible Plugin build and a
+  coordinated Core transition.
 - Plugin updates require explicit operator approval, either for one Plugin or for all compatible updates. Atlas does not
   install unattended Plugin updates.
 - Enable, enabled-Plugin update, disable, and enabled-Plugin rollback may restart the existing Core, Source Gateway, or
@@ -49,10 +58,17 @@ The replacement design has these settled requirements:
 - Plugin processes remain separate from Core and continue to run under the deployment orchestrator.
 - The first independent Core release refuses to update while a bundled-v1 Plugin is enabled. Operators disable those
   Plugins before the Core update and reinstall them from the signed catalog afterward.
+- The current engine-scoped-v1 deployment state is schema 3. Independent management uses schema 4; it does not infer
+  receipts from the old bundled catalog or silently migrate an enabled bundled Plugin.
+- A failed Core transition has explicit recovery commands. The manager retries the exact staged candidate, can fix forward
+  to a compatible target while stopped, or accepts a paired restore only after an explicit operator attestation and
+  ledger and image checks. It never auto-restores an old Core image after the target has started.
+- Retained base and generated Plugin services use `restart: "no"`. `atlas-core supervise` is the recovery-aware startup
+  path; Linux user services require lingering, and macOS LaunchAgents run after login.
 
 The release format, catalog trust and publication, local state, transaction recovery, compatibility fields, and command
-behavior are specified in the linked design documents. The current wire and deployment sections below continue to
-describe implemented v1 until the replacement is built.
+behavior are specified in the linked design documents. The wire and deployment sections below describe the shared Plugin
+runtime contracts; the package and catalog paragraphs identify the schema-3 transition where it still applies.
 
 Atlas plugins add bounded capabilities without deploying a new public API for every integration. Atlas remains the public control plane. Plugins run behind Core-owned routes, consume external data through Atlas-managed source connectors, and use normal Atlas resource and task systems when their results become durable or cause action.
 
@@ -183,8 +199,8 @@ The request uses `Content-Type: application/json` and `Accept: application/json`
 ```
 
 `plugin_to_source_gateway_protocol_major` is a positive integer and is exactly `1` for the first independent-release
-contract. The implemented v1 request does not yet send this field. After migration, a missing or unsupported value is a
-malformed request and produces HTTP `400` with `request_rejected`. `method` is an uppercase HTTP method. `path` begins
+contract. The runtime sends this field on every request. A missing or unsupported value is a malformed request and
+produces HTTP `400` with `request_rejected`. `method` is an uppercase HTTP method. `path` begins
 with `/` and contains no scheme, authority, query, or fragment. The path and query tuple strings are decoded UTF-8 text,
 never pre-encoded URL text. The Gateway evaluates connector policy against those decoded values, rejects NUL, backslash,
 and `.` or `..` path segments, then percent-encodes UTF-8 bytes exactly once. A literal `%` is data and becomes `%25`.
@@ -252,7 +268,7 @@ provenance or audit model.
 
 ## Execution and failure isolation
 
-The deployment orchestrator starts one trusted container per configured Plugin. In the current bundled Atlas deployment, Docker Compose owns startup, restart policy, resource limits, and shutdown. The independent manager keeps Compose ownership but fixes every retained base service and generated Plugin service to `restart: "no"`. Docker daemon and host restarts leave Atlas stopped until `atlas-core start` performs transaction recovery and validation. Core does not receive Docker socket access and does not create, upgrade, or delete containers.
+The deployment orchestrator starts one trusted container per configured Plugin. In the current bundled Atlas deployment, Docker Compose owns startup, restart policy, resource limits, and shutdown. The independent manager keeps Compose ownership but fixes every retained base service and generated Plugin service to `restart: "no"`. Docker daemon and host restarts leave Atlas stopped until `atlas-core start` or `atlas-core supervise` performs transaction recovery and validation. An explicit stopped `run-intent.json` prevents either path from auto-starting. Core does not receive Docker socket access and does not create, upgrade, or delete containers.
 
 Deployment configuration gives Core each Plugin's stable ID and private base URL. Core uses a fixed HTTP/JSON protocol to fetch its manifest and health, dispatch Operations, and report status. Plugins do not self-register, and Core does not scan Docker or the network for them. Either side may start first; Core keeps retryable Plugin failures out of base liveness and readiness.
 
@@ -289,8 +305,8 @@ Core sends `Accept: application/json` on every call and `Content-Type: applicati
 
 `plugin_id`, `display_name`, `core_to_plugin_protocol_major`, and `operations` are required, and each display name is a
 nonempty string. Initial independent releases require major `1`; a later Core may explicitly support more than one major
-during a transition. The implemented v1 manifest does not yet send this field. After migration, a missing or unsupported
-value invalidates the manifest and uses Core's existing `invalid_manifest` status reason. This private transport field
+during a transition. The runtime includes this field in every manifest. A missing or unsupported value invalidates the
+manifest and uses Core's `invalid_manifest` status reason. This private transport field
 stays outside the generated Atlas Protocol `PluginManifest` shape and revision token. `tool_asset_id` is optional and
 omitted for a query-only Plugin. Each
 Operation requires `operation_id`, `display_name`, and a positive integer `timeout_ms`, measured in milliseconds and no
@@ -366,10 +382,16 @@ If the selected release is revoked, an approved update may choose the greatest c
 that requires a version downgrade. It never reports a revoked selection as current.
 
 Plugin versions are immutable Semantic Versions in one stable channel. A release workflow publishes and verifies the
-image and `.atlas-plugin` document before it appends the release to a newly signed catalog. A failed catalog publication
-may leave unlisted artifacts, which have no installation path and may be reused by a retry. A published version is never
-replaced. Plugins do not depend on other Plugins; every release depends only on declared Atlas contracts, fixed Command
-Interface interactions, and configured Source connectors.
+image and `.atlas-plugin` document before it appends the release to a newly signed catalog. The candidate image must pass
+the runtime manifest, health, identity, contract, interaction, and SDK gate before its immutable version tag is promoted.
+The authoring manifest explicitly declares `uses_core_sdk`; the release workflow derives the exact Atlas Protocol revision
+from the SDK build when it is true. A failed catalog publication may leave unlisted artifacts, which have no installation
+path and may be reused by a retry. A published version is never replaced. Plugins do not depend on other Plugins; every
+release depends only on declared Atlas contracts, fixed Command Interface interactions, and configured Source connectors.
+
+Catalog expiry is deliberately fail-closed for install, enable, update, and manual rollback, even when the release and
+image are cached locally. Existing enabled Plugins may continue running, and status, logs, disable, uninstall, key
+rotation, and Core start remain available from verified local state.
 
 ## Health, readiness, and status
 
@@ -510,10 +532,12 @@ The building is not an Asset or Track. Source-provided height is advisory data a
 
 ## Design status
 
-The runtime Plugin platform, independent release format, catalog, installation lifecycle, compatibility checks, and
-failure recovery are settled. The design tree for independent trusted query-only Plugin management is closed. The
-documents specify behavioral bounds but leave health cadence, timeout ceilings, response limits, the per-Plugin
-in-flight Operation limit, retry counts, cache durations, and circuit-breaker thresholds to implementation.
+The runtime Plugin platform and independent-release design are implemented in this worktree, while validation and live
+catalog rollout remain in progress. The terminal UI redesign awaits the user's mock selection. The design tree for
+independent trusted query-only Plugin management is closed. The documents specify
+behavioral bounds but leave health cadence, timeout ceilings, response limits, the per-Plugin in-flight Operation limit,
+retry counts, cache durations, and circuit-breaker thresholds to implementation. Production catalog key generation,
+trusted-key bootstrap, GitHub environments, and Pages publication remain external setup steps.
 
 Datastream delivery, executable browser plugins, additional declarative interaction kinds, arbitrary third-party
 installation, taskable-Plugin lifecycle management, and ADS-B Track identity remain deliberately deferred. Each needs a

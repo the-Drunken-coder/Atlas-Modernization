@@ -1,0 +1,4 @@
+{
+  "id": "@atlas/core-endpoint-id@",
+  "base_url": "http://@atlas/plugin-service@:8080"
+}

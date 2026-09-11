@@ -488,6 +488,9 @@ type preparedRequest struct {
 }
 
 func (c *connector) prepare(input ConnectorRequest) (preparedRequest, RouteRule, *gatewayError) {
+	if !supportsPluginToSourceGatewayProtocolMajor(input.PluginToSourceGatewayProtocolMajor) {
+		return preparedRequest{}, RouteRule{}, rejected(fmt.Errorf("unsupported plugin_to_source_gateway_protocol_major %d", input.PluginToSourceGatewayProtocolMajor))
+	}
 	if input.Method != strings.TrimSpace(input.Method) || input.Method != strings.ToUpper(input.Method) {
 		return preparedRequest{}, RouteRule{}, rejected(errors.New("method must use its canonical uppercase form"))
 	}

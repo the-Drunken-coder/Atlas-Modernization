@@ -54,6 +54,15 @@ export type PluginDeploymentStatus = {
   lifecycle: "query_only";
   enabled: boolean;
   packaged: boolean;
+  /** Independent-release state, omitted by the bundled-plugin compatibility path. */
+  installed?: boolean;
+  selectedVersion?: string | null | undefined;
+  previousVersion?: string | null | undefined;
+  availableVersions?: readonly string[];
+  compatibility?: "compatible" | "incompatible" | "unknown";
+  revoked?: boolean;
+  revocationReason?: string;
+  error?: string;
   state?: string;
   health?: string;
 };
@@ -78,10 +87,16 @@ export type AtlasCoreOperator = {
   logs(service: "api" | "minio" | "postgres" | "source-gateway" | undefined, follow: boolean): Promise<void>;
   pluginDisable(pluginId: string, reportActivity?: PluginActivityReporter): Promise<PluginOperationOutcome>;
   pluginEnable(pluginId: string, reportActivity?: PluginActivityReporter): Promise<PluginOperationOutcome>;
+  pluginInstall?(pluginId: string, version?: string): Promise<void>;
   pluginLogs(pluginId: string, follow: boolean): Promise<void>;
+  pluginUpdate?(pluginId: string): Promise<void>;
+  pluginRollback?(pluginId: string): Promise<void>;
+  pluginUninstall?(pluginId: string): Promise<void>;
+  pluginRefresh?(): Promise<void>;
+  pluginRotateCoreKey?(): Promise<void>;
   pluginStatuses(pluginId?: string): Promise<PluginDeploymentStatus[]>;
   resumeAfterCancellation(): void;
-  reset(): Promise<void>;
+  reset(options?: { manual?: boolean }): Promise<void>;
   restart(): Promise<void>;
   snapshot(): Promise<DeploymentSnapshot>;
   start(): Promise<void>;
@@ -280,7 +295,23 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
   const loadPlugins = useCallback(async () => {
     setScreen({ kind: "busy", label: "Loading Plugins..." });
     try {
-      setScreen({ kind: "plugins", view: await operator.pluginStatuses() });
+      // Refresh the signed catalog before showing the menu. If the network is
+      // unavailable, pluginStatuses still reads the last verified receipt.
+      let refreshFailure: Error | undefined;
+      try {
+        await operator.pluginRefresh?.();
+      } catch (error) {
+        // A verified local catalog is sufficient for an inspection view.
+        refreshFailure = new Error(errorMessage(error));
+      }
+      const statuses = await operator.pluginStatuses();
+      if (refreshFailure && statuses.length === 0) throw refreshFailure;
+      setScreen({
+        kind: "plugins",
+        view: refreshFailure
+          ? statuses.map((status) => ({ ...status, error: status.error ?? refreshFailure.message }))
+          : statuses
+      });
     } catch (error) {
       setScreen({ kind: "plugins", view: new Error(errorMessage(error)) });
     }
@@ -502,6 +533,17 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
     [loadPlugins, operator, runVisibleOperation]
   );
 
+  const installPlugin = useCallback(
+    async (plugin: PluginDeploymentStatus) => {
+      if (!operator.pluginInstall) return;
+      await runVisibleOperation(`Installing ${plugin.displayName}`, async () => {
+        await operator.pluginInstall?.(plugin.pluginId);
+      });
+      await loadPlugins();
+    },
+    [loadPlugins, operator, runVisibleOperation]
+  );
+
   const showLogs = useCallback(
     async (service: "api" | "minio" | "postgres" | "source-gateway" | undefined, returnTo: "menu" | "status") => {
       await runVisibleOperation("Loading logs", async () => {
@@ -592,6 +634,7 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
     return (
       <PluginsMenu
         onBack={() => void loadMenu()}
+        onInstall={operator.pluginInstall ? (plugin) => void installPlugin(plugin) : undefined}
         onLogs={(plugin) => void showPluginLogs(plugin)}
         onReload={() => void loadPlugins()}
         onToggle={(plugin) => void togglePlugin(plugin)}
@@ -1348,12 +1391,14 @@ function formatActivityTime(milliseconds: number): string {
 
 function PluginsMenu({
   onBack,
+  onInstall,
   onLogs,
   onReload,
   onToggle,
   view
 }: {
   onBack(): void;
+  onInstall: ((plugin: PluginDeploymentStatus) => void) | undefined;
   onLogs(plugin: PluginDeploymentStatus): void;
   onReload(): void;
   onToggle(plugin: PluginDeploymentStatus): void;
@@ -1385,7 +1430,10 @@ function PluginsMenu({
       const next = (Math.min(selectedRef.current, plugins.length - 1) + 1) % plugins.length;
       selectedRef.current = next;
       setSelected(next);
-    } else if (key.return && plugin?.packaged) {
+    } else if (key.return && plugin?.installed === false && onInstall) {
+      actionPending.current = true;
+      onInstall(plugin);
+    } else if (key.return && plugin && (plugin.packaged || plugin.installed === true)) {
       actionPending.current = true;
       onToggle(plugin);
     } else if (input === "l" && plugin?.enabled) {
@@ -1407,11 +1455,20 @@ function PluginsMenu({
           <Text bold>PLUGIN CATALOG</Text>
           {plugins.map((candidate, candidateIndex) => {
             const runtime = candidate.state ? `  ${candidate.state}/${candidate.health || "unknown"}` : "";
-            const availability = candidate.packaged ? "" : "  image unavailable";
+            const availability =
+              candidate.installed === false
+                ? "  not installed"
+                : candidate.packaged || candidate.installed === true
+                  ? ""
+                  : "  image unavailable";
+            const error = candidate.error ? "  ERROR" : "";
+            const revocation = candidate.revoked
+              ? `  REVOKED${candidate.revocationReason ? `: ${candidate.revocationReason}` : ""}`
+              : "";
             return (
               <Text inverse={candidateIndex === index} key={candidate.pluginId}>
                 {pad(
-                  `${candidateIndex === index ? ">" : " "} ${candidate.displayName}  ${candidate.enabled ? "enabled" : "disabled"}${runtime}${availability}`,
+                  `${candidateIndex === index ? ">" : " "} ${candidate.displayName}  ${candidate.enabled ? "enabled" : "disabled"}${runtime}${availability}${error}${revocation}`,
                   columns
                 )}
               </Text>
@@ -1420,10 +1477,14 @@ function PluginsMenu({
           <Text> </Text>
           <Text>{plugin?.pluginId}</Text>
           <Text dimColor>{plugin?.lifecycle === "query_only" ? "Query-only, stateless" : "Unsupported lifecycle"}</Text>
+          {plugin?.revoked ? (
+            <Text color="red">{`REVOKED${plugin.revocationReason ? `: ${plugin.revocationReason}` : ""}`}</Text>
+          ) : null}
+          {plugin?.error ? <Text color="red">{`ERROR: ${plugin.error}`}</Text> : null}
         </>
       )}
       <Rule width={columns} />
-      <Text dimColor>{"↑/↓ move   Enter enable/disable   l logs   r refresh   Esc back"}</Text>
+      <Text dimColor>{"↑/↓ move   Enter install/enable/disable   l logs   r refresh   Esc back"}</Text>
     </Box>
   );
 }
@@ -1894,8 +1955,14 @@ function menuActions(snapshot: DeploymentSnapshot): Action[] {
     } else {
       actions.push({ id: "start", label: "Start Atlas Core", detail: "Start the deployment from its pinned image." });
     }
+    if (snapshot.status !== "stopped") {
+      actions.push({
+        id: "restart",
+        label: "Restart Atlas Core",
+        detail: "Pull the pinned image, then restart the deployment."
+      });
+    }
     actions.push(
-      { id: "restart", label: "Restart Atlas Core", detail: "Pull the pinned image, then restart the deployment." },
       {
         id: "update",
         label: "Update",

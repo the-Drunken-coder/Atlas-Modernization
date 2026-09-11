@@ -290,13 +290,14 @@ type ProtocolRevisionResponse struct {
 }
 
 type EntityCheckInRequest struct {
-	Status     *string              `json:"status,omitempty"`
-	Latitude   *float64             `json:"latitude,omitempty"`
-	Longitude  *float64             `json:"longitude,omitempty"`
-	AltitudeM  *float64             `json:"altitude_m,omitempty"`
-	SpeedMS    *float64             `json:"speed_m_s,omitempty"`
-	HeadingDeg *float64             `json:"heading_deg,omitempty"`
-	Components map[string]JSONValue `json:"components,omitempty"`
+	MovementObservedAt *string              `json:"movement_observed_at,omitempty"`
+	Status             *string              `json:"status,omitempty"`
+	Latitude           *float64             `json:"latitude,omitempty"`
+	Longitude          *float64             `json:"longitude,omitempty"`
+	AltitudeM          *float64             `json:"altitude_m,omitempty"`
+	SpeedMS            *float64             `json:"speed_m_s,omitempty"`
+	HeadingDeg         *float64             `json:"heading_deg,omitempty"`
+	Components         map[string]JSONValue `json:"components,omitempty"`
 }
 
 type EntityResource struct {
@@ -650,4 +651,64 @@ func (m FeedHandshakeMessage) MarshalJSON() ([]byte, error) {
 		return nil, fmt.Errorf("invalid FeedHandshakeMessage: %s", strings.Join(errors, "; "))
 	}
 	return data, nil
+}
+
+// Movement reports retain only quantities actually supplied by their source.
+type MovementSampleInput struct {
+	SampleID   string   `json:"sample_id"`
+	ObservedAt *string  `json:"observed_at,omitempty"`
+	Latitude   *float64 `json:"latitude,omitempty"`
+	Longitude  *float64 `json:"longitude,omitempty"`
+	SpeedMS    *float64 `json:"speed_m_s,omitempty"`
+	AltitudeM  *float64 `json:"altitude_m,omitempty"`
+}
+type MovementSample struct {
+	SampleID      string   `json:"sample_id"`
+	ObservedAt    *string  `json:"observed_at,omitempty"`
+	ReceivedAt    string   `json:"received_at"`
+	Time          string   `json:"time"`
+	TimeIsArrival bool     `json:"time_is_arrival"`
+	Latitude      *float64 `json:"latitude,omitempty"`
+	Longitude     *float64 `json:"longitude,omitempty"`
+	SpeedMS       *float64 `json:"speed_m_s,omitempty"`
+	AltitudeM     *float64 `json:"altitude_m,omitempty"`
+}
+type MovementHistoryBatchRequest struct {
+	EntityCreatedAt string                `json:"entity_created_at"`
+	Samples         []MovementSampleInput `json:"samples"`
+}
+type MovementHistoryBatchResponse struct {
+	Inserted   int64 `json:"inserted"`
+	Duplicates int64 `json:"duplicates"`
+	Expired    int64 `json:"expired"`
+}
+type MovementHistoryPage struct {
+	RetentionAdvanced bool             `json:"retention_advanced,omitempty"`
+	EntityCreatedAt   string           `json:"entity_created_at"`
+	From              string           `json:"from"`
+	To                string           `json:"to"`
+	RetainedFrom      string           `json:"retained_from"`
+	Snapshot          string           `json:"snapshot"`
+	Samples           []MovementSample `json:"samples"`
+	NextCursor        string           `json:"next_cursor,omitempty"`
+}
+type MovementTrailPoint struct {
+	Sample    MovementSample `json:"sample"`
+	GapBefore bool           `json:"gap_before"`
+}
+type MovementTrail struct {
+	EntityCreatedAt string               `json:"entity_created_at"`
+	From            string               `json:"from"`
+	To              string               `json:"to"`
+	RetainedFrom    string               `json:"retained_from"`
+	Points          []MovementTrailPoint `json:"points"`
+	PositionCount   int64                `json:"position_count"`
+	Simplified      bool                 `json:"simplified"`
+}
+type MovementInspection struct {
+	EntityCreatedAt string          `json:"entity_created_at"`
+	Time            string          `json:"time"`
+	Position        *MovementSample `json:"position,omitempty"`
+	Speed           *MovementSample `json:"speed,omitempty"`
+	Altitude        *MovementSample `json:"altitude,omitempty"`
 }

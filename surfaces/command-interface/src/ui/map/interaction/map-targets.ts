@@ -239,7 +239,7 @@ function directionalDistances(
 }
 
 function boxFromFeature(map: MlMap, feature: MapGeoJSONFeature): TargetBox | null {
-  return boxFromCoordinates(map, feature.geometry.coordinates);
+  return "coordinates" in feature.geometry ? boxFromCoordinates(map, feature.geometry.coordinates) : null;
 }
 
 function boxForFeature(map: MlMap, feature: MapFeature | undefined): TargetBox | null {

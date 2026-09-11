@@ -15,24 +15,25 @@ const outputDir = resolve(packageRoot, outputArgIndex === -1 ? defaultOutputDir 
 const budgets = {
   // Blueprint Core is a deliberate shell dependency. These limits include its
   // shared component styles and icon-path chunks. Map budgets remain scoped separately.
-  // SDK point-read generations and local-delete guards add 3.54 kB raw to the
-  // initial graph. Keep enough gzip margin for Node's platform zlib variance.
-  initialJavaScript: { raw: 418_000, gzip: 128_000 },
-  initialCss: { raw: 511_000, gzip: 55_000 },
+  // Movement history adds SDK response validators, sidebar controls and trail
+  // layers. With explicit quantity unions: initial 430.57 kB, shell 159.13 kB, map 75.75 kB raw.
+  // Linux initial gzip measures 130.06 kB; allow a small margin for zlib variance.
+  initialJavaScript: { raw: 431_000, gzip: 130_500 },
+  initialCss: { raw: 512_000, gzip: 55_000 },
   // Includes the Geo Feature creation editor, command fixes, and draft lifecycle.
-  shellJavaScript: { raw: 148_000, gzip: 48_000 },
+  shellJavaScript: { raw: 160_000, gzip: 52_000 },
   // Includes live drawing previews, keyboard vertex controls, focus restoration,
   // heartbeat-qualified symbols, and the first-vertex close control.
-  mapViewJavaScript: { raw: 75_000, gzip: 22_750 },
+  mapViewJavaScript: { raw: 76_000, gzip: 23_500 },
   mapLibreJavaScript: { raw: 1_100_000, gzip: 300_000 },
   mapLibreWorkerJavaScript: { raw: 500_000, gzip: 140_000 },
   milsymbolJavaScript: { raw: 900_000, gzip: 240_000 },
   mapLibreCss: { raw: 85_000, gzip: 11_000 },
   mapRoute: { raw: 2_100_000, gzip: 550_000 },
-  // The combined build is 3,627.43 kB raw / 1,000.24 kB gzip on macOS.
+  // Movement history brings the combined build to about 3,653.48 kB raw / 1,006.53 kB gzip.
   // Retain the existing allowance for Linux zlib variance.
-  allJavaScript: { raw: 3_628_000, gzip: 1_002_000 },
-  allCss: { raw: 602_000, gzip: 67_000 }
+  allJavaScript: { raw: 3_654_000, gzip: 1_008_000 },
+  allCss: { raw: 603_000, gzip: 67_000 }
 };
 
 if (!args.has("--skip-build")) {

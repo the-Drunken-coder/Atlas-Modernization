@@ -798,6 +798,139 @@ describe("Link transport", () => {
     expect(asset.metrics().operation_outcomes).toMatchObject({ confirmed: 0, responded: 1, failed: 0 });
   });
 
+  it.each(["valid", "ascending", "outside", "oversized"] as const)(
+    "checks Radio history sample coherence: %s",
+    async (order) => {
+      const { clock, gateway, asset } = directPair();
+      const from = "2026-09-09T12:00:00Z";
+      const to = "2026-09-09T12:00:01Z";
+      gateway.onEvent((event) => {
+        if (event.type !== "message" || event.message.type !== "data_request") return;
+        gateway.settleInbound(event.settlement_id, true);
+        const times = order === "ascending" ? [from, to] : order === "outside" ? ["2026-09-09T12:00:02Z"] : [to, from];
+        gateway.submit(
+          {
+            type: "data_response",
+            request_id: event.message.request_id,
+            operation: "entity.history",
+            output: {
+              entity_created_at: from,
+              from,
+              to,
+              retained_from: from,
+              snapshot: "1",
+              ...(order === "valid" ? { next_cursor: "next" } : {}),
+              samples: times.map((time, index) => ({
+                sample_id: String(index),
+                time,
+                received_at: time,
+                time_is_arrival: true,
+                speed_m_s: 1
+              }))
+            }
+          },
+          { destination: event.source }
+        );
+      });
+      asset.submit(
+        {
+          type: "data_request",
+          request_id: "history",
+          operation: "entity.history",
+          target_id: "asset-alpha",
+          entity_created_at: from,
+          from,
+          to,
+          limit: order === "oversized" ? 1 : 2
+        },
+        { destination: gateway.node, operationID: "history" }
+      );
+      await clock.runUntilIdle();
+      expect(asset.status("history")?.status).toBe(order === "valid" ? "responded" : "failed");
+    }
+  );
+
+  it.each([0, 1, 2])("checks Radio import total %i against the batch", async (inserted) => {
+    const { clock, gateway, asset } = directPair();
+    gateway.onEvent((event) => {
+      if (event.type !== "message" || event.message.type !== "resource_operation") return;
+      gateway.settleInbound(event.settlement_id, true);
+      gateway.submit(
+        {
+          type: "data_response",
+          request_id: event.operation_id,
+          operation: "entity.import_movement",
+          output: { inserted, duplicates: 0, expired: 0 }
+        },
+        { destination: event.source }
+      );
+    });
+    asset.submit(
+      {
+        type: "resource_operation",
+        operation: "entity.import_movement",
+        target_id: "asset-alpha",
+        input: { entity_created_at: "2026-09-09T12:00:00Z", samples: [{ sample_id: "one", speed_m_s: 1 }] }
+      },
+      { destination: gateway.node, operationID: "import" }
+    );
+    await clock.runUntilIdle();
+    expect(asset.status("import")?.status).toBe(inserted === 1 ? "responded" : "failed");
+  });
+
+  it.each([true, false])("checks Radio trail coordinates: valid=%s", async (valid) => {
+    const { clock, gateway, asset } = directPair();
+    const time = "2026-09-09T12:00:00Z";
+    gateway.onEvent((event) => {
+      if (event.type !== "message" || event.message.type !== "data_request") return;
+      gateway.settleInbound(event.settlement_id, true);
+      gateway.submit(
+        {
+          type: "data_response",
+          request_id: event.message.request_id,
+          operation: "entity.trail",
+          output: {
+            entity_created_at: time,
+            from: time,
+            to: time,
+            retained_from: time,
+            position_count: 1,
+            simplified: false,
+            points: [
+              {
+                sample: {
+                  sample_id: "one",
+                  time,
+                  received_at: time,
+                  time_is_arrival: true,
+                  speed_m_s: 1,
+                  ...(valid ? { latitude: 1, longitude: 2 } : {})
+                },
+                gap_before: false
+              }
+            ]
+          }
+        },
+        { destination: event.source }
+      );
+    });
+    asset.submit(
+      {
+        type: "data_request",
+        request_id: "trail",
+        operation: "entity.trail",
+        target_id: "asset-alpha",
+        entity_created_at: time,
+        max_points: 100,
+        from: time,
+        to: time
+      },
+      { destination: gateway.node, operationID: "trail" }
+    );
+    await clock.runUntilIdle();
+    expect(asset.status("trail")?.status).toBe(valid ? "responded" : "failed");
+  });
+
   it("does not complete a targeted request with another resource", async () => {
     const { clock, gateway, asset, assetPicture } = directPair();
     gateway.onEvent((event) => {

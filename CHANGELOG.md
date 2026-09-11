@@ -3,6 +3,28 @@
 Atlas Core release notes are listed newest first. The manual release workflow writes each new section from the
 verified commit history with OpenCode Go, then pauses for approval before publishing.
 
+## 0.2.1 - 2026-09-11
+
+### Fixed
+
+- Generated Plugin endpoint and Source Gateway connector files are now readable by container users. Credentials and release receipts remain owner-only.
+- Retained deployment files no longer inherit group or world write permissions from npm installations, preventing Plugin template rejection under umask `0002`.
+- Release verification allows five minutes of retry delays for npm to expose an accepted package and its provenance.
+
+## 0.2.0 - 2026-09-11
+
+### Added
+
+- Movement history is available through authenticated history, trail, import, and point-inspection routes, with 30-day retention and bounded pagination and trail queries.
+- Schema-4 deployments can install, enable, disable, update, roll back, uninstall, and refresh independently released trusted Plugins with `atlas-core plugins`.
+
+### Changed
+
+- Plugin releases no longer require publishing or installing a new Atlas Core version. Plugin updates use the installed Core bundle and require explicit operator approval.
+- The independent Plugin manager uses schema 4. Before moving a schema-3 deployment from bundled Plugins, disable them with the matching v1 CLI, update Core, and install the independent releases.
+- Movement history is durable Atlas storage and must be backed up and restored with the paired PostgreSQL and MinIO store; development scratch resets clear it.
+- MeshCore transport has been retired. Meshtastic Link is the maintained radio communication method.
+
 ## 0.1.8 - 2026-09-08
 
 ### Breaking changes
