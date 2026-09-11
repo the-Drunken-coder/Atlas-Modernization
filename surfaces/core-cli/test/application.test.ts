@@ -3336,6 +3336,24 @@ describe("atlas-core CLI", () => {
     expect(test.runner.calls.some((call) => composeCommand(call)[0] === "down")).toBe(false);
   });
 
+  it.each([false, true])("rejects bundled Plugins before replacing the CLI (new CLI: %s)", async (updateCLI) => {
+    const test = runtime();
+    markInitialized(test);
+    const statePath = join(test.home, ".atlas", "core", "state.json");
+    const state = JSON.parse(readFileSync(statePath, "utf8"));
+    writeFileSync(statePath, JSON.stringify({ ...state, packageVersion: "0.1.2", enabledPlugins: ["building_scan"] }));
+    if (updateCLI) test.runner.latestVersion = NEXT_PACKAGE_VERSION;
+    test.context.confirmCoreUpdate = async () => true;
+    const previousState = readFileSync(statePath, "utf8");
+
+    expect(await runCLI(["update", "all"], test.context)).toBe(1);
+    expect(test.stderr.join("")).toContain("npx --yes atlas-core@0.1.2 plugins disable building_scan");
+    expect(test.runner.installedVersion).toBe(PACKAGE_VERSION);
+    expect(test.runner.calls.some((call) => call.command === "npm" && call.args[0] === "install")).toBe(false);
+    expect(test.runner.calls.some((call) => composeCommand(call)[0] === "down")).toBe(false);
+    expect(readFileSync(statePath, "utf8")).toBe(previousState);
+  });
+
   it("uses the newly installed CLI to update Core", async () => {
     const test = runtime();
     markInitialized(test);
@@ -4256,6 +4274,48 @@ describe("atlas-core CLI", () => {
     expect(test.runner.existingNetworks.has(MUTATION_LOCK_NETWORK)).toBe(false);
   });
 
+  it("does not reclaim an ordinary mutation while its fenced Docker process group is alive", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const config = join(test.home, ".atlas", "core");
+    const lockPath = join(config, ".mutation.lock");
+    const orphan = spawn(process.execPath, ["-e", "setTimeout(() => {}, 30_000)"], {
+      detached: true,
+      stdio: "ignore"
+    });
+    if (orphan.pid === undefined) throw new Error("test process group did not start");
+    const processGroupId = orphan.pid;
+    writeFileSync(
+      lockPath,
+      `${JSON.stringify({
+        schema: 1,
+        id: "f".repeat(32),
+        pid: 2_147_483_647,
+        operation: "deployment",
+        dockerEngineId: TEST_ENGINE_ID,
+        bootIdentity: "stale-boot",
+        processStartIdentity: "stale-start",
+        processGroupId
+      })}\n`,
+      { mode: 0o600 }
+    );
+
+    try {
+      await vi.waitFor(() => expect(() => process.kill(-processGroupId, 0)).not.toThrow());
+      expect(await runCLI(["stop"], test.context)).toBe(1);
+      expect(test.stderr.join("")).toContain("deployment mutation is locked");
+      expect(test.runner.calls.some((call) => call.args[0] === "network" && call.args[1] === "create")).toBe(false);
+    } finally {
+      process.kill(-processGroupId, "SIGKILL");
+      await new Promise<void>((resolveClose) => orphan.once("close", () => resolveClose()));
+    }
+
+    test.stderr.length = 0;
+    expect(await runCLI(["stop"], test.context)).toBe(0);
+    expect(existsSync(lockPath)).toBe(false);
+    expect(test.runner.existingNetworks.has(MUTATION_LOCK_NETWORK)).toBe(false);
+  });
+
   it("keeps status and logs useful after a destructive disable crash", async () => {
     const test = runtime();
     markInitialized(test);
@@ -4473,6 +4533,30 @@ describe("atlas-core CLI", () => {
       expect(call.processGroup).toBeDefined();
       expect(JSON.parse(readFileSync(lockPath, "utf8"))).toMatchObject({ operation: "plugin-disable" });
       const processGroupId = 123_457;
+      call.processGroup?.started(processGroupId);
+      expect(JSON.parse(readFileSync(lockPath, "utf8"))).toMatchObject({ processGroupId });
+      call.processGroup?.finished(processGroupId);
+      supervisedCreate = true;
+    };
+
+    expect(await runCLI(["stop"], test.context)).toBe(0);
+
+    expect(supervisedCreate).toBe(true);
+    expect(existsSync(lockPath)).toBe(false);
+    expect(test.runner.existingNetworks.has(MUTATION_LOCK_NETWORK)).toBe(false);
+  });
+
+  it("fences an ordinary mutation before acquiring its Docker lock", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const config = join(test.home, ".atlas", "core");
+    const lockPath = join(config, ".mutation.lock");
+    let supervisedCreate = false;
+    test.runner.onRun = (call) => {
+      if (call.args[0] !== "network" || call.args[1] !== "create") return;
+      expect(call.processGroup).toBeDefined();
+      expect(JSON.parse(readFileSync(lockPath, "utf8"))).toMatchObject({ operation: "deployment" });
+      const processGroupId = 123_461;
       call.processGroup?.started(processGroupId);
       expect(JSON.parse(readFileSync(lockPath, "utf8"))).toMatchObject({ processGroupId });
       call.processGroup?.finished(processGroupId);
@@ -4782,7 +4866,7 @@ describe("atlas-core CLI", () => {
     expect(test.runner.existingNetworks.has(MUTATION_LOCK_NETWORK)).toBe(false);
   });
 
-  it("makes recovered stop fail closed before unsupervised Compose work", async () => {
+  it("supervises recovered stop before Compose work", async () => {
     const test = runtime();
     markInitialized(test);
     const config = join(test.home, ".atlas", "core");
@@ -4812,7 +4896,11 @@ describe("atlas-core CLI", () => {
       if (composeCommand(call)[0] !== "down") return;
       inspectedStopOwner = true;
       expect(JSON.parse(readFileSync(lockPath, "utf8"))).not.toHaveProperty("operation");
-      expect(call.processGroup).toBeUndefined();
+      expect(call.processGroup).toBeDefined();
+      call.processGroup?.started(123_460);
+      expect(JSON.parse(readFileSync(lockPath, "utf8"))).toMatchObject({ processGroupId: 123_460 });
+      call.processGroup?.finished(123_460);
+      expect(JSON.parse(readFileSync(lockPath, "utf8"))).not.toHaveProperty("processGroupId");
     };
 
     expect(await runCLI(["stop"], test.context)).toBe(0);

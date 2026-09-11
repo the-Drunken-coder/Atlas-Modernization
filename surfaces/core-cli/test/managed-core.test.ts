@@ -273,11 +273,15 @@ describe("ManagedCoreManager", () => {
 
     const failedPackage = packageDirectory(NEXT_IMAGE, "forward-failed");
     writeFileSync(join(failedPackage, "assets", "obsolete.txt"), "obsolete\n");
+    let credentialCalls = 0;
     const failed = new ManagedCoreManager(
       makeOptions(configDir, failedPackage, NEXT_IMAGE, stateRef, calls, NEXT_RECEIPT, {
         previousRunning: false,
         desiredRunning: true,
         bundleFiles: BUNDLE_FILES_WITH_OBSOLETE,
+        ensureCredential: async () => {
+          credentialCalls += 1;
+        },
         verifyPlugins: async (_state, options) => {
           if (options.requireHealth) throw new Error("failed target Plugin health check");
         }
@@ -285,11 +289,16 @@ describe("ManagedCoreManager", () => {
     );
 
     await expect(failed.update(stateRef.current)).rejects.toThrow("failed target Plugin health check");
+    expect(credentialCalls).toBe(1);
     expect(existsSync(join(configDir, "base", "obsolete.txt"))).toBe(true);
 
     const forwardPackage = packageDirectory(NEXT_IMAGE, "forward-final");
     const finalManager = new ManagedCoreManager(
-      makeOptions(configDir, forwardPackage, NEXT_IMAGE, stateRef, calls, NEXT_RECEIPT)
+      makeOptions(configDir, forwardPackage, NEXT_IMAGE, stateRef, calls, NEXT_RECEIPT, {
+        ensureCredential: async () => {
+          credentialCalls += 1;
+        }
+      })
     );
     const recovered = await finalManager.recover("forward", {
       target: {
@@ -301,6 +310,7 @@ describe("ManagedCoreManager", () => {
     });
 
     expect((recovered as ManagedCoreState).phase).toBe("ready");
+    expect(credentialCalls).toBe(2);
     expect(existsSync(join(configDir, "base", "obsolete.txt"))).toBe(false);
     await finalManager.start(recovered as ManagedCoreState);
   });

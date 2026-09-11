@@ -582,7 +582,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   readonly #dockerRuntimeScope = new AsyncLocalStorage<DockerRuntime>();
   readonly #recoveryCommandScope = new AsyncLocalStorage<boolean>();
   readonly #pluginCredentialScope = new AsyncLocalStorage<string>();
-  readonly #pluginDisableScope = new AsyncLocalStorage<string>();
+  readonly #mutationScope = new AsyncLocalStorage<string>();
   #activeMutationLock: MutationLockOwner | undefined;
   #idleRecoverableMutationLock: MutationLockOwner | undefined;
   #activeMutationRecoveryPath: string | undefined;
@@ -1556,9 +1556,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
           dockerLockReleased = true;
         }
       };
-      return mutationLock.owner.operation === "plugin-disable"
-        ? await this.#pluginDisableScope.run(mutationLock.owner.id, runDockerMutation)
-        : await runDockerMutation();
+      return await this.#mutationScope.run(mutationLock.owner.id, runDockerMutation);
     } finally {
       try {
         let localOwner = this.#activeMutationLock ?? mutationLock.owner;
@@ -1947,6 +1945,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       this.#stdout.write(`Atlas Core CLI and deployment ${PACKAGE_VERSION} are already current.\n`);
       return;
     }
+    if (updateCore) this.#assertLegacyPluginsDisabled(state);
     if (updateCore && !coreBackupConfirmed) {
       this.#stdout.write(
         "Atlas Core updates may apply schema migrations. Create and validate a paired PostgreSQL and MinIO backup before continuing.\n"
@@ -1962,6 +1961,17 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       return;
     }
     if (updateCore) await this.applyCoreUpdate(state.packageVersion, release.image);
+  }
+
+  #assertLegacyPluginsDisabled(state: DeploymentState): void {
+    if (state.schema !== 3 || state.enabledPlugins.length === 0) return;
+    const commands = state.enabledPlugins.map(
+      (pluginId) => `npx --yes atlas-core@${state.packageVersion} plugins disable ${pluginId}`
+    );
+    throw new Error(
+      `Disable bundled Plugins with the deployed schema-3 CLI before upgrading Core: ${commands.join("; ")}. ` +
+        "Use the same ATLAS_CORE_HOME. Independent Plugins are then installed explicitly."
+    );
   }
 
   async applyCoreUpdate(fromVersion: string, expectedImage: string): Promise<void> {
@@ -1993,11 +2003,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       throw new Error(`Installed Atlas Core ${PACKAGE_VERSION} pins ${imageReference}, not ${expectedImage}.`);
     }
     this.#assertStateMatchesEngine(state, dockerEngineId);
-    if (state.schema === 3 && state.enabledPlugins.length > 0) {
-      throw new Error(
-        "Disable bundled Plugins with the deployed schema-3 CLI before upgrading Core. Independent Plugins are then installed explicitly."
-      );
-    }
+    this.#assertLegacyPluginsDisabled(state);
     const snapshot = await this.#deploymentSnapshot(state.enabledPlugins);
     if (!existsSync(join(this.#configDir, "run-intent.json"))) this.#writeRunIntent(snapshot.status !== "stopped");
     if (state.schema === 3) state = await this.#importLegacyBase(state);
@@ -2692,9 +2698,11 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
 
   async #runDockerCommand(args: string[], options: RunOptions, allowAfterCancellation = false): Promise<CommandResult> {
     const cleanup = allowAfterCancellation || this.#recoveryCommandScope.getStore() === true;
+    const processGroup = this.#mutationProcessGroup();
+    const runOptions = processGroup && options.processGroup === undefined ? { ...options, processGroup } : options;
     const result = cleanup
-      ? await this.#runner.runCleanup("docker", args, options)
-      : await this.#runner.run("docker", args, options);
+      ? await this.#runner.runCleanup("docker", args, runOptions)
+      : await this.#runner.run("docker", args, runOptions);
     const runtime = this.#dockerRuntimeScope.getStore();
     if (runtime && this.#activeMutationLock) {
       await this.#assertPinnedDockerEngine(runtime.engineId, cleanup);
@@ -2927,28 +2935,26 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     return owner;
   }
 
-  #pluginDisableProcessGroup(): RunOptions["processGroup"] | undefined {
+  #mutationProcessGroup(): RunOptions["processGroup"] | undefined {
     const activeOwner = this.#activeMutationLock;
-    if (activeOwner?.operation !== "plugin-disable" || this.#pluginDisableScope.getStore() !== activeOwner.id) {
-      return undefined;
-    }
+    if (!activeOwner || this.#mutationScope.getStore() !== activeOwner.id) return undefined;
     return {
-      started: (processGroupId) => this.#recordPluginDisableProcessGroup(processGroupId),
-      finished: (processGroupId) => this.#clearPluginDisableProcessGroup(processGroupId)
+      started: (processGroupId) => this.#recordMutationProcessGroup(processGroupId),
+      finished: (processGroupId) => this.#clearMutationProcessGroup(processGroupId)
     };
   }
 
   #dockerRunOptions(): RunOptions {
-    const processGroup = this.#pluginDisableProcessGroup();
+    const processGroup = this.#mutationProcessGroup();
     return {
       env: this.#dockerEnvironment(),
       ...(processGroup ? { processGroup } : {})
     };
   }
 
-  #recordPluginDisableProcessGroup(processGroupId: number): void {
+  #recordMutationProcessGroup(processGroupId: number): void {
     const activeOwner = this.#activeMutationLock;
-    if (!activeOwner) throw new Error("Plugin disable requires the deployment mutation lock.");
+    if (!activeOwner) throw new Error("Docker work requires the deployment mutation lock.");
     const currentOwner = this.#readMutationLockOwner(this.#mutationLockFile);
     if (!sameMutationLockIdentity(currentOwner, activeOwner) || currentOwner.processGroupId !== undefined) {
       throw new Error("Atlas Core mutation lock changed ownership before starting Docker work.");
@@ -2958,9 +2964,9 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     this.#activeMutationLock = updatedOwner;
   }
 
-  #clearPluginDisableProcessGroup(processGroupId: number): void {
+  #clearMutationProcessGroup(processGroupId: number): void {
     const activeOwner = this.#activeMutationLock;
-    if (!activeOwner) throw new Error("Plugin disable requires the deployment mutation lock.");
+    if (!activeOwner) throw new Error("Docker work requires the deployment mutation lock.");
     const currentOwner = this.#readMutationLockOwner(this.#mutationLockFile);
     if (!sameMutationLockIdentity(currentOwner, activeOwner) || currentOwner.processGroupId !== processGroupId) {
       throw new Error("Atlas Core mutation lock changed ownership while Docker work was running.");
@@ -3196,12 +3202,8 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     let failure: Error | undefined;
     try {
       const result = allowAfterCancellation
-        ? await this.#runner.runCleanup("docker", ["info", "--format", "{{json .}}"], {
-            env: this.#dockerEnvironment()
-          })
-        : await this.#runner.run("docker", ["info", "--format", "{{json .}}"], {
-            env: this.#dockerEnvironment()
-          });
+        ? await this.#runner.runCleanup("docker", ["info", "--format", "{{json .}}"], this.#dockerRunOptions())
+        : await this.#runner.run("docker", ["info", "--format", "{{json .}}"], this.#dockerRunOptions());
       if (result.status !== 0) throw commandFailure("docker info --format {{json .}}", result);
       let info: unknown;
       try {
@@ -4201,7 +4203,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     env.ATLAS_PLUGIN_CONFIG_ROOT = this.#pluginConfigRoot;
     const candidateKey = this.#pluginCredentialScope.getStore();
     if (candidateKey) env.ATLAS_PLUGIN_API_KEY = candidateKey;
-    const processGroup = this.#pluginDisableProcessGroup();
+    const processGroup = this.#mutationProcessGroup();
     const options = {
       cwd: this.#configDir,
       env,
@@ -4754,7 +4756,10 @@ export function isMutationLockOwner(value: unknown): value is MutationLockOwner 
       (record.operation === "plugin-disable" &&
         (record.pluginDisableTarget === "ready" || record.pluginDisableTarget === "stopped"))) &&
     (record.processGroupId === undefined ||
-      ((record.operation === "plugin-disable" ||
+      (((record.operation === undefined &&
+        typeof record.bootIdentity === "string" &&
+        typeof record.processStartIdentity === "string") ||
+        record.operation === "plugin-disable" ||
         record.operation === "deployment" ||
         record.operation === "engine-recovery") &&
         typeof record.processGroupId === "number" &&

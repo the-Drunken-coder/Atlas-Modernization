@@ -477,8 +477,9 @@ images are still present.
 
 The first independent-release Core update does not migrate enabled bundled-v1 Plugins. If schema-3 state contains an
 enabled Plugin without a verified `installed.json`, the update stops without changing the deployment and tells the
-operator to disable it with the matching v1 CLI. If a newer CLI was installed directly, the error names the exact
-`state.packageVersion` to invoke temporarily for that disable operation. After updating Core, the operator installs and
+operator to disable it with the matching v1 CLI. `update all` checks this before replacing the CLI. The error prints
+`npx --yes atlas-core@<state.packageVersion> plugins disable <pluginId>` for each enabled Plugin, including when a newer
+CLI was installed directly; use the same `ATLAS_CORE_HOME` for those commands. After updating Core, the operator installs and
 enables an independent release from the signed catalog. This is an intentional greenfield cutoff rather than a
 compatibility bridge.
 

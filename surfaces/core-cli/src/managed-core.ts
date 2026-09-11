@@ -546,7 +546,10 @@ export class ManagedCoreManager {
         true
       );
       await this.#verifyRunningCore(targetImage, stagedState.baseDeployment.images);
-      if (journal.phase === "core-started" && this.#options.ensureCredential)
+      if (
+        (journal.phase === "core-started" || journal.phase === "credentials-durable") &&
+        this.#options.ensureCredential
+      )
         await this.#options.ensureCredential(transaction);
       if (transaction.read().phase === "core-started") transaction.advance("credentials-durable");
       await this.#options.verifyPlugins?.(stagedState, { requireHealth: true });
