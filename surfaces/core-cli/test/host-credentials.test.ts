@@ -26,6 +26,7 @@ class CredentialHostStub implements ManagedPluginCredentialHost {
   failVerifyOnce = false;
   failRestoreOnce = false;
   rejectOldKeyOnce = false;
+  rejectOldVerification = false;
   failAuthenticationOnce = false;
   starts = 0;
   startIncludesPlugins: boolean[] = [];
@@ -34,6 +35,7 @@ class CredentialHostStub implements ManagedPluginCredentialHost {
   verified = 0;
   restored = 0;
   recreatedKeys: Array<string | undefined> = [];
+  verifiedKeys: Array<string | undefined> = [];
   authenticated: string[] = [];
   actions: Array<{ action: ManagedKeyAction; value: string }> = [];
   readonly records = new Map<string, ManagedKeyRecord>();
@@ -104,8 +106,12 @@ class CredentialHostStub implements ManagedPluginCredentialHost {
     this.recreatedKeys.push(apiKey);
   }
 
-  async verifySDKPlugins(): Promise<void> {
+  async verifySDKPlugins(apiKey?: string): Promise<void> {
     this.verified += 1;
+    this.verifiedKeys.push(apiKey);
+    if (this.rejectOldVerification && (apiKey ?? OLD_KEY) === OLD_KEY) {
+      throw new ManagedPluginKeyRejectedError();
+    }
     if (this.failVerifyOnce) {
       this.failVerifyOnce = false;
       throw new Error("injected verification failure");
@@ -287,10 +293,24 @@ describe("ManagedPluginCredentials", () => {
 
     expect(readFileSync(join(configDir, ".env"), "utf8")).toContain(`ATLAS_PLUGIN_API_KEY=${OLD_KEY}`);
     expect(host.recreatedKeys[0]).toMatch(/^atlas_ak_0000000000000001\.secret-1$/u);
+    expect(host.verifiedKeys[0]).toMatch(/^atlas_ak_0000000000000001\.secret-1$/u);
     expect(host.restored).toBe(1);
     expect(host.records).toHaveLength(0);
     expect(host.actions).toContainEqual({ action: "revoke", value: "atlas_ak_0000000000000001" });
     expect(existsSync(join(configDir, "transaction"))).toBe(false);
+  });
+
+  it("verifies a running SDK Plugin with the candidate key before the old key is revoked", async () => {
+    const configDir = mkdtempSync(join(tmpdir(), "atlas-host-credentials-"));
+    temporaryDirectories.push(configDir);
+    writeFileSync(join(configDir, ".env"), `ATLAS_PLUGIN_API_KEY=${OLD_KEY}\n`, { mode: 0o600 });
+    const host = new CredentialHostStub();
+    host.rejectOldVerification = true;
+
+    await new ManagedPluginCredentials({ configDir, host, dockerEngineId: ENGINE_ID }).rotate();
+
+    expect(host.verifiedKeys).toEqual(["atlas_ak_0000000000000001.secret-1"]);
+    expect(host.actions).toContainEqual({ action: "revoke", value: "atlas_ak_aaaaaaaaaaaaaaaa" });
   });
 
   it("retains rollback intent when SDK restoration fails and finishes it on recovery", async () => {

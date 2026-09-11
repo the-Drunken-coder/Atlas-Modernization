@@ -33,7 +33,8 @@ export type ManagedPluginCredentialHost = {
   authenticateKey(apiKey: string): Promise<void>;
   /** Recreate enabled SDK Plugin services with an optional in-memory candidate key. */
   recreateSDKPlugins(apiKey?: string): Promise<void>;
-  verifySDKPlugins(): Promise<void>;
+  /** Verify enabled SDK Plugin services, optionally using an in-memory candidate key. */
+  verifySDKPlugins(apiKey?: string): Promise<void>;
   /** Restore enabled SDK Plugin services using the current (old) .env key. */
   restoreSDKPlugins(): Promise<void>;
   /** Run compensation in the host's cancellation-resistant command scope. */
@@ -268,7 +269,7 @@ export class ManagedPluginCredentials {
         this.#persistIntent(transactions, intent);
       }
       await this.#host.recreateSDKPlugins(standaloneRotation ? candidate.apiKey : undefined);
-      await this.#host.verifySDKPlugins();
+      await this.#host.verifySDKPlugins(standaloneRotation ? candidate.apiKey : undefined);
       intent = { ...intent, pluginsVerified: true };
       this.#persistIntent(transactions, intent);
     }

@@ -849,7 +849,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   }
 
   async #waitForPluginDiscovery(release: PluginRelease, privateResponses: unknown): Promise<void> {
-    const key = this.#readConfigValue("ATLAS_PLUGIN_API_KEY");
+    const key = this.#pluginCredentialScope.getStore() ?? this.#readConfigValue("ATLAS_PLUGIN_API_KEY");
     if (!key) throw new Error("Public Plugin discovery requires the managed Core API key.");
     const deadline = Date.now() + 30_000;
     let failure: unknown;
@@ -960,6 +960,11 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       if (apiKey) await this.#pluginCredentialScope.run(apiKey, recreate);
       else await recreate();
     };
+    const verifySDKPlugins = async (apiKey?: string): Promise<void> => {
+      const verify = async (): Promise<void> => await this.#verifyEnabledPlugins(sdkState(), true);
+      if (apiKey) await this.#pluginCredentialScope.run(apiKey, verify);
+      else await verify();
+    };
     return new ManagedPluginCredentials({
       configDir: this.#configDir,
       dockerEngineId,
@@ -999,7 +1004,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
           if (!response.ok) throw new Error("Managed Plugin key authentication failed.");
         },
         recreateSDKPlugins,
-        verifySDKPlugins: async () => await this.#verifyEnabledPlugins(sdkState(), true),
+        verifySDKPlugins,
         restoreSDKPlugins: async () => {
           await recreateSDKPlugins();
           await this.#verifyEnabledPlugins(sdkState(), true);

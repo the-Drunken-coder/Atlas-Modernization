@@ -20,7 +20,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { type CLIContext, type CommandRunner, ProcessCommandRunner, runCLI } from "../src/application.js";
 import { DeploymentTransactionStore } from "../src/deployment-transaction.js";
 import { OperationCleanupError } from "../src/operation-errors.js";
-import { PACKAGE_NAME, PACKAGE_VERSION } from "../src/package-metadata.js";
+import { PACKAGE_NAME, PACKAGE_PLUGIN_CONTRACTS, PACKAGE_VERSION } from "../src/package-metadata.js";
 import type { PluginCatalogEntry } from "../src/plugin-catalog.js";
 import * as supervision from "../src/supervision.js";
 import type { DeploymentDetails } from "../src/terminal-ui.js";
@@ -724,6 +724,7 @@ type IndependentPluginFixture = {
   pluginId: string;
   displayName: string;
   image: string;
+  atlasProtocolRevision?: string | null;
 };
 
 const INDEPENDENT_UPDATE_FIXTURES: readonly IndependentPluginFixture[] = [
@@ -742,7 +743,7 @@ function independentReleaseBytes(plugin: IndependentPluginFixture, version: stri
       image: plugin.image,
       core_to_plugin_protocol_major: 1,
       plugin_to_source_gateway_protocol_major: 1,
-      atlas_protocol_revision: null,
+      atlas_protocol_revision: plugin.atlasProtocolRevision ?? null,
       interactions: ["map_area"],
       source_connector: null
     })}\n`
@@ -844,10 +845,13 @@ function installSignedIndependentCatalog(test: TestRuntime, plugins = INDEPENDEN
   return { catalogBytes, privateKey, catalogURL };
 }
 
-async function installIndependentUpdateFixtures(test: TestRuntime) {
+async function installIndependentUpdateFixtures(
+  test: TestRuntime,
+  plugins: readonly IndependentPluginFixture[] = INDEPENDENT_UPDATE_FIXTURES
+) {
   await markManagedInitialized(test);
-  const catalog = installSignedIndependentCatalog(test);
-  for (const plugin of [...INDEPENDENT_UPDATE_FIXTURES].reverse()) {
+  const catalog = installSignedIndependentCatalog(test, plugins);
+  for (const plugin of [...plugins].reverse()) {
     expect(await runCLI(["plugins", "install", plugin.pluginId, "0.1.0"], test.context), test.stderr.join("")).toBe(0);
   }
   test.stdout.length = 0;
@@ -4463,6 +4467,54 @@ describe("atlas-core CLI", () => {
     expect(composeSawRestoredFiles).toBe(true);
     expect(existsSync(join(config, "transaction"))).toBe(false);
     expect(JSON.parse(readFileSync(statePath, "utf8"))).toMatchObject({ enabledPlugins: [plugin.pluginId] });
+  });
+
+  it("uses the candidate managed key while verifying a running SDK Plugin rotation", async () => {
+    const test = runtime();
+    const fixture = INDEPENDENT_UPDATE_FIXTURES[0];
+    if (!fixture) throw new Error("Independent Plugin fixture is missing.");
+    const plugin = { ...fixture, atlasProtocolRevision: PACKAGE_PLUGIN_CONTRACTS.atlasProtocolRevision };
+    await installIndependentUpdateFixtures(test, [plugin]);
+    installIndependentRuntimeFixture(test, plugin);
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context), test.stderr.join("")).toBe(0);
+
+    const config = join(test.home, ".atlas", "core");
+    const oldKeyLine = readFileSync(join(config, ".env"), "utf8")
+      .split(/\r?\n/u)
+      .find((line) => line.startsWith("ATLAS_PLUGIN_API_KEY="));
+    const oldKey = oldKeyLine?.slice("ATLAS_PLUGIN_API_KEY=".length);
+    if (!oldKey) throw new Error("Managed Plugin key fixture is missing.");
+    const discoveryKeys: string[] = [];
+    const previousFetch = test.context.fetch;
+    if (!previousFetch) throw new Error("Test runtime is missing its fetch adapter.");
+    let oldKeySeen = false;
+    const realDateNow = Date.now.bind(Date);
+    const dateNow = vi
+      .spyOn(Date, "now")
+      .mockImplementation(() => (oldKeySeen ? realDateNow() + 60_000 : realDateNow()));
+    test.context.fetch = async (input, init) => {
+      const url = String(input);
+      if (url === "http://127.0.0.1:8000/protocol/revision") return new Response("");
+      if (url === "http://127.0.0.1:8000/plugins") {
+        const key = new Headers(init?.headers).get("x-api-key");
+        if (key) discoveryKeys.push(key);
+        if (key === oldKey) {
+          oldKeySeen = true;
+          return new Response("expired", { status: 401 });
+        }
+      }
+      return await previousFetch(input, init);
+    };
+
+    try {
+      expect(await runCLI(["plugins", "rotate-core-key"], test.context), test.stderr.join("")).toBe(0);
+    } finally {
+      dateNow.mockRestore();
+    }
+
+    expect(discoveryKeys).toHaveLength(1);
+    expect(discoveryKeys[0]).not.toBe(oldKey);
+    expect(discoveryKeys[0]).toMatch(/managed-secret-2$/u);
   });
 
   it.each([false, true])(
