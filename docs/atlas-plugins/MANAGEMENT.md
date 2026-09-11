@@ -1,15 +1,20 @@
 # Plugin management
 
-Status: the independent Plugin lifecycle and release workflow are implemented in this worktree, and local validation passes. The candidate-image Docker acceptance test still awaits CI. Menu controls for update, rollback, uninstall, and shared-key rotation await the user's selection from the proposed mocks; these operations are available through direct CLI commands. Existing published Core
+Status: the independent Plugin lifecycle and release workflow are released with Atlas Core 0.2.0 and Building Scan 0.1.0. Candidate-image checks passed on linux/amd64 and linux/arm64. Menu controls for update, rollback, uninstall, and shared-key rotation await the user's selection from the proposed mocks; these operations are available through direct CLI commands. Existing published Core
 packages may still contain the bundled catalog; the source implementation uses independent catalog state for schema-4
 deployments. Production signing trust and Pages configuration are recorded in [bootstrap provenance](CATALOG_BOOTSTRAP.md).
-The repository contains only the public key; the first signed catalog publication is still required.
+The repository contains only the public key; the signed stable catalog is published.
 
 The host-side `atlas-core` CLI manages independently versioned, trusted, query-only Plugins. Core remains unaware of the
 catalog, release history, image registry, and host filesystem. It receives only generated endpoint configuration and the
 private Plugin protocol.
 
 ## Local state
+
+Generated `active/core-endpoint.json` and `active/source-connector.json` use mode `0644` because Core and Source Gateway
+read these non-secret files through individual bind mounts under a different container UID. Host directories remain
+`0700`; credentials, release receipts, and other generated files remain `0600`. Retaining a package bundle removes group
+and world write permissions so npm installations under umask `0002` do not produce unusable templates.
 
 The manager stores Plugin state under the existing private Atlas Core configuration directory:
 
@@ -55,12 +60,12 @@ installed Core release:
         "local_image_id": "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
       },
       {
-        "image_index": "minio/mc:RELEASE.2024-01-31T08-59-40Z@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "image_index": "quay.io/minio/mc:RELEASE.2024-01-31T08-59-40Z@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
         "platform_manifest_sha256": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
         "local_image_id": "sha256:123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0"
       },
       {
-        "image_index": "minio/minio:RELEASE.2024-01-31T20-20-33Z@sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+        "image_index": "quay.io/minio/minio:RELEASE.2024-01-31T20-20-33Z@sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
         "platform_manifest_sha256": "sha256:123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0",
         "local_image_id": "sha256:23456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef01"
       },

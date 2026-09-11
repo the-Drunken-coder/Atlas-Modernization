@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -60,6 +60,16 @@ describe("retained bundle", () => {
     expect(manifest.files.map((file) => file.path)).toEqual([...files].sort());
     verifyRetainedBundle(target, manifest);
     expect(hashRetainedBundle(target)).toBe(manifest.bundleSha256);
+  });
+
+  it("removes group and world write permissions from copied package files", () => {
+    const { source, files } = writeSourceBundle();
+    const target = join(temporaryDirectory(), "base");
+    for (const file of files) chmodSync(join(source, file), 0o664);
+    const manifest = copyRetainedBundle({ sourceRoot: source, targetRoot: target, files });
+    expect(manifest.files.map((file) => file.mode)).toEqual(files.map(() => 0o644));
+    expect(manifest.bundleSha256).toBe(hashRetainedBundle(source));
+    verifyRetainedBundle(target, manifest);
   });
 
   it("repairs a changed retained bundle only after validating the candidate", () => {

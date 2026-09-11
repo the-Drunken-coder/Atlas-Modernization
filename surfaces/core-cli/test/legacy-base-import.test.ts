@@ -20,13 +20,13 @@ import { type LegacyCommandResult, prepareLegacyBase, prepareRepairPackage } fro
 const VERSION = "0.1.8";
 const CORE_IMAGE = `ghcr.io/the-drunken-coder/atlas-core@sha256:${"a".repeat(64)}`;
 const POSTGRES_IMAGE = `postgres:15@sha256:${"b".repeat(64)}`;
-const MINIO_IMAGE = `minio/minio:legacy@sha256:${"c".repeat(64)}`;
-const MINIO_CLIENT_IMAGE = `minio/mc:legacy@sha256:${"d".repeat(64)}`;
+const MINIO_IMAGE = `quay.io/minio/minio:legacy@sha256:${"c".repeat(64)}`;
+const MINIO_CLIENT_IMAGE = `quay.io/minio/mc:legacy@sha256:${"d".repeat(64)}`;
 const PRODUCTION_POSTGRES_IMAGE = "postgres:15@sha256:1b92e7a80c021647bf70f5d3eb66066a998e4f5cf43c07bb9dc9f729782cf88e";
 const PRODUCTION_MINIO_IMAGE =
-  "minio/minio:RELEASE.2024-01-31T20-20-33Z@sha256:4092433a77e510826874b36f369696df43407a763d7f901a61d74e83e6fd95bc";
+  "quay.io/minio/minio:RELEASE.2024-01-31T20-20-33Z@sha256:4092433a77e510826874b36f369696df43407a763d7f901a61d74e83e6fd95bc";
 const PRODUCTION_MINIO_CLIENT_IMAGE =
-  "minio/mc:RELEASE.2024-01-31T08-59-40Z@sha256:c084c9a67c7a9ed5f37cc7f2a905010861aaa882bec76da10352305c9709b6d2";
+  "quay.io/minio/mc:RELEASE.2024-01-31T08-59-40Z@sha256:c084c9a67c7a9ed5f37cc7f2a905010861aaa882bec76da10352305c9709b6d2";
 
 describe("exact Core repair package", () => {
   it("fetches recorded assets and templates without extracting package code or changing bytes", async () => {
@@ -191,7 +191,7 @@ describe("legacy Core base import", () => {
     expect(calls[0]).toContain(`atlas-core@${VERSION}`);
     expect(prepared.baseDeployment.coreImage).toBe(CORE_IMAGE);
     expect(prepared.baseDeployment.coreLocalImageId).toBe(`sha256:${"0".repeat(64)}`);
-    expect(pulled).toEqual([CORE_IMAGE, MINIO_CLIENT_IMAGE, MINIO_IMAGE, POSTGRES_IMAGE]);
+    expect(pulled).toEqual([CORE_IMAGE, POSTGRES_IMAGE, MINIO_CLIENT_IMAGE, MINIO_IMAGE]);
     expect(prepared.baseDeployment.images.map((image) => image.image_index)).toEqual(pulled);
     expect(prepared.baseDirectory).toContain(prepared.candidateDirectory);
     expect(readFileSync(join(prepared.baseDirectory, "docker-compose.yml"), "utf8")).toContain('restart: "no"');

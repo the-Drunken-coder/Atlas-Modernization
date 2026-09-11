@@ -5,11 +5,11 @@ Release and installation details:
 - [`RELEASE_FORMAT.md`](RELEASE_FORMAT.md) defines independent Plugin artifacts, catalog trust, and publication.
 - [`MANAGEMENT.md`](MANAGEMENT.md) defines local Installed Plugin state, compatibility, commands, and transactions.
 
-Status: Plugin platform v1 and the independent lifecycle and release workflow are implemented in this worktree, and
-local validation passes. The candidate-image Docker acceptance test still awaits CI. Menu controls for update, rollback, uninstall, and shared-key rotation await the user's selection from the proposed mocks; these operations are available through direct CLI commands. Existing
+Status: Plugin platform v1 and the independent lifecycle and release workflow are released with Atlas Core 0.2.0 and Building Scan 0.1.0.
+Candidate-image checks passed on linux/amd64 and linux/arm64. Menu controls for update, rollback, uninstall, and shared-key rotation await the user's selection from the proposed mocks; these operations are available through direct CLI commands. Existing
 published Core packages may still contain the bundled catalog; schema-4 deployments use independent catalog state.
 Production signing trust and Pages configuration are recorded in [bootstrap provenance](CATALOG_BOOTSTRAP.md).
-The first signed catalog publication is still required. Datastream delivery, executable UI Plugins, third-party installation, hot upgrades, untrusted
+The signed stable catalog is published. Datastream delivery, executable UI Plugins, third-party installation, hot upgrades, untrusted
 Plugin isolation, scoped Plugin credentials, persistent Plugin storage, and taskable-Plugin lifecycle management remain
 deferred.
 

@@ -1155,7 +1155,7 @@ jobs:
           VERSION: ${{ inputs.version }}
         run: |
           attestations="$(mktemp)"
-          for attempt in $(seq 1 12); do
+          for attempt in $(seq 1 60); do
             published_integrity="$(npm view "atlas-core@$VERSION" dist.integrity 2>/dev/null || true)"
             attestation_url="$(npm view "atlas-core@$VERSION" dist.attestations.url 2>/dev/null || true)"
             if [ "$published_integrity" = "$EXPECTED_INTEGRITY" ] && \
@@ -1164,7 +1164,7 @@ jobs:
                 "$attestation_url" > "$attestations"; then
               break
             fi
-            if [ "$attempt" = 12 ]; then
+            if [ "$attempt" = 60 ]; then
               echo "npm did not return the reviewed package and its provenance consistently." >&2
               exit 1
             fi
