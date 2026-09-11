@@ -1800,8 +1800,8 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     for (const name of existingVolumes) {
       await this.#checkCommand("docker", ["volume", "rm", name]);
     }
-    this.#deleteConfigurationFile(this.#stateFile);
     this.#deleteConfigurationFile(this.#envFile);
+    this.#deleteConfigurationFile(this.#stateFile);
     for (const entry of ["base", "transaction", "catalog-state.json", "run-intent.json"]) {
       rmSync(join(this.#configDir, entry), { recursive: true, force: true });
     }
@@ -2218,6 +2218,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
           availableVersions: available.filter((release) => !release.revoked).map((release) => release.version),
           compatibility,
           ...(selected ? { revoked: selected.revoked } : {}),
+          ...(selected?.revoked && selected.revocationReason ? { revocationReason: selected.revocationReason } : {}),
           ...(catalogError ? { error: catalogError } : {}),
           ...(service ? { state: service.State, health: service.Health } : {})
         };
@@ -4558,7 +4559,7 @@ function printPluginStatuses(output: { write(data: string): void }, statuses: re
         ? status.packaged
           ? ""
           : ", legacy deployment"
-        : `, ${status.installed ? `installed ${status.selectedVersion ?? "unknown"}` : "not installed"}${status.previousVersion ? `, previous ${status.previousVersion}` : ""}${status.availableVersions?.length ? `, available ${status.availableVersions.join(" ")}` : ""}${status.revoked ? ", REVOKED" : ""}${status.error ? `, ${status.error}` : ""}`;
+        : `, ${status.installed ? `installed ${status.selectedVersion ?? "unknown"}` : "not installed"}${status.previousVersion ? `, previous ${status.previousVersion}` : ""}${status.availableVersions?.length ? `, available ${status.availableVersions.join(" ")}` : ""}${status.revoked ? `, REVOKED${status.revocationReason ? `: ${status.revocationReason}` : ""}` : ""}${status.error ? `, ${status.error}` : ""}`;
     output.write(`${status.pluginId}\t${status.displayName}\t${deployment}${runtime}${availability}\n`);
   }
 }

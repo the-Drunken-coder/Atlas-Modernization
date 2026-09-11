@@ -99,6 +99,132 @@ function sourceConnector() {
   };
 }
 
+function catalogFixture(directory) {
+  const trustPath = join(directory, "plugin-trust.json");
+  const ledgerPath = join(directory, "ledger");
+  const { privateKey, publicKey } = generateKeyPairSync("ed25519", {
+    privateKeyEncoding: { format: "pem", type: "pkcs8" },
+    publicKeyEncoding: { format: "pem", type: "spki" }
+  });
+  writeFileSync(
+    trustPath,
+    JSON.stringify({
+      schema: 1,
+      catalog_url: "https://example.test/catalog.json",
+      minimum_checkpoint: { key_epoch: 1, sequence: 1 },
+      keys: [{ key_id: "test-key", key_epoch: 1, public_key_pem: publicKey, minimum_sequence: 1 }]
+    })
+  );
+  const releasePath = join(directory, "fixture.atlas-plugin");
+  writeFileSync(releasePath, `${JSON.stringify(releaseDocument(), null, 2)}\n`);
+  const environment = {
+    ATLAS_PLUGIN_CATALOG_TRUST_PATH: trustPath,
+    ATLAS_PLUGIN_CATALOG_KEY_ID: "test-key",
+    ATLAS_PLUGIN_CATALOG_KEY_EPOCH: "1",
+    ATLAS_PLUGIN_CATALOG_PRIVATE_KEY: privateKey
+  };
+  return { ledgerPath, releasePath, privateKey, publicKey, environment };
+}
+
+function expireCatalog(fixture) {
+  const catalogPath = join(fixture.ledgerPath, "catalog.json");
+  const signaturePath = join(fixture.ledgerPath, "catalog.json.sig");
+  const previousBytes = readFileSync(catalogPath);
+  const previous = JSON.parse(previousBytes);
+  const expired = {
+    ...previous,
+    issued_at: "2020-01-01T00:00:00.000Z",
+    expires_at: "2020-01-02T00:00:00.000Z"
+  };
+  const expiredBytes = Buffer.from(`${JSON.stringify(expired, null, 2)}\n`);
+  writeFileSync(catalogPath, expiredBytes);
+  writeFileSync(
+    signaturePath,
+    `${JSON.stringify({
+      algorithm: "ed25519",
+      key_id: "test-key",
+      signature: sign(null, expiredBytes, fixture.privateKey).toString("base64")
+    }, null, 2)}\n`
+  );
+  return { previousBytes, expiredBytes, expired };
+}
+
+test("renews an expired matching append while preserving fresh idempotent bytes", () => {
+  const directory = mkdtempSync(join(tmpdir(), "atlas-plugin-catalog-append-expired-"));
+  try {
+    const fixture = catalogFixture(directory);
+    assert.equal(run(["append", fixture.releasePath, fixture.ledgerPath], fixture.environment).status, 0);
+    const expired = expireCatalog(fixture);
+    const renewed = run(["append", fixture.releasePath, fixture.ledgerPath], fixture.environment);
+    assert.equal(renewed.status, 0, renewed.stderr);
+    const catalogPath = join(fixture.ledgerPath, "catalog.json");
+    const signaturePath = join(fixture.ledgerPath, "catalog.json.sig");
+    const renewedBytes = readFileSync(catalogPath);
+    const renewedCatalog = JSON.parse(renewedBytes);
+    const renewedSignature = JSON.parse(readFileSync(signaturePath));
+    assert.equal(renewedCatalog.sequence, 2);
+    assert.equal(renewedCatalog.previous_catalog_sha256, `sha256:${createHash("sha256").update(expired.expiredBytes).digest("hex")}`);
+    assert.ok(Date.parse(renewedCatalog.expires_at) > Date.now());
+    assert.deepEqual(renewedCatalog.plugins, expired.expired.plugins);
+    assert.equal(
+      verify(null, renewedBytes, createPublicKey(fixture.publicKey), Buffer.from(renewedSignature.signature, "base64")),
+      true
+    );
+    const repeat = run(["append", fixture.releasePath, fixture.ledgerPath], fixture.environment);
+    assert.equal(repeat.status, 0, repeat.stderr);
+    assert.deepEqual(readFileSync(catalogPath), renewedBytes);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("renews an expired matching revoke and leaves a fresh repeat byte stable", () => {
+  const directory = mkdtempSync(join(tmpdir(), "atlas-plugin-catalog-revoke-expired-"));
+  try {
+    const fixture = catalogFixture(directory);
+    assert.equal(run(["append", fixture.releasePath, fixture.ledgerPath], fixture.environment).status, 0);
+    expireCatalog(fixture);
+    assert.equal(run(["revoke", "fixture", "1.0.0", "security issue", fixture.ledgerPath], fixture.environment).status, 0);
+    const catalogPath = join(fixture.ledgerPath, "catalog.json");
+    const signaturePath = join(fixture.ledgerPath, "catalog.json.sig");
+    const renewedBytes = readFileSync(catalogPath);
+    const renewedCatalog = JSON.parse(renewedBytes);
+    const renewedSignature = JSON.parse(readFileSync(signaturePath));
+    assert.equal(renewedCatalog.sequence, 2);
+    assert.equal(renewedCatalog.plugins[0].releases[0].revoked, true);
+    assert.equal(renewedCatalog.plugins[0].releases[0].revocation_reason, "security issue");
+    assert.ok(Date.parse(renewedCatalog.expires_at) > Date.now());
+    assert.equal(
+      verify(null, renewedBytes, createPublicKey(fixture.publicKey), Buffer.from(renewedSignature.signature, "base64")),
+      true
+    );
+    const repeat = run(["revoke", "fixture", "1.0.0", "security issue", fixture.ledgerPath], fixture.environment);
+    assert.equal(repeat.status, 0, repeat.stderr);
+    assert.deepEqual(readFileSync(catalogPath), renewedBytes);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("rejects a currently expired published catalog", () => {
+  const directory = mkdtempSync(join(tmpdir(), "atlas-plugin-catalog-published-expired-"));
+  try {
+    const fixture = catalogFixture(directory);
+    assert.equal(run(["append", fixture.releasePath, fixture.ledgerPath], fixture.environment).status, 0);
+    expireCatalog(fixture);
+    const result = run(["verify-published", fixture.ledgerPath], {
+      ...fixture.environment,
+      ATLAS_TEST_REMOTE_CATALOG: join(fixture.ledgerPath, "catalog.json"),
+      ATLAS_TEST_REMOTE_SIGNATURE: join(fixture.ledgerPath, "catalog.json.sig"),
+      NODE_OPTIONS: mockFetchPreload(directory)
+    });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /Protected catalog ledger is expired/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("publishes and renews a signed append-only catalog with exact release URLs", () => {
   const directory = mkdtempSync(join(tmpdir(), "atlas-plugin-catalog-"));
   try {

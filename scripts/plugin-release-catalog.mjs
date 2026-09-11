@@ -156,6 +156,12 @@ function appendCatalog(releasePath, ledgerDirectory, documentUrl) {
     if (previousRelease.display_name !== release.display_name || previousRelease.document_sha256 !== releaseHash || previousRelease.document_url !== resolvedUrl) {
       throw new Error(`Catalog already contains ${pluginId} ${version} with different immutable bytes`);
     }
+    if (isCatalogExpired(previous)) {
+      const catalog = renewedCatalog(previous, previousBytes, signing);
+      writeSignedCatalog(catalog, ledgerDirectory, signing);
+      process.stdout.write(`Renewed expired catalog sequence ${catalog.sequence} for ${pluginId} ${version}.\n`);
+      return;
+    }
     process.stdout.write(`Catalog already contains ${pluginId} ${version} with matching immutable metadata.\n`);
     return;
   }
@@ -215,17 +221,7 @@ function renewCatalog(ledgerDirectory) {
   if (signing.keyEpoch === previous.key_epoch && signing.keyId !== previous.key_id) {
     throw new Error(`Catalog renewal key ${signing.keyId} does not match the ledger's current key ${previous.key_id}`);
   }
-  const rotated = signing.keyEpoch !== previous.key_epoch;
-  const { issuedAt, expiresAt } = nextCatalogTimes(previous);
-  const catalog = {
-    ...previous,
-    sequence: rotated ? signing.minimumSequence : previous.sequence + 1,
-    previous_catalog_sha256: sha256(previousBytes),
-    issued_at: issuedAt,
-    expires_at: expiresAt,
-    key_epoch: signing.keyEpoch,
-    key_id: signing.keyId
-  };
+  const catalog = renewedCatalog(previous, previousBytes, signing);
   writeSignedCatalog(catalog, ledgerDirectory, signing);
   process.stdout.write(`Renewed catalog sequence ${catalog.sequence}.\n`);
 }
@@ -251,6 +247,12 @@ function revokeCatalog(pluginId, version, reason, ledgerDirectory) {
   if (!previousRelease) throw new Error(`Catalog does not contain ${pluginId} ${version}`);
   if (previousRelease.revoked) {
     if (previousRelease.revocation_reason !== reason) throw new Error(`Catalog already revoked ${pluginId} ${version} with a different reason`);
+    if (isCatalogExpired(previous)) {
+      const catalog = renewedCatalog(previous, previousBytes, signing);
+      writeSignedCatalog(catalog, ledgerDirectory, signing);
+      process.stdout.write(`Renewed expired catalog sequence ${catalog.sequence} for ${pluginId} ${version}.\n`);
+      return;
+    }
     process.stdout.write(`Catalog already revoked ${pluginId} ${version} with the same reason.\n`);
     return;
   }
@@ -267,6 +269,23 @@ function revokeCatalog(pluginId, version, reason, ledgerDirectory) {
   catalog.expires_at = expiresAt;
   writeSignedCatalog(catalog, ledgerDirectory, signing);
   process.stdout.write(`Revoked catalog release ${pluginId} ${version} at sequence ${catalog.sequence}.\n`);
+}
+
+function renewedCatalog(previous, previousBytes, signing) {
+  const { issuedAt, expiresAt } = nextCatalogTimes(previous);
+  return {
+    ...previous,
+    sequence: signing.keyEpoch === previous.key_epoch ? previous.sequence + 1 : signing.minimumSequence,
+    previous_catalog_sha256: sha256(previousBytes),
+    issued_at: issuedAt,
+    expires_at: expiresAt,
+    key_epoch: signing.keyEpoch,
+    key_id: signing.keyId
+  };
+}
+
+function isCatalogExpired(catalog) {
+  return Date.parse(catalog.expires_at) <= Date.now();
 }
 
 function writeSignedCatalog(catalog, ledgerDirectory, signing) {
@@ -425,6 +444,7 @@ async function verifyPublishedCatalog(ledgerDirectory, options) {
   const localCatalog = readJSON(ledgerPath);
   validateCatalog(localCatalog);
   verifyLedgerSignature(ledgerDirectory, localCatalog, localBytes);
+  assertCatalogCurrent(localCatalog, "Protected catalog ledger");
   const trust = readTrust();
   const remoteCatalogURL = new URL(trust.catalog_url);
   const remoteSignatureURL = new URL(remoteCatalogURL);
@@ -462,6 +482,7 @@ async function verifyPublishedCatalog(ledgerDirectory, options) {
   const remoteCatalog = parseJSONBytes(remoteBytes, "stable catalog");
   validateCatalog(remoteCatalog);
   verifyCatalogSignature(remoteCatalog, remoteBytes, remoteSignatureBytes);
+  assertCatalogCurrent(remoteCatalog, "Stable catalog");
   if (remoteCatalog.sequence !== localCatalog.sequence || remoteCatalog.key_epoch !== localCatalog.key_epoch || remoteCatalog.key_id !== localCatalog.key_id) {
     throw new Error("Stable catalog identity or sequence does not match the protected ledger");
   }
@@ -482,6 +503,10 @@ async function verifyPublishedCatalog(ledgerDirectory, options) {
     }
   }
   process.stdout.write(`Verified stable catalog sequence ${remoteCatalog.sequence} at ${trust.catalog_url}.\n`);
+}
+
+function assertCatalogCurrent(catalog, label) {
+  if (Date.parse(catalog.expires_at) <= Date.now()) throw new Error(`${label} is expired`);
 }
 
 async function fetchBounded(url, limit, label, timeoutMs = 15_000) {

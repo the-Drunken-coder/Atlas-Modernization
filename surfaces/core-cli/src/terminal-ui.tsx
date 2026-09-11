@@ -61,6 +61,7 @@ export type PluginDeploymentStatus = {
   availableVersions?: readonly string[];
   compatibility?: "compatible" | "incompatible" | "unknown";
   revoked?: boolean;
+  revocationReason?: string;
   error?: string;
   state?: string;
   health?: string;
@@ -1433,10 +1434,13 @@ function PluginsMenu({
           {plugins.map((candidate, candidateIndex) => {
             const runtime = candidate.state ? `  ${candidate.state}/${candidate.health || "unknown"}` : "";
             const availability = candidate.packaged || candidate.installed === true ? "" : "  image unavailable";
+            const revocation = candidate.revoked
+              ? `  REVOKED${candidate.revocationReason ? `: ${candidate.revocationReason}` : ""}`
+              : "";
             return (
               <Text inverse={candidateIndex === index} key={candidate.pluginId}>
                 {pad(
-                  `${candidateIndex === index ? ">" : " "} ${candidate.displayName}  ${candidate.enabled ? "enabled" : "disabled"}${runtime}${availability}`,
+                  `${candidateIndex === index ? ">" : " "} ${candidate.displayName}  ${candidate.enabled ? "enabled" : "disabled"}${runtime}${availability}${revocation}`,
                   columns
                 )}
               </Text>
@@ -1445,6 +1449,9 @@ function PluginsMenu({
           <Text> </Text>
           <Text>{plugin?.pluginId}</Text>
           <Text dimColor>{plugin?.lifecycle === "query_only" ? "Query-only, stateless" : "Unsupported lifecycle"}</Text>
+          {plugin?.revoked ? (
+            <Text color="red">{`REVOKED${plugin.revocationReason ? `: ${plugin.revocationReason}` : ""}`}</Text>
+          ) : null}
         </>
       )}
       <Rule width={columns} />

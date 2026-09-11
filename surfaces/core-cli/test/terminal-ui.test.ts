@@ -751,6 +751,35 @@ describe("Atlas Core terminal UI", () => {
     await menu;
   });
 
+  it("shows the selected Plugin revocation reason", async () => {
+    const terminal = new TestTerminal();
+    const deployment = operator();
+    deployment.pluginStatuses.mockResolvedValue([
+      {
+        pluginId: "building_scan",
+        displayName: "Building Scan",
+        lifecycle: "query_only",
+        enabled: false,
+        packaged: false,
+        installed: true,
+        selectedVersion: "1.0.0",
+        revoked: true,
+        revocationReason: "security issue"
+      }
+    ]);
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("View status");
+    terminal.write("plugins");
+    await terminal.waitFor("Filter: plugins");
+    terminal.write("\r");
+    await terminal.waitFor("REVOKED: security issue");
+    terminal.write("q");
+    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
+    terminal.write("q");
+    await menu;
+  });
+
   it("keeps Plugin enable progress and completion inside Atlas Core", async () => {
     const terminal = new TestTerminal(40, true, 24);
     const deployment = operator();

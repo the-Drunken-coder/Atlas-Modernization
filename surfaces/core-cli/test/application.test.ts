@@ -791,7 +791,7 @@ function installIndependentRuntimeFixture(test: TestRuntime, plugin: Independent
   };
 }
 
-function installSignedIndependentCatalog(test: TestRuntime, plugins = INDEPENDENT_UPDATE_FIXTURES): void {
+function installSignedIndependentCatalog(test: TestRuntime, plugins = INDEPENDENT_UPDATE_FIXTURES) {
   const { publicKey, privateKey } = generateKeyPairSync("ed25519");
   const catalogURL = "https://catalog.example/catalog.json";
   const releaseBytesByURL = new Map<string, Uint8Array>();
@@ -841,17 +841,19 @@ function installSignedIndependentCatalog(test: TestRuntime, plugins = INDEPENDEN
     const bytes = releaseBytesByURL.get(url);
     return bytes ? new Response(bytes) : new Response("not found", { status: 404 });
   };
+  return { catalogBytes, privateKey, catalogURL };
 }
 
-async function installIndependentUpdateFixtures(test: TestRuntime): Promise<void> {
+async function installIndependentUpdateFixtures(test: TestRuntime) {
   await markManagedInitialized(test);
-  installSignedIndependentCatalog(test);
+  const catalog = installSignedIndependentCatalog(test);
   for (const plugin of [...INDEPENDENT_UPDATE_FIXTURES].reverse()) {
     expect(await runCLI(["plugins", "install", plugin.pluginId, "0.1.0"], test.context), test.stderr.join("")).toBe(0);
   }
   test.stdout.length = 0;
   test.stderr.length = 0;
   test.runner.calls.length = 0;
+  return catalog;
 }
 
 function installedPluginVersion(test: TestRuntime, pluginId: string): string {
@@ -2419,6 +2421,23 @@ describe("atlas-core CLI", () => {
     expect(await runCLI(["start", "--manual"], test.context)).toBe(1);
     expect(test.stderr.join("")).toContain("Run atlas-core init first");
     expect(test.runner.calls).toHaveLength(0);
+  });
+
+  it("retains reset authorization when credential deletion fails", async () => {
+    const test = runtime();
+    await markManagedInitialized(test);
+    test.context.confirmReset = async () => true;
+    const config = join(test.home, ".atlas", "core");
+    const env = join(config, ".env");
+    test.runner.onRun = (call) => {
+      if (call.args[0] === "volume" && call.args[1] === "rm" && call.args.includes(MINIO_VOLUME)) chmodSync(env, 0o644);
+    };
+    expect(await runCLI(["reset", "--manual"], test.context)).toBe(1);
+    expect(existsSync(join(config, "state.json"))).toBe(true);
+    expect(existsSync(env)).toBe(true);
+    test.runner.onRun = undefined;
+    chmodSync(env, 0o600);
+    expect(await runCLI(["reset", "--manual"], test.context), test.stderr.join("")).toBe(0);
   });
 
   it("rejects unsupervised reset before deleting retained state or data", async () => {
@@ -5128,6 +5147,35 @@ describe("atlas-core CLI", () => {
       expect(test.runner.existingContainers.has(container)).toBe(foreign);
     }
   );
+
+  it("shows the signed revocation reason for an installed Plugin", async () => {
+    const test = runtime();
+    const { catalogBytes, privateKey, catalogURL } = await installIndependentUpdateFixtures(test);
+    const catalog = JSON.parse(new TextDecoder().decode(catalogBytes));
+    catalog.sequence = 2;
+    catalog.issued_at = "2026-08-28T01:00:00Z";
+    catalog.previous_catalog_sha256 = `sha256:${createHash("sha256").update(catalogBytes).digest("hex")}`;
+    const selected = catalog.plugins[0].releases[0];
+    selected.revoked = true;
+    selected.revocation_reason = "Credential exposure in this release";
+    const bytes = Buffer.from(JSON.stringify(catalog));
+    const signature = JSON.stringify({
+      algorithm: "ed25519",
+      key_id: "test-key",
+      signature: sign(null, bytes, privateKey).toString("base64")
+    });
+    const fetch = test.context.fetch;
+    if (!fetch) throw new Error("Missing test fetch");
+    test.context.fetch = async (input, init) =>
+      String(input) === catalogURL
+        ? new Response(bytes)
+        : String(input) === `${catalogURL}.sig`
+          ? new Response(signature)
+          : await fetch(input, init);
+    expect(await runCLI(["plugins", "refresh"], test.context), test.stderr.join("")).toBe(0);
+    expect(await runCLI(["plugins", "status", "alpha_fixture"], test.context), test.stderr.join("")).toBe(0);
+    expect(test.stdout.join("")).toContain("REVOKED: Credential exposure in this release");
+  });
 
   it("rejects unknown independent Plugin status IDs", async () => {
     const test = runtime();

@@ -14,6 +14,7 @@ const imagePattern = /^ghcr\.io\/the-drunken-coder\/[a-z0-9][a-z0-9-]*@sha256:[0
 const releaseDocumentLimit = 1 << 20;
 const releaseRedirectLimit = 5;
 const maxCandidateOperations = 128;
+const candidatePlatforms = ["linux/amd64", "linux/arm64"];
 const releaseHosts = new Set([
   "github.com",
   "objects.githubusercontent.com",
@@ -219,34 +220,39 @@ function checkCandidate(plugin, image) {
   if (!image.startsWith(`${expectedRepository}@`)) throw new Error(`${plugin.id} candidate image uses the wrong repository`);
   const networkName = `atlas-plugin-release-${process.pid}-${Date.now()}`;
   runCapture("docker", ["network", "create", networkName]);
-  let containerId;
   try {
-    const container = runCapture("docker", ["run", "--detach", "--rm", "--network", networkName, "--publish", "127.0.0.1::8080", image]);
-    containerId = container.trim();
-    if (!/^[a-f0-9]{12,64}$/u.test(containerId)) throw new Error(`Docker returned an invalid candidate container ID: ${containerId}`);
-    const port = waitForCandidatePort(containerId);
-    const manifest = waitForJSON(`http://127.0.0.1:${port}/manifest`, 200, "candidate manifest");
-    validateCandidateManifest(plugin, manifest);
-    const health = waitForJSON(`http://127.0.0.1:${port}/health`, 200, "candidate health");
-    if (!isRecord(health) || Object.keys(health).length !== 1 || health.status !== "ok") {
-      throw new Error("Candidate /health did not return {\"status\":\"ok\"}");
-    }
-    const routeResponse = runCapture("curl", ["--silent", "--show-error", "--max-time", "2", "--write-out", "\n%{content_type}\n%{http_code}", `http://127.0.0.1:${port}/__atlas_candidate_missing__`], true).trimEnd();
-    const routeLines = routeResponse.split("\n");
-    const routeStatus = routeLines.pop();
-    const routeContentType = routeLines.pop() ?? "";
-    if (
-      routeStatus !== "404" ||
-      !isJSONContentType(routeContentType) ||
-      routeLines.join("\n") !== '{"code":"route_not_found"}'
-    ) {
-      throw new Error(`Candidate missing route must return {"code":"route_not_found"} as application/json with HTTP 404; got ${routeContentType || "no Content-Type"} HTTP ${routeStatus}`);
+    for (const platform of candidatePlatforms) {
+      let containerId;
+      try {
+        const container = runCapture("docker", ["run", "--platform", platform, "--detach", "--rm", "--network", networkName, "--publish", "127.0.0.1::8080", image]);
+        containerId = container.trim();
+        if (!/^[a-f0-9]{12,64}$/u.test(containerId)) throw new Error(`Docker returned an invalid ${platform} candidate container ID: ${containerId}`);
+        const port = waitForCandidatePort(containerId);
+        const manifest = waitForJSON(`http://127.0.0.1:${port}/manifest`, 200, `${platform} candidate manifest`);
+        validateCandidateManifest(plugin, manifest);
+        const health = waitForJSON(`http://127.0.0.1:${port}/health`, 200, `${platform} candidate health`);
+        if (!isRecord(health) || Object.keys(health).length !== 1 || health.status !== "ok") {
+          throw new Error(`${platform} candidate /health did not return {\"status\":\"ok\"}`);
+        }
+        const routeResponse = runCapture("curl", ["--silent", "--show-error", "--max-time", "2", "--write-out", "\n%{content_type}\n%{http_code}", `http://127.0.0.1:${port}/__atlas_candidate_missing__`], true).trimEnd();
+        const routeLines = routeResponse.split("\n");
+        const routeStatus = routeLines.pop();
+        const routeContentType = routeLines.pop() ?? "";
+        if (
+          routeStatus !== "404" ||
+          !isJSONContentType(routeContentType) ||
+          routeLines.join("\n") !== '{"code":"route_not_found"}'
+        ) {
+          throw new Error(`${platform} candidate missing route must return {"code":"route_not_found"} as application/json with HTTP 404; got ${routeContentType || "no Content-Type"} HTTP ${routeStatus}`);
+        }
+      } finally {
+        if (containerId) spawnSync("docker", ["rm", "--force", containerId], { cwd: repositoryRoot, stdio: "ignore" });
+      }
     }
   } finally {
-    if (containerId) spawnSync("docker", ["rm", "--force", containerId], { cwd: repositoryRoot, stdio: "ignore" });
     spawnSync("docker", ["network", "rm", networkName], { cwd: repositoryRoot, stdio: "ignore" });
   }
-  process.stdout.write(`Candidate ${image} passed the ${plugin.id} runtime contract checks.\n`);
+  process.stdout.write(`Candidate ${image} passed the ${plugin.id} runtime contract checks on ${candidatePlatforms.join(", ")}.\n`);
 }
 
 async function verifyPublicRelease(url, localPath) {

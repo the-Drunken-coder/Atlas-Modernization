@@ -1,4 +1,4 @@
-import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -24,17 +24,28 @@ const candidateManifest = {
   ]
 };
 
-function runCandidate(manifest, routeBody = '{"code":"route_not_found"}', contentType = "application/json") {
+function runCandidate(manifest, routeBody = '{"code":"route_not_found"}', contentType = "application/json", failingPlatform = "") {
   const directory = mkdtempSync(join(tmpdir(), "atlas-plugin-candidate-"));
   const bin = join(directory, "bin");
   const docker = join(bin, "docker");
   const curl = join(bin, "curl");
+  const platformLog = join(directory, "platforms.log");
   mkdirSync(bin, { recursive: true });
+  writeFileSync(platformLog, "");
   writeFileSync(
     docker,
     `#!/usr/bin/env node
+import { appendFileSync } from "node:fs";
 const args = process.argv.slice(2);
-if (args[0] === "run") process.stdout.write("abcdef123456\\n");
+if (args[0] === "run") {
+  const platform = args[args.indexOf("--platform") + 1];
+  appendFileSync(process.env.CANDIDATE_PLATFORM_LOG, platform + "\\n");
+  if (platform === process.env.CANDIDATE_FAIL_PLATFORM) {
+    process.stderr.write("candidate platform failed: " + platform + "\\n");
+    process.exit(1);
+  }
+  process.stdout.write("abcdef123456\\n");
+}
 else if (args[0] === "port") process.stdout.write("0.0.0.0:12345\\n");
 else if (args[0] === "network" && args[1] === "create") process.stdout.write("network123\\n");
 else if (args[0] === "rm" || (args[0] === "network" && args[1] === "rm")) process.stdout.write("");
@@ -54,7 +65,7 @@ else process.stdout.write((process.env.CANDIDATE_ROUTE_BODY ?? '{"code":"route_n
   chmodSync(docker, 0o755);
   chmodSync(curl, 0o755);
   try {
-    return spawnSync(process.execPath, [script, "check-candidate", "building_scan", image], {
+    const result = spawnSync(process.execPath, [script, "check-candidate", "building_scan", image], {
       cwd: repositoryRoot,
       encoding: "utf8",
       env: {
@@ -62,9 +73,13 @@ else process.stdout.write((process.env.CANDIDATE_ROUTE_BODY ?? '{"code":"route_n
         PATH: `${bin}:${process.env.PATH}`,
         CANDIDATE_MANIFEST: JSON.stringify(manifest),
         CANDIDATE_ROUTE_BODY: routeBody,
-        CANDIDATE_CONTENT_TYPE: contentType
+        CANDIDATE_CONTENT_TYPE: contentType,
+        CANDIDATE_FAIL_PLATFORM: failingPlatform,
+        CANDIDATE_PLATFORM_LOG: platformLog
       }
     });
+    result.platforms = readFileSync(platformLog, "utf8").trim().split("\n").filter(Boolean);
+    return result;
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -374,6 +389,14 @@ test("accepts a mutating retry with a case-normalized allowed idempotency header
 test("accepts a candidate only when its private manifest matches the authored interaction contract", () => {
   const result = runCandidate(candidateManifest);
   assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(result.platforms, ["linux/amd64", "linux/arm64"]);
+});
+
+test("fails candidate acceptance when either published platform fails its contract probe", () => {
+  const result = runCandidate(candidateManifest, undefined, undefined, "linux/arm64");
+  assert.notEqual(result.status, 0);
+  assert.deepEqual(result.platforms, ["linux/amd64", "linux/arm64"]);
+  assert.match(result.stderr, /linux\/arm64.*candidate platform failed|candidate platform failed.*linux\/arm64/);
 });
 
 test("requires candidate JSON probes to advertise an application/json media type", () => {
@@ -621,4 +644,14 @@ test("reuses a promoted image and release document before rebuilding on a public
   assert.match(workflow.slice(select, document), /REUSED_REFERENCE/);
   assert.match(workflow.slice(document), /if \[ \"\$\{\{ steps\.reuse\.outputs\.found \}\}\" != \"true\" \]/);
   assert.match(workflow.slice(document), /sha256sum .*release-artifacts\/SHA256SUMS/);
+});
+
+test("sets up QEMU before probing every published candidate platform", () => {
+  const workflow = readFileSync(join(repositoryRoot, ".github", "workflows", "release-atlas-plugin.yml"), "utf8");
+  const qemu = workflow.indexOf("- name: Set up QEMU");
+  const probe = workflow.indexOf("- name: Run candidate image contract checks");
+  assert.ok(qemu >= 0 && qemu < probe);
+  const script = readFileSync(join(repositoryRoot, "scripts", "plugin-release.mjs"), "utf8");
+  assert.match(script, /const candidatePlatforms = \["linux\/amd64", "linux\/arm64"\]/);
+  assert.match(script, /\["run", "--platform", platform/);
 });
