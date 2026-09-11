@@ -2,7 +2,9 @@ import { createHash, randomBytes } from "node:crypto";
 import {
   chmodSync,
   closeSync,
+  constants,
   existsSync,
+  fstatSync,
   fsyncSync,
   lstatSync,
   mkdirSync,
@@ -441,15 +443,29 @@ function readTemplate(path: string): unknown {
   // reads outside the bundle.
   assertNoSymlinkAncestors(resolve(path, "../.."), path);
   assertNoSymlink(path);
-  const stats = lstatSync(path);
-  if (!stats.isFile()) throw new Error(`Expected a regular Plugin template at ${path}.`);
-  const currentUserId = process.getuid?.();
-  if (currentUserId !== undefined && stats.uid !== currentUserId) {
-    throw new Error(`Plugin template ${path} is owned by UID ${stats.uid}, not the current user.`);
+  let descriptor: number;
+  try {
+    descriptor = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ELOOP") {
+      throw new Error(`Expected a regular Plugin template at ${path}.`);
+    }
+    throw error;
   }
-  const mode = stats.mode & 0o777;
-  if (mode !== 0o600 && mode !== 0o644) throw new Error(`Plugin template ${path} must have mode 600 or 644.`);
-  const bytes = readFileSync(path);
+  let bytes: Buffer;
+  try {
+    const stats = fstatSync(descriptor);
+    if (!stats.isFile()) throw new Error(`Expected a regular Plugin template at ${path}.`);
+    const currentUserId = process.getuid?.();
+    if (currentUserId !== undefined && stats.uid !== currentUserId) {
+      throw new Error(`Plugin template ${path} is owned by UID ${stats.uid}, not the current user.`);
+    }
+    const mode = stats.mode & 0o777;
+    if (mode !== 0o600 && mode !== 0o644) throw new Error(`Plugin template ${path} must have mode 600 or 644.`);
+    bytes = readFileSync(descriptor);
+  } finally {
+    closeSync(descriptor);
+  }
   if (bytes.byteLength > MAX_TEMPLATE_BYTES) throw new Error(`Plugin template ${path} exceeds the size limit.`);
   try {
     return parseStrictJsonBytes(new Uint8Array(bytes), MAX_TEMPLATE_BYTES, "Plugin template");

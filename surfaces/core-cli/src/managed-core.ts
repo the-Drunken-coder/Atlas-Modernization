@@ -1,5 +1,15 @@
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, lstatSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import {
+  closeSync,
+  constants,
+  existsSync,
+  fstatSync,
+  lstatSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  rmSync
+} from "node:fs";
 import { isAbsolute, join, normalize, sep } from "node:path";
 import type { PairedBackupIdentity } from "./backup-receipt.js";
 import {
@@ -257,9 +267,7 @@ export class ManagedCoreManager {
     // guard, because the guard may validate the active Compose topology.
     // Nothing has been started yet, so a rejected storage check remains safe.
     await this.#options.assertStorageSafe?.(state);
-    let invoked = false;
     try {
-      invoked = true;
       const result = await this.#options.runCompose(
         [
           "up",
@@ -283,7 +291,7 @@ export class ManagedCoreManager {
       await this.#verifyRunningCore(receiptFromBase(base), base.images);
       await this.#options.verifyPlugins?.(state, { requireHealth: false });
     } catch (error) {
-      if (invoked) await this.#stopAfterFailure(state.enabledPlugins, base.coreImage);
+      await this.#stopAfterFailure(state.enabledPlugins, base.coreImage);
       throw error;
     }
   }
@@ -658,8 +666,14 @@ export class ManagedCoreManager {
     try {
       for (const path of candidate.files) {
         const absolute = join(candidate.root, path);
-        const mode = lstatSync(absolute).mode & 0o777;
-        transaction.stage(`base/${path}`, readFileSync(absolute), { mode });
+        const descriptor = openSync(absolute, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+        try {
+          const stats = fstatSync(descriptor);
+          if (!stats.isFile()) throw new Error(`Core bundle candidate ${path} must be a regular file.`);
+          transaction.stage(`base/${path}`, readFileSync(descriptor), { mode: stats.mode & 0o777 });
+        } finally {
+          closeSync(descriptor);
+        }
       }
     } finally {
       rmSync(candidate.root, { recursive: true, force: true });

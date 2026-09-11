@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, readFileSync } from "node:fs";
+import { closeSync, constants, fstatSync, openSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   DeploymentTransactionStore,
@@ -425,10 +425,7 @@ export class ManagedPluginCredentials {
       if (intent && !intent.candidateRevoked) {
         // Core must be running for managed-key revoke. A stopped deployment
         // may therefore need a temporary base start before its final stop.
-        if (!running) {
-          await this.#host.startBase(journal.previousRunning);
-          running = true;
-        }
+        if (!running) await this.#host.startBase(journal.previousRunning);
         if (intent.candidateKeyId) await this.#revoke(intent.candidateKeyId);
         else await this.#revokeAttemptMatches(intent.attemptName);
         intent = { ...intent, candidateRevoked: true };
@@ -502,10 +499,21 @@ function attemptName(transactionID: string, attempt: number): string {
 
 function readEnvFile(configDir: string): string {
   const path = join(configDir, ENV_FILE);
-  if (!existsSync(path)) throw new Error("Atlas Core configuration is missing .env.");
-  const stats = lstatSync(path);
-  if (stats.isSymbolicLink() || !stats.isFile()) throw new Error("Atlas Core .env must be a regular file.");
-  return readFileSync(path, "utf8");
+  let descriptor: number;
+  try {
+    descriptor = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") throw new Error("Atlas Core configuration is missing .env.");
+    if (code === "ELOOP") throw new Error("Atlas Core .env must be a regular file.");
+    throw error;
+  }
+  try {
+    if (!fstatSync(descriptor).isFile()) throw new Error("Atlas Core .env must be a regular file.");
+    return readFileSync(descriptor, "utf8");
+  } finally {
+    closeSync(descriptor);
+  }
 }
 
 function readCurrentAPIKey(configDir: string): ParsedAPIKey | undefined {
@@ -647,14 +655,28 @@ function isManagedKeyID(value: string): boolean {
 
 function readDesiredRunning(configDir: string, fallback: boolean): boolean {
   const path = join(configDir, "run-intent.json");
-  if (!existsSync(path)) return fallback;
-  const stats = lstatSync(path);
-  if (stats.isSymbolicLink() || !stats.isFile()) throw new Error("Atlas Core run intent must be a regular file.");
+  let descriptor: number;
+  try {
+    descriptor = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") return fallback;
+    if (code === "ELOOP") throw new Error("Atlas Core run intent must be a regular file.");
+    throw error;
+  }
   let value: unknown;
   try {
-    value = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    if (!fstatSync(descriptor).isFile()) throw new Error("Atlas Core run intent must be a regular file.");
+  } catch (error) {
+    closeSync(descriptor);
+    throw error;
+  }
+  try {
+    value = JSON.parse(readFileSync(descriptor, "utf8")) as unknown;
   } catch {
     throw new Error("Atlas Core run intent is invalid.");
+  } finally {
+    closeSync(descriptor);
   }
   if (!isRecord(value) || typeof value.desiredRunning !== "boolean")
     throw new Error("Atlas Core run intent is invalid.");

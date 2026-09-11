@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   type DockerImageCommand,
@@ -46,6 +47,85 @@ describe("Docker image receipts", () => {
       ["image", "inspect", "--format", "{{json .}}", image],
       ["manifest", "inspect", platformReference]
     ]);
+  });
+
+  it.each([false, true])(
+    "verifies raw OCI bytes after Docker manifest rejects their serialization, tampered=%s",
+    async (tampered) => {
+      const raw = JSON.stringify({ schemaVersion: 2, config: { digest: localImageID } });
+      const reference = `postgres@sha256:${createHash("sha256").update(raw).digest("hex")}`;
+      const calls: string[][] = [];
+      const run: DockerImageCommand = async (args) => {
+        calls.push(args);
+        if (args[0] === "manifest") return { status: 1, stdout: "", stderr: "manifest verification failed for digest" };
+        if (args[0] === "buildx") return { status: 0, stdout: tampered ? `${raw} ` : raw, stderr: "" };
+        if (args[0] === "image")
+          return {
+            status: 0,
+            stderr: "",
+            stdout: JSON.stringify({ Id: localImageID, Os: "linux", Architecture: "amd64", RepoDigests: [reference] })
+          };
+        return { status: 0, stdout: "", stderr: "" };
+      };
+      if (tampered) await expect(pullImageReceipt(run, reference, "amd64")).rejects.toThrow("does not match");
+      else
+        await expect(pullImageReceipt(run, reference, "amd64")).resolves.toMatchObject({
+          image_index: reference,
+          local_image_id: localImageID
+        });
+      expect(calls).toContainEqual(["buildx", "imagetools", "inspect", "--raw", reference]);
+    }
+  );
+
+  it.each([false, true])("checks containerd's selected local platform, mismatch=%s", async (mismatch) => {
+    const localIndexID = image.slice(image.indexOf("@") + 1);
+    const docker = fakeDocker({
+      [`manifest\u0000inspect\u0000${image}`]: JSON.stringify({
+        manifests: [{ digest: platformDigest, platform: { os: "linux", architecture: "arm64" } }]
+      }),
+      [`manifest\u0000inspect\u0000${image.split("@")[0]}@${platformDigest}`]: JSON.stringify({
+        schemaVersion: 2,
+        config: { digest: localImageID }
+      }),
+      [`image\u0000inspect\u0000--format\u0000{{json .}}\u0000${image}`]: JSON.stringify({
+        Id: localIndexID,
+        Descriptor: { digest: localIndexID },
+        Os: "linux",
+        Architecture: "arm64",
+        RepoDigests: [image]
+      }),
+      [`image\u0000inspect\u0000--platform\u0000linux/arm64\u0000--format\u0000{{json .}}\u0000${image}`]:
+        JSON.stringify({
+          Id: platformDigest,
+          Descriptor: { digest: mismatch ? localIndexID : platformDigest },
+          Os: "linux",
+          Architecture: "arm64"
+        })
+    });
+    if (mismatch)
+      await expect(pullImageReceipt(docker.run, image, "arm64")).rejects.toThrow("local platform does not match");
+    else
+      await expect(pullImageReceipt(docker.run, image, "arm64")).resolves.toMatchObject({
+        local_image_id: localIndexID
+      });
+  });
+
+  it("rejects a containerd container using another platform of the same index", async () => {
+    const localIndexID = image.split("@")[1]!;
+    const docker = fakeDocker({
+      [`container\u0000inspect\u0000--format\u0000{{json .}}\u0000plugin`]: JSON.stringify({
+        Config: { Image: image },
+        Image: localIndexID,
+        ImageManifestDescriptor: { digest: localIndexID }
+      })
+    });
+    await expect(
+      verifyContainerImage(docker.run, "plugin", {
+        image_index: image,
+        local_image_id: localIndexID,
+        platform_manifest_sha256: platformDigest
+      })
+    ).rejects.toThrow("retained platform manifest");
   });
 
   it("rejects an index with no unambiguous manifest for the selected architecture", async () => {

@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 export type ImageReceipt = {
   image_index: string;
   platform_manifest_sha256: string;
@@ -38,7 +40,7 @@ export async function pullImageReceipt(
 ): Promise<ImageReceipt> {
   if (!isImageReference(image)) throw new Error("Only immutable image digests can be selected.");
   await checked(run, ["pull", "--platform", `linux/${architecture}`, image]);
-  const manifest = parseObject(await checked(run, ["manifest", "inspect", image]));
+  const manifest = await readDistributionManifest(run, image);
   let platformDigest = imageDigest(image);
   if (Array.isArray(manifest.manifests)) {
     const platforms = manifest.manifests.filter(
@@ -69,11 +71,35 @@ export async function pullImageReceipt(
     throw new Error(`Docker did not resolve the selected ${image} to the expected platform and digest.`);
   }
   // The selected platform manifest must refer to the local configuration Docker actually unpacked.
-  const platform = parseObject(
-    await checked(run, ["manifest", "inspect", `${imageRepository(image)}@${platformDigest}`])
-  );
-  if (!isRecord(platform.config) || platform.config.digest !== inspected.Id) {
-    throw new Error(`Image ${image} local configuration does not match its selected platform manifest.`);
+  const platform = await readDistributionManifest(run, `${imageRepository(image)}@${platformDigest}`);
+  if (
+    !isRecord(platform.config) ||
+    typeof platform.config.digest !== "string" ||
+    !digestPattern.test(platform.config.digest)
+  ) {
+    throw new Error(`Image ${image} has an invalid configuration digest.`);
+  }
+  if (platform.config.digest !== inspected.Id) {
+    // Containerd-backed engines identify local images by distribution digest rather than config digest.
+    if (
+      !isRecord(inspected.Descriptor) ||
+      inspected.Descriptor.digest !== imageDigest(image) ||
+      inspected.Id !== imageDigest(image)
+    ) {
+      throw new Error(`Image ${image} local configuration does not match its selected platform manifest.`);
+    }
+    const selected = parseObject(
+      await checked(run, ["image", "inspect", "--platform", `linux/${architecture}`, "--format", "{{json .}}", image])
+    );
+    if (
+      !isRecord(selected.Descriptor) ||
+      selected.Descriptor.digest !== platformDigest ||
+      selected.Id !== platformDigest ||
+      selected.Os !== "linux" ||
+      selected.Architecture !== architecture
+    ) {
+      throw new Error(`Image ${image} local platform does not match its selected platform manifest.`);
+    }
   }
   return { image_index: image, platform_manifest_sha256: platformDigest, local_image_id: inspected.Id };
 }
@@ -100,12 +126,32 @@ export async function verifyContainerImage(
 ): Promise<void> {
   const inspected = parseObject(await checked(run, ["container", "inspect", "--format", "{{json .}}", container]));
   if (
+    receipt.local_image_id === imageDigest(receipt.image_index) &&
+    (!isRecord(inspected.ImageManifestDescriptor) ||
+      inspected.ImageManifestDescriptor.digest !== receipt.platform_manifest_sha256)
+  ) {
+    throw new Error(`Container ${container} does not use its retained platform manifest.`);
+  }
+  if (
     !isRecord(inspected.Config) ||
     inspected.Config.Image !== receipt.image_index ||
     inspected.Image !== receipt.local_image_id
   ) {
     throw new Error(`Container ${container} does not use its retained image identity.`);
   }
+}
+
+/** Docker manifest can reserialize OCI JSON before checking its digest. Verify raw bytes instead when that fails. */
+async function readDistributionManifest(run: DockerImageCommand, image: string): Promise<Record<string, unknown>> {
+  const result = await run(["manifest", "inspect", image]);
+  if (result.status === 0) return parseObject(result.stdout);
+  if (!result.stderr.includes("manifest verification failed for digest")) {
+    throw new Error(`Docker manifest failed: ${result.stderr.trim() || "no diagnostic"}`);
+  }
+  const raw = await checked(run, ["buildx", "imagetools", "inspect", "--raw", image]);
+  const digest = `sha256:${createHash("sha256").update(raw).digest("hex")}`;
+  if (digest !== imageDigest(image)) throw new Error(`Raw distribution manifest does not match ${image}.`);
+  return parseObject(raw);
 }
 
 async function checked(run: DockerImageCommand, args: string[]): Promise<string> {
