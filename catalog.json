@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "sequence": 1,
+  "previous_catalog_sha256": null,
+  "issued_at": "2026-09-11T17:07:57.573Z",
+  "expires_at": "2026-10-11T17:07:57.573Z",
+  "key_epoch": 1,
+  "key_id": "atlas-plugin-catalog-2026-09",
+  "plugins": [
+    {
+      "plugin_id": "building_scan",
+      "releases": [
+        {
+          "version": "0.1.0",
+          "display_name": "Building Scan",
+          "document_url": "https://github.com/the-Drunken-coder/Atlas-Modernization/releases/download/atlas-plugin-building_scan-v0.1.0/building_scan-0.1.0.atlas-plugin",
+          "document_sha256": "sha256:f3ff53a255260a93f3049fbf7b464cd72a252657a6a513c6cf4b6a0ed47d3655",
+          "revoked": false,
+          "revocation_reason": null
+        }
+      ]
+    }
+  ]
+}
