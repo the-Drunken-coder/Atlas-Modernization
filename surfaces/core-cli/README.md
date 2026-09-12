@@ -258,8 +258,8 @@ From the repository root, after `npm ci`, run:
 npm run test:portable-package --workspace atlas-core
 ```
 
-By default, each run writes a uniquely named
-`$TMPDIR/atlas-core-portable-package-evidence-*.json` file. Set
+By default, each run writes `result.json` in a private uniquely named
+`$TMPDIR/atlas-core-portable-package-evidence-*/` directory. Set
 `ATLAS_CORE_PACKED_CLI_EVIDENCE` to an absolute JSON output path to override it.
 The file records the revision, Node runtime, host OS and architecture, native or
 emulated execution, each completed scenario, and the packed artifact's filename,

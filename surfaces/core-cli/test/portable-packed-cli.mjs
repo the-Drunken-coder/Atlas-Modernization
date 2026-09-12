@@ -10,9 +10,9 @@ const temporaryDirectory = mkdtempSync(join(tmpdir(), "atlas-core-portable-packa
 const npmCache = join(temporaryDirectory, "npm-cache");
 const startedAt = new Date().toISOString();
 const startedAtMilliseconds = Date.now();
+const configuredEvidencePath = process.env.ATLAS_CORE_PACKED_CLI_EVIDENCE;
 const evidencePath =
-  process.env.ATLAS_CORE_PACKED_CLI_EVIDENCE ??
-  join(tmpdir(), `atlas-core-portable-package-evidence-${process.pid}-${startedAt.replaceAll(/[^0-9]/gu, "")}.json`);
+  configuredEvidencePath ?? join(mkdtempSync(join(tmpdir(), "atlas-core-portable-package-evidence-")), "result.json");
 const scenarios = [];
 let packedArtifact;
 let packedPackagePath;
@@ -108,7 +108,8 @@ function writeEvidence(extra) {
       },
       null,
       2
-    )}\n`
+    )}\n`,
+    { mode: 0o600 }
   );
 }
 
