@@ -141,7 +141,7 @@ export function resourceUpsertEvent<TType extends ResourceType>(
   id: string,
   version: number,
   resource: ResourceOf<TType>
-): FeedEvent {
+): Exclude<FeedEvent, { event: "delete" }> {
   const actualID = resourceID(type, resource);
   if (actualID !== id) {
     throw new TypeError(`Atlas ${type} resource id ${actualID} does not match event id ${id}`);
