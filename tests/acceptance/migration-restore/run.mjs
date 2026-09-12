@@ -141,7 +141,7 @@ try {
 
   const containerBeforeRestart = await apiContainerID();
   await composeExecute(["restart", "--no-deps", "api"], 120_000);
-  await waitForReadiness(primaryBaseURL, 90_000);
+  await rediscoverPrimaryAPI("Core restart");
   const containerAfterRestart = await apiContainerID();
   record({
     check: "Core process restarted while the owned container and durable volumes remained",
@@ -156,7 +156,7 @@ try {
   await composeExecute(["stop", "api"], 120_000);
   await backupPair(initialLedger);
   await composeExecute(["start", "api"], 120_000);
-  await waitForReadiness(primaryBaseURL, 90_000);
+  await rediscoverPrimaryAPI("post-backup start");
   await createPostBackupChanges(baseline);
 
   observer = startObserver();
@@ -186,7 +186,7 @@ try {
   assertObserverOverlap(observerActivity, restoreWindow.startedAt, restoreWindow.completedAt);
 
   await composeExecute(["start", "api"], 120_000);
-  await waitForReadiness(primaryBaseURL, 90_000);
+  await rediscoverPrimaryAPI("paired-restore start");
   await verifyBaseline(baseline, "after paired restore");
   const restoredLedger = await readMigrationLedger("restored");
   recordDeepEqual("paired restore recovered the exact migration ledger", initialLedger, restoredLedger);
@@ -317,7 +317,7 @@ async function provisionBucket() {
   await runMinio(
     [
       "set -eu",
-      'mc alias set atlas http://minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null',
+      'mc alias set -- atlas http://minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null',
       'mc mb --ignore-existing "atlas/$MINIO_BUCKET" >/dev/null',
       'mc anonymous set none "atlas/$MINIO_BUCKET" >/dev/null',
       'mc stat "atlas/$MINIO_BUCKET"'
@@ -328,23 +328,36 @@ async function provisionBucket() {
 
 async function startAPI() {
   await composeExecute(["up", "--detach", "--no-deps", "api"], 120_000);
-  const portOutput = await composeCapture(["port", "api", "8000"], 30_000);
-  const portMatch = portOutput.trim().match(/127\.0\.0\.1:(\d+)$/u);
-  if (!portMatch) throw new Error(`could not parse owned Core port from ${inspect(portOutput.trim())}`);
-  const baseURL = `http://127.0.0.1:${portMatch[1]}`;
-  await waitForReadiness(baseURL, 90_000);
+  await rediscoverPrimaryAPI("initial API start");
   writeJSON(join(artifacts, "stack.json"), {
     run_id: runID,
     compose_project: project,
     core_image: image,
-    core_base_url: baseURL,
+    core_base_url: primaryBaseURL,
     bucket,
     storage: {
       postgres_volume: `${project}_postgres_data`,
       minio_volume: `${project}_minio_data`
     }
   });
-  return baseURL;
+  return primaryBaseURL;
+}
+
+async function rediscoverPrimaryAPI(label) {
+  const portOutput = await composeCapture(["port", "api", "8000"], 30_000);
+  const portMatch = portOutput.trim().match(/127\.0\.0\.1:(\d+)$/u);
+  if (!portMatch) throw new Error(`could not parse owned Core port from ${inspect(portOutput.trim())}`);
+  const previousBaseURL = primaryBaseURL;
+  primaryBaseURL = `http://127.0.0.1:${portMatch[1]}`;
+  appendJSONLine(join(artifacts, "ports.jsonl"), {
+    timestamp: new Date().toISOString(),
+    label,
+    previous_base_url: previousBaseURL,
+    core_base_url: primaryBaseURL,
+    changed: previousBaseURL !== undefined && primaryBaseURL !== previousBaseURL
+  });
+  await waitForReadiness(primaryBaseURL, 90_000);
+  return primaryBaseURL;
 }
 
 async function createBaseline() {
@@ -595,7 +608,7 @@ async function backupPair(expectedLedger) {
   await runMinio(
     [
       "set -eu",
-      'mc alias set atlas http://minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null',
+      'mc alias set -- atlas http://minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null',
       'rm -rf "/evidence/backup/minio/$MINIO_BUCKET"',
       'mkdir -p "/evidence/backup/minio/$MINIO_BUCKET"',
       'mc mirror --overwrite "atlas/$MINIO_BUCKET" "/evidence/backup/minio/$MINIO_BUCKET"',
@@ -659,7 +672,7 @@ async function restoreMinioBackup() {
   const result = await runMinio(
     [
       "set -eu",
-      'mc alias set atlas http://minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null',
+      'mc alias set -- atlas http://minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null',
       'mc mb --ignore-existing "atlas/$MINIO_BUCKET" >/dev/null',
       'mc rm --recursive --force "atlas/$MINIO_BUCKET" >/dev/null',
       'mc mirror --overwrite --remove "/evidence/backup/minio/$MINIO_BUCKET" "atlas/$MINIO_BUCKET"',
@@ -678,7 +691,7 @@ async function proveIncompleteStorageFailure(baseline) {
   await runMinio(
     [
       "set -eu",
-      'mc alias set atlas http://minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null',
+      'mc alias set -- atlas http://minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null',
       'mc rm --recursive --force "atlas/$MINIO_BUCKET" >/dev/null',
       'mc rb "atlas/$MINIO_BUCKET"'
     ].join("\n"),
@@ -691,7 +704,7 @@ async function proveIncompleteStorageFailure(baseline) {
   );
   await restoreMinioBackup();
   await composeExecute(["start", "api"], 120_000);
-  await waitForReadiness(primaryBaseURL, 90_000);
+  await rediscoverPrimaryAPI("incomplete-storage recovery start");
   await verifyBaseline(baseline, "after recovery from incomplete storage rejection");
 }
 
@@ -715,7 +728,7 @@ async function proveIncompatibleMigrationFailure(baseline, initialLedger) {
   await expectAPIExit("incompatible-migration-history", "database: invalid schema migration history");
   await restorePair("recovery restore after incompatible migration history proof");
   await composeExecute(["start", "api"], 120_000);
-  await waitForReadiness(primaryBaseURL, 90_000);
+  await rediscoverPrimaryAPI("incompatible-migration recovery start");
   await verifyBaseline(baseline, "after incompatible migration history recovery");
   recordDeepEqual(
     "incompatible migration recovery restored the original ledger",
@@ -744,7 +757,7 @@ async function proveSchemaDriftFailure(baseline, initialLedger) {
   await expectAPIExit("nightly-schema-drift", "database: schema drift detected");
   await restorePair("nightly recovery restore after schema drift proof");
   await composeExecute(["start", "api"], 120_000);
-  await waitForReadiness(primaryBaseURL, 90_000);
+  await rediscoverPrimaryAPI("schema-drift recovery start");
   await verifyBaseline(baseline, "after nightly schema drift recovery");
   recordDeepEqual(
     "nightly schema drift recovery restored the original ledger",

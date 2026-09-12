@@ -47,7 +47,7 @@ Before the primary restore, the runner starts `observer.mjs` through the shared 
 
 Each run writes `.atlas/acceptance/migration-restore/<timestamp>-<uuid>/`. Set `ATLAS_ACCEPTANCE_ARTIFACTS` to place that parent under another directory. The run directory includes:
 
-- `run.json`, `result.json`, `preflight.json`, and `stack.json` with the exact revision, dirty-worktree status, mode, duration, project identity, and bounded local reproduction command;
+- `run.json`, `result.json`, `preflight.json`, `stack.json`, and `ports.jsonl` with the exact revision, dirty-worktree status, mode, duration, project identity, bounded local reproduction command, and every host-port discovery after API startup or restart;
 - `commands.log`, `http.jsonl`, `readiness.jsonl`, and `evidence.jsonl` with executed commands and raw public observations;
 - the validated `backup/` pair, migration-ledger snapshots, and failure-specific API logs;
 - `observer-process.log`, observer control timestamps, and the independent shared-runner artifacts;
