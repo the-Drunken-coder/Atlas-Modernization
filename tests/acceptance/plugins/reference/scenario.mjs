@@ -338,8 +338,12 @@ function recordPluginError({
     status,
     error_code: errorCode,
     message,
-    details,
-    path: operationPath,
+    optional_when_present: {
+      details,
+      path: operationPath,
+      error_id: "err_<12 lowercase hex characters>",
+      timestamp: "RFC3339 timestamp",
+    },
   };
   const response = actual.response;
   record({
@@ -351,14 +355,16 @@ function recordPluginError({
       actual.error_code === errorCode &&
       actual.message ===
         `Atlas request failed: ${status} ${errorCode}: ${message}` &&
-      structurallyEqual(actual.details, details) &&
+      optionalMatches(actual.details, details, structurallyEqual) &&
       response?.success === false &&
       response.error_code === errorCode &&
       response.message === message &&
-      response.path === operationPath &&
-      structurallyEqual(response.details, details) &&
-      /^err_[0-9a-f]{12}$/u.test(response.error_id) &&
-      isTimestamp(response.timestamp),
+      optionalMatches(response.details, details, structurallyEqual) &&
+      optionalMatches(response.path, operationPath) &&
+      optionalMatches(response.error_id, undefined, (value) =>
+        /^err_[0-9a-f]{12}$/u.test(value),
+      ) &&
+      optionalMatches(response.timestamp, undefined, isTimestamp),
   });
 }
 
@@ -398,6 +404,14 @@ async function waitForFixtureProbe(client, predicate, signal) {
 
 function structurallyEqual(actual, expected) {
   return isDeepStrictEqual(actual, expected, { skipPrototype: true });
+}
+
+function optionalMatches(
+  actual,
+  expected,
+  comparison = (value, target) => value === target,
+) {
+  return actual === undefined || comparison(actual, expected);
 }
 
 function isTimestamp(value) {
