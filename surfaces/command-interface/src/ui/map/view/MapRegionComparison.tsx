@@ -1,14 +1,5 @@
 import type { MapEventType, Map as MlMap } from "maplibre-gl";
-import {
-  type CSSProperties,
-  type KeyboardEvent as ReactKeyboardEvent,
-  type PointerEvent as ReactPointerEvent,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState
-} from "react";
+import { type CSSProperties, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import "../../styles/map-comparison.css";
 import type { MapSourceConfig } from "../../../app/config.js";
 import { sanitizeConnectionError } from "../../../atlas/connection-error.js";
@@ -20,39 +11,16 @@ import type { MapEditing } from "../rendering/map-editing.js";
 import { pushEditingOverlay, pushSources, registerSourcesAndLayers } from "../rendering/map-layers.js";
 import type { MapSources } from "../rendering/map-sources.js";
 import type { MapLibreRuntime } from "../runtime/maplibre-runtime.js";
-import { MapRegionSelection, type RegionTransform, type ScreenRect } from "./MapRegionSelection.js";
+import { MapRegionSelection, type ScreenRect } from "./MapRegionSelection.js";
 import {
-  DATE_LINE_CROSSING_MESSAGE,
-  keyboardDelta,
   MIN_REGION_SIZE,
-  pointInCanvas,
-  projectedScreenRect,
   type RegionBounds,
-  rectFromPoints,
-  regionAfterTransform,
   regionFromScreenRect,
-  type ScreenPoint,
   screenRectsEqual,
   visibleScreenRect
 } from "./map-region-geometry.js";
+import { useMapRegionInteraction } from "./map-region-interaction.js";
 import { cloneStyle } from "./map-view-utils.js";
-
-type DragState =
-  | {
-      kind: "draw";
-      start: ScreenPoint | null;
-      current: ScreenPoint | null;
-      pointerId: number | null;
-      previousRegion: GeographicRegion | null;
-    }
-  | {
-      kind: "transform";
-      transform: RegionTransform;
-      start: ScreenPoint;
-      pointerId: number;
-      initialRect: ScreenRect;
-      initialRegion: GeographicRegion;
-    };
 
 type GeographicRegion = RegionBounds;
 
@@ -106,12 +74,10 @@ export function MapRegionComparison({
   const [alternateSourceId, setAlternateSourceId] = useState(availableAlternatives[0]?.id ?? "");
   const [region, setRegion] = useState<GeographicRegion | null>(null);
   const [regionRect, setRegionRect] = useState<ScreenRect | null>(null);
-  const [drag, setDrag] = useState<DragState | null>(null);
   const [panelOpen, setPanelOpen] = useState(false);
   const [panelHeight, setPanelHeight] = useState(PANEL_HEIGHT_ESTIMATE);
   const [opacity, setOpacity] = useState(100);
   const [status, setStatus] = useState<ComparisonStatus>({ kind: "idle" });
-  const [selectionError, setSelectionError] = useState<string | null>(null);
   const [retryGeneration, setRetryGeneration] = useState(0);
   const toolRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLElement>(null);
@@ -123,26 +89,39 @@ export function MapRegionComparison({
   const editingRef = useRef(editing);
   const source = alternatives.find((candidate) => candidate.id === alternateSourceId);
   const regionVisible = regionRect !== null;
-  const drawing = drag?.kind === "draw";
   sourcesRef.current = sources;
   editingRef.current = editing;
   regionRectRef.current = regionRect;
 
+  const interaction = useMapRegionInteraction({
+    map,
+    mapCanvas,
+    onBeginInteraction: onBeginRegionInteraction,
+    onRegionChange: setRegion,
+    onDrawResult: (result) => {
+      if (result.kind === "complete") setRegion(result.region);
+      else setRegion(result.initialRegion);
+      setPanelOpen(result.kind === "undersized" ? Boolean(result.initialRegion) : true);
+    },
+    onCancel: (cancellation) => {
+      setRegion(cancellation.initialRegion);
+      setPanelOpen(cancellation.kind === "draw" && Boolean(cancellation.initialRegion));
+      if (cancellation.reason !== "external") toolRef.current?.focus();
+    },
+    escapeBlocked: (event) => boxZoomActive || Boolean(foregroundEscapeOwner(event.target)),
+    suppressNextClick
+  });
+  const drawing = interaction.drawing;
+
   useEffect(() => {
     if (!exclusiveDrawingActive) return;
-    if (!drag) {
+    if (!interaction.activeKind) {
       setPanelOpen(false);
       return;
     }
-    if (drag.pointerId !== null && mapCanvas?.hasPointerCapture?.(drag.pointerId)) {
-      suppressNextClick();
-      mapCanvas.releasePointerCapture?.(drag.pointerId);
-    }
-    setRegion(drag.kind === "draw" ? drag.previousRegion : drag.initialRegion);
+    interaction.cancelInteraction({ reason: "external", suppressReleaseClick: "if-captured", notify: true });
     setPanelOpen(false);
-    setSelectionError(null);
-    setDrag(null);
-  }, [drag, exclusiveDrawingActive, mapCanvas, suppressNextClick]);
+  }, [exclusiveDrawingActive, interaction.activeKind, interaction.cancelInteraction]);
 
   useEffect(() => {
     if (source?.style) return;
@@ -203,112 +182,9 @@ export function MapRegionComparison({
   }, [map, mapCanvas, mapReady, region]);
 
   useEffect(() => {
-    if (!map || !mapCanvas || !drag) return;
-    const primaryMap = map;
-    const startDrawing = (event: globalThis.PointerEvent) => {
-      if (drag.kind !== "draw" || drag.start || event.button !== 0 || event.shiftKey) return;
-      if (
-        event.target instanceof Element &&
-        event.target.closest(".maplibregl-control-container, [data-map-interaction-control]")
-      )
-        return;
-      event.preventDefault();
-      event.stopPropagation();
-      onBeginRegionInteraction();
-      mapCanvas.setPointerCapture?.(event.pointerId);
-      const point = pointInCanvas(event, mapCanvas, true);
-      setSelectionError(null);
-      setDrag({ ...drag, start: point, current: point, pointerId: event.pointerId });
-    };
-    const updateDrag = (event: globalThis.PointerEvent) => {
-      if (drag.pointerId === null || event.pointerId !== drag.pointerId) return;
-      const point = pointInCanvas(event, mapCanvas, true);
-      if (drag.kind === "draw") {
-        if (!drag.start) return;
-        setDrag((current) => (current?.kind === "draw" ? { ...current, current: point } : current));
-        return;
-      }
-      const delta = { x: point.x - drag.start.x, y: point.y - drag.start.y };
-      const nextRegion = regionAfterTransform(
-        primaryMap,
-        drag.initialRect,
-        delta,
-        drag.transform,
-        mapCanvas.getBoundingClientRect()
-      );
-      if (!nextRegion) {
-        setSelectionError(DATE_LINE_CROSSING_MESSAGE);
-        return;
-      }
-      setRegion(nextRegion);
-      setSelectionError(null);
-    };
-    const finishDrag = (event: globalThis.PointerEvent) => {
-      if (drag.pointerId === null || event.pointerId !== drag.pointerId) return;
-      if (drag.kind === "draw") {
-        if (!drag.start) return;
-        const end = pointInCanvas(event, mapCanvas, true);
-        const rect = rectFromPoints(drag.start, end);
-        if (rect.width >= MIN_REGION_SIZE && rect.height >= MIN_REGION_SIZE) {
-          const nextRegion = regionFromScreenRect(primaryMap, rect);
-          if (!nextRegion) {
-            setRegion(drag.previousRegion);
-            setPanelOpen(true);
-            setSelectionError(DATE_LINE_CROSSING_MESSAGE);
-          } else {
-            setRegion(nextRegion);
-            setPanelOpen(true);
-            setSelectionError(null);
-          }
-        } else {
-          setRegion(drag.previousRegion);
-          setPanelOpen(Boolean(drag.previousRegion));
-        }
-      }
-      if (event.target instanceof Node && mapCanvas.contains(event.target)) suppressNextClick();
-      setDrag(null);
-    };
-    const cancelActiveDrag = (suppressReleaseClick: boolean) => {
-      if (drag.pointerId !== null) {
-        if (suppressReleaseClick) suppressNextClick();
-        if (mapCanvas.hasPointerCapture?.(drag.pointerId)) mapCanvas.releasePointerCapture?.(drag.pointerId);
-      }
-      setRegion(drag.kind === "draw" ? drag.previousRegion : drag.initialRegion);
-      setPanelOpen(drag.kind === "draw" && Boolean(drag.previousRegion));
-      setSelectionError(null);
-      setDrag(null);
-      toolRef.current?.focus();
-    };
-    const cancelPointer = (event: globalThis.PointerEvent) => {
-      if (drag.pointerId === null || event.pointerId !== drag.pointerId) return;
-      cancelActiveDrag(false);
-    };
-    const cancelDrag = (event: globalThis.KeyboardEvent) => {
-      if (event.key !== "Escape" || boxZoomActive || foregroundEscapeOwner(event.target)) return;
-      event.preventDefault();
-      event.stopPropagation();
-      cancelActiveDrag(true);
-    };
-    mapCanvas.classList.toggle("map-canvas--region-drawing", drag.kind === "draw");
-    mapCanvas.addEventListener("pointerdown", startDrawing, { capture: true });
-    window.addEventListener("pointermove", updateDrag);
-    window.addEventListener("pointerup", finishDrag);
-    window.addEventListener("pointercancel", cancelPointer);
-    window.addEventListener("keydown", cancelDrag, { capture: true });
-    return () => {
-      mapCanvas.classList.remove("map-canvas--region-drawing");
-      mapCanvas.removeEventListener("pointerdown", startDrawing, { capture: true });
-      window.removeEventListener("pointermove", updateDrag);
-      window.removeEventListener("pointerup", finishDrag);
-      window.removeEventListener("pointercancel", cancelPointer);
-      window.removeEventListener("keydown", cancelDrag, { capture: true });
-    };
-  }, [boxZoomActive, drag, map, mapCanvas, onBeginRegionInteraction, suppressNextClick]);
-
-  useEffect(() => {
     if (!region && !panelOpen) return;
     const handleEscape = (event: globalThis.KeyboardEvent) => {
-      if (event.key !== "Escape" || drag) return;
+      if (event.key !== "Escape" || interaction.activeKind) return;
       const escapeOwner = foregroundEscapeOwner(event.target);
       if (escapeOwner && !escapeOwner.matches(".map-compare__panel")) return;
       event.preventDefault();
@@ -322,7 +198,7 @@ export function MapRegionComparison({
     };
     window.addEventListener("keydown", handleEscape, { capture: true });
     return () => window.removeEventListener("keydown", handleEscape, { capture: true });
-  }, [drag, panelOpen, region]);
+  }, [interaction.activeKind, panelOpen, region]);
 
   useEffect(() => {
     const host = comparisonHostRef.current;
@@ -417,17 +293,15 @@ export function MapRegionComparison({
     setPanelOpen(false);
     setOpacity(100);
     setStatus({ kind: "idle" });
-    setSelectionError(null);
+    interaction.clearSelectionError();
     toolRef.current?.focus();
   };
 
   const beginDrawing = (previousRegion: GeographicRegion | null) => {
     if (!mapCanvas || !map || !mapReady) return;
-    onBeginRegionInteraction();
+    interaction.beginDrawing(previousRegion);
     onBeginDrawing();
     setPanelOpen(false);
-    setSelectionError(null);
-    setDrag({ kind: "draw", start: null, current: null, pointerId: null, previousRegion });
   };
 
   const createKeyboardRegion = () => {
@@ -438,7 +312,7 @@ export function MapRegionComparison({
     const height = Math.min(180, Math.max(MIN_REGION_SIZE, viewport.height / 2));
     onBeginRegionInteraction();
     onBeginDrawing();
-    setSelectionError(null);
+    interaction.clearSelectionError();
     const nextRegion = regionFromScreenRect(map, {
       left: (viewport.width - width) / 2,
       top: (viewport.height - height) / 2,
@@ -446,7 +320,7 @@ export function MapRegionComparison({
       height
     });
     if (!nextRegion) {
-      setSelectionError(DATE_LINE_CROSSING_MESSAGE);
+      interaction.reportInvalidSelection();
       setRegion(null);
       setPanelOpen(true);
       return;
@@ -455,46 +329,6 @@ export function MapRegionComparison({
     setPanelOpen(true);
   };
 
-  const beginTransform = (transform: RegionTransform, event: ReactPointerEvent<HTMLButtonElement>) => {
-    if (event.button !== 0 || !map || !mapCanvas || !region || !regionRect) return;
-    event.preventDefault();
-    event.stopPropagation();
-    onBeginRegionInteraction();
-    mapCanvas.setPointerCapture?.(event.pointerId);
-    setPanelOpen(false);
-    setSelectionError(null);
-    setDrag({
-      kind: "transform",
-      transform,
-      start: pointInCanvas(event, mapCanvas, true),
-      pointerId: event.pointerId,
-      initialRect: projectedScreenRect(map, region),
-      initialRegion: region
-    });
-  };
-
-  const transformWithKeyboard = (transform: RegionTransform, event: ReactKeyboardEvent<HTMLButtonElement>) => {
-    if (!map || !mapCanvas || !region) return;
-    const delta = keyboardDelta(event.key, event.shiftKey, transform);
-    if (!delta) return;
-    event.preventDefault();
-    event.stopPropagation();
-    onBeginRegionInteraction();
-    setPanelOpen(false);
-    setSelectionError(null);
-    const viewport = mapCanvas.getBoundingClientRect();
-    const projectedRect = projectedScreenRect(map, region);
-    const nextRegion = regionAfterTransform(map, projectedRect, delta, transform, viewport);
-    if (!nextRegion) {
-      setSelectionError(DATE_LINE_CROSSING_MESSAGE);
-      return;
-    }
-    setRegion(nextRegion);
-    setSelectionError(null);
-  };
-
-  const drawingRect =
-    drag?.kind === "draw" && drag.start && drag.current ? rectFromPoints(drag.start, drag.current) : null;
   const canvasBounds = mapCanvas?.getBoundingClientRect();
   const panelAnchor = panelPosition(regionRect, canvasBounds, panelHeight);
   const captionStyle = captionPosition(regionRect, canvasBounds);
@@ -508,20 +342,23 @@ export function MapRegionComparison({
           type="button"
           className="map-compare__tool-button"
           aria-label="Compare map source inside a region"
-          aria-pressed={Boolean(region || drag || panelOpen)}
+          aria-pressed={Boolean(region || interaction.activeKind || panelOpen)}
           disabled={!mapReady}
           title="Compare map source inside a region"
           onKeyDown={(event) => {
-            if (!region && !drag && availableAlternatives.length > 0 && ["Enter", " "].includes(event.key)) {
+            if (
+              !region &&
+              !interaction.activeKind &&
+              availableAlternatives.length > 0 &&
+              ["Enter", " "].includes(event.key)
+            ) {
               event.preventDefault();
               createKeyboardRegion();
             }
           }}
           onClick={() => {
-            if (drag?.kind === "draw") {
-              setRegion(drag.previousRegion);
-              setPanelOpen(Boolean(drag.previousRegion));
-              setDrag(null);
+            if (interaction.activeKind === "draw") {
+              interaction.cancelInteraction({ reason: "external", suppressReleaseClick: false, notify: true });
               return;
             }
             if (region) {
@@ -547,13 +384,17 @@ export function MapRegionComparison({
       <MapRegionSelection
         rect={regionRect}
         drawing={drawing}
-        drawingRect={drawingRect}
+        drawingRect={interaction.drawingRect}
         drawingPrompt="Drag a region. Shift-drag still zooms."
         label="comparison region"
         testId="map-comparison-region"
         viewport={canvasBounds}
-        onPointerDown={beginTransform}
-        onKeyDown={transformWithKeyboard}
+        onPointerDown={(transform, event) => {
+          if (region && interaction.beginTransform(transform, event, region)) setPanelOpen(false);
+        }}
+        onKeyDown={(transform, event) => {
+          if (region && interaction.transformWithKeyboard(transform, event, region)) setPanelOpen(false);
+        }}
       />
 
       {regionRect && !panelOpen && !drawing ? (
@@ -568,13 +409,13 @@ export function MapRegionComparison({
             {source?.label ?? "Source unavailable"}
             {source?.style ? ` · ${opacity}%` : ""}
           </span>
-          <StatusLabel status={status} selectionError={selectionError} />
+          <StatusLabel status={status} selectionError={interaction.selectionError} />
         </button>
       ) : null}
 
-      {selectionError && !panelOpen && !drawing ? (
+      {interaction.selectionError && !panelOpen && !drawing ? (
         <p className="map-region-selection__status" role="status">
-          {selectionError}
+          {interaction.selectionError}
         </p>
       ) : null}
 
@@ -610,9 +451,9 @@ export function MapRegionComparison({
               setRetryGeneration((generation) => generation + 1);
             }}
           />
-          {selectionError ? (
+          {interaction.selectionError ? (
             <p className="map-compare__status" role="status">
-              {selectionError}
+              {interaction.selectionError}
             </p>
           ) : null}
           {region && source?.style ? (
