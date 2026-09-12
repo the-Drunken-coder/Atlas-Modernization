@@ -1,14 +1,16 @@
-# Atlas Core TUI redesign tickets
+# Atlas Core TUI redesign implementation issues
 
-Approved implementation slices. These are repository planning documents, not published tracker issues. Each ticket lists its blockers; `ready-for-agent` does not mean blocked work can start.
+[GitHub issue #359](https://github.com/the-Drunken-coder/Atlas-Modernization/issues/359) is the canonical specification. GitHub owns status, assignment, discussion, and dependency changes.
 
-- [01: Extract the shared operator contract](01-extract-shared-operator-contract.md)
-- [02: Build the action-list home and service health screen](02-action-list-and-health.md)
-- [03: Run start, stop, and restart inside the TUI](03-lifecycle-inside-tui.md)
-- [04: Initialize and explicitly reset deployments](04-initialize-and-reset.md)
-- [05: Embed logs and diagnostics](05-logs-and-diagnostics.md)
-- [06: Change the admin password inside the TUI](06-admin-password.md)
-- [07: Manage existing Plugins through the new interface](07-plugin-management.md)
-- [08: Update the CLI without surrendering terminal control](08-cli-update.md)
-- [09: Update Core without backup prerequisites](09-core-update-no-backups.md)
-- [10: Make the new TUI the default and retire the old implementation](10-replace-default-tui.md)
+1. [#360: Extract the shared operator contract](https://github.com/the-Drunken-coder/Atlas-Modernization/issues/360)
+2. [#361: Build the action-list home and service health](https://github.com/the-Drunken-coder/Atlas-Modernization/issues/361), blocked by #360
+3. [#362: Run lifecycle operations inside the TUI](https://github.com/the-Drunken-coder/Atlas-Modernization/issues/362), blocked by #361
+4. [#363: Initialize and reset deployments in the TUI](https://github.com/the-Drunken-coder/Atlas-Modernization/issues/363), blocked by #362
+5. [#364: Embed logs and diagnostics in the TUI](https://github.com/the-Drunken-coder/Atlas-Modernization/issues/364), blocked by #361
+6. [#365: Change the admin password in the TUI](https://github.com/the-Drunken-coder/Atlas-Modernization/issues/365), blocked by #362
+7. [#367: Install and manage Plugins in the TUI](https://github.com/the-Drunken-coder/Atlas-Modernization/issues/367), blocked by #362 and #364
+8. [#366: Update the CLI without surrendering terminal control](https://github.com/the-Drunken-coder/Atlas-Modernization/issues/366), blocked by #362
+9. [#368: Update Core without backup prerequisites](https://github.com/the-Drunken-coder/Atlas-Modernization/issues/368), blocked by #366
+10. [#369: Replace the default TUI](https://github.com/the-Drunken-coder/Atlas-Modernization/issues/369), blocked by #363, #364, #365, #367, and #368
+
+An issue may be fully specified while blocked. Start only issues whose listed blockers are closed.

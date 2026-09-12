@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="600" viewBox="0 0 960 600" role="img" aria-labelledby="title desc">
+  <title id="title">Atlas Core live logs</title>
+  <desc id="desc">Static reference showing a controlled service log stream and viewer controls.</desc>
+  <rect width="960" height="600" fill="#141719"/>
+  <rect x="36" y="32" width="888" height="536" rx="4" fill="#0c1012" stroke="#424b50"/>
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="16" fill="#e2e5e6">
+    <text x="70" y="76" font-size="23" font-weight="700">LIVE LOGS</text>
+    <text x="70" y="110" fill="#a7afb3">Service</text><text x="162" y="110" fill="#aad5ce">core-api</text>
+    <text x="720" y="110" fill="#86c797">FOLLOWING</text>
+    <line x1="62" y1="134" x2="898" y2="134" stroke="#424b50"/>
+    <text x="70" y="175" fill="#a7afb3">08:40:17.124</text><text x="216" y="175">INFO  database migration check complete</text>
+    <text x="70" y="210" fill="#a7afb3">08:40:17.219</text><text x="216" y="210">INFO  object storage connection ready</text>
+    <text x="70" y="245" fill="#a7afb3">08:40:17.383</text><text x="216" y="245">INFO  plugin registry loaded</text>
+    <text x="70" y="280" fill="#a7afb3">08:40:17.510</text><text x="216" y="280">INFO  listening on 0.0.0.0:8080</text>
+    <text x="70" y="315" fill="#a7afb3">08:40:18.044</text><text x="216" y="315">INFO  health check passed</text>
+    <text x="70" y="350" fill="#a7afb3">08:40:22.907</text><text x="216" y="350">INFO  client connected</text>
+    <text x="70" y="385" fill="#a7afb3">08:40:23.121</text><text x="216" y="385">INFO  shared picture subscription opened</text>
+    <line x1="62" y1="510" x2="898" y2="510" stroke="#424b50"/>
+    <text x="70" y="537" fill="#a7afb3" font-size="14">←→ service   ↑↓ scroll   space pause/follow   end latest   esc close</text>
+  </g>
+</svg>

@@ -6,8 +6,9 @@
 
 ## Planned TUI redesign
 
-- [Agreed design](TUI_REDESIGN.md) records the interaction and architectural direction.
-- [Implementation spec](TUI_REDESIGN_SPEC.md) defines scope and behavior.
-- [Approved tickets](tui-redesign-tickets/README.md) sequence the work and its dependencies.
+- [Agreed design](TUI_REDESIGN.md) records the interaction and visual direction.
+- [Implementation spec](TUI_REDESIGN_SPEC.md) points to the canonical GitHub specification.
+- [Implementation issues](tui-redesign-tickets/README.md) list the canonical work and dependencies.
+- [Design decision](../design-decisions/2026-09-12-atlas-core-tui-redesign.md) preserves the architectural and update-policy choices.
 
-These documents describe planned behavior; they do not change the current CLI.
+These documents describe planned behavior. The current CLI still requires a validated paired backup for Core updates.

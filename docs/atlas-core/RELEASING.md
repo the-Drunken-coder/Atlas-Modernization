@@ -2,7 +2,7 @@
 
 Implementation status: the Core-only release workflow and independent Plugin release workflow are released with Atlas Core 0.2.0 and Building Scan 0.1.0.
 Candidate-image checks passed on linux/amd64 and linux/arm64. Existing published Core packages may still use the bundled catalog. The terminal
-UI redesign still awaits the user's selection from the proposed mocks. Production Plugin signing trust and Pages configuration are recorded in
+UI redesign is approved and tracked in [GitHub issue #359](https://github.com/the-Drunken-coder/Atlas-Modernization/issues/359); the released CLI remains unchanged. Production Plugin signing trust and Pages configuration are recorded in
 [bootstrap provenance](../atlas-plugins/CATALOG_BOOTSTRAP.md); the signed stable catalog is published. [`2026-09-01-plugins-release-independently-from-atlas-core.md`](../design-decisions/2026-09-01-plugins-release-independently-from-atlas-core.md)
 records the independent release decision and the schema-3 transition to schema 4.
 

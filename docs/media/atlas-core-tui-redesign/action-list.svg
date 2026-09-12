@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="600" viewBox="0 0 960 600" role="img" aria-labelledby="title desc">
+  <title id="title">Atlas Core action-list home</title>
+  <desc id="desc">Static reference showing deployment health and an unfiltered action list.</desc>
+  <rect width="960" height="600" fill="#141719"/>
+  <rect x="36" y="32" width="888" height="536" rx="4" fill="#0c1012" stroke="#424b50"/>
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="18" fill="#e2e5e6">
+    <text x="70" y="76" font-size="23" font-weight="700">ATLAS CORE</text>
+    <text x="70" y="111" fill="#a7afb3">Deployment</text>
+    <text x="250" y="111">local-engine</text>
+    <text x="70" y="140" fill="#a7afb3">Core</text>
+    <text x="250" y="140">0.2.0</text>
+    <circle cx="249" cy="171" r="6" fill="#86c797"/>
+    <text x="269" y="177">Running</text>
+    <text x="70" y="221" fill="#a7afb3">Choose an action</text>
+    <rect x="62" y="242" width="836" height="38" fill="#263332"/>
+    <text x="78" y="267" fill="#aad5ce">›  View service health</text>
+    <text x="78" y="310">   View logs and diagnostics</text>
+    <text x="78" y="352">   Stop Atlas Core</text>
+    <text x="78" y="394">   Restart Atlas Core</text>
+    <text x="78" y="436">   Manage Plugins</text>
+    <text x="78" y="478">   Update Atlas Core</text>
+    <line x1="62" y1="510" x2="898" y2="510" stroke="#424b50"/>
+    <text x="70" y="542" fill="#a7afb3" font-size="15">↑↓ move   enter select   esc exit</text>
+  </g>
+</svg>
