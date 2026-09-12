@@ -160,7 +160,12 @@ try {
   await createPostBackupChanges(baseline);
 
   observer = startObserver();
-  const observerReady = await waitForJSON(join(controlDirectory, "ready.json"), 10 * 60_000, scenarioAbort.signal);
+  const observerReady = await waitForObserverJSON(
+    observer,
+    join(controlDirectory, "ready.json"),
+    "it became ready",
+    scenarioAbort.signal
+  );
   record({
     check: "separate UUID-owned acceptance stack became ready",
     expected: { ready: true, distinct_artifacts: true },
@@ -172,12 +177,29 @@ try {
   const activityStartedAt = new Date();
   writeJSON(join(controlDirectory, "activity-start.json"), { started_at: activityStartedAt.toISOString() });
   const restorePromise = restorePair("paired-restore-with-concurrent-observer");
-  const observerActivityPromise = waitForJSON(
+  const observerActivityAbort = new AbortController();
+  const observerActivityPromise = waitForObserverJSON(
+    observer,
     join(controlDirectory, "activity-observed.json"),
-    10 * 60_000,
-    scenarioAbort.signal
+    "it reported restore-window activity",
+    AbortSignal.any([scenarioAbort.signal, observerActivityAbort.signal])
   );
-  const [restoreWindow] = await Promise.all([restorePromise, observerActivityPromise]);
+  let restoreWindow;
+  try {
+    [restoreWindow] = await Promise.all([restorePromise, observerActivityPromise]);
+  } catch (error) {
+    observerActivityAbort.abort(error);
+    const [restoreResult] = await Promise.allSettled([restorePromise, observerActivityPromise]);
+    if (restoreResult.status === "rejected" && restoreResult.reason !== error) {
+      appendJSONLine(evidenceLog, {
+        timestamp: new Date().toISOString(),
+        check: "concurrent restore settled before observer failure teardown",
+        primary_failure: serializeError(error),
+        restore_failure: serializeError(restoreResult.reason)
+      });
+    }
+    throw error;
+  }
   const activityCompletedAt = new Date();
   writeJSON(join(controlDirectory, "activity-complete.json"), { completed_at: activityCompletedAt.toISOString() });
   await observer.exit;
@@ -833,6 +855,20 @@ function startObserver() {
   });
   void exit.catch(() => {});
   return { child, exit };
+}
+
+async function waitForObserverJSON(observerProcess, path, phase, signal) {
+  const pollAbort = new AbortController();
+  const fileWait = waitForJSON(path, 10 * 60_000, AbortSignal.any([signal, pollAbort.signal]));
+  const earlyExit = observerProcess.exit.then(() => {
+    throw new Error(`independent acceptance observer exited before ${phase}`);
+  });
+  try {
+    return await Promise.race([fileWait, earlyExit]);
+  } finally {
+    pollAbort.abort(new Error(`stopped waiting for independent acceptance observer before ${phase}`));
+    await fileWait.catch(() => undefined);
+  }
 }
 
 function assertObserverOverlap(activity, restoreStartedAt, restoreCompletedAt) {
