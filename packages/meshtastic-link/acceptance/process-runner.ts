@@ -28,6 +28,10 @@ type RunnerSummary = {
   error?: string;
   lifecycle_cleanup: ReturnType<LaboratoryMeshtasticDevice["summary"]>;
   device: ReturnType<LaboratoryMeshtasticDevice["summary"]>;
+  active_resources: {
+    after_lifecycle_close: string[];
+    after_ipc_disconnect: string[];
+  };
 };
 
 const startedAt = performance.now();
@@ -60,6 +64,7 @@ process.on("message", onControllerMessage);
 
 let outcome: RunnerSummary["outcome"] = "failed";
 let failure: unknown;
+let activeResourcesAfterLifecycleClose: string[] = [];
 try {
   const profile = createUSShortFastProfile(20, "2.7.15");
   const authentication = new PreSharedKeyAuthenticationPolicy(joinKey);
@@ -87,7 +92,11 @@ try {
     await waitForShutdown();
     outcome = "stopped";
   } finally {
-    await running.close();
+    try {
+      await running.close();
+    } finally {
+      activeResourcesAfterLifecycleClose = process.getActiveResourcesInfo();
+    }
   }
 } catch (error) {
   outcome = "failed";
@@ -104,12 +113,18 @@ try {
     outcome,
     ...(failure === undefined ? {} : { error: errorMessage(failure) }),
     lifecycle_cleanup: lifecycleCleanup,
-    device: device.summary()
+    device: device.summary(),
+    active_resources: {
+      after_lifecycle_close: activeResourcesAfterLifecycleClose,
+      after_ipc_disconnect: []
+    }
   };
   await mkdir(dirname(summaryPath), { recursive: true });
   await writeFile(summaryPath, `${JSON.stringify(summary, null, 2)}\n`);
   await sendFinalSummary(summary);
-  process.disconnect?.();
+  await disconnectFromController();
+  summary.active_resources.after_ipc_disconnect = process.getActiveResourcesInfo();
+  await writeFile(summaryPath, `${JSON.stringify(summary, null, 2)}\n`);
 }
 
 if (failure !== undefined) throw failure;
@@ -126,6 +141,18 @@ function waitForShutdown(): Promise<void> {
     };
     process.on("SIGINT", stop);
     process.on("SIGTERM", stop);
+  });
+}
+
+function disconnectFromController(): Promise<void> {
+  return new Promise((resolve) => {
+    const disconnect = process.disconnect;
+    if (!process.connected || disconnect === undefined) {
+      resolve();
+      return;
+    }
+    process.once("disconnect", resolve);
+    disconnect.call(process);
   });
 }
 
