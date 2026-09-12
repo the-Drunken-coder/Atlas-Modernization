@@ -173,7 +173,6 @@ export class ResourceCache {
   }
 
   applyWrite(event: ResourceUpsertEvent, options?: Pick<ResourceReadOptions, "detail">): ResourceChange | undefined {
-    if (event.version <= this.versionFor(event.resource_type, event.id)) return undefined;
     if (this.isSuppressedByPendingDelete(event)) return undefined;
     if (
       !this.acceptResource(event.resource_type, event.id, event.resource, {
@@ -250,7 +249,11 @@ export class ResourceCache {
     const version = options?.version ?? embeddedResourceVersion(type, value);
     const existing = this.entries[type].get(id);
     const isDetailUpgrade =
-      type === "object" && options?.detail === true && existing?.version === version && existing.detail !== true;
+      type === "object" &&
+      options?.detail === true &&
+      existing?.version === version &&
+      !existing.deleted &&
+      existing.detail !== true;
     if (existing && existing.version > version) {
       return false;
     }

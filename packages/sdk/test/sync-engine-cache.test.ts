@@ -1233,7 +1233,7 @@ describe("AtlasClient sync: cache projection and reads", () => {
     expect(watch.mock.calls[1]).toEqual([recreated, expect.objectContaining({ event: "create" })]);
   });
 
-  it("does not let a delayed Object create response restore a locally deleted Object", async () => {
+  it.each([false, true])("merges delayed Object details only while live (deleted: %s)", async (deleted) => {
     const core = new FakeCore();
     const objectID = "object-create-after-delete";
     let createResponse: Response | undefined;
@@ -1269,12 +1269,21 @@ describe("AtlasClient sync: cache projection and reads", () => {
     core.emit(createEvent, { record: false });
     await vi.waitFor(() => expect(client.sync.snapshot().objects[objectID]).toEqual(createEvent.resource));
 
-    await client.objects.delete(objectID);
-    expect(client.sync.snapshot().objects).not.toHaveProperty(objectID);
-    expect(watch).toHaveBeenCalledTimes(2);
+    if (deleted) {
+      await client.objects.delete(objectID);
+      expect(client.sync.snapshot().objects).not.toHaveProperty(objectID);
+      expect(watch).toHaveBeenCalledTimes(2);
+    }
     releaseCreate();
 
     await expect(creation).resolves.toMatchObject({ object_id: objectID, extra: { label: "delayed detail" } });
+    if (!deleted) {
+      expect(client.sync.snapshot().objects[objectID]).toMatchObject({ extra: { label: "delayed detail" } });
+      core.requests = [];
+      await expect(client.objects.get(objectID)).resolves.toMatchObject({ extra: { label: "delayed detail" } });
+      expect(core.requests).toEqual([]);
+      return;
+    }
     expect(client.sync.snapshot().objects).not.toHaveProperty(objectID);
     expect(watch).toHaveBeenCalledTimes(2);
 
