@@ -471,13 +471,25 @@ async function probeDirectSourceRoute(runID, signal) {
     return { reachable: true, stdout: result.stdout, stderr: result.stderr };
   } catch (error) {
     if (signal.aborted) throw signal.reason;
+    if (!isExpectedDirectSourceNetworkBlock(error)) throw error;
     return {
       reachable: false,
-      status: typeof error.code === "number" ? error.code : null,
+      status: error.code,
       stdout: error.stdout ?? "",
       stderr: error.stderr ?? "",
     };
   }
+}
+
+function isExpectedDirectSourceNetworkBlock(error) {
+  return (
+    error instanceof Error &&
+    error.code === 1 &&
+    error.killed !== true &&
+    (error.signal === undefined || error.signal === null) &&
+    typeof error.stderr === "string" &&
+    error.stderr.trim() === "wget: bad address 'reference-source:8090'"
+  );
 }
 
 async function fixtureProbe(client, signal) {
