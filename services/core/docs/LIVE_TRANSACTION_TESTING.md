@@ -39,7 +39,7 @@ The verifier owns the explicit test list and generates the live selector. After 
 
 The offline profile instruments the ordinary Go test processes while the runner removes database and MinIO credentials from their environment. Live tests skip in that profile. The live profile instruments the selected `testenv`, `actions`, `handlers`, `database`, and `feed` packages while the test processes call disposable PostgreSQL. No separate Atlas Core server process runs or contributes coverage.
 
-The coverage checker uses exact covered and total statement ratios measured with the required command. It merges identical source ranges emitted by the three live test binaries, and counts a source block once if any of those processes executed it. The live total and action floors leave a small measured margin for scheduling-dependent error branches in the contention tests.
+The coverage checker uses exact covered and total statement ratios measured with the required command. It merges identical source ranges emitted by the three live test binaries, and counts a source block once if any of those processes executed it. Hosted offline runs measured 269 or 270 covered feed statements depending on whether the server's abnormal read-error branch won the clean-close websocket shutdown race. The offline feed floor preserves that one-statement scheduling margin while the explicit behavior tests remain required. The live total and action floors leave a small measured margin for scheduling-dependent error branches in the contention tests.
 
 | Profile | Module | Floor |
 | --- | --- | --- |
@@ -47,7 +47,7 @@ The coverage checker uses exact covered and total statement ratios measured with
 | Offline | Actions | 24.7% (674/2730) |
 | Offline | Handlers | 45.6% (548/1201) |
 | Offline | Database | 25.0% (64/256) |
-| Offline | Feed | 70.7% (270/382) |
+| Offline | Feed | 70.4% (269/382) |
 | Offline | Test environment | 28.1% (18/64) |
 | Offline | Storage | 29.3% (27/92) |
 | Offline | Admin | 13.9% (51/366) |

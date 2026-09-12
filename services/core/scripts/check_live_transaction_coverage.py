@@ -26,15 +26,16 @@ GROUP_PATHS = {
 }
 
 # Exact statement ratios avoid rounding a displayed percentage into an
-# accidental weaker floor. Live total and action coverage leave a measured
-# margin for scheduling-dependent error branches in the contention tests.
+# accidental weaker floor. The offline feed floor leaves one measured statement
+# of margin for websocket shutdown scheduling; live total and action coverage
+# leave measured margin for error branches in the contention tests.
 FLOORS = {
     "offline": {
         "total": Floor(3539, 7572),
         "actions": Floor(674, 2730),
         "handlers": Floor(548, 1201),
         "database": Floor(64, 256),
-        "feed": Floor(270, 382),
+        "feed": Floor(269, 382),
         "testenv": Floor(18, 64),
         "storage": Floor(27, 92),
         "admin": Floor(51, 366),
