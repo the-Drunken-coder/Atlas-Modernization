@@ -173,6 +173,7 @@ export class ResourceCache {
   }
 
   applyWrite(event: ResourceUpsertEvent, options?: Pick<ResourceReadOptions, "detail">): ResourceChange | undefined {
+    if (event.version <= this.versionFor(event.resource_type, event.id)) return undefined;
     if (this.isSuppressedByPendingDelete(event)) return undefined;
     if (
       !this.acceptResource(event.resource_type, event.id, event.resource, {

@@ -225,6 +225,9 @@ describe("AtlasClient sync: cache projection and reads", () => {
       pollIntervalMs: 0
     });
     await client.sync.start();
+    const newer = core.upsertEntity({ ...original, alias: "fresh point read" });
+    await client.entities.get(original.entity_id, { fresh: true });
+    expect(client.sync.status().lastVersion).toBe(original.metadata.version);
     const watch = vi.fn();
     client.entities.watch(original.entity_id, watch);
 
@@ -239,7 +242,7 @@ describe("AtlasClient sync: cache projection and reads", () => {
         event: "delete",
         resource_type: "entity",
         id: original.entity_id,
-        version: original.metadata.version
+        version: newer.metadata.version
       },
       { record: false }
     );
@@ -268,7 +271,7 @@ describe("AtlasClient sync: cache projection and reads", () => {
     expect(watch).toHaveBeenCalledTimes(2);
   });
 
-  it("rolls back an in-flight local delete when HTTP fails", async () => {
+  it.each(["update", "delete"] as const)("accepts a remote %s after a failed local delete", async (eventType) => {
     const core = new FakeCore();
     const original = core.upsertEntity(entity("asset-delete-http-failure"));
     let failDelete = true;
@@ -299,16 +302,26 @@ describe("AtlasClient sync: cache projection and reads", () => {
     expect(client.sync.snapshot().entities[original.entity_id]).toEqual(original);
     expect(watch).not.toHaveBeenCalled();
 
-    await expect(client.entities.delete(original.entity_id)).resolves.toBeUndefined();
-    const confirmingDelete = core.deleteEvents.at(-1);
-    if (!confirmingDelete) throw new Error("fake core did not record the confirming delete");
-    core.emit(confirmingDelete, { record: false });
+    if (eventType === "update") {
+      const updated = core.upsertEntity({ ...original, alias: "remote update after failure" });
+      core.emit(core.events.at(-1)!, { record: false });
+      await vi.waitFor(() => expect(client.sync.snapshot().entities[original.entity_id]).toEqual(updated));
+      expect(watch).toHaveBeenCalledTimes(1);
+      expect(watch.mock.calls[0]).toEqual([updated, expect.objectContaining({ event: "update" })]);
+      return;
+    }
+
+    const remoteDelete = core.deleteEntity(original.entity_id);
+    if (!remoteDelete) throw new Error("fake core did not record the remote delete");
+    core.emit(remoteDelete, { record: false });
+    await vi.waitFor(() => expect(watch).toHaveBeenCalledTimes(1));
+    expect(client.sync.snapshot().entities[original.entity_id]).toBeUndefined();
 
     const recreated = core.createEntity({ entity_id: original.entity_id, entity_type: "asset" });
     core.emit(core.events.at(-1)!, { record: false });
     await vi.waitFor(() => expect(client.sync.snapshot().entities[original.entity_id]).toEqual(recreated));
     expect(watch).toHaveBeenCalledTimes(2);
-    expect(watch.mock.calls[0][1]).toMatchObject({ event: "local_delete" });
+    expect(watch.mock.calls[0][1]).toMatchObject({ event: "delete" });
     expect(watch.mock.calls[1]).toEqual([recreated, expect.objectContaining({ event: "create" })]);
   });
 
@@ -1218,6 +1231,60 @@ describe("AtlasClient sync: cache projection and reads", () => {
     await vi.waitFor(() => expect(client.sync.snapshot().entities[original.entity_id]).toEqual(recreated));
     expect(watch).toHaveBeenCalledTimes(2);
     expect(watch.mock.calls[1]).toEqual([recreated, expect.objectContaining({ event: "create" })]);
+  });
+
+  it("does not let a delayed Object create response restore a locally deleted Object", async () => {
+    const core = new FakeCore();
+    const objectID = "object-create-after-delete";
+    let createResponse: Response | undefined;
+    let releaseCreate!: () => void;
+    const createGate = new Promise<void>((resolve) => {
+      releaseCreate = resolve;
+    });
+    const fetchImpl: typeof fetch = async (url, init) => {
+      if (new URL(String(url)).pathname === "/objects" && init?.method === "POST") {
+        createResponse = await core.fetch(String(url), init);
+        await createGate;
+        return createResponse;
+      }
+      return core.fetch(String(url), init);
+    };
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: fetchImpl,
+      WebSocket: core.attachWebSocketGlobal(),
+      sync: "all",
+      pollIntervalMs: 0
+    });
+    await client.sync.start();
+    const watch = vi.fn();
+    client.objects.watch(objectID, watch);
+
+    const creation = client.objects.create({ object_id: objectID, extra: { label: "delayed detail" } });
+    await vi.waitFor(() => expect(createResponse).toBeDefined());
+    const createEvent = core.events.at(-1);
+    if (!createEvent || createEvent.event !== "create" || createEvent.resource_type !== "object") {
+      throw new Error("fake core did not record the Object create event");
+    }
+    core.emit(createEvent, { record: false });
+    await vi.waitFor(() => expect(client.sync.snapshot().objects[objectID]).toEqual(createEvent.resource));
+
+    await client.objects.delete(objectID);
+    expect(client.sync.snapshot().objects).not.toHaveProperty(objectID);
+    expect(watch).toHaveBeenCalledTimes(2);
+    releaseCreate();
+
+    await expect(creation).resolves.toMatchObject({ object_id: objectID, extra: { label: "delayed detail" } });
+    expect(client.sync.snapshot().objects).not.toHaveProperty(objectID);
+    expect(watch).toHaveBeenCalledTimes(2);
+
+    const confirmingDelete = core.deleteEvents.at(-1);
+    if (!confirmingDelete) throw new Error("fake core did not record the confirming Object delete");
+    core.emit(confirmingDelete, { record: false });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(client.sync.snapshot().objects).not.toHaveProperty(objectID);
+    expect(watch).toHaveBeenCalledTimes(2);
   });
 
   it("does not let a delayed Task response regress a newer feed state", async () => {
