@@ -184,18 +184,20 @@ async function runMapWindowJourney({
       .then(() => ({ activated: true }))
       .catch((error) => ({ activated: false, error: errorMessage(error) }));
     await zoomIn.focus();
+    const keyboardControlFocused = await zoomIn.evaluate((element) => document.activeElement === element);
     const remainingZoomSteps = zoomPointerAttempt.activated ? 15 : 16;
     for (let index = 0; index < remainingZoomSteps; index += 1) await zoomIn.press("Enter");
-    const keyboardZoomLoadedTiles = await waitUntil(() => routedTileRequests > routedBeforeKeyboardZoom, 10_000, signal);
+    await waitUntil(() => routedTileRequests > routedBeforeKeyboardZoom, 10_000, signal);
     record({
       check: `${browserName} used the visible zoom control's keyboard interaction to continue the map-window journey`,
-      expected: { zoom_steps: 16, additional_fixture_tile_requests: true },
+      expected: { focused: true, zoom_steps: 16, additional_fixture_tile_requests: true },
       actual: {
+        focused: keyboardControlFocused,
         zoom_steps: remainingZoomSteps + (zoomPointerAttempt.activated ? 1 : 0),
         routed_tile_requests_before: routedBeforeKeyboardZoom,
         routed_tile_requests_after: routedTileRequests
       },
-      passed: keyboardZoomLoadedTiles
+      passed: keyboardControlFocused && routedTileRequests > routedBeforeKeyboardZoom
     });
 
     const map = page.getByTestId("map-canvas");
@@ -212,7 +214,7 @@ async function runMapWindowJourney({
     });
     const mapBox = await requiredBox(map, "map canvas");
     const start = { x: mapBox.x + mapBox.width * 0.46, y: mapBox.y + mapBox.height * 0.46 };
-    const end = { x: start.x + 36, y: start.y + 28 };
+    const end = { x: start.x + 36, y: start.y + 36 };
     await page.mouse.move(start.x, start.y);
     await page.mouse.down();
     await page.mouse.move(end.x, end.y, { steps: 8 });
