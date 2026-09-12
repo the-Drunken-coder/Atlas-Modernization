@@ -140,14 +140,18 @@ test("runs compiled Gateway and Asset processes through device configuration, au
   let failure: unknown;
   try {
     const membershipPath = join(artifactDirectory, "gateway-membership.json");
-    await writeJSON(membershipPath, {
-      gateway_node_id: "gateway-main",
-      gateway_generation: 0,
-      asset_generations: {},
-      channel_index: 1,
-      channel_name: "ATLAS",
-      channel_key_base64: Buffer.alloc(32, 7).toString("base64")
-    });
+    await writeJSON(
+      membershipPath,
+      {
+        gateway_node_id: "gateway-main",
+        gateway_generation: 0,
+        asset_generations: {},
+        channel_index: 1,
+        channel_name: "ATLAS",
+        channel_key_base64: Buffer.alloc(32, 7).toString("base64")
+      },
+      0o600
+    );
 
     const gateway = spawnRunner("gateway", 10_001, artifactDirectory, membershipPath);
     runners.push(gateway);
@@ -610,9 +614,9 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: s
   }
 }
 
-async function writeJSON(path: string, value: unknown): Promise<void> {
+async function writeJSON(path: string, value: unknown, mode?: number): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, `${JSON.stringify(value, null, 2)}\n`);
+  await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, { mode });
 }
 
 function elapsed(startedAt: number): number {
