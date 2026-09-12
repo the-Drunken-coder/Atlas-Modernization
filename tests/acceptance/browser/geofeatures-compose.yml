@@ -23,4 +23,3 @@ services:
       start_period: 3s
     labels:
       io.atlas.acceptance.run: ${ATLAS_ACCEPTANCE_RUN_ID:?ATLAS_ACCEPTANCE_RUN_ID must be set}
-
