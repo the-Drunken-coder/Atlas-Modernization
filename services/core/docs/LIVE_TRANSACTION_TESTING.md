@@ -18,7 +18,7 @@ Both commands require Docker, Git, Go, and Python 3. A missing command, an unava
 
 ## Isolation and cleanup
 
-The runner starts PostgreSQL with a unique container name, a random loopback port, no host bind mount, and no named volume. Its exit trap captures PostgreSQL logs and inspection data, then removes the container. Every Docker call has an explicit time limit. A failed removal changes an otherwise successful run to a failure and identifies the exact owned container in `classification.md`.
+The runner starts PostgreSQL with a unique container name, a random loopback port, no host bind mount, and no named volume. Its exit trap captures PostgreSQL logs and inspection data, then removes the container and its image-declared anonymous data volume. Every Docker call has an explicit time limit. A failed removal changes an otherwise successful run to a failure and identifies the exact owned container in `classification.md`.
 
 Each live Go test creates a unique PostgreSQL schema through `internal/testenv`. Test cleanup closes the test pool before dropping that schema. Tests within one contention scenario continue to share their pool and transactions so they still exercise the intended locks. `TestIsolatedDatabaseSchemasDoNotShareData` writes tables with the same name into two schemas and proves that each pool reads only its own row. `TestIsolatedDatabaseSchemaIsDroppedAtTestCleanup` proves that subtest cleanup removes the schema.
 

@@ -86,8 +86,8 @@ finish() {
     record_command docker inspect "${postgres_container}"
     run_with_timeout 15 docker inspect "${postgres_container}" >"${artifact_dir}/postgres-inspect.json" 2>&1
     inspect_status=$?
-    record_command docker rm -f "${postgres_container}"
-    run_with_timeout 30 docker rm -f "${postgres_container}" >"${artifact_dir}/postgres-cleanup.log" 2>&1
+    record_command docker rm -f -v "${postgres_container}"
+    run_with_timeout 30 docker rm -f -v "${postgres_container}" >"${artifact_dir}/postgres-cleanup.log" 2>&1
     cleanup_status=$?
     if (( original_status == 0 )); then
       for support_status in "${logs_status}" "${inspect_status}" "${cleanup_status}"; do
