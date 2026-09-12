@@ -31,4 +31,4 @@ ATLAS_ACCEPTANCE_RUN_LABEL=worktree-b npm run test:acceptance:sdk-entity
 
 The label never replaces the random ownership suffix, so simultaneous or diagnostic runs cannot adopt another run's resources or overwrite its evidence. Scenarios must honor the supplied abort signal in waits and cancellable operations. Cleanup targets only the generated project identity; it never invokes the development launcher or accesses retained production volumes.
 
-The built Command Interface smoke and its three-engine local commands are documented in [browser/README.md](browser/README.md).
+The built Command Interface smoke and its two-engine local commands are documented in [browser/README.md](browser/README.md).

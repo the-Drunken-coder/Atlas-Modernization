@@ -1,12 +1,12 @@
 import { appendFileSync, existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { AtlasClient } from "@the-drunken-coder/atlas-sdk";
-import { chromium, firefox, webkit } from "playwright";
+import { chromium, webkit } from "playwright";
 import { runAcceptance } from "../support/stack.mjs";
 import { buildCommandInterface, prepareBrowserServers } from "./support/servers.mjs";
 
 const options = parseArguments(process.argv.slice(2));
-const browserTypes = { chromium, firefox, webkit };
+const browserTypes = { chromium, webkit };
 const browserType = browserTypes[options.browser];
 const reproduction = `npm run test:acceptance:browser-smoke -- --browser=${options.browser}${options.headed ? " --headed" : ""}`;
 
@@ -483,8 +483,8 @@ function parseArguments(args) {
     }
     throw new Error(`unknown browser smoke argument: ${argument}`);
   }
-  if (!Object.hasOwn({ chromium: true, firefox: true, webkit: true }, browser)) {
-    throw new Error(`--browser must be chromium, firefox, or webkit; received ${browser}`);
+  if (!Object.hasOwn({ chromium: true, webkit: true }, browser)) {
+    throw new Error(`--browser must be chromium or webkit; received ${browser}`);
   }
   return { browser, headed };
 }
