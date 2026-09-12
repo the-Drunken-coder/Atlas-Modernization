@@ -45,7 +45,7 @@ artifact_dir="${artifact_root}/${run_id}"
 mkdir -p "${artifact_dir}"
 checkout_pathspec=(-- .)
 if [[ "${artifact_root}" == "${repo_dir}/"* ]]; then
-  artifact_repo_path="${artifact_root#"${repo_dir}/"}"
+  artifact_repo_path="${artifact_dir#"${repo_dir}/"}"
   checkout_pathspec+=(":(top,exclude,literal)${artifact_repo_path}")
 fi
 
@@ -287,7 +287,7 @@ postgres_ready_deadline=$((SECONDS + 60))
 attempt=0
 while (( SECONDS < postgres_ready_deadline )); do
   attempt=$((attempt + 1))
-  if run_with_timeout 2 docker exec "${postgres_container}" pg_isready -U atlas -d atlas_core >/dev/null 2>&1; then
+  if run_with_timeout 2 docker exec "${postgres_container}" pg_isready -h 127.0.0.1 -U atlas -d atlas_core >/dev/null 2>&1; then
     postgres_ready="true"
     printf 'postgres_ready_attempt=%d\n' "${attempt}" >>"${artifact_dir}/metadata.txt"
     break
