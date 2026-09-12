@@ -325,6 +325,7 @@ async function runMapWindowJourney({
       passed: peekText.includes(`${fixture.result.features.length} result`) && peekText.includes(fixture.result.attribution.text)
     });
 
+    await focusAfterSettledFrames(handle, page);
     await handle.press("Enter");
     await checkAttribute(record, window, "data-collapsed", null, {
       check: `${browserName} restored the collapsed map window with its keyboard-reachable handle`,
@@ -438,6 +439,12 @@ async function runMapWindowJourney({
         Math.abs(handleAfterMove.y - handleBeforeMove.y) > 3
     });
     await captureScreenshot(page, join(artifacts, `${browserName}-collapsed-handle.png`), consoleLog);
+    await focusAfterSettledFrames(movedHandle, page);
+    await movedHandle.press("Enter");
+    await checkAttribute(record, window, "data-collapsed", null, {
+      check: `${browserName} restored the pointer-moved collapsed handle after its click-suppression frame settled`,
+      page
+    });
 
     record({
       check: `${browserName} activated the visible native MapLibre zoom control with a normal pointer click`,
@@ -610,6 +617,19 @@ function boxOverlaps(inner, outer) {
     inner.x + inner.width > outer.x &&
     inner.y < outer.y + outer.height &&
     inner.y + inner.height > outer.y
+  );
+}
+
+async function focusAfterSettledFrames(locator, page) {
+  await locator.focus();
+  const element = await locator.elementHandle();
+  if (!element) throw new Error("map window control must be attached before keyboard interaction");
+  await page.waitForFunction((control) => document.activeElement === control, element, { timeout: 15_000 });
+  await page.evaluate(
+    () =>
+      new Promise((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(resolve));
+      })
   );
 }
 
