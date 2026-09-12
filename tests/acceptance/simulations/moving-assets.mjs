@@ -12,7 +12,7 @@ const repositoryRoot = fileURLToPath(new URL("../../..", import.meta.url));
 const normalInputs = {
   assetCount: 2,
   ticks: 3,
-  tickMs: 10,
+  tickMs: 50,
   startLatitude: 38.5,
   startLongitude: -77.25
 };
