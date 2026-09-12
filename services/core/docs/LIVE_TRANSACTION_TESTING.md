@@ -71,4 +71,4 @@ Each run writes a unique directory under `.atlas/core-live-transactions/`. It co
 - `postgres.log` and `postgres-inspect.json`
 - `classification.md`, which records a clean run or leaves a failed command unclassified for assessment
 
-GitHub Actions uploads this directory even when a command fails. The required job has a 15 minute limit. The scheduled and manually selected nightly job has a 35 minute limit.
+GitHub Actions uploads this directory even when a command fails. The required job has a 30 minute limit. The scheduled and manually selected nightly job has a 45 minute limit.
