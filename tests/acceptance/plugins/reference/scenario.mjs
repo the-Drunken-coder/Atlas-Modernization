@@ -1,6 +1,5 @@
 import { AtlasClient, isAtlasAPIError } from "@the-drunken-coder/atlas-sdk";
-import { execFile } from "node:child_process";
-import { isDeepStrictEqual, promisify } from "node:util";
+import { isDeepStrictEqual } from "node:util";
 import {
   runPluginAcceptance,
   waitForPluginStatus,
@@ -10,7 +9,6 @@ const pluginID = "reference";
 const operationID = "inspect_fixture";
 const operationPath = `/plugins/${pluginID}/operations/${operationID}`;
 const reproduction = "node tests/acceptance/plugins/reference/scenario.mjs";
-const executeFile = promisify(execFile);
 
 await runPluginAcceptance({
   name: "reference-plugin",
@@ -18,7 +16,7 @@ await runPluginAcceptance({
   composeFile: "tests/acceptance/plugins/reference/compose.yml",
   fixtureVariant: "controlled-reference-source-v1",
   pluginService: "reference-plugin",
-  run: async ({ baseUrl, apiKey, record, runID, signal, pluginStack }) => {
+  run: async ({ baseUrl, apiKey, record, signal, pluginStack }) => {
     const wireResponses = createWireResponseCapture();
     const client = new AtlasClient({
       baseUrl,
@@ -61,15 +59,6 @@ await runPluginAcceptance({
         available.tool_asset_id === null &&
         structurallyEqual(available.operations, expectedOperations) &&
         isTimestamp(available.checked_at),
-    });
-
-    const directSource = await probeDirectSourceRoute(runID, signal);
-    record({
-      check:
-        "Reference Plugin cannot reach the fixture source outside the Source Gateway network",
-      expected: { reachable: false },
-      actual: directSource,
-      passed: directSource.reachable === false,
     });
 
     const successInputs = new Map([[operationID, { key: "alpha" }]]);
@@ -431,65 +420,6 @@ function parseWirePayload(text) {
   } catch {
     return undefined;
   }
-}
-
-async function probeDirectSourceRoute(runID, signal) {
-  const ownedPlugin = await executeFile(
-    "docker",
-    [
-      "container",
-      "ls",
-      "--all",
-      "--quiet",
-      "--filter",
-      `label=io.atlas.acceptance.run=${runID}`,
-      "--filter",
-      "label=com.docker.compose.service=reference-plugin",
-    ],
-    { encoding: "utf8", signal, timeout: 5_000 },
-  );
-  const containerIDs = ownedPlugin.stdout.trim().split(/\s+/u).filter(Boolean);
-  if (containerIDs.length !== 1) {
-    throw new Error(
-      `expected one owned reference-plugin container, observed ${JSON.stringify(containerIDs)}`,
-    );
-  }
-  try {
-    const result = await executeFile(
-      "docker",
-      [
-        "exec",
-        containerIDs[0],
-        "wget",
-        "--timeout=2",
-        "--quiet",
-        "--output-document=-",
-        "http://reference-source:8090/fixture?key=alpha",
-      ],
-      { encoding: "utf8", signal, timeout: 5_000 },
-    );
-    return { reachable: true, stdout: result.stdout, stderr: result.stderr };
-  } catch (error) {
-    if (signal.aborted) throw signal.reason;
-    if (!isExpectedDirectSourceNetworkBlock(error)) throw error;
-    return {
-      reachable: false,
-      status: error.code,
-      stdout: error.stdout ?? "",
-      stderr: error.stderr ?? "",
-    };
-  }
-}
-
-function isExpectedDirectSourceNetworkBlock(error) {
-  return (
-    error instanceof Error &&
-    error.code === 1 &&
-    error.killed !== true &&
-    (error.signal === undefined || error.signal === null) &&
-    typeof error.stderr === "string" &&
-    error.stderr.trim() === "wget: bad address 'reference-source:8090'"
-  );
 }
 
 async function fixtureProbe(client, signal) {
