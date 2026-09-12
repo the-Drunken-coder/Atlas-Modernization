@@ -114,9 +114,11 @@ require_command() {
 }
 
 record_command() {
-  printf '$' >>"${artifact_dir}/commands.log"
-  printf ' %q' "$@" >>"${artifact_dir}/commands.log"
-  printf '\n' >>"${artifact_dir}/commands.log"
+  {
+    printf '$'
+    printf ' %q' "$@"
+    printf '\n'
+  } >>"${artifact_dir}/commands.log"
 }
 
 run_logged() {

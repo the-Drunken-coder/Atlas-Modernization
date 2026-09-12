@@ -20,6 +20,8 @@ import (
 
 const storageUploadCrashHelperEnv = "ATLAS_STORAGE_UPLOAD_CRASH_HELPER"
 
+const storageUploadCrashDatabaseURLEnv = "ATLAS_STORAGE_UPLOAD_CRASH_DATABASE_URL"
+
 const storageUploadCrashFileName = "crash-blob"
 
 func storageUploadCrashRoot() string {
@@ -35,7 +37,7 @@ func storageUploadCrashFilePath() string {
 }
 
 func TestUploadCrashLeavesRecoverableIntentForNewAndReplacementBlobs(t *testing.T) {
-	pool := openActionsTestPool(t)
+	pool, databaseURL := openIsolatedActionsTestPool(t)
 	root := storageUploadCrashRoot()
 	if err := os.RemoveAll(root); err != nil {
 		t.Fatalf("clear crash storage root: %v", err)
@@ -66,6 +68,7 @@ func TestUploadCrashLeavesRecoverableIntentForNewAndReplacementBlobs(t *testing.
 			cmd := exec.Command(os.Args[0], "-test.run=^TestStorageUploadCrashHelper$")
 			cmd.Env = append(os.Environ(),
 				storageUploadCrashHelperEnv+"=1",
+				storageUploadCrashDatabaseURLEnv+"="+databaseURL,
 				"ATLAS_STORAGE_UPLOAD_CRASH_OBJECT_ID="+objectID,
 			)
 			output, err := cmd.CombinedOutput()
@@ -124,7 +127,11 @@ func TestStorageUploadCrashHelper(t *testing.T) {
 	if os.Getenv(storageUploadCrashHelperEnv) != "1" {
 		return
 	}
-	pool := openActionsTestPool(t)
+	databaseURL := os.Getenv(storageUploadCrashDatabaseURLEnv)
+	if databaseURL == "" {
+		t.Fatalf("%s is required", storageUploadCrashDatabaseURLEnv)
+	}
+	pool := openActionsTestPoolAtURL(t, databaseURL)
 	objectID := os.Getenv("ATLAS_STORAGE_UPLOAD_CRASH_OBJECT_ID")
 	_, _ = NewObjectActions(pool, &crashFileObjectStorage{crashAfterWrite: true}).Upload(
 		context.Background(), objectID, strings.NewReader("crash"), 5, "text/plain", "data", nil,

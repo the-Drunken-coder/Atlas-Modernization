@@ -65,7 +65,18 @@ func TestUpdateEntityValidatesFinalBlobBeforeUpdate(t *testing.T) {
 
 func openActionsTestPool(t testing.TB) *pgxpool.Pool {
 	t.Helper()
+	pool, _ := openIsolatedActionsTestPool(t)
+	return pool
+}
+
+func openIsolatedActionsTestPool(t testing.TB) (*pgxpool.Pool, string) {
+	t.Helper()
 	dbURL := testenv.IsolatedDatabaseURL(t, "ATLAS_ACTIONS_DATABASE_URL", "set ATLAS_ACTIONS_DATABASE_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed action tests")
+	return openActionsTestPoolAtURL(t, dbURL), dbURL
+}
+
+func openActionsTestPoolAtURL(t testing.TB, dbURL string) *pgxpool.Pool {
+	t.Helper()
 	db, err := atlasdb.New(&config.Config{
 		DatabaseURL:             dbURL,
 		DatabasePoolSize:        5,
