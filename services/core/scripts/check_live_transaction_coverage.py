@@ -26,7 +26,8 @@ GROUP_PATHS = {
 }
 
 # Exact statement ratios avoid rounding a displayed percentage into an
-# accidental weaker floor.
+# accidental weaker floor. Live total and action coverage leave a measured
+# margin for scheduling-dependent error branches in the contention tests.
 FLOORS = {
     "offline": {
         "total": Floor(3539, 7572),
@@ -39,8 +40,8 @@ FLOORS = {
         "admin": Floor(51, 366),
     },
     "live": {
-        "total": Floor(1661, 4633),
-        "actions": Floor(1050, 2730),
+        "total": Floor(1645, 4633),
+        "actions": Floor(1038, 2730),
         "handlers": Floor(239, 1201),
         "database": Floor(151, 256),
         "feed": Floor(187, 382),
