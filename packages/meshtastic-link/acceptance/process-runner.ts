@@ -102,6 +102,7 @@ try {
 } catch (error) {
   outcome = "failed";
   failure = error;
+  activeResourcesAfterLifecycleClose = process.getActiveResourcesInfo();
 } finally {
   process.off("message", onControllerMessage);
   const lifecycleCleanup = device.summary();

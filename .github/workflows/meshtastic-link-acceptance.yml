@@ -5,6 +5,8 @@ on:
   push:
     branches:
       - main
+  schedule:
+    - cron: "23 8 * * *"
 
 permissions:
   contents: read
@@ -15,9 +17,13 @@ concurrency:
 
 jobs:
   process-acceptance:
-    name: process-acceptance
+    name: process-acceptance-${{ matrix.seed }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        seed: ${{ fromJSON(github.event_name == 'schedule' && '[39001,39002]' || '[390]') }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -38,13 +44,15 @@ jobs:
       - name: Run compiled Link process acceptance
         env:
           ATLAS_LINK_ACCEPTANCE_ARTIFACTS: ${{ runner.temp }}/atlas-link-acceptance
+          ATLAS_LINK_ACCEPTANCE_MODE: ${{ github.event_name == 'schedule' && 'nightly' || 'required' }}
+          ATLAS_LINK_ACCEPTANCE_SEED: ${{ matrix.seed }}
         run: npm run test:acceptance --workspace @the-drunken-coder/atlas-meshtastic-link
 
       - name: Upload Link acceptance evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: meshtastic-link-process-acceptance-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: meshtastic-link-process-acceptance-${{ runner.os }}-${{ matrix.seed }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/atlas-link-acceptance
           if-no-files-found: error
           retention-days: 14
