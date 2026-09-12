@@ -14,7 +14,7 @@ Run the bounded nightly variant with the race detector, three repetitions, and s
 services/core/scripts/run_live_transaction_tests.sh --nightly
 ```
 
-Both commands require Docker, Git, Go, and Python 3. A missing command, an unavailable Docker daemon, PostgreSQL startup failure, skipped live dependency, missing coverage profile, malformed profile, or missing module fails the run. The script does not retry failures.
+Both commands require Docker, Git, Go, and Python 3. A missing command, an unavailable Docker daemon, PostgreSQL startup failure, skipped live dependency, missing coverage profile, malformed profile, or missing module fails the run. Stable checkout and mode metadata is written before the Docker daemon probe, so prerequisite failures retain their reproduction context. The script does not retry failures.
 
 ## Isolation and cleanup
 
@@ -37,7 +37,7 @@ The verifier owns the explicit test list and generates the live selector. After 
 
 ## Coverage evidence
 
-The offline profile instruments the ordinary Go test processes while the runner removes database and MinIO credentials from their environment. Live tests skip in that profile. The live profile instruments the selected `testenv`, `actions`, `handlers`, `database`, and `feed` packages while the test processes call disposable PostgreSQL. No separate Atlas Core server process runs or contributes coverage.
+The offline profile instruments the ordinary Go test processes while the runner removes database and MinIO credentials from their environment and overrides `ATLAS_CORE_API_URL` with the unreachable loopback endpoint `http://127.0.0.1:0`. Tests that create their own HTTP server remain active, while ambient local or deployed Core processes cannot be contacted. Live tests skip in that profile. The live profile instruments the selected `testenv`, `actions`, `handlers`, `database`, and `feed` packages while the test processes call disposable PostgreSQL. No separate Atlas Core server process runs or contributes coverage.
 
 The coverage checker uses exact covered and total statement ratios measured with the required command. It merges identical source ranges emitted by the three live test binaries, and counts a source block once if any of those processes executed it. Hosted offline runs measured 269 or 270 covered feed statements depending on whether the server's abnormal read-error branch won the clean-close websocket shutdown race. The offline feed floor preserves that one-statement scheduling margin while the explicit behavior tests remain required. The live total and action floors leave a small measured margin for scheduling-dependent error branches in the contention tests.
 

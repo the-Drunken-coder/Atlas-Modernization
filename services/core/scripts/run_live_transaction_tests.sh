@@ -210,10 +210,6 @@ working_tree_dirty="false"
 if [[ -s "${artifact_dir}/checkout-status.txt" ]]; then
   working_tree_dirty="true"
 fi
-docker_server="$(
-  run_logged_with_timeout "${artifact_dir}/docker-version.log" 15 \
-    docker version --format '{{.Server.Version}} {{.Server.Os}}/{{.Server.Arch}}'
-)"
 {
   printf 'revision=%s\n' "${revision}"
   printf 'working_tree_dirty=%s\n' "${working_tree_dirty}"
@@ -224,8 +220,8 @@ docker_server="$(
   printf 'mode=%s\n' "${mode}"
   printf 'started_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   printf 'go_version=%s\n' "$(go version)"
-  printf 'docker_server=%s\n' "${docker_server}"
   printf 'coverage_process=Go test binaries; no separate Atlas Core process is instrumented\n'
+  printf 'offline_core_url=http://127.0.0.1:0\n'
   printf 'postgres_image=%s\n' "${postgres_image}"
   printf 'postgres_container=%s\n' "${postgres_container}"
   printf 'postgres_pull_timeout_seconds=180\n'
@@ -233,6 +229,11 @@ docker_server="$(
   printf 'postgres_port_lookup_timeout_seconds=15\n'
   printf 'postgres_cleanup_timeout_seconds=30\n'
 } >"${artifact_dir}/metadata.txt"
+docker_server="$(
+  run_logged_with_timeout "${artifact_dir}/docker-version.log" 15 \
+    docker version --format '{{.Server.Version}} {{.Server.Os}}/{{.Server.Arch}}'
+)"
+printf 'docker_server=%s\n' "${docker_server}" >>"${artifact_dir}/metadata.txt"
 
 cd "${core_dir}"
 
@@ -258,6 +259,7 @@ offline_command=(
   -u MINIO_SECRET_KEY
   -u MINIO_ROOT_PASSWORD
   ATLAS_CORE_REQUIRE_LIVE_TESTS=0
+  ATLAS_CORE_API_URL=http://127.0.0.1:0
   go test
   -count=1
   -covermode=atomic
@@ -269,7 +271,7 @@ run_logged "${artifact_dir}/offline.log" "${offline_command[@]}"
 
 run_logged_with_timeout "${artifact_dir}/postgres-pull.log" 180 docker pull "${postgres_image}"
 
-docker_run_command=(docker run --pull never --rm -d \
+docker_run_command=(docker run --pull never -d \
   --name "${postgres_container}" \
   -e POSTGRES_DB=atlas_core \
   -e POSTGRES_USER=atlas \
