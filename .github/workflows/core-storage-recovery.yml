@@ -1,0 +1,85 @@
+name: Core storage recovery
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: "23 8 * * *"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Test duration and injected failure count
+        required: true
+        default: required
+        type: choice
+        options:
+          - required
+          - nightly
+
+permissions:
+  contents: read
+
+concurrency:
+  group: core-storage-recovery-${{ github.workflow }}-${{ github.ref }}-${{ (github.event_name == 'schedule' || inputs.mode == 'nightly') && 'nightly' || 'required' }}
+  cancel-in-progress: true
+
+jobs:
+  core-storage-recovery:
+    name: core-storage-recovery
+    if: ${{ github.event_name != 'schedule' && inputs.mode != 'nightly' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: services/core/go.mod
+          cache-dependency-path: services/core/go.sum
+
+      - name: Run required storage recovery tests
+        run: services/core/scripts/run_storage_recovery_tests.sh
+
+      - name: Upload Core storage recovery evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: core-storage-recovery-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .atlas/core-storage-recovery/
+          if-no-files-found: error
+          retention-days: 14
+
+  core-storage-recovery-nightly:
+    name: core-storage-recovery-nightly
+    if: ${{ github.event_name == 'schedule' || inputs.mode == 'nightly' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: services/core/go.mod
+          cache-dependency-path: services/core/go.sum
+
+      - name: Run expanded storage recovery tests
+        run: services/core/scripts/run_storage_recovery_tests.sh --nightly
+
+      - name: Upload Core storage recovery evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: core-storage-recovery-nightly-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .atlas/core-storage-recovery/
+          if-no-files-found: error
+          retention-days: 14
