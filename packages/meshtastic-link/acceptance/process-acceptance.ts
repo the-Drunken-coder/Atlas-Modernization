@@ -101,6 +101,7 @@ type ProcessObservation = {
   shared_picture?: unknown;
   application_confirmation?: unknown;
   application_rejection?: unknown;
+  incomplete_operation_cleanup?: unknown;
   startup_rejection?: unknown;
   join_rejection?: unknown;
   shutdown_stream_closed?: boolean;
@@ -164,6 +165,7 @@ test("runs compiled Link processes through joining, application settlement, reje
     rejected_startup: "Gateway membership identity does not match --node-id",
     rejected_join: "Asset remains discovering after rejecting a challenge authenticated with another key",
     application_settlement: ["confirmed", "rejected"],
+    incomplete_operation_shutdown: { status: "failed", reason: "link service stopped" },
     radio_profile_differences: [],
     picture_record: { source: { role: "asset", id: "asset-alpha" }, entity_id: "asset-alpha", altitude: 101 },
     shutdown: { exit_code: 0, active_connections: 0, pending_writes: 0, loopback_ports_reusable: true },
@@ -455,6 +457,64 @@ test("runs compiled Link processes through joining, application settlement, reje
     observation.shared_picture = sharedPicture;
     observation.timings_ms.picture_observed = elapsed(scenarioStarted);
 
+    const incompleteSubmission = await postJSON(`${assetBase}/v1/messages`, {
+      message: {
+        type: "subscription",
+        action: "add",
+        selector: { kind: "record", resource_type: "entity", id: "shutdown-pending" }
+      },
+      destination: { role: "gateway", id: "gateway-main" },
+      operation_id: "acceptance-subscription-incomplete"
+    });
+    assert.equal(property(incompleteSubmission, "status"), "queued");
+    const incompletePacketSent = await assetEvents.next(
+      (value) =>
+        property(value, "type") === "transport" &&
+        property(property(value, "event"), "type") === "packet_sent" &&
+        property(property(value, "event"), "operation_id") === "acceptance-subscription-incomplete",
+      15_000,
+      "Asset did not expose radio acceptance for the shutdown-pending subscription"
+    );
+    const incompleteInbound = await gatewayEvents.next(
+      (value) => isSettlementEvent(value, "acceptance-subscription-incomplete"),
+      15_000,
+      "Gateway did not expose the shutdown-pending subscription"
+    );
+    const assetPendingStatus = await waitForJSON(
+      `${assetBase}/v1/status`,
+      (value) => property(property(value, "transport"), "confirmed_pending") === 1,
+      15_000,
+      "Asset did not retain the intentionally incomplete operation before shutdown"
+    );
+    const gatewayPendingStatus = await waitForJSON(
+      `${gatewayBase}/v1/status`,
+      (value) => property(property(value, "transport"), "inbound_awaiting_settlement") === 1,
+      15_000,
+      "Gateway did not retain the intentionally incomplete settlement before shutdown"
+    );
+    const incompleteFailure = assetEvents.next(
+      (value) => {
+        const event = property(value, "event");
+        const result = property(event, "result");
+        return (
+          property(value, "type") === "transport" &&
+          property(event, "type") === "operation" &&
+          property(result, "operation_id") === "acceptance-subscription-incomplete" &&
+          property(result, "status") === "failed"
+        );
+      },
+      15_000,
+      "Asset shutdown did not fail the incomplete operation"
+    );
+    void incompleteFailure.catch(() => undefined);
+    observation.incomplete_operation_cleanup = {
+      submission: incompleteSubmission,
+      radio_accepted_event: incompletePacketSent,
+      inbound: incompleteInbound,
+      asset_before_shutdown: assetPendingStatus,
+      gateway_before_shutdown: gatewayPendingStatus
+    };
+
     shutdownEvents = await openSSE(`${gatewayBase}/v1/events?client_id=shutdown-observer`);
     for (const runner of runners) runner.child.kill("SIGTERM");
     const shutdownStream = waitForSSEClosure(shutdownEvents, 15_000);
@@ -462,10 +522,17 @@ test("runs compiled Link processes through joining, application settlement, reje
       runners.map((runner) => withTimeout(runner.exit, 15_000, `${runner.name} did not exit`))
     );
     const shutdown = Promise.all([shutdownStream, exitsPromise]);
+    void shutdown.catch(() => undefined);
     await Promise.all(
       runners.map((runner) => withTimeout(runner.summary, 5_000, `${runner.name} did not publish its summary`))
     );
     const summaries = await Promise.all(runners.map(readFinalSummary));
+    const incompleteResult = await incompleteFailure;
+    assert.equal(property(property(property(incompleteResult, "event"), "result"), "reason"), "link service stopped");
+    observation.incomplete_operation_cleanup = {
+      ...requiredRecord(observation.incomplete_operation_cleanup, "incomplete operation cleanup evidence"),
+      shutdown_result: incompleteResult
+    };
     observation.summaries = summaries;
     for (const [index, summary] of summaries.entries()) {
       if (runners[index]?.name === "startup-rejected-gateway") assertRejectedStartupCleanup(summary);
@@ -799,6 +866,8 @@ function assertCleanLifecycleShutdown(summary: SummaryMessage): void {
   assert.ok(summary.lifecycle_cleanup.configuration_writes > 0, `${summary.mode} exercised configuration writes`);
   assert.ok(summary.lifecycle_cleanup.radio_packets_sent > 0, `${summary.mode} sent application packets`);
   assert.ok(summary.lifecycle_cleanup.radio_packets_received > 0, `${summary.mode} received application packets`);
+  assert.equal(summary.active_resources.after_ipc_disconnect.includes("TCPServerWrap"), false);
+  assert.equal(summary.active_resources.after_ipc_disconnect.includes("TCPSocketWrap"), false);
 }
 
 function assertRejectedStartupCleanup(summary: SummaryMessage): void {
