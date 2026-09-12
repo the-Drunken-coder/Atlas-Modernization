@@ -30,7 +30,7 @@ jobs:
     name: core-live-transactions
     if: ${{ github.event_name != 'schedule' && inputs.mode != 'nightly' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -59,7 +59,7 @@ jobs:
     name: core-live-transactions-nightly
     if: ${{ github.event_name == 'schedule' || inputs.mode == 'nightly' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 45
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

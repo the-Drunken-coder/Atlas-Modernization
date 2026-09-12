@@ -289,8 +289,7 @@ coverage_command=(
   "${artifact_dir}/offline.coverage.out"
   "${artifact_dir}/live.coverage.out"
 )
-record_command "${coverage_command[@]}"
-"${coverage_command[@]}" | tee "${artifact_dir}/coverage.txt"
+run_logged "${artifact_dir}/coverage.txt" "${coverage_command[@]}"
 verification_complete="true"
 
 printf 'artifacts=%s\n' "${artifact_dir}"
