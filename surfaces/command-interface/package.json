@@ -23,7 +23,7 @@
     "@blueprintjs/core": "^6.18.0",
     "@blueprintjs/icons": "^6.13.0",
     "@the-drunken-coder/atlas-sdk": "0.1.0",
-    "maplibre-gl": "^6.6.0",
+    "maplibre-gl": "^6.8.0",
     "milsymbol": "3.0.4",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
