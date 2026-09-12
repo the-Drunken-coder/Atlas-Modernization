@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
-import { AtlasClient, ConflictError } from "@the-drunken-coder/atlas-sdk";
+import { AtlasAPIError, AtlasClient, ConflictError } from "@the-drunken-coder/atlas-sdk";
 import { runAcceptance } from "./support/stack.mjs";
 
 const reproduction = "npm run build:sdk && node tests/acceptance/sdk-auth-conflicts.mjs";
@@ -35,27 +35,22 @@ await runAcceptance({
           created.metadata.version > 0
       });
 
-      const missingCredential = await requestEntity(baseUrl, entityID, undefined, signal);
+      const missingCredential = await readEntityWithSDK(createClient(baseUrl), entityID, signal);
       recordUnauthorized(record, "missing credentials", missingCredential);
 
-      const invalidCredential = await requestEntity(baseUrl, entityID, "atlas-invalid-test-key", signal);
+      const invalidCredential = await readEntityWithSDK(createClient(baseUrl, "atlas-invalid-test-key"), entityID, signal);
       recordUnauthorized(record, "invalid credentials", invalidCredential);
 
-      const legitimateRead = await requestEntity(baseUrl, entityID, apiKey, signal);
+      const legitimateRead = await readEntityWithSDK(writer, entityID, signal);
       record({
         check: "legitimate API-key request reads the intended protected Entity",
         expected: { status: 200, entity_id: entityID, alias: initialAlias, version: created.metadata.version },
-        actual: {
-          status: legitimateRead.status,
-          body: summarizeEntityBody(legitimateRead.body),
-          response: legitimateRead.body
-        },
+        actual: { status: legitimateRead.status, response: legitimateRead.observation },
         passed:
           legitimateRead.status === 200 &&
-          isEntityBody(legitimateRead.body) &&
-          legitimateRead.body.entity_id === entityID &&
-          legitimateRead.body.alias === initialAlias &&
-          legitimateRead.body.metadata.version === created.metadata.version
+          legitimateRead.entity.entity_id === entityID &&
+          legitimateRead.entity.alias === initialAlias &&
+          legitimateRead.entity.metadata.version === created.metadata.version
       });
 
       const staleSnapshot = await staleClient.entities.get(entityID, { fresh: true, signal });
@@ -127,7 +122,6 @@ await runAcceptance({
           finalRead.entity.metadata.version === newerUpdate.metadata.version
       });
 
-      await writer.entities.delete(entityID);
     } finally {
       writer.sync.stop();
       newerClient.sync.stop();
@@ -147,41 +141,27 @@ function createClient(baseUrl, apiKey) {
   });
 }
 
-async function requestEntity(baseUrl, id, apiKey, signal) {
-  const headers = { Accept: "application/json" };
-  if (apiKey !== undefined) headers["X-API-Key"] = apiKey;
-  const response = await fetch(`${baseUrl}/entities/${encodeURIComponent(id)}`, {
-    method: "GET",
-    headers,
-    signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)])
-  });
-  const serialized = await response.text();
-  let body;
+async function readEntityWithSDK(client, id, signal) {
   try {
-    body = JSON.parse(serialized);
-  } catch {
-    body = serialized;
+    const entity = await client.entities.get(id, { fresh: true, signal });
+    return { status: 200, entity, observation: summarizeEntity(entity) };
+  } catch (error) {
+    return { status: undefined, error: summarizeSDKError(error) };
   }
-  return {
-    status: response.status,
-    body,
-    headers: {
-      contentType: response.headers.get("content-type"),
-      etag: response.headers.get("etag")
-    }
-  };
 }
 
 function recordUnauthorized(record, credentialCase, response) {
   const expectedBody = { success: false, message: "Unauthorized", error_code: "UNAUTHORIZED" };
   record({
     check: `${credentialCase} cannot read a protected Entity and receives no protected data`,
-    expected: { status: 401, ...expectedBody },
-    actual: { status: response.status, body: response.body, headers: response.headers },
+    expected: { error_type: "AtlasAPIError", status: 401, error_code: "UNAUTHORIZED", response: expectedBody },
+    actual: response.error,
     passed:
-      response.status === 401 &&
-      isDeepStrictEqual(response.body, expectedBody) &&
-      !includesProtectedData(response.body)
+      response.error?.error_type === "AtlasAPIError" &&
+      response.error.status === 401 &&
+      response.error.error_code === "UNAUTHORIZED" &&
+      isDeepStrictEqual(response.error.response, expectedBody) &&
+      !includesProtectedData(response.error.response)
   });
 }
 
@@ -201,6 +181,22 @@ function summarizeEntity(entity) {
   return { entity_id: entity.entity_id, alias: entity.alias, version: entity.metadata.version };
 }
 
+function summarizeSDKError(error) {
+  if (!(error instanceof AtlasAPIError)) {
+    return {
+      error_type: error instanceof Error ? error.name : typeof error,
+      message: error instanceof Error ? error.message : String(error)
+    };
+  }
+  return {
+    error_type: error.name,
+    status: error.status,
+    error_code: error.errorCode,
+    response: error.response,
+    message: error.message
+  };
+}
+
 async function readEntityOutcome(client, id, signal) {
   try {
     const entity = await client.entities.get(id, { fresh: true, signal });
@@ -208,36 +204,6 @@ async function readEntityOutcome(client, id, signal) {
   } catch (error) {
     return { ok: false, observation: summarizeSDKError(error) };
   }
-}
-
-function summarizeSDKError(error) {
-  if (!(error instanceof Error)) return { error: String(error) };
-  return {
-    name: error.name,
-    status: error.status,
-    error_code: error.errorCode,
-    message: error.message,
-    response: error.response
-  };
-}
-
-function summarizeEntityBody(body) {
-  return isEntityBody(body)
-    ? { entity_id: body.entity_id, alias: body.alias, version: body.metadata.version }
-    : body;
-}
-
-function isEntityBody(value) {
-  return (
-    value !== null &&
-    typeof value === "object" &&
-    !Array.isArray(value) &&
-    value.entity_id === entityID &&
-    typeof value.alias === "string" &&
-    value.metadata !== null &&
-    typeof value.metadata === "object" &&
-    typeof value.metadata.version === "number"
-  );
 }
 
 function includesProtectedData(value) {
