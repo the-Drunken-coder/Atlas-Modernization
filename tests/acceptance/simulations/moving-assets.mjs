@@ -6,6 +6,13 @@ import { isDeepStrictEqual } from "node:util";
 import { AtlasClient, isAtlasAPIError } from "@the-drunken-coder/atlas-sdk";
 import { runAcceptance } from "../support/stack.mjs";
 import { createSimulationServerFixture, simulationFixtureVariant } from "./support/server-fixture.mjs";
+import {
+  prepareTaskFixture,
+  taskFixtureCatalog,
+  taskFixtureManifest,
+  taskFixtureQueuedCommand,
+  taskFixtureVariant
+} from "./support/task-fixture.mjs";
 
 const reproduction = "npm run build:sdk && node tests/acceptance/simulations/moving-assets.mjs";
 const repositoryRoot = fileURLToPath(new URL("../../..", import.meta.url));
@@ -23,13 +30,17 @@ const cancelledInputs = {
   startLatitude: 37.75,
   startLongitude: -76.75
 };
+const retainedTaskInput = { value: "retain through moving-assets cleanup" };
+const retainedTaskOutput = { result: "completed before moving-assets cleanup" };
 const fixture = createSimulationServerFixture();
+const taskFixtureComposePath = fileURLToPath(new URL("./task-fixture.compose.yml", import.meta.url));
 
 await runAcceptance({
   name: "simulations-moving-assets",
   reproduction,
-  fixtureVariant: simulationFixtureVariant,
-  prepare: fixture.prepare,
+  additionalComposeFiles: [taskFixtureComposePath],
+  fixtureVariant: { simulation: simulationFixtureVariant, task: taskFixtureVariant },
+  prepare: prepareSimulationTaskFixture,
   run: async ({ runID, baseUrl, apiKey, artifacts, record, signal }) => {
     const simulation = await fixture.start({ coreBaseUrl: baseUrl, apiKey, signal });
     const api = createSimulationAPI(simulation.url, join(artifacts, "simulation-http.jsonl"), signal);
@@ -46,6 +57,7 @@ await runAcceptance({
     const unrelatedEntityID = shortID("acpt-unrelated-entity");
     const unrelatedObjectID = shortID("acpt-unrelated-object");
     let replacementID;
+    let retainedTask;
 
     try {
       verifyServerHealth(simulation.health, baseUrl, record);
@@ -65,6 +77,18 @@ await runAcceptance({
       const normalEntities = await readRunEntities(core, normalSummary.createdResources, signal);
       recordPersistedMovement(normalSummary, normalEntities, normalInputs, runID, record);
 
+      const normalEntityIDs = normalSummary.createdResources
+        .filter((resource) => resource.type === "entity")
+        .map((resource) => resource.id);
+      const taskSetup = await createTaskBeforeCleanup({
+        core,
+        entityIDs: normalEntityIDs,
+        record,
+        signal
+      });
+      replacementID = taskSetup.replacementID;
+      retainedTask = taskSetup.task;
+
       await core.entities.create(
         {
           entity_id: unrelatedEntityID,
@@ -81,8 +105,6 @@ await runAcceptance({
         },
         { instanceToken: unrelatedObjectToken, signal }
       );
-      replacementID = normalSummary.createdResources.find((resource) => resource.type === "entity")?.id;
-      if (!replacementID) throw new Error("Completed moving-assets run did not expose an Entity cleanup candidate");
       await core.entities.delete(replacementID);
       await core.entities.create(
         {
@@ -112,6 +134,7 @@ await runAcceptance({
         signal,
         record
       });
+      await recordRetainedTask(core, retainedTask, signal, record);
       recordLocalLedgerState(normal.id, artifacts, record);
 
       const cancelled = await startRun(api, cancelledInputs, { acceptance_run_id: runID, journey: "cancel" });
@@ -177,6 +200,7 @@ await runAcceptance({
       const allIDs = [
         ...normalSummary.createdResources.map(({ id }) => id),
         ...progressedIDs,
+        retainedTask.task_id,
         unrelatedEntityID,
         unrelatedObjectID
       ];
@@ -196,6 +220,169 @@ await runAcceptance({
     }
   }
 });
+
+async function prepareSimulationTaskFixture(context) {
+  const taskFixture = prepareTaskFixture(context);
+  try {
+    const simulationFixture = await fixture.prepare(context);
+    return {
+      environment: taskFixture.environment,
+      metadata: {
+        simulation: simulationFixture.metadata,
+        task: taskFixture.metadata
+      },
+      cleanup: async () => {
+        try {
+          await simulationFixture.cleanup?.();
+        } finally {
+          await taskFixture.cleanup?.();
+        }
+      }
+    };
+  } catch (error) {
+    await taskFixture.cleanup?.();
+    throw error;
+  }
+}
+
+async function createTaskBeforeCleanup({ core, entityIDs, record, signal }) {
+  if (entityIDs.length < 2) {
+    throw new Error(
+      `Completed moving-assets run expected two Entity cleanup candidates, observed ${JSON.stringify(entityIDs)}`
+    );
+  }
+  const [replacementID, taskAssetID] = entityIDs;
+  const catalog = await core.commandCatalog();
+  record({
+    check: "Task fixture overlay exposes the canonical Task conformance catalog",
+    expected: taskFixtureCatalog,
+    actual: catalog,
+    passed: isDeepStrictEqual(catalog, taskFixtureCatalog)
+  });
+
+  const runtimeID = shortID("acpt-simulation-runtime");
+  await core.runtime.begin(taskAssetID, { runtime_id: runtimeID }, { signal });
+  await core.runtime.ready(
+    taskAssetID,
+    { runtime_id: runtimeID, manifest: taskFixtureManifest },
+    { signal }
+  );
+  const created = await core.tasks.create(
+    {
+      asset_id: taskAssetID,
+      command: taskFixtureQueuedCommand,
+      input: retainedTaskInput
+    },
+    { idempotencyKey: shortID("acpt-simulation-task"), signal }
+  );
+  const beforeCleanup = await core.tasks.get(created.task_id, { fresh: true, signal });
+  record({
+    check: "public runtime and Task APIs persist a nonempty pending Task before simulation cleanup",
+    expected: {
+      asset_id: taskAssetID,
+      command: taskFixtureQueuedCommand,
+      input: retainedTaskInput,
+      status: "pending"
+    },
+    actual: taskState(beforeCleanup),
+    passed: matchesRetainedTask(beforeCleanup, {
+      taskID: created.task_id,
+      assetID: taskAssetID,
+      status: "pending"
+    })
+  });
+
+  const delivery = await core.runtime.tasks(taskAssetID, { runtimeId: runtimeID, signal });
+  record({
+    check: "registered runtime receives the nonempty Task before simulation cleanup",
+    expected: {
+      task_ids: [created.task_id],
+      input: retainedTaskInput,
+      statuses: ["pending"]
+    },
+    actual: delivery.tasks.map(taskState),
+    passed:
+      delivery.tasks.length === 1 &&
+      matchesRetainedTask(delivery.tasks[0], {
+        taskID: created.task_id,
+        assetID: taskAssetID,
+        status: "pending"
+      })
+  });
+
+  await core.tasks.acknowledge(created.task_id, { runtimeId: runtimeID, signal });
+  await core.tasks.start(created.task_id, { runtimeId: runtimeID, signal });
+  await core.tasks.complete(created.task_id, {
+    runtimeId: runtimeID,
+    output: retainedTaskOutput,
+    signal
+  });
+  const completedBeforeCleanup = await core.tasks.get(created.task_id, { fresh: true, signal });
+  record({
+    check: "runtime completes the nonempty Task before deleting its Asset",
+    expected: {
+      task_id: created.task_id,
+      asset_id: taskAssetID,
+      input: retainedTaskInput,
+      output: retainedTaskOutput,
+      status: "completed"
+    },
+    actual: taskState(completedBeforeCleanup),
+    passed: matchesRetainedTask(completedBeforeCleanup, {
+      taskID: created.task_id,
+      assetID: taskAssetID,
+      status: "completed"
+    })
+  });
+
+  return {
+    replacementID,
+    task: { task_id: created.task_id, asset_id: taskAssetID }
+  };
+}
+
+async function recordRetainedTask(core, retainedTask, signal, record) {
+  const afterCleanup = await core.tasks.get(retainedTask.task_id, { fresh: true, signal });
+  record({
+    check: "Task remains independently readable after cleanup deletes its run-owned Asset",
+    expected: {
+      task_id: retainedTask.task_id,
+      asset_id: retainedTask.asset_id,
+      command: taskFixtureQueuedCommand,
+      input: retainedTaskInput,
+      output: retainedTaskOutput,
+      status: "completed"
+    },
+    actual: taskState(afterCleanup),
+    passed: matchesRetainedTask(afterCleanup, {
+      taskID: retainedTask.task_id,
+      assetID: retainedTask.asset_id,
+      status: "completed"
+    })
+  });
+}
+
+function matchesRetainedTask(task, { taskID, assetID, status }) {
+  return (
+    task.task_id === taskID &&
+    task.asset_id === assetID &&
+    task.command === taskFixtureQueuedCommand &&
+    task.status === status &&
+    isDeepStrictEqual(task.input, retainedTaskInput) &&
+    (status !== "completed" || isDeepStrictEqual(task.output, retainedTaskOutput))
+  );
+}
+
+function taskState(task) {
+  return {
+    task_id: task.task_id,
+    asset_id: task.asset_id,
+    command: task.command,
+    input: task.input,
+    output: task.output,
+    status: task.status
+  };
+}
 
 function createSimulationAPI(baseUrl, logPath, acceptanceSignal) {
   return {
