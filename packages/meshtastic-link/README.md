@@ -163,4 +163,18 @@ npm run check --workspace @the-drunken-coder/atlas-meshtastic-link
 
 The check regenerates the Radio contract from the canonical Protocol schema, verifies that the checked-in output has not drifted, formats and lints the workspace, type-checks it, runs the deterministic suite, and builds the executable package.
 
+Run the separate compiled process acceptance with:
+
+```sh
+npm run test:acceptance --workspace @the-drunken-coder/atlas-meshtastic-link
+```
+
+The acceptance starts independent Gateway and Asset Node processes through the public `startLinkService` lifecycle and `MeshtasticSerialRadio.openTransport`. A test-owned device protocol fixture drives real profile configuration, commit, reconnect, readback, Gateway membership activation, and pre-shared-key authenticated joining. The controller observes public loopback status and Radio profile responses, then verifies an ordinary Asset state publication through both the Gateway event stream and Shared Picture. It signals both processes, verifies lifecycle-owned transport cleanup, waits for the event stream to close, and rebinds both loopback ports.
+
+Set `ATLAS_LINK_ACCEPTANCE_ARTIFACTS` to select the artifact parent directory. Each run preserves expected and observed JSON, the activated membership record, child summaries, and separate child stdout and stderr logs under a UUID-owned scenario directory. The dedicated CI workflow uploads this directory even when the scenario fails.
+
+After a valid baseline, set `ATLAS_LINK_ACCEPTANCE_FAULT=drop-asset-private-packets` to drop the Asset's private-channel delivery in the test-owned packet switch. The unchanged public event assertion must fail and preserve a separate fault-run artifact directory. This is the only supported fault value; there is no seeded random network model in this acceptance.
+
+The fixture supplies firmware-decoded packets and the `pkiEncrypted` metadata a Meshtastic device reports for unicast reception. Link's own challenge and response authentication remains real, but this fixture does not implement or prove Meshtastic firmware PKI encryption or decryption. It also does not exercise device framing, `SerialPort`, USB, physical firmware, RF, macOS hardware, or Linux and Windows serial support. Queue status timing and packet delivery are controlled laboratory inputs, so results are process and integration evidence rather than field performance evidence.
+
 The serial adapter pins `@meshtastic/protobufs` 2.7.8 to match the schema bundled in `@meshtastic/core` 2.6.7. The `@meshtastic/protobufs-firmware` alias supplies schema 2.8.0 for the firmware's device-telemetry switch. Typed binary conversion preserves that field across the older SDK's read and write path.
