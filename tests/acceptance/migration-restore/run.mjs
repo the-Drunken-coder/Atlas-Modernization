@@ -39,6 +39,7 @@ const credentials = createCredentials();
 const bucket = `atlas-mr-${runUUID}`;
 const entityID = `entity-${randomUUID()}`;
 const objectID = `object-${randomUUID()}`;
+const objectContentType = "application/vnd.atlas.migration-restore";
 const objectBytes = Buffer.from(`Atlas paired restore marker ${randomUUID()}\n`, "utf8");
 const replacementBytes = Buffer.from(`Atlas post-backup replacement ${randomUUID()}\n`, "utf8");
 const environment = {
@@ -404,19 +405,19 @@ async function createBaseline() {
       createdEntity.metadata.version > 0
   });
 
-  const uploadedObject = await uploadObject(objectBytes, "application/octet-stream", "baseline");
+  const uploadedObject = await uploadObject(objectBytes, objectContentType, "baseline");
   record({
     check: "public Object upload stored metadata in PostgreSQL and bytes in MinIO",
     expected: {
       object_id: objectID,
-      content_type: "application/octet-stream",
+      content_type: objectContentType,
       size_bytes: objectBytes.length,
       version_positive: true
     },
     actual: summarizeObject(uploadedObject),
     passed:
       uploadedObject.object_id === objectID &&
-      uploadedObject.content_type === "application/octet-stream" &&
+      uploadedObject.content_type === objectContentType &&
       uploadedObject.size_bytes === objectBytes.length &&
       Number.isInteger(uploadedObject.metadata?.version) &&
       uploadedObject.metadata.version > 0
@@ -428,14 +429,20 @@ async function createBaseline() {
   const object = await requestJSON("baseline-object", `/objects/${encodeURIComponent(objectID)}`, {
     expectedStatus: 200
   });
-  const bytes = await downloadObject("baseline-object-bytes");
+  const download = await downloadObject("baseline-object-bytes");
   record({
-    check: "downloaded baseline Object bytes match the uploaded payload",
-    expected: { sha256: sha256(objectBytes), bytes: objectBytes.length },
-    actual: { sha256: sha256(bytes), bytes: bytes.length },
-    passed: bytes.equals(objectBytes)
+    check: "downloaded baseline Object bytes and content type match the uploaded payload",
+    expected: { sha256: sha256(objectBytes), bytes: objectBytes.length, content_type: objectContentType },
+    actual: { sha256: sha256(download.bytes), bytes: download.bytes.length, content_type: download.contentType },
+    passed: download.bytes.equals(objectBytes) && download.contentType === objectContentType
   });
-  const snapshot = { entity, object, object_sha256: sha256(bytes), object_bytes: bytes.length };
+  const snapshot = {
+    entity,
+    object,
+    object_sha256: sha256(download.bytes),
+    object_bytes: download.bytes.length,
+    object_download_content_type: download.contentType
+  };
   writeJSON(join(artifacts, "baseline-snapshot.json"), snapshot);
   return snapshot;
 }
@@ -447,14 +454,25 @@ async function verifyBaseline(baseline, phase) {
   const object = await requestJSON(`${slug(phase)}-object`, `/objects/${encodeURIComponent(objectID)}`, {
     expectedStatus: 200
   });
-  const bytes = await downloadObject(`${slug(phase)}-object-bytes`);
+  const download = await downloadObject(`${slug(phase)}-object-bytes`);
   recordDeepEqual(`${phase}: Entity data and metadata match the pre-backup snapshot`, baseline.entity, entity);
   recordDeepEqual(`${phase}: Object data and metadata match the pre-backup snapshot`, baseline.object, object);
   record({
-    check: `${phase}: Object bytes match the pre-backup snapshot`,
-    expected: { sha256: baseline.object_sha256, bytes: baseline.object_bytes },
-    actual: { sha256: sha256(bytes), bytes: bytes.length },
-    passed: bytes.length === baseline.object_bytes && sha256(bytes) === baseline.object_sha256
+    check: `${phase}: Object bytes and content type match the pre-backup snapshot`,
+    expected: {
+      sha256: baseline.object_sha256,
+      bytes: baseline.object_bytes,
+      content_type: baseline.object_download_content_type
+    },
+    actual: {
+      sha256: sha256(download.bytes),
+      bytes: download.bytes.length,
+      content_type: download.contentType
+    },
+    passed:
+      download.bytes.length === baseline.object_bytes &&
+      sha256(download.bytes) === baseline.object_sha256 &&
+      download.contentType === baseline.object_download_content_type
   });
 }
 
@@ -465,8 +483,8 @@ async function createPostBackupChanges(baseline) {
     body: { alias: "migration-restore-post-backup" },
     expectedStatus: 200
   });
-  const changedObject = await uploadObject(replacementBytes, "application/octet-stream", "post-backup");
-  const changedBytes = await downloadObject("post-backup-object-bytes");
+  const changedObject = await uploadObject(replacementBytes, objectContentType, "post-backup");
+  const changedDownload = await downloadObject("post-backup-object-bytes");
   record({
     check: "post-backup Entity and Object changes establish a meaningful restore boundary",
     expected: {
@@ -477,13 +495,15 @@ async function createPostBackupChanges(baseline) {
     actual: {
       entity_version: changedEntity.metadata.version,
       object_version: changedObject.metadata.version,
-      object_sha256: sha256(changedBytes)
+      object_sha256: sha256(changedDownload.bytes),
+      object_content_type: changedDownload.contentType
     },
     passed:
       changedEntity.metadata.version > baseline.entity.metadata.version &&
       changedObject.metadata.version > baseline.object.metadata.version &&
-      changedBytes.equals(replacementBytes) &&
-      !changedBytes.equals(objectBytes)
+      changedDownload.bytes.equals(replacementBytes) &&
+      changedDownload.contentType === objectContentType &&
+      !changedDownload.bytes.equals(objectBytes)
   });
 }
 
@@ -504,7 +524,7 @@ async function downloadObject(label) {
   const response = await requestRaw(label, `/objects/${encodeURIComponent(objectID)}/download`, {
     expectedStatus: 200
   });
-  return response.body;
+  return { bytes: response.body, contentType: response.response.headers.get("content-type") ?? "" };
 }
 
 async function requestJSON(label, path, options = {}) {
@@ -669,8 +689,8 @@ async function validateBackupPair() {
 }
 
 async function restorePair(label) {
-  const started = new Date();
   await validateBackupPair();
+  const started = new Date();
   await postgresExecute(["dropdb", "-U", "atlas", "--if-exists", "atlas_core"], 60_000);
   await postgresExecute(["createdb", "-U", "atlas", "atlas_core"], 60_000);
   await postgresExecute(
@@ -920,7 +940,7 @@ async function waitForReadiness(baseURL, timeoutMs) {
 }
 
 async function apiContainerID() {
-  return (await composeCapture(["ps", "--quiet", "api"], 30_000)).trim();
+  return (await composeCapture(["ps", "--all", "--quiet", "api"], 30_000)).trim();
 }
 
 async function composeExecute(args, timeoutMs, options = {}) {

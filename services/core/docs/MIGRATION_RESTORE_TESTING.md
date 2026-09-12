@@ -29,8 +29,8 @@ The runner uses the current public Entity and Object HTTP interfaces and the sam
 
 1. Start empty PostgreSQL and MinIO volumes, provision the owned bucket, and let Core apply its ordered migrations.
 2. Confirm that the migration ledger begins at version 1, is contiguous, and contains checksums and schema fingerprints. The test relates versions to one another instead of fixing the current latest version in test support.
-3. Create one opaque Entity ID and upload one binary Object through Core. Both resource IDs are checked against the published 50-character limit before the first request. The file is below the configured 100 MiB upload limit.
-4. Snapshot the complete observable Entity and Object data and metadata, plus the Object byte count and SHA-256 digest. Parsed JSON is compared with `node:util` semantic deep equality, so member order has no effect.
+3. Create one opaque Entity ID and upload one binary Object with a nondefault media type through Core. Both resource IDs are checked against the published 50-character limit before the first request. The file is below the configured 100 MiB upload limit.
+4. Snapshot the complete observable Entity and Object data and metadata, plus the download media type, Object byte count, and SHA-256 digest. Parsed JSON is compared with `node:util` semantic deep equality, so member order has no effect.
 5. Restart only Core and confirm that the same container, project volumes, migration ledger, resource representations, and Object bytes remain.
 6. Stop Core, create a custom PostgreSQL archive and complete MinIO mirror, validate both members, make post-backup Entity and Object changes, then restore the pair.
 7. Confirm that the restored public resources, versions, timestamps, storage metadata, and bytes equal the pre-backup snapshot.
