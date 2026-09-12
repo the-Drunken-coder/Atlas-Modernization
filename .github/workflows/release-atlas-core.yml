@@ -934,6 +934,7 @@ jobs:
         if: needs.changelog.outputs.mode == 'prepare'
         env:
           ATLAS_CORE_ACCEPTANCE_DISPOSABLE: "1"
+          ATLAS_CORE_ACCEPTANCE_EXECUTION_MODE: "native"
           IMAGE_REFERENCE: ${{ steps.image.outputs.reference }}
           VERSION: ${{ inputs.version }}
         run: |
@@ -953,7 +954,7 @@ jobs:
             )
             package_integrity="sha512-$(openssl dgst -sha512 -binary "$package" | openssl base64 -A)"
             echo "package_integrity=$package_integrity" >> "$GITHUB_OUTPUT"
-            bash .github/scripts/test-atlas-core-package.sh "$package" "$VERSION" "$IMAGE_REFERENCE"
+            bash .github/scripts/test-atlas-core-package.sh "$package" "$VERSION" "$IMAGE_REFERENCE" linux/amd64
             source .github/scripts/atlas-core-release-files.sh
             validate_atlas_core_release_paths "Unexpected final release change" < <(git diff --name-only)
             git diff --check

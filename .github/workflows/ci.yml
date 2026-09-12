@@ -225,8 +225,19 @@ jobs:
           npm run plugins:release:test
 
   atlas-core-package:
-    name: atlas-core-package
-    runs-on: ubuntu-latest
+    name: atlas-core-package (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            platform: linux/amd64
+            architecture: amd64
+          - runner: ubuntu-24.04-arm
+            platform: linux/arm64
+            architecture: arm64
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -313,6 +324,8 @@ jobs:
       - name: Build the current Core candidate in an isolated registry
         id: candidate
         shell: bash
+        env:
+          CORE_IMAGE_PLATFORM: ${{ matrix.platform }}
         run: |
           set -euo pipefail
           registry_root="$RUNNER_TEMP/atlas-core-ci-registry"
@@ -345,7 +358,7 @@ jobs:
             sleep 1
           done
           image_tag="localhost:5000/atlas-core:ci-${GITHUB_SHA}"
-          docker build --platform linux/amd64 --target production \
+          docker build --platform "$CORE_IMAGE_PLATFORM" --target production \
             --tag "$image_tag" \
             --file services/core/docker/Dockerfile .
           docker push "$image_tag"
@@ -357,6 +370,8 @@ jobs:
         env:
           IMAGE_REFERENCE: ${{ steps.candidate.outputs.image_reference }}
           ATLAS_CORE_ACCEPTANCE_DISPOSABLE: "1"
+          ATLAS_CORE_ACCEPTANCE_EXECUTION_MODE: "native"
+          ATLAS_CORE_ACCEPTANCE_ARTIFACTS: ${{ runner.temp }}/atlas-core-package-acceptance
         run: |
           set -euo pipefail
           test -n "$IMAGE_REFERENCE"
@@ -378,7 +393,7 @@ jobs:
           pack_json="$(npm pack --workspace atlas-core --ignore-scripts --pack-destination "$package_dir" --json --silent)"
           package_path="$package_dir/$(jq -er '.[0].filename' <<< "$pack_json")"
           version="$(node -p "require('./surfaces/core-cli/package.json').version")"
-          bash .github/scripts/test-atlas-core-package.sh "$package_path" "$version" "$IMAGE_REFERENCE"
+          bash .github/scripts/test-atlas-core-package.sh "$package_path" "$version" "$IMAGE_REFERENCE" "${{ matrix.platform }}"
 
       - name: Clean up the isolated Core registry
         if: ${{ always() }}
@@ -388,6 +403,15 @@ jobs:
           docker rm --force atlas-core-ci-registry >/dev/null 2>&1
           sudo rm -f /etc/docker/certs.d/localhost:5000/ca.crt /usr/local/share/ca-certificates/atlas-core-ci.crt
           sudo update-ca-certificates >/dev/null 2>&1
+
+      - name: Upload Atlas Core package acceptance evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: atlas-core-package-${{ matrix.architecture }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/atlas-core-package-acceptance/
+          if-no-files-found: error
+          retention-days: 14
 
   meshtastic-link:
     name: meshtastic-link
