@@ -178,7 +178,25 @@ async function runMapWindowJourney({
       expected: "visible zoom-in control",
       page
     });
-    for (let index = 0; index < 16; index += 1) await zoomIn.click();
+    const routedBeforeKeyboardZoom = routedTileRequests;
+    const zoomPointerAttempt = await zoomIn
+      .click({ timeout: 2_000 })
+      .then(() => ({ activated: true }))
+      .catch((error) => ({ activated: false, error: errorMessage(error) }));
+    await zoomIn.focus();
+    const remainingZoomSteps = zoomPointerAttempt.activated ? 15 : 16;
+    for (let index = 0; index < remainingZoomSteps; index += 1) await zoomIn.press("Enter");
+    const keyboardZoomLoadedTiles = await waitUntil(() => routedTileRequests > routedBeforeKeyboardZoom, 10_000, signal);
+    record({
+      check: `${browserName} used the visible zoom control's keyboard interaction to continue the map-window journey`,
+      expected: { zoom_steps: 16, additional_fixture_tile_requests: true },
+      actual: {
+        zoom_steps: remainingZoomSteps + (zoomPointerAttempt.activated ? 1 : 0),
+        routed_tile_requests_before: routedBeforeKeyboardZoom,
+        routed_tile_requests_after: routedTileRequests
+      },
+      passed: keyboardZoomLoadedTiles
+    });
 
     const map = page.getByTestId("map-canvas");
     await checkVisible(record, map, {
@@ -415,6 +433,13 @@ async function runMapWindowJourney({
       check: `${browserName} restored the resized collapsed handle into a usable map window`,
       expected: "visible map window title bar",
       page
+    });
+
+    record({
+      check: `${browserName} activated the visible native MapLibre zoom control with a normal pointer click`,
+      expected: { activated: true },
+      actual: zoomPointerAttempt,
+      passed: zoomPointerAttempt.activated
     });
 
     writeJSON(runtimePath, {
