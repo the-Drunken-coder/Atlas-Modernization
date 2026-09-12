@@ -675,7 +675,7 @@ async function restoreMinioBackup() {
       'mc alias set -- atlas http://minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null',
       'mc mb --ignore-existing "atlas/$MINIO_BUCKET" >/dev/null',
       'mc rm --recursive --force "atlas/$MINIO_BUCKET" >/dev/null',
-      'mc mirror --overwrite --remove "/evidence/backup/minio/$MINIO_BUCKET" "atlas/$MINIO_BUCKET"',
+      'mc mirror --overwrite --remove "/evidence/backup/minio/$MINIO_BUCKET" "atlas/$MINIO_BUCKET" >&2',
       'mc diff "/evidence/backup/minio/$MINIO_BUCKET" "atlas/$MINIO_BUCKET"'
     ].join("\n"),
     "minio-restore.log",
