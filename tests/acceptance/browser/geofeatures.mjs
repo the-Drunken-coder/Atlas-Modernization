@@ -1,5 +1,6 @@
 import { appendFileSync, existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { AtlasAPIError, AtlasClient } from "@the-drunken-coder/atlas-sdk";
 import { chromium, webkit } from "playwright";
 import { runAcceptance } from "../support/stack.mjs";
@@ -1122,7 +1123,7 @@ function summarizeEntity(entity) {
 }
 
 function sameGeometry(actual, expected) {
-  return JSON.stringify(actual) === JSON.stringify(expected);
+  return isDeepStrictEqual(actual, expected);
 }
 
 function sameCoordinates(actual, expected) {
