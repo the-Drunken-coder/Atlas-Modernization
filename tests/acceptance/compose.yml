@@ -1,0 +1,101 @@
+services:
+  api:
+    build:
+      context: ../..
+      dockerfile: services/core/docker/Dockerfile
+      target: development
+    environment:
+      DATABASE_URL: postgres://atlas:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/atlas_core
+      DATABASE_RECREATE_ON_STARTUP: "false"
+      ENABLE_API_AUTH: "true"
+      API_AUTH_KEY: ${API_AUTH_KEY:?API_AUTH_KEY must be set}
+      ATLAS_ADMIN_PASSWORD: ${ATLAS_ADMIN_PASSWORD:?ATLAS_ADMIN_PASSWORD must be set}
+      CORS_ORIGINS: ${ATLAS_ACCEPTANCE_CORS_ORIGINS:-http://127.0.0.1:4173}
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:?MINIO_ROOT_USER must be set}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set}
+      MINIO_BUCKET: atlas-media
+      MINIO_SECURE: "false"
+      SERVER_PORT: "8000"
+    ports:
+      - "127.0.0.1:${ATLAS_ACCEPTANCE_CORE_PORT:?ATLAS_ACCEPTANCE_CORE_PORT must be set}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8000/readiness"]
+      interval: 2s
+      timeout: 2s
+      retries: 45
+      start_period: 5s
+    labels:
+      io.atlas.acceptance.run: ${ATLAS_ACCEPTANCE_RUN_ID:?ATLAS_ACCEPTANCE_RUN_ID must be set}
+
+  postgres:
+    image: postgres:15@sha256:1b92e7a80c021647bf70f5d3eb66066a998e4f5cf43c07bb9dc9f729782cf88e
+    environment:
+      POSTGRES_DB: atlas_core
+      POSTGRES_USER: atlas
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      POSTGRES_INITDB_ARGS: "--auth-local=md5 --auth-host=md5"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U atlas -d atlas_core"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    labels:
+      io.atlas.acceptance.run: ${ATLAS_ACCEPTANCE_RUN_ID:?ATLAS_ACCEPTANCE_RUN_ID must be set}
+
+  minio:
+    image: quay.io/minio/minio:RELEASE.2024-01-31T20-20-33Z@sha256:4092433a77e510826874b36f369696df43407a763d7f901a61d74e83e6fd95bc
+    command: server /data
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER must be set}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set}
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+      start_period: 3s
+    labels:
+      io.atlas.acceptance.run: ${ATLAS_ACCEPTANCE_RUN_ID:?ATLAS_ACCEPTANCE_RUN_ID must be set}
+
+  minio-init:
+    image: quay.io/minio/mc:RELEASE.2024-01-31T08-59-40Z@sha256:c084c9a67c7a9ed5f37cc7f2a905010861aaa882bec76da10352305c9709b6d2
+    restart: "no"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER must be set}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set}
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        set -eu
+        mc alias set acceptance http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" >/dev/null
+        mc mb --ignore-existing acceptance/atlas-media >/dev/null
+        mc anonymous set none acceptance/atlas-media >/dev/null
+    labels:
+      io.atlas.acceptance.run: ${ATLAS_ACCEPTANCE_RUN_ID:?ATLAS_ACCEPTANCE_RUN_ID must be set}
+
+volumes:
+  postgres_data:
+    labels:
+      io.atlas.acceptance.run: ${ATLAS_ACCEPTANCE_RUN_ID:?ATLAS_ACCEPTANCE_RUN_ID must be set}
+  minio_data:
+    labels:
+      io.atlas.acceptance.run: ${ATLAS_ACCEPTANCE_RUN_ID:?ATLAS_ACCEPTANCE_RUN_ID must be set}
+
+networks:
+  default:
+    labels:
+      io.atlas.acceptance.run: ${ATLAS_ACCEPTANCE_RUN_ID:?ATLAS_ACCEPTANCE_RUN_ID must be set}
