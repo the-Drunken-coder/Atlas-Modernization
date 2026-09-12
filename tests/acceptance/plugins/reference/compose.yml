@@ -3,7 +3,7 @@ services:
     environment:
       ATLAS_PLUGIN_CONFIG_DIR: /app/plugin-endpoints
     volumes:
-      - ./plugins/reference/core-endpoint.json:/app/plugin-endpoints/reference.json:ro
+      - ../../plugins/reference/core-endpoint.json:/app/plugin-endpoints/reference.json:ro
     depends_on:
       reference-plugin:
         condition: service_healthy
@@ -16,7 +16,7 @@ services:
     environment:
       ATLAS_SOURCE_CONNECTOR_CONFIG_DIR: /app/source-connectors
     volumes:
-      - ./plugins/reference/source-connector.json:/app/source-connectors/reference.json:ro
+      - ../../plugins/reference/source-connector.json:/app/source-connectors/reference.json:ro
     depends_on:
       reference-source:
         condition: service_healthy

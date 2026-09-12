@@ -1,4 +1,8 @@
-import { AtlasClient, isAtlasAPIError } from "@the-drunken-coder/atlas-sdk";
+import {
+  AtlasClient,
+  isAtlasAPIError,
+  isRFC3339Timestamp,
+} from "@the-drunken-coder/atlas-sdk";
 import { isDeepStrictEqual } from "node:util";
 import {
   runPluginAcceptance,
@@ -469,7 +473,7 @@ function optionalMatches(
 }
 
 function isTimestamp(value) {
-  return typeof value === "string" && Number.isFinite(Date.parse(value));
+  return isRFC3339Timestamp(value);
 }
 
 function isLaterTimestamp(actual, before) {
