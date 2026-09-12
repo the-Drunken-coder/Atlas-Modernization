@@ -223,7 +223,7 @@ describe("MapView wheel interaction", () => {
     }
   });
 
-  it("selects the raw pointer target after targeted wheel zoom settles", async () => {
+  it("keeps Geo Features selectable after wheel zoom without capturing the hover cursor", async () => {
     const { canvas, map, onSelectEntity } = renderMapView({
       sources: buildMapSources(
         [
@@ -247,7 +247,11 @@ describe("MapView wheel interaction", () => {
     });
 
     firePointerMove(canvas, { clientX: 80, clientY: 100 });
-    await waitFor(() => expect(document.querySelector(".map-reticle")).toHaveClass("map-reticle--targeted"));
+    await waitFor(() => expect(document.querySelector(".map-reticle")).toBeInTheDocument());
+    const reticle = document.querySelector<HTMLElement>(".map-reticle");
+    expect(reticle).not.toHaveClass("map-reticle--targeted");
+    expect(reticle?.style.getPropertyValue("--map-reticle-x")).toBe("70px");
+    expect(reticle?.style.getPropertyValue("--map-reticle-y")).toBe("80px");
 
     vi.useFakeTimers();
     try {
@@ -268,5 +272,6 @@ describe("MapView wheel interaction", () => {
     );
     expect(onSelectEntity).toHaveBeenCalledWith("geo-raw");
     expect(onSelectEntity).not.toHaveBeenCalledWith("geo-visual");
+    expect(map.zoomTo).not.toHaveBeenCalled();
   });
 });

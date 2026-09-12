@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { AtlasClient, type FeedEvent, type TaskResource } from "../src";
+import { AtlasClient, type TaskResource } from "../src";
 import { ObjectContentCache, ResourceCache } from "../src/cache.js";
 import { createAtlasClient } from "./support/client.js";
 import { entity, FakeCore, metadata, object, task } from "./support/fake-core.js";
@@ -103,6 +103,46 @@ describe("AtlasClient sync: cache projection and reads", () => {
     expect(core.requests).toContain(`/queries/changed-since?since_version=${deletion.version}`);
   });
 
+  it("does not restore a resource from a point read started before hydration", async () => {
+    const core = new FakeCore();
+    const original = core.upsertEntity(entity("asset-read-across-hydration"));
+    let releaseRead!: () => void;
+    const readGate = new Promise<void>((resolve) => {
+      releaseRead = resolve;
+    });
+    let readCaptured!: () => void;
+    const captured = new Promise<void>((resolve) => {
+      readCaptured = resolve;
+    });
+    const fetchImpl: typeof fetch = async (url, init) => {
+      const response = await core.fetch(String(url), init);
+      if (new URL(String(url)).pathname === `/entities/${original.entity_id}` && init?.method === "GET") {
+        readCaptured();
+        await readGate;
+      }
+      return response;
+    };
+    const client = createAtlasClient(core, { fetch: fetchImpl, sync: "all", pollIntervalMs: 0 });
+    const read = client.entities.get(original.entity_id);
+    await captured;
+    core.deleteEntity(original.entity_id);
+
+    await client.sync.start();
+    const hydrated = client.sync.snapshot();
+    expect(hydrated.entities).toEqual({});
+    const snapshots = vi.fn();
+    client.sync.watchSnapshot(snapshots);
+    releaseRead();
+
+    await expect(read).resolves.toEqual(original);
+    expect(client.sync.snapshot()).toBe(hydrated);
+    expect(snapshots).not.toHaveBeenCalled();
+
+    const recreated = core.upsertEntity(entity(original.entity_id));
+    await expect(client.entities.get(original.entity_id, { fresh: true })).resolves.toEqual(recreated);
+    expect(client.sync.snapshot().entities[original.entity_id]).toEqual(recreated);
+  });
+
   it("does not advance the global change cursor from optimistic local writes", async () => {
     const core = new FakeCore();
     const baseline = core.upsertEntity(entity("asset-baseline-write"));
@@ -180,13 +220,14 @@ describe("AtlasClient sync: cache projection and reads", () => {
     const core = new FakeCore();
     const original = core.upsertEntity(entity("asset-stale-delete"));
     const client = createAtlasClient(core, {
+      WebSocket: core.attachWebSocketGlobal(),
       sync: "all",
       pollIntervalMs: 0
     });
     await client.sync.start();
-    const applyFeedEvent = (
-      client as unknown as { engine: { applyEvent(event: FeedEvent): void } }
-    ).engine.applyEvent.bind((client as unknown as { engine: object }).engine);
+    const newer = core.upsertEntity({ ...original, alias: "fresh point read" });
+    await client.entities.get(original.entity_id, { fresh: true });
+    expect(client.sync.status().lastVersion).toBe(original.metadata.version);
     const watch = vi.fn();
     client.entities.watch(original.entity_id, watch);
 
@@ -196,12 +237,15 @@ describe("AtlasClient sync: cache projection and reads", () => {
     core.events = core.events.filter((event) => event.version !== authoritativeDelete.version);
     const recreated = core.upsertEntity({ ...entity(original.entity_id), alias: "authoritative but suppressed" });
 
-    applyFeedEvent({
-      event: "delete",
-      resource_type: "entity",
-      id: original.entity_id,
-      version: original.metadata.version
-    });
+    core.emit(
+      {
+        event: "delete",
+        resource_type: "entity",
+        id: original.entity_id,
+        version: newer.metadata.version
+      },
+      { record: false }
+    );
     await client.changedSince();
 
     expect(client.sync.snapshot().entities[original.entity_id]).toBeUndefined();
@@ -211,24 +255,33 @@ describe("AtlasClient sync: cache projection and reads", () => {
 
     const confirmingDelete = core.deleteEntity(original.entity_id);
     if (!confirmingDelete) throw new Error("fake core did not record confirming delete event");
-    applyFeedEvent(confirmingDelete);
+    core.emit(confirmingDelete, { record: false });
     const visible = core.upsertEntity({ ...recreated, alias: "visible after authoritative delete" });
-    applyFeedEvent({
-      event: "create",
-      resource_type: "entity",
-      id: visible.entity_id,
-      version: visible.metadata.version,
-      resource: visible
-    });
-    expect(client.sync.snapshot().entities[visible.entity_id]).toEqual(visible);
+    core.emit(
+      {
+        event: "create",
+        resource_type: "entity",
+        id: visible.entity_id,
+        version: visible.metadata.version,
+        resource: visible
+      },
+      { record: false }
+    );
+    await vi.waitFor(() => expect(client.sync.snapshot().entities[visible.entity_id]).toEqual(visible));
     expect(watch).toHaveBeenCalledTimes(2);
   });
 
-  it("rolls back an in-flight local delete when HTTP fails", async () => {
+  it.each(["update", "delete"] as const)("accepts a remote %s after a failed local delete", async (eventType) => {
     const core = new FakeCore();
     const original = core.upsertEntity(entity("asset-delete-http-failure"));
+    let failDelete = true;
     const fetchImpl: typeof fetch = async (url, init) => {
-      if (new URL(String(url)).pathname === `/entities/${original.entity_id}` && init?.method === "DELETE") {
+      if (
+        failDelete &&
+        new URL(String(url)).pathname === `/entities/${original.entity_id}` &&
+        init?.method === "DELETE"
+      ) {
+        failDelete = false;
         throw new Error("delete request failed");
       }
       return core.fetch(String(url), init);
@@ -248,9 +301,28 @@ describe("AtlasClient sync: cache projection and reads", () => {
 
     expect(client.sync.snapshot().entities[original.entity_id]).toEqual(original);
     expect(watch).not.toHaveBeenCalled();
-    const cache = (client as unknown as { engine: { cache: ResourceCache } }).engine.cache;
-    expect(cache.pendingDeletes).toEqual(new Set());
-    expect(cache.locallyNotifiedDeletes).toEqual(new Set());
+
+    if (eventType === "update") {
+      const updated = core.upsertEntity({ ...original, alias: "remote update after failure" });
+      core.emit(core.events.at(-1)!, { record: false });
+      await vi.waitFor(() => expect(client.sync.snapshot().entities[original.entity_id]).toEqual(updated));
+      expect(watch).toHaveBeenCalledTimes(1);
+      expect(watch.mock.calls[0]).toEqual([updated, expect.objectContaining({ event: "update" })]);
+      return;
+    }
+
+    const remoteDelete = core.deleteEntity(original.entity_id);
+    if (!remoteDelete) throw new Error("fake core did not record the remote delete");
+    core.emit(remoteDelete, { record: false });
+    await vi.waitFor(() => expect(watch).toHaveBeenCalledTimes(1));
+    expect(client.sync.snapshot().entities[original.entity_id]).toBeUndefined();
+
+    const recreated = core.createEntity({ entity_id: original.entity_id, entity_type: "asset" });
+    core.emit(core.events.at(-1)!, { record: false });
+    await vi.waitFor(() => expect(client.sync.snapshot().entities[original.entity_id]).toEqual(recreated));
+    expect(watch).toHaveBeenCalledTimes(2);
+    expect(watch.mock.calls[0][1]).toMatchObject({ event: "delete" });
+    expect(watch.mock.calls[1]).toEqual([recreated, expect.objectContaining({ event: "create" })]);
   });
 
   it("does not double-notify when feed delete wins an in-flight local delete", async () => {
@@ -288,9 +360,12 @@ describe("AtlasClient sync: cache projection and reads", () => {
 
     await expect(deletion).resolves.toBeUndefined();
     expect(watch).toHaveBeenCalledWith(undefined, deleteEvent);
-    const cache = (client as unknown as { engine: { cache: ResourceCache } }).engine.cache;
-    expect(cache.pendingDeletes).toEqual(new Set());
-    expect(cache.locallyNotifiedDeletes).toEqual(new Set());
+
+    const recreated = core.createEntity({ entity_id: original.entity_id, entity_type: "asset" });
+    core.emit(core.events.at(-1)!, { record: false });
+    await vi.waitFor(() => expect(client.sync.snapshot().entities[original.entity_id]).toEqual(recreated));
+    expect(watch).toHaveBeenCalledTimes(2);
+    expect(watch.mock.calls[1]).toEqual([recreated, expect.objectContaining({ event: "create" })]);
   });
 
   it("keeps a newer same-ID recreation visible when it races an in-flight delete", async () => {
@@ -332,9 +407,6 @@ describe("AtlasClient sync: cache projection and reads", () => {
     expect(watch).toHaveBeenCalledTimes(2);
     expect(watch.mock.calls[0]).toEqual([undefined, deleteEvent]);
     expect(watch.mock.calls[1]).toEqual([recreated, expect.objectContaining({ event: "create" })]);
-    const cache = (client as unknown as { engine: { cache: ResourceCache } }).engine.cache;
-    expect(cache.pendingDeletes).toEqual(new Set());
-    expect(cache.locallyNotifiedDeletes).toEqual(new Set());
   });
 
   it("keeps a fresh point read visible after an older delete response arrives", async () => {
@@ -546,7 +618,7 @@ describe("AtlasClient sync: cache projection and reads", () => {
   it("keeps a recreated hydration entry after an older delete finishes", () => {
     const cache = new ResourceCache();
     const original = entity("asset-hydrated-recreated");
-    cache.cacheResource("entity", original.entity_id, original);
+    cache.applyPointRead(cache.beginPointRead("entity", original.entity_id), original);
     const deletion = cache.beginLocalDelete("entity", original.entity_id);
     const recreated = { ...original, alias: "hydrated recreation", metadata: metadata(2) };
 
@@ -971,7 +1043,7 @@ describe("AtlasClient sync: cache projection and reads", () => {
       metadata: metadata(1)
     };
 
-    expect(cache.cacheResource("entity", source.entity_id, source)).toBe(true);
+    expect(cache.applyPointRead(cache.beginPointRead("entity", source.entity_id), source)).toBe(true);
     const cached = cache.value("entity", source.entity_id);
     const snapshot = cache.snapshot();
 
@@ -998,7 +1070,7 @@ describe("AtlasClient sync: cache projection and reads", () => {
     const extra = JSON.parse('{"__proto__":{"sentinel":true}}') as Record<string, { sentinel: boolean }>;
     const detail = { ...object("object-proto-key"), extra, metadata: metadata(1) };
 
-    expect(cache.cacheResource("object", detail.object_id, detail, { detail: true })).toBe(true);
+    expect(cache.applyPointRead(cache.beginPointRead("object", detail.object_id), detail, { detail: true })).toBe(true);
     const cached = cache.objectDetail(detail.object_id);
 
     expect(cached).toBeDefined();
@@ -1011,29 +1083,30 @@ describe("AtlasClient sync: cache projection and reads", () => {
     const cache = new ResourceCache();
     const cachedEntity = { ...entity("asset-detail-reference"), metadata: metadata(1) };
     const summary = { ...object("object-detail-upgrade"), metadata: metadata(2) };
-    cache.cacheResource("entity", cachedEntity.entity_id, cachedEntity);
-    cache.cacheResource("object", summary.object_id, summary);
+    cache.applyPointRead(cache.beginPointRead("entity", cachedEntity.entity_id), cachedEntity);
+    cache.applyPointRead(cache.beginPointRead("object", summary.object_id), summary);
     const beforeDetail = cache.snapshot();
     const detail = { ...summary, extra: { nested: { confidence: 0.91 } } };
 
     expect(cache.objectDetail(summary.object_id)).toBeUndefined();
 
-    expect(cache.cacheResource("object", detail.object_id, detail, { detail: true })).toBe(true);
+    expect(cache.applyPointRead(cache.beginPointRead("object", detail.object_id), detail, { detail: true })).toBe(true);
     const afterDetail = cache.snapshot();
 
     expect(afterDetail).not.toBe(beforeDetail);
     expect(afterDetail.entities).toBe(beforeDetail.entities);
     expect(afterDetail.objects).not.toBe(beforeDetail.objects);
     expect(cache.value("object", detail.object_id)).toBe(afterDetail.objects[detail.object_id]);
-    expect(cache.entry("object", detail.object_id)).toMatchObject({ version: 2, detail: true });
     expect(cache.objectDetail(detail.object_id)).toBe(afterDetail.objects[detail.object_id]);
     expect(afterDetail.objects[detail.object_id]).toMatchObject({ extra: detail.extra });
     expect(Object.isFrozen(Reflect.get(afterDetail.objects[detail.object_id], "extra").nested)).toBe(true);
 
     const stale = { ...summary, type: "stale", metadata: metadata(1) };
-    expect(cache.cacheResource("object", stale.object_id, stale, { detail: true })).toBe(false);
-    expect(cache.cacheResource("object", summary.object_id, summary)).toBe(false);
-    expect(cache.cacheResource("object", detail.object_id, detail, { detail: true })).toBe(false);
+    expect(cache.applyPointRead(cache.beginPointRead("object", stale.object_id), stale, { detail: true })).toBe(false);
+    expect(cache.applyPointRead(cache.beginPointRead("object", summary.object_id), summary)).toBe(false);
+    expect(cache.applyPointRead(cache.beginPointRead("object", detail.object_id), detail, { detail: true })).toBe(
+      false
+    );
     expect(cache.snapshot()).toBe(afterDetail);
     expect(cache.value("object", detail.object_id)).toMatchObject({ type: summary.type, extra: detail.extra });
   });
@@ -1113,6 +1186,114 @@ describe("AtlasClient sync: cache projection and reads", () => {
     resolveWrite(Response.json(original));
     await expect(write).resolves.toEqual(original);
     expect(client.sync.snapshot().entities[original.entity_id]).toEqual(newer);
+  });
+
+  it("does not let a delayed write response restore a locally deleted resource", async () => {
+    const core = new FakeCore();
+    const original = core.upsertEntity(entity("asset-write-after-delete"));
+    let writeResponse: Response | undefined;
+    let releaseWrite!: () => void;
+    const writeGate = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+    const fetchImpl: typeof fetch = async (url, init) => {
+      if (new URL(String(url)).pathname === `/entities/${original.entity_id}` && init?.method === "PATCH") {
+        writeResponse = await core.fetch(String(url), init);
+        await writeGate;
+        return writeResponse;
+      }
+      return core.fetch(String(url), init);
+    };
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: fetchImpl,
+      WebSocket: core.attachWebSocketGlobal(),
+      sync: "all",
+      pollIntervalMs: 0
+    });
+    await client.sync.start();
+    const watch = vi.fn();
+    client.entities.watch(original.entity_id, watch);
+
+    const write = client.entities.update(original.entity_id, { alias: "delayed write" });
+    await vi.waitFor(() => expect(writeResponse).toBeDefined());
+    await client.entities.delete(original.entity_id);
+    releaseWrite();
+
+    await expect(write).resolves.toMatchObject({ alias: "delayed write" });
+    expect(client.sync.snapshot().entities).not.toHaveProperty(original.entity_id);
+    expect(watch).toHaveBeenCalledOnce();
+    expect(watch).toHaveBeenCalledWith(undefined, expect.objectContaining({ event: "local_delete" }));
+
+    await client.changedSince();
+    const recreated = core.createEntity({ entity_id: original.entity_id, entity_type: "asset" });
+    core.emit(core.events.at(-1)!, { record: false });
+    await vi.waitFor(() => expect(client.sync.snapshot().entities[original.entity_id]).toEqual(recreated));
+    expect(watch).toHaveBeenCalledTimes(2);
+    expect(watch.mock.calls[1]).toEqual([recreated, expect.objectContaining({ event: "create" })]);
+  });
+
+  it.each([false, true])("merges delayed Object details only while live (deleted: %s)", async (deleted) => {
+    const core = new FakeCore();
+    const objectID = "object-create-after-delete";
+    let createResponse: Response | undefined;
+    let releaseCreate!: () => void;
+    const createGate = new Promise<void>((resolve) => {
+      releaseCreate = resolve;
+    });
+    const fetchImpl: typeof fetch = async (url, init) => {
+      if (new URL(String(url)).pathname === "/objects" && init?.method === "POST") {
+        createResponse = await core.fetch(String(url), init);
+        await createGate;
+        return createResponse;
+      }
+      return core.fetch(String(url), init);
+    };
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: fetchImpl,
+      WebSocket: core.attachWebSocketGlobal(),
+      sync: "all",
+      pollIntervalMs: 0
+    });
+    await client.sync.start();
+    const watch = vi.fn();
+    client.objects.watch(objectID, watch);
+
+    const creation = client.objects.create({ object_id: objectID, extra: { label: "delayed detail" } });
+    await vi.waitFor(() => expect(createResponse).toBeDefined());
+    const createEvent = core.events.at(-1);
+    if (!createEvent || createEvent.event !== "create" || createEvent.resource_type !== "object") {
+      throw new Error("fake core did not record the Object create event");
+    }
+    core.emit(createEvent, { record: false });
+    await vi.waitFor(() => expect(client.sync.snapshot().objects[objectID]).toEqual(createEvent.resource));
+
+    if (deleted) {
+      await client.objects.delete(objectID);
+      expect(client.sync.snapshot().objects).not.toHaveProperty(objectID);
+      expect(watch).toHaveBeenCalledTimes(2);
+    }
+    releaseCreate();
+
+    await expect(creation).resolves.toMatchObject({ object_id: objectID, extra: { label: "delayed detail" } });
+    if (!deleted) {
+      expect(client.sync.snapshot().objects[objectID]).toMatchObject({ extra: { label: "delayed detail" } });
+      core.requests = [];
+      await expect(client.objects.get(objectID)).resolves.toMatchObject({ extra: { label: "delayed detail" } });
+      expect(core.requests).toEqual([]);
+      return;
+    }
+    expect(client.sync.snapshot().objects).not.toHaveProperty(objectID);
+    expect(watch).toHaveBeenCalledTimes(2);
+
+    const confirmingDelete = core.deleteEvents.at(-1);
+    if (!confirmingDelete) throw new Error("fake core did not record the confirming Object delete");
+    core.emit(confirmingDelete, { record: false });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(client.sync.snapshot().objects).not.toHaveProperty(objectID);
+    expect(watch).toHaveBeenCalledTimes(2);
   });
 
   it("does not let a delayed Task response regress a newer feed state", async () => {
@@ -1248,34 +1429,37 @@ describe("AtlasClient sync: cache projection and reads", () => {
   it("requires canonical cache identity and normalizes watcher filters", async () => {
     const cache = new ResourceCache();
     const cached = entity("asset-cache-canonical");
-    expect(() => cache.cacheResource("entity", " asset-cache-canonical ", cached)).toThrow("does not match cache id");
-    expect(cache.cacheResource("entity", "asset-cache-canonical", cached)).toBe(true);
+    expect(() => cache.beginPointRead("entity", " asset-cache-canonical ")).toThrow("must be canonical");
+    expect(cache.applyPointRead(cache.beginPointRead("entity", "asset-cache-canonical"), cached)).toBe(true);
     expect(cache.value("entity", "asset-cache-canonical")).toEqual(cached);
     expect(cache.snapshot().entities).toEqual({ [cached.entity_id]: cached });
 
     const core = new FakeCore();
-    const client = createAtlasClient(core, { sync: "all", pollIntervalMs: 0 });
+    const client = createAtlasClient(core, {
+      WebSocket: core.attachWebSocketGlobal(),
+      sync: "all",
+      pollIntervalMs: 0
+    });
     await client.sync.start();
-    const applyFeedEvent = (
-      client as unknown as { engine: { applyEvent(event: FeedEvent): void } }
-    ).engine.applyEvent.bind((client as unknown as { engine: object }).engine);
     const entityWatch = vi.fn();
     const taskWatch = vi.fn();
     client.watch({ filter: "id", resource_type: "entity", id: " asset-watch-canonical " }, entityWatch);
     client.watch({ filter: "tasks_for_asset", asset_id: " asset-watch-canonical " }, taskWatch);
 
     const watchedEntity = core.upsertEntity(entity("asset-watch-canonical"));
-    applyFeedEvent(core.events.at(-1)!);
+    core.emit(core.events.at(-1)!, { record: false });
     const watchedTask = core.upsertTask(task("task-watch-canonical", "asset-watch-canonical"));
-    applyFeedEvent(core.events.at(-1)!);
+    core.emit(core.events.at(-1)!, { record: false });
 
-    expect(entityWatch).toHaveBeenCalledWith(
-      watchedEntity,
-      expect.objectContaining({ resource_type: "entity", id: "asset-watch-canonical" })
-    );
-    expect(taskWatch).toHaveBeenCalledWith(
-      watchedTask,
-      expect.objectContaining({ resource_type: "task", id: "task-watch-canonical" })
-    );
+    await vi.waitFor(() => {
+      expect(entityWatch).toHaveBeenCalledWith(
+        watchedEntity,
+        expect.objectContaining({ resource_type: "entity", id: "asset-watch-canonical" })
+      );
+      expect(taskWatch).toHaveBeenCalledWith(
+        watchedTask,
+        expect.objectContaining({ resource_type: "task", id: "task-watch-canonical" })
+      );
+    });
   });
 });

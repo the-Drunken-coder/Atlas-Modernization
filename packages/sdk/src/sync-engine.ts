@@ -1,4 +1,4 @@
-import { type CacheResourceOptions, embeddedResourceVersion, ResourceCache } from "./cache.js";
+import { embeddedResourceVersion, ResourceCache, type ResourceChange } from "./cache.js";
 import { sanitizeErrorMessage } from "./error-sanitizer.js";
 import { assertRevision, FeedConnectionManager } from "./feed-connection.js";
 import { AtlasAPIError, type HttpTransport, type ResponseValidator, resourceInstanceTokenHeaders } from "./http.js";
@@ -16,11 +16,9 @@ import { normalizeResourceID } from "./resource-id.js";
 import {
   assertResourceMatchesSubscription,
   covers,
-  localDeleteEvent,
   matchesSubscription,
   normalizeSubscription,
   parseSubscriptionKey,
-  resourceCacheKey,
   resourceID,
   resourceUpsertEvent,
   subscriptionKey
@@ -138,6 +136,7 @@ export class SyncEngine {
   private reconnecting = false;
   private reconnectAfterRecovery = false;
   private lastErrorCode: SyncErrorCode | undefined;
+  private feedCursor = 0;
   constructor(options: {
     transport: HttpTransport;
     feed: FeedConnectionManager;
@@ -211,7 +210,7 @@ export class SyncEngine {
       healthy: this.health === "healthy",
       degraded: this.health === "degraded",
       ...(this.lastErrorCode ? { error: SYNC_ERROR_MESSAGES[this.lastErrorCode] } : {}),
-      lastVersion: this.cache.lastVersion,
+      lastVersion: this.feedCursor,
       subscriptions: [...this.subscriptions]
     };
   }
@@ -332,10 +331,10 @@ export class SyncEngine {
   }
 
   changedSince(): Promise<boolean> {
-    return this.changedSinceForGeneration(this.lifecycleGeneration, this.cache.lastVersion);
+    return this.changedSinceForGeneration(this.lifecycleGeneration, this.feedCursor);
   }
 
-  private changedSinceForGeneration(generation: number, sinceVersion = this.cache.lastVersion): Promise<boolean> {
+  private changedSinceForGeneration(generation: number, sinceVersion = this.feedCursor): Promise<boolean> {
     return this.recovery.start(
       generation,
       sinceVersion,
@@ -357,7 +356,7 @@ export class SyncEngine {
         isCurrentOperation
       );
       if (!isCurrentOperation() || result.superseded) return false;
-      this.cache.lastVersion = Math.max(this.cache.lastVersion, result.snapshotVersion ?? sinceVersion);
+      this.feedCursor = Math.max(this.feedCursor, result.snapshotVersion ?? sinceVersion);
       this.markSynchronized();
       if (this.lastErrorCode === "recovery-request-failed") this.lastErrorCode = undefined;
       return true;
@@ -380,14 +379,14 @@ export class SyncEngine {
     isCurrentOperation: () => boolean
   ): ReturnType<RecoveryRunner["run"]> {
     try {
-      return await this.recoveryRunner.run(sinceVersion, isCurrentOperation, (event) => this.applyEvent(event));
+      return await this.recoveryRunner.run(sinceVersion, isCurrentOperation, (event) => this.applyFeedEvent(event));
     } catch (error) {
       if (!(error instanceof AtlasAPIError) || error.errorCode !== "CURSOR_EXPIRED") throw error;
       const hydratedVersion = await this.loadHydratedSnapshot(generation, isCurrentOperation, operation);
       if (!isCurrentOperation() || hydratedVersion === undefined) {
         return { snapshotVersion: hydratedVersion, superseded: true };
       }
-      return this.recoveryRunner.run(hydratedVersion, isCurrentOperation, (event) => this.applyEvent(event));
+      return this.recoveryRunner.run(hydratedVersion, isCurrentOperation, (event) => this.applyFeedEvent(event));
     }
   }
 
@@ -396,16 +395,11 @@ export class SyncEngine {
   }
 
   async readEntity(id: string, options?: ReadOptions): Promise<EntityResource> {
-    const cached = this.cache.entry("entity", id);
-    if (
-      !options?.fresh &&
-      this.canServeFromCache({ filter: "id", resource_type: "entity", id }) &&
-      cached?.value &&
-      !cached.deleted
-    ) {
-      return cached.value;
+    const cached = this.cache.value("entity", id);
+    if (!options?.fresh && this.canServeFromCache({ filter: "id", resource_type: "entity", id }) && cached) {
+      return cached;
     }
-    const generation = this.cache.generation("entity", id);
+    const pointRead = this.cache.beginPointRead("entity", id);
     const entity = await this.transport.json(
       "GET",
       `/entities/${encodeURIComponent(id)}`,
@@ -415,20 +409,16 @@ export class SyncEngine {
       options?.signal
     );
     assertExpectedResourceID("entity", id, entity);
-    if (this.cache.cacheResource("entity", id, entity, { advanceCursor: false, generation })) this.notifySnapshot();
+    if (this.cache.applyPointRead(pointRead, entity)) this.notifySnapshot();
     return entity;
   }
 
   async readTask(id: string, options?: ReadOptions): Promise<TaskResource> {
-    const cached = this.cache.entry("task", id);
-    if (
-      !options?.fresh &&
-      this.canServeFromCache({ filter: "id", resource_type: "task", id }) &&
-      cached?.value &&
-      !cached.deleted
-    ) {
-      return cached.value;
+    const cached = this.cache.value("task", id);
+    if (!options?.fresh && this.canServeFromCache({ filter: "id", resource_type: "task", id }) && cached) {
+      return cached;
     }
+    const pointRead = this.cache.beginPointRead("task", id);
     const { value: task, version } = await this.transport.versionedJSON(
       "GET",
       `/tasks/${encodeURIComponent(id)}`,
@@ -438,8 +428,7 @@ export class SyncEngine {
     );
     assertExpectedResourceID("task", id, task);
     if (
-      this.cache.cacheResource("task", id, task, {
-        advanceCursor: false,
+      this.cache.applyPointRead(pointRead, task, {
         version,
         replaceSameVersion: options?.fresh === true
       })
@@ -460,19 +449,9 @@ export class SyncEngine {
       options.requestHeaders
     );
     if (expectedID !== undefined) assertExpectedResourceID("task", expectedID, task);
-    if (
-      this.cache.cacheResource("task", task.task_id, task, {
-        advanceCursor: false,
-        version
-      })
-    ) {
-      const cachedTask = this.cache.value("task", task.task_id)!;
-      this.notify(
-        resourceUpsertEvent("task", options.eventName ?? "update", task.task_id, version, cachedTask),
-        cachedTask
-      );
-      this.notifySnapshot();
-    }
+    this.deliverChange(
+      this.cache.applyWrite(resourceUpsertEvent("task", options.eventName ?? "update", task.task_id, version, task))
+    );
     return task;
   }
 
@@ -481,7 +460,7 @@ export class SyncEngine {
     if (!options?.fresh && this.canServeFromCache({ filter: "id", resource_type: "object", id }) && cached) {
       return cached;
     }
-    const generation = this.cache.generation("object", id);
+    const pointRead = this.cache.beginPointRead("object", id);
     const object = await this.transport.json(
       "GET",
       `/objects/${encodeURIComponent(id)}`,
@@ -491,8 +470,7 @@ export class SyncEngine {
       options?.signal
     );
     assertExpectedResourceID("object", id, object);
-    if (this.cache.cacheResource("object", id, object, { detail: true, advanceCursor: false, generation }))
-      this.notifySnapshot();
+    if (this.cache.applyPointRead(pointRead, object, { detail: true })) this.notifySnapshot();
     return object;
   }
 
@@ -514,10 +492,11 @@ export class SyncEngine {
       throw new TypeError(`Atlas ${type} response id ${id} does not match requested id ${expectedID}`);
     }
     const event = eventName ?? (method === "POST" ? "create" : "update");
-    this.applyEvent(resourceUpsertEvent(type, event, id, embeddedResourceVersion(type, resource), resource), {
-      detail: type === "object",
-      advanceCursor: false
-    });
+    this.deliverChange(
+      this.cache.applyWrite(resourceUpsertEvent(type, event, id, embeddedResourceVersion(type, resource), resource), {
+        detail: type === "object"
+      })
+    );
     return resource;
   }
 
@@ -538,15 +517,14 @@ export class SyncEngine {
       ifMatchVersion,
       signal
     );
-    this.applyEvent(
-      {
+    this.deliverChange(
+      this.cache.applyWrite({
         event: "update",
         resource_type: "entity",
         id: response.entity.entity_id,
         version: response.entity.metadata.version,
         resource: response.entity
-      },
-      { advanceCursor: false }
+      })
     );
     return response;
   }
@@ -571,10 +549,7 @@ export class SyncEngine {
       this.cache.cancelLocalDelete(localDelete);
       throw error;
     }
-    const previousVersion = this.cache.finishLocalDelete(localDelete);
-    if (previousVersion === undefined) return;
-    this.notify(localDeleteEvent(type, id, previousVersion), undefined);
-    this.notifySnapshot();
+    this.deliverChange(this.cache.finishLocalDelete(localDelete));
   }
 
   private async startSyncFromStopped(generation: number): Promise<void> {
@@ -712,7 +687,7 @@ export class SyncEngine {
     if (!isCurrentHydration()) return undefined;
     if (snapshotVersion === undefined) throw new Error("Atlas full-dataset response is missing a version watermark");
     this.cache.replaceHydratedResources({ entities, tasks, objects });
-    this.cache.lastVersion = snapshotVersion;
+    this.feedCursor = snapshotVersion;
     this.notifySnapshot();
     return snapshotVersion;
   }
@@ -720,14 +695,14 @@ export class SyncEngine {
   private async consumeFeedEvent(event: FeedEvent, generation: number, attempt: number): Promise<void> {
     await this.activeHydration?.promise;
     if (!this.isCurrentFeedConnection(generation, attempt)) return;
-    if (event.version <= this.cache.lastVersion) return;
-    if (event.version > this.cache.lastVersion + 1) {
+    if (event.version <= this.feedCursor) return;
+    if (event.version > this.feedCursor + 1) {
       this.health = "degraded";
       const recovered = await this.changedSinceForGeneration(generation);
       if (!recovered || !this.isCurrentFeedConnection(generation, attempt)) return;
     }
     if (!this.isCurrentFeedConnection(generation, attempt)) return;
-    this.applyEvent(event);
+    this.applyFeedEvent(event);
   }
 
   private async connectAndRecoverFeedForGeneration(
@@ -751,7 +726,7 @@ export class SyncEngine {
       events: [],
       bytes: 0
     };
-    const sinceVersion = this.cache.lastVersion;
+    const sinceVersion = this.feedCursor;
     this.feedRecoveryBuffer = buffer;
     let recoveryCompleted = false;
     try {
@@ -855,33 +830,10 @@ export class SyncEngine {
     this.reconnectTimer.clear();
   }
 
-  private applyEvent(event: FeedEvent, options?: CacheResourceOptions): void {
-    const advanceCursor = options?.advanceCursor !== false;
-    const key = resourceCacheKey(event.resource_type, event.id);
-    const pendingDelete = this.cache.pendingDeletes.has(key);
-    if (event.version <= this.cache.versionFor(event.resource_type, event.id)) {
-      this.advanceCursor(event, advanceCursor);
-      return;
-    }
-    if (pendingDelete && event.event === "update") {
-      this.advanceCursor(event, advanceCursor);
-      return;
-    }
-    if (event.event === "delete") {
-      this.cache.pendingDeletes.delete(key);
-      this.cache.markRemoteDelete(event.resource_type, event.id, event.version);
-      this.advanceCursor(event, advanceCursor);
-      const alreadyNotified = this.cache.locallyNotifiedDeletes.delete(key);
-      if (!alreadyNotified) {
-        this.notify(event, undefined);
-        this.notifySnapshot();
-      }
-      return;
-    }
-    this.cache.cacheResource(event.resource_type, event.id, event.resource, { ...options, version: event.version });
-    this.advanceCursor(event, advanceCursor);
-    this.notify(event, this.cache.value(event.resource_type, event.id));
-    this.notifySnapshot();
+  private applyFeedEvent(event: FeedEvent): void {
+    const change = this.cache.applyFeedEvent(event);
+    this.feedCursor = Math.max(this.feedCursor, event.version);
+    this.deliverChange(change);
   }
 
   private canServeFromCache(filter: AtlasSubscription): boolean {
@@ -896,10 +848,10 @@ export class SyncEngine {
     this.health = !this.syncRunning ? "idle" : hasAutomaticUpdates ? "healthy" : "degraded";
   }
 
-  private advanceCursor(event: FeedEvent, enabled: boolean): void {
-    if (enabled) {
-      this.cache.lastVersion = Math.max(this.cache.lastVersion, event.version);
-    }
+  private deliverChange(change: ResourceChange | undefined): void {
+    if (!change) return;
+    this.notify(change.event, change.resource);
+    this.notifySnapshot();
   }
 
   private notify(event: AtlasWatchEvent, resource: ResourceValue | undefined): void {
