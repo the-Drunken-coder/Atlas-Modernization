@@ -777,7 +777,7 @@ async function expectAPIExit(label, expectedLogText) {
       ["inspect", "--format", "{{.State.Status}}|{{.State.ExitCode}}", containerID],
       { cwd: repositoryRoot, timeoutMs: 30_000, signal: scenarioAbort.signal }
     );
-    state = result.stdout.trim();
+    state = result.stdout.toString("utf8").trim();
     if (result.code === 0 && state.startsWith("exited|")) break;
     await delay(250, scenarioAbort.signal);
   }
