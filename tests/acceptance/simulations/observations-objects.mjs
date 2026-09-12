@@ -561,12 +561,22 @@ async function recordPersistedObservations(
         return (
           observer?.entity_type === "asset" &&
           observer.alias === `Observer ${run.id} ${index + 1}` &&
-          observer.components.telemetry?.latitude === latitude &&
-          observer.components.telemetry?.longitude === longitude &&
-          isDeepStrictEqual(observer.components.geometry?.coordinates, [
-            longitude,
+          approximatelyEqual(
+            observer.components.telemetry?.latitude,
             latitude,
-          ])
+          ) &&
+          approximatelyEqual(
+            observer.components.telemetry?.longitude,
+            longitude,
+          ) &&
+          approximatelyEqual(
+            observer.components.geometry?.coordinates?.[0],
+            longitude,
+          ) &&
+          approximatelyEqual(
+            observer.components.geometry?.coordinates?.[1],
+            latitude,
+          )
         );
       }).every(Boolean) &&
       tracks.length === inputs.observations &&
@@ -836,6 +846,10 @@ function strictlyIncreasing(values) {
   return values.every(
     (value, index) => index === 0 || value > values[index - 1],
   );
+}
+
+function approximatelyEqual(actual, expected) {
+  return typeof actual === "number" && Math.abs(actual - expected) < 1e-12;
 }
 
 function parseJSON(raw, description) {
