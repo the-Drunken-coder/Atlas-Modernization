@@ -261,9 +261,9 @@ npm run test:portable-package --workspace atlas-core
 By default, each run writes `result.json` in a private uniquely named
 `$TMPDIR/atlas-core-portable-package-evidence-*/` directory. Set
 `ATLAS_CORE_PACKED_CLI_EVIDENCE` to an absolute JSON output path to override it.
-The file records the revision, Node runtime, host OS and architecture, native or
-emulated execution, each completed scenario, and the packed artifact's filename,
-SHA-1, and npm integrity hash. A failed run preserves its tarball next to the
+The file records the revision, Node runtime, host OS and architecture, native,
+translated, emulated, or unknown execution, each completed scenario, and the
+packed artifact's filename, SHA-1, and npm integrity hash. A failed run preserves its tarball next to the
 evidence file. The dedicated `CLI platform acceptance` workflow runs this check
 natively on the following GitHub-hosted runners and uploads that evidence for
 every run:

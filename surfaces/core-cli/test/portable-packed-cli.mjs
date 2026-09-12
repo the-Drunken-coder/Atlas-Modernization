@@ -1,5 +1,14 @@
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync
+} from "node:fs";
 import { release, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -45,9 +54,24 @@ function hostMachine() {
 }
 
 function executionMode() {
+  if (process.platform === "darwin") {
+    const translation = darwinTranslationState();
+    if (translation !== "native") return translation;
+  }
   const machine = hostMachine();
+  if (machine === "unavailable") return "unknown";
   const normalized = machine === "x86_64" ? "x64" : machine === "aarch64" ? "arm64" : machine;
   return normalized === process.arch ? "native" : "emulated";
+}
+
+function darwinTranslationState() {
+  const result = spawnSync("sysctl", ["-n", "sysctl.proc_translated"], { encoding: "utf8" });
+  const value = result.stdout?.trim();
+  if (result.status === 0 && value === "1") return "translated";
+  if (result.status === 0 && value === "0") return "native";
+  // Intel macOS reports the Rosetta-only OID as absent for native processes.
+  if (result.stderr?.includes("unknown oid")) return "native";
+  return "unknown";
 }
 
 function assertExpectedRuntime() {
@@ -111,6 +135,7 @@ function writeEvidence(extra) {
     )}\n`,
     { mode: 0o600 }
   );
+  chmodSync(evidencePath, 0o600);
 }
 
 try {
@@ -201,6 +226,8 @@ esac
 
   const validationOutput = runExpectingFailure(installedBin, ["init"], consumer, {
     ATLAS_CORE_HOME: fakeCoreHome,
+    DOCKER_CONTEXT: "",
+    DOCKER_HOST: "",
     PATH: `${fakeBin}:${process.env.PATH ?? ""}`
   });
   if (!validationOutput.includes("Atlas Core requires a Linux Docker daemon. Detected windows.")) {
