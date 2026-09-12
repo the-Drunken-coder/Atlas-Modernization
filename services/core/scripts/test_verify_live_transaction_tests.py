@@ -52,6 +52,25 @@ class LiveTransactionSelectionTest(unittest.TestCase):
                 ],
             )
 
+    def test_verify_rejects_skipped_child_of_selected_test(self) -> None:
+        package = "example/package"
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(EXPECTED, {package: {"TestOnly"}}, clear=True):
+            path = Path(temp_dir) / "live.json"
+            path.write_text(
+                "\n".join(
+                    json.dumps(event)
+                    for event in [
+                        {"Action": "skip", "Package": package, "Test": "TestOnly/child"},
+                        {"Action": "pass", "Package": package, "Test": "TestOnly"},
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                verify(path),
+                [f"selected live test skipped: {package} TestOnly/child"],
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

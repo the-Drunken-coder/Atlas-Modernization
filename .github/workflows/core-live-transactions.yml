@@ -22,7 +22,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: core-live-transactions-${{ github.workflow }}-${{ github.ref }}
+  group: core-live-transactions-${{ github.workflow }}-${{ github.ref }}-${{ (github.event_name == 'schedule' || inputs.mode == 'nightly') && 'nightly' || 'required' }}
   cancel-in-progress: true
 
 jobs:

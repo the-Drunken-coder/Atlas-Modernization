@@ -57,7 +57,7 @@ def verify(path: Path) -> list[str]:
         package = event.get("Package")
         test = event.get("Test")
         action = event.get("Action")
-        if not isinstance(package, str) or not isinstance(test, str) or "/" in test:
+        if not isinstance(package, str) or not isinstance(test, str):
             continue
         key = (package, test)
         if action == "pass":
@@ -69,8 +69,15 @@ def verify(path: Path) -> list[str]:
     for package, tests in EXPECTED.items():
         for test in sorted(tests):
             key = (package, test)
-            if key in skipped:
-                errors.append(f"selected live test skipped: {package} {test}")
+            matching_skips = sorted(
+                skipped_test
+                for skipped_package, skipped_test in skipped
+                if skipped_package == package and (skipped_test == test or skipped_test.startswith(test + "/"))
+            )
+            if matching_skips:
+                errors.extend(
+                    f"selected live test skipped: {package} {skipped_test}" for skipped_test in matching_skips
+                )
             elif key not in passed:
                 errors.append(f"selected live test did not pass: {package} {test}")
     return errors

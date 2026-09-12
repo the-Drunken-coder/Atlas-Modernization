@@ -64,18 +64,27 @@ raise SystemExit(completed.returncode)
 finish() {
   original_status=$?
   status="${original_status}"
+  logs_status=0
+  inspect_status=0
   cleanup_status=0
   set +e
   if [[ "${container_cleanup_needed}" == "true" ]]; then
     record_command docker logs "${postgres_container}"
     run_with_timeout 15 docker logs "${postgres_container}" >"${artifact_dir}/postgres.log" 2>&1
+    logs_status=$?
     record_command docker inspect "${postgres_container}"
     run_with_timeout 15 docker inspect "${postgres_container}" >"${artifact_dir}/postgres-inspect.json" 2>&1
+    inspect_status=$?
     record_command docker rm -f "${postgres_container}"
     run_with_timeout 30 docker rm -f "${postgres_container}" >"${artifact_dir}/postgres-cleanup.log" 2>&1
     cleanup_status=$?
-    if (( original_status == 0 && cleanup_status != 0 )); then
-      status="${cleanup_status}"
+    if (( original_status == 0 )); then
+      for support_status in "${logs_status}" "${inspect_status}" "${cleanup_status}"; do
+        if (( support_status != 0 )); then
+          status="${support_status}"
+          break
+        fi
+      done
     fi
   fi
   if (( status == 0 )) && [[ "${verification_complete}" == "true" ]]; then
@@ -92,13 +101,24 @@ finish() {
       "- Unclassified failure: command exited with status ${status}." \
       '- Inspect commands.log and the matching test or dependency log before classifying it.' \
       '- The runner did not retry the failure.' >"${artifact_dir}/classification.md"
+    if (( logs_status != 0 )); then
+      printf '%s\n' \
+        "- Owned container log capture failed with status ${logs_status}: ${postgres_container}." \
+        '- Inspect postgres.log for the capture error.' >>"${artifact_dir}/classification.md"
+    fi
+    if (( inspect_status != 0 )); then
+      printf '%s\n' \
+        "- Owned container inspection failed with status ${inspect_status}: ${postgres_container}." \
+        '- Inspect postgres-inspect.json for the capture error.' >>"${artifact_dir}/classification.md"
+    fi
     if (( cleanup_status != 0 )); then
       printf '%s\n' \
         "- Owned container cleanup failed with status ${cleanup_status}: ${postgres_container}." \
         '- Inspect postgres-cleanup.log and remove that exact container before continuing.' >>"${artifact_dir}/classification.md"
     fi
   fi
-  printf 'exit_status=%d\nfinished_at=%s\n' "${status}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"${artifact_dir}/metadata.txt"
+  printf 'postgres_logs_status=%d\npostgres_inspect_status=%d\npostgres_cleanup_status=%d\nexit_status=%d\nfinished_at=%s\n' \
+    "${logs_status}" "${inspect_status}" "${cleanup_status}" "${status}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"${artifact_dir}/metadata.txt"
   exit "${status}"
 }
 trap finish EXIT
