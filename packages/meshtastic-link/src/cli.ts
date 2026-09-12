@@ -3,20 +3,13 @@ import { randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { runCanonicalBaseline, runFirstVerticalSlice, runStressBaseline } from "./benchmark.js";
-import { RealClock } from "./clock.js";
-import { RADIO_CONTRACT_REVISION } from "./contract.js";
-import {
-  AssetJoinService,
-  encodeJoinMessage,
-  GatewayJoinService,
-  PreSharedKeyAuthenticationPolicy
-} from "./joining.js";
-import { type GatewayMembership, GatewayMembershipStore } from "./membership.js";
+import type { FrameEncoding } from "./frame.js";
+import { PreSharedKeyAuthenticationPolicy } from "./joining.js";
+import { preflightGatewayAcceptance, startLinkService } from "./lifecycle.js";
+import { GatewayMembershipStore } from "./membership.js";
 import { readPrivateFile } from "./private-file.js";
-import { createUSShortFastProfile, type RadioProfile, RadioProfileManager, validateRadioProfile } from "./profile.js";
-import { LinkRadioGate, MESHTASTIC_NATIVE_PKI_PAYLOAD_BYTES, MeshtasticSerialRadio } from "./radio.js";
-import { LinkHTTPServer, LinkService } from "./service.js";
-import { LinkTransport } from "./transport.js";
+import { createUSShortFastProfile, type RadioProfile, validateRadioProfile } from "./profile.js";
+import { MeshtasticSerialRadio } from "./radio.js";
 
 const args = process.argv.slice(2);
 
@@ -124,133 +117,39 @@ async function serve(argv: string[]): Promise<void> {
     frameEncoding !== "message-v2"
   )
     throw new Error("Invalid --frame-encoding");
+  const validatedFrameEncoding: FrameEncoding = frameEncoding;
   const profile = await readProfile(requiredOption(argv, "--profile"));
   const joinKey = await readPrivateFile(requiredOption(argv, "--join-key-file"), "join authentication key");
   const port = integerOption(argv, "--port", 7331);
   const authentication = new PreSharedKeyAuthenticationPolicy(joinKey);
-  const clock = new RealClock();
-  const rawRadio = await MeshtasticSerialRadio.open(requiredOption(argv, "--serial"));
-  const radio = new LinkRadioGate(rawRadio);
-  const profileManager = new RadioProfileManager(profile, rawRadio);
-  const service = new LinkService({ mode, nodeID, clock, profileManager, radioGate: radio });
-  const http = new LinkHTTPServer(service);
-  let listening = false;
-  let gatewayJoin: GatewayJoinService | undefined;
-  let assetJoin: AssetJoinService | undefined;
-  let primaryError: unknown;
+  const membershipPath = option(argv, "--membership");
+  const common = {
+    nodeID,
+    profile,
+    openRadio: () => MeshtasticSerialRadio.open(requiredOption(argv, "--serial")),
+    port,
+    frameEncoding: validatedFrameEncoding,
+    adaptiveRetries: argv.includes("--adaptive-retries"),
+    stateDeltas: argv.includes("--state-deltas")
+  };
+  const running =
+    mode === "gateway"
+      ? await startLinkService({
+          ...common,
+          mode,
+          authentication,
+          ...(membershipPath === undefined ? {} : { membershipPath })
+        })
+      : await startLinkService({ ...common, mode, authentication });
 
+  console.log(
+    JSON.stringify({ listening: `http://${running.address.host}:${running.address.port}`, mode, node_id: nodeID })
+  );
   try {
-    const address = await http.listen(port);
-    listening = true;
-    if (mode === "gateway") {
-      const store = new GatewayMembershipStore(requiredOption(argv, "--membership"));
-      const membership = await store.load();
-      if (membership.gateway_node_id !== nodeID)
-        throw new Error("Gateway membership identity does not match --node-id");
-      preflightGatewayAcceptance(membership);
-      await profileManager.prepareGateway(membership);
-      const active = await store.activateGateway();
-      const transport = new LinkTransport({
-        node: service.node,
-        frameEncoding,
-        retryJitterMs: 1000,
-        adaptiveRetries: argv.includes("--adaptive-retries"),
-        stateDeltas: argv.includes("--state-deltas"),
-        sourceGeneration: active.gateway_generation,
-        serviceSession: service.serviceSession,
-        radio,
-        clock,
-        picture: service.picture,
-        privateChannel: active.channel_index
-      });
-      service.attachTransport(transport);
-      gatewayJoin = new GatewayJoinService(
-        radio,
-        profile.public_channel.index,
-        store,
-        authentication,
-        (error) => service.setJoiningLifecycle("active", `join attempt deferred: ${error.message}`),
-        (admission): void => {
-          // Source-fence rejection throws; a queue result must not roll back local membership admission.
-          transport.announceSourceActivation(admission.source, admission.source_generation, admission.service_session);
-        }
-      );
-    } else {
-      await profileManager.prepareAssetForJoin();
-      service.setJoiningLifecycle("discovering", "waiting for authenticated Gateway admission");
-      let attached = false;
-      assetJoin = new AssetJoinService({
-        radio,
-        clock,
-        assetID: nodeID,
-        radioNodeID: rawRadio.nodeNumber(),
-        serviceSession: service.serviceSession,
-        rendezvousChannel: profile.public_channel.index,
-        authentication,
-        installMembership: async (membership) => {
-          if (service.isRadioProfileApplying()) throw new Error("radio profile apply is in progress");
-          await profileManager.installAssetMembership(membership);
-        },
-        onStatus: (status) => {
-          service.setJoiningStatus(status);
-          if (status.state === "discovering" || status.state === "authenticating") {
-            service.setJoiningLifecycle("discovering", status.state);
-          } else if (status.state === "joined" && !attached) {
-            attached = true;
-            const transport = new LinkTransport({
-              node: service.node,
-              frameEncoding,
-              retryJitterMs: 1000,
-              adaptiveRetries: argv.includes("--adaptive-retries"),
-              stateDeltas: argv.includes("--state-deltas"),
-              sourceGeneration: status.source_generation,
-              serviceSession: service.serviceSession,
-              radio,
-              clock,
-              picture: service.picture,
-              privateChannel: profile.private_channel.index
-            });
-            service.attachTransport(transport, { role: "gateway", id: status.gateway_node_id });
-          }
-        },
-        onError: (error) => service.setJoiningLifecycle("discovering", `join attempt deferred: ${error.message}`),
-        onDisconnect: (error) => service.setLifecycle("error", error.message)
-      });
-      assetJoin.start();
-    }
-    console.log(JSON.stringify({ listening: `http://${address.host}:${address.port}`, mode, node_id: nodeID }));
     await waitForShutdown();
-  } catch (error) {
-    primaryError = error;
-    try {
-      service.setLifecycle("error", error instanceof Error ? error.message : String(error));
-    } catch {
-      // Preserve the operation failure even if a local event listener is faulty.
-    }
+  } finally {
+    await running.close();
   }
-
-  const cleanupErrors: unknown[] = [];
-  for (const cleanup of [() => service.stop(), () => assetJoin?.close(), () => gatewayJoin?.close()]) {
-    try {
-      await cleanup();
-    } catch (error) {
-      cleanupErrors.push(error);
-    }
-  }
-  if (listening) {
-    try {
-      await http.close();
-    } catch (error) {
-      cleanupErrors.push(error);
-    }
-  }
-  try {
-    await radio.close();
-  } catch (error) {
-    cleanupErrors.push(error);
-  }
-  if (primaryError !== undefined) throw primaryError;
-  if (cleanupErrors.length > 0) throw new AggregateError(cleanupErrors, "Link service cleanup failed");
 }
 
 async function readProfile(path: string): Promise<RadioProfile> {
@@ -313,24 +212,6 @@ function usage(): string {
     "  atlas-meshtastic-link radio apply [--url http://127.0.0.1:7331]",
     "  atlas-meshtastic-link serve --mode asset|gateway --node-id ID --serial /dev/cu.* --profile PATH --join-key-file PATH [--membership PATH] [--port N] [--frame-encoding canonical-json|deflate-v1|deflate-v2|deflate-v3|binary-v1|message-v1|message-v2] [--adaptive-retries] [--state-deltas]"
   ].join("\n");
-}
-
-function preflightGatewayAcceptance(
-  membership: Omit<GatewayMembership, "gateway_generation" | "asset_generations">
-): void {
-  encodeJoinMessage(
-    {
-      type: "accept",
-      join_attempt_id: "0".repeat(32),
-      gateway_node_id: membership.gateway_node_id,
-      source_generation: 1,
-      radio_contract_revision: RADIO_CONTRACT_REVISION,
-      channel_index: membership.channel_index,
-      channel_name: membership.channel_name,
-      channel_key_base64: membership.channel_key_base64
-    },
-    MESHTASTIC_NATIVE_PKI_PAYLOAD_BYTES
-  );
 }
 
 function isLoopbackHostname(hostname: string): boolean {
