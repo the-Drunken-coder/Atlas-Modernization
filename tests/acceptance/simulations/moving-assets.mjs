@@ -128,6 +128,13 @@ await runAcceptance({
       const progressedIDs = progressStream.events
         .filter((event) => event.type === "resource" && event.resource?.type === "entity")
         .map((event) => event.resource.id);
+      const stop = await api.json("POST", `/api/runs/${encodeURIComponent(cancelled.id)}/stop`);
+      record({
+        check: "actual simulation server accepts cancellation through its public route",
+        expected: { status: 200, run_status: "cancelled" },
+        actual: { status: stop.status, run_status: stop.body.run.status },
+        passed: stop.status === 200 && stop.body.run.status === "cancelled"
+      });
       const progressedEntities = await readRunEntities(
         core,
         progressedIDs.map((id) => ({ type: "entity", id })),
@@ -137,25 +144,14 @@ await runAcceptance({
         check: "moving-assets performs real persisted movement before cancellation",
         expected: {
           entities: cancelledInputs.assetCount,
-          speed_m_s: 13,
+          committed_tick_range: [1, cancelledInputs.ticks],
+          coordinates_match_each_committed_tick: true,
           run_id: cancelled.id
         },
         actual: progressedEntities.map(entityState),
         passed:
           progressedEntities.length === cancelledInputs.assetCount &&
-          progressedEntities.every(
-            (entity) =>
-              entity.components.telemetry?.speed_m_s === 13 &&
-              entity.components.custom_simulation?.run_id === cancelled.id
-          )
-      });
-
-      const stop = await api.json("POST", `/api/runs/${encodeURIComponent(cancelled.id)}/stop`);
-      record({
-        check: "actual simulation server accepts cancellation through its public route",
-        expected: { status: 200, run_status: "cancelled" },
-        actual: { status: stop.status, run_status: stop.body.run.status },
-        passed: stop.status === 200 && stop.body.run.status === "cancelled"
+          progressedEntities.every((entity) => persistedMovementBeforeCancellation(entity, cancelled, cancelledInputs))
       });
       const cancelledCleanup = await api.json("POST", `/api/runs/${encodeURIComponent(cancelled.id)}/cleanup`);
       const cancelledStream = await collectRunEvents({
@@ -394,6 +390,23 @@ function recordPersistedMovement(run, entities, inputs, acceptanceRunID, record)
     actual,
     passed
   });
+}
+
+function persistedMovementBeforeCancellation(entity, run, inputs) {
+  const assetNumber = Number.parseInt(entity.entity_id.slice(entity.entity_id.lastIndexOf("-") + 1), 10);
+  const index = assetNumber - 1;
+  const speed = entity.components.telemetry?.speed_m_s;
+  const committedTick = typeof speed === "number" ? speed - 12 : Number.NaN;
+  if (!Number.isInteger(index) || index < 0 || index >= inputs.assetCount) return false;
+  if (!Number.isInteger(committedTick) || committedTick < 1 || committedTick > inputs.ticks) return false;
+  const expectedLatitude = Number((inputs.startLatitude + index * 0.001 + committedTick * 0.0005).toFixed(6));
+  const expectedLongitude = Number((inputs.startLongitude + index * 0.002 + committedTick * 0.0008).toFixed(6));
+  return (
+    entity.components.telemetry?.latitude === expectedLatitude &&
+    entity.components.telemetry?.longitude === expectedLongitude &&
+    isDeepStrictEqual(entity.components.geometry?.coordinates, [expectedLongitude, expectedLatitude]) &&
+    entity.components.custom_simulation?.run_id === run.id
+  );
 }
 
 function recordCleanupEvents(run, cleaned, events, replacementID, record) {

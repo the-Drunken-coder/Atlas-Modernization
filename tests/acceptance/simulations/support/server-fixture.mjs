@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 const repositoryRoot = fileURLToPath(new URL("../../../..", import.meta.url));
 const serverEntrypoint = join(repositoryRoot, "simulations", "src", "server", "index.ts");
+const tsxLoader = join(repositoryRoot, "simulations", "node_modules", "tsx", "dist", "loader.mjs");
 const readinessTimeoutMs = 30_000;
 const shutdownTimeoutMs = 5_000;
 
@@ -75,7 +76,7 @@ export function createSimulationServerFixture() {
       delete environment.ATLAS_DEPLOYED_BASE_URL;
       delete environment.ATLAS_DEPLOYED_API_KEY;
 
-      const args = ["--import", "tsx", serverEntrypoint];
+      const args = ["--import", tsxLoader, serverEntrypoint];
       appendFileSync(logPath, `$ ${process.execPath} ${args.join(" ")}\n`);
       child = spawn(process.execPath, args, {
         cwd: repositoryRoot,
