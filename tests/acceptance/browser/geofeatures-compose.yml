@@ -1,0 +1,26 @@
+services:
+  api:
+    environment:
+      ATLAS_PLUGIN_CONFIG_DIR: /app/plugin-endpoints
+    volumes:
+      - ../../plugins/building_scan/core-endpoint.json:/app/plugin-endpoints/building_scan.json:ro
+    depends_on:
+      building-scan-plugin:
+        condition: service_healthy
+
+  building-scan-plugin:
+    build:
+      context: ../..
+      dockerfile: plugins/building_scan/Dockerfile
+      target: plugin
+    environment:
+      ATLAS_SOURCE_GATEWAY_ORIGIN: http://source-gateway:8080
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+      start_period: 3s
+    labels:
+      io.atlas.acceptance.run: ${ATLAS_ACCEPTANCE_RUN_ID:?ATLAS_ACCEPTANCE_RUN_ID must be set}
+
