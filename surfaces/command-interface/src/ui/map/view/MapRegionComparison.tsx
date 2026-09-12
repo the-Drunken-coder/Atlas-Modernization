@@ -390,9 +390,7 @@ export function MapRegionComparison({
         testId="map-comparison-region"
         viewport={canvasBounds}
         onPointerDown={(transform, event) => {
-          if (!region || !regionRect) return;
-          interaction.beginTransform(transform, event, region);
-          setPanelOpen(false);
+          if (region && interaction.beginTransform(transform, event, region)) setPanelOpen(false);
         }}
         onKeyDown={(transform, event) => {
           if (region && interaction.transformWithKeyboard(transform, event, region)) setPanelOpen(false);

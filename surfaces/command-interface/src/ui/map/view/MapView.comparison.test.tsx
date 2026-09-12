@@ -129,6 +129,21 @@ describe("MapView region comparison", () => {
     expect(region).toBeInTheDocument();
   });
 
+  it("keeps the comparison panel open when a transform handle is right-clicked", async () => {
+    renderMapView({ styleId: "base", style: style("base"), mapSourceOptions });
+    await drawComparison();
+
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Resize comparison region width" }), {
+      pointerId: 2,
+      pointerType: "mouse",
+      button: 2,
+      clientX: 260,
+      clientY: 120
+    });
+
+    expect(screen.getByRole("dialog", { name: "Region comparison" })).toBeInTheDocument();
+  });
+
   it("draws and resizes a region with touch pointers", async () => {
     renderMapView({ styleId: "base", style: style("base"), mapSourceOptions });
     await drawComparison("touch");

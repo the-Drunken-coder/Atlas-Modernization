@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
 import type { Map as MlMap } from "maplibre-gl";
 import { useMemo, useState } from "react";
 import { describe, expect, it, vi } from "vitest";
@@ -11,6 +11,37 @@ import {
 } from "./map-region-interaction.js";
 
 describe("useMapRegionInteraction", () => {
+  it("cancels drawing with Escape before the map is ready", () => {
+    const { canvas, setPointerCapture } = interactionCanvas(rect(0, 0, 100, 80));
+    const onBeginInteraction = vi.fn();
+    const onCancel = vi.fn();
+    const initialProps: { map: MlMap | undefined } = { map: undefined };
+    const { result, rerender } = renderHook(
+      ({ map }: { map: MlMap | undefined }) =>
+        useMapRegionInteraction({
+          map,
+          mapCanvas: canvas,
+          onBeginInteraction,
+          onRegionChange: vi.fn(),
+          onDrawResult: vi.fn(),
+          onCancel,
+          escapeBlocked: () => false,
+          suppressNextClick: vi.fn()
+        }),
+      { initialProps }
+    );
+
+    act(() => result.current.beginDrawing(null));
+    fireEvent.keyDown(window, { key: "Escape" });
+    rerender({ map: interactionMap() });
+    fireEvent.pointerDown(canvas, { pointerId: 1, button: 0, clientX: 10, clientY: 10 });
+
+    expect(result.current.drawing).toBe(false);
+    expect(onCancel).toHaveBeenCalledWith({ kind: "draw", initialRegion: null, reason: "keyboard" });
+    expect(onBeginInteraction).toHaveBeenCalledOnce();
+    expect(setPointerCapture).not.toHaveBeenCalled();
+  });
+
   it("completes a clamped drawing for its active pointer and cleans up capture", async () => {
     const { canvas, setPointerCapture, releasePointerCapture } = interactionCanvas(rect(10, 20, 100, 80));
     const onDrawResult = vi.fn();

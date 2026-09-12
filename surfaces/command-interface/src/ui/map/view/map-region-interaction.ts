@@ -133,7 +133,7 @@ export function useMapRegionInteraction(options: UseMapRegionInteractionOptions)
   const beginTransform = useCallback(
     (transform: RegionTransform, event: ReactPointerEvent<HTMLButtonElement>, region: RegionBounds) => {
       const { map, mapCanvas } = optionsRef.current;
-      if (event.button !== 0 || !map || !mapCanvas) return;
+      if (event.button !== 0 || !map || !mapCanvas) return false;
       event.preventDefault();
       event.stopPropagation();
       optionsRef.current.onBeginInteraction();
@@ -148,6 +148,7 @@ export function useMapRegionInteraction(options: UseMapRegionInteractionOptions)
         initialRect: projectedScreenRect(map, region),
         initialRegion: region
       });
+      return true;
     },
     []
   );
@@ -196,6 +197,18 @@ export function useMapRegionInteraction(options: UseMapRegionInteractionOptions)
       }
     };
   }, [releasePointer]);
+
+  useEffect(() => {
+    if (!active) return;
+    const cancelKeyboard = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== "Escape" || optionsRef.current.escapeBlocked(event)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      cancelActive(active, "keyboard", "always", true);
+    };
+    window.addEventListener("keydown", cancelKeyboard, { capture: true });
+    return () => window.removeEventListener("keydown", cancelKeyboard, { capture: true });
+  }, [active, cancelActive]);
 
   useEffect(() => {
     if (!map || !mapCanvas || !active) return;
@@ -282,13 +295,6 @@ export function useMapRegionInteraction(options: UseMapRegionInteractionOptions)
       cancelActive(active, "pointer", false, true);
     };
 
-    const cancelKeyboard = (event: globalThis.KeyboardEvent) => {
-      if (event.key !== "Escape" || optionsRef.current.escapeBlocked(event)) return;
-      event.preventDefault();
-      event.stopPropagation();
-      cancelActive(active, "keyboard", "always", true);
-    };
-
     mapCanvas.classList.toggle("map-canvas--region-drawing", active.kind === "draw");
     mapCanvas.addEventListener("pointerdown", startDrawing, { capture: true });
     window.addEventListener("pointermove", updateInteraction);
@@ -296,7 +302,6 @@ export function useMapRegionInteraction(options: UseMapRegionInteractionOptions)
     window.addEventListener("pointercancel", cancelPointer);
     const handleMouseUp = () => optionsRef.current.onWindowMouseUp?.();
     window.addEventListener("mouseup", handleMouseUp);
-    window.addEventListener("keydown", cancelKeyboard, { capture: true });
     return () => {
       mapCanvas.classList.remove("map-canvas--region-drawing");
       mapCanvas.removeEventListener("pointerdown", startDrawing, { capture: true });
@@ -304,7 +309,6 @@ export function useMapRegionInteraction(options: UseMapRegionInteractionOptions)
       window.removeEventListener("pointerup", finishInteraction);
       window.removeEventListener("pointercancel", cancelPointer);
       window.removeEventListener("mouseup", handleMouseUp);
-      window.removeEventListener("keydown", cancelKeyboard, { capture: true });
     };
   }, [active, cancelActive, map, mapCanvas, releasePointer]);
 
