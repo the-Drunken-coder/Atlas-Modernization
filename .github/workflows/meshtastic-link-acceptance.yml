@@ -2,8 +2,6 @@ name: Meshtastic Link acceptance
 
 on:
   pull_request:
-    branches:
-      - main
   push:
     branches:
       - main
@@ -24,6 +22,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Set up Node
@@ -43,9 +42,9 @@ jobs:
 
       - name: Upload Link acceptance evidence
         if: always()
-        uses: actions/upload-artifact@043becc3cfb45d486f0657f952667c0e9d0aef2f # v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: meshtastic-link-process-acceptance-${{ runner.os }}-${{ github.run_id }}
           path: ${{ runner.temp }}/atlas-link-acceptance
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 14
