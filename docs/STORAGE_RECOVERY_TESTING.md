@@ -55,7 +55,7 @@ The coverage checker reports exact statement ratios for the whole profile and ea
 Each run writes a unique directory under `.atlas/core-storage-recovery/` containing:
 
 - `metadata.txt` with the exact Git revision, working-tree state, tool versions, mode, image digests, selector, repetitions, coverage ownership, and readiness evidence
-- `workspace-status.txt`, `workspace-tracked.patch`, and `workspace-untracked-paths.txt` so a run from a dirty checkout remains attributable to its exact tracked changes and untracked source paths
+- `workspace-status.txt`, `workspace-tracked.patch`, `workspace-untracked-paths.txt`, and `workspace-untracked-files.tar.gz` preserve tracked changes and nonignored untracked input bytes from dirty checkouts. The artifact root is reserved for generated evidence and excluded from this snapshot. Symlinks are preserved without following external targets; their external contents and ignored local files are not archived.
 - `commands.log` with the executed commands while omitting disposable passwords
 - dependency pull, startup, runtime, inspection, and cleanup logs
 - `coverage-checker-tests.log`, `selection-verifier-tests.log`, `schema-initialization.log`, `storage.log`, `selection-verification.log`, `storage.coverage.out`, and `coverage.txt`

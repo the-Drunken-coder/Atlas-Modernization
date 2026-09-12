@@ -24,9 +24,9 @@ if (( $# > 1 )); then
   exit 2
 fi
 
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-core_dir="$(cd "${script_dir}/.." && pwd)"
-repo_dir="$(cd "${core_dir}/../.." && pwd)"
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+core_dir="$(cd "${script_dir}/.." && pwd -P)"
+repo_dir="$(cd "${core_dir}/../.." && pwd -P)"
 if ! command -v python3 >/dev/null 2>&1; then
   printf '%s\n' 'required command is unavailable: python3' >&2
   exit 1
@@ -35,9 +35,19 @@ run_token="$(python3 -c 'import uuid; print(uuid.uuid4().hex)')"
 run_id="$(date -u +%Y%m%dT%H%M%SZ)-${run_token}"
 started_epoch="$(date +%s)"
 artifact_root="${ATLAS_STORAGE_RECOVERY_ARTIFACT_ROOT:-${repo_dir}/.atlas/core-storage-recovery}"
-artifact_root="$(python3 -c 'import os, sys; print(os.path.abspath(sys.argv[1]))' "${artifact_root}")"
+mkdir -p "${artifact_root}"
+artifact_root="$(cd "${artifact_root}" && pwd -P)"
+if [[ "${artifact_root}" == "${repo_dir}" ]]; then
+  printf '%s\n' 'ATLAS_STORAGE_RECOVERY_ARTIFACT_ROOT must not be the repository root' >&2
+  exit 1
+fi
 artifact_dir="${artifact_root}/${run_id}"
 mkdir -p "${artifact_dir}"
+checkout_pathspec=(-- .)
+if [[ "${artifact_root}" == "${repo_dir}/"* ]]; then
+  artifact_repo_path="${artifact_root#"${repo_dir}/"}"
+  checkout_pathspec+=(":(top,exclude,literal)${artifact_repo_path}")
+fi
 
 postgres_image="postgres:15@sha256:1b92e7a80c021647bf70f5d3eb66066a998e4f5cf43c07bb9dc9f729782cf88e"
 minio_image="quay.io/minio/minio:RELEASE.2024-01-31T20-20-33Z@sha256:4092433a77e510826874b36f369696df43407a763d7f901a61d74e83e6fd95bc"
@@ -174,13 +184,39 @@ require_command go
 require_command python3
 
 revision="$(git -C "${repo_dir}" rev-parse HEAD)"
-record_command git -C "${repo_dir}" status --short --untracked-files=all
-run_with_timeout 10 git -C "${repo_dir}" status --short --untracked-files=all >"${artifact_dir}/workspace-status.txt"
-record_command git -C "${repo_dir}" diff --binary HEAD --
-run_with_timeout 10 git -C "${repo_dir}" diff --binary HEAD -- >"${artifact_dir}/workspace-tracked.patch"
-record_command git -C "${repo_dir}" ls-files --others --exclude-standard
-run_with_timeout 10 git -C "${repo_dir}" ls-files --others --exclude-standard \
-  >"${artifact_dir}/workspace-untracked-paths.txt"
+record_command git -C "${repo_dir}" status --short "${checkout_pathspec[@]}"
+git -C "${repo_dir}" status --short "${checkout_pathspec[@]}" >"${artifact_dir}/workspace-status.txt"
+record_command git -C "${repo_dir}" diff --binary HEAD "${checkout_pathspec[@]}"
+git -C "${repo_dir}" diff --binary HEAD "${checkout_pathspec[@]}" >"${artifact_dir}/workspace-tracked.patch"
+untracked_index="${artifact_dir}/workspace-untracked-paths.nul"
+record_command git -C "${repo_dir}" ls-files --others --exclude-standard -z "${checkout_pathspec[@]}"
+git -C "${repo_dir}" ls-files --others --exclude-standard -z "${checkout_pathspec[@]}" >"${untracked_index}"
+record_command python3 - "${repo_dir}" "${untracked_index}" \
+  "${artifact_dir}/workspace-untracked-paths.txt" "${artifact_dir}/workspace-untracked-files.tar.gz"
+python3 - "${repo_dir}" "${untracked_index}" \
+  "${artifact_dir}/workspace-untracked-paths.txt" "${artifact_dir}/workspace-untracked-files.tar.gz" <<'PY'
+import os
+import stat
+import sys
+import tarfile
+from pathlib import Path
+
+repo = Path(sys.argv[1])
+raw_paths = [value for value in Path(sys.argv[2]).read_bytes().split(b"\0") if value]
+Path(sys.argv[3]).write_bytes(b"\n".join(raw_paths) + (b"\n" if raw_paths else b""))
+with tarfile.open(sys.argv[4], "w:gz", dereference=False) as archive:
+    for raw_path in raw_paths:
+        relative = os.fsdecode(raw_path)
+        path = Path(relative)
+        if path.is_absolute() or ".." in path.parts:
+            raise SystemExit(f"git returned unsafe untracked path: {relative!r}")
+        source = repo / path
+        mode = source.lstat().st_mode
+        if not (stat.S_ISREG(mode) or stat.S_ISLNK(mode)):
+            raise SystemExit(f"unsupported untracked filesystem entry: {relative!r}")
+        archive.add(source, arcname=relative, recursive=False)
+PY
+rm -f "${untracked_index}"
 if [[ -s "${artifact_dir}/workspace-status.txt" ]]; then
   working_tree="dirty"
 else
@@ -193,6 +229,7 @@ docker_server="$(run_with_timeout 10 docker version --format '{{.Server.Version}
   printf 'workspace_status=%s\n' "${artifact_dir}/workspace-status.txt"
   printf 'workspace_tracked_diff=%s\n' "${artifact_dir}/workspace-tracked.patch"
   printf 'workspace_untracked_paths=%s\n' "${artifact_dir}/workspace-untracked-paths.txt"
+  printf 'workspace_untracked_archive=%s\n' "${artifact_dir}/workspace-untracked-files.tar.gz"
   printf 'mode=%s\n' "${mode}"
   printf 'started_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   printf 'go_version=%s\n' "$(go version)"
