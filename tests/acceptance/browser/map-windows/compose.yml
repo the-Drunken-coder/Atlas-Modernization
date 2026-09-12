@@ -1,0 +1,22 @@
+services:
+  api:
+    environment:
+      ATLAS_PLUGIN_CONFIG_DIR: /app/plugin-endpoints
+    volumes:
+      - ./browser/map-windows/core-endpoint.json:/app/plugin-endpoints/map_windows.json:ro
+    depends_on:
+      map-windows-plugin:
+        condition: service_healthy
+
+  map-windows-plugin:
+    build:
+      context: ../..
+      dockerfile: tests/acceptance/browser/map-windows/Dockerfile
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+      start_period: 3s
+    labels:
+      io.atlas.acceptance.run: ${ATLAS_ACCEPTANCE_RUN_ID:?ATLAS_ACCEPTANCE_RUN_ID must be set}

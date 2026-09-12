@@ -1,0 +1,68 @@
+{
+  "manifest": {
+    "plugin_id": "map_windows",
+    "display_name": "Map window fixture",
+    "core_to_plugin_protocol_major": 1,
+    "operations": [
+      {
+        "operation_id": "inspect_map_windows",
+        "display_name": "Inspect map windows",
+        "timeout_ms": 5000,
+        "interaction": {
+          "kind": "map_area"
+        }
+      }
+    ]
+  },
+  "result": {
+    "attribution": {
+      "text": "Atlas Map Window Fixture",
+      "url": "https://atlasinterface.com"
+    },
+    "features": [
+      {
+        "id": "fixture-window-area",
+        "title": "Fixture window area",
+        "fields": [
+          {
+            "label": "Fixture",
+            "value": "Map window acceptance"
+          }
+        ],
+        "geometry": {
+          "type": "Polygon",
+          "coordinates": [
+            [
+              [
+                0,
+                0
+              ],
+              [
+                0.002,
+                0
+              ],
+              [
+                0.002,
+                0.002
+              ],
+              [
+                0,
+                0.002
+              ],
+              [
+                0,
+                0
+              ]
+            ]
+          ]
+        }
+      }
+    ],
+    "provenance": {
+      "connector_id": "map_windows",
+      "source": "atlas_map_windows_fixture"
+    },
+    "retrieved_at": "2026-09-12T00:00:00Z",
+    "truncation": null
+  }
+}
