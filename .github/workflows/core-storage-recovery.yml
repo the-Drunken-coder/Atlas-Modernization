@@ -30,7 +30,7 @@ jobs:
     name: core-storage-recovery
     if: ${{ github.event_name != 'schedule' && inputs.mode != 'nightly' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

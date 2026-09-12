@@ -42,6 +42,14 @@ The injected deletion error is test support around the production storage interf
 
 The coverage checker reports exact statement ratios for the whole profile and each instrumented module. Its floors are based on the required command and retain a small margin for branches that depend on scheduling. Coverage percentage supports the behavior assertions; it does not replace them.
 
+| Instrumented profile | Required-run measurement | Floor |
+| --- | --- | --- |
+| Total | 21.8% (685/3142) | 21.5% (675/3142) |
+| Actions | 16.2% (441/2730) | 15.8% (431/2730) |
+| Database | 62.5% (160/256) | 58.6% (150/256) |
+| Storage | 54.3% (50/92) | 52.2% (48/92) |
+| Test environment | 53.1% (34/64) | 50.0% (32/64) |
+
 ## Artifacts and failure classification
 
 Each run writes a unique directory under `.atlas/core-storage-recovery/` containing:
@@ -54,4 +62,4 @@ Each run writes a unique directory under `.atlas/core-storage-recovery/` contain
 
 For an initial failure in a new storage behavior assertion, stop that case without changing its expectation or retrying. Report the clean revision, exact command, dependency setup, expected and observed behavior, artifact directory, and first error for manual assessment. Record corrected setup failures, verified product defects, and unavailable verification separately. A correct product failure remains active for a later product repair.
 
-The required workflow has a 20-minute bound. The nightly workflow has a 45-minute bound and expands failure attempts and ordering. GitHub Actions uploads the owned artifact directory even when the run fails.
+The required workflow has a 25-minute bound, including the worst-case bounded pulls, schema initialization, test process, evidence capture, and cleanup. The nightly workflow has a 45-minute bound and expands failure attempts and ordering. GitHub Actions uploads the owned artifact directory even when the run fails.

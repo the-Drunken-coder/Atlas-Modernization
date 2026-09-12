@@ -173,12 +173,13 @@ require_command go
 require_command python3
 
 revision="$(git -C "${repo_dir}" rev-parse HEAD)"
+docker_server="$(run_with_timeout 10 docker version --format '{{.Server.Version}} {{.Server.Os}}/{{.Server.Arch}}')"
 {
   printf 'revision=%s\n' "${revision}"
   printf 'mode=%s\n' "${mode}"
   printf 'started_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   printf 'go_version=%s\n' "$(go version)"
-  printf 'docker_server=%s\n' "$(docker version --format '{{.Server.Version}} {{.Server.Os}}/{{.Server.Arch}}')"
+  printf 'docker_server=%s\n' "${docker_server}"
   printf 'coverage_process=instrumented Go actions test binary; no separate Atlas Core server process is run or measured\n'
   printf 'crash_helper_coverage=separate child test process is not included in storage.coverage.out\n'
   printf 'postgres_image=%s\n' "${postgres_image}"
@@ -227,8 +228,11 @@ run_with_timeout 30 "${minio_run[@]}" >"${artifact_dir}/minio-start.log" 2>&1
 printf 'minio_container_id=%s\n' "$(tr -d '\r\n' <"${artifact_dir}/minio-start.log")" >>"${artifact_dir}/metadata.txt"
 
 postgres_ready="false"
-for attempt in $(seq 1 60); do
-  if docker exec "${postgres_container}" pg_isready -U atlas -d atlas_core >/dev/null 2>&1; then
+postgres_ready_deadline=$((SECONDS + 60))
+attempt=0
+while (( SECONDS < postgres_ready_deadline )); do
+  attempt=$((attempt + 1))
+  if run_with_timeout 2 docker exec "${postgres_container}" pg_isready -U atlas -d atlas_core >/dev/null 2>&1; then
     postgres_ready="true"
     printf 'postgres_ready_attempt=%d\n' "${attempt}" >>"${artifact_dir}/metadata.txt"
     break
@@ -241,8 +245,11 @@ if [[ "${postgres_ready}" != "true" ]]; then
 fi
 
 minio_ready="false"
-for attempt in $(seq 1 60); do
-  if docker exec "${minio_container}" mc ready local >/dev/null 2>&1; then
+minio_ready_deadline=$((SECONDS + 60))
+attempt=0
+while (( SECONDS < minio_ready_deadline )); do
+  attempt=$((attempt + 1))
+  if run_with_timeout 2 docker exec "${minio_container}" mc ready local >/dev/null 2>&1; then
     minio_ready="true"
     printf 'minio_ready_attempt=%d\n' "${attempt}" >>"${artifact_dir}/metadata.txt"
     break
@@ -254,9 +261,9 @@ if [[ "${minio_ready}" != "true" ]]; then
   exit 1
 fi
 
-postgres_port="$(docker port "${postgres_container}" 5432/tcp)"
+postgres_port="$(run_with_timeout 5 docker port "${postgres_container}" 5432/tcp)"
 postgres_port="${postgres_port##*:}"
-minio_port="$(docker port "${minio_container}" 9000/tcp)"
+minio_port="$(run_with_timeout 5 docker port "${minio_container}" 9000/tcp)"
 minio_port="${minio_port##*:}"
 export ATLAS_ACTIONS_DATABASE_URL="postgres://atlas:${postgres_password}@127.0.0.1:${postgres_port}/atlas_core?sslmode=disable"
 export ATLAS_STORAGE_RECOVERY_ENDPOINT="127.0.0.1:${minio_port}"

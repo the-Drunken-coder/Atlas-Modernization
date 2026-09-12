@@ -22,15 +22,15 @@ GROUP_PATHS = {
     "testenv": "/internal/testenv/",
 }
 
-# These provisional floors keep the first clean behavior run honest while its
-# exact statement ratios are measured. They are replaced with measured ratios
-# before this testing change is complete.
+# Exact ratios avoid weakening a floor through displayed rounding. The required
+# run measured 685/3142 statements overall. Each floor keeps a small margin for
+# scheduling-dependent error branches in the lock and retry cases.
 FLOORS = {
-    "total": Floor(1, 100),
-    "actions": Floor(1, 100),
-    "database": Floor(1, 100),
-    "storage": Floor(1, 100),
-    "testenv": Floor(1, 100),
+    "total": Floor(675, 3142),
+    "actions": Floor(431, 2730),
+    "database": Floor(150, 256),
+    "storage": Floor(48, 92),
+    "testenv": Floor(32, 64),
 }
 
 
