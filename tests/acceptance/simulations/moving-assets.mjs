@@ -151,7 +151,9 @@ await runAcceptance({
         actual: progressedEntities.map(entityState),
         passed:
           progressedEntities.length === cancelledInputs.assetCount &&
-          progressedEntities.every((entity) => persistedMovementBeforeCancellation(entity, cancelled, cancelledInputs))
+          progressedEntities.every((entity) =>
+            persistedMovementBeforeCancellation(entity, cancelled, cancelledInputs, runID)
+          )
       });
       const cancelledCleanup = await api.json("POST", `/api/runs/${encodeURIComponent(cancelled.id)}/cleanup`);
       const cancelledStream = await collectRunEvents({
@@ -357,27 +359,9 @@ function recordCompletedStream(started, completed, events, record) {
 }
 
 function recordPersistedMovement(run, entities, inputs, acceptanceRunID, record) {
+  const expected = expectedMovingAssets(run.id, inputs, inputs.ticks, acceptanceRunID);
   const actual = entities.map(entityState);
-  const passed =
-    entities.length === inputs.assetCount &&
-    entities.every((entity) => {
-      const assetNumber = Number.parseInt(entity.entity_id.slice(entity.entity_id.lastIndexOf("-") + 1), 10);
-      const index = assetNumber - 1;
-      const expectedLatitude = Number((inputs.startLatitude + index * 0.001 + inputs.ticks * 0.0005).toFixed(6));
-      const expectedLongitude = Number((inputs.startLongitude + index * 0.002 + inputs.ticks * 0.0008).toFixed(6));
-      return (
-        Number.isInteger(index) &&
-        index >= 0 &&
-        index < inputs.assetCount &&
-        entity.alias === `Sim ${run.id} asset ${assetNumber}` &&
-        entity.components.telemetry?.latitude === expectedLatitude &&
-        entity.components.telemetry?.longitude === expectedLongitude &&
-        entity.components.telemetry?.speed_m_s === 12 + inputs.ticks &&
-        isDeepStrictEqual(entity.components.geometry?.coordinates, [expectedLongitude, expectedLatitude]) &&
-        entity.components.custom_simulation?.run_id === run.id &&
-        entity.components.custom_simulation?.acceptance_run_id === acceptanceRunID
-      );
-    });
+  const passed = matchesExpectedAssets(entities, expected);
   record({
     check: "independent built SDK reads verify persisted final moving-assets telemetry",
     expected: {
@@ -385,27 +369,50 @@ function recordPersistedMovement(run, entities, inputs, acceptanceRunID, record)
       final_speed_m_s: 12 + inputs.ticks,
       coordinate_delta_per_tick: { latitude: 0.0005, longitude: 0.0008 },
       simulation_run_id: run.id,
-      acceptance_run_id: acceptanceRunID
+      acceptance_run_id: acceptanceRunID,
+      assets: expected
     },
     actual,
     passed
   });
 }
 
-function persistedMovementBeforeCancellation(entity, run, inputs) {
-  const assetNumber = Number.parseInt(entity.entity_id.slice(entity.entity_id.lastIndexOf("-") + 1), 10);
-  const index = assetNumber - 1;
-  const speed = entity.components.telemetry?.speed_m_s;
-  const committedTick = typeof speed === "number" ? speed - 12 : Number.NaN;
-  if (!Number.isInteger(index) || index < 0 || index >= inputs.assetCount) return false;
-  if (!Number.isInteger(committedTick) || committedTick < 1 || committedTick > inputs.ticks) return false;
-  const expectedLatitude = Number((inputs.startLatitude + index * 0.001 + committedTick * 0.0005).toFixed(6));
-  const expectedLongitude = Number((inputs.startLongitude + index * 0.002 + committedTick * 0.0008).toFixed(6));
+function persistedMovementBeforeCancellation(entity, run, inputs, acceptanceRunID) {
+  return Array.from({ length: inputs.ticks }, (_, index) => index + 1)
+    .flatMap((tick) => expectedMovingAssets(run.id, inputs, tick, acceptanceRunID))
+    .some((expected) => matchesExpectedAsset(entity, expected));
+}
+
+function expectedMovingAssets(runID, inputs, tick, acceptanceRunID) {
+  return Array.from({ length: inputs.assetCount }, (_, index) => {
+    const assetNumber = index + 1;
+    const latitude = Number((inputs.startLatitude + index * 0.001 + tick * 0.0005).toFixed(6));
+    const longitude = Number((inputs.startLongitude + index * 0.002 + tick * 0.0008).toFixed(6));
+    return {
+      alias: `Sim ${runID} asset ${assetNumber}`,
+      telemetry: { latitude, longitude, speed_m_s: 12 + tick },
+      geometry: { coordinates: [longitude, latitude] },
+      custom_simulation: { run_id: runID, acceptance_run_id: acceptanceRunID }
+    };
+  });
+}
+
+function matchesExpectedAssets(entities, expected) {
   return (
-    entity.components.telemetry?.latitude === expectedLatitude &&
-    entity.components.telemetry?.longitude === expectedLongitude &&
-    isDeepStrictEqual(entity.components.geometry?.coordinates, [expectedLongitude, expectedLatitude]) &&
-    entity.components.custom_simulation?.run_id === run.id
+    entities.length === expected.length &&
+    expected.every((asset) => entities.some((entity) => matchesExpectedAsset(entity, asset)))
+  );
+}
+
+function matchesExpectedAsset(entity, expected) {
+  return (
+    entity.alias === expected.alias &&
+    entity.components.telemetry?.latitude === expected.telemetry.latitude &&
+    entity.components.telemetry?.longitude === expected.telemetry.longitude &&
+    entity.components.telemetry?.speed_m_s === expected.telemetry.speed_m_s &&
+    isDeepStrictEqual(entity.components.geometry?.coordinates, expected.geometry.coordinates) &&
+    entity.components.custom_simulation?.run_id === expected.custom_simulation.run_id &&
+    entity.components.custom_simulation?.acceptance_run_id === expected.custom_simulation.acceptance_run_id
   );
 }
 
