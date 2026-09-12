@@ -1,0 +1,56 @@
+name: SDK Recovery Acceptance
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: "37 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sdk-recovery-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sdk-recovery-acceptance:
+    name: sdk-recovery-acceptance
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      ATLAS_ACCEPTANCE_RECOVERY_CYCLES: ${{ github.event_name == 'schedule' && '3' || '1' }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install JavaScript workspace dependencies
+        run: npm ci
+
+      - name: Build the Atlas SDK
+        run: npm run build:sdk
+
+      - name: Run SDK recovery acceptance
+        run: node tests/acceptance/sdk-recovery.mjs
+
+      - name: Upload SDK recovery evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sdk-recovery-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .atlas/acceptance/sdk-recovery/
+          if-no-files-found: error
+          retention-days: 14
