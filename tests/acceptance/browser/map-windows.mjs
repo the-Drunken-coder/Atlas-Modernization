@@ -325,39 +325,6 @@ async function runMapWindowJourney({
       passed: peekText.includes(`${fixture.result.features.length} result`) && peekText.includes(fixture.result.attribution.text)
     });
 
-    const handleBeforeMove = await requiredBox(handle, "collapsed map window handle");
-    const offsetBeforeMove = Number(await window.getAttribute("data-dock-offset"));
-    await page.mouse.move(handleBeforeMove.x + handleBeforeMove.width / 2, handleBeforeMove.y + handleBeforeMove.height / 2);
-    await page.mouse.down();
-    await page.mouse.move(handleBeforeMove.x + handleBeforeMove.width / 2, handleBeforeMove.y + handleBeforeMove.height / 2 + 56, {
-      steps: 8
-    });
-    await page.mouse.up();
-    const handleAfterMove = await requiredBox(handle, "moved collapsed map window handle");
-    const offsetAfterMove = Number(await window.getAttribute("data-dock-offset"));
-    record({
-      check: `${browserName} moved the collapsed handle parallel to its attached edge without restoring it`,
-      expected: { placement: "docked", edge: "right", collapsed: true, changed_offset: true },
-      actual: {
-        placement: await window.getAttribute("data-placement"),
-        edge: await window.getAttribute("data-edge"),
-        collapsed: await window.getAttribute("data-collapsed"),
-        offset_before: offsetBeforeMove,
-        offset_after: offsetAfterMove,
-        box_before: handleBeforeMove,
-        box_after: handleAfterMove
-      },
-      passed:
-        (await window.getAttribute("data-placement")) === "docked" &&
-        (await window.getAttribute("data-edge")) === "right" &&
-        (await window.getAttribute("data-collapsed")) === "true" &&
-        Number.isFinite(offsetBeforeMove) &&
-        Number.isFinite(offsetAfterMove) &&
-        Math.abs(offsetAfterMove - offsetBeforeMove) > 0.001 &&
-        Math.abs(handleAfterMove.y - handleBeforeMove.y) > 3
-    });
-    await captureScreenshot(page, join(artifacts, `${browserName}-collapsed-handle.png`), consoleLog);
-
     await handle.press("Enter");
     await checkAttribute(record, window, "data-collapsed", null, {
       check: `${browserName} restored the collapsed map window with its keyboard-reachable handle`,
@@ -436,6 +403,41 @@ async function runMapWindowJourney({
       expected: "visible map window title bar",
       page
     });
+
+    await window.getByRole("button", { name: `Collapse ${title} window` }).click();
+    const movedHandle = window.getByRole("button", { name: new RegExp(`^Expand ${escapeRegExp(title)} window`) });
+    const handleBeforeMove = await requiredBox(movedHandle, "collapsed map window handle");
+    const offsetBeforeMove = Number(await window.getAttribute("data-dock-offset"));
+    await page.mouse.move(handleBeforeMove.x + handleBeforeMove.width / 2, handleBeforeMove.y + handleBeforeMove.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(handleBeforeMove.x + handleBeforeMove.width / 2, handleBeforeMove.y + handleBeforeMove.height / 2 + 56, {
+      steps: 8
+    });
+    await page.mouse.up();
+    const handleAfterMove = await requiredBox(movedHandle, "moved collapsed map window handle");
+    const offsetAfterMove = Number(await window.getAttribute("data-dock-offset"));
+    record({
+      check: `${browserName} moved the collapsed handle parallel to its attached edge without restoring it`,
+      expected: { placement: "docked", edge: "right", collapsed: true, changed_offset: true },
+      actual: {
+        placement: await window.getAttribute("data-placement"),
+        edge: await window.getAttribute("data-edge"),
+        collapsed: await window.getAttribute("data-collapsed"),
+        offset_before: offsetBeforeMove,
+        offset_after: offsetAfterMove,
+        box_before: handleBeforeMove,
+        box_after: handleAfterMove
+      },
+      passed:
+        (await window.getAttribute("data-placement")) === "docked" &&
+        (await window.getAttribute("data-edge")) === "right" &&
+        (await window.getAttribute("data-collapsed")) === "true" &&
+        Number.isFinite(offsetBeforeMove) &&
+        Number.isFinite(offsetAfterMove) &&
+        Math.abs(offsetAfterMove - offsetBeforeMove) > 0.001 &&
+        Math.abs(handleAfterMove.y - handleBeforeMove.y) > 3
+    });
+    await captureScreenshot(page, join(artifacts, `${browserName}-collapsed-handle.png`), consoleLog);
 
     record({
       check: `${browserName} activated the visible native MapLibre zoom control with a normal pointer click`,
