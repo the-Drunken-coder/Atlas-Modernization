@@ -97,33 +97,34 @@ await runAcceptance({
 
       let staleWrite;
       try {
-        await staleClient.entities.update(
+        const overwritten = await staleClient.entities.update(
           entityID,
           { alias: staleAlias },
           { ifMatchVersion: staleSnapshot.metadata.version }
         );
-        staleWrite = { status: 200, response: "unexpected success" };
+        staleWrite = { status: 200, response: summarizeEntity(overwritten) };
       } catch (error) {
         staleWrite = summarizeConflict(error);
       }
+      const finalRead = await readEntityOutcome(verifier, entityID, signal);
       record({
         check: "stale SDK write is rejected by the current Entity version",
         expected: { status: 412, error_code: "PRECONDITION_FAILED" },
-        actual: staleWrite,
+        actual: { stale_write: staleWrite, independent_read: finalRead.observation },
         passed:
           staleWrite.status === 412 &&
           staleWrite.error_code === "PRECONDITION_FAILED"
       });
 
-      const unchanged = await verifier.entities.get(entityID, { fresh: true, signal });
       record({
         check: "independent SDK read confirms the newer Entity state was preserved",
         expected: { entity_id: entityID, alias: newerAlias, version: newerUpdate.metadata.version },
-        actual: summarizeEntity(unchanged),
+        actual: finalRead.observation,
         passed:
-          unchanged.entity_id === entityID &&
-          unchanged.alias === newerAlias &&
-          unchanged.metadata.version === newerUpdate.metadata.version
+          finalRead.ok &&
+          finalRead.entity.entity_id === entityID &&
+          finalRead.entity.alias === newerAlias &&
+          finalRead.entity.metadata.version === newerUpdate.metadata.version
       });
 
       await writer.entities.delete(entityID);
@@ -198,6 +199,26 @@ function summarizeConflict(error) {
 
 function summarizeEntity(entity) {
   return { entity_id: entity.entity_id, alias: entity.alias, version: entity.metadata.version };
+}
+
+async function readEntityOutcome(client, id, signal) {
+  try {
+    const entity = await client.entities.get(id, { fresh: true, signal });
+    return { ok: true, entity, observation: summarizeEntity(entity) };
+  } catch (error) {
+    return { ok: false, observation: summarizeSDKError(error) };
+  }
+}
+
+function summarizeSDKError(error) {
+  if (!(error instanceof Error)) return { error: String(error) };
+  return {
+    name: error.name,
+    status: error.status,
+    error_code: error.errorCode,
+    message: error.message,
+    response: error.response
+  };
 }
 
 function summarizeEntityBody(body) {

@@ -44,5 +44,5 @@ jobs:
         with:
           name: sdk-auth-conflicts-acceptance-${{ github.run_id }}-${{ github.run_attempt }}
           path: .atlas/acceptance/sdk-auth-conflicts/
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 14
