@@ -40,16 +40,43 @@ mkdir -p "${artifact_dir}"
 postgres_image="postgres:15@sha256:1b92e7a80c021647bf70f5d3eb66066a998e4f5cf43c07bb9dc9f729782cf88e"
 postgres_container="atlas-core-live-${run_id}"
 postgres_password="atlas-test"
-container_started="false"
+container_cleanup_needed="false"
 verification_complete="false"
 
+run_with_timeout() {
+  timeout_seconds="$1"
+  shift
+  python3 -c '
+import subprocess
+import sys
+
+timeout_seconds = float(sys.argv[1])
+command = sys.argv[2:]
+try:
+    completed = subprocess.run(command, timeout=timeout_seconds)
+except subprocess.TimeoutExpired:
+    print(f"command timed out after {timeout_seconds:g} seconds", file=sys.stderr)
+    raise SystemExit(124)
+raise SystemExit(completed.returncode)
+' "${timeout_seconds}" "$@"
+}
+
 finish() {
-  status=$?
+  original_status=$?
+  status="${original_status}"
+  cleanup_status=0
   set +e
-  if [[ "${container_started}" == "true" ]]; then
-    docker logs "${postgres_container}" >"${artifact_dir}/postgres.log" 2>&1
-    docker inspect "${postgres_container}" >"${artifact_dir}/postgres-inspect.json" 2>&1
-    docker rm -f "${postgres_container}" >/dev/null 2>&1
+  if [[ "${container_cleanup_needed}" == "true" ]]; then
+    record_command docker logs "${postgres_container}"
+    run_with_timeout 15 docker logs "${postgres_container}" >"${artifact_dir}/postgres.log" 2>&1
+    record_command docker inspect "${postgres_container}"
+    run_with_timeout 15 docker inspect "${postgres_container}" >"${artifact_dir}/postgres-inspect.json" 2>&1
+    record_command docker rm -f "${postgres_container}"
+    run_with_timeout 30 docker rm -f "${postgres_container}" >"${artifact_dir}/postgres-cleanup.log" 2>&1
+    cleanup_status=$?
+    if (( original_status == 0 && cleanup_status != 0 )); then
+      status="${cleanup_status}"
+    fi
   fi
   if (( status == 0 )) && [[ "${verification_complete}" == "true" ]]; then
     printf '%s\n' \
@@ -65,6 +92,11 @@ finish() {
       "- Unclassified failure: command exited with status ${status}." \
       '- Inspect commands.log and the matching test or dependency log before classifying it.' \
       '- The runner did not retry the failure.' >"${artifact_dir}/classification.md"
+    if (( cleanup_status != 0 )); then
+      printf '%s\n' \
+        "- Owned container cleanup failed with status ${cleanup_status}: ${postgres_container}." \
+        '- Inspect postgres-cleanup.log and remove that exact container before continuing.' >>"${artifact_dir}/classification.md"
+    fi
   fi
   printf 'exit_status=%d\nfinished_at=%s\n' "${status}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"${artifact_dir}/metadata.txt"
   exit "${status}"
@@ -94,6 +126,14 @@ run_logged() {
   "$@" 2>&1 | tee "${log_path}"
 }
 
+run_logged_with_timeout() {
+  log_path="$1"
+  timeout_seconds="$2"
+  shift 2
+  record_command "$@"
+  run_with_timeout "${timeout_seconds}" "$@" 2>&1 | tee "${log_path}"
+}
+
 require_command docker
 require_command git
 require_command go
@@ -109,6 +149,9 @@ revision="$(git -C "${repo_dir}" rev-parse HEAD)"
   printf 'coverage_process=Go test binaries; no separate Atlas Core process is instrumented\n'
   printf 'postgres_image=%s\n' "${postgres_image}"
   printf 'postgres_container=%s\n' "${postgres_container}"
+  printf 'postgres_pull_timeout_seconds=180\n'
+  printf 'postgres_start_timeout_seconds=30\n'
+  printf 'postgres_cleanup_timeout_seconds=30\n'
 } >"${artifact_dir}/metadata.txt"
 
 cd "${core_dir}"
@@ -144,15 +187,21 @@ offline_command=(
 )
 run_logged "${artifact_dir}/offline.log" "${offline_command[@]}"
 
-container_id="$(docker run --rm -d \
+run_logged_with_timeout "${artifact_dir}/postgres-pull.log" 180 docker pull "${postgres_image}"
+
+docker_run_command=(docker run --pull never --rm -d \
   --name "${postgres_container}" \
   -e POSTGRES_DB=atlas_core \
   -e POSTGRES_USER=atlas \
   -e POSTGRES_PASSWORD="${postgres_password}" \
   -e POSTGRES_INITDB_ARGS='--auth-local=md5 --auth-host=md5' \
   -p 127.0.0.1::5432 \
-  "${postgres_image}")"
-container_started="true"
+  "${postgres_image}")
+record_command "${docker_run_command[@]}"
+container_cleanup_needed="true"
+run_with_timeout 30 "${docker_run_command[@]}" \
+  >"${artifact_dir}/postgres-start.log" 2>&1
+container_id="$(tr -d '\r\n' <"${artifact_dir}/postgres-start.log")"
 printf 'postgres_container_id=%s\n' "${container_id}" >>"${artifact_dir}/metadata.txt"
 
 ready="false"
