@@ -398,6 +398,7 @@ async function runMapWindowJourney({
         (await window.getAttribute("data-edge")) === "right"
     });
     await captureScreenshot(page, join(artifacts, `${browserName}-viewport-resize.png`), consoleLog);
+    await focusAfterSettledFrames(resizeHandle, page);
     await resizeHandle.press("Enter");
     await checkVisible(record, window.locator(".map-window__bar"), {
       check: `${browserName} restored the resized collapsed handle into a usable map window`,
