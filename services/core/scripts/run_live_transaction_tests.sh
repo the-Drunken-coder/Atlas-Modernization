@@ -34,6 +34,8 @@ fi
 run_token="$(python3 -c 'import uuid; print(uuid.uuid4().hex)')"
 run_id="$(date -u +%Y%m%dT%H%M%SZ)-${run_token}"
 artifact_root="${ATLAS_CORE_LIVE_ARTIFACT_ROOT:-${repo_dir}/.atlas/core-live-transactions}"
+mkdir -p "${artifact_root}"
+artifact_root="$(cd "${artifact_root}" && pwd -P)"
 artifact_dir="${artifact_root}/${run_id}"
 mkdir -p "${artifact_dir}"
 
@@ -162,8 +164,22 @@ require_command go
 require_command python3
 
 revision="$(git -C "${repo_dir}" rev-parse HEAD)"
+record_command git -C "${repo_dir}" status --short
+git -C "${repo_dir}" status --short >"${artifact_dir}/checkout-status.txt"
+record_command git -C "${repo_dir}" diff --binary HEAD --
+git -C "${repo_dir}" diff --binary HEAD -- >"${artifact_dir}/checkout-tracked.diff"
+record_command git -C "${repo_dir}" ls-files --others --exclude-standard
+git -C "${repo_dir}" ls-files --others --exclude-standard >"${artifact_dir}/checkout-untracked-paths.txt"
+working_tree_dirty="false"
+if [[ -s "${artifact_dir}/checkout-status.txt" ]]; then
+  working_tree_dirty="true"
+fi
 {
   printf 'revision=%s\n' "${revision}"
+  printf 'working_tree_dirty=%s\n' "${working_tree_dirty}"
+  printf 'checkout_status=%s\n' "${artifact_dir}/checkout-status.txt"
+  printf 'checkout_tracked_diff=%s\n' "${artifact_dir}/checkout-tracked.diff"
+  printf 'checkout_untracked_paths=%s\n' "${artifact_dir}/checkout-untracked-paths.txt"
   printf 'mode=%s\n' "${mode}"
   printf 'started_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   printf 'go_version=%s\n' "$(go version)"
@@ -227,8 +243,11 @@ container_id="$(tr -d '\r\n' <"${artifact_dir}/postgres-start.log")"
 printf 'postgres_container_id=%s\n' "${container_id}" >>"${artifact_dir}/metadata.txt"
 
 ready="false"
-for attempt in $(seq 1 60); do
-  if docker exec "${postgres_container}" pg_isready -U atlas -d atlas_core >/dev/null 2>&1; then
+ready_deadline=$((SECONDS + 60))
+attempt=0
+while (( SECONDS < ready_deadline )); do
+  attempt=$((attempt + 1))
+  if run_with_timeout 2 docker exec "${postgres_container}" pg_isready -U atlas -d atlas_core >/dev/null 2>&1; then
     ready="true"
     printf 'postgres_ready_attempt=%d\n' "${attempt}" >>"${artifact_dir}/metadata.txt"
     break

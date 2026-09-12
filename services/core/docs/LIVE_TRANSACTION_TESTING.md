@@ -64,7 +64,8 @@ Coverage percentage does not replace the behavior assertions above. The live tie
 
 Each run writes a unique directory under `.atlas/core-live-transactions/`. It contains:
 
-- `metadata.txt` with the exact Git revision, tool versions, mode, image digest, selector, repetition count, and ordering mode
+- `metadata.txt` with the exact Git revision, dirty-checkout state, tool versions, mode, image digest, selector, repetition count, and ordering mode
+- `checkout-status.txt`, `checkout-tracked.diff`, and `checkout-untracked-paths.txt` so a dirty local execution can be reproduced without treating the commit ID as the whole source state
 - `commands.log` with each executed command
 - `coverage-checker-tests.log`, `selection-verifier-tests.log`, `offline.log`, `offline.coverage.out`, `live.log`, `selection-verification.log`, and `live.coverage.out`
 - `coverage.txt` with separately labeled module results
