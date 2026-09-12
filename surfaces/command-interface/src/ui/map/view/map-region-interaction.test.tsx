@@ -70,6 +70,24 @@ describe("useMapRegionInteraction", () => {
     expect(canvas).not.toHaveClass("map-canvas--region-drawing");
   });
 
+  it("releases capture and stops reacting to pointer events after unmount", () => {
+    const { canvas, releasePointerCapture } = interactionCanvas(rect(0, 0, 100, 80));
+    const onDrawResult = vi.fn();
+    const { unmount } = render(
+      <DrawingHarness canvas={canvas} onDrawResult={onDrawResult} suppressNextClick={vi.fn()} />
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Draw" }));
+    fireEvent.pointerDown(canvas, { pointerId: 7, button: 0, clientX: 10, clientY: 10 });
+
+    unmount();
+    fireEvent.pointerMove(window, { pointerId: 7, clientX: 60, clientY: 60 });
+    fireEvent.pointerUp(canvas, { pointerId: 7, clientX: 60, clientY: 60 });
+
+    expect(releasePointerCapture).toHaveBeenCalledExactlyOnceWith(7);
+    expect(canvas).not.toHaveClass("map-canvas--region-drawing");
+    expect(onDrawResult).not.toHaveBeenCalled();
+  });
+
   it("can reject a date-line drawing and remain armed for another pointer", async () => {
     const { canvas, setPointerCapture } = interactionCanvas(rect(0, 0, 100, 80), false);
     const map = interactionMap();

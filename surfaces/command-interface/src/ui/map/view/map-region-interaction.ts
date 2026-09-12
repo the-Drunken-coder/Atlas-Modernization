@@ -153,6 +153,11 @@ export function useMapRegionInteraction(options: UseMapRegionInteractionOptions)
     []
   );
 
+  const applyTransformedRegion = useCallback((region: RegionBounds | null) => {
+    if (region) optionsRef.current.onRegionChange(region);
+    setSelectionError(region ? null : DATE_LINE_CROSSING_MESSAGE);
+  }, []);
+
   const transformWithKeyboard = useCallback(
     (transform: RegionTransform, event: ReactKeyboardEvent<HTMLButtonElement>, region: RegionBounds) => {
       const { map, mapCanvas } = optionsRef.current;
@@ -169,15 +174,10 @@ export function useMapRegionInteraction(options: UseMapRegionInteractionOptions)
         transform,
         mapCanvas.getBoundingClientRect()
       );
-      if (!nextRegion) {
-        setSelectionError(DATE_LINE_CROSSING_MESSAGE);
-        return true;
-      }
-      optionsRef.current.onRegionChange(nextRegion);
-      setSelectionError(null);
+      applyTransformedRegion(nextRegion);
       return true;
     },
-    []
+    [applyTransformedRegion]
   );
 
   const clearSelectionError = useCallback(() => setSelectionError(null), []);
@@ -247,12 +247,7 @@ export function useMapRegionInteraction(options: UseMapRegionInteractionOptions)
         active.transform,
         mapCanvas.getBoundingClientRect()
       );
-      if (!nextRegion) {
-        setSelectionError(DATE_LINE_CROSSING_MESSAGE);
-        return;
-      }
-      optionsRef.current.onRegionChange(nextRegion);
-      setSelectionError(null);
+      applyTransformedRegion(nextRegion);
     };
 
     const finishInteraction = (event: globalThis.PointerEvent) => {
@@ -295,22 +290,19 @@ export function useMapRegionInteraction(options: UseMapRegionInteractionOptions)
       cancelActive(active, "pointer", false, true);
     };
 
+    const controller = new AbortController();
+    const { signal } = controller;
     mapCanvas.classList.toggle("map-canvas--region-drawing", active.kind === "draw");
-    mapCanvas.addEventListener("pointerdown", startDrawing, { capture: true });
-    window.addEventListener("pointermove", updateInteraction);
-    window.addEventListener("pointerup", finishInteraction);
-    window.addEventListener("pointercancel", cancelPointer);
-    const handleMouseUp = () => optionsRef.current.onWindowMouseUp?.();
-    window.addEventListener("mouseup", handleMouseUp);
+    mapCanvas.addEventListener("pointerdown", startDrawing, { capture: true, signal });
+    window.addEventListener("pointermove", updateInteraction, { signal });
+    window.addEventListener("pointerup", finishInteraction, { signal });
+    window.addEventListener("pointercancel", cancelPointer, { signal });
+    window.addEventListener("mouseup", () => optionsRef.current.onWindowMouseUp?.(), { signal });
     return () => {
       mapCanvas.classList.remove("map-canvas--region-drawing");
-      mapCanvas.removeEventListener("pointerdown", startDrawing, { capture: true });
-      window.removeEventListener("pointermove", updateInteraction);
-      window.removeEventListener("pointerup", finishInteraction);
-      window.removeEventListener("pointercancel", cancelPointer);
-      window.removeEventListener("mouseup", handleMouseUp);
+      controller.abort();
     };
-  }, [active, cancelActive, map, mapCanvas, releasePointer]);
+  }, [active, applyTransformedRegion, cancelActive, map, mapCanvas, releasePointer]);
 
   const drawingRect =
     active?.kind === "draw" && active.start && active.current ? rectFromPoints(active.start, active.current) : null;

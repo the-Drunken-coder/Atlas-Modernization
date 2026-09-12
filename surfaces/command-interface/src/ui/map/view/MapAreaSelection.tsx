@@ -58,12 +58,7 @@ export function MapAreaSelection({
   useEffect(() => {
     if (!map || !mapCanvas || !mapReady) return;
     const publishViewport = () => {
-      const viewportArea = regionFromMapBounds(map);
-      if (!viewportArea) {
-        callbacksRef.current.onViewportArea(null);
-        return;
-      }
-      callbacksRef.current.onViewportArea(viewportArea);
+      callbacksRef.current.onViewportArea(regionFromMapBounds(map));
     };
     publishViewport();
     map.on("moveend", publishViewport);
