@@ -1,0 +1,109 @@
+name: Browser Command Acceptance
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: "23 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: browser-command-acceptance-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  browser-commands-chromium:
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    name: browser-commands-chromium
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install JavaScript workspace dependencies
+        run: npm ci
+
+      - name: Install Chromium and system dependencies
+        run: timeout 10m node node_modules/playwright/cli.js install --with-deps chromium
+
+      - name: Type-check browser Command fixture
+        run: node node_modules/typescript/bin/tsc -p tests/acceptance/browser/commands/tsconfig.json
+
+      - name: Run Chromium Command acceptance
+        env:
+          ATLAS_ACCEPTANCE_RUN_LABEL: ci-chromium
+        run: npm run build:sdk && node tests/acceptance/browser/commands/commands.mjs --browser=chromium
+
+      - name: Upload Browser Command evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: browser-commands-chromium-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .atlas/acceptance/browser-commands-chromium/
+          if-no-files-found: error
+          retention-days: 14
+
+  browser-commands-nightly:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    name: browser-commands-nightly-${{ matrix.browser }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        browser:
+          - chromium
+          - firefox
+          - webkit
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install JavaScript workspace dependencies
+        run: npm ci
+
+      - name: Install ${{ matrix.browser }} and system dependencies
+        run: timeout 10m node node_modules/playwright/cli.js install --with-deps ${{ matrix.browser }}
+
+      - name: Type-check browser Command fixture
+        run: node node_modules/typescript/bin/tsc -p tests/acceptance/browser/commands/tsconfig.json
+
+      - name: Run ${{ matrix.browser }} Command acceptance
+        env:
+          ATLAS_ACCEPTANCE_RUN_LABEL: nightly-${{ matrix.browser }}
+        run: npm run build:sdk && node tests/acceptance/browser/commands/commands.mjs --browser=${{ matrix.browser }}
+
+      - name: Upload Browser Command evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: browser-commands-${{ matrix.browser }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .atlas/acceptance/browser-commands-${{ matrix.browser }}/
+          if-no-files-found: error
+          retention-days: 14
