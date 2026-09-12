@@ -5,6 +5,7 @@ export * from "./contract.js";
 export * from "./frame.js";
 export * from "./gateway.js";
 export * from "./joining.js";
+export { type RunningLinkService, type StartLinkServiceOptions, startLinkService } from "./lifecycle.js";
 export * from "./membership.js";
 export * from "./message-codec.js";
 export * from "./picture.js";
