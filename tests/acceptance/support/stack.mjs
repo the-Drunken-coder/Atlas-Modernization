@@ -10,10 +10,26 @@ const composeFile = join(repositoryRoot, "tests", "acceptance", "compose.yml");
 const commandTimeoutMs = 10 * 60_000;
 const readinessTimeoutMs = 90_000;
 const coreStartupAttempts = 2;
+const runnerOwnedEnvironmentKeys = new Set([
+  "ATLAS_ACCEPTANCE_RUN_ID",
+  "API_AUTH_KEY",
+  "ATLAS_ADMIN_PASSWORD",
+  "POSTGRES_PASSWORD",
+  "MINIO_ROOT_USER",
+  "MINIO_ROOT_PASSWORD",
+  "ATLAS_ACCEPTANCE_CORE_PORT"
+]);
 
 let activeChild;
 
-export async function runAcceptance({ name, reproduction, run }) {
+export async function runAcceptance({
+  name,
+  reproduction,
+  run,
+  additionalComposeFiles = [],
+  fixtureVariant,
+  prepare
+}) {
   const startedAt = new Date();
   const runLabel = acceptanceRunLabel();
   const runID = acceptanceRunID(name, runLabel);
@@ -31,13 +47,23 @@ export async function runAcceptance({ name, reproduction, run }) {
     MINIO_ROOT_USER: "atlas",
     MINIO_ROOT_PASSWORD: credentials.minioPassword
   };
-  const compose = ["compose", "--ansi", "never", "--project-name", project, "--file", composeFile];
+  const compose = [
+    "compose",
+    "--ansi",
+    "never",
+    "--project-name",
+    project,
+    "--file",
+    composeFile,
+    ...additionalComposeFiles.flatMap((path) => ["--file", resolve(repositoryRoot, path)])
+  ];
   const revision = await capture("git", ["rev-parse", "HEAD"], { cwd: repositoryRoot });
   const workingTree = await capture("git", ["status", "--short"], { cwd: repositoryRoot });
   const metadata = {
     scenario: name,
     run_id: runID,
     ...(runLabel ? { run_label: runLabel } : {}),
+    ...(fixtureVariant ? { fixture_variant: fixtureVariant } : {}),
     compose_project: project,
     revision: revision.trim(),
     working_tree: workingTree.trim() || "clean",
@@ -53,8 +79,10 @@ export async function runAcceptance({ name, reproduction, run }) {
 
   let ownsProject = false;
   let failure;
+  let fixtureCleanupFailure;
   let baseUrl;
   let initialPortReservation;
+  let preparation;
   let interruptedSignal;
   const interruption = new AbortController();
   const onSignal = (signal) => {
@@ -80,12 +108,26 @@ export async function runAcceptance({ name, reproduction, run }) {
   };
 
   try {
+    preparation = await prepare?.({ artifacts, runID, signal: interruption.signal });
+    if (preparation?.environment) {
+      const reservedKeys = Object.keys(preparation.environment).filter((key) => runnerOwnedEnvironmentKeys.has(key));
+      if (reservedKeys.length > 0) {
+        throw new Error(`fixture environment cannot override runner-owned keys: ${reservedKeys.join(", ")}`);
+      }
+      Object.assign(environment, preparation.environment);
+    }
+    if (preparation?.metadata) {
+      const serializedFixtureMetadata = JSON.stringify(preparation.metadata);
+      if (serializedFixtureMetadata === undefined) throw new Error("fixture metadata must be valid JSON");
+      metadata.fixture = JSON.parse(serializedFixtureMetadata);
+      writeJSON(join(artifacts, "run.json"), { ...metadata, status: "prepared" });
+    }
     await preflight(commandLog);
     interruption.signal.throwIfAborted();
     initialPortReservation = await reserveLoopbackPort();
     environment.ATLAS_ACCEPTANCE_CORE_PORT = String(initialPortReservation.port);
     ownsProject = true;
-    await execute("docker", [...compose, "build", "api"], {
+    await execute("docker", [...compose, "build"], {
       cwd: repositoryRoot,
       env: environment,
       logPath: commandLog,
@@ -164,6 +206,12 @@ export async function runAcceptance({ name, reproduction, run }) {
         failure ??= cleanupError;
       }
     }
+    try {
+      await preparation?.cleanup?.();
+    } catch (cleanupError) {
+      fixtureCleanupFailure ??= cleanupError;
+      failure ??= cleanupError;
+    }
     process.off("SIGINT", onInterrupt);
     process.off("SIGTERM", onTerminate);
   }
@@ -178,7 +226,8 @@ export async function runAcceptance({ name, reproduction, run }) {
     status: failure ? "failed" : "passed",
     completed_at: completedAt.toISOString(),
     duration_ms: completedAt.getTime() - startedAt.getTime(),
-    ...(failure ? { failure: serializeError(failure) } : {})
+    ...(failure ? { failure: serializeError(failure) } : {}),
+    ...(fixtureCleanupFailure ? { fixture_cleanup_failure: serializeError(fixtureCleanupFailure) } : {})
   };
   writeJSON(join(artifacts, "result.json"), result);
   if (failure) {
