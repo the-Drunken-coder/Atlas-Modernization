@@ -8,7 +8,6 @@ import re
 import sys
 from pathlib import Path
 
-
 EXPECTED = {
     "github.com/the-drunken-coder/atlas/services/core/internal/testenv": {
         "TestIsolatedDatabaseSchemasDoNotShareData",

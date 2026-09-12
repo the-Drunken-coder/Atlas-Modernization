@@ -23,7 +23,9 @@ def profile(lines: list[str], mode: str = "atomic") -> str:
 
 def block(group: str, statements: int, count: int, line: int = 1) -> str:
     path = "internal/api/handlers" if group == "handlers" else f"internal/{group}"
-    return f"github.com/the-drunken-coder/atlas/services/core/{path}/sample.go:{line}.1,{line + 1}.1 {statements} {count}"
+    return (
+        f"github.com/the-drunken-coder/atlas/services/core/{path}/sample.go:{line}.1,{line + 1}.1 {statements} {count}"
+    )
 
 
 class LiveTransactionCoverageTest(unittest.TestCase):
