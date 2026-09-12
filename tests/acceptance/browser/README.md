@@ -30,4 +30,4 @@ The smoke does not retry. A failure keeps the first observation in `evidence.jso
 
 Open a trace with `node node_modules/playwright/cli.js show-trace <trace.zip>`. If a new user-facing assertion fails on its first real run, preserve that directory and stop the case for developer assessment. Do not rerun, weaken, skip, or mark the case as expected to fail while its expectation is disputed.
 
-The required pull request workflow runs this same journey in Chromium and WebKit. WebKit engine coverage does not verify Safari or any physical device.
+The required pull request workflow runs this same journey in Chromium and WebKit. Firefox was removed from the supported matrix on 2026-09-12 after its initial hosted smoke run failed before MapLibre could create a real WebGL context ([CI run 34712353314](https://github.com/the-Drunken-coder/Atlas-Modernization/actions/runs/34712353314)). That run remains removed coverage evidence and is not a pass. WebKit engine coverage does not verify Safari or any physical device.
