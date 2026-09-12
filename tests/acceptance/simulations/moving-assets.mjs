@@ -706,14 +706,14 @@ async function recordAllMissing(core, ids, signal, record, check) {
   );
   record({
     check,
-    expected: ids.map((id) => ({ id, status: 404 })),
+    expected: ids.map((id) => ({ id, status: 404, error_code: "ENTITY_NOT_FOUND" })),
     actual,
     passed:
       actual.length === ids.length &&
       actual.every(
         (result) =>
           result.status === 404 &&
-          result.error_code === "NOT_FOUND" &&
+          result.error_code === "ENTITY_NOT_FOUND" &&
           typeof result.response === "object" &&
           result.response !== null
       )
