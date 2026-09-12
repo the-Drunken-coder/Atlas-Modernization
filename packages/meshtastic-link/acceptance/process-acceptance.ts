@@ -99,11 +99,12 @@ const repositoryRoot = resolve(packageRoot, "../..");
 const runnerPath = join(packageRoot, "dist", "acceptance", "process-runner.js");
 const revision = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repositoryRoot, encoding: "utf8" }).trim();
 const artifactParent = process.env.ATLAS_LINK_ACCEPTANCE_ARTIFACTS ?? join(repositoryRoot, ".tmp", "link-acceptance");
-const scenario =
-  process.env.ATLAS_LINK_ACCEPTANCE_FAULT === "drop-asset-private-packets" ? "drop-asset-private-packets" : "baseline";
+const scenario = acceptanceScenario();
+// The sequential readiness, join, publication, shutdown, and fallback-cleanup bounds total less than this outer limit.
+const processTestTimeoutMs = 210_000;
 
 test("runs compiled Gateway and Asset processes through device configuration, authenticated join, traffic, and shutdown", {
-  timeout: 120_000
+  timeout: processTestTimeoutMs
 }, async () => {
   const scenarioStarted = performance.now();
   const artifactDirectory = join(artifactParent, `${scenario}-${randomUUID()}`);
@@ -223,11 +224,11 @@ test("runs compiled Gateway and Asset processes through device configuration, au
 
     shutdownEvents = await openSSE(`${gatewayBase}/v1/events?client_id=shutdown-observer`);
     for (const runner of runners) runner.child.kill("SIGTERM");
-    const shutdownStream = waitForSSEClosure(shutdownEvents, 15_000);
-    const exits = await Promise.all(
-      runners.map((runner) => withTimeout(runner.exit, 15_000, `${runner.role} did not exit`))
-    );
-    observation.shutdown_stream_closed = await shutdownStream;
+    const [shutdownStreamClosed, exits] = await Promise.all([
+      waitForSSEClosure(shutdownEvents, 15_000),
+      Promise.all(runners.map((runner) => withTimeout(runner.exit, 15_000, `${runner.role} did not exit`)))
+    ]);
+    observation.shutdown_stream_closed = shutdownStreamClosed;
     const summaries = await Promise.all(
       runners.map((runner) => withTimeout(runner.summary, 2_000, `${runner.role} did not publish its summary`))
     );
@@ -629,4 +630,11 @@ function delay(milliseconds: number): Promise<void> {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? (error.stack ?? error.message) : String(error);
+}
+
+function acceptanceScenario(): "baseline" | "drop-asset-private-packets" {
+  const value = process.env.ATLAS_LINK_ACCEPTANCE_FAULT;
+  if (value === undefined || value === "") return "baseline";
+  if (value === "drop-asset-private-packets") return value;
+  throw new Error("ATLAS_LINK_ACCEPTANCE_FAULT must be drop-asset-private-packets when set");
 }
