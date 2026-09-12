@@ -126,8 +126,8 @@ finish() {
       if (( status == 0 )); then status="${inspect_status}"; fi
     fi
 
-    record_command docker rm -f "${container}"
-    run_with_timeout 30 docker rm -f "${container}" >"${artifact_dir}/${service}-cleanup.log" 2>&1
+    record_command docker rm -f -v "${container}"
+    run_with_timeout 30 docker rm -f -v "${container}" >"${artifact_dir}/${service}-cleanup.log" 2>&1
     cleanup_status=$?
     if (( cleanup_status != 0 )); then
       support_failure+="${service}_cleanup=${cleanup_status} "
@@ -222,7 +222,6 @@ if [[ -s "${artifact_dir}/workspace-status.txt" ]]; then
 else
   working_tree="clean"
 fi
-docker_server="$(run_with_timeout 10 docker version --format '{{.Server.Version}} {{.Server.Os}}/{{.Server.Arch}}')"
 {
   printf 'revision=%s\n' "${revision}"
   printf 'working_tree=%s\n' "${working_tree}"
@@ -233,7 +232,6 @@ docker_server="$(run_with_timeout 10 docker version --format '{{.Server.Version}
   printf 'mode=%s\n' "${mode}"
   printf 'started_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   printf 'go_version=%s\n' "$(go version)"
-  printf 'docker_server=%s\n' "${docker_server}"
   printf 'coverage_process=instrumented Go actions test binary; no separate Atlas Core server process is run or measured\n'
   printf 'crash_helper_coverage=separate child test process is not included in storage.coverage.out\n'
   printf 'postgres_image=%s\n' "${postgres_image}"
@@ -244,6 +242,9 @@ docker_server="$(run_with_timeout 10 docker version --format '{{.Server.Version}
   printf 'dependency_start_timeout_seconds=60\n'
   printf 'dependency_cleanup_timeout_seconds=30\n'
 } >"${artifact_dir}/metadata.txt"
+docker_server="$(run_logged_with_timeout "${artifact_dir}/docker-version.log" 10 \
+  docker version --format '{{.Server.Version}} {{.Server.Os}}/{{.Server.Arch}}')"
+printf 'docker_server=%s\n' "${docker_server}" >>"${artifact_dir}/metadata.txt"
 
 cd "${core_dir}"
 
@@ -253,7 +254,7 @@ run_logged_with_timeout "${artifact_dir}/postgres-pull.log" 180 docker pull "${p
 run_logged_with_timeout "${artifact_dir}/minio-pull.log" 180 docker pull "${minio_image}"
 
 postgres_run=(
-  docker run --pull never --rm -d
+  docker run --pull never -d
   --name "${postgres_container}"
   -e POSTGRES_DB=atlas_core
   -e POSTGRES_USER=atlas
@@ -262,13 +263,13 @@ postgres_run=(
   -p 127.0.0.1::5432
   "${postgres_image}"
 )
-record_command docker run --pull never --rm -d --name "${postgres_container}" '[owned PostgreSQL settings]' -p 127.0.0.1::5432 "${postgres_image}"
+record_command docker run --pull never -d --name "${postgres_container}" '[owned PostgreSQL settings]' -p 127.0.0.1::5432 "${postgres_image}"
 postgres_started="true"
 run_with_timeout 30 "${postgres_run[@]}" >"${artifact_dir}/postgres-start.log" 2>&1
 printf 'postgres_container_id=%s\n' "$(tr -d '\r\n' <"${artifact_dir}/postgres-start.log")" >>"${artifact_dir}/metadata.txt"
 
 minio_run=(
-  docker run --pull never --rm -d
+  docker run --pull never -d
   --name "${minio_container}"
   -e MINIO_ROOT_USER="${minio_access_key}"
   -e MINIO_ROOT_PASSWORD="${minio_secret_key}"
@@ -276,7 +277,7 @@ minio_run=(
   "${minio_image}"
   server /data --console-address :9001
 )
-record_command docker run --pull never --rm -d --name "${minio_container}" '[owned MinIO credentials]' -p 127.0.0.1::9000 "${minio_image}" server /data --console-address :9001
+record_command docker run --pull never -d --name "${minio_container}" '[owned MinIO credentials]' -p 127.0.0.1::9000 "${minio_image}" server /data --console-address :9001
 minio_started="true"
 run_with_timeout 30 "${minio_run[@]}" >"${artifact_dir}/minio-start.log" 2>&1
 printf 'minio_container_id=%s\n' "$(tr -d '\r\n' <"${artifact_dir}/minio-start.log")" >>"${artifact_dir}/metadata.txt"
