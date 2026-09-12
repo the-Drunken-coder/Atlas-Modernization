@@ -1,4 +1,5 @@
 import { AtlasClient, isAtlasAPIError } from "@the-drunken-coder/atlas-sdk";
+import { isDeepStrictEqual } from "node:util";
 import {
   runPluginAcceptance,
   waitForPluginStatus,
@@ -54,7 +55,7 @@ await runPluginAcceptance({
         available.status === "available" &&
         available.reason_code === null &&
         available.tool_asset_id === null &&
-        jsonEqual(available.operations, expectedOperations) &&
+        structurallyEqual(available.operations, expectedOperations) &&
         isTimestamp(available.checked_at),
     });
 
@@ -85,7 +86,7 @@ await runPluginAcceptance({
         check: `declared Operation ${operation.operation_id} returned fixture data through Core and Source Gateway`,
         expected,
         actual: result,
-        passed: jsonEqual(result, expected),
+        passed: structurallyEqual(result, expected),
       });
     }
 
@@ -234,7 +235,7 @@ await runPluginAcceptance({
       passed:
         unavailable.status === "unavailable" &&
         unavailable.reason_code === "transport_unreachable" &&
-        jsonEqual(unavailable.operations, expectedOperations) &&
+        structurallyEqual(unavailable.operations, expectedOperations) &&
         isLaterTimestamp(unavailable.checked_at, available.checked_at),
     });
     const unavailableInvocation = await captureAPIError(() =>
@@ -282,7 +283,7 @@ await runPluginAcceptance({
       passed:
         recovered.status === "available" &&
         recovered.reason_code === null &&
-        jsonEqual(recovered.operations, expectedOperations) &&
+        structurallyEqual(recovered.operations, expectedOperations) &&
         isLaterTimestamp(recovered.checked_at, unavailable.checked_at),
     });
     const recoveredResult = await client.plugins.invoke(
@@ -304,7 +305,7 @@ await runPluginAcceptance({
         "restarted Reference executed its declared Operation through Source Gateway",
       expected: expectedRecoveredResult,
       actual: recoveredResult,
-      passed: jsonEqual(recoveredResult, expectedRecoveredResult),
+      passed: structurallyEqual(recoveredResult, expectedRecoveredResult),
     });
   },
 });
@@ -350,12 +351,12 @@ function recordPluginError({
       actual.error_code === errorCode &&
       actual.message ===
         `Atlas request failed: ${status} ${errorCode}: ${message}` &&
-      jsonEqual(actual.details, details) &&
+      structurallyEqual(actual.details, details) &&
       response?.success === false &&
       response.error_code === errorCode &&
       response.message === message &&
       response.path === operationPath &&
-      jsonEqual(response.details, details) &&
+      structurallyEqual(response.details, details) &&
       /^err_[0-9a-f]{12}$/u.test(response.error_id) &&
       isTimestamp(response.timestamp),
   });
@@ -395,8 +396,8 @@ async function waitForFixtureProbe(client, predicate, signal) {
   );
 }
 
-function jsonEqual(actual, expected) {
-  return JSON.stringify(actual) === JSON.stringify(expected);
+function structurallyEqual(actual, expected) {
+  return isDeepStrictEqual(actual, expected);
 }
 
 function isTimestamp(value) {
