@@ -242,3 +242,43 @@ storage unless you intend to discard the deployment. Use the confirmed `reset` c
 the desired outcome.
 
 Image platform selection uses the local Docker daemon architecture, including when Node runs under Rosetta.
+
+## Platform acceptance
+
+The portable package check builds the current CLI, packs it, installs it into a
+temporary npm consumer, and executes its installed binary. It runs the help and
+version commands and confirms that initialization rejects a non-Linux Docker
+daemon before writing configuration. The latter uses a controlled Docker-command
+fake to verify the packaged validation path; it does not establish Docker
+acceptance.
+
+From the repository root, after `npm ci`, run:
+
+```bash
+npm run test:portable-package --workspace atlas-core
+```
+
+By default, each run writes a uniquely named
+`$TMPDIR/atlas-core-portable-package-evidence-*.json` file. Set
+`ATLAS_CORE_PACKED_CLI_EVIDENCE` to an absolute JSON output path to override it.
+The file records the revision, Node runtime, host OS and architecture, native or
+emulated execution, each completed scenario, and the packed artifact's filename,
+SHA-1, and npm integrity hash. A failed run preserves its tarball next to the
+evidence file. The dedicated `CLI platform acceptance` workflow runs this check
+natively on the following GitHub-hosted runners and uploads that evidence for
+every run:
+
+| Host | Architecture | Execution mode | Docker acceptance |
+| --- | --- | --- | --- |
+| `ubuntu-24.04` | x64 | packed npm consumer | not established here |
+| `ubuntu-24.04-arm` | arm64 | packed npm consumer | not established here |
+| `macos-15-intel` | x64 | packed npm consumer | unavailable in this workflow |
+| `macos-15` | arm64 | packed npm consumer | unavailable in this workflow |
+
+The CLI only supports macOS and Linux x64/arm64 hosts and requires Node.js 24+
+and Docker Compose 2.17.0+. Any command that configures or operates a deployment
+also requires a local Linux Docker daemon over a Unix socket. Portable checks and
+macOS runner results are not evidence that a Docker deployment works. The
+existing `.github/scripts/test-atlas-core-package.sh` is the disposable Linux
+Docker lifecycle acceptance command; its multi-architecture execution and
+evidence are tracked separately from this portable package workflow.

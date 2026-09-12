@@ -1,0 +1,93 @@
+name: CLI platform acceptance
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cli-platform-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  packed-cli:
+    name: packed-cli (${{ matrix.host }})
+    runs-on: ${{ matrix.host }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - host: ubuntu-24.04
+            platform: linux
+            architecture: x64
+          - host: ubuntu-24.04-arm
+            platform: linux
+            architecture: arm64
+          - host: macos-15-intel
+            platform: darwin
+            architecture: x64
+          - host: macos-15
+            platform: darwin
+            architecture: arm64
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Record runner facts
+        shell: bash
+        run: |
+          mkdir -p artifacts/cli-platform
+          node --input-type=module <<'NODE'
+          import { writeFileSync } from "node:fs";
+
+          writeFileSync(
+            "artifacts/cli-platform/runner.json",
+            JSON.stringify(
+              {
+                revision: process.env.GITHUB_SHA,
+                runner: process.env.RUNNER_NAME,
+                runtime: {
+                  node: process.version,
+                  platform: process.platform,
+                  architecture: process.arch
+                }
+              },
+              null,
+              2
+            ) + "\n"
+          );
+          NODE
+
+      - name: Install JavaScript workspace dependencies
+        run: npm ci
+
+      - name: Exercise packed CLI on this host
+        shell: bash
+        run: |
+          set -o pipefail
+          ATLAS_CORE_EXPECTED_PLATFORM="${{ matrix.platform }}" \
+            ATLAS_CORE_EXPECTED_ARCHITECTURE="${{ matrix.architecture }}" \
+            ATLAS_CORE_EXPECTED_EXECUTION=native \
+            ATLAS_CORE_PACKED_CLI_EVIDENCE="$PWD/artifacts/cli-platform/packed-cli-evidence.json" \
+            npm run test:portable-package --workspace atlas-core 2>&1 | tee artifacts/cli-platform/packed-cli.log
+
+      - name: Upload CLI platform evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cli-platform-${{ matrix.host }}-${{ github.sha }}
+          path: artifacts/cli-platform
+          if-no-files-found: warn
+          retention-days: 14
