@@ -10,8 +10,8 @@ services:
 
   map-windows-plugin:
     build:
-      context: ../..
-      dockerfile: tests/acceptance/browser/map-windows/Dockerfile
+      context: ./browser/map-windows
+      dockerfile: Dockerfile
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health"]
       interval: 2s
