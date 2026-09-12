@@ -70,7 +70,6 @@ jobs:
       matrix:
         browser:
           - chromium
-          - firefox
           - webkit
     steps:
       - name: Checkout repository

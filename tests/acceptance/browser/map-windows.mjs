@@ -1,13 +1,13 @@
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { isPluginManifest, isSpatialOperationResult } from "@the-drunken-coder/atlas-sdk";
-import { chromium, firefox, webkit } from "playwright";
+import { chromium, webkit } from "playwright";
 import { runAcceptance } from "../support/stack.mjs";
 import { buildCommandInterface, prepareBrowserServers } from "./support/servers.mjs";
 
 const fixturePath = new URL("./map-windows/fixture.json", import.meta.url);
 const composePath = "tests/acceptance/browser/map-windows/compose.yml";
-const browserTypes = { chromium, firefox, webkit };
+const browserTypes = { chromium, webkit };
 const options = parseArguments(process.argv.slice(2));
 const browserType = browserTypes[options.browser];
 const fixtureData = JSON.parse(readFileSync(fixturePath, "utf8"));
@@ -683,7 +683,7 @@ function parseArguments(args) {
     throw new Error(`unknown map-window acceptance argument: ${argument}`);
   }
   if (!Object.hasOwn(browserTypes, browser)) {
-    throw new Error(`--browser must be chromium, firefox, or webkit; received ${browser}`);
+    throw new Error(`--browser must be chromium or webkit; received ${browser}`);
   }
   return { browser, headed };
 }

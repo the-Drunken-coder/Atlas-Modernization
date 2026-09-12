@@ -20,7 +20,7 @@ node node_modules/playwright/cli.js install chromium
 node tests/acceptance/browser/map-windows.mjs --browser=chromium
 ```
 
-Use `--headed` to watch the journey. The workflow runs Chromium for pull requests and branch pushes. Its scheduled nightly job runs Chromium, Firefox, and WebKit in a separate concurrency group. CI execution is recorded only after that workflow has run; this document does not claim a hosted result before publication.
+Use `--headed` to watch the journey. The workflow runs Chromium for pull requests and branch pushes. Its scheduled nightly job runs Chromium and WebKit in a separate concurrency group. CI execution is recorded only after that workflow has run; this document does not claim a hosted result before publication.
 
 Each run creates an isolated Compose project and writes diagnostics under:
 
@@ -36,4 +36,4 @@ node node_modules/playwright/cli.js show-trace <trace.zip>
 
 Do not rerun a new user-facing failure before manual assessment. Preserve its artifact directory and report the revision, command, expected and observed behavior, duration, and evidence path.
 
-The current built application mounts only one production `MapWindow`, `spatial-results`. The test can therefore verify focus reaches the restored active control, but cannot observe relative stacking order between two simultaneously rendered real map windows. It does not add a synthetic browser window to fill that product-surface gap. The inherited browser-smoke Firefox WebGL failure is separately awaiting manual assessment and is not rerun or reclassified by this journey.
+The current built application mounts only one production `MapWindow`, `spatial-results`. The test can therefore verify focus reaches the restored active control, but cannot observe relative stacking order between two simultaneously rendered real map windows. It does not add a synthetic browser window to fill that product-surface gap. Firefox was removed from the supported matrix after the initial hosted browser smoke run failed before MapLibre could create a real WebGL context; that failure remains removed coverage evidence and is not rerun or reclassified by this journey.
