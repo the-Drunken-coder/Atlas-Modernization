@@ -45,7 +45,7 @@ await runAcceptance({
       record({
         check: "legitimate API-key request reads the intended protected Entity",
         expected: { status: 200, entity_id: entityID, alias: initialAlias, version: created.metadata.version },
-        actual: { status: legitimateRead.status, response: legitimateRead.observation },
+        actual: legitimateRead.error ?? { status: legitimateRead.status, response: legitimateRead.observation },
         passed:
           legitimateRead.status === 200 &&
           legitimateRead.entity.entity_id === entityID &&
@@ -121,7 +121,6 @@ await runAcceptance({
           finalRead.entity.alias === newerAlias &&
           finalRead.entity.metadata.version === newerUpdate.metadata.version
       });
-
     } finally {
       writer.sync.stop();
       newerClient.sync.stop();
@@ -155,7 +154,7 @@ function recordUnauthorized(record, credentialCase, response) {
   record({
     check: `${credentialCase} cannot read a protected Entity and receives no protected data`,
     expected: { error_type: "AtlasAPIError", status: 401, error_code: "UNAUTHORIZED", response: expectedBody },
-    actual: response.error,
+    actual: response.error ?? { status: response.status, response: response.observation },
     passed:
       response.error?.error_type === "AtlasAPIError" &&
       response.error.status === 401 &&
