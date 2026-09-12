@@ -30,9 +30,9 @@ const budgets = {
   milsymbolJavaScript: { raw: 900_000, gzip: 240_000 },
   mapLibreCss: { raw: 85_000, gzip: 11_000 },
   mapRoute: { raw: 2_100_000, gzip: 550_000 },
-  // Movement history brings the combined build to about 3,653.48 kB raw / 1,006.53 kB gzip.
-  // Retain the existing allowance for Linux zlib variance.
-  allJavaScript: { raw: 3_654_000, gzip: 1_008_000 },
+  // MapLibre 6.8 brings the combined build to about 3,710.5 kB raw / 1,027.8 kB gzip.
+  // Retain a small allowance for Linux zlib variance.
+  allJavaScript: { raw: 3_712_000, gzip: 1_030_000 },
   allCss: { raw: 603_000, gzip: 67_000 }
 };
 
