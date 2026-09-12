@@ -27,11 +27,17 @@ fi
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 core_dir="$(cd "${script_dir}/.." && pwd -P)"
 repo_dir="$(cd "${core_dir}/../.." && pwd -P)"
-if ! command -v python3 >/dev/null 2>&1; then
-  printf '%s\n' 'required command is unavailable: python3' >&2
+if command -v python3 >/dev/null 2>&1 &&
+  run_token="$(python3 -c 'import uuid; print(uuid.uuid4().hex)' 2>/dev/null)"; then
+  :
+elif [[ -r /proc/sys/kernel/random/uuid ]] && IFS= read -r run_token </proc/sys/kernel/random/uuid; then
+  run_token="${run_token//-/}"
+elif command -v uuidgen >/dev/null 2>&1 && run_token="$(uuidgen 2>/dev/null)"; then
+  run_token="${run_token//-/}"
+else
+  printf '%s\n' 'unable to create a unique test run identifier' >&2
   exit 1
 fi
-run_token="$(python3 -c 'import uuid; print(uuid.uuid4().hex)')"
 run_id="$(date -u +%Y%m%dT%H%M%SZ)-${run_token}"
 started_epoch="$(date +%s)"
 artifact_root="${ATLAS_STORAGE_RECOVERY_ARTIFACT_ROOT:-${repo_dir}/.atlas/core-storage-recovery}"
@@ -110,7 +116,7 @@ finish() {
   capture_and_remove() {
     service="$1"
     container="$2"
-    record_command docker logs "${container}"
+    record_command docker logs "${container}" || { if (( status == 0 )); then status=1; fi; }
     run_with_timeout 15 docker logs "${container}" >"${artifact_dir}/${service}.log" 2>&1
     capture_status=$?
     if (( capture_status != 0 )); then
@@ -118,7 +124,7 @@ finish() {
       if (( status == 0 )); then status="${capture_status}"; fi
     fi
 
-    record_command docker inspect "${container}"
+    record_command docker inspect "${container}" || { if (( status == 0 )); then status=1; fi; }
     run_with_timeout 15 docker inspect "${container}" >"${artifact_dir}/${service}-inspect.json" 2>&1
     inspect_status=$?
     if (( inspect_status != 0 )); then
@@ -126,7 +132,7 @@ finish() {
       if (( status == 0 )); then status="${inspect_status}"; fi
     fi
 
-    record_command docker rm -f -v "${container}"
+    record_command docker rm -f -v "${container}" || { if (( status == 0 )); then status=1; fi; }
     run_with_timeout 30 docker rm -f -v "${container}" >"${artifact_dir}/${service}-cleanup.log" 2>&1
     cleanup_status=$?
     if (( cleanup_status != 0 )); then
@@ -148,21 +154,21 @@ finish() {
       '' \
       '- Corrected test or setup failures: none in this run.' \
       '- Verified product defects: none in this run.' \
-      '- Unavailable verification: none in this run.' >"${artifact_dir}/classification.md"
+      '- Unavailable verification: none in this run.' >"${artifact_dir}/classification.md" || { if (( status == 0 )); then status=1; fi; }
   else
     printf '%s\n' \
       '# Run classification' \
       '' \
       "- Unclassified failure: command exited with status ${status}." \
       '- Inspect commands.log and the matching dependency or test log before classifying it.' \
-      '- The runner did not retry the failure.' >"${artifact_dir}/classification.md"
+      '- The runner did not retry the failure.' >"${artifact_dir}/classification.md" || { if (( status == 0 )); then status=1; fi; }
     if [[ -n "${support_failure}" ]]; then
-      printf '%s\n' "- Evidence or cleanup failure: ${support_failure}" >>"${artifact_dir}/classification.md"
+      printf '%s\n' "- Evidence or cleanup failure: ${support_failure}" >>"${artifact_dir}/classification.md" || { if (( status == 0 )); then status=1; fi; }
     fi
   fi
   finished_epoch="$(date +%s)"
   printf 'support_failure=%s\nexit_status=%s\nfinished_at=%s\nduration_seconds=%s\n' \
-    "${support_failure}" "${status}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$((finished_epoch - started_epoch))" >>"${artifact_dir}/metadata.txt"
+    "${support_failure}" "${status}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$((finished_epoch - started_epoch))" >>"${artifact_dir}/metadata.txt" || { if (( status == 0 )); then status=1; fi; }
   printf 'artifacts=%s\n' "${artifact_dir}"
   exit "${status}"
 }
@@ -173,10 +179,20 @@ trap 'exit 143' TERM
 
 require_command() {
   if ! command -v "$1" >/dev/null 2>&1; then
-    printf 'required command is unavailable: %s\n' "$1" >&2
+    printf 'required command is unavailable: %s\n' "$1" | tee -a "${artifact_dir}/prerequisites.log" >&2
     exit 1
   fi
 }
+
+# Bootstrap context survives missing tools before the complete source snapshot is available.
+{
+  printf 'revision=%s\n' "$(git -C "${repo_dir}" rev-parse HEAD 2>/dev/null || printf unavailable)"
+  printf 'working_tree=unavailable\nmode=%s\n' "${mode}"
+  printf 'started_at=%s\n' "$(date -u +%Y%m%dT%H%M%SZ)"
+  printf 'go_version=%s\n' "$(go version 2>/dev/null || printf unavailable)"
+  printf 'postgres_image=%s\nminio_image=%s\n' "${postgres_image}" "${minio_image}"
+  printf 'postgres_container=%s\nminio_container=%s\n' "${postgres_container}" "${minio_container}"
+} >"${artifact_dir}/metadata.txt"
 
 require_command docker
 require_command git
