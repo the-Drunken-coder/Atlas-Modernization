@@ -36,15 +36,11 @@ run_id="$(date -u +%Y%m%dT%H%M%SZ)-${run_token}"
 artifact_root="${ATLAS_CORE_LIVE_ARTIFACT_ROOT:-${repo_dir}/.atlas/core-live-transactions}"
 mkdir -p "${artifact_root}"
 artifact_root="$(cd "${artifact_root}" && pwd -P)"
-if [[ "${artifact_root}" == "${repo_dir}" ]]; then
-  printf '%s\n' 'ATLAS_CORE_LIVE_ARTIFACT_ROOT must not be the repository root' >&2
-  exit 1
-fi
 artifact_dir="${artifact_root}/${run_id}"
 mkdir -p "${artifact_dir}"
 checkout_pathspec=(-- .)
-if [[ "${artifact_root}" == "${repo_dir}/"* ]]; then
-  artifact_repo_path="${artifact_root#"${repo_dir}/"}"
+if [[ "${artifact_dir}" == "${repo_dir}/"* ]]; then
+  artifact_repo_path="${artifact_dir#"${repo_dir}/"}"
   checkout_pathspec+=(":(top,exclude,literal)${artifact_repo_path}")
 fi
 
@@ -291,7 +287,8 @@ ready_deadline=$((SECONDS + 60))
 attempt=0
 while (( SECONDS < ready_deadline )); do
   attempt=$((attempt + 1))
-  if run_with_timeout 2 docker exec "${postgres_container}" pg_isready -U atlas -d atlas_core >/dev/null 2>&1; then
+  if run_with_timeout 2 docker exec "${postgres_container}" \
+    pg_isready -h 127.0.0.1 -U atlas -d atlas_core >/dev/null 2>&1; then
     ready="true"
     printf 'postgres_ready_attempt=%d\n' "${attempt}" >>"${artifact_dir}/metadata.txt"
     break
