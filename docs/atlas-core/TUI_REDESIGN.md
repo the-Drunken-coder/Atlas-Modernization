@@ -19,6 +19,7 @@ They preserve the selected look without making the local throwaway prototype or 
 ## Interaction contract
 
 - General lists use Up and Down, Enter, Escape, and visible shortcuts. The current main-menu text filter is intentionally removed. Mouse input is out of scope.
+- Service health uses Left and Right to select a service, Up and Down to scroll that service's details one display line, and `r` to refresh. These bindings own the status screen and take precedence over general list navigation. At 40 columns the service selector may wrap or stack visually without changing the mapping.
 - During an operation, Escape requests cancellation and returns after cleanup. Ctrl-C requests cancellation and exits after cleanup. A step that cannot stop safely must say so and finish before cleanup.
 - In logs, Left and Right change service. Up and Down pause following before scrolling one display line. Space toggles pause and follow. End jumps to the latest line and resumes follow. Escape leaves the viewer and closes its stream without affecting services.
 - Log-viewer controls take precedence over general list navigation. Incoming lines remain bounded while paused. Oldest-line eviction preserves the paused viewport until its retained anchor is evicted.
@@ -38,4 +39,4 @@ The released CLI still requires `ATLAS_CORE_BACKUP_DIR` and a validated paired P
 
 ## Tracking
 
-The ten canonical implementation issues and their blockers are listed in the [issue index](tui-redesign-tickets/README.md). Repository-local ticket copies were removed so implementation status cannot drift from GitHub.
+The ten canonical implementation issues are linked from the [issue index](tui-redesign-tickets/README.md). GitHub owns their blocker state. Repository-local ticket copies were removed so implementation status cannot drift from GitHub.

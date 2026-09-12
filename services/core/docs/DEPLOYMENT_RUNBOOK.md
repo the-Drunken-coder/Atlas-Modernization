@@ -166,6 +166,7 @@ The released `atlas-core update all` command requires this validated pair throug
 ```bash
 BACKUP_ID="$(date -u +%Y%m%dT%H%M%SZ)" || exit 1
 export BACKUP_DIR="/srv/atlas-backups/${BACKUP_ID}"
+export ATLAS_CORE_BACKUP_DIR="${BACKUP_DIR}"
 export BACKUP_ID
 umask 077
 mkdir -p "${BACKUP_DIR}/minio" || exit 1
