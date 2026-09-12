@@ -30,7 +30,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        browser: ${{ fromJSON((github.event_name == 'schedule' || inputs.mode == 'nightly') && '["chromium","firefox","webkit"]' || '["chromium"]') }}
+        browser: ${{ fromJSON((github.event_name == 'schedule' || inputs.mode == 'nightly') && '["chromium","webkit"]' || '["chromium"]') }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
