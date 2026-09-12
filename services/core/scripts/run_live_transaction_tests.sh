@@ -24,9 +24,9 @@ if (( $# > 1 )); then
   exit 2
 fi
 
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-core_dir="$(cd "${script_dir}/.." && pwd)"
-repo_dir="$(cd "${core_dir}/../.." && pwd)"
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+core_dir="$(cd "${script_dir}/.." && pwd -P)"
+repo_dir="$(cd "${core_dir}/../.." && pwd -P)"
 if ! command -v python3 >/dev/null 2>&1; then
   printf '%s\n' 'required command is unavailable: python3' >&2
   exit 1
@@ -36,8 +36,17 @@ run_id="$(date -u +%Y%m%dT%H%M%SZ)-${run_token}"
 artifact_root="${ATLAS_CORE_LIVE_ARTIFACT_ROOT:-${repo_dir}/.atlas/core-live-transactions}"
 mkdir -p "${artifact_root}"
 artifact_root="$(cd "${artifact_root}" && pwd -P)"
+if [[ "${artifact_root}" == "${repo_dir}" ]]; then
+  printf '%s\n' 'ATLAS_CORE_LIVE_ARTIFACT_ROOT must not be the repository root' >&2
+  exit 1
+fi
 artifact_dir="${artifact_root}/${run_id}"
 mkdir -p "${artifact_dir}"
+checkout_pathspec=(-- .)
+if [[ "${artifact_root}" == "${repo_dir}/"* ]]; then
+  artifact_repo_path="${artifact_root#"${repo_dir}/"}"
+  checkout_pathspec+=(":(top,exclude,literal)${artifact_repo_path}")
+fi
 
 postgres_image="postgres:15@sha256:1b92e7a80c021647bf70f5d3eb66066a998e4f5cf43c07bb9dc9f729782cf88e"
 postgres_container="atlas-core-live-${run_id}"
@@ -164,31 +173,64 @@ require_command go
 require_command python3
 
 revision="$(git -C "${repo_dir}" rev-parse HEAD)"
-record_command git -C "${repo_dir}" status --short
-git -C "${repo_dir}" status --short >"${artifact_dir}/checkout-status.txt"
-record_command git -C "${repo_dir}" diff --binary HEAD --
-git -C "${repo_dir}" diff --binary HEAD -- >"${artifact_dir}/checkout-tracked.diff"
-record_command git -C "${repo_dir}" ls-files --others --exclude-standard
-git -C "${repo_dir}" ls-files --others --exclude-standard >"${artifact_dir}/checkout-untracked-paths.txt"
+record_command git -C "${repo_dir}" status --short "${checkout_pathspec[@]}"
+git -C "${repo_dir}" status --short "${checkout_pathspec[@]}" >"${artifact_dir}/checkout-status.txt"
+record_command git -C "${repo_dir}" diff --binary HEAD "${checkout_pathspec[@]}"
+git -C "${repo_dir}" diff --binary HEAD "${checkout_pathspec[@]}" >"${artifact_dir}/checkout-tracked.diff"
+untracked_index="${artifact_dir}/checkout-untracked-paths.nul"
+record_command git -C "${repo_dir}" ls-files --others --exclude-standard -z "${checkout_pathspec[@]}"
+git -C "${repo_dir}" ls-files --others --exclude-standard -z "${checkout_pathspec[@]}" >"${untracked_index}"
+record_command python3 - "${repo_dir}" "${untracked_index}" \
+  "${artifact_dir}/checkout-untracked-paths.txt" "${artifact_dir}/checkout-untracked-files.tar.gz"
+python3 - "${repo_dir}" "${untracked_index}" \
+  "${artifact_dir}/checkout-untracked-paths.txt" "${artifact_dir}/checkout-untracked-files.tar.gz" <<'PY'
+import os
+import stat
+import sys
+import tarfile
+from pathlib import Path
+
+repo = Path(sys.argv[1])
+raw_paths = [value for value in Path(sys.argv[2]).read_bytes().split(b"\0") if value]
+Path(sys.argv[3]).write_bytes(b"\n".join(raw_paths) + (b"\n" if raw_paths else b""))
+with tarfile.open(sys.argv[4], "w:gz", dereference=False) as archive:
+    for raw_path in raw_paths:
+        relative = os.fsdecode(raw_path)
+        path = Path(relative)
+        if path.is_absolute() or ".." in path.parts:
+            raise SystemExit(f"git returned unsafe untracked path: {relative!r}")
+        source = repo / path
+        mode = source.lstat().st_mode
+        if not (stat.S_ISREG(mode) or stat.S_ISLNK(mode)):
+            raise SystemExit(f"unsupported untracked filesystem entry: {relative!r}")
+        archive.add(source, arcname=relative, recursive=False)
+PY
+rm -f "${untracked_index}"
 working_tree_dirty="false"
 if [[ -s "${artifact_dir}/checkout-status.txt" ]]; then
   working_tree_dirty="true"
 fi
+docker_server="$(
+  run_logged_with_timeout "${artifact_dir}/docker-version.log" 15 \
+    docker version --format '{{.Server.Version}} {{.Server.Os}}/{{.Server.Arch}}'
+)"
 {
   printf 'revision=%s\n' "${revision}"
   printf 'working_tree_dirty=%s\n' "${working_tree_dirty}"
   printf 'checkout_status=%s\n' "${artifact_dir}/checkout-status.txt"
   printf 'checkout_tracked_diff=%s\n' "${artifact_dir}/checkout-tracked.diff"
   printf 'checkout_untracked_paths=%s\n' "${artifact_dir}/checkout-untracked-paths.txt"
+  printf 'checkout_untracked_archive=%s\n' "${artifact_dir}/checkout-untracked-files.tar.gz"
   printf 'mode=%s\n' "${mode}"
   printf 'started_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   printf 'go_version=%s\n' "$(go version)"
-  printf 'docker_server=%s\n' "$(docker version --format '{{.Server.Version}} {{.Server.Os}}/{{.Server.Arch}}')"
+  printf 'docker_server=%s\n' "${docker_server}"
   printf 'coverage_process=Go test binaries; no separate Atlas Core process is instrumented\n'
   printf 'postgres_image=%s\n' "${postgres_image}"
   printf 'postgres_container=%s\n' "${postgres_container}"
   printf 'postgres_pull_timeout_seconds=180\n'
   printf 'postgres_start_timeout_seconds=30\n'
+  printf 'postgres_port_lookup_timeout_seconds=15\n'
   printf 'postgres_cleanup_timeout_seconds=30\n'
 } >"${artifact_dir}/metadata.txt"
 
@@ -259,8 +301,15 @@ if [[ "${ready}" != "true" ]]; then
   exit 1
 fi
 
-port_mapping="$(docker port "${postgres_container}" 5432/tcp)"
-postgres_port="${port_mapping##*:}"
+port_mapping="$(
+  run_logged_with_timeout "${artifact_dir}/postgres-port.log" 15 \
+    docker port "${postgres_container}" 5432/tcp
+)"
+if [[ ! "${port_mapping}" =~ ^127\.0\.0\.1:([0-9]+)$ ]]; then
+  printf 'unexpected disposable PostgreSQL port mapping: %q\n' "${port_mapping}" >&2
+  exit 1
+fi
+postgres_port="${BASH_REMATCH[1]}"
 database_url="postgres://atlas:${postgres_password}@127.0.0.1:${postgres_port}/atlas_core?sslmode=disable"
 
 live_test_pattern="$(python3 scripts/verify_live_transaction_tests.py pattern)"

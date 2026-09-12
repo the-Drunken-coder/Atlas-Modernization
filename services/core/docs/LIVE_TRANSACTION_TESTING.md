@@ -18,7 +18,7 @@ Both commands require Docker, Git, Go, and Python 3. A missing command, an unava
 
 ## Isolation and cleanup
 
-The runner starts PostgreSQL with a unique container name, a random loopback port, no host bind mount, and no named volume. Its exit trap captures PostgreSQL logs and inspection data, then removes the container. Pull, start, and cleanup commands have explicit time limits. A failed removal changes an otherwise successful run to a failure and identifies the exact owned container in `classification.md`.
+The runner starts PostgreSQL with a unique container name, a random loopback port, no host bind mount, and no named volume. Its exit trap captures PostgreSQL logs and inspection data, then removes the container. Every Docker call has an explicit time limit. A failed removal changes an otherwise successful run to a failure and identifies the exact owned container in `classification.md`.
 
 Each live Go test creates a unique PostgreSQL schema through `internal/testenv`. Test cleanup closes the test pool before dropping that schema. Tests within one contention scenario continue to share their pool and transactions so they still exercise the intended locks. `TestIsolatedDatabaseSchemasDoNotShareData` writes tables with the same name into two schemas and proves that each pool reads only its own row. `TestIsolatedDatabaseSchemaIsDroppedAtTestCleanup` proves that subtest cleanup removes the schema.
 
@@ -65,7 +65,7 @@ Coverage percentage does not replace the behavior assertions above. The live tie
 Each run writes a unique directory under `.atlas/core-live-transactions/`. It contains:
 
 - `metadata.txt` with the exact Git revision, dirty-checkout state, tool versions, mode, image digest, selector, repetition count, and ordering mode
-- `checkout-status.txt`, `checkout-tracked.diff`, and `checkout-untracked-paths.txt` so a dirty local execution can be reproduced without treating the commit ID as the whole source state
+- `checkout-status.txt`, `checkout-tracked.diff`, `checkout-untracked-paths.txt`, and `checkout-untracked-files.tar.gz` so a dirty local execution can be reconstructed without treating the commit ID as the whole source state. The archive contains nonignored untracked regular files and symlinks at repository-relative paths; it stores symlinks without copying targets outside the repository. Ignored files and files outside the repository are not captured. When the artifact root is inside the repository, that entire generated subtree is excluded from the status, diff, path list, and archive to prevent current or earlier evidence from being archived recursively.
 - `commands.log` with each executed command
 - `coverage-checker-tests.log`, `selection-verifier-tests.log`, `offline.log`, `offline.coverage.out`, `live.log`, `selection-verification.log`, and `live.coverage.out`
 - `coverage.txt` with separately labeled module results
