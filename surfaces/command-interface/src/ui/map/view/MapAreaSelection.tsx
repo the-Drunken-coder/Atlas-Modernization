@@ -1,40 +1,10 @@
 import type { MapArea } from "@the-drunken-coder/atlas-sdk";
 import type { Map as MlMap } from "maplibre-gl";
-import {
-  type KeyboardEvent as ReactKeyboardEvent,
-  type PointerEvent as ReactPointerEvent,
-  useCallback,
-  useEffect,
-  useRef,
-  useState
-} from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { foregroundEscapeOwner } from "../interaction/foreground-escape-owner.js";
-import { MapRegionSelection, type RegionTransform, type ScreenRect } from "./MapRegionSelection.js";
-import {
-  DATE_LINE_CROSSING_MESSAGE,
-  keyboardDelta,
-  MIN_REGION_SIZE,
-  pointInCanvas,
-  projectedScreenRect,
-  rectFromPoints,
-  regionAfterTransform,
-  regionFromMapBounds,
-  regionFromScreenRect,
-  type ScreenPoint,
-  screenRectsEqual,
-  visibleScreenRect
-} from "./map-region-geometry.js";
-
-type DragState =
-  | { kind: "draw"; start: ScreenPoint | null; current: ScreenPoint | null; pointerId: number | null }
-  | {
-      kind: "transform";
-      transform: RegionTransform;
-      start: ScreenPoint;
-      pointerId: number;
-      initialRect: ScreenRect;
-      initialArea: MapArea;
-    };
+import { MapRegionSelection, type ScreenRect } from "./MapRegionSelection.js";
+import { regionFromMapBounds, screenRectsEqual, visibleScreenRect } from "./map-region-geometry.js";
+import { useMapRegionInteraction } from "./map-region-interaction.js";
 
 type MapAreaSelectionProps = {
   mapCanvas: HTMLDivElement | null;
@@ -66,17 +36,11 @@ export function MapAreaSelection({
   suppressNextClick
 }: MapAreaSelectionProps) {
   const [rect, setRect] = useState<ScreenRect | null>(null);
-  const [drag, setDrag] = useState<DragState | null>(null);
-  const [selectionError, setSelectionError] = useState<string | null>(null);
   const rectRef = useRef(rect);
-  const dragRef = useRef<DragState | null>(drag);
   const boxZoomGestureRef = useRef(false);
   const onBoxZoomActiveChangeRef = useRef(onBoxZoomActiveChange);
-  const onBeginRegionInteractionRef = useRef(onBeginRegionInteraction);
   const callbacksRef = useRef({ onAreaChange, onDrawingComplete, onCancelDrawing, onViewportArea });
   rectRef.current = rect;
-  dragRef.current = drag;
-  onBeginRegionInteractionRef.current = onBeginRegionInteraction;
   onBoxZoomActiveChangeRef.current = onBoxZoomActiveChange;
   callbacksRef.current = { onAreaChange, onDrawingComplete, onCancelDrawing, onViewportArea };
 
@@ -88,9 +52,8 @@ export function MapAreaSelection({
   useEffect(() => {
     return () => {
       setBoxZoomActive(false);
-      releasePointerCapture(mapCanvas, dragRef.current?.pointerId ?? null, suppressNextClick, true);
     };
-  }, [mapCanvas, setBoxZoomActive, suppressNextClick]);
+  }, [setBoxZoomActive]);
 
   useEffect(() => {
     if (!map || !mapCanvas || !mapReady) return;
@@ -151,206 +114,75 @@ export function MapAreaSelection({
     };
   }, [map, setBoxZoomActive]);
 
-  useEffect(() => {
-    const currentDrag = dragRef.current;
-    if (!drawing) {
-      setSelectionError(null);
-      if (currentDrag?.kind === "draw") {
-        releasePointerCapture(mapCanvas, currentDrag.pointerId, suppressNextClick, true);
-        setDrag(null);
-      }
-      return;
-    }
-    onBeginRegionInteractionRef.current();
-    if (currentDrag?.kind === "transform") {
-      releasePointerCapture(mapCanvas, currentDrag.pointerId, suppressNextClick, true);
-      callbacksRef.current.onAreaChange(currentDrag.initialArea);
-    }
-    setDrag((current) =>
-      current?.kind === "draw" ? current : { kind: "draw", start: null, current: null, pointerId: null }
-    );
-  }, [drawing, mapCanvas, suppressNextClick]);
-
-  useEffect(() => {
-    if (!map || !mapCanvas || !drag) return;
-    const startDrag = (event: globalThis.PointerEvent) => {
-      if (drag.kind !== "draw" || drag.start || event.button !== 0) return;
-      if (
-        event.target instanceof Element &&
-        event.target.closest(".maplibregl-control-container, [data-map-interaction-control]")
-      )
-        return;
-      if (event.shiftKey) {
-        setBoxZoomActive(true);
+  const interaction = useMapRegionInteraction({
+    map,
+    mapCanvas,
+    onBeginInteraction: onBeginRegionInteraction,
+    onRegionChange: (nextArea) => callbacksRef.current.onAreaChange(nextArea),
+    onDrawResult: (result) => {
+      if (result.kind === "invalid") return "continue";
+      if (result.kind === "undersized") {
+        callbacksRef.current.onCancelDrawing();
         return;
       }
-      event.preventDefault();
-      event.stopPropagation();
-      onBeginRegionInteraction();
-      mapCanvas.setPointerCapture?.(event.pointerId);
-      const point = pointInCanvas(event, mapCanvas);
-      setSelectionError(null);
-      setDrag({ kind: "draw", start: point, current: point, pointerId: event.pointerId });
-    };
-    const updateDrag = (event: globalThis.PointerEvent) => {
-      if (drag.pointerId === null || event.pointerId !== drag.pointerId) return;
-      const point = pointInCanvas(event, mapCanvas);
-      if (drag.kind === "draw") {
-        if (drag.start) setDrag({ ...drag, current: point });
-        return;
-      }
-      const delta = { x: point.x - drag.start.x, y: point.y - drag.start.y };
-      const nextArea = regionAfterTransform(
-        map,
-        drag.initialRect,
-        delta,
-        drag.transform,
-        mapCanvas.getBoundingClientRect()
-      );
-      if (!nextArea) {
-        setSelectionError(DATE_LINE_CROSSING_MESSAGE);
-        return;
-      }
-      callbacksRef.current.onAreaChange(nextArea);
-      setSelectionError(null);
-    };
-    const finishDrag = (event: globalThis.PointerEvent) => {
-      if (drag.pointerId === null || event.pointerId !== drag.pointerId) return;
-      const suppressReleaseClick = event.target instanceof Node && mapCanvas.contains(event.target);
-      releasePointerCapture(mapCanvas, drag.pointerId, suppressNextClick, suppressReleaseClick);
-      if (drag.kind === "draw" && drag.start) {
-        const next = rectFromPoints(drag.start, pointInCanvas(event, mapCanvas));
-        if (next.width >= MIN_REGION_SIZE && next.height >= MIN_REGION_SIZE) {
-          const nextArea = regionFromScreenRect(map, next);
-          if (!nextArea) {
-            setSelectionError(DATE_LINE_CROSSING_MESSAGE);
-            setDrag({ kind: "draw", start: null, current: null, pointerId: null });
-            return;
-          } else {
-            callbacksRef.current.onAreaChange(nextArea);
-            callbacksRef.current.onDrawingComplete();
-            setSelectionError(null);
-          }
-        } else {
-          callbacksRef.current.onCancelDrawing();
-        }
-      }
-      setDrag(null);
-    };
-    const clearBoxZoomGesture = () => {
-      setBoxZoomActive(false);
-    };
-    const cancelPointer = (event: globalThis.PointerEvent) => {
-      if (drag.pointerId === null || event.pointerId !== drag.pointerId) {
-        if (drag.pointerId === null) setBoxZoomActive(false);
-        return;
-      }
-      releasePointerCapture(mapCanvas, drag.pointerId, suppressNextClick, false);
-      if (drag.kind === "transform") callbacksRef.current.onAreaChange(drag.initialArea);
+      callbacksRef.current.onAreaChange(result.region);
+      callbacksRef.current.onDrawingComplete();
+    },
+    onCancel: (cancellation) => {
+      if (cancellation.kind === "transform") callbacksRef.current.onAreaChange(cancellation.initialRegion);
       else callbacksRef.current.onCancelDrawing();
-      setSelectionError(null);
-      setDrag(null);
-    };
-    const cancelKeyboard = (event: globalThis.KeyboardEvent) => {
-      if (event.key !== "Escape") return;
+    },
+    escapeBlocked: (event) => {
       if (boxZoomGestureRef.current) {
         queueMicrotask(() => setBoxZoomActive(false));
-        return;
+        return true;
       }
-      if (event.defaultPrevented || foregroundEscapeOwner(event.target)) return;
-      event.preventDefault();
-      event.stopPropagation();
-      releasePointerCapture(mapCanvas, drag.pointerId, suppressNextClick, true);
-      if (drag.kind === "transform") callbacksRef.current.onAreaChange(drag.initialArea);
-      else callbacksRef.current.onCancelDrawing();
-      setSelectionError(null);
-      setDrag(null);
-    };
+      return event.defaultPrevented || Boolean(foregroundEscapeOwner(event.target));
+    },
+    suppressNextClick,
+    onShiftPointerDown: () => setBoxZoomActive(true),
+    onWindowMouseUp: () => setBoxZoomActive(false),
+    onPointerCancelWithoutInteraction: () => setBoxZoomActive(false),
+    unmountReleaseClickSuppression: "always"
+  });
 
-    mapCanvas.classList.toggle("map-canvas--region-drawing", drag.kind === "draw");
-    mapCanvas.addEventListener("pointerdown", startDrag, { capture: true });
-    window.addEventListener("pointermove", updateDrag);
-    window.addEventListener("pointerup", finishDrag);
-    window.addEventListener("pointercancel", cancelPointer);
-    window.addEventListener("mouseup", clearBoxZoomGesture);
-    window.addEventListener("keydown", cancelKeyboard, { capture: true });
-    return () => {
-      mapCanvas.classList.remove("map-canvas--region-drawing");
-      mapCanvas.removeEventListener("pointerdown", startDrag, { capture: true });
-      window.removeEventListener("pointermove", updateDrag);
-      window.removeEventListener("pointerup", finishDrag);
-      window.removeEventListener("pointercancel", cancelPointer);
-      window.removeEventListener("mouseup", clearBoxZoomGesture);
-      window.removeEventListener("keydown", cancelKeyboard, { capture: true });
-    };
-  }, [drag, map, mapCanvas, onBeginRegionInteraction, setBoxZoomActive, suppressNextClick]);
-
-  const beginTransform = (transform: RegionTransform, event: ReactPointerEvent<HTMLButtonElement>) => {
-    if (event.button !== 0 || !map || !mapCanvas || !area || !rect) return;
-    event.preventDefault();
-    event.stopPropagation();
-    onBeginRegionInteraction();
-    mapCanvas.setPointerCapture?.(event.pointerId);
-    setSelectionError(null);
-    setDrag({
-      kind: "transform",
-      transform,
-      start: pointInCanvas(event, mapCanvas),
-      pointerId: event.pointerId,
-      initialRect: projectedScreenRect(map, area),
-      initialArea: area
-    });
-  };
-
-  const transformWithKeyboard = (transform: RegionTransform, event: ReactKeyboardEvent<HTMLButtonElement>) => {
-    if (!map || !mapCanvas || !area) return;
-    const delta = keyboardDelta(event.key, event.shiftKey, transform);
-    if (!delta) return;
-    event.preventDefault();
-    event.stopPropagation();
-    onBeginRegionInteraction();
-    const initial = projectedScreenRect(map, area);
-    const nextArea = regionAfterTransform(map, initial, delta, transform, mapCanvas.getBoundingClientRect());
-    if (!nextArea) {
-      setSelectionError(DATE_LINE_CROSSING_MESSAGE);
+  useEffect(() => {
+    if (!drawing) {
+      if (interaction.activeKind === "draw") {
+        interaction.cancelInteraction({ reason: "external", suppressReleaseClick: "always", notify: false });
+      }
       return;
     }
-    callbacksRef.current.onAreaChange(nextArea);
-    setSelectionError(null);
-  };
+    if (interaction.activeKind === "draw") return;
+    if (interaction.activeKind === "transform") {
+      interaction.cancelInteraction({ reason: "external", suppressReleaseClick: "always", notify: true });
+    }
+    interaction.beginDrawing(null);
+  }, [drawing, interaction.activeKind, interaction.beginDrawing, interaction.cancelInteraction]);
 
-  const drawingRect =
-    drag?.kind === "draw" && drag.start && drag.current ? rectFromPoints(drag.start, drag.current) : null;
   return (
     <>
       <MapRegionSelection
         rect={rect}
-        drawing={drawing}
-        drawingRect={drawingRect}
-        drawingPrompt={selectionError ?? "Drag an area. Press Escape to cancel."}
+        drawing={interaction.drawing}
+        drawingRect={interaction.drawingRect}
+        drawingPrompt={interaction.selectionError ?? "Drag an area. Press Escape to cancel."}
         label="selected area"
         testId="map-area-selection"
         viewport={mapCanvas?.getBoundingClientRect()}
         tinted
-        onPointerDown={beginTransform}
-        onKeyDown={transformWithKeyboard}
+        onPointerDown={(transform, event) => {
+          if (area && rect) interaction.beginTransform(transform, event, area);
+        }}
+        onKeyDown={(transform, event) => {
+          if (area) interaction.transformWithKeyboard(transform, event, area);
+        }}
       />
-      {selectionError && !drawing ? (
+      {interaction.selectionError && !interaction.drawing ? (
         <p className="map-region-selection__status" role="status">
-          {selectionError}
+          {interaction.selectionError}
         </p>
       ) : null}
     </>
   );
-}
-
-function releasePointerCapture(
-  mapCanvas: HTMLDivElement | null,
-  pointerId: number | null,
-  suppressNextClick: () => void,
-  suppressReleaseClick: boolean
-): void {
-  if (pointerId === null) return;
-  if (suppressReleaseClick) suppressNextClick();
-  if (mapCanvas?.hasPointerCapture?.(pointerId)) mapCanvas.releasePointerCapture?.(pointerId);
 }
