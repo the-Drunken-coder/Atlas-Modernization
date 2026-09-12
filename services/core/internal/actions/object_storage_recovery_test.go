@@ -22,9 +22,21 @@ const (
 	storageRecoveryCrashDatabaseEnv    = "ATLAS_STORAGE_RECOVERY_CRASH_DATABASE_URL"
 	storageRecoveryCrashBucketEnv      = "ATLAS_STORAGE_RECOVERY_CRASH_BUCKET"
 	storageRecoveryCrashObjectIDEnv    = "ATLAS_STORAGE_RECOVERY_CRASH_OBJECT_ID"
+	storageRecoverySchemaHelperEnv     = "ATLAS_STORAGE_RECOVERY_SCHEMA_HELPER"
 	storageRecoveryCrashExitCode       = 86
 	storageRecoveryReconcileBatchLimit = 10
 )
+
+func TestStorageRecoverySchemaHelper(t *testing.T) {
+	if os.Getenv(storageRecoverySchemaHelperEnv) != "1" {
+		return
+	}
+	databaseURL := os.Getenv("ATLAS_ACTIONS_DATABASE_URL")
+	if databaseURL == "" {
+		t.Fatal("storage recovery schema helper requires ATLAS_ACTIONS_DATABASE_URL")
+	}
+	openActionsTestPoolAtURL(t, databaseURL)
+}
 
 func TestRealStorageInterruptedUploadRecovery(t *testing.T) {
 	for _, replacement := range []bool{false, true} {

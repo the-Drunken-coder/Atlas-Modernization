@@ -264,6 +264,10 @@ export ATLAS_STORAGE_RECOVERY_ACCESS_KEY="${minio_access_key}"
 export ATLAS_STORAGE_RECOVERY_SECRET_KEY="${minio_secret_key}"
 export ATLAS_CORE_REQUIRE_LIVE_TESTS=1
 
+run_logged "${artifact_dir}/schema-initialization.log" \
+  env ATLAS_STORAGE_RECOVERY_SCHEMA_HELPER=1 \
+  go test -count=1 -run='^TestStorageRecoverySchemaHelper$' -timeout=2m ./internal/actions
+
 test_count=1
 test_shuffle="off"
 test_timeout="8m"
