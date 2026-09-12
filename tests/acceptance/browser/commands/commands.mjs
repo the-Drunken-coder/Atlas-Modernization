@@ -9,6 +9,7 @@ import { chromium, webkit } from "playwright";
 import { runAcceptance } from "../../support/stack.mjs";
 import { prepareBrowserServers } from "../support/servers.mjs";
 import { buildCommandFixture } from "./build.mjs";
+import { createFeedTransportGate } from "./feed-transport-gate.mjs";
 
 const repositoryRoot = fileURLToPath(new URL("../../../..", import.meta.url));
 const catalogPath = join(repositoryRoot, "packages/protocol/conformance/tasking/fixtures/catalog.json");
@@ -162,11 +163,12 @@ async function runJourney({
   const finalScreenshot = join(artifacts, `${browserName}-final.png`);
   const failureScreenshot = join(artifacts, `${browserName}-failure.png`);
   const failureHTML = join(artifacts, `${browserName}-failure.html`);
+  const feedTransportLog = join(artifacts, `${browserName}-feed-transport.jsonl`);
   const browser = await browserType.launch({ headless: !headed });
   const context = await browser.newContext({ ignoreHTTPSErrors: true, viewport: { width: 1440, height: 900 } });
   const pendingDiagnostics = new Set();
   let routedTileRequests = 0;
-  let browserOffline = false;
+  let feedSevered = false;
   let page;
   let failure;
 
@@ -174,6 +176,10 @@ async function runJourney({
   await context.route("https://api.maptiler.com/maps/openstreetmap-dark/**", async (route) => {
     routedTileRequests += 1;
     await route.continue({ url: fixture.fixtureTileUrl });
+  });
+  const feedTransport = await createFeedTransportGate(context, {
+    coreOrigin: fixture.coreOrigin,
+    logPath: feedTransportLog
   });
 
   try {
@@ -202,8 +208,40 @@ async function runJourney({
     await verifyFreshPendingTask(client, assetID, runtimeID, recoveryTask, record, signal, "connection-loss issuance");
     await verifyVisibleTaskStatus(page, record, browserName, "Pending", "connection-loss issuance");
 
-    await context.setOffline(true);
-    browserOffline = true;
+    const feedUpgradesBeforeSeverance = fixture
+      .transportObservations()
+      .filter((entry) => entry.event === "upgrade" && entry.path?.startsWith("/feed")).length;
+    const severance = await feedTransport.sever();
+    feedSevered = true;
+    const blockedReconnect = await waitUntil(
+      () => feedTransport.snapshot().blocked_connections > severance.blocked_connections,
+      10_000,
+      signal
+    );
+    const severedTransport = feedTransport.snapshot();
+    const feedUpgradesWhileSevered = fixture
+      .transportObservations()
+      .filter((entry) => entry.event === "upgrade" && entry.path?.startsWith("/feed")).length;
+    record({
+      check: `${browserName} test support severed the established real Core feed before UI assessment`,
+      expected: {
+        upstream_feed_upgrades: ">=1",
+        established_connections_closed: ">=1",
+        reconnect_connections_blocked: ">=1",
+        blocked_reconnect_reached_upstream: false
+      },
+      actual: {
+        upstream_feed_upgrades_before: feedUpgradesBeforeSeverance,
+        upstream_feed_upgrades_while_severed: feedUpgradesWhileSevered,
+        ...severedTransport,
+        wait_error: blockedReconnect.error
+      },
+      passed:
+        feedUpgradesBeforeSeverance >= 1 &&
+        severedTransport.closed_connections >= 1 &&
+        severedTransport.blocked_connections >= 1 &&
+        feedUpgradesWhileSevered === feedUpgradesBeforeSeverance
+    });
     const connectionError = page.getByRole("button", { name: "Atlas connection error" });
     await requireVisible(record, connectionError, {
       check: `${browserName} visibly reported the live Core connection loss`,
@@ -229,14 +267,27 @@ async function runJourney({
       record,
       signal
     );
-    await context.setOffline(false);
-    browserOffline = false;
+    const feedTransportBeforeRecovery = feedTransport.snapshot();
+    feedTransport.restore();
+    feedSevered = false;
     await page.getByRole("button", { name: "Retry connection" }).click();
     await requireVisible(record, page.getByRole("status", { name: "Atlas connection Online" }), {
       check: `${browserName} recovered its real Core connection after operator retry`,
       expected: "Atlas connection Online",
       page,
       timeoutMs: 30_000
+    });
+    const restoredFeed = await waitUntil(
+      () => feedTransport.snapshot().forwarded_connections > feedTransportBeforeRecovery.forwarded_connections,
+      10_000,
+      signal
+    );
+    const recoveredTransport = feedTransport.snapshot();
+    record({
+      check: `${browserName} operator retry restored a new real Core feed connection`,
+      expected: { additional_forwarded_connection: true },
+      actual: { ...recoveredTransport, wait_error: restoredFeed.error },
+      passed: recoveredTransport.forwarded_connections > feedTransportBeforeRecovery.forwarded_connections
     });
     await verifyVisibleCompletedTask(
       page,
@@ -350,6 +401,10 @@ async function runJourney({
       "post-session recovery issuance"
     );
 
+    const cancellationTask = await issueQueuedCommand(page, record, browserName, "cancellation issuance");
+    await verifyFreshPendingTask(client, assetID, runtimeID, cancellationTask, record, signal, "cancellation issuance");
+    await verifyVisibleTaskStatus(page, record, browserName, "Pending", "cancellation issuance");
+
     const transport = fixture.transportObservations();
     const taskRequests = transport.filter(
       (entry) => entry.event === "request" && entry.method === "POST" && entry.path === "/tasks"
@@ -362,17 +417,19 @@ async function runJourney({
     );
     record({
       check: `${browserName} used real cookie-authenticated Command and reconnect transport`,
-      expected: { authenticated_task_requests: 3, unauthenticated_task_requests: 1, authenticated_feeds: ">=2" },
+      expected: { authenticated_task_requests: 4, unauthenticated_task_requests: 1, authenticated_feeds: ">=2" },
       actual: {
         authenticated_task_requests: authenticatedTaskRequests.length,
         unauthenticated_task_requests: unauthenticatedTaskRequests.length,
         authenticated_feeds: authenticatedFeeds.length
       },
       passed:
-        authenticatedTaskRequests.length === 3 &&
+        authenticatedTaskRequests.length === 4 &&
         unauthenticatedTaskRequests.length === 1 &&
         authenticatedFeeds.length >= 2
     });
+
+    await cancelIssuedTaskThroughUI(page, client, cancellationTask, record, browserName, signal);
 
     await page.screenshot({ path: finalScreenshot, fullPage: true });
     writeFileSync(
@@ -384,9 +441,8 @@ async function runJourney({
           app_origin: fixture.appOrigin,
           core_proxy_origin: fixture.coreOrigin,
           map_fixture_requests: fixture.mapTileRequestCount(),
-          tasks: [normalTask.task_id, recoveryTask.task_id, postLoginTask.task_id],
-          cancellation_control: "unavailable in the shipped Command Interface",
-          status: "passed-with-documented-cancellation-gap"
+          tasks: [normalTask.task_id, recoveryTask.task_id, postLoginTask.task_id, cancellationTask.task_id],
+          status: "passed"
         },
         null,
         2
@@ -407,7 +463,7 @@ async function runJourney({
     }
     throw error;
   } finally {
-    if (browserOffline) await context.setOffline(false).catch(() => undefined);
+    if (feedSevered) feedTransport.restore();
     await Promise.allSettled([...pendingDiagnostics]);
     await context.tracing.stop({ path: tracePath }).catch((traceError) => {
       appendJSON(consoleLog, { event: "diagnostic-error", artifact: tracePath, error: errorState(traceError) });
@@ -684,6 +740,30 @@ async function verifyVisibleCompletedTask(page, authoritative, output, record, b
   });
 }
 
+async function cancelIssuedTaskThroughUI(page, client, task, record, browserName, signal) {
+  const pendingRow = page.locator(".task-row").filter({ hasText: queuedCommand }).filter({ hasText: "Pending" }).first();
+  const cancelControl = pendingRow.getByRole("button", { name: /cancel/iu });
+  await requireVisible(record, cancelControl, {
+    check: `${browserName} exposed an operator cancellation control for the issued pending Task`,
+    expected: { task_id: task.task_id, status: "pending", cancellation_control: "visible button within Task row" },
+    page
+  });
+  await cancelControl.click();
+
+  let authoritative;
+  const cancellation = await waitUntil(async () => {
+    authoritative = await client.tasks.get(task.task_id, { fresh: true, signal });
+    return authoritative.status === "cancelled";
+  }, 15_000, signal);
+  record({
+    check: `${browserName} operator cancellation persisted authoritative cancelled Task state`,
+    expected: { task_id: task.task_id, status: "cancelled" },
+    actual: { task: authoritative ? taskState(authoritative) : undefined, wait_error: cancellation.error },
+    passed: authoritative?.task_id === task.task_id && authoritative.status === "cancelled"
+  });
+  await verifyVisibleTaskStatus(page, record, browserName, "Cancelled", "cancellation issuance");
+}
+
 async function readVisibleTaskPayload(page, taskID) {
   const drawers = page.getByRole("button", { name: "Task payload", exact: true });
   const count = await drawers.count();
@@ -810,7 +890,7 @@ async function waitUntil(predicate, timeoutMs, signal) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     signal.throwIfAborted();
-    if (predicate()) return {};
+    if (await predicate()) return {};
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 100));
   }
   return { error: `condition was not met within ${timeoutMs} ms` };
