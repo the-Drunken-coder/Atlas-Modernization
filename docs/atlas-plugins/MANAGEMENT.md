@@ -1,6 +1,6 @@
 # Plugin management
 
-Status: the independent Plugin lifecycle and release workflow are released with Atlas Core 0.2.0 and Building Scan 0.1.0. Candidate-image checks passed on linux/amd64 and linux/arm64. Menu controls for update, rollback, uninstall, and shared-key rotation await the user's selection from the proposed mocks; these operations are available through direct CLI commands. Existing published Core
+Status: the independent Plugin lifecycle and release workflow are released with Atlas Core 0.2.0 and Building Scan 0.1.0. Candidate-image checks passed on linux/amd64 and linux/arm64. The approved first TUI version keeps independent Plugin update, rollback, uninstall, catalog refresh, and shared-key rotation, plus recovery and supervision, as direct-command-only operations; see [GitHub issue #359](https://github.com/the-Drunken-coder/Atlas-Modernization/issues/359). Existing published Core
 packages may still contain the bundled catalog; the source implementation uses independent catalog state for schema-4
 deployments. Production signing trust and Pages configuration are recorded in [bootstrap provenance](CATALOG_BOOTSTRAP.md).
 The repository contains only the public key; the signed stable catalog is published.
@@ -428,6 +428,8 @@ Plugin to a release declaring the new revision, then enables it. Atlas does not 
 exact generated Protocol revisions.
 
 Before `atlas-core update`, export `ATLAS_CORE_BACKUP_DIR` as the absolute path to the validated paired backup directory from the [deployment runbook](../../services/core/docs/DEPLOYMENT_RUNBOOK.md#pre-deploy-backup). The CLI validates its layout and hashes the PostgreSQL dump, MinIO mirror, and companion metadata before starting the update. Keep the pair unchanged. For `recover restored --confirm-paired-restore`, set the variable to that same pair (its directory may have moved). Recovery compares its content hash with the pre-update journal. This check identifies the selected backup; the operator's confirmation still attests that both stores were restored. The CLI does not create or restore backups.
+
+This paragraph describes the released runtime. [Issue #368](https://github.com/the-Drunken-coder/Atlas-Modernization/issues/368) owns the approved future backup-optional flow. That flow preserves restored recovery only when the journal contains a validated paired-backup receipt.
 
 The Core update uses the same durable root transaction and the existing paired-backup confirmation from the deployment
 runbook. Before changing containers, its journal records the prior migration version and checksums as well as the prior

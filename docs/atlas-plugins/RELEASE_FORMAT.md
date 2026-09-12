@@ -4,7 +4,7 @@ Status: the independent Plugin release workflow and lifecycle implementation are
 Candidate-image checks passed on linux/amd64 and linux/arm64. Already published Atlas Core packages may still contain bundled first-party Plugin images and
 deployment files. The first independent package supports only trusted query-only Plugins; general external-source
 credential configuration remains out of scope. Production signing trust and Pages configuration were bootstrapped on 2026-09-11;
-see [bootstrap provenance](CATALOG_BOOTSTRAP.md). The signed stable catalog is published. Menu controls for update, rollback, uninstall, and shared-key rotation await the user's selection from the proposed mocks; these operations are available through direct CLI commands.
+see [bootstrap provenance](CATALOG_BOOTSTRAP.md). The signed stable catalog is published. The approved first TUI version keeps independent Plugin update, rollback, uninstall, catalog refresh, and shared-key rotation as direct-command-only operations; see [GitHub issue #359](https://github.com/the-Drunken-coder/Atlas-Modernization/issues/359).
 
 This document defines the independently versioned first-party Plugin release, the signed Atlas Plugin catalog, and the
 publication transaction. The first package schema supports trusted, query-only Plugins in one stable channel.

@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="600" viewBox="0 0 960 600" role="img" aria-labelledby="title desc">
+  <title id="title">Atlas Core operation activity</title>
+  <desc id="desc">Static reference showing chronological progress for an update operation.</desc>
+  <rect width="960" height="600" fill="#141719"/>
+  <rect x="36" y="32" width="888" height="536" rx="4" fill="#0c1012" stroke="#424b50"/>
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="17" fill="#e2e5e6">
+    <text x="70" y="76" font-size="23" font-weight="700">UPDATE ATLAS CORE</text>
+    <text x="70" y="110" fill="#a7afb3">Target 0.3.0</text>
+    <line x1="62" y1="134" x2="898" y2="134" stroke="#424b50"/>
+    <text x="74" y="177" fill="#86c797">✓</text><text x="110" y="177">Verified release metadata</text>
+    <text x="74" y="217" fill="#86c797">✓</text><text x="110" y="217">Pulled immutable images</text>
+    <text x="74" y="257" fill="#86c797">✓</text><text x="110" y="257">Stopped current services</text>
+    <text x="74" y="297" fill="#aad5ce">●</text><text x="110" y="297">Starting target services</text>
+    <text x="110" y="330" fill="#a7afb3">core-db      healthy</text>
+    <text x="110" y="359" fill="#a7afb3">core-storage healthy</text>
+    <text x="110" y="388" fill="#a7afb3">core-api     waiting for readiness</text>
+    <text x="74" y="438" fill="#424b50">○</text><text x="110" y="438" fill="#a7afb3">Verify deployment health</text>
+    <text x="74" y="478" fill="#424b50">○</text><text x="110" y="478" fill="#a7afb3">Commit update journal</text>
+    <line x1="62" y1="510" x2="898" y2="510" stroke="#424b50"/>
+    <text x="70" y="542" fill="#a7afb3" font-size="15">esc cancel safely   ctrl-c cancel and exit</text>
+  </g>
+</svg>

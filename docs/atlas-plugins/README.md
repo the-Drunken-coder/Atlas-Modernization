@@ -6,7 +6,7 @@ Release and installation details:
 - [`MANAGEMENT.md`](MANAGEMENT.md) defines local Installed Plugin state, compatibility, commands, and transactions.
 
 Status: Plugin platform v1 and the independent lifecycle and release workflow are released with Atlas Core 0.2.0 and Building Scan 0.1.0.
-Candidate-image checks passed on linux/amd64 and linux/arm64. Menu controls for update, rollback, uninstall, and shared-key rotation await the user's selection from the proposed mocks; these operations are available through direct CLI commands. Existing
+Candidate-image checks passed on linux/amd64 and linux/arm64. The approved first TUI version keeps independent Plugin update, rollback, uninstall, catalog refresh, and shared-key rotation, plus recovery and supervision, as direct-command-only operations; see [GitHub issue #359](https://github.com/the-Drunken-coder/Atlas-Modernization/issues/359). Existing
 published Core packages may still contain the bundled catalog; schema-4 deployments use independent catalog state.
 Production signing trust and Pages configuration are recorded in [bootstrap provenance](CATALOG_BOOTSTRAP.md).
 The signed stable catalog is published. Datastream delivery, executable UI Plugins, third-party installation, hot upgrades, untrusted
@@ -532,12 +532,10 @@ The building is not an Asset or Track. Source-provided height is advisory data a
 
 ## Design status
 
-The runtime Plugin platform and independent-release design are implemented in this worktree, while validation and live
-catalog rollout remain in progress. The terminal UI redesign awaits the user's mock selection. The design tree for
+The runtime Plugin platform, independent-release design, production signing trust, and stable catalog rollout are complete. The terminal UI redesign and its Plugin capability boundary are approved in [GitHub issue #359](https://github.com/the-Drunken-coder/Atlas-Modernization/issues/359). The design tree for
 independent trusted query-only Plugin management is closed. The documents specify
 behavioral bounds but leave health cadence, timeout ceilings, response limits, the per-Plugin in-flight Operation limit,
-retry counts, cache durations, and circuit-breaker thresholds to implementation. Production catalog key generation,
-trusted-key bootstrap, GitHub environments, and Pages publication remain external setup steps.
+retry counts, cache durations, and circuit-breaker thresholds to implementation.
 
 Datastream delivery, executable browser plugins, additional declarative interaction kinds, arbitrary third-party
 installation, taskable-Plugin lifecycle management, and ADS-B Track identity remain deliberately deferred. Each needs a
