@@ -178,11 +178,26 @@ async function runMapWindowJourney({
       expected: "visible zoom-in control",
       page
     });
+    const pointerTilesBefore = browserFixture.mapTileRequestCount();
+    let pointerClickCompleted = false;
+    let pointerClickError;
+    try {
+      await zoomIn.click({ timeout: 2_000 });
+      pointerClickCompleted = true;
+      await waitUntil(() => browserFixture.mapTileRequestCount() > pointerTilesBefore, 10_000, signal);
+    } catch (error) {
+      pointerClickError = errorMessage(error);
+    }
+    const pointerTilesAfter = browserFixture.mapTileRequestCount();
+    const zoomPointerAttempt = {
+      activated: pointerClickCompleted && pointerTilesAfter > pointerTilesBefore,
+      click_completed: pointerClickCompleted,
+      observable_map_change: pointerTilesAfter > pointerTilesBefore,
+      fixture_tile_requests_before: pointerTilesBefore,
+      fixture_tile_requests_after: pointerTilesAfter,
+      ...(pointerClickError ? { error: pointerClickError } : {})
+    };
     const routedBeforeKeyboardZoom = routedTileRequests;
-    const zoomPointerAttempt = await zoomIn
-      .click({ timeout: 2_000 })
-      .then(() => ({ activated: true }))
-      .catch((error) => ({ activated: false, error: errorMessage(error) }));
     await zoomIn.focus();
     const keyboardControlFocused = await zoomIn.evaluate((element) => document.activeElement === element);
     const remainingZoomSteps = zoomPointerAttempt.activated ? 15 : 16;
@@ -324,6 +339,19 @@ async function runMapWindowJourney({
       actual: { text: peekText },
       passed: peekText.includes(`${fixture.result.features.length} result`) && peekText.includes(fixture.result.attribution.text)
     });
+    const collapsedClose = peek.getByRole("button", { name: `Close ${title} window` });
+    await checkVisible(record, collapsedClose, {
+      check: `${browserName} exposed the actual collapsed-window close button`,
+      expected: `Close ${title} window`,
+      page
+    });
+    const collapsedCloseBox = await requiredBox(collapsedClose, "collapsed map window close button");
+    record({
+      check: `${browserName} kept the collapsed-window close button enabled and within the map workspace`,
+      expected: { enabled: true, within_workspace: true },
+      actual: { enabled: await collapsedClose.isEnabled(), control: collapsedCloseBox, workspace: workspaceBox },
+      passed: (await collapsedClose.isEnabled()) && boxOverlaps(collapsedCloseBox, workspaceBox)
+    });
 
     await focusAfterSettledFrames(handle, page);
     await handle.press("Enter");
@@ -447,11 +475,24 @@ async function runMapWindowJourney({
       page
     });
 
+    await window.getByRole("button", { name: `Collapse ${title} window` }).click();
+    const finalClose = window
+      .getByRole("region", { name: `${title} collapsed window details` })
+      .getByRole("button", { name: `Close ${title} window` });
+    await finalClose.click();
+    await window.waitFor({ state: "detached", timeout: 15_000 });
+    record({
+      check: `${browserName} activated the reachable collapsed-window close button and removed the map window`,
+      expected: { remaining_windows: 0 },
+      actual: { remaining_windows: await window.count() },
+      passed: (await window.count()) === 0
+    });
+
     record({
       check: `${browserName} activated the visible native MapLibre zoom control with a normal pointer click`,
-      expected: { activated: true },
+      expected: { activated: true, click_completed: true, observable_map_change: true },
       actual: zoomPointerAttempt,
-      passed: zoomPointerAttempt.activated
+      passed: zoomPointerAttempt.activated && zoomPointerAttempt.click_completed && zoomPointerAttempt.observable_map_change
     });
 
     writeJSON(runtimePath, {

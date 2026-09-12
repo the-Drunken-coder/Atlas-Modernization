@@ -7,11 +7,11 @@ This acceptance journey runs the built Command Interface and built SDK against a
 The journey validates observable behavior:
 
 - real pointer dragging docks the spatial-results window to the workspace edge;
-- attached windows collapse into a restore handle that retains result metadata, attribution, and close control;
+- attached windows collapse into a restore handle that retains result metadata and attribution, and whose visible, enabled close button removes the window through a normal pointer activation;
 - pointer and keyboard controls move, restore, attach, and detach the same window through the documented transitions;
 - after a viewport resize, a collapsed edge handle remains visible and can restore the window.
 
-The journey records the native zoom-in control's normal pointer attempt, then uses that same visible control through keyboard focus to continue independent map-window coverage. The pointer result remains the final active assertion. Map-window keyboard activations wait for focus and two browser animation frames because the component restores focus after rendering and clears collapsed-handle drag suppression on `requestAnimationFrame`.
+The journey records the native zoom-in control's normal pointer attempt and requires both a completed click and the resulting increase in fixture tile traffic. It then uses that same visible control through keyboard focus to continue independent map-window coverage. The pointer result remains the final active assertion. Map-window keyboard activations wait for focus and two browser animation frames because the component restores focus after rendering and clears collapsed-handle drag suppression on `requestAnimationFrame`.
 
 Run Chromium locally from the repository root with Node 24, Docker, and the browser executable installed:
 
