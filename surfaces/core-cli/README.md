@@ -242,3 +242,33 @@ storage unless you intend to discard the deployment. Use the confirmed `reset` c
 the desired outcome.
 
 Image platform selection uses the local Docker daemon architecture, including when Node runs under Rosetta.
+
+## Linux container acceptance
+
+The `atlas-core-package` CI job is configured to exercise the packed CLI against a current Core image on native
+`ubuntu-24.04` (`linux/amd64`) and `ubuntu-24.04-arm` (`linux/arm64`) runners. Each matrix run builds its platform's
+production image, serves it from a disposable local TLS registry, injects that immutable image reference into the
+packed CLI, then checks `init`, `start`, readiness, `doctor`, `status`, an authenticated durable Entity across
+`stop` and restart, the existing update/reset journey, and the guard against unconfigured labeled containers or
+durable volumes. The script verifies the runner, Docker daemon, and pulled image platforms before labeling that run
+as native.
+
+The command requires a dedicated disposable Linux Docker host. Do not set `ATLAS_CORE_ACCEPTANCE_DISPOSABLE=1` for a
+normal workstation daemon. The CI job sets it only on its ephemeral hosted runner. A manually provisioned disposable
+host can use the same command after producing a packed CLI and a platform-matched image:
+
+```bash
+ATLAS_CORE_ACCEPTANCE_DISPOSABLE=1 \
+ATLAS_CORE_ACCEPTANCE_EXECUTION_MODE=native \
+ATLAS_CORE_ACCEPTANCE_ARTIFACTS="$PWD/.atlas/acceptance/atlas-core-package" \
+bash .github/scripts/test-atlas-core-package.sh <package.tgz> <version> <image-reference> linux/amd64
+```
+
+Each run retains a unique evidence directory outside its temporary install/configuration root. It contains the npm
+integrity value and SHA-256/SHA-512 package identities, image reference, revision, runner/daemon/image platform
+evidence, duration, scrubbed CLI and HTTP results, unowned-resource diagnostics, and bounded Core service logs and
+resource snapshots before teardown. CI uploads this directory even on failure. The artifacts never include the
+generated `.env` or API keys.
+
+This matrix records Linux container execution only after GitHub Actions has run it. It does not establish macOS Docker
+acceptance; portable macOS package checks and a Docker daemon on a macOS host remain separate evidence.
