@@ -8,7 +8,6 @@ import re
 import sys
 from pathlib import Path
 
-
 PACKAGE = "github.com/the-drunken-coder/atlas/services/core/internal/actions"
 EXPECTED = {
     "TestObjectDeletePublishesChangeBeforeStorageCleanup",
@@ -73,9 +72,7 @@ def verify(path: Path) -> list[str]:
     errors = malformed
     for test in sorted(EXPECTED):
         matching_skips = sorted(
-            skipped_test
-            for skipped_test in skipped
-            if skipped_test == test or skipped_test.startswith(test + "/")
+            skipped_test for skipped_test in skipped if skipped_test == test or skipped_test.startswith(test + "/")
         )
         if matching_skips:
             errors.extend(f"selected storage recovery test skipped: {test}" for test in matching_skips)

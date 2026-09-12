@@ -365,12 +365,12 @@ type crashAfterRealUploadStorage struct {
 func (s *crashAfterRealUploadStorage) UploadObjectFromReaderToPath(
 	ctx context.Context, objectID, path string, reader io.Reader, size int64, contentType string,
 ) (*storage.ObjectInfo, error) {
-	info, err := s.Client.UploadObjectFromReaderToPath(ctx, objectID, path, reader, size, contentType)
+	_, err := s.Client.UploadObjectFromReaderToPath(ctx, objectID, path, reader, size, contentType)
 	if err != nil {
 		return nil, err
 	}
 	os.Exit(storageRecoveryCrashExitCode)
-	return info, nil
+	return nil, nil
 }
 
 type failNextDeleteStorage struct {

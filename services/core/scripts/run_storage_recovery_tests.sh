@@ -35,6 +35,7 @@ run_token="$(python3 -c 'import uuid; print(uuid.uuid4().hex)')"
 run_id="$(date -u +%Y%m%dT%H%M%SZ)-${run_token}"
 started_epoch="$(date +%s)"
 artifact_root="${ATLAS_STORAGE_RECOVERY_ARTIFACT_ROOT:-${repo_dir}/.atlas/core-storage-recovery}"
+artifact_root="$(python3 -c 'import os, sys; print(os.path.abspath(sys.argv[1]))' "${artifact_root}")"
 artifact_dir="${artifact_root}/${run_id}"
 mkdir -p "${artifact_dir}"
 
@@ -173,9 +174,25 @@ require_command go
 require_command python3
 
 revision="$(git -C "${repo_dir}" rev-parse HEAD)"
+record_command git -C "${repo_dir}" status --short --untracked-files=all
+run_with_timeout 10 git -C "${repo_dir}" status --short --untracked-files=all >"${artifact_dir}/workspace-status.txt"
+record_command git -C "${repo_dir}" diff --binary HEAD --
+run_with_timeout 10 git -C "${repo_dir}" diff --binary HEAD -- >"${artifact_dir}/workspace-tracked.patch"
+record_command git -C "${repo_dir}" ls-files --others --exclude-standard
+run_with_timeout 10 git -C "${repo_dir}" ls-files --others --exclude-standard \
+  >"${artifact_dir}/workspace-untracked-paths.txt"
+if [[ -s "${artifact_dir}/workspace-status.txt" ]]; then
+  working_tree="dirty"
+else
+  working_tree="clean"
+fi
 docker_server="$(run_with_timeout 10 docker version --format '{{.Server.Version}} {{.Server.Os}}/{{.Server.Arch}}')"
 {
   printf 'revision=%s\n' "${revision}"
+  printf 'working_tree=%s\n' "${working_tree}"
+  printf 'workspace_status=%s\n' "${artifact_dir}/workspace-status.txt"
+  printf 'workspace_tracked_diff=%s\n' "${artifact_dir}/workspace-tracked.patch"
+  printf 'workspace_untracked_paths=%s\n' "${artifact_dir}/workspace-untracked-paths.txt"
   printf 'mode=%s\n' "${mode}"
   printf 'started_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   printf 'go_version=%s\n' "$(go version)"

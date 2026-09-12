@@ -19,10 +19,7 @@ class StorageRecoveryVerifierTests(unittest.TestCase):
         return path
 
     def passing_events(self) -> list[dict[str, str]]:
-        return [
-            {"Action": "pass", "Package": verifier.PACKAGE, "Test": test}
-            for test in verifier.EXPECTED
-        ]
+        return [{"Action": "pass", "Package": verifier.PACKAGE, "Test": test} for test in verifier.EXPECTED]
 
     def test_accepts_every_expected_test_passing(self) -> None:
         self.assertEqual(verifier.verify(self.write_events(self.passing_events())), [])
@@ -38,9 +35,7 @@ class StorageRecoveryVerifierTests(unittest.TestCase):
     def test_rejects_skipped_subtest_even_when_parent_passes(self) -> None:
         test = next(iter(verifier.EXPECTED))
         events = self.passing_events()
-        events.append(
-            {"Action": "skip", "Package": verifier.PACKAGE, "Test": test + "/dependency"}
-        )
+        events.append({"Action": "skip", "Package": verifier.PACKAGE, "Test": test + "/dependency"})
         self.assertIn(
             f"selected storage recovery test skipped: {test}/dependency",
             verifier.verify(self.write_events(events)),
