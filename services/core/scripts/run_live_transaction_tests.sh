@@ -27,11 +27,17 @@ fi
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 core_dir="$(cd "${script_dir}/.." && pwd -P)"
 repo_dir="$(cd "${core_dir}/../.." && pwd -P)"
-if ! command -v python3 >/dev/null 2>&1; then
-  printf '%s\n' 'required command is unavailable: python3' >&2
+if command -v python3 >/dev/null 2>&1 &&
+  run_token="$(python3 -c 'import uuid; print(uuid.uuid4().hex)' 2>/dev/null)"; then
+  :
+elif [[ -r /proc/sys/kernel/random/uuid ]] && IFS= read -r run_token </proc/sys/kernel/random/uuid; then
+  run_token="${run_token//-/}"
+elif command -v uuidgen >/dev/null 2>&1 && run_token="$(uuidgen 2>/dev/null)"; then
+  run_token="${run_token//-/}"
+else
+  printf '%s\n' 'unable to create a unique test run identifier' >&2
   exit 1
 fi
-run_token="$(python3 -c 'import uuid; print(uuid.uuid4().hex)')"
 run_id="$(date -u +%Y%m%dT%H%M%SZ)-${run_token}"
 artifact_root="${ATLAS_CORE_LIVE_ARTIFACT_ROOT:-${repo_dir}/.atlas/core-live-transactions}"
 mkdir -p "${artifact_root}"
@@ -76,13 +82,13 @@ finish() {
   cleanup_status=0
   set +e
   if [[ "${container_cleanup_needed}" == "true" ]]; then
-    record_command docker logs "${postgres_container}"
+    record_command docker logs "${postgres_container}" || { if (( status == 0 )); then status=1; fi; }
     run_with_timeout 15 docker logs "${postgres_container}" >"${artifact_dir}/postgres.log" 2>&1
     logs_status=$?
-    record_command docker inspect "${postgres_container}"
+    record_command docker inspect "${postgres_container}" || { if (( status == 0 )); then status=1; fi; }
     run_with_timeout 15 docker inspect "${postgres_container}" >"${artifact_dir}/postgres-inspect.json" 2>&1
     inspect_status=$?
-    record_command docker rm -f -v "${postgres_container}"
+    record_command docker rm -f -v "${postgres_container}" || { if (( status == 0 )); then status=1; fi; }
     run_with_timeout 30 docker rm -f -v "${postgres_container}" >"${artifact_dir}/postgres-cleanup.log" 2>&1
     cleanup_status=$?
     if (( original_status == 0 )); then
@@ -100,32 +106,32 @@ finish() {
       '' \
       '- Corrected test or setup failures: none in this run.' \
       '- Verified product defects: none in this run.' \
-      '- Unavailable verification: none in this run.' >"${artifact_dir}/classification.md"
+      '- Unavailable verification: none in this run.' >"${artifact_dir}/classification.md" || { if (( status == 0 )); then status=1; fi; }
   else
     printf '%s\n' \
       '# Run classification' \
       '' \
       "- Unclassified failure: command exited with status ${status}." \
       '- Inspect commands.log and the matching test or dependency log before classifying it.' \
-      '- The runner did not retry the failure.' >"${artifact_dir}/classification.md"
+      '- The runner did not retry the failure.' >"${artifact_dir}/classification.md" || { if (( status == 0 )); then status=1; fi; }
     if (( logs_status != 0 )); then
       printf '%s\n' \
         "- Owned container log capture failed with status ${logs_status}: ${postgres_container}." \
-        '- Inspect postgres.log for the capture error.' >>"${artifact_dir}/classification.md"
+        '- Inspect postgres.log for the capture error.' >>"${artifact_dir}/classification.md" || { if (( status == 0 )); then status=1; fi; }
     fi
     if (( inspect_status != 0 )); then
       printf '%s\n' \
         "- Owned container inspection failed with status ${inspect_status}: ${postgres_container}." \
-        '- Inspect postgres-inspect.json for the capture error.' >>"${artifact_dir}/classification.md"
+        '- Inspect postgres-inspect.json for the capture error.' >>"${artifact_dir}/classification.md" || { if (( status == 0 )); then status=1; fi; }
     fi
     if (( cleanup_status != 0 )); then
       printf '%s\n' \
         "- Owned container cleanup failed with status ${cleanup_status}: ${postgres_container}." \
-        '- Inspect postgres-cleanup.log and remove that exact container before continuing.' >>"${artifact_dir}/classification.md"
+        '- Inspect postgres-cleanup.log and remove that exact container before continuing.' >>"${artifact_dir}/classification.md" || { if (( status == 0 )); then status=1; fi; }
     fi
   fi
   printf 'postgres_logs_status=%d\npostgres_inspect_status=%d\npostgres_cleanup_status=%d\nexit_status=%d\nfinished_at=%s\n' \
-    "${logs_status}" "${inspect_status}" "${cleanup_status}" "${status}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"${artifact_dir}/metadata.txt"
+    "${logs_status}" "${inspect_status}" "${cleanup_status}" "${status}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"${artifact_dir}/metadata.txt" || { if (( status == 0 )); then status=1; fi; }
   exit "${status}"
 }
 trap finish EXIT
@@ -135,7 +141,7 @@ trap 'exit 143' TERM
 
 require_command() {
   if ! command -v "$1" >/dev/null 2>&1; then
-    printf 'required command is unavailable: %s\n' "$1" >&2
+    printf 'required command is unavailable: %s\n' "$1" | tee -a "${artifact_dir}/prerequisites.log" >&2
     exit 1
   fi
 }
@@ -147,6 +153,15 @@ record_command() {
     printf '\n'
   } >>"${artifact_dir}/commands.log"
 }
+
+# Bootstrap context survives missing tools before the complete source snapshot is available.
+{
+  printf 'revision=%s\n' "$(git -C "${repo_dir}" rev-parse HEAD 2>/dev/null || printf unavailable)"
+  printf 'working_tree_dirty=unavailable\nmode=%s\n' "${mode}"
+  printf 'started_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  printf 'go_version=%s\n' "$(go version 2>/dev/null || printf unavailable)"
+  printf 'postgres_image=%s\npostgres_container=%s\n' "${postgres_image}" "${postgres_container}"
+} >"${artifact_dir}/metadata.txt"
 
 run_logged() {
   log_path="$1"

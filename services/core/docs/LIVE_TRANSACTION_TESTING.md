@@ -67,9 +67,10 @@ Each run writes a unique directory under `.atlas/core-live-transactions/`. It co
 - `metadata.txt` with the exact Git revision, dirty-checkout state, tool versions, mode, image digest, selector, repetition count, and ordering mode
 - `checkout-status.txt`, `checkout-tracked.diff`, `checkout-untracked-paths.txt`, and `checkout-untracked-files.tar.gz` so a dirty local execution can be reconstructed without treating the commit ID as the whole source state. The archive contains nonignored untracked regular files and symlinks at repository-relative paths; it stores symlinks without copying targets outside the repository. Ignored files and files outside the repository are not captured. When the artifact root is inside the repository, only the current generated run directory is excluded; tracked source and other nonignored files under that root, including earlier evidence, remain recorded checkout inputs.
 - `commands.log` with each executed command
+- `prerequisites.log` when a required executable is unavailable
 - `coverage-checker-tests.log`, `selection-verifier-tests.log`, `offline.log`, `offline.coverage.out`, `live.log`, `selection-verification.log`, and `live.coverage.out`
 - `coverage.txt` with separately labeled module results
 - `postgres.log` and `postgres-inspect.json`
-- `classification.md`, which records a clean run or leaves a failed command unclassified for assessment
+- `classification.md`, which records a clean run or leaves a failed command unclassified for assessment. The runner fails if it cannot record cleanup commands or write final classification or metadata evidence.
 
 GitHub Actions uploads this directory even when a command fails. The required job has a 30 minute limit. The scheduled and manually selected nightly job has a 45 minute limit.
