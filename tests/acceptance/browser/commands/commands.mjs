@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import { AtlasClient, isAtlasAPIError, isAtlasTransportError } from "@the-drunken-coder/atlas-sdk";
-import { chromium, firefox, webkit } from "playwright";
+import { chromium, webkit } from "playwright";
 import { runAcceptance } from "../../support/stack.mjs";
 import { prepareBrowserServers } from "../support/servers.mjs";
 import { buildCommandFixture } from "./build.mjs";
@@ -21,7 +21,7 @@ const manifest = JSON.parse(manifestText);
 const queuedCommand = "fixture.queued";
 const fixtureInput = { value: "browser-command-fixture" };
 const options = parseArguments(process.argv.slice(2));
-const browserTypes = { chromium, firefox, webkit };
+const browserTypes = { chromium, webkit };
 const browserType = browserTypes[options.browser];
 const reproduction = `npm run build:sdk && node tests/acceptance/browser/commands/commands.mjs --browser=${options.browser}${options.headed ? " --headed" : ""}`;
 
@@ -863,8 +863,8 @@ function parseArguments(args) {
     }
     throw new Error(`unknown browser Command argument: ${argument}`);
   }
-  if (!Object.hasOwn({ chromium: true, firefox: true, webkit: true }, browser)) {
-    throw new Error(`--browser must be chromium, firefox, or webkit; received ${browser}`);
+  if (!Object.hasOwn({ chromium: true, webkit: true }, browser)) {
+    throw new Error(`--browser must be chromium or webkit; received ${browser}`);
   }
   return { browser, headed };
 }

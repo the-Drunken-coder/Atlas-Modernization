@@ -17,7 +17,7 @@ npm run build:sdk
 node tests/acceptance/browser/commands/commands.mjs --browser=chromium
 ```
 
-Use `--browser=firefox` or `--browser=webkit` for the nightly engines, and add `--headed` for local observation. Each command owns unique credentials, ports, containers, volumes, fixture directory, build directory, and artifacts. The runner bounds public requests at 10 seconds, normal UI observations at 15 seconds, interruption recovery at 30 seconds, Core readiness at 90 seconds, and builds at 10 minutes. It uses observable readiness and Task state rather than fixed delays.
+Use `--browser=webkit` for the additional nightly engine, and add `--headed` for local observation. Each command owns unique credentials, ports, containers, volumes, fixture directory, build directory, and artifacts. The runner bounds public requests at 10 seconds, normal UI observations at 15 seconds, interruption recovery at 30 seconds, Core readiness at 90 seconds, and builds at 10 minutes. It uses observable readiness and Task state rather than fixed delays.
 
 The journey verifies normal issuance, acknowledgement, start, progress, completion, and visible output against fresh SDK reads. It then disconnects the browser while a pending Task completes through the real runtime interface, restores transport through the visible retry control, and verifies changed-since recovery against the authoritative Task. Finally, it expires the browser's real HttpOnly session cookie, records the actual Core `401` response from a Command click, verifies the session-expiry login message, signs in again, checks retained outcomes, and completes another Command. This exercises the application's response to an expired browser credential; it does not wait through Core's seven-day wall-clock session lifetime.
 
@@ -35,4 +35,4 @@ The shipped Command Interface has no Task cancellation action or control at the 
 
 This acceptance therefore does not claim or simulate UI cancellation. Adding a cancellation control requires a product change outside this test-only ticket and remains pending developer assessment.
 
-The pull request job runs Chromium. The scheduled and manually dispatched nightly job requests Chromium, Firefox, and WebKit. WebKit does not establish Safari or physical-device coverage. The inherited hosted Firefox WebGL failure from browser smoke ticket #379 is still awaiting manual assessment; this ticket does not change or rerun that case, so successful three-engine nightly coverage remains unverified until the new workflow executes and that existing limitation is resolved.
+The pull request job runs Chromium. The scheduled and manually dispatched nightly job requests Chromium and WebKit. WebKit does not establish Safari or physical-device coverage. Firefox was removed from the supported matrix after the initial hosted browser smoke run failed before MapLibre could create a real WebGL context; this workflow does not claim Firefox coverage or treat that failure as a pass.
