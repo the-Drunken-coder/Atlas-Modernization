@@ -2,7 +2,7 @@
 
 Acceptance scenarios use `support/stack.mjs` to run the current Core against disposable PostgreSQL and MinIO storage. The runner owns:
 
-- a unique Docker Compose project, reserved loopback Core port, credentials, network, and project-scoped volumes;
+- a unique Docker Compose project, loopback Core port, credentials, network, and project-scoped volumes;
 - bounded dependency checks, startup, readiness, scenario execution, evidence capture, and cleanup on success, failure, or interruption;
 - a `restartCore()` operation that restarts only Core while retaining that run's PostgreSQL and MinIO volumes;
 - the scenario context: `baseUrl`, `apiKey`, browser `admin` credentials, `artifacts`, `record()`, `signal`, and `runID`.
@@ -18,7 +18,7 @@ npm run test:acceptance:sdk-entity
 
 The command builds the SDK, starts the isolated stack, connects two built SDK clients, and verifies that the receiving client observes a real create, update, and delete feed sequence plus fresh public reads. Missing Node or Docker dependencies fail the command explicitly.
 
-Every invocation generates an unoverrideable UUID-backed ownership identity and a new artifact directory. To make concurrent runs easy to identify, add labels:
+Every invocation generates an unoverrideable UUID-backed ownership identity and a new artifact directory. The runner holds its selected loopback port through setup, releases it immediately before Compose binds it, then retries startup once only when Docker reports that exact port was claimed in the handoff. The initial bind error remains in `commands.log` and `evidence.jsonl`; the successful port remains assigned to the same Core container through `restartCore()`. To make concurrent runs easy to identify, add labels:
 
 ```sh
 ATLAS_ACCEPTANCE_RUN_LABEL=worktree-a npm run test:acceptance:sdk-entity

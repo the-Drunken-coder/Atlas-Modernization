@@ -9,6 +9,7 @@ const repositoryRoot = fileURLToPath(new URL("../../../", import.meta.url));
 const composeFile = join(repositoryRoot, "tests", "acceptance", "compose.yml");
 const commandTimeoutMs = 10 * 60_000;
 const readinessTimeoutMs = 90_000;
+const coreStartupAttempts = 2;
 
 let activeChild;
 
@@ -53,7 +54,7 @@ export async function runAcceptance({ name, reproduction, run }) {
   let ownsProject = false;
   let failure;
   let baseUrl;
-  let portReservation;
+  let initialPortReservation;
   let interruptedSignal;
   const interruption = new AbortController();
   const onSignal = (signal) => {
@@ -81,8 +82,8 @@ export async function runAcceptance({ name, reproduction, run }) {
   try {
     await preflight(commandLog);
     interruption.signal.throwIfAborted();
-    portReservation = await reserveLoopbackPort();
-    environment.ATLAS_ACCEPTANCE_CORE_PORT = String(portReservation.port);
+    initialPortReservation = await reserveLoopbackPort();
+    environment.ATLAS_ACCEPTANCE_CORE_PORT = String(initialPortReservation.port);
     ownsProject = true;
     await execute("docker", [...compose, "build", "api"], {
       cwd: repositoryRoot,
@@ -96,17 +97,8 @@ export async function runAcceptance({ name, reproduction, run }) {
       logPath: commandLog,
       timeoutMs: commandTimeoutMs
     });
-    const port = portReservation.port;
-    await portReservation.release();
-    portReservation = undefined;
-    await execute("docker", [...compose, "up", "--detach", "--no-build"], {
-      cwd: repositoryRoot,
-      env: environment,
-      logPath: commandLog,
-      timeoutMs: 120_000
-    });
+    baseUrl = await startCore(compose, environment, commandLog, interruption.signal, record, initialPortReservation);
     interruption.signal.throwIfAborted();
-    baseUrl = `http://127.0.0.1:${port}`;
     await waitForReadiness(baseUrl, interruption.signal);
     record({ check: "core readiness", expected: 200, actual: 200, passed: true });
     writeJSON(join(artifacts, "stack.json"), {
@@ -154,7 +146,7 @@ export async function runAcceptance({ name, reproduction, run }) {
     failure = error;
   } finally {
     try {
-      await portReservation?.release();
+      await initialPortReservation?.release();
     } catch (releaseError) {
       failure ??= releaseError;
     }
@@ -198,6 +190,57 @@ export async function runAcceptance({ name, reproduction, run }) {
   }
   process.stdout.write(`Acceptance passed in ${result.duration_ms} ms. Evidence: ${artifacts}\n`);
   return result;
+}
+
+async function startCore(compose, environment, commandLog, signal, record, initialPortReservation) {
+  for (let attempt = 1; attempt <= coreStartupAttempts; attempt++) {
+    signal.throwIfAborted();
+    const portReservation = attempt === 1 ? initialPortReservation : await reserveLoopbackPort();
+    const port = portReservation.port;
+    environment.ATLAS_ACCEPTANCE_CORE_PORT = String(port);
+    await portReservation.release();
+
+    try {
+      await runProcess("docker", [...compose, "up", "--detach", "--no-build"], {
+        cwd: repositoryRoot,
+        env: environment,
+        logPath: commandLog,
+        timeoutMs: 120_000,
+        capture: true
+      });
+      return `http://127.0.0.1:${port}`;
+    } catch (error) {
+      if (attempt === coreStartupAttempts || !isPortBindConflict(error, port)) throw error;
+      record({
+        check: "Core startup retried after a recognized loopback port bind conflict",
+        expected: { attempts: coreStartupAttempts, conflict_port: port },
+        actual: { attempt, conflict_port: port, error: errorMessage(error) },
+        passed: true
+      });
+      await execute("docker", [...compose, "down", "--volumes", "--remove-orphans"], {
+        cwd: repositoryRoot,
+        env: environment,
+        logPath: commandLog,
+        timeoutMs: 120_000,
+        echo: false
+      });
+    }
+  }
+  throw new Error("Core startup exhausted its recognized port bind retries");
+}
+
+function isPortBindConflict(error, port) {
+  const message = errorMessage(error).toLowerCase();
+  return (
+    message.includes(String(port)) &&
+    (message.includes("address already in use") ||
+      message.includes("port is already allocated") ||
+      message.includes("failed to bind host port"))
+  );
+}
+
+function errorMessage(error) {
+  return error instanceof Error ? error.message : String(error);
 }
 
 async function preflight(commandLog) {
@@ -302,7 +345,13 @@ function runProcess(command, args, options) {
         return;
       }
       if (code !== 0) {
-        finish(new Error(`${rendered} exited ${code ?? signal ?? "without a status"}${stderr ? `: ${stderr.trim()}` : ""}`));
+        const output = [
+          stdout && `stdout:\n${stdout.trim()}`,
+          stderr && `stderr:\n${stderr.trim()}`
+        ]
+          .filter(Boolean)
+          .join("\n");
+        finish(new Error(`${rendered} exited ${code ?? signal ?? "without a status"}${output ? `:\n${output}` : ""}`));
         return;
       }
       finish(undefined, { stdout, stderr });
@@ -342,11 +391,20 @@ function acceptanceArtifacts(name, runID) {
 
 function acceptanceCredentials() {
   return {
-    apiKey: `atlas_ak_${randomBytes(32).toString("base64url")}`,
+    apiKey: acceptanceAPIKey(),
     adminPassword: randomBytes(32).toString("base64url"),
     postgresPassword: randomBytes(24).toString("base64url"),
-    minioPassword: randomBytes(24).toString("base64url")
+    minioPassword: randomBytes(24).toString("hex")
   };
+}
+
+function acceptanceAPIKey() {
+  const hex = randomBytes(32).toString("hex");
+  const groups = [];
+  for (let index = 0; index < hex.length; index += 2) {
+    groups.push(hex.slice(index, index + 2));
+  }
+  return `atlas_ak_${groups.join("-")}`;
 }
 
 function reserveLoopbackPort() {
