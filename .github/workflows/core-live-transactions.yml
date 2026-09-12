@@ -1,0 +1,85 @@
+name: Core live transactions
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: "41 7 * * *"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Test duration and ordering
+        required: true
+        default: required
+        type: choice
+        options:
+          - required
+          - nightly
+
+permissions:
+  contents: read
+
+concurrency:
+  group: core-live-transactions-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core-live-transactions:
+    name: core-live-transactions
+    if: ${{ github.event_name != 'schedule' && inputs.mode != 'nightly' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: services/core/go.mod
+          cache-dependency-path: services/core/go.sum
+
+      - name: Run offline and required live transaction tests
+        run: services/core/scripts/run_live_transaction_tests.sh
+
+      - name: Upload Core transaction evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: core-live-transactions-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .atlas/core-live-transactions/
+          if-no-files-found: error
+          retention-days: 14
+
+  core-live-transactions-nightly:
+    name: core-live-transactions-nightly
+    if: ${{ github.event_name == 'schedule' || inputs.mode == 'nightly' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: services/core/go.mod
+          cache-dependency-path: services/core/go.sum
+
+      - name: Run shuffled repeated live transaction tests
+        run: services/core/scripts/run_live_transaction_tests.sh --nightly
+
+      - name: Upload Core transaction evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: core-live-transactions-nightly-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .atlas/core-live-transactions/
+          if-no-files-found: error
+          retention-days: 14
