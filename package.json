@@ -38,6 +38,7 @@
     "dev:simulations": "npm run build:sdk && npm run dev --workspace @the-drunken-coder/atlas-simulations",
     "dev:simulations-server": "npm run build:sdk && npm run dev:server --workspace @the-drunken-coder/atlas-simulations",
     "deploy:command-interface": "npm run build:sdk && npm run deploy:pages --workspace @the-drunken-coder/atlas-command-interface",
+    "test:acceptance:sdk-entity": "npm run build:sdk && node tests/acceptance/sdk-entity.mjs",
     "test:clean-workspace": "node tests/clean-workspace-smoke.mjs"
   },
   "devDependencies": {
