@@ -63,3 +63,20 @@ Each run writes a unique directory under `.atlas/core-storage-recovery/` contain
 For an initial failure in a new storage behavior assertion, stop that case without changing its expectation or retrying. Report the clean revision, exact command, dependency setup, expected and observed behavior, artifact directory, and first error for manual assessment. Record corrected setup failures, verified product defects, and unavailable verification separately. A correct product failure remains active for a later product repair.
 
 The required workflow has a 25-minute bound, including the worst-case bounded pulls, schema initialization, test process, evidence capture, and cleanup. The nightly workflow has a 45-minute bound and expands failure attempts and ordering. GitHub Actions uploads the owned artifact directory even when the run fails.
+
+## Implementation evidence
+
+Local behavior was exercised on macOS with Docker Desktop, Go 1.26.5, PostgreSQL 15, and the pinned MinIO image. Artifact paths below are relative to the implementation worktree.
+
+| Revision and command | Duration | Result and artifacts |
+| --- | ---: | --- |
+| `e96969681876ef6a5a93a70bedbd241f9e019065`<br>`services/core/scripts/run_storage_recovery_tests.sh` | 21 s | Setup failure before retained behavior: the fresh job database had no initialized `public` schema. The new isolated-schema real MinIO cases passed, but the full selected run did not. Preserved at `.atlas/core-storage-recovery/20260912T192749Z-45001fa42b5d46519ea8630069543ea6/`. |
+| `d77ff66db250da9fdfecb65969c78d8108ad3de3`<br>`services/core/scripts/run_storage_recovery_tests.sh` | 21 s | Corrected setup baseline: 31 selected tests passed without skips; container evidence and cleanup passed. Preserved at `.atlas/core-storage-recovery/20260912T192930Z-fb62753052bb42f78bb1c48f6994ab40/`. |
+| `70518d5038edaf0c5b1f247cec548aa83ef710ef`<br>`services/core/scripts/run_storage_recovery_tests.sh` | 21 s | Required mode passed 31 selected tests, measured floors, evidence capture, and cleanup. Preserved at `.atlas/core-storage-recovery/20260912T193333Z-eb06ebc8d4e04b89a7f2df827717beab/`. |
+| `70518d5038edaf0c5b1f247cec548aa83ef710ef`<br>`services/core/scripts/run_storage_recovery_tests.sh --nightly` | 36 s | Three shuffled repetitions and three consecutive deletion faults per repetition passed with the same measured coverage. Preserved at `.atlas/core-storage-recovery/20260912T193400Z-7507216b3fdd417b8f2e18229e0b0ea6/`. |
+
+The setup failure was corrected by invoking the existing schema initializer against only the run-owned PostgreSQL database before the retained shared-schema tests. No behavior expectation or product code changed.
+
+For the critical guard proof, a detached checkout at `70518d5038edaf0c5b1f247cec548aa83ef710ef` temporarily changed the live-path branch in `ReconcileStorageDeletions` so it did not preserve a live path. The required runner failed in 21 seconds. The retained test reported `reconciliation deleted=1 ... want live path preserved`, and the real MinIO test reported `live-path reconciliation deleted 1 blobs, want 0`. Evidence is preserved at `.atlas/core-storage-recovery-guard/20260912T193523Z-b530945e4bc84c8193d60777a779eec1/`. Both disposable containers were removed, the detached checkout was deleted, and the mutation is absent from the implementation branch.
+
+GitHub Actions execution is unavailable until the coordinator pushes the branch and opens its pull request. No product defect was observed in the completed local runs.
