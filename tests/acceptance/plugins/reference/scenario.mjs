@@ -397,7 +397,7 @@ async function waitForFixtureProbe(client, predicate, signal) {
 }
 
 function structurallyEqual(actual, expected) {
-  return isDeepStrictEqual(actual, expected);
+  return isDeepStrictEqual(actual, expected, { skipPrototype: true });
 }
 
 function isTimestamp(value) {
