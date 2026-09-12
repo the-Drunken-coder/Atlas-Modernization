@@ -44,5 +44,5 @@ jobs:
         with:
           name: moving-assets-acceptance-${{ github.run_id }}-${{ github.run_attempt }}
           path: .atlas/acceptance/simulations-moving-assets/
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 14
