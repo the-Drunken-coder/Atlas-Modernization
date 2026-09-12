@@ -20,6 +20,9 @@ services:
     depends_on:
       reference-source:
         condition: service_healthy
+    networks:
+      - default
+      - source-gateway-only
     healthcheck:
       test:
         ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8080/health"]
@@ -36,6 +39,8 @@ services:
       target: source
     volumes:
       - ./plugins/reference/fixture-source.mjs:/app/fixture-source.mjs:ro
+    networks:
+      - source-gateway-only
     healthcheck:
       test:
         [
@@ -59,6 +64,8 @@ services:
       target: plugin
     environment:
       ATLAS_SOURCE_GATEWAY_ORIGIN: http://source-gateway:8080
+    networks:
+      - default
     depends_on:
       source-gateway:
         condition: service_healthy
@@ -68,5 +75,11 @@ services:
       interval: 2s
       timeout: 2s
       retries: 30
+    labels:
+      io.atlas.acceptance.run: ${ATLAS_ACCEPTANCE_RUN_ID:?ATLAS_ACCEPTANCE_RUN_ID must be set}
+
+networks:
+  source-gateway-only:
+    internal: true
     labels:
       io.atlas.acceptance.run: ${ATLAS_ACCEPTANCE_RUN_ID:?ATLAS_ACCEPTANCE_RUN_ID must be set}

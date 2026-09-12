@@ -1,5 +1,6 @@
 import { AtlasClient, isAtlasAPIError } from "@the-drunken-coder/atlas-sdk";
-import { isDeepStrictEqual } from "node:util";
+import { execFile } from "node:child_process";
+import { isDeepStrictEqual, promisify } from "node:util";
 import {
   runPluginAcceptance,
   waitForPluginStatus,
@@ -9,6 +10,7 @@ const pluginID = "reference";
 const operationID = "inspect_fixture";
 const operationPath = `/plugins/${pluginID}/operations/${operationID}`;
 const reproduction = "node tests/acceptance/plugins/reference/scenario.mjs";
+const executeFile = promisify(execFile);
 
 await runPluginAcceptance({
   name: "reference-plugin",
@@ -16,10 +18,12 @@ await runPluginAcceptance({
   composeFile: "tests/acceptance/plugins/reference/compose.yml",
   fixtureVariant: "controlled-reference-source-v1",
   pluginService: "reference-plugin",
-  run: async ({ baseUrl, apiKey, record, signal, pluginStack }) => {
+  run: async ({ baseUrl, apiKey, record, runID, signal, pluginStack }) => {
+    const wireResponses = createWireResponseCapture();
     const client = new AtlasClient({
       baseUrl,
       apiKey,
+      fetch: wireResponses.fetch,
       sync: false,
       requestTimeoutMs: 8_000,
     });
@@ -59,6 +63,15 @@ await runPluginAcceptance({
         isTimestamp(available.checked_at),
     });
 
+    const directSource = await probeDirectSourceRoute(runID, signal);
+    record({
+      check:
+        "Reference Plugin cannot reach the fixture source outside the Source Gateway network",
+      expected: { reachable: false },
+      actual: directSource,
+      passed: directSource.reachable === false,
+    });
+
     const successInputs = new Map([[operationID, { key: "alpha" }]]);
     for (const operation of available.operations) {
       const input = successInputs.get(operation.operation_id);
@@ -90,8 +103,10 @@ await runPluginAcceptance({
       });
     }
 
-    const invalidInput = await captureAPIError(() =>
-      client.plugins.invoke(pluginID, operationID, { key: "" }, { signal }),
+    const invalidInput = await captureAPIError(
+      () =>
+        client.plugins.invoke(pluginID, operationID, { key: "" }, { signal }),
+      wireResponses,
     );
     recordPluginError({
       record,
@@ -103,13 +118,15 @@ await runPluginAcceptance({
       details: { plugin_code: "invalid_key" },
     });
 
-    const sourceFailure = await captureAPIError(() =>
-      client.plugins.invoke(
-        pluginID,
-        operationID,
-        { key: "source_error" },
-        { signal },
-      ),
+    const sourceFailure = await captureAPIError(
+      () =>
+        client.plugins.invoke(
+          pluginID,
+          operationID,
+          { key: "source_error" },
+          { signal },
+        ),
+      wireResponses,
     );
     recordPluginError({
       record,
@@ -121,13 +138,15 @@ await runPluginAcceptance({
       details: { plugin_code: "operation_failed" },
     });
 
-    const malformedFailure = await captureAPIError(() =>
-      client.plugins.invoke(
-        pluginID,
-        operationID,
-        { key: "malformed" },
-        { signal },
-      ),
+    const malformedFailure = await captureAPIError(
+      () =>
+        client.plugins.invoke(
+          pluginID,
+          operationID,
+          { key: "malformed" },
+          { signal },
+        ),
+      wireResponses,
     );
     recordPluginError({
       record,
@@ -238,13 +257,15 @@ await runPluginAcceptance({
         structurallyEqual(unavailable.operations, expectedOperations) &&
         isLaterTimestamp(unavailable.checked_at, available.checked_at),
     });
-    const unavailableInvocation = await captureAPIError(() =>
-      client.plugins.invoke(
-        pluginID,
-        operationID,
-        { key: "alpha" },
-        { signal },
-      ),
+    const unavailableInvocation = await captureAPIError(
+      () =>
+        client.plugins.invoke(
+          pluginID,
+          operationID,
+          { key: "alpha" },
+          { signal },
+        ),
+      wireResponses,
     );
     recordPluginError({
       record,
@@ -310,7 +331,8 @@ await runPluginAcceptance({
   },
 });
 
-async function captureAPIError(operation) {
+async function captureAPIError(operation, wireResponses) {
+  const marker = wireResponses.mark();
   try {
     return { returned: await operation() };
   } catch (error) {
@@ -321,6 +343,7 @@ async function captureAPIError(operation) {
       details: error.details,
       message: error.message,
       response: error.response,
+      wire_response: wireResponses.latestSince(marker),
     };
   }
 }
@@ -335,17 +358,26 @@ function recordPluginError({
   details,
 }) {
   const expected = {
-    status,
-    error_code: errorCode,
-    message,
-    optional_when_present: {
-      details,
-      path: operationPath,
-      error_id: "err_<12 lowercase hex characters>",
-      timestamp: "RFC3339 timestamp",
+    sdk: {
+      status,
+      error_code: errorCode,
+      message,
+      optional_when_present: { details },
+    },
+    wire_response: {
+      status,
+      required: { success: false, error_code: errorCode, message },
+      optional_when_present: {
+        details,
+        path: operationPath,
+        error_id: "err_<12 lowercase hex characters>",
+        timestamp: "RFC3339 timestamp",
+      },
     },
   };
   const response = actual.response;
+  const wireResponse = actual.wire_response;
+  const wirePayload = wireResponse?.body;
   record({
     check,
     expected,
@@ -360,12 +392,92 @@ function recordPluginError({
       response.error_code === errorCode &&
       response.message === message &&
       optionalMatches(response.details, details, structurallyEqual) &&
-      optionalMatches(response.path, operationPath) &&
-      optionalMatches(response.error_id, undefined, (value) =>
+      wireResponse?.status === status &&
+      wirePayload?.success === false &&
+      wirePayload.error_code === errorCode &&
+      wirePayload.message === message &&
+      optionalMatches(wirePayload.details, details, structurallyEqual) &&
+      optionalMatches(wirePayload.path, operationPath) &&
+      optionalMatches(wirePayload.error_id, undefined, (value) =>
         /^err_[0-9a-f]{12}$/u.test(value),
       ) &&
-      optionalMatches(response.timestamp, undefined, isTimestamp),
+      optionalMatches(wirePayload.timestamp, undefined, isTimestamp),
   });
+}
+
+function createWireResponseCapture() {
+  const responses = [];
+  return {
+    fetch: async (input, init) => {
+      const response = await fetch(input, init);
+      responses.push({
+        status: response.status,
+        body: parseWirePayload(await response.clone().text()),
+      });
+      return response;
+    },
+    mark() {
+      return responses.length;
+    },
+    latestSince(marker) {
+      return responses.slice(marker).at(-1);
+    },
+  };
+}
+
+function parseWirePayload(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+}
+
+async function probeDirectSourceRoute(runID, signal) {
+  const ownedPlugin = await executeFile(
+    "docker",
+    [
+      "container",
+      "ls",
+      "--all",
+      "--quiet",
+      "--filter",
+      `label=io.atlas.acceptance.run=${runID}`,
+      "--filter",
+      "label=com.docker.compose.service=reference-plugin",
+    ],
+    { encoding: "utf8", signal, timeout: 5_000 },
+  );
+  const containerIDs = ownedPlugin.stdout.trim().split(/\s+/u).filter(Boolean);
+  if (containerIDs.length !== 1) {
+    throw new Error(
+      `expected one owned reference-plugin container, observed ${JSON.stringify(containerIDs)}`,
+    );
+  }
+  try {
+    const result = await executeFile(
+      "docker",
+      [
+        "exec",
+        containerIDs[0],
+        "wget",
+        "--timeout=2",
+        "--quiet",
+        "--output-document=-",
+        "http://reference-source:8090/fixture?key=alpha",
+      ],
+      { encoding: "utf8", signal, timeout: 5_000 },
+    );
+    return { reachable: true, stdout: result.stdout, stderr: result.stderr };
+  } catch (error) {
+    if (signal.aborted) throw signal.reason;
+    return {
+      reachable: false,
+      status: typeof error.code === "number" ? error.code : null,
+      stdout: error.stdout ?? "",
+      stderr: error.stderr ?? "",
+    };
+  }
 }
 
 async function fixtureProbe(client, signal) {
