@@ -86,12 +86,15 @@ async function runMapWindowJourney({
   });
   const pendingDiagnostics = new Set();
   let routedTileRequests = 0;
+  let maximumRoutedTileZoom = -1;
   let page;
   let failure;
 
   await context.tracing.start({ screenshots: true, snapshots: true, sources: true });
   await context.route("https://api.maptiler.com/maps/openstreetmap-dark/**", async (route) => {
     routedTileRequests += 1;
+    const tileZoom = mapTileZoom(route.request().url());
+    if (tileZoom !== undefined) maximumRoutedTileZoom = Math.max(maximumRoutedTileZoom, tileZoom);
     await route.continue({ url: browserFixture.fixtureTileUrl });
   });
 
@@ -179,20 +182,24 @@ async function runMapWindowJourney({
       page
     });
     const pointerTilesBefore = browserFixture.mapTileRequestCount();
+    const pointerMaximumTileZoomBefore = maximumRoutedTileZoom;
     let pointerClickCompleted = false;
     let pointerClickError;
     try {
       await zoomIn.click({ timeout: 2_000 });
       pointerClickCompleted = true;
-      await waitUntil(() => browserFixture.mapTileRequestCount() > pointerTilesBefore, 10_000, signal);
+      await waitUntil(() => maximumRoutedTileZoom > pointerMaximumTileZoomBefore, 10_000, signal);
     } catch (error) {
       pointerClickError = errorMessage(error);
     }
     const pointerTilesAfter = browserFixture.mapTileRequestCount();
+    const pointerMaximumTileZoomAfter = maximumRoutedTileZoom;
     const zoomPointerAttempt = {
-      activated: pointerClickCompleted && pointerTilesAfter > pointerTilesBefore,
+      activated: pointerClickCompleted && pointerMaximumTileZoomAfter > pointerMaximumTileZoomBefore,
       click_completed: pointerClickCompleted,
-      observable_map_change: pointerTilesAfter > pointerTilesBefore,
+      observable_map_change: pointerMaximumTileZoomAfter > pointerMaximumTileZoomBefore,
+      maximum_requested_tile_zoom_before: pointerMaximumTileZoomBefore,
+      maximum_requested_tile_zoom_after: pointerMaximumTileZoomAfter,
       fixture_tile_requests_before: pointerTilesBefore,
       fixture_tile_requests_after: pointerTilesAfter,
       ...(pointerClickError ? { error: pointerClickError } : {})
@@ -797,4 +804,10 @@ function escapeRegExp(value) {
 
 function errorMessage(error) {
   return error instanceof Error ? error.message : String(error);
+}
+
+function mapTileZoom(requestUrl) {
+  const match = new URL(requestUrl).pathname.match(/\/256\/(\d+)\/\d+\/\d+\.png$/u);
+  if (!match?.[1]) return undefined;
+  return Number(match[1]);
 }
