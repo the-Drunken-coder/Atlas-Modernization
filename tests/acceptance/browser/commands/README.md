@@ -35,4 +35,6 @@ The shipped Command Interface has no Task cancellation action or control at the 
 
 The journey issues a final real pending Task after every independent recovery case and requires a visible cancellation button within that Task's row. If the control exists, the test clicks it and checks fresh authoritative Core state plus the visible cancelled state. The missing-control assertion remains active so the test stays red until a separate product repair adds operator cancellation.
 
+The implementation-SHA reproduction and retained evidence are recorded in [`docs/problems/2026-09-12-command-task-cancellation-control-missing.md`](../../../../docs/problems/2026-09-12-command-task-cancellation-control-missing.md).
+
 The pull request job runs Chromium. The scheduled and manually dispatched nightly job requests Chromium and WebKit. WebKit does not establish Safari or physical-device coverage. Firefox was removed from the supported matrix after the initial hosted browser smoke run failed before MapLibre could create a real WebGL context; this workflow does not claim Firefox coverage or treat that failure as a pass.
