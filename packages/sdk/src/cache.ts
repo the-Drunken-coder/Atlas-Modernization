@@ -31,6 +31,7 @@ type PointReadOperation<TType extends ResourceType> = {
   readonly type: TType;
   readonly id: string;
   readonly generation: number;
+  readonly hydrationEpoch: number;
 };
 
 type ResourceUpsertEvent = Exclude<FeedEvent, { event: "delete" }>;
@@ -126,6 +127,7 @@ export class ResourceCache {
   private readonly localDeleteOperations = new Set<LocalDeleteOperation>();
   // Point reads capture this generation before the request and only project the response if it is still current.
   private readonly generations = new Map<string, number>();
+  private hydrationEpoch = 0;
   private readonly snapshotRecords: SnapshotRecords = {
     entity: new SnapshotRecord<EntityResource>(),
     task: new SnapshotRecord<TaskResource>(),
@@ -155,7 +157,7 @@ export class ResourceCache {
   }
 
   beginPointRead<TType extends ResourceType>(type: TType, id: string): PointReadOperation<TType> {
-    return { type, id, generation: this.generation(type, id) };
+    return { type, id, generation: this.generation(type, id), hydrationEpoch: this.hydrationEpoch };
   }
 
   applyPointRead<TType extends ResourceType>(
@@ -163,6 +165,7 @@ export class ResourceCache {
     value: ResourceOf<TType>,
     options?: ResourceReadOptions
   ): boolean {
+    if (operation.hydrationEpoch !== this.hydrationEpoch) return false;
     return this.acceptResource(operation.type, operation.id, value, {
       ...options,
       generation: operation.generation
@@ -200,6 +203,7 @@ export class ResourceCache {
     tasks: readonly TaskResource[];
     objects: readonly ObjectDetailResource[];
   }): void {
+    this.hydrationEpoch += 1;
     this.entries.entity.clear();
     this.entries.task.clear();
     this.entries.object.clear();

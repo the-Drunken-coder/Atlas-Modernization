@@ -103,6 +103,46 @@ describe("AtlasClient sync: cache projection and reads", () => {
     expect(core.requests).toContain(`/queries/changed-since?since_version=${deletion.version}`);
   });
 
+  it("does not restore a resource from a point read started before hydration", async () => {
+    const core = new FakeCore();
+    const original = core.upsertEntity(entity("asset-read-across-hydration"));
+    let releaseRead!: () => void;
+    const readGate = new Promise<void>((resolve) => {
+      releaseRead = resolve;
+    });
+    let readCaptured!: () => void;
+    const captured = new Promise<void>((resolve) => {
+      readCaptured = resolve;
+    });
+    const fetchImpl: typeof fetch = async (url, init) => {
+      const response = await core.fetch(String(url), init);
+      if (new URL(String(url)).pathname === `/entities/${original.entity_id}` && init?.method === "GET") {
+        readCaptured();
+        await readGate;
+      }
+      return response;
+    };
+    const client = createAtlasClient(core, { fetch: fetchImpl, sync: "all", pollIntervalMs: 0 });
+    const read = client.entities.get(original.entity_id);
+    await captured;
+    core.deleteEntity(original.entity_id);
+
+    await client.sync.start();
+    const hydrated = client.sync.snapshot();
+    expect(hydrated.entities).toEqual({});
+    const snapshots = vi.fn();
+    client.sync.watchSnapshot(snapshots);
+    releaseRead();
+
+    await expect(read).resolves.toEqual(original);
+    expect(client.sync.snapshot()).toBe(hydrated);
+    expect(snapshots).not.toHaveBeenCalled();
+
+    const recreated = core.upsertEntity(entity(original.entity_id));
+    await expect(client.entities.get(original.entity_id, { fresh: true })).resolves.toEqual(recreated);
+    expect(client.sync.snapshot().entities[original.entity_id]).toEqual(recreated);
+  });
+
   it("does not advance the global change cursor from optimistic local writes", async () => {
     const core = new FakeCore();
     const baseline = core.upsertEntity(entity("asset-baseline-write"));
