@@ -1,20 +1,43 @@
 import {
   type EntityResource,
+  type FeedEvent,
   isObjectDetailResource,
   type ObjectDetailResource,
   type ObjectResource,
   type ResourceType,
   type TaskResource
 } from "./protocol.js";
-import { resourceCacheKey, resourceID } from "./subscriptions.js";
-import type { CacheEntry, DeletableResourceType, ResourceOf, ResourceValue, SyncSnapshot } from "./types.js";
+import { localDeleteEvent, resourceCacheKey, resourceID } from "./subscriptions.js";
+import type {
+  AtlasWatchEvent,
+  CacheEntry,
+  DeletableResourceType,
+  ResourceOf,
+  ResourceValue,
+  SyncSnapshot
+} from "./types.js";
 
-export type CacheResourceOptions = {
+type ResourceReadOptions = {
   detail?: boolean;
-  advanceCursor?: boolean;
-  generation?: number;
   version?: number;
   replaceSameVersion?: boolean;
+};
+
+type ResourceAcceptanceOptions = ResourceReadOptions & {
+  generation?: number;
+};
+
+type PointReadOperation<TType extends ResourceType> = {
+  readonly type: TType;
+  readonly id: string;
+  readonly generation: number;
+};
+
+type ResourceUpsertEvent = Exclude<FeedEvent, { event: "delete" }>;
+
+export type ResourceChange = {
+  readonly event: AtlasWatchEvent;
+  readonly resource: ResourceValue | undefined;
 };
 
 type SnapshotRecords = {
@@ -93,13 +116,13 @@ export class ObjectContentCache {
 }
 
 export class ResourceCache {
-  readonly entries: { [TType in ResourceType]: Map<string, CacheEntry<ResourceOf<TType>>> } = {
+  private readonly entries: { [TType in ResourceType]: Map<string, CacheEntry<ResourceOf<TType>>> } = {
     entity: new Map<string, CacheEntry<EntityResource>>(),
     task: new Map<string, CacheEntry<TaskResource>>(),
     object: new Map<string, CacheEntry<ObjectResource>>()
   };
-  readonly pendingDeletes = new Set<string>();
-  readonly locallyNotifiedDeletes = new Set<string>();
+  private readonly pendingDeletes = new Set<string>();
+  private readonly locallyNotifiedDeletes = new Set<string>();
   private readonly localDeleteOperations = new Set<LocalDeleteOperation>();
   // Point reads capture this generation before the request and only project the response if it is still current.
   private readonly generations = new Map<string, number>();
@@ -110,14 +133,9 @@ export class ResourceCache {
   };
   private snapshotValue = snapshotFromRecords(this.snapshotRecords);
   private snapshotDirty = false;
-  lastVersion = 0;
-
-  entry<TType extends ResourceType>(type: TType, id: string): CacheEntry<ResourceOf<TType>> | undefined {
-    return this.entries[type].get(id);
-  }
 
   value<TType extends ResourceType>(type: TType, id: string): ResourceOf<TType> | undefined {
-    const entry = this.entry(type, id);
+    const entry = this.entries[type].get(id);
     return entry && !entry.deleted ? entry.value : undefined;
   }
 
@@ -136,6 +154,47 @@ export class ResourceCache {
     return this.snapshotValue;
   }
 
+  beginPointRead<TType extends ResourceType>(type: TType, id: string): PointReadOperation<TType> {
+    return { type, id, generation: this.generation(type, id) };
+  }
+
+  applyPointRead<TType extends ResourceType>(
+    operation: PointReadOperation<TType>,
+    value: ResourceOf<TType>,
+    options?: ResourceReadOptions
+  ): boolean {
+    return this.acceptResource(operation.type, operation.id, value, {
+      ...options,
+      generation: operation.generation
+    });
+  }
+
+  applyWrite(event: ResourceUpsertEvent, options?: Pick<ResourceReadOptions, "detail">): ResourceChange | undefined {
+    if (this.isSuppressedByPendingDelete(event)) return undefined;
+    if (
+      !this.acceptResource(event.resource_type, event.id, event.resource, {
+        ...options,
+        version: event.version
+      })
+    ) {
+      return undefined;
+    }
+    return this.changeForUpsert(event);
+  }
+
+  applyFeedEvent(event: FeedEvent): ResourceChange | undefined {
+    const key = resourceCacheKey(event.resource_type, event.id);
+    if (event.version <= this.versionFor(event.resource_type, event.id)) return undefined;
+    if (event.event === "delete") {
+      this.pendingDeletes.delete(key);
+      this.markRemoteDelete(event.resource_type, event.id, event.version);
+      return this.locallyNotifiedDeletes.delete(key) ? undefined : { event, resource: undefined };
+    }
+    if (this.isSuppressedByPendingDelete(event)) return undefined;
+    this.acceptResource(event.resource_type, event.id, event.resource, { version: event.version });
+    return this.changeForUpsert(event);
+  }
+
   replaceHydratedResources(resources: {
     entities: readonly EntityResource[];
     tasks: readonly TaskResource[];
@@ -151,19 +210,16 @@ export class ResourceCache {
     this.pendingDeletes.clear();
     this.locallyNotifiedDeletes.clear();
     this.localDeleteOperations.clear();
-    this.lastVersion = 0;
-    for (const entity of resources.entities)
-      this.cacheResource("entity", entity.entity_id, entity, { advanceCursor: false });
-    for (const task of resources.tasks) this.cacheResource("task", task.task_id, task, { advanceCursor: false });
-    for (const object of resources.objects)
-      this.cacheResource("object", object.object_id, object, { detail: true, advanceCursor: false });
+    for (const entity of resources.entities) this.acceptResource("entity", entity.entity_id, entity);
+    for (const task of resources.tasks) this.acceptResource("task", task.task_id, task);
+    for (const object of resources.objects) this.acceptResource("object", object.object_id, object, { detail: true });
   }
 
-  cacheResource<TType extends ResourceType>(
+  private acceptResource<TType extends ResourceType>(
     type: TType,
     id: string,
     value: ResourceOf<TType>,
-    options?: CacheResourceOptions
+    options?: ResourceAcceptanceOptions
   ): boolean {
     const actualID = resourceID(type, value);
     if (actualID !== id) {
@@ -207,25 +263,18 @@ export class ResourceCache {
       deleted: false,
       detail: type === "object" && options?.detail === true
     });
-    if (options?.advanceCursor !== false) {
-      this.lastVersion = Math.max(this.lastVersion, version);
-    }
     return true;
   }
 
-  cacheWrittenResource<TType extends ResourceType>(type: TType, resource: ResourceOf<TType>): void {
-    this.cacheResource(type, resourceID(type, resource), resource);
-  }
-
-  versionFor(type: ResourceType, id: string): number {
+  private versionFor(type: ResourceType, id: string): number {
     return this.entries[type].get(id)?.version ?? 0;
   }
 
-  generation(type: ResourceType, id: string): number {
+  private generation(type: ResourceType, id: string): number {
     return this.generations.get(resourceCacheKey(type, id)) ?? 0;
   }
 
-  markRemoteDelete(type: ResourceType, id: string, version: number): void {
+  private markRemoteDelete(type: DeletableResourceType, id: string, version: number): void {
     this.bumpGeneration(type, id);
     for (const operation of this.localDeleteOperations) {
       if (operation.type === type && operation.id === id) operation.remoteDeleteSeen = true;
@@ -234,7 +283,7 @@ export class ResourceCache {
     this.removeFromSnapshot(type, id);
   }
 
-  markLocalDelete(type: DeletableResourceType, id: string): number {
+  private markLocalDelete(type: DeletableResourceType, id: string): number {
     const previousEntry = this.entries[type].get(id);
     const previousVersion = previousEntry?.version ?? 0;
     this.markRemoteDelete(type, id, previousVersion);
@@ -251,7 +300,7 @@ export class ResourceCache {
     return operation;
   }
 
-  finishLocalDelete(operation: LocalDeleteOperation): number | undefined {
+  finishLocalDelete(operation: LocalDeleteOperation): ResourceChange | undefined {
     if (!this.localDeleteOperations.delete(operation)) return undefined;
     const currentEntry = this.entries[operation.type].get(operation.id);
     this.bumpGeneration(operation.type, operation.id);
@@ -261,11 +310,36 @@ export class ResourceCache {
     ) {
       return undefined;
     }
-    return this.markLocalDelete(operation.type, operation.id);
+    const previousVersion = this.markLocalDelete(operation.type, operation.id);
+    return {
+      event: localDeleteEvent(operation.type, operation.id, previousVersion),
+      resource: undefined
+    };
   }
 
   cancelLocalDelete(operation: LocalDeleteOperation): void {
     this.localDeleteOperations.delete(operation);
+  }
+
+  private isSuppressedByPendingDelete(event: ResourceUpsertEvent): boolean {
+    return event.event === "update" && this.pendingDeletes.has(resourceCacheKey(event.resource_type, event.id));
+  }
+
+  private changeForUpsert(event: ResourceUpsertEvent): ResourceChange {
+    switch (event.resource_type) {
+      case "entity": {
+        const resource = this.value("entity", event.id)!;
+        return { event: { ...event, resource }, resource };
+      }
+      case "task": {
+        const resource = this.value("task", event.id)!;
+        return { event: { ...event, resource }, resource };
+      }
+      case "object": {
+        const resource = this.value("object", event.id)!;
+        return { event: { ...event, resource }, resource };
+      }
+    }
   }
 
   private bumpGeneration(type: ResourceType, id: string): void {

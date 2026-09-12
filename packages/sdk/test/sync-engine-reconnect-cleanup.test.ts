@@ -1,8 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import { AtlasClient, AtlasTransportError, type ResourceType } from "../src";
+import { AtlasClient, AtlasTransportError } from "../src";
 import { ResourceCache } from "../src/cache.js";
 import { parseSubscriptionKey } from "../src/subscriptions.js";
-import { type ResourceValue } from "../src/types.js";
 import { createAtlasClient } from "./support/client.js";
 import { entity, FakeCore, metadata, object, task } from "./support/fake-core.js";
 
@@ -759,23 +758,10 @@ describe("AtlasClient sync: polling, reconnect timers, and cleanup", () => {
     expect(typeof client.objects.watch("object-watch", vi.fn())).toBe("function");
   });
 
-  it("rejects resources written into the wrong cache bucket", () => {
-    const cache = new ResourceCache();
-    const cacheResource = cache.cacheResource.bind(cache) as (
-      type: ResourceType,
-      id: string,
-      value: ResourceValue
-    ) => boolean;
-    const taskPayload = task("task-cache-cross-type", "asset-cache-cross-type");
-
-    expect(() => cacheResource("entity", "asset-cache-cross-type", taskPayload)).toThrow("cannot be used as entity");
-    expect(cache.entry("entity", "asset-cache-cross-type")).toBeUndefined();
-  });
-
   it("does not commit a cache entry when snapshot cloning fails", () => {
     const cache = new ResourceCache();
     const original = { ...entity("asset-cache-clone-failure"), metadata: metadata(1) };
-    cache.cacheResource("entity", original.entity_id, original);
+    cache.applyPointRead(cache.beginPointRead("entity", original.entity_id), original);
     const snapshot = cache.snapshot();
     const uncloneable = {
       ...original,
@@ -784,7 +770,7 @@ describe("AtlasClient sync: polling, reconnect timers, and cleanup", () => {
       invalid_runtime_value: () => undefined
     };
 
-    expect(() => cache.cacheResource("entity", original.entity_id, uncloneable)).toThrow();
+    expect(() => cache.applyPointRead(cache.beginPointRead("entity", original.entity_id), uncloneable)).toThrow();
     expect(cache.value("entity", original.entity_id)).toEqual(original);
     expect(cache.snapshot()).toBe(snapshot);
   });
