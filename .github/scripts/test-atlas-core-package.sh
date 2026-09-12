@@ -401,7 +401,36 @@ jq -e --arg revision "$protocol_revision" '.protocol_revision == $revision' \
 capture_resources "before-first-stop"
 
 ATLAS_CORE_HOME="$core_home" "$cli" stop 2>&1 | redact_stream "$artifact_dir/stop-first.txt"
-ATLAS_CORE_HOME="$core_home" "$cli" status 2>&1 | redact_stream "$artifact_dir/status-stopped.txt"
+status_stopped_stdout="$test_root/status-stopped.stdout"
+status_stopped_stderr="$test_root/status-stopped.stderr"
+status_stopped_expected_stderr="$test_root/status-stopped.expected.stderr"
+printf 'Atlas Core is stopped.\n' > "$status_stopped_expected_stderr"
+if ATLAS_CORE_HOME="$core_home" "$cli" status \
+  >"$status_stopped_stdout" 2>"$status_stopped_stderr"; then
+  status_stopped_exit=0
+else
+  status_stopped_exit=$?
+fi
+redact_stream "$artifact_dir/status-stopped.stdout.txt" < "$status_stopped_stdout"
+redact_stream "$artifact_dir/status-stopped.stderr.txt" < "$status_stopped_stderr"
+{
+  printf 'exit=%s\nstdout:\n' "$status_stopped_exit"
+  cat "$artifact_dir/status-stopped.stdout.txt"
+  printf 'stderr:\n'
+  cat "$artifact_dir/status-stopped.stderr.txt"
+} > "$artifact_dir/status-stopped.txt"
+if [ "$status_stopped_exit" -ne 1 ]; then
+  fail "atlas-core status after stop exited $status_stopped_exit instead of 1."
+fi
+if ! cmp -s "$status_stopped_stderr" "$status_stopped_expected_stderr"; then
+  fail "atlas-core status after stop emitted unexpected stderr."
+fi
+if [ -s "$status_stopped_stdout" ]; then
+  fail "atlas-core status after stop emitted unexpected stdout."
+fi
+record_check "packed CLI reports an initialized stopped deployment" \
+  "exit 1; empty stdout; stderr Atlas Core is stopped." \
+  "exit $status_stopped_exit; empty stdout; stderr Atlas Core is stopped."
 for resource in \
   "${project_name}_api" \
   "${project_name}_source_gateway" \

@@ -20,6 +20,8 @@ view reports CPU, memory, network and block I/O, process count, uptime, restart 
 Docker. It refreshes every five seconds without overlapping Docker reads. Up and down scroll the status body, left and
 right select a service, and `r` refreshes immediately. Arrow keys move through other menus, typing filters the main
 menu, Enter selects an action, and Escape or `q` goes back.
+The direct `atlas-core status` command exits 1 and writes `Atlas Core is stopped.` to stderr when an initialized deployment
+is stopped.
 
 ### Preview the terminal UI
 
