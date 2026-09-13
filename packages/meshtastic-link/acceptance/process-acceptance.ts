@@ -100,6 +100,7 @@ const runnerPath = join(packageRoot, "dist", "acceptance", "process-runner.js");
 const revision = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repositoryRoot, encoding: "utf8" }).trim();
 const artifactParent = process.env.ATLAS_LINK_ACCEPTANCE_ARTIFACTS ?? join(repositoryRoot, ".tmp", "link-acceptance");
 const scenario = acceptanceScenario();
+const httpRequestTimeoutMs = 15_000;
 // The sequential readiness, join, publication, shutdown, and fallback-cleanup bounds total less than this outer limit.
 const processTestTimeoutMs = 210_000;
 
@@ -520,21 +521,40 @@ function parseSSEBlock(block: string): Record<string, unknown> | undefined {
 }
 
 async function getJSON(url: string, signal?: AbortSignal): Promise<unknown> {
-  const response = await fetch(url, signal ? { signal } : undefined);
-  const value: unknown = await response.json();
-  assert.equal(response.status, 200, `GET ${url}: ${JSON.stringify(value)}`);
-  return value;
+  return withHTTPRequestDeadline(signal, async (requestSignal) => {
+    const response = await fetch(url, { signal: requestSignal });
+    const value: unknown = await response.json();
+    assert.equal(response.status, 200, `GET ${url}: ${JSON.stringify(value)}`);
+    return value;
+  });
 }
 
 async function postJSON(url: string, body: unknown): Promise<unknown> {
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body)
+  return withHTTPRequestDeadline(undefined, async (signal) => {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+      signal
+    });
+    const value: unknown = await response.json();
+    assert.ok(response.status >= 200 && response.status < 300, `POST ${url}: ${JSON.stringify(value)}`);
+    return value;
   });
-  const value: unknown = await response.json();
-  assert.ok(response.status >= 200 && response.status < 300, `POST ${url}: ${JSON.stringify(value)}`);
-  return value;
+}
+
+async function withHTTPRequestDeadline<T>(
+  signal: AbortSignal | undefined,
+  request: (signal: AbortSignal) => Promise<T>
+): Promise<T> {
+  if (signal) return request(signal);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), httpRequestTimeoutMs);
+  try {
+    return await request(controller.signal);
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 async function waitForJSON(

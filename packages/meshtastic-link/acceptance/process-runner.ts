@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import {
   createUSShortFastProfile,
@@ -26,6 +26,7 @@ type RunnerSummary = {
   duration_ms: number;
   outcome: "stopped" | "failed";
   error?: string;
+  evidence_complete: boolean;
   lifecycle_cleanup: ReturnType<LaboratoryMeshtasticDevice["summary"]>;
   device: ReturnType<LaboratoryMeshtasticDevice["summary"]>;
   active_resources: {
@@ -112,6 +113,7 @@ try {
     duration_ms: Math.round(performance.now() - startedAt),
     outcome,
     ...(failure === undefined ? {} : { error: errorMessage(failure) }),
+    evidence_complete: false,
     lifecycle_cleanup: lifecycleCleanup,
     device: device.summary(),
     active_resources: {
@@ -120,14 +122,21 @@ try {
     }
   };
   await mkdir(dirname(summaryPath), { recursive: true });
-  await writeFile(summaryPath, `${JSON.stringify(summary, null, 2)}\n`);
+  await writeSummary(summary);
   await sendFinalSummary(summary);
   await disconnectFromController();
   summary.active_resources.after_ipc_disconnect = process.getActiveResourcesInfo();
-  await writeFile(summaryPath, `${JSON.stringify(summary, null, 2)}\n`);
+  summary.evidence_complete = true;
+  await writeSummary(summary);
 }
 
 if (failure !== undefined) throw failure;
+
+async function writeSummary(summary: RunnerSummary): Promise<void> {
+  const temporaryPath = `${summaryPath}.${process.pid}.tmp`;
+  await writeFile(temporaryPath, `${JSON.stringify(summary, null, 2)}\n`);
+  await rename(temporaryPath, summaryPath);
+}
 
 function waitForShutdown(): Promise<void> {
   return new Promise((resolve) => {
