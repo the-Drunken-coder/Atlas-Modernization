@@ -208,17 +208,23 @@ async function runMapWindowJourney({
     await zoomIn.focus();
     const keyboardControlFocused = await zoomIn.evaluate((element) => document.activeElement === element);
     const targetSelectionTileZoom = fixture.expectedRequest.tile_zoom;
+    const expectedKeyboardZoomSteps = targetSelectionTileZoom - pointerMaximumTileZoomAfter;
     let keyboardZoomSteps = 0;
     while (maximumRoutedTileZoom < targetSelectionTileZoom && keyboardZoomSteps < 20) {
       const previousMaximumTileZoom = maximumRoutedTileZoom;
       await zoomIn.press("Enter");
       await waitUntil(() => maximumRoutedTileZoom > previousMaximumTileZoom, 10_000, signal);
       if (maximumRoutedTileZoom <= previousMaximumTileZoom) break;
+      await waitForStableValue(() => routedTileRequests, 500, 10_000, signal);
       keyboardZoomSteps += 1;
     }
     record({
       check: `${browserName} used the visible zoom control's keyboard interaction to continue the map-window journey`,
-      expected: { focused: true, target_fixture_tile_zoom: targetSelectionTileZoom },
+      expected: {
+        focused: true,
+        keyboard_zoom_steps: expectedKeyboardZoomSteps,
+        target_fixture_tile_zoom: targetSelectionTileZoom
+      },
       actual: {
         focused: keyboardControlFocused,
         keyboard_zoom_steps: keyboardZoomSteps,
@@ -226,9 +232,12 @@ async function runMapWindowJourney({
         routed_tile_requests_before: routedBeforeKeyboardZoom,
         routed_tile_requests_after: routedTileRequests
       },
-      passed: keyboardControlFocused && keyboardZoomSteps > 0 && maximumRoutedTileZoom >= targetSelectionTileZoom
+      passed:
+        keyboardControlFocused &&
+        keyboardZoomSteps === expectedKeyboardZoomSteps &&
+        maximumRoutedTileZoom === targetSelectionTileZoom
     });
-    const settledTileRequests = await waitForStableValue(() => routedTileRequests, 500, 10_000, signal);
+    const settledTileRequests = routedTileRequests;
     record({
       check: `${browserName} waited for the observable map zoom to settle before drawing`,
       expected: { stable_fixture_tile_requests_ms: 500 },
