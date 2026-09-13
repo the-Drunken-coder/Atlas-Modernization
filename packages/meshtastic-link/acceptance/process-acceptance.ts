@@ -7,6 +7,9 @@ import { createServer } from "node:net";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { fromBinary } from "@bufbuild/protobuf";
+import { Protobuf } from "@meshtastic/core";
+import { decodeFrame, type LinkFrame } from "@the-drunken-coder/atlas-meshtastic-link";
 
 type Role = "asset" | "gateway";
 
@@ -41,8 +44,13 @@ type SummaryMessage = {
   duration_ms: number;
   outcome: "stopped" | "failed";
   error?: string;
+  evidence_complete: boolean;
   lifecycle_cleanup: DeviceSummary;
   device: DeviceSummary;
+  active_resources: {
+    after_lifecycle_close: string[];
+    after_ipc_disconnect: string[];
+  };
 };
 
 type RegisterMessage = {
@@ -62,10 +70,12 @@ type RadioMessage = {
 type ChildMessage = ReadyMessage | SummaryMessage | RegisterMessage | RadioMessage;
 
 type Runner = {
+  name: string;
   role: Role;
   child: ChildProcess;
   ready: Promise<ReadyMessage>;
   summary: Promise<SummaryMessage>;
+  disconnected: Promise<void>;
   exit: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
   stdout: string[];
   stderr: string[];
@@ -77,7 +87,15 @@ type ProcessObservation = {
   platform: NodeJS.Platform;
   architecture: string;
   node: string;
-  scenario: "baseline" | "drop-asset-private-packets";
+  scenario: "required" | "nightly";
+  fault: "none" | "drop-asset-private-packets";
+  seed: number;
+  controlled_values: {
+    node_numbers: number[];
+    private_channel_key_byte: number;
+    join_key_labels: string[];
+  };
+  uncontrolled_random_sources: string[];
   artifact_directory: string;
   timings_ms: Record<string, number>;
   gateway?: { ready: ReadyMessage; status: unknown; profile: unknown };
@@ -85,11 +103,17 @@ type ProcessObservation = {
   state_submission?: unknown;
   state_event?: unknown;
   shared_picture?: unknown;
+  application_confirmation?: unknown;
+  application_rejection?: unknown;
+  private_delivery_fault?: unknown;
+  incomplete_operation_cleanup?: unknown;
+  startup_rejection?: unknown;
+  join_rejection?: unknown;
   shutdown_stream_closed?: boolean;
   summaries?: SummaryMessage[];
-  exits?: Array<{ role: Role; code: number | null; signal: NodeJS.Signals | null }>;
+  exits?: Array<{ name: string; role: Role; code: number | null; signal: NodeJS.Signals | null }>;
   ports_reused?: number[];
-  forced_terminations?: Role[];
+  forced_terminations?: string[];
   cleanup_failures?: string[];
   failure?: string;
 };
@@ -99,16 +123,22 @@ const repositoryRoot = resolve(packageRoot, "../..");
 const runnerPath = join(packageRoot, "dist", "acceptance", "process-runner.js");
 const revision = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repositoryRoot, encoding: "utf8" }).trim();
 const artifactParent = process.env.ATLAS_LINK_ACCEPTANCE_ARTIFACTS ?? join(repositoryRoot, ".tmp", "link-acceptance");
-const scenario = acceptanceScenario();
+const scenario = process.env.ATLAS_LINK_ACCEPTANCE_MODE === "nightly" ? "nightly" : "required";
+const fault = acceptanceFault();
+const seed = acceptanceSeed();
+const nodeNumbers = Array.from({ length: 5 }, (_, index) => 100_000 + seed * 10 + index);
+const privateChannelKeyByte = (seed % 255) + 1;
+const sharedJoinKey = `atlas-link-acceptance-${seed}-shared-authentication-key`;
+const rejectedJoinKey = `atlas-link-acceptance-${seed}-rejected-authentication-key`;
 const httpRequestTimeoutMs = 15_000;
-// Explicit phase deadlines total 207 seconds; cleanup adds 10 seconds, leaving 23 seconds for evidence writes.
-const processTestTimeoutMs = 240_000;
+// The scheduled fault path's phase deadlines total 776 seconds; cleanup adds 10 seconds, leaving 24 seconds for evidence writes.
+const processTestTimeoutMs = 810_000;
 
-test("runs compiled Gateway and Asset processes through device configuration, authenticated join, traffic, and shutdown", {
+test("runs compiled Link processes through joining, application settlement, rejected startup and join, and shutdown", {
   timeout: processTestTimeoutMs
 }, async () => {
   const scenarioStarted = performance.now();
-  const artifactDirectory = join(artifactParent, `${scenario}-${randomUUID()}`);
+  const artifactDirectory = join(artifactParent, `${scenario}-${fault}-seed-${seed}-${randomUUID()}`);
   await mkdir(artifactDirectory, { recursive: true });
   process.stdout.write(`Atlas Link acceptance artifacts: ${artifactDirectory}\n`);
   const observation: ProcessObservation = {
@@ -117,13 +147,37 @@ test("runs compiled Gateway and Asset processes through device configuration, au
     architecture: process.arch,
     node: process.version,
     scenario,
+    fault,
+    seed,
+    controlled_values: {
+      node_numbers: nodeNumbers,
+      private_channel_key_byte: privateChannelKeyByte,
+      join_key_labels: ["shared", "rejected"]
+    },
+    uncontrolled_random_sources: [
+      "Link service sessions",
+      "join attempt identifiers",
+      "transport operation and message identifiers",
+      "operating-system process and network scheduling"
+    ],
     artifact_directory: artifactDirectory,
     timings_ms: {}
   };
   const expected = {
-    processes: ["gateway", "asset"],
+    processes: ["startup-rejected-gateway", "join-rejected-gateway", "join-rejected-asset", "gateway", "asset"],
     lifecycle: "active",
     authenticated_join: "joined",
+    rejected_startup: "Gateway membership identity does not match --node-id",
+    rejected_join: "Asset remains discovering after rejecting a challenge authenticated with another key",
+    application_settlement: ["confirmed", "rejected"],
+    private_delivery_fault:
+      fault === "drop-asset-private-packets"
+        ? { dropped_before_gateway_delivery: true, recovered_operation: "confirmed" }
+        : null,
+    incomplete_operation_shutdown: {
+      asset_confirmed_pending_before_shutdown: 1,
+      gateway_inbound_awaiting_settlement_before_shutdown: 1
+    },
     radio_profile_differences: [],
     picture_record: { source: { role: "asset", id: "asset-alpha" }, entity_id: "asset-alpha", altitude: 101 },
     shutdown: { exit_code: 0, active_connections: 0, pending_writes: 0, loopback_ports_reusable: true },
@@ -135,33 +189,137 @@ test("runs compiled Gateway and Asset processes through device configuration, au
   };
   await writeJSON(join(artifactDirectory, "expected.json"), expected);
 
-  const network = new LaboratoryNetwork(scenario === "drop-asset-private-packets");
+  const network = new LaboratoryNetwork();
   const runners: Runner[] = [];
   let gatewayEvents: SSEReader | undefined;
+  let assetEvents: SSEReader | undefined;
   let shutdownEvents: SSEReader | undefined;
   let failure: unknown;
   try {
-    const membershipPath = join(artifactDirectory, "gateway-membership.json");
-    await writeJSON(
-      membershipPath,
-      {
-        gateway_node_id: "gateway-main",
-        gateway_generation: 0,
-        asset_generations: {},
-        channel_index: 1,
-        channel_name: "ATLAS",
-        channel_key_base64: Buffer.alloc(32, 7).toString("base64")
-      },
-      0o600
+    const rejectedStartupMembershipPath = join(artifactDirectory, "startup-rejected-membership.json");
+    await writeMembership(rejectedStartupMembershipPath, "another-gateway");
+    const startupRejected = spawnRunner(
+      "startup-rejected-gateway",
+      "gateway",
+      "gateway-startup-rejected",
+      nodeNumbers[0]!,
+      artifactDirectory,
+      sharedJoinKey,
+      rejectedStartupMembershipPath
     );
+    runners.push(startupRejected);
+    new LaboratoryNetwork().add(startupRejected);
+    await withTimeout(
+      startupRejected.summary,
+      30_000,
+      "Gateway rejected-startup process did not publish its failure summary"
+    );
+    const startupSummary = await readFinalSummary(startupRejected);
+    assertRejectedStartupCleanup(startupSummary);
+    const startupExit = await withTimeout(
+      startupRejected.exit,
+      2_000,
+      "Gateway rejected-startup process did not exit after publishing its final summary"
+    );
+    observation.startup_rejection = { summary: startupSummary, exit: startupExit };
+    assert.equal(typeof startupExit.code, "number", "rejected-startup process exit code");
+    assert.notEqual(startupExit.code, 0, "rejected-startup process must not exit successfully");
+    assert.equal(startupExit.signal, null, "rejected-startup process exit signal");
+    observation.timings_ms.startup_rejected = elapsed(scenarioStarted);
 
-    const gateway = spawnRunner("gateway", 10_001, artifactDirectory, membershipPath);
+    const rejectedJoinMembershipPath = join(artifactDirectory, "join-rejected-membership.json");
+    await writeMembership(rejectedJoinMembershipPath, "gateway-join-rejected");
+    const rejectedJoinNetwork = new LaboratoryNetwork();
+    const rejectedJoinGateway = spawnRunner(
+      "join-rejected-gateway",
+      "gateway",
+      "gateway-join-rejected",
+      nodeNumbers[1]!,
+      artifactDirectory,
+      sharedJoinKey,
+      rejectedJoinMembershipPath
+    );
+    runners.push(rejectedJoinGateway);
+    rejectedJoinNetwork.add(rejectedJoinGateway);
+    const rejectedJoinGatewayReady = await withTimeout(
+      rejectedJoinGateway.ready,
+      30_000,
+      "join-rejection Gateway did not become ready"
+    );
+    const rejectedJoinAsset = spawnRunner(
+      "join-rejected-asset",
+      "asset",
+      "asset-join-rejected",
+      nodeNumbers[2]!,
+      artifactDirectory,
+      rejectedJoinKey
+    );
+    runners.push(rejectedJoinAsset);
+    rejectedJoinNetwork.add(rejectedJoinAsset);
+    const rejectedJoinAssetReady = await withTimeout(
+      rejectedJoinAsset.ready,
+      30_000,
+      "join-rejection Asset did not become ready"
+    );
+    await waitForCondition(
+      () =>
+        rejectedJoinNetwork.hasTransmission({
+          from: nodeNumbers[1]!,
+          to: nodeNumbers[2]!,
+          channel: 0
+        }),
+      15_000,
+      "Gateway did not send the mismatched-key Asset an authenticated join challenge"
+    );
+    await waitForCondition(
+      () => rejectedJoinAsset.stdout.join("").includes("Received PRIVATE_APP packet"),
+      5_000,
+      "Mismatched-key Asset did not process the Gateway challenge"
+    );
+    await waitForCondition(
+      () => rejectedJoinNetwork.transmissionCountFrom(nodeNumbers[2]!, 0) >= 2,
+      15_000,
+      "Mismatched-key Asset did not remain in discovery through another bounded attempt"
+    );
+    const rejectedJoinStatus = await waitForJSON(
+      `${baseURL(rejectedJoinAssetReady.address)}/v1/status`,
+      (value) =>
+        property(value, "lifecycle") === "discovering" &&
+        property(property(value, "joining"), "state") === "discovering",
+      5_000,
+      "Mismatched-key Asset did not remain in discovery after processing the Gateway challenge"
+    );
+    observation.join_rejection = {
+      gateway: rejectedJoinGatewayReady,
+      asset: rejectedJoinAssetReady,
+      asset_status: rejectedJoinStatus,
+      public_channel_transmissions: rejectedJoinNetwork.transmissionCount(0),
+      asset_discovery_transmissions: rejectedJoinNetwork.transmissionCountFrom(nodeNumbers[2]!, 0),
+      asset_processed_private_packets: countOccurrences(
+        rejectedJoinAsset.stdout.join(""),
+        "Received PRIVATE_APP packet"
+      )
+    };
+    observation.timings_ms.join_rejected = elapsed(scenarioStarted);
+
+    const membershipPath = join(artifactDirectory, "gateway-membership.json");
+    await writeMembership(membershipPath, "gateway-main");
+
+    const gateway = spawnRunner(
+      "gateway",
+      "gateway",
+      "gateway-main",
+      nodeNumbers[3]!,
+      artifactDirectory,
+      sharedJoinKey,
+      membershipPath
+    );
     runners.push(gateway);
     network.add(gateway);
     const gatewayReady = await withTimeout(gateway.ready, 30_000, "Gateway process did not become ready");
     observation.timings_ms.gateway_ready = elapsed(scenarioStarted);
 
-    const asset = spawnRunner("asset", 10_002, artifactDirectory);
+    const asset = spawnRunner("asset", "asset", "asset-alpha", nodeNumbers[4]!, artifactDirectory, sharedJoinKey);
     runners.push(asset);
     network.add(asset);
     const assetReady = await withTimeout(asset.ready, 30_000, "Asset process did not become ready");
@@ -192,6 +350,206 @@ test("runs compiled Gateway and Asset processes through device configuration, au
     observation.asset = { ready: assetReady, status: assetStatus, profile: assetProfile };
 
     gatewayEvents = await openSSE(`${gatewayBase}/v1/events?after=0&client_id=process-acceptance`);
+    assetEvents = await openSSE(`${assetBase}/v1/events?after=0&client_id=process-acceptance`);
+
+    if (fault === "drop-asset-private-packets") {
+      network.dropPrivateTransmissionsFrom(nodeNumbers[4]!, "acceptance-private-drop-recovery");
+      const faultSubmission = await postJSON(`${assetBase}/v1/messages`, {
+        message: {
+          type: "subscription",
+          action: "add",
+          selector: { kind: "record", resource_type: "entity", id: "fault-recovery" }
+        },
+        destination: { role: "gateway", id: "gateway-main" },
+        operation_id: "acceptance-private-drop-recovery"
+      });
+      assert.equal(property(faultSubmission, "status"), "queued");
+      const faultPacketSent = await assetEvents.next(
+        (value) =>
+          property(value, "type") === "transport" &&
+          property(property(value, "event"), "type") === "packet_sent" &&
+          property(property(value, "event"), "operation_id") === "acceptance-private-drop-recovery",
+        15_000,
+        "Asset did not expose radio acceptance for the private-delivery fault"
+      );
+      await waitForCondition(
+        () => network.droppedPrivateAttemptComplete(),
+        5_000,
+        "Laboratory network did not drop one complete Asset private transmission attempt"
+      );
+      const operationBeforeRecovery = await getJSON(`${assetBase}/v1/operations/acceptance-private-drop-recovery`);
+      assert.equal(property(operationBeforeRecovery, "status"), "queued");
+      const assetBeforeRecovery = await waitForJSON(
+        `${assetBase}/v1/status`,
+        (value) => property(property(value, "transport"), "confirmed_pending") === 1,
+        5_000,
+        "Asset did not retain the dropped confirmed operation"
+      );
+      const gatewayBeforeRecovery = await getJSON(`${gatewayBase}/v1/status`);
+      assert.equal(property(property(gatewayBeforeRecovery, "transport"), "inbound_awaiting_settlement"), 0);
+
+      const droppedTransmissions = network.droppedPrivateTransmissionCount();
+      network.resumePrivateTransmissions();
+      const recoveredInbound = await gatewayEvents.next(
+        (value) => isSettlementEvent(value, "acceptance-private-drop-recovery"),
+        15_000,
+        "Gateway did not receive the dropped operation after private delivery recovered"
+      );
+      const recoveredSettlementID = requiredString(
+        property(property(recoveredInbound, "event"), "settlement_id"),
+        "recovered settlement ID"
+      );
+      const recoveredSettlement = await postJSON(
+        `${gatewayBase}/v1/inbound/${encodeURIComponent(recoveredSettlementID)}/settle`,
+        { accepted: true }
+      );
+      assert.equal(property(recoveredSettlement, "settled"), true);
+      const recoveredOperation = await waitForJSON(
+        `${assetBase}/v1/operations/acceptance-private-drop-recovery`,
+        (value) => property(value, "status") === "confirmed",
+        15_000,
+        "Asset operation did not confirm after private delivery recovered"
+      );
+      await waitForJSON(
+        `${assetBase}/v1/status`,
+        hasNoPendingTransportWork,
+        15_000,
+        "Asset retained pending transport work after private delivery recovered"
+      );
+      await waitForJSON(
+        `${gatewayBase}/v1/status`,
+        hasNoPendingTransportWork,
+        15_000,
+        "Gateway retained pending transport work after private delivery recovered"
+      );
+      observation.private_delivery_fault = {
+        submission: faultSubmission,
+        radio_accepted_event: faultPacketSent,
+        operation_before_recovery: operationBeforeRecovery,
+        asset_before_recovery: assetBeforeRecovery,
+        gateway_before_recovery: gatewayBeforeRecovery,
+        dropped_private_transmissions: droppedTransmissions,
+        recovered_inbound: recoveredInbound,
+        settlement: recoveredSettlement,
+        operation: recoveredOperation
+      };
+      observation.timings_ms.private_delivery_recovered = elapsed(scenarioStarted);
+    }
+
+    const confirmedSubmission = await postJSON(`${assetBase}/v1/messages`, {
+      message: {
+        type: "subscription",
+        action: "add",
+        selector: { kind: "resource_type", resource_type: "entity" }
+      },
+      destination: { role: "gateway", id: "gateway-main" },
+      operation_id: "acceptance-subscription-confirmed"
+    });
+    assert.equal(property(confirmedSubmission, "status"), "queued");
+    const confirmedPacketSent = await assetEvents.next(
+      (value) =>
+        property(value, "type") === "transport" &&
+        property(property(value, "event"), "type") === "packet_sent" &&
+        property(property(value, "event"), "operation_id") === "acceptance-subscription-confirmed",
+      15_000,
+      "Asset did not expose radio acceptance for the confirmed subscription"
+    );
+    const beforeApplicationConfirmation = await getJSON(`${assetBase}/v1/operations/acceptance-subscription-confirmed`);
+    assert.equal(property(beforeApplicationConfirmation, "status"), "queued");
+    const confirmedInbound = await gatewayEvents.next(
+      (value) => isSettlementEvent(value, "acceptance-subscription-confirmed"),
+      15_000,
+      "Gateway did not expose the confirmed subscription for application settlement"
+    );
+    const confirmedSettlementID = requiredString(
+      property(property(confirmedInbound, "event"), "settlement_id"),
+      "confirmed settlement ID"
+    );
+    const confirmedSettlement = await postJSON(
+      `${gatewayBase}/v1/inbound/${encodeURIComponent(confirmedSettlementID)}/settle`,
+      { accepted: true }
+    );
+    assert.equal(property(confirmedSettlement, "settled"), true);
+    const confirmedOperation = await waitForJSON(
+      `${assetBase}/v1/operations/acceptance-subscription-confirmed`,
+      (value) => property(value, "status") === "confirmed",
+      15_000,
+      "Asset operation did not reach application-confirmed status"
+    );
+    observation.application_confirmation = {
+      submission: confirmedSubmission,
+      radio_accepted_event: confirmedPacketSent,
+      before_application_settlement: beforeApplicationConfirmation,
+      inbound: confirmedInbound,
+      settlement: confirmedSettlement,
+      operation: confirmedOperation
+    };
+
+    const rejectedSubmission = await postJSON(`${assetBase}/v1/messages`, {
+      message: {
+        type: "subscription",
+        action: "remove",
+        selector: { kind: "resource_type", resource_type: "entity" }
+      },
+      destination: { role: "gateway", id: "gateway-main" },
+      operation_id: "acceptance-subscription-rejected"
+    });
+    assert.equal(property(rejectedSubmission, "status"), "queued");
+    const rejectedPacketSent = await assetEvents.next(
+      (value) =>
+        property(value, "type") === "transport" &&
+        property(property(value, "event"), "type") === "packet_sent" &&
+        property(property(value, "event"), "operation_id") === "acceptance-subscription-rejected",
+      15_000,
+      "Asset did not expose radio acceptance for the rejected subscription"
+    );
+    const beforeApplicationRejection = await getJSON(`${assetBase}/v1/operations/acceptance-subscription-rejected`);
+    assert.equal(property(beforeApplicationRejection, "status"), "queued");
+    const rejectedInbound = await gatewayEvents.next(
+      (value) => isSettlementEvent(value, "acceptance-subscription-rejected"),
+      15_000,
+      "Gateway did not expose the subscription selected for application rejection"
+    );
+    const rejectedSettlementID = requiredString(
+      property(property(rejectedInbound, "event"), "settlement_id"),
+      "rejected settlement ID"
+    );
+    const rejectionReason = "laboratory application rejected subscription";
+    const rejectedSettlement = await postJSON(
+      `${gatewayBase}/v1/inbound/${encodeURIComponent(rejectedSettlementID)}/settle`,
+      { accepted: false, reason: rejectionReason }
+    );
+    assert.equal(property(rejectedSettlement, "settled"), true);
+    const rejectedOperation = await waitForJSON(
+      `${assetBase}/v1/operations/acceptance-subscription-rejected`,
+      (value) => property(value, "status") === "rejected",
+      15_000,
+      "Asset operation did not expose application rejection"
+    );
+    assert.equal(property(rejectedOperation, "reason"), rejectionReason);
+    observation.application_rejection = {
+      submission: rejectedSubmission,
+      radio_accepted_event: rejectedPacketSent,
+      before_application_settlement: beforeApplicationRejection,
+      inbound: rejectedInbound,
+      settlement: rejectedSettlement,
+      operation: rejectedOperation
+    };
+
+    await waitForJSON(
+      `${assetBase}/v1/status`,
+      hasNoPendingTransportWork,
+      15_000,
+      "Asset retained pending transport work after application settlements"
+    );
+    await waitForJSON(
+      `${gatewayBase}/v1/status`,
+      hasNoPendingTransportWork,
+      15_000,
+      "Gateway retained pending transport work after application settlements"
+    );
+    observation.timings_ms.application_settlements = elapsed(scenarioStarted);
+
     const statePublication = positionPublication();
     const stateSubmission = await postJSON(`${assetBase}/v1/messages`, {
       message: statePublication,
@@ -223,26 +581,86 @@ test("runs compiled Gateway and Asset processes through device configuration, au
     observation.shared_picture = sharedPicture;
     observation.timings_ms.picture_observed = elapsed(scenarioStarted);
 
-    shutdownEvents = await openSSE(`${gatewayBase}/v1/events?client_id=shutdown-observer`);
-    for (const runner of runners) runner.child.kill("SIGTERM");
-    const [shutdownStreamClosed, exits] = await Promise.all([
-      waitForSSEClosure(shutdownEvents, 15_000),
-      Promise.all(runners.map((runner) => withTimeout(runner.exit, 15_000, `${runner.role} did not exit`)))
-    ]);
-    observation.shutdown_stream_closed = shutdownStreamClosed;
-    const summaries = await Promise.all(
-      runners.map((runner) => withTimeout(runner.summary, 2_000, `${runner.role} did not publish its summary`))
+    const incompleteSubmission = await postJSON(`${assetBase}/v1/messages`, {
+      message: {
+        type: "subscription",
+        action: "add",
+        selector: { kind: "record", resource_type: "entity", id: "shutdown-pending" }
+      },
+      destination: { role: "gateway", id: "gateway-main" },
+      operation_id: "acceptance-subscription-incomplete"
+    });
+    assert.equal(property(incompleteSubmission, "status"), "queued");
+    const incompletePacketSent = await assetEvents.next(
+      (value) =>
+        property(value, "type") === "transport" &&
+        property(property(value, "event"), "type") === "packet_sent" &&
+        property(property(value, "event"), "operation_id") === "acceptance-subscription-incomplete",
+      15_000,
+      "Asset did not expose radio acceptance for the shutdown-pending subscription"
     );
-    observation.summaries = summaries;
-    observation.exits = exits.map((exit, index) => ({ role: runners[index]?.role ?? "asset", ...exit }));
-    observation.timings_ms.shutdown_complete = elapsed(scenarioStarted);
+    const incompleteInbound = await gatewayEvents.next(
+      (value) => isSettlementEvent(value, "acceptance-subscription-incomplete"),
+      15_000,
+      "Gateway did not expose the shutdown-pending subscription"
+    );
+    const assetPendingStatus = await waitForJSON(
+      `${assetBase}/v1/status`,
+      (value) => property(property(value, "transport"), "confirmed_pending") === 1,
+      15_000,
+      "Asset did not retain the intentionally incomplete operation before shutdown"
+    );
+    const gatewayPendingStatus = await waitForJSON(
+      `${gatewayBase}/v1/status`,
+      (value) => property(property(value, "transport"), "inbound_awaiting_settlement") === 1,
+      15_000,
+      "Gateway did not retain the intentionally incomplete settlement before shutdown"
+    );
+    observation.incomplete_operation_cleanup = {
+      submission: incompleteSubmission,
+      radio_accepted_event: incompletePacketSent,
+      inbound: incompleteInbound,
+      asset_before_shutdown: assetPendingStatus,
+      gateway_before_shutdown: gatewayPendingStatus
+    };
 
-    for (const [index, exit] of exits.entries()) {
-      assert.equal(exit.code, 0, `${runners[index]?.role} process exit code`);
-      assert.equal(exit.signal, null, `${runners[index]?.role} process exit signal`);
+    shutdownEvents = await openSSE(`${gatewayBase}/v1/events?client_id=shutdown-observer`);
+    for (const runner of runners) {
+      if (runner.child.exitCode === null && runner.child.signalCode === null) runner.child.kill("SIGTERM");
     }
-    for (const summary of summaries) assertCleanLifecycleShutdown(summary);
+    const shutdownStream = waitForSSEClosure(shutdownEvents, 15_000);
+    const exitsPromise = Promise.all(
+      runners.map((runner) => withTimeout(runner.exit, 15_000, `${runner.name} did not exit`))
+    );
+    const shutdown = Promise.all([shutdownStream, exitsPromise]);
+    void shutdown.catch(() => undefined);
+    await Promise.all(
+      runners.map((runner) => withTimeout(runner.summary, 5_000, `${runner.name} did not publish its summary`))
+    );
+    const summaries = await Promise.all(runners.map(readFinalSummary));
+    observation.summaries = summaries;
+    for (const [index, summary] of summaries.entries()) {
+      if (runners[index]?.name === "startup-rejected-gateway") assertRejectedStartupCleanup(summary);
+      else assertCleanLifecycleShutdown(summary);
+    }
+    const [shutdownStreamClosed, exits] = await shutdown;
+    observation.shutdown_stream_closed = shutdownStreamClosed;
     assert.equal(observation.shutdown_stream_closed, true);
+    observation.exits = exits.map((exit, index) => ({
+      name: runners[index]?.name ?? "unknown",
+      role: runners[index]?.role ?? "asset",
+      ...exit
+    }));
+    observation.timings_ms.shutdown_complete = elapsed(scenarioStarted);
+    for (const [index, exit] of exits.entries()) {
+      const runner = runners[index];
+      if (runner?.name === "startup-rejected-gateway") {
+        assert.deepEqual(exit, startupExit, "rejected-startup process exit changed after initial observation");
+        continue;
+      }
+      assert.equal(exit.code, 0, `${runner?.name} process exit code`);
+      assert.equal(exit.signal, null, `${runner?.name} process exit signal`);
+    }
 
     const ports = [gatewayReady.address.port, assetReady.address.port];
     for (const port of ports) await assertPortReusable(port);
@@ -253,23 +671,24 @@ test("runs compiled Gateway and Asset processes through device configuration, au
     observation.failure = errorMessage(error);
   } finally {
     await gatewayEvents?.close();
+    await assetEvents?.close();
     await shutdownEvents?.close();
     for (const runner of runners) {
       if (runner.child.exitCode === null && runner.child.signalCode === null) runner.child.kill("SIGTERM");
     }
     const gracefulCleanup = await Promise.allSettled(
-      runners.map((runner) => withTimeout(runner.exit, 5_000, `${runner.role} cleanup timed out`))
+      runners.map((runner) => withTimeout(runner.exit, 5_000, `${runner.name} cleanup timed out`))
     );
-    const forced: Role[] = [];
+    const forced: string[] = [];
     for (const runner of runners) {
       if (runner.child.exitCode === null && runner.child.signalCode === null) {
-        forced.push(runner.role);
+        forced.push(runner.name);
         runner.child.kill("SIGKILL");
       }
     }
     observation.forced_terminations = forced;
     const forcedCleanup = await Promise.allSettled(
-      runners.map((runner) => withTimeout(runner.exit, 5_000, `${runner.role} did not exit after SIGKILL`))
+      runners.map((runner) => withTimeout(runner.exit, 5_000, `${runner.name} did not exit after SIGKILL`))
     );
     const cleanupFailures = [...gracefulCleanup, ...forcedCleanup]
       .filter((result): result is PromiseRejectedResult => result.status === "rejected")
@@ -280,8 +699,8 @@ test("runs compiled Gateway and Asset processes through device configuration, au
     }
     await Promise.all(
       runners.map(async (runner) => {
-        await writeFile(join(artifactDirectory, `${runner.role}.stdout.log`), runner.stdout.join(""));
-        await writeFile(join(artifactDirectory, `${runner.role}.stderr.log`), runner.stderr.join(""));
+        await writeFile(join(artifactDirectory, `${runner.name}.stdout.log`), runner.stdout.join(""));
+        await writeFile(join(artifactDirectory, `${runner.name}.stderr.log`), runner.stderr.join(""));
         try {
           await readFile(runner.summaryPath);
         } catch {
@@ -297,8 +716,47 @@ test("runs compiled Gateway and Asset processes through device configuration, au
 
 class LaboratoryNetwork {
   private readonly nodes = new Map<number, { child: ChildProcess; publicKeyBase64: string }>();
+  private readonly transmissions: RadioMessage[] = [];
+  private privateDrop:
+    | {
+        from: number;
+        operationID: string;
+        messageID?: string;
+        chunkCount?: number;
+        chunks: Set<number>;
+      }
+    | undefined;
+  private droppedPrivateTransmissions = 0;
 
-  constructor(private readonly dropAssetPrivatePackets: boolean) {}
+  dropPrivateTransmissionsFrom(nodeNumber: number, operationID: string): void {
+    this.privateDrop = { from: nodeNumber, operationID, chunks: new Set() };
+  }
+
+  resumePrivateTransmissions(): void {
+    this.privateDrop = undefined;
+  }
+
+  droppedPrivateTransmissionCount(): number {
+    return this.droppedPrivateTransmissions;
+  }
+
+  droppedPrivateAttemptComplete(): boolean {
+    return this.privateDrop?.chunkCount !== undefined && this.privateDrop.chunks.size === this.privateDrop.chunkCount;
+  }
+
+  hasTransmission(expected: Pick<RadioMessage, "from" | "to" | "channel">): boolean {
+    return this.transmissions.some(
+      (message) => message.from === expected.from && message.to === expected.to && message.channel === expected.channel
+    );
+  }
+
+  transmissionCount(channel: number): number {
+    return this.transmissions.filter((message) => message.channel === channel).length;
+  }
+
+  transmissionCountFrom(from: number, channel: number): number {
+    return this.transmissions.filter((message) => message.from === from && message.channel === channel).length;
+  }
 
   add(runner: Runner): void {
     runner.child.on("message", (message: unknown) => this.receive(runner.child, message));
@@ -320,7 +778,21 @@ class LaboratoryNetwork {
       return;
     }
     if (message.type !== "lab:radio") return;
-    if (this.dropAssetPrivatePackets && message.from === 10_002 && message.channel === 1) return;
+    this.transmissions.push(message);
+    const drop = this.privateDrop;
+    if (drop && message.from === drop.from && message.channel === 1) {
+      const frame = radioFrame(message);
+      if (
+        frame?.operation_id === drop.operationID &&
+        (drop.messageID === undefined || frame.message_id === drop.messageID)
+      ) {
+        drop.messageID = frame.message_id;
+        drop.chunkCount = frame.chunk_count;
+        drop.chunks.add(frame.chunk_index);
+        this.droppedPrivateTransmissions++;
+        return;
+      }
+    }
     for (const [nodeNumber, peer] of this.nodes) {
       if (nodeNumber === message.from) continue;
       if (message.to !== 0xffffffff && message.to !== nodeNumber) continue;
@@ -387,14 +859,21 @@ class SSEReader {
   }
 }
 
-function spawnRunner(role: Role, nodeNumber: number, artifactDirectory: string, membershipPath?: string): Runner {
-  const nodeID = role === "gateway" ? "gateway-main" : "asset-alpha";
-  const summaryPath = join(artifactDirectory, `${role}.summary.json`);
+function spawnRunner(
+  name: string,
+  role: Role,
+  nodeID: string,
+  nodeNumber: number,
+  artifactDirectory: string,
+  joinKey: string,
+  membershipPath?: string
+): Runner {
+  const summaryPath = join(artifactDirectory, `${name}.summary.json`);
   const args = ["--mode", role, "--node-id", nodeID, "--node-number", String(nodeNumber), "--summary", summaryPath];
   if (membershipPath) args.push("--membership", membershipPath);
   const child = fork(runnerPath, args, {
     cwd: packageRoot,
-    env: { ...process.env, ATLAS_LINK_JOIN_KEY: "seed-389-shared-authentication-key" },
+    env: { ...process.env, ATLAS_LINK_JOIN_KEY: joinKey },
     stdio: ["ignore", "pipe", "pipe", "ipc"]
   });
   const readyDeferred = deferred<ReadyMessage>();
@@ -416,16 +895,35 @@ function spawnRunner(role: Role, nodeNumber: number, artifactDirectory: string, 
     code: typeof code === "number" ? code : null,
     signal: typeof signal === "string" ? (signal as NodeJS.Signals) : null
   }));
+  const disconnected = once(child, "disconnect").then(() => undefined);
   return {
+    name,
     role,
     child,
     ready: readyDeferred.promise,
     summary: summaryDeferred.promise,
+    disconnected,
     exit,
     stdout,
     stderr,
     summaryPath
   };
+}
+
+async function readFinalSummary(runner: Runner): Promise<SummaryMessage> {
+  await withTimeout(runner.disconnected, 2_000, `${runner.name} did not disconnect after publishing its summary`);
+  const deadline = Date.now() + 2_000;
+  let latest: unknown;
+  while (Date.now() < deadline) {
+    try {
+      latest = JSON.parse(await readFile(runner.summaryPath, "utf8"));
+      if (isSummaryMessage(latest)) return latest;
+    } catch (error) {
+      latest = errorMessage(error);
+    }
+    await delay(25);
+  }
+  throw new Error(`${runner.name} did not finalize its summary: ${errorMessage(latest)}`);
 }
 
 function positionPublication(): Record<string, unknown> {
@@ -450,6 +948,42 @@ function positionPublication(): Record<string, unknown> {
     operation_id: "acceptance-position",
     runtime_id: "acceptance-runtime"
   };
+}
+
+async function writeMembership(path: string, gatewayNodeID: string): Promise<void> {
+  await writeJSON(
+    path,
+    {
+      gateway_node_id: gatewayNodeID,
+      gateway_generation: 0,
+      asset_generations: {},
+      channel_index: 1,
+      channel_name: "ATLAS",
+      channel_key_base64: Buffer.alloc(32, privateChannelKeyByte).toString("base64")
+    },
+    0o600
+  );
+}
+
+function isSettlementEvent(value: Record<string, unknown>, operationID: string): boolean {
+  const event = property(value, "event");
+  return (
+    property(value, "type") === "transport" &&
+    property(event, "type") === "message" &&
+    property(event, "operation_id") === operationID &&
+    property(event, "addressed_to_local") === true &&
+    property(event, "requires_settlement") === true
+  );
+}
+
+function hasNoPendingTransportWork(value: unknown): boolean {
+  const transport = property(value, "transport");
+  return (
+    property(transport, "queue_depth") === 0 &&
+    property(transport, "confirmed_pending") === 0 &&
+    property(transport, "inbound_awaiting_settlement") === 0 &&
+    property(transport, "incomplete_reassemblies") === 0
+  );
 }
 
 function assertRadioProfile(value: unknown, role: string): void {
@@ -487,6 +1021,20 @@ function assertCleanLifecycleShutdown(summary: SummaryMessage): void {
   assert.ok(summary.lifecycle_cleanup.configuration_writes > 0, `${summary.mode} exercised configuration writes`);
   assert.ok(summary.lifecycle_cleanup.radio_packets_sent > 0, `${summary.mode} sent application packets`);
   assert.ok(summary.lifecycle_cleanup.radio_packets_received > 0, `${summary.mode} received application packets`);
+  assert.equal(summary.active_resources.after_ipc_disconnect.includes("TCPServerWrap"), false);
+  assert.equal(summary.active_resources.after_ipc_disconnect.includes("TCPSocketWrap"), false);
+}
+
+function assertRejectedStartupCleanup(summary: SummaryMessage): void {
+  assert.equal(summary.outcome, "failed", "rejected-startup runner outcome");
+  assert.match(summary.error ?? "", /Gateway membership identity does not match --node-id/);
+  assert.equal(summary.lifecycle_cleanup.active_connections, 0, "rejected-startup lifecycle-owned active connections");
+  assert.equal(summary.lifecycle_cleanup.pending_writes, 0, "rejected-startup lifecycle-owned pending writes");
+  assert.equal(
+    summary.active_resources.after_ipc_disconnect.includes("TCPServerWrap"),
+    false,
+    "rejected-startup HTTP listener resource"
+  );
 }
 
 async function openSSE(url: string, connectTimeoutMs = 5_000): Promise<SSEReader> {
@@ -582,6 +1130,15 @@ async function waitForJSON(
   throw new Error(`${message}; latest observation: ${JSON.stringify(latest)}`);
 }
 
+async function waitForCondition(accept: () => boolean, timeoutMs: number, message: string): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (accept()) return;
+    await delay(25);
+  }
+  throw new Error(message);
+}
+
 async function assertPortReusable(port: number): Promise<void> {
   const server = createServer();
   try {
@@ -609,6 +1166,11 @@ function requiredRecord(value: unknown, label: string): Record<string, unknown> 
   return value;
 }
 
+function requiredString(value: unknown, label: string): string {
+  if (typeof value !== "string" || value.length === 0) throw new Error(`${label} is not a nonempty string`);
+  return value;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
@@ -616,6 +1178,38 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function isChildMessage(value: unknown): value is ChildMessage {
   if (!isRecord(value) || typeof value.type !== "string") return false;
   return ["runner:ready", "runner:summary", "lab:register", "lab:radio"].includes(value.type);
+}
+
+function isSummaryMessage(value: unknown): value is SummaryMessage {
+  if (!isRecord(value) || value.type !== "runner:summary") return false;
+  const lifecycleCleanup = value.lifecycle_cleanup;
+  const device = value.device;
+  const resources = value.active_resources;
+  return (
+    (value.mode === "asset" || value.mode === "gateway") &&
+    typeof value.nodeID === "string" &&
+    typeof value.duration_ms === "number" &&
+    (value.outcome === "stopped" || value.outcome === "failed") &&
+    value.evidence_complete === true &&
+    isRecord(lifecycleCleanup) &&
+    isRecord(device) &&
+    isRecord(resources) &&
+    Array.isArray(resources.after_lifecycle_close) &&
+    resources.after_lifecycle_close.every((item) => typeof item === "string") &&
+    Array.isArray(resources.after_ipc_disconnect) &&
+    resources.after_ipc_disconnect.every((item) => typeof item === "string")
+  );
+}
+
+function radioFrame(message: RadioMessage): LinkFrame | undefined {
+  const packet = fromBinary(Protobuf.Mesh.MeshPacketSchema, Buffer.from(message.packetBase64, "base64"));
+  if (packet.payloadVariant.case !== "decoded") return undefined;
+  if (packet.payloadVariant.value.portnum !== Protobuf.Portnums.PortNum.PRIVATE_APP) return undefined;
+  return decodeFrame(packet.payloadVariant.value.payload);
+}
+
+function countOccurrences(value: string, needle: string): number {
+  return value.split(needle).length - 1;
 }
 
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reject: (error: unknown) => void } {
@@ -657,9 +1251,18 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? (error.stack ?? error.message) : String(error);
 }
 
-function acceptanceScenario(): "baseline" | "drop-asset-private-packets" {
+function acceptanceSeed(): number {
+  const raw = process.env.ATLAS_LINK_ACCEPTANCE_SEED ?? "390";
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < 1 || value > 100_000) {
+    throw new Error("ATLAS_LINK_ACCEPTANCE_SEED must be an integer from 1 through 100000");
+  }
+  return value;
+}
+
+function acceptanceFault(): "none" | "drop-asset-private-packets" {
   const value = process.env.ATLAS_LINK_ACCEPTANCE_FAULT;
-  if (value === undefined || value === "") return "baseline";
+  if (value === undefined || value === "") return "none";
   if (value === "drop-asset-private-packets") return value;
   throw new Error("ATLAS_LINK_ACCEPTANCE_FAULT must be drop-asset-private-packets when set");
 }
