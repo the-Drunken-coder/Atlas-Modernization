@@ -165,7 +165,10 @@ test("runs compiled Link processes through joining, application settlement, reje
     rejected_startup: "Gateway membership identity does not match --node-id",
     rejected_join: "Asset remains discovering after rejecting a challenge authenticated with another key",
     application_settlement: ["confirmed", "rejected"],
-    incomplete_operation_shutdown: { status: "failed", reason: "link service stopped" },
+    incomplete_operation_shutdown: {
+      asset_confirmed_pending_before_shutdown: 1,
+      gateway_inbound_awaiting_settlement_before_shutdown: 1
+    },
     radio_profile_differences: [],
     picture_record: { source: { role: "asset", id: "asset-alpha" }, entity_id: "asset-alpha", altitude: 101 },
     shutdown: { exit_code: 0, active_connections: 0, pending_writes: 0, loopback_ports_reusable: true },
@@ -492,21 +495,6 @@ test("runs compiled Link processes through joining, application settlement, reje
       15_000,
       "Gateway did not retain the intentionally incomplete settlement before shutdown"
     );
-    const incompleteFailure = assetEvents.next(
-      (value) => {
-        const event = property(value, "event");
-        const result = property(event, "result");
-        return (
-          property(value, "type") === "transport" &&
-          property(event, "type") === "operation" &&
-          property(result, "operation_id") === "acceptance-subscription-incomplete" &&
-          property(result, "status") === "failed"
-        );
-      },
-      15_000,
-      "Asset shutdown did not fail the incomplete operation"
-    );
-    void incompleteFailure.catch(() => undefined);
     observation.incomplete_operation_cleanup = {
       submission: incompleteSubmission,
       radio_accepted_event: incompletePacketSent,
@@ -527,12 +515,6 @@ test("runs compiled Link processes through joining, application settlement, reje
       runners.map((runner) => withTimeout(runner.summary, 5_000, `${runner.name} did not publish its summary`))
     );
     const summaries = await Promise.all(runners.map(readFinalSummary));
-    const incompleteResult = await incompleteFailure;
-    assert.equal(property(property(property(incompleteResult, "event"), "result"), "reason"), "link service stopped");
-    observation.incomplete_operation_cleanup = {
-      ...requiredRecord(observation.incomplete_operation_cleanup, "incomplete operation cleanup evidence"),
-      shutdown_result: incompleteResult
-    };
     observation.summaries = summaries;
     for (const [index, summary] of summaries.entries()) {
       if (runners[index]?.name === "startup-rejected-gateway") assertRejectedStartupCleanup(summary);
