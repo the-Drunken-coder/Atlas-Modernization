@@ -7,6 +7,7 @@ import { AtlasClient, isAtlasAPIError } from "@the-drunken-coder/atlas-sdk";
 import { parseRunEvent } from "../../../simulations/src/client/run-state.ts";
 import { runAcceptance } from "../support/stack.mjs";
 import { parseBrowserRunSummary } from "./support/browser-run-contracts.mjs";
+import { assessCancelledObservationWindow } from "./support/cancelled-observation-window.mjs";
 import {
   createSimulationServerFixture,
   simulationFixtureVariant,
@@ -266,15 +267,18 @@ await runAcceptance({
         "POST",
         `/api/runs/${encodeURIComponent(cancelled.id)}/stop`,
       );
-      const cancelledRunSummary = parseBrowserRunSummary(cancelledRun.body.run, {
-        context: "stop response",
-        runID: cancelled.id,
-        scenarioID,
-        scenarioName,
-        target,
-        inputs: cancellationInputs,
-        jsonInput: observationJSON,
-      });
+      const cancelledRunSummary = parseBrowserRunSummary(
+        cancelledRun.body.run,
+        {
+          context: "stop response",
+          runID: cancelled.id,
+          scenarioID,
+          scenarioName,
+          target,
+          inputs: cancellationInputs,
+          jsonInput: observationJSON,
+        },
+      );
       record({
         check:
           "observations-objects accepts cancellation through its public route",
@@ -297,9 +301,13 @@ await runAcceptance({
       const cancelledObservationLogs = observationLogMessages(
         cancellationProgress.events,
       );
-      const stabilityStartedAt = Date.now();
-      await delay(cancellationInputs.tickMs + 25, undefined, { signal });
-      const waitedMs = Date.now() - stabilityStartedAt;
+      const cancellationStability = await collectRunEventsForWindow({
+        api,
+        runID: cancelled.id,
+        artifactBase: join(artifacts, "observations-objects-cancel-stability"),
+        signal,
+        windowMs: cancellationInputs.tickMs + 25,
+      });
       const cancelledSummary = await readRun(
         api,
         cancelled.id,
@@ -308,19 +316,11 @@ await runAcceptance({
         target,
         scenarioName,
       );
-      const cancellationStability = await collectRunEvents({
-        api,
-        runID: cancelled.id,
-        artifactBase: join(artifacts, "observations-objects-cancel-stability"),
-        signal,
-        until: (events) =>
-          events.some(
-            (event) => event.type === "status" && event.status === "cancelled",
-          ),
-      });
       const stableResources = resourceKeys(cancelledSummary.createdResources);
-      const stableObservationLogs = observationLogMessages(
-        cancellationStability.events,
+      const cancellationWindow = assessCancelledObservationWindow(
+        cancellationStability.snapshots,
+        cancelledResources,
+        cancelledObservationLogs,
       );
       record({
         check:
@@ -331,14 +331,15 @@ await runAcceptance({
           observation_logs: cancelledObservationLogs,
         },
         actual: {
-          waited_ms: waitedMs,
+          observed_window_ms: cancellationStability.observedWindowMs,
+          snapshot_count: cancellationStability.snapshots.length,
           resources: stableResources,
-          observation_logs: stableObservationLogs,
+          observation_windows: cancellationWindow.states,
         },
         passed:
-          waitedMs >= cancellationInputs.tickMs &&
+          cancellationStability.observedWindowMs >= cancellationInputs.tickMs &&
           isDeepStrictEqual(stableResources, cancelledResources) &&
-          isDeepStrictEqual(stableObservationLogs, cancelledObservationLogs),
+          cancellationWindow.passed,
       });
       record({
         check: "observations reread preserves the confirmed cancelled status",
@@ -654,10 +655,7 @@ async function startRun(api, inputs, jsonInput, target, scenarioName) {
     inputs,
     jsonInput,
   });
-  if (
-    response.status !== 201 ||
-    run.scenarioId !== scenarioID
-  ) {
+  if (response.status !== 201 || run.scenarioId !== scenarioID) {
     throw new Error(
       `Starting observations-objects expected HTTP 201, observed ${response.raw}`,
     );
@@ -666,7 +664,10 @@ async function startRun(api, inputs, jsonInput, target, scenarioName) {
 }
 
 async function readRun(api, runID, inputs, jsonInput, target, scenarioName) {
-  const response = await api.json("GET", `/api/runs/${encodeURIComponent(runID)}`);
+  const response = await api.json(
+    "GET",
+    `/api/runs/${encodeURIComponent(runID)}`,
+  );
   return parseBrowserRunSummary(response.body.run, {
     context: "run read response",
     runID,
@@ -694,9 +695,8 @@ function recordCompletedStream(started, completed, events, inputs, record) {
   const streamAssertionResults = assertions.map((event) =>
     assertionResultState(event.assertion),
   );
-  const summaryAssertionResults = completed.assertions.map(
-    assertionResultState,
-  );
+  const summaryAssertionResults =
+    completed.assertions.map(assertionResultState);
   const actualAssertionIDs = streamAssertionResults.map(
     (assertion) => assertion.id,
   );
@@ -793,9 +793,7 @@ function recordCompletedStream(started, completed, events, inputs, record) {
 }
 
 function resourceKeys(resources) {
-  return resources
-    .map((resource) => `${resource.type}:${resource.id}`)
-    .sort();
+  return resources.map((resource) => `${resource.type}:${resource.id}`).sort();
 }
 
 function observationLogMessages(events) {
@@ -1342,6 +1340,86 @@ async function collectRunEvents({ api, runID, artifactBase, signal, until }) {
     writeFileSync(
       `${artifactBase}.events.json`,
       `${JSON.stringify(events, null, 2)}\n`,
+    );
+  }
+}
+
+/**
+ * Terminal run streams can remain open after replay. Keep the stream open for
+ * the observation window so activity in a later chunk cannot hide behind the
+ * cancelled marker in an earlier chunk.
+ */
+async function collectRunEventsForWindow({
+  api,
+  runID,
+  artifactBase,
+  signal,
+  windowMs,
+}) {
+  const startedAt = Date.now();
+  const events = [];
+  let raw = "";
+  let reader;
+  try {
+    const response = await fetch(
+      `${api.baseUrl}/api/runs/${encodeURIComponent(runID)}/events`,
+      {
+        headers: { Accept: "text/event-stream" },
+        signal: AbortSignal.any([signal, AbortSignal.timeout(5_000)]),
+      },
+    );
+    if (!response.ok || !response.body) {
+      raw = await response.text();
+      throw new Error(
+        `GET run events returned HTTP ${response.status}: ${raw}`,
+      );
+    }
+    reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let pending = "";
+    const deadline = Date.now() + windowMs;
+    while (true) {
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) {
+        await reader.cancel();
+        return {
+          snapshots: [{ events, raw }],
+          observedWindowMs: Date.now() - startedAt,
+        };
+      }
+      const result = await Promise.race([
+        reader.read(),
+        delay(remainingMs, undefined, { signal }).then(() => undefined),
+      ]);
+      if (result === undefined) {
+        await reader.cancel();
+        return {
+          snapshots: [{ events, raw }],
+          observedWindowMs: Date.now() - startedAt,
+        };
+      }
+      if (result.done) {
+        throw new Error(
+          "Simulation event stream ended before the cancellation observation window",
+        );
+      }
+      const text = decoder.decode(result.value, { stream: true });
+      raw += text;
+      pending += text;
+      let separator = pending.indexOf("\n\n");
+      while (separator !== -1) {
+        const event = parseEventFrame(pending.slice(0, separator));
+        pending = pending.slice(separator + 2);
+        if (event) events.push(event);
+        separator = pending.indexOf("\n\n");
+      }
+    }
+  } finally {
+    await reader?.cancel();
+    writeFileSync(`${artifactBase}.sse`, raw);
+    writeFileSync(
+      `${artifactBase}.events.json`,
+      `${JSON.stringify([{ events, raw }], null, 2)}\n`,
     );
   }
 }
