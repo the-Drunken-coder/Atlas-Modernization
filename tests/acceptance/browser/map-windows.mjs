@@ -207,19 +207,26 @@ async function runMapWindowJourney({
     const routedBeforeKeyboardZoom = routedTileRequests;
     await zoomIn.focus();
     const keyboardControlFocused = await zoomIn.evaluate((element) => document.activeElement === element);
-    const remainingZoomSteps = zoomPointerAttempt.activated ? 15 : 16;
-    for (let index = 0; index < remainingZoomSteps; index += 1) await zoomIn.press("Enter");
-    await waitUntil(() => routedTileRequests > routedBeforeKeyboardZoom, 10_000, signal);
+    const targetSelectionTileZoom = fixture.expectedRequest.tile_zoom;
+    let keyboardZoomSteps = 0;
+    while (maximumRoutedTileZoom < targetSelectionTileZoom && keyboardZoomSteps < 20) {
+      const previousMaximumTileZoom = maximumRoutedTileZoom;
+      await zoomIn.press("Enter");
+      await waitUntil(() => maximumRoutedTileZoom > previousMaximumTileZoom, 10_000, signal);
+      if (maximumRoutedTileZoom <= previousMaximumTileZoom) break;
+      keyboardZoomSteps += 1;
+    }
     record({
       check: `${browserName} used the visible zoom control's keyboard interaction to continue the map-window journey`,
-      expected: { focused: true, zoom_steps: 16, additional_fixture_tile_requests: true },
+      expected: { focused: true, target_fixture_tile_zoom: targetSelectionTileZoom },
       actual: {
         focused: keyboardControlFocused,
-        zoom_steps: remainingZoomSteps + (zoomPointerAttempt.activated ? 1 : 0),
+        keyboard_zoom_steps: keyboardZoomSteps,
+        maximum_requested_tile_zoom: maximumRoutedTileZoom,
         routed_tile_requests_before: routedBeforeKeyboardZoom,
         routed_tile_requests_after: routedTileRequests
       },
-      passed: keyboardControlFocused && routedTileRequests > routedBeforeKeyboardZoom
+      passed: keyboardControlFocused && keyboardZoomSteps > 0 && maximumRoutedTileZoom >= targetSelectionTileZoom
     });
     const settledTileRequests = await waitForStableValue(() => routedTileRequests, 500, 10_000, signal);
     record({
@@ -288,13 +295,7 @@ async function runMapWindowJourney({
       check: `${browserName} submitted the independently expected bounded map area through Core`,
       expected: fixture.expectedRequest,
       actual: pluginRequestBody,
-      passed:
-        isMapArea(pluginRequestBody) &&
-        sameMapArea(
-          pluginRequestBody,
-          fixture.expectedRequest.area,
-          fixture.expectedRequest.coordinate_tolerance
-        )
+      passed: isMapArea(pluginRequestBody) && matchesExpectedMapArea(pluginRequestBody, fixture.expectedRequest)
     });
     const pluginResponse = await responseObservation(rawPluginResponse);
     record({
@@ -655,11 +656,9 @@ function validateFixture(value) {
   if (
     !expectedRequest ||
     typeof expectedRequest !== "object" ||
-    !isMapArea(expectedRequest.area) ||
-    !Number.isFinite(expectedRequest.coordinate_tolerance) ||
-    expectedRequest.coordinate_tolerance <= 0
+    !validAreaExpectation(expectedRequest)
   ) {
-    throw new Error("map-window fixture must define an expected valid map-area request and positive tolerance");
+    throw new Error("map-window fixture must define valid expected map-area bounds and spans");
   }
   const { core_to_plugin_protocol_major: protocolMajor, ...publicManifest } = manifest;
   if (!isPluginManifest(publicManifest)) throw new Error("map-window fixture manifest does not satisfy PluginManifest");
@@ -938,8 +937,38 @@ function mapTileZoom(requestUrl) {
   return Number(match[1]);
 }
 
-function sameMapArea(actual, expected, tolerance) {
-  return ["west", "south", "east", "north"].every(
-    (key) => Math.abs(actual[key] - expected[key]) <= tolerance
+function validAreaExpectation(expectation) {
+  return (
+    Number.isSafeInteger(expectation.tile_zoom) &&
+    expectation.tile_zoom >= 0 &&
+    ["west", "south", "east", "north"].every((key) => validRange(expectation.bounds?.[key])) &&
+    validRange(expectation.longitude_span) &&
+    validRange(expectation.latitude_span) &&
+    validRange(expectation.longitude_to_latitude_span_ratio)
   );
+}
+
+function matchesExpectedMapArea(actual, expectation) {
+  const longitudeSpan = actual.east - actual.west;
+  const latitudeSpan = actual.north - actual.south;
+  return (
+    ["west", "south", "east", "north"].every((key) => inRange(actual[key], expectation.bounds[key])) &&
+    inRange(longitudeSpan, expectation.longitude_span) &&
+    inRange(latitudeSpan, expectation.latitude_span) &&
+    inRange(longitudeSpan / latitudeSpan, expectation.longitude_to_latitude_span_ratio)
+  );
+}
+
+function validRange(range) {
+  return (
+    range &&
+    typeof range === "object" &&
+    Number.isFinite(range.minimum) &&
+    Number.isFinite(range.maximum) &&
+    range.minimum < range.maximum
+  );
+}
+
+function inRange(value, range) {
+  return Number.isFinite(value) && value >= range.minimum && value <= range.maximum;
 }

@@ -15,13 +15,37 @@
     ]
   },
   "expected_request": {
-    "area": {
-      "west": -0.002694780673,
-      "south": 19.800385362457,
-      "east": -0.000449130753,
-      "north": 19.802498232137
+    "tile_zoom": 14,
+    "bounds": {
+      "west": {
+        "minimum": -0.0042,
+        "maximum": -0.0022
+      },
+      "south": {
+        "minimum": 19.8002,
+        "maximum": 19.8006
+      },
+      "east": {
+        "minimum": -0.0009,
+        "maximum": -0.0003
+      },
+      "north": {
+        "minimum": 19.802,
+        "maximum": 19.804
+      }
     },
-    "coordinate_tolerance": 0.00025
+    "longitude_span": {
+      "minimum": 0.002,
+      "maximum": 0.004
+    },
+    "latitude_span": {
+      "minimum": 0.0018,
+      "maximum": 0.0038
+    },
+    "longitude_to_latitude_span_ratio": {
+      "minimum": 1.05,
+      "maximum": 1.075
+    }
   },
   "result": {
     "attribution": {

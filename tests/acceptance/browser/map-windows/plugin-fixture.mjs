@@ -54,12 +54,22 @@ function matchesExpectedArea(actual, expectedRequest) {
   if (!actual || typeof actual !== "object" || Array.isArray(actual)) return false;
   const keys = Object.keys(actual).sort();
   if (keys.join(",") !== "east,north,south,west") return false;
-  return keys.every(
-    (key) =>
-      typeof actual[key] === "number" &&
-      Number.isFinite(actual[key]) &&
-      Math.abs(actual[key] - expectedRequest.area[key]) <= expectedRequest.coordinate_tolerance
+  if (!keys.every((key) => typeof actual[key] === "number" && Number.isFinite(actual[key]))) return false;
+  const longitudeSpan = actual.east - actual.west;
+  const latitudeSpan = actual.north - actual.south;
+  const ratio = longitudeSpan / latitudeSpan;
+  return (
+    keys.every(
+      (key) => actual[key] >= expectedRequest.bounds[key].minimum && actual[key] <= expectedRequest.bounds[key].maximum
+    ) &&
+    inRange(longitudeSpan, expectedRequest.longitude_span) &&
+    inRange(latitudeSpan, expectedRequest.latitude_span) &&
+    inRange(ratio, expectedRequest.longitude_to_latitude_span_ratio)
   );
+}
+
+function inRange(value, range) {
+  return Number.isFinite(value) && value >= range.minimum && value <= range.maximum;
 }
 
 function writeJSON(response, status, body) {
