@@ -9,6 +9,7 @@ const pluginID = "building_scan";
 const operationID = "search_buildings";
 const operationPath = `/plugins/${pluginID}/operations/${operationID}`;
 const reproduction = "node tests/acceptance/plugins/building-scan/scenario.mjs";
+const sourceCancellationDeadlineMs = 2_000;
 const isNightly = process.env.ATLAS_BUILDING_SCAN_FIXTURE_MODE === "nightly";
 const areas = {
   success: { west: -71.01, south: 42, east: -71, north: 42.01 },
@@ -166,6 +167,7 @@ await runPluginAcceptance({
       });
 
       const canceledAt = new Date();
+      const cancellationDeadlineAt = new Date(canceledAt.getTime() + sourceCancellationDeadlineMs);
       cancellation.abort(cancellationReason);
       let cancellationResult;
       try {
@@ -199,12 +201,15 @@ await runPluginAcceptance({
       });
       record({
         check: "caller cancellation closed the controlled source connection",
-        expected: { event: "slow_request_connection_closed", after: canceledAt.toISOString() },
+        expected: {
+          event: "slow_request_connection_closed",
+          not_before: canceledAt.toISOString(),
+          not_after: cancellationDeadlineAt.toISOString(),
+        },
         actual: sourceClosed,
         passed:
           sourceClosed.event === "slow_request_connection_closed" &&
-          isTimestamp(sourceClosed.occurred_at) &&
-          Date.parse(sourceClosed.occurred_at) >= canceledAt.getTime(),
+          isTimestampWithinWindow(sourceClosed.occurred_at, canceledAt, cancellationDeadlineAt),
       });
     } finally {
       await copyFile(controlledFixture.eventsPath, join(artifacts, "building-scan-source-events.jsonl"));
