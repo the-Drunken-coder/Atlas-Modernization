@@ -245,11 +245,13 @@ async function verifyLocalTargetAndScenario(api, coreBaseUrl, apiKey, record) {
     check:
       "multi-client acceptance exposes only the disposable loopback target",
     expected: {
+      target_id: "local",
       default_target_id: "local",
       deployed: false,
       credentials_disclosed: false,
     },
     actual: {
+      target_id: targets.body.targets[0]?.id,
       default_target_id: targets.body.defaultTargetId,
       targets: targets.body.targets,
       credentials_disclosed: JSON.stringify(targets.body).includes(apiKey),
@@ -257,6 +259,7 @@ async function verifyLocalTargetAndScenario(api, coreBaseUrl, apiKey, record) {
     passed:
       targets.body.defaultTargetId === "local" &&
       targets.body.targets.length === 1 &&
+      targets.body.targets[0]?.id === "local" &&
       targets.body.targets[0]?.baseUrl === coreBaseUrl &&
       targets.body.targets[0]?.deployed === false &&
       !JSON.stringify(targets.body).includes(apiKey),
@@ -577,24 +580,23 @@ async function recordUnrelatedResources(core, ids, signal, record) {
 }
 
 async function collectRunEvents({ api, runID, artifactBase, signal, until }) {
-  const response = await fetch(
-    `${api.baseUrl}/api/runs/${encodeURIComponent(runID)}/events`,
-    {
-      headers: { Accept: "text/event-stream" },
-      signal: AbortSignal.any([signal, AbortSignal.timeout(20_000)]),
-    },
-  );
-  if (!response.ok || !response.body) {
-    throw new Error(
-      `GET run events returned HTTP ${response.status}: ${await response.text()}`,
-    );
-  }
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
   const events = [];
-  let pending = "";
   let raw = "";
   try {
+    const response = await fetch(
+      `${api.baseUrl}/api/runs/${encodeURIComponent(runID)}/events`,
+      {
+        headers: { Accept: "text/event-stream" },
+        signal: AbortSignal.any([signal, AbortSignal.timeout(20_000)]),
+      },
+    );
+    if (!response.ok || !response.body) {
+      raw = await response.text();
+      throw new Error(`GET run events returned HTTP ${response.status}: ${raw}`);
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let pending = "";
     while (true) {
       const result = await reader.read();
       if (result.done) break;
