@@ -435,6 +435,9 @@ async function readWriterEntities(core, run, signal) {
 }
 
 function recordPersistedWriterEntities(run, entities, inputs, record) {
+  const expectedEntityResources =
+    run.createdResources.length === inputs.writes &&
+    run.createdResources.every((resource) => resource.type === "entity");
   const indexedEntities = entities.map((entity) => ({
     entity,
     writeIndex: writerEntityIndex(run.id, entity.entity_id),
@@ -467,11 +470,16 @@ function recordPersistedWriterEntities(run, entities, inputs, record) {
       entity_type: "asset",
       subtype: "sync-probe",
       run_id: run.id,
+      resource_types: Array.from(
+        { length: inputs.writes },
+        () => "entity",
+      ),
       write_indexes: Array.from({ length: inputs.writes }, (_, index) =>
         index + 1,
       ),
     },
     actual: {
+      created_resources: run.createdResources,
       entities: entities.map(entityState),
       entity_index_mapping: indexedEntities.map(({ entity, writeIndex }) => ({
         entity_id: entity.entity_id,
@@ -479,6 +487,7 @@ function recordPersistedWriterEntities(run, entities, inputs, record) {
       })),
     },
     passed:
+      expectedEntityResources &&
       writerMappingComplete &&
       expectedEntities.every(({ entity, writeIndex }) =>
         isExpectedWriterEntity(entity, run.id, writeIndex),
@@ -595,35 +604,48 @@ function recordCleanupEvents(run, cleaned, events, record) {
 
 async function recordAllMissing(core, resources, signal, record) {
   const actual = await Promise.all(
-    resources.map(async (resource) => {
-      try {
-        await core.entities.get(resource.id, { fresh: true, signal });
-        return { id: resource.id, status: 200 };
-      } catch (error) {
-        if (!isAtlasAPIError(error)) throw error;
-        return {
-          id: resource.id,
-          status: error.status,
-          error_code: error.errorCode,
-        };
-      }
-    }),
+    resources.map((resource) => captureMissing(core, resource, signal)),
   );
   record({
-    check: "multi-client cleanup removes every run-owned Entity",
+    check: "multi-client cleanup removes every run-owned resource",
     expected: resources.map((resource) => ({
+      type: resource.type,
       id: resource.id,
       status: 404,
-      error_code: "ENTITY_NOT_FOUND",
+      error_code:
+        resource.type === "entity" ? "ENTITY_NOT_FOUND" : "OBJECT_NOT_FOUND",
     })),
     actual,
     passed:
       actual.length === resources.length &&
       actual.every(
         (result) =>
-          result.status === 404 && result.error_code === "ENTITY_NOT_FOUND",
+          result.status === 404 &&
+          result.error_code ===
+            (result.type === "entity" ? "ENTITY_NOT_FOUND" : "OBJECT_NOT_FOUND"),
       ),
   });
+}
+
+async function captureMissing(core, resource, signal) {
+  try {
+    if (resource.type === "entity") {
+      await core.entities.get(resource.id, { fresh: true, signal });
+    } else if (resource.type === "object") {
+      await core.objects.get(resource.id, { fresh: true, signal });
+    } else {
+      throw new Error(`Unknown run resource type: ${resource.type}`);
+    }
+    return { type: resource.type, id: resource.id, status: 200 };
+  } catch (error) {
+    if (!isAtlasAPIError(error)) throw error;
+    return {
+      type: resource.type,
+      id: resource.id,
+      status: error.status,
+      error_code: error.errorCode,
+    };
+  }
 }
 
 async function recordProtectedResources(core, ids, signal, record) {

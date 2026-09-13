@@ -559,6 +559,9 @@ async function recordPersistedObservations(
     (entity) => entity.subtype === "simulated-observer",
   );
   const tracks = entities.filter((entity) => entity.entity_type === "track");
+  const entitySetComplete =
+    entities.length === inputs.assetCount + inputs.observations &&
+    observers.length + tracks.length === entities.length;
   const indexedTracks = tracks.map((track) => ({
     track,
     observation: trackEntityIndex(run.id, track.entity_id),
@@ -654,6 +657,11 @@ async function recordPersistedObservations(
     check:
       "independent SDK reads verify persisted observer, track, Object bytes, and relations",
     expected: {
+      entities: {
+        total: inputs.assetCount + inputs.observations,
+        observers: inputs.assetCount,
+        tracks: inputs.observations,
+      },
       observers: inputs.assetCount,
       observer_custom_simulation: {
         run_id: run.id,
@@ -678,6 +686,7 @@ async function recordPersistedObservations(
       collection: jsonInput.collection,
     },
     actual: {
+      entities: entities.map((entity) => entityState(entity)),
       observers: observers.map((entity) => entityState(entity)),
       observer_index_mapping: indexedObservers.map(({ observer, asset }) => ({
         entity_id: observer.entity_id,
@@ -695,6 +704,7 @@ async function recordPersistedObservations(
       })),
     },
     passed:
+      entitySetComplete &&
       observerMappingComplete &&
       Array.from({ length: inputs.assetCount }, (_, index) => {
         const observer = observerByIndex.get(index + 1);
