@@ -8,10 +8,14 @@ The journey validates observable behavior:
 
 - real pointer dragging docks the spatial-results window to the workspace edge;
 - attached windows collapse into a restore handle that retains result metadata and attribution, and whose visible, enabled close button removes the window through a normal pointer activation;
+- pointer dragging moves the right-docked window 96 pixels into the workspace and proves that it becomes floating with no attached edge;
 - pointer and keyboard controls move, restore, attach, and detach the same window through the documented transitions;
-- after a viewport resize, a collapsed edge handle remains visible and can restore the window.
+- the returned feature's actual result row contains both the fixture title and ID;
+- after a viewport resize, the entire collapsed edge handle remains inside the workspace and can restore the window.
 
-The journey records the native zoom-in control's normal pointer attempt and requires both a completed click and a higher zoom level in the resulting MapTiler tile request path. Tracking the requested `/z/x/y` level prevents unrelated late tile loads at the existing zoom from satisfying the assertion. It then uses that same visible control through keyboard focus to continue independent map-window coverage. The pointer result remains the final active assertion. Map-window keyboard activations wait for focus and two browser animation frames because the component restores focus after rendering and clears collapsed-handle drag suppression on `requestAnimationFrame`.
+The journey records the native zoom-in control's normal pointer attempt and requires both a completed click and a higher zoom level in the resulting MapTiler tile request path. Tracking the requested `/z/x/y` level prevents unrelated late tile loads at the existing zoom from satisfying the assertion. It then uses that same visible control through keyboard focus to continue independent map-window coverage. Each zoom activation waits until the routed tile zoom increases and tile traffic remains unchanged for 500 milliseconds before the next activation. The pointer result remains the final active assertion. Map-window keyboard activations wait for observable focus and render frames because the component restores focus after rendering and clears collapsed-handle drag suppression on `requestAnimationFrame`.
+
+The fixture validates the real Core Plugin POST body instead of returning a result for any request. The 1440 by 900 browser viewport leaves a 1080 by 900 map after the 360-pixel sidebar. Fitting the source-defined world bounds to that map is width-limited at zoom 1.076815597. Twelve settled unit zoom activations produce zoom 13.076815597. At that projection, a 36 by 36 drag from 46 percent of the map width and height resolves to west -0.003515625, south 19.800385362, east -0.0005859375, and north 19.803141819. The fixture permits two projected pixels around each edge to cover browser layout rounding while its coordinate, span, and aspect-ratio checks reject a translated area, an oversized area, and an area captured at a stale lower zoom. A focused HTTP probe of the fixture accepted the projected request with status 200 and returned status 422 for each of those three counterexamples.
 
 Run Chromium locally from the repository root with Node 24, Docker, and the browser executable installed:
 
