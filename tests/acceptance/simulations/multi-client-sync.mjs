@@ -180,24 +180,43 @@ function createSimulationAPI(baseUrl, logPath, acceptanceSignal) {
     const headers = new Headers({ Accept: "application/json" });
     if (method === "POST") headers.set("X-Atlas-Simulations-Request", "1");
     if (body !== undefined) headers.set("Content-Type", "application/json");
-    const response = await fetch(`${baseUrl}${path}`, {
-      method,
-      headers,
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      signal: AbortSignal.any([acceptanceSignal, AbortSignal.timeout(15_000)]),
-    });
-    const raw = await response.text();
-    const parsed = parseJSON(raw, `${method} ${path}`);
-    appendJSON(logPath, {
-      started_at: startedAt,
-      completed_at: new Date().toISOString(),
-      method,
-      path,
-      ...(body === undefined ? {} : { request: body }),
-      status: response.status,
-      response: parsed,
-    });
-    return { status: response.status, body: parsed, raw };
+    let response;
+    let raw = "";
+    try {
+      response = await fetch(`${baseUrl}${path}`, {
+        method,
+        headers,
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        signal: AbortSignal.any([
+          acceptanceSignal,
+          AbortSignal.timeout(15_000),
+        ]),
+      });
+      raw = await response.text();
+      const parsed = parseJSON(raw, `${method} ${path}`);
+      appendJSON(logPath, {
+        started_at: startedAt,
+        completed_at: new Date().toISOString(),
+        method,
+        path,
+        ...(body === undefined ? {} : { request: body }),
+        status: response.status,
+        response: parsed,
+      });
+      return { status: response.status, body: parsed, raw };
+    } catch (error) {
+      appendJSON(logPath, {
+        started_at: startedAt,
+        completed_at: new Date().toISOString(),
+        method,
+        path,
+        ...(body === undefined ? {} : { request: body }),
+        status: response?.status,
+        raw_response: raw,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
   };
   return {
     async json(method, path, body) {
@@ -355,6 +374,30 @@ async function readWriterEntities(core, run, signal) {
 }
 
 function recordPersistedWriterEntities(run, entities, inputs, record) {
+  const indexedEntities = entities.map((entity) => ({
+    entity,
+    writeIndex: writerEntityIndex(run.id, entity.entity_id),
+  }));
+  const entitiesByWriteIndex = new Map();
+  const writerMappingComplete =
+    indexedEntities.length === inputs.writes &&
+    indexedEntities.every(({ entity, writeIndex }) => {
+      if (
+        writeIndex === undefined ||
+        writeIndex < 1 ||
+        writeIndex > inputs.writes ||
+        entitiesByWriteIndex.has(writeIndex)
+      ) {
+        return false;
+      }
+      entitiesByWriteIndex.set(writeIndex, entity);
+      return true;
+    }) &&
+    entitiesByWriteIndex.size === inputs.writes;
+  const expectedEntities = Array.from({ length: inputs.writes }, (_, index) => {
+    const writeIndex = index + 1;
+    return { entity: entitiesByWriteIndex.get(writeIndex), writeIndex };
+  });
   record({
     check:
       "independent SDK reads verify every persisted multi-client writer Entity",
@@ -363,12 +406,21 @@ function recordPersistedWriterEntities(run, entities, inputs, record) {
       entity_type: "asset",
       subtype: "sync-probe",
       run_id: run.id,
+      write_indexes: Array.from({ length: inputs.writes }, (_, index) =>
+        index + 1,
+      ),
     },
-    actual: entities.map(entityState),
+    actual: {
+      entities: entities.map(entityState),
+      entity_index_mapping: indexedEntities.map(({ entity, writeIndex }) => ({
+        entity_id: entity.entity_id,
+        write_index: writeIndex,
+      })),
+    },
     passed:
-      entities.length === inputs.writes &&
-      entities.every((entity, index) =>
-        isExpectedWriterEntity(entity, run.id, index + 1),
+      writerMappingComplete &&
+      expectedEntities.every(({ entity, writeIndex }) =>
+        isExpectedWriterEntity(entity, run.id, writeIndex),
       ),
   });
 }
@@ -593,6 +645,18 @@ function isExpectedWriterEntity(entity, runID, writeIndex) {
     entity.components.custom_simulation?.run_id === runID &&
     entity.components.custom_simulation?.write_index === writeIndex
   );
+}
+
+function writerEntityIndex(runID, entityID) {
+  const prefix = `${runID}-sync-asset-`;
+  if (!entityID.startsWith(prefix)) return undefined;
+  const remainder = entityID.slice(prefix.length);
+  const separator = remainder.indexOf("-");
+  if (separator <= 0 || separator === remainder.length - 1) return undefined;
+  const index = remainder.slice(0, separator);
+  if (!/^[1-9]\d*$/u.test(index)) return undefined;
+  const value = Number(index);
+  return Number.isSafeInteger(value) ? value : undefined;
 }
 
 function fieldBounds(scenario, key, min, max) {

@@ -21,7 +21,7 @@ export async function startReaders({
         baseUrl,
         apiKey,
         sync: "all",
-        pollIntervalMs: 200,
+        pollIntervalMs: 0,
         requestTimeoutMs: 10_000,
       });
       const reader = {
