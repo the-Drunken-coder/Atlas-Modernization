@@ -9,9 +9,6 @@ import { assessReplayAssertionParity } from "./run-event-replay-contract.mjs";
 export function assessMultiClientAssertions(events, summary, expectedResults) {
   const expectedIDs = expectedResults.map((_, index) => `assert-${index + 1}`);
   const expectedResultSet = orderedNamePassMessageSet(expectedResults);
-  const stream = events
-    .filter((event) => event.type === "assertion")
-    .map((event) => event.assertion);
   const replayParity = assessReplayAssertionParity(events, summary);
   const { streamResults, summaryResults } = replayParity;
 
