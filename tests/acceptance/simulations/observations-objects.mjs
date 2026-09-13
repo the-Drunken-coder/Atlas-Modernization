@@ -530,6 +530,18 @@ async function recordPersistedObservations(
       };
     },
   );
+  const expectedObjects = run.createdResources
+    .filter((resource) => resource.type === "object")
+    .map((resource, index) => {
+      const track = tracks.find(
+        (candidate) => candidate.alias === expectedTracks[index]?.alias,
+      );
+      return {
+        objectID: resource.id,
+        observation: index + 1,
+        trackID: track?.entity_id,
+      };
+    });
   record({
     check:
       "independent SDK reads verify persisted observer, track, Object bytes, and relations",
@@ -543,7 +555,12 @@ async function recordPersistedObservations(
           longitude,
         }),
       ),
-      objects: inputs.observations,
+      objects: expectedObjects.map(({ objectID, observation, trackID }) => ({
+        object_id: objectID,
+        observation,
+        usage_hints: ["thumbnail"],
+        referenced_by: [{ entity_id: trackID }],
+      })),
       object_bytes: "metadata-only objects have null path and size_bytes",
       collection: jsonInput.collection,
     },
@@ -599,28 +616,21 @@ async function recordPersistedObservations(
         }),
       ) &&
       objects.length === inputs.observations &&
-      expectedTracks.every((expected) =>
-        objects.some(
-          (object) =>
-            object.type === "observation" &&
-            object.usage_hints.includes("thumbnail") &&
-            object.path === null &&
-            object.size_bytes === null &&
-            object.content_type === null &&
-            object.bucket === null &&
-            (object.referenced_by ?? []).some(
-              (reference) =>
-                reference.entity_id === expected.observer?.entity_id,
-            ) === false &&
-            (object.referenced_by ?? []).some((reference) =>
-              tracks.some(
-                (track) =>
-                  track.alias === expected.alias &&
-                  reference.entity_id === track.entity_id,
-              ),
-            ),
-        ),
-      ),
+      expectedObjects.length === inputs.observations &&
+      expectedObjects.every(({ objectID, trackID }) => {
+        const object = objects.find(
+          (candidate) => candidate.object_id === objectID,
+        );
+        return (
+          object?.type === "observation" &&
+          isDeepStrictEqual(object.usage_hints, ["thumbnail"]) &&
+          object.path === null &&
+          object.size_bytes === null &&
+          object.content_type === null &&
+          object.bucket === null &&
+          isDeepStrictEqual(object.referenced_by, [{ entity_id: trackID }])
+        );
+      }),
   });
 }
 
