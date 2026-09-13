@@ -151,7 +151,13 @@ async function runBrowserJourney({
   };
   writeBrowserSummary(browserSummaryPath, { ...browserMetadata, status: "launched" });
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
-  const observations = { essentialPageResources: [], eventStreams: [], mutations: [], pageErrors: [] };
+  const observations = {
+    essentialPageResources: [],
+    eventStreams: [],
+    mutations: [],
+    pageErrors: [],
+    sameOriginAPIFailures: []
+  };
   const pendingDiagnostics = new Set();
   let page;
   let failure;
@@ -396,6 +402,12 @@ async function runBrowserJourney({
     });
 
     await Promise.allSettled([...pendingDiagnostics]);
+    record({
+      check: `${browserName} completes without unexpected same-origin API failures`,
+      expected: [],
+      actual: observations.sameOriginAPIFailures,
+      passed: observations.sameOriginAPIFailures.length === 0
+    });
     const observedResourceTypes = new Set(
       observations.essentialPageResources.map((resource) => resource.resource_type)
     );
@@ -724,6 +736,15 @@ function attachDiagnostics(page, { requestLog, consoleLog, simulationUrl, observ
         failure
       });
     }
+    if (isSameOriginAPIRequest(url, simulationUrl) && !isExpectedEventStreamCancellation(url, resourceType, failure)) {
+      observations.sameOriginAPIFailures.push({
+        method: request.method(),
+        path: url.pathname,
+        url: request.url(),
+        resource_type: resourceType,
+        failure
+      });
+    }
   });
   page.on("response", (response) => {
     const diagnostic = logResponse(response, requestLog, simulationUrl, observations).catch((error) => {
@@ -744,12 +765,22 @@ async function logResponse(response, requestLog, simulationUrl, observations) {
   const request = response.request();
   const url = new URL(response.url());
   const resourceType = request.resourceType();
-  const contentType = (await response.headerValue("content-type")) ?? "";
-  const summary = {
+  const responseStatus = response.status();
+  const responseIdentity = {
     method: request.method(),
     path: url.pathname,
     url: response.url(),
-    status: response.status(),
+    status: responseStatus
+  };
+  if (isSameOriginAPIRequest(url, simulationUrl) && responseStatus >= 400) {
+    observations.sameOriginAPIFailures.push({
+      ...responseIdentity,
+      resource_type: resourceType
+    });
+  }
+  const contentType = (await response.headerValue("content-type")) ?? "";
+  const summary = {
+    ...responseIdentity,
     contentType
   };
   if (isEssentialPageResource(url, resourceType, simulationUrl)) {
@@ -758,14 +789,14 @@ async function logResponse(response, requestLog, simulationUrl, observations) {
       path: url.pathname,
       url: response.url(),
       resource_type: resourceType,
-      status: response.status()
+      status: responseStatus
     });
   }
   if (response.url().startsWith(simulationUrl) && request.method() === "POST") {
     const mutation = observations.mutations.find(
       (entry) => entry.method === request.method() && entry.path === url.pathname && entry.status === undefined
     );
-    if (mutation) mutation.status = response.status();
+    if (mutation) mutation.status = responseStatus;
   }
   if (response.url().startsWith(simulationUrl) && url.pathname.endsWith("/events")) {
     observations.eventStreams.push(summary);
@@ -786,6 +817,18 @@ async function logResponse(response, requestLog, simulationUrl, observations) {
     ...(body !== undefined ? { body } : {}),
     ...(bodyError ? { body_error: bodyError } : {})
   });
+}
+
+function isSameOriginAPIRequest(url, simulationUrl) {
+  return url.origin === new URL(simulationUrl).origin && (url.pathname === "/api" || url.pathname.startsWith("/api/"));
+}
+
+function isExpectedEventStreamCancellation(url, resourceType, failure) {
+  return (
+    resourceType === "eventsource" &&
+    url.pathname.endsWith("/events") &&
+    (failure?.errorText === "cancelled" || failure?.errorText === "net::ERR_ABORTED")
+  );
 }
 
 async function readSimulationRun(simulationUrl, runID, signal) {
