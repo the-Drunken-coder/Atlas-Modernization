@@ -495,7 +495,12 @@ function orderedAssertionResults(assertions) {
       name: assertion?.name,
       passed: assertion?.passed,
     }))
-    .sort((left, right) => String(left.id).localeCompare(String(right.id)));
+    .sort((left, right) => assertionSequence(left.id) - assertionSequence(right.id));
+}
+
+function assertionSequence(id) {
+  const match = /^assert-([1-9]\d*)$/u.exec(id ?? "");
+  return match ? Number(match[1]) : Number.MAX_SAFE_INTEGER;
 }
 
 async function readWriterEntities(core, run, signal) {
