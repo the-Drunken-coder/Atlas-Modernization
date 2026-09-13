@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { appendFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
@@ -41,6 +42,10 @@ await runAcceptance({
       sync: false,
       requestTimeoutMs: 10_000,
     });
+    const unrelatedEntityID = shortID("acpt-unrelated-sync-entity");
+    const unrelatedObjectID = shortID("acpt-unrelated-sync-object");
+    const unrelatedEntityToken = `unrelated-entity-${randomUUID()}`;
+    const unrelatedObjectToken = `unrelated-object-${randomUUID()}`;
     const readers = await startReaders({
       count: normalInputs.clientCount,
       baseUrl,
@@ -81,6 +86,22 @@ await runAcceptance({
         signal,
         record,
       );
+      await core.entities.create(
+        {
+          entity_id: unrelatedEntityID,
+          entity_type: "asset",
+          alias: "unrelated multi-client acceptance Entity",
+        },
+        { instanceToken: unrelatedEntityToken, signal },
+      );
+      await core.objects.create(
+        {
+          object_id: unrelatedObjectID,
+          type: "sync-probe",
+          extra: { owner: "unrelated multi-client acceptance Object" },
+        },
+        { instanceToken: unrelatedObjectToken, signal },
+      );
 
       const cleanup = await api.json(
         "POST",
@@ -103,27 +124,53 @@ await runAcceptance({
         record,
       );
       await recordAllMissing(core, summary.createdResources, signal, record);
+      await recordUnrelatedResources(
+        core,
+        { unrelatedEntityID, unrelatedObjectID },
+        signal,
+        record,
+      );
       record({
         check: "multi-client acceptance IDs stay within the Core limit",
         expected: { unique: true, maximum_length: 50 },
         actual: {
-          ids: summary.createdResources.map((resource) => resource.id),
-          lengths: summary.createdResources.map(
-            (resource) => resource.id.length,
-          ),
+          ids: [
+            ...summary.createdResources.map((resource) => resource.id),
+            unrelatedEntityID,
+            unrelatedObjectID,
+          ],
+          lengths: [
+            ...summary.createdResources.map((resource) => resource.id.length),
+            unrelatedEntityID.length,
+            unrelatedObjectID.length,
+          ],
         },
         passed:
-          new Set(summary.createdResources.map((resource) => resource.id))
-            .size === summary.createdResources.length &&
-          summary.createdResources.every(
-            (resource) => resource.id.length <= 50,
-          ),
+          new Set([
+            ...summary.createdResources.map((resource) => resource.id),
+            unrelatedEntityID,
+            unrelatedObjectID,
+          ]).size ===
+            summary.createdResources.length + 2 &&
+          [
+            ...summary.createdResources.map((resource) => resource.id),
+            unrelatedEntityID,
+            unrelatedObjectID,
+          ].every((id) => id.length <= 50),
       });
     } finally {
       for (const reader of readers) {
         reader.unwatch();
         reader.client.sync.stop();
       }
+      await Promise.allSettled([
+        core.entities.delete(unrelatedEntityID, {
+          instanceToken: unrelatedEntityToken,
+        }),
+        core.objects.delete(unrelatedObjectID, {
+          instanceToken: unrelatedObjectToken,
+        }),
+      ]);
       core.sync.stop();
     }
   },
@@ -483,6 +530,28 @@ async function recordAllMissing(core, resources, signal, record) {
   });
 }
 
+async function recordUnrelatedResources(core, ids, signal, record) {
+  const [entity, object] = await Promise.all([
+    core.entities.get(ids.unrelatedEntityID, { fresh: true, signal }),
+    core.objects.get(ids.unrelatedObjectID, { fresh: true, signal }),
+  ]);
+  record({
+    check:
+      "multi-client cleanup preserves unrelated Entity and Object canaries",
+    expected: {
+      entity: "unrelated multi-client acceptance Entity",
+      object: "unrelated multi-client acceptance Object",
+    },
+    actual: {
+      entity: entity.alias,
+      object: object.extra?.owner,
+    },
+    passed:
+      entity.alias === "unrelated multi-client acceptance Entity" &&
+      object.extra?.owner === "unrelated multi-client acceptance Object",
+  });
+}
+
 async function collectRunEvents({ api, runID, artifactBase, signal, until }) {
   const response = await fetch(
     `${api.baseUrl}/api/runs/${encodeURIComponent(runID)}/events`,
@@ -572,6 +641,10 @@ function entityState(entity) {
     custom_simulation: entity.components.custom_simulation,
     version: entity.metadata.version,
   };
+}
+
+function shortID(prefix) {
+  return `${prefix}-${randomUUID().slice(0, 12)}`;
 }
 
 function structurallyEqual(actual, expected) {
