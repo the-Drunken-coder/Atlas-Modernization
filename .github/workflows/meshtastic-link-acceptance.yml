@@ -1,0 +1,50 @@
+name: Meshtastic Link acceptance
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: meshtastic-link-acceptance-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  process-acceptance:
+    name: process-acceptance
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install JavaScript workspace dependencies
+        run: npm ci
+
+      - name: Run compiled Link process acceptance
+        env:
+          ATLAS_LINK_ACCEPTANCE_ARTIFACTS: ${{ runner.temp }}/atlas-link-acceptance
+        run: npm run test:acceptance --workspace @the-drunken-coder/atlas-meshtastic-link
+
+      - name: Upload Link acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: meshtastic-link-process-acceptance-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/atlas-link-acceptance
+          if-no-files-found: error
+          retention-days: 14
