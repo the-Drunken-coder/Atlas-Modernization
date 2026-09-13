@@ -444,18 +444,48 @@ async function verifyLocalTargetAndScenario(api, coreBaseUrl, apiKey, record) {
     check: "actual server registers the observations-objects contract",
     expected: {
       accepts_json: true,
-      asset_count: [1, 10],
-      observations: [1, 50],
-      tick_ms: [0, 10_000],
-      tick_ms_step: 50,
+      input_fields: [
+        { key: "assetCount", default_value: 2, min: 1, max: 10, step: 1 },
+        {
+          key: "observations",
+          default_value: 4,
+          min: 1,
+          max: 50,
+          step: 1,
+        },
+        {
+          key: "tickMs",
+          default_value: 200,
+          min: 0,
+          max: 10_000,
+          step: 50,
+        },
+        {
+          key: "startLatitude",
+          default_value: 38.88,
+          min: -90,
+          max: 89.9557,
+          step: 0.0001,
+        },
+        {
+          key: "startLongitude",
+          default_value: -77.04,
+          min: -180,
+          max: 179.9459,
+          step: 0.0001,
+        },
+      ],
     },
     actual: scenario,
     passed:
       scenario?.acceptsJson === true &&
-      fieldBounds(scenario, "assetCount", 1, 10) &&
-      fieldBounds(scenario, "observations", 1, 50) &&
-      fieldBounds(scenario, "tickMs", 0, 10_000) &&
-      scenario.inputFields.find((field) => field.key === "tickMs")?.step === 50,
+      hasExactNumberFields(scenario, [
+        ["assetCount", 2, 1, 10, 1],
+        ["observations", 4, 1, 50, 1],
+        ["tickMs", 200, 0, 10_000, 50],
+        ["startLatitude", 38.88, -90, 89.9557, 0.0001],
+        ["startLongitude", -77.04, -180, 179.9459, 0.0001],
+      ]),
   });
 }
 
@@ -515,9 +545,7 @@ async function readRun(api, runID) {
 function recordCompletedStream(started, completed, events, inputs, record) {
   const initial = events.at(0);
   const resources = events.filter((event) => event.type === "resource");
-  const observations = events.filter(
-    (event) => event.type === "log" && event.message.startsWith("Observation "),
-  );
+  const logs = events.filter((event) => event.type === "log");
   const assertions = events.filter((event) => event.type === "assertion");
   const terminal = events.find(
     (event) => event.type === "status" && event.status !== "running",
@@ -528,6 +556,32 @@ function recordCompletedStream(started, completed, events, inputs, record) {
   const actualResources = resources
     .map((event) => `${event.resource?.type}:${event.resource?.id}`)
     .sort();
+  const observersByIndex = new Map(
+    completed.createdResources.flatMap((resource) => {
+      const asset =
+        resource.type === "entity"
+          ? observerEntityIndex(completed.id, resource.id)
+          : undefined;
+      return asset === undefined ? [] : [[asset, resource.id]];
+    }),
+  );
+  const tracksByObservation = new Map(
+    completed.createdResources.flatMap((resource) => {
+      const observation =
+        resource.type === "entity"
+          ? trackEntityIndex(completed.id, resource.id)
+          : undefined;
+      return observation === undefined ? [] : [[observation, resource.id]];
+    }),
+  );
+  const expectedLogs = Array.from(
+    { length: inputs.observations },
+    (_, index) => {
+      const observation = index + 1;
+      return `Observation ${observation} linked ${observersByIndex.get((index % inputs.assetCount) + 1)} to ${tracksByObservation.get(observation)}`;
+    },
+  );
+  const actualLogs = logs.map((event) => event.message);
   record({
     check: "actual server event stream completes observations-objects",
     expected: {
@@ -535,7 +589,7 @@ function recordCompletedStream(started, completed, events, inputs, record) {
       initial_event: { type: "status", status: "running" },
       status: "completed",
       resources: expectedResources,
-      observation_logs: inputs.observations,
+      logs: expectedLogs,
       assertions: [
         "Observer assets persisted",
         "Tracks persisted",
@@ -547,7 +601,7 @@ function recordCompletedStream(started, completed, events, inputs, record) {
       initial,
       terminal,
       resources: actualResources,
-      logs: observations.map((event) => event.message),
+      logs: actualLogs,
       assertions: assertions.map((event) => event.assertion),
     },
     passed:
@@ -557,7 +611,7 @@ function recordCompletedStream(started, completed, events, inputs, record) {
       completed.status === "completed" &&
       terminal?.status === "completed" &&
       isDeepStrictEqual(actualResources, expectedResources) &&
-      observations.length === inputs.observations &&
+      isDeepStrictEqual(actualLogs, expectedLogs) &&
       isDeepStrictEqual(
         assertions.map((event) => event.assertion?.name),
         [
@@ -1112,11 +1166,21 @@ function parseEventFrame(frame) {
   return data ? parseJSON(data, "simulation event frame") : undefined;
 }
 
-function fieldBounds(scenario, key, min, max) {
-  const field = scenario?.inputFields.find(
-    (candidate) => candidate.key === key,
+function hasExactNumberFields(scenario, expected) {
+  return (
+    scenario?.inputFields.length === expected.length &&
+    expected.every(([key, defaultValue, min, max, step], index) => {
+      const field = scenario.inputFields[index];
+      return (
+        field?.key === key &&
+        field.type === "number" &&
+        field.defaultValue === defaultValue &&
+        field.min === min &&
+        field.max === max &&
+        field.step === step
+      );
+    })
   );
-  return field?.type === "number" && field.min === min && field.max === max;
 }
 
 function entityState(entity) {

@@ -325,19 +325,26 @@ async function verifyLocalTargetAndScenario(api, coreBaseUrl, apiKey, record) {
     check: "actual server registers the multi-client-sync contract",
     expected: {
       accepts_json: false,
-      client_count: [1, 8],
-      writes: [1, 20],
-      settle_ms: [1_500, 10_000],
-      settle_ms_step: 50,
+      input_fields: [
+        { key: "clientCount", default_value: 2, min: 1, max: 8, step: 1 },
+        { key: "writes", default_value: 3, min: 1, max: 20, step: 1 },
+        {
+          key: "settleMs",
+          default_value: 1_500,
+          min: 1_500,
+          max: 10_000,
+          step: 50,
+        },
+      ],
     },
     actual: scenario,
     passed:
       scenario?.acceptsJson === false &&
-      fieldBounds(scenario, "clientCount", 1, 8) &&
-      fieldBounds(scenario, "writes", 1, 20) &&
-      fieldBounds(scenario, "settleMs", 1_500, 10_000) &&
-      scenario.inputFields.find((field) => field.key === "settleMs")?.step ===
-        50,
+      hasExactNumberFields(scenario, [
+        ["clientCount", 2, 1, 8, 1],
+        ["writes", 3, 1, 20, 1],
+        ["settleMs", 1_500, 1_500, 10_000, 50],
+      ]),
   });
 }
 
@@ -808,11 +815,21 @@ function writerEntityIndex(runID, entityID) {
   return Number.isSafeInteger(value) ? value : undefined;
 }
 
-function fieldBounds(scenario, key, min, max) {
-  const field = scenario?.inputFields.find(
-    (candidate) => candidate.key === key,
+function hasExactNumberFields(scenario, expected) {
+  return (
+    scenario?.inputFields.length === expected.length &&
+    expected.every(([key, defaultValue, min, max, step], index) => {
+      const field = scenario.inputFields[index];
+      return (
+        field?.key === key &&
+        field.type === "number" &&
+        field.defaultValue === defaultValue &&
+        field.min === min &&
+        field.max === max &&
+        field.step === step
+      );
+    })
   );
-  return field?.type === "number" && field.min === min && field.max === max;
 }
 
 function entityState(entity) {
