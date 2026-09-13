@@ -121,6 +121,13 @@ function isCreatedResource(value) {
 function isAtlasTargetSummary(value) {
   return (
     isRecord(value) &&
+    isDeepStrictEqual(Object.keys(value).sort(), [
+      "apiKeyConfigured",
+      "baseUrl",
+      "deployed",
+      "id",
+      "label",
+    ]) &&
     typeof value.id === "string" &&
     typeof value.label === "string" &&
     typeof value.baseUrl === "string" &&

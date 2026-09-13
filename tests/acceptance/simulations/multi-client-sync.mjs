@@ -25,6 +25,11 @@ import {
   createSimulationServerFixture,
   simulationFixtureVariant,
 } from "./support/server-fixture.mjs";
+import {
+  assessCompletedEventOrder,
+  assessExpectedSuccessEvents,
+  assessReplayAssertionParity,
+} from "./support/run-event-replay-contract.mjs";
 import { eventStreamResponseError } from "./support/sse-response-contract.mjs";
 
 const reproduction =
@@ -474,6 +479,8 @@ function recordCompletedStream(run, summary, events, inputs, record) {
   const logs = events.filter((event) => event.type === "log");
   const assertions = events.filter((event) => event.type === "assertion");
   const expectedAssertionNames = clientAssertionNames(inputs.clientCount);
+  const eventContract = assessExpectedSuccessEvents(events, run.id);
+  const completionOrder = assessCompletedEventOrder(events);
   const assertionContract = assessMultiClientAssertions(
     assertions.map((event) => event.assertion),
     summary.assertions,
@@ -518,6 +525,8 @@ function recordCompletedStream(run, summary, events, inputs, record) {
       progress_logs: expectedProgressLogs,
       assertion_id_set: assertionContract.expectedIDs,
       assertion_name_pass_set: assertionContract.expectedNamePassSet,
+      event_contract: eventContract.expected,
+      completion_order: completionOrder.expected,
     },
     actual: {
       started_run: {
@@ -534,6 +543,8 @@ function recordCompletedStream(run, summary, events, inputs, record) {
       progress_logs: actualProgressLogs,
       stream_assertion_results: assertionContract.streamResults,
       summary_assertion_results: assertionContract.summaryResults,
+      event_contract: eventContract.actual,
+      completion_order: completionOrder.actual,
     },
     passed:
       run.status === "running" &&
@@ -548,8 +559,10 @@ function recordCompletedStream(run, summary, events, inputs, record) {
       isDeepStrictEqual(actualResources, expectedResources) &&
       isDeepStrictEqual(actualProgressLogs, expectedProgressLogs) &&
       assertionContract.passed &&
+      eventContract.passed &&
+      completionOrder.passed &&
       strictlyIncreasing(events.map((event) => event.sequence)) &&
-      events.every((event) => event.runId === run.id),
+      events.length > 0,
   });
 }
 
@@ -708,6 +721,11 @@ function recordCleanupEvents(run, cleaned, events, preserved, record) {
     preserved,
   );
   const cleanupCompletion = assessCleanupCompletionOrder(events);
+  const eventContract = assessExpectedSuccessEvents(events, run.id);
+  const assertionReplay = assessReplayAssertionParity(
+    events,
+    cleaned.assertions,
+  );
   const expected = run.createdResources.map(resourceKey).sort();
   const sequences = events.map((event) => event.sequence);
   const runIDs = [...new Set(events.map((event) => event.runId))];
@@ -719,6 +737,8 @@ function recordCleanupEvents(run, cleaned, events, preserved, record) {
       resources: expected,
       cleanup_events: cleanupResources.expected,
       cleanup_completion: cleanupCompletion.expected,
+      event_contract: eventContract.expected,
+      assertion_message_parity: assertionReplay.expected,
       created_resources: run.createdResources,
       assertions: run.assertions,
       run_id: run.id,
@@ -730,6 +750,8 @@ function recordCleanupEvents(run, cleaned, events, preserved, record) {
       resources: cleanupResources.actual.map(resourceKey),
       cleanup_events: cleanupResources.actual,
       cleanup_completion: cleanupCompletion.actual,
+      event_contract: eventContract.actual,
+      assertion_message_parity: assertionReplay.actual,
       created_resources: cleaned.createdResources,
       assertions: cleaned.assertions,
       run_ids: runIDs,
@@ -741,6 +763,8 @@ function recordCleanupEvents(run, cleaned, events, preserved, record) {
       isDeepStrictEqual(cleanupResources.actual.map(resourceKey), expected) &&
       cleanupResources.passed &&
       cleanupCompletion.passed &&
+      eventContract.passed &&
+      assertionReplay.passed &&
       isDeepStrictEqual(cleaned.createdResources, run.createdResources) &&
       isDeepStrictEqual(cleaned.assertions, run.assertions) &&
       strictlyIncreasing(sequences) &&

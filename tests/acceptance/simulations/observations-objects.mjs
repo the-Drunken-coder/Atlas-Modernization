@@ -21,6 +21,12 @@ import {
   createSimulationServerFixture,
   simulationFixtureVariant,
 } from "./support/server-fixture.mjs";
+import {
+  assessCompletedEventOrder,
+  assessExpectedSuccessEvents,
+  assessReplayAssertionParity,
+  orderAssertionResults,
+} from "./support/run-event-replay-contract.mjs";
 import { eventStreamResponseError } from "./support/sse-response-contract.mjs";
 
 const reproduction =
@@ -282,6 +288,10 @@ await runAcceptance({
               event.type === "resource" && event.resource?.type === "object",
           ),
       });
+      const cancellationProgressContract = assessExpectedSuccessEvents(
+        cancellationProgress.events,
+        cancelled.id,
+      );
       const cancelledRun = await api.json(
         "POST",
         `/api/runs/${encodeURIComponent(cancelled.id)}/stop`,
@@ -302,18 +312,25 @@ await runAcceptance({
       record({
         check:
           "observations-objects accepts cancellation through its public route",
-        expected: { status: 200, run_status: "cancelled", cleaned: false },
+        expected: {
+          status: 200,
+          run_status: "cancelled",
+          cleaned: false,
+          event_contract: cancellationProgressContract.expected,
+        },
         actual: {
           status: cancelledRun.status,
           run_status: cancelledRunSummary.status,
           cleaned: cancelledRunSummary.cleaned,
           progress_events: cancellationProgress.events.length,
+          event_contract: cancellationProgressContract.actual,
         },
         passed:
           cancelledRun.status === 200 &&
           cancelledRunSummary.status === "cancelled" &&
           cancelledRunSummary.cleaned === false &&
-          cancellationProgress.events.length > 0,
+          cancellationProgress.events.length > 0 &&
+          cancellationProgressContract.passed,
       });
       const cancellationStability = await collectRunEventsForWindow({
         api,
@@ -338,6 +355,12 @@ await runAcceptance({
       const cancellationWindow = assessCancelledObservationWindow(
         cancellationStability.snapshots,
       );
+      const cancellationStabilityEvents =
+        cancellationStability.snapshots.flatMap((snapshot) => snapshot.events);
+      const cancellationStabilityContract = assessExpectedSuccessEvents(
+        cancellationStabilityEvents,
+        cancelled.id,
+      );
       const cancelledResources = cancellationWindow.baseline?.resources ?? [];
       const cancelledObservationLogs =
         cancellationWindow.baseline?.observationLogs ?? [];
@@ -351,6 +374,7 @@ await runAcceptance({
           wait_ms_at_least: cancellationInputs.tickMs,
           resources: cancelledResources,
           observation_logs: cancelledObservationLogs,
+          event_contract: cancellationStabilityContract.expected,
         },
         actual: {
           observed_window_ms: cancellationStability.observedWindowMs,
@@ -359,12 +383,14 @@ await runAcceptance({
           stop_response_resources: stopResponseResources,
           replay_prefix_resources: cancelledResources,
           observation_windows: cancellationWindow.states,
+          event_contract: cancellationStabilityContract.actual,
         },
         passed:
           cancellationStability.observedWindowMs >= cancellationInputs.tickMs &&
           isDeepStrictEqual(stopResponseResources, cancelledResources) &&
           isDeepStrictEqual(stableResources, cancelledResources) &&
-          cancellationWindow.passed,
+          cancellationWindow.passed &&
+          cancellationStabilityContract.passed,
       });
       record({
         check: "observations reread preserves the confirmed cancelled status",
@@ -377,6 +403,14 @@ await runAcceptance({
           cancelledSummary.status === cancelledRunSummary.status &&
           cancelledSummary.cleaned === false,
       });
+      recordCancellationAssertionPhase(
+        cancellationProgress.events,
+        cancellationStabilityEvents,
+        cancelledRunSummary,
+        cancelledSummary,
+        cancellationInputs,
+        record,
+      );
       recordCreatedResourceSet(cancelledSummary, cancellationInputs, record);
       recordLocalLedgerState(
         cancelled.id,
@@ -725,7 +759,12 @@ function recordCompletedStream(started, completed, events, inputs, record) {
   const initial = events.at(0);
   const resources = events.filter((event) => event.type === "resource");
   const logs = events.filter((event) => event.type === "log");
-  const assertions = events.filter((event) => event.type === "assertion");
+  const eventContract = assessExpectedSuccessEvents(events, started.id);
+  const completionOrder = assessCompletedEventOrder(events);
+  const assertionReplay = assessReplayAssertionParity(
+    events,
+    completed.assertions,
+  );
   const expectedAssertionResults = [
     { id: "assert-1", name: "Observer assets persisted", passed: true },
     { id: "assert-2", name: "Tracks persisted", passed: true },
@@ -734,11 +773,12 @@ function recordCompletedStream(started, completed, events, inputs, record) {
   const expectedAssertionIDs = expectedAssertionResults.map(
     (assertion) => assertion.id,
   );
-  const streamAssertionResults = assertions.map((event) =>
-    assertionResultState(event.assertion),
-  );
-  const summaryAssertionResults =
-    completed.assertions.map(assertionResultState);
+  const streamAssertionResults = assertionReplay.streamResults;
+  const summaryAssertionResults = assertionReplay.summaryResults;
+  const streamAssertionSemantics =
+    streamAssertionResults.map(assertionResultState);
+  const summaryAssertionSemantics =
+    summaryAssertionResults.map(assertionResultState);
   const actualAssertionIDs = streamAssertionResults.map(
     (assertion) => assertion.id,
   );
@@ -792,6 +832,9 @@ function recordCompletedStream(started, completed, events, inputs, record) {
       assertion_ids: expectedAssertionIDs,
       assertion_ids_unique: true,
       assertion_results: expectedAssertionResults,
+      event_contract: eventContract.expected,
+      completion_order: completionOrder.expected,
+      assertion_message_parity: assertionReplay.expected,
     },
     actual: {
       started_run: {
@@ -811,6 +854,8 @@ function recordCompletedStream(started, completed, events, inputs, record) {
         new Set(actualAssertionIDs).size === actualAssertionIDs.length,
       stream_assertion_results: streamAssertionResults,
       summary_assertion_results: summaryAssertionResults,
+      event_contract: eventContract.actual,
+      completion_order: completionOrder.actual,
     },
     passed:
       started.status === "running" &&
@@ -826,11 +871,12 @@ function recordCompletedStream(started, completed, events, inputs, record) {
       isDeepStrictEqual(actualLogs, expectedLogs) &&
       isDeepStrictEqual(actualAssertionIDs, expectedAssertionIDs) &&
       new Set(actualAssertionIDs).size === actualAssertionIDs.length &&
-      isDeepStrictEqual(streamAssertionResults, expectedAssertionResults) &&
-      isDeepStrictEqual(summaryAssertionResults, expectedAssertionResults) &&
-      isDeepStrictEqual(summaryAssertionResults, streamAssertionResults) &&
-      strictlyIncreasing(events.map((event) => event.sequence)) &&
-      events.every((event) => event.runId === started.id),
+      isDeepStrictEqual(streamAssertionSemantics, expectedAssertionResults) &&
+      isDeepStrictEqual(summaryAssertionSemantics, expectedAssertionResults) &&
+      assertionReplay.passed &&
+      eventContract.passed &&
+      completionOrder.passed &&
+      strictlyIncreasing(events.map((event) => event.sequence)),
   });
 }
 
@@ -853,6 +899,118 @@ function assertionResultState(assertion) {
     name: assertion?.name,
     passed: assertion?.passed,
   };
+}
+
+function recordCancellationAssertionPhase(
+  progressEvents,
+  postStopEvents,
+  stopped,
+  reread,
+  inputs,
+  record,
+) {
+  const progressAssertions = orderAssertionResults(
+    progressEvents
+      .filter((event) => event.type === "assertion")
+      .map((event) => event.assertion),
+  );
+  const stoppedAssertions = orderAssertionResults(stopped.assertions);
+  const rereadAssertions = orderAssertionResults(reread.assertions);
+  const postStopReplay = assessReplayAssertionParity(
+    postStopEvents,
+    reread.assertions,
+  );
+  const observationPairs = observedObservationPairs(progressEvents);
+  const verifierAssertions = expectedVerifierAssertions(inputs);
+  const allObservationPairsRecorded =
+    observationPairs.length === inputs.observations &&
+    observationPairs.every((observation, index) => observation === index + 1);
+  const allowedAssertions = allObservationPairsRecorded
+    ? (assertions) =>
+        assertions.length === 0 ||
+        isDeepStrictEqual(assertions, verifierAssertions)
+    : (assertions) => assertions.length === 0;
+  record({
+    check:
+      "cancelled observations preserve only source-valid verifier assertions across the stop phase",
+    expected: {
+      pre_stop_observation_pairs: inputs.observations,
+      ...(allObservationPairsRecorded
+        ? { allowed_assertions: [[], verifierAssertions] }
+        : { allowed_assertions: [] }),
+      pre_stop_assertions_retained_by_stop_summary: true,
+      stop_assertions_retained_by_cancelled_summary: true,
+      post_stop_replay_matches_cancelled_summary: postStopReplay.expected,
+    },
+    actual: {
+      pre_stop_observation_pairs: observationPairs,
+      pre_stop_assertions: progressAssertions,
+      stop_summary_assertions: stoppedAssertions,
+      cancelled_summary_assertions: rereadAssertions,
+      post_stop_replay: postStopReplay.actual,
+    },
+    passed:
+      hasUniqueAssertionIDs(progressAssertions) &&
+      hasUniqueAssertionIDs(stoppedAssertions) &&
+      hasUniqueAssertionIDs(rereadAssertions) &&
+      allowedAssertions(progressAssertions) &&
+      allowedAssertions(stoppedAssertions) &&
+      allowedAssertions(rereadAssertions) &&
+      assertionResultsAreSubset(progressAssertions, stoppedAssertions) &&
+      assertionResultsAreSubset(stoppedAssertions, rereadAssertions) &&
+      postStopReplay.passed,
+  });
+}
+
+function observedObservationPairs(events) {
+  return [
+    ...new Set(
+      events.flatMap((event) => {
+        if (event.type !== "log") return [];
+        const match = /^Observation ([1-9]\d*) linked /u.exec(event.message);
+        return match ? [Number(match[1])] : [];
+      }),
+    ),
+  ].sort((left, right) => left - right);
+}
+
+function expectedVerifierAssertions(inputs) {
+  return [
+    {
+      id: "assert-1",
+      name: "Observer assets persisted",
+      passed: true,
+      message: `${inputs.assetCount}/${inputs.assetCount} observers persisted`,
+    },
+    {
+      id: "assert-2",
+      name: "Tracks persisted",
+      passed: true,
+      message: `${inputs.observations}/${inputs.observations} tracks persisted`,
+    },
+    {
+      id: "assert-3",
+      name: "Object references persisted",
+      passed: true,
+      message: `${inputs.observations}/${inputs.observations} objects linked`,
+    },
+  ];
+}
+
+function assertionResultsAreSubset(expected, actual) {
+  const actualByID = new Map(
+    actual.map((assertion) => [assertion.id, assertion]),
+  );
+  return expected.every((assertion) =>
+    isDeepStrictEqual(actualByID.get(assertion.id), assertion),
+  );
+}
+
+function hasUniqueAssertionIDs(assertions) {
+  return (
+    new Set(assertions.map((assertion) => assertion.id)).size ===
+    assertions.length
+  );
 }
 
 function recordCreatedResourceSet(run, inputs, record) {
@@ -1176,6 +1334,11 @@ function recordCleanupEvents(run, cleaned, events, preserved, record) {
     preserved,
   );
   const cleanupCompletion = assessCleanupCompletionOrder(events);
+  const eventContract = assessExpectedSuccessEvents(events, run.id);
+  const assertionReplay = assessReplayAssertionParity(
+    events,
+    cleaned.assertions,
+  );
   const expected = run.createdResources.map(resourceKey).sort();
   const stopEventIndex = events.findIndex(
     (event) => event.type === "log" && event.message === "Stop requested",
@@ -1195,6 +1358,8 @@ function recordCleanupEvents(run, cleaned, events, preserved, record) {
       resources: expected,
       cleanup_events: cleanupResources.expected,
       cleanup_completion: cleanupCompletion.expected,
+      event_contract: eventContract.expected,
+      assertion_message_parity: assertionReplay.expected,
       created_resources: run.createdResources,
       assertions: run.assertions,
       run_id: run.id,
@@ -1214,6 +1379,8 @@ function recordCleanupEvents(run, cleaned, events, preserved, record) {
       resources: cleanupResources.actual.map(resourceKey),
       cleanup_events: cleanupResources.actual,
       cleanup_completion: cleanupCompletion.actual,
+      event_contract: eventContract.actual,
+      assertion_message_parity: assertionReplay.actual,
       created_resources: cleaned.createdResources,
       assertions: cleaned.assertions,
       run_ids: runIDs,
@@ -1233,6 +1400,8 @@ function recordCleanupEvents(run, cleaned, events, preserved, record) {
       isDeepStrictEqual(cleanupResources.actual.map(resourceKey), expected) &&
       cleanupResources.passed &&
       cleanupCompletion.passed &&
+      eventContract.passed &&
+      assertionReplay.passed &&
       isDeepStrictEqual(cleaned.createdResources, run.createdResources) &&
       isDeepStrictEqual(cleaned.assertions, run.assertions) &&
       strictlyIncreasing(sequences) &&

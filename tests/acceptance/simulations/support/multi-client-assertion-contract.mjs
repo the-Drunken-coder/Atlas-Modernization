@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
+import { assessReplayAssertionParity } from "./run-event-replay-contract.mjs";
 
 /**
  * The producer emits each concurrent reader's assertions as it settles. IDs are
@@ -10,8 +11,11 @@ export function assessMultiClientAssertions(stream, summary, expectedNames) {
   const expectedNamePassSet = orderedNamePassSet(
     expectedNames.map((name) => ({ name, passed: true })),
   );
-  const streamResults = orderedAssertionResults(stream);
-  const summaryResults = orderedAssertionResults(summary);
+  const replayParity = assessReplayAssertionParity(
+    stream.map((assertion) => ({ type: "assertion", assertion })),
+    summary,
+  );
+  const { streamResults, summaryResults } = replayParity;
 
   return {
     expectedIDs,
@@ -21,17 +25,22 @@ export function assessMultiClientAssertions(stream, summary, expectedNames) {
     passed:
       hasExactNumericIDSet(streamResults, expectedIDs) &&
       hasExactNumericIDSet(summaryResults, expectedIDs) &&
-      isDeepStrictEqual(orderedNamePassSet(streamResults), expectedNamePassSet) &&
-      isDeepStrictEqual(orderedNamePassSet(summaryResults), expectedNamePassSet) &&
-      isDeepStrictEqual(summaryResults, streamResults),
+      isDeepStrictEqual(
+        orderedNamePassSet(streamResults),
+        expectedNamePassSet,
+      ) &&
+      isDeepStrictEqual(
+        orderedNamePassSet(summaryResults),
+        expectedNamePassSet,
+      ) &&
+      replayParity.passed,
   };
 }
 
 function hasExactNumericIDSet(assertions, expectedIDs) {
   const ids = assertions.map((assertion) => assertion.id);
   return (
-    new Set(ids).size === ids.length &&
-    isDeepStrictEqual(ids, expectedIDs)
+    new Set(ids).size === ids.length && isDeepStrictEqual(ids, expectedIDs)
   );
 }
 
@@ -39,19 +48,4 @@ function orderedNamePassSet(assertions) {
   return assertions
     .map((assertion) => ({ name: assertion.name, passed: assertion.passed }))
     .sort((left, right) => left.name.localeCompare(right.name));
-}
-
-function orderedAssertionResults(assertions) {
-  return assertions
-    .map((assertion) => ({
-      id: assertion?.id,
-      name: assertion?.name,
-      passed: assertion?.passed,
-    }))
-    .sort((left, right) => assertionSequence(left.id) - assertionSequence(right.id));
-}
-
-function assertionSequence(id) {
-  const match = /^assert-([1-9]\d*)$/u.exec(id ?? "");
-  return match ? Number(match[1]) : Number.MAX_SAFE_INTEGER;
 }
