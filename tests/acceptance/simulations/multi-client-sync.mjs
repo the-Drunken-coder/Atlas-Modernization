@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { AtlasClient, isAtlasAPIError } from "@the-drunken-coder/atlas-sdk";
 import { runAcceptance } from "../support/stack.mjs";
+import { startReaders, stopReaders } from "./support/multi-client-readers.mjs";
 import {
   createSimulationServerFixture,
   simulationFixtureVariant,
@@ -159,10 +160,7 @@ await runAcceptance({
           ].every((id) => id.length <= 50),
       });
     } finally {
-      for (const reader of readers) {
-        reader.unwatch();
-        reader.client.sync.stop();
-      }
+      stopReaders(readers);
       await Promise.allSettled([
         core.entities.delete(unrelatedEntityID, {
           instanceToken: unrelatedEntityToken,
@@ -175,32 +173,6 @@ await runAcceptance({
     }
   },
 });
-
-async function startReaders({ count, baseUrl, apiKey, signal }) {
-  return Promise.all(
-    Array.from({ length: count }, async (_, index) => {
-      const client = new AtlasClient({
-        baseUrl,
-        apiKey,
-        sync: "all",
-        pollIntervalMs: 200,
-        requestTimeoutMs: 10_000,
-      });
-      const seenVersions = new Map();
-      const unwatch = client.watch(
-        { filter: "type", resource_type: "entity" },
-        (resource) => {
-          if (resource?.entity_id) {
-            seenVersions.set(resource.entity_id, resource.metadata.version);
-          }
-        },
-      );
-      signal.throwIfAborted();
-      await client.sync.start();
-      return { index: index + 1, client, seenVersions, unwatch };
-    }),
-  );
-}
 
 function createSimulationAPI(baseUrl, logPath, acceptanceSignal) {
   const request = async (method, path, body) => {
