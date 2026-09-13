@@ -13,7 +13,7 @@ export function parseBrowserRunSummary(value, expected) {
     typeof value.id !== "string" ||
     typeof value.scenarioId !== "string" ||
     typeof value.scenarioName !== "string" ||
-    (value.target !== undefined && !isAtlasTargetSummary(value.target)) ||
+    !isAtlasTargetSummary(value.target) ||
     !isRunStatus(value.status) ||
     typeof value.startedAt !== "string" ||
     (value.finishedAt !== undefined && typeof value.finishedAt !== "string") ||
@@ -32,12 +32,24 @@ export function parseBrowserRunSummary(value, expected) {
   if (
     value.scenarioId !== expected.scenarioID ||
     (expected.runID !== undefined && value.id !== expected.runID) ||
+    !hasExpectedTarget(value.target, expected.target) ||
     !hasExpectedInputs(value.inputs, expected.inputs) ||
     !isDeepStrictEqual(value.jsonInput, expected.jsonInput)
   ) {
     throw new Error(`Unexpected browser run summary from ${expected.context}`);
   }
   return value;
+}
+
+function hasExpectedTarget(actual, expected) {
+  return (
+    isAtlasTargetSummary(expected) &&
+    actual.id === expected.id &&
+    actual.label === expected.label &&
+    actual.baseUrl === expected.baseUrl &&
+    actual.deployed === expected.deployed &&
+    actual.apiKeyConfigured === expected.apiKeyConfigured
+  );
 }
 
 function hasExpectedInputs(actual, expected) {

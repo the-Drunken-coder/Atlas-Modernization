@@ -71,10 +71,10 @@ await runAcceptance({
 
     try {
       verifyServerHealth(simulation.health, baseUrl, record);
-      await verifyLocalTargetAndScenario(api, baseUrl, apiKey, record);
+      const target = await verifyLocalTargetAndScenario(api, baseUrl, apiKey, record);
       if (nightly) await recordInvalidInputFault(api, record);
 
-      const normal = await startRun(api, normalInputs, observationJSON);
+      const normal = await startRun(api, normalInputs, observationJSON, target);
       const normalStream = await collectRunEvents({
         api,
         runID: normal.id,
@@ -90,6 +90,7 @@ await runAcceptance({
         normal.id,
         normalInputs,
         observationJSON,
+        target,
       );
       recordCompletedStream(
         normal,
@@ -176,6 +177,7 @@ await runAcceptance({
           context: "completed cleanup response",
           runID: normal.id,
           scenarioID,
+          target,
           inputs: normalInputs,
           jsonInput: observationJSON,
         },
@@ -227,6 +229,7 @@ await runAcceptance({
         api,
         cancellationInputs,
         observationJSON,
+        target,
       );
       const cancellationProgress = await collectRunEvents({
         api,
@@ -252,6 +255,7 @@ await runAcceptance({
         context: "stop response",
         runID: cancelled.id,
         scenarioID,
+        target,
         inputs: cancellationInputs,
         jsonInput: observationJSON,
       });
@@ -276,6 +280,7 @@ await runAcceptance({
         cancelled.id,
         cancellationInputs,
         observationJSON,
+        target,
       );
       record({
         check: "observations reread preserves the confirmed cancelled status",
@@ -306,6 +311,7 @@ await runAcceptance({
           context: "cancelled cleanup response",
           runID: cancelled.id,
           scenarioID,
+          target,
           inputs: cancellationInputs,
           jsonInput: observationJSON,
         },
@@ -464,27 +470,34 @@ async function verifyLocalTargetAndScenario(api, coreBaseUrl, apiKey, record) {
   const scenario = scenarios.body.scenarios.find(
     (candidate) => candidate.id === "observations-objects",
   );
+  const target = targets.body.targets[0];
   record({
     check:
       "observations acceptance exposes only the disposable loopback target",
     expected: {
       target_id: "local",
+      target_label: "Local Core",
       default_target_id: "local",
       deployed: false,
+      api_key_configured: true,
       credentials_disclosed: false,
     },
     actual: {
-      target_id: targets.body.targets[0]?.id,
+      target_id: target?.id,
+      target_label: target?.label,
       default_target_id: targets.body.defaultTargetId,
       targets: targets.body.targets,
+      api_key_configured: target?.apiKeyConfigured,
       credentials_disclosed: JSON.stringify(targets.body).includes(apiKey),
     },
     passed:
       targets.body.defaultTargetId === "local" &&
       targets.body.targets.length === 1 &&
-      targets.body.targets[0]?.id === "local" &&
-      targets.body.targets[0]?.baseUrl === coreBaseUrl &&
-      targets.body.targets[0]?.deployed === false &&
+      target?.id === "local" &&
+      target?.label === "Local Core" &&
+      target?.baseUrl === coreBaseUrl &&
+      target?.deployed === false &&
+      target?.apiKeyConfigured === true &&
       !JSON.stringify(targets.body).includes(apiKey),
   });
   record({
@@ -534,6 +547,7 @@ async function verifyLocalTargetAndScenario(api, coreBaseUrl, apiKey, record) {
         ["startLongitude", -77.04, -180, 179.9459, 0.0001],
       ]),
   });
+  return target;
 }
 
 function verifyServerHealth(health, coreBaseUrl, record) {
@@ -566,7 +580,7 @@ async function recordInvalidInputFault(api, record) {
   });
 }
 
-async function startRun(api, inputs, jsonInput) {
+async function startRun(api, inputs, jsonInput, target) {
   const response = await api.json("POST", "/api/runs", {
     scenarioId: "observations-objects",
     targetId: "local",
@@ -576,6 +590,7 @@ async function startRun(api, inputs, jsonInput) {
   const run = parseBrowserRunSummary(response.body.run, {
     context: "start response",
     scenarioID,
+    target,
     inputs,
     jsonInput,
   });
@@ -590,12 +605,13 @@ async function startRun(api, inputs, jsonInput) {
   return run;
 }
 
-async function readRun(api, runID, inputs, jsonInput) {
+async function readRun(api, runID, inputs, jsonInput, target) {
   const response = await api.json("GET", `/api/runs/${encodeURIComponent(runID)}`);
   return parseBrowserRunSummary(response.body.run, {
     context: "run read response",
     runID,
     scenarioID,
+    target,
     inputs,
     jsonInput,
   });

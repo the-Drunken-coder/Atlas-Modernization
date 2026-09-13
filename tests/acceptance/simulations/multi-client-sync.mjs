@@ -10,6 +10,7 @@ import {
   startReaders,
   stopReaders,
 } from "./support/multi-client-readers.mjs";
+import { assessMultiClientAssertions } from "./support/multi-client-assertion-contract.mjs";
 import { parseBrowserRunSummary } from "./support/browser-run-contracts.mjs";
 import {
   createSimulationServerFixture,
@@ -67,11 +68,11 @@ await runAcceptance({
 
     try {
       verifyServerHealth(simulation.health, baseUrl, record);
-      await verifyLocalTargetAndScenario(api, baseUrl, apiKey, record);
+      const target = await verifyLocalTargetAndScenario(api, baseUrl, apiKey, record);
       if (nightly) await recordInvalidInputFault(api, record);
 
       observeReaderTransport(readers);
-      const run = await startRun(api, normalInputs);
+      const run = await startRun(api, normalInputs, target);
       const stream = await collectRunEvents({
         api,
         runID: run.id,
@@ -82,7 +83,7 @@ await runAcceptance({
             (event) => event.type === "status" && event.status !== "running",
           ),
       });
-      const summary = await readRun(api, run.id, normalInputs);
+      const summary = await readRun(api, run.id, normalInputs, target);
       recordCompletedStream(run, summary, stream.events, normalInputs, record);
 
       const writerEntities = await readWriterEntities(core, summary, signal);
@@ -148,6 +149,7 @@ await runAcceptance({
         context: "cleanup response",
         runID: run.id,
         scenarioID,
+        target,
         inputs: normalInputs,
         jsonInput: undefined,
       });
@@ -308,27 +310,34 @@ async function verifyLocalTargetAndScenario(api, coreBaseUrl, apiKey, record) {
   const scenario = scenarios.body.scenarios.find(
     (candidate) => candidate.id === "multi-client-sync",
   );
+  const target = targets.body.targets[0];
   record({
     check:
       "multi-client acceptance exposes only the disposable loopback target",
     expected: {
       target_id: "local",
+      target_label: "Local Core",
       default_target_id: "local",
       deployed: false,
+      api_key_configured: true,
       credentials_disclosed: false,
     },
     actual: {
-      target_id: targets.body.targets[0]?.id,
+      target_id: target?.id,
+      target_label: target?.label,
       default_target_id: targets.body.defaultTargetId,
       targets: targets.body.targets,
+      api_key_configured: target?.apiKeyConfigured,
       credentials_disclosed: JSON.stringify(targets.body).includes(apiKey),
     },
     passed:
       targets.body.defaultTargetId === "local" &&
       targets.body.targets.length === 1 &&
-      targets.body.targets[0]?.id === "local" &&
-      targets.body.targets[0]?.baseUrl === coreBaseUrl &&
-      targets.body.targets[0]?.deployed === false &&
+      target?.id === "local" &&
+      target?.label === "Local Core" &&
+      target?.baseUrl === coreBaseUrl &&
+      target?.deployed === false &&
+      target?.apiKeyConfigured === true &&
       !JSON.stringify(targets.body).includes(apiKey),
   });
   record({
@@ -356,6 +365,7 @@ async function verifyLocalTargetAndScenario(api, coreBaseUrl, apiKey, record) {
         ["settleMs", 1_500, 1_500, 10_000, 50],
       ]),
   });
+  return target;
 }
 
 function verifyServerHealth(health, coreBaseUrl, record) {
@@ -388,7 +398,7 @@ async function recordInvalidInputFault(api, record) {
   });
 }
 
-async function startRun(api, inputs) {
+async function startRun(api, inputs, target) {
   const response = await api.json("POST", "/api/runs", {
     scenarioId: "multi-client-sync",
     targetId: "local",
@@ -397,6 +407,7 @@ async function startRun(api, inputs) {
   const run = parseBrowserRunSummary(response.body.run, {
     context: "start response",
     scenarioID,
+    target,
     inputs,
     jsonInput: undefined,
   });
@@ -408,12 +419,13 @@ async function startRun(api, inputs) {
   return run;
 }
 
-async function readRun(api, runID, inputs) {
+async function readRun(api, runID, inputs, target) {
   const response = await api.json("GET", `/api/runs/${encodeURIComponent(runID)}`);
   return parseBrowserRunSummary(response.body.run, {
     context: "run read response",
     runID,
     scenarioID,
+    target,
     inputs,
     jsonInput: undefined,
   });
@@ -424,18 +436,10 @@ function recordCompletedStream(run, summary, events, inputs, record) {
   const resources = events.filter((event) => event.type === "resource");
   const assertions = events.filter((event) => event.type === "assertion");
   const expectedAssertionNames = clientAssertionNames(inputs.clientCount);
-  const expectedAssertionResults = expectedAssertionNames.map(
-    (name, index) => ({ id: `assert-${index + 1}`, name, passed: true }),
-  );
-  const expectedAssertionIDs = expectedAssertionResults.map(
-    (assertion) => assertion.id,
-  );
-  const streamAssertionResults = orderedAssertionResults(
+  const assertionContract = assessMultiClientAssertions(
     assertions.map((event) => event.assertion),
-  );
-  const summaryAssertionResults = orderedAssertionResults(summary.assertions);
-  const actualAssertionIDs = streamAssertionResults.map(
-    (assertion) => assertion.id,
+    summary.assertions,
+    expectedAssertionNames,
   );
   const terminal = events.find(
     (event) => event.type === "status" && event.status !== "running",
@@ -455,10 +459,8 @@ function recordCompletedStream(run, summary, events, inputs, record) {
       status: "completed",
       completed_cleaned: false,
       resources: expectedResources,
-      assertion_ids: expectedAssertionIDs,
-      assertion_ids_unique: true,
-      assertion_names: expectedAssertionNames,
-      assertion_results: expectedAssertionResults,
+      assertion_id_set: assertionContract.expectedIDs,
+      assertion_name_pass_set: assertionContract.expectedNamePassSet,
     },
     actual: {
       started_run: { id: run.id, status: run.status, cleaned: run.cleaned },
@@ -466,11 +468,8 @@ function recordCompletedStream(run, summary, events, inputs, record) {
       initial,
       terminal,
       resources: actualResources,
-      assertion_ids: actualAssertionIDs,
-      assertion_ids_unique:
-        new Set(actualAssertionIDs).size === actualAssertionIDs.length,
-      stream_assertion_results: streamAssertionResults,
-      summary_assertion_results: summaryAssertionResults,
+      stream_assertion_results: assertionContract.streamResults,
+      summary_assertion_results: assertionContract.summaryResults,
     },
     passed:
       run.status === "running" &&
@@ -481,32 +480,10 @@ function recordCompletedStream(run, summary, events, inputs, record) {
       summary.cleaned === false &&
       terminal?.status === "completed" &&
       isDeepStrictEqual(actualResources, expectedResources) &&
-      isDeepStrictEqual(
-        [...actualAssertionIDs].sort(),
-        [...expectedAssertionIDs].sort(),
-      ) &&
-      new Set(actualAssertionIDs).size === actualAssertionIDs.length &&
-      isDeepStrictEqual(streamAssertionResults, expectedAssertionResults) &&
-      isDeepStrictEqual(summaryAssertionResults, expectedAssertionResults) &&
-      isDeepStrictEqual(summaryAssertionResults, streamAssertionResults) &&
+      assertionContract.passed &&
       strictlyIncreasing(events.map((event) => event.sequence)) &&
       events.every((event) => event.runId === run.id),
   });
-}
-
-function orderedAssertionResults(assertions) {
-  return assertions
-    .map((assertion) => ({
-      id: assertion?.id,
-      name: assertion?.name,
-      passed: assertion?.passed,
-    }))
-    .sort((left, right) => assertionSequence(left.id) - assertionSequence(right.id));
-}
-
-function assertionSequence(id) {
-  const match = /^assert-([1-9]\d*)$/u.exec(id ?? "");
-  return match ? Number(match[1]) : Number.MAX_SAFE_INTEGER;
 }
 
 async function readWriterEntities(core, run, signal) {
