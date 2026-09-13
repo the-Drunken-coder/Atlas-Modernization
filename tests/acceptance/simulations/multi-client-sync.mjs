@@ -114,7 +114,9 @@ await runAcceptance({
       );
       replacementWriterID = writerEntities[0]?.entity_id;
       if (!replacementWriterID) {
-        throw new Error("multi-client-sync did not create a writer Entity to replace before cleanup");
+        throw new Error(
+          "multi-client-sync did not create a writer Entity to replace before cleanup",
+        );
       }
       replacementWriterToken = `replacement-writer-${randomUUID()}`;
       await core.entities.delete(replacementWriterID);
@@ -469,13 +471,12 @@ function recordPersistedWriterEntities(run, entities, inputs, record) {
       entities: inputs.writes,
       entity_type: "asset",
       subtype: "sync-probe",
+      status: "sync-probe",
       run_id: run.id,
-      resource_types: Array.from(
+      resource_types: Array.from({ length: inputs.writes }, () => "entity"),
+      write_indexes: Array.from(
         { length: inputs.writes },
-        () => "entity",
-      ),
-      write_indexes: Array.from({ length: inputs.writes }, (_, index) =>
-        index + 1,
+        (_, index) => index + 1,
       ),
     },
     actual: {
@@ -581,18 +582,30 @@ function recordCleanupEvents(run, cleaned, events, record) {
   const actual = resources
     .map((resource) => `${resource.type}:${resource.id}`)
     .sort();
+  const sequences = events.map((event) => event.sequence);
+  const runIDs = [...new Set(events.map((event) => event.runId))];
   record({
     check: "multi-client cleanup reports every run-owned Entity",
-    expected: { status: run.status, cleaned: true, resources: expected },
+    expected: {
+      status: run.status,
+      cleaned: true,
+      resources: expected,
+      run_id: run.id,
+      strictly_increasing_sequences: true,
+    },
     actual: {
       status: cleaned.status,
       cleaned: cleaned.cleaned,
       resources: actual,
+      run_ids: runIDs,
+      sequences,
     },
     passed:
       cleaned.status === run.status &&
       cleaned.cleaned === true &&
       isDeepStrictEqual(actual, expected) &&
+      strictlyIncreasing(sequences) &&
+      events.every((event) => event.runId === run.id) &&
       events.some(
         (event) =>
           event.type === "cleanup" &&
@@ -622,7 +635,9 @@ async function recordAllMissing(core, resources, signal, record) {
         (result) =>
           result.status === 404 &&
           result.error_code ===
-            (result.type === "entity" ? "ENTITY_NOT_FOUND" : "OBJECT_NOT_FOUND"),
+            (result.type === "entity"
+              ? "ENTITY_NOT_FOUND"
+              : "OBJECT_NOT_FOUND"),
       ),
   });
 }
@@ -706,7 +721,9 @@ async function collectRunEvents({ api, runID, artifactBase, signal, until }) {
     );
     if (!response.ok || !response.body) {
       raw = await response.text();
-      throw new Error(`GET run events returned HTTP ${response.status}: ${raw}`);
+      throw new Error(
+        `GET run events returned HTTP ${response.status}: ${raw}`,
+      );
     }
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
@@ -758,6 +775,7 @@ function isExpectedWriterEntity(entity, runID, writeIndex) {
       entity.components.geometry?.coordinates?.[1],
       latitude,
     ) &&
+    entity.components.status?.value === "sync-probe" &&
     entity.components.custom_simulation?.run_id === runID &&
     entity.components.custom_simulation?.write_index === writeIndex
   );
@@ -790,6 +808,7 @@ function entityState(entity) {
     subtype: entity.subtype,
     telemetry: entity.components.telemetry,
     geometry: entity.components.geometry,
+    status: entity.components.status,
     custom_simulation: entity.components.custom_simulation,
     version: entity.metadata.version,
   };

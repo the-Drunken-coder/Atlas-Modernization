@@ -669,6 +669,7 @@ async function recordPersistedObservations(
         track: trackByObservation.get(observation),
         latitude,
         longitude,
+        classification: observation % 2 === 1 ? "unknown" : "neutral",
       };
     },
   );
@@ -713,6 +714,8 @@ async function recordPersistedObservations(
         tracks: inputs.observations,
       },
       observers: inputs.assetCount,
+      observer_telemetry: { heading_deg: 90, speed_m_s: 4 },
+      observer_status: "observing",
       observer_custom_simulation: {
         run_id: run.id,
         collection: jsonInput.collection,
@@ -728,12 +731,14 @@ async function recordPersistedObservations(
         ],
       })),
       tracks: expectedTracks.map(
-        ({ observation, alias, latitude, longitude }) => ({
+        ({ observation, alias, latitude, longitude, classification }) => ({
           observation,
           alias,
           subtype: "simulated-observation",
           latitude,
           longitude,
+          classification,
+          status: "observed",
         }),
       ),
       objects: expectedObjects.map(({ object, observation, trackID }) => ({
@@ -791,6 +796,8 @@ async function recordPersistedObservations(
             observer.components.telemetry?.longitude,
             longitude,
           ) &&
+          observer.components.telemetry?.heading_deg === 90 &&
+          observer.components.telemetry?.speed_m_s === 4 &&
           approximatelyEqual(
             observer.components.geometry?.coordinates?.[0],
             longitude,
@@ -798,7 +805,8 @@ async function recordPersistedObservations(
           approximatelyEqual(
             observer.components.geometry?.coordinates?.[1],
             latitude,
-          )
+          ) &&
+          observer.components.status?.value === "observing"
         );
       }).every(Boolean) &&
       trackMappingComplete &&
@@ -814,6 +822,9 @@ async function recordPersistedObservations(
             expected.longitude,
             expected.latitude,
           ]) &&
+          expected.track.components.mil_view?.classification ===
+            expected.classification &&
+          expected.track.components.status?.value === "observed" &&
           simulation?.run_id === run.id &&
           simulation?.observer_id === expected.observer?.entity_id &&
           simulation?.observation_index === expected.observation &&
@@ -853,6 +864,8 @@ function recordCleanupEvents(run, cleaned, events, record) {
     (event) => event.type === "status" && event.status === "cancelled",
   );
   const requiresCancellationLifecycle = run.status === "cancelled";
+  const sequences = events.map((event) => event.sequence);
+  const runIDs = [...new Set(events.map((event) => event.runId))];
   record({
     check:
       "observations cleanup reports every recorded Entity and Object resource",
@@ -860,6 +873,8 @@ function recordCleanupEvents(run, cleaned, events, record) {
       status: run.status,
       cleaned: true,
       resources: expected,
+      run_id: run.id,
+      strictly_increasing_sequences: true,
       ...(requiresCancellationLifecycle
         ? {
             cancellation_lifecycle: [
@@ -873,6 +888,8 @@ function recordCleanupEvents(run, cleaned, events, record) {
       status: cleaned.status,
       cleaned: cleaned.cleaned,
       resources: actual,
+      run_ids: runIDs,
+      sequences,
       ...(requiresCancellationLifecycle
         ? {
             cancellation_lifecycle: {
@@ -886,6 +903,8 @@ function recordCleanupEvents(run, cleaned, events, record) {
       cleaned.status === run.status &&
       cleaned.cleaned === true &&
       isDeepStrictEqual(actual, expected) &&
+      strictlyIncreasing(sequences) &&
+      events.every((event) => event.runId === run.id) &&
       (!requiresCancellationLifecycle ||
         (stopEventIndex !== -1 &&
           cancelledStatusIndex !== -1 &&
@@ -1077,7 +1096,9 @@ function entityState(entity) {
     subtype: entity.subtype,
     telemetry: entity.components.telemetry,
     geometry: entity.components.geometry,
+    mil_view: entity.components.mil_view,
     sensor_refs: entity.components.sensor_refs,
+    status: entity.components.status,
     custom_simulation: entity.components.custom_simulation,
   };
 }
