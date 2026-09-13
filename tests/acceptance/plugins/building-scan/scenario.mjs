@@ -222,7 +222,9 @@ await runPluginAcceptance({
         isTimestamp(availableAfterCancellation.checked_at),
     });
 
+    const stopStartedAt = new Date();
     const stopped = await pluginStack.stop();
+    const stopCompletedAt = new Date();
     record({
       check: "test control stopped the owned Building Scan container",
       expected: { state: "exited" },
@@ -236,19 +238,29 @@ await runPluginAcceptance({
       "transport_unreachable",
       signal,
     );
+    const unavailableDetectedAt = new Date();
     record({
       check: "Core observed Building Scan becoming unavailable",
       expected: {
         status: "unavailable",
         reason_code: "transport_unreachable",
         operations: expectedOperations,
+        checked_at: {
+          format: "RFC3339 timestamp",
+          not_before: stopStartedAt.toISOString(),
+          not_after: unavailableDetectedAt.toISOString(),
+        },
       },
-      actual: unavailable,
+      actual: {
+        ...unavailable,
+        stop: { started_at: stopStartedAt.toISOString(), completed_at: stopCompletedAt.toISOString() },
+        unavailable_detected_at: unavailableDetectedAt.toISOString(),
+      },
       passed:
         unavailable.status === "unavailable" &&
         unavailable.reason_code === "transport_unreachable" &&
         structurallyEqual(unavailable.operations, expectedOperations) &&
-        isLaterTimestamp(unavailable.checked_at, available.checked_at),
+        isTimestampWithinWindow(unavailable.checked_at, stopStartedAt, unavailableDetectedAt),
     });
     const unavailableInvocation = await captureAPIError(
       () => client.plugins.invokeSpatial(pluginID, operationID, areas.success, { signal }),
@@ -386,7 +398,7 @@ function recordSuccessfulResult(record, operation, invocation, check = undefined
     actual: { ...actual, invocation: { started_at: startedAt.toISOString(), completed_at: completedAt.toISOString() } },
     passed:
       structurallyEqual({ ...actual, retrieved_at: undefined }, { ...expected, retrieved_at: undefined }) &&
-      isTimestampWithinInvocation(result.retrieved_at, startedAt, completedAt),
+      isTimestampWithinWindow(result.retrieved_at, startedAt, completedAt),
   });
 }
 
@@ -513,7 +525,7 @@ function isTimestamp(value) {
   return isRFC3339Timestamp(value);
 }
 
-function isTimestampWithinInvocation(value, startedAt, completedAt) {
+function isTimestampWithinWindow(value, startedAt, completedAt) {
   if (!isTimestamp(value)) return false;
   const time = Date.parse(value);
   return time >= startedAt.getTime() && time <= completedAt.getTime();
