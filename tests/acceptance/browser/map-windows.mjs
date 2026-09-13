@@ -465,7 +465,11 @@ async function runMapWindowJourney({
       check: `${browserName} restored the collapsed map window with its keyboard-reachable handle`,
       page
     });
-    const restoreFocus = await window.locator(".map-window__collapse").evaluate((element) => document.activeElement === element);
+    const collapseControl = window.locator(".map-window__collapse");
+    const collapseElement = await collapseControl.elementHandle();
+    if (!collapseElement) throw new Error("restored collapse control must be attached before checking focus");
+    await page.waitForFunction((control) => document.activeElement === control, collapseElement, { timeout: 15_000 });
+    const restoreFocus = await collapseControl.evaluate((element) => document.activeElement === element);
     record({
       check: `${browserName} restored keyboard focus to a reachable active map-window control`,
       expected: { collapse_control_focused: true },
