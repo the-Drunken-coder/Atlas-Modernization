@@ -101,8 +101,8 @@ const revision = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repositoryRoo
 const artifactParent = process.env.ATLAS_LINK_ACCEPTANCE_ARTIFACTS ?? join(repositoryRoot, ".tmp", "link-acceptance");
 const scenario = acceptanceScenario();
 const httpRequestTimeoutMs = 15_000;
-// The sequential readiness, join, publication, shutdown, and fallback-cleanup bounds total less than this outer limit.
-const processTestTimeoutMs = 210_000;
+// Explicit phase deadlines total 207 seconds; cleanup adds 10 seconds, leaving 23 seconds for evidence writes.
+const processTestTimeoutMs = 240_000;
 
 test("runs compiled Gateway and Asset processes through device configuration, authenticated join, traffic, and shutdown", {
   timeout: processTestTimeoutMs
