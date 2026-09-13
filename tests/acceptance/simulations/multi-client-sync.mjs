@@ -18,6 +18,7 @@ import {
 
 const reproduction =
   "npm run build:sdk && node --import ./simulations/node_modules/tsx/dist/loader.mjs tests/acceptance/simulations/multi-client-sync.mjs";
+const scenarioID = "multi-client-sync";
 const nightly = process.env.ATLAS_ACCEPTANCE_NIGHTLY === "1";
 const normalInputs = nightly
   ? { clientCount: 4, writes: 8, settleMs: 2_500 }
@@ -143,7 +144,11 @@ await runAcceptance({
         "POST",
         `/api/runs/${encodeURIComponent(run.id)}/cleanup`,
       );
-      const cleanedSummary = parseBrowserRunSummary(cleanup.body.run);
+      const cleanedSummary = parseBrowserRunSummary(cleanup.body.run, {
+        context: "cleanup response",
+        runID: run.id,
+        scenarioID,
+      });
       const cleanupStream = await collectRunEvents({
         api,
         runID: run.id,
@@ -387,8 +392,11 @@ async function startRun(api, inputs) {
     targetId: "local",
     inputs,
   });
-  const run = parseBrowserRunSummary(response.body.run);
-  if (response.status !== 201 || run.scenarioId !== "multi-client-sync") {
+  const run = parseBrowserRunSummary(response.body.run, {
+    context: "start response",
+    scenarioID,
+  });
+  if (response.status !== 201 || run.scenarioId !== scenarioID) {
     throw new Error(
       `Starting multi-client-sync expected HTTP 201, observed ${response.raw}`,
     );
@@ -398,7 +406,11 @@ async function startRun(api, inputs) {
 
 async function readRun(api, runID) {
   const response = await api.json("GET", `/api/runs/${encodeURIComponent(runID)}`);
-  return parseBrowserRunSummary(response.body.run);
+  return parseBrowserRunSummary(response.body.run, {
+    context: "run read response",
+    runID,
+    scenarioID,
+  });
 }
 
 function recordCompletedStream(run, summary, events, inputs, record) {
@@ -406,10 +418,19 @@ function recordCompletedStream(run, summary, events, inputs, record) {
   const resources = events.filter((event) => event.type === "resource");
   const assertions = events.filter((event) => event.type === "assertion");
   const expectedAssertionNames = clientAssertionNames(inputs.clientCount);
-  const expectedAssertionIDs = expectedAssertionNames.map(
-    (_, index) => `assert-${index + 1}`,
+  const expectedAssertionResults = expectedAssertionNames.map(
+    (name, index) => ({ id: `assert-${index + 1}`, name, passed: true }),
   );
-  const actualAssertionIDs = assertions.map((event) => event.assertion?.id);
+  const expectedAssertionIDs = expectedAssertionResults.map(
+    (assertion) => assertion.id,
+  );
+  const streamAssertionResults = orderedAssertionResults(
+    assertions.map((event) => event.assertion),
+  );
+  const summaryAssertionResults = orderedAssertionResults(summary.assertions);
+  const actualAssertionIDs = streamAssertionResults.map(
+    (assertion) => assertion.id,
+  );
   const terminal = events.find(
     (event) => event.type === "status" && event.status !== "running",
   );
@@ -431,6 +452,7 @@ function recordCompletedStream(run, summary, events, inputs, record) {
       assertion_ids: expectedAssertionIDs,
       assertion_ids_unique: true,
       assertion_names: expectedAssertionNames,
+      assertion_results: expectedAssertionResults,
     },
     actual: {
       started_run: { id: run.id, status: run.status, cleaned: run.cleaned },
@@ -441,7 +463,8 @@ function recordCompletedStream(run, summary, events, inputs, record) {
       assertion_ids: actualAssertionIDs,
       assertion_ids_unique:
         new Set(actualAssertionIDs).size === actualAssertionIDs.length,
-      assertions: assertions.map((event) => event.assertion),
+      stream_assertion_results: streamAssertionResults,
+      summary_assertion_results: summaryAssertionResults,
     },
     passed:
       run.status === "running" &&
@@ -457,14 +480,22 @@ function recordCompletedStream(run, summary, events, inputs, record) {
         [...expectedAssertionIDs].sort(),
       ) &&
       new Set(actualAssertionIDs).size === actualAssertionIDs.length &&
-      isDeepStrictEqual(
-        assertions.map((event) => event.assertion?.name).sort(),
-        [...expectedAssertionNames].sort(),
-      ) &&
-      assertions.every((event) => event.assertion?.passed === true) &&
+      isDeepStrictEqual(streamAssertionResults, expectedAssertionResults) &&
+      isDeepStrictEqual(summaryAssertionResults, expectedAssertionResults) &&
+      isDeepStrictEqual(summaryAssertionResults, streamAssertionResults) &&
       strictlyIncreasing(events.map((event) => event.sequence)) &&
       events.every((event) => event.runId === run.id),
   });
+}
+
+function orderedAssertionResults(assertions) {
+  return assertions
+    .map((assertion) => ({
+      id: assertion?.id,
+      name: assertion?.name,
+      passed: assertion?.passed,
+    }))
+    .sort((left, right) => String(left.id).localeCompare(String(right.id)));
 }
 
 async function readWriterEntities(core, run, signal) {

@@ -1,11 +1,11 @@
 import { isResourceType } from "@the-drunken-coder/atlas-sdk";
 
 /**
- * Mirrors the browser API's `isRunSummary` guard for each run lifecycle
- * response. Journey assertions below still compare the scenario's expected
- * values independently of this structural consumer check.
+ * Mirrors the browser API's `isRunSummary` guard and binds each consumed
+ * lifecycle response to the requested scenario and, when known, run ID.
+ * Journey assertions still compare the scenario's expected values separately.
  */
-export function parseBrowserRunSummary(value) {
+export function parseBrowserRunSummary(value, expected) {
   if (
     !isRecord(value) ||
     typeof value.id !== "string" ||
@@ -26,6 +26,12 @@ export function parseBrowserRunSummary(value) {
     (value.lastError !== undefined && typeof value.lastError !== "string")
   ) {
     throw new Error("Invalid browser run summary");
+  }
+  if (
+    value.scenarioId !== expected.scenarioID ||
+    (expected.runID !== undefined && value.id !== expected.runID)
+  ) {
+    throw new Error(`Unexpected browser run summary from ${expected.context}`);
   }
   return value;
 }

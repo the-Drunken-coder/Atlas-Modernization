@@ -13,6 +13,7 @@ import {
 
 const reproduction =
   "npm run build:sdk && node --import ./simulations/node_modules/tsx/dist/loader.mjs tests/acceptance/simulations/observations-objects.mjs";
+const scenarioID = "observations-objects";
 const nightly = process.env.ATLAS_ACCEPTANCE_NIGHTLY === "1";
 const normalInputs = {
   assetCount: nightly ? 3 : 2,
@@ -166,6 +167,11 @@ await runAcceptance({
       );
       const cleanedNormalSummary = parseBrowserRunSummary(
         cleanedNormal.body.run,
+        {
+          context: "completed cleanup response",
+          runID: normal.id,
+          scenarioID,
+        },
       );
       const normalCleanupStream = await collectRunEvents({
         api,
@@ -235,7 +241,11 @@ await runAcceptance({
         "POST",
         `/api/runs/${encodeURIComponent(cancelled.id)}/stop`,
       );
-      const cancelledRunSummary = parseBrowserRunSummary(cancelledRun.body.run);
+      const cancelledRunSummary = parseBrowserRunSummary(cancelledRun.body.run, {
+        context: "stop response",
+        runID: cancelled.id,
+        scenarioID,
+      });
       record({
         check:
           "observations-objects accepts cancellation through its public route",
@@ -278,6 +288,11 @@ await runAcceptance({
       );
       const cleanedCancelledSummary = parseBrowserRunSummary(
         cleanedCancelled.body.run,
+        {
+          context: "cancelled cleanup response",
+          runID: cancelled.id,
+          scenarioID,
+        },
       );
       const cancelledCleanupStream = await collectRunEvents({
         api,
@@ -542,10 +557,13 @@ async function startRun(api, inputs, jsonInput) {
     inputs,
     jsonInput: JSON.stringify(jsonInput),
   });
-  const run = parseBrowserRunSummary(response.body.run);
+  const run = parseBrowserRunSummary(response.body.run, {
+    context: "start response",
+    scenarioID,
+  });
   if (
     response.status !== 201 ||
-    run.scenarioId !== "observations-objects"
+    run.scenarioId !== scenarioID
   ) {
     throw new Error(
       `Starting observations-objects expected HTTP 201, observed ${response.raw}`,
@@ -556,7 +574,11 @@ async function startRun(api, inputs, jsonInput) {
 
 async function readRun(api, runID) {
   const response = await api.json("GET", `/api/runs/${encodeURIComponent(runID)}`);
-  return parseBrowserRunSummary(response.body.run);
+  return parseBrowserRunSummary(response.body.run, {
+    context: "run read response",
+    runID,
+    scenarioID,
+  });
 }
 
 function recordCompletedStream(started, completed, events, inputs, record) {
@@ -564,15 +586,23 @@ function recordCompletedStream(started, completed, events, inputs, record) {
   const resources = events.filter((event) => event.type === "resource");
   const logs = events.filter((event) => event.type === "log");
   const assertions = events.filter((event) => event.type === "assertion");
-  const expectedAssertions = [
-    "Observer assets persisted",
-    "Tracks persisted",
-    "Object references persisted",
+  const expectedAssertionResults = [
+    { id: "assert-1", name: "Observer assets persisted", passed: true },
+    { id: "assert-2", name: "Tracks persisted", passed: true },
+    { id: "assert-3", name: "Object references persisted", passed: true },
   ];
-  const expectedAssertionIDs = expectedAssertions.map(
-    (_, index) => `assert-${index + 1}`,
+  const expectedAssertionIDs = expectedAssertionResults.map(
+    (assertion) => assertion.id,
   );
-  const actualAssertionIDs = assertions.map((event) => event.assertion?.id);
+  const streamAssertionResults = assertions.map((event) =>
+    assertionResultState(event.assertion),
+  );
+  const summaryAssertionResults = completed.assertions.map(
+    assertionResultState,
+  );
+  const actualAssertionIDs = streamAssertionResults.map(
+    (assertion) => assertion.id,
+  );
   const terminal = events.find(
     (event) => event.type === "status" && event.status !== "running",
   );
@@ -620,7 +650,7 @@ function recordCompletedStream(started, completed, events, inputs, record) {
       logs: expectedLogs,
       assertion_ids: expectedAssertionIDs,
       assertion_ids_unique: true,
-      assertions: expectedAssertions,
+      assertion_results: expectedAssertionResults,
     },
     actual: {
       started_run: {
@@ -636,7 +666,8 @@ function recordCompletedStream(started, completed, events, inputs, record) {
       assertion_ids: actualAssertionIDs,
       assertion_ids_unique:
         new Set(actualAssertionIDs).size === actualAssertionIDs.length,
-      assertions: assertions.map((event) => event.assertion),
+      stream_assertion_results: streamAssertionResults,
+      summary_assertion_results: summaryAssertionResults,
     },
     passed:
       started.status === "running" &&
@@ -650,14 +681,20 @@ function recordCompletedStream(started, completed, events, inputs, record) {
       isDeepStrictEqual(actualLogs, expectedLogs) &&
       isDeepStrictEqual(actualAssertionIDs, expectedAssertionIDs) &&
       new Set(actualAssertionIDs).size === actualAssertionIDs.length &&
-      isDeepStrictEqual(
-        assertions.map((event) => event.assertion?.name),
-        expectedAssertions,
-      ) &&
-      assertions.every((event) => event.assertion?.passed === true) &&
+      isDeepStrictEqual(streamAssertionResults, expectedAssertionResults) &&
+      isDeepStrictEqual(summaryAssertionResults, expectedAssertionResults) &&
+      isDeepStrictEqual(summaryAssertionResults, streamAssertionResults) &&
       strictlyIncreasing(events.map((event) => event.sequence)) &&
       events.every((event) => event.runId === started.id),
   });
+}
+
+function assertionResultState(assertion) {
+  return {
+    id: assertion?.id,
+    name: assertion?.name,
+    passed: assertion?.passed,
+  };
 }
 
 function recordCreatedResourceSet(run, inputs, record) {
