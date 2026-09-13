@@ -13,9 +13,18 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repositoryRoot = fileURLToPath(new URL("../../../..", import.meta.url));
-const serverEntrypoint = fileURLToPath(new URL("./server-launcher.mjs", import.meta.url));
+const serverEntrypoint = fileURLToPath(
+  new URL("./server-launcher.mjs", import.meta.url),
+);
 const simulationPackageRoot = join(repositoryRoot, "simulations");
-const tsxLoader = join(repositoryRoot, "simulations", "node_modules", "tsx", "dist", "loader.mjs");
+const tsxLoader = join(
+  repositoryRoot,
+  "simulations",
+  "node_modules",
+  "tsx",
+  "dist",
+  "loader.mjs",
+);
 const readinessTimeoutMs = 30_000;
 const shutdownTimeoutMs = 5_000;
 const startupRetryAttempts = 3;
@@ -27,7 +36,7 @@ export const simulationFixtureVariant = {
   config_loader: "simulations/src/server/config.ts#loadConfig",
   sdk: "built @the-drunken-coder/atlas-sdk workspace package",
   target: "runner-owned disposable loopback Core",
-  transport: "public simulation HTTP and server-sent event routes"
+  transport: "public simulation HTTP and server-sent event routes",
 };
 
 export function createSimulationServerFixture() {
@@ -54,20 +63,22 @@ export function createSimulationServerFixture() {
         ...simulationFixtureVariant,
         acceptance_run_id: runID,
         node: process.version,
-        startup: "each child startup reserves a loopback port and retries only a recognized EADDRINUSE exit",
+        startup:
+          "each child startup reserves a loopback port and retries only a recognized EADDRINUSE exit",
         isolated_package_root: isolatedPackageRoot,
         static_assets: isolatedPackage.staticAssets
           ? {
               present: true,
               path: join(isolatedPackageRoot, "dist"),
-              coverage: "not exercised by this API and SDK acceptance"
+              coverage: "not exercised by this API and SDK acceptance",
             }
           : {
               present: false,
-              coverage: "not built or exercised by this API and SDK acceptance"
+              coverage: "not built or exercised by this API and SDK acceptance",
             },
         package_state: packageState,
-        cleanup: "owned child receives SIGTERM and then SIGKILL only if it misses the bounded shutdown deadline"
+        cleanup:
+          "owned child receives SIGTERM and then SIGKILL only if it misses the bounded shutdown deadline",
       };
       writeJSON(join(artifacts, "simulation-fixture.json"), metadata);
       return {
@@ -81,14 +92,14 @@ export function createSimulationServerFixture() {
               stopped_at: new Date().toISOString(),
               forced_shutdown: forced,
               exit_code: child.exitCode,
-              exit_signal: child.signalCode
+              exit_signal: child.signalCode,
             };
             writeJSON(join(artifacts, "simulation-server.json"), serverState);
           } finally {
             removeIsolatedPackageRoot(isolatedPackageRoot);
             isolatedPackageRoot = undefined;
           }
-        }
+        },
       };
     },
 
@@ -104,7 +115,8 @@ export function createSimulationServerFixture() {
       environment.ATLAS_LOCAL_API_KEY = apiKey;
       environment.ATLAS_SIM_ENABLE_DEPLOYED = "false";
       environment.ATLAS_SIM_TARGET = "local";
-      environment.ATLAS_ACCEPTANCE_SIMULATION_PACKAGE_ROOT = isolatedPackageRoot;
+      environment.ATLAS_ACCEPTANCE_SIMULATION_PACKAGE_ROOT =
+        isolatedPackageRoot;
       delete environment.ATLAS_DEPLOYED_BASE_URL;
       delete environment.ATLAS_DEPLOYED_API_KEY;
 
@@ -121,7 +133,7 @@ export function createSimulationServerFixture() {
         child = spawn(process.execPath, args, {
           cwd: repositoryRoot,
           env: environment,
-          stdio: ["ignore", "pipe", "pipe"]
+          stdio: ["ignore", "pipe", "pipe"],
         });
         child.stdout.on("data", (chunk) => {
           childOutput += chunk;
@@ -145,30 +157,46 @@ export function createSimulationServerFixture() {
           startup_attempts: startupAttempts,
           core_base_url: coreBaseUrl,
           started_at: new Date().toISOString(),
-          log: logPath
+          log: logPath,
         };
         writeJSON(join(artifacts, "simulation-server.json"), serverState);
         try {
-          const health = await waitForReadiness(url, signal, () => ({ child, spawnError, childOutput }));
-          serverState = { ...serverState, ready_at: new Date().toISOString(), health };
+          const health = await waitForReadiness(url, signal, () => ({
+            child,
+            spawnError,
+            childOutput,
+          }));
+          serverState = {
+            ...serverState,
+            ready_at: new Date().toISOString(),
+            health,
+          };
           writeJSON(join(artifacts, "simulation-server.json"), serverState);
           return { url, health, cleanupLedgerDirectory };
         } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : String(error);
+          const errorMessage =
+            error instanceof Error ? error.message : String(error);
           const retryable = isAddressInUse(errorMessage);
-          startupAttempts.push({ attempt, port, error: errorMessage, retryable });
+          startupAttempts.push({
+            attempt,
+            port,
+            error: errorMessage,
+            retryable,
+          });
           serverState = {
             ...serverState,
             failed_at: new Date().toISOString(),
-            startup_attempts: startupAttempts
+            startup_attempts: startupAttempts,
           };
           writeJSON(join(artifacts, "simulation-server.json"), serverState);
           if (!retryable || attempt === startupRetryAttempts) throw error;
           await childCompletion;
         }
       }
-      throw new Error("Simulation server exhausted its bounded startup retries");
-    }
+      throw new Error(
+        "Simulation server exhausted its bounded startup retries",
+      );
+    },
   };
 }
 
@@ -189,15 +217,17 @@ function removeIsolatedPackageRoot(packageRoot) {
 
 function validateIsolatedPackageState(packageRoot) {
   const ledgerDirectory = join(packageRoot, ".atlas-simulations", "runs");
-  const ledgerEntries = existsSync(ledgerDirectory) ? readdirSync(ledgerDirectory) : [];
+  const ledgerEntries = existsSync(ledgerDirectory)
+    ? readdirSync(ledgerDirectory)
+    : [];
   if (ledgerEntries.length > 0) {
     throw new Error(
-      `Simulation acceptance requires a clean worktree without retained cleanup-ledger entries; found ${ledgerEntries.length}`
+      `Simulation acceptance requires a clean worktree without retained cleanup-ledger entries; found ${ledgerEntries.length}`,
     );
   }
   return {
     retained_cleanup_ledger_entries: 0,
-    retained_cleanup_ledger_path: ledgerDirectory
+    retained_cleanup_ledger_path: ledgerDirectory,
   };
 }
 
@@ -207,26 +237,30 @@ async function waitForReadiness(url, signal, processState) {
   while (Date.now() < deadline) {
     signal.throwIfAborted();
     const { child, spawnError, childOutput } = processState();
-    if (spawnError) throw new Error(`Simulation server failed to start: ${spawnError.message}`);
+    if (spawnError)
+      throw new Error(
+        `Simulation server failed to start: ${spawnError.message}`,
+      );
     if (child.exitCode !== null || child.signalCode !== null) {
       throw new Error(
-        `Simulation server exited before readiness with code ${String(child.exitCode)} and signal ${String(child.signalCode)}: ${childOutput}`
+        `Simulation server exited before readiness with code ${String(child.exitCode)} and signal ${String(child.signalCode)}: ${childOutput}`,
       );
     }
     try {
       const response = await fetch(`${url}/api/health`, {
-        signal: AbortSignal.any([signal, AbortSignal.timeout(2_000)])
+        signal: AbortSignal.any([signal, AbortSignal.timeout(2_000)]),
       });
       const raw = await response.text();
       lastObservation = `HTTP ${response.status}: ${raw}`;
-      if (response.status === 200) return parseJSON(raw, "simulation health response");
+      if (response.status === 200)
+        return parseJSON(raw, "simulation health response");
     } catch (error) {
       lastObservation = error instanceof Error ? error.message : String(error);
     }
     await abortableDelay(100, signal);
   }
   throw new Error(
-    `Simulation server readiness expected HTTP 200 within ${readinessTimeoutMs} ms; observed ${lastObservation}`
+    `Simulation server readiness expected HTTP 200 within ${readinessTimeoutMs} ms; observed ${lastObservation}`,
   );
 }
 
@@ -269,7 +303,7 @@ async function settledWithin(promise, milliseconds) {
       promise.then(() => true),
       new Promise((resolve) => {
         timer = setTimeout(() => resolve(false), milliseconds);
-      })
+      }),
     ]);
   } finally {
     clearTimeout(timer);
@@ -280,7 +314,8 @@ function reserveLoopbackPort(signal) {
   return new Promise((resolve, reject) => {
     const server = createServer();
     let settled = false;
-    const onAbort = () => finish(signal.reason ?? new Error("Simulation port reservation aborted"));
+    const onAbort = () =>
+      finish(signal.reason ?? new Error("Simulation port reservation aborted"));
     const finish = (error, value) => {
       if (settled) return;
       settled = true;
@@ -298,7 +333,9 @@ function reserveLoopbackPort(signal) {
       const address = server.address();
       if (!address || typeof address === "string") {
         server.close();
-        finish(new Error("Could not reserve an isolated simulation server port"));
+        finish(
+          new Error("Could not reserve an isolated simulation server port"),
+        );
         return;
       }
       let released = false;
@@ -312,7 +349,7 @@ function reserveLoopbackPort(signal) {
             }
             released = true;
             server.close((error) => (error ? releaseReject(error) : release()));
-          })
+          }),
       });
     });
   });
