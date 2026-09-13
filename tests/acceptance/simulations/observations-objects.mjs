@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { appendFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { AtlasClient, isAtlasAPIError } from "@the-drunken-coder/atlas-sdk";
@@ -150,6 +150,14 @@ await runAcceptance({
         { instanceToken: replacementObjectToken, signal },
       );
 
+      recordLocalLedgerState(
+        normal.id,
+        simulation.cleanupLedgerDirectory,
+        artifacts,
+        record,
+        "before completed cleanup",
+      );
+
       const cleanedNormal = await api.json(
         "POST",
         `/api/runs/${encodeURIComponent(normal.id)}/cleanup`,
@@ -188,6 +196,13 @@ await runAcceptance({
         },
         signal,
         record,
+      );
+      recordLocalLedgerState(
+        normal.id,
+        simulation.cleanupLedgerDirectory,
+        artifacts,
+        record,
+        "after completed cleanup",
       );
 
       const cancelled = await startRun(
@@ -237,6 +252,13 @@ await runAcceptance({
         passed: cancelledSummary.status === cancelledRun.body.run.status,
       });
       recordCreatedResourceSet(cancelledSummary, cancellationInputs, record);
+      recordLocalLedgerState(
+        cancelled.id,
+        simulation.cleanupLedgerDirectory,
+        artifacts,
+        record,
+        "before cancelled cleanup",
+      );
       const cleanedCancelled = await api.json(
         "POST",
         `/api/runs/${encodeURIComponent(cancelled.id)}/cleanup`,
@@ -276,6 +298,13 @@ await runAcceptance({
         signal,
         record,
         "cancelled observations cleanup preserves replacement and unrelated resource instances",
+      );
+      recordLocalLedgerState(
+        cancelled.id,
+        simulation.cleanupLedgerDirectory,
+        artifacts,
+        record,
+        "after cancelled cleanup",
       );
 
       const allIDs = [
@@ -417,6 +446,7 @@ async function verifyLocalTargetAndScenario(api, coreBaseUrl, apiKey, record) {
       accepts_json: true,
       asset_count: [1, 10],
       observations: [1, 50],
+      tick_ms: [0, 10_000],
       tick_ms_step: 50,
     },
     actual: scenario,
@@ -424,6 +454,7 @@ async function verifyLocalTargetAndScenario(api, coreBaseUrl, apiKey, record) {
       scenario?.acceptsJson === true &&
       fieldBounds(scenario, "assetCount", 1, 10) &&
       fieldBounds(scenario, "observations", 1, 50) &&
+      fieldBounds(scenario, "tickMs", 0, 10_000) &&
       scenario.inputFields.find((field) => field.key === "tickMs")?.step === 50,
   });
 }
@@ -1176,4 +1207,32 @@ function parseJSON(raw, description) {
 
 function appendJSON(path, value) {
   appendFileSync(path, `${JSON.stringify(value)}\n`);
+}
+
+function recordLocalLedgerState(
+  simulationRunID,
+  cleanupLedgerDirectory,
+  artifacts,
+  record,
+  phase,
+) {
+  const ledgerPath = join(cleanupLedgerDirectory, `${simulationRunID}.json`);
+  const present = existsSync(ledgerPath);
+  const state = {
+    run_id: simulationRunID,
+    phase,
+    ledger_path: ledgerPath,
+    local_ledger_file_present: present,
+  };
+  appendJSON(join(artifacts, "local-ledger-checks.jsonl"), state);
+  record({
+    check: `local disposable run does not create a deployed cleanup ledger record ${phase}`,
+    expected: {
+      run_id: simulationRunID,
+      phase,
+      local_ledger_file_present: false,
+    },
+    actual: state,
+    passed: !present,
+  });
 }

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { appendFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { AtlasClient, isAtlasAPIError } from "@the-drunken-coder/atlas-sdk";
@@ -129,6 +129,14 @@ await runAcceptance({
         { instanceToken: replacementWriterToken, signal },
       );
 
+      recordLocalLedgerState(
+        run.id,
+        simulation.cleanupLedgerDirectory,
+        artifacts,
+        record,
+        "before cleanup",
+      );
+
       const cleanup = await api.json(
         "POST",
         `/api/runs/${encodeURIComponent(run.id)}/cleanup`,
@@ -156,6 +164,13 @@ await runAcceptance({
         ),
         signal,
         record,
+      );
+      recordLocalLedgerState(
+        run.id,
+        simulation.cleanupLedgerDirectory,
+        artifacts,
+        record,
+        "after cleanup",
       );
       await recordProtectedResources(
         core,
@@ -867,4 +882,32 @@ function parseJSON(raw, description) {
 
 function appendJSON(path, value) {
   appendFileSync(path, `${JSON.stringify(value)}\n`);
+}
+
+function recordLocalLedgerState(
+  simulationRunID,
+  cleanupLedgerDirectory,
+  artifacts,
+  record,
+  phase,
+) {
+  const ledgerPath = join(cleanupLedgerDirectory, `${simulationRunID}.json`);
+  const present = existsSync(ledgerPath);
+  const state = {
+    run_id: simulationRunID,
+    phase,
+    ledger_path: ledgerPath,
+    local_ledger_file_present: present,
+  };
+  appendJSON(join(artifacts, "local-ledger-checks.jsonl"), state);
+  record({
+    check: `local disposable run does not create a deployed cleanup ledger record ${phase}`,
+    expected: {
+      run_id: simulationRunID,
+      phase,
+      local_ledger_file_present: false,
+    },
+    actual: state,
+    passed: !present,
+  });
 }
