@@ -483,13 +483,19 @@ function recordCompletedStream(started, completed, events, inputs, record) {
   const terminal = events.find(
     (event) => event.type === "status" && event.status !== "running",
   );
+  const expectedResources = completed.createdResources
+    .map((resource) => `${resource.type}:${resource.id}`)
+    .sort();
+  const actualResources = resources
+    .map((event) => `${event.resource?.type}:${event.resource?.id}`)
+    .sort();
   record({
     check: "actual server event stream completes observations-objects",
     expected: {
       start_status: "running",
       initial_event: { type: "status", status: "running" },
       status: "completed",
-      resources: inputs.assetCount + inputs.observations * 2,
+      resources: expectedResources,
       observation_logs: inputs.observations,
       assertions: [
         "Observer assets persisted",
@@ -501,7 +507,7 @@ function recordCompletedStream(started, completed, events, inputs, record) {
       started_run: { id: started.id, status: started.status },
       initial,
       terminal,
-      resources: resources.map((event) => event.resource),
+      resources: actualResources,
       logs: observations.map((event) => event.message),
       assertions: assertions.map((event) => event.assertion),
     },
@@ -511,7 +517,7 @@ function recordCompletedStream(started, completed, events, inputs, record) {
       initial.status === "running" &&
       completed.status === "completed" &&
       terminal?.status === "completed" &&
-      resources.length === inputs.assetCount + inputs.observations * 2 &&
+      isDeepStrictEqual(actualResources, expectedResources) &&
       observations.length === inputs.observations &&
       isDeepStrictEqual(
         assertions.map((event) => event.assertion?.name),
@@ -766,9 +772,14 @@ function recordCleanupEvents(run, cleaned, events, record) {
   record({
     check:
       "observations cleanup reports every recorded Entity and Object resource",
-    expected: { cleaned: true, resources: expected },
-    actual: { cleaned: cleaned.cleaned, resources: actual },
+    expected: { status: run.status, cleaned: true, resources: expected },
+    actual: {
+      status: cleaned.status,
+      cleaned: cleaned.cleaned,
+      resources: actual,
+    },
     passed:
+      cleaned.status === run.status &&
       cleaned.cleaned === true &&
       isDeepStrictEqual(actual, expected) &&
       events.some(

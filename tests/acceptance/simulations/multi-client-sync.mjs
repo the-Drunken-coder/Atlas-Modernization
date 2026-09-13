@@ -4,7 +4,11 @@ import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { AtlasClient, isAtlasAPIError } from "@the-drunken-coder/atlas-sdk";
 import { runAcceptance } from "../support/stack.mjs";
-import { startReaders, stopReaders } from "./support/multi-client-readers.mjs";
+import {
+  observeReaderTransport,
+  startReaders,
+  stopReaders,
+} from "./support/multi-client-readers.mjs";
 import {
   createSimulationServerFixture,
   simulationFixtureVariant,
@@ -63,6 +67,7 @@ await runAcceptance({
       await verifyLocalTargetAndScenario(api, baseUrl, apiKey, record);
       if (nightly) await recordInvalidInputFault(api, record);
 
+      observeReaderTransport(readers);
       const run = await startRun(api, normalInputs);
       const stream = await collectRunEvents({
         api,
@@ -379,20 +384,26 @@ function recordCompletedStream(run, summary, events, inputs, record) {
   const terminal = events.find(
     (event) => event.type === "status" && event.status !== "running",
   );
+  const expectedResources = summary.createdResources
+    .map((resource) => `${resource.type}:${resource.id}`)
+    .sort();
+  const actualResources = resources
+    .map((event) => `${event.resource?.type}:${event.resource?.id}`)
+    .sort();
   record({
     check: "actual server event stream completes multi-client-sync",
     expected: {
       start_status: "running",
       initial_event: { type: "status", status: "running" },
       status: "completed",
-      resources: inputs.writes,
+      resources: expectedResources,
       assertion_names: expectedAssertionNames,
     },
     actual: {
       started_run: { id: run.id, status: run.status },
       initial,
       terminal,
-      resources: resources.map((event) => event.resource),
+      resources: actualResources,
       assertions: assertions.map((event) => event.assertion),
     },
     passed:
@@ -401,7 +412,7 @@ function recordCompletedStream(run, summary, events, inputs, record) {
       initial.status === "running" &&
       summary.status === "completed" &&
       terminal?.status === "completed" &&
-      resources.length === inputs.writes &&
+      isDeepStrictEqual(actualResources, expectedResources) &&
       isDeepStrictEqual(
         assertions.map((event) => event.assertion?.name).sort(),
         [...expectedAssertionNames].sort(),
@@ -507,6 +518,7 @@ async function recordSDKConvergence(
           snapshot.entities[entity.entity_id],
         ]),
       ),
+      transport_requests: reader.transport.requests,
     };
   });
   record({
@@ -523,11 +535,16 @@ async function recordSDKConvergence(
       ),
       running: true,
       healthy: true,
+      transport_requests: [],
     },
     actual,
     passed:
       readers.length === inputs.clientCount &&
-      readers.every((reader) => readerMatchesWriter(reader, writerByID)),
+      readers.every(
+        (reader) =>
+          readerMatchesWriter(reader, writerByID) &&
+          reader.transport.requests.length === 0,
+      ),
   });
 }
 
@@ -557,9 +574,14 @@ function recordCleanupEvents(run, cleaned, events, record) {
     .sort();
   record({
     check: "multi-client cleanup reports every run-owned Entity",
-    expected: { cleaned: true, resources: expected },
-    actual: { cleaned: cleaned.cleaned, resources: actual },
+    expected: { status: run.status, cleaned: true, resources: expected },
+    actual: {
+      status: cleaned.status,
+      cleaned: cleaned.cleaned,
+      resources: actual,
+    },
     passed:
+      cleaned.status === run.status &&
       cleaned.cleaned === true &&
       isDeepStrictEqual(actual, expected) &&
       events.some(

@@ -17,17 +17,20 @@ export async function startReaders({
 
   try {
     for (let index = 0; index < count; index += 1) {
+      const readerTransport = { observing: false, requests: [] };
       const client = createClient({
         baseUrl,
         apiKey,
         sync: "all",
         pollIntervalMs: 0,
         requestTimeoutMs: 10_000,
+        fetch: createObservedFetch(readerTransport),
       });
       const reader = {
         index: index + 1,
         client,
         seenVersions: new Map(),
+        transport: readerTransport,
         unwatch: () => {},
       };
       readers.push(reader);
@@ -64,6 +67,18 @@ export async function startReaders({
   }
 }
 
+/**
+ * Begins observing real SDK HTTP calls after feed startup and before the
+ * scenario creates writer resources. The fetch hook delegates to the runtime
+ * implementation; it never supplies a response itself.
+ */
+export function observeReaderTransport(readers) {
+  for (const reader of readers) {
+    reader.transport.requests.length = 0;
+    reader.transport.observing = true;
+  }
+}
+
 export function stopReaders(readers) {
   const cleanupErrors = [];
   for (const reader of readers) {
@@ -79,4 +94,33 @@ export function stopReaders(readers) {
     }
   }
   return cleanupErrors;
+}
+
+function createObservedFetch(transport) {
+  return async (input, init) => {
+    if (transport.observing) {
+      transport.requests.push({
+        method: requestMethod(input, init),
+        path: requestPath(input),
+      });
+    }
+    return fetch(input, init);
+  };
+}
+
+function requestMethod(input, init) {
+  if (init?.method) return init.method;
+  if (typeof input === "object" && input && "method" in input) {
+    return input.method;
+  }
+  return "GET";
+}
+
+function requestPath(input) {
+  const url =
+    typeof input === "string" || input instanceof URL
+      ? String(input)
+      : input.url;
+  const parsed = new URL(url);
+  return `${parsed.pathname}${parsed.search}`;
 }
