@@ -230,6 +230,12 @@ await runAcceptance({
           cancellationProgress.events.length > 0,
       });
       const cancelledSummary = await readRun(api, cancelled.id);
+      record({
+        check: "observations reread preserves the confirmed cancelled status",
+        expected: { status: cancelledRun.body.run.status },
+        actual: { status: cancelledSummary.status },
+        passed: cancelledSummary.status === cancelledRun.body.run.status,
+      });
       recordCreatedResourceSet(cancelledSummary, cancellationInputs, record);
       const cleanedCancelled = await api.json(
         "POST",
