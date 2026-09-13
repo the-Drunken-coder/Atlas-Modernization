@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { appendFileSync, existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { isDeepStrictEqual } from "node:util";
 import { AtlasClient, isAtlasAPIError } from "@the-drunken-coder/atlas-sdk";
 import { parseRunEvent } from "../../../simulations/src/client/run-state.ts";
@@ -71,10 +72,21 @@ await runAcceptance({
 
     try {
       verifyServerHealth(simulation.health, baseUrl, record);
-      const target = await verifyLocalTargetAndScenario(api, baseUrl, apiKey, record);
+      const { target, scenarioName } = await verifyLocalTargetAndScenario(
+        api,
+        baseUrl,
+        apiKey,
+        record,
+      );
       if (nightly) await recordInvalidInputFault(api, record);
 
-      const normal = await startRun(api, normalInputs, observationJSON, target);
+      const normal = await startRun(
+        api,
+        normalInputs,
+        observationJSON,
+        target,
+        scenarioName,
+      );
       const normalStream = await collectRunEvents({
         api,
         runID: normal.id,
@@ -91,6 +103,7 @@ await runAcceptance({
         normalInputs,
         observationJSON,
         target,
+        scenarioName,
       );
       recordCompletedStream(
         normal,
@@ -177,6 +190,7 @@ await runAcceptance({
           context: "completed cleanup response",
           runID: normal.id,
           scenarioID,
+          scenarioName,
           target,
           inputs: normalInputs,
           jsonInput: observationJSON,
@@ -230,6 +244,7 @@ await runAcceptance({
         cancellationInputs,
         observationJSON,
         target,
+        scenarioName,
       );
       const cancellationProgress = await collectRunEvents({
         api,
@@ -255,6 +270,7 @@ await runAcceptance({
         context: "stop response",
         runID: cancelled.id,
         scenarioID,
+        scenarioName,
         target,
         inputs: cancellationInputs,
         jsonInput: observationJSON,
@@ -275,13 +291,55 @@ await runAcceptance({
           cancelledRunSummary.cleaned === false &&
           cancellationProgress.events.length > 0,
       });
+      const cancelledResources = resourceKeys(
+        cancelledRunSummary.createdResources,
+      );
+      const cancelledObservationLogs = observationLogMessages(
+        cancellationProgress.events,
+      );
+      const stabilityStartedAt = Date.now();
+      await delay(cancellationInputs.tickMs + 25, undefined, { signal });
+      const waitedMs = Date.now() - stabilityStartedAt;
       const cancelledSummary = await readRun(
         api,
         cancelled.id,
         cancellationInputs,
         observationJSON,
         target,
+        scenarioName,
       );
+      const cancellationStability = await collectRunEvents({
+        api,
+        runID: cancelled.id,
+        artifactBase: join(artifacts, "observations-objects-cancel-stability"),
+        signal,
+        until: (events) =>
+          events.some(
+            (event) => event.type === "status" && event.status === "cancelled",
+          ),
+      });
+      const stableResources = resourceKeys(cancelledSummary.createdResources);
+      const stableObservationLogs = observationLogMessages(
+        cancellationStability.events,
+      );
+      record({
+        check:
+          "cancelled observations stop producing resources and observation logs after one tick",
+        expected: {
+          wait_ms_at_least: cancellationInputs.tickMs,
+          resources: cancelledResources,
+          observation_logs: cancelledObservationLogs,
+        },
+        actual: {
+          waited_ms: waitedMs,
+          resources: stableResources,
+          observation_logs: stableObservationLogs,
+        },
+        passed:
+          waitedMs >= cancellationInputs.tickMs &&
+          isDeepStrictEqual(stableResources, cancelledResources) &&
+          isDeepStrictEqual(stableObservationLogs, cancelledObservationLogs),
+      });
       record({
         check: "observations reread preserves the confirmed cancelled status",
         expected: { status: cancelledRunSummary.status, cleaned: false },
@@ -311,6 +369,7 @@ await runAcceptance({
           context: "cancelled cleanup response",
           runID: cancelled.id,
           scenarioID,
+          scenarioName,
           target,
           inputs: cancellationInputs,
           jsonInput: observationJSON,
@@ -547,7 +606,7 @@ async function verifyLocalTargetAndScenario(api, coreBaseUrl, apiKey, record) {
         ["startLongitude", -77.04, -180, 179.9459, 0.0001],
       ]),
   });
-  return target;
+  return { target, scenarioName: scenario?.name };
 }
 
 function verifyServerHealth(health, coreBaseUrl, record) {
@@ -580,7 +639,7 @@ async function recordInvalidInputFault(api, record) {
   });
 }
 
-async function startRun(api, inputs, jsonInput, target) {
+async function startRun(api, inputs, jsonInput, target, scenarioName) {
   const response = await api.json("POST", "/api/runs", {
     scenarioId: "observations-objects",
     targetId: "local",
@@ -590,6 +649,7 @@ async function startRun(api, inputs, jsonInput, target) {
   const run = parseBrowserRunSummary(response.body.run, {
     context: "start response",
     scenarioID,
+    scenarioName,
     target,
     inputs,
     jsonInput,
@@ -605,12 +665,13 @@ async function startRun(api, inputs, jsonInput, target) {
   return run;
 }
 
-async function readRun(api, runID, inputs, jsonInput, target) {
+async function readRun(api, runID, inputs, jsonInput, target, scenarioName) {
   const response = await api.json("GET", `/api/runs/${encodeURIComponent(runID)}`);
   return parseBrowserRunSummary(response.body.run, {
     context: "run read response",
     runID,
     scenarioID,
+    scenarioName,
     target,
     inputs,
     jsonInput,
@@ -679,6 +740,8 @@ function recordCompletedStream(started, completed, events, inputs, record) {
     expected: {
       start_status: "running",
       start_cleaned: false,
+      start_created_resources: [],
+      start_assertions: [],
       initial_event: { type: "status", status: "running" },
       status: "completed",
       completed_cleaned: false,
@@ -693,6 +756,8 @@ function recordCompletedStream(started, completed, events, inputs, record) {
         id: started.id,
         status: started.status,
         cleaned: started.cleaned,
+        created_resources: started.createdResources,
+        assertions: started.assertions,
       },
       completed_run: { status: completed.status, cleaned: completed.cleaned },
       initial,
@@ -708,6 +773,8 @@ function recordCompletedStream(started, completed, events, inputs, record) {
     passed:
       started.status === "running" &&
       started.cleaned === false &&
+      started.createdResources.length === 0 &&
+      started.assertions.length === 0 &&
       initial?.type === "status" &&
       initial.status === "running" &&
       completed.status === "completed" &&
@@ -723,6 +790,21 @@ function recordCompletedStream(started, completed, events, inputs, record) {
       strictlyIncreasing(events.map((event) => event.sequence)) &&
       events.every((event) => event.runId === started.id),
   });
+}
+
+function resourceKeys(resources) {
+  return resources
+    .map((resource) => `${resource.type}:${resource.id}`)
+    .sort();
+}
+
+function observationLogMessages(events) {
+  return events
+    .filter(
+      (event) =>
+        event.type === "log" && event.message.startsWith("Observation "),
+    )
+    .map((event) => event.message);
 }
 
 function assertionResultState(assertion) {

@@ -68,11 +68,16 @@ await runAcceptance({
 
     try {
       verifyServerHealth(simulation.health, baseUrl, record);
-      const target = await verifyLocalTargetAndScenario(api, baseUrl, apiKey, record);
+      const { target, scenarioName } = await verifyLocalTargetAndScenario(
+        api,
+        baseUrl,
+        apiKey,
+        record,
+      );
       if (nightly) await recordInvalidInputFault(api, record);
 
       observeReaderTransport(readers);
-      const run = await startRun(api, normalInputs, target);
+      const run = await startRun(api, normalInputs, target, scenarioName);
       const stream = await collectRunEvents({
         api,
         runID: run.id,
@@ -83,7 +88,13 @@ await runAcceptance({
             (event) => event.type === "status" && event.status !== "running",
           ),
       });
-      const summary = await readRun(api, run.id, normalInputs, target);
+      const summary = await readRun(
+        api,
+        run.id,
+        normalInputs,
+        target,
+        scenarioName,
+      );
       recordCompletedStream(run, summary, stream.events, normalInputs, record);
 
       const writerEntities = await readWriterEntities(core, summary, signal);
@@ -149,6 +160,7 @@ await runAcceptance({
         context: "cleanup response",
         runID: run.id,
         scenarioID,
+        scenarioName,
         target,
         inputs: normalInputs,
         jsonInput: undefined,
@@ -365,7 +377,7 @@ async function verifyLocalTargetAndScenario(api, coreBaseUrl, apiKey, record) {
         ["settleMs", 1_500, 1_500, 10_000, 50],
       ]),
   });
-  return target;
+  return { target, scenarioName: scenario?.name };
 }
 
 function verifyServerHealth(health, coreBaseUrl, record) {
@@ -398,7 +410,7 @@ async function recordInvalidInputFault(api, record) {
   });
 }
 
-async function startRun(api, inputs, target) {
+async function startRun(api, inputs, target, scenarioName) {
   const response = await api.json("POST", "/api/runs", {
     scenarioId: "multi-client-sync",
     targetId: "local",
@@ -407,6 +419,7 @@ async function startRun(api, inputs, target) {
   const run = parseBrowserRunSummary(response.body.run, {
     context: "start response",
     scenarioID,
+    scenarioName,
     target,
     inputs,
     jsonInput: undefined,
@@ -419,12 +432,13 @@ async function startRun(api, inputs, target) {
   return run;
 }
 
-async function readRun(api, runID, inputs, target) {
+async function readRun(api, runID, inputs, target, scenarioName) {
   const response = await api.json("GET", `/api/runs/${encodeURIComponent(runID)}`);
   return parseBrowserRunSummary(response.body.run, {
     context: "run read response",
     runID,
     scenarioID,
+    scenarioName,
     target,
     inputs,
     jsonInput: undefined,
@@ -434,6 +448,7 @@ async function readRun(api, runID, inputs, target) {
 function recordCompletedStream(run, summary, events, inputs, record) {
   const initial = events.at(0);
   const resources = events.filter((event) => event.type === "resource");
+  const logs = events.filter((event) => event.type === "log");
   const assertions = events.filter((event) => event.type === "assertion");
   const expectedAssertionNames = clientAssertionNames(inputs.clientCount);
   const assertionContract = assessMultiClientAssertions(
@@ -450,36 +465,65 @@ function recordCompletedStream(run, summary, events, inputs, record) {
   const actualResources = resources
     .map((event) => `${event.resource?.type}:${event.resource?.id}`)
     .sort();
+  const writerIDs = summary.createdResources
+    .filter((resource) => resource.type === "entity")
+    .map((resource) => ({
+      id: resource.id,
+      index: writerEntityIndex(summary.id, resource.id),
+    }))
+    .sort((left, right) => left.index - right.index)
+    .map((writer) => writer.id);
+  const expectedProgressLogs = [
+    ...Array.from(
+      { length: inputs.clientCount },
+      (_, index) => `Sync client ${index + 1} started`,
+    ),
+    ...writerIDs.map((id) => `Writer created ${id}`),
+  ];
+  const actualProgressLogs = logs.map((event) => event.message);
   record({
     check: "actual server event stream completes multi-client-sync",
     expected: {
       start_status: "running",
       start_cleaned: false,
+      start_created_resources: [],
+      start_assertions: [],
       initial_event: { type: "status", status: "running" },
       status: "completed",
       completed_cleaned: false,
       resources: expectedResources,
+      progress_logs: expectedProgressLogs,
       assertion_id_set: assertionContract.expectedIDs,
       assertion_name_pass_set: assertionContract.expectedNamePassSet,
     },
     actual: {
-      started_run: { id: run.id, status: run.status, cleaned: run.cleaned },
+      started_run: {
+        id: run.id,
+        status: run.status,
+        cleaned: run.cleaned,
+        created_resources: run.createdResources,
+        assertions: run.assertions,
+      },
       completed_run: { status: summary.status, cleaned: summary.cleaned },
       initial,
       terminal,
       resources: actualResources,
+      progress_logs: actualProgressLogs,
       stream_assertion_results: assertionContract.streamResults,
       summary_assertion_results: assertionContract.summaryResults,
     },
     passed:
       run.status === "running" &&
       run.cleaned === false &&
+      run.createdResources.length === 0 &&
+      run.assertions.length === 0 &&
       initial?.type === "status" &&
       initial.status === "running" &&
       summary.status === "completed" &&
       summary.cleaned === false &&
       terminal?.status === "completed" &&
       isDeepStrictEqual(actualResources, expectedResources) &&
+      isDeepStrictEqual(actualProgressLogs, expectedProgressLogs) &&
       assertionContract.passed &&
       strictlyIncreasing(events.map((event) => event.sequence)) &&
       events.every((event) => event.runId === run.id),

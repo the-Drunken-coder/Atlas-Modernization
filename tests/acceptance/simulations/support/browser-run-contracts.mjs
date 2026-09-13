@@ -31,6 +31,7 @@ export function parseBrowserRunSummary(value, expected) {
   }
   if (
     value.scenarioId !== expected.scenarioID ||
+    value.scenarioName !== expected.scenarioName ||
     (expected.runID !== undefined && value.id !== expected.runID) ||
     !hasExpectedTarget(value.target, expected.target) ||
     !hasExpectedInputs(value.inputs, expected.inputs) ||
