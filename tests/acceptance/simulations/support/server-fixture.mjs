@@ -21,7 +21,9 @@ const shutdownTimeoutMs = 5_000;
 
 export const simulationFixtureVariant = {
   name: "real-simulations-server",
-  entrypoint: "simulations/src/server/index.ts",
+  entrypoint: "tests/acceptance/simulations/support/server-launcher.mjs",
+  server_factory: "simulations/src/server/index.ts#createSimulationServer",
+  config_loader: "simulations/src/server/config.ts#loadConfig",
   sdk: "built @the-drunken-coder/atlas-sdk workspace package",
   target: "runner-owned disposable loopback Core",
   transport: "public simulation HTTP and server-sent event routes"
@@ -31,6 +33,7 @@ export function createSimulationServerFixture() {
   let artifacts;
   let child;
   let childCompletion;
+  let cleanupLedgerDirectory;
   let isolatedPackageRoot;
   let initialReservation;
   let serverState;
@@ -40,6 +43,11 @@ export function createSimulationServerFixture() {
     prepare: async ({ artifacts: artifactDirectory, runID, signal }) => {
       artifacts = artifactDirectory;
       isolatedPackageRoot = prepareIsolatedPackageRoot(artifacts);
+      cleanupLedgerDirectory = join(
+        isolatedPackageRoot,
+        ".atlas-simulations",
+        "runs",
+      );
       const packageState = validateIsolatedPackageState(isolatedPackageRoot);
       initialReservation = await reserveLoopbackPort(signal);
       const metadata = {
@@ -124,7 +132,7 @@ export function createSimulationServerFixture() {
       const health = await waitForReadiness(url, signal, () => ({ child, spawnError }));
       serverState = { ...serverState, ready_at: new Date().toISOString(), health };
       writeJSON(join(artifacts, "simulation-server.json"), serverState);
-      return { url, health };
+      return { url, health, cleanupLedgerDirectory };
     }
   };
 }

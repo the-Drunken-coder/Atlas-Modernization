@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { appendFileSync, existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import { AtlasClient, isAtlasAPIError } from "@the-drunken-coder/atlas-sdk";
 import { runAcceptance } from "../support/stack.mjs";
@@ -15,7 +14,6 @@ import {
 } from "./support/task-fixture.mjs";
 
 const reproduction = "npm run build:sdk && node tests/acceptance/simulations/moving-assets.mjs";
-const repositoryRoot = fileURLToPath(new URL("../../..", import.meta.url));
 const normalInputs = {
   assetCount: 2,
   ticks: 3,
@@ -135,7 +133,12 @@ await runAcceptance({
         record
       });
       await recordRetainedTask(core, retainedTask, signal, record);
-      recordLocalLedgerState(normal.id, artifacts, record);
+      recordLocalLedgerState(
+        normal.id,
+        simulation.cleanupLedgerDirectory,
+        artifacts,
+        record,
+      );
 
       const cancelled = await startRun(api, cancelledInputs, { acceptance_run_id: runID, journey: "cancel" });
       const progressStream = await collectRunEvents({
@@ -178,6 +181,25 @@ await runAcceptance({
             persistedMovementBeforeCancellation(entity, cancelled, cancelledInputs, runID)
           )
       });
+      await delay(cancelledInputs.tickMs + 100, signal);
+      const entitiesAfterTickInterval = await readRunEntities(
+        core,
+        progressedIDs.map((id) => ({ type: "entity", id })),
+        signal,
+      );
+      record({
+        check:
+          "cancelled moving-assets telemetry remains unchanged for one tick interval",
+        expected: {
+          tick_interval_ms: cancelledInputs.tickMs,
+          post_stop_state_unchanged: true,
+        },
+        actual: {
+          observed_after_stop: progressedEntities.map(entityState),
+          observed_after_wait: entitiesAfterTickInterval.map(entityState),
+        },
+        passed: isDeepStrictEqual(progressedEntities, entitiesAfterTickInterval),
+      });
       const cancelledCleanup = await api.json("POST", `/api/runs/${encodeURIComponent(cancelled.id)}/cleanup`);
       const cancelledStream = await collectRunEvents({
         api,
@@ -195,7 +217,12 @@ await runAcceptance({
         "cancelled run-owned Entities are absent after cleanup"
       );
       await recordProtectedResources(core, replacementID, unrelatedEntityID, unrelatedObjectID, signal, record);
-      recordLocalLedgerState(cancelled.id, artifacts, record);
+      recordLocalLedgerState(
+        cancelled.id,
+        simulation.cleanupLedgerDirectory,
+        artifacts,
+        record,
+      );
 
       const allIDs = [
         ...normalSummary.createdResources.map(({ id }) => id),
@@ -605,12 +632,17 @@ function matchesExpectedAsset(entity, expected) {
 
 function recordCleanupEvents(run, cleaned, events, replacementID, record) {
   const cleanupEvents = events.filter((event) => event.type === "cleanup" && event.resource);
+  const cleanupIDs = cleanupEvents.map((event) => event.resource.id).sort();
+  const expectedCleanupIDs = run.createdResources
+    .filter((resource) => resource.type === "entity")
+    .map((resource) => resource.id)
+    .sort();
   const replacementEvent = cleanupEvents.find((event) => event.resource?.id === replacementID);
   record({
     check: "simulation cleanup reports every run-owned Entity and completes",
     expected: {
       cleaned: true,
-      resources: run.createdResources,
+      resource_ids: expectedCleanupIDs,
       resource_types: ["entity"],
       replacement: `${replacementID} owned instance is no longer present`,
       final_event: "Cleanup complete"
@@ -618,6 +650,7 @@ function recordCleanupEvents(run, cleaned, events, replacementID, record) {
     actual: {
       cleaned: cleaned.cleaned,
       resource_types: [...new Set(cleanupEvents.map((event) => event.resource.type))],
+      resource_ids: cleanupIDs,
       resources: cleanupEvents.map((event) => ({ resource: event.resource, message: event.message })),
       final_event: events.find((event) => event.type === "cleanup" && event.resource === undefined)?.message
     },
@@ -625,7 +658,7 @@ function recordCleanupEvents(run, cleaned, events, replacementID, record) {
       cleaned.cleaned === true &&
       run.createdResources.every((resource) => resource.type === "entity") &&
       cleanupEvents.every((event) => event.resource.type === "entity") &&
-      cleanupEvents.length === run.createdResources.filter((resource) => resource.type !== "task").length &&
+      isDeepStrictEqual(cleanupIDs, expectedCleanupIDs) &&
       replacementEvent?.message === `entity ${replacementID} owned instance is no longer present` &&
       events.some(
         (event) => event.type === "cleanup" && event.resource === undefined && event.message === "Cleanup complete"
@@ -796,10 +829,19 @@ function parseEventFrame(frame) {
   return data ? parseJSON(data, "simulation event frame") : undefined;
 }
 
-function recordLocalLedgerState(simulationRunID, artifacts, record) {
-  const ledgerPath = join(repositoryRoot, "simulations", ".atlas-simulations", "runs", `${simulationRunID}.json`);
+function recordLocalLedgerState(
+  simulationRunID,
+  cleanupLedgerDirectory,
+  artifacts,
+  record,
+) {
+  const ledgerPath = join(cleanupLedgerDirectory, `${simulationRunID}.json`);
   const present = existsSync(ledgerPath);
-  const state = { run_id: simulationRunID, local_ledger_file_present: present };
+  const state = {
+    run_id: simulationRunID,
+    ledger_path: ledgerPath,
+    local_ledger_file_present: present,
+  };
   appendJSON(join(artifacts, "local-ledger-checks.jsonl"), state);
   record({
     check: "local disposable run does not create a deployed cleanup ledger record",
