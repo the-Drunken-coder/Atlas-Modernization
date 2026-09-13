@@ -131,7 +131,7 @@ const privateChannelKeyByte = (seed % 255) + 1;
 const sharedJoinKey = `atlas-link-acceptance-${seed}-shared-authentication-key`;
 const rejectedJoinKey = `atlas-link-acceptance-${seed}-rejected-authentication-key`;
 const httpRequestTimeoutMs = 15_000;
-// The scheduled fault path's phase deadlines total 774 seconds; cleanup adds 10 seconds, leaving 26 seconds for evidence writes.
+// The scheduled fault path's phase deadlines total 776 seconds; cleanup adds 10 seconds, leaving 24 seconds for evidence writes.
 const processTestTimeoutMs = 810_000;
 
 test("runs compiled Link processes through joining, application settlement, rejected startup and join, and shutdown", {
@@ -216,7 +216,15 @@ test("runs compiled Link processes through joining, application settlement, reje
     );
     const startupSummary = await readFinalSummary(startupRejected);
     assertRejectedStartupCleanup(startupSummary);
-    observation.startup_rejection = startupSummary;
+    const startupExit = await withTimeout(
+      startupRejected.exit,
+      2_000,
+      "Gateway rejected-startup process did not exit after publishing its final summary"
+    );
+    observation.startup_rejection = { summary: startupSummary, exit: startupExit };
+    assert.equal(typeof startupExit.code, "number", "rejected-startup process exit code");
+    assert.notEqual(startupExit.code, 0, "rejected-startup process must not exit successfully");
+    assert.equal(startupExit.signal, null, "rejected-startup process exit signal");
     observation.timings_ms.startup_rejected = elapsed(scenarioStarted);
 
     const rejectedJoinMembershipPath = join(artifactDirectory, "join-rejected-membership.json");
@@ -617,7 +625,9 @@ test("runs compiled Link processes through joining, application settlement, reje
     };
 
     shutdownEvents = await openSSE(`${gatewayBase}/v1/events?client_id=shutdown-observer`);
-    for (const runner of runners) runner.child.kill("SIGTERM");
+    for (const runner of runners) {
+      if (runner.child.exitCode === null && runner.child.signalCode === null) runner.child.kill("SIGTERM");
+    }
     const shutdownStream = waitForSSEClosure(shutdownEvents, 15_000);
     const exitsPromise = Promise.all(
       runners.map((runner) => withTimeout(runner.exit, 15_000, `${runner.name} did not exit`))
@@ -645,7 +655,7 @@ test("runs compiled Link processes through joining, application settlement, reje
     for (const [index, exit] of exits.entries()) {
       const runner = runners[index];
       if (runner?.name === "startup-rejected-gateway") {
-        assert.notEqual(exit.code, 0, "rejected-startup process must not exit successfully");
+        assert.deepEqual(exit, startupExit, "rejected-startup process exit changed after initial observation");
         continue;
       }
       assert.equal(exit.code, 0, `${runner?.name} process exit code`);
