@@ -26,6 +26,29 @@ export function assessCleanupResourceEvents(events, resources, preserved) {
   };
 }
 
+export function assessCreatedResourceEvents(events, resources) {
+  const expected = resources.map((resource) => ({
+    type: resource.type,
+    id: resource.id,
+    message: `Created ${resource.type} ${resource.id}`,
+  }));
+  const actual = events
+    .filter((event) => event.type === "resource")
+    .map((event) => ({
+      type: event.resource.type,
+      id: event.resource.id,
+      message: event.message,
+    }));
+  return {
+    expected: sortResourceEvents(expected),
+    actual: sortResourceEvents(actual),
+    passed: isDeepStrictEqual(
+      sortResourceEvents(actual),
+      sortResourceEvents(expected),
+    ),
+  };
+}
+
 export function assessCleanupCompletionOrder(events) {
   const resourceEventIndexes = [];
   const completionEventIndexes = [];
@@ -54,6 +77,10 @@ export function resourceKey(resource) {
 }
 
 function sortCleanupEvents(events) {
+  return sortResourceEvents(events);
+}
+
+function sortResourceEvents(events) {
   return [...events].sort((left, right) =>
     resourceKey(left).localeCompare(resourceKey(right)),
   );

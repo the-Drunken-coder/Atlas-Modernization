@@ -1,5 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { appendFileSync, existsSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  readdirSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import {
@@ -17,6 +22,7 @@ import {
 import { assessMultiClientAssertions } from "./support/multi-client-assertion-contract.mjs";
 import { parseBrowserRunSummary } from "./support/browser-run-contracts.mjs";
 import {
+  assessCreatedResourceEvents,
   assessCleanupCompletionOrder,
   assessCleanupResourceEvents,
   resourceKey,
@@ -28,6 +34,7 @@ import {
 import {
   assessCompletedEventOrder,
   assessExpectedSuccessEvents,
+  assessLifecycleStatusMessages,
   assessReplayAssertionParity,
 } from "./support/run-event-replay-contract.mjs";
 import { eventStreamResponseError } from "./support/sse-response-contract.mjs";
@@ -477,12 +484,20 @@ function recordCompletedStream(run, summary, events, inputs, record) {
   const initial = events.at(0);
   const resources = events.filter((event) => event.type === "resource");
   const logs = events.filter((event) => event.type === "log");
+  const createdResourceEvents = assessCreatedResourceEvents(
+    resources,
+    summary.createdResources,
+  );
   const assertions = events.filter((event) => event.type === "assertion");
   const expectedAssertionResults = clientAssertionResults(
     inputs.clientCount,
     inputs.writes,
   );
   const eventContract = assessExpectedSuccessEvents(events, run.id);
+  const lifecycle = assessLifecycleStatusMessages(events, run.scenarioName, {
+    status: "completed",
+    message: "Run completed",
+  });
   const completionOrder = assessCompletedEventOrder(events);
   const assertionContract = assessMultiClientAssertions(
     assertions.map((event) => event.assertion),
@@ -492,12 +507,8 @@ function recordCompletedStream(run, summary, events, inputs, record) {
   const terminal = events.find(
     (event) => event.type === "status" && event.status !== "running",
   );
-  const expectedResources = summary.createdResources
-    .map((resource) => `${resource.type}:${resource.id}`)
-    .sort();
-  const actualResources = resources
-    .map((event) => `${event.resource?.type}:${event.resource?.id}`)
-    .sort();
+  const expectedResources = createdResourceEvents.expected;
+  const actualResources = createdResourceEvents.actual;
   const writerIDs = summary.createdResources
     .filter((resource) => resource.type === "entity")
     .map((resource) => ({
@@ -529,6 +540,7 @@ function recordCompletedStream(run, summary, events, inputs, record) {
       assertion_id_set: assertionContract.expectedIDs,
       assertion_name_pass_message_set: assertionContract.expectedResultSet,
       event_contract: eventContract.expected,
+      lifecycle: lifecycle.expected,
       completion_order: completionOrder.expected,
     },
     actual: {
@@ -547,6 +559,7 @@ function recordCompletedStream(run, summary, events, inputs, record) {
       stream_assertion_results: assertionContract.streamResults,
       summary_assertion_results: assertionContract.summaryResults,
       event_contract: eventContract.actual,
+      lifecycle: lifecycle.actual,
       completion_order: completionOrder.actual,
     },
     passed:
@@ -559,10 +572,11 @@ function recordCompletedStream(run, summary, events, inputs, record) {
       summary.status === "completed" &&
       summary.cleaned === false &&
       terminal?.status === "completed" &&
-      isDeepStrictEqual(actualResources, expectedResources) &&
+      createdResourceEvents.passed &&
       isDeepStrictEqual(actualProgressLogs, expectedProgressLogs) &&
       assertionContract.passed &&
       eventContract.passed &&
+      lifecycle.passed &&
       completionOrder.passed &&
       strictlyIncreasing(events.map((event) => event.sequence)) &&
       events.length > 0,
@@ -1080,13 +1094,14 @@ function recordLocalLedgerState(
   record,
   phase,
 ) {
-  const ledgerPath = join(cleanupLedgerDirectory, `${simulationRunID}.json`);
-  const present = existsSync(ledgerPath);
+  const entries = existsSync(cleanupLedgerDirectory)
+    ? readdirSync(cleanupLedgerDirectory).sort()
+    : [];
   const state = {
     run_id: simulationRunID,
     phase,
-    ledger_path: ledgerPath,
-    local_ledger_file_present: present,
+    ledger_directory: cleanupLedgerDirectory,
+    local_ledger_entries: entries,
   };
   appendJSON(join(artifacts, "local-ledger-checks.jsonl"), state);
   record({
@@ -1094,9 +1109,9 @@ function recordLocalLedgerState(
     expected: {
       run_id: simulationRunID,
       phase,
-      local_ledger_file_present: false,
+      local_ledger_entries: [],
     },
     actual: state,
-    passed: !present,
+    passed: entries.length === 0,
   });
 }

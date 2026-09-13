@@ -1,0 +1,9 @@
+1. **Time & Date:** 2026-09-13T06:54:56Z
+2. **Name:** Cancelled observations can append assertions after the browser terminal event
+3. **Issue:** A stop request can mark an observations run cancelled while its verifier client is already constructed. Delayed verifier reads then append assertions after the terminal event. The browser closes its event source on that terminal event and does not continue periodic refreshes for the cancelled run, so it can omit the later assertion evidence until a manual refresh or cleanup.
+4. **Severity:** S3 (Moderate)
+5. **Location:** `simulations/src/server/run-store.ts`, `simulations/src/server/run-store-execution.ts`, and `simulations/src/client/use-run-session.ts`
+6. **Expected:** A cancelled run must not append assertion evidence after its terminal `cancelled` status event.
+7. **Actual:** With a bounded, test-owned delay around the real SDK verifier reads, `Stop requested` and `cancelled` are sequences 7 and 8; three failed verifier assertions follow at sequences 9 through 11. The browser terminal stream has already closed, while a later run summary contains the assertions.
+8. **Reproduction:** Run `npm run build:sdk && node --import ./simulations/node_modules/tsx/dist/loader.mjs tests/acceptance/simulations/observations-late-assertions.mjs`. It intentionally fails until the product prevents or reconciles the late assertions.
+9. **Notes:** Dirty source-barrier evidence is retained at `/tmp/atlas-testing-coordination/evidence-413-late-assertions/dirty-source-barrier/`; clean test-fixture evidence is retained at `/tmp/atlas-testing-coordination/evidence-413-late-assertions/retained-fixture/`. The committed acceptance case uses only `AtlasTargetConfig.clientFactory` to pause the real SDK verifier's first read until its own stop signal aborts; it does not modify product source.

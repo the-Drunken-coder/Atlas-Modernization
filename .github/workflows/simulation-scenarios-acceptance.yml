@@ -26,6 +26,7 @@ jobs:
       matrix:
         scenario:
           - observations-objects
+          - observations-late-assertions
           - multi-client-sync
     steps:
       - name: Checkout repository

@@ -1,5 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { appendFileSync, existsSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  readdirSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { isDeepStrictEqual } from "node:util";
@@ -16,6 +21,7 @@ import {
   assessCancelledObservationWindow,
 } from "./support/cancelled-observation-window.mjs";
 import {
+  assessCreatedResourceEvents,
   assessCleanupCompletionOrder,
   assessCleanupResourceEvents,
   resourceKey,
@@ -27,6 +33,7 @@ import {
 import {
   assessCompletedEventOrder,
   assessExpectedSuccessEvents,
+  assessLifecycleStatusMessages,
   assessReplayAssertionParity,
 } from "./support/run-event-replay-contract.mjs";
 import { eventStreamResponseError } from "./support/sse-response-contract.mjs";
@@ -294,6 +301,10 @@ await runAcceptance({
         cancellationProgress.events,
         cancelled.id,
       );
+      const cancellationProgressLifecycle = assessLifecycleStatusMessages(
+        cancellationProgress.events,
+        scenarioName,
+      );
       const cancelledRun = await api.json(
         "POST",
         `/api/runs/${encodeURIComponent(cancelled.id)}/stop`,
@@ -319,6 +330,7 @@ await runAcceptance({
           run_status: "cancelled",
           cleaned: false,
           event_contract: cancellationProgressContract.expected,
+          lifecycle: cancellationProgressLifecycle.expected,
         },
         actual: {
           status: cancelledRun.status,
@@ -326,13 +338,15 @@ await runAcceptance({
           cleaned: cancelledRunSummary.cleaned,
           progress_events: cancellationProgress.events.length,
           event_contract: cancellationProgressContract.actual,
+          lifecycle: cancellationProgressLifecycle.actual,
         },
         passed:
           cancelledRun.status === 200 &&
           cancelledRunSummary.status === "cancelled" &&
           cancelledRunSummary.cleaned === false &&
           cancellationProgress.events.length > 0 &&
-          cancellationProgressContract.passed,
+          cancellationProgressContract.passed &&
+          cancellationProgressLifecycle.passed,
       });
       const cancellationStability = await collectRunEventsForWindow({
         api,
@@ -363,6 +377,11 @@ await runAcceptance({
         cancellationStabilityEvents,
         cancelled.id,
       );
+      const cancellationStabilityLifecycle = assessLifecycleStatusMessages(
+        cancellationStabilityEvents,
+        scenarioName,
+        { status: "cancelled", message: "Stop requested" },
+      );
       const cancelledResources = cancellationWindow.baseline?.resources ?? [];
       const cancelledObservationLogs =
         cancellationWindow.baseline?.observationLogs ?? [];
@@ -377,6 +396,7 @@ await runAcceptance({
           resources: cancelledResources,
           observation_logs: cancelledObservationLogs,
           event_contract: cancellationStabilityContract.expected,
+          lifecycle: cancellationStabilityLifecycle.expected,
         },
         actual: {
           observed_window_ms: cancellationStability.observedWindowMs,
@@ -386,13 +406,15 @@ await runAcceptance({
           replay_prefix_resources: cancelledResources,
           observation_windows: cancellationWindow.states,
           event_contract: cancellationStabilityContract.actual,
+          lifecycle: cancellationStabilityLifecycle.actual,
         },
         passed:
           cancellationStability.observedWindowMs >= cancellationInputs.tickMs &&
           isDeepStrictEqual(stopResponseResources, cancelledResources) &&
           isDeepStrictEqual(stableResources, cancelledResources) &&
           cancellationWindow.passed &&
-          cancellationStabilityContract.passed,
+          cancellationStabilityContract.passed &&
+          cancellationStabilityLifecycle.passed,
       });
       record({
         check: "observations reread preserves the confirmed cancelled status",
@@ -768,7 +790,16 @@ function recordCompletedStream(started, completed, events, inputs, record) {
   const initial = events.at(0);
   const resources = events.filter((event) => event.type === "resource");
   const logs = events.filter((event) => event.type === "log");
+  const createdResourceEvents = assessCreatedResourceEvents(
+    resources,
+    completed.createdResources,
+  );
   const eventContract = assessExpectedSuccessEvents(events, started.id);
+  const lifecycle = assessLifecycleStatusMessages(
+    events,
+    started.scenarioName,
+    { status: "completed", message: "Run completed" },
+  );
   const completionOrder = assessCompletedEventOrder(events);
   const assertionReplay = assessReplayAssertionParity(
     events,
@@ -786,12 +817,8 @@ function recordCompletedStream(started, completed, events, inputs, record) {
   const terminal = events.find(
     (event) => event.type === "status" && event.status !== "running",
   );
-  const expectedResources = completed.createdResources
-    .map((resource) => `${resource.type}:${resource.id}`)
-    .sort();
-  const actualResources = resources
-    .map((event) => `${event.resource?.type}:${event.resource?.id}`)
-    .sort();
+  const expectedResources = createdResourceEvents.expected;
+  const actualResources = createdResourceEvents.actual;
   const observersByIndex = new Map(
     completed.createdResources.flatMap((resource) => {
       const asset =
@@ -834,6 +861,7 @@ function recordCompletedStream(started, completed, events, inputs, record) {
       assertion_ids_unique: true,
       assertion_results: expectedAssertionResults,
       event_contract: eventContract.expected,
+      lifecycle: lifecycle.expected,
       completion_order: completionOrder.expected,
       assertion_message_parity: assertionReplay.expected,
     },
@@ -856,6 +884,7 @@ function recordCompletedStream(started, completed, events, inputs, record) {
       stream_assertion_results: streamAssertionResults,
       summary_assertion_results: summaryAssertionResults,
       event_contract: eventContract.actual,
+      lifecycle: lifecycle.actual,
       completion_order: completionOrder.actual,
     },
     passed:
@@ -868,7 +897,7 @@ function recordCompletedStream(started, completed, events, inputs, record) {
       completed.status === "completed" &&
       completed.cleaned === false &&
       terminal?.status === "completed" &&
-      isDeepStrictEqual(actualResources, expectedResources) &&
+      createdResourceEvents.passed &&
       isDeepStrictEqual(actualLogs, expectedLogs) &&
       isDeepStrictEqual(actualAssertionIDs, expectedAssertionIDs) &&
       new Set(actualAssertionIDs).size === actualAssertionIDs.length &&
@@ -876,6 +905,7 @@ function recordCompletedStream(started, completed, events, inputs, record) {
       isDeepStrictEqual(summaryAssertionResults, expectedAssertionResults) &&
       assertionReplay.passed &&
       eventContract.passed &&
+      lifecycle.passed &&
       completionOrder.passed &&
       strictlyIncreasing(events.map((event) => event.sequence)),
   });
@@ -1690,13 +1720,14 @@ function recordLocalLedgerState(
   record,
   phase,
 ) {
-  const ledgerPath = join(cleanupLedgerDirectory, `${simulationRunID}.json`);
-  const present = existsSync(ledgerPath);
+  const entries = existsSync(cleanupLedgerDirectory)
+    ? readdirSync(cleanupLedgerDirectory).sort()
+    : [];
   const state = {
     run_id: simulationRunID,
     phase,
-    ledger_path: ledgerPath,
-    local_ledger_file_present: present,
+    ledger_directory: cleanupLedgerDirectory,
+    local_ledger_entries: entries,
   };
   appendJSON(join(artifacts, "local-ledger-checks.jsonl"), state);
   record({
@@ -1704,9 +1735,9 @@ function recordLocalLedgerState(
     expected: {
       run_id: simulationRunID,
       phase,
-      local_ledger_file_present: false,
+      local_ledger_entries: [],
     },
     actual: state,
-    passed: !present,
+    passed: entries.length === 0,
   });
 }

@@ -5,12 +5,56 @@ export function assessExpectedSuccessEvents(events, runID) {
     .filter((event) => event.type === "error")
     .map((event) => ({ sequence: event.sequence, message: event.message }));
   const runIDs = [...new Set(events.map((event) => event.runId))];
+  const sequences = events.map((event) => event.sequence);
   return {
-    expected: { run_id: runID, error_events: [] },
-    actual: { run_ids: runIDs, error_events: errorEvents },
+    expected: {
+      run_id: runID,
+      error_events: [],
+      strictly_increasing_sequences: true,
+    },
+    actual: {
+      run_ids: runIDs,
+      error_events: errorEvents,
+      sequences,
+    },
     passed:
       events.length > 0 &&
-      events.every((event) => event.runId === runID && event.type !== "error"),
+      events.every(
+        (event) => event.runId === runID && event.type !== "error",
+      ) &&
+      strictlyIncreasing(sequences),
+  };
+}
+
+export function assessLifecycleStatusMessages(events, scenarioName, terminal) {
+  const statuses = events.filter((event) => event.type === "status");
+  const initial = statuses.at(0);
+  const terminals = statuses.filter((event) => event.status !== "running");
+  const expected = {
+    initial: { status: "running", message: `${scenarioName} started` },
+    ...(terminal === undefined ? { terminal_events: [] } : { terminal }),
+  };
+  const actual = {
+    initial:
+      initial === undefined
+        ? undefined
+        : { status: initial.status, message: initial.message },
+    terminal_events: terminals.map((event) => ({
+      status: event.status,
+      message: event.message,
+    })),
+  };
+  return {
+    expected,
+    actual,
+    passed:
+      initial?.status === "running" &&
+      initial.message === `${scenarioName} started` &&
+      (terminal === undefined
+        ? terminals.length === 0
+        : terminals.length === 1 &&
+          terminals[0].status === terminal.status &&
+          terminals[0].message === terminal.message),
   };
 }
 
@@ -80,5 +124,11 @@ function assertionSequence(id) {
 function hasNonemptyMessage(assertion) {
   return (
     typeof assertion.message === "string" && assertion.message.trim().length > 0
+  );
+}
+
+function strictlyIncreasing(values) {
+  return values.every(
+    (value, index) => index === 0 || value > values[index - 1],
   );
 }

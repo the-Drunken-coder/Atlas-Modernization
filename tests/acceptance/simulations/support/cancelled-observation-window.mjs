@@ -44,6 +44,14 @@ export function assessCancelledObservationAssertions({
   const stopped = orderAssertionResults(stoppedAssertions);
   const reread = orderAssertionResults(rereadAssertions);
   const cancelledPrefix = eventsThroughCancelledMarker(postStopEvents);
+  const assertionsAfterCancelled = postStopEvents
+    .slice(
+      cancelledPrefix.marker === undefined
+        ? postStopEvents.length
+        : cancelledPrefix.marker + 1,
+    )
+    .filter((event) => event.type === "assertion")
+    .map((event) => event.assertion);
   const observationPairs = observedObservationPairs(cancelledPrefix.events);
   const allObservationPairsRecorded =
     observationPairs.length === observationCount &&
@@ -61,6 +69,7 @@ export function assessCancelledObservationAssertions({
     expected: {
       cancelled_marker: "exactly once",
       observation_pairs_before_cancelled: observationCount,
+      assertion_events_after_cancelled: [],
       ...(allObservationPairsRecorded
         ? { allowed_assertions: [[], verifierAssertions] }
         : { allowed_assertions: [] }),
@@ -71,6 +80,9 @@ export function assessCancelledObservationAssertions({
     actual: {
       cancelled_marker_indexes: cancelledPrefix.indexes,
       observation_pairs_before_cancelled: observationPairs,
+      assertion_events_after_cancelled: orderAssertionResults(
+        assertionsAfterCancelled,
+      ),
       pre_stop_assertions: progress,
       stop_summary_assertions: stopped,
       cancelled_summary_assertions: reread,
@@ -78,6 +90,7 @@ export function assessCancelledObservationAssertions({
     },
     passed:
       cancelledPrefix.indexes.length === 1 &&
+      assertionsAfterCancelled.length === 0 &&
       hasUniqueAssertionIDs(progress) &&
       hasUniqueAssertionIDs(stopped) &&
       hasUniqueAssertionIDs(reread) &&
@@ -132,6 +145,7 @@ function eventsThroughCancelledMarker(events) {
   const marker = indexes[0];
   return {
     indexes,
+    marker,
     events: marker === undefined ? [] : events.slice(0, marker + 1),
   };
 }

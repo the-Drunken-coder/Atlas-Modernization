@@ -9,11 +9,11 @@ import {
   writeFileSync,
 } from "node:fs";
 import { createServer } from "node:net";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repositoryRoot = fileURLToPath(new URL("../../../..", import.meta.url));
-const serverEntrypoint = fileURLToPath(
+const defaultServerEntrypoint = fileURLToPath(
   new URL("./server-launcher.mjs", import.meta.url),
 );
 const simulationPackageRoot = join(repositoryRoot, "simulations");
@@ -39,7 +39,9 @@ export const simulationFixtureVariant = {
   transport: "public simulation HTTP and server-sent event routes",
 };
 
-export function createSimulationServerFixture() {
+export function createSimulationServerFixture({
+  serverEntrypoint = defaultServerEntrypoint,
+} = {}) {
   let artifacts;
   let child;
   let childCompletion;
@@ -61,6 +63,7 @@ export function createSimulationServerFixture() {
       const packageState = validateIsolatedPackageState(isolatedPackageRoot);
       const metadata = {
         ...simulationFixtureVariant,
+        entrypoint: relative(repositoryRoot, serverEntrypoint),
         acceptance_run_id: runID,
         node: process.version,
         startup:
