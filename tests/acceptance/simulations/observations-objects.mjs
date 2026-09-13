@@ -530,18 +530,40 @@ async function recordPersistedObservations(
       };
     },
   );
-  const expectedObjects = run.createdResources
-    .filter((resource) => resource.type === "object")
-    .map((resource, index) => {
+  const indexedObjects = objects.map((object) => ({
+    object,
+    observation: observationObjectIndex(run.id, object.object_id),
+  }));
+  const objectByObservation = new Map();
+  const objectMappingComplete =
+    indexedObjects.length === inputs.observations &&
+    indexedObjects.every(({ object, observation }) => {
+      if (
+        observation === undefined ||
+        observation < 1 ||
+        observation > inputs.observations ||
+        objectByObservation.has(observation)
+      ) {
+        return false;
+      }
+      objectByObservation.set(observation, object);
+      return true;
+    }) &&
+    objectByObservation.size === inputs.observations;
+  const expectedObjects = Array.from(
+    { length: inputs.observations },
+    (_, index) => {
+      const observation = index + 1;
       const track = tracks.find(
-        (candidate) => candidate.alias === expectedTracks[index]?.alias,
+        (candidate) => candidate.alias === expectedTracks[index].alias,
       );
       return {
-        objectID: resource.id,
-        observation: index + 1,
+        object: objectByObservation.get(observation),
+        observation,
         trackID: track?.entity_id,
       };
-    });
+    },
+  );
   record({
     check:
       "independent SDK reads verify persisted observer, track, Object bytes, and relations",
@@ -555,8 +577,8 @@ async function recordPersistedObservations(
           longitude,
         }),
       ),
-      objects: expectedObjects.map(({ objectID, observation, trackID }) => ({
-        object_id: objectID,
+      objects: expectedObjects.map(({ object, observation, trackID }) => ({
+        object_id: object?.object_id,
         observation,
         usage_hints: ["thumbnail"],
         referenced_by: [{ entity_id: trackID }],
@@ -568,6 +590,10 @@ async function recordPersistedObservations(
       observers: observers.map((entity) => entityState(entity)),
       tracks: tracks.map((entity) => entityState(entity)),
       objects: objects.map((object) => objectState(object)),
+      object_index_mapping: indexedObjects.map(({ object, observation }) => ({
+        object_id: object.object_id,
+        observation,
+      })),
     },
     passed:
       observers.length === inputs.assetCount &&
@@ -616,11 +642,8 @@ async function recordPersistedObservations(
         }),
       ) &&
       objects.length === inputs.observations &&
-      expectedObjects.length === inputs.observations &&
-      expectedObjects.every(({ objectID, trackID }) => {
-        const object = objects.find(
-          (candidate) => candidate.object_id === objectID,
-        );
+      objectMappingComplete &&
+      expectedObjects.every(({ object, trackID }) => {
         return (
           object?.type === "observation" &&
           isDeepStrictEqual(object.usage_hints, ["thumbnail"]) &&
@@ -850,6 +873,18 @@ function objectState(object) {
 
 function shortID(prefix) {
   return `${prefix}-${randomUUID().slice(0, 12)}`;
+}
+
+function observationObjectIndex(runID, objectID) {
+  const prefix = `${runID}-observation-object-`;
+  if (!objectID.startsWith(prefix)) return undefined;
+  const remainder = objectID.slice(prefix.length);
+  const separator = remainder.indexOf("-");
+  if (separator <= 0 || separator === remainder.length - 1) return undefined;
+  const index = remainder.slice(0, separator);
+  if (!/^[1-9]\d*$/u.test(index)) return undefined;
+  const value = Number(index);
+  return Number.isSafeInteger(value) ? value : undefined;
 }
 
 function strictlyIncreasing(values) {
