@@ -98,17 +98,35 @@ export function stopReaders(readers) {
 
 export function readerTeardownFailure(primaryFailure, teardownErrors) {
   if (teardownErrors.length === 0) return primaryFailure;
-  if (primaryFailure === undefined) {
-    return new AggregateError(
-      teardownErrors,
-      "External simulation reader teardown failed",
-    );
-  }
-  return new AggregateError(
-    [primaryFailure, ...teardownErrors],
-    "Simulation scenario failed and external reader teardown also failed",
-    { cause: primaryFailure },
-  );
+  const error =
+    primaryFailure === undefined
+      ? new AggregateError(
+          teardownErrors,
+          "External simulation reader teardown failed",
+        )
+      : new AggregateError(
+          [primaryFailure, ...teardownErrors],
+          "Simulation scenario failed and external reader teardown also failed",
+          { cause: primaryFailure },
+        );
+  error.acceptanceEvidence = {
+    ...(primaryFailure === undefined
+      ? {}
+      : { primary_failure: serializeReaderFailure(primaryFailure) }),
+    reader_teardown_failures: teardownErrors.map(serializeReaderFailure),
+  };
+  return error;
+}
+
+function serializeReaderFailure(error) {
+  if (!(error instanceof Error)) return { message: String(error) };
+  return {
+    name: error.name,
+    message: error.message,
+    ...(error.acceptanceEvidence === undefined
+      ? {}
+      : { evidence: error.acceptanceEvidence }),
+  };
 }
 
 function createObservedFetch(transport) {
