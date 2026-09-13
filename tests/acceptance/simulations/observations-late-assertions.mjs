@@ -3,10 +3,12 @@ import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
-import { parseRunEvent } from "../../../simulations/src/client/run-state.ts";
 import { runAcceptance } from "../support/stack.mjs";
 import { createSimulationServerFixture } from "./support/server-fixture.mjs";
-import { eventStreamResponseError } from "./support/sse-response-contract.mjs";
+import {
+  eventStreamResponseError,
+  parseBrowserRunEventFrame,
+} from "./support/sse-response-contract.mjs";
 
 const reproduction =
   "npm run build:sdk && node --import ./simulations/node_modules/tsx/dist/loader.mjs tests/acceptance/simulations/observations-late-assertions.mjs";
@@ -225,10 +227,5 @@ async function requestJSON(baseUrl, path, options = {}) {
 }
 
 function parseEventFrame(frame) {
-  const data = frame
-    .split("\n")
-    .filter((line) => line.startsWith("data:"))
-    .map((line) => line.slice(5).trimStart())
-    .join("\n");
-  return data ? parseRunEvent(JSON.parse(data)) : undefined;
+  return parseBrowserRunEventFrame(frame);
 }

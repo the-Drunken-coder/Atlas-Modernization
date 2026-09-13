@@ -6,18 +6,19 @@ import { assessReplayAssertionParity } from "./run-event-replay-contract.mjs";
  * complete and unique, but their reader-name association is intentionally not
  * fixed. The browser must receive the same mapping from the replay and summary.
  */
-export function assessMultiClientAssertions(stream, summary, expectedResults) {
+export function assessMultiClientAssertions(events, summary, expectedResults) {
   const expectedIDs = expectedResults.map((_, index) => `assert-${index + 1}`);
   const expectedResultSet = orderedNamePassMessageSet(expectedResults);
-  const replayParity = assessReplayAssertionParity(
-    stream.map((assertion) => ({ type: "assertion", assertion })),
-    summary,
-  );
+  const stream = events
+    .filter((event) => event.type === "assertion")
+    .map((event) => event.assertion);
+  const replayParity = assessReplayAssertionParity(events, summary);
   const { streamResults, summaryResults } = replayParity;
 
   return {
     expectedIDs,
     expectedResultSet,
+    replayParity,
     streamResults,
     summaryResults,
     passed:

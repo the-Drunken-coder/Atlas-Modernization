@@ -13,7 +13,6 @@ import {
   isAtlasAPIError,
   isRFC3339Timestamp,
 } from "@the-drunken-coder/atlas-sdk";
-import { parseRunEvent } from "../../../simulations/src/client/run-state.ts";
 import { runAcceptance } from "../support/stack.mjs";
 import { parseBrowserRunSummary } from "./support/browser-run-contracts.mjs";
 import {
@@ -36,7 +35,10 @@ import {
   assessLifecycleStatusMessages,
   assessReplayAssertionParity,
 } from "./support/run-event-replay-contract.mjs";
-import { eventStreamResponseError } from "./support/sse-response-contract.mjs";
+import {
+  eventStreamResponseError,
+  parseBrowserRunEventFrame,
+} from "./support/sse-response-contract.mjs";
 
 const reproduction =
   "npm run build:sdk && node --import ./simulations/node_modules/tsx/dist/loader.mjs tests/acceptance/simulations/observations-objects.mjs";
@@ -1580,14 +1582,7 @@ async function collectRunEventsForWindow({
 }
 
 function parseEventFrame(frame) {
-  const data = frame
-    .split("\n")
-    .filter((line) => line.startsWith("data:"))
-    .map((line) => line.slice(5).trimStart())
-    .join("\n");
-  return data
-    ? parseRunEvent(parseJSON(data, "simulation event frame"))
-    : undefined;
+  return parseBrowserRunEventFrame(frame);
 }
 
 function hasExactNumberFields(scenario, expected) {

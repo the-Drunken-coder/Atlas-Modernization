@@ -12,7 +12,6 @@ import {
   isAtlasAPIError,
   isRFC3339Timestamp,
 } from "@the-drunken-coder/atlas-sdk";
-import { parseRunEvent } from "../../../simulations/src/client/run-state.ts";
 import { runAcceptance } from "../support/stack.mjs";
 import {
   observeReaderTransport,
@@ -37,7 +36,10 @@ import {
   assessLifecycleStatusMessages,
   assessReplayAssertionParity,
 } from "./support/run-event-replay-contract.mjs";
-import { eventStreamResponseError } from "./support/sse-response-contract.mjs";
+import {
+  eventStreamResponseError,
+  parseBrowserRunEventFrame,
+} from "./support/sse-response-contract.mjs";
 
 const reproduction =
   "npm run build:sdk && node --import ./simulations/node_modules/tsx/dist/loader.mjs tests/acceptance/simulations/multi-client-sync.mjs";
@@ -488,7 +490,6 @@ function recordCompletedStream(run, summary, events, inputs, record) {
     resources,
     summary.createdResources,
   );
-  const assertions = events.filter((event) => event.type === "assertion");
   const expectedAssertionResults = clientAssertionResults(
     inputs.clientCount,
     inputs.writes,
@@ -500,7 +501,7 @@ function recordCompletedStream(run, summary, events, inputs, record) {
   });
   const completionOrder = assessCompletedEventOrder(events);
   const assertionContract = assessMultiClientAssertions(
-    assertions.map((event) => event.assertion),
+    events,
     summary.assertions,
     expectedAssertionResults,
   );
@@ -539,6 +540,7 @@ function recordCompletedStream(run, summary, events, inputs, record) {
       progress_logs: expectedProgressLogs,
       assertion_id_set: assertionContract.expectedIDs,
       assertion_name_pass_message_set: assertionContract.expectedResultSet,
+      assertion_message_parity: assertionContract.replayParity.expected,
       event_contract: eventContract.expected,
       lifecycle: lifecycle.expected,
       completion_order: completionOrder.expected,
@@ -558,6 +560,7 @@ function recordCompletedStream(run, summary, events, inputs, record) {
       progress_logs: actualProgressLogs,
       stream_assertion_results: assertionContract.streamResults,
       summary_assertion_results: assertionContract.summaryResults,
+      assertion_message_parity: assertionContract.replayParity.actual,
       event_contract: eventContract.actual,
       lifecycle: lifecycle.actual,
       completion_order: completionOrder.actual,
@@ -1065,14 +1068,7 @@ function delay(milliseconds, signal) {
 }
 
 function parseEventFrame(frame) {
-  const data = frame
-    .split("\n")
-    .filter((line) => line.startsWith("data:"))
-    .map((line) => line.slice(5).trimStart())
-    .join("\n");
-  return data
-    ? parseRunEvent(parseJSON(data, "simulation event frame"))
-    : undefined;
+  return parseBrowserRunEventFrame(frame);
 }
 
 function parseJSON(raw, description) {

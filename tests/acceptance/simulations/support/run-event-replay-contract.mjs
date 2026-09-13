@@ -85,22 +85,38 @@ export function assessCompletedEventOrder(events) {
 }
 
 export function assessReplayAssertionParity(events, summaryAssertions) {
+  const assertionEvents = events.filter((event) => event.type === "assertion");
   const streamResults = orderAssertionResults(
-    events
-      .filter((event) => event.type === "assertion")
-      .map((event) => event.assertion),
+    assertionEvents.map((event) => event.assertion),
   );
   const summaryResults = orderAssertionResults(summaryAssertions);
+  const outerMessages = assertionEvents.map((event) => ({
+    id: event.assertion.id,
+    expected: assertionEventMessage(event.assertion),
+    actual: event.message,
+  }));
   return {
-    expected: "SSE and summary assertions have matching nonempty messages",
-    actual: { stream_results: streamResults, summary_results: summaryResults },
+    expected:
+      "SSE and summary assertions have matching nonempty messages, and each SSE assertion event reports its nested PASS or FAIL result",
+    actual: {
+      stream_results: streamResults,
+      summary_results: summaryResults,
+      assertion_event_messages: outerMessages,
+    },
     streamResults,
     summaryResults,
     passed:
       streamResults.every(hasNonemptyMessage) &&
       summaryResults.every(hasNonemptyMessage) &&
+      outerMessages.every(({ expected, actual }) => expected === actual) &&
       isDeepStrictEqual(streamResults, summaryResults),
   };
+}
+
+function assertionEventMessage(assertion) {
+  return `${assertion.passed ? "PASS" : "FAIL"} ${assertion.name}${
+    assertion.message ? `: ${assertion.message}` : ""
+  }`;
 }
 
 export function orderAssertionResults(assertions) {
