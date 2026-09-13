@@ -519,8 +519,8 @@ function parseSSEBlock(block: string): Record<string, unknown> | undefined {
   return isRecord(value) ? value : undefined;
 }
 
-async function getJSON(url: string): Promise<unknown> {
-  const response = await fetch(url);
+async function getJSON(url: string, signal?: AbortSignal): Promise<unknown> {
+  const response = await fetch(url, signal ? { signal } : undefined);
   const value: unknown = await response.json();
   assert.equal(response.status, 200, `GET ${url}: ${JSON.stringify(value)}`);
   return value;
@@ -546,13 +546,18 @@ async function waitForJSON(
   const deadline = Date.now() + timeoutMs;
   let latest: unknown;
   while (Date.now() < deadline) {
+    const controller = new AbortController();
+    const requestTimeout = setTimeout(() => controller.abort(), Math.max(1, deadline - Date.now()));
     try {
-      latest = await getJSON(url);
+      latest = await getJSON(url, controller.signal);
       if (accept(latest)) return latest;
     } catch (error) {
       latest = errorMessage(error);
+    } finally {
+      clearTimeout(requestTimeout);
     }
-    await delay(50);
+    const retryDelay = Math.min(50, deadline - Date.now());
+    if (retryDelay > 0) await delay(retryDelay);
   }
   throw new Error(`${message}; latest observation: ${JSON.stringify(latest)}`);
 }
