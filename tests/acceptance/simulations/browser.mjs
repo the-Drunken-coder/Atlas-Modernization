@@ -149,8 +149,6 @@ async function runBrowserJourney({
     browser_engine: browserName,
     browser_version: browser.version()
   };
-  writeBrowserSummary(browserSummaryPath, { ...browserMetadata, status: "launched" });
-  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
   const observations = {
     essentialPageResources: [],
     eventStreams: [],
@@ -159,14 +157,19 @@ async function runBrowserJourney({
     sameOriginAPIFailures: []
   };
   const pendingDiagnostics = new Set();
+  let context;
   let page;
   let failure;
   let replacementID;
   let simulationRunID;
+  let traceStarted = false;
   let traceStopped = false;
 
-  await context.tracing.start({ screenshots: true, snapshots: true, sources: true });
   try {
+    writeBrowserSummary(browserSummaryPath, { ...browserMetadata, status: "launched" });
+    context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+    await context.tracing.start({ screenshots: true, snapshots: true, sources: true });
+    traceStarted = true;
     page = await context.newPage();
     attachDiagnostics(page, { requestLog, consoleLog, simulationUrl, observations, pendingDiagnostics });
     await page.goto(simulationUrl, { waitUntil: "domcontentloaded", timeout: 20_000 });
@@ -497,18 +500,20 @@ async function runBrowserJourney({
     throw error;
   } finally {
     await Promise.allSettled([...pendingDiagnostics]);
-    if (!traceStopped) {
+    if (context && traceStarted && !traceStopped) {
       await context.tracing.stop({ path: tracePath }).catch((traceError) => {
         appendJSON(consoleLog, { event: "diagnostic-error", artifact: tracePath, message: errorMessage(traceError) });
       });
     }
-    await context.close().catch((closeError) => {
-      appendJSON(consoleLog, {
-        event: "diagnostic-error",
-        target: "browser context",
-        message: errorMessage(closeError)
+    if (context) {
+      await context.close().catch((closeError) => {
+        appendJSON(consoleLog, {
+          event: "diagnostic-error",
+          target: "browser context",
+          message: errorMessage(closeError)
+        });
       });
-    });
+    }
     await browser.close().catch((closeError) => {
       appendJSON(consoleLog, { event: "diagnostic-error", target: "browser", message: errorMessage(closeError) });
     });
@@ -516,9 +521,9 @@ async function runBrowserJourney({
       appendJSON(consoleLog, {
         event: "journey-failure",
         message: errorMessage(failure),
-        screenshot: failureScreenshot,
-        html: failureHTML,
-        trace: tracePath,
+        ...(existsSync(failureScreenshot) ? { screenshot: failureScreenshot } : {}),
+        ...(existsSync(failureHTML) ? { html: failureHTML } : {}),
+        ...(existsSync(tracePath) ? { trace: tracePath } : {}),
         reproduction
       });
     }

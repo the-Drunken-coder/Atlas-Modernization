@@ -23,7 +23,7 @@ node tests/acceptance/simulations/browser.mjs --browser=webkit
 
 Add `--headed` to watch a local run. A missing Node 24 runtime, Docker daemon, Compose plugin, built workbench, or selected browser executable fails explicitly. The journey has no retry.
 
-Each run writes its exact revision, dirty-worktree state, duration, expected and observed values, built-asset hashes, browser version, mutation, SSE, and unexpected same-origin API failures, browser console and uncaught page exceptions, simulation server output, Compose logs, and a Playwright trace under:
+Each run writes its exact revision, dirty-worktree state, duration, expected and observed values, built-asset hashes, browser version, mutation, SSE, and unexpected same-origin API failures, browser console and uncaught page exceptions, simulation server output, and Compose logs. When tracing starts, it also writes a Playwright trace under:
 
 ```text
 .atlas/acceptance/simulations-browser-<engine>/<run-id>/
@@ -31,6 +31,6 @@ Each run writes its exact revision, dirty-worktree state, duration, expected and
 
 The API failure assertion excludes only browser-reported cancellation of an EventSource request that the workbench deliberately closes.
 
-A failure also writes a full-page screenshot and page HTML when the browser remains available. Open the trace with `node node_modules/playwright/cli.js show-trace <trace.zip>`. Preserve the first failing directory. Correct setup or expectation errors in this test-only branch. Keep a verified product failure active and record its exact revision, command, expected result, observed result, and artifacts in `docs/problems/` for a later repair.
+A failure also writes a full-page screenshot and page HTML when a page was created and remains available. Open an available trace with `node node_modules/playwright/cli.js show-trace <trace.zip>`. Preserve the first failing directory. Correct setup or expectation errors in this test-only branch. Keep a verified product failure active and record its exact revision, command, expected result, observed result, and artifacts in `docs/problems/` for a later repair.
 
 The required `Simulation Browser Acceptance` workflow runs the same Chromium and WebKit commands on Linux and uploads each engine's evidence even when its job fails. A local or hosted Playwright result establishes only the recorded engine, operating system, and Docker environment.
