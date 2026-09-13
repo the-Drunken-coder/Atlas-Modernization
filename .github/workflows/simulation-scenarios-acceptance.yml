@@ -45,7 +45,7 @@ jobs:
         run: npm ci
 
       - name: Run required simulation scenario acceptance
-        run: npm run build:sdk && node tests/acceptance/simulations/${{ matrix.scenario }}.mjs
+        run: npm run build:sdk && node --import ./simulations/node_modules/tsx/dist/loader.mjs tests/acceptance/simulations/${{ matrix.scenario }}.mjs
 
       - name: Upload acceptance evidence
         if: ${{ always() }}
@@ -87,7 +87,7 @@ jobs:
       - name: Run expanded simulation scenario and input fault
         env:
           ATLAS_ACCEPTANCE_NIGHTLY: "1"
-        run: npm run build:sdk && node tests/acceptance/simulations/${{ matrix.scenario }}.mjs
+        run: npm run build:sdk && node --import ./simulations/node_modules/tsx/dist/loader.mjs tests/acceptance/simulations/${{ matrix.scenario }}.mjs
 
       - name: Upload nightly acceptance evidence
         if: ${{ always() }}

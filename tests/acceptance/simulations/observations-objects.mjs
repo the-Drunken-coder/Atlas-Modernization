@@ -3,14 +3,16 @@ import { appendFileSync, existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { AtlasClient, isAtlasAPIError } from "@the-drunken-coder/atlas-sdk";
+import { parseRunEvent } from "../../../simulations/src/client/run-state.ts";
 import { runAcceptance } from "../support/stack.mjs";
+import { parseBrowserRunSummary } from "./support/browser-run-contracts.mjs";
 import {
   createSimulationServerFixture,
   simulationFixtureVariant,
 } from "./support/server-fixture.mjs";
 
 const reproduction =
-  "npm run build:sdk && node tests/acceptance/simulations/observations-objects.mjs";
+  "npm run build:sdk && node --import ./simulations/node_modules/tsx/dist/loader.mjs tests/acceptance/simulations/observations-objects.mjs";
 const nightly = process.env.ATLAS_ACCEPTANCE_NIGHTLY === "1";
 const normalInputs = {
   assetCount: nightly ? 3 : 2,
@@ -162,6 +164,9 @@ await runAcceptance({
         "POST",
         `/api/runs/${encodeURIComponent(normal.id)}/cleanup`,
       );
+      const cleanedNormalSummary = parseBrowserRunSummary(
+        cleanedNormal.body.run,
+      );
       const normalCleanupStream = await collectRunEvents({
         api,
         runID: normal.id,
@@ -174,7 +179,7 @@ await runAcceptance({
       });
       recordCleanupEvents(
         normalSummary,
-        cleanedNormal.body.run,
+        cleanedNormalSummary,
         normalCleanupStream.events,
         record,
       );
@@ -230,26 +235,34 @@ await runAcceptance({
         "POST",
         `/api/runs/${encodeURIComponent(cancelled.id)}/stop`,
       );
+      const cancelledRunSummary = parseBrowserRunSummary(cancelledRun.body.run);
       record({
         check:
           "observations-objects accepts cancellation through its public route",
-        expected: { status: 200, run_status: "cancelled" },
+        expected: { status: 200, run_status: "cancelled", cleaned: false },
         actual: {
           status: cancelledRun.status,
-          run_status: cancelledRun.body.run.status,
+          run_status: cancelledRunSummary.status,
+          cleaned: cancelledRunSummary.cleaned,
           progress_events: cancellationProgress.events.length,
         },
         passed:
           cancelledRun.status === 200 &&
-          cancelledRun.body.run.status === "cancelled" &&
+          cancelledRunSummary.status === "cancelled" &&
+          cancelledRunSummary.cleaned === false &&
           cancellationProgress.events.length > 0,
       });
       const cancelledSummary = await readRun(api, cancelled.id);
       record({
         check: "observations reread preserves the confirmed cancelled status",
-        expected: { status: cancelledRun.body.run.status },
-        actual: { status: cancelledSummary.status },
-        passed: cancelledSummary.status === cancelledRun.body.run.status,
+        expected: { status: cancelledRunSummary.status, cleaned: false },
+        actual: {
+          status: cancelledSummary.status,
+          cleaned: cancelledSummary.cleaned,
+        },
+        passed:
+          cancelledSummary.status === cancelledRunSummary.status &&
+          cancelledSummary.cleaned === false,
       });
       recordCreatedResourceSet(cancelledSummary, cancellationInputs, record);
       recordLocalLedgerState(
@@ -263,6 +276,9 @@ await runAcceptance({
         "POST",
         `/api/runs/${encodeURIComponent(cancelled.id)}/cleanup`,
       );
+      const cleanedCancelledSummary = parseBrowserRunSummary(
+        cleanedCancelled.body.run,
+      );
       const cancelledCleanupStream = await collectRunEvents({
         api,
         runID: cancelled.id,
@@ -275,7 +291,7 @@ await runAcceptance({
       });
       recordCleanupEvents(
         cancelledSummary,
-        cleanedCancelled.body.run,
+        cleanedCancelledSummary,
         cancelledCleanupStream.events,
         record,
       );
@@ -526,20 +542,21 @@ async function startRun(api, inputs, jsonInput) {
     inputs,
     jsonInput: JSON.stringify(jsonInput),
   });
+  const run = parseBrowserRunSummary(response.body.run);
   if (
     response.status !== 201 ||
-    response.body.run?.scenarioId !== "observations-objects"
+    run.scenarioId !== "observations-objects"
   ) {
     throw new Error(
       `Starting observations-objects expected HTTP 201, observed ${response.raw}`,
     );
   }
-  return response.body.run;
+  return run;
 }
 
 async function readRun(api, runID) {
-  return (await api.json("GET", `/api/runs/${encodeURIComponent(runID)}`)).body
-    .run;
+  const response = await api.json("GET", `/api/runs/${encodeURIComponent(runID)}`);
+  return parseBrowserRunSummary(response.body.run);
 }
 
 function recordCompletedStream(started, completed, events, inputs, record) {
@@ -547,6 +564,15 @@ function recordCompletedStream(started, completed, events, inputs, record) {
   const resources = events.filter((event) => event.type === "resource");
   const logs = events.filter((event) => event.type === "log");
   const assertions = events.filter((event) => event.type === "assertion");
+  const expectedAssertions = [
+    "Observer assets persisted",
+    "Tracks persisted",
+    "Object references persisted",
+  ];
+  const expectedAssertionIDs = expectedAssertions.map(
+    (_, index) => `assert-${index + 1}`,
+  );
+  const actualAssertionIDs = assertions.map((event) => event.assertion?.id);
   const terminal = events.find(
     (event) => event.type === "status" && event.status !== "running",
   );
@@ -586,39 +612,47 @@ function recordCompletedStream(started, completed, events, inputs, record) {
     check: "actual server event stream completes observations-objects",
     expected: {
       start_status: "running",
+      start_cleaned: false,
       initial_event: { type: "status", status: "running" },
       status: "completed",
+      completed_cleaned: false,
       resources: expectedResources,
       logs: expectedLogs,
-      assertions: [
-        "Observer assets persisted",
-        "Tracks persisted",
-        "Object references persisted",
-      ],
+      assertion_ids: expectedAssertionIDs,
+      assertion_ids_unique: true,
+      assertions: expectedAssertions,
     },
     actual: {
-      started_run: { id: started.id, status: started.status },
+      started_run: {
+        id: started.id,
+        status: started.status,
+        cleaned: started.cleaned,
+      },
+      completed_run: { status: completed.status, cleaned: completed.cleaned },
       initial,
       terminal,
       resources: actualResources,
       logs: actualLogs,
+      assertion_ids: actualAssertionIDs,
+      assertion_ids_unique:
+        new Set(actualAssertionIDs).size === actualAssertionIDs.length,
       assertions: assertions.map((event) => event.assertion),
     },
     passed:
       started.status === "running" &&
+      started.cleaned === false &&
       initial?.type === "status" &&
       initial.status === "running" &&
       completed.status === "completed" &&
+      completed.cleaned === false &&
       terminal?.status === "completed" &&
       isDeepStrictEqual(actualResources, expectedResources) &&
       isDeepStrictEqual(actualLogs, expectedLogs) &&
+      isDeepStrictEqual(actualAssertionIDs, expectedAssertionIDs) &&
+      new Set(actualAssertionIDs).size === actualAssertionIDs.length &&
       isDeepStrictEqual(
         assertions.map((event) => event.assertion?.name),
-        [
-          "Observer assets persisted",
-          "Tracks persisted",
-          "Object references persisted",
-        ],
+        expectedAssertions,
       ) &&
       assertions.every((event) => event.assertion?.passed === true) &&
       strictlyIncreasing(events.map((event) => event.sequence)) &&
@@ -1163,7 +1197,9 @@ function parseEventFrame(frame) {
     .filter((line) => line.startsWith("data:"))
     .map((line) => line.slice(5).trimStart())
     .join("\n");
-  return data ? parseJSON(data, "simulation event frame") : undefined;
+  return data
+    ? parseRunEvent(parseJSON(data, "simulation event frame"))
+    : undefined;
 }
 
 function hasExactNumberFields(scenario, expected) {

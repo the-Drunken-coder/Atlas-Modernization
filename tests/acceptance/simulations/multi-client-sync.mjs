@@ -3,19 +3,21 @@ import { appendFileSync, existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { AtlasClient, isAtlasAPIError } from "@the-drunken-coder/atlas-sdk";
+import { parseRunEvent } from "../../../simulations/src/client/run-state.ts";
 import { runAcceptance } from "../support/stack.mjs";
 import {
   observeReaderTransport,
   startReaders,
   stopReaders,
 } from "./support/multi-client-readers.mjs";
+import { parseBrowserRunSummary } from "./support/browser-run-contracts.mjs";
 import {
   createSimulationServerFixture,
   simulationFixtureVariant,
 } from "./support/server-fixture.mjs";
 
 const reproduction =
-  "npm run build:sdk && node tests/acceptance/simulations/multi-client-sync.mjs";
+  "npm run build:sdk && node --import ./simulations/node_modules/tsx/dist/loader.mjs tests/acceptance/simulations/multi-client-sync.mjs";
 const nightly = process.env.ATLAS_ACCEPTANCE_NIGHTLY === "1";
 const normalInputs = nightly
   ? { clientCount: 4, writes: 8, settleMs: 2_500 }
@@ -141,6 +143,7 @@ await runAcceptance({
         "POST",
         `/api/runs/${encodeURIComponent(run.id)}/cleanup`,
       );
+      const cleanedSummary = parseBrowserRunSummary(cleanup.body.run);
       const cleanupStream = await collectRunEvents({
         api,
         runID: run.id,
@@ -153,7 +156,7 @@ await runAcceptance({
       });
       recordCleanupEvents(
         summary,
-        cleanup.body.run,
+        cleanedSummary,
         cleanupStream.events,
         record,
       );
@@ -384,20 +387,18 @@ async function startRun(api, inputs) {
     targetId: "local",
     inputs,
   });
-  if (
-    response.status !== 201 ||
-    response.body.run?.scenarioId !== "multi-client-sync"
-  ) {
+  const run = parseBrowserRunSummary(response.body.run);
+  if (response.status !== 201 || run.scenarioId !== "multi-client-sync") {
     throw new Error(
       `Starting multi-client-sync expected HTTP 201, observed ${response.raw}`,
     );
   }
-  return response.body.run;
+  return run;
 }
 
 async function readRun(api, runID) {
-  return (await api.json("GET", `/api/runs/${encodeURIComponent(runID)}`)).body
-    .run;
+  const response = await api.json("GET", `/api/runs/${encodeURIComponent(runID)}`);
+  return parseBrowserRunSummary(response.body.run);
 }
 
 function recordCompletedStream(run, summary, events, inputs, record) {
@@ -405,6 +406,10 @@ function recordCompletedStream(run, summary, events, inputs, record) {
   const resources = events.filter((event) => event.type === "resource");
   const assertions = events.filter((event) => event.type === "assertion");
   const expectedAssertionNames = clientAssertionNames(inputs.clientCount);
+  const expectedAssertionIDs = expectedAssertionNames.map(
+    (_, index) => `assert-${index + 1}`,
+  );
+  const actualAssertionIDs = assertions.map((event) => event.assertion?.id);
   const terminal = events.find(
     (event) => event.type === "status" && event.status !== "running",
   );
@@ -418,25 +423,40 @@ function recordCompletedStream(run, summary, events, inputs, record) {
     check: "actual server event stream completes multi-client-sync",
     expected: {
       start_status: "running",
+      start_cleaned: false,
       initial_event: { type: "status", status: "running" },
       status: "completed",
+      completed_cleaned: false,
       resources: expectedResources,
+      assertion_ids: expectedAssertionIDs,
+      assertion_ids_unique: true,
       assertion_names: expectedAssertionNames,
     },
     actual: {
-      started_run: { id: run.id, status: run.status },
+      started_run: { id: run.id, status: run.status, cleaned: run.cleaned },
+      completed_run: { status: summary.status, cleaned: summary.cleaned },
       initial,
       terminal,
       resources: actualResources,
+      assertion_ids: actualAssertionIDs,
+      assertion_ids_unique:
+        new Set(actualAssertionIDs).size === actualAssertionIDs.length,
       assertions: assertions.map((event) => event.assertion),
     },
     passed:
       run.status === "running" &&
+      run.cleaned === false &&
       initial?.type === "status" &&
       initial.status === "running" &&
       summary.status === "completed" &&
+      summary.cleaned === false &&
       terminal?.status === "completed" &&
       isDeepStrictEqual(actualResources, expectedResources) &&
+      isDeepStrictEqual(
+        [...actualAssertionIDs].sort(),
+        [...expectedAssertionIDs].sort(),
+      ) &&
+      new Set(actualAssertionIDs).size === actualAssertionIDs.length &&
       isDeepStrictEqual(
         assertions.map((event) => event.assertion?.name).sort(),
         [...expectedAssertionNames].sort(),
@@ -886,7 +906,9 @@ function parseEventFrame(frame) {
     .filter((line) => line.startsWith("data:"))
     .map((line) => line.slice(5).trimStart())
     .join("\n");
-  return data ? parseJSON(data, "simulation event frame") : undefined;
+  return data
+    ? parseRunEvent(parseJSON(data, "simulation event frame"))
+    : undefined;
 }
 
 function parseJSON(raw, description) {
