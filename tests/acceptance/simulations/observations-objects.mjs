@@ -16,8 +16,8 @@ const normalInputs = {
   assetCount: nightly ? 3 : 2,
   observations: nightly ? 8 : 3,
   tickMs: 50,
-  startLatitude: 38.88,
-  startLongitude: -77.04,
+  startLatitude: 38.8123,
+  startLongitude: -77.1634,
 };
 const cancellationInputs = {
   assetCount: 2,
@@ -637,6 +637,7 @@ async function recordPersistedObservations(
         ({ observation, alias, latitude, longitude }) => ({
           observation,
           alias,
+          subtype: "simulated-observation",
           latitude,
           longitude,
         }),
@@ -699,6 +700,7 @@ async function recordPersistedObservations(
         const simulation = expected.track?.components.custom_simulation;
         return (
           expected.track?.alias === expected.alias &&
+          expected.track.subtype === "simulated-observation" &&
           expected.track.components.telemetry?.latitude === expected.latitude &&
           expected.track.components.telemetry?.longitude ===
             expected.longitude &&
