@@ -179,7 +179,7 @@ async function readUntilAssertions({ baseUrl, runID, artifacts, signal }) {
     latest = await requestJSON(
       baseUrl,
       `/api/runs/${encodeURIComponent(runID)}`,
-      { signal },
+      { signal, timeoutMs: Math.max(1, deadline - Date.now()) },
     );
     if (
       latest.status === 200 &&
@@ -214,7 +214,10 @@ async function requestJSON(baseUrl, path, options = {}) {
           }
         : undefined,
     body: options.body,
-    signal: options.signal,
+    signal: AbortSignal.any([
+      options.signal,
+      AbortSignal.timeout(options.timeoutMs ?? 15_000),
+    ]),
   });
   const raw = await response.text();
   let body;
