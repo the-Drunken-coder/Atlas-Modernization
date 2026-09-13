@@ -131,8 +131,8 @@ const privateChannelKeyByte = (seed % 255) + 1;
 const sharedJoinKey = `atlas-link-acceptance-${seed}-shared-authentication-key`;
 const rejectedJoinKey = `atlas-link-acceptance-${seed}-rejected-authentication-key`;
 const httpRequestTimeoutMs = 15_000;
-// Explicit phase deadlines total 207 seconds; cleanup adds 10 seconds, leaving 23 seconds for evidence writes.
-const processTestTimeoutMs = 240_000;
+// The scheduled fault path's phase deadlines total 774 seconds; cleanup adds 10 seconds, leaving 26 seconds for evidence writes.
+const processTestTimeoutMs = 810_000;
 
 test("runs compiled Link processes through joining, application settlement, rejected startup and join, and shutdown", {
   timeout: processTestTimeoutMs
