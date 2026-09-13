@@ -101,6 +101,7 @@ type ProcessObservation = {
   shared_picture?: unknown;
   application_confirmation?: unknown;
   application_rejection?: unknown;
+  private_delivery_fault?: unknown;
   incomplete_operation_cleanup?: unknown;
   startup_rejection?: unknown;
   join_rejection?: unknown;
@@ -165,6 +166,10 @@ test("runs compiled Link processes through joining, application settlement, reje
     rejected_startup: "Gateway membership identity does not match --node-id",
     rejected_join: "Asset remains discovering after rejecting a challenge authenticated with another key",
     application_settlement: ["confirmed", "rejected"],
+    private_delivery_fault:
+      fault === "drop-asset-private-packets"
+        ? { dropped_before_gateway_delivery: true, recovered_operation: "confirmed" }
+        : null,
     incomplete_operation_shutdown: {
       asset_confirmed_pending_before_shutdown: 1,
       gateway_inbound_awaiting_settlement_before_shutdown: 1
@@ -180,7 +185,7 @@ test("runs compiled Link processes through joining, application settlement, reje
   };
   await writeJSON(join(artifactDirectory, "expected.json"), expected);
 
-  const network = new LaboratoryNetwork(fault === "drop-asset-private-packets" ? nodeNumbers[4] : undefined);
+  const network = new LaboratoryNetwork();
   const runners: Runner[] = [];
   let gatewayEvents: SSEReader | undefined;
   let assetEvents: SSEReader | undefined;
@@ -314,6 +319,90 @@ test("runs compiled Link processes through joining, application settlement, reje
 
     gatewayEvents = await openSSE(`${gatewayBase}/v1/events?after=0&client_id=process-acceptance`);
     assetEvents = await openSSE(`${assetBase}/v1/events?after=0&client_id=process-acceptance`);
+
+    if (fault === "drop-asset-private-packets") {
+      network.dropPrivateTransmissionsFrom(nodeNumbers[4]!);
+      const faultSubmission = await postJSON(`${assetBase}/v1/messages`, {
+        message: {
+          type: "subscription",
+          action: "add",
+          selector: { kind: "record", resource_type: "entity", id: "fault-recovery" }
+        },
+        destination: { role: "gateway", id: "gateway-main" },
+        operation_id: "acceptance-private-drop-recovery"
+      });
+      assert.equal(property(faultSubmission, "status"), "queued");
+      const faultPacketSent = await assetEvents.next(
+        (value) =>
+          property(value, "type") === "transport" &&
+          property(property(value, "event"), "type") === "packet_sent" &&
+          property(property(value, "event"), "operation_id") === "acceptance-private-drop-recovery",
+        15_000,
+        "Asset did not expose radio acceptance for the private-delivery fault"
+      );
+      await waitForCondition(
+        () => network.droppedPrivateTransmissionCount() > 0,
+        5_000,
+        "Laboratory network did not drop the Asset private transmission"
+      );
+      const operationBeforeRecovery = await getJSON(`${assetBase}/v1/operations/acceptance-private-drop-recovery`);
+      assert.equal(property(operationBeforeRecovery, "status"), "queued");
+      const assetBeforeRecovery = await waitForJSON(
+        `${assetBase}/v1/status`,
+        (value) => property(property(value, "transport"), "confirmed_pending") === 1,
+        5_000,
+        "Asset did not retain the dropped confirmed operation"
+      );
+      const gatewayBeforeRecovery = await getJSON(`${gatewayBase}/v1/status`);
+      assert.equal(property(property(gatewayBeforeRecovery, "transport"), "inbound_awaiting_settlement"), 0);
+
+      const droppedTransmissions = network.droppedPrivateTransmissionCount();
+      network.resumePrivateTransmissions();
+      const recoveredInbound = await gatewayEvents.next(
+        (value) => isSettlementEvent(value, "acceptance-private-drop-recovery"),
+        15_000,
+        "Gateway did not receive the dropped operation after private delivery recovered"
+      );
+      const recoveredSettlementID = requiredString(
+        property(property(recoveredInbound, "event"), "settlement_id"),
+        "recovered settlement ID"
+      );
+      const recoveredSettlement = await postJSON(
+        `${gatewayBase}/v1/inbound/${encodeURIComponent(recoveredSettlementID)}/settle`,
+        { accepted: true }
+      );
+      assert.equal(property(recoveredSettlement, "settled"), true);
+      const recoveredOperation = await waitForJSON(
+        `${assetBase}/v1/operations/acceptance-private-drop-recovery`,
+        (value) => property(value, "status") === "confirmed",
+        15_000,
+        "Asset operation did not confirm after private delivery recovered"
+      );
+      await waitForJSON(
+        `${assetBase}/v1/status`,
+        hasNoPendingTransportWork,
+        15_000,
+        "Asset retained pending transport work after private delivery recovered"
+      );
+      await waitForJSON(
+        `${gatewayBase}/v1/status`,
+        hasNoPendingTransportWork,
+        15_000,
+        "Gateway retained pending transport work after private delivery recovered"
+      );
+      observation.private_delivery_fault = {
+        submission: faultSubmission,
+        radio_accepted_event: faultPacketSent,
+        operation_before_recovery: operationBeforeRecovery,
+        asset_before_recovery: assetBeforeRecovery,
+        gateway_before_recovery: gatewayBeforeRecovery,
+        dropped_private_transmissions: droppedTransmissions,
+        recovered_inbound: recoveredInbound,
+        settlement: recoveredSettlement,
+        operation: recoveredOperation
+      };
+      observation.timings_ms.private_delivery_recovered = elapsed(scenarioStarted);
+    }
 
     const confirmedSubmission = await postJSON(`${assetBase}/v1/messages`, {
       message: {
@@ -594,8 +683,20 @@ test("runs compiled Link processes through joining, application settlement, reje
 class LaboratoryNetwork {
   private readonly nodes = new Map<number, { child: ChildProcess; publicKeyBase64: string }>();
   private readonly transmissions: RadioMessage[] = [];
+  private dropPrivateFrom: number | undefined;
+  private droppedPrivateTransmissions = 0;
 
-  constructor(private readonly dropPrivateFrom?: number) {}
+  dropPrivateTransmissionsFrom(nodeNumber: number): void {
+    this.dropPrivateFrom = nodeNumber;
+  }
+
+  resumePrivateTransmissions(): void {
+    this.dropPrivateFrom = undefined;
+  }
+
+  droppedPrivateTransmissionCount(): number {
+    return this.droppedPrivateTransmissions;
+  }
 
   hasTransmission(expected: Pick<RadioMessage, "from" | "to" | "channel">): boolean {
     return this.transmissions.some(
@@ -628,7 +729,10 @@ class LaboratoryNetwork {
     }
     if (message.type !== "lab:radio") return;
     this.transmissions.push(message);
-    if (message.from === this.dropPrivateFrom && message.channel === 1) return;
+    if (message.from === this.dropPrivateFrom && message.channel === 1) {
+      this.droppedPrivateTransmissions++;
+      return;
+    }
     for (const [nodeNumber, peer] of this.nodes) {
       if (nodeNumber === message.from) continue;
       if (message.to !== 0xffffffff && message.to !== nodeNumber) continue;
