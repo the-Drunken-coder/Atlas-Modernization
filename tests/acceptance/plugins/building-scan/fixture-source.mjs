@@ -1,6 +1,15 @@
 import { createServer } from "node:http";
+import { appendFileSync } from "node:fs";
 
 const fixtureMode = process.env.ATLAS_BUILDING_SCAN_FIXTURE_MODE ?? "required";
+const fixtureVariants = [
+  { south: 42, north: 42.01, variant: "success" },
+  { south: 42.02, north: 42.03, variant: "malformed_geometry" },
+  { south: 42.04, north: 42.05, variant: "source_failure" },
+  { south: 42.06, north: 42.07, variant: "slow" },
+  { south: 42.08, north: 42.09, variant: "source_busy" },
+  { south: 42.1, north: 42.11, variant: "remark_timeout" },
+];
 
 createServer(async (request, response) => {
   const url = new URL(request.url ?? "/", "http://fixture.invalid");
@@ -45,10 +54,21 @@ createServer(async (request, response) => {
     return;
   }
   if (variant === "slow") {
-    const completion = setTimeout(() => writeJSON(response, 200, successfulBuildings()), 10_000);
-    const cancel = () => clearTimeout(completion);
-    request.once("aborted", cancel);
-    response.once("close", cancel);
+    recordFixtureEvent({ event: "slow_request_started" });
+    let completed = false;
+    let connectionClosed = false;
+    const completion = setTimeout(() => {
+      completed = true;
+      writeJSON(response, 200, successfulBuildings());
+    }, 10_000);
+    const closeConnection = () => {
+      if (completed || connectionClosed) return;
+      connectionClosed = true;
+      clearTimeout(completion);
+      recordFixtureEvent({ event: "slow_request_connection_closed" });
+    };
+    request.once("aborted", closeConnection);
+    response.once("close", closeConnection);
     return;
   }
   writeJSON(response, 200, successfulBuildings());
@@ -61,19 +81,13 @@ function fixtureVariant(body) {
   if (!match) throw new Error("missing building-way bounds");
   const [south, west, north, east] = match[1].split(",").map(Number);
   if (![south, west, north, east].every(Number.isFinite)) throw new Error("bounds must be finite numbers");
-  if (!sameCoordinate(west, -71.01) || !sameCoordinate(east, -71) || !sameCoordinate(north, south + 0.01)) {
+  if (!sameCoordinate(west, -71.01) || !sameCoordinate(east, -71)) {
     throw new Error(`unexpected fixture bounds ${match[1]}`);
   }
-  const variantBySouth = new Map([
-    ["42.00", "success"],
-    ["42.02", "malformed_geometry"],
-    ["42.04", "source_failure"],
-    ["42.06", "slow"],
-    ["42.08", "source_busy"],
-    ["42.10", "remark_timeout"],
-  ]);
-  const variant = variantBySouth.get(south.toFixed(2));
-  if (!variant) throw new Error(`unexpected fixture south bound ${south}`);
+  const variant = fixtureVariants.find(
+    (fixture) => sameCoordinate(south, fixture.south) && sameCoordinate(north, fixture.north),
+  )?.variant;
+  if (!variant) throw new Error(`unexpected fixture bounds ${match[1]}`);
   if (fixtureMode !== "nightly" && (variant === "source_busy" || variant === "remark_timeout")) {
     throw new Error(`fixture variant ${variant} is reserved for nightly coverage`);
   }
@@ -82,6 +96,12 @@ function fixtureVariant(body) {
 
 function sameCoordinate(left, right) {
   return Math.abs(left - right) < 1e-9;
+}
+
+function recordFixtureEvent(event) {
+  const eventsFile = process.env.ATLAS_BUILDING_SCAN_FIXTURE_EVENTS_FILE;
+  if (!eventsFile) return;
+  appendFileSync(eventsFile, `${JSON.stringify({ occurred_at: new Date().toISOString(), ...event })}\n`);
 }
 
 function successfulBuildings() {

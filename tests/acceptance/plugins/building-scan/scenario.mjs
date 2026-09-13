@@ -19,8 +19,9 @@ const areas = {
   timeoutRemark: { west: -71.01, south: 42.1, east: -71, north: 42.11 },
 };
 
-const controlledSourceConnector = await createControlledSourceConnector();
-process.env.ATLAS_BUILDING_SCAN_SOURCE_CONNECTOR_FILE = controlledSourceConnector.path;
+const controlledFixture = await createControlledFixture();
+process.env.ATLAS_BUILDING_SCAN_SOURCE_CONNECTOR_FILE = controlledFixture.connectorPath;
+process.env.ATLAS_BUILDING_SCAN_FIXTURE_EVENTS_DIRECTORY = controlledFixture.directory;
 
 try {
 await runPluginAcceptance({
@@ -31,14 +32,14 @@ await runPluginAcceptance({
   pluginService: "building-scan-plugin",
   run: async ({ baseUrl, apiKey, artifacts, record, signal, pluginStack }) => {
     await copyFile(
-      controlledSourceConnector.path,
+      controlledFixture.connectorPath,
       join(artifacts, "building-scan-source-connector.json"),
     );
     record({
       check: "controlled source connector retained shipped route, limit, rate, and circuit policy",
-      expected: controlledSourceConnector.expected,
-      actual: controlledSourceConnector.connector,
-      passed: structurallyEqual(controlledSourceConnector.connector, controlledSourceConnector.expected),
+      expected: controlledFixture.expectedConnector,
+      actual: controlledFixture.connector,
+      passed: structurallyEqual(controlledFixture.connector, controlledFixture.expectedConnector),
     });
     const wireResponses = createWireResponseCapture();
     const client = new AtlasClient({
@@ -87,8 +88,8 @@ await runPluginAcceptance({
         actual: { covered: input !== undefined },
         passed: input !== undefined,
       });
-      const result = await client.plugins.invokeSpatial(pluginID, operation.operation_id, input, { signal });
-      recordSuccessfulResult(record, operation.operation_id, result);
+      const invocation = await invokeSpatial(client, operation.operation_id, input, signal);
+      recordSuccessfulResult(record, operation.operation_id, invocation);
     }
 
     const invalidInput = await captureAPIError(
@@ -148,38 +149,66 @@ await runPluginAcceptance({
     const cancellationReason = new Error("Building Scan acceptance canceled the Operation");
     const cancellation = new AbortController();
     const operationSignal = AbortSignal.any([signal, cancellation.signal]);
+    const eventCountBeforeSlowRequest = (await readFixtureEvents(controlledFixture.eventsPath)).length;
     const pending = client.plugins.invokeSpatial(pluginID, operationID, areas.slow, { signal: operationSignal });
-    const pendingState = await waitForPending(pending, signal);
-    record({
-      check: "slow Building Scan request remained active before caller cancellation",
-      expected: { pending: true },
-      actual: pendingState,
-      passed: pendingState.pending === true,
-    });
-    cancellation.abort(cancellationReason);
-    let cancellationResult;
     try {
-      cancellationResult = { returned: await pending };
-    } catch (error) {
-      cancellationResult = {
-        same_reason: error === cancellationReason,
-        name: error instanceof Error ? error.name : typeof error,
-        message: error instanceof Error ? error.message : String(error),
-      };
+      const sourceStarted = await waitForFixtureEvent({
+        eventsPath: controlledFixture.eventsPath,
+        event: "slow_request_started",
+        after: eventCountBeforeSlowRequest,
+        signal,
+      });
+      record({
+        check: "slow Building Scan request reached the controlled source before caller cancellation",
+        expected: { event: "slow_request_started" },
+        actual: sourceStarted,
+        passed: sourceStarted.event === "slow_request_started",
+      });
+
+      const canceledAt = new Date();
+      cancellation.abort(cancellationReason);
+      let cancellationResult;
+      try {
+        cancellationResult = { returned: await pending };
+      } catch (error) {
+        cancellationResult = {
+          same_reason: error === cancellationReason,
+          name: error instanceof Error ? error.name : typeof error,
+          message: error instanceof Error ? error.message : String(error),
+        };
+      }
+      record({
+        check: "SDK cancellation crossed Core during a slow Building Scan Operation",
+        expected: {
+          same_reason: true,
+          name: "Error",
+          message: cancellationReason.message,
+        },
+        actual: cancellationResult,
+        passed:
+          cancellationResult.same_reason === true &&
+          cancellationResult.name === "Error" &&
+          cancellationResult.message === cancellationReason.message,
+      });
+
+      const sourceClosed = await waitForFixtureEvent({
+        eventsPath: controlledFixture.eventsPath,
+        event: "slow_request_connection_closed",
+        after: eventCountBeforeSlowRequest,
+        signal,
+      });
+      record({
+        check: "caller cancellation closed the controlled source connection",
+        expected: { event: "slow_request_connection_closed", after: canceledAt.toISOString() },
+        actual: sourceClosed,
+        passed:
+          sourceClosed.event === "slow_request_connection_closed" &&
+          isTimestamp(sourceClosed.occurred_at) &&
+          Date.parse(sourceClosed.occurred_at) >= canceledAt.getTime(),
+      });
+    } finally {
+      await copyFile(controlledFixture.eventsPath, join(artifacts, "building-scan-source-events.jsonl"));
     }
-    record({
-      check: "SDK cancellation crossed Core during a slow Building Scan Operation",
-      expected: {
-        same_reason: true,
-        name: "Error",
-        message: cancellationReason.message,
-      },
-      actual: cancellationResult,
-      passed:
-        cancellationResult.same_reason === true &&
-        cancellationResult.name === "Error" &&
-        cancellationResult.message === cancellationReason.message,
-    });
 
     const stopped = await pluginStack.stop();
     record({
@@ -245,13 +274,19 @@ await runPluginAcceptance({
         structurallyEqual(recovered.operations, expectedOperations) &&
         isLaterTimestamp(recovered.checked_at, unavailable.checked_at),
     });
-    const recoveredResult = await client.plugins.invokeSpatial(pluginID, operationID, areas.success, { signal });
-    recordSuccessfulResult(record, operationID, recoveredResult, "restarted Building Scan routed the controlled source fixture");
+    const recoveredInvocation = await invokeSpatial(client, operationID, areas.success, signal);
+    recordSuccessfulResult(
+      record,
+      operationID,
+      recoveredInvocation,
+      "restarted Building Scan routed the controlled source fixture",
+    );
   },
 });
 } finally {
   delete process.env.ATLAS_BUILDING_SCAN_SOURCE_CONNECTOR_FILE;
-  await rm(controlledSourceConnector.directory, { force: true, recursive: true });
+  delete process.env.ATLAS_BUILDING_SCAN_FIXTURE_EVENTS_DIRECTORY;
+  await rm(controlledFixture.directory, { force: true, recursive: true });
 }
 
 async function recordSpatialFailure({ client, wireResponses, record, signal, check, area, pluginCode }) {
@@ -270,7 +305,14 @@ async function recordSpatialFailure({ client, wireResponses, record, signal, che
   });
 }
 
-function recordSuccessfulResult(record, operation, result, check = undefined) {
+async function invokeSpatial(client, operation, input, signal) {
+  const startedAt = new Date();
+  const result = await client.plugins.invokeSpatial(pluginID, operation, input, { signal });
+  return { completedAt: new Date(), result, startedAt };
+}
+
+function recordSuccessfulResult(record, operation, invocation, check = undefined) {
+  const { completedAt, result, startedAt } = invocation;
   const expected = {
     attribution: {
       text: "Map data from OpenStreetMap",
@@ -321,9 +363,18 @@ function recordSuccessfulResult(record, operation, result, check = undefined) {
   };
   record({
     check: check ?? `declared Operation ${operation} returned the controlled Building Scan fixture through Core and Source Gateway`,
-    expected: { ...expected, retrieved_at: "RFC3339 timestamp" },
-    actual,
-    passed: structurallyEqual({ ...actual, retrieved_at: undefined }, { ...expected, retrieved_at: undefined }) && isTimestamp(result.retrieved_at),
+    expected: {
+      ...expected,
+      retrieved_at: {
+        format: "RFC3339 timestamp",
+        not_before: startedAt.toISOString(),
+        not_after: completedAt.toISOString(),
+      },
+    },
+    actual: { ...actual, invocation: { started_at: startedAt.toISOString(), completed_at: completedAt.toISOString() } },
+    passed:
+      structurallyEqual({ ...actual, retrieved_at: undefined }, { ...expected, retrieved_at: undefined }) &&
+      isTimestampWithinInvocation(result.retrieved_at, startedAt, completedAt),
   });
 }
 
@@ -410,14 +461,26 @@ function createWireResponseCapture() {
   };
 }
 
-async function waitForPending(pending, signal) {
-  return Promise.race([
-    pending.then(
-      (returned) => ({ pending: false, returned }),
-      (error) => ({ pending: false, error: error instanceof Error ? error.message : String(error) }),
-    ),
-    abortableDelay(200, signal).then(() => ({ pending: true })),
-  ]);
+async function waitForFixtureEvent({ eventsPath, event, after, signal }) {
+  const deadline = Date.now() + 25_000;
+  let events = [];
+  while (Date.now() < deadline) {
+    signal.throwIfAborted();
+    events = await readFixtureEvents(eventsPath);
+    const observed = events.slice(after).find((entry) => entry.event === event);
+    if (observed) return observed;
+    await abortableDelay(50, signal);
+  }
+  throw new Error(`fixture event ${event} was not observed within 25000 ms: ${JSON.stringify(events.slice(after))}`);
+}
+
+async function readFixtureEvents(eventsPath) {
+  const content = await readFile(eventsPath, "utf8");
+  return content
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
 }
 
 function parseWirePayload(text) {
@@ -440,6 +503,12 @@ function isTimestamp(value) {
   return isRFC3339Timestamp(value);
 }
 
+function isTimestampWithinInvocation(value, startedAt, completedAt) {
+  if (!isTimestamp(value)) return false;
+  const time = Date.parse(value);
+  return time >= startedAt.getTime() && time <= completedAt.getTime();
+}
+
 function isLaterTimestamp(actual, before) {
   return isTimestamp(actual) && isTimestamp(before) && Date.parse(actual) > Date.parse(before);
 }
@@ -460,23 +529,26 @@ function abortableDelay(milliseconds, signal) {
   });
 }
 
-async function createControlledSourceConnector() {
+async function createControlledFixture() {
   const source = new URL("../../../../plugins/building_scan/source-connector.json", import.meta.url);
   const shipped = JSON.parse(await readFile(source, "utf8"));
   const connector = structuredClone(shipped);
   connector.origin = "http://building-scan-source:8090";
   connector.egress = { ...connector.egress, allow_private: true };
   const directory = await mkdtemp(join(tmpdir(), "atlas-building-scan-source-"));
-  const path = join(directory, "building-scan-source-connector.json");
-  await writeFile(path, `${JSON.stringify(connector, null, 2)}\n`);
+  const connectorPath = join(directory, "building-scan-source-connector.json");
+  const eventsPath = join(directory, "events.jsonl");
+  await writeFile(connectorPath, `${JSON.stringify(connector, null, 2)}\n`);
+  await writeFile(eventsPath, "");
   return {
     connector,
     directory,
-    expected: {
+    connectorPath,
+    eventsPath,
+    expectedConnector: {
       ...shipped,
       origin: connector.origin,
       egress: { ...shipped.egress, allow_private: true },
     },
-    path,
   };
 }

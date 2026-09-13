@@ -38,8 +38,10 @@ services:
     command: ["node", "fixture-source.mjs"]
     environment:
       ATLAS_BUILDING_SCAN_FIXTURE_MODE: ${ATLAS_BUILDING_SCAN_FIXTURE_MODE:-required}
+      ATLAS_BUILDING_SCAN_FIXTURE_EVENTS_FILE: /fixture-events/events.jsonl
     volumes:
       - ./plugins/building-scan/fixture-source.mjs:/app/fixture-source.mjs:ro
+      - ${ATLAS_BUILDING_SCAN_FIXTURE_EVENTS_DIRECTORY:?ATLAS_BUILDING_SCAN_FIXTURE_EVENTS_DIRECTORY must be set}:/fixture-events
     networks:
       - source-gateway-only
     healthcheck:
