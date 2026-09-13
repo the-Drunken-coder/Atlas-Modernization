@@ -221,6 +221,13 @@ async function runMapWindowJourney({
       },
       passed: keyboardControlFocused && routedTileRequests > routedBeforeKeyboardZoom
     });
+    const settledTileRequests = await waitForStableValue(() => routedTileRequests, 500, 10_000, signal);
+    record({
+      check: `${browserName} waited for the observable map zoom to settle before drawing`,
+      expected: { stable_fixture_tile_requests_ms: 500 },
+      actual: { routed_tile_requests: settledTileRequests, maximum_requested_tile_zoom: maximumRoutedTileZoom },
+      passed: true
+    });
 
     const map = page.getByTestId("map-canvas");
     await checkVisible(record, map, {
@@ -790,6 +797,24 @@ async function waitUntil(predicate, timeoutMs, signal) {
     if (await predicate()) return;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
+}
+
+async function waitForStableValue(readValue, stableMs, timeoutMs, signal) {
+  const deadline = Date.now() + timeoutMs;
+  let value = readValue();
+  let stableSince = Date.now();
+  while (Date.now() < deadline) {
+    signal.throwIfAborted();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const next = readValue();
+    if (next !== value) {
+      value = next;
+      stableSince = Date.now();
+    } else if (Date.now() - stableSince >= stableMs) {
+      return value;
+    }
+  }
+  throw new Error(`observable value did not remain stable for ${stableMs} ms within ${timeoutMs} ms`);
 }
 
 async function captureScreenshot(page, path, consoleLog) {
