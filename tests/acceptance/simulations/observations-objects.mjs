@@ -308,12 +308,6 @@ await runAcceptance({
           cancelledRunSummary.cleaned === false &&
           cancellationProgress.events.length > 0,
       });
-      const cancelledResources = resourceKeys(
-        cancelledRunSummary.createdResources,
-      );
-      const cancelledObservationLogs = observationLogMessages(
-        cancellationProgress.events,
-      );
       const cancellationStability = await collectRunEventsForWindow({
         api,
         runID: cancelled.id,
@@ -332,8 +326,12 @@ await runAcceptance({
       const stableResources = resourceKeys(cancelledSummary.createdResources);
       const cancellationWindow = assessCancelledObservationWindow(
         cancellationStability.snapshots,
-        cancelledResources,
-        cancelledObservationLogs,
+      );
+      const cancelledResources = cancellationWindow.baseline?.resources ?? [];
+      const cancelledObservationLogs =
+        cancellationWindow.baseline?.observationLogs ?? [];
+      const stopResponseResources = resourceKeys(
+        cancelledRunSummary.createdResources,
       );
       record({
         check:
@@ -347,10 +345,13 @@ await runAcceptance({
           observed_window_ms: cancellationStability.observedWindowMs,
           snapshot_count: cancellationStability.snapshots.length,
           resources: stableResources,
+          stop_response_resources: stopResponseResources,
+          replay_prefix_resources: cancelledResources,
           observation_windows: cancellationWindow.states,
         },
         passed:
           cancellationStability.observedWindowMs >= cancellationInputs.tickMs &&
+          isDeepStrictEqual(stopResponseResources, cancelledResources) &&
           isDeepStrictEqual(stableResources, cancelledResources) &&
           cancellationWindow.passed,
       });

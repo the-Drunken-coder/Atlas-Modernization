@@ -5,22 +5,20 @@ import { isDeepStrictEqual } from "node:util";
  * events in another. The bounded stream window must retain the cancelled
  * marker without adding an observation log or resource event.
  */
-export function assessCancelledObservationWindow(
-  snapshots,
-  expectedResources,
-  expectedObservationLogs,
-) {
+export function assessCancelledObservationWindow(snapshots) {
   const states = snapshots.map((snapshot) => snapshotState(snapshot.events));
+  const baseline = states.find((state) => state.hasCancelledMarker);
 
   return {
+    baseline,
     states,
     passed:
-      states.length > 0 &&
+      baseline !== undefined &&
       states.every(
         (state) =>
           state.hasCancelledMarker &&
-          isDeepStrictEqual(state.resources, expectedResources) &&
-          isDeepStrictEqual(state.observationLogs, expectedObservationLogs) &&
+          isDeepStrictEqual(state.resources, baseline.resources) &&
+          isDeepStrictEqual(state.observationLogs, baseline.observationLogs) &&
           state.lateActivity.length === 0,
       ),
   };
@@ -42,14 +40,16 @@ function snapshotState(events) {
                 event.message.startsWith("Observation ")),
           )
           .map(eventState);
+  const prefix =
+    cancelledIndex === -1 ? [] : events.slice(0, cancelledIndex + 1);
 
   return {
     hasCancelledMarker: cancelledIndex !== -1,
-    resources: events
+    resources: prefix
       .filter((event) => event.type === "resource")
       .map((event) => `${event.resource.type}:${event.resource.id}`)
       .sort(),
-    observationLogs: events
+    observationLogs: prefix
       .filter(
         (event) =>
           event.type === "log" && event.message.startsWith("Observation "),
