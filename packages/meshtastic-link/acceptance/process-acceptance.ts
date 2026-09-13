@@ -7,6 +7,9 @@ import { createServer } from "node:net";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { fromBinary } from "@bufbuild/protobuf";
+import { Protobuf } from "@meshtastic/core";
+import { decodeFrame, type LinkFrame } from "@the-drunken-coder/atlas-meshtastic-link";
 
 type Role = "asset" | "gateway";
 
@@ -41,6 +44,7 @@ type SummaryMessage = {
   duration_ms: number;
   outcome: "stopped" | "failed";
   error?: string;
+  evidence_complete: boolean;
   lifecycle_cleanup: DeviceSummary;
   device: DeviceSummary;
   active_resources: {
@@ -259,14 +263,34 @@ test("runs compiled Link processes through joining, application settlement, reje
       15_000,
       "Gateway did not send the mismatched-key Asset an authenticated join challenge"
     );
-    const rejectedJoinStatus = await getJSON(`${baseURL(rejectedJoinAssetReady.address)}/v1/status`);
-    assert.equal(property(rejectedJoinStatus, "lifecycle"), "discovering");
-    assert.equal(property(property(rejectedJoinStatus, "joining"), "state"), "discovering");
+    await waitForCondition(
+      () => rejectedJoinAsset.stdout.join("").includes("Received PRIVATE_APP packet"),
+      5_000,
+      "Mismatched-key Asset did not process the Gateway challenge"
+    );
+    await waitForCondition(
+      () => rejectedJoinNetwork.transmissionCountFrom(nodeNumbers[2]!, 0) >= 2,
+      15_000,
+      "Mismatched-key Asset did not remain in discovery through another bounded attempt"
+    );
+    const rejectedJoinStatus = await waitForJSON(
+      `${baseURL(rejectedJoinAssetReady.address)}/v1/status`,
+      (value) =>
+        property(value, "lifecycle") === "discovering" &&
+        property(property(value, "joining"), "state") === "discovering",
+      5_000,
+      "Mismatched-key Asset did not remain in discovery after processing the Gateway challenge"
+    );
     observation.join_rejection = {
       gateway: rejectedJoinGatewayReady,
       asset: rejectedJoinAssetReady,
       asset_status: rejectedJoinStatus,
-      public_channel_transmissions: rejectedJoinNetwork.transmissionCount(0)
+      public_channel_transmissions: rejectedJoinNetwork.transmissionCount(0),
+      asset_discovery_transmissions: rejectedJoinNetwork.transmissionCountFrom(nodeNumbers[2]!, 0),
+      asset_processed_private_packets: countOccurrences(
+        rejectedJoinAsset.stdout.join(""),
+        "Received PRIVATE_APP packet"
+      )
     };
     observation.timings_ms.join_rejected = elapsed(scenarioStarted);
 
@@ -321,7 +345,7 @@ test("runs compiled Link processes through joining, application settlement, reje
     assetEvents = await openSSE(`${assetBase}/v1/events?after=0&client_id=process-acceptance`);
 
     if (fault === "drop-asset-private-packets") {
-      network.dropPrivateTransmissionsFrom(nodeNumbers[4]!);
+      network.dropPrivateTransmissionsFrom(nodeNumbers[4]!, "acceptance-private-drop-recovery");
       const faultSubmission = await postJSON(`${assetBase}/v1/messages`, {
         message: {
           type: "subscription",
@@ -341,9 +365,9 @@ test("runs compiled Link processes through joining, application settlement, reje
         "Asset did not expose radio acceptance for the private-delivery fault"
       );
       await waitForCondition(
-        () => network.droppedPrivateTransmissionCount() > 0,
+        () => network.droppedPrivateAttemptComplete(),
         5_000,
-        "Laboratory network did not drop the Asset private transmission"
+        "Laboratory network did not drop one complete Asset private transmission attempt"
       );
       const operationBeforeRecovery = await getJSON(`${assetBase}/v1/operations/acceptance-private-drop-recovery`);
       assert.equal(property(operationBeforeRecovery, "status"), "queued");
@@ -683,19 +707,31 @@ test("runs compiled Link processes through joining, application settlement, reje
 class LaboratoryNetwork {
   private readonly nodes = new Map<number, { child: ChildProcess; publicKeyBase64: string }>();
   private readonly transmissions: RadioMessage[] = [];
-  private dropPrivateFrom: number | undefined;
+  private privateDrop:
+    | {
+        from: number;
+        operationID: string;
+        messageID?: string;
+        chunkCount?: number;
+        chunks: Set<number>;
+      }
+    | undefined;
   private droppedPrivateTransmissions = 0;
 
-  dropPrivateTransmissionsFrom(nodeNumber: number): void {
-    this.dropPrivateFrom = nodeNumber;
+  dropPrivateTransmissionsFrom(nodeNumber: number, operationID: string): void {
+    this.privateDrop = { from: nodeNumber, operationID, chunks: new Set() };
   }
 
   resumePrivateTransmissions(): void {
-    this.dropPrivateFrom = undefined;
+    this.privateDrop = undefined;
   }
 
   droppedPrivateTransmissionCount(): number {
     return this.droppedPrivateTransmissions;
+  }
+
+  droppedPrivateAttemptComplete(): boolean {
+    return this.privateDrop?.chunkCount !== undefined && this.privateDrop.chunks.size === this.privateDrop.chunkCount;
   }
 
   hasTransmission(expected: Pick<RadioMessage, "from" | "to" | "channel">): boolean {
@@ -706,6 +742,10 @@ class LaboratoryNetwork {
 
   transmissionCount(channel: number): number {
     return this.transmissions.filter((message) => message.channel === channel).length;
+  }
+
+  transmissionCountFrom(from: number, channel: number): number {
+    return this.transmissions.filter((message) => message.from === from && message.channel === channel).length;
   }
 
   add(runner: Runner): void {
@@ -729,9 +769,19 @@ class LaboratoryNetwork {
     }
     if (message.type !== "lab:radio") return;
     this.transmissions.push(message);
-    if (message.from === this.dropPrivateFrom && message.channel === 1) {
-      this.droppedPrivateTransmissions++;
-      return;
+    const drop = this.privateDrop;
+    if (drop && message.from === drop.from && message.channel === 1) {
+      const frame = radioFrame(message);
+      if (
+        frame?.operation_id === drop.operationID &&
+        (drop.messageID === undefined || frame.message_id === drop.messageID)
+      ) {
+        drop.messageID = frame.message_id;
+        drop.chunkCount = frame.chunk_count;
+        drop.chunks.add(frame.chunk_index);
+        this.droppedPrivateTransmissions++;
+        return;
+      }
     }
     for (const [nodeNumber, peer] of this.nodes) {
       if (nodeNumber === message.from) continue;
@@ -852,9 +902,18 @@ function spawnRunner(
 
 async function readFinalSummary(runner: Runner): Promise<SummaryMessage> {
   await withTimeout(runner.disconnected, 2_000, `${runner.name} did not disconnect after publishing its summary`);
-  const value: unknown = JSON.parse(await readFile(runner.summaryPath, "utf8"));
-  if (!isSummaryMessage(value)) throw new Error(`${runner.name} wrote an invalid summary`);
-  return value;
+  const deadline = Date.now() + 2_000;
+  let latest: unknown;
+  while (Date.now() < deadline) {
+    try {
+      latest = JSON.parse(await readFile(runner.summaryPath, "utf8"));
+      if (isSummaryMessage(latest)) return latest;
+    } catch (error) {
+      latest = errorMessage(error);
+    }
+    await delay(25);
+  }
+  throw new Error(`${runner.name} did not finalize its summary: ${errorMessage(latest)}`);
 }
 
 function positionPublication(): Record<string, unknown> {
@@ -1121,6 +1180,7 @@ function isSummaryMessage(value: unknown): value is SummaryMessage {
     typeof value.nodeID === "string" &&
     typeof value.duration_ms === "number" &&
     (value.outcome === "stopped" || value.outcome === "failed") &&
+    value.evidence_complete === true &&
     isRecord(lifecycleCleanup) &&
     isRecord(device) &&
     isRecord(resources) &&
@@ -1129,6 +1189,17 @@ function isSummaryMessage(value: unknown): value is SummaryMessage {
     Array.isArray(resources.after_ipc_disconnect) &&
     resources.after_ipc_disconnect.every((item) => typeof item === "string")
   );
+}
+
+function radioFrame(message: RadioMessage): LinkFrame | undefined {
+  const packet = fromBinary(Protobuf.Mesh.MeshPacketSchema, Buffer.from(message.packetBase64, "base64"));
+  if (packet.payloadVariant.case !== "decoded") return undefined;
+  if (packet.payloadVariant.value.portnum !== Protobuf.Portnums.PortNum.PRIVATE_APP) return undefined;
+  return decodeFrame(packet.payloadVariant.value.payload);
+}
+
+function countOccurrences(value: string, needle: string): number {
+  return value.split(needle).length - 1;
 }
 
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reject: (error: unknown) => void } {
