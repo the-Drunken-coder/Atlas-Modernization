@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { FakeCoreFeed, runCanonicalBaseline, runFirstVerticalSlice, runStressBaseline } from "./benchmark.js";
 import { canonicalJSON } from "./canonical-json.js";
 import { VirtualClock } from "./clock.js";
@@ -379,6 +379,9 @@ describe("joining and Radio profile", () => {
     const authentication = new PreSharedKeyAuthenticationPolicy("j".repeat(32));
     const joinErrors: string[] = [];
     const admissions: SourceAdmission[] = [];
+    const admissionWaiters: Array<(admission: SourceAdmission) => void> = [];
+    const waitForNextAdmission = (): Promise<SourceAdmission> =>
+      new Promise((resolve) => admissionWaiters.push(resolve));
     const gateway = new GatewayJoinService(
       gatewayRadio,
       0,
@@ -387,8 +390,10 @@ describe("joining and Radio profile", () => {
       (error) => joinErrors.push(error.message),
       (admission) => {
         admissions.push(admission);
+        admissionWaiters.shift()?.(admission);
       }
     );
+    const admissionStarted = vi.spyOn(store, "admitAsset");
     const installed: PrivateChannelMembership[] = [];
     let latestStatus: ReturnType<AssetJoinService["status"]> | undefined;
     const start = (session: string): AssetJoinService => {
@@ -412,15 +417,31 @@ describe("joining and Radio profile", () => {
       return service;
     };
 
+    const firstAdmission = waitForNextAdmission();
     const first = start("session-one");
-    await advanceUntilJoined(clock, () => latestStatus, joinErrors);
+    await advanceThroughAdmission(
+      clock,
+      () => admissionStarted.mock.calls.length >= 1,
+      firstAdmission,
+      () => latestStatus?.state === "joined",
+      "simulated Asset did not join",
+      joinErrors
+    );
     expect(latestStatus).toMatchObject({ state: "joined", gateway_node_id: gatewayNodeID, source_generation: 1 });
     expect(installed[0]).toEqual({ channel_index: 1, channel_name: "ATLAS", channel_key_base64: channelKey });
     first.stop();
 
     latestStatus = undefined;
+    const secondAdmission = waitForNextAdmission();
     const second = start("session-two");
-    await advanceUntilJoined(clock, () => latestStatus, joinErrors);
+    await advanceThroughAdmission(
+      clock,
+      () => admissionStarted.mock.calls.length >= 2,
+      secondAdmission,
+      () => latestStatus?.state === "joined",
+      "restarted simulated Asset did not join",
+      joinErrors
+    );
     expect(latestStatus).toMatchObject({ state: "joined", source_generation: 2 });
     expect(admissions).toEqual([
       {
@@ -441,6 +462,7 @@ describe("joining and Radio profile", () => {
       releaseMembership = resolve;
     });
     let installationStarted = false;
+    const stoppingAdmission = waitForNextAdmission();
     const stopping = new AssetJoinService({
       radio: assetRadio,
       clock,
@@ -456,11 +478,14 @@ describe("joining and Radio profile", () => {
       onError: (error) => joinErrors.push(error.message)
     });
     stopping.start();
-    for (let attempt = 0; attempt < 100 && !installationStarted; attempt++) {
-      await clock.advanceBy(500);
-      await new Promise<void>((resolve) => setTimeout(resolve, 1));
-    }
-    expect(installationStarted).toBe(true);
+    await advanceThroughAdmission(
+      clock,
+      () => admissionStarted.mock.calls.length >= 3,
+      stoppingAdmission,
+      () => installationStarted,
+      "membership installation did not start",
+      joinErrors
+    );
     let closeResolved = false;
     const close = stopping.close().then(() => {
       closeResolved = true;
@@ -1088,15 +1113,31 @@ async function waitFor(condition: () => boolean): Promise<void> {
   throw new Error("timed out waiting for join operation");
 }
 
-async function advanceUntilJoined(
+async function advanceThroughAdmission(
   clock: VirtualClock,
-  status: () => ReturnType<AssetJoinService["status"]> | undefined,
+  admissionStarted: () => boolean,
+  admissionCompleted: Promise<SourceAdmission>,
+  completed: () => boolean,
+  message: string,
   errors: readonly string[]
 ): Promise<void> {
-  for (let attempt = 0; attempt < 100; attempt++) {
-    await clock.advanceBy(500);
-    await new Promise<void>((resolve) => setTimeout(resolve, 1));
-    if (status()?.state === "joined") return;
+  const deadline = clock.now() + 50_000;
+  await advanceUntilObserved(clock, deadline, admissionStarted, `${message}: admission did not start`, errors);
+  await admissionCompleted;
+  await advanceUntilObserved(clock, deadline, completed, message, errors);
+}
+
+async function advanceUntilObserved(
+  clock: VirtualClock,
+  deadline: number,
+  observed: () => boolean,
+  message: string,
+  errors: readonly string[]
+): Promise<void> {
+  while (clock.now() < deadline) {
+    if (observed()) return;
+    await clock.advanceTo(Math.min(clock.now() + 500, deadline));
+    await Promise.resolve();
   }
-  throw new Error(`simulated Asset did not join: ${errors.join("; ")}`);
+  if (!observed()) throw new Error(`${message}: ${errors.join("; ")}`);
 }
