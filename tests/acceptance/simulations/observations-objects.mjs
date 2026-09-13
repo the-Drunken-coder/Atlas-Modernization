@@ -376,11 +376,13 @@ async function verifyLocalTargetAndScenario(api, coreBaseUrl, apiKey, record) {
     check:
       "observations acceptance exposes only the disposable loopback target",
     expected: {
+      target_id: "local",
       default_target_id: "local",
       deployed: false,
       credentials_disclosed: false,
     },
     actual: {
+      target_id: targets.body.targets[0]?.id,
       default_target_id: targets.body.defaultTargetId,
       targets: targets.body.targets,
       credentials_disclosed: JSON.stringify(targets.body).includes(apiKey),
@@ -388,6 +390,7 @@ async function verifyLocalTargetAndScenario(api, coreBaseUrl, apiKey, record) {
     passed:
       targets.body.defaultTargetId === "local" &&
       targets.body.targets.length === 1 &&
+      targets.body.targets[0]?.id === "local" &&
       targets.body.targets[0]?.baseUrl === coreBaseUrl &&
       targets.body.targets[0]?.deployed === false &&
       !JSON.stringify(targets.body).includes(apiKey),
@@ -534,14 +537,46 @@ async function recordPersistedObservations(
     (entity) => entity.subtype === "simulated-observer",
   );
   const tracks = entities.filter((entity) => entity.entity_type === "track");
-  const observerByIndex = new Map(
-    Array.from({ length: inputs.assetCount }, (_, index) => [
-      index + 1,
-      observers.find(
-        (entity) => entity.alias === `Observer ${run.id} ${index + 1}`,
-      ),
-    ]),
-  );
+  const indexedTracks = tracks.map((track) => ({
+    track,
+    observation: trackEntityIndex(run.id, track.entity_id),
+  }));
+  const trackByObservation = new Map();
+  const trackMappingComplete =
+    indexedTracks.length === inputs.observations &&
+    indexedTracks.every(({ track, observation }) => {
+      if (
+        observation === undefined ||
+        observation < 1 ||
+        observation > inputs.observations ||
+        trackByObservation.has(observation)
+      ) {
+        return false;
+      }
+      trackByObservation.set(observation, track);
+      return true;
+    }) &&
+    trackByObservation.size === inputs.observations;
+  const indexedObservers = observers.map((observer) => ({
+    observer,
+    asset: observerEntityIndex(run.id, observer.entity_id),
+  }));
+  const observerByIndex = new Map();
+  const observerMappingComplete =
+    indexedObservers.length === inputs.assetCount &&
+    indexedObservers.every(({ observer, asset }) => {
+      if (
+        asset === undefined ||
+        asset < 1 ||
+        asset > inputs.assetCount ||
+        observerByIndex.has(asset)
+      ) {
+        return false;
+      }
+      observerByIndex.set(asset, observer);
+      return true;
+    }) &&
+    observerByIndex.size === inputs.assetCount;
   const expectedTracks = Array.from(
     { length: inputs.observations },
     (_, index) => {
@@ -556,6 +591,7 @@ async function recordPersistedObservations(
         observation,
         alias: `Observed ${run.id} track ${observation}`,
         observer: observerByIndex.get((index % inputs.assetCount) + 1),
+        track: trackByObservation.get(observation),
         latitude,
         longitude,
       };
@@ -585,13 +621,10 @@ async function recordPersistedObservations(
     { length: inputs.observations },
     (_, index) => {
       const observation = index + 1;
-      const track = tracks.find(
-        (candidate) => candidate.alias === expectedTracks[index].alias,
-      );
       return {
         object: objectByObservation.get(observation),
         observation,
-        trackID: track?.entity_id,
+        trackID: expectedTracks[index].track?.entity_id,
       };
     },
   );
@@ -619,7 +652,15 @@ async function recordPersistedObservations(
     },
     actual: {
       observers: observers.map((entity) => entityState(entity)),
+      observer_index_mapping: indexedObservers.map(({ observer, asset }) => ({
+        entity_id: observer.entity_id,
+        asset,
+      })),
       tracks: tracks.map((entity) => entityState(entity)),
+      track_index_mapping: indexedTracks.map(({ track, observation }) => ({
+        entity_id: track.entity_id,
+        observation,
+      })),
       objects: objects.map((object) => objectState(object)),
       object_index_mapping: indexedObjects.map(({ object, observation }) => ({
         object_id: object.object_id,
@@ -627,7 +668,7 @@ async function recordPersistedObservations(
       })),
     },
     passed:
-      observers.length === inputs.assetCount &&
+      observerMappingComplete &&
       Array.from({ length: inputs.assetCount }, (_, index) => {
         const observer = observerByIndex.get(index + 1);
         const latitude = inputs.startLatitude + index * 0.001;
@@ -653,25 +694,23 @@ async function recordPersistedObservations(
           )
         );
       }).every(Boolean) &&
-      tracks.length === inputs.observations &&
-      expectedTracks.every((expected) =>
-        tracks.some((track) => {
-          const simulation = track.components.custom_simulation;
-          return (
-            track.alias === expected.alias &&
-            track.components.telemetry?.latitude === expected.latitude &&
-            track.components.telemetry?.longitude === expected.longitude &&
-            isDeepStrictEqual(track.components.geometry?.coordinates, [
-              expected.longitude,
-              expected.latitude,
-            ]) &&
-            simulation?.run_id === run.id &&
-            simulation?.observer_id === expected.observer?.entity_id &&
-            simulation?.observation_index === expected.observation &&
-            simulation?.collection === jsonInput.collection
-          );
-        }),
-      ) &&
+      trackMappingComplete &&
+      expectedTracks.every((expected) => {
+        const simulation = expected.track?.components.custom_simulation;
+        return (
+          expected.track?.alias === expected.alias &&
+          expected.track.components.telemetry?.latitude === expected.latitude &&
+          expected.track.components.telemetry?.longitude === expected.longitude &&
+          isDeepStrictEqual(expected.track.components.geometry?.coordinates, [
+            expected.longitude,
+            expected.latitude,
+          ]) &&
+          simulation?.run_id === run.id &&
+          simulation?.observer_id === expected.observer?.entity_id &&
+          simulation?.observation_index === expected.observation &&
+          simulation?.collection === jsonInput.collection
+        );
+      }) &&
       objects.length === inputs.observations &&
       objectMappingComplete &&
       expectedObjects.every(({ object, trackID }) => {
@@ -818,24 +857,23 @@ async function captureMissing(core, resource, signal) {
 }
 
 async function collectRunEvents({ api, runID, artifactBase, signal, until }) {
-  const response = await fetch(
-    `${api.baseUrl}/api/runs/${encodeURIComponent(runID)}/events`,
-    {
-      headers: { Accept: "text/event-stream" },
-      signal: AbortSignal.any([signal, AbortSignal.timeout(20_000)]),
-    },
-  );
-  if (!response.ok || !response.body) {
-    throw new Error(
-      `GET run events returned HTTP ${response.status}: ${await response.text()}`,
-    );
-  }
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
   const events = [];
-  let pending = "";
   let raw = "";
   try {
+    const response = await fetch(
+      `${api.baseUrl}/api/runs/${encodeURIComponent(runID)}/events`,
+      {
+        headers: { Accept: "text/event-stream" },
+        signal: AbortSignal.any([signal, AbortSignal.timeout(20_000)]),
+      },
+    );
+    if (!response.ok || !response.body) {
+      raw = await response.text();
+      throw new Error(`GET run events returned HTTP ${response.status}: ${raw}`);
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let pending = "";
     while (true) {
       const result = await reader.read();
       if (result.done) break;
@@ -915,6 +953,30 @@ function observationObjectIndex(runID, objectID) {
   const prefix = `${runID}-observation-object-`;
   if (!objectID.startsWith(prefix)) return undefined;
   const remainder = objectID.slice(prefix.length);
+  const separator = remainder.indexOf("-");
+  if (separator <= 0 || separator === remainder.length - 1) return undefined;
+  const index = remainder.slice(0, separator);
+  if (!/^[1-9]\d*$/u.test(index)) return undefined;
+  const value = Number(index);
+  return Number.isSafeInteger(value) ? value : undefined;
+}
+
+function trackEntityIndex(runID, entityID) {
+  const prefix = `${runID}-track-`;
+  if (!entityID.startsWith(prefix)) return undefined;
+  const remainder = entityID.slice(prefix.length);
+  const separator = remainder.indexOf("-");
+  if (separator <= 0 || separator === remainder.length - 1) return undefined;
+  const index = remainder.slice(0, separator);
+  if (!/^[1-9]\d*$/u.test(index)) return undefined;
+  const value = Number(index);
+  return Number.isSafeInteger(value) ? value : undefined;
+}
+
+function observerEntityIndex(runID, entityID) {
+  const prefix = `${runID}-observer-`;
+  if (!entityID.startsWith(prefix)) return undefined;
+  const remainder = entityID.slice(prefix.length);
   const separator = remainder.indexOf("-");
   if (separator <= 0 || separator === remainder.length - 1) return undefined;
   const index = remainder.slice(0, separator);
