@@ -30,6 +30,7 @@ const runInputs = {
   startLatitude: 38.5,
   startLongitude: -77.25
 };
+const essentialPageResourceTypes = ["document", "script", "stylesheet"];
 const fixture = createSimulationServerFixture();
 
 await runAcceptance({
@@ -150,7 +151,7 @@ async function runBrowserJourney({
   };
   writeBrowserSummary(browserSummaryPath, { ...browserMetadata, status: "launched" });
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
-  const observations = { eventStreams: [], mutations: [], pageErrors: [] };
+  const observations = { essentialPageResources: [], eventStreams: [], mutations: [], pageErrors: [] };
   const pendingDiagnostics = new Set();
   let page;
   let failure;
@@ -395,6 +396,27 @@ async function runBrowserJourney({
     });
 
     await Promise.allSettled([...pendingDiagnostics]);
+    const observedResourceTypes = new Set(
+      observations.essentialPageResources.map((resource) => resource.resource_type)
+    );
+    record({
+      check: `${browserName} loads essential same-origin page resources without network or HTTP failures`,
+      expected: {
+        resource_types: essentialPageResourceTypes,
+        statuses: "200-399",
+        failures: []
+      },
+      actual: observations.essentialPageResources,
+      passed:
+        essentialPageResourceTypes.every((resourceType) => observedResourceTypes.has(resourceType)) &&
+        observations.essentialPageResources.every(
+          (resource) =>
+            resource.failure === undefined &&
+            resource.status !== undefined &&
+            resource.status >= 200 &&
+            resource.status < 400
+        )
+    });
     const mutations = observations.mutations.filter((entry) => entry.status !== undefined);
     record({
       check: `${browserName} performs the start, stop, and cleanup mutations through the actual server`,
@@ -682,14 +704,26 @@ function attachDiagnostics(page, { requestLog, consoleLog, simulationUrl, observ
     }
   });
   page.on("requestfailed", (request) => {
+    const url = new URL(request.url());
+    const resourceType = request.resourceType();
+    const failure = request.failure();
     appendJSON(requestLog, {
       timestamp: new Date().toISOString(),
       event: "requestfailed",
       method: request.method(),
       url: request.url(),
-      resource_type: request.resourceType(),
-      failure: request.failure()
+      resource_type: resourceType,
+      failure
     });
+    if (isEssentialPageResource(url, resourceType, simulationUrl)) {
+      observations.essentialPageResources.push({
+        method: request.method(),
+        path: url.pathname,
+        url: request.url(),
+        resource_type: resourceType,
+        failure
+      });
+    }
   });
   page.on("response", (response) => {
     const diagnostic = logResponse(response, requestLog, simulationUrl, observations).catch((error) => {
@@ -709,6 +743,7 @@ function attachDiagnostics(page, { requestLog, consoleLog, simulationUrl, observ
 async function logResponse(response, requestLog, simulationUrl, observations) {
   const request = response.request();
   const url = new URL(response.url());
+  const resourceType = request.resourceType();
   const contentType = (await response.headerValue("content-type")) ?? "";
   const summary = {
     method: request.method(),
@@ -717,6 +752,15 @@ async function logResponse(response, requestLog, simulationUrl, observations) {
     status: response.status(),
     contentType
   };
+  if (isEssentialPageResource(url, resourceType, simulationUrl)) {
+    observations.essentialPageResources.push({
+      method: request.method(),
+      path: url.pathname,
+      url: response.url(),
+      resource_type: resourceType,
+      status: response.status()
+    });
+  }
   if (response.url().startsWith(simulationUrl) && request.method() === "POST") {
     const mutation = observations.mutations.find(
       (entry) => entry.method === request.method() && entry.path === url.pathname && entry.status === undefined
@@ -917,6 +961,10 @@ function parseJSON(raw, description) {
 
 function appendJSON(path, value) {
   appendFileSync(path, `${JSON.stringify(value)}\n`);
+}
+
+function isEssentialPageResource(url, resourceType, simulationUrl) {
+  return url.origin === new URL(simulationUrl).origin && essentialPageResourceTypes.includes(resourceType);
 }
 
 function writeBrowserSummary(path, value) {

@@ -10,7 +10,7 @@ Use Node 24 and a running Docker daemon. Install dependencies and browsers once 
 
 ```sh
 npm ci
-node node_modules/playwright/cli.js install chromium webkit
+node node_modules/playwright/cli.js install --with-deps chromium webkit
 ```
 
 Build the actual workbench assets, then select one browser engine:
