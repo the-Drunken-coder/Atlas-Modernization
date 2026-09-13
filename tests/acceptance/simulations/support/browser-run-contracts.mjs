@@ -1,8 +1,10 @@
+import { isDeepStrictEqual } from "node:util";
+
 import { isResourceType } from "@the-drunken-coder/atlas-sdk";
 
 /**
  * Mirrors the browser API's `isRunSummary` guard and binds each consumed
- * lifecycle response to the requested scenario and, when known, run ID.
+ * lifecycle response to the requested scenario, run ID, and input context.
  * Journey assertions still compare the scenario's expected values separately.
  */
 export function parseBrowserRunSummary(value, expected) {
@@ -29,11 +31,32 @@ export function parseBrowserRunSummary(value, expected) {
   }
   if (
     value.scenarioId !== expected.scenarioID ||
-    (expected.runID !== undefined && value.id !== expected.runID)
+    (expected.runID !== undefined && value.id !== expected.runID) ||
+    !hasExpectedInputs(value.inputs, expected.inputs) ||
+    !isDeepStrictEqual(value.jsonInput, expected.jsonInput)
   ) {
     throw new Error(`Unexpected browser run summary from ${expected.context}`);
   }
   return value;
+}
+
+function hasExpectedInputs(actual, expected) {
+  const actualKeys = Object.keys(actual).sort();
+  const expectedKeys = Object.keys(expected).sort();
+  return (
+    isDeepStrictEqual(actualKeys, expectedKeys) &&
+    expectedKeys.every((key) => sameInputValue(actual[key], expected[key]))
+  );
+}
+
+function sameInputValue(actual, expected) {
+  if (typeof actual !== "number" || typeof expected !== "number") {
+    return actual === expected;
+  }
+  return (
+    Math.abs(actual - expected) <=
+    Number.EPSILON * Math.max(1, Math.abs(actual), Math.abs(expected)) * 32
+  );
 }
 
 function isAssertionResult(value) {

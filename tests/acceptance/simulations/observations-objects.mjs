@@ -85,7 +85,12 @@ await runAcceptance({
             (event) => event.type === "status" && event.status !== "running",
           ),
       });
-      const normalSummary = await readRun(api, normal.id);
+      const normalSummary = await readRun(
+        api,
+        normal.id,
+        normalInputs,
+        observationJSON,
+      );
       recordCompletedStream(
         normal,
         normalSummary,
@@ -171,6 +176,8 @@ await runAcceptance({
           context: "completed cleanup response",
           runID: normal.id,
           scenarioID,
+          inputs: normalInputs,
+          jsonInput: observationJSON,
         },
       );
       const normalCleanupStream = await collectRunEvents({
@@ -245,6 +252,8 @@ await runAcceptance({
         context: "stop response",
         runID: cancelled.id,
         scenarioID,
+        inputs: cancellationInputs,
+        jsonInput: observationJSON,
       });
       record({
         check:
@@ -262,7 +271,12 @@ await runAcceptance({
           cancelledRunSummary.cleaned === false &&
           cancellationProgress.events.length > 0,
       });
-      const cancelledSummary = await readRun(api, cancelled.id);
+      const cancelledSummary = await readRun(
+        api,
+        cancelled.id,
+        cancellationInputs,
+        observationJSON,
+      );
       record({
         check: "observations reread preserves the confirmed cancelled status",
         expected: { status: cancelledRunSummary.status, cleaned: false },
@@ -292,6 +306,8 @@ await runAcceptance({
           context: "cancelled cleanup response",
           runID: cancelled.id,
           scenarioID,
+          inputs: cancellationInputs,
+          jsonInput: observationJSON,
         },
       );
       const cancelledCleanupStream = await collectRunEvents({
@@ -560,6 +576,8 @@ async function startRun(api, inputs, jsonInput) {
   const run = parseBrowserRunSummary(response.body.run, {
     context: "start response",
     scenarioID,
+    inputs,
+    jsonInput,
   });
   if (
     response.status !== 201 ||
@@ -572,12 +590,14 @@ async function startRun(api, inputs, jsonInput) {
   return run;
 }
 
-async function readRun(api, runID) {
+async function readRun(api, runID, inputs, jsonInput) {
   const response = await api.json("GET", `/api/runs/${encodeURIComponent(runID)}`);
   return parseBrowserRunSummary(response.body.run, {
     context: "run read response",
     runID,
     scenarioID,
+    inputs,
+    jsonInput,
   });
 }
 

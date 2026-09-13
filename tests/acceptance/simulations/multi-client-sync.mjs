@@ -82,7 +82,7 @@ await runAcceptance({
             (event) => event.type === "status" && event.status !== "running",
           ),
       });
-      const summary = await readRun(api, run.id);
+      const summary = await readRun(api, run.id, normalInputs);
       recordCompletedStream(run, summary, stream.events, normalInputs, record);
 
       const writerEntities = await readWriterEntities(core, summary, signal);
@@ -148,6 +148,8 @@ await runAcceptance({
         context: "cleanup response",
         runID: run.id,
         scenarioID,
+        inputs: normalInputs,
+        jsonInput: undefined,
       });
       const cleanupStream = await collectRunEvents({
         api,
@@ -395,6 +397,8 @@ async function startRun(api, inputs) {
   const run = parseBrowserRunSummary(response.body.run, {
     context: "start response",
     scenarioID,
+    inputs,
+    jsonInput: undefined,
   });
   if (response.status !== 201 || run.scenarioId !== scenarioID) {
     throw new Error(
@@ -404,12 +408,14 @@ async function startRun(api, inputs) {
   return run;
 }
 
-async function readRun(api, runID) {
+async function readRun(api, runID, inputs) {
   const response = await api.json("GET", `/api/runs/${encodeURIComponent(runID)}`);
   return parseBrowserRunSummary(response.body.run, {
     context: "run read response",
     runID,
     scenarioID,
+    inputs,
+    jsonInput: undefined,
   });
 }
 
