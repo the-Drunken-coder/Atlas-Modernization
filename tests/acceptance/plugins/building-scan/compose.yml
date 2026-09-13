@@ -1,0 +1,79 @@
+services:
+  api:
+    environment:
+      ATLAS_PLUGIN_CONFIG_DIR: /app/plugin-endpoints
+    volumes:
+      - ../../plugins/building_scan/core-endpoint.json:/app/plugin-endpoints/building_scan.json:ro
+    depends_on:
+      building-scan-plugin:
+        condition: service_healthy
+
+  source-gateway:
+    build:
+      context: ../..
+      dockerfile: services/core/docker/Dockerfile
+      target: source-gateway-production
+    environment:
+      ATLAS_SOURCE_CONNECTOR_CONFIG_DIR: /app/source-connectors
+    volumes:
+      - ${ATLAS_BUILDING_SCAN_SOURCE_CONNECTOR_FILE:?ATLAS_BUILDING_SCAN_SOURCE_CONNECTOR_FILE must be set}:/app/source-connectors/building_scan.json:ro
+    depends_on:
+      building-scan-source:
+        condition: service_healthy
+    networks:
+      - default
+      - source-gateway-only
+    healthcheck:
+      test:
+        ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8080/health"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    labels:
+      io.atlas.acceptance.run: ${ATLAS_ACCEPTANCE_RUN_ID:?ATLAS_ACCEPTANCE_RUN_ID must be set}
+
+  building-scan-source:
+    image: node:24-alpine@sha256:50c8e8ca1d27439048670df5883f32d57cf81cff6233222c893fd0d9884cbd81
+    working_dir: /app
+    command: ["node", "fixture-source.mjs"]
+    environment:
+      ATLAS_BUILDING_SCAN_FIXTURE_MODE: ${ATLAS_BUILDING_SCAN_FIXTURE_MODE:-required}
+    volumes:
+      - ./plugins/building-scan/fixture-source.mjs:/app/fixture-source.mjs:ro
+    networks:
+      - source-gateway-only
+    healthcheck:
+      test:
+        ["CMD", "node", "-e", "fetch('http://127.0.0.1:8090/health').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    labels:
+      io.atlas.acceptance.run: ${ATLAS_ACCEPTANCE_RUN_ID:?ATLAS_ACCEPTANCE_RUN_ID must be set}
+
+  building-scan-plugin:
+    build:
+      context: ../..
+      dockerfile: plugins/building_scan/Dockerfile
+      target: plugin
+    environment:
+      ATLAS_SOURCE_GATEWAY_ORIGIN: http://source-gateway:8080
+    networks:
+      - default
+    depends_on:
+      source-gateway:
+        condition: service_healthy
+    healthcheck:
+      test:
+        ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    labels:
+      io.atlas.acceptance.run: ${ATLAS_ACCEPTANCE_RUN_ID:?ATLAS_ACCEPTANCE_RUN_ID must be set}
+
+networks:
+  source-gateway-only:
+    internal: true
+    labels:
+      io.atlas.acceptance.run: ${ATLAS_ACCEPTANCE_RUN_ID:?ATLAS_ACCEPTANCE_RUN_ID must be set}
