@@ -488,12 +488,30 @@ async function runJourney({
 async function createLineThroughMap({ page, fixture, alias, browserName, record, signal }) {
   await page.getByRole("button", { name: "Geo Features" }).click();
   await page.getByRole("button", { name: "Add Geo Feature" }).click();
-  await checkVisible(record, page.getByRole("textbox", { name: "Name" }), {
+  const nameField = page.getByRole("textbox", { name: "Name" });
+  const createFeature = page.getByRole("button", { name: "Create feature", exact: true });
+  await checkVisible(record, nameField, {
     check: browserName + " opened the existing Geofeature creation flow",
-    expected: "focused Name field and disabled Create feature action",
+    expected: "Name field visible",
     page
   });
-  await page.getByRole("textbox", { name: "Name" }).fill(alias);
+  await waitUntil(
+    async () =>
+      (await nameField.evaluate((element) => document.activeElement === element)) && (await createFeature.isDisabled()),
+    10_000,
+    signal
+  );
+  const creationInitialState = {
+    name_focused: await nameField.evaluate((element) => document.activeElement === element),
+    create_feature_disabled: await createFeature.isDisabled()
+  };
+  record({
+    check: browserName + " focused the initial Name field and disabled incomplete creation",
+    expected: { name_focused: true, create_feature_disabled: true },
+    actual: creationInitialState,
+    passed: creationInitialState.name_focused && creationInitialState.create_feature_disabled
+  });
+  await nameField.fill(alias);
   await page.getByRole("button", { name: "Line", exact: true }).click();
 
   const drawing = page.getByTestId("geofeature-drawing");
@@ -539,7 +557,7 @@ async function createLineThroughMap({ page, fixture, alias, browserName, record,
   });
 
   const createResponsePromise = waitForCoreResponse(page, fixture.coreOrigin, "POST", "/entities");
-  await page.getByRole("button", { name: "Create feature", exact: true }).click();
+  await createFeature.click();
   const createResponse = await createResponsePromise;
   const observation = await responseObservation(createResponse);
   record({
@@ -896,7 +914,17 @@ async function verifyAndDeleteThroughBrowser({
     expected: "Geofeature list visible",
     page
   });
-  const rowCount = await page.locator(".entity-row__name", { hasText: concurrentAlias }).count();
+  const panelInspector = page.locator(".panel__body .inspector");
+  await waitUntil(async () => (await panelInspector.count()) === 0, 10_000, signal);
+  const panelTitle = await page.locator(".panel__title").innerText();
+  const inspectorCount = await panelInspector.count();
+  record({
+    check: browserName + " left the deleted Geofeature inspector and returned to its list",
+    expected: { panel_title: "Geo Features", inspector_count: 0 },
+    actual: { panel_title: panelTitle, inspector_count: inspectorCount },
+    passed: panelTitle === "Geo Features" && inspectorCount === 0
+  });
+  const rowCount = await page.locator(".panel__body .entity-row__name", { hasText: concurrentAlias }).count();
   const independentDelete = await readEntityOutcome(writer, entityID, signal);
   record({
     check: browserName + " deletion removed the Geofeature from UI and real Core",
