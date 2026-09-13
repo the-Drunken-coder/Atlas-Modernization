@@ -90,6 +90,7 @@ await runAcceptance({
         normalInputs,
         record,
       );
+      recordCreatedResourceSet(normalSummary, normalInputs, record);
       await recordPersistedObservations(
         core,
         normalSummary,
@@ -229,6 +230,7 @@ await runAcceptance({
           cancellationProgress.events.length > 0,
       });
       const cancelledSummary = await readRun(api, cancelled.id);
+      recordCreatedResourceSet(cancelledSummary, cancellationInputs, record);
       const cleanedCancelled = await api.json(
         "POST",
         `/api/runs/${encodeURIComponent(cancelled.id)}/cleanup`,
@@ -533,6 +535,47 @@ function recordCompletedStream(started, completed, events, inputs, record) {
   });
 }
 
+function recordCreatedResourceSet(run, inputs, record) {
+  const expectedEntityCount = inputs.assetCount + inputs.observations;
+  const expectedObjectCount = inputs.observations;
+  const completed = run.status === "completed";
+  const actualEntityCount = run.createdResources.filter(
+    (resource) => resource.type === "entity",
+  ).length;
+  const actualObjectCount = run.createdResources.filter(
+    (resource) => resource.type === "object",
+  ).length;
+  record({
+    check:
+      "observations-objects records only its complete Entity and Object resource set",
+    expected: {
+      resource_types: ["entity", "object"],
+      ...(completed
+        ? {
+            total: expectedEntityCount + expectedObjectCount,
+            entity: expectedEntityCount,
+            object: expectedObjectCount,
+          }
+        : { partial_run: true }),
+    },
+    actual: {
+      total: run.createdResources.length,
+      entity: actualEntityCount,
+      object: actualObjectCount,
+      resources: run.createdResources,
+    },
+    passed:
+      run.createdResources.every(
+        (resource) => resource.type === "entity" || resource.type === "object",
+      ) &&
+      (!completed ||
+        (run.createdResources.length ===
+          expectedEntityCount + expectedObjectCount &&
+          actualEntityCount === expectedEntityCount &&
+          actualObjectCount === expectedObjectCount)),
+  });
+}
+
 async function recordPersistedObservations(
   core,
   run,
@@ -541,6 +584,7 @@ async function recordPersistedObservations(
   record,
   signal,
 ) {
+  const expectedEntityCount = inputs.assetCount + inputs.observations;
   const entities = await Promise.all(
     run.createdResources
       .filter((resource) => resource.type === "entity")
@@ -560,7 +604,7 @@ async function recordPersistedObservations(
   );
   const tracks = entities.filter((entity) => entity.entity_type === "track");
   const entitySetComplete =
-    entities.length === inputs.assetCount + inputs.observations &&
+    entities.length === expectedEntityCount &&
     observers.length + tracks.length === entities.length;
   const indexedTracks = tracks.map((track) => ({
     track,
@@ -658,7 +702,7 @@ async function recordPersistedObservations(
       "independent SDK reads verify persisted observer, track, Object bytes, and relations",
     expected: {
       entities: {
-        total: inputs.assetCount + inputs.observations,
+        total: expectedEntityCount,
         observers: inputs.assetCount,
         tracks: inputs.observations,
       },
@@ -667,6 +711,16 @@ async function recordPersistedObservations(
         run_id: run.id,
         collection: jsonInput.collection,
       },
+      observer_sensor_refs: indexedObservers.map(({ observer, asset }) => ({
+        asset,
+        sensor_refs: [
+          {
+            sensor_id: `${observer.entity_id}-camera`,
+            type: "camera",
+            horizontal_fov: 60,
+          },
+        ],
+      })),
       tracks: expectedTracks.map(
         ({ observation, alias, latitude, longitude }) => ({
           observation,
@@ -716,6 +770,13 @@ async function recordPersistedObservations(
           observer.components.custom_simulation?.run_id === run.id &&
           observer.components.custom_simulation?.collection ===
             jsonInput.collection &&
+          isDeepStrictEqual(observer.components.sensor_refs, [
+            {
+              sensor_id: `${observer.entity_id}-camera`,
+              type: "camera",
+              horizontal_fov: 60,
+            },
+          ]) &&
           approximatelyEqual(
             observer.components.telemetry?.latitude,
             latitude,
@@ -779,19 +840,50 @@ function recordCleanupEvents(run, cleaned, events, record) {
   const actual = resources
     .map((resource) => `${resource.type}:${resource.id}`)
     .sort();
+  const stopEventIndex = events.findIndex(
+    (event) => event.type === "log" && event.message === "Stop requested",
+  );
+  const cancelledStatusIndex = events.findIndex(
+    (event) => event.type === "status" && event.status === "cancelled",
+  );
+  const requiresCancellationLifecycle = run.status === "cancelled";
   record({
     check:
       "observations cleanup reports every recorded Entity and Object resource",
-    expected: { status: run.status, cleaned: true, resources: expected },
+    expected: {
+      status: run.status,
+      cleaned: true,
+      resources: expected,
+      ...(requiresCancellationLifecycle
+        ? {
+            cancellation_lifecycle: [
+              { type: "log", message: "Stop requested" },
+              { type: "status", status: "cancelled" },
+            ],
+          }
+        : {}),
+    },
     actual: {
       status: cleaned.status,
       cleaned: cleaned.cleaned,
       resources: actual,
+      ...(requiresCancellationLifecycle
+        ? {
+            cancellation_lifecycle: {
+              stop_log_index: stopEventIndex,
+              cancelled_status_index: cancelledStatusIndex,
+            },
+          }
+        : {}),
     },
     passed:
       cleaned.status === run.status &&
       cleaned.cleaned === true &&
       isDeepStrictEqual(actual, expected) &&
+      (!requiresCancellationLifecycle ||
+        (stopEventIndex !== -1 &&
+          cancelledStatusIndex !== -1 &&
+          stopEventIndex < cancelledStatusIndex)) &&
       events.some(
         (event) =>
           event.type === "cleanup" &&
@@ -887,8 +979,10 @@ async function captureMissing(core, resource, signal) {
   try {
     if (resource.type === "entity") {
       await core.entities.get(resource.id, { fresh: true, signal });
-    } else {
+    } else if (resource.type === "object") {
       await core.objects.get(resource.id, { fresh: true, signal });
+    } else {
+      throw new Error(`Unsupported run resource type: ${resource.type}`);
     }
     return { type: resource.type, id: resource.id, status: 200 };
   } catch (error) {
@@ -977,6 +1071,7 @@ function entityState(entity) {
     subtype: entity.subtype,
     telemetry: entity.components.telemetry,
     geometry: entity.components.geometry,
+    sensor_refs: entity.components.sensor_refs,
     custom_simulation: entity.components.custom_simulation,
   };
 }
