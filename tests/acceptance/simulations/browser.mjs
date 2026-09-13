@@ -142,13 +142,20 @@ async function runBrowserJourney({
   const tracePath = join(artifacts, `${browserName}-trace.zip`);
   const failureScreenshot = join(artifacts, `${browserName}-failure.png`);
   const failureHTML = join(artifacts, `${browserName}-failure.html`);
+  const browserSummaryPath = join(artifacts, `${browserName}-summary.json`);
   const browser = await browserType.launch({ headless: !headed });
+  const browserMetadata = {
+    browser_engine: browserName,
+    browser_version: browser.version()
+  };
+  writeBrowserSummary(browserSummaryPath, { ...browserMetadata, status: "launched" });
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
   const observations = { eventStreams: [], mutations: [], pageErrors: [] };
   const pendingDiagnostics = new Set();
   let page;
   let failure;
   let replacementID;
+  let simulationRunID;
 
   await context.tracing.start({ screenshots: true, snapshots: true, sources: true });
   try {
@@ -246,7 +253,7 @@ async function runBrowserJourney({
       expected: "running status visible",
       page
     });
-    const simulationRunID = (await page.locator(".run-details dd").first().textContent())?.trim();
+    simulationRunID = (await page.locator(".run-details dd").first().textContent())?.trim();
     if (!simulationRunID) throw new Error("The running workbench did not display a run ID");
     await recordVisible(record, page.getByText(`Telemetry tick 1/${runInputs.ticks}`, { exact: true }), {
       check: `${browserName} renders a real streamed telemetry event`,
@@ -420,23 +427,25 @@ async function runBrowserJourney({
       actual: observations.pageErrors,
       passed: observations.pageErrors.length === 0
     });
-    writeFileSync(
-      join(artifacts, `${browserName}-summary.json`),
-      `${JSON.stringify(
-        {
-          browser_engine: browserName,
-          browser_version: browser.version(),
-          simulation_origin: simulationUrl,
-          simulation_run_id: simulationRunID,
-          status: "passed"
-        },
-        null,
-        2
-      )}\n`
-    );
+    writeBrowserSummary(browserSummaryPath, {
+      ...browserMetadata,
+      simulation_origin: simulationUrl,
+      simulation_run_id: simulationRunID,
+      status: "passed"
+    });
     return { replacementID };
   } catch (error) {
     failure = error;
+    writeBrowserSummary(browserSummaryPath, {
+      ...browserMetadata,
+      simulation_origin: simulationUrl,
+      ...(simulationRunID ? { simulation_run_id: simulationRunID } : {}),
+      status: "failed",
+      failure: {
+        name: error instanceof Error ? error.name : "Error",
+        message: errorMessage(error)
+      }
+    });
     if (page) {
       await page.screenshot({ path: failureScreenshot, fullPage: true }).catch((screenshotError) => {
         appendJSON(consoleLog, {
@@ -678,9 +687,17 @@ function attachDiagnostics(page, { requestLog, consoleLog, simulationUrl, observ
     });
   });
   page.on("response", (response) => {
-    const diagnostic = logResponse(response, requestLog, simulationUrl, observations);
+    const diagnostic = logResponse(response, requestLog, simulationUrl, observations).catch((error) => {
+      appendJSON(consoleLog, {
+        timestamp: new Date().toISOString(),
+        event: "diagnostic-error",
+        target: response.url(),
+        message: errorMessage(error)
+      });
+    });
     pendingDiagnostics.add(diagnostic);
-    void diagnostic.finally(() => pendingDiagnostics.delete(diagnostic));
+    const removeDiagnostic = () => pendingDiagnostics.delete(diagnostic);
+    void diagnostic.then(removeDiagnostic, removeDiagnostic);
   });
 }
 
@@ -895,6 +912,10 @@ function parseJSON(raw, description) {
 
 function appendJSON(path, value) {
   appendFileSync(path, `${JSON.stringify(value)}\n`);
+}
+
+function writeBrowserSummary(path, value) {
+  writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
 }
 
 function errorMessage(error) {
