@@ -58,8 +58,15 @@ jobs:
 
   nightly-cardinality-and-faults:
     if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+    name: ${{ matrix.scenario }}-nightly-acceptance
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario:
+          - observations-objects
+          - multi-client-sync
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -77,21 +84,16 @@ jobs:
       - name: Install JavaScript workspace dependencies
         run: npm ci
 
-      - name: Run expanded simulation scenarios and input faults
+      - name: Run expanded simulation scenario and input fault
         env:
           ATLAS_ACCEPTANCE_NIGHTLY: "1"
-        run: |
-          npm run build:sdk
-          node tests/acceptance/simulations/observations-objects.mjs
-          node tests/acceptance/simulations/multi-client-sync.mjs
+        run: npm run build:sdk && node tests/acceptance/simulations/${{ matrix.scenario }}.mjs
 
       - name: Upload nightly acceptance evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: simulation-scenarios-nightly-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            .atlas/acceptance/simulations-observations-objects/
-            .atlas/acceptance/simulations-multi-client-sync/
+          name: ${{ matrix.scenario }}-nightly-acceptance-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .atlas/acceptance/simulations-${{ matrix.scenario }}/
           if-no-files-found: error
           retention-days: 14

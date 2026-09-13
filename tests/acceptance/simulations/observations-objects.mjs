@@ -254,6 +254,18 @@ await runAcceptance({
         record,
         "cancelled observations-objects cleanup removes only its recorded resources",
       );
+      await recordProtectedResources(
+        core,
+        {
+          replacementEntityID,
+          replacementObjectID,
+          unrelatedEntityID,
+          unrelatedObjectID,
+        },
+        signal,
+        record,
+        "cancelled observations cleanup preserves replacement and unrelated resource instances",
+      );
 
       const allIDs = [
         ...normalSummary.createdResources.map((resource) => resource.id),
@@ -299,24 +311,43 @@ function createSimulationAPI(baseUrl, logPath, acceptanceSignal) {
     const headers = new Headers({ Accept: "application/json" });
     if (method === "POST") headers.set("X-Atlas-Simulations-Request", "1");
     if (body !== undefined) headers.set("Content-Type", "application/json");
-    const response = await fetch(`${baseUrl}${path}`, {
-      method,
-      headers,
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      signal: AbortSignal.any([acceptanceSignal, AbortSignal.timeout(15_000)]),
-    });
-    const raw = await response.text();
-    const parsed = parseJSON(raw, `${method} ${path}`);
-    appendJSON(logPath, {
-      started_at: startedAt,
-      completed_at: new Date().toISOString(),
-      method,
-      path,
-      ...(body === undefined ? {} : { request: body }),
-      status: response.status,
-      response: parsed,
-    });
-    return { status: response.status, body: parsed, raw };
+    let response;
+    let raw = "";
+    try {
+      response = await fetch(`${baseUrl}${path}`, {
+        method,
+        headers,
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        signal: AbortSignal.any([
+          acceptanceSignal,
+          AbortSignal.timeout(15_000),
+        ]),
+      });
+      raw = await response.text();
+      const parsed = parseJSON(raw, `${method} ${path}`);
+      appendJSON(logPath, {
+        started_at: startedAt,
+        completed_at: new Date().toISOString(),
+        method,
+        path,
+        ...(body === undefined ? {} : { request: body }),
+        status: response.status,
+        response: parsed,
+      });
+      return { status: response.status, body: parsed, raw };
+    } catch (error) {
+      appendJSON(logPath, {
+        started_at: startedAt,
+        completed_at: new Date().toISOString(),
+        method,
+        path,
+        ...(body === undefined ? {} : { request: body }),
+        status: response?.status,
+        raw_response: raw,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
   };
   return {
     async json(method, path, body) {
@@ -723,7 +754,13 @@ async function recordDeletedRunResources(
   });
 }
 
-async function recordProtectedResources(core, ids, signal, record) {
+async function recordProtectedResources(
+  core,
+  ids,
+  signal,
+  record,
+  check = "observations cleanup preserves replacement and unrelated resource instances",
+) {
   const [
     replacementEntity,
     replacementObject,
@@ -736,8 +773,7 @@ async function recordProtectedResources(core, ids, signal, record) {
     core.objects.get(ids.unrelatedObjectID, { fresh: true, signal }),
   ]);
   record({
-    check:
-      "observations cleanup preserves replacement and unrelated resource instances",
+    check,
     expected: {
       replacement_entity: "replacement observations acceptance Entity",
       replacement_object: "replacement observations acceptance Object",
