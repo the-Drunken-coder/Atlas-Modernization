@@ -478,13 +478,16 @@ function recordCompletedStream(run, summary, events, inputs, record) {
   const resources = events.filter((event) => event.type === "resource");
   const logs = events.filter((event) => event.type === "log");
   const assertions = events.filter((event) => event.type === "assertion");
-  const expectedAssertionNames = clientAssertionNames(inputs.clientCount);
+  const expectedAssertionResults = clientAssertionResults(
+    inputs.clientCount,
+    inputs.writes,
+  );
   const eventContract = assessExpectedSuccessEvents(events, run.id);
   const completionOrder = assessCompletedEventOrder(events);
   const assertionContract = assessMultiClientAssertions(
     assertions.map((event) => event.assertion),
     summary.assertions,
-    expectedAssertionNames,
+    expectedAssertionResults,
   );
   const terminal = events.find(
     (event) => event.type === "status" && event.status !== "running",
@@ -524,7 +527,7 @@ function recordCompletedStream(run, summary, events, inputs, record) {
       resources: expectedResources,
       progress_logs: expectedProgressLogs,
       assertion_id_set: assertionContract.expectedIDs,
-      assertion_name_pass_set: assertionContract.expectedNamePassSet,
+      assertion_name_pass_message_set: assertionContract.expectedResultSet,
       event_contract: eventContract.expected,
       completion_order: completionOrder.expected,
     },
@@ -853,14 +856,30 @@ async function recordProtectedResources(core, ids, signal, record) {
   });
 }
 
-function clientAssertionNames(clientCount) {
+function clientAssertionResults(clientCount, writes) {
   return Array.from({ length: clientCount }, (_, index) => {
     const client = index + 1;
     return [
-      `Client ${client} saw writer resources`,
-      `Client ${client} matched writer versions`,
-      `Client ${client} sync running`,
-      `Client ${client} sync healthy`,
+      {
+        name: `Client ${client} saw writer resources`,
+        passed: true,
+        message: `${writes}/${writes} resources visible via sync`,
+      },
+      {
+        name: `Client ${client} matched writer versions`,
+        passed: true,
+        message: `${writes}/${writes} versions matched`,
+      },
+      {
+        name: `Client ${client} sync running`,
+        passed: true,
+        message: "running",
+      },
+      {
+        name: `Client ${client} sync healthy`,
+        passed: true,
+        message: "healthy",
+      },
     ];
   }).flat();
 }

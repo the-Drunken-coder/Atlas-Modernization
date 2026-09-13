@@ -6,11 +6,9 @@ import { assessReplayAssertionParity } from "./run-event-replay-contract.mjs";
  * complete and unique, but their reader-name association is intentionally not
  * fixed. The browser must receive the same mapping from the replay and summary.
  */
-export function assessMultiClientAssertions(stream, summary, expectedNames) {
-  const expectedIDs = expectedNames.map((_, index) => `assert-${index + 1}`);
-  const expectedNamePassSet = orderedNamePassSet(
-    expectedNames.map((name) => ({ name, passed: true })),
-  );
+export function assessMultiClientAssertions(stream, summary, expectedResults) {
+  const expectedIDs = expectedResults.map((_, index) => `assert-${index + 1}`);
+  const expectedResultSet = orderedNamePassMessageSet(expectedResults);
   const replayParity = assessReplayAssertionParity(
     stream.map((assertion) => ({ type: "assertion", assertion })),
     summary,
@@ -19,19 +17,19 @@ export function assessMultiClientAssertions(stream, summary, expectedNames) {
 
   return {
     expectedIDs,
-    expectedNamePassSet,
+    expectedResultSet,
     streamResults,
     summaryResults,
     passed:
       hasExactNumericIDSet(streamResults, expectedIDs) &&
       hasExactNumericIDSet(summaryResults, expectedIDs) &&
       isDeepStrictEqual(
-        orderedNamePassSet(streamResults),
-        expectedNamePassSet,
+        orderedNamePassMessageSet(streamResults),
+        expectedResultSet,
       ) &&
       isDeepStrictEqual(
-        orderedNamePassSet(summaryResults),
-        expectedNamePassSet,
+        orderedNamePassMessageSet(summaryResults),
+        expectedResultSet,
       ) &&
       replayParity.passed,
   };
@@ -44,8 +42,12 @@ function hasExactNumericIDSet(assertions, expectedIDs) {
   );
 }
 
-function orderedNamePassSet(assertions) {
+function orderedNamePassMessageSet(assertions) {
   return assertions
-    .map((assertion) => ({ name: assertion.name, passed: assertion.passed }))
+    .map((assertion) => ({
+      name: assertion.name,
+      passed: assertion.passed,
+      message: assertion.message,
+    }))
     .sort((left, right) => left.name.localeCompare(right.name));
 }

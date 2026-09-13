@@ -11,7 +11,10 @@ import {
 import { parseRunEvent } from "../../../simulations/src/client/run-state.ts";
 import { runAcceptance } from "../support/stack.mjs";
 import { parseBrowserRunSummary } from "./support/browser-run-contracts.mjs";
-import { assessCancelledObservationWindow } from "./support/cancelled-observation-window.mjs";
+import {
+  assessCancelledObservationAssertions,
+  assessCancelledObservationWindow,
+} from "./support/cancelled-observation-window.mjs";
 import {
   assessCleanupCompletionOrder,
   assessCleanupResourceEvents,
@@ -25,7 +28,6 @@ import {
   assessCompletedEventOrder,
   assessExpectedSuccessEvents,
   assessReplayAssertionParity,
-  orderAssertionResults,
 } from "./support/run-event-replay-contract.mjs";
 import { eventStreamResponseError } from "./support/sse-response-contract.mjs";
 
@@ -403,14 +405,21 @@ await runAcceptance({
           cancelledSummary.status === cancelledRunSummary.status &&
           cancelledSummary.cleaned === false,
       });
-      recordCancellationAssertionPhase(
-        cancellationProgress.events,
-        cancellationStabilityEvents,
-        cancelledRunSummary,
-        cancelledSummary,
-        cancellationInputs,
-        record,
-      );
+      const cancellationAssertionPhase = assessCancelledObservationAssertions({
+        progressEvents: cancellationProgress.events,
+        postStopEvents: cancellationStabilityEvents,
+        stoppedAssertions: cancelledRunSummary.assertions,
+        rereadAssertions: cancelledSummary.assertions,
+        observationCount: cancellationInputs.observations,
+        verifierAssertions: expectedVerifierAssertions(cancellationInputs),
+      });
+      record({
+        check:
+          "cancelled observations preserve only source-valid verifier assertions across the stop phase",
+        expected: cancellationAssertionPhase.expected,
+        actual: cancellationAssertionPhase.actual,
+        passed: cancellationAssertionPhase.passed,
+      });
       recordCreatedResourceSet(cancelledSummary, cancellationInputs, record);
       recordLocalLedgerState(
         cancelled.id,
@@ -765,20 +774,12 @@ function recordCompletedStream(started, completed, events, inputs, record) {
     events,
     completed.assertions,
   );
-  const expectedAssertionResults = [
-    { id: "assert-1", name: "Observer assets persisted", passed: true },
-    { id: "assert-2", name: "Tracks persisted", passed: true },
-    { id: "assert-3", name: "Object references persisted", passed: true },
-  ];
+  const expectedAssertionResults = expectedVerifierAssertions(inputs);
   const expectedAssertionIDs = expectedAssertionResults.map(
     (assertion) => assertion.id,
   );
   const streamAssertionResults = assertionReplay.streamResults;
   const summaryAssertionResults = assertionReplay.summaryResults;
-  const streamAssertionSemantics =
-    streamAssertionResults.map(assertionResultState);
-  const summaryAssertionSemantics =
-    summaryAssertionResults.map(assertionResultState);
   const actualAssertionIDs = streamAssertionResults.map(
     (assertion) => assertion.id,
   );
@@ -871,8 +872,8 @@ function recordCompletedStream(started, completed, events, inputs, record) {
       isDeepStrictEqual(actualLogs, expectedLogs) &&
       isDeepStrictEqual(actualAssertionIDs, expectedAssertionIDs) &&
       new Set(actualAssertionIDs).size === actualAssertionIDs.length &&
-      isDeepStrictEqual(streamAssertionSemantics, expectedAssertionResults) &&
-      isDeepStrictEqual(summaryAssertionSemantics, expectedAssertionResults) &&
+      isDeepStrictEqual(streamAssertionResults, expectedAssertionResults) &&
+      isDeepStrictEqual(summaryAssertionResults, expectedAssertionResults) &&
       assertionReplay.passed &&
       eventContract.passed &&
       completionOrder.passed &&
@@ -891,87 +892,6 @@ function observationLogMessages(events) {
         event.type === "log" && event.message.startsWith("Observation "),
     )
     .map((event) => event.message);
-}
-
-function assertionResultState(assertion) {
-  return {
-    id: assertion?.id,
-    name: assertion?.name,
-    passed: assertion?.passed,
-  };
-}
-
-function recordCancellationAssertionPhase(
-  progressEvents,
-  postStopEvents,
-  stopped,
-  reread,
-  inputs,
-  record,
-) {
-  const progressAssertions = orderAssertionResults(
-    progressEvents
-      .filter((event) => event.type === "assertion")
-      .map((event) => event.assertion),
-  );
-  const stoppedAssertions = orderAssertionResults(stopped.assertions);
-  const rereadAssertions = orderAssertionResults(reread.assertions);
-  const postStopReplay = assessReplayAssertionParity(
-    postStopEvents,
-    reread.assertions,
-  );
-  const observationPairs = observedObservationPairs(progressEvents);
-  const verifierAssertions = expectedVerifierAssertions(inputs);
-  const allObservationPairsRecorded =
-    observationPairs.length === inputs.observations &&
-    observationPairs.every((observation, index) => observation === index + 1);
-  const allowedAssertions = allObservationPairsRecorded
-    ? (assertions) =>
-        assertions.length === 0 ||
-        isDeepStrictEqual(assertions, verifierAssertions)
-    : (assertions) => assertions.length === 0;
-  record({
-    check:
-      "cancelled observations preserve only source-valid verifier assertions across the stop phase",
-    expected: {
-      pre_stop_observation_pairs: inputs.observations,
-      ...(allObservationPairsRecorded
-        ? { allowed_assertions: [[], verifierAssertions] }
-        : { allowed_assertions: [] }),
-      pre_stop_assertions_retained_by_stop_summary: true,
-      stop_assertions_retained_by_cancelled_summary: true,
-      post_stop_replay_matches_cancelled_summary: postStopReplay.expected,
-    },
-    actual: {
-      pre_stop_observation_pairs: observationPairs,
-      pre_stop_assertions: progressAssertions,
-      stop_summary_assertions: stoppedAssertions,
-      cancelled_summary_assertions: rereadAssertions,
-      post_stop_replay: postStopReplay.actual,
-    },
-    passed:
-      hasUniqueAssertionIDs(progressAssertions) &&
-      hasUniqueAssertionIDs(stoppedAssertions) &&
-      hasUniqueAssertionIDs(rereadAssertions) &&
-      allowedAssertions(progressAssertions) &&
-      allowedAssertions(stoppedAssertions) &&
-      allowedAssertions(rereadAssertions) &&
-      assertionResultsAreSubset(progressAssertions, stoppedAssertions) &&
-      assertionResultsAreSubset(stoppedAssertions, rereadAssertions) &&
-      postStopReplay.passed,
-  });
-}
-
-function observedObservationPairs(events) {
-  return [
-    ...new Set(
-      events.flatMap((event) => {
-        if (event.type !== "log") return [];
-        const match = /^Observation ([1-9]\d*) linked /u.exec(event.message);
-        return match ? [Number(match[1])] : [];
-      }),
-    ),
-  ].sort((left, right) => left - right);
 }
 
 function expectedVerifierAssertions(inputs) {
@@ -995,22 +915,6 @@ function expectedVerifierAssertions(inputs) {
       message: `${inputs.observations}/${inputs.observations} objects linked`,
     },
   ];
-}
-
-function assertionResultsAreSubset(expected, actual) {
-  const actualByID = new Map(
-    actual.map((assertion) => [assertion.id, assertion]),
-  );
-  return expected.every((assertion) =>
-    isDeepStrictEqual(actualByID.get(assertion.id), assertion),
-  );
-}
-
-function hasUniqueAssertionIDs(assertions) {
-  return (
-    new Set(assertions.map((assertion) => assertion.id)).size ===
-    assertions.length
-  );
 }
 
 function recordCreatedResourceSet(run, inputs, record) {
