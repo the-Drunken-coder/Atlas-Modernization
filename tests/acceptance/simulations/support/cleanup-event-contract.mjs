@@ -26,6 +26,29 @@ export function assessCleanupResourceEvents(events, resources, preserved) {
   };
 }
 
+export function assessCleanupCompletionOrder(events) {
+  const resourceEventIndexes = [];
+  const completionEventIndexes = [];
+  events.forEach((event, index) => {
+    if (event.type !== "cleanup") return;
+    if (event.resource !== undefined) resourceEventIndexes.push(index);
+    if (event.resource === undefined && event.message === "Cleanup complete") {
+      completionEventIndexes.push(index);
+    }
+  });
+  return {
+    expected: { cleanup_complete_after_all_resource_messages: true },
+    actual: {
+      resource_event_indexes: resourceEventIndexes,
+      completion_event_indexes: completionEventIndexes,
+    },
+    passed:
+      resourceEventIndexes.length > 0 &&
+      completionEventIndexes.length === 1 &&
+      resourceEventIndexes.every((index) => index < completionEventIndexes[0]),
+  };
+}
+
 export function resourceKey(resource) {
   return `${resource.type}:${resource.id}`;
 }

@@ -13,6 +13,7 @@ import { runAcceptance } from "../support/stack.mjs";
 import { parseBrowserRunSummary } from "./support/browser-run-contracts.mjs";
 import { assessCancelledObservationWindow } from "./support/cancelled-observation-window.mjs";
 import {
+  assessCleanupCompletionOrder,
   assessCleanupResourceEvents,
   resourceKey,
 } from "./support/cleanup-event-contract.mjs";
@@ -114,6 +115,7 @@ await runAcceptance({
         observationJSON,
         target,
         scenarioName,
+        { startedAt: normal.startedAt },
       );
       recordCompletedStream(
         normal,
@@ -204,6 +206,10 @@ await runAcceptance({
           target,
           inputs: normalInputs,
           jsonInput: observationJSON,
+          lifecycle: {
+            startedAt: normal.startedAt,
+            finishedAt: normalSummary.finishedAt,
+          },
         },
       );
       const normalCleanupStream = await collectRunEvents({
@@ -290,6 +296,7 @@ await runAcceptance({
           target,
           inputs: cancellationInputs,
           jsonInput: observationJSON,
+          lifecycle: { startedAt: cancelled.startedAt },
         },
       );
       record({
@@ -322,6 +329,10 @@ await runAcceptance({
         observationJSON,
         target,
         scenarioName,
+        {
+          startedAt: cancelled.startedAt,
+          finishedAt: cancelledRunSummary.finishedAt,
+        },
       );
       const stableResources = resourceKeys(cancelledSummary.createdResources);
       const cancellationWindow = assessCancelledObservationWindow(
@@ -388,6 +399,10 @@ await runAcceptance({
           target,
           inputs: cancellationInputs,
           jsonInput: observationJSON,
+          lifecycle: {
+            startedAt: cancelled.startedAt,
+            finishedAt: cancelledRunSummary.finishedAt,
+          },
         },
       );
       const cancelledCleanupStream = await collectRunEvents({
@@ -578,6 +593,8 @@ async function verifyLocalTargetAndScenario(api, coreBaseUrl, apiKey, record) {
   record({
     check: "actual server registers the observations-objects contract",
     expected: {
+      scenario_id: scenarioID,
+      user_visible_descriptor_text: "nonempty name, summary, and input labels",
       accepts_json: true,
       input_fields: [
         { key: "assetCount", default_value: 2, min: 1, max: 10, step: 1 },
@@ -613,7 +630,8 @@ async function verifyLocalTargetAndScenario(api, coreBaseUrl, apiKey, record) {
     },
     actual: scenario,
     passed:
-      scenario?.acceptsJson === true &&
+      hasScenarioDescriptorPresentation(scenario) &&
+      scenario.acceptsJson === true &&
       hasExactNumberFields(scenario, [
         ["assetCount", 2, 1, 10, 1],
         ["observations", 4, 1, 50, 1],
@@ -622,7 +640,7 @@ async function verifyLocalTargetAndScenario(api, coreBaseUrl, apiKey, record) {
         ["startLongitude", -77.04, -180, 179.9459, 0.0001],
       ]),
   });
-  return { target, scenarioName: scenario?.name };
+  return { target, scenarioName: scenario.name };
 }
 
 function verifyServerHealth(health, coreBaseUrl, record) {
@@ -678,7 +696,15 @@ async function startRun(api, inputs, jsonInput, target, scenarioName) {
   return run;
 }
 
-async function readRun(api, runID, inputs, jsonInput, target, scenarioName) {
+async function readRun(
+  api,
+  runID,
+  inputs,
+  jsonInput,
+  target,
+  scenarioName,
+  lifecycle,
+) {
   const response = await api.json(
     "GET",
     `/api/runs/${encodeURIComponent(runID)}`,
@@ -691,6 +717,7 @@ async function readRun(api, runID, inputs, jsonInput, target, scenarioName) {
     target,
     inputs,
     jsonInput,
+    lifecycle,
   });
 }
 
@@ -1027,6 +1054,8 @@ async function recordPersistedObservations(
           longitude,
           classification,
           status: "observed",
+          telemetry_last_update: "valid RFC3339 timestamp",
+          status_last_update: "valid RFC3339 timestamp",
         }),
       ),
       objects: expectedObjects.map(({ object, observation, trackID }) => ({
@@ -1107,6 +1136,9 @@ async function recordPersistedObservations(
           expected.track.components.telemetry?.latitude === expected.latitude &&
           expected.track.components.telemetry?.longitude ===
             expected.longitude &&
+          isRFC3339Timestamp(
+            expected.track.components.telemetry?.last_update,
+          ) &&
           isDeepStrictEqual(expected.track.components.geometry?.coordinates, [
             expected.longitude,
             expected.latitude,
@@ -1114,6 +1146,7 @@ async function recordPersistedObservations(
           expected.track.components.mil_view?.classification ===
             expected.classification &&
           expected.track.components.status?.value === "observed" &&
+          isRFC3339Timestamp(expected.track.components.status?.last_update) &&
           simulation?.run_id === run.id &&
           simulation?.observer_id === expected.observer?.entity_id &&
           simulation?.observation_index === expected.observation &&
@@ -1142,6 +1175,7 @@ function recordCleanupEvents(run, cleaned, events, preserved, record) {
     run.createdResources,
     preserved,
   );
+  const cleanupCompletion = assessCleanupCompletionOrder(events);
   const expected = run.createdResources.map(resourceKey).sort();
   const stopEventIndex = events.findIndex(
     (event) => event.type === "log" && event.message === "Stop requested",
@@ -1160,6 +1194,7 @@ function recordCleanupEvents(run, cleaned, events, preserved, record) {
       cleaned: true,
       resources: expected,
       cleanup_events: cleanupResources.expected,
+      cleanup_completion: cleanupCompletion.expected,
       created_resources: run.createdResources,
       assertions: run.assertions,
       run_id: run.id,
@@ -1178,6 +1213,7 @@ function recordCleanupEvents(run, cleaned, events, preserved, record) {
       cleaned: cleaned.cleaned,
       resources: cleanupResources.actual.map(resourceKey),
       cleanup_events: cleanupResources.actual,
+      cleanup_completion: cleanupCompletion.actual,
       created_resources: cleaned.createdResources,
       assertions: cleaned.assertions,
       run_ids: runIDs,
@@ -1196,6 +1232,7 @@ function recordCleanupEvents(run, cleaned, events, preserved, record) {
       cleaned.cleaned === true &&
       isDeepStrictEqual(cleanupResources.actual.map(resourceKey), expected) &&
       cleanupResources.passed &&
+      cleanupCompletion.passed &&
       isDeepStrictEqual(cleaned.createdResources, run.createdResources) &&
       isDeepStrictEqual(cleaned.assertions, run.assertions) &&
       strictlyIncreasing(sequences) &&
@@ -1203,13 +1240,7 @@ function recordCleanupEvents(run, cleaned, events, preserved, record) {
       (!requiresCancellationLifecycle ||
         (stopEventIndex !== -1 &&
           cancelledStatusIndex !== -1 &&
-          stopEventIndex < cancelledStatusIndex)) &&
-      events.some(
-        (event) =>
-          event.type === "cleanup" &&
-          event.resource === undefined &&
-          event.message === "Cleanup complete",
-      ),
+          stopEventIndex < cancelledStatusIndex)),
   });
 }
 
@@ -1458,7 +1489,8 @@ function parseEventFrame(frame) {
 
 function hasExactNumberFields(scenario, expected) {
   return (
-    scenario?.inputFields.length === expected.length &&
+    Array.isArray(scenario?.inputFields) &&
+    scenario.inputFields.length === expected.length &&
     expected.every(([key, defaultValue, min, max, step], index) => {
       const field = scenario.inputFields[index];
       return (
@@ -1471,6 +1503,20 @@ function hasExactNumberFields(scenario, expected) {
       );
     })
   );
+}
+
+function hasScenarioDescriptorPresentation(scenario) {
+  return (
+    scenario?.id === scenarioID &&
+    hasNonemptyText(scenario.name) &&
+    hasNonemptyText(scenario.summary) &&
+    Array.isArray(scenario.inputFields) &&
+    scenario.inputFields.every((field) => hasNonemptyText(field?.label))
+  );
+}
+
+function hasNonemptyText(value) {
+  return typeof value === "string" && value.trim().length > 0;
 }
 
 function entityState(entity) {

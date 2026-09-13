@@ -36,11 +36,22 @@ export function parseBrowserRunSummary(value, expected) {
     (expected.runID !== undefined && value.id !== expected.runID) ||
     !hasExpectedTarget(value.target, expected.target) ||
     !hasExpectedInputs(value.inputs, expected.inputs) ||
-    !isDeepStrictEqual(value.jsonInput, expected.jsonInput)
+    !isDeepStrictEqual(value.jsonInput, expected.jsonInput) ||
+    !hasExpectedLifecycle(value, expected.lifecycle)
   ) {
     throw new Error(`Unexpected browser run summary from ${expected.context}`);
   }
   return value;
+}
+
+function hasExpectedLifecycle(value, expected) {
+  return (
+    expected === undefined ||
+    ((expected.startedAt === undefined ||
+      value.startedAt === expected.startedAt) &&
+      (expected.finishedAt === undefined ||
+        value.finishedAt === expected.finishedAt))
+  );
 }
 
 function hasValidLifecycleTimestamps(value) {

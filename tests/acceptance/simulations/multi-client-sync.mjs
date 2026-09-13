@@ -17,6 +17,7 @@ import {
 import { assessMultiClientAssertions } from "./support/multi-client-assertion-contract.mjs";
 import { parseBrowserRunSummary } from "./support/browser-run-contracts.mjs";
 import {
+  assessCleanupCompletionOrder,
   assessCleanupResourceEvents,
   resourceKey,
 } from "./support/cleanup-event-contract.mjs";
@@ -103,6 +104,7 @@ await runAcceptance({
         normalInputs,
         target,
         scenarioName,
+        { startedAt: run.startedAt },
       );
       recordCompletedStream(run, summary, stream.events, normalInputs, record);
 
@@ -173,6 +175,10 @@ await runAcceptance({
         target,
         inputs: normalInputs,
         jsonInput: undefined,
+        lifecycle: {
+          startedAt: run.startedAt,
+          finishedAt: summary.finishedAt,
+        },
       });
       const cleanupStream = await collectRunEvents({
         api,
@@ -365,6 +371,8 @@ async function verifyLocalTargetAndScenario(api, coreBaseUrl, apiKey, record) {
   record({
     check: "actual server registers the multi-client-sync contract",
     expected: {
+      scenario_id: scenarioID,
+      user_visible_descriptor_text: "nonempty name, summary, and input labels",
       accepts_json: false,
       input_fields: [
         { key: "clientCount", default_value: 2, min: 1, max: 8, step: 1 },
@@ -380,14 +388,15 @@ async function verifyLocalTargetAndScenario(api, coreBaseUrl, apiKey, record) {
     },
     actual: scenario,
     passed:
-      scenario?.acceptsJson === false &&
+      hasScenarioDescriptorPresentation(scenario) &&
+      scenario.acceptsJson === false &&
       hasExactNumberFields(scenario, [
         ["clientCount", 2, 1, 8, 1],
         ["writes", 3, 1, 20, 1],
         ["settleMs", 1_500, 1_500, 10_000, 50],
       ]),
   });
-  return { target, scenarioName: scenario?.name };
+  return { target, scenarioName: scenario.name };
 }
 
 function verifyServerHealth(health, coreBaseUrl, record) {
@@ -442,7 +451,7 @@ async function startRun(api, inputs, target, scenarioName) {
   return run;
 }
 
-async function readRun(api, runID, inputs, target, scenarioName) {
+async function readRun(api, runID, inputs, target, scenarioName, lifecycle) {
   const response = await api.json(
     "GET",
     `/api/runs/${encodeURIComponent(runID)}`,
@@ -455,6 +464,7 @@ async function readRun(api, runID, inputs, target, scenarioName) {
     target,
     inputs,
     jsonInput: undefined,
+    lifecycle,
   });
 }
 
@@ -697,6 +707,7 @@ function recordCleanupEvents(run, cleaned, events, preserved, record) {
     run.createdResources,
     preserved,
   );
+  const cleanupCompletion = assessCleanupCompletionOrder(events);
   const expected = run.createdResources.map(resourceKey).sort();
   const sequences = events.map((event) => event.sequence);
   const runIDs = [...new Set(events.map((event) => event.runId))];
@@ -707,6 +718,7 @@ function recordCleanupEvents(run, cleaned, events, preserved, record) {
       cleaned: true,
       resources: expected,
       cleanup_events: cleanupResources.expected,
+      cleanup_completion: cleanupCompletion.expected,
       created_resources: run.createdResources,
       assertions: run.assertions,
       run_id: run.id,
@@ -717,6 +729,7 @@ function recordCleanupEvents(run, cleaned, events, preserved, record) {
       cleaned: cleaned.cleaned,
       resources: cleanupResources.actual.map(resourceKey),
       cleanup_events: cleanupResources.actual,
+      cleanup_completion: cleanupCompletion.actual,
       created_resources: cleaned.createdResources,
       assertions: cleaned.assertions,
       run_ids: runIDs,
@@ -727,16 +740,11 @@ function recordCleanupEvents(run, cleaned, events, preserved, record) {
       cleaned.cleaned === true &&
       isDeepStrictEqual(cleanupResources.actual.map(resourceKey), expected) &&
       cleanupResources.passed &&
+      cleanupCompletion.passed &&
       isDeepStrictEqual(cleaned.createdResources, run.createdResources) &&
       isDeepStrictEqual(cleaned.assertions, run.assertions) &&
       strictlyIncreasing(sequences) &&
-      events.every((event) => event.runId === run.id) &&
-      events.some(
-        (event) =>
-          event.type === "cleanup" &&
-          event.resource === undefined &&
-          event.message === "Cleanup complete",
-      ),
+      events.every((event) => event.runId === run.id),
   });
 }
 
@@ -920,7 +928,8 @@ function writerEntityIndex(runID, entityID) {
 
 function hasExactNumberFields(scenario, expected) {
   return (
-    scenario?.inputFields.length === expected.length &&
+    Array.isArray(scenario?.inputFields) &&
+    scenario.inputFields.length === expected.length &&
     expected.every(([key, defaultValue, min, max, step], index) => {
       const field = scenario.inputFields[index];
       return (
@@ -933,6 +942,20 @@ function hasExactNumberFields(scenario, expected) {
       );
     })
   );
+}
+
+function hasScenarioDescriptorPresentation(scenario) {
+  return (
+    scenario?.id === scenarioID &&
+    hasNonemptyText(scenario.name) &&
+    hasNonemptyText(scenario.summary) &&
+    Array.isArray(scenario.inputFields) &&
+    scenario.inputFields.every((field) => hasNonemptyText(field?.label))
+  );
+}
+
+function hasNonemptyText(value) {
+  return typeof value === "string" && value.trim().length > 0;
 }
 
 function entityState(entity) {
