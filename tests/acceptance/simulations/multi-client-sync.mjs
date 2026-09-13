@@ -2,7 +2,11 @@ import { randomUUID } from "node:crypto";
 import { appendFileSync, existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
-import { AtlasClient, isAtlasAPIError } from "@the-drunken-coder/atlas-sdk";
+import {
+  AtlasClient,
+  isAtlasAPIError,
+  isRFC3339Timestamp,
+} from "@the-drunken-coder/atlas-sdk";
 import { parseRunEvent } from "../../../simulations/src/client/run-state.ts";
 import { runAcceptance } from "../support/stack.mjs";
 import {
@@ -13,9 +17,14 @@ import {
 import { assessMultiClientAssertions } from "./support/multi-client-assertion-contract.mjs";
 import { parseBrowserRunSummary } from "./support/browser-run-contracts.mjs";
 import {
+  assessCleanupResourceEvents,
+  resourceKey,
+} from "./support/cleanup-event-contract.mjs";
+import {
   createSimulationServerFixture,
   simulationFixtureVariant,
 } from "./support/server-fixture.mjs";
+import { eventStreamResponseError } from "./support/sse-response-contract.mjs";
 
 const reproduction =
   "npm run build:sdk && node --import ./simulations/node_modules/tsx/dist/loader.mjs tests/acceptance/simulations/multi-client-sync.mjs";
@@ -179,6 +188,7 @@ await runAcceptance({
         summary,
         cleanedSummary,
         cleanupStream.events,
+        new Set([`entity:${replacementWriterID}`]),
         record,
       );
       await recordAllMissing(
@@ -433,7 +443,10 @@ async function startRun(api, inputs, target, scenarioName) {
 }
 
 async function readRun(api, runID, inputs, target, scenarioName) {
-  const response = await api.json("GET", `/api/runs/${encodeURIComponent(runID)}`);
+  const response = await api.json(
+    "GET",
+    `/api/runs/${encodeURIComponent(runID)}`,
+  );
   return parseBrowserRunSummary(response.body.run, {
     context: "run read response",
     runID,
@@ -577,6 +590,7 @@ function recordPersistedWriterEntities(run, entities, inputs, record) {
       entity_type: "asset",
       subtype: "sync-probe",
       status: "sync-probe",
+      heartbeat: "valid RFC3339 last_seen timestamp",
       run_id: run.id,
       resource_types: Array.from({ length: inputs.writes }, () => "entity"),
       write_indexes: Array.from(
@@ -677,16 +691,13 @@ function readerMatchesWriter(reader, writerByID) {
   );
 }
 
-function recordCleanupEvents(run, cleaned, events, record) {
-  const resources = events
-    .filter((event) => event.type === "cleanup" && event.resource)
-    .map((event) => event.resource);
-  const expected = run.createdResources
-    .map((resource) => `${resource.type}:${resource.id}`)
-    .sort();
-  const actual = resources
-    .map((resource) => `${resource.type}:${resource.id}`)
-    .sort();
+function recordCleanupEvents(run, cleaned, events, preserved, record) {
+  const cleanupResources = assessCleanupResourceEvents(
+    events,
+    run.createdResources,
+    preserved,
+  );
+  const expected = run.createdResources.map(resourceKey).sort();
   const sequences = events.map((event) => event.sequence);
   const runIDs = [...new Set(events.map((event) => event.runId))];
   record({
@@ -695,20 +706,29 @@ function recordCleanupEvents(run, cleaned, events, record) {
       status: run.status,
       cleaned: true,
       resources: expected,
+      cleanup_events: cleanupResources.expected,
+      created_resources: run.createdResources,
+      assertions: run.assertions,
       run_id: run.id,
       strictly_increasing_sequences: true,
     },
     actual: {
       status: cleaned.status,
       cleaned: cleaned.cleaned,
-      resources: actual,
+      resources: cleanupResources.actual.map(resourceKey),
+      cleanup_events: cleanupResources.actual,
+      created_resources: cleaned.createdResources,
+      assertions: cleaned.assertions,
       run_ids: runIDs,
       sequences,
     },
     passed:
       cleaned.status === run.status &&
       cleaned.cleaned === true &&
-      isDeepStrictEqual(actual, expected) &&
+      isDeepStrictEqual(cleanupResources.actual.map(resourceKey), expected) &&
+      cleanupResources.passed &&
+      isDeepStrictEqual(cleaned.createdResources, run.createdResources) &&
+      isDeepStrictEqual(cleaned.assertions, run.assertions) &&
       strictlyIncreasing(sequences) &&
       events.every((event) => event.runId === run.id) &&
       events.some(
@@ -824,11 +844,10 @@ async function collectRunEvents({ api, runID, artifactBase, signal, until }) {
         signal: AbortSignal.any([signal, AbortSignal.timeout(20_000)]),
       },
     );
-    if (!response.ok || !response.body) {
+    const responseError = eventStreamResponseError(response);
+    if (responseError) {
       raw = await response.text();
-      throw new Error(
-        `GET run events returned HTTP ${response.status}: ${raw}`,
-      );
+      throw new Error(`${responseError}: ${raw}`);
     }
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
@@ -881,6 +900,7 @@ function isExpectedWriterEntity(entity, runID, writeIndex) {
       latitude,
     ) &&
     entity.components.status?.value === "sync-probe" &&
+    isRFC3339Timestamp(entity.components.heartbeat?.last_seen) &&
     entity.components.custom_simulation?.run_id === runID &&
     entity.components.custom_simulation?.write_index === writeIndex
   );
@@ -922,6 +942,7 @@ function entityState(entity) {
     alias: entity.alias,
     subtype: entity.subtype,
     telemetry: entity.components.telemetry,
+    heartbeat: entity.components.heartbeat,
     geometry: entity.components.geometry,
     status: entity.components.status,
     custom_simulation: entity.components.custom_simulation,

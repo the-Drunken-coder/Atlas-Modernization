@@ -1,6 +1,9 @@
 import { isDeepStrictEqual } from "node:util";
 
-import { isResourceType } from "@the-drunken-coder/atlas-sdk";
+import {
+  isRFC3339Timestamp,
+  isResourceType,
+} from "@the-drunken-coder/atlas-sdk";
 
 /**
  * Mirrors the browser API's `isRunSummary` guard and binds each consumed
@@ -15,9 +18,7 @@ export function parseBrowserRunSummary(value, expected) {
     typeof value.scenarioName !== "string" ||
     !isAtlasTargetSummary(value.target) ||
     !isRunStatus(value.status) ||
-    typeof value.startedAt !== "string" ||
-    (value.finishedAt !== undefined && typeof value.finishedAt !== "string") ||
-    (value.updatedAt !== undefined && typeof value.updatedAt !== "string") ||
+    !hasValidLifecycleTimestamps(value) ||
     !isInputRecord(value.inputs) ||
     (value.jsonInput !== undefined && !isJSONValue(value.jsonInput)) ||
     !Array.isArray(value.createdResources) ||
@@ -25,7 +26,7 @@ export function parseBrowserRunSummary(value, expected) {
     !Array.isArray(value.assertions) ||
     !value.assertions.every(isAssertionResult) ||
     typeof value.cleaned !== "boolean" ||
-    (value.lastError !== undefined && typeof value.lastError !== "string")
+    value.lastError !== undefined
   ) {
     throw new Error("Invalid browser run summary");
   }
@@ -40,6 +41,21 @@ export function parseBrowserRunSummary(value, expected) {
     throw new Error(`Unexpected browser run summary from ${expected.context}`);
   }
   return value;
+}
+
+function hasValidLifecycleTimestamps(value) {
+  if (
+    !isRFC3339Timestamp(value.startedAt) ||
+    !isRFC3339Timestamp(value.updatedAt)
+  )
+    return false;
+  const startedAt = Date.parse(value.startedAt);
+  const updatedAt = Date.parse(value.updatedAt);
+  if (updatedAt < startedAt) return false;
+  if (value.status === "running") return value.finishedAt === undefined;
+  if (!isRFC3339Timestamp(value.finishedAt)) return false;
+  const finishedAt = Date.parse(value.finishedAt);
+  return finishedAt >= startedAt && updatedAt >= finishedAt;
 }
 
 function hasExpectedTarget(actual, expected) {
@@ -84,7 +100,11 @@ function isAssertionResult(value) {
 }
 
 function isCreatedResource(value) {
-  return isRecord(value) && isResourceType(value.type) && typeof value.id === "string";
+  return (
+    isRecord(value) &&
+    isResourceType(value.type) &&
+    typeof value.id === "string"
+  );
 }
 
 function isAtlasTargetSummary(value) {
@@ -102,20 +122,30 @@ function isInputRecord(value) {
   return (
     isRecord(value) &&
     Object.values(value).every(
-      (item) => typeof item === "string" || typeof item === "boolean" || isFiniteNumber(item),
+      (item) =>
+        typeof item === "string" ||
+        typeof item === "boolean" ||
+        isFiniteNumber(item),
     )
   );
 }
 
 function isRunStatus(value) {
-  return ["running", "completed", "failed", "cancelled", "abandoned"].includes(value);
+  return ["running", "completed", "failed", "cancelled", "abandoned"].includes(
+    value,
+  );
 }
 
 function isJSONValue(value) {
   const pending = [value];
   while (pending.length > 0) {
     const current = pending.pop();
-    if (current === null || typeof current === "boolean" || typeof current === "string") continue;
+    if (
+      current === null ||
+      typeof current === "boolean" ||
+      typeof current === "string"
+    )
+      continue;
     if (isFiniteNumber(current)) continue;
     if (Array.isArray(current)) pending.push(...current);
     else if (isRecord(current)) pending.push(...Object.values(current));
