@@ -18,7 +18,7 @@
     "tile_zoom": 14,
     "bounds": {
       "west": {
-        "minimum": -0.0042,
+        "minimum": -0.005,
         "maximum": -0.0022
       },
       "south": {
@@ -31,16 +31,16 @@
       },
       "north": {
         "minimum": 19.802,
-        "maximum": 19.804
+        "maximum": 19.8045
       }
     },
     "longitude_span": {
       "minimum": 0.002,
-      "maximum": 0.004
+      "maximum": 0.0045
     },
     "latitude_span": {
       "minimum": 0.0018,
-      "maximum": 0.0038
+      "maximum": 0.0043
     },
     "longitude_to_latitude_span_ratio": {
       "minimum": 1.05,
