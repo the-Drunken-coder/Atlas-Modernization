@@ -210,6 +210,18 @@ await runPluginAcceptance({
       await copyFile(controlledFixture.eventsPath, join(artifacts, "building-scan-source-events.jsonl"));
     }
 
+    const availableAfterCancellation = await waitForPluginStatus(client, pluginID, "available", null, signal);
+    record({
+      check: "caller cancellation left Building Scan available",
+      expected: { status: "available", reason_code: null, operations: expectedOperations },
+      actual: availableAfterCancellation,
+      passed:
+        availableAfterCancellation.status === "available" &&
+        availableAfterCancellation.reason_code === null &&
+        structurallyEqual(availableAfterCancellation.operations, expectedOperations) &&
+        isTimestamp(availableAfterCancellation.checked_at),
+    });
+
     const stopped = await pluginStack.stop();
     record({
       check: "test control stopped the owned Building Scan container",
@@ -401,12 +413,14 @@ function recordPluginError({ record, check, actual, status, errorCode, message, 
       status,
       error_code: errorCode,
       message,
-      optional_when_present: { details },
+      details,
     },
     wire_response: {
       status,
-      required: { success: false, error_code: errorCode, message },
-      optional_when_present: {
+      required: {
+        success: false,
+        error_code: errorCode,
+        message,
         details,
         path: operationPath,
         error_id: "err_<12 lowercase hex characters>",
@@ -425,19 +439,19 @@ function recordPluginError({ record, check, actual, status, errorCode, message, 
       actual.status === status &&
       actual.error_code === errorCode &&
       actual.message === `Atlas request failed: ${status} ${errorCode}: ${message}` &&
-      optionalMatches(actual.details, details, structurallyEqual) &&
+      structurallyEqual(actual.details, details) &&
       response?.success === false &&
       response.error_code === errorCode &&
       response.message === message &&
-      optionalMatches(response.details, details, structurallyEqual) &&
+      structurallyEqual(response.details, details) &&
       wireResponse?.status === status &&
       wirePayload?.success === false &&
       wirePayload.error_code === errorCode &&
       wirePayload.message === message &&
-      optionalMatches(wirePayload.details, details, structurallyEqual) &&
-      optionalMatches(wirePayload.path, operationPath) &&
-      optionalMatches(wirePayload.error_id, undefined, (value) => /^err_[0-9a-f]{12}$/u.test(value)) &&
-      optionalMatches(wirePayload.timestamp, undefined, isTimestamp),
+      structurallyEqual(wirePayload.details, details) &&
+      wirePayload.path === operationPath &&
+      /^err_[0-9a-f]{12}$/u.test(wirePayload.error_id) &&
+      isTimestamp(wirePayload.timestamp),
   });
 }
 
@@ -493,10 +507,6 @@ function parseWirePayload(text) {
 
 function structurallyEqual(actual, expected) {
   return isDeepStrictEqual(actual, expected, { skipPrototype: true });
-}
-
-function optionalMatches(actual, expected, comparison = (value, target) => value === target) {
-  return actual === undefined || comparison(actual, expected);
 }
 
 function isTimestamp(value) {
