@@ -798,20 +798,20 @@ async function readRunEntities(core, resources, signal) {
 }
 
 async function collectRunEvents({ api, runID, artifactBase, signal, until }) {
-  const response = await fetch(`${api.baseUrl}/api/runs/${encodeURIComponent(runID)}/events`, {
-    headers: { Accept: "text/event-stream" },
-    signal: AbortSignal.any([signal, AbortSignal.timeout(20_000)])
-  });
-  if (!response.ok || !response.body) {
-    const raw = await response.text();
-    throw new Error(`GET run events returned HTTP ${response.status}: ${raw}`);
-  }
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
   const events = [];
-  let pending = "";
   let raw = "";
   try {
+    const response = await fetch(`${api.baseUrl}/api/runs/${encodeURIComponent(runID)}/events`, {
+      headers: { Accept: "text/event-stream" },
+      signal: AbortSignal.any([signal, AbortSignal.timeout(20_000)])
+    });
+    if (!response.ok || !response.body) {
+      raw = await response.text();
+      throw new Error(`GET run events returned HTTP ${response.status}: ${raw}`);
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let pending = "";
     while (true) {
       const result = await reader.read();
       if (result.done) break;
