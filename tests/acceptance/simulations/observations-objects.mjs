@@ -700,7 +700,8 @@ async function recordPersistedObservations(
         return (
           expected.track?.alias === expected.alias &&
           expected.track.components.telemetry?.latitude === expected.latitude &&
-          expected.track.components.telemetry?.longitude === expected.longitude &&
+          expected.track.components.telemetry?.longitude ===
+            expected.longitude &&
           isDeepStrictEqual(expected.track.components.geometry?.coordinates, [
             expected.longitude,
             expected.latitude,
@@ -869,7 +870,9 @@ async function collectRunEvents({ api, runID, artifactBase, signal, until }) {
     );
     if (!response.ok || !response.body) {
       raw = await response.text();
-      throw new Error(`GET run events returned HTTP ${response.status}: ${raw}`);
+      throw new Error(
+        `GET run events returned HTTP ${response.status}: ${raw}`,
+      );
     }
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
