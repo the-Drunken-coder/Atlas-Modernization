@@ -1,6 +1,6 @@
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { isPluginManifest, isSpatialOperationResult } from "@the-drunken-coder/atlas-sdk";
+import { isMapArea, isPluginManifest, isSpatialOperationResult } from "@the-drunken-coder/atlas-sdk";
 import { chromium, webkit } from "playwright";
 import { runAcceptance } from "../support/stack.mjs";
 import { buildCommandInterface, prepareBrowserServers } from "./support/servers.mjs";
@@ -241,20 +241,55 @@ async function runMapWindowJourney({
     await page.mouse.down();
     await page.mouse.move(end.x, end.y, { steps: 8 });
     await page.mouse.up();
+    const selectedArea = page.getByTestId("map-area-selection");
+    await checkVisible(record, selectedArea, {
+      check: `${browserName} rendered the bounded map-area selection from the pointer drag`,
+      expected: "visible selected-area region",
+      page
+    });
+    const selectedAreaBox = await requiredBox(selectedArea, "selected map area");
+    record({
+      check: `${browserName} preserved the requested 36 by 36 pixel map-area drag`,
+      expected: { width: 36, height: 36, tolerance: 1 },
+      actual: selectedAreaBox,
+      passed: Math.abs(selectedAreaBox.width - 36) <= 1 && Math.abs(selectedAreaBox.height - 36) <= 1
+    });
     await checkVisible(record, page.getByRole("button", { name: "Search", exact: true }), {
       check: `${browserName} converted a bounded real map drag into a searchable area`,
       expected: "Search control visible after map-area drawing",
       page
     });
 
+    const pluginPath = `/plugins/${fixture.manifest.plugin_id}/operations/${fixture.operation.operation_id}`;
+    const pluginRequestPromise = page.waitForRequest(
+      (request) =>
+        request.method() === "POST" &&
+        new URL(request.url()).origin === browserFixture.coreOrigin &&
+        new URL(request.url()).pathname === pluginPath,
+      { timeout: 15_000 }
+    );
     const pluginResponsePromise = waitForCoreResponse(
       page,
       browserFixture.coreOrigin,
       "POST",
-      `/plugins/${fixture.manifest.plugin_id}/operations/${fixture.operation.operation_id}`
+      pluginPath
     );
     await page.getByRole("button", { name: "Search", exact: true }).click();
-    const pluginResponse = await responseObservation(await pluginResponsePromise);
+    const [pluginRequest, rawPluginResponse] = await Promise.all([pluginRequestPromise, pluginResponsePromise]);
+    const pluginRequestBody = pluginRequest.postDataJSON();
+    record({
+      check: `${browserName} submitted the independently expected bounded map area through Core`,
+      expected: fixture.expectedRequest,
+      actual: pluginRequestBody,
+      passed:
+        isMapArea(pluginRequestBody) &&
+        sameMapArea(
+          pluginRequestBody,
+          fixture.expectedRequest.area,
+          fixture.expectedRequest.coordinate_tolerance
+        )
+    });
+    const pluginResponse = await responseObservation(rawPluginResponse);
     record({
       check: `${browserName} received the deterministic spatial fixture through the public Core Plugin route`,
       expected: {
@@ -289,6 +324,17 @@ async function runMapWindowJourney({
       expected: fixture.result.features[0].title,
       page
     });
+    await checkVisible(
+      record,
+      window
+        .locator(".spatial-map-window__result", { hasText: fixture.result.features[0].title })
+        .filter({ hasText: fixture.result.features[0].id }),
+      {
+        check: `${browserName} rendered the expected fixture feature row and title`,
+        expected: { feature_id: fixture.result.features[0].id, title: fixture.result.features[0].title },
+        page
+      }
+    );
 
     const titleBar = window.locator(".map-window__bar");
     const initialWindowBox = await requiredBox(window, "spatial results window");
@@ -321,6 +367,42 @@ async function runMapWindowJourney({
         Math.abs(dockedWindowBox.x - initialWindowBox.x) > 3
     });
     await captureScreenshot(page, join(artifacts, `${browserName}-pointer-docked.png`), consoleLog);
+
+    const dockedTitleBarBox = await requiredBox(titleBar, "right-docked spatial results title bar");
+    const pointerDetachStart = {
+      x: dockedTitleBarBox.x + dockedTitleBarBox.width / 2,
+      y: dockedTitleBarBox.y + dockedTitleBarBox.height / 2
+    };
+    const pointerDetachEnd = { x: pointerDetachStart.x - 96, y: pointerDetachStart.y };
+    await page.mouse.move(pointerDetachStart.x, pointerDetachStart.y);
+    await page.mouse.down();
+    await page.mouse.move(pointerDetachEnd.x, pointerDetachEnd.y, { steps: 12 });
+    await page.mouse.up();
+    await checkAttribute(record, window, "data-placement", "floating", {
+      check: `${browserName} detached the right-docked map window with an inward pointer drag`,
+      page
+    });
+    await checkAttribute(record, window, "data-edge", null, {
+      check: `${browserName} cleared edge attachment after the inward pointer drag`,
+      page
+    });
+    const pointerDetachedWindowBox = await requiredBox(window, "pointer-detached spatial results window");
+    record({
+      check: `${browserName} moved the pointer-detached window away from the workspace boundary`,
+      expected: { right_boundary_gap: ">3" },
+      actual: {
+        workspace_right: workspaceBox.x + workspaceBox.width,
+        window_right: pointerDetachedWindowBox.x + pointerDetachedWindowBox.width
+      },
+      passed: workspaceBox.x + workspaceBox.width - (pointerDetachedWindowBox.x + pointerDetachedWindowBox.width) > 3
+    });
+    const pointerDetachedMove = window.locator("[data-map-window-move]");
+    await pointerDetachedMove.focus();
+    await pointerDetachedMove.press("Alt+ArrowRight");
+    await checkAttribute(record, window, "data-edge", "right", {
+      check: `${browserName} reattached the pointer-detached window for collapsed-handle coverage`,
+      page
+    });
 
     await window.getByRole("button", { name: `Collapse ${title} window` }).click();
     await checkAttribute(record, window, "data-collapsed", "true", {
@@ -428,7 +510,7 @@ async function runMapWindowJourney({
         edge: await window.getAttribute("data-edge")
       },
       passed:
-        boxOverlaps(resizedHandleBox, resizedWorkspaceBox) &&
+        boxContains(resizedWorkspaceBox, resizedHandleBox) &&
         (await window.getAttribute("data-collapsed")) === "true" &&
         (await window.getAttribute("data-edge")) === "right"
     });
@@ -560,8 +642,18 @@ async function runMapWindowJourney({
 function validateFixture(value) {
   if (!value || typeof value !== "object") throw new Error("map-window fixture must be an object");
   const manifest = value.manifest;
+  const expectedRequest = value.expected_request;
   const result = value.result;
   if (!manifest || typeof manifest !== "object") throw new Error("map-window fixture manifest must be an object");
+  if (
+    !expectedRequest ||
+    typeof expectedRequest !== "object" ||
+    !isMapArea(expectedRequest.area) ||
+    !Number.isFinite(expectedRequest.coordinate_tolerance) ||
+    expectedRequest.coordinate_tolerance <= 0
+  ) {
+    throw new Error("map-window fixture must define an expected valid map-area request and positive tolerance");
+  }
   const { core_to_plugin_protocol_major: protocolMajor, ...publicManifest } = manifest;
   if (!isPluginManifest(publicManifest)) throw new Error("map-window fixture manifest does not satisfy PluginManifest");
   if (!isSpatialOperationResult(result)) throw new Error("map-window fixture result does not satisfy SpatialOperationResult");
@@ -578,7 +670,7 @@ function validateFixture(value) {
   if (result.features.length !== 1 || result.features[0]?.id !== "fixture-window-area") {
     throw new Error("map-window fixture must retain its single deterministic spatial feature");
   }
-  return { manifest, operation, result };
+  return { manifest, operation, expectedRequest, result };
 }
 
 async function waitForCoreResponse(page, coreOrigin, method, path) {
@@ -657,7 +749,16 @@ async function isHandleReachable(handle, workspace) {
     workspace.boundingBox(),
     handle.isVisible()
   ]);
-  return Boolean(handleBox && workspaceBox && visible && boxOverlaps(handleBox, workspaceBox));
+  return Boolean(handleBox && workspaceBox && visible && boxContains(workspaceBox, handleBox));
+}
+
+function boxContains(outer, inner) {
+  return (
+    inner.x >= outer.x &&
+    inner.y >= outer.y &&
+    inner.x + inner.width <= outer.x + outer.width &&
+    inner.y + inner.height <= outer.y + outer.height
+  );
 }
 
 function boxOverlaps(inner, outer) {
@@ -810,4 +911,10 @@ function mapTileZoom(requestUrl) {
   const match = new URL(requestUrl).pathname.match(/\/256\/(\d+)\/\d+\/\d+\.png$/u);
   if (!match?.[1]) return undefined;
   return Number(match[1]);
+}
+
+function sameMapArea(actual, expected, tolerance) {
+  return ["west", "south", "east", "north"].every(
+    (key) => Math.abs(actual[key] - expected[key]) <= tolerance
+  );
 }

@@ -14,6 +14,15 @@
       }
     ]
   },
+  "expected_request": {
+    "area": {
+      "west": -0.002694780673,
+      "south": 19.800385362457,
+      "east": -0.000449130753,
+      "north": 19.802498232137
+    },
+    "coordinate_tolerance": 0.00025
+  },
   "result": {
     "attribution": {
       "text": "Atlas Map Window Fixture",
