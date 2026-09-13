@@ -18,29 +18,29 @@
     "tile_zoom": 14,
     "bounds": {
       "west": {
-        "minimum": -0.00392,
-        "maximum": -0.00357
+        "minimum": -0.00368,
+        "maximum": -0.00335
       },
       "south": {
         "minimum": 19.80022,
         "maximum": 19.80055
       },
       "east": {
-        "minimum": -0.0008,
-        "maximum": -0.00045
+        "minimum": -0.00075,
+        "maximum": -0.00042
       },
       "north": {
-        "minimum": 19.80315,
-        "maximum": 19.80349
+        "minimum": 19.80298,
+        "maximum": 19.80331
       }
     },
     "longitude_span": {
-      "minimum": 0.00277,
-      "maximum": 0.00347
+      "minimum": 0.0026,
+      "maximum": 0.00326
     },
     "latitude_span": {
-      "minimum": 0.00261,
-      "maximum": 0.00327
+      "minimum": 0.00245,
+      "maximum": 0.00307
     },
     "longitude_to_latitude_span_ratio": {
       "minimum": 1.05,
