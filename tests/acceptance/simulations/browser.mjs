@@ -156,6 +156,7 @@ async function runBrowserJourney({
   let failure;
   let replacementID;
   let simulationRunID;
+  let traceStopped = false;
 
   await context.tracing.start({ screenshots: true, snapshots: true, sources: true });
   try {
@@ -427,6 +428,8 @@ async function runBrowserJourney({
       actual: observations.pageErrors,
       passed: observations.pageErrors.length === 0
     });
+    await context.tracing.stop({ path: tracePath });
+    traceStopped = true;
     writeBrowserSummary(browserSummaryPath, {
       ...browserMetadata,
       simulation_origin: simulationUrl,
@@ -460,9 +463,11 @@ async function runBrowserJourney({
     throw error;
   } finally {
     await Promise.allSettled([...pendingDiagnostics]);
-    await context.tracing.stop({ path: tracePath }).catch((traceError) => {
-      appendJSON(consoleLog, { event: "diagnostic-error", artifact: tracePath, message: errorMessage(traceError) });
-    });
+    if (!traceStopped) {
+      await context.tracing.stop({ path: tracePath }).catch((traceError) => {
+        appendJSON(consoleLog, { event: "diagnostic-error", artifact: tracePath, message: errorMessage(traceError) });
+      });
+    }
     await context.close().catch((closeError) => {
       appendJSON(consoleLog, {
         event: "diagnostic-error",
