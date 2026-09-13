@@ -1,11 +1,20 @@
 import { spawn } from "node:child_process";
-import { appendFileSync, existsSync, readdirSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { createServer } from "node:net";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repositoryRoot = fileURLToPath(new URL("../../../..", import.meta.url));
-const serverEntrypoint = join(repositoryRoot, "simulations", "src", "server", "index.ts");
+const serverEntrypoint = fileURLToPath(new URL("./server-launcher.mjs", import.meta.url));
+const simulationPackageRoot = join(repositoryRoot, "simulations");
 const tsxLoader = join(repositoryRoot, "simulations", "node_modules", "tsx", "dist", "loader.mjs");
 const readinessTimeoutMs = 30_000;
 const shutdownTimeoutMs = 5_000;
@@ -22,6 +31,7 @@ export function createSimulationServerFixture() {
   let artifacts;
   let child;
   let childCompletion;
+  let isolatedPackageRoot;
   let initialReservation;
   let serverState;
   let spawnError;
@@ -29,13 +39,16 @@ export function createSimulationServerFixture() {
   return {
     prepare: async ({ artifacts: artifactDirectory, runID, signal }) => {
       artifacts = artifactDirectory;
-      const packageState = validateIsolatedPackageState();
+      isolatedPackageRoot = prepareIsolatedPackageRoot(artifacts);
+      const packageState = validateIsolatedPackageState(isolatedPackageRoot);
       initialReservation = await reserveLoopbackPort(signal);
       const metadata = {
         ...simulationFixtureVariant,
         acceptance_run_id: runID,
         node: process.version,
         reserved_loopback_port: initialReservation.port,
+        isolated_package_root: isolatedPackageRoot,
+        static_assets: join(isolatedPackageRoot, "dist"),
         package_state: packageState,
         cleanup: "owned child receives SIGTERM and then SIGKILL only if it misses the bounded shutdown deadline"
       };
@@ -43,24 +56,31 @@ export function createSimulationServerFixture() {
       return {
         metadata,
         cleanup: async () => {
-          await initialReservation?.release();
-          initialReservation = undefined;
-          if (!child || !childCompletion) return;
-          const forced = await stopChild(child, childCompletion);
-          serverState = {
-            ...serverState,
-            stopped_at: new Date().toISOString(),
-            forced_shutdown: forced,
-            exit_code: child.exitCode,
-            exit_signal: child.signalCode
-          };
-          writeJSON(join(artifacts, "simulation-server.json"), serverState);
+          try {
+            await initialReservation?.release();
+            initialReservation = undefined;
+            if (!child || !childCompletion) return;
+            const forced = await stopChild(child, childCompletion);
+            serverState = {
+              ...serverState,
+              stopped_at: new Date().toISOString(),
+              forced_shutdown: forced,
+              exit_code: child.exitCode,
+              exit_signal: child.signalCode
+            };
+            writeJSON(join(artifacts, "simulation-server.json"), serverState);
+          } finally {
+            removeIsolatedPackageRoot(isolatedPackageRoot);
+            isolatedPackageRoot = undefined;
+          }
         }
       };
     },
 
     start: async ({ coreBaseUrl, apiKey, signal }) => {
-      if (!artifacts || !initialReservation) throw new Error("Simulation fixture must be prepared before it starts");
+      if (!artifacts || !initialReservation || !isolatedPackageRoot) {
+        throw new Error("Simulation fixture must be prepared before it starts");
+      }
       signal.throwIfAborted();
       const port = initialReservation.port;
       await initialReservation.release();
@@ -73,6 +93,7 @@ export function createSimulationServerFixture() {
       environment.ATLAS_SIM_ENABLE_DEPLOYED = "false";
       environment.ATLAS_SIM_TARGET = "local";
       environment.ATLAS_SIM_PORT = String(port);
+      environment.ATLAS_ACCEPTANCE_SIMULATION_PACKAGE_ROOT = isolatedPackageRoot;
       delete environment.ATLAS_DEPLOYED_BASE_URL;
       delete environment.ATLAS_DEPLOYED_API_KEY;
 
@@ -108,8 +129,19 @@ export function createSimulationServerFixture() {
   };
 }
 
-function validateIsolatedPackageState() {
-  const ledgerDirectory = join(repositoryRoot, "simulations", ".atlas-simulations", "runs");
+function prepareIsolatedPackageRoot(artifacts) {
+  const packageRoot = join(artifacts, "simulation-server-package");
+  mkdirSync(packageRoot, { recursive: true });
+  symlinkSync(join(simulationPackageRoot, "dist"), join(packageRoot, "dist"), "dir");
+  return packageRoot;
+}
+
+function removeIsolatedPackageRoot(packageRoot) {
+  if (packageRoot) rmSync(packageRoot, { recursive: true, force: true });
+}
+
+function validateIsolatedPackageState(packageRoot) {
+  const ledgerDirectory = join(packageRoot, ".atlas-simulations", "runs");
   const ledgerEntries = existsSync(ledgerDirectory) ? readdirSync(ledgerDirectory) : [];
   if (ledgerEntries.length > 0) {
     throw new Error(
