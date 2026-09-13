@@ -40,6 +40,7 @@
     "deploy:command-interface": "npm run build:sdk && npm run deploy:pages --workspace @the-drunken-coder/atlas-command-interface",
     "test:acceptance:sdk-entity": "npm run build:sdk && node tests/acceptance/sdk-entity.mjs",
     "test:acceptance:browser-smoke": "npm run build:sdk && node tests/acceptance/browser/smoke.mjs",
+    "test:acceptance:browser-geofeatures": "npm run build:sdk && node tests/acceptance/browser/geofeatures.mjs",
     "test:clean-workspace": "node tests/clean-workspace-smoke.mjs"
   },
   "devDependencies": {
