@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { appendFileSync, existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import { AtlasClient, isAtlasAPIError } from "@the-drunken-coder/atlas-sdk";
@@ -182,7 +183,7 @@ await runAcceptance({
             persistedMovementBeforeCancellation(entity, cancelled, cancelledInputs, runID)
           )
       });
-      await delay(cancelledInputs.tickMs + 100, signal);
+      await delay(cancelledInputs.tickMs + 100, undefined, { signal });
       const entitiesAfterTickInterval = await readRunEntities(
         core,
         progressedIDs.map((id) => ({ type: "entity", id })),
