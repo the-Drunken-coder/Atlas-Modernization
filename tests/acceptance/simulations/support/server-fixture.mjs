@@ -70,11 +70,10 @@ export function createSimulationServerFixture() {
           ? {
               present: true,
               path: join(isolatedPackageRoot, "dist"),
-              coverage: "not exercised by this API and SDK acceptance",
             }
           : {
               present: false,
-              coverage: "not built or exercised by this API and SDK acceptance",
+              reason: "simulations/dist is absent",
             },
         package_state: packageState,
         cleanup:
