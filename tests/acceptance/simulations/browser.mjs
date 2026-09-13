@@ -144,7 +144,7 @@ async function runBrowserJourney({
   const failureHTML = join(artifacts, `${browserName}-failure.html`);
   const browser = await browserType.launch({ headless: !headed });
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
-  const observations = { eventStreams: [], mutations: [] };
+  const observations = { eventStreams: [], mutations: [], pageErrors: [] };
   const pendingDiagnostics = new Set();
   let page;
   let failure;
@@ -414,6 +414,12 @@ async function runBrowserJourney({
       actual: { credential_disclosed: diagnostics.includes(apiKey) },
       passed: !diagnostics.includes(apiKey)
     });
+    record({
+      check: `${browserName} completes without uncaught page exceptions`,
+      expected: [],
+      actual: observations.pageErrors,
+      passed: observations.pageErrors.length === 0
+    });
     writeFileSync(
       join(artifacts, `${browserName}-summary.json`),
       `${JSON.stringify(
@@ -637,13 +643,15 @@ function attachDiagnostics(page, { requestLog, consoleLog, simulationUrl, observ
     });
   });
   page.on("pageerror", (error) => {
-    appendJSON(consoleLog, {
+    const observation = {
       timestamp: new Date().toISOString(),
       event: "pageerror",
       name: error.name,
       message: error.message,
       stack: error.stack
-    });
+    };
+    observations.pageErrors.push(observation);
+    appendJSON(consoleLog, observation);
   });
   page.on("request", (request) => {
     const url = new URL(request.url());

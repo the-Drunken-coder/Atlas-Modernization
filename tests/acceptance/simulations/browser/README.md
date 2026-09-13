@@ -23,7 +23,7 @@ node tests/acceptance/simulations/browser.mjs --browser=webkit
 
 Add `--headed` to watch a local run. A missing Node 24 runtime, Docker daemon, Compose plugin, built workbench, or selected browser executable fails explicitly. The journey has no retry.
 
-Each run writes its exact revision, dirty-worktree state, duration, expected and observed values, built-asset hashes, browser version, mutation and SSE responses, browser console, simulation server output, Compose logs, and a Playwright trace under:
+Each run writes its exact revision, dirty-worktree state, duration, expected and observed values, built-asset hashes, browser version, mutation and SSE responses, browser console and uncaught page exceptions, simulation server output, Compose logs, and a Playwright trace under:
 
 ```text
 .atlas/acceptance/simulations-browser-<engine>/<run-id>/
