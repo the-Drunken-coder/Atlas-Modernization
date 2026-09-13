@@ -116,6 +116,13 @@ await runAcceptance({
         { instanceToken: replacementToken, signal }
       );
 
+      recordLocalLedgerState(
+        normal.id,
+        simulation.cleanupLedgerDirectory,
+        artifacts,
+        record,
+        "before completed cleanup",
+      );
       const normalCleanup = await api.json("POST", `/api/runs/${encodeURIComponent(normal.id)}/cleanup`);
       const normalCleanupStream = await collectRunEvents({
         api,
@@ -140,6 +147,7 @@ await runAcceptance({
         simulation.cleanupLedgerDirectory,
         artifacts,
         record,
+        "after completed cleanup",
       );
 
       const cancelled = await startRun(api, cancelledInputs, { acceptance_run_id: runID, journey: "cancel" });
@@ -202,6 +210,13 @@ await runAcceptance({
         },
         passed: isDeepStrictEqual(progressedEntities, entitiesAfterTickInterval),
       });
+      recordLocalLedgerState(
+        cancelled.id,
+        simulation.cleanupLedgerDirectory,
+        artifacts,
+        record,
+        "before cancelled cleanup",
+      );
       const cancelledCleanup = await api.json("POST", `/api/runs/${encodeURIComponent(cancelled.id)}/cleanup`);
       const cancelledStream = await collectRunEvents({
         api,
@@ -224,6 +239,7 @@ await runAcceptance({
         simulation.cleanupLedgerDirectory,
         artifacts,
         record,
+        "after cancelled cleanup",
       );
 
       const allIDs = [
@@ -836,18 +852,20 @@ function recordLocalLedgerState(
   cleanupLedgerDirectory,
   artifacts,
   record,
+  phase,
 ) {
   const ledgerPath = join(cleanupLedgerDirectory, `${simulationRunID}.json`);
   const present = existsSync(ledgerPath);
   const state = {
     run_id: simulationRunID,
+    phase,
     ledger_path: ledgerPath,
     local_ledger_file_present: present,
   };
   appendJSON(join(artifacts, "local-ledger-checks.jsonl"), state);
   record({
-    check: "local disposable run does not create a deployed cleanup ledger record",
-    expected: { run_id: simulationRunID, local_ledger_file_present: false },
+    check: `local disposable run does not create a deployed cleanup ledger record ${phase}`,
+    expected: { run_id: simulationRunID, phase, local_ledger_file_present: false },
     actual: state,
     passed: !present
   });
