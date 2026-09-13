@@ -96,6 +96,21 @@ export function stopReaders(readers) {
   return cleanupErrors;
 }
 
+export function readerTeardownFailure(primaryFailure, teardownErrors) {
+  if (teardownErrors.length === 0) return primaryFailure;
+  if (primaryFailure === undefined) {
+    return new AggregateError(
+      teardownErrors,
+      "External simulation reader teardown failed",
+    );
+  }
+  return new AggregateError(
+    [primaryFailure, ...teardownErrors],
+    "Simulation scenario failed and external reader teardown also failed",
+    { cause: primaryFailure },
+  );
+}
+
 function createObservedFetch(transport) {
   return async (input, init) => {
     if (transport.observing) {

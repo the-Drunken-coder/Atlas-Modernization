@@ -31,7 +31,9 @@ import {
 } from "./support/server-fixture.mjs";
 import {
   assessCompletedEventOrder,
+  assessAssertionTimestampParity,
   assessExpectedSuccessEvents,
+  assessLifecycleEventTiming,
   assessLifecycleStatusMessages,
   assessReplayAssertionParity,
 } from "./support/run-event-replay-contract.mjs";
@@ -307,6 +309,13 @@ await runAcceptance({
         cancellationProgress.events,
         scenarioName,
       );
+      const cancellationProgressTiming = assessLifecycleEventTiming(
+        cancellationProgress.events,
+        {
+          startedAt: cancelled.startedAt,
+          updatedAt: cancelled.updatedAt,
+        },
+      );
       const cancelledRun = await api.json(
         "POST",
         `/api/runs/${encodeURIComponent(cancelled.id)}/stop`,
@@ -333,6 +342,7 @@ await runAcceptance({
           cleaned: false,
           event_contract: cancellationProgressContract.expected,
           lifecycle: cancellationProgressLifecycle.expected,
+          lifecycle_timing: cancellationProgressTiming.expected,
         },
         actual: {
           status: cancelledRun.status,
@@ -341,6 +351,7 @@ await runAcceptance({
           progress_events: cancellationProgress.events.length,
           event_contract: cancellationProgressContract.actual,
           lifecycle: cancellationProgressLifecycle.actual,
+          lifecycle_timing: cancellationProgressTiming.actual,
         },
         passed:
           cancelledRun.status === 200 &&
@@ -348,7 +359,8 @@ await runAcceptance({
           cancelledRunSummary.cleaned === false &&
           cancellationProgress.events.length > 0 &&
           cancellationProgressContract.passed &&
-          cancellationProgressLifecycle.passed,
+          cancellationProgressLifecycle.passed &&
+          cancellationProgressTiming.passed,
       });
       const cancellationStability = await collectRunEventsForWindow({
         api,
@@ -384,6 +396,14 @@ await runAcceptance({
         scenarioName,
         { status: "cancelled", message: "Stop requested" },
       );
+      const cancellationStabilityTiming = assessLifecycleEventTiming(
+        cancellationStabilityEvents,
+        {
+          startedAt: cancelled.startedAt,
+          finishedAt: cancelledRunSummary.finishedAt,
+          updatedAt: cancelledRunSummary.updatedAt,
+        },
+      );
       const cancelledResources = cancellationWindow.baseline?.resources ?? [];
       const cancelledObservationLogs =
         cancellationWindow.baseline?.observationLogs ?? [];
@@ -399,6 +419,7 @@ await runAcceptance({
           observation_logs: cancelledObservationLogs,
           event_contract: cancellationStabilityContract.expected,
           lifecycle: cancellationStabilityLifecycle.expected,
+          lifecycle_timing: cancellationStabilityTiming.expected,
         },
         actual: {
           observed_window_ms: cancellationStability.observedWindowMs,
@@ -409,6 +430,7 @@ await runAcceptance({
           observation_windows: cancellationWindow.states,
           event_contract: cancellationStabilityContract.actual,
           lifecycle: cancellationStabilityLifecycle.actual,
+          lifecycle_timing: cancellationStabilityTiming.actual,
         },
         passed:
           cancellationStability.observedWindowMs >= cancellationInputs.tickMs &&
@@ -416,7 +438,8 @@ await runAcceptance({
           isDeepStrictEqual(stableResources, cancelledResources) &&
           cancellationWindow.passed &&
           cancellationStabilityContract.passed &&
-          cancellationStabilityLifecycle.passed,
+          cancellationStabilityLifecycle.passed &&
+          cancellationStabilityTiming.passed,
       });
       record({
         check: "observations reread preserves the confirmed cancelled status",
@@ -807,6 +830,15 @@ function recordCompletedStream(started, completed, events, inputs, record) {
     events,
     completed.assertions,
   );
+  const assertionTimestampParity = assessAssertionTimestampParity(
+    events,
+    completed.assertions,
+  );
+  const lifecycleTiming = assessLifecycleEventTiming(events, {
+    startedAt: started.startedAt,
+    finishedAt: completed.finishedAt,
+    updatedAt: completed.updatedAt,
+  });
   const expectedAssertionResults = expectedVerifierAssertions(inputs);
   const expectedAssertionIDs = expectedAssertionResults.map(
     (assertion) => assertion.id,
@@ -866,6 +898,8 @@ function recordCompletedStream(started, completed, events, inputs, record) {
       lifecycle: lifecycle.expected,
       completion_order: completionOrder.expected,
       assertion_message_parity: assertionReplay.expected,
+      assertion_timestamp_parity: assertionTimestampParity.expected,
+      lifecycle_timing: lifecycleTiming.expected,
     },
     actual: {
       started_run: {
@@ -888,6 +922,8 @@ function recordCompletedStream(started, completed, events, inputs, record) {
       event_contract: eventContract.actual,
       lifecycle: lifecycle.actual,
       completion_order: completionOrder.actual,
+      assertion_timestamp_parity: assertionTimestampParity.actual,
+      lifecycle_timing: lifecycleTiming.actual,
     },
     passed:
       started.status === "running" &&
@@ -906,8 +942,10 @@ function recordCompletedStream(started, completed, events, inputs, record) {
       isDeepStrictEqual(streamAssertionResults, expectedAssertionResults) &&
       isDeepStrictEqual(summaryAssertionResults, expectedAssertionResults) &&
       assertionReplay.passed &&
+      assertionTimestampParity.passed &&
       eventContract.passed &&
       lifecycle.passed &&
+      lifecycleTiming.passed &&
       completionOrder.passed &&
       strictlyIncreasing(events.map((event) => event.sequence)),
   });
@@ -1275,6 +1313,10 @@ function recordCleanupEvents(run, cleaned, events, preserved, record) {
     events,
     cleaned.assertions,
   );
+  const assertionTimestampParity = assessAssertionTimestampParity(
+    events,
+    cleaned.assertions,
+  );
   const expected = run.createdResources.map(resourceKey).sort();
   const stopEventIndex = events.findIndex(
     (event) => event.type === "log" && event.message === "Stop requested",
@@ -1296,6 +1338,7 @@ function recordCleanupEvents(run, cleaned, events, preserved, record) {
       cleanup_completion: cleanupCompletion.expected,
       event_contract: eventContract.expected,
       assertion_message_parity: assertionReplay.expected,
+      assertion_timestamp_parity: assertionTimestampParity.expected,
       created_resources: run.createdResources,
       assertions: run.assertions,
       run_id: run.id,
@@ -1317,6 +1360,7 @@ function recordCleanupEvents(run, cleaned, events, preserved, record) {
       cleanup_completion: cleanupCompletion.actual,
       event_contract: eventContract.actual,
       assertion_message_parity: assertionReplay.actual,
+      assertion_timestamp_parity: assertionTimestampParity.actual,
       created_resources: cleaned.createdResources,
       assertions: cleaned.assertions,
       run_ids: runIDs,
@@ -1338,6 +1382,7 @@ function recordCleanupEvents(run, cleaned, events, preserved, record) {
       cleanupCompletion.passed &&
       eventContract.passed &&
       assertionReplay.passed &&
+      assertionTimestampParity.passed &&
       isDeepStrictEqual(cleaned.createdResources, run.createdResources) &&
       isDeepStrictEqual(cleaned.assertions, run.assertions) &&
       strictlyIncreasing(sequences) &&

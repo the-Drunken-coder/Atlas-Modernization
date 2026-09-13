@@ -1,28 +1,79 @@
 import { isDeepStrictEqual } from "node:util";
 
+import { isRFC3339Timestamp } from "@the-drunken-coder/atlas-sdk";
+
 export function assessExpectedSuccessEvents(events, runID) {
   const errorEvents = events
     .filter((event) => event.type === "error")
     .map((event) => ({ sequence: event.sequence, message: event.message }));
+  const errorLevelEvents = events
+    .filter((event) => event.level === "error")
+    .map((event) => ({
+      sequence: event.sequence,
+      type: event.type,
+      message: event.message,
+    }));
   const runIDs = [...new Set(events.map((event) => event.runId))];
   const sequences = events.map((event) => event.sequence);
   return {
     expected: {
       run_id: runID,
       error_events: [],
+      error_level_events: [],
       strictly_increasing_sequences: true,
     },
     actual: {
       run_ids: runIDs,
       error_events: errorEvents,
+      error_level_events: errorLevelEvents,
       sequences,
     },
     passed:
       events.length > 0 &&
       events.every(
-        (event) => event.runId === runID && event.type !== "error",
+        (event) =>
+          event.runId === runID &&
+          event.type !== "error" &&
+          event.level !== "error",
       ) &&
       strictlyIncreasing(sequences),
+  };
+}
+
+export function assessLifecycleEventTiming(events, lifecycle) {
+  const initial = events.find(
+    (event) => event.type === "status" && event.status === "running",
+  );
+  const terminal = events.find(
+    (event) => event.type === "status" && event.status !== "running",
+  );
+  const hasTerminalSummary = lifecycle.finishedAt !== undefined;
+  return {
+    expected: {
+      initial_status_at_or_after_started_at: true,
+      ...(hasTerminalSummary
+        ? {
+            terminal_status_at_or_after_finished_at: true,
+            terminal_status_matches_summary_updated_at: true,
+          }
+        : { terminal_status_absent_while_summary_running: true }),
+    },
+    actual: {
+      summary_lifecycle: lifecycle,
+      initial_status_timestamp: initial?.timestamp,
+      terminal_status_timestamp: terminal?.timestamp,
+    },
+    passed:
+      isRFC3339Timestamp(lifecycle.startedAt) &&
+      isRFC3339Timestamp(lifecycle.updatedAt) &&
+      isRFC3339Timestamp(initial?.timestamp) &&
+      Date.parse(initial.timestamp) >= Date.parse(lifecycle.startedAt) &&
+      (hasTerminalSummary
+        ? isRFC3339Timestamp(lifecycle.finishedAt) &&
+          isRFC3339Timestamp(terminal?.timestamp) &&
+          Date.parse(terminal.timestamp) >= Date.parse(lifecycle.finishedAt) &&
+          lifecycle.updatedAt === terminal.timestamp
+        : terminal === undefined),
   };
 }
 
@@ -113,10 +164,37 @@ export function assessReplayAssertionParity(events, summaryAssertions) {
   };
 }
 
+export function assessAssertionTimestampParity(events, summaryAssertions) {
+  const stream = orderAssertionTimestamps(
+    events
+      .filter((event) => event.type === "assertion")
+      .map((event) => event.assertion),
+  );
+  const summary = orderAssertionTimestamps(summaryAssertions);
+  return {
+    expected: {
+      stream_and_summary_assertion_timestamps: "canonical RFC 3339 and equal by assertion ID",
+    },
+    actual: { stream_assertion_timestamps: stream, summary_assertion_timestamps: summary },
+    passed:
+      stream.every((assertion) => isRFC3339Timestamp(assertion.timestamp)) &&
+      summary.every((assertion) => isRFC3339Timestamp(assertion.timestamp)) &&
+      isDeepStrictEqual(stream, summary),
+  };
+}
+
 function assertionEventMessage(assertion) {
   return `${assertion.passed ? "PASS" : "FAIL"} ${assertion.name}${
     assertion.message ? `: ${assertion.message}` : ""
   }`;
+}
+
+function orderAssertionTimestamps(assertions) {
+  return assertions
+    .map((assertion) => ({ id: assertion?.id, timestamp: assertion?.timestamp }))
+    .sort(
+      (left, right) => assertionSequence(left.id) - assertionSequence(right.id),
+    );
 }
 
 export function orderAssertionResults(assertions) {

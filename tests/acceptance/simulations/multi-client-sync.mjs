@@ -15,6 +15,7 @@ import {
 import { runAcceptance } from "../support/stack.mjs";
 import {
   observeReaderTransport,
+  readerTeardownFailure,
   startReaders,
   stopReaders,
 } from "./support/multi-client-readers.mjs";
@@ -32,7 +33,9 @@ import {
 } from "./support/server-fixture.mjs";
 import {
   assessCompletedEventOrder,
+  assessAssertionTimestampParity,
   assessExpectedSuccessEvents,
+  assessLifecycleEventTiming,
   assessLifecycleStatusMessages,
   assessReplayAssertionParity,
 } from "./support/run-event-replay-contract.mjs";
@@ -90,6 +93,7 @@ await runAcceptance({
     let replacementWriterID;
     let replacementWriterToken;
 
+    let scenarioFailure;
     try {
       verifyServerHealth(simulation.health, baseUrl, record);
       const { target, scenarioName } = await verifyLocalTargetAndScenario(
@@ -260,8 +264,14 @@ await runAcceptance({
             unrelatedObjectID,
           ].every((id) => id.length <= 50),
       });
+    } catch (error) {
+      scenarioFailure = error;
+      throw error;
     } finally {
-      stopReaders(readers);
+      const readerTeardown = readerTeardownFailure(
+        scenarioFailure,
+        stopReaders(readers),
+      );
       await Promise.allSettled([
         replacementWriterID && replacementWriterToken
           ? core.entities.delete(replacementWriterID, {
@@ -276,6 +286,9 @@ await runAcceptance({
         }),
       ]);
       core.sync.stop();
+      if (readerTeardown !== undefined && readerTeardown !== scenarioFailure) {
+        throw readerTeardown;
+      }
     }
   },
 });
@@ -505,6 +518,15 @@ function recordCompletedStream(run, summary, events, inputs, record) {
     summary.assertions,
     expectedAssertionResults,
   );
+  const assertionTimestampParity = assessAssertionTimestampParity(
+    events,
+    summary.assertions,
+  );
+  const lifecycleTiming = assessLifecycleEventTiming(events, {
+    startedAt: run.startedAt,
+    finishedAt: summary.finishedAt,
+    updatedAt: summary.updatedAt,
+  });
   const terminal = events.find(
     (event) => event.type === "status" && event.status !== "running",
   );
@@ -541,8 +563,10 @@ function recordCompletedStream(run, summary, events, inputs, record) {
       assertion_id_set: assertionContract.expectedIDs,
       assertion_name_pass_message_set: assertionContract.expectedResultSet,
       assertion_message_parity: assertionContract.replayParity.expected,
+      assertion_timestamp_parity: assertionTimestampParity.expected,
       event_contract: eventContract.expected,
       lifecycle: lifecycle.expected,
+      lifecycle_timing: lifecycleTiming.expected,
       completion_order: completionOrder.expected,
     },
     actual: {
@@ -561,8 +585,10 @@ function recordCompletedStream(run, summary, events, inputs, record) {
       stream_assertion_results: assertionContract.streamResults,
       summary_assertion_results: assertionContract.summaryResults,
       assertion_message_parity: assertionContract.replayParity.actual,
+      assertion_timestamp_parity: assertionTimestampParity.actual,
       event_contract: eventContract.actual,
       lifecycle: lifecycle.actual,
+      lifecycle_timing: lifecycleTiming.actual,
       completion_order: completionOrder.actual,
     },
     passed:
@@ -578,8 +604,10 @@ function recordCompletedStream(run, summary, events, inputs, record) {
       createdResourceEvents.passed &&
       isDeepStrictEqual(actualProgressLogs, expectedProgressLogs) &&
       assertionContract.passed &&
+      assertionTimestampParity.passed &&
       eventContract.passed &&
       lifecycle.passed &&
+      lifecycleTiming.passed &&
       completionOrder.passed &&
       strictlyIncreasing(events.map((event) => event.sequence)) &&
       events.length > 0,
@@ -746,6 +774,10 @@ function recordCleanupEvents(run, cleaned, events, preserved, record) {
     events,
     cleaned.assertions,
   );
+  const assertionTimestampParity = assessAssertionTimestampParity(
+    events,
+    cleaned.assertions,
+  );
   const expected = run.createdResources.map(resourceKey).sort();
   const sequences = events.map((event) => event.sequence);
   const runIDs = [...new Set(events.map((event) => event.runId))];
@@ -759,6 +791,7 @@ function recordCleanupEvents(run, cleaned, events, preserved, record) {
       cleanup_completion: cleanupCompletion.expected,
       event_contract: eventContract.expected,
       assertion_message_parity: assertionReplay.expected,
+      assertion_timestamp_parity: assertionTimestampParity.expected,
       created_resources: run.createdResources,
       assertions: run.assertions,
       run_id: run.id,
@@ -772,6 +805,7 @@ function recordCleanupEvents(run, cleaned, events, preserved, record) {
       cleanup_completion: cleanupCompletion.actual,
       event_contract: eventContract.actual,
       assertion_message_parity: assertionReplay.actual,
+      assertion_timestamp_parity: assertionTimestampParity.actual,
       created_resources: cleaned.createdResources,
       assertions: cleaned.assertions,
       run_ids: runIDs,
@@ -785,6 +819,7 @@ function recordCleanupEvents(run, cleaned, events, preserved, record) {
       cleanupCompletion.passed &&
       eventContract.passed &&
       assertionReplay.passed &&
+      assertionTimestampParity.passed &&
       isDeepStrictEqual(cleaned.createdResources, run.createdResources) &&
       isDeepStrictEqual(cleaned.assertions, run.assertions) &&
       strictlyIncreasing(sequences) &&

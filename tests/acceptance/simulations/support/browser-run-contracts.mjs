@@ -105,7 +105,7 @@ function isAssertionResult(value) {
     typeof value.id === "string" &&
     typeof value.name === "string" &&
     typeof value.passed === "boolean" &&
-    typeof value.timestamp === "string" &&
+    isRFC3339Timestamp(value.timestamp) &&
     (value.message === undefined || typeof value.message === "string")
   );
 }

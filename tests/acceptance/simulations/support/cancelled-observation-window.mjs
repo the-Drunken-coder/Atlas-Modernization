@@ -1,5 +1,6 @@
 import { isDeepStrictEqual } from "node:util";
 import {
+  assessAssertionTimestampParity,
   assessReplayAssertionParity,
   orderAssertionResults,
 } from "./run-event-replay-contract.mjs";
@@ -65,6 +66,10 @@ export function assessCancelledObservationAssertions({
     postStopEvents,
     rereadAssertions,
   );
+  const postStopTimestampParity = assessAssertionTimestampParity(
+    postStopEvents,
+    rereadAssertions,
+  );
   return {
     expected: {
       cancelled_marker: "exactly once",
@@ -76,6 +81,8 @@ export function assessCancelledObservationAssertions({
       pre_stop_assertions_retained_by_stop_summary: true,
       stop_assertions_retained_by_cancelled_summary: true,
       post_stop_replay_matches_cancelled_summary: postStopReplay.expected,
+      post_stop_assertion_timestamp_parity:
+        postStopTimestampParity.expected,
     },
     actual: {
       cancelled_marker_indexes: cancelledPrefix.indexes,
@@ -87,6 +94,7 @@ export function assessCancelledObservationAssertions({
       stop_summary_assertions: stopped,
       cancelled_summary_assertions: reread,
       post_stop_replay: postStopReplay.actual,
+      post_stop_assertion_timestamp_parity: postStopTimestampParity.actual,
     },
     passed:
       cancelledPrefix.indexes.length === 1 &&
@@ -99,7 +107,8 @@ export function assessCancelledObservationAssertions({
       allowedAssertions(reread) &&
       assertionResultsAreSubset(progress, stopped) &&
       assertionResultsAreSubset(stopped, reread) &&
-      postStopReplay.passed,
+      postStopReplay.passed &&
+      postStopTimestampParity.passed,
   };
 }
 

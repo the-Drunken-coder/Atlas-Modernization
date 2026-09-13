@@ -60,7 +60,7 @@ export function assessCleanupCompletionOrder(events) {
     }
   });
   return {
-    expected: { cleanup_complete_after_all_resource_messages: true },
+    expected: { cleanup_complete_is_final_after_all_resource_messages: true },
     actual: {
       resource_event_indexes: resourceEventIndexes,
       completion_event_indexes: completionEventIndexes,
@@ -68,7 +68,8 @@ export function assessCleanupCompletionOrder(events) {
     passed:
       resourceEventIndexes.length > 0 &&
       completionEventIndexes.length === 1 &&
-      resourceEventIndexes.every((index) => index < completionEventIndexes[0]),
+      resourceEventIndexes.every((index) => index < completionEventIndexes[0]) &&
+      completionEventIndexes[0] === events.length - 1,
   };
 }
 
