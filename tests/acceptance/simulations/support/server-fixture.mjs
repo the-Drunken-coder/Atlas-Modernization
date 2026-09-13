@@ -18,6 +18,7 @@ const simulationPackageRoot = join(repositoryRoot, "simulations");
 const tsxLoader = join(repositoryRoot, "simulations", "node_modules", "tsx", "dist", "loader.mjs");
 const readinessTimeoutMs = 30_000;
 const shutdownTimeoutMs = 5_000;
+const startupRetryAttempts = 3;
 
 export const simulationFixtureVariant = {
   name: "real-simulations-server",
@@ -35,28 +36,36 @@ export function createSimulationServerFixture() {
   let childCompletion;
   let cleanupLedgerDirectory;
   let isolatedPackageRoot;
-  let initialReservation;
   let serverState;
   let spawnError;
 
   return {
     prepare: async ({ artifacts: artifactDirectory, runID, signal }) => {
       artifacts = artifactDirectory;
-      isolatedPackageRoot = prepareIsolatedPackageRoot(artifacts);
+      const isolatedPackage = prepareIsolatedPackageRoot(artifacts);
+      isolatedPackageRoot = isolatedPackage.root;
       cleanupLedgerDirectory = join(
         isolatedPackageRoot,
         ".atlas-simulations",
         "runs",
       );
       const packageState = validateIsolatedPackageState(isolatedPackageRoot);
-      initialReservation = await reserveLoopbackPort(signal);
       const metadata = {
         ...simulationFixtureVariant,
         acceptance_run_id: runID,
         node: process.version,
-        reserved_loopback_port: initialReservation.port,
+        startup: "each child startup reserves a loopback port and retries only a recognized EADDRINUSE exit",
         isolated_package_root: isolatedPackageRoot,
-        static_assets: join(isolatedPackageRoot, "dist"),
+        static_assets: isolatedPackage.staticAssets
+          ? {
+              present: true,
+              path: join(isolatedPackageRoot, "dist"),
+              coverage: "not exercised by this API and SDK acceptance"
+            }
+          : {
+              present: false,
+              coverage: "not built or exercised by this API and SDK acceptance"
+            },
         package_state: packageState,
         cleanup: "owned child receives SIGTERM and then SIGKILL only if it misses the bounded shutdown deadline"
       };
@@ -65,8 +74,6 @@ export function createSimulationServerFixture() {
         metadata,
         cleanup: async () => {
           try {
-            await initialReservation?.release();
-            initialReservation = undefined;
             if (!child || !childCompletion) return;
             const forced = await stopChild(child, childCompletion);
             serverState = {
@@ -86,13 +93,10 @@ export function createSimulationServerFixture() {
     },
 
     start: async ({ coreBaseUrl, apiKey, signal }) => {
-      if (!artifacts || !initialReservation || !isolatedPackageRoot) {
+      if (!artifacts || !isolatedPackageRoot) {
         throw new Error("Simulation fixture must be prepared before it starts");
       }
       signal.throwIfAborted();
-      const port = initialReservation.port;
-      await initialReservation.release();
-      initialReservation = undefined;
 
       const logPath = join(artifacts, "simulation-server.log");
       const environment = { ...process.env };
@@ -100,39 +104,70 @@ export function createSimulationServerFixture() {
       environment.ATLAS_LOCAL_API_KEY = apiKey;
       environment.ATLAS_SIM_ENABLE_DEPLOYED = "false";
       environment.ATLAS_SIM_TARGET = "local";
-      environment.ATLAS_SIM_PORT = String(port);
       environment.ATLAS_ACCEPTANCE_SIMULATION_PACKAGE_ROOT = isolatedPackageRoot;
       delete environment.ATLAS_DEPLOYED_BASE_URL;
       delete environment.ATLAS_DEPLOYED_API_KEY;
 
       const args = ["--import", tsxLoader, serverEntrypoint];
       appendFileSync(logPath, `$ ${process.execPath} ${args.join(" ")}\n`);
-      child = spawn(process.execPath, args, {
-        cwd: repositoryRoot,
-        env: environment,
-        stdio: ["ignore", "pipe", "pipe"]
-      });
-      child.stdout.on("data", (chunk) => appendFileSync(logPath, chunk));
-      child.stderr.on("data", (chunk) => appendFileSync(logPath, chunk));
-      childCompletion = observeCompletion(child, (error) => {
-        spawnError = error;
-      });
+      const startupAttempts = [];
+      for (let attempt = 1; attempt <= startupRetryAttempts; attempt += 1) {
+        const reservation = await reserveLoopbackPort(signal);
+        const port = reservation.port;
+        await reservation.release();
+        environment.ATLAS_SIM_PORT = String(port);
+        spawnError = undefined;
+        let childOutput = "";
+        child = spawn(process.execPath, args, {
+          cwd: repositoryRoot,
+          env: environment,
+          stdio: ["ignore", "pipe", "pipe"]
+        });
+        child.stdout.on("data", (chunk) => {
+          childOutput += chunk;
+          appendFileSync(logPath, chunk);
+        });
+        child.stderr.on("data", (chunk) => {
+          childOutput += chunk;
+          appendFileSync(logPath, chunk);
+        });
+        childCompletion = observeCompletion(child, (error) => {
+          spawnError = error;
+        });
 
-      const url = `http://127.0.0.1:${port}`;
-      serverState = {
-        command: [process.execPath, ...args],
-        pid: child.pid,
-        node: process.version,
-        url,
-        core_base_url: coreBaseUrl,
-        started_at: new Date().toISOString(),
-        log: logPath
-      };
-      writeJSON(join(artifacts, "simulation-server.json"), serverState);
-      const health = await waitForReadiness(url, signal, () => ({ child, spawnError }));
-      serverState = { ...serverState, ready_at: new Date().toISOString(), health };
-      writeJSON(join(artifacts, "simulation-server.json"), serverState);
-      return { url, health, cleanupLedgerDirectory };
+        const url = `http://127.0.0.1:${port}`;
+        serverState = {
+          command: [process.execPath, ...args],
+          pid: child.pid,
+          node: process.version,
+          url,
+          startup_attempt: attempt,
+          startup_attempts: startupAttempts,
+          core_base_url: coreBaseUrl,
+          started_at: new Date().toISOString(),
+          log: logPath
+        };
+        writeJSON(join(artifacts, "simulation-server.json"), serverState);
+        try {
+          const health = await waitForReadiness(url, signal, () => ({ child, spawnError, childOutput }));
+          serverState = { ...serverState, ready_at: new Date().toISOString(), health };
+          writeJSON(join(artifacts, "simulation-server.json"), serverState);
+          return { url, health, cleanupLedgerDirectory };
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          const retryable = isAddressInUse(errorMessage);
+          startupAttempts.push({ attempt, port, error: errorMessage, retryable });
+          serverState = {
+            ...serverState,
+            failed_at: new Date().toISOString(),
+            startup_attempts: startupAttempts
+          };
+          writeJSON(join(artifacts, "simulation-server.json"), serverState);
+          if (!retryable || attempt === startupRetryAttempts) throw error;
+          await childCompletion;
+        }
+      }
+      throw new Error("Simulation server exhausted its bounded startup retries");
     }
   };
 }
@@ -140,8 +175,12 @@ export function createSimulationServerFixture() {
 function prepareIsolatedPackageRoot(artifacts) {
   const packageRoot = join(artifacts, "simulation-server-package");
   mkdirSync(packageRoot, { recursive: true });
-  symlinkSync(join(simulationPackageRoot, "dist"), join(packageRoot, "dist"), "dir");
-  return packageRoot;
+  const staticAssetSource = join(simulationPackageRoot, "dist");
+  const staticAssets = existsSync(staticAssetSource);
+  if (staticAssets) {
+    symlinkSync(staticAssetSource, join(packageRoot, "dist"), "dir");
+  }
+  return { root: packageRoot, staticAssets };
 }
 
 function removeIsolatedPackageRoot(packageRoot) {
@@ -167,11 +206,11 @@ async function waitForReadiness(url, signal, processState) {
   let lastObservation = "no response";
   while (Date.now() < deadline) {
     signal.throwIfAborted();
-    const { child, spawnError } = processState();
+    const { child, spawnError, childOutput } = processState();
     if (spawnError) throw new Error(`Simulation server failed to start: ${spawnError.message}`);
     if (child.exitCode !== null || child.signalCode !== null) {
       throw new Error(
-        `Simulation server exited before readiness with code ${String(child.exitCode)} and signal ${String(child.signalCode)}`
+        `Simulation server exited before readiness with code ${String(child.exitCode)} and signal ${String(child.signalCode)}: ${childOutput}`
       );
     }
     try {
@@ -189,6 +228,10 @@ async function waitForReadiness(url, signal, processState) {
   throw new Error(
     `Simulation server readiness expected HTTP 200 within ${readinessTimeoutMs} ms; observed ${lastObservation}`
   );
+}
+
+function isAddressInUse(message) {
+  return /\bEADDRINUSE\b/u.test(message);
 }
 
 function observeCompletion(child, onSpawnError) {

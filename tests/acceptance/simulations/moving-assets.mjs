@@ -32,6 +32,8 @@ const cancelledInputs = {
 };
 const retainedTaskInput = { value: "retain through moving-assets cleanup" };
 const retainedTaskOutput = { result: "completed before moving-assets cleanup" };
+const standardRequestTimeoutMs = 15_000;
+const cleanupRequestTimeoutMs = 35_000;
 const fixture = createSimulationServerFixture();
 const taskFixtureComposePath = fileURLToPath(new URL("./task-fixture.compose.yml", import.meta.url));
 
@@ -433,6 +435,7 @@ function createSimulationAPI(baseUrl, logPath, acceptanceSignal) {
   return {
     async json(method, path, body) {
       const startedAt = new Date().toISOString();
+      const timeoutMs = path.endsWith("/cleanup") ? cleanupRequestTimeoutMs : standardRequestTimeoutMs;
       const headers = new Headers({ Accept: "application/json" });
       if (method === "POST") headers.set("X-Atlas-Simulations-Request", "1");
       if (body !== undefined) headers.set("Content-Type", "application/json");
@@ -443,7 +446,7 @@ function createSimulationAPI(baseUrl, logPath, acceptanceSignal) {
           method,
           headers,
           ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-          signal: AbortSignal.any([acceptanceSignal, AbortSignal.timeout(15_000)])
+          signal: AbortSignal.any([acceptanceSignal, AbortSignal.timeout(timeoutMs)])
         });
         raw = await response.text();
         const parsed = parseJSON(raw, `${method} ${path}`);
@@ -453,6 +456,7 @@ function createSimulationAPI(baseUrl, logPath, acceptanceSignal) {
           method,
           path,
           ...(body === undefined ? {} : { request: body }),
+          timeout_ms: timeoutMs,
           status: response.status,
           response: parsed
         });
@@ -467,6 +471,7 @@ function createSimulationAPI(baseUrl, logPath, acceptanceSignal) {
           method,
           path,
           ...(body === undefined ? {} : { request: body }),
+          timeout_ms: timeoutMs,
           status: response?.status,
           raw_response: raw,
           error: error instanceof Error ? error.message : String(error)
@@ -719,9 +724,11 @@ async function recordProtectedResources(core, replacementID, unrelatedEntityID, 
 }
 
 function recordCancelledCleanup(cleaned, events, progressedIDs, record) {
-  const cleanupIDs = events
-    .filter((event) => event.type === "cleanup" && event.resource?.type === "entity")
-    .map((event) => event.resource.id)
+  const cleanupResources = events
+    .filter((event) => event.type === "cleanup" && event.resource)
+    .map((event) => event.resource);
+  const cleanupIDs = cleanupResources
+    .map((resource) => resource.id)
     .sort();
   record({
     check: "cancelled moving-assets run settles and cleans only its recorded Entities",
@@ -729,6 +736,7 @@ function recordCancelledCleanup(cleaned, events, progressedIDs, record) {
       status: "cancelled",
       cleaned: true,
       cleanup_ids: [...progressedIDs].sort(),
+      cleanup_types: ["entity"],
       stop_event: true,
       terminal_event: true
     },
@@ -736,6 +744,7 @@ function recordCancelledCleanup(cleaned, events, progressedIDs, record) {
       status: cleaned.status,
       cleaned: cleaned.cleaned,
       cleanup_ids: cleanupIDs,
+      cleanup_types: [...new Set(cleanupResources.map((resource) => resource.type))],
       stop_event: events.some((event) => event.type === "log" && event.message === "Stop requested"),
       terminal_event: events.some(
         (event) => event.type === "status" && event.status === "cancelled" && event.message === "Stop requested"
@@ -744,6 +753,7 @@ function recordCancelledCleanup(cleaned, events, progressedIDs, record) {
     passed:
       cleaned.status === "cancelled" &&
       cleaned.cleaned === true &&
+      cleanupResources.every((resource) => resource.type === "entity") &&
       isDeepStrictEqual(cleanupIDs, [...progressedIDs].sort()) &&
       events.some((event) => event.type === "log" && event.message === "Stop requested") &&
       events.some((event) => event.type === "status" && event.status === "cancelled") &&
