@@ -27,6 +27,8 @@ const cancellationInputs = {
   startLongitude: -76.04,
 };
 const observationJSON = { collection: "acceptance-observations" };
+const standardRequestTimeoutMs = 15_000;
+const cleanupRequestTimeoutMs = 35_000;
 const fixture = createSimulationServerFixture();
 
 await runAcceptance({
@@ -82,6 +84,7 @@ await runAcceptance({
       });
       const normalSummary = await readRun(api, normal.id);
       recordCompletedStream(
+        normal,
         normalSummary,
         normalStream.events,
         normalInputs,
@@ -308,6 +311,9 @@ await runAcceptance({
 function createSimulationAPI(baseUrl, logPath, acceptanceSignal) {
   const request = async (method, path, body) => {
     const startedAt = new Date().toISOString();
+    const timeoutMs = path.endsWith("/cleanup")
+      ? cleanupRequestTimeoutMs
+      : standardRequestTimeoutMs;
     const headers = new Headers({ Accept: "application/json" });
     if (method === "POST") headers.set("X-Atlas-Simulations-Request", "1");
     if (body !== undefined) headers.set("Content-Type", "application/json");
@@ -320,7 +326,7 @@ function createSimulationAPI(baseUrl, logPath, acceptanceSignal) {
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
         signal: AbortSignal.any([
           acceptanceSignal,
-          AbortSignal.timeout(15_000),
+          AbortSignal.timeout(timeoutMs),
         ]),
       });
       raw = await response.text();
@@ -331,6 +337,7 @@ function createSimulationAPI(baseUrl, logPath, acceptanceSignal) {
         method,
         path,
         ...(body === undefined ? {} : { request: body }),
+        timeout_ms: timeoutMs,
         status: response.status,
         response: parsed,
       });
@@ -342,6 +349,7 @@ function createSimulationAPI(baseUrl, logPath, acceptanceSignal) {
         method,
         path,
         ...(body === undefined ? {} : { request: body }),
+        timeout_ms: timeoutMs,
         status: response?.status,
         raw_response: raw,
         error: error instanceof Error ? error.message : String(error),
@@ -465,7 +473,8 @@ async function readRun(api, runID) {
     .run;
 }
 
-function recordCompletedStream(run, events, inputs, record) {
+function recordCompletedStream(started, completed, events, inputs, record) {
+  const initial = events.at(0);
   const resources = events.filter((event) => event.type === "resource");
   const observations = events.filter(
     (event) => event.type === "log" && event.message.startsWith("Observation "),
@@ -477,6 +486,8 @@ function recordCompletedStream(run, events, inputs, record) {
   record({
     check: "actual server event stream completes observations-objects",
     expected: {
+      start_status: "running",
+      initial_event: { type: "status", status: "running" },
       status: "completed",
       resources: inputs.assetCount + inputs.observations * 2,
       observation_logs: inputs.observations,
@@ -487,13 +498,18 @@ function recordCompletedStream(run, events, inputs, record) {
       ],
     },
     actual: {
+      started_run: { id: started.id, status: started.status },
+      initial,
       terminal,
       resources: resources.map((event) => event.resource),
       logs: observations.map((event) => event.message),
       assertions: assertions.map((event) => event.assertion),
     },
     passed:
-      run.status === "completed" &&
+      started.status === "running" &&
+      initial?.type === "status" &&
+      initial.status === "running" &&
+      completed.status === "completed" &&
       terminal?.status === "completed" &&
       resources.length === inputs.assetCount + inputs.observations * 2 &&
       observations.length === inputs.observations &&
@@ -507,7 +523,7 @@ function recordCompletedStream(run, events, inputs, record) {
       ) &&
       assertions.every((event) => event.assertion?.passed === true) &&
       strictlyIncreasing(events.map((event) => event.sequence)) &&
-      events.every((event) => event.runId === run.id),
+      events.every((event) => event.runId === started.id),
   });
 }
 
@@ -633,6 +649,10 @@ async function recordPersistedObservations(
       "independent SDK reads verify persisted observer, track, Object bytes, and relations",
     expected: {
       observers: inputs.assetCount,
+      observer_custom_simulation: {
+        run_id: run.id,
+        collection: jsonInput.collection,
+      },
       tracks: expectedTracks.map(
         ({ observation, alias, latitude, longitude }) => ({
           observation,
@@ -677,6 +697,9 @@ async function recordPersistedObservations(
         return (
           observer?.entity_type === "asset" &&
           observer.alias === `Observer ${run.id} ${index + 1}` &&
+          observer.components.custom_simulation?.run_id === run.id &&
+          observer.components.custom_simulation?.collection ===
+            jsonInput.collection &&
           approximatelyEqual(
             observer.components.telemetry?.latitude,
             latitude,

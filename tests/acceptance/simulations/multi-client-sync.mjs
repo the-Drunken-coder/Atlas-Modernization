@@ -16,6 +16,8 @@ const nightly = process.env.ATLAS_ACCEPTANCE_NIGHTLY === "1";
 const normalInputs = nightly
   ? { clientCount: 4, writes: 8, settleMs: 2_500 }
   : { clientCount: 2, writes: 3, settleMs: 1_500 };
+const standardRequestTimeoutMs = 15_000;
+const cleanupRequestTimeoutMs = 35_000;
 const fixture = createSimulationServerFixture();
 
 await runAcceptance({
@@ -53,6 +55,8 @@ await runAcceptance({
       apiKey,
       signal,
     });
+    let replacementWriterID;
+    let replacementWriterToken;
 
     try {
       verifyServerHealth(simulation.health, baseUrl, record);
@@ -103,6 +107,20 @@ await runAcceptance({
         },
         { instanceToken: unrelatedObjectToken, signal },
       );
+      replacementWriterID = writerEntities[0]?.entity_id;
+      if (!replacementWriterID) {
+        throw new Error("multi-client-sync did not create a writer Entity to replace before cleanup");
+      }
+      replacementWriterToken = `replacement-writer-${randomUUID()}`;
+      await core.entities.delete(replacementWriterID);
+      await core.entities.create(
+        {
+          entity_id: replacementWriterID,
+          entity_type: "asset",
+          alias: "replacement multi-client writer Entity",
+        },
+        { instanceToken: replacementWriterToken, signal },
+      );
 
       const cleanup = await api.json(
         "POST",
@@ -124,10 +142,17 @@ await runAcceptance({
         cleanupStream.events,
         record,
       );
-      await recordAllMissing(core, summary.createdResources, signal, record);
-      await recordUnrelatedResources(
+      await recordAllMissing(
         core,
-        { unrelatedEntityID, unrelatedObjectID },
+        summary.createdResources.filter(
+          (resource) => resource.id !== replacementWriterID,
+        ),
+        signal,
+        record,
+      );
+      await recordProtectedResources(
+        core,
+        { replacementWriterID, unrelatedEntityID, unrelatedObjectID },
         signal,
         record,
       );
@@ -162,6 +187,11 @@ await runAcceptance({
     } finally {
       stopReaders(readers);
       await Promise.allSettled([
+        replacementWriterID && replacementWriterToken
+          ? core.entities.delete(replacementWriterID, {
+              instanceToken: replacementWriterToken,
+            })
+          : Promise.resolve(),
         core.entities.delete(unrelatedEntityID, {
           instanceToken: unrelatedEntityToken,
         }),
@@ -177,6 +207,9 @@ await runAcceptance({
 function createSimulationAPI(baseUrl, logPath, acceptanceSignal) {
   const request = async (method, path, body) => {
     const startedAt = new Date().toISOString();
+    const timeoutMs = path.endsWith("/cleanup")
+      ? cleanupRequestTimeoutMs
+      : standardRequestTimeoutMs;
     const headers = new Headers({ Accept: "application/json" });
     if (method === "POST") headers.set("X-Atlas-Simulations-Request", "1");
     if (body !== undefined) headers.set("Content-Type", "application/json");
@@ -189,7 +222,7 @@ function createSimulationAPI(baseUrl, logPath, acceptanceSignal) {
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
         signal: AbortSignal.any([
           acceptanceSignal,
-          AbortSignal.timeout(15_000),
+          AbortSignal.timeout(timeoutMs),
         ]),
       });
       raw = await response.text();
@@ -200,6 +233,7 @@ function createSimulationAPI(baseUrl, logPath, acceptanceSignal) {
         method,
         path,
         ...(body === undefined ? {} : { request: body }),
+        timeout_ms: timeoutMs,
         status: response.status,
         response: parsed,
       });
@@ -211,6 +245,7 @@ function createSimulationAPI(baseUrl, logPath, acceptanceSignal) {
         method,
         path,
         ...(body === undefined ? {} : { request: body }),
+        timeout_ms: timeoutMs,
         status: response?.status,
         raw_response: raw,
         error: error instanceof Error ? error.message : String(error),
@@ -337,28 +372,40 @@ async function readRun(api, runID) {
 }
 
 function recordCompletedStream(run, summary, events, inputs, record) {
+  const initial = events.at(0);
   const resources = events.filter((event) => event.type === "resource");
   const assertions = events.filter((event) => event.type === "assertion");
+  const expectedAssertionNames = clientAssertionNames(inputs.clientCount);
   const terminal = events.find(
     (event) => event.type === "status" && event.status !== "running",
   );
   record({
     check: "actual server event stream completes multi-client-sync",
     expected: {
+      start_status: "running",
+      initial_event: { type: "status", status: "running" },
       status: "completed",
       resources: inputs.writes,
-      successful_assertions: inputs.clientCount * 4,
+      assertion_names: expectedAssertionNames,
     },
     actual: {
+      started_run: { id: run.id, status: run.status },
+      initial,
       terminal,
       resources: resources.map((event) => event.resource),
       assertions: assertions.map((event) => event.assertion),
     },
     passed:
+      run.status === "running" &&
+      initial?.type === "status" &&
+      initial.status === "running" &&
       summary.status === "completed" &&
       terminal?.status === "completed" &&
       resources.length === inputs.writes &&
-      assertions.length === inputs.clientCount * 4 &&
+      isDeepStrictEqual(
+        assertions.map((event) => event.assertion?.name).sort(),
+        [...expectedAssertionNames].sort(),
+      ) &&
       assertions.every((event) => event.assertion?.passed === true) &&
       strictlyIncreasing(events.map((event) => event.sequence)) &&
       events.every((event) => event.runId === run.id),
@@ -557,26 +604,49 @@ async function recordAllMissing(core, resources, signal, record) {
   });
 }
 
-async function recordUnrelatedResources(core, ids, signal, record) {
-  const [entity, object] = await Promise.all([
+async function recordProtectedResources(core, ids, signal, record) {
+  const [replacement, entity, object] = await Promise.all([
+    core.entities.get(ids.replacementWriterID, { fresh: true, signal }),
     core.entities.get(ids.unrelatedEntityID, { fresh: true, signal }),
     core.objects.get(ids.unrelatedObjectID, { fresh: true, signal }),
   ]);
   record({
     check:
-      "multi-client cleanup preserves unrelated Entity and Object canaries",
+      "multi-client cleanup preserves the replaced writer and unrelated Entity and Object canaries",
     expected: {
+      replacement_writer: {
+        id: ids.replacementWriterID,
+        alias: "replacement multi-client writer Entity",
+      },
       entity: "unrelated multi-client acceptance Entity",
       object: "unrelated multi-client acceptance Object",
     },
     actual: {
+      replacement_writer: {
+        id: replacement.entity_id,
+        alias: replacement.alias,
+      },
       entity: entity.alias,
       object: object.extra?.owner,
     },
     passed:
+      replacement.entity_id === ids.replacementWriterID &&
+      replacement.alias === "replacement multi-client writer Entity" &&
       entity.alias === "unrelated multi-client acceptance Entity" &&
       object.extra?.owner === "unrelated multi-client acceptance Object",
   });
+}
+
+function clientAssertionNames(clientCount) {
+  return Array.from({ length: clientCount }, (_, index) => {
+    const client = index + 1;
+    return [
+      `Client ${client} saw writer resources`,
+      `Client ${client} matched writer versions`,
+      `Client ${client} sync running`,
+      `Client ${client} sync healthy`,
+    ];
+  }).flat();
 }
 
 async function collectRunEvents({ api, runID, artifactBase, signal, until }) {
