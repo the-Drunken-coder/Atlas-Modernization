@@ -827,7 +827,9 @@ function isExpectedEventStreamCancellation(url, resourceType, failure) {
   return (
     resourceType === "eventsource" &&
     url.pathname.endsWith("/events") &&
-    (failure?.errorText === "cancelled" || failure?.errorText === "net::ERR_ABORTED")
+    (failure?.errorText === "cancelled" ||
+      failure?.errorText === "Load request cancelled" ||
+      failure?.errorText === "net::ERR_ABORTED")
   );
 }
 
