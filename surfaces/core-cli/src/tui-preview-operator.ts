@@ -358,7 +358,7 @@ export function createPreviewOperator(
     async pluginEnable(pluginId, reportActivity) {
       return await mutatePlugin(true, pluginId, reportActivity);
     },
-    async pluginInstall(pluginId, version) {
+    async pluginInstall(pluginId, version, reportActivity): Promise<PluginOperationOutcome> {
       const plugin = requirePreviewPlugin(pluginId);
       if (deploymentState === "not-initialized") {
         throw new Error("Atlas Core is not initialized. Run atlas-core init first.");
@@ -368,8 +368,32 @@ export function createPreviewOperator(
       if (!PREVIEW_PLUGIN_VERSIONS.includes(selectedVersion as (typeof PREVIEW_PLUGIN_VERSIONS)[number])) {
         throw new Error(`Unknown fixture Plugin release ${pluginId} ${selectedVersion}.`);
       }
+      reportActivity?.({ level: "working", message: "Checking fixture Plugin catalog", stage: "operation" });
+      await waitForPluginStep();
+      if (cancellationRequested) {
+        reportActivity?.({ level: "failure", message: "Install cancelled in the fixture", stage: "operation" });
+        reportActivity?.({ level: "success", message: "Previous fixture Plugin state restored", stage: "rollback" });
+        return { previousDeploymentPreserved: true, status: "cancelled" };
+      }
+      reportActivity?.({
+        level: "working",
+        message: `Installing ${plugin.displayName} ${selectedVersion}`,
+        stage: "operation"
+      });
+      await waitForPluginStep();
+      if (cancellationRequested) {
+        reportActivity?.({ level: "failure", message: "Install cancelled in the fixture", stage: "operation" });
+        reportActivity?.({ level: "success", message: "Previous fixture Plugin state restored", stage: "rollback" });
+        return { previousDeploymentPreserved: true, status: "cancelled" };
+      }
       installedPlugins.set(pluginId, { previousVersion: null, selectedVersion });
       preview(`Installed ${plugin.displayName} ${selectedVersion}.`);
+      reportActivity?.({
+        level: "success",
+        message: `Installed ${plugin.displayName} ${selectedVersion}.`,
+        stage: "operation"
+      });
+      return { status: "success" };
     },
     async pluginLogs(pluginId, follow) {
       if (deploymentState === "not-initialized") {

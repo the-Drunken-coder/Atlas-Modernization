@@ -157,7 +157,11 @@ export type AtlasCoreOperator = {
   openLogStream(service: DeploymentServiceId | undefined, follow?: boolean): Promise<LogStream>;
   pluginDisable(pluginId: string, reportActivity?: PluginActivityReporter): Promise<PluginOperationOutcome>;
   pluginEnable(pluginId: string, reportActivity?: PluginActivityReporter): Promise<PluginOperationOutcome>;
-  pluginInstall?(pluginId: string, version?: string): Promise<void>;
+  pluginInstall?(
+    pluginId: string,
+    version?: string,
+    reportActivity?: PluginActivityReporter
+  ): Promise<PluginOperationOutcome>;
   pluginLogs(pluginId: string, follow: boolean): Promise<void>;
   openPluginLogStream?(pluginId: string, follow?: boolean): Promise<LogStream>;
   pluginUpdate?(pluginId: string): Promise<void>;

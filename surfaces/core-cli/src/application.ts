@@ -1413,31 +1413,64 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     this.#stdout.write("Plugin catalog refreshed.\n");
   }
 
-  async pluginInstall(pluginId: string, version?: string): Promise<void> {
-    await this.#withInitializedMutation(async (raw) => {
-      const state = this.#requireManaged(raw);
-      await this.#catalogStore.refresh({ allowCachedOnFailure: true });
-      const candidates = (
-        await this.#catalogStore.candidates(pluginId, {
-          ...(version ? { version } : {}),
-          contracts: state.pluginContracts ?? PACKAGE_PLUGIN_CONTRACTS
-        })
-      ).filter((candidate) => {
-        if (version && candidate.release.version !== version) return false;
-        try {
-          assertPluginCompatible(candidate.release, state.pluginContracts ?? PACKAGE_PLUGIN_CONTRACTS);
-          return true;
-        } catch {
-          return false;
-        }
+  async pluginInstall(
+    pluginId: string,
+    version?: string,
+    reportActivity?: PluginActivityReporter
+  ): Promise<PluginOperationOutcome> {
+    const report = reportActivity ?? (() => undefined);
+    let mutationStarted = false;
+    report({ level: "working", message: "Checking Plugin catalog and compatibility", stage: "operation" });
+    try {
+      await this.#withInitializedMutation(async (raw) => {
+        const state = this.#requireManaged(raw);
+        await this.#catalogStore.refresh({ allowCachedOnFailure: true });
+        const candidates = (
+          await this.#catalogStore.candidates(pluginId, {
+            ...(version ? { version } : {}),
+            contracts: state.pluginContracts ?? PACKAGE_PLUGIN_CONTRACTS
+          })
+        ).filter((candidate) => {
+          if (version && candidate.release.version !== version) return false;
+          try {
+            assertPluginCompatible(candidate.release, state.pluginContracts ?? PACKAGE_PLUGIN_CONTRACTS);
+            return true;
+          } catch {
+            return false;
+          }
+        });
+        const selected = selectPluginRelease(candidates);
+        if (!selected)
+          throw new Error(
+            `No compatible non-revoked release is available for ${pluginId}${version ? ` ${version}` : ""}.`
+          );
+        report({
+          level: "working",
+          message: `Installing ${selected.release.displayName} ${selected.release.version}`,
+          stage: "operation"
+        });
+        mutationStarted = true;
+        const result = await this.#plugins(state).install(selected);
+        this.#stdout.write(`${result.message}\n`);
+        report({ level: "success", message: result.message, stage: "operation" });
       });
-      const selected = selectPluginRelease(candidates);
-      if (!selected)
-        throw new Error(
-          `No compatible non-revoked release is available for ${pluginId}${version ? ` ${version}` : ""}.`
-        );
-      this.#stdout.write(`${(await this.#plugins(state).install(selected)).message}\n`);
-    });
+      return { status: "success" };
+    } catch (error) {
+      if (error instanceof CommandCancelledError) {
+        if (!reportActivity) throw error;
+        report({ level: "failure", message: "Install cancelled", stage: "operation" });
+        if (mutationStarted) report({ level: "success", message: "Previous deployment restored", stage: "rollback" });
+        return { previousDeploymentPreserved: true, status: "cancelled" };
+      }
+      const message = errorMessage(error);
+      report({ level: "failure", message: `Install failed: ${message}`, stage: "operation" });
+      if (/Recovery is required:/u.test(message)) {
+        report({ level: "failure", message: "Recovery is required before retrying", stage: "rollback" });
+      } else if (mutationStarted) {
+        report({ level: "success", message: "Previous deployment restored", stage: "rollback" });
+      }
+      throw error;
+    }
   }
 
   async pluginUpdate(pluginId: string): Promise<void> {
@@ -2745,6 +2778,13 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     await this.#runLogs(plugin.service, follow);
   }
 
+  async openPluginLogStream(pluginId: string, follow = true): Promise<LogStream> {
+    const state = this.#requireInitialized();
+    if (!state.enabledPlugins.includes(pluginId)) throw new Error(`Plugin ${pluginId} is not enabled.`);
+    const plugin = this.#pluginForRead(pluginId, state);
+    return await this.#openLogStream(plugin.service, follow);
+  }
+
   async #runLogs(service: string | undefined, follow: boolean): Promise<void> {
     const stream = await this.#openLogStream(service, follow);
     const removeLine = stream.onLine((line) => this.#stdout.write(`${line}\n`));
@@ -2758,15 +2798,29 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
 
   async pluginEnable(pluginId: string, reportActivity?: PluginActivityReporter): Promise<PluginOperationOutcome> {
     if (this.#readState()?.schema === 4) {
+      const report = reportActivity ?? (() => undefined);
+      let mutationStarted = false;
+      report({ level: "working", message: "Checking installed Plugin and retained Core", stage: "operation" });
       try {
         await this.#withInitializedMutation(async (raw) => {
+          mutationStarted = true;
           const result = await this.#plugins(this.#requireManaged(raw)).enable(pluginId);
           this.#stdout.write(`${result.message}\n`);
+          report({ level: "success", message: result.message, stage: "operation" });
         });
         return { status: "success" };
       } catch (error) {
         if (error instanceof CommandCancelledError) {
+          report({ level: "failure", message: "Enable cancelled", stage: "operation" });
+          if (mutationStarted) report({ level: "success", message: "Previous deployment restored", stage: "rollback" });
           return { previousDeploymentPreserved: true, status: "cancelled" };
+        }
+        const message = errorMessage(error);
+        report({ level: "failure", message: `Enable failed: ${message}`, stage: "operation" });
+        if (/Recovery is required:/u.test(message)) {
+          report({ level: "failure", message: "Recovery is required before retrying", stage: "rollback" });
+        } else if (mutationStarted) {
+          report({ level: "success", message: "Previous deployment restored", stage: "rollback" });
         }
         throw error;
       }
@@ -2902,15 +2956,29 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
 
   async pluginDisable(pluginId: string, reportActivity?: PluginActivityReporter): Promise<PluginOperationOutcome> {
     if (this.#readState()?.schema === 4) {
+      const report = reportActivity ?? (() => undefined);
+      let mutationStarted = false;
+      report({ level: "working", message: "Checking installed Plugin and retained Core", stage: "operation" });
       try {
         await this.#withInitializedMutation(async (raw) => {
+          mutationStarted = true;
           const result = await this.#plugins(this.#requireManaged(raw)).disable(pluginId);
           this.#stdout.write(`${result.message}\n`);
+          report({ level: "success", message: result.message, stage: "operation" });
         });
         return { status: "success" };
       } catch (error) {
         if (error instanceof CommandCancelledError) {
+          report({ level: "failure", message: "Disable cancelled", stage: "operation" });
+          if (mutationStarted) report({ level: "success", message: "Previous deployment restored", stage: "rollback" });
           return { previousDeploymentPreserved: true, status: "cancelled" };
+        }
+        const message = errorMessage(error);
+        report({ level: "failure", message: `Disable failed: ${message}`, stage: "operation" });
+        if (/Recovery is required:/u.test(message)) {
+          report({ level: "failure", message: "Recovery is required before retrying", stage: "rollback" });
+        } else if (mutationStarted) {
+          report({ level: "success", message: "Previous deployment restored", stage: "rollback" });
         }
         throw error;
       }
