@@ -454,6 +454,39 @@ describe("Atlas Core terminal UI", () => {
     expect(deployment.resumeAfterCancellation).toHaveBeenCalledOnce();
   });
 
+  it("cancels and exits after Plugin cleanup on process SIGINT", async () => {
+    const terminal = new TestTerminal();
+    const deployment = operator();
+    const plugin = {
+      pluginId: "building_scan",
+      displayName: "Building Scan",
+      lifecycle: "query_only" as const,
+      enabled: false,
+      packaged: true
+    };
+    let finishEnable: (() => void) | undefined;
+    deployment.pluginStatuses.mockResolvedValue([plugin]);
+    deployment.pluginEnable.mockImplementation(
+      async () =>
+        await new Promise<PluginOperationOutcome>((resolve) => {
+          finishEnable = () => resolve({ previousDeploymentPreserved: true, status: "cancelled" });
+        })
+    );
+    deployment.cancelPending.mockImplementation(() => finishEnable?.());
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("Manage Plugins");
+    terminal.write("\u001b[B".repeat(4));
+    terminal.write("\r");
+    await terminal.waitFor("PLUGIN CATALOG");
+    terminal.write("\r");
+    await terminal.waitFor("Enable requested");
+    process.emit("SIGINT", "SIGINT");
+    await expect(menu).resolves.toBeUndefined();
+    expect(deployment.cancelPending).toHaveBeenCalledOnce();
+    expect(deployment.resumeAfterCancellation).toHaveBeenCalledOnce();
+  });
+
   it("shows a committed Plugin change as success after a late cancellation request", async () => {
     const terminal = new TestTerminal();
     const deployment = operator();
@@ -904,6 +937,30 @@ describe("Atlas Core terminal UI", () => {
     terminal.write("\r");
     await terminal.waitFor("Stopping services");
     terminal.write("\u0003");
+    await expect(menu).resolves.toBeUndefined();
+    expect(deployment.cancelPending).toHaveBeenCalledOnce();
+    expect(deployment.resumeAfterCancellation).toHaveBeenCalledOnce();
+  });
+
+  it("cancels and exits after process SIGINT cleanup", async () => {
+    const terminal = new TestTerminal(80, true, 24);
+    const deployment = operator();
+    let finish: (() => void) | undefined;
+    deployment.runLifecycle.mockImplementationOnce(
+      async () =>
+        await new Promise<LifecycleOperationResult>((resolve) => {
+          finish = () =>
+            resolve({ previousDeploymentPreserved: true, status: "cancelled", summary: "Stop Atlas Core cancelled." });
+        })
+    );
+    deployment.cancelPending.mockImplementation(() => finish?.());
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("Stop Atlas Core");
+    terminal.write("\u001b[B".repeat(2));
+    terminal.write("\r");
+    await terminal.waitFor("ATLAS CORE > OPERATION");
+    process.emit("SIGINT", "SIGINT");
     await expect(menu).resolves.toBeUndefined();
     expect(deployment.cancelPending).toHaveBeenCalledOnce();
     expect(deployment.resumeAfterCancellation).toHaveBeenCalledOnce();

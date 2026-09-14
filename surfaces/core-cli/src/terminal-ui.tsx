@@ -368,6 +368,7 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
       const lifecycleResult = result.value;
       const cancelled = result.cancelled || lifecycleResult?.status === "cancelled";
       if (cancelled || lifecycleCancellation.current !== undefined) operator.resumeAfterCancellation();
+      if (result.cancelled && lifecycleCancellation.current === undefined) lifecycleCancellation.current = "exit";
       const terminalExit = lifecycleCancellation.current === "exit";
       if (cancelled && !terminalExit && !terminalLost.current) {
         lifecycleCancellation.current = undefined;
@@ -478,6 +479,7 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
       if (activePluginOperation.current === operationId) activePluginOperation.current = undefined;
       const cancellationRequested = pluginCancellationRequested.current || result.cancelled;
       if (cancellationRequested) operator.resumeAfterCancellation();
+      if (result.cancelled && pluginCancellation.current === undefined) pluginCancellation.current = "exit";
       if (terminalLost.current) {
         exit(terminalLossError.current);
         return;
