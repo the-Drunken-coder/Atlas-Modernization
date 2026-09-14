@@ -699,11 +699,6 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
 
   const applyUpdate = useCallback(
     async (info: UpdateInfo, scope: UpdateScope) => {
-      if (scope !== "cli") {
-        setScreen({ kind: "busy", label: "Applying reviewed update..." });
-        await applyLegacyUpdate(operator, info, scope, input, output, exit, suspendTerminal, waitUntilRenderFlush);
-        return;
-      }
       const operationId = updateOperationGeneration.current + 1;
       updateOperationGeneration.current = operationId;
       activeUpdateOperation.current = operationId;
@@ -714,7 +709,11 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
         view: {
           events: [
             { elapsedMs: 0, message: "Applying reviewed update...", stage: "operation" },
-            { elapsedMs: 0, message: "CLI-only update requested", stage: "operation" }
+            {
+              elapsedMs: 0,
+              message: scope === "cli" ? "CLI-only update requested" : "CLI and Core update requested",
+              stage: "operation"
+            }
           ],
           info,
           scope,
@@ -738,7 +737,7 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
         );
       };
       const result = await runCancelableOperation(operator, async () => {
-        await operator.updateWithProgress(scope, info.latestVersion, false, report);
+        await operator.updateWithProgress(scope, info.latestVersion, report);
       });
       activeUpdateOperation.current = undefined;
       const requestedCancellation = updateCancellation.current;
@@ -770,7 +769,7 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
         exit(result.failure ?? terminalLossError.current);
       }
     },
-    [exit, input, loadUpdate, operator, output, suspendTerminal, waitUntilRenderFlush]
+    [exit, loadUpdate, operator, waitUntilRenderFlush]
   );
 
   const cancelUpdateOperation = useCallback(
@@ -948,37 +947,6 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
       onReview={(scope) => setScreen({ kind: "update-review", info: screen.info, scope })}
     />
   );
-}
-
-async function applyLegacyUpdate(
-  operator: AtlasCoreOperator,
-  info: UpdateInfo,
-  scope: UpdateScope,
-  input: NodeJS.ReadStream,
-  output: NodeJS.WriteStream,
-  exit: (error?: Error) => void,
-  suspendTerminal: (operation: () => Promise<void>) => Promise<void>,
-  waitUntilRenderFlush: () => Promise<void>
-): Promise<void> {
-  await waitUntilRenderFlush();
-  let result: OperationResult<void> = { cancelled: false };
-  await suspendTerminal(async () => {
-    result = await runCancelableOperation(operator, async () => {
-      await operator.update(scope, info.latestVersion, scope === "all");
-    });
-    if (result.cancelled && !result.failure) return;
-    if (result.failure) output.write(`\n${result.failure.message}\n`);
-    output.write(
-      result.failure
-        ? "\nThe update stopped without deleting Atlas Core data. Rerun atlas-core to inspect or retry.\n"
-        : "\nUpdate complete. Rerun atlas-core to use the installed CLI.\n"
-    );
-    output.write("\nPress Enter to exit.");
-    await waitForReturn(input);
-  });
-  if (result.cancelled && !result.failure) exit();
-  else if (result.failure) exit(result.failure);
-  else exit();
 }
 
 function MainMenu({ onSelect, snapshot }: { onSelect(action: Action): void; snapshot: DeploymentSnapshot }): ReactNode {
@@ -2215,7 +2183,7 @@ function UpdateOperationScreen({
   });
 
   const elapsed = (view.completedAt ?? now) - view.startedAt;
-  const detail = `CLI-only update  ${formatActivityTime(elapsed)}`;
+  const detail = `${view.scope === "all" ? "CLI + Core" : "CLI-only"} update  ${formatActivityTime(elapsed)}`;
   const footer = finished
     ? "Enter exit"
     : view.status === "cancelling"
@@ -2291,7 +2259,10 @@ function updateOperationLines(view: UpdateOperationView, width: number): Activit
       { text: "" },
       {
         color: "green",
-        text: `Update complete. Atlas Core CLI ${view.info.latestVersion} installed. Running Core and durable data were not changed.`
+        text:
+          view.scope === "all"
+            ? `Update complete. Atlas Core CLI ${view.info.latestVersion} and the Core deployment are current.`
+            : `Update complete. Atlas Core CLI ${view.info.latestVersion} installed. Running Core and durable data were not changed.`
       }
     ];
   }
@@ -2301,7 +2272,10 @@ function updateOperationLines(view: UpdateOperationView, width: number): Activit
       { text: "" },
       {
         color: "yellow",
-        text: "CLI update cancelled. Running Core and durable data were not changed; the package may have updated."
+        text:
+          view.scope === "all"
+            ? "Update cancelled. Running Core and durable data were not deleted; the package may have updated."
+            : "CLI update cancelled. Running Core and durable data were not changed; the package may have updated."
       }
     ];
   }
@@ -2311,7 +2285,7 @@ function updateOperationLines(view: UpdateOperationView, width: number): Activit
       { text: "" },
       {
         color: "red",
-        text: `ERROR: ${view.error ?? "CLI update failed."} The update stopped without deleting Atlas Core data. CLI installation may have completed; running Core and durable data were not changed.`
+        text: `ERROR: ${view.error ?? "Update failed."} The update stopped without deleting Atlas Core data. CLI installation may have completed; inspect recovery status before retrying.`
       }
     ];
   }
@@ -2749,8 +2723,6 @@ function UpdateReview({
           <Text>
             PostgreSQL, MinIO, credentials, and configuration are preserved. Atlas Core restarts after the image pull.
           </Text>
-          <Text> </Text>
-          <Text color="yellow">Continuing confirms that a current paired PostgreSQL and MinIO backup exists.</Text>
         </>
       )}
       <Rule width={columns} />
@@ -2908,9 +2880,7 @@ function updateReviewRows(info: UpdateInfo, scope: UpdateScope, width: number): 
     wrappedRows(
       "PostgreSQL, MinIO, credentials, and configuration are preserved. Atlas Core restarts after the image pull.",
       width
-    ) +
-    1 +
-    wrappedRows("Continuing confirms that a current paired PostgreSQL and MinIO backup exists.", width)
+    )
   );
 }
 

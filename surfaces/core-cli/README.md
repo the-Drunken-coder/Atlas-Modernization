@@ -167,14 +167,14 @@ and available release before changing anything. Choose one of two update scopes:
   A stopped deployment stays stopped. A schema-3 deployment still follows its bundled-catalog transition rules and
   refuses a target catalog that no longer contains an enabled Plugin.
 
-Core releases may carry schema migrations. Before a Core update, create and validate the paired PostgreSQL and MinIO
-backup described in the [deployment runbook](https://github.com/the-Drunken-coder/Atlas-Modernization/blob/main/services/core/docs/DEPLOYMENT_RUNBOOK.md#pre-deploy-backup).
-The released menu review screen and `atlas-core update all` both require confirmation that a current paired backup exists.
-Set `ATLAS_CORE_BACKUP_DIR` to that backup directory’s absolute path before updating. The CLI records a content hash of
-the dump, bucket mirror, and runbook metadata. Preserve the pair and select it again with the same environment variable
-when running `recover restored --confirm-paired-restore`; recovery requires the recorded hash to match. This identifies
-the backup artifacts and does not prove that the operator restored them.
-The approved future update policy in [issue #368](https://github.com/the-Drunken-coder/Atlas-Modernization/issues/368) removes this prerequisite while retaining restored recovery only for receipt-bearing journals.
+Core releases may carry schema migrations. The update flow preserves PostgreSQL and MinIO volumes and does not require a
+backup prompt or `ATLAS_CORE_BACKUP_DIR`. Operators should still create and validate the paired backup described in the
+[deployment runbook](https://github.com/the-Drunken-coder/Atlas-Modernization/blob/main/services/core/docs/DEPLOYMENT_RUNBOOK.md#pre-deploy-backup).
+When `ATLAS_CORE_BACKUP_DIR` points to that validated pair, the CLI records a content hash of the dump, bucket mirror,
+and runbook metadata. Only a journal with that receipt can later accept `recover restored --confirm-paired-restore`;
+without a receipt, recovery never claims that a backup exists and offers exact retry, compatible forward recovery, or
+the normal confirmed reset path instead. The receipt identifies backup artifacts and does not prove that the operator
+restored them.
 CLI-only updates do not require a deployment backup because they do not change the running Core or its stores.
 
 CLI-only updates may leave the CLI newer than the running Core. Status, logs, diagnostics, stop, reset, and the explicit

@@ -126,7 +126,7 @@ export type ManagedCoreOptions = ManagedCorePackage & {
   preflightPlugins: (contracts: PluginContracts) => void | Promise<void>;
   ensureCredential: (transaction: DeploymentTransactionStore) => void | Promise<void>;
   readMigrationLedger?: (options?: MigrationLedgerOptions) => Promise<string>;
-  readBackupIdentity?: () => Promise<PairedBackupIdentity>;
+  readBackupIdentity?: () => Promise<PairedBackupIdentity | undefined>;
   readRunIntent?: () => boolean | undefined;
   previousRunning?: boolean;
   desiredRunning?: boolean;
@@ -255,7 +255,7 @@ export class ManagedCoreManager {
         fromPackageVersion: state.packageVersion,
         targetPackageVersion: target.packageVersion,
         targetCoreImage: target.packageImage,
-        priorBackupIdentity
+        ...(priorBackupIdentity ? { priorBackupIdentity } : {})
       });
       return await this.#runTransaction(transaction, state, target, "core-update");
     } catch (error) {
@@ -360,7 +360,7 @@ export class ManagedCoreManager {
       return {
         pending: true,
         journal,
-        action: recoveryActionForPhase(journal.phase)
+        action: recoveryActionForPhase(journal)
       };
     }
     if (journal.phase === "committed") {
@@ -1038,13 +1038,10 @@ export class ManagedCoreManager {
     return ledger.length > 0 ? { priorMigrationLedger: ledger } : {};
   }
 
-  async #readBackupIdentity(): Promise<PairedBackupIdentity> {
-    if (!this.#options.readBackupIdentity) {
-      throw new Error(
-        "Core update recovery requires a validated paired PostgreSQL and MinIO backup (set ATLAS_CORE_BACKUP_DIR)."
-      );
-    }
+  async #readBackupIdentity(): Promise<PairedBackupIdentity | undefined> {
+    if (!this.#options.readBackupIdentity) return undefined;
     const identity = await this.#options.readBackupIdentity();
+    if (identity === undefined) return undefined;
     if (typeof identity !== "string" || !DIGEST_PATTERN.test(identity)) {
       throw new Error("The paired backup identity is missing or malformed.");
     }
@@ -1495,9 +1492,14 @@ function manifestFromTransaction(transaction: DeploymentTransactionStore): Retai
   };
 }
 
-function recoveryActionForPhase(phase: TransactionJournal["phase"]): string {
+function recoveryActionForPhase(journal: TransactionJournal): string {
+  const phase = journal.phase;
   if (phase === "prepared" || phase === "runtime-changing") return "rollback and restore the prior composition";
-  if (phase === "core-started" || phase === "credentials-durable") return "retry, forward, or confirm paired restore";
+  if (phase === "core-started" || phase === "credentials-durable") {
+    return journal.recovery?.priorBackupIdentity
+      ? "retry, forward, or confirm paired restore"
+      : "retry, forward, or confirm intentional reset";
+  }
   if (phase === "committed") return "finish transaction cleanup";
   if (phase === "rollback-complete") return "finish rollback cleanup";
   return "none";

@@ -81,9 +81,7 @@ class TestTerminal {
 }
 
 function operator(snapshot: DeploymentSnapshot = { status: "ready", detail: "Everything is healthy." }) {
-  const update = vi.fn(
-    async (_scope: UpdateScope, _expectedVersion?: string, _coreBackupConfirmed?: boolean) => undefined
-  );
+  const update = vi.fn(async (_scope: UpdateScope, _expectedVersion?: string) => undefined);
   return {
     cancelPending: vi.fn(),
     checkForUpdates: vi.fn(async () => ({
@@ -176,12 +174,10 @@ function operator(snapshot: DeploymentSnapshot = { status: "ready", detail: "Eve
     status: vi.fn(async () => true),
     stop: vi.fn(async (): Promise<void> => {}),
     update,
-    updateWithProgress: vi.fn(
-      async (scope: UpdateScope, expectedVersion?: string, coreBackupConfirmed?: boolean, report?: UpdateReporter) => {
-        report?.({ message: "Applying reviewed update...", stage: "operation" });
-        await update(scope, expectedVersion, coreBackupConfirmed);
-      }
-    ),
+    updateWithProgress: vi.fn(async (scope: UpdateScope, expectedVersion?: string, report?: UpdateReporter) => {
+      report?.({ message: "Applying reviewed update...", stage: "operation" });
+      await update(scope, expectedVersion);
+    }),
     runLifecycle: vi.fn(
       async (
         operation: LifecycleOperation,
@@ -1801,7 +1797,7 @@ describe("Atlas Core terminal UI", () => {
 
     await terminal.waitFor("Update CLI + Atlas Core");
     terminal.write("\u001b[B\r");
-    await terminal.waitFor("paired PostgreSQL and MinIO backup exists");
+    await terminal.waitFor("PostgreSQL, MinIO, credentials, and configuration are preserved");
     terminal.resize(36);
     await terminal.waitFor("Resize to at least 40 columns.");
     terminal.write("\r");
@@ -1836,6 +1832,7 @@ describe("Atlas Core terminal UI", () => {
     terminal.write("\u001b[B");
     await terminal.waitFor("Preserve credentials and durable data");
     terminal.write("\r");
+    terminal.resize(40, 5);
     await terminal.waitFor("Update review needs at least");
     terminal.write("\r");
     await nextInputTurn();
@@ -2048,13 +2045,13 @@ describe("Atlas Core terminal UI", () => {
     terminal.write("\u001b[B");
     await terminal.waitFor("Preserve credentials and durable data");
     terminal.write("\r");
-    await terminal.waitFor("paired PostgreSQL and MinIO backup exists");
+    await terminal.waitFor("PostgreSQL, MinIO, credentials, and configuration are preserved");
     terminal.write("\r");
     await terminal.waitFor("Update complete");
     terminal.write("\r");
     await update;
 
-    expect(deployment.update).toHaveBeenCalledWith("all", "0.1.6", true);
+    expect(deployment.update).toHaveBeenCalledWith("all", "0.1.6");
   });
 
   it("keeps CLI-only subprocess output inside the mounted update screen", async () => {
@@ -2063,7 +2060,6 @@ describe("Atlas Core terminal UI", () => {
       async (
         _scope: "cli" | "all",
         _version: string | undefined,
-        _backupConfirmed: boolean | undefined,
         report?: (progress: { message: string; stage: "operation" | "cleanup" }) => void
       ) => {
         report?.({ message: "npm install started", stage: "operation" });
@@ -2085,7 +2081,7 @@ describe("Atlas Core terminal UI", () => {
     await terminal.waitFor("REVIEW UPDATE");
     terminal.write("\r");
     await terminal.waitFor("npm install completed");
-    expect(progressUpdate).toHaveBeenCalledWith("cli", "0.1.6", false, expect.any(Function));
+    expect(progressUpdate).toHaveBeenCalledWith("cli", "0.1.6", expect.any(Function));
     expect(terminal.text).not.toContain("Press Enter to exit.");
     terminal.write("\r");
     await update;
@@ -2143,7 +2139,7 @@ describe("Atlas Core terminal UI", () => {
     terminal.write("\r");
     await update;
 
-    expect(deployment.update).toHaveBeenCalledWith("all", "0.1.5", true);
+    expect(deployment.update).toHaveBeenCalledWith("all", "0.1.5");
   });
 
   it("propagates an update failure after showing the recovery message", async () => {

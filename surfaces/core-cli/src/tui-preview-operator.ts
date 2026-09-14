@@ -272,11 +272,7 @@ export function createPreviewOperator(
     return { status: "success" };
   };
 
-  const update = async (
-    scope: UpdateScope,
-    _expectedVersion?: string,
-    _coreBackupConfirmed?: boolean
-  ): Promise<void> => {
+  const update = async (scope: UpdateScope, _expectedVersion?: string): Promise<void> => {
     preview(`${scope === "all" ? "CLI and Core" : "CLI-only"} update simulated. Nothing was installed.`);
   };
 
@@ -499,9 +495,9 @@ export function createPreviewOperator(
       deploymentState = "stopped";
     },
     update,
-    async updateWithProgress(scope, _expectedVersion, _coreBackupConfirmed, report?: UpdateReporter) {
+    async updateWithProgress(scope, _expectedVersion, report?: UpdateReporter) {
       report?.({ message: "Running the fixture update", stage: "operation" });
-      await update(scope, _expectedVersion, _coreBackupConfirmed);
+      await update(scope, _expectedVersion);
     }
   };
 }

@@ -33,9 +33,12 @@ Preserve storage ownership, Docker engine identity, mutation locks, durable run 
 
 ## Current and future backup behavior
 
-The released CLI still requires `ATLAS_CORE_BACKUP_DIR` and a validated paired PostgreSQL and MinIO backup for Core updates. This planning change does not alter that runtime behavior.
-
-[Issue #368](https://github.com/the-Drunken-coder/Atlas-Modernization/issues/368) will remove the prompt and mandatory receipt from future Core updates. A receipt-bearing journal retains paired-restore recovery. A journal without a receipt rejects restored recovery and offers only actions supported by its phase and evidence. After the target Core starts, that means exact-candidate retry, compatible forward recovery, or intentional reset. It never means starting the prior Core against migrated or uncertain storage.
+Core updates no longer require `ATLAS_CORE_BACKUP_DIR` or a validated paired PostgreSQL and MinIO backup. When the
+variable is supplied, the manager records an optional receipt. A receipt-bearing journal retains paired-restore
+recovery; a journal without a receipt rejects restored recovery and offers only actions supported by its phase and
+evidence. After the target Core starts, that means exact-candidate retry, compatible forward recovery, or intentional
+reset. It never means starting the prior Core against migrated or uncertain storage. The deployment runbook remains the
+recommended backup procedure.
 
 ## Tracking
 

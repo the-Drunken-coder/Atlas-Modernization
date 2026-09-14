@@ -8,4 +8,6 @@ Repository documentation preserves only the durable context that must remain dis
 - [Architectural and update-policy decision](../design-decisions/2026-09-12-atlas-core-tui-redesign.md)
 - [Canonical implementation issue index](tui-redesign-tickets/README.md)
 
-The plan was refreshed against `ae875bca` after PRs #346 and #348 merged. The current runtime still requires backup confirmation and `ATLAS_CORE_BACKUP_DIR` for a Core update. Issue #368 owns the future behavior change.
+The plan was refreshed against `ae875bca` after PRs #346 and #348 merged. Issue #368 implements the backup-optional Core
+update flow: `ATLAS_CORE_BACKUP_DIR` records an optional receipt, and only receipt-bearing journals support restored
+recovery.

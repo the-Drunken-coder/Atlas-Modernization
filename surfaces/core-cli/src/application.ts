@@ -220,7 +220,6 @@ export type CLIContext = {
   nodeVersion?: string;
   now?: () => Date;
   createSecret?: () => string;
-  confirmCoreUpdate?: (question: string) => Promise<boolean>;
   confirmReset?: (question: string) => Promise<boolean>;
   imageReference?: string;
   interactive?: InteractiveCLI;
@@ -696,7 +695,6 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   readonly #nodeVersion: string;
   readonly #now: () => Date;
   readonly #createSecret: () => string;
-  readonly #confirmCoreUpdate: (question: string) => Promise<boolean>;
   readonly #confirmReset: (question: string) => Promise<boolean>;
   readonly #imageReference: string | undefined;
   readonly #dockerRuntimeScope = new AsyncLocalStorage<DockerRuntime>();
@@ -729,7 +727,6 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     this.#nodeVersion = context.nodeVersion;
     this.#now = context.now;
     this.#createSecret = context.createSecret;
-    this.#confirmCoreUpdate = context.confirmCoreUpdate;
     this.#confirmReset = context.confirmReset;
     this.#imageReference = context.imageReference;
     this.#homeDir = context.homeDir;
@@ -950,7 +947,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       readRunIntent: () => this.#desiredRunning(),
       readBackupIdentity: async () => {
         const directory = this.#env.ATLAS_CORE_BACKUP_DIR;
-        if (!directory) throw new Error("Set ATLAS_CORE_BACKUP_DIR to the validated paired backup directory.");
+        if (!directory) return undefined;
         return await readPairedBackupIdentity(directory);
       },
       architecture: this.#imageArchitecture(),
@@ -2333,19 +2330,14 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     };
   }
 
-  async updateWithProgress(
-    scope: UpdateScope,
-    expectedVersion?: string,
-    coreBackupConfirmed = false,
-    report?: UpdateReporter
-  ): Promise<void> {
-    if (!report) return await this.update(scope, expectedVersion, coreBackupConfirmed);
+  async updateWithProgress(scope: UpdateScope, expectedVersion?: string, report?: UpdateReporter): Promise<void> {
+    if (!report) return await this.update(scope, expectedVersion);
     await this.#updateReporterScope.run(report, async () => {
-      await this.update(scope, expectedVersion, coreBackupConfirmed);
+      await this.update(scope, expectedVersion);
     });
   }
 
-  async update(scope: UpdateScope, expectedVersion?: string, coreBackupConfirmed = false): Promise<void> {
+  async update(scope: UpdateScope, expectedVersion?: string): Promise<void> {
     const release = await this.#latestRelease();
     if (expectedVersion && release.version !== expectedVersion) {
       throw new Error(
@@ -2393,15 +2385,6 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       return;
     }
     if (updateCore) this.#assertLegacyPluginsDisabled(state);
-    if (updateCore && !coreBackupConfirmed) {
-      this.#stdout.write(
-        "Atlas Core updates may apply schema migrations. Create and validate a paired PostgreSQL and MinIO backup before continuing.\n"
-      );
-      if (!(await this.#confirmCoreUpdate("Confirm a current paired backup exists. Continue? [y/N] "))) {
-        this.#stdout.write("Atlas Core update cancelled.\n");
-        return;
-      }
-    }
     const supervision = updateCLI ? await this.#supervisionBeforeCLIUpdate(updateCore) : undefined;
     if (updateCLI) {
       await this.#installCLI(release.version);
@@ -4530,11 +4513,9 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     const updateResult = await this.#runner.run(
       process.execPath,
       [installedCLI, "__apply-core-update", fromVersion, expectedImage],
-      {
-        env: childEnvironment,
-        inherit: true
-      }
+      { env: childEnvironment }
     );
+    this.#reportCommandOutput(updateResult);
     if (updateResult.status !== 0) {
       throw commandFailure(`Atlas Core ${version} deployment update`, updateResult);
     }
@@ -4853,7 +4834,6 @@ type RequiredRuntimeContext = {
   nodeVersion: string;
   now: () => Date;
   createSecret: () => string;
-  confirmCoreUpdate: (question: string) => Promise<boolean>;
   confirmReset: (question: string) => Promise<boolean>;
   imageReference: string | undefined;
   interactive: InteractiveCLI;
@@ -5233,7 +5213,6 @@ function defaultContext(context: CLIContext): RequiredRuntimeContext {
     nodeVersion: context.nodeVersion ?? process.versions.node,
     now: context.now ?? (() => new Date()),
     createSecret: context.createSecret ?? (() => randomBytes(32).toString("base64url")),
-    confirmCoreUpdate: context.confirmCoreUpdate ?? askForConfirmation,
     confirmReset: context.confirmReset ?? askForConfirmation,
     imageReference: context.imageReference ?? PACKAGE_IMAGE,
     interactive: context.interactive ?? createInteractiveCLI(),

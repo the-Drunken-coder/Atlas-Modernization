@@ -179,14 +179,9 @@ export type AtlasCoreOperator = {
   start(): Promise<void>;
   status(): Promise<boolean>;
   stop(): Promise<void>;
-  update(scope: UpdateScope, expectedVersion?: string, coreBackupConfirmed?: boolean): Promise<void>;
+  update(scope: UpdateScope, expectedVersion?: string): Promise<void>;
   /** Run an update while retaining subprocess output as typed interface progress. */
-  updateWithProgress(
-    scope: UpdateScope,
-    expectedVersion?: string,
-    coreBackupConfirmed?: boolean,
-    report?: UpdateReporter
-  ): Promise<void>;
+  updateWithProgress(scope: UpdateScope, expectedVersion?: string, report?: UpdateReporter): Promise<void>;
 };
 
 export type InteractiveCLI = {

@@ -125,6 +125,7 @@ class FakeRunner implements CommandRunner {
   latestVersion = PACKAGE_VERSION;
   latestImage = TEST_IMAGE;
   npmInstallOutput = "";
+  installedCoreUpdateOutput = "";
   runningCoreImage = TEST_IMAGE;
   wrongPluginContainerImage = false;
   installedVersion = PACKAGE_VERSION;
@@ -191,7 +192,9 @@ class FakeRunner implements CommandRunner {
       return result(0, `atlas-core ${this.installedVersion}\n`);
     }
     if (command === process.execPath && args.includes("__apply-core-update")) {
-      return this.failInstalledCoreUpdate ? result(1, "", "injected installed update failure") : result(0);
+      return this.failInstalledCoreUpdate
+        ? result(1, "", "injected installed update failure")
+        : result(0, this.installedCoreUpdateOutput);
     }
     if (command === "npm" && args[0] === "pack") {
       const destination = args[args.indexOf("--pack-destination") + 1];
@@ -673,7 +676,6 @@ function runtime(): TestRuntime {
       nodeVersion: "24.19.0",
       now: () => new Date("2026-08-28T12:00:00.000Z"),
       createSecret: () => `secret-${++secret}-abcdefghijklmnopqrstuvwxyz`,
-      confirmCoreUpdate: async () => false,
       confirmReset: async () => false,
       imageReference: TEST_IMAGE,
       fetch: async () => new Response("", { status: 200 })
@@ -3631,7 +3633,7 @@ describe("atlas-core CLI", () => {
       configureAdmin: async () => undefined,
       runMenu: async () => undefined,
       runUpdate: async (deployment) => {
-        await deployment.updateWithProgress("cli", NEXT_PACKAGE_VERSION, false, (event) => {
+        await deployment.updateWithProgress("cli", NEXT_PACKAGE_VERSION, (event) => {
           progress.push(event.message);
         });
       }
@@ -3642,6 +3644,27 @@ describe("atlas-core CLI", () => {
     expect(progress).toContain(`Installing Atlas Core CLI ${NEXT_PACKAGE_VERSION}...`);
     expect(progress).toContain("npm install completed");
     expect(test.stdout.join("")).not.toContain("npm install completed");
+  });
+
+  it("reports the installed Core handoff output through the update reporter", async () => {
+    const test = runtime();
+    markInitialized(test);
+    test.runner.latestVersion = NEXT_PACKAGE_VERSION;
+    test.runner.installedCoreUpdateOutput = "Core migration check completed\n";
+    const progress: string[] = [];
+    const interactive: InteractiveCLI = {
+      configureAdmin: async () => undefined,
+      runMenu: async () => undefined,
+      runUpdate: async (deployment) => {
+        await deployment.updateWithProgress("all", NEXT_PACKAGE_VERSION, (event) => {
+          progress.push(event.message);
+        });
+      }
+    };
+
+    expect(await runCLI(["update"], { ...test.context, interactive })).toBe(0);
+    expect(progress).toContain("Core migration check completed");
+    expect(test.stdout.join("")).not.toContain("Core migration check completed");
   });
 
   it("can update the CLI when deployment configuration is incomplete", async () => {
@@ -3661,16 +3684,15 @@ describe("atlas-core CLI", () => {
     expect(test.stderr.join("")).toContain("npm has an invalid Atlas Core version: next");
   });
 
-  it("cancels a Core update without a confirmed paired backup", async () => {
+  it("updates Core without a backup prerequisite", async () => {
     const test = runtime();
     markInitialized(test);
     test.runner.latestVersion = NEXT_PACKAGE_VERSION;
+    test.context.env = {};
 
     expect(await runCLI(["update", "all"], test.context)).toBe(0);
-    expect(test.stdout.join("")).toContain("paired PostgreSQL and MinIO backup");
-    expect(test.stdout.join("")).toContain("Atlas Core update cancelled");
-    expect(test.runner.installedVersion).toBe(PACKAGE_VERSION);
-    expect(test.runner.calls.some((call) => composeCommand(call)[0] === "down")).toBe(false);
+    expect(test.stdout.join("")).not.toContain("paired PostgreSQL and MinIO backup");
+    expect(test.runner.installedVersion).toBe(NEXT_PACKAGE_VERSION);
   });
 
   it.each([false, true])("rejects bundled Plugins before replacing the CLI (new CLI: %s)", async (updateCLI) => {
@@ -3680,7 +3702,6 @@ describe("atlas-core CLI", () => {
     const state = JSON.parse(readFileSync(statePath, "utf8"));
     writeFileSync(statePath, JSON.stringify({ ...state, packageVersion: "0.1.2", enabledPlugins: ["building_scan"] }));
     if (updateCLI) test.runner.latestVersion = NEXT_PACKAGE_VERSION;
-    test.context.confirmCoreUpdate = async () => true;
     const previousState = readFileSync(statePath, "utf8");
 
     expect(await runCLI(["update", "all"], test.context)).toBe(1);
@@ -3695,7 +3716,6 @@ describe("atlas-core CLI", () => {
     const test = runtime();
     markInitialized(test);
     test.runner.latestVersion = NEXT_PACKAGE_VERSION;
-    test.context.confirmCoreUpdate = async () => true;
 
     expect(await runCLI(["update", "all"], test.context)).toBe(0);
     expect(test.runner.installedVersion).toBe(NEXT_PACKAGE_VERSION);
@@ -3708,7 +3728,7 @@ describe("atlas-core CLI", () => {
           PACKAGE_VERSION,
           TEST_IMAGE
         ],
-        inherit: true
+        inherit: false
       })
     );
   });
@@ -3736,7 +3756,6 @@ describe("atlas-core CLI", () => {
       expect(await runCLI(["supervision", "install"], test.context), test.stderr.join("")).toBe(0);
       test.runner.calls.length = 0;
       test.runner.latestVersion = NEXT_PACKAGE_VERSION;
-      test.context.confirmCoreUpdate = async () => true;
 
       expect(await runCLI(["update", "all"], test.context), test.stderr.join("")).toBe(0);
     } finally {
@@ -3790,7 +3809,6 @@ describe("atlas-core CLI", () => {
     });
     try {
       test.runner.latestVersion = NEXT_PACKAGE_VERSION;
-      test.context.confirmCoreUpdate = async () => true;
       expect(await runCLI(["update", "all"], test.context)).toBe(1);
     } finally {
       supervisorRunner.mockRestore();
@@ -3805,7 +3823,6 @@ describe("atlas-core CLI", () => {
     markInitialized(test);
     test.runner.latestVersion = NEXT_PACKAGE_VERSION;
     test.runner.failInstalledCoreUpdate = true;
-    test.context.confirmCoreUpdate = async () => true;
 
     expect(await runCLI(["update", "all"], test.context)).toBe(1);
     expect(test.stderr.join("")).toContain("injected installed update failure");
@@ -3815,7 +3832,6 @@ describe("atlas-core CLI", () => {
     const test = runtime();
     await markManagedInitialized(test);
     setCoreVersion(test, "0.1.2");
-    test.context.confirmCoreUpdate = async () => true;
     const envPath = join(test.home, ".atlas", "core", ".env");
     const configuredEnvironment = readFileSync(envPath, "utf8");
     writeFileSync(envPath, configuredEnvironment, { mode: 0o600 });
@@ -3846,16 +3862,15 @@ describe("atlas-core CLI", () => {
     expect(readFileSync(envPath, "utf8")).toBe(configuredEnvironment);
   });
 
-  it("refuses an in-place Core update without a validated paired backup", async () => {
+  it("updates an in-place Core deployment without a backup prerequisite", async () => {
     const test = runtime();
     await markManagedInitialized(test);
     setCoreVersion(test, "0.1.2");
-    test.context.confirmCoreUpdate = async () => true;
     test.context.env = {};
 
-    expect(await runCLI(["update", "all"], test.context)).toBe(1);
-    expect(test.stderr.join("")).toContain("ATLAS_CORE_BACKUP_DIR");
-    expect(test.runner.calls.map(composeCommand)).not.toContainEqual(expect.arrayContaining(["down"]));
+    expect(await runCLI(["update", "all"], test.context)).toBe(0);
+    expect(test.stderr.join("")).not.toContain("ATLAS_CORE_BACKUP_DIR");
+    expect(test.runner.calls.map(composeCommand)).toContainEqual(["down", "--remove-orphans"]);
   });
 
   it("refuses a Core update when the installed package pins another image", async () => {
@@ -3863,7 +3878,6 @@ describe("atlas-core CLI", () => {
     markInitialized(test);
     setCoreVersion(test, "0.1.2");
     test.runner.latestImage = `ghcr.io/the-drunken-coder/atlas-core@sha256:${"b".repeat(64)}`;
-    test.context.confirmCoreUpdate = async () => true;
 
     expect(await runCLI(["update", "all"], test.context)).toBe(1);
     expect(test.stderr.join("")).toContain("pins");
@@ -3887,7 +3901,6 @@ describe("atlas-core CLI", () => {
     markInitialized(test);
     setCoreVersion(test, "0.1.2");
     test.runner.existingContainers.add(API_CONTAINER);
-    test.context.confirmCoreUpdate = async () => true;
     const config = join(test.home, ".atlas", "core");
     let checked = false;
     test.runner.onRun = (call) => {
@@ -3935,7 +3948,6 @@ describe("atlas-core CLI", () => {
     markInitialized(test);
     setCoreVersion(test, "0.1.2");
     test.runner.failComposeUp = true;
-    test.context.confirmCoreUpdate = async () => true;
 
     expect(await runCLI(["update", "all"], test.context)).toBe(1);
     expect(JSON.parse(readFileSync(join(test.home, ".atlas", "core", "state.json"), "utf8"))).toMatchObject({
@@ -3958,7 +3970,6 @@ describe("atlas-core CLI", () => {
     await markManagedInitialized(test);
     setCoreVersion(test, "0.1.2");
     test.runner.failComposeUp = true;
-    test.context.confirmCoreUpdate = async () => true;
 
     expect(await runCLI(["update", "all"], test.context)).toBe(1);
     test.runner.failComposeUp = false;
@@ -3990,7 +4001,6 @@ describe("atlas-core CLI", () => {
     setCoreVersion(test, "0.1.2");
     test.runner.runningCoreImage = previousImage;
     test.runner.failComposeUp = true;
-    test.context.confirmCoreUpdate = async () => true;
 
     expect(await runCLI(["update", "all"], test.context)).toBe(1);
     const upCalls = test.runner.calls.filter((call) => composeCommand(call)[0] === "up");
@@ -4008,7 +4018,6 @@ describe("atlas-core CLI", () => {
     markInitialized(test);
     setCoreVersion(test, "0.1.2");
     test.runner.serviceStates = [];
-    test.context.confirmCoreUpdate = async () => true;
 
     expect(await runCLI(["update", "all"], test.context)).toBe(0);
     const composeCalls = test.runner.calls.map(composeCommand).filter((args) => args.length > 0);
@@ -4968,7 +4977,6 @@ describe("atlas-core CLI", () => {
     expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(0);
     simulateInterruptedPluginDisable(test, plugin, true);
     setCoreVersion(test, "0.1.2");
-    test.context.confirmCoreUpdate = async () => true;
     test.runner.calls.length = 0;
 
     expect(await runCLI(["update", "all"], test.context)).toBe(1);
