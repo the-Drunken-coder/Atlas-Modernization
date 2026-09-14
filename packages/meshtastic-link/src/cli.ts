@@ -142,10 +142,10 @@ async function serve(argv: string[]): Promise<void> {
         })
       : await startLinkService({ ...common, mode, authentication });
 
-  console.log(
-    JSON.stringify({ listening: `http://${running.address.host}:${running.address.port}`, mode, node_id: nodeID })
-  );
   try {
+    console.log(
+      JSON.stringify({ listening: `http://${running.address.host}:${running.address.port}`, mode, node_id: nodeID })
+    );
     await waitForShutdown();
   } finally {
     await running.close();

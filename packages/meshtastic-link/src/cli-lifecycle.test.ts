@@ -120,4 +120,40 @@ describe("Meshtastic Link CLI lifecycle caller", () => {
       await rm(directory, { recursive: true, force: true });
     }
   });
+
+  it("closes the shared service when readiness reporting fails", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "atlas-link-cli-"));
+    const profilePath = join(directory, "profile.json");
+    const joinKeyPath = join(directory, "join.key");
+    await writeFile(profilePath, JSON.stringify(createUSShortFastProfile(20, "2.7.15")));
+    await writeFile(joinKeyPath, "k".repeat(32));
+    await chmod(joinKeyPath, 0o600);
+    const close = vi.fn(async () => undefined);
+    mocks.startLinkService.mockResolvedValue({ address: { host: "127.0.0.1", port: 7331 }, close });
+    const log = vi.spyOn(console, "log").mockImplementation(() => {
+      throw new Error("readiness output failed");
+    });
+
+    try {
+      await expect(
+        main([
+          "serve",
+          "--mode",
+          "asset",
+          "--node-id",
+          "asset-alpha",
+          "--serial",
+          "/dev/cu.test",
+          "--profile",
+          profilePath,
+          "--join-key-file",
+          joinKeyPath
+        ])
+      ).rejects.toThrow("readiness output failed");
+      expect(close).toHaveBeenCalledOnce();
+    } finally {
+      log.mockRestore();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
 });
