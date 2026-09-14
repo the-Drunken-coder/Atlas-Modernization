@@ -3410,6 +3410,20 @@ describe("atlas-core CLI", () => {
     expect(test.stdout.join("")).toContain("Atlas Core is running");
   });
 
+  it("includes shared health and resource details in direct status output", async () => {
+    const test = runtime();
+    markInitialized(test);
+
+    expect(await runCLI(["status"], test.context)).toBe(0);
+    const output = test.stdout.join("");
+    expect(output).toContain("Core API: running/healthy");
+    expect(output).toContain("CPU 1.00%");
+    expect(output).toContain("memory 128MiB / 1GiB");
+    expect(output).toContain("network 1MB / 2MB");
+    expect(output).toContain("block 3MB / 4MB");
+    expect(output).toContain("processes 12");
+  });
+
   it("updates only the global CLI when requested", async () => {
     const test = runtime();
     markInitialized(test);

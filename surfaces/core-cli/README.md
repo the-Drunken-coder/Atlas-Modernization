@@ -14,26 +14,27 @@ npm install --global atlas-core
 atlas-core
 ```
 
-Running `atlas-core` without arguments opens an interactive action menu. It provides initialization, start and stop,
+Running `atlas-core` without arguments opens the existing interactive action menu. It provides initialization, start and stop,
 service health and performance, configuration, updates, logs, diagnostics, and the confirmed reset flow. The status
 view reports CPU, memory, network and block I/O, process count, uptime, restart count, health, and image details from
 Docker. It refreshes every five seconds without overlapping Docker reads. Up and down scroll the status body, left and
 right select a service, and `r` refreshes immediately. Arrow keys move through other menus, typing filters the main
 menu, Enter selects an action, and Escape or `q` goes back.
 The direct `atlas-core status` command exits 1 and writes `Atlas Core is stopped.` to stderr when an initialized deployment
-is stopped.
+is stopped. It uses the same service-health and Docker resource details as the status view for direct output.
 
 ### Preview the terminal UI
 
-From a repository checkout, run the visual preview with fixture data:
+From a repository checkout, run the development action-list and service-health preview with fixture data:
 
 ```bash
 python3 scripts/preview_atlas_core_tui.py
 ```
 
 Use `--state stopped`, `--state degraded`, or `--state not-initialized` to open another deployment state. The preview
-builds and runs the real terminal UI, but its operator is entirely in memory. It never contacts Docker, reads Atlas Core
-configuration, uses credentials, accesses the network, or changes containers and durable storage. Pass `--no-build` to
+builds and runs the development entrypoint for the action-list slice, but its operator is entirely in memory. The shipped
+`atlas-core` command continues to use the existing menu until the remaining TUI slices are complete. The preview never
+contacts Docker, reads Atlas Core configuration, uses credentials, accesses the network, or changes containers and durable storage. Pass `--no-build` to
 reuse the current `surfaces/core-cli/dist` output while iterating on visual changes.
 
 Initialization generates strong local credentials and provisions the MinIO bucket only when it can prove the deployment

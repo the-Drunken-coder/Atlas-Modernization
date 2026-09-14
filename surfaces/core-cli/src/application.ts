@@ -2133,18 +2133,22 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   }
 
   async status(): Promise<boolean> {
-    const snapshot = await this.snapshot();
+    const details = await this.details();
+    const snapshot = details.snapshot;
     if (snapshot.status === "not-initialized")
       throw new Error("Atlas Core is not initialized. Run atlas-core init first.");
     if (snapshot.status === "stopped") {
       this.#stderr.write("Atlas Core is stopped.\n");
+      printDeploymentDetails(this.#stderr, details);
       return false;
     }
     if (snapshot.status === "degraded") {
       this.#stderr.write(`Atlas Core is not ready: ${snapshot.detail}.\n`);
+      printDeploymentDetails(this.#stderr, details);
       return false;
     }
     this.#stdout.write("Atlas Core is running.\n");
+    printDeploymentDetails(this.#stdout, details);
     return true;
   }
 
@@ -4714,6 +4718,24 @@ function printPluginStatuses(output: { write(data: string): void }, statuses: re
         : `, ${status.installed ? `installed ${status.selectedVersion ?? "unknown"}` : "not installed"}${status.previousVersion ? `, previous ${status.previousVersion}` : ""}${status.availableVersions?.length ? `, available ${status.availableVersions.join(" ")}` : ""}${status.revoked ? `, REVOKED${status.revocationReason ? `: ${status.revocationReason}` : ""}` : ""}${status.error ? `, ${status.error}` : ""}`;
     output.write(`${status.pluginId}\t${status.displayName}\t${deployment}${runtime}${availability}\n`);
   }
+}
+
+function printDeploymentDetails(output: { write(data: string): void }, details: DeploymentDetails): void {
+  for (const service of details.services) {
+    const resources = [
+      service.cpuPercent ? `CPU ${service.cpuPercent}` : undefined,
+      service.memoryUsage ? `memory ${service.memoryUsage}` : undefined,
+      service.networkIO ? `network ${service.networkIO}` : undefined,
+      service.blockIO ? `block ${service.blockIO}` : undefined,
+      service.processes ? `processes ${service.processes}` : undefined,
+      service.uptime ? `uptime ${service.uptime}` : undefined,
+      service.restarts === undefined ? undefined : `restarts ${service.restarts}`,
+      service.image ? `image ${service.image}` : undefined
+    ].filter((value): value is string => value !== undefined);
+    const suffix = resources.length > 0 ? `; ${resources.join("; ")}` : "";
+    output.write(`${service.label}: ${service.state}/${service.health}${suffix}\n`);
+  }
+  if (details.performanceError) output.write(`Performance statistics unavailable: ${details.performanceError}\n`);
 }
 
 function defaultContext(context: CLIContext): RequiredRuntimeContext {

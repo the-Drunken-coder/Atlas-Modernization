@@ -7,6 +7,7 @@ import type {
   DeploymentDetails,
   DeploymentService,
   DeploymentSnapshot,
+  DevelopmentInteractiveCLI,
   InteractiveCLI,
   PluginActivity,
   PluginActivityReporter,
@@ -37,6 +38,7 @@ type Action = {
 type Screen =
   | { kind: "busy"; label: string }
   | { kind: "configure" }
+  | { kind: "development-message"; message: string }
   | { kind: "logs" }
   | { kind: "menu"; snapshot: DeploymentSnapshot }
   | { kind: "password" }
@@ -47,7 +49,7 @@ type Screen =
   | { kind: "update-error"; message: string }
   | { kind: "update-review"; info: UpdateInfo; scope: UpdateScope };
 
-type AppMode = "configure" | "menu" | "update";
+type AppMode = "configure" | "menu" | "update" | "development";
 
 type OperationResult<T> = {
   cancelled: boolean;
@@ -94,6 +96,22 @@ export function createInteractiveCLI(
     },
     runUpdate: async (operator) => {
       await runInkApp(operator, "update", input, output);
+    }
+  };
+}
+
+/**
+ * Run the action-list and service-health slice without changing the shipped
+ * filter-based menu. The preview and development checks use this entrypoint
+ * until the later slices replace the default TUI.
+ */
+export function createDevelopmentInteractiveCLI(
+  input: NodeJS.ReadStream = process.stdin,
+  output: NodeJS.WriteStream = process.stdout
+): DevelopmentInteractiveCLI {
+  return {
+    runMenu: async (operator) => {
+      await runInkApp(operator, "development", input, output);
     }
   };
 }
@@ -516,7 +534,22 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
     return <BusyScreen label={screen.label} onCancel={() => operator.cancelPending()} />;
   }
   if (screen.kind === "menu") {
+    if (mode === "development") {
+      return (
+        <DevelopmentMenu
+          onSelect={(action) => {
+            if (action === "status") void loadStatus();
+            else setScreen({ kind: "development-message", message: "This action is planned for a later TUI slice." });
+          }}
+          onExit={exit}
+          snapshot={screen.snapshot}
+        />
+      );
+    }
     return <MainMenu onSelect={(action) => void runMainAction(action)} snapshot={screen.snapshot} />;
+  }
+  if (screen.kind === "development-message") {
+    return <MessageScreen message={screen.message} onBack={() => void loadMenu()} title="Development TUI" />;
   }
   if (screen.kind === "configure") {
     return <ConfigureMenu onAdmin={() => setScreen({ kind: "password" })} onBack={() => void loadMenu()} />;
@@ -731,6 +764,156 @@ function MainMenu({ onSelect, snapshot }: { onSelect(action: Action): void; snap
       </Box>
       {compact ? null : <Text>{snapshot.detail}</Text>}
       <Text dimColor>{"↑/↓ move   Enter select   Backspace edit   Esc or q quit"}</Text>
+    </Box>
+  );
+}
+
+type DevelopmentAction = "status" | "placeholder";
+
+type DevelopmentChoice = {
+  action: DevelopmentAction;
+  label: string;
+};
+
+/**
+ * The incremental action-list home mirrors the approved static reference but
+ * leaves later slices visibly unavailable instead of routing around the
+ * development surface into the legacy menu.
+ */
+function DevelopmentMenu({
+  onExit,
+  onSelect,
+  snapshot
+}: {
+  onExit(): void;
+  onSelect(action: DevelopmentAction): void;
+  snapshot: DeploymentSnapshot;
+}): ReactNode {
+  const { columns, rows } = useWindowSize();
+  const selectedRef = useRef(0);
+  const actionPending = useRef(false);
+  const [selected, setSelected] = useState(0);
+  const choices = useMemo(() => developmentChoices(snapshot), [snapshot]);
+  const index = Math.min(selected, Math.max(0, choices.length - 1));
+  const summary = developmentSummary(snapshot);
+  const requiredRows = developmentMenuRows(summary, choices, columns);
+  const canInteract = columns >= MINIMUM_TERMINAL_COLUMNS && rows >= requiredRows;
+
+  useInput((input, key) => {
+    if (actionPending.current) return;
+    if (key.escape || (key.ctrl && input === "c") || input === "q") {
+      actionPending.current = true;
+      onExit();
+      return;
+    }
+    if (!canInteract || hasCommandModifier(key)) return;
+    if (key.upArrow || key.downArrow) {
+      const next = (selectedRef.current + (key.downArrow ? 1 : -1) + choices.length) % Math.max(1, choices.length);
+      selectedRef.current = next;
+      setSelected(next);
+      return;
+    }
+    if (key.return) {
+      const choice = choices[selectedRef.current];
+      if (!choice) return;
+      actionPending.current = true;
+      onSelect(choice.action);
+    }
+  });
+
+  if (columns < MINIMUM_TERMINAL_COLUMNS) return <NarrowDevelopmentTerminal />;
+  if (rows < requiredRows) return <ShortDevelopmentMenu requiredRows={requiredRows} />;
+
+  return (
+    <Box flexDirection="column" width={columns}>
+      <Header right={stateName(snapshot.status)} title="ATLAS CORE" />
+      <Box flexDirection="column">
+        {summary.map(([label, value]) => (
+          <Box key={label}>
+            <Box width={Math.min(18, columns > 40 ? 18 : 12)}>
+              <Text dimColor>{pad(label, Math.min(18, columns > 40 ? 18 : 12))}</Text>
+            </Box>
+            <Text wrap="wrap">{value}</Text>
+          </Box>
+        ))}
+      </Box>
+      <Rule width={columns} />
+      <Text bold>CHOOSE AN ACTION</Text>
+      {choices.map((choice, choiceIndex) => (
+        <Text inverse={choiceIndex === index} key={choice.label}>
+          {pad(`${choiceIndex === index ? "›" : " "}  ${choice.label}`, columns)}
+        </Text>
+      ))}
+      <Rule width={columns} />
+      <Text dimColor>{"↑/↓ move   Enter select   Esc exit"}</Text>
+    </Box>
+  );
+}
+
+function developmentChoices(snapshot: DeploymentSnapshot): DevelopmentChoice[] {
+  const lifecycle =
+    snapshot.status === "not-initialized"
+      ? "Initialize Atlas Core"
+      : snapshot.status === "ready"
+        ? "Stop Atlas Core"
+        : "Start Atlas Core";
+  const choices: DevelopmentChoice[] = [
+    { action: "status", label: "View service health" },
+    { action: "placeholder", label: "View logs and diagnostics" },
+    { action: "placeholder", label: lifecycle }
+  ];
+  if (snapshot.status !== "stopped" && snapshot.status !== "not-initialized") {
+    choices.push({ action: "placeholder", label: "Restart Atlas Core" });
+  }
+  choices.push(
+    { action: "placeholder", label: "Manage Plugins" },
+    { action: "placeholder", label: "Update Atlas Core" }
+  );
+  return choices;
+}
+
+function developmentSummary(snapshot: DeploymentSnapshot): KeyValue[] {
+  const status =
+    snapshot.status === "ready"
+      ? "Running"
+      : snapshot.status === "stopped"
+        ? "Stopped"
+        : snapshot.status === "degraded"
+          ? "Degraded"
+          : "Not initialized";
+  return [
+    ["Deployment", "local-engine"],
+    ["Core", snapshot.status === "not-initialized" ? "Not initialized" : `v${PACKAGE_VERSION}`],
+    ["Status", status],
+    ["Detail", snapshot.detail]
+  ];
+}
+
+function developmentMenuRows(summary: KeyValue[], choices: DevelopmentChoice[], width: number): number {
+  const labelWidth = Math.min(18, width > 40 ? 18 : 12);
+  const summaryRows = summary.reduce(
+    (rows, [, value]) => rows + wrappedRows(value, Math.max(1, width - labelWidth)),
+    0
+  );
+  return 1 + summaryRows + 1 + 1 + Math.max(1, choices.length) + 1 + 1;
+}
+
+function NarrowDevelopmentTerminal(): ReactNode {
+  return (
+    <Box flexDirection="column">
+      <Header title="ATLAS CORE" />
+      <Text>Resize terminal to at least 40 columns.</Text>
+      <Text dimColor>State is preserved while the development UI is unavailable.</Text>
+    </Box>
+  );
+}
+
+function ShortDevelopmentMenu({ requiredRows }: { requiredRows: number }): ReactNode {
+  return (
+    <Box flexDirection="column">
+      <Header title="ATLAS CORE" />
+      <Text>Action list needs at least {requiredRows} rows.</Text>
+      <Text dimColor>Resize the terminal or press Esc to exit.</Text>
     </Box>
   );
 }

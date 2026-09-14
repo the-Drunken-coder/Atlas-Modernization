@@ -8,7 +8,7 @@ import type {
   PluginDeploymentStatus,
   PluginOperationOutcome
 } from "../src/operator.js";
-import { createInteractiveCLI } from "../src/terminal-ui.js";
+import { createDevelopmentInteractiveCLI, createInteractiveCLI } from "../src/terminal-ui.js";
 
 class TestTerminal {
   readonly input = new PassThrough() as PassThrough & NodeJS.ReadStream;
@@ -167,6 +167,78 @@ function operator(snapshot: DeploymentSnapshot = { status: "ready", detail: "Eve
 }
 
 describe("Atlas Core terminal UI", () => {
+  it("shows the development action list without changing the shipped menu", async () => {
+    const terminal = new TestTerminal();
+    const deployment = operator({ status: "ready", detail: "Core API and storage are healthy." });
+    const menu = createDevelopmentInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("CHOOSE AN ACTION");
+    expect(terminal.text).toContain("View service health");
+    expect(terminal.text).toContain("View logs and diagnostics");
+    expect(terminal.text).toContain("Stop Atlas Core");
+    expect(terminal.text).toContain("Restart Atlas Core");
+    expect(terminal.text).toContain("Manage Plugins");
+    expect(terminal.text).toContain("Update Atlas Core");
+    expect(terminal.text).toContain("Esc exit");
+    expect(terminal.text).not.toContain("Filter:");
+    terminal.write("q");
+    await menu;
+
+    expect(deployment.snapshot).toHaveBeenCalledOnce();
+    expect(deployment.details).not.toHaveBeenCalled();
+    expect(terminal.setRawMode).toHaveBeenLastCalledWith(false);
+  });
+
+  it.each([
+    ["ready", "Running"],
+    ["stopped", "Stopped"],
+    ["degraded", "Degraded"],
+    ["not-initialized", "Not initialized"]
+  ] as const)("renders the %s fixture state in the development home", async (status, label) => {
+    const terminal = new TestTerminal(80, true, 24);
+    const menu = createDevelopmentInteractiveCLI(terminal.input, terminal.output).runMenu(
+      operator({ status, detail: `${label} fixture state.` })
+    );
+
+    await terminal.waitFor(label);
+    expect(terminal.text).toContain("Deployment");
+    terminal.write("q");
+    await menu;
+  });
+
+  it("fits the development action list at the supported 40 by 24 size", async () => {
+    const terminal = new TestTerminal(40, true, 24);
+    const menu = createDevelopmentInteractiveCLI(terminal.input, terminal.output).runMenu(operator());
+
+    await terminal.waitFor("CHOOSE AN ACTION");
+    expect(terminal.text).not.toContain("Action list needs at least");
+    const before = terminal.raw.length;
+    terminal.write("\u001b[B");
+    await terminal.waitForRawChange(before);
+    terminal.write("q");
+    await menu;
+  });
+
+  it("opens health from the development action list and preserves it across resize", async () => {
+    const terminal = new TestTerminal(80, true, 24);
+    const deployment = operator();
+    const menu = createDevelopmentInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("View service health");
+    terminal.write("\r");
+    await terminal.waitFor("Network I/O");
+    expect(deployment.details).toHaveBeenCalledOnce();
+    terminal.write("\u001b[C");
+    await terminal.waitFor("256MiB / 1GiB");
+    terminal.resize(40, 24);
+    await terminal.waitFor("ATLAS CORE > STATUS");
+    expect(terminal.text).toContain("PostgreSQL");
+    terminal.write("\r");
+    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
+    terminal.write("q");
+    await menu;
+  });
+
   it("shows the selected split console and exits without changing anything", async () => {
     const terminal = new TestTerminal();
     const deployment = operator();

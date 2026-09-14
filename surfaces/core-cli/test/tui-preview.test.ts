@@ -29,6 +29,7 @@ describe("Atlas Core TUI preview operator", () => {
       })
     );
     await expect(operator.snapshot()).resolves.toMatchObject({ status: expectedStatus });
+    await expect(operator.details()).resolves.toMatchObject({ snapshot: { status: expectedStatus } });
     await expect(operator.pluginStatuses()).resolves.toEqual([
       {
         pluginId: "demo_plugin",

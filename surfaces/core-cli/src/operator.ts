@@ -110,3 +110,10 @@ export type InteractiveCLI = {
   runMenu(operator: AtlasCoreOperator): Promise<void>;
   runUpdate(operator: AtlasCoreOperator): Promise<void>;
 };
+
+/**
+ * Development-only terminal entrypoint for incrementally replacing the
+ * legacy menu. It deliberately exposes only the slice that is implemented by
+ * the development surface; the shipped CLI keeps using InteractiveCLI.
+ */
+export type DevelopmentInteractiveCLI = Pick<InteractiveCLI, "runMenu">;
