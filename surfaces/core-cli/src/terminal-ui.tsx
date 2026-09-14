@@ -8,7 +8,6 @@ import type {
   DeploymentDetails,
   DeploymentService,
   DeploymentSnapshot,
-  DevelopmentInteractiveCLI,
   DiagnosticsResult,
   InteractiveCLI,
   LifecycleOperation,
@@ -27,39 +26,20 @@ import type {
 import { lifecycleOperationLabel, lifecycleOperationSummary } from "./operator.js";
 import { PACKAGE_VERSION } from "./package-metadata.js";
 
-type Action = {
-  id:
-    | "configure"
-    | "doctor"
-    | "init"
-    | "logs"
-    | "plugins"
-    | "quit"
-    | "reset"
-    | "restart"
-    | "start"
-    | "status"
-    | "stop"
-    | "update";
-  label: string;
-  detail: string;
-};
-
 type Screen =
   | { kind: "busy"; label: string }
-  | { kind: "configure" }
-  | { kind: "development-message"; message: string }
+  | { kind: "message"; message: string }
   | { kind: "logs" }
   | {
       kind: "log-viewer";
-      returnTo: "development" | "menu" | "plugins" | "status";
+      returnTo: "menu" | "plugins" | "status";
       service: string | undefined;
       services: readonly LogServiceOption[];
       stream: LogStream;
       title: string;
     }
-  | { kind: "diagnostics"; view: DiagnosticsResult | Error; returnTo: "development" | "status" }
-  | { kind: "menu"; notice?: DevelopmentNotice; snapshot: DeploymentSnapshot }
+  | { kind: "diagnostics"; view: DiagnosticsResult | Error; returnTo: "menu" | "status" }
+  | { kind: "menu"; notice?: Notice; snapshot: DeploymentSnapshot }
   | { kind: "operation"; view: LifecycleOperationView }
   | { kind: "password" }
   | { kind: "plugin-activity"; view: PluginActivityView }
@@ -71,7 +51,7 @@ type Screen =
   | { kind: "update-operation"; view: UpdateOperationView }
   | { kind: "update-review"; info: UpdateInfo; scope: UpdateScope };
 
-type AppMode = "configure" | "menu" | "update" | "development";
+type AppMode = "configure" | "menu" | "update";
 
 type OperationResult<T> = {
   cancelled: boolean;
@@ -81,7 +61,7 @@ type OperationResult<T> = {
 
 type LifecycleOperationEvent = LifecycleOperationProgress & { elapsedMs: number };
 
-type DevelopmentNotice = {
+type Notice = {
   message: string;
   tone: "green" | "yellow";
 };
@@ -132,7 +112,6 @@ type AtlasCoreAppProps = {
   input: NodeJS.ReadStream;
   mode: AppMode;
   operator: AtlasCoreOperator;
-  output: NodeJS.WriteStream;
 };
 
 const MINIMUM_TERMINAL_COLUMNS = 40;
@@ -155,22 +134,6 @@ export function createInteractiveCLI(
   };
 }
 
-/**
- * Run the action-list and service-health slice without changing the shipped
- * filter-based menu. The preview and development checks use this entrypoint
- * until the later slices replace the default TUI.
- */
-export function createDevelopmentInteractiveCLI(
-  input: NodeJS.ReadStream = process.stdin,
-  output: NodeJS.WriteStream = process.stdout
-): DevelopmentInteractiveCLI {
-  return {
-    runMenu: async (operator) => {
-      await runInkApp(operator, "development", input, output);
-    }
-  };
-}
-
 async function runInkApp(
   operator: AtlasCoreOperator,
   mode: AppMode,
@@ -178,7 +141,7 @@ async function runInkApp(
   output: NodeJS.WriteStream
 ): Promise<void> {
   assertInteractive(input, output);
-  const instance = render(<AtlasCoreApp input={input} mode={mode} operator={operator} output={output} />, {
+  const instance = render(<AtlasCoreApp input={input} mode={mode} operator={operator} />, {
     alternateScreen: true,
     exitOnCtrlC: false,
     incrementalRendering: true,
@@ -196,8 +159,8 @@ async function runInkApp(
   }
 }
 
-function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): ReactNode {
-  const { exit, suspendTerminal, waitUntilRenderFlush } = useApp();
+function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
+  const { exit, waitUntilRenderFlush } = useApp();
   const activePluginOperation = useRef<number | undefined>(undefined);
   const activeLifecycleOperation = useRef<number | undefined>(undefined);
   const activeUpdateOperation = useRef<number | undefined>(undefined);
@@ -219,7 +182,7 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
   });
 
   const loadMenu = useCallback(
-    async (notice?: DevelopmentNotice) => {
+    async (notice?: Notice) => {
       setScreen({ kind: "busy", label: "Checking deployment..." });
       setScreen({ kind: "menu", snapshot: await readSnapshot(operator), ...(notice ? { notice } : {}) });
     },
@@ -284,29 +247,12 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
   const loadPlugins = useCallback(async () => {
     setScreen({ kind: "busy", label: "Loading Plugins..." });
     try {
-      let refreshFailure: Error | undefined;
-      if (mode !== "development") {
-        // The shipped menu refreshes the signed catalog before showing the
-        // menu. The new action-list keeps catalog refresh direct-command-only.
-        try {
-          await operator.pluginRefresh?.();
-        } catch (error) {
-          // A verified local catalog is sufficient for an inspection view.
-          refreshFailure = new Error(errorMessage(error));
-        }
-      }
       const statuses = await operator.pluginStatuses();
-      if (refreshFailure && statuses.length === 0) throw refreshFailure;
-      setScreen({
-        kind: "plugins",
-        view: refreshFailure
-          ? statuses.map((status) => ({ ...status, error: status.error ?? refreshFailure.message }))
-          : statuses
-      });
+      setScreen({ kind: "plugins", view: statuses });
     } catch (error) {
       setScreen({ kind: "plugins", view: new Error(errorMessage(error)) });
     }
-  }, [mode, operator]);
+  }, [operator]);
 
   useEffect(() => {
     if (mode === "configure") setScreen({ kind: "password" });
@@ -381,25 +327,7 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
     };
   }, [exit, input, operator]);
 
-  const runVisibleOperation = useCallback(
-    async (label: string, operation: () => Promise<void>): Promise<OperationResult<void>> => {
-      setScreen({ kind: "busy", label: `${label}...` });
-      await waitUntilRenderFlush();
-      let result: OperationResult<void> = { cancelled: false };
-      await suspendTerminal(async () => {
-        result = await runCancelableOperation(operator, operation);
-        if (terminalLost.current || (result.cancelled && !result.failure)) return;
-        if (result.failure) output.write(`\n${result.failure.message}\n`);
-        output.write("\nPress Enter to return to Atlas Core.");
-        await waitForReturn(input);
-      });
-      if (result.cancelled && !terminalLost.current) operator.resumeAfterCancellation();
-      return result;
-    },
-    [input, operator, output, suspendTerminal, waitUntilRenderFlush]
-  );
-
-  const runDevelopmentLifecycle = useCallback(
+  const runLifecycleOperation = useCallback(
     async (operation: LifecycleOperation, options: LifecycleRunOptions = {}): Promise<void> => {
       const operationId = lifecycleOperationGeneration.current + 1;
       lifecycleOperationGeneration.current = operationId;
@@ -488,7 +416,7 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
     [exit, loadMenu, mode, operator, waitUntilRenderFlush]
   );
 
-  const cancelDevelopmentLifecycle = useCallback(
+  const cancelLifecycleOperation = useCallback(
     (disposition: "return" | "exit") => {
       if (activeLifecycleOperation.current === undefined) return;
       lifecycleCancellation.current ??= disposition;
@@ -496,68 +424,6 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
       setScreen((current) => lifecycleCancellationScreen(current, "Cancellation requested. Waiting for safe cleanup."));
     },
     [operator]
-  );
-
-  const runMainAction = useCallback(
-    async (action: Action): Promise<void> => {
-      if (action.id === "quit") {
-        exit();
-        return;
-      }
-      if (action.id === "configure") {
-        setScreen({ kind: "configure" });
-        return;
-      }
-      if (action.id === "logs") {
-        setScreen({ kind: "logs" });
-        return;
-      }
-      if (action.id === "plugins") {
-        await loadPlugins();
-        return;
-      }
-      if (action.id === "status") {
-        await loadStatus();
-        return;
-      }
-      if (action.id === "update") {
-        await loadUpdate();
-        return;
-      }
-
-      await runVisibleOperation(action.label, async () => {
-        switch (action.id) {
-          case "doctor":
-            await operator.doctor();
-            return;
-          case "init":
-            await operator.init();
-            return;
-          case "plugins":
-            return;
-          case "reset":
-            await operator.reset();
-            return;
-          case "restart":
-            await operator.restart();
-            return;
-          case "start":
-            await operator.start();
-            return;
-          case "stop":
-            await operator.stop();
-            return;
-          case "configure":
-          case "logs":
-          case "quit":
-          case "status":
-          case "update":
-            return;
-        }
-      });
-      await loadMenu();
-    },
-    [exit, loadMenu, loadPlugins, loadStatus, loadUpdate, operator, runVisibleOperation]
   );
 
   const runPluginActivity = useCallback(
@@ -611,9 +477,6 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
       if (activePluginOperation.current === operationId) activePluginOperation.current = undefined;
       const cancellationRequested = pluginCancellationRequested.current || result.cancelled;
       if (cancellationRequested) operator.resumeAfterCancellation();
-      if (mode === "development" && result.cancelled && pluginCancellation.current === undefined) {
-        pluginCancellation.current = "exit";
-      }
       if (terminalLost.current) {
         exit(terminalLossError.current);
         return;
@@ -646,7 +509,7 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
         };
       });
     },
-    [exit, loadPlugins, mode, operator, waitUntilRenderFlush]
+    [exit, loadPlugins, operator, waitUntilRenderFlush]
   );
 
   const togglePlugin = useCallback(
@@ -666,7 +529,7 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
       const operationId = activePluginOperation.current;
       if (operationId === undefined || pluginCancellationRequested.current) return;
       pluginCancellationRequested.current = true;
-      if (mode === "development") pluginCancellation.current = disposition;
+      pluginCancellation.current = disposition;
       operator.cancelPending();
       setScreen((current) =>
         current.kind === "plugin-activity" &&
@@ -691,23 +554,13 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
           : current
       );
     },
-    [mode, operator]
-  );
-
-  const showPluginLogs = useCallback(
-    async (plugin: PluginDeploymentStatus) => {
-      await runVisibleOperation("Loading Plugin logs", async () => {
-        await operator.pluginLogs(plugin.pluginId, false);
-      });
-      await loadPlugins();
-    },
-    [loadPlugins, operator, runVisibleOperation]
+    [operator]
   );
 
   const openPluginLogViewer = useCallback(
     async (plugin: PluginDeploymentStatus) => {
       if (!operator.openPluginLogStream) {
-        await showPluginLogs(plugin);
+        setScreen({ kind: "message", message: "Plugin log streaming is unavailable in this operator." });
         return;
       }
       setScreen({ kind: "busy", label: "Opening Plugin logs..." });
@@ -724,45 +577,24 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
           title: "ATLAS CORE > PLUGIN LOGS"
         });
       } catch (error) {
-        setScreen({ kind: "development-message", message: `Unable to open Plugin logs: ${errorMessage(error)}` });
+        setScreen({ kind: "message", message: `Unable to open Plugin logs: ${errorMessage(error)}` });
       }
     },
-    [operator, showPluginLogs, waitUntilRenderFlush]
+    [operator, waitUntilRenderFlush]
   );
 
   const installPlugin = useCallback(
     async (plugin: PluginDeploymentStatus) => {
       if (!operator.pluginInstall) return;
-      if (mode !== "development") {
-        await runVisibleOperation(`Installing ${plugin.displayName}`, async () => {
-          await operator.pluginInstall?.(plugin.pluginId);
-        });
-        await loadPlugins();
-        return;
-      }
       await runPluginActivity("Install", plugin, async (reportActivity) => {
         return await operator.pluginInstall!(plugin.pluginId, undefined, reportActivity);
       });
     },
-    [loadPlugins, mode, operator, runPluginActivity, runVisibleOperation]
-  );
-
-  const showLogs = useCallback(
-    async (service: "api" | "minio" | "postgres" | "source-gateway" | undefined, returnTo: "menu" | "status") => {
-      await runVisibleOperation("Loading logs", async () => {
-        await operator.logs(service, false);
-      });
-      if (returnTo === "status") await loadStatus();
-      else await loadMenu();
-    },
-    [loadMenu, loadStatus, operator, runVisibleOperation]
+    [operator, runPluginActivity]
   );
 
   const openLogViewer = useCallback(
-    async (
-      service: "api" | "minio" | "postgres" | "source-gateway" | undefined,
-      returnTo: "development" | "menu" | "status"
-    ) => {
+    async (service: "api" | "minio" | "postgres" | "source-gateway" | undefined, returnTo: "menu" | "status") => {
       setScreen({ kind: "busy", label: "Opening live logs..." });
       await waitUntilRenderFlush();
       try {
@@ -776,14 +608,14 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
           title: "ATLAS CORE > LIVE LOGS"
         });
       } catch (error) {
-        setScreen({ kind: "development-message", message: `Unable to open logs: ${errorMessage(error)}` });
+        setScreen({ kind: "message", message: `Unable to open logs: ${errorMessage(error)}` });
       }
     },
     [operator, waitUntilRenderFlush]
   );
 
   const runStructuredDiagnostics = useCallback(
-    async (returnTo: "development" | "status") => {
+    async (returnTo: "menu" | "status") => {
       setScreen({ kind: "busy", label: "Running diagnostics..." });
       await waitUntilRenderFlush();
       try {
@@ -797,9 +629,9 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
 
   const configureAdmin = useCallback(
     async (password: string) => {
-      await runDevelopmentLifecycle("configure", { password });
+      await runLifecycleOperation("configure", { password });
     },
-    [runDevelopmentLifecycle]
+    [runLifecycleOperation]
   );
 
   const applyUpdate = useCallback(
@@ -867,14 +699,15 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
       );
       if (requestedCancellation === "return" && !terminalLost.current && !result.failure) {
         updateCancellation.current = undefined;
-        await loadUpdate();
+        if (mode === "update") await loadUpdate();
+        else await loadMenu({ message: "Update cancelled.", tone: "yellow" });
         return;
       }
       if (updateCancellation.current === "exit" || terminalLost.current) {
         exit(result.failure ?? terminalLossError.current);
       }
     },
-    [exit, loadUpdate, operator, waitUntilRenderFlush]
+    [exit, loadMenu, loadUpdate, mode, operator, waitUntilRenderFlush]
   );
 
   const cancelUpdateOperation = useCallback(
@@ -892,32 +725,29 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
     return <BusyScreen label={screen.label} onCancel={() => operator.cancelPending()} />;
   }
   if (screen.kind === "menu") {
-    if (mode === "development") {
-      return (
-        <DevelopmentMenu
-          onSelect={(action) => {
-            if (action === "status") void loadStatus();
-            else if (action === "logs") setScreen({ kind: "logs" });
-            else if (action === "plugins") void loadPlugins();
-            else if (action === "init" || action === "start" || action === "stop" || action === "restart")
-              void runDevelopmentLifecycle(action);
-            else if (action === "configure") setScreen({ kind: "password" });
-            else if (action === "reset") setScreen({ kind: "reset-confirmation" });
-            else setScreen({ kind: "development-message", message: "This action is planned for a later TUI slice." });
-          }}
-          onExit={exit}
-          {...(screen.notice ? { notice: screen.notice } : {})}
-          snapshot={screen.snapshot}
-        />
-      );
-    }
-    return <MainMenu onSelect={(action) => void runMainAction(action)} snapshot={screen.snapshot} />;
+    return (
+      <ActionListMenu
+        onSelect={(action) => {
+          if (action === "status") void loadStatus();
+          else if (action === "logs") setScreen({ kind: "logs" });
+          else if (action === "plugins") void loadPlugins();
+          else if (action === "update") void loadUpdate();
+          else if (action === "init" || action === "start" || action === "stop" || action === "restart")
+            void runLifecycleOperation(action);
+          else if (action === "configure") setScreen({ kind: "password" });
+          else if (action === "reset") setScreen({ kind: "reset-confirmation" });
+        }}
+        onExit={exit}
+        {...(screen.notice ? { notice: screen.notice } : {})}
+        snapshot={screen.snapshot}
+      />
+    );
   }
   if (screen.kind === "operation") {
     return (
       <LifecycleOperationScreen
         onBack={() => (mode === "configure" ? setScreen({ kind: "password" }) : void loadMenu())}
-        onCancel={(disposition) => cancelDevelopmentLifecycle(disposition)}
+        onCancel={cancelLifecycleOperation}
         view={screen.view}
       />
     );
@@ -925,34 +755,33 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
   if (screen.kind === "update-operation") {
     return (
       <UpdateOperationScreen
-        onBack={() => exit(screen.view.error ? new Error(screen.view.error) : undefined)}
+        onBack={() => {
+          if (mode === "update") exit(screen.view.error ? new Error(screen.view.error) : undefined);
+          else void loadMenu();
+        }}
         onCancel={cancelUpdateOperation}
         view={screen.view}
       />
     );
   }
-  if (screen.kind === "development-message") {
-    return <MessageScreen message={screen.message} onBack={() => void loadMenu()} title="Development TUI" />;
+  if (screen.kind === "message") {
+    return <MessageScreen message={screen.message} onBack={() => void loadMenu()} title="Atlas Core" />;
   }
   if (screen.kind === "reset-confirmation") {
     return (
       <ResetConfirmationScreen
         onCancel={() => void loadMenu({ message: "Atlas Core reset cancelled.", tone: "yellow" })}
-        onConfirm={() => void runDevelopmentLifecycle("reset", { resetConfirmed: true })}
+        onConfirm={() => void runLifecycleOperation("reset", { resetConfirmed: true })}
         onExit={exit}
       />
     );
-  }
-  if (screen.kind === "configure") {
-    return <ConfigureMenu onAdmin={() => setScreen({ kind: "password" })} onBack={() => void loadMenu()} />;
   }
   if (screen.kind === "password") {
     return (
       <PasswordScreen
         onCancel={() => {
           if (mode === "configure") exit();
-          else if (mode === "development") void loadMenu();
-          else setScreen({ kind: "configure" });
+          else void loadMenu();
         }}
         onSubmit={(password) => void configureAdmin(password)}
       />
@@ -961,12 +790,9 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
   if (screen.kind === "logs") {
     return (
       <LogsMenu
-        includeDiagnostics={mode === "development"}
         onBack={() => void loadMenu()}
-        {...(mode === "development" ? { onDiagnostics: () => void runStructuredDiagnostics("development") } : {})}
-        onSelect={(service) =>
-          void (mode === "development" ? openLogViewer(service, "development") : showLogs(service, "menu"))
-        }
+        onDiagnostics={() => void runStructuredDiagnostics("menu")}
+        onSelect={(service) => void openLogViewer(service, "menu")}
       />
     );
   }
@@ -976,6 +802,7 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
         onBack={async () => {
           await screen.stream.close();
           if (screen.returnTo === "plugins") await loadPlugins();
+          else if (screen.returnTo === "status") await loadStatus();
           else await loadMenu();
         }}
         onServiceChange={(service) => {
@@ -1010,8 +837,7 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
       <PluginsMenu
         onBack={() => void loadMenu()}
         onInstall={operator.pluginInstall ? (plugin) => void installPlugin(plugin) : undefined}
-        onLogs={(plugin) => void (mode === "development" ? openPluginLogViewer(plugin) : showPluginLogs(plugin))}
-        {...(mode === "development" ? {} : { onReload: () => void loadPlugins() })}
+        onLogs={(plugin) => void openPluginLogViewer(plugin)}
         onToggle={(plugin) => void togglePlugin(plugin)}
         view={screen.view}
       />
@@ -1019,12 +845,7 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
   }
   if (screen.kind === "plugin-activity") {
     return (
-      <PluginActivityScreen
-        developmentMode={mode === "development"}
-        onBack={() => void loadPlugins()}
-        onCancel={cancelPluginActivity}
-        view={screen.view}
-      />
+      <PluginActivityScreen onBack={() => void loadPlugins()} onCancel={cancelPluginActivity} view={screen.view} />
     );
   }
   if (screen.kind === "status") {
@@ -1033,7 +854,7 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
         onBack={() => void loadMenu()}
         onDeactivate={invalidateStatus}
         onDiagnostics={() => void runStructuredDiagnostics("status")}
-        onLogs={(service) => void showLogs(service, "status")}
+        onLogs={(service) => void openLogViewer(service, "status")}
         onReload={refreshStatus}
         view={screen.view}
       />
@@ -1064,183 +885,43 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
   return (
     <UpdateMenu
       info={screen.info}
-      onBack={() => {
-        if (mode === "update") exit();
-        else void loadMenu();
-      }}
+      onBack={() => (mode === "update" ? exit() : void loadMenu())}
       onReload={() => void loadUpdate()}
       onReview={(scope) => setScreen({ kind: "update-review", info: screen.info, scope })}
     />
   );
 }
 
-function MainMenu({ onSelect, snapshot }: { onSelect(action: Action): void; snapshot: DeploymentSnapshot }): ReactNode {
-  const { exit } = useApp();
-  const { columns, rows } = useWindowSize();
-  const actions = useMemo(() => menuActions(snapshot), [snapshot]);
-  const actionPending = useRef(false);
-  const filterRef = useRef("");
-  const selectedRef = useRef(0);
-  const [filter, setFilter] = useState("");
-  const [selected, setSelected] = useState(0);
-  const filtered = useMemo(() => filteredActions(actions, filter), [actions, filter]);
-  const index = Math.min(selected, Math.max(0, filtered.length - 1));
-  const width = columns;
-  const wide = width >= 72;
-  const actionWidth = Math.min(34, Math.max(24, Math.floor(width * 0.42)));
-  const action = filtered[index];
-  const compactRows = compactMainMenuRows(snapshot, filtered, filter, width);
-  const fullRows = fullMainMenuRows(snapshot, filtered, action, filter, width, actionWidth, wide);
-  const hasEnoughRows = rows >= compactRows;
-  const canInteract = columns >= MINIMUM_TERMINAL_COLUMNS && hasEnoughRows;
-  const compact = rows < fullRows;
+type ActionListAction = LifecycleOperation | "logs" | "plugins" | "status" | "update";
 
-  useInput((input, key) => {
-    if (actionPending.current) return;
-    const modified = hasCommandModifier(key);
-    if ((key.ctrl && input === "c") || key.escape || (!modified && input === "q" && filterRef.current === "")) {
-      exit();
-      return;
-    }
-    if (!canInteract || modified) return;
-    const currentFiltered = filteredActions(actions, filterRef.current);
-    if (key.upArrow) {
-      const next =
-        currentFiltered.length === 0 ? 0 : (selectedRef.current - 1 + currentFiltered.length) % currentFiltered.length;
-      selectedRef.current = next;
-      setSelected(next);
-      return;
-    }
-    if (key.downArrow) {
-      const next = currentFiltered.length === 0 ? 0 : (selectedRef.current + 1) % currentFiltered.length;
-      selectedRef.current = next;
-      setSelected(next);
-      return;
-    }
-    if (key.backspace || key.delete) {
-      filterRef.current = Array.from(filterRef.current).slice(0, -1).join("");
-      setFilter(filterRef.current);
-      selectedRef.current = 0;
-      setSelected(0);
-      return;
-    }
-    if (key.return) {
-      const action = currentFiltered[Math.min(selectedRef.current, Math.max(0, currentFiltered.length - 1))];
-      if (action) {
-        actionPending.current = true;
-        onSelect(action);
-      }
-      return;
-    }
-    if (isPrintableInput(input, key)) {
-      filterRef.current += input;
-      setFilter(filterRef.current);
-      selectedRef.current = 0;
-      setSelected(0);
-    }
-  });
-  usePaste(
-    (value) => {
-      if (actionPending.current) return;
-      const printable = printableText(value);
-      if (printable) {
-        filterRef.current += printable;
-        setFilter(filterRef.current);
-        selectedRef.current = 0;
-        setSelected(0);
-      }
-    },
-    { isActive: canInteract }
-  );
-
-  if (columns < MINIMUM_TERMINAL_COLUMNS) return <NarrowTerminal />;
-  if (!hasEnoughRows) return <ShortMainMenu requiredRows={compactRows} />;
-
-  return (
-    <Box flexDirection="column" width={width}>
-      <Header right={`v${PACKAGE_VERSION}  ${stateName(snapshot.status)}`} title="ATLAS CORE" />
-      <Text dimColor>Manage one durable deployment</Text>
-      <Rule width={width} />
-      {compact ? (
-        <Box flexDirection="column">
-          <Text bold>ACTIONS</Text>
-          <ActionRows actions={filtered} selected={index} width={width} />
-          <Text>{pad(action?.detail ?? "No actions match the filter.", width)}</Text>
-        </Box>
-      ) : wide ? (
-        <Box>
-          <Box flexDirection="column" width={actionWidth}>
-            <Text bold>ACTIONS</Text>
-            <ActionRows actions={filtered} selected={index} width={actionWidth} />
-          </Box>
-          <Box
-            borderBottom={false}
-            borderLeft
-            borderLeftDimColor
-            borderRight={false}
-            borderStyle="single"
-            borderTop={false}
-            flexDirection="column"
-            paddingLeft={1}
-            width={width - actionWidth}
-          >
-            <Text bold>DETAILS</Text>
-            <Text>{action?.label ?? "No actions match the filter."}</Text>
-            <Text> </Text>
-            <Text>{action?.detail ?? "Clear the filter to restore the action list."}</Text>
-          </Box>
-        </Box>
-      ) : (
-        <Box flexDirection="column">
-          <Text bold>ACTIONS</Text>
-          <ActionRows actions={filtered} selected={index} width={width} />
-          <Text> </Text>
-          <Text bold>DETAILS</Text>
-          <Text>{action?.detail ?? "No actions match the filter."}</Text>
-        </Box>
-      )}
-      <Rule width={width} />
-      <Box justifyContent="space-between">
-        <StateText status={snapshot.status} />
-        <Text dimColor>Filter: {filter || "type to filter"}</Text>
-      </Box>
-      {compact ? null : <Text>{snapshot.detail}</Text>}
-      <Text dimColor>{"↑/↓ move   Enter select   Backspace edit   Esc or q quit"}</Text>
-    </Box>
-  );
-}
-
-type DevelopmentAction = LifecycleOperation | "logs" | "plugins" | "status" | "placeholder";
-
-type DevelopmentChoice = {
-  action: DevelopmentAction;
+type ActionListChoice = {
+  action: ActionListAction;
   label: string;
 };
 
 /**
- * The incremental action-list home mirrors the approved static reference but
- * leaves later slices visibly unavailable instead of routing around the
- * development surface into the legacy menu.
+ * Render the single shipped action-list home. The list is intentionally
+ * unfiltered so every supported operation remains visible and discoverable.
  */
-function DevelopmentMenu({
+function ActionListMenu({
   notice,
   onExit,
   onSelect,
   snapshot
 }: {
-  notice?: DevelopmentNotice;
+  notice?: Notice;
   onExit(): void;
-  onSelect(action: DevelopmentAction): void;
+  onSelect(action: ActionListAction): void;
   snapshot: DeploymentSnapshot;
 }): ReactNode {
   const { columns, rows } = useWindowSize();
   const selectedRef = useRef(0);
   const actionPending = useRef(false);
   const [selected, setSelected] = useState(0);
-  const choices = useMemo(() => developmentChoices(snapshot), [snapshot]);
+  const choices = useMemo(() => actionListChoices(snapshot), [snapshot]);
   const index = Math.min(selected, Math.max(0, choices.length - 1));
-  const summary = developmentSummary(snapshot);
-  const requiredRows = developmentMenuRows(summary, choices, columns, notice);
+  const summary = actionListSummary(snapshot);
+  const requiredRows = actionListMenuRows(summary, choices, columns, notice);
   const canInteract = columns >= MINIMUM_TERMINAL_COLUMNS && rows >= requiredRows;
 
   useInput((input, key) => {
@@ -1265,8 +946,8 @@ function DevelopmentMenu({
     }
   });
 
-  if (columns < MINIMUM_TERMINAL_COLUMNS) return <NarrowDevelopmentTerminal />;
-  if (rows < requiredRows) return <ShortDevelopmentMenu requiredRows={requiredRows} />;
+  if (columns < MINIMUM_TERMINAL_COLUMNS) return <NarrowTerminal />;
+  if (rows < requiredRows) return <ShortActionList requiredRows={requiredRows} />;
 
   return (
     <Box flexDirection="column" width={columns}>
@@ -1295,8 +976,8 @@ function DevelopmentMenu({
   );
 }
 
-function developmentChoices(snapshot: DeploymentSnapshot): DevelopmentChoice[] {
-  const lifecycle: DevelopmentAction =
+function actionListChoices(snapshot: DeploymentSnapshot): ActionListChoice[] {
+  const lifecycle: ActionListAction =
     snapshot.status === "not-initialized" ? "init" : snapshot.status === "ready" ? "stop" : "start";
   const lifecycleLabel =
     snapshot.status === "not-initialized"
@@ -1304,7 +985,7 @@ function developmentChoices(snapshot: DeploymentSnapshot): DevelopmentChoice[] {
       : lifecycle === "stop"
         ? "Stop Atlas Core"
         : "Start Atlas Core";
-  const choices: DevelopmentChoice[] = [
+  const choices: ActionListChoice[] = [
     { action: "status", label: "View service health" },
     { action: "logs", label: "View logs and diagnostics" },
     { action: lifecycle, label: lifecycleLabel }
@@ -1312,7 +993,7 @@ function developmentChoices(snapshot: DeploymentSnapshot): DevelopmentChoice[] {
   if (snapshot.status !== "stopped" && snapshot.status !== "not-initialized") {
     choices.push({ action: "restart", label: "Restart Atlas Core" });
   }
-  choices.push({ action: "plugins", label: "Manage Plugins" }, { action: "placeholder", label: "Update Atlas Core" });
+  choices.push({ action: "plugins", label: "Manage Plugins" }, { action: "update", label: "Update Atlas Core" });
   if (snapshot.status !== "not-initialized") {
     choices.push({ action: "configure", label: "Change admin password" });
     choices.push({ action: "reset", label: "Reset Atlas Core" });
@@ -1320,7 +1001,7 @@ function developmentChoices(snapshot: DeploymentSnapshot): DevelopmentChoice[] {
   return choices;
 }
 
-function developmentSummary(snapshot: DeploymentSnapshot): KeyValue[] {
+function actionListSummary(snapshot: DeploymentSnapshot): KeyValue[] {
   const status =
     snapshot.status === "ready"
       ? "Running"
@@ -1337,12 +1018,7 @@ function developmentSummary(snapshot: DeploymentSnapshot): KeyValue[] {
   ];
 }
 
-function developmentMenuRows(
-  summary: KeyValue[],
-  choices: DevelopmentChoice[],
-  width: number,
-  notice?: DevelopmentNotice
-): number {
+function actionListMenuRows(summary: KeyValue[], choices: ActionListChoice[], width: number, notice?: Notice): number {
   const labelWidth = Math.min(18, width > 40 ? 18 : 12);
   const summaryRows = summary.reduce(
     (rows, [, value]) => rows + wrappedRows(value, Math.max(1, width - labelWidth)),
@@ -1352,17 +1028,11 @@ function developmentMenuRows(
   return 1 + summaryRows + noticeRows + 1 + 1 + Math.max(1, choices.length) + 1 + 1;
 }
 
-function NarrowDevelopmentTerminal(): ReactNode {
-  return (
-    <Box flexDirection="column">
-      <Header title="ATLAS CORE" />
-      <Text>Resize terminal to at least 40 columns.</Text>
-      <Text dimColor>State is preserved while the development UI is unavailable.</Text>
-    </Box>
-  );
-}
-
-function ShortDevelopmentMenu({ requiredRows }: { requiredRows: number }): ReactNode {
+function ShortActionList({ requiredRows }: { requiredRows: number }): ReactNode {
+  const { exit } = useApp();
+  useInput((input, key) => {
+    if (key.escape || (key.ctrl && input === "c") || input === "q") exit();
+  });
   return (
     <Box flexDirection="column">
       <Header title="ATLAS CORE" />
@@ -1443,67 +1113,6 @@ function ResetConfirmationScreen({
       <Text dimColor>Enter confirm Esc cancel Ctrl+C exit</Text>
     </Box>
   );
-}
-
-function ActionRows({ actions, selected, width }: { actions: Action[]; selected: number; width: number }): ReactNode {
-  if (actions.length === 0) return <Text dimColor>No matching actions</Text>;
-  return actions.map((action, index) => (
-    <Text inverse={index === selected} key={action.id}>
-      {pad(`${index === selected ? ">" : " "} ${action.label}`, width)}
-    </Text>
-  ));
-}
-
-function compactMainMenuRows(snapshot: DeploymentSnapshot, actions: Action[], filter: string, width: number): number {
-  return (
-    mainMenuHeaderRows(snapshot, width) +
-    actionRows(actions) +
-    1 +
-    1 +
-    wrappedRows(`${stateName(snapshot.status)} Filter: ${filter || "type to filter"}`, width) +
-    wrappedRows("↑/↓ move   Enter select   Backspace edit   Esc or q quit", width)
-  );
-}
-
-function fullMainMenuRows(
-  snapshot: DeploymentSnapshot,
-  actions: Action[],
-  action: Action | undefined,
-  filter: string,
-  width: number,
-  actionWidth: number,
-  wide: boolean
-): number {
-  const detail = action?.detail ?? "No actions match the filter.";
-  const bodyRows = wide
-    ? Math.max(
-        actionRows(actions),
-        1 +
-          wrappedRows(action?.label ?? "No actions match the filter.", Math.max(1, width - actionWidth - 2)) +
-          1 +
-          wrappedRows(detail, Math.max(1, width - actionWidth - 2))
-      )
-    : actionRows(actions) + 2 + wrappedRows(detail, width);
-  return (
-    mainMenuHeaderRows(snapshot, width) +
-    bodyRows +
-    1 +
-    wrappedRows(`${stateName(snapshot.status)} Filter: ${filter || "type to filter"}`, width) +
-    wrappedRows(snapshot.detail, width) +
-    wrappedRows("↑/↓ move   Enter select   Backspace edit   Esc or q quit", width)
-  );
-}
-
-function mainMenuHeaderRows(snapshot: DeploymentSnapshot, width: number): number {
-  return (
-    wrappedRows(`ATLAS CORE v${PACKAGE_VERSION} ${stateName(snapshot.status)}`, width) +
-    wrappedRows("Manage one durable deployment", width) +
-    1
-  );
-}
-
-function actionRows(actions: Action[]): number {
-  return 1 + Math.max(1, actions.length);
 }
 
 function StatusScreen({
@@ -1826,26 +1435,13 @@ function wrappedRows(value: string, width: number): number {
   return wrapAnsi(value, lineWidth, { hard: true, trim: false }).split("\n").length;
 }
 
-function ConfigureMenu({ onAdmin, onBack }: { onAdmin(): void; onBack(): void }): ReactNode {
-  return (
-    <SimpleMenu
-      choices={["Admin account", "Back"]}
-      onBack={onBack}
-      onSelect={(index) => (index === 0 ? onAdmin() : onBack())}
-      title="Configure"
-    />
-  );
-}
-
 function LogsMenu({
-  includeDiagnostics,
   onBack,
   onDiagnostics,
   onSelect
 }: {
-  includeDiagnostics?: boolean;
   onBack(): void;
-  onDiagnostics?: () => void;
+  onDiagnostics(): void;
   onSelect(service: DeploymentService["id"] | undefined): void;
 }): ReactNode {
   const choices: Array<{ label: string; service: DeploymentService["id"] | undefined }> = [
@@ -1855,11 +1451,7 @@ function LogsMenu({
     { label: "PostgreSQL", service: "postgres" },
     { label: "MinIO", service: "minio" }
   ];
-  const menuChoices = [
-    ...choices.map(({ label }) => label),
-    ...(includeDiagnostics ? ["Run diagnostics"] : []),
-    "Back"
-  ];
+  const menuChoices = [...choices.map(({ label }) => label), "Run diagnostics", "Back"];
   return (
     <SimpleMenu
       choices={menuChoices}
@@ -1867,10 +1459,10 @@ function LogsMenu({
       onSelect={(index) => {
         const choice = choices[index];
         if (choice) onSelect(choice.service);
-        else if (includeDiagnostics && index === choices.length) onDiagnostics?.();
+        else if (index === choices.length) onDiagnostics();
         else onBack();
       }}
-      title={includeDiagnostics ? "Logs and diagnostics" : "View logs"}
+      title="Logs and diagnostics"
     />
   );
 }
@@ -2046,12 +1638,10 @@ function DiagnosticsScreen({ onBack, view }: { onBack(): void; view: Diagnostics
 }
 
 function PluginActivityScreen({
-  developmentMode,
   onBack,
   onCancel,
   view
 }: {
-  developmentMode: boolean;
   onBack(): void;
   onCancel(disposition: "return" | "exit"): void;
   view: PluginActivityView;
@@ -2087,9 +1677,7 @@ function PluginActivityScreen({
     ? "Enter return to Plugins"
     : view.status === "cancelling"
       ? "Cancelling safely. Waiting for cleanup..."
-      : developmentMode
-        ? "Esc return after safe cleanup   Ctrl+C exit after safe cleanup"
-        : "Ctrl+C cancel safely";
+      : "Esc return after safe cleanup   Ctrl+C exit after safe cleanup";
   const headerRows = 1 + (wide ? 0 : wrappedRows(detail, columns));
   const viewportRows = rows - headerRows - wrappedRows(footer, columns) - 2;
 
@@ -2492,14 +2080,12 @@ function PluginsMenu({
   onBack,
   onInstall,
   onLogs,
-  onReload,
   onToggle,
   view
 }: {
   onBack(): void;
   onInstall: ((plugin: PluginDeploymentStatus) => void) | undefined;
   onLogs(plugin: PluginDeploymentStatus): void;
-  onReload?: () => void;
   onToggle(plugin: PluginDeploymentStatus): void;
   view: PluginDeploymentStatus[] | Error;
 }): ReactNode {
@@ -2518,10 +2104,7 @@ function PluginsMenu({
       actionPending.current = true;
       onBack();
     } else if (!canInteract || modified) return;
-    else if (input === "r" && onReload) {
-      actionPending.current = true;
-      onReload();
-    } else if (key.upArrow && plugins.length > 0) {
+    else if (key.upArrow && plugins.length > 0) {
       const next = (Math.min(selectedRef.current, plugins.length - 1) - 1 + plugins.length) % plugins.length;
       selectedRef.current = next;
       setSelected(next);
@@ -2583,9 +2166,7 @@ function PluginsMenu({
         </>
       )}
       <Rule width={columns} />
-      <Text dimColor>
-        {`↑/↓ move   Enter install/enable/disable   l logs${onReload ? "   r refresh" : ""}   Esc back`}
-      </Text>
+      <Text dimColor>{"↑/↓ move   Enter install/enable/disable   l logs   Esc back"}</Text>
     </Box>
   );
 }
@@ -2925,27 +2506,6 @@ function Rule({ width }: { width: number }): ReactNode {
   return <Text dimColor>{"─".repeat(Math.max(1, width))}</Text>;
 }
 
-function StateText({ status }: { status: DeploymentSnapshot["status"] }): ReactNode {
-  if (status === "ready")
-    return (
-      <Text bold color="green">
-        READY
-      </Text>
-    );
-  if (status === "degraded")
-    return (
-      <Text bold color="yellow">
-        DEGRADED
-      </Text>
-    );
-  if (status === "stopped") return <Text bold>STOPPED</Text>;
-  return (
-    <Text bold color="yellow">
-      NOT INITIALIZED
-    </Text>
-  );
-}
-
 function NarrowTerminal(): ReactNode {
   return (
     <Box flexDirection="column">
@@ -2954,18 +2514,6 @@ function NarrowTerminal(): ReactNode {
       </Text>
       <Text>Terminal too narrow.</Text>
       <Text dimColor>Resize to at least 40 columns.</Text>
-    </Box>
-  );
-}
-
-function ShortMainMenu({ requiredRows }: { requiredRows: number }): ReactNode {
-  return (
-    <Box flexDirection="column">
-      <Text bold color="cyan">
-        ATLAS CORE
-      </Text>
-      <Text>Menu needs at least {requiredRows} rows at this width.</Text>
-      <Text dimColor>Resize the terminal or press Esc or q to exit.</Text>
     </Box>
   );
 }
@@ -3034,70 +2582,6 @@ function updateChoices(info: UpdateInfo): Array<{ label: string; scope: UpdateSc
   return choices;
 }
 
-function menuActions(snapshot: DeploymentSnapshot): Action[] {
-  const actions: Action[] = [];
-  if (snapshot.status === "not-initialized") {
-    actions.push({
-      id: "init",
-      label: "Initialize Atlas Core",
-      detail: "Create private credentials and provision the new durable MinIO store."
-    });
-    actions.push({
-      id: "update",
-      label: "Update",
-      detail: "Check npm and update the Atlas Core CLI."
-    });
-  } else {
-    actions.push({ id: "status", label: "View status", detail: snapshot.detail });
-    if (snapshot.status === "ready") {
-      actions.push({ id: "stop", label: "Stop Atlas Core", detail: "Stop containers and preserve durable storage." });
-    } else {
-      actions.push({ id: "start", label: "Start Atlas Core", detail: "Start the deployment from its pinned image." });
-    }
-    if (snapshot.status !== "stopped") {
-      actions.push({
-        id: "restart",
-        label: "Restart Atlas Core",
-        detail: "Pull the pinned image, then restart the deployment."
-      });
-    }
-    actions.push(
-      {
-        id: "update",
-        label: "Update",
-        detail: "Check npm, then update only the CLI or update the CLI and Atlas Core together."
-      },
-      {
-        id: "configure",
-        label: "Configure",
-        detail: "Open Atlas Core configuration. Admin account settings are available here."
-      },
-      {
-        id: "plugins",
-        label: "Plugins",
-        detail: "Enable, disable, inspect, and view logs for first-party query-only Plugins."
-      },
-      { id: "logs", label: "View logs", detail: "Show the latest logs for all services or one service." }
-    );
-  }
-  actions.push(
-    { id: "doctor", label: "Run diagnostics", detail: "Check the host, Docker, Compose, and local configuration." },
-    {
-      id: "reset",
-      label: "Reset Atlas Core",
-      detail: "Permanently delete Atlas Core data and credentials, then start from scratch. Confirmation is required."
-    },
-    { id: "quit", label: "Quit", detail: "Exit without changing the deployment." }
-  );
-  return actions;
-}
-
-function filteredActions(actions: Action[], filter: string): Action[] {
-  const query = filter.trim().toLocaleLowerCase();
-  if (!query) return actions;
-  return actions.filter((action) => action.label.toLocaleLowerCase().includes(query));
-}
-
 async function readSnapshot(operator: AtlasCoreOperator): Promise<DeploymentSnapshot> {
   try {
     return await operator.snapshot();
@@ -3106,38 +2590,11 @@ async function readSnapshot(operator: AtlasCoreOperator): Promise<DeploymentSnap
   }
 }
 
-async function waitForReturn(input: NodeJS.ReadStream): Promise<void> {
-  await new Promise<void>((resolve) => {
-    const cleanup = (): void => {
-      input.off("data", onData);
-      input.off("end", onEnd);
-      input.off("error", onError);
-    };
-    const onData = (data: string | Buffer): void => {
-      if (!/[\r\n]/u.test(data.toString())) return;
-      cleanup();
-      resolve();
-    };
-    const onEnd = (): void => {
-      cleanup();
-      resolve();
-    };
-    const onError = (): void => {
-      cleanup();
-      resolve();
-    };
-    input.on("data", onData);
-    input.once("end", onEnd);
-    input.once("error", onError);
-    input.resume();
-  });
-}
-
 async function runCancelableOperation<T>(
   operator: AtlasCoreOperator,
   operation: () => Promise<T>
 ): Promise<OperationResult<T>> {
-  // Ink pauses its input hooks while the terminal is suspended, so Ctrl-C arrives as SIGINT here.
+  // Keep Ctrl-C cancellation consistent for both terminal input and process signals.
   let cancelled = false;
   const onInterrupt = (): void => {
     if (cancelled) return;

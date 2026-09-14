@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { createDevelopmentInteractiveCLI } from "../dist/terminal-ui.js";
+import { createInteractiveCLI } from "../dist/terminal-ui.js";
 import { createPreviewOperator, isPreviewState } from "../dist/tui-preview-operator.js";
 
 const stateArgument = process.argv.indexOf("--state");
@@ -9,7 +9,7 @@ if (!isPreviewState(initialState)) {
   process.exitCode = 2;
 } else {
   try {
-    await createDevelopmentInteractiveCLI().runMenu(createPreviewOperator(initialState));
+    await createInteractiveCLI().runMenu(createPreviewOperator(initialState));
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
     process.exitCode = 1;

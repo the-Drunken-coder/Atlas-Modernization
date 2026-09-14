@@ -27,7 +27,10 @@ They preserve the selected look without making the local throwaway prototype or 
 
 ## Implementation boundary
 
-[`application.ts`](../../surfaces/core-cli/src/application.ts) contains the current deployment implementation but imports operator contracts from [`terminal-ui.tsx`](../../surfaces/core-cli/src/terminal-ui.tsx) and writes terminal output directly. The rewrite moves typed inputs, results, progress, cancellation, and recovery outcomes into one internal headless manager used by direct commands, the TUI, and the fixture preview. Rendering and prompts remain in interface adapters. Subprocesses use controlled output streams rather than inheriting the terminal.
+[`application.ts`](../../surfaces/core-cli/src/application.ts) contains the deployment manager behind the direct commands,
+TUI, and fixture preview. Typed inputs, results, progress, cancellation, and recovery outcomes live in the headless
+operator contract. Rendering and prompts remain in interface adapters, and subprocesses use controlled output streams
+rather than inheriting the terminal.
 
 Preserve storage ownership, Docker engine identity, mutation locks, durable run intent, transaction recovery, Plugin compatibility checks, and password privacy. Do not add a public manager package, remote API, background mutation navigation, or generic workflow engine.
 

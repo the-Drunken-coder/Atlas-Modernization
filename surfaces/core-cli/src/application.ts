@@ -2384,13 +2384,13 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     const updateCLI = compareVersions(PACKAGE_VERSION, release.version, "installed CLI", "npm") < 0;
     if (scope === "cli") {
       if (!updateCLI) {
-        this.#stdout.write(`Atlas Core CLI ${PACKAGE_VERSION} is already current.\n`);
+        this.#reportUpdate(`Atlas Core CLI ${PACKAGE_VERSION} is already current.`);
         return;
       }
       const supervision = await this.#supervisionBeforeCLIUpdate(false);
       await this.#installCLI(release.version);
       await this.#restartActiveSupervision(supervision.active, release.version);
-      this.#stdout.write(`Atlas Core CLI ${release.version} installed. The running Core was not changed.\n`);
+      this.#reportUpdate(`Atlas Core CLI ${release.version} installed. The running Core was not changed.`);
       return;
     }
 
@@ -2408,13 +2408,13 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
         await this.#installCLI(release.version);
         await this.#restartActiveSupervision(supervision.active, release.version);
       }
-      this.#stdout.write(
-        "Atlas Core is not initialized. The CLI is current and there is no Core deployment to update.\n"
+      this.#reportUpdate(
+        "Atlas Core is not initialized. The CLI is current and there is no Core deployment to update."
       );
       return;
     }
     if (!updateCLI && !updateCore) {
-      this.#stdout.write(`Atlas Core CLI and deployment ${PACKAGE_VERSION} are already current.\n`);
+      this.#reportUpdate(`Atlas Core CLI and deployment ${PACKAGE_VERSION} are already current.`);
       return;
     }
     if (updateCore) this.#assertLegacyPluginsDisabled(state);
@@ -2465,7 +2465,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     const comparison = compareVersions(fromVersion, PACKAGE_VERSION, "running Atlas Core", "installed CLI");
     if (comparison > 0) throw new Error(`Atlas Core refuses to downgrade from ${fromVersion} to ${PACKAGE_VERSION}.`);
     if (comparison === 0) {
-      this.#stdout.write(`Atlas Core ${PACKAGE_VERSION} is already current.\n`);
+      this.#reportUpdate(`Atlas Core ${PACKAGE_VERSION} is already current.`);
       return;
     }
 
@@ -2482,7 +2482,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       previousRunning: snapshot.status !== "stopped",
       desiredRunning: this.#desiredRunning()
     }).update(state);
-    this.#stdout.write(`Atlas Core ${PACKAGE_VERSION} update completed.\n`);
+    this.#reportUpdate(`Atlas Core ${PACKAGE_VERSION} update completed.`);
   }
 
   async status(): Promise<boolean> {
@@ -2805,7 +2805,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
         await this.#withInitializedMutation(async (raw) => {
           mutationStarted = true;
           const result = await this.#plugins(this.#requireManaged(raw)).enable(pluginId);
-          this.#stdout.write(`${result.message}\n`);
+          if (!reportActivity) this.#stdout.write(`${result.message}\n`);
           report({ level: "success", message: result.message, stage: "operation" });
         });
         return { status: "success" };
@@ -2963,7 +2963,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
         await this.#withInitializedMutation(async (raw) => {
           mutationStarted = true;
           const result = await this.#plugins(this.#requireManaged(raw)).disable(pluginId);
-          this.#stdout.write(`${result.message}\n`);
+          if (!reportActivity) this.#stdout.write(`${result.message}\n`);
           report({ level: "success", message: result.message, stage: "operation" });
         });
         return { status: "success" };

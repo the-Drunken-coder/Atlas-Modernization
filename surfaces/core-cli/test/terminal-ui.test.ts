@@ -1,4 +1,3 @@
-import { createInterface } from "node:readline/promises";
 import { PassThrough } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
 import type {
@@ -16,7 +15,7 @@ import type {
   UpdateReporter,
   UpdateScope
 } from "../src/operator.js";
-import { createDevelopmentInteractiveCLI, createInteractiveCLI } from "../src/terminal-ui.js";
+import { createInteractiveCLI } from "../src/terminal-ui.js";
 
 class TestTerminal {
   readonly input = new PassThrough() as PassThrough & NodeJS.ReadStream;
@@ -247,10 +246,10 @@ function liveLogStream(): LogStream & { emit(line: string): void; fail(error: Er
 }
 
 describe("Atlas Core terminal UI", () => {
-  it("shows the development action list without changing the shipped menu", async () => {
+  it("shows the shipped unfiltered action list", async () => {
     const terminal = new TestTerminal();
     const deployment = operator({ status: "ready", detail: "Core API and storage are healthy." });
-    const menu = createDevelopmentInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
 
     await terminal.waitFor("CHOOSE AN ACTION");
     expect(terminal.text).toContain("View service health");
@@ -269,7 +268,7 @@ describe("Atlas Core terminal UI", () => {
     expect(terminal.setRawMode).toHaveBeenLastCalledWith(false);
   });
 
-  it("opens Plugin management from the development action list", async () => {
+  it("opens Plugin management from the action list", async () => {
     const terminal = new TestTerminal();
     const deployment = operator();
     deployment.pluginStatuses.mockResolvedValue([
@@ -281,7 +280,7 @@ describe("Atlas Core terminal UI", () => {
         packaged: true
       }
     ]);
-    const menu = createDevelopmentInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
 
     await terminal.waitFor("Manage Plugins");
     for (let index = 0; index < 4; index += 1) {
@@ -298,7 +297,7 @@ describe("Atlas Core terminal UI", () => {
     await menu;
   });
 
-  it("runs Plugin installation in the development activity screen", async () => {
+  it("runs Plugin installation in the activity screen", async () => {
     const terminal = new TestTerminal();
     const deployment = operator();
     const plugin = {
@@ -317,7 +316,7 @@ describe("Atlas Core terminal UI", () => {
       reportActivity?.({ level: "success", message: "Building Scan 1.2.0 installed.", stage: "operation" });
       return { status: "success" };
     });
-    const menu = createDevelopmentInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
 
     await terminal.waitFor("Manage Plugins");
     for (let index = 0; index < 4; index += 1) {
@@ -353,7 +352,7 @@ describe("Atlas Core terminal UI", () => {
     const stream = liveLogStream();
     deployment.pluginStatuses.mockResolvedValue([plugin]);
     deployment.openPluginLogStream.mockResolvedValue(stream);
-    const menu = createDevelopmentInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
 
     await terminal.waitFor("Manage Plugins");
     for (let index = 0; index < 4; index += 1) {
@@ -374,7 +373,7 @@ describe("Atlas Core terminal UI", () => {
     await menu;
   });
 
-  it("returns to Plugin management after safe Escape cancellation in the development TUI", async () => {
+  it("returns to Plugin management after safe Escape cancellation", async () => {
     const terminal = new TestTerminal();
     const deployment = operator();
     const plugin = {
@@ -398,7 +397,7 @@ describe("Atlas Core terminal UI", () => {
         })
     );
     deployment.cancelPending.mockImplementation(() => cancelEnable?.());
-    const menu = createDevelopmentInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
 
     await terminal.waitFor("Manage Plugins");
     for (let index = 0; index < 4; index += 1) {
@@ -419,7 +418,7 @@ describe("Atlas Core terminal UI", () => {
     await menu;
   });
 
-  it("cancels and exits after Plugin cleanup on Ctrl-C in the development TUI", async () => {
+  it("cancels and exits after Plugin cleanup on Ctrl-C", async () => {
     const terminal = new TestTerminal();
     const deployment = operator();
     const plugin = {
@@ -439,7 +438,7 @@ describe("Atlas Core terminal UI", () => {
         })
     );
     deployment.cancelPending.mockImplementation(() => cancelEnable?.());
-    const menu = createDevelopmentInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
 
     await terminal.waitFor("Manage Plugins");
     for (let index = 0; index < 4; index += 1) {
@@ -460,9 +459,9 @@ describe("Atlas Core terminal UI", () => {
     ["stopped", "Stopped"],
     ["degraded", "Degraded"],
     ["not-initialized", "Not initialized"]
-  ] as const)("renders the %s fixture state in the development home", async (status, label) => {
+  ] as const)("renders the %s fixture state in the action-list home", async (status, label) => {
     const terminal = new TestTerminal(80, true, 24);
-    const menu = createDevelopmentInteractiveCLI(terminal.input, terminal.output).runMenu(
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(
       operator({ status, detail: `${label} fixture state.` })
     );
 
@@ -472,9 +471,9 @@ describe("Atlas Core terminal UI", () => {
     await menu;
   });
 
-  it("fits the development action list at the supported 40 by 24 size", async () => {
+  it("fits the action list at the supported 40 by 24 size", async () => {
     const terminal = new TestTerminal(40, true, 24);
-    const menu = createDevelopmentInteractiveCLI(terminal.input, terminal.output).runMenu(operator());
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(operator());
 
     await terminal.waitFor("CHOOSE AN ACTION");
     expect(terminal.text).not.toContain("Action list needs at least");
@@ -490,7 +489,7 @@ describe("Atlas Core terminal UI", () => {
     const deployment = operator();
     const stream = liveLogStream();
     deployment.openLogStream.mockResolvedValue(stream);
-    const menu = createDevelopmentInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
 
     await terminal.waitFor("CHOOSE AN ACTION");
     terminal.write("\u001b[B\r");
@@ -519,7 +518,7 @@ describe("Atlas Core terminal UI", () => {
     const deployment = operator();
     const stream = liveLogStream();
     deployment.openLogStream.mockResolvedValue(stream);
-    const menu = createDevelopmentInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
 
     await terminal.waitFor("CHOOSE AN ACTION");
     terminal.write("\u001b[B\r");
@@ -546,7 +545,7 @@ describe("Atlas Core terminal UI", () => {
         { label: "configuration", status: "failure", detail: "ownership mismatch" }
       ]
     });
-    const menu = createDevelopmentInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
 
     await terminal.waitFor("CHOOSE AN ACTION");
     terminal.write("\u001b[B\r");
@@ -583,10 +582,10 @@ describe("Atlas Core terminal UI", () => {
     await menu;
   });
 
-  it("runs initialization from the not-initialized development home", async () => {
+  it("runs initialization from the not-initialized action-list home", async () => {
     const terminal = new TestTerminal(80, true, 24);
     const deployment = operator({ status: "not-initialized", detail: "Initialize Atlas Core." });
-    const menu = createDevelopmentInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
 
     await terminal.waitFor("Initialize Atlas Core");
     terminal.write("\u001b[B".repeat(2));
@@ -601,7 +600,7 @@ describe("Atlas Core terminal UI", () => {
   it("cancels reset before confirmation without calling the manager", async () => {
     const terminal = new TestTerminal(80, true, 24);
     const deployment = operator();
-    const menu = createDevelopmentInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
 
     await terminal.waitFor("Reset Atlas Core");
     terminal.write("\u001b[B".repeat(7));
@@ -615,7 +614,7 @@ describe("Atlas Core terminal UI", () => {
     await menu;
   });
 
-  it("confirms reset inside the development TUI operation screen", async () => {
+  it("confirms reset inside the TUI operation screen", async () => {
     const terminal = new TestTerminal(80, true, 24);
     const deployment = operator();
     deployment.runLifecycle.mockImplementationOnce(async (operation, report, options) => {
@@ -624,7 +623,7 @@ describe("Atlas Core terminal UI", () => {
       report?.({ message: "Deleting credentials and durable data", stage: "operation" });
       return { status: "success", summary: "Atlas Core reset is complete. A new deployment is running." };
     });
-    const menu = createDevelopmentInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
 
     await terminal.waitFor("Reset Atlas Core");
     terminal.write("\u001b[B".repeat(7));
@@ -641,11 +640,11 @@ describe("Atlas Core terminal UI", () => {
     await menu;
   });
 
-  it("changes the admin password from the development home without an acknowledgement pause", async () => {
+  it("changes the admin password from the action-list home without an acknowledgement pause", async () => {
     const terminal = new TestTerminal(80, true, 24);
     const deployment = operator();
     const password = "correct-horse-battery-staple";
-    const menu = createDevelopmentInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
 
     await terminal.waitFor("Change admin password");
     terminal.write("\u001b[B".repeat(6));
@@ -669,7 +668,7 @@ describe("Atlas Core terminal UI", () => {
     await menu;
   });
 
-  it("keeps admin password cancellation inside the development operation screen", async () => {
+  it("keeps admin password cancellation inside the operation screen", async () => {
     const terminal = new TestTerminal(80, true, 24);
     const deployment = operator();
     let finishConfiguration: (() => void) | undefined;
@@ -686,7 +685,7 @@ describe("Atlas Core terminal UI", () => {
         })
     );
     deployment.cancelPending.mockImplementation(() => finishConfiguration?.());
-    const menu = createDevelopmentInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
 
     await terminal.waitFor("Change admin password");
     terminal.write("\u001b[B".repeat(6));
@@ -716,10 +715,10 @@ describe("Atlas Core terminal UI", () => {
     await menu;
   });
 
-  it("opens health from the development action list and preserves it across resize", async () => {
+  it("opens health from the action list and preserves it across resize", async () => {
     const terminal = new TestTerminal(80, true, 24);
     const deployment = operator();
-    const menu = createDevelopmentInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
 
     await terminal.waitFor("View service health");
     terminal.write("\r");
@@ -739,10 +738,10 @@ describe("Atlas Core terminal UI", () => {
   it.each([
     ["stop", 2, "Stop Atlas Core"],
     ["restart", 3, "Restart Atlas Core"]
-  ] as const)("runs the development %s operation inside an activity screen", async (operation, moves, label) => {
+  ] as const)("runs the %s operation inside an activity screen", async (operation, moves, label) => {
     const terminal = new TestTerminal(80, true, 24);
     const deployment = operator();
-    const menu = createDevelopmentInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
 
     await terminal.waitFor(label);
     terminal.write("\u001b[B".repeat(moves));
@@ -763,7 +762,7 @@ describe("Atlas Core terminal UI", () => {
       error: "Docker Compose failed with exit code 1",
       snapshot: { status: "degraded", detail: "Core API is running, but storage is unavailable." }
     });
-    const menu = createDevelopmentInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
 
     await terminal.waitFor("Stop Atlas Core");
     terminal.write("\u001b[B".repeat(2));
@@ -780,7 +779,7 @@ describe("Atlas Core terminal UI", () => {
     await menu;
   });
 
-  it("returns to the development home after Escape cancellation cleanup", async () => {
+  it("returns to the action-list home after Escape cancellation cleanup", async () => {
     const terminal = new TestTerminal(80, true, 24);
     const deployment = operator();
     let finish: (() => void) | undefined;
@@ -799,7 +798,7 @@ describe("Atlas Core terminal UI", () => {
         })
     );
     deployment.cancelPending.mockImplementation(() => finish?.());
-    const menu = createDevelopmentInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
 
     await terminal.waitFor("Stop Atlas Core");
     terminal.write("\u001b[B".repeat(2));
@@ -825,7 +824,7 @@ describe("Atlas Core terminal UI", () => {
         })
     );
     deployment.cancelPending.mockImplementation(() => finish?.());
-    const menu = createDevelopmentInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
 
     await terminal.waitFor("Stop Atlas Core");
     terminal.write("\u001b[B".repeat(2));
@@ -855,7 +854,7 @@ describe("Atlas Core terminal UI", () => {
         })
     );
     deployment.cancelPending.mockImplementation(() => finish?.());
-    const menu = createDevelopmentInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
 
     await terminal.waitFor("Stop Atlas Core");
     terminal.write("\u001b[B".repeat(2));
@@ -880,7 +879,7 @@ describe("Atlas Core terminal UI", () => {
         })
     );
     deployment.cancelPending.mockImplementation(() => finish?.());
-    const menu = createDevelopmentInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
 
     await terminal.waitFor("Stop Atlas Core");
     terminal.write("\u001b[B".repeat(2));
@@ -898,8 +897,8 @@ describe("Atlas Core terminal UI", () => {
     const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
 
     await terminal.waitFor("Reset Atlas Core");
-    expect(terminal.text).toContain("ACTIONS");
-    expect(terminal.text).toContain("DETAILS");
+    expect(terminal.text).toContain("CHOOSE AN ACTION");
+    expect(terminal.text).toContain("Detail");
     expect(terminal.text).toContain("Everything is healthy.");
     expect(terminal.text).toContain("Restart Atlas Core");
     terminal.write("q");
@@ -914,7 +913,7 @@ describe("Atlas Core terminal UI", () => {
     const terminal = new TestTerminal();
     const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(operator());
 
-    await terminal.waitFor("View status");
+    await terminal.waitFor("View service health");
     const before = terminal.raw.length;
     terminal.write("\u001b[B");
     await terminal.waitForRawChange(before);
@@ -922,80 +921,6 @@ describe("Atlas Core terminal UI", () => {
 
     expect(arrowFrame).not.toContain("\u001b[2J");
     expect(arrowFrame).not.toContain("\u001bc");
-    terminal.write("q");
-    await menu;
-  });
-
-  it("dispatches the selection moved in the same input chunk", async () => {
-    const terminal = new TestTerminal();
-    const deployment = operator();
-    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
-
-    await terminal.waitFor("View status");
-    terminal.write("\u001b[B\r");
-    await terminal.waitFor("Press Enter to return to Atlas Core.");
-    terminal.write("\r");
-    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
-    terminal.write("q");
-    await menu;
-
-    expect(deployment.stop).toHaveBeenCalledOnce();
-    expect(deployment.details).not.toHaveBeenCalled();
-  });
-
-  it("returns to the menu after cancelling an ordinary operation", async () => {
-    const terminal = new TestTerminal();
-    const deployment = operator();
-    let finishStop: (() => void) | undefined;
-    deployment.stop.mockImplementation(
-      async () =>
-        await new Promise<void>((resolve) => {
-          finishStop = resolve;
-        })
-    );
-    deployment.cancelPending.mockImplementation(() => finishStop?.());
-    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
-
-    await terminal.waitFor("View status");
-    terminal.write("stop");
-    await terminal.waitFor("Filter: stop");
-    terminal.write("\r");
-    await terminal.waitFor("Stop Atlas Core...");
-    await vi.waitFor(() => expect(deployment.stop).toHaveBeenCalledOnce());
-    process.emit("SIGINT", "SIGINT");
-    process.emit("SIGINT", "SIGINT");
-    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
-    await terminal.waitFor("View status");
-    expect(deployment.cancelPending).toHaveBeenCalledOnce();
-    expect(deployment.resumeAfterCancellation).toHaveBeenCalledOnce();
-    terminal.write("q");
-    await menu;
-  });
-
-  it("keeps a cleanup failure visible after cancelling an ordinary operation", async () => {
-    const terminal = new TestTerminal();
-    const deployment = operator();
-    let failCleanup: (() => void) | undefined;
-    deployment.stop.mockImplementation(
-      async () =>
-        await new Promise<void>((_resolve, reject) => {
-          failCleanup = () => reject(new Error("Docker mutation-lock cleanup failed"));
-        })
-    );
-    deployment.cancelPending.mockImplementation(() => failCleanup?.());
-    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
-
-    await terminal.waitFor("View status");
-    terminal.write("stop");
-    await terminal.waitFor("Filter: stop");
-    terminal.write("\r");
-    await terminal.waitFor("Stop Atlas Core...");
-    process.emit("SIGINT", "SIGINT");
-    await terminal.waitFor("Docker mutation-lock cleanup failed");
-    await terminal.waitFor("Press Enter to return to Atlas Core.");
-    terminal.write("\r");
-    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
-    expect(deployment.resumeAfterCancellation).toHaveBeenCalledOnce();
     terminal.write("q");
     await menu;
   });
@@ -1011,8 +936,8 @@ describe("Atlas Core terminal UI", () => {
     );
 
     await terminal.waitFor("Reset Atlas Core");
-    expect(terminal.text).toContain("ACTIONS");
-    expect(terminal.text).not.toContain("DETAILS");
+    expect(terminal.text).toContain("CHOOSE AN ACTION");
+    expect(terminal.text).not.toContain("Filter:");
     const before = terminal.raw.length;
     terminal.write("\u001b[B");
     await terminal.waitForRawChange(before);
@@ -1038,7 +963,7 @@ describe("Atlas Core terminal UI", () => {
     const deployment = operator();
     const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
 
-    await terminal.waitFor("Menu needs at least");
+    await terminal.waitFor("Action list needs at least");
     terminal.write("\r");
     await nextInputTurn();
     terminal.write("q");
@@ -1047,46 +972,12 @@ describe("Atlas Core terminal UI", () => {
     expect(deployment.details).not.toHaveBeenCalled();
   });
 
-  it("discards reset confirmation typed before the warning prompt appears", async () => {
-    const terminal = new TestTerminal();
-    const deployment = operator();
-    let answer: string | undefined;
-    let confirmationSettled = false;
-    deployment.reset.mockImplementation(async () => {
-      terminal.output.write("Reset permanently deletes Atlas Core data.\n");
-      const prompt = createInterface({ input: terminal.input, output: terminal.output });
-      try {
-        answer = await prompt.question("Continue? [y/N] ");
-        confirmationSettled = true;
-      } finally {
-        prompt.close();
-      }
-    });
-    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
-
-    await terminal.waitFor("Reset Atlas Core");
-    terminal.writeWhenVisible("Reset Atlas Core...", "yes\n");
-    terminal.write("reset");
-    await terminal.waitFor("Filter: reset");
-    terminal.write("\r");
-    await terminal.waitFor("Continue? [y/N]");
-    await nextInputTurn();
-    if (!confirmationSettled) terminal.write("no\n");
-    await terminal.waitFor("Press Enter to return to Atlas Core.");
-    terminal.write("\r");
-    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
-    terminal.write("q");
-    await menu;
-
-    expect(answer).toBe("no");
-  });
-
   it("opens the service status view and moves between services", async () => {
     const terminal = new TestTerminal();
     const deployment = operator();
     const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
 
-    await terminal.waitFor("View status");
+    await terminal.waitFor("View service health");
     terminal.write("\r");
     await terminal.waitFor("Network I/O");
     terminal.write("\u001b[C");
@@ -1101,32 +992,12 @@ describe("Atlas Core terminal UI", () => {
     expect(deployment.details).toHaveBeenCalledOnce();
   });
 
-  it("opens logs for the status service selected in the same input chunk", async () => {
-    const terminal = new TestTerminal();
-    const deployment = operator();
-    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
-
-    await terminal.waitFor("View status");
-    terminal.write("\r");
-    await terminal.waitFor("Network I/O");
-    terminal.write("\u001b[Cl");
-    await terminal.waitFor("Press Enter to return to Atlas Core.");
-    terminal.write("\r");
-    await vi.waitFor(() => expect(deployment.details).toHaveBeenCalledTimes(2));
-    terminal.write("\r");
-    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
-    terminal.write("q");
-    await menu;
-
-    expect(deployment.logs).toHaveBeenCalledWith("postgres", false);
-  });
-
   it("dispatches only one action when Enter repeats before the screen changes", async () => {
     const terminal = new TestTerminal();
     const deployment = operator();
     const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
 
-    await terminal.waitFor("View status");
+    await terminal.waitFor("View service health");
     terminal.write("\u001b[13u\u001b[13u");
     await terminal.waitFor("Network I/O");
     const detailsCallsAfterRepeatedEnter = deployment.details.mock.calls.length;
@@ -1143,7 +1014,7 @@ describe("Atlas Core terminal UI", () => {
     const deployment = operator();
     const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
 
-    await terminal.waitFor("View status");
+    await terminal.waitFor("View service health");
     terminal.write("\r");
     await terminal.waitFor("↑/↓ 1-18/19");
     expect(terminal.text).not.toContain("Status needs at least");
@@ -1172,7 +1043,7 @@ describe("Atlas Core terminal UI", () => {
     deployment.details.mockResolvedValue(wrappedDetails);
     const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
 
-    await terminal.waitFor("View status");
+    await terminal.waitFor("View service health");
     terminal.write("\r");
     await vi.waitFor(() => expect(deployment.details).toHaveBeenCalledOnce());
     await terminal.waitFor("r refresh");
@@ -1200,7 +1071,7 @@ describe("Atlas Core terminal UI", () => {
       });
       const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
 
-      await terminal.waitFor("View status");
+      await terminal.waitFor("View service health");
       terminal.write("\r");
       await terminal.waitFor("CPU          1.00%");
       await vi.advanceTimersByTimeAsync(5_000);
@@ -1227,7 +1098,7 @@ describe("Atlas Core terminal UI", () => {
     deployment.details.mockResolvedValueOnce(baseDetails).mockImplementationOnce(() => pendingRefresh);
     const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
 
-    await terminal.waitFor("View status");
+    await terminal.waitFor("View service health");
     terminal.write("\r");
     await terminal.waitFor("CPU          1.00%");
     terminal.write("r");
@@ -1276,7 +1147,7 @@ describe("Atlas Core terminal UI", () => {
       .mockImplementationOnce(() => newVisit);
     const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
 
-    await terminal.waitFor("View status");
+    await terminal.waitFor("View service health");
     terminal.write("\r");
     await terminal.waitFor("CPU          1.00%");
     terminal.write("r");
@@ -1321,7 +1192,7 @@ describe("Atlas Core terminal UI", () => {
       .mockResolvedValueOnce(baseDetails);
     const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
 
-    await terminal.waitFor("View status");
+    await terminal.waitFor("View service health");
     terminal.write("\r");
     await terminal.waitFor("CPU          1.00%");
     terminal.write("r");
@@ -1344,7 +1215,7 @@ describe("Atlas Core terminal UI", () => {
     deployment.details.mockRejectedValueOnce(new Error(`Docker failed: ${"detail ".repeat(400)}END`));
     const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
 
-    await terminal.waitFor("View status");
+    await terminal.waitFor("View service health");
     terminal.write("\r");
     await terminal.waitFor("r retry");
     expect(terminal.text).not.toContain("END");
@@ -1369,7 +1240,7 @@ describe("Atlas Core terminal UI", () => {
       .mockResolvedValueOnce(fullDetails);
     const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
 
-    await terminal.waitFor("View status");
+    await terminal.waitFor("View service health");
     terminal.write("\r");
     await terminal.waitFor("↑/↓ 1-18/19");
     terminal.write("\u001b[B");
@@ -1383,41 +1254,6 @@ describe("Atlas Core terminal UI", () => {
     await terminal.waitForRawChange(beforeExpansion);
     await vi.waitFor(() => expect(stripAnsi(terminal.raw.slice(beforeExpansion))).toContain("↑/↓ 1-18/19"));
     terminal.write("\r");
-    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
-    terminal.write("q");
-    await menu;
-  });
-
-  it("refreshes the Plugin catalog on open and falls back to the verified cache", async () => {
-    const terminal = new TestTerminal();
-    const deployment = operator();
-    const plugin = {
-      pluginId: "building_scan",
-      displayName: "Building Scan",
-      lifecycle: "query_only" as const,
-      enabled: false,
-      packaged: false,
-      installed: true,
-      selectedVersion: "1.0.0"
-    };
-    deployment.pluginRefresh.mockRejectedValueOnce(new Error("catalog network unavailable"));
-    deployment.pluginStatuses.mockResolvedValue([plugin]);
-    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
-
-    await terminal.waitFor("View status");
-    terminal.write("plugins");
-    await terminal.waitFor("Filter: plugins");
-    terminal.write("\r");
-    await terminal.waitFor("PLUGIN CATALOG");
-    await vi.waitFor(() => expect(deployment.pluginRefresh).toHaveBeenCalledOnce());
-    await vi.waitFor(() => expect(deployment.pluginStatuses).toHaveBeenCalledOnce());
-    expect(terminal.text).not.toContain("image unavailable");
-    expect(terminal.text).toContain("ERROR: catalog network unavailable");
-
-    terminal.write("r");
-    await vi.waitFor(() => expect(deployment.pluginRefresh).toHaveBeenCalledTimes(2));
-    await vi.waitFor(() => expect(deployment.pluginStatuses).toHaveBeenCalledTimes(2));
-    terminal.write("q");
     await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
     terminal.write("q");
     await menu;
@@ -1440,9 +1276,8 @@ describe("Atlas Core terminal UI", () => {
       .mockResolvedValueOnce([{ ...plugin, enabled: true, state: "running", health: "healthy" }]);
     const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
 
-    await terminal.waitFor("View status");
-    terminal.write("plugins");
-    await terminal.waitFor("Filter: plugins");
+    await terminal.waitFor("Manage Plugins");
+    terminal.write("\u001b[B".repeat(4));
     terminal.write("\r");
     await terminal.waitFor("PLUGIN CATALOG");
     expect(terminal.text).not.toContain("image unavailable");
@@ -1457,61 +1292,6 @@ describe("Atlas Core terminal UI", () => {
     await menu;
 
     expect(deployment.pluginEnable).toHaveBeenCalledWith(plugin.pluginId, expect.any(Function));
-  });
-
-  it("installs a catalog-only Plugin from the selected row", async () => {
-    const terminal = new TestTerminal();
-    const deployment = operator();
-    const plugin = {
-      pluginId: "building_scan",
-      displayName: "Building Scan",
-      lifecycle: "query_only" as const,
-      enabled: false,
-      packaged: false,
-      installed: false,
-      availableVersions: ["1.2.0", "1.1.0"]
-    };
-    deployment.pluginStatuses
-      .mockResolvedValueOnce([plugin])
-      .mockResolvedValueOnce([{ ...plugin, installed: true, selectedVersion: "1.2.0" }]);
-    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
-
-    await terminal.waitFor("View status");
-    terminal.write("plugins");
-    await terminal.waitFor("Filter: plugins");
-    terminal.write("\r");
-    await terminal.waitFor("PLUGIN CATALOG");
-    expect(terminal.text).toContain("not installed");
-    terminal.write("\r");
-    await terminal.waitFor("Installing Building Scan...");
-    await terminal.waitFor("Press Enter to return to Atlas Core.");
-    terminal.write("\r");
-    await vi.waitFor(() => expect(deployment.pluginStatuses).toHaveBeenCalledTimes(2));
-    terminal.write("q");
-    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
-    terminal.write("q");
-    await menu;
-
-    expect(deployment.pluginInstall).toHaveBeenCalledWith(plugin.pluginId);
-  });
-
-  it("shows the catalog refresh error when no verified cache is available", async () => {
-    const terminal = new TestTerminal();
-    const deployment = operator();
-    deployment.pluginRefresh.mockRejectedValueOnce(new Error("catalog network unavailable"));
-    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
-
-    await terminal.waitFor("View status");
-    terminal.write("plugins");
-    await terminal.waitFor("Filter: plugins");
-    terminal.write("\r");
-    await terminal.waitFor("catalog network unavailable");
-    expect(deployment.pluginRefresh).toHaveBeenCalledOnce();
-    expect(deployment.pluginStatuses).toHaveBeenCalledOnce();
-    terminal.write("q");
-    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
-    terminal.write("q");
-    await menu;
   });
 
   it("shows an installed Plugin status error in the details", async () => {
@@ -1531,9 +1311,8 @@ describe("Atlas Core terminal UI", () => {
     ]);
     const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
 
-    await terminal.waitFor("View status");
-    terminal.write("plugins");
-    await terminal.waitFor("Filter: plugins");
+    await terminal.waitFor("Manage Plugins");
+    terminal.write("\u001b[B".repeat(4));
     terminal.write("\r");
     await terminal.waitFor("ERROR: Plugin catalog expired; refresh before installing or enabling Plugins.");
     expect(terminal.text).toContain("ERROR");
@@ -1561,9 +1340,8 @@ describe("Atlas Core terminal UI", () => {
     ]);
     const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
 
-    await terminal.waitFor("View status");
-    terminal.write("plugins");
-    await terminal.waitFor("Filter: plugins");
+    await terminal.waitFor("Manage Plugins");
+    terminal.write("\u001b[B".repeat(4));
     terminal.write("\r");
     await terminal.waitFor("REVOKED: security issue");
     terminal.write("q");
@@ -1599,9 +1377,8 @@ describe("Atlas Core terminal UI", () => {
     );
     const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
 
-    await terminal.waitFor("View status");
-    terminal.write("plugins");
-    await terminal.waitFor("Filter: plugins");
+    await terminal.waitFor("Manage Plugins");
+    terminal.write("\u001b[B".repeat(4));
     terminal.write("\r");
     await terminal.waitFor("PLUGIN CATALOG");
     terminal.write("\r");
@@ -1645,110 +1422,13 @@ describe("Atlas Core terminal UI", () => {
     });
     const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
 
-    await terminal.waitFor("View status");
-    terminal.write("plugins");
-    await terminal.waitFor("Filter: plugins");
+    await terminal.waitFor("Manage Plugins");
+    terminal.write("\u001b[B".repeat(4));
     terminal.write("\r");
     await terminal.waitFor("PLUGIN CATALOG");
     terminal.write("\r");
     await terminal.waitFor("Previous deployment restored");
     await terminal.waitFor("Enable failed: health wait timed out");
-    terminal.write("\r");
-    await vi.waitFor(() => expect(deployment.pluginStatuses).toHaveBeenCalledTimes(2));
-    terminal.write("q");
-    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
-    terminal.write("q");
-    await menu;
-  });
-
-  it("cancels Plugin enable safely and returns to the Plugins screen", async () => {
-    const terminal = new TestTerminal();
-    const deployment = operator();
-    const plugin = {
-      pluginId: "building_scan",
-      displayName: "Building Scan",
-      lifecycle: "query_only" as const,
-      enabled: false,
-      packaged: true
-    };
-    let cancelEnable: (() => void) | undefined;
-    deployment.pluginStatuses.mockResolvedValue([plugin]);
-    deployment.pluginEnable.mockImplementation(
-      async (_pluginId, reportActivity) =>
-        await new Promise<PluginOperationOutcome>((resolve) => {
-          reportActivity?.({ level: "working", message: "Pulling Building Scan image", stage: "operation" });
-          cancelEnable = () => {
-            reportActivity?.({
-              level: "failure",
-              message: "Enable stopped: Atlas Core command was cancelled",
-              stage: "operation"
-            });
-            reportActivity?.({ level: "working", message: "Restoring previous deployment", stage: "rollback" });
-            reportActivity?.({ level: "success", message: "Previous deployment restored", stage: "rollback" });
-            resolve({ previousDeploymentPreserved: true, status: "cancelled" });
-          };
-        })
-    );
-    deployment.cancelPending.mockImplementation(() => cancelEnable?.());
-    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
-
-    await terminal.waitFor("View status");
-    terminal.write("plugins");
-    await terminal.waitFor("Filter: plugins");
-    terminal.write("\r");
-    await terminal.waitFor("PLUGIN CATALOG");
-    terminal.write("\r");
-    await terminal.waitFor("Pulling Building Scan image");
-    terminal.write("\u0003");
-    await terminal.waitFor("Previous deployment restored");
-    await terminal.waitFor("Enable cancelled. The previous deployment is preserved.");
-    expect(deployment.resumeAfterCancellation).toHaveBeenCalledOnce();
-    terminal.write("\r");
-    await vi.waitFor(() => expect(deployment.pluginStatuses).toHaveBeenCalledTimes(2));
-    terminal.write("q");
-    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
-    terminal.write("q");
-    await menu;
-
-    expect(deployment.cancelPending).toHaveBeenCalledOnce();
-  });
-
-  it("reports a committed Plugin change as success after a late cancellation request", async () => {
-    const terminal = new TestTerminal();
-    const deployment = operator();
-    const plugin = {
-      pluginId: "building_scan",
-      displayName: "Building Scan",
-      lifecycle: "query_only" as const,
-      enabled: false,
-      packaged: true
-    };
-    let finishLockCleanup: (() => void) | undefined;
-    deployment.pluginStatuses.mockResolvedValue([plugin]);
-    deployment.pluginEnable.mockImplementation(
-      async (_pluginId, reportActivity) =>
-        await new Promise<PluginOperationOutcome>((resolve) => {
-          reportActivity?.({ level: "success", message: "Core API and Building Scan are healthy", stage: "operation" });
-          finishLockCleanup = () => {
-            reportActivity?.({ level: "success", message: "Building Scan enabled and healthy", stage: "operation" });
-            resolve({ status: "success" });
-          };
-        })
-    );
-    deployment.cancelPending.mockImplementation(() => finishLockCleanup?.());
-    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
-
-    await terminal.waitFor("View status");
-    terminal.write("plugins");
-    await terminal.waitFor("Filter: plugins");
-    terminal.write("\r");
-    await terminal.waitFor("PLUGIN CATALOG");
-    terminal.write("\r");
-    await terminal.waitFor("Core API and Building Scan are healthy");
-    terminal.write("\u0003");
-    await terminal.waitFor("Building Scan enabled.");
-    expect(terminal.text).not.toContain("Enable cancelled. The previous deployment is preserved.");
-    expect(deployment.resumeAfterCancellation).toHaveBeenCalledOnce();
     terminal.write("\r");
     await vi.waitFor(() => expect(deployment.pluginStatuses).toHaveBeenCalledTimes(2));
     terminal.write("q");
@@ -1777,9 +1457,8 @@ describe("Atlas Core terminal UI", () => {
     );
     const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
 
-    await terminal.waitFor("View status");
-    terminal.write("plugins");
-    await terminal.waitFor("Filter: plugins");
+    await terminal.waitFor("Manage Plugins");
+    terminal.write("\u001b[B".repeat(4));
     terminal.write("\r");
     await terminal.waitFor("PLUGIN CATALOG");
     terminal.write("\r");
@@ -1789,48 +1468,6 @@ describe("Atlas Core terminal UI", () => {
     terminal.write("\u0003");
     await vi.waitFor(() => expect(deployment.pluginStatuses).toHaveBeenCalledTimes(2));
     expect(deployment.cancelPending).not.toHaveBeenCalled();
-    terminal.write("q");
-    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
-    terminal.write("q");
-    await menu;
-  });
-
-  it("keeps Plugin activity controls visible in a four-row terminal", async () => {
-    const terminal = new TestTerminal(40, true, 24);
-    const deployment = operator();
-    const plugin = {
-      pluginId: "building_scan",
-      displayName: "Building Scan With A Deliberately Long Operator-Facing Name",
-      lifecycle: "query_only" as const,
-      enabled: false,
-      packaged: true
-    };
-    let cancelEnable: (() => void) | undefined;
-    deployment.pluginStatuses.mockResolvedValue([plugin]);
-    deployment.pluginEnable.mockImplementation(
-      async () =>
-        await new Promise<PluginOperationOutcome>((resolve) => {
-          cancelEnable = () => resolve({ previousDeploymentPreserved: true, status: "cancelled" });
-        })
-    );
-    deployment.cancelPending.mockImplementation(() => cancelEnable?.());
-    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
-
-    await terminal.waitFor("View status");
-    terminal.write("plugins");
-    await terminal.waitFor("Filter: plugins");
-    terminal.write("\r");
-    await terminal.waitFor("PLUGIN CATALOG");
-    terminal.write("\r");
-    await terminal.waitFor("ATLAS CORE > ACTIVITY");
-    terminal.resize(40, 4);
-    await terminal.waitFor("ACTIVITY 00:00.0");
-    await terminal.waitFor("Ctrl+C cancel safely");
-    terminal.write("\u0003");
-    await terminal.waitFor("Enable cancelled.");
-    await terminal.waitFor("Enter return to Plugins");
-    terminal.write("\r");
-    await vi.waitFor(() => expect(deployment.pluginStatuses).toHaveBeenCalledTimes(2));
     terminal.write("q");
     await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
     terminal.write("q");
@@ -1857,9 +1494,8 @@ describe("Atlas Core terminal UI", () => {
     );
     const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
 
-    await terminal.waitFor("View status");
-    terminal.write("plugins");
-    await terminal.waitFor("Filter: plugins");
+    await terminal.waitFor("Manage Plugins");
+    terminal.write("\u001b[B".repeat(4));
     terminal.write("\r");
     await terminal.waitFor("PLUGIN CATALOG");
     terminal.write("\r");
@@ -1897,9 +1533,8 @@ describe("Atlas Core terminal UI", () => {
     );
     const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
 
-    await terminal.waitFor("View status");
-    terminal.write("plugins");
-    await terminal.waitFor("Filter: plugins");
+    await terminal.waitFor("Manage Plugins");
+    terminal.write("\u001b[B".repeat(4));
     terminal.write("\r");
     await terminal.waitFor("PLUGIN CATALOG");
     terminal.write("\r");
@@ -1914,54 +1549,6 @@ describe("Atlas Core terminal UI", () => {
     await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
     terminal.write("q");
     await menu;
-  });
-
-  it("shows logs for all services from the log picker", async () => {
-    const terminal = new TestTerminal();
-    const deployment = operator();
-    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
-
-    await terminal.waitFor("View logs");
-    terminal.write("logs\u001b[13u");
-    await terminal.waitFor("All services");
-    terminal.write("\r");
-    await terminal.waitFor("Press Enter to return to Atlas Core.");
-    terminal.write("\r");
-    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
-    terminal.write("q");
-    await menu;
-
-    expect(deployment.logs).toHaveBeenCalledWith(undefined, false);
-  });
-
-  it("dispatches the newly selected log once when input is coalesced", async () => {
-    const terminal = new TestTerminal();
-    const deployment = operator();
-    let finishLogs: (() => void) | undefined;
-    const pendingLogs = new Promise<undefined>((resolve) => {
-      finishLogs = () => resolve(undefined);
-    });
-    deployment.logs.mockImplementation(() => pendingLogs);
-    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
-
-    await terminal.waitFor("View logs");
-    terminal.write("logs");
-    await terminal.waitFor("Filter: logs");
-    terminal.write("\r");
-    await terminal.waitFor("All services");
-    terminal.write("\u001b[B\u001b[13u\u001b[13u");
-    await vi.waitFor(() => expect(deployment.logs).toHaveBeenCalled());
-    await nextInputTurn();
-    const logCallsAfterRepeatedEnter = deployment.logs.mock.calls.length;
-    finishLogs?.();
-    await terminal.waitFor("Press Enter to return to Atlas Core.");
-    terminal.write("\r");
-    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
-    terminal.write("q");
-    await menu;
-
-    expect(logCallsAfterRepeatedEnter).toBe(1);
-    expect(deployment.logs).toHaveBeenCalledWith("api", false);
   });
 
   it("renders an intentional narrow-terminal state", async () => {
@@ -2043,13 +1630,8 @@ describe("Atlas Core terminal UI", () => {
     const deployment = operator();
     const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
 
-    await terminal.waitFor("Configure");
-    terminal.write("configure");
-    await terminal.waitFor("Filter: configure");
-    const beforeSubmenu = terminal.raw.length;
-    terminal.write("\r");
-    await terminal.waitForRawChange(beforeSubmenu);
-    await nextInputTurn();
+    await terminal.waitFor("Change admin password");
+    terminal.write("\u001b[B".repeat(6));
     terminal.write("\r");
     await terminal.waitFor("New password");
     const beforeCancel = terminal.raw.length;
@@ -2203,7 +1785,7 @@ describe("Atlas Core terminal UI", () => {
     const deployment = operator();
     const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
 
-    await terminal.waitFor("View status");
+    await terminal.waitFor("View service health");
     terminal.write("\r");
     await terminal.waitFor("Network I/O");
     terminal.write("\u0004");
@@ -2535,21 +2117,23 @@ describe("Atlas Core terminal UI", () => {
     const terminal = new TestTerminal();
     const deployment = operator();
     let finishDiagnostics: (() => void) | undefined;
-    deployment.doctor.mockImplementation(
+    deployment.diagnostics.mockImplementation(
       () =>
         new Promise((resolve) => {
-          finishDiagnostics = () => resolve(true);
+          finishDiagnostics = () => resolve({ healthy: true, checks: [] });
         })
     );
     deployment.cancelPending.mockImplementation(() => finishDiagnostics?.());
     const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
 
-    await terminal.waitFor("View status");
-    terminal.write("diagnostics");
-    await terminal.waitFor("Filter: diagnostics");
+    await terminal.waitFor("View logs and diagnostics");
+    terminal.write("\u001b[B");
     terminal.write("\r");
-    await terminal.waitFor("Run diagnostics...");
-    await vi.waitFor(() => expect(deployment.doctor).toHaveBeenCalledOnce());
+    await terminal.waitFor("Logs and diagnostics");
+    terminal.write("\u001b[B".repeat(5));
+    terminal.write("\r");
+    await terminal.waitFor("Running diagnostics...");
+    await vi.waitFor(() => expect(deployment.diagnostics).toHaveBeenCalledOnce());
     terminal.input.emit("end");
 
     await expect(menu).rejects.toThrow("lost its terminal input");
