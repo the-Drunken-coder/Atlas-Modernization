@@ -14,6 +14,7 @@ This directory contains operational docs for the Go-based Atlas Core service.
 | Entity Status | `ASSET_STATUS_SYSTEM.md` | Entity types, status tracking, and telemetry updates. |
 | Pagination | `PAGINATION.md` | `limit`/`cursor` behavior and pagination headers. |
 | Database Workflow | `DATABASE_WORKFLOW.md` | Durable production migrations, drift checks, v1 baseline adoption, and explicit developer scratch mode. |
+| Live Transaction Testing | `LIVE_TRANSACTION_TESTING.md` | Disposable PostgreSQL execution, Task and feed coverage, measured floors, and artifacts. |
 | Deployment Runbook | `DEPLOYMENT_RUNBOOK.md` | Single-host deployment, paired PostgreSQL/MinIO backup and restore, migration rollback, smoke tests, and shutdown/reset. |
 | Source Gateway | `SOURCE_GATEWAY.md` | Private Source connector configuration, defaults, limits, credentials, and egress policy. |
 | Entities | `database-structure/entities.md` | Entity JSON blob structure and component guidance. |

@@ -60,6 +60,10 @@ jobs:
         run: ./scripts/run_integration_tests.sh
 
       - name: Run full Go test suite against live stack
+        env:
+          ATLAS_STORAGE_RECOVERY_ENDPOINT: 127.0.0.1:9000
+          ATLAS_STORAGE_RECOVERY_ACCESS_KEY: ${{ env.MINIO_ROOT_USER }}
+          ATLAS_STORAGE_RECOVERY_SECRET_KEY: ${{ env.MINIO_ROOT_PASSWORD }}
         run: go test -count=1 -race ./...
 
       - name: Collect Compose logs

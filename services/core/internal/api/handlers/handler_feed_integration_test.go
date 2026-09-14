@@ -10,13 +10,11 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"testing"
 	"time"
 
 	"github.com/coder/websocket"
 	"github.com/go-chi/chi/v5"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog"
 	protocol "github.com/the-drunken-coder/atlas/packages/protocol/generated/go/atlasprotocol"
@@ -134,54 +132,11 @@ func TestFeedReadsCommittedEventsWithoutRejectedWriteGaps(t *testing.T) {
 
 func openIsolatedFeedIntegrationPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	dbURL, explicitDBURL := testenv.DatabaseURL("ATLAS_ACTIONS_DATABASE_URL")
-	if dbURL == "" {
-		testenv.SkipOrFatal(t, "set ATLAS_ACTIONS_DATABASE_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed feed integration tests")
-	}
-
+	dbURL := testenv.IsolatedDatabaseURL(t, "ATLAS_ACTIONS_DATABASE_URL", "set ATLAS_ACTIONS_DATABASE_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed feed integration tests")
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	adminConn, err := pgx.Connect(ctx, dbURL)
-	if err != nil {
-		if explicitDBURL {
-			t.Fatalf("connect feed integration database: %v", err)
-		}
-		testenv.SkipOrFatal(t, "feed integration database unavailable: %v", err)
-	}
-
-	schema := fmt.Sprintf("atlas_feed_test_%d", time.Now().UTC().UnixNano())
-	identifier := pgx.Identifier{schema}.Sanitize()
-	if _, err := adminConn.Exec(ctx, "CREATE SCHEMA "+identifier); err != nil {
-		_ = adminConn.Close(context.Background())
-		if explicitDBURL {
-			t.Fatalf("create isolated feed integration schema: %v", err)
-		}
-		testenv.SkipOrFatal(t, "feed integration database unavailable: %v", err)
-	}
-	var db *atlasdb.DB
-	t.Cleanup(func() {
-		if db != nil {
-			db.Close()
-		}
-		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cleanupCancel()
-		if _, err := adminConn.Exec(cleanupCtx, "DROP SCHEMA IF EXISTS "+identifier+" CASCADE"); err != nil {
-			t.Errorf("drop isolated feed integration schema %s: %v", schema, err)
-		}
-		if err := adminConn.Close(cleanupCtx); err != nil {
-			t.Errorf("close feed integration database connection: %v", err)
-		}
-	})
-
-	parsed, err := url.Parse(dbURL)
-	if err != nil {
-		t.Fatalf("parse feed integration database URL: %v", err)
-	}
-	query := parsed.Query()
-	query.Set("search_path", schema)
-	parsed.RawQuery = query.Encode()
-	db, err = atlasdb.New(&config.Config{
-		DatabaseURL:             parsed.String(),
+	db, err := atlasdb.New(&config.Config{
+		DatabaseURL:             dbURL,
 		DatabasePoolSize:        1,
 		DatabaseMaxOverflow:     1,
 		DatabasePoolRecycle:     3600,
@@ -192,6 +147,7 @@ func openIsolatedFeedIntegrationPool(t *testing.T) *pgxpool.Pool {
 	if err != nil {
 		t.Fatalf("open isolated feed integration database: %v", err)
 	}
+	t.Cleanup(db.Close)
 	if err := db.EnsureTables(ctx); err != nil {
 		t.Fatalf("initialize isolated feed integration schema: %v", err)
 	}
@@ -283,28 +239,7 @@ func assertEntityCreateFeedEventIntegration(t *testing.T, event protocol.FeedEve
 
 func openFeedIntegrationPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	pool := testenv.OpenDatabasePool(t, "ATLAS_ACTIONS_DATABASE_URL", "set ATLAS_ACTIONS_DATABASE_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed feed integration tests")
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if ok, err := feedIntegrationCoreSchemaPresent(ctx, pool); err != nil {
-		t.Fatalf("check core schema: %v", err)
-	} else if !ok {
-		testenv.SkipOrFatal(t, "core schema is not present in test database")
-	}
-	return pool
-}
-
-func feedIntegrationCoreSchemaPresent(ctx context.Context, pool *pgxpool.Pool) (bool, error) {
-	var ok bool
-	err := pool.QueryRow(ctx, `
-		SELECT to_regclass('public.entities') IS NOT NULL
-			AND to_regclass('public.tasks') IS NOT NULL
-			AND to_regclass('public.objects') IS NOT NULL
-			AND to_regclass('public.atlas_change_clock') IS NOT NULL
-			AND to_regclass('public.atlas_change_events') IS NOT NULL
-			AND to_regclass('public.admin_records') IS NOT NULL
-	`).Scan(&ok)
-	return ok, err
+	return openIsolatedFeedIntegrationPool(t)
 }
 
 func storeFeedIntegrationAdminRecord(ctx context.Context, pool *pgxpool.Pool, id, recordType string, value any) error {

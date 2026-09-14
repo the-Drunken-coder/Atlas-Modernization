@@ -133,7 +133,7 @@ mc_image="quay.io/minio/mc:RELEASE.2024-01-31T08-59-40Z@sha256:c084c9a67c7a9ed5f
 docker run --rm --network "${project_name}_atlas_core_network" \
   --env-file "$core_home/.env" --volume "$backup_dir:/backup" \
   --entrypoint /bin/sh "$mc_image" -ec '
-    mc alias set atlas http://minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null
+    mc alias set -- atlas http://minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null
     mkdir -p "/backup/minio/$MINIO_BUCKET"
     mc mirror --overwrite "atlas/$MINIO_BUCKET" "/backup/minio/$MINIO_BUCKET"
     mc ls --recursive "atlas/$MINIO_BUCKET" > /backup/minio.contents.txt
