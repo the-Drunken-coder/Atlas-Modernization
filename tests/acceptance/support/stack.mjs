@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repositoryRoot = fileURLToPath(new URL("../../../", import.meta.url));
@@ -11,7 +11,21 @@ const commandTimeoutMs = 10 * 60_000;
 const readinessTimeoutMs = 90_000;
 const fixtureHookTimeoutMs = 120_000;
 const coreStartupAttempts = 2;
-const failureClassifications = new Set(["corrected_test_error", "verified_product_defect", "unavailable_verification"]);
+const failureClassifications = new Set([
+  "corrected_test_error",
+  "verified_product_defect",
+  "unavailable_verification",
+  "required_dependency_unavailable",
+  "baseline_not_observed",
+  "disconnect_not_observed",
+  "core_restart_failed",
+  "reconnect_not_attempted",
+  "durability_mismatch",
+  "changed_since_mismatch",
+  "disconnect_boundary_mismatch",
+  "recovery_timeout",
+  "convergence_mismatch"
+]);
 const runnerOwnedEnvironmentKeys = new Set([
   "ATLAS_ACCEPTANCE_RUN_ID",
   "API_AUTH_KEY",
@@ -167,7 +181,19 @@ export async function runAcceptance({
       logPath: commandLog,
       timeoutMs: 30_000
     });
-    validateComposeConfig(JSON.parse(composeConfig), { project, corePort: initialPortReservation.port });
+    const fixturePaths = Object.values(preparation?.environment ?? {}).filter(
+      (value) => typeof value === "string" && isAbsolute(value)
+    );
+    validateComposeConfig(JSON.parse(composeConfig), {
+      project,
+      corePort: initialPortReservation.port,
+      allowedBindRoots: [
+        repositoryRoot,
+        ...additionalComposeFiles.map((path) => dirname(resolve(repositoryRoot, path))),
+        ...fixturePaths
+      ],
+      allowedWritableBindRoots: fixturePaths
+    });
     ownsProject = true;
     await execute("docker", [...compose, "build"], {
       cwd: repositoryRoot,
@@ -361,7 +387,12 @@ export function cloneJSONValue(value, label) {
   }
 }
 
-export function validateComposeConfig(config, { project, corePort }) {
+export function validateComposeConfig(config, {
+  project,
+  corePort,
+  allowedBindRoots = [],
+  allowedWritableBindRoots = []
+}) {
   if (!config || typeof config !== "object" || config.name !== project) {
     throw new Error("acceptance Compose config must retain the runner project name");
   }
@@ -386,7 +417,15 @@ export function validateComposeConfig(config, { project, corePort }) {
       throw new Error(`acceptance Compose service ${serviceName} cannot attach host devices`);
     }
     for (const volume of service.volumes ?? []) {
-      if (volume.type === "bind") throw new Error(`acceptance Compose service ${serviceName} cannot bind host paths`);
+      if (volume.type === "bind") {
+        const source = resolve(volume.source);
+        const allowedRoots = allowedBindRoots.some((root) => isPathWithin(source, root));
+        const allowedWritableRoot = allowedWritableBindRoots.some((root) => isPathWithin(source, root));
+        if (!allowedRoots || (volume.read_only !== true && !allowedWritableRoot)) {
+          throw new Error(`acceptance Compose service ${serviceName} uses an unowned host bind`);
+        }
+        continue;
+      }
       if (volume.type === "volume" && !Object.hasOwn(declaredVolumes, volume.source)) {
         throw new Error(`acceptance Compose service ${serviceName} uses an unowned volume`);
       }
@@ -402,6 +441,13 @@ export function validateComposeConfig(config, { project, corePort }) {
       throw new Error(`acceptance Compose volume ${volumeName} is not runner-owned`);
     }
   }
+}
+
+function isPathWithin(candidate, root) {
+  const normalizedCandidate = resolve(candidate);
+  const normalizedRoot = resolve(root);
+  const remainder = relative(normalizedRoot, normalizedCandidate);
+  return remainder === "" || (!remainder.startsWith("..") && !isAbsolute(remainder));
 }
 
 function isRunnerCorePort(port, corePort) {

@@ -64,7 +64,26 @@ test("validateComposeConfig accepts only project-owned acceptance resources", ()
   externalVolume.volumes.shared = { name: "shared", external: true };
   assert.throws(() => validateComposeConfig(externalVolume, { project, corePort }), /not runner-owned/);
 
-  const bindMount = baseComposeConfig();
-  bindMount.services.worker = { volumes: [{ type: "bind", source: "/tmp/fixture", target: "/fixture" }] };
-  assert.throws(() => validateComposeConfig(bindMount, { project, corePort }), /cannot bind host paths/);
+  const readOnlyBind = baseComposeConfig();
+  readOnlyBind.services.worker = {
+    volumes: [{ type: "bind", source: "/repo/fixture.json", target: "/fixture.json", read_only: true }]
+  };
+  assert.doesNotThrow(() => validateComposeConfig(readOnlyBind, { project, corePort, allowedBindRoots: ["/repo"] }));
+
+  const writableBind = baseComposeConfig();
+  writableBind.services.worker = {
+    volumes: [{ type: "bind", source: "/tmp/fixture", target: "/fixture" }]
+  };
+  assert.throws(
+    () => validateComposeConfig(writableBind, { project, corePort, allowedBindRoots: ["/tmp/fixture"] }),
+    /uses an unowned host bind/
+  );
+  assert.doesNotThrow(() =>
+    validateComposeConfig(writableBind, {
+      project,
+      corePort,
+      allowedBindRoots: ["/tmp/fixture"],
+      allowedWritableBindRoots: ["/tmp/fixture"]
+    })
+  );
 });

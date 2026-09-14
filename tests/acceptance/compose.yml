@@ -3,9 +3,10 @@ services:
     build:
       context: ../..
       dockerfile: services/core/docker/Dockerfile
-      # Acceptance keeps state across an in-run Core restart, so use the
-      # durable production image while retaining run-owned disposable volumes.
-      target: production
+      # Acceptance keeps state across an in-run Core restart. The dedicated
+      # acceptance image retains Go overlays for test fixtures while applying
+      # the production entrypoint's durable-storage and credential guards.
+      target: acceptance
     environment:
       DATABASE_URL: postgres://atlas:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/atlas_core
       DATABASE_RECREATE_ON_STARTUP: "false"
