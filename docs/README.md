@@ -1,6 +1,6 @@
 # Atlas Modernization — documentation index
 
-_Revision: 2026-09-10_
+_Revision: 2026-09-13_
 
 This is the single entry point for project documentation. Docs are split into **project-level**
 (this `docs/` tree, spanning every package) and **package-level** (each package's own `docs/`).
@@ -15,6 +15,7 @@ This is the single entry point for project documentation. Docs are split into **
 | [`docs/atlas-meshtastic-link/`](atlas-meshtastic-link/) | Discovery and target architecture for moving Atlas data through Meshtastic. | "What should the Meshtastic communication method do?" |
 | [`docs/atlas-protocol/`](atlas-protocol/) | Atlas Protocol design decisions and reference docs. | "Why is the protocol shaped this way?" |
 | [`docs/atlas-sdk/`](atlas-sdk/) | Atlas SDK design: client architecture, sync engine/cache, unified reads, testing, known gaps. | "How do services talk to Atlas Core?" |
+| [`docs/STORAGE_RECOVERY_TESTING.md`](STORAGE_RECOVERY_TESTING.md) | Core storage-recovery test tiers, isolated dependencies, coverage evidence, and failure artifacts. | "How do I run or assess Core storage-recovery tests?" |
 | [`docs/design-decisions/`](design-decisions/) | Durable architectural/implementation choices across the whole project (Atlas Core, Atlas Protocol, Atlas SDK, …). | "What did we decide, and why?" |
 | [`docs/problems/`](problems/) | Short-lived agent-to-agent notes on active blockers (minutes to a day or two). Spans all packages. | "What is broken right now on this branch?" |
 
