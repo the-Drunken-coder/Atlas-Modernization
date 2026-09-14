@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { AtlasAPIError, AtlasClient, ConflictError } from "@the-drunken-coder/atlas-sdk";
 import { runAcceptance } from "./support/stack.mjs";
@@ -14,11 +16,22 @@ assertFixtureContracts();
 await runAcceptance({
   name: "sdk-auth-conflicts",
   reproduction,
-  run: async ({ baseUrl, apiKey, record, signal }) => {
+  run: async ({ artifacts, baseUrl, apiKey, record, signal }) => {
     const writer = createClient(baseUrl, apiKey);
     const newerClient = createClient(baseUrl, apiKey);
     const staleClient = createClient(baseUrl, apiKey);
     const verifier = createClient(baseUrl, apiKey);
+    const runMetadata = JSON.parse(readFileSync(join(artifacts, "run.json"), "utf8"));
+    const disposition = {
+      revision: runMetadata.revision,
+      scenario: runMetadata.scenario,
+      reproduction: runMetadata.reproduction,
+      artifacts,
+      corrected_test_errors: [],
+      verified_product_defects: [],
+      unavailable_verification: [],
+      unresolved_failures: []
+    };
 
     try {
       const created = await writer.entities.create(
@@ -36,10 +49,17 @@ await runAcceptance({
       });
 
       const missingCredential = await readEntityWithSDK(createClient(baseUrl), entityID, signal);
-      recordUnauthorized(record, "missing credentials", missingCredential);
+      const missingCredentialBoundary = await readEntityAtHTTPBoundary(baseUrl, entityID, undefined, signal);
+      recordUnauthorized(record, "missing credentials", missingCredential, missingCredentialBoundary);
 
       const invalidCredential = await readEntityWithSDK(createClient(baseUrl, "atlas-invalid-test-key"), entityID, signal);
-      recordUnauthorized(record, "invalid credentials", invalidCredential);
+      const invalidCredentialBoundary = await readEntityAtHTTPBoundary(
+        baseUrl,
+        entityID,
+        "atlas-invalid-test-key",
+        signal
+      );
+      recordUnauthorized(record, "invalid credentials", invalidCredential, invalidCredentialBoundary);
 
       const legitimateRead = await readEntityWithSDK(writer, entityID, signal);
       record({
@@ -106,22 +126,29 @@ await runAcceptance({
         check: "stale SDK write is rejected by the current Entity version",
         expected: { status: 412, error_code: "PRECONDITION_FAILED" },
         actual: { stale_write: staleWrite, independent_read: finalRead.observation },
-        passed:
-          staleWrite.status === 412 &&
-          staleWrite.error_code === "PRECONDITION_FAILED"
+        passed: isStaleWriteRejected(staleWrite)
       });
 
       record({
         check: "independent SDK read confirms the newer Entity state was preserved",
         expected: { entity_id: entityID, alias: newerAlias, version: newerUpdate.metadata.version },
         actual: finalRead.observation,
-        passed:
-          finalRead.ok &&
-          finalRead.entity.entity_id === entityID &&
-          finalRead.entity.alias === newerAlias &&
-          finalRead.entity.metadata.version === newerUpdate.metadata.version
+        passed: isNewerStatePreserved(finalRead, entityID, newerAlias, newerUpdate.metadata.version)
       });
+
+      recordMutationProbes(record, entityID, newerUpdate.metadata.version);
+    } catch (error) {
+      disposition.unresolved_failures.push({
+        check: error?.acceptanceEvidence?.check ?? "scenario execution",
+        affected_checks: [error?.acceptanceEvidence?.check ?? "scenario execution"],
+        expected: error?.acceptanceEvidence?.expected,
+        actual: error?.acceptanceEvidence?.actual,
+        manual_verification: "required before classification",
+        reason: error instanceof Error ? error.message : String(error)
+      });
+      throw error;
     } finally {
+      writeDisposition(artifacts, disposition);
       writer.sync.stop();
       newerClient.sync.stop();
       staleClient.sync.stop();
@@ -140,6 +167,21 @@ function createClient(baseUrl, apiKey) {
   });
 }
 
+async function readEntityAtHTTPBoundary(baseUrl, id, apiKey, signal) {
+  const response = await fetch(`${baseUrl}/entities/${encodeURIComponent(id)}`, {
+    ...(apiKey === undefined ? {} : { headers: { "X-API-Key": apiKey } }),
+    signal
+  });
+  const bodyText = await response.text();
+  let body;
+  try {
+    body = JSON.parse(bodyText);
+  } catch {
+    body = bodyText;
+  }
+  return { status: response.status, body };
+}
+
 async function readEntityWithSDK(client, id, signal) {
   try {
     const entity = await client.entities.get(id, { fresh: true, signal });
@@ -149,19 +191,68 @@ async function readEntityWithSDK(client, id, signal) {
   }
 }
 
-function recordUnauthorized(record, credentialCase, response) {
+function recordUnauthorized(record, credentialCase, response, boundaryResponse) {
   const expectedBody = { success: false, message: "Unauthorized", error_code: "UNAUTHORIZED" };
   record({
     check: `${credentialCase} cannot read a protected Entity and receives no protected data`,
     expected: { error_type: "AtlasAPIError", status: 401, error_code: "UNAUTHORIZED", response: expectedBody },
-    actual: response.error ?? { status: response.status, response: response.observation },
+    actual: {
+      sdk: response.error ?? { status: response.status, response: response.observation },
+      http: boundaryResponse
+    },
     passed:
       response.error?.error_type === "AtlasAPIError" &&
       response.error.status === 401 &&
       response.error.error_code === "UNAUTHORIZED" &&
       isDeepStrictEqual(response.error.response, expectedBody) &&
-      !includesProtectedData(response.error.response)
+      !includesProtectedData(response.error.response) &&
+      boundaryResponse.status === 401 &&
+      isDeepStrictEqual(boundaryResponse.body, expectedBody) &&
+      !includesProtectedData(boundaryResponse.body)
   });
+}
+
+function isStaleWriteRejected(staleWrite) {
+  return staleWrite.status === 412 && staleWrite.error_code === "PRECONDITION_FAILED";
+}
+
+function isNewerStatePreserved(finalRead, expectedEntityID, expectedAlias, expectedVersion) {
+  return (
+    finalRead.ok &&
+    finalRead.entity.entity_id === expectedEntityID &&
+    finalRead.entity.alias === expectedAlias &&
+    finalRead.entity.metadata.version === expectedVersion
+  );
+}
+
+function recordMutationProbes(record, expectedEntityID, expectedVersion) {
+  const overwritten = {
+    status: 200,
+    response: { entity_id: expectedEntityID, alias: staleAlias, version: expectedVersion }
+  };
+  record({
+    check: "stale-write assertion rejects a deliberately overwritten outcome",
+    expected: { stale_write_rejected: false },
+    actual: { stale_write_rejected: isStaleWriteRejected(overwritten) },
+    passed: !isStaleWriteRejected(overwritten)
+  });
+
+  const corruptedRead = {
+    ok: true,
+    entity: { entity_id: expectedEntityID, alias: staleAlias, metadata: { version: expectedVersion } }
+  };
+  record({
+    check: "newer-state assertion rejects a deliberately corrupted read",
+    expected: { newer_state_preserved: false },
+    actual: {
+      newer_state_preserved: isNewerStatePreserved(corruptedRead, expectedEntityID, newerAlias, expectedVersion)
+    },
+    passed: !isNewerStatePreserved(corruptedRead, expectedEntityID, newerAlias, expectedVersion)
+  });
+}
+
+function writeDisposition(artifacts, disposition) {
+  writeFileSync(join(artifacts, "verification-disposition.json"), `${JSON.stringify(disposition, null, 2)}\n`);
 }
 
 function summarizeConflict(error) {
