@@ -41,6 +41,7 @@
     "test:acceptance:sdk-entity": "npm run build:sdk && node tests/acceptance/sdk-entity.mjs",
     "test:acceptance:support": "node --test tests/acceptance/support/stack.test.mjs",
     "test:acceptance:browser-smoke": "npm run build:sdk && node tests/acceptance/browser/smoke.mjs",
+    "test:acceptance:browser-geofeatures": "npm run build:sdk && node tests/acceptance/browser/geofeatures.mjs",
     "test:clean-workspace": "node tests/clean-workspace-smoke.mjs"
   },
   "devDependencies": {
