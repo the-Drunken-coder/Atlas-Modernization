@@ -27,6 +27,7 @@
     "link": "tsx src/cli.ts",
     "lint": "biome lint --config-path biome.json .",
     "test": "vitest run",
+    "test:acceptance": "npm run build && tsc -p tsconfig.acceptance.json && node --test dist/acceptance/process-acceptance.js",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {

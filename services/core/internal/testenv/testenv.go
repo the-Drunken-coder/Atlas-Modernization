@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -49,6 +51,57 @@ func DatabaseURL(primaryEnv string) (string, bool) {
 		Host:   "localhost:5432",
 		Path:   "/atlas_core",
 	}).String(), false
+}
+
+// IsolatedDatabaseURL creates a private PostgreSQL schema for one test and
+// returns a URL whose search path selects it. The schema is dropped after the
+// test's later cleanup handlers close their pools.
+func IsolatedDatabaseURL(t testing.TB, primaryEnv, missingMessage string) string {
+	t.Helper()
+	dbURL, explicit := DatabaseURL(primaryEnv)
+	if dbURL == "" {
+		SkipOrFatal(t, "%s", missingMessage)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	adminConn, err := pgx.Connect(ctx, dbURL)
+	if err != nil {
+		if explicit {
+			t.Fatalf("connect test database: %v", err)
+		}
+		SkipOrFatal(t, "test database unavailable: %v", err)
+	}
+
+	schema := "atlas_test_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	identifier := pgx.Identifier{schema}.Sanitize()
+	if _, err := adminConn.Exec(ctx, "CREATE SCHEMA "+identifier); err != nil {
+		_ = adminConn.Close(context.Background())
+		if explicit {
+			t.Fatalf("create isolated test schema: %v", err)
+		}
+		SkipOrFatal(t, "test database unavailable: %v", err)
+	}
+	t.Logf("isolated PostgreSQL schema: %s", schema)
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cleanupCancel()
+		if _, err := adminConn.Exec(cleanupCtx, "DROP SCHEMA IF EXISTS "+identifier+" CASCADE"); err != nil {
+			t.Errorf("drop isolated test schema %s: %v", schema, err)
+		}
+		if err := adminConn.Close(cleanupCtx); err != nil {
+			t.Errorf("close test database connection: %v", err)
+		}
+	})
+
+	parsed, err := url.Parse(dbURL)
+	if err != nil {
+		t.Fatalf("parse test database URL: %v", err)
+	}
+	query := parsed.Query()
+	query.Set("search_path", schema)
+	parsed.RawQuery = query.Encode()
+	return parsed.String()
 }
 
 // OpenDatabasePool opens and pings the shared test database. Bad configured

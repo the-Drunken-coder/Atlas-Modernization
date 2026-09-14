@@ -77,6 +77,17 @@ COPY services/core/docker/source_gateway.development.json ./source_gateway.json
 EXPOSE 8080
 CMD ["go", "run", "./cmd/atlas_source_gateway"]
 
+# Acceptance stage: keep the development compiler and source tree so test-only
+# Go overlays can be applied at startup, but enforce the production entrypoint
+# guard against destructive storage mode and placeholder credentials.
+FROM development AS acceptance
+USER root
+COPY services/core/docker/production-entrypoint.sh ./production-entrypoint.sh
+RUN chown atlas:atlas ./production-entrypoint.sh && chmod 0500 ./production-entrypoint.sh
+USER atlas
+ENTRYPOINT ["./production-entrypoint.sh"]
+CMD ["go", "run", "./cmd/atlas_core"]
+
 # Production stage (digest pins alpine:3.24 index)
 FROM alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b AS production
 

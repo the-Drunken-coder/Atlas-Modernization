@@ -46,7 +46,8 @@
     "format:check": "biome check --linter-enabled=false --config-path biome.json .",
     "test": "vitest run",
     "test:package": "node test/packed-install-smoke.mjs",
-    "check": "npm run format:check && npm run lint && npm run typecheck && npm test && npm run build && npm run test:package"
+    "test:portable-package": "node test/portable-packed-cli.mjs",
+    "check": "npm run format:check && npm run lint && npm run typecheck && npm test && npm run build && npm run test:package && npm run test:portable-package"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.12",
