@@ -35,6 +35,9 @@ jobs:
       - name: Install JavaScript workspace dependencies
         run: npm ci
 
+      - name: Run acceptance support tests
+        run: npm run test:acceptance:support
+
       - name: Run SDK Entity acceptance
         run: npm run test:acceptance:sdk-entity
 

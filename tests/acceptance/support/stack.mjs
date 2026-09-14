@@ -9,6 +9,7 @@ const repositoryRoot = fileURLToPath(new URL("../../../", import.meta.url));
 const composeFile = join(repositoryRoot, "tests", "acceptance", "compose.yml");
 const commandTimeoutMs = 10 * 60_000;
 const readinessTimeoutMs = 90_000;
+const fixtureHookTimeoutMs = 120_000;
 const coreStartupAttempts = 2;
 const runnerOwnedEnvironmentKeys = new Set([
   "ATLAS_ACCEPTANCE_RUN_ID",
@@ -63,7 +64,6 @@ export async function runAcceptance({
     scenario: name,
     run_id: runID,
     ...(runLabel ? { run_label: runLabel } : {}),
-    ...(fixtureVariant ? { fixture_variant: fixtureVariant } : {}),
     compose_project: project,
     revision: revision.trim(),
     working_tree: workingTree.trim() || "clean",
@@ -71,7 +71,6 @@ export async function runAcceptance({
     started_at: startedAt.toISOString(),
     artifacts
   };
-  writeJSON(join(artifacts, "run.json"), { ...metadata, status: "starting" });
   process.stdout.write(
     `Atlas acceptance ${name}\nrevision: ${metadata.revision}${workingTree ? " (working tree has changes)" : ""}\n` +
       `run: ${runID}\nartifacts: ${artifacts}\nreproduce: ${reproduction}\n`
@@ -108,7 +107,16 @@ export async function runAcceptance({
   };
 
   try {
-    preparation = await prepare?.({ artifacts, runID, signal: interruption.signal });
+    writeJSON(join(artifacts, "run.json"), { ...metadata, status: "starting" });
+    if (fixtureVariant !== undefined) {
+      metadata.fixture_variant = cloneJSONValue(fixtureVariant, "fixture variant");
+      writeJSON(join(artifacts, "run.json"), { ...metadata, status: "starting" });
+    }
+    preparation = await runFixtureHook(
+      "fixture preparation",
+      prepare ? (signal) => prepare({ artifacts, runID, signal }) : undefined,
+      interruption.signal
+    );
     if (preparation?.environment) {
       const reservedKeys = Object.keys(preparation.environment).filter((key) => runnerOwnedEnvironmentKeys.has(key));
       if (reservedKeys.length > 0) {
@@ -116,16 +124,21 @@ export async function runAcceptance({
       }
       Object.assign(environment, preparation.environment);
     }
-    if (preparation?.metadata) {
-      const serializedFixtureMetadata = JSON.stringify(preparation.metadata);
-      if (serializedFixtureMetadata === undefined) throw new Error("fixture metadata must be valid JSON");
-      metadata.fixture = JSON.parse(serializedFixtureMetadata);
+    if (preparation?.metadata !== undefined) {
+      metadata.fixture = cloneJSONValue(preparation.metadata, "fixture metadata");
       writeJSON(join(artifacts, "run.json"), { ...metadata, status: "prepared" });
     }
     await preflight(commandLog);
     interruption.signal.throwIfAborted();
     initialPortReservation = await reserveLoopbackPort();
     environment.ATLAS_ACCEPTANCE_CORE_PORT = String(initialPortReservation.port);
+    const composeConfig = await capture("docker", [...compose, "config", "--format", "json"], {
+      cwd: repositoryRoot,
+      env: environment,
+      logPath: commandLog,
+      timeoutMs: 30_000
+    });
+    validateComposeConfig(JSON.parse(composeConfig), { project, corePort: initialPortReservation.port });
     ownsProject = true;
     await execute("docker", [...compose, "build"], {
       cwd: repositoryRoot,
@@ -207,7 +220,10 @@ export async function runAcceptance({
       }
     }
     try {
-      await preparation?.cleanup?.();
+      await runFixtureHook(
+        "fixture cleanup",
+        preparation?.cleanup ? (signal) => preparation.cleanup({ signal }) : undefined
+      );
     } catch (cleanupError) {
       fixtureCleanupFailure ??= cleanupError;
       failure ??= cleanupError;
@@ -276,6 +292,94 @@ async function startCore(compose, environment, commandLog, signal, record, initi
     }
   }
   throw new Error("Core startup exhausted its recognized port bind retries");
+}
+
+export async function runFixtureHook(label, hook, parentSignal) {
+  if (!hook) return undefined;
+  const timeoutController = new AbortController();
+  let timeout;
+  const timeoutPromise = new Promise((_, reject) => {
+    timeout = setTimeout(() => {
+      const error = new Error(`${label} exceeded ${fixtureHookTimeoutMs} ms`);
+      timeoutController.abort(error);
+      reject(error);
+    }, fixtureHookTimeoutMs);
+  });
+  const signal = parentSignal ? AbortSignal.any([parentSignal, timeoutController.signal]) : timeoutController.signal;
+  try {
+    return await Promise.race([Promise.resolve().then(() => hook(signal)), timeoutPromise]);
+  } finally {
+    clearTimeout(timeout);
+    timeoutController.abort();
+  }
+}
+
+export function cloneJSONValue(value, label) {
+  let serialized;
+  try {
+    serialized = JSON.stringify(value);
+  } catch (error) {
+    throw new Error(`${label} must be valid JSON`, { cause: error });
+  }
+  if (serialized === undefined) throw new Error(`${label} must be valid JSON`);
+  try {
+    return JSON.parse(serialized);
+  } catch (error) {
+    throw new Error(`${label} must be valid JSON`, { cause: error });
+  }
+}
+
+export function validateComposeConfig(config, { project, corePort }) {
+  if (!config || typeof config !== "object" || config.name !== project) {
+    throw new Error("acceptance Compose config must retain the runner project name");
+  }
+  const services = config.services;
+  if (!services || typeof services !== "object" || !services.api) {
+    throw new Error("acceptance Compose config must define the api service");
+  }
+  const apiPorts = services.api.ports ?? [];
+  if (apiPorts.length !== 1 || !isRunnerCorePort(apiPorts[0], corePort)) {
+    throw new Error("acceptance Compose config must publish only the runner-owned Core port");
+  }
+  const projectPrefix = `${project}_`;
+  const declaredVolumes = config.volumes ?? {};
+  for (const [serviceName, service] of Object.entries(services)) {
+    if (service.container_name || service.network_mode === "host" || service.pid === "host" || service.ipc === "host") {
+      throw new Error(`acceptance Compose service ${serviceName} escapes runner ownership`);
+    }
+    if (serviceName !== "api" && (service.ports?.length ?? 0) > 0) {
+      throw new Error(`acceptance Compose service ${serviceName} cannot publish a host port`);
+    }
+    if ((service.devices?.length ?? 0) > 0) {
+      throw new Error(`acceptance Compose service ${serviceName} cannot attach host devices`);
+    }
+    for (const volume of service.volumes ?? []) {
+      if (volume.type === "bind") throw new Error(`acceptance Compose service ${serviceName} cannot bind host paths`);
+      if (volume.type === "volume" && !Object.hasOwn(declaredVolumes, volume.source)) {
+        throw new Error(`acceptance Compose service ${serviceName} uses an unowned volume`);
+      }
+    }
+  }
+  for (const [networkName, network] of Object.entries(config.networks ?? {})) {
+    if (network.external || !String(network.name).startsWith(projectPrefix)) {
+      throw new Error(`acceptance Compose network ${networkName} is not runner-owned`);
+    }
+  }
+  for (const [volumeName, volume] of Object.entries(declaredVolumes)) {
+    if (volume.external || !String(volume.name).startsWith(projectPrefix)) {
+      throw new Error(`acceptance Compose volume ${volumeName} is not runner-owned`);
+    }
+  }
+}
+
+function isRunnerCorePort(port, corePort) {
+  return (
+    port &&
+    port.host_ip === "127.0.0.1" &&
+    String(port.published) === String(corePort) &&
+    String(port.target) === "8000" &&
+    (port.protocol ?? "tcp") === "tcp"
+  );
 }
 
 function isPortBindConflict(error, port) {
