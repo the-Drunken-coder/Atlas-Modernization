@@ -15,6 +15,8 @@ Scenarios that need a deterministic fixture can pass `prepare({ artifacts, runID
 
 `fixtureVariant` adds a JSON-serializable scenario-level variant description to `run.json.fixture_variant`. `additionalComposeFiles` adds repository-relative or absolute Compose override paths after the base acceptance Compose file, allowing a fixture to extend the disposable stack without duplicating runner ownership. The runner validates the resolved Compose configuration before creating resources: overrides may not publish extra host ports, use external volumes or networks, attach host devices, or bypass the generated project identity. Read-only binds are allowed for repository and override-local fixture files; writable binds must point at an absolute path supplied by preparation through `environment`.
 
+The acceptance-only `js/http-to-file-access` findings in migration/restore, simulation-browser, Link process, and browser proxy helpers are intentional evidence sinks. They serialize loopback responses or request metadata as data-only JSON to fixed files below each run's UUID-owned artifact directory; generated credentials are per-run and ephemeral, the browser journey asserts its configured key is absent from diagnostics, and no logged value controls a filename, command, import, configuration, later execution, or re-ingestion. The building-scan fixture's response helper likewise serializes controlled fixture values, and its validation error exposes only `error.message`, never a stack trace; the fixture is internal to the disposable stack. These local, non-production paths are documented false positives for CodeQL's network-to-file and stack-trace checks.
+
 Run the Entity journey from the repository root with Node 24 or newer and a running Docker daemon:
 
 ```sh

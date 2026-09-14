@@ -932,6 +932,12 @@ function requireBuiltBrowserAssets(artifacts) {
   if (!existsSync(indexPath)) {
     throw new Error(`Built simulation browser assets are required at ${indexPath}. Run: npm run build:simulations`);
   }
+  let index;
+  try {
+    index = readFileSync(indexPath);
+  } catch {
+    throw new Error(`Built simulation browser assets are required at ${indexPath}. Run: npm run build:simulations`);
+  }
   const assetsDirectory = join(buildRoot, "assets");
   const assets = existsSync(assetsDirectory)
     ? readdirSync(assetsDirectory)
@@ -952,8 +958,8 @@ function requireBuiltBrowserAssets(artifacts) {
       {
         index: {
           path: indexPath,
-          bytes: statSync(indexPath).size,
-          sha256: createHash("sha256").update(readFileSync(indexPath)).digest("hex")
+          bytes: index.length,
+          sha256: createHash("sha256").update(index).digest("hex")
         },
         assets
       },

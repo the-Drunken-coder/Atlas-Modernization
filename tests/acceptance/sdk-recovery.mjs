@@ -646,7 +646,6 @@ async function observeWithin({
 async function changedSinceAll(clientInstance, sinceVersion, signal) {
   const events = [];
   let cursor;
-  let version = sinceVersion;
   for (let pages = 1; pages <= 10; pages++) {
     signal.throwIfAborted();
     const response = await clientInstance.queries.changedSince(sinceVersion, {
@@ -654,8 +653,7 @@ async function changedSinceAll(clientInstance, sinceVersion, signal) {
       ...(cursor === undefined ? {} : { cursor }),
     });
     events.push(...response.events);
-    version = response.version;
-    if (!response.has_more) return { events, pages, version };
+    if (!response.has_more) return { events, pages, version: response.version };
     cursor = response.next_cursor;
   }
   throw new Error("changed-since recovery evidence exceeded 10 pages");

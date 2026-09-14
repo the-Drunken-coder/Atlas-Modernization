@@ -680,23 +680,36 @@ async function validateBackupPair() {
   const dumpPath = join(backupDirectory, "postgres.dump");
   const markerPath = join(backupDirectory, "minio.complete");
   const minioPath = join(backupDirectory, "minio", bucket);
-  if (!existsSync(dumpPath) || statSync(dumpPath).size === 0) throw new Error("paired restore PostgreSQL dump is absent or empty");
-  if (!existsSync(markerPath) || readFileSync(markerPath, "utf8").trim() !== bucket) {
+  let dump;
+  try {
+    dump = readFileSync(dumpPath);
+  } catch {
+    throw new Error("paired restore PostgreSQL dump is absent or unreadable");
+  }
+  if (dump.length === 0) throw new Error("paired restore PostgreSQL dump is empty");
+  let marker;
+  try {
+    marker = readFileSync(markerPath, "utf8").trim();
+  } catch {
+    marker = undefined;
+  }
+  if (marker !== bucket) {
     throw new Error("paired restore MinIO completion marker is absent or names another bucket");
   }
   if (filesUnder(minioPath).length === 0) throw new Error("paired restore MinIO mirror contains no object bytes");
-  await postgresCaptureBuffer(["pg_restore", "--list"], 60_000, readFileSync(dumpPath));
+  await postgresCaptureBuffer(["pg_restore", "--list"], 60_000, dump);
+  return dump;
 }
 
 async function restorePair(label) {
-  await validateBackupPair();
+  const dump = await validateBackupPair();
   const started = new Date();
   await postgresExecute(["dropdb", "-U", "atlas", "--if-exists", "atlas_core"], 60_000);
   await postgresExecute(["createdb", "-U", "atlas", "atlas_core"], 60_000);
   await postgresExecute(
     ["pg_restore", "-U", "atlas", "-d", "atlas_core", "--exit-on-error", "--no-owner", "--no-privileges"],
     180_000,
-    readFileSync(join(backupDirectory, "postgres.dump"))
+    dump
   );
   await restoreMinioBackup();
   const completed = new Date();

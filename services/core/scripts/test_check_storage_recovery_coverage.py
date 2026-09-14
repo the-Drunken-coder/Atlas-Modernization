@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
-from unittest import mock
 
 import check_storage_recovery_coverage as coverage
 
@@ -33,7 +33,7 @@ class StorageRecoveryCoverageTests(unittest.TestCase):
 
     def test_rejects_profile_under_floor(self) -> None:
         floors = {name: coverage.Floor(1, 1) for name in coverage.FLOORS}
-        with mock.patch.object(coverage, "FLOORS", floors):
+        with unittest.mock.patch.object(coverage, "FLOORS", floors):
             self.assertFalse(coverage.check(self.complete_profile(count=0)))
 
     def test_rejects_missing_module(self) -> None:
