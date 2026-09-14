@@ -136,14 +136,8 @@ await runAcceptance({
         scenarioName,
         { startedAt: normal.startedAt },
       );
-      recordCompletedStream(
-        normal,
-        normalSummary,
-        normalStream.events,
-        normalInputs,
-        record,
-      );
-      recordCreatedResourceSet(normalSummary, normalInputs, record);
+      // Keep the independent Core read ahead of event-contract checks so a status
+      // defect cannot mask persistence evidence.
       await recordPersistedObservations(
         core,
         normalSummary,
@@ -152,6 +146,14 @@ await runAcceptance({
         record,
         signal,
       );
+      recordCompletedStream(
+        normal,
+        normalSummary,
+        normalStream.events,
+        normalInputs,
+        record,
+      );
+      recordCreatedResourceSet(normalSummary, normalInputs, record);
 
       replacementEntityID = normalSummary.createdResources.find(
         (resource) => resource.type === "entity",
