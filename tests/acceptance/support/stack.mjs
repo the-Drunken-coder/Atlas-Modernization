@@ -10,6 +10,7 @@ const composeFile = join(repositoryRoot, "tests", "acceptance", "compose.yml");
 const commandTimeoutMs = 10 * 60_000;
 const readinessTimeoutMs = 90_000;
 const coreStartupAttempts = 2;
+const failureClassifications = new Set(["corrected_test_error", "verified_product_defect", "unavailable_verification"]);
 
 let activeChild;
 
@@ -69,9 +70,17 @@ export async function runAcceptance({ name, reproduction, run }) {
 
   const record = (entry) => {
     const value = { timestamp: new Date().toISOString(), ...entry };
+    if (value.classification !== undefined && !failureClassifications.has(value.classification)) {
+      throw new TypeError(`unsupported acceptance failure classification: ${value.classification}`);
+    }
+    if (value.passed === false && value.classification === undefined) {
+      value.classification = "verified_product_defect";
+    }
     appendFileSync(evidenceLog, `${JSON.stringify(value)}\n`);
     if (value.passed === false) {
-      const error = new Error(`${value.check}: expected ${formatValue(value.expected)}, observed ${formatValue(value.actual)}`);
+      const error = new Error(
+        `${value.check}: expected ${formatValue(value.expected)}, observed ${formatValue(value.actual)}`
+      );
       error.name = "AcceptanceCheckError";
       error.acceptanceEvidence = value;
       throw error;
@@ -99,7 +108,7 @@ export async function runAcceptance({ name, reproduction, run }) {
     });
     baseUrl = await startCore(compose, environment, commandLog, interruption.signal, record, initialPortReservation);
     interruption.signal.throwIfAborted();
-    await waitForReadiness(baseUrl, interruption.signal);
+    await waitForReadiness(baseUrl, interruption.signal, record);
     record({ check: "core readiness", expected: 200, actual: 200, passed: true });
     writeJSON(join(artifacts, "stack.json"), {
       run_id: runID,
@@ -130,7 +139,7 @@ export async function runAcceptance({ name, reproduction, run }) {
           logPath: commandLog,
           timeoutMs: 120_000
         });
-        await waitForReadiness(baseUrl, interruption.signal);
+        await waitForReadiness(baseUrl, interruption.signal, record);
         const after = (
           await capture("docker", [...compose, "ps", "--quiet", "api"], { cwd: repositoryRoot, env: environment })
         ).trim();
@@ -259,7 +268,7 @@ async function preflight(commandLog) {
   });
 }
 
-async function waitForReadiness(baseUrl, signal) {
+async function waitForReadiness(baseUrl, signal, record) {
   let lastObservation = "no response";
   const deadline = Date.now() + readinessTimeoutMs;
   while (Date.now() < deadline) {
@@ -276,7 +285,13 @@ async function waitForReadiness(baseUrl, signal) {
     }
     await delay(500, signal);
   }
-  throw new Error(`Core readiness expected HTTP 200 within ${readinessTimeoutMs} ms; observed ${lastObservation}`);
+  record({
+    check: "core readiness",
+    expected: { status: 200, within_ms: readinessTimeoutMs },
+    actual: { status: lastObservation },
+    classification: "unavailable_verification",
+    passed: false
+  });
 }
 
 async function collectComposeLogs(compose, environment, artifacts) {
@@ -436,11 +451,14 @@ function reserveLoopbackPort() {
 }
 
 function serializeError(error) {
-  if (!(error instanceof Error)) return { message: String(error) };
+  const evidence = error instanceof Error ? error.acceptanceEvidence : undefined;
+  const classification = evidence?.classification ?? "unavailable_verification";
+  if (!(error instanceof Error)) return { message: String(error), classification };
   return {
     name: error.name,
     message: error.message,
-    ...(error.acceptanceEvidence ? { evidence: error.acceptanceEvidence } : {})
+    classification,
+    ...(evidence ? { evidence } : {})
   };
 }
 

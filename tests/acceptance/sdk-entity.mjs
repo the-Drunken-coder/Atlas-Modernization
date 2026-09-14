@@ -45,7 +45,8 @@ await runAcceptance({
       const createObservation = await observeUntil(
         () => observations.find(({ event }) => event.event === "create"),
         "receiving SDK create feed event",
-        signal
+        signal,
+        record
       );
       record({
         check: "receiving SDK observed Entity creation through the feed",
@@ -57,11 +58,12 @@ await runAcceptance({
           version: created.metadata.version
         },
         actual: summarizeObservation(createObservation),
-        passed:
-          createObservation.event.resource_type === "entity" &&
-          createObservation.event.id === entityID &&
-          createObservation.entity?.alias === createdAlias &&
-          createObservation.event.version === created.metadata.version
+        passed: matchesEntityObservation(createObservation, {
+          event: "create",
+          id: entityID,
+          alias: createdAlias,
+          version: created.metadata.version
+        })
       });
       const createdRead = await receiver.entities.get(entityID, { fresh: true, signal });
       record({
@@ -74,6 +76,23 @@ await runAcceptance({
           createdRead.metadata.version === created.metadata.version
       });
 
+      const faultedCreateObservation = {
+        ...createObservation,
+        entity: { ...createObservation.entity, alias: expectedUpdatedAlias }
+      };
+      const faultedAssertionAccepted = matchesEntityObservation(faultedCreateObservation, {
+        event: "create",
+        id: entityID,
+        alias: createdAlias,
+        version: created.metadata.version
+      });
+      record({
+        check: "critical Entity feed assertion rejects a deliberate mismatch",
+        expected: { accepted: false },
+        actual: { accepted: faultedAssertionAccepted },
+        passed: !faultedAssertionAccepted
+      });
+
       const updated = await writer.entities.update(
         entityID,
         { alias: expectedUpdatedAlias },
@@ -83,7 +102,8 @@ await runAcceptance({
       const updateObservation = await observeUntil(
         () => observations.find(({ event }) => event.event === "update"),
         "receiving SDK update feed event",
-        signal
+        signal,
+        record
       );
       record({
         check: "receiving SDK observed Entity update through the feed",
@@ -96,11 +116,12 @@ await runAcceptance({
         },
         actual: summarizeObservation(updateObservation),
         passed:
-          updateObservation.event.resource_type === "entity" &&
-          updateObservation.event.id === entityID &&
-          updateObservation.entity?.alias === expectedUpdatedAlias &&
-          updateObservation.event.version === updated.metadata.version &&
-          updated.metadata.version > created.metadata.version
+          matchesEntityObservation(updateObservation, {
+            event: "update",
+            id: entityID,
+            alias: expectedUpdatedAlias,
+            version: updated.metadata.version
+          }) && updated.metadata.version > created.metadata.version
       });
       const updatedRead = await receiver.entities.get(entityID, { fresh: true, signal });
       record({
@@ -118,7 +139,8 @@ await runAcceptance({
       const deleteObservation = await observeUntil(
         () => observations.find(({ event }) => event.event === "delete"),
         "receiving SDK delete feed event",
-        signal
+        signal,
+        record
       );
       record({
         check: "receiving SDK observed Entity deletion through the feed",
@@ -151,7 +173,7 @@ await runAcceptance({
   }
 });
 
-async function observeUntil(observe, description, signal) {
+async function observeUntil(observe, description, signal, record) {
   const deadline = Date.now() + 10_000;
   let actual;
   while (Date.now() < deadline) {
@@ -160,7 +182,13 @@ async function observeUntil(observe, description, signal) {
     if (actual !== undefined) return actual;
     await abortableDelay(25, signal);
   }
-  throw new Error(`${description}: expected an observable result within 10000 ms, observed ${JSON.stringify(actual)}`);
+  record({
+    check: description,
+    expected: { observable: true, within_ms: 10_000 },
+    actual: { observable: actual !== undefined, value: actual ?? null },
+    classification: "unavailable_verification",
+    passed: false
+  });
 }
 
 function abortableDelay(milliseconds, signal) {
@@ -188,6 +216,16 @@ function summarizeObservation({ entity, event }) {
     version: event.version,
     entity: entity === undefined ? undefined : "present"
   };
+}
+
+function matchesEntityObservation({ entity, event }, expected) {
+  return (
+    event.event === expected.event &&
+    event.resource_type === "entity" &&
+    event.id === expected.id &&
+    entity?.alias === expected.alias &&
+    event.version === expected.version
+  );
 }
 
 function summarizeEntity(entity) {
