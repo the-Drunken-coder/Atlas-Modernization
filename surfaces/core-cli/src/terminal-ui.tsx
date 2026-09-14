@@ -19,6 +19,8 @@ import type {
   PluginActivityReporter,
   PluginDeploymentStatus,
   UpdateInfo,
+  UpdateProgress,
+  UpdateReporter,
   UpdateScope
 } from "./operator.js";
 import { lifecycleOperationLabel, lifecycleOperationSummary } from "./operator.js";
@@ -58,6 +60,7 @@ type Screen =
   | { kind: "status"; view: DeploymentDetails | Error }
   | { kind: "update"; info: UpdateInfo }
   | { kind: "update-error"; message: string }
+  | { kind: "update-operation"; view: UpdateOperationView }
   | { kind: "update-review"; info: UpdateInfo; scope: UpdateScope };
 
 type AppMode = "configure" | "menu" | "update" | "development";
@@ -84,6 +87,18 @@ type LifecycleOperationView = {
   status: "running" | "cancelling" | "success" | "failure" | "cancelled";
   summary?: string;
   snapshot?: DeploymentSnapshot;
+};
+
+type UpdateOperationEvent = UpdateProgress & { elapsedMs: number };
+
+type UpdateOperationView = {
+  completedAt?: number;
+  error?: string;
+  events: UpdateOperationEvent[];
+  info: UpdateInfo;
+  scope: UpdateScope;
+  startedAt: number;
+  status: "running" | "cancelling" | "success" | "failure" | "cancelled";
 };
 
 type LifecycleRunOptions = LifecycleOperationOptions;
@@ -176,8 +191,11 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
   const { exit, suspendTerminal, waitUntilRenderFlush } = useApp();
   const activePluginOperation = useRef<number | undefined>(undefined);
   const activeLifecycleOperation = useRef<number | undefined>(undefined);
+  const activeUpdateOperation = useRef<number | undefined>(undefined);
   const lifecycleOperationGeneration = useRef(0);
+  const updateOperationGeneration = useRef(0);
   const lifecycleCancellation = useRef<"return" | "exit" | undefined>(undefined);
+  const updateCancellation = useRef<"return" | "exit" | undefined>(undefined);
   const pluginCancellationRequested = useRef(false);
   const pluginOperationGeneration = useRef(0);
   const statusAbortController = useRef<AbortController | undefined>(undefined);
@@ -290,10 +308,17 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
       operator.cancelPending();
       const error = new Error("Atlas Core lost its terminal input.");
       terminalLossError.current = error;
-      if (activeLifecycleOperation.current === undefined) exit(error);
+      if (activeLifecycleOperation.current === undefined && activeUpdateOperation.current === undefined) exit(error);
       else {
-        lifecycleCancellation.current = "exit";
-        setScreen((current) => lifecycleCancellationScreen(current, "Terminal input lost. Waiting for safe cleanup."));
+        if (activeLifecycleOperation.current !== undefined) {
+          lifecycleCancellation.current = "exit";
+          setScreen((current) =>
+            lifecycleCancellationScreen(current, "Terminal input lost. Waiting for safe cleanup.")
+          );
+        } else {
+          updateCancellation.current = "exit";
+          setScreen((current) => updateCancellationScreen(current, "Terminal input lost. Waiting for safe cleanup."));
+        }
       }
     };
     const onError = (error: Error): void => {
@@ -301,10 +326,18 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
       operator.cancelPending();
       const terminalError = new Error(`Atlas Core lost its terminal input: ${error.message}`);
       terminalLossError.current = terminalError;
-      if (activeLifecycleOperation.current === undefined) exit(terminalError);
+      if (activeLifecycleOperation.current === undefined && activeUpdateOperation.current === undefined)
+        exit(terminalError);
       else {
-        lifecycleCancellation.current = "exit";
-        setScreen((current) => lifecycleCancellationScreen(current, "Terminal input lost. Waiting for safe cleanup."));
+        if (activeLifecycleOperation.current !== undefined) {
+          lifecycleCancellation.current = "exit";
+          setScreen((current) =>
+            lifecycleCancellationScreen(current, "Terminal input lost. Waiting for safe cleanup.")
+          );
+        } else {
+          updateCancellation.current = "exit";
+          setScreen((current) => updateCancellationScreen(current, "Terminal input lost. Waiting for safe cleanup."));
+        }
       }
     };
     input.once("end", onEnd);
@@ -666,28 +699,89 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
 
   const applyUpdate = useCallback(
     async (info: UpdateInfo, scope: UpdateScope) => {
-      setScreen({ kind: "busy", label: "Applying reviewed update..." });
-      await waitUntilRenderFlush();
-      let result: OperationResult<void> = { cancelled: false };
-      await suspendTerminal(async () => {
-        result = await runCancelableOperation(operator, async () => {
-          await operator.update(scope, info.latestVersion, scope === "all");
-        });
-        if (result.cancelled && !result.failure) return;
-        if (result.failure) output.write(`\n${result.failure.message}\n`);
-        output.write(
-          result.failure
-            ? "\nThe update stopped without deleting Atlas Core data. Rerun atlas-core to inspect or retry.\n"
-            : "\nUpdate complete. Rerun atlas-core to use the installed CLI.\n"
-        );
-        output.write("\nPress Enter to exit.");
-        await waitForReturn(input);
+      if (scope !== "cli") {
+        setScreen({ kind: "busy", label: "Applying reviewed update..." });
+        await applyLegacyUpdate(operator, info, scope, input, output, exit, suspendTerminal, waitUntilRenderFlush);
+        return;
+      }
+      const operationId = updateOperationGeneration.current + 1;
+      updateOperationGeneration.current = operationId;
+      activeUpdateOperation.current = operationId;
+      updateCancellation.current = undefined;
+      const startedAt = Date.now();
+      setScreen({
+        kind: "update-operation",
+        view: {
+          events: [
+            { elapsedMs: 0, message: "Applying reviewed update...", stage: "operation" },
+            { elapsedMs: 0, message: "CLI-only update requested", stage: "operation" }
+          ],
+          info,
+          scope,
+          startedAt,
+          status: "running"
+        }
       });
-      if (result.cancelled && !result.failure) exit();
-      else if (result.failure) exit(result.failure);
-      else exit();
+      await waitUntilRenderFlush();
+      const report: UpdateReporter = (progress) => {
+        if (activeUpdateOperation.current !== operationId) return;
+        setScreen((current) =>
+          current.kind === "update-operation"
+            ? {
+                ...current,
+                view: {
+                  ...current.view,
+                  events: [...current.view.events, { ...progress, elapsedMs: Date.now() - startedAt }]
+                }
+              }
+            : current
+        );
+      };
+      const result = await runCancelableOperation(operator, async () => {
+        await operator.updateWithProgress(scope, info.latestVersion, false, report);
+      });
+      activeUpdateOperation.current = undefined;
+      const requestedCancellation = updateCancellation.current;
+      if ((result.cancelled || requestedCancellation !== undefined) && !terminalLost.current) {
+        operator.resumeAfterCancellation();
+      }
+      if (result.cancelled && requestedCancellation === undefined) updateCancellation.current = "exit";
+      const cancelled = result.cancelled || requestedCancellation !== undefined;
+      const status = result.failure ? "failure" : cancelled ? "cancelled" : "success";
+      setScreen((current) =>
+        current.kind === "update-operation"
+          ? {
+              ...current,
+              view: {
+                ...current.view,
+                completedAt: Date.now(),
+                ...(result.failure ? { error: result.failure.message } : {}),
+                status
+              }
+            }
+          : current
+      );
+      if (requestedCancellation === "return" && !terminalLost.current && !result.failure) {
+        updateCancellation.current = undefined;
+        await loadUpdate();
+        return;
+      }
+      if (updateCancellation.current === "exit" || terminalLost.current) {
+        exit(result.failure ?? terminalLossError.current);
+      }
     },
-    [exit, input, operator, output, suspendTerminal, waitUntilRenderFlush]
+    [exit, input, loadUpdate, operator, output, suspendTerminal, waitUntilRenderFlush]
+  );
+
+  const cancelUpdateOperation = useCallback(
+    (disposition: "return" | "exit") => {
+      if (activeUpdateOperation.current === undefined) return;
+      if (disposition === "exit") updateCancellation.current = "exit";
+      else updateCancellation.current ??= "return";
+      operator.cancelPending();
+      setScreen((current) => updateCancellationScreen(current, "Cancellation requested. Waiting for safe cleanup."));
+    },
+    [operator]
   );
 
   if (screen.kind === "busy") {
@@ -719,6 +813,15 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
       <LifecycleOperationScreen
         onBack={() => (mode === "configure" ? setScreen({ kind: "password" }) : void loadMenu())}
         onCancel={(disposition) => cancelDevelopmentLifecycle(disposition)}
+        view={screen.view}
+      />
+    );
+  }
+  if (screen.kind === "update-operation") {
+    return (
+      <UpdateOperationScreen
+        onBack={() => exit(screen.view.error ? new Error(screen.view.error) : undefined)}
+        onCancel={cancelUpdateOperation}
         view={screen.view}
       />
     );
@@ -845,6 +948,37 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
       onReview={(scope) => setScreen({ kind: "update-review", info: screen.info, scope })}
     />
   );
+}
+
+async function applyLegacyUpdate(
+  operator: AtlasCoreOperator,
+  info: UpdateInfo,
+  scope: UpdateScope,
+  input: NodeJS.ReadStream,
+  output: NodeJS.WriteStream,
+  exit: (error?: Error) => void,
+  suspendTerminal: (operation: () => Promise<void>) => Promise<void>,
+  waitUntilRenderFlush: () => Promise<void>
+): Promise<void> {
+  await waitUntilRenderFlush();
+  let result: OperationResult<void> = { cancelled: false };
+  await suspendTerminal(async () => {
+    result = await runCancelableOperation(operator, async () => {
+      await operator.update(scope, info.latestVersion, scope === "all");
+    });
+    if (result.cancelled && !result.failure) return;
+    if (result.failure) output.write(`\n${result.failure.message}\n`);
+    output.write(
+      result.failure
+        ? "\nThe update stopped without deleting Atlas Core data. Rerun atlas-core to inspect or retry.\n"
+        : "\nUpdate complete. Rerun atlas-core to use the installed CLI.\n"
+    );
+    output.write("\nPress Enter to exit.");
+    await waitForReturn(input);
+  });
+  if (result.cancelled && !result.failure) exit();
+  else if (result.failure) exit(result.failure);
+  else exit();
 }
 
 function MainMenu({ onSelect, snapshot }: { onSelect(action: Action): void; snapshot: DeploymentSnapshot }): ReactNode {
@@ -2049,6 +2183,141 @@ function LifecycleOperationScreen({
   );
 }
 
+function UpdateOperationScreen({
+  onBack,
+  onCancel,
+  view
+}: {
+  onBack(): void;
+  onCancel(disposition: "return" | "exit"): void;
+  view: UpdateOperationView;
+}): ReactNode {
+  const { columns, rows } = useWindowSize();
+  const [now, setNow] = useState(Date.now());
+  const finished = view.status === "success" || view.status === "failure" || view.status === "cancelled";
+
+  useEffect(() => {
+    if (finished) return;
+    const timer = setInterval(() => setNow(Date.now()), 1_000);
+    return () => clearInterval(timer);
+  }, [finished]);
+
+  useInput((input, key) => {
+    if (!finished && key.escape) {
+      onCancel("return");
+      return;
+    }
+    if (!finished && key.ctrl && input === "c") {
+      onCancel("exit");
+      return;
+    }
+    if (finished && (key.return || key.escape || (key.ctrl && input === "c"))) onBack();
+  });
+
+  const elapsed = (view.completedAt ?? now) - view.startedAt;
+  const detail = `CLI-only update  ${formatActivityTime(elapsed)}`;
+  const footer = finished
+    ? "Enter exit"
+    : view.status === "cancelling"
+      ? "Cancelling safely. Waiting for cleanup..."
+      : "Esc cancel and return   Ctrl+C cancel and exit";
+  if (columns < MINIMUM_TERMINAL_COLUMNS) {
+    return (
+      <Box flexDirection="column" width={columns}>
+        <Header title="ATLAS CORE > UPDATE" />
+        <Text>Resize terminal to at least 40 columns.</Text>
+        <Text dimColor>
+          {view.status === "cancelling" ? "Waiting for safe cleanup..." : "Esc return   Ctrl+C cancel and exit"}
+        </Text>
+      </Box>
+    );
+  }
+
+  const headerRows = 1 + wrappedRows(detail, columns);
+  const viewportRows = rows - headerRows - wrappedRows(footer, columns) - 2;
+  if (viewportRows < 1) {
+    const lines = updateOperationLines(view, columns).slice(-Math.max(1, rows - 3));
+    return (
+      <Box flexDirection="column" width={columns}>
+        <Header title="ATLAS CORE > UPDATE" />
+        {lines.map((line, index) => (
+          <Text
+            {...(line.color ? { color: line.color } : {})}
+            {...(line.dim === undefined ? {} : { dimColor: line.dim })}
+            key={`${index}-${line.text}`}
+          >
+            {line.text || " "}
+          </Text>
+        ))}
+        <Text dimColor={view.status !== "failure"}>{footer}</Text>
+      </Box>
+    );
+  }
+
+  return (
+    <Box flexDirection="column" width={columns}>
+      <Header right={detail} title="ATLAS CORE > UPDATE" />
+      <Rule width={columns} />
+      <Box flexDirection="column" height={viewportRows} justifyContent="flex-end">
+        {updateOperationLines(view, columns)
+          .slice(-viewportRows)
+          .map((line, index) => (
+            <Text
+              {...(line.color ? { color: line.color } : {})}
+              {...(line.dim === undefined ? {} : { dimColor: line.dim })}
+              key={`${index}-${line.text}`}
+            >
+              {line.text || " "}
+            </Text>
+          ))}
+      </Box>
+      <Rule width={columns} />
+      <Text dimColor={view.status !== "failure"}>{footer}</Text>
+    </Box>
+  );
+}
+
+function updateOperationLines(view: UpdateOperationView, width: number): ActivityLine[] {
+  const lines = view.events.flatMap((event) => {
+    const marker = event.stage === "cleanup" ? "[cleanup]" : "[work]";
+    const prefix = `${formatActivityTime(event.elapsedMs)} ${marker} `;
+    return wrapAnsi(`${prefix}${event.message}`, width, { hard: true, trim: false })
+      .split("\n")
+      .map((text) => ({ dim: event.stage === "operation", text }));
+  });
+  if (view.status === "success") {
+    return [
+      ...lines,
+      { text: "" },
+      {
+        color: "green",
+        text: `Update complete. Atlas Core CLI ${view.info.latestVersion} installed. Running Core and durable data were not changed.`
+      }
+    ];
+  }
+  if (view.status === "cancelled") {
+    return [
+      ...lines,
+      { text: "" },
+      {
+        color: "yellow",
+        text: "CLI update cancelled. Running Core and durable data were not changed; the package may have updated."
+      }
+    ];
+  }
+  if (view.status === "failure") {
+    return [
+      ...lines,
+      { text: "" },
+      {
+        color: "red",
+        text: `ERROR: ${view.error ?? "CLI update failed."} The update stopped without deleting Atlas Core data. CLI installation may have completed; running Core and durable data were not changed.`
+      }
+    ];
+  }
+  return lines;
+}
+
 function lifecycleOperationLines(view: LifecycleOperationView, width: number): ActivityLine[] {
   const lines = view.events.flatMap((event) => {
     const marker = event.stage === "cleanup" ? "[cleanup]" : "[work]";
@@ -2408,7 +2677,7 @@ function UpdateMenu({
           <Text> </Text>
           <Text>
             {choice?.scope === "cli"
-              ? "Install the latest CLI and leave the running Atlas Core version unchanged."
+              ? "CLI-only: install the latest CLI while leaving Atlas Core, credentials, and durable data unchanged."
               : "Preserve credentials and durable data, install the latest CLI, then restart Atlas Core on its reviewed image."}
           </Text>
         </>
@@ -2462,6 +2731,7 @@ function UpdateReview({
             CLI {info.cliVersion} → {info.latestVersion}
           </Text>
           <Text>Atlas Core stays at {info.coreVersion ?? "not initialized"}.</Text>
+          <Text>CLI-only scope: running Core, credentials, and durable data stay unchanged.</Text>
           <Text> </Text>
           <Text>The current process exits after npm installs the CLI.</Text>
         </>
@@ -2622,6 +2892,7 @@ function updateReviewRows(info: UpdateInfo, scope: UpdateScope, width: number): 
       headerAndFooterRows +
       wrappedRows(`CLI ${info.cliVersion} → ${info.latestVersion}`, width) +
       wrappedRows(`Atlas Core stays at ${info.coreVersion ?? "not initialized"}.`, width) +
+      wrappedRows("CLI-only scope: running Core, credentials, and durable data stay unchanged.", width) +
       1 +
       wrappedRows("The current process exits after npm installs the CLI.", width)
     );
@@ -2822,6 +3093,18 @@ function errorMessage(error: unknown): string {
 
 function lifecycleCancellationScreen(screen: Screen, message: string): Screen {
   if (screen.kind !== "operation" || screen.view.status !== "running") return screen;
+  return {
+    ...screen,
+    view: {
+      ...screen.view,
+      events: [...screen.view.events, { elapsedMs: Date.now() - screen.view.startedAt, message, stage: "cleanup" }],
+      status: "cancelling"
+    }
+  };
+}
+
+function updateCancellationScreen(screen: Screen, message: string): Screen {
+  if (screen.kind !== "update-operation" || screen.view.status !== "running") return screen;
   return {
     ...screen,
     view: {

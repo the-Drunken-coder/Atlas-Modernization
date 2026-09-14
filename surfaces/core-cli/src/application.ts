@@ -56,6 +56,8 @@ import type {
   PluginDeploymentStatus,
   PluginOperationOutcome,
   UpdateInfo,
+  UpdateProgress,
+  UpdateReporter,
   UpdateScope
 } from "./operator.js";
 import { lifecycleOperationLabel, lifecycleOperationSummary } from "./operator.js";
@@ -702,6 +704,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   readonly #pluginCredentialScope = new AsyncLocalStorage<string>();
   readonly #mutationScope = new AsyncLocalStorage<string>();
   readonly #lifecycleReporterScope = new AsyncLocalStorage<LifecycleOperationContext>();
+  readonly #updateReporterScope = new AsyncLocalStorage<UpdateReporter>();
   #lifecycleCancellationRequested = false;
   #activeMutationLock: MutationLockOwner | undefined;
   #idleRecoverableMutationLock: MutationLockOwner | undefined;
@@ -1510,8 +1513,11 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       dockerHost,
       cliVersion,
       userId: String(process.getuid?.() ?? 0),
-      runner: async (command: string, args: readonly string[]) =>
-        await this.#runner.run(command, [...args], { env: this.#env }),
+      runner: async (command: string, args: readonly string[]) => {
+        const result = await this.#runner.run(command, [...args], { env: this.#env });
+        this.#reportCommandOutput(result, false);
+        return result;
+      },
       filesystem: {
         mkdir: async (path: string, options?: { recursive?: boolean; mode?: number }) => {
           mkdirSync(path, options);
@@ -2325,6 +2331,18 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
         ? compareVersions(state.packageVersion, release.version, "running Atlas Core", "npm") < 0
         : false
     };
+  }
+
+  async updateWithProgress(
+    scope: UpdateScope,
+    expectedVersion?: string,
+    coreBackupConfirmed = false,
+    report?: UpdateReporter
+  ): Promise<void> {
+    if (!report) return await this.update(scope, expectedVersion, coreBackupConfirmed);
+    await this.#updateReporterScope.run(report, async () => {
+      await this.update(scope, expectedVersion, coreBackupConfirmed);
+    });
   }
 
   async update(scope: UpdateScope, expectedVersion?: string, coreBackupConfirmed = false): Promise<void> {
@@ -4450,21 +4468,44 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       ["view", `${PACKAGE_NAME}@latest`, "version", "atlasCoreImage", "--json"],
       { env: this.#env }
     );
+    this.#reportCommandOutput(result, false);
     if (result.status !== 0) throw commandFailure(`npm view ${PACKAGE_NAME}@latest`, result);
     return parseNpmRelease(result.stdout);
   }
 
   async #installCLI(version: string): Promise<void> {
-    this.#stdout.write(`Installing Atlas Core CLI ${version}...\n`);
+    this.#reportUpdate(`Installing Atlas Core CLI ${version}...`);
     const result = await this.#runner.run("npm", ["install", "--global", `${PACKAGE_NAME}@${version}`], {
-      env: this.#env,
-      inherit: true
+      env: this.#env
     });
+    this.#reportCommandOutput(result);
     if (result.status !== 0) throw commandFailure(`npm install --global ${PACKAGE_NAME}@${version}`, result);
+  }
+
+  #reportUpdate(message: string, stage: UpdateProgress["stage"] = "operation"): void {
+    const reporter = this.#updateReporterScope.getStore();
+    if (reporter) reporter({ message, stage });
+    else this.#stdout.write(`${message}\n`);
+  }
+
+  #reportCommandOutput(result: { stdout?: string; stderr?: string }, writeDirect = true): void {
+    const reporter = this.#updateReporterScope.getStore();
+    for (const [output, stream] of [
+      [result.stdout ?? "", this.#stdout] as const,
+      [result.stderr ?? "", this.#stderr] as const
+    ]) {
+      for (const line of output.split(/\r?\n/u)) {
+        const message = line.trimEnd();
+        if (!message.trim()) continue;
+        if (reporter) reporter({ message, stage: "operation" });
+        else if (writeDirect) stream.write(`${message}\n`);
+      }
+    }
   }
 
   async #installedCLIPath(): Promise<string> {
     const rootResult = await this.#runner.run("npm", ["root", "--global"], { env: this.#env });
+    this.#reportCommandOutput(rootResult, false);
     if (rootResult.status !== 0) throw commandFailure("npm root --global", rootResult);
     const globalRoot = oneLine(rootResult.stdout);
     if (!globalRoot) throw new Error("npm did not report its global package directory after the CLI update.");

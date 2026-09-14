@@ -12,7 +12,9 @@ import type {
   LogStream,
   PluginActivityReporter,
   PluginDeploymentStatus,
-  PluginOperationOutcome
+  PluginOperationOutcome,
+  UpdateReporter,
+  UpdateScope
 } from "../src/operator.js";
 import { createDevelopmentInteractiveCLI, createInteractiveCLI } from "../src/terminal-ui.js";
 
@@ -79,6 +81,9 @@ class TestTerminal {
 }
 
 function operator(snapshot: DeploymentSnapshot = { status: "ready", detail: "Everything is healthy." }) {
+  const update = vi.fn(
+    async (_scope: UpdateScope, _expectedVersion?: string, _coreBackupConfirmed?: boolean) => undefined
+  );
   return {
     cancelPending: vi.fn(),
     checkForUpdates: vi.fn(async () => ({
@@ -170,7 +175,13 @@ function operator(snapshot: DeploymentSnapshot = { status: "ready", detail: "Eve
     start: vi.fn(async () => undefined),
     status: vi.fn(async () => true),
     stop: vi.fn(async (): Promise<void> => {}),
-    update: vi.fn(async () => undefined),
+    update,
+    updateWithProgress: vi.fn(
+      async (scope: UpdateScope, expectedVersion?: string, coreBackupConfirmed?: boolean, report?: UpdateReporter) => {
+        report?.({ message: "Applying reviewed update...", stage: "operation" });
+        await update(scope, expectedVersion, coreBackupConfirmed);
+      }
+    ),
     runLifecycle: vi.fn(
       async (
         operation: LifecycleOperation,
@@ -2046,6 +2057,40 @@ describe("Atlas Core terminal UI", () => {
     expect(deployment.update).toHaveBeenCalledWith("all", "0.1.6", true);
   });
 
+  it("keeps CLI-only subprocess output inside the mounted update screen", async () => {
+    const terminal = new TestTerminal();
+    const progressUpdate = vi.fn(
+      async (
+        _scope: "cli" | "all",
+        _version: string | undefined,
+        _backupConfirmed: boolean | undefined,
+        report?: (progress: { message: string; stage: "operation" | "cleanup" }) => void
+      ) => {
+        report?.({ message: "npm install started", stage: "operation" });
+        report?.({ message: "npm install completed", stage: "operation" });
+      }
+    );
+    const deployment = Object.assign(operator(), { updateWithProgress: progressUpdate });
+    deployment.checkForUpdates.mockResolvedValue({
+      cliVersion: "0.1.5",
+      coreVersion: "0.1.5",
+      latestVersion: "0.1.6",
+      cliUpdateAvailable: true,
+      coreUpdateAvailable: true
+    });
+    const update = createInteractiveCLI(terminal.input, terminal.output).runUpdate(deployment);
+
+    await terminal.waitFor("Update CLI only");
+    terminal.write("\r");
+    await terminal.waitFor("REVIEW UPDATE");
+    terminal.write("\r");
+    await terminal.waitFor("npm install completed");
+    expect(progressUpdate).toHaveBeenCalledWith("cli", "0.1.6", false, expect.any(Function));
+    expect(terminal.text).not.toContain("Press Enter to exit.");
+    terminal.write("\r");
+    await update;
+  });
+
   it("dispatches only one reviewed update when Enter repeats before the screen changes", async () => {
     const terminal = new TestTerminal();
     const deployment = operator();
@@ -2222,6 +2267,47 @@ describe("Atlas Core terminal UI", () => {
 
     expect(deployment.cancelPending).toHaveBeenCalledOnce();
     expect(terminal.text).not.toContain("Update complete");
+  });
+
+  it("returns to the update menu after Escape cancels an update operation", async () => {
+    const terminal = new TestTerminal();
+    const deployment = operator();
+    deployment.checkForUpdates
+      .mockResolvedValueOnce({
+        cliVersion: "0.1.5",
+        coreVersion: "0.1.5",
+        latestVersion: "0.1.6",
+        cliUpdateAvailable: true,
+        coreUpdateAvailable: true
+      })
+      .mockResolvedValueOnce({
+        cliVersion: "0.1.5",
+        coreVersion: "0.1.5",
+        latestVersion: "0.1.5",
+        cliUpdateAvailable: false,
+        coreUpdateAvailable: false
+      });
+    let finishUpdate: (() => void) | undefined;
+    deployment.update.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finishUpdate = () => resolve(undefined);
+        })
+    );
+    deployment.cancelPending.mockImplementation(() => finishUpdate?.());
+    const update = createInteractiveCLI(terminal.input, terminal.output).runUpdate(deployment);
+
+    await terminal.waitFor("Update CLI only");
+    terminal.write("\r");
+    await terminal.waitFor("REVIEW UPDATE");
+    terminal.write("\r");
+    await terminal.waitFor("Applying reviewed update...");
+    await vi.waitFor(() => expect(deployment.update).toHaveBeenCalledOnce());
+    terminal.write("\u001b");
+    await terminal.waitFor("The CLI and Atlas Core are current.");
+    expect(deployment.resumeAfterCancellation).toHaveBeenCalledOnce();
+    terminal.write("q");
+    await update;
   });
 
   it("offers initialization instead of configuration before first setup", async () => {

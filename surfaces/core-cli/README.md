@@ -180,6 +180,8 @@ CLI-only updates do not require a deployment backup because they do not change t
 CLI-only updates may leave the CLI newer than the running Core. Status, logs, diagnostics, stop, reset, and the explicit
 update flow remain available in that state. Start and restart refuse to change Core implicitly and direct the operator
 to `atlas-core update all`. This applies only when both releases use the current engine-scoped resource layout.
+The interactive CLI-only update keeps its operation screen mounted while npm runs, shows captured subprocess output as
+progress, and reports that a failed package command may have completed before exiting.
 
 State schemas 1 and 2 belong to the retired fixed-name experimental layout. Schema 3 is the current bundled deployment
 state with the `engine-scoped-v1` layout. Independent Plugin management uses schema 4. The first independent Core

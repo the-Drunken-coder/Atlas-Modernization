@@ -70,6 +70,13 @@ export type UpdateInfo = {
 
 export type UpdateScope = "all" | "cli";
 
+export type UpdateProgress = {
+  message: string;
+  stage: "operation" | "cleanup";
+};
+
+export type UpdateReporter = (progress: UpdateProgress) => void;
+
 export type LifecycleOperation = "init" | "start" | "stop" | "restart" | "reset" | "configure";
 
 export type LifecycleOperationOptions = {
@@ -173,6 +180,13 @@ export type AtlasCoreOperator = {
   status(): Promise<boolean>;
   stop(): Promise<void>;
   update(scope: UpdateScope, expectedVersion?: string, coreBackupConfirmed?: boolean): Promise<void>;
+  /** Run an update while retaining subprocess output as typed interface progress. */
+  updateWithProgress(
+    scope: UpdateScope,
+    expectedVersion?: string,
+    coreBackupConfirmed?: boolean,
+    report?: UpdateReporter
+  ): Promise<void>;
 };
 
 export type InteractiveCLI = {

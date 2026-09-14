@@ -9,7 +9,9 @@ import type {
   LifecycleOperationResult,
   LogStream,
   PluginActivityReporter,
-  PluginOperationOutcome
+  PluginOperationOutcome,
+  UpdateReporter,
+  UpdateScope
 } from "./operator.js";
 import { lifecycleOperationLabel, lifecycleOperationSummary } from "./operator.js";
 import { PLUGIN_CATALOG, type PluginCatalogEntry } from "./plugin-catalog.js";
@@ -270,6 +272,14 @@ export function createPreviewOperator(
     return { status: "success" };
   };
 
+  const update = async (
+    scope: UpdateScope,
+    _expectedVersion?: string,
+    _coreBackupConfirmed?: boolean
+  ): Promise<void> => {
+    preview(`${scope === "all" ? "CLI and Core" : "CLI-only"} update simulated. Nothing was installed.`);
+  };
+
   return {
     cancelPending() {
       cancellationRequested = true;
@@ -488,8 +498,10 @@ export function createPreviewOperator(
       preview("Stop simulated. No containers changed.");
       deploymentState = "stopped";
     },
-    async update(scope, _expectedVersion, _coreBackupConfirmed) {
-      preview(`${scope === "all" ? "CLI and Core" : "CLI-only"} update simulated. Nothing was installed.`);
+    update,
+    async updateWithProgress(scope, _expectedVersion, _coreBackupConfirmed, report?: UpdateReporter) {
+      report?.({ message: "Running the fixture update", stage: "operation" });
+      await update(scope, _expectedVersion, _coreBackupConfirmed);
     }
   };
 }

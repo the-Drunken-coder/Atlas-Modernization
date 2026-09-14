@@ -20,7 +20,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { type CLIContext, type CommandRunner, ProcessCommandRunner, runCLI } from "../src/application.js";
 import { DeploymentTransactionStore } from "../src/deployment-transaction.js";
 import { OperationCleanupError } from "../src/operation-errors.js";
-import type { DeploymentDetails, DiagnosticsResult, LifecycleOperationProgress } from "../src/operator.js";
+import type {
+  DeploymentDetails,
+  DiagnosticsResult,
+  InteractiveCLI,
+  LifecycleOperationProgress
+} from "../src/operator.js";
 import { PACKAGE_NAME, PACKAGE_PLUGIN_CONTRACTS, PACKAGE_VERSION } from "../src/package-metadata.js";
 import type { PluginCatalogEntry } from "../src/plugin-catalog.js";
 import * as supervision from "../src/supervision.js";
@@ -119,6 +124,7 @@ class FakeRunner implements CommandRunner {
   readonly legacyPackageArchives = new Map<string, string>();
   latestVersion = PACKAGE_VERSION;
   latestImage = TEST_IMAGE;
+  npmInstallOutput = "";
   runningCoreImage = TEST_IMAGE;
   wrongPluginContainerImage = false;
   installedVersion = PACKAGE_VERSION;
@@ -176,7 +182,7 @@ class FakeRunner implements CommandRunner {
     }
     if (command === "npm" && args[0] === "install" && args[1] === "--global") {
       this.installedVersion = args[2]?.split("@").at(-1) ?? this.installedVersion;
-      return result(0);
+      return result(0, this.npmInstallOutput);
     }
     if (command === "npm" && args[0] === "root" && args[1] === "--global") {
       return result(0, `${this.globalRoot}\n`);
@@ -3597,6 +3603,7 @@ describe("atlas-core CLI", () => {
     const test = runtime();
     markInitialized(test);
     test.runner.latestVersion = NEXT_PACKAGE_VERSION;
+    test.runner.npmInstallOutput = "npm install completed\n";
 
     expect(await runCLI(["update", "cli"], test.context)).toBe(0);
     expect(test.runner.installedVersion).toBe(NEXT_PACKAGE_VERSION);
@@ -3604,13 +3611,37 @@ describe("atlas-core CLI", () => {
       expect.objectContaining({
         command: "npm",
         args: ["install", "--global", `atlas-core@${NEXT_PACKAGE_VERSION}`],
-        inherit: true
+        inherit: false
       })
     );
+    expect(test.stdout.join("")).toContain("npm install completed");
     expect(JSON.parse(readFileSync(join(test.home, ".atlas", "core", "state.json"), "utf8")).packageVersion).toBe(
       PACKAGE_VERSION
     );
     expect(test.runner.calls.some((call) => composeCommand(call)[0] === "down")).toBe(false);
+  });
+
+  it("reports release and package subprocess output through the update reporter", async () => {
+    const test = runtime();
+    markInitialized(test);
+    test.runner.latestVersion = NEXT_PACKAGE_VERSION;
+    test.runner.npmInstallOutput = "npm install completed\n";
+    const progress: string[] = [];
+    const interactive: InteractiveCLI = {
+      configureAdmin: async () => undefined,
+      runMenu: async () => undefined,
+      runUpdate: async (deployment) => {
+        await deployment.updateWithProgress("cli", NEXT_PACKAGE_VERSION, false, (event) => {
+          progress.push(event.message);
+        });
+      }
+    };
+
+    expect(await runCLI(["update"], { ...test.context, interactive })).toBe(0);
+    expect(progress).toContain(JSON.stringify({ version: NEXT_PACKAGE_VERSION, atlasCoreImage: TEST_IMAGE }));
+    expect(progress).toContain(`Installing Atlas Core CLI ${NEXT_PACKAGE_VERSION}...`);
+    expect(progress).toContain("npm install completed");
+    expect(test.stdout.join("")).not.toContain("npm install completed");
   });
 
   it("can update the CLI when deployment configuration is incomplete", async () => {
