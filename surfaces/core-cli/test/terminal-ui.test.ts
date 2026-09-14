@@ -1860,7 +1860,7 @@ describe("Atlas Core terminal UI", () => {
     terminal.write("q");
     await menu;
 
-    expect(deployment.configureAdminPassword).not.toHaveBeenCalled();
+    expect(deployment.runLifecycle).not.toHaveBeenCalled();
   });
 
   it("masks the admin password and never writes its value", async () => {
@@ -1972,7 +1972,7 @@ describe("Atlas Core terminal UI", () => {
     terminal.write("\u001b");
     await configuration;
 
-    expect(deployment.configureAdminPassword).not.toHaveBeenCalled();
+    expect(deployment.runLifecycle).not.toHaveBeenCalled();
   });
 
   it("does not insert Ctrl-letter input into an admin password", async () => {
