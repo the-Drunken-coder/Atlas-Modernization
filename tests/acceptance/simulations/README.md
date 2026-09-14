@@ -15,4 +15,8 @@ The test configures only the runner-owned loopback Core. The actual server's dep
 
 Each invocation writes the exact revision, dirty-worktree state, duration, expected and observed values, raw SSE frames, parsed events, simulation HTTP responses with a 35-second cleanup deadline and 15-second deadline for other requests, server output, and Compose logs under `.atlas/acceptance/simulations-moving-assets/`. The runner preserves the first failure in those files and tears down only its generated Compose project and child process. Set `ATLAS_ACCEPTANCE_ARTIFACTS` to choose another artifact root.
 
+An initial failed acceptance assertion stops that journey and writes `manual-verification-required.json` beside the evidence. That handoff contains the exact checkout revision, setup, reproduction command, expected and observed behavior, and evidence paths. Review it before changing the expectation or rerunning the case; the original assertion remains a failed result.
+
+After the valid completed journey, the test applies isolated in-memory faults to the persisted-telemetry and event/resource-correlation assertions. The probes must be rejected without mutating Core or changing the acceptance resources.
+
 The required `Simulation Acceptance` workflow runs the same command on Linux and uploads the evidence even when the check fails. A local run proves only the recorded host and Docker daemon environment.

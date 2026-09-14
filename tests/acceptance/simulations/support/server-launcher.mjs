@@ -1,5 +1,4 @@
-import { createSimulationServer } from "../../../../simulations/src/server/index.ts";
-import { loadConfig } from "../../../../simulations/src/server/config.ts";
+import { createSimulationServer, loadConfig } from "@the-drunken-coder/atlas-simulations/server";
 
 const packageRoot = process.env.ATLAS_ACCEPTANCE_SIMULATION_PACKAGE_ROOT;
 if (!packageRoot) {

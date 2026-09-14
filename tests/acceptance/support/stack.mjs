@@ -37,6 +37,7 @@ export async function runAcceptance({
   const artifacts = acceptanceArtifacts(name, runID);
   const commandLog = join(artifacts, "commands.log");
   const evidenceLog = join(artifacts, "evidence.jsonl");
+  const manualVerificationPath = join(artifacts, "manual-verification-required.json");
   const credentials = acceptanceCredentials();
   const environment = {
     ...process.env,
@@ -99,6 +100,25 @@ export async function runAcceptance({
     const value = { timestamp: new Date().toISOString(), ...entry };
     appendFileSync(evidenceLog, `${JSON.stringify(value)}\n`);
     if (value.passed === false) {
+      writeJSON(manualVerificationPath, {
+        status: "required",
+        reason: "Initial acceptance assertion failure requires manual verification before settling the expectation.",
+        scenario: name,
+        run_id: runID,
+        revision: metadata.revision,
+        working_tree: metadata.working_tree,
+        reproduction,
+        setup: {
+          compose_project: project,
+          core_base_url: baseUrl,
+          fixture_variant: metadata.fixture_variant
+        },
+        check: value.check,
+        expected: value.expected,
+        observed: value.actual,
+        evidence_log: evidenceLog,
+        artifacts
+      });
       const error = new Error(`${value.check}: expected ${formatValue(value.expected)}, observed ${formatValue(value.actual)}`);
       error.name = "AcceptanceCheckError";
       error.acceptanceEvidence = value;
@@ -220,12 +240,14 @@ export async function runAcceptance({
     failure ??= new Error(`acceptance run interrupted by ${interruptedSignal}`);
   }
   const completedAt = new Date();
+  const manualVerificationRequired = failure?.name === "AcceptanceCheckError";
   const result = {
     ...metadata,
     ...(baseUrl ? { core_base_url: baseUrl } : {}),
     status: failure ? "failed" : "passed",
     completed_at: completedAt.toISOString(),
     duration_ms: completedAt.getTime() - startedAt.getTime(),
+    ...(manualVerificationRequired ? { manual_verification: manualVerificationPath } : {}),
     ...(failure ? { failure: serializeError(failure) } : {}),
     ...(fixtureCleanupFailure ? { fixture_cleanup_failure: serializeError(fixtureCleanupFailure) } : {})
   };
@@ -233,7 +255,8 @@ export async function runAcceptance({
   if (failure) {
     process.stderr.write(
       `Acceptance failed at revision ${metadata.revision}.\nExpected/actual evidence: ${evidenceLog}\n` +
-        `Compose logs: ${join(artifacts, "compose.log")}\nReproduce: ${reproduction}\n`
+        `Compose logs: ${join(artifacts, "compose.log")}\nReproduce: ${reproduction}\n` +
+        (manualVerificationRequired ? `Manual verification handoff: ${manualVerificationPath}\n` : "")
     );
     throw failure;
   }
