@@ -48,7 +48,13 @@ export type UpdateInfo = {
 
 export type UpdateScope = "all" | "cli";
 
-export type LifecycleOperation = "start" | "stop" | "restart";
+export type LifecycleOperation = "init" | "start" | "stop" | "restart" | "reset";
+
+export type LifecycleOperationOptions = {
+  /** The TUI owns reset confirmation; direct callers keep the prompt by default. */
+  resetConfirmed?: boolean;
+  manual?: boolean;
+};
 
 export type LifecycleOperationProgress = {
   message: string;
@@ -63,7 +69,9 @@ export type LifecycleOperationResult =
 export type LifecycleOperationReporter = (progress: LifecycleOperationProgress) => void;
 
 const LIFECYCLE_OPERATION_DETAILS: Readonly<Record<LifecycleOperation, { label: string; summary: string }>> = {
+  init: { label: "Initialize Atlas Core", summary: "Atlas Core initialized. Choose Start Atlas Core when ready." },
   restart: { label: "Restart Atlas Core", summary: "Atlas Core restarted and is healthy." },
+  reset: { label: "Reset Atlas Core", summary: "Atlas Core reset is complete. A new deployment is running." },
   start: { label: "Start Atlas Core", summary: "Atlas Core started and is healthy." },
   stop: { label: "Stop Atlas Core", summary: "Atlas Core stopped. Durable volumes were preserved." }
 };
@@ -124,9 +132,13 @@ export type AtlasCoreOperator = {
   pluginRotateCoreKey?(): Promise<void>;
   pluginStatuses(pluginId?: string): Promise<PluginDeploymentStatus[]>;
   /** Run one serialized lifecycle mutation while reporting typed progress. */
-  runLifecycle(operation: LifecycleOperation, report?: LifecycleOperationReporter): Promise<LifecycleOperationResult>;
+  runLifecycle(
+    operation: LifecycleOperation,
+    report?: LifecycleOperationReporter,
+    options?: LifecycleOperationOptions
+  ): Promise<LifecycleOperationResult>;
   resumeAfterCancellation(): void;
-  reset(options?: { manual?: boolean }): Promise<void>;
+  reset(options?: { confirmed?: boolean; manual?: boolean }): Promise<void>;
   restart(): Promise<void>;
   snapshot(): Promise<DeploymentSnapshot>;
   start(): Promise<void>;

@@ -10,6 +10,7 @@ import type {
   DevelopmentInteractiveCLI,
   InteractiveCLI,
   LifecycleOperation,
+  LifecycleOperationOptions,
   LifecycleOperationProgress,
   PluginActivity,
   PluginActivityReporter,
@@ -48,6 +49,7 @@ type Screen =
   | { kind: "password" }
   | { kind: "plugin-activity"; view: PluginActivityView }
   | { kind: "plugins"; view: PluginDeploymentStatus[] | Error }
+  | { kind: "reset-confirmation" }
   | { kind: "status"; view: DeploymentDetails | Error }
   | { kind: "update"; info: UpdateInfo }
   | { kind: "update-error"; message: string }
@@ -78,6 +80,8 @@ type LifecycleOperationView = {
   summary?: string;
   snapshot?: DeploymentSnapshot;
 };
+
+type LifecycleRunOptions = LifecycleOperationOptions;
 
 type PluginActivityEvent = PluginActivity & { elapsedMs: number };
 
@@ -325,7 +329,7 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
   );
 
   const runDevelopmentLifecycle = useCallback(
-    async (operation: LifecycleOperation): Promise<void> => {
+    async (operation: LifecycleOperation, options: LifecycleRunOptions = {}): Promise<void> => {
       const operationId = lifecycleOperationGeneration.current + 1;
       lifecycleOperationGeneration.current = operationId;
       const startedAt = Date.now();
@@ -356,7 +360,10 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
             : current
         );
       };
-      const result = await runCancelableOperation(operator, async () => await operator.runLifecycle(operation, report));
+      const result = await runCancelableOperation(operator, async () => {
+        if (Object.keys(options).length > 0) return await operator.runLifecycle(operation, report, options);
+        return await operator.runLifecycle(operation, report);
+      });
       activeLifecycleOperation.current = undefined;
       const lifecycleResult = result.value;
       const cancelled = result.cancelled || lifecycleResult?.status === "cancelled";
@@ -669,8 +676,9 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
         <DevelopmentMenu
           onSelect={(action) => {
             if (action === "status") void loadStatus();
-            else if (action === "start" || action === "stop" || action === "restart")
+            else if (action === "init" || action === "start" || action === "stop" || action === "restart")
               void runDevelopmentLifecycle(action);
+            else if (action === "reset") setScreen({ kind: "reset-confirmation" });
             else setScreen({ kind: "development-message", message: "This action is planned for a later TUI slice." });
           }}
           onExit={exit}
@@ -692,6 +700,15 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
   }
   if (screen.kind === "development-message") {
     return <MessageScreen message={screen.message} onBack={() => void loadMenu()} title="Development TUI" />;
+  }
+  if (screen.kind === "reset-confirmation") {
+    return (
+      <ResetConfirmationScreen
+        onCancel={() => void loadMenu({ message: "Atlas Core reset cancelled.", tone: "yellow" })}
+        onConfirm={() => void runDevelopmentLifecycle("reset", { resetConfirmed: true })}
+        onExit={exit}
+      />
+    );
   }
   if (screen.kind === "configure") {
     return <ConfigureMenu onAdmin={() => setScreen({ kind: "password" })} onBack={() => void loadMenu()} />;
@@ -997,7 +1014,7 @@ function DevelopmentMenu({
 
 function developmentChoices(snapshot: DeploymentSnapshot): DevelopmentChoice[] {
   const lifecycle: DevelopmentAction =
-    snapshot.status === "not-initialized" ? "placeholder" : snapshot.status === "ready" ? "stop" : "start";
+    snapshot.status === "not-initialized" ? "init" : snapshot.status === "ready" ? "stop" : "start";
   const lifecycleLabel =
     snapshot.status === "not-initialized"
       ? "Initialize Atlas Core"
@@ -1016,6 +1033,7 @@ function developmentChoices(snapshot: DeploymentSnapshot): DevelopmentChoice[] {
     { action: "placeholder", label: "Manage Plugins" },
     { action: "placeholder", label: "Update Atlas Core" }
   );
+  if (snapshot.status !== "not-initialized") choices.push({ action: "reset", label: "Reset Atlas Core" });
   return choices;
 }
 
@@ -1067,6 +1085,79 @@ function ShortDevelopmentMenu({ requiredRows }: { requiredRows: number }): React
       <Header title="ATLAS CORE" />
       <Text>Action list needs at least {requiredRows} rows.</Text>
       <Text dimColor>Resize the terminal or press Esc to exit.</Text>
+    </Box>
+  );
+}
+
+function ResetConfirmationScreen({
+  onCancel,
+  onConfirm,
+  onExit
+}: {
+  onCancel(): void;
+  onConfirm(): void;
+  onExit(): void;
+}): ReactNode {
+  const { columns } = useWindowSize();
+  const answerRef = useRef("");
+  const pendingRef = useRef(false);
+  const [answer, setAnswer] = useState("");
+
+  useInput((input, key) => {
+    if (pendingRef.current) return;
+    if (key.ctrl && input === "c") {
+      pendingRef.current = true;
+      onExit();
+      return;
+    }
+    if (key.escape) {
+      pendingRef.current = true;
+      onCancel();
+      return;
+    }
+    if (key.backspace || key.delete) {
+      answerRef.current = Array.from(answerRef.current).slice(0, -1).join("");
+      setAnswer(answerRef.current);
+      return;
+    }
+    const typed = input.replace(/[\r\n]/gu, "");
+    if (typed && isPrintableInput(typed, key)) {
+      answerRef.current += typed;
+      setAnswer(answerRef.current);
+    }
+    if (key.return || /[\r\n]/u.test(input)) {
+      pendingRef.current = true;
+      if (/^(?:y|yes)$/iu.test(answerRef.current.trim())) onConfirm();
+      else onCancel();
+    }
+  });
+
+  if (columns < MINIMUM_TERMINAL_COLUMNS) {
+    return (
+      <Box flexDirection="column" width={columns}>
+        <Header title="ATLAS CORE > RESET" />
+        <Text>Resize terminal to at least 40 columns.</Text>
+        <Text dimColor>Esc cancels reset. State is unchanged until confirmation.</Text>
+      </Box>
+    );
+  }
+
+  return (
+    <Box flexDirection="column" width={columns}>
+      <Header title="ATLAS CORE > RESET" />
+      <Rule width={columns} />
+      <Text color="yellow" bold>
+        Reset permanently deletes this deployment.
+      </Text>
+      <Text wrap="wrap">
+        Containers, PostgreSQL and MinIO data, credentials, and configuration will be deleted. A new deployment will be
+        initialized afterward.
+      </Text>
+      <Text> </Text>
+      <Text>Type yes to continue, or no to cancel:</Text>
+      <Text>{`> ${answer}`}</Text>
+      <Rule width={columns} />
+      <Text dimColor>Enter confirm Esc cancel Ctrl+C exit</Text>
     </Box>
   );
 }

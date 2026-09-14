@@ -1232,6 +1232,52 @@ describe("atlas-core CLI", () => {
     expect(await runCLI([], test.context), test.stderr.join("")).toBe(0);
   });
 
+  it("reports production initialization through the typed manager without terminal output leaks", async () => {
+    const test = runtime();
+    const progress: LifecycleOperationProgress[] = [];
+    test.context.interactive = {
+      configureAdmin: async () => undefined,
+      runUpdate: async () => undefined,
+      runMenu: async (operator) => {
+        await expect(operator.runLifecycle("init", (event) => progress.push(event))).resolves.toEqual({
+          status: "success",
+          summary: "Atlas Core initialized. Choose Start Atlas Core when ready."
+        });
+        expect(progress.map((event) => event.stage)).toEqual(["operation", "operation", "operation", "operation"]);
+        await expect(operator.snapshot()).resolves.toMatchObject({ status: "ready" });
+      }
+    };
+
+    expect(await runCLI([], test.context), test.stderr.join("")).toBe(0);
+    expect(test.stdout.join("")).toBe("");
+  });
+
+  it("runs a confirmed production reset through the typed manager", async () => {
+    const test = runtime();
+    await markManagedInitialized(test);
+    const progress: LifecycleOperationProgress[] = [];
+    test.context.interactive = {
+      configureAdmin: async () => undefined,
+      runUpdate: async () => undefined,
+      runMenu: async (operator) => {
+        await expect(
+          operator.runLifecycle("reset", (event) => progress.push(event), {
+            manual: true,
+            resetConfirmed: true
+          })
+        ).resolves.toEqual({
+          status: "success",
+          summary: "Atlas Core reset is complete. A new deployment is running."
+        });
+        expect(progress.some((event) => event.message.includes("Deleting Atlas Core containers"))).toBe(true);
+        await expect(operator.snapshot()).resolves.toMatchObject({ status: "ready" });
+      }
+    };
+
+    expect(await runCLI([], test.context), test.stderr.join("")).toBe(0);
+    expect(test.stdout.join("")).toBe("");
+  });
+
   it("restores the prior run intent after production lifecycle cancellation", async () => {
     const test = runtime();
     await markManagedInitialized(test);

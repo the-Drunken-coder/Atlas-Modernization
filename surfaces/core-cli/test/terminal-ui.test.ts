@@ -5,6 +5,7 @@ import type {
   AtlasCoreOperator,
   DeploymentSnapshot,
   LifecycleOperation,
+  LifecycleOperationOptions,
   LifecycleOperationProgress,
   LifecycleOperationResult,
   PluginActivityReporter,
@@ -169,7 +170,8 @@ function operator(snapshot: DeploymentSnapshot = { status: "ready", detail: "Eve
     runLifecycle: vi.fn(
       async (
         operation: LifecycleOperation,
-        report?: (progress: LifecycleOperationProgress) => void
+        report?: (progress: LifecycleOperationProgress) => void,
+        _options?: LifecycleOperationOptions
       ): Promise<LifecycleOperationResult> => {
         report?.({ message: `${operation} requested`, stage: "operation" });
         return { status: "success", summary: `Atlas Core ${operation} complete.` };
@@ -227,6 +229,64 @@ describe("Atlas Core terminal UI", () => {
     const before = terminal.raw.length;
     terminal.write("\u001b[B");
     await terminal.waitForRawChange(before);
+    terminal.write("q");
+    await menu;
+  });
+
+  it("runs initialization from the not-initialized development home", async () => {
+    const terminal = new TestTerminal(80, true, 24);
+    const deployment = operator({ status: "not-initialized", detail: "Initialize Atlas Core." });
+    const menu = createDevelopmentInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("Initialize Atlas Core");
+    terminal.write("\u001b[B".repeat(2));
+    terminal.write("\r");
+    await terminal.waitFor("Atlas Core init complete.");
+    expect(deployment.runLifecycle).toHaveBeenCalledWith("init", expect.any(Function));
+    await terminal.waitFor("CHOOSE AN ACTION");
+    terminal.write("q");
+    await menu;
+  });
+
+  it("cancels reset before confirmation without calling the manager", async () => {
+    const terminal = new TestTerminal(80, true, 24);
+    const deployment = operator();
+    const menu = createDevelopmentInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("Reset Atlas Core");
+    terminal.write("\u001b[B".repeat(6));
+    terminal.write("\r");
+    await terminal.waitFor("PostgreSQL and MinIO data");
+    await nextInputTurn();
+    terminal.write("no\r");
+    await terminal.waitFor("Atlas Core reset cancelled.");
+    expect(deployment.runLifecycle).not.toHaveBeenCalled();
+    terminal.write("q");
+    await menu;
+  });
+
+  it("confirms reset inside the development TUI operation screen", async () => {
+    const terminal = new TestTerminal(80, true, 24);
+    const deployment = operator();
+    deployment.runLifecycle.mockImplementationOnce(async (operation, report, options) => {
+      expect(operation).toBe("reset");
+      expect(options).toEqual({ resetConfirmed: true });
+      report?.({ message: "Deleting credentials and durable data", stage: "operation" });
+      return { status: "success", summary: "Atlas Core reset is complete. A new deployment is running." };
+    });
+    const menu = createDevelopmentInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("Reset Atlas Core");
+    terminal.write("\u001b[B".repeat(6));
+    terminal.write("\r");
+    await terminal.waitFor("Type yes to continue");
+    await nextInputTurn();
+    terminal.write("yes\r");
+    await vi.waitFor(() =>
+      expect(deployment.runLifecycle).toHaveBeenCalledWith("reset", expect.any(Function), { resetConfirmed: true })
+    );
+    await terminal.waitFor("Atlas Core reset is complete. A new deployment is running.");
+    await terminal.waitFor("CHOOSE AN ACTION");
     terminal.write("q");
     await menu;
   });

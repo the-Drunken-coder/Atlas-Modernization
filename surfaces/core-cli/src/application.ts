@@ -44,6 +44,7 @@ import type {
   DeploymentSnapshot,
   InteractiveCLI,
   LifecycleOperation,
+  LifecycleOperationOptions,
   LifecycleOperationProgress,
   LifecycleOperationReporter,
   LifecycleOperationResult,
@@ -342,10 +343,12 @@ type RunIntentSnapshot = {
 };
 
 type LifecycleOperationContext = {
+  destructiveStarted?: boolean;
   operationStarted?: boolean;
   operationCommitted?: boolean;
   report: LifecycleOperationReporter;
   restorationError?: unknown;
+  restoreRunIntentOnCancellation: boolean;
   runIntent: RunIntentSnapshot;
 };
 
@@ -663,7 +666,8 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
 
   async runLifecycle(
     operation: LifecycleOperation,
-    report?: LifecycleOperationReporter
+    report?: LifecycleOperationReporter,
+    options: LifecycleOperationOptions = {}
   ): Promise<LifecycleOperationResult> {
     const label = lifecycleOperationLabel(operation);
     const emit =
@@ -671,6 +675,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       ((progress: LifecycleOperationProgress) => this.#stdout.write(`[${progress.stage}] ${progress.message}\n`));
     const lifecycleContext: LifecycleOperationContext = {
       report: emit,
+      restoreRunIntentOnCancellation: true,
       runIntent: { exists: false, path: join(this.#configDir, "run-intent.json") }
     };
     emit({ message: `${label} requested`, stage: "operation" });
@@ -679,6 +684,9 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       await this.#lifecycleReporterScope.run(lifecycleContext, async () => {
         emit({ message: `Checking deployment before ${label.toLocaleLowerCase()}.`, stage: "operation" });
         switch (operation) {
+          case "init":
+            await this.init();
+            return;
           case "start":
             await this.start();
             return;
@@ -686,7 +694,14 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
             await this.stop();
             return;
           case "restart":
-            await this.restart();
+            await this.restart(options.manual === undefined ? {} : { manual: options.manual });
+            return;
+          case "reset":
+            if (options.resetConfirmed !== true) throw new Error("Reset requires explicit confirmation.");
+            await this.reset({
+              ...(options.manual === undefined ? {} : { manual: options.manual }),
+              ...(options.resetConfirmed === undefined ? {} : { confirmed: options.resetConfirmed })
+            });
             return;
         }
       });
@@ -696,6 +711,11 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     } catch (error) {
       if (error instanceof CommandCancelledError) {
         emit({ message: "Cancellation requested. Waiting for safe cleanup.", stage: "cleanup" });
+        if (operation === "reset" && lifecycleContext.destructiveStarted) {
+          const message = "Reset cancellation arrived after deletion began; inspect recovery status before retrying.";
+          emit({ message, stage: "cleanup" });
+          return { status: "failure", error: message, snapshot: this.#persistedLifecycleSnapshot() };
+        }
         try {
           if (lifecycleContext.restorationError) throw lifecycleContext.restorationError;
           this.#restoreRunIntent(lifecycleContext.runIntent);
@@ -1807,7 +1827,12 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
           (dockerLock === undefined &&
             (mutationLock.recovered || (preserveRecoverableLocalLock && dockerLockAcquisitionNeedsRecovery)));
         const lifecycleContext = this.#lifecycleReporterScope.getStore();
-        if (this.#lifecycleCancellationRequested && lifecycleContext && !lifecycleContext.operationCommitted) {
+        if (
+          this.#lifecycleCancellationRequested &&
+          lifecycleContext &&
+          lifecycleContext.restoreRunIntentOnCancellation &&
+          !lifecycleContext.operationCommitted
+        ) {
           try {
             this.#restoreRunIntent(lifecycleContext.runIntent);
           } catch (error) {
@@ -1845,7 +1870,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       if (!hasEnv)
         throw new Error(`Atlas Core state exists without ${this.#envFile}. Restore the matching credentials.`);
       this.#assertStateMatchesEngine(existingState, dockerEngineId);
-      this.#stdout.write(`Atlas Core is already initialized at ${this.#configDir}.\n`);
+      this.#writeLifecycleOutput(`Atlas Core is already initialized at ${this.#configDir}.\n`);
       return;
     }
     if (existingState) this.#assertStateMatchesRuntime(existingState, dockerEngineId);
@@ -1886,7 +1911,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
 
     let startedMinio = false;
     try {
-      this.#stdout.write("Provisioning the new durable MinIO store...\n");
+      this.#reportLifecycleOrWrite("Provisioning the new durable MinIO store...", "operation");
       startedMinio = true;
       await this.#runInitComposeChecked(["up", "-d", "--wait", "--wait-timeout", COMPOSE_WAIT_SECONDS, "minio"]);
       await this.#runInitComposeChecked([
@@ -1905,6 +1930,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       await this.#managedCore(dockerEngineId).initialize(initializingState);
     } catch (error) {
       if (startedMinio) {
+        this.#reportLifecycleOrWrite("Cleaning up the interrupted initialization safely...", "cleanup");
         const cleanup = await this.#runInitComposeCleanup(["down"]);
         if (cleanup.status !== 0) {
           throw new Error(
@@ -1915,9 +1941,11 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       throw error;
     }
 
-    this.#stdout.write(`Atlas Core initialized at ${this.#configDir}.\n`);
-    this.#stdout.write(`Credentials are stored in ${this.#envFile} with owner-only permissions.\n`);
-    this.#stdout.write("Run atlas-core start to start the deployment.\n");
+    this.#writeLifecycleOutput(
+      `Atlas Core initialized at ${this.#configDir}.\n` +
+        `Credentials are stored in ${this.#envFile} with owner-only permissions.\n` +
+        "Run atlas-core start to start the deployment.\n"
+    );
   }
 
   async #requireSupervision(command: "start" | "restart" | "reset"): Promise<void> {
@@ -1988,11 +2016,18 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     this.#lifecycleReporterScope.getStore()?.report({ message, stage });
   }
 
-  async reset(options: { manual?: boolean } = {}): Promise<void> {
-    this.#stdout.write(
-      `Reset permanently deletes Atlas Core containers, PostgreSQL and MinIO data, and configuration at ${this.#configDir}.\n`
-    );
-    if (!(await this.#confirmReset("Continue? [y/N] "))) {
+  #reportLifecycleOrWrite(message: string, stage: LifecycleOperationProgress["stage"]): void {
+    if (this.#lifecycleReporterScope.getStore()) this.#reportLifecycle(message, stage);
+    else this.#stdout.write(`${message}\n`);
+  }
+
+  async reset(options: { confirmed?: boolean; manual?: boolean } = {}): Promise<void> {
+    if (!options.confirmed) {
+      this.#stdout.write(
+        `Reset permanently deletes Atlas Core containers, PostgreSQL and MinIO data, credentials, and configuration at ${this.#configDir}.\n`
+      );
+    }
+    if (!options.confirmed && !(await this.#confirmReset("Continue? [y/N] "))) {
       this.#stdout.write("Atlas Core reset cancelled.\n");
       return;
     }
@@ -2015,6 +2050,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
 
   async #reset(dockerEngineId: string): Promise<void> {
     const deployment = this.#deploymentIdentity();
+    this.#reportLifecycleOrWrite("Preparing reset and verifying owned deployment resources...", "operation");
     const resetContainers = [
       deployment.apiContainer,
       deployment.sourceGatewayContainer,
@@ -2042,6 +2078,15 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     const composeFile = previousState?.baseDeployment
       ? join(this.#configDir, "base", "docker-compose.yml")
       : this.#composeFile;
+    const lifecycleContext = this.#lifecycleReporterScope.getStore();
+    lifecycleContext?.report({
+      message: "Deleting Atlas Core containers, PostgreSQL and MinIO data, credentials, and configuration.",
+      stage: "operation"
+    });
+    if (lifecycleContext) {
+      lifecycleContext.destructiveStarted = true;
+      lifecycleContext.restoreRunIntentOnCancellation = false;
+    }
     if (existsSync(this.#envFile) && existsSync(composeFile)) {
       await this.#runComposeChecked(["down", "--remove-orphans"], resetPluginIds);
     }
@@ -2057,11 +2102,14 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     }
     if (existsSync(this.#pluginConfigRoot)) rmSync(this.#pluginConfigRoot, { recursive: true, force: true });
 
-    this.#stdout.write(`Reinitializing Atlas Core ${PACKAGE_VERSION} with new credentials and empty storage.\n`);
+    this.#reportLifecycleOrWrite(
+      `Reinitializing Atlas Core ${PACKAGE_VERSION} with new credentials and empty storage.`,
+      "operation"
+    );
     await this.#initialize(dockerEngineId);
     this.#writeRunIntent(true);
     await this.#start(this.#requireInitialized(), dockerEngineId);
-    this.#stdout.write(`Atlas Core ${PACKAGE_VERSION} reset is complete.\n`);
+    this.#writeLifecycleOutput(`Atlas Core ${PACKAGE_VERSION} reset is complete.\n`);
   }
 
   async stop(): Promise<void> {

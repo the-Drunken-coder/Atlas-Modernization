@@ -3,6 +3,7 @@ import type {
   DeploymentService,
   DeploymentSnapshot,
   LifecycleOperation,
+  LifecycleOperationOptions,
   LifecycleOperationProgress,
   LifecycleOperationResult,
   PluginActivityReporter,
@@ -74,6 +75,12 @@ export function createPreviewOperator(
     return { status: "degraded", detail: "Core API is running, but MinIO health is unavailable." };
   };
 
+  const setFreshPreviewDeployment = (): void => {
+    deploymentState = "ready";
+    enabledPlugins.clear();
+    installedPlugins.clear();
+  };
+
   const services = (): DeploymentService[] => {
     if (deploymentState === "stopped" || deploymentState === "not-initialized") return [];
     return [
@@ -125,7 +132,8 @@ export function createPreviewOperator(
 
   const runLifecycle = async (
     operation: LifecycleOperation,
-    report?: (progress: LifecycleOperationProgress) => void
+    report?: (progress: LifecycleOperationProgress) => void,
+    options: LifecycleOperationOptions = {}
   ): Promise<LifecycleOperationResult> => {
     if (lifecycleRunning) {
       return {
@@ -134,6 +142,9 @@ export function createPreviewOperator(
         snapshot: snapshot()
       };
     }
+    if (operation === "reset" && !options.resetConfirmed) {
+      return { status: "failure", error: "Reset requires explicit confirmation.", snapshot: snapshot() };
+    }
     lifecycleRunning = true;
     const label = lifecycleOperationLabel(operation);
     const emit = (message: string, stage: LifecycleOperationProgress["stage"] = "operation"): void => {
@@ -141,15 +152,26 @@ export function createPreviewOperator(
     };
     emit(`${label} requested`);
     try {
-      if (deploymentState === "not-initialized") {
+      if (operation !== "init" && deploymentState === "not-initialized") {
         throw new Error("Atlas Core is not initialized. Run atlas-core init first.");
+      }
+      if (operation === "init" && deploymentState !== "not-initialized") {
+        throw new Error("Atlas Core is already initialized. Choose Reset Atlas Core to start from scratch.");
       }
       if (operation === "restart" && deploymentState === "stopped") {
         throw new Error("Atlas Core is stopped; run atlas-core start instead of atlas-core restart.");
       }
+      const previousState = deploymentState;
+      const previousEnabledPlugins = new Set(enabledPlugins);
+      const previousInstalledPlugins = new Map(installedPlugins);
       emit(`Running ${label.toLocaleLowerCase()}.`);
       await waitForLifecycleStep();
       if (cancellationRequested) {
+        deploymentState = previousState;
+        enabledPlugins.clear();
+        for (const pluginId of previousEnabledPlugins) enabledPlugins.add(pluginId);
+        installedPlugins.clear();
+        for (const [pluginId, installed] of previousInstalledPlugins) installedPlugins.set(pluginId, installed);
         emit("Cancellation requested. Waiting for safe cleanup.", "cleanup");
         emit("Safe cleanup complete.", "cleanup");
         return {
@@ -158,7 +180,11 @@ export function createPreviewOperator(
           summary: `${label} cancelled. The existing deployment state was preserved.`
         };
       }
-      deploymentState = operation === "stop" ? "stopped" : "ready";
+      if (operation === "init" || operation === "reset") {
+        setFreshPreviewDeployment();
+      } else {
+        deploymentState = operation === "stop" ? "stopped" : "ready";
+      }
       const summary = lifecycleOperationSummary(operation);
       emit(summary);
       return { status: "success", summary };
@@ -277,10 +303,11 @@ export function createPreviewOperator(
       return true;
     },
     async init() {
+      if (deploymentState !== "not-initialized") {
+        throw new Error("Atlas Core is already initialized. Choose Reset Atlas Core to start from scratch.");
+      }
       preview("Initialization simulated. No credentials, containers, or volumes were created.");
-      deploymentState = "ready";
-      enabledPlugins.clear();
-      installedPlugins.clear();
+      setFreshPreviewDeployment();
     },
     async logs(serviceId, _follow) {
       const label = serviceId ?? "all services";
@@ -389,10 +416,11 @@ export function createPreviewOperator(
       cancellationRequested = false;
     },
     async reset() {
+      if (deploymentState === "not-initialized") {
+        throw new Error("Atlas Core is not initialized. Run atlas-core init first.");
+      }
       preview("Reset simulated. No credentials, containers, or volumes were deleted.");
-      deploymentState = "ready";
-      enabledPlugins.clear();
-      installedPlugins.clear();
+      setFreshPreviewDeployment();
     },
     async restart() {
       preview("Restart simulated. No images were pulled and no containers changed.");
