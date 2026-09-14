@@ -78,6 +78,7 @@ await runAcceptance({
 
       const normalEntities = await readRunEntities(core, normalSummary.createdResources, signal);
       recordPersistedMovement(normalSummary, normalEntities, normalInputs, runID, record);
+      recordCriticalAssertionFaults(normalSummary, normalEntities, normalStream.events, normalInputs, runID, record);
 
       const normalEntityIDs = normalSummary.createdResources
         .filter((resource) => resource.type === "entity")
@@ -555,6 +556,11 @@ async function startRun(api, inputs, jsonInput) {
 
 function recordCompletedStream(started, completed, events, record) {
   const resourceEvents = events.filter((event) => event.type === "resource");
+  const expectedResourceIDs = completed.createdResources
+    .filter((resource) => resource.type === "entity")
+    .map((resource) => resource.id)
+    .sort();
+  const observedResourceIDs = eventResourceIDs(events);
   const tickEvents = events.filter((event) => event.type === "log" && event.message.startsWith("Telemetry tick "));
   const terminal = events.find((event) => event.type === "status" && event.status !== "running");
   const assertions = events.filter((event) => event.type === "assertion");
@@ -566,12 +572,14 @@ function recordCompletedStream(started, completed, events, record) {
       entity_resources: normalInputs.assetCount,
       telemetry_ticks: normalInputs.ticks,
       passing_assertions: ["Assets persisted", "Telemetry persisted"],
+      resource_ids: expectedResourceIDs,
       increasing_sequences: true
     },
     actual: {
       first_event: events[0],
       terminal,
       resources: resourceEvents.map((event) => event.resource),
+      resource_ids: observedResourceIDs,
       ticks: tickEvents.map((event) => event.message),
       assertions: assertions.map((event) => event.assertion),
       sequences: events.map((event) => event.sequence)
@@ -584,6 +592,7 @@ function recordCompletedStream(started, completed, events, record) {
       terminal?.status === "completed" &&
       resourceEvents.length === normalInputs.assetCount &&
       resourceEvents.every((event) => event.resource?.type === "entity") &&
+      isDeepStrictEqual(observedResourceIDs, expectedResourceIDs) &&
       tickEvents.length === normalInputs.ticks &&
       isDeepStrictEqual(
         assertions.map((event) => event.assertion?.name),
@@ -611,6 +620,37 @@ function recordPersistedMovement(run, entities, inputs, acceptanceRunID, record)
     },
     actual,
     passed
+  });
+}
+
+function recordCriticalAssertionFaults(run, entities, events, inputs, acceptanceRunID, record) {
+  const expected = expectedMovingAssets(run.id, inputs, inputs.ticks, acceptanceRunID);
+  const expectedResourceIDs = run.createdResources
+    .filter((resource) => resource.type === "entity")
+    .map((resource) => resource.id)
+    .sort();
+  const telemetryFault = structuredClone(entities);
+  telemetryFault[0].components.telemetry.speed_m_s += 1;
+  const eventFault = structuredClone(events);
+  const resourceEvent = eventFault.find((event) => event.type === "resource");
+  if (resourceEvent?.resource) resourceEvent.resource.id = `${resourceEvent.resource.id}-fault`;
+  const probes = [
+    {
+      assertion: "persisted telemetry",
+      fault: "first entity reports an incorrect final speed",
+      rejected: !matchesExpectedAssets(telemetryFault, expected)
+    },
+    {
+      assertion: "event/resource correlation",
+      fault: "first event resource uses an unrelated ID",
+      rejected: !eventResourceIDsMatch(eventFault, expectedResourceIDs)
+    }
+  ];
+  record({
+    check: "critical acceptance assertions reject isolated deliberate faults",
+    expected: { every_probe_rejected: true, probes: probes.map(({ assertion, fault }) => ({ assertion, fault })) },
+    actual: probes,
+    passed: probes.every((probe) => probe.rejected)
   });
 }
 
@@ -651,6 +691,17 @@ function matchesExpectedAsset(entity, expected) {
     entity.components.custom_simulation?.run_id === expected.custom_simulation.run_id &&
     entity.components.custom_simulation?.acceptance_run_id === expected.custom_simulation.acceptance_run_id
   );
+}
+
+function eventResourceIDsMatch(events, expectedIDs) {
+  return isDeepStrictEqual(eventResourceIDs(events), [...expectedIDs].sort());
+}
+
+function eventResourceIDs(events) {
+  return events
+    .filter((event) => event.type === "resource")
+    .map((event) => event.resource?.id)
+    .sort();
 }
 
 function recordCleanupEvents(run, cleaned, events, replacementID, record) {
