@@ -4,10 +4,12 @@ import { describe, expect, it, vi } from "vitest";
 import type {
   AtlasCoreOperator,
   DeploymentSnapshot,
+  DiagnosticsResult,
   LifecycleOperation,
   LifecycleOperationOptions,
   LifecycleOperationProgress,
   LifecycleOperationResult,
+  LogStream,
   PluginActivityReporter,
   PluginDeploymentStatus,
   PluginOperationOutcome
@@ -87,6 +89,7 @@ function operator(snapshot: DeploymentSnapshot = { status: "ready", detail: "Eve
       coreUpdateAvailable: false
     })),
     configureAdminPassword: vi.fn(async () => undefined),
+    diagnostics: vi.fn(async (): Promise<DiagnosticsResult> => ({ healthy: true, checks: [] })),
     details: vi.fn(async (_signal?: AbortSignal) => ({
       snapshot,
       cliVersion: "0.1.5",
@@ -145,6 +148,7 @@ function operator(snapshot: DeploymentSnapshot = { status: "ready", detail: "Eve
     doctor: vi.fn(async () => true),
     init: vi.fn(async () => undefined),
     logs: vi.fn(async () => undefined),
+    openLogStream: vi.fn(async (): Promise<LogStream> => emptyLogStream()),
     pluginDisable: vi.fn(
       async (_pluginId: string, _reportActivity?: PluginActivityReporter): Promise<PluginOperationOutcome> => ({
         status: "success"
@@ -178,6 +182,54 @@ function operator(snapshot: DeploymentSnapshot = { status: "ready", detail: "Eve
       }
     )
   } satisfies AtlasCoreOperator;
+}
+
+function emptyLogStream(): LogStream {
+  return {
+    service: undefined,
+    onLine: () => () => undefined,
+    onError: () => () => undefined,
+    onClose: (listener) => {
+      listener();
+      return () => undefined;
+    },
+    wait: async () => undefined,
+    close: async () => undefined
+  };
+}
+
+function liveLogStream(): LogStream & { emit(line: string): void; fail(error: Error): void; closed: boolean } {
+  const listeners = new Set<(line: string) => void>();
+  let resolveWait!: () => void;
+  let rejectWait!: (error: Error) => void;
+  const wait = new Promise<void>((resolve, reject) => {
+    resolveWait = resolve;
+    rejectWait = reject;
+  });
+  let closed = false;
+  return {
+    service: undefined,
+    onLine(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    onError: () => () => undefined,
+    onClose: () => () => undefined,
+    wait: () => wait,
+    close: async () => {
+      closed = true;
+      resolveWait();
+    },
+    emit(line) {
+      for (const listener of listeners) listener(line);
+    },
+    fail(error) {
+      rejectWait(error);
+    },
+    get closed() {
+      return closed;
+    }
+  };
 }
 
 describe("Atlas Core terminal UI", () => {
@@ -229,6 +281,104 @@ describe("Atlas Core terminal UI", () => {
     const before = terminal.raw.length;
     terminal.write("\u001b[B");
     await terminal.waitForRawChange(before);
+    terminal.write("q");
+    await menu;
+  });
+
+  it("opens a controlled bounded log viewer and closes the stream on Escape", async () => {
+    const terminal = new TestTerminal(80, true, 24);
+    const deployment = operator();
+    const stream = liveLogStream();
+    deployment.openLogStream.mockResolvedValue(stream);
+    const menu = createDevelopmentInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("CHOOSE AN ACTION");
+    terminal.write("\u001b[B\r");
+    await terminal.waitFor("Logs and diagnostics");
+    terminal.write("\u001b[B\r");
+    await terminal.waitFor("LIVE LOGS");
+    const beforeLine = terminal.raw.length;
+    stream.emit("a very long diagnostic line that must wrap inside the viewer instead of overlapping the footer");
+    await terminal.waitFor("pause/follow");
+    await terminal.waitForRawChange(beforeLine);
+    expect(terminal.text).toContain("a very long diagnostic line");
+    terminal.write(" ");
+    await terminal.waitFor("PAUSED");
+    terminal.write("\u001b[A");
+    terminal.write("\u001b[B");
+    terminal.write("\u001b[F");
+    await terminal.waitFor("FOLLOWING");
+    terminal.write("\u001b");
+    await vi.waitFor(() => expect(stream.closed).toBe(true));
+    terminal.write("q");
+    await menu;
+  });
+
+  it("keeps stream failures inside the controlled log viewer", async () => {
+    const terminal = new TestTerminal(80, true, 24);
+    const deployment = operator();
+    const stream = liveLogStream();
+    deployment.openLogStream.mockResolvedValue(stream);
+    const menu = createDevelopmentInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("CHOOSE AN ACTION");
+    terminal.write("\u001b[B\r");
+    await terminal.waitFor("Logs and diagnostics");
+    terminal.write("\u001b[B\r");
+    await terminal.waitFor("LIVE LOGS");
+    stream.fail(new Error("fixture stream failed"));
+    await terminal.waitFor("ERROR: fixture stream failed");
+    terminal.write("\u001b");
+    await vi.waitFor(() => expect(stream.closed).toBe(true));
+    terminal.write("q");
+    await menu;
+  });
+
+  it("changes the selected log service and reports structured diagnostic failures", async () => {
+    const terminal = new TestTerminal(80, true, 24);
+    const deployment = operator();
+    const streams = [liveLogStream(), liveLogStream(), liveLogStream()];
+    deployment.openLogStream.mockImplementation(async () => streams.shift() ?? liveLogStream());
+    deployment.diagnostics.mockResolvedValue({
+      healthy: false,
+      checks: [
+        { label: "Docker", status: "ok", detail: "fixture healthy" },
+        { label: "configuration", status: "failure", detail: "ownership mismatch" }
+      ]
+    });
+    const menu = createDevelopmentInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("CHOOSE AN ACTION");
+    terminal.write("\u001b[B\r");
+    await terminal.waitFor("Logs and diagnostics");
+    terminal.write("\u001b[B\r");
+    await terminal.waitFor("LIVE LOGS");
+    const beforeServiceChange = terminal.raw.length;
+    terminal.write("\u001b[C");
+    await terminal.waitForRawChange(beforeServiceChange);
+    await terminal.waitFor("LIVE LOGS");
+    expect(deployment.openLogStream).toHaveBeenCalledWith("api", true);
+    await nextInputTurn();
+    const beforeLeft = terminal.raw.length;
+    terminal.write("\u001b[D");
+    await terminal.waitForRawChange(beforeLeft);
+    await vi.waitFor(() => expect(deployment.openLogStream).toHaveBeenCalledTimes(3));
+    expect(deployment.openLogStream).toHaveBeenLastCalledWith("api", true);
+    const beforeClose = terminal.raw.length;
+    terminal.write("\u001b");
+    await terminal.waitForRawChange(beforeClose);
+    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
+    const beforeLogsMenu = terminal.raw.length;
+    terminal.write("\u001b[B\r");
+    await terminal.waitForRawChange(beforeLogsMenu);
+    await terminal.waitFor("Logs and diagnostics");
+    for (let index = 0; index < 5; index += 1) terminal.write("\u001b[B");
+    terminal.write("\r");
+    await terminal.waitFor("DIAGNOSTICS");
+    expect(terminal.text).toContain("ownership mismatch");
+    expect(terminal.text).toContain("Checks failed.");
+    terminal.write("\u001b");
+    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(3));
     terminal.write("q");
     await menu;
   });

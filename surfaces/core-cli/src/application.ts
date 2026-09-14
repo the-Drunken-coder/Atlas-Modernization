@@ -29,6 +29,7 @@ import { ManagedPluginCredentials, ManagedPluginKeyRejectedError } from "./host-
 import { type ImageReceipt, pullImageReceipt, verifyContainerImage, verifyLocalImage } from "./image-receipts.js";
 import { IndependentPluginManager, isPluginLifecycleOperation, pluginServiceName } from "./independent-plugins.js";
 import { prepareLegacyBase, prepareRepairPackage } from "./legacy-base-import.js";
+import { type CommandOutputStream, createBufferedCommandOutputStream, createLogStream } from "./log-stream.js";
 import {
   ManagedCoreManager,
   type ManagedCoreState,
@@ -42,12 +43,14 @@ import type {
   DeploymentDetails,
   DeploymentService,
   DeploymentSnapshot,
+  DiagnosticCheck,
   InteractiveCLI,
   LifecycleOperation,
   LifecycleOperationOptions,
   LifecycleOperationProgress,
   LifecycleOperationReporter,
   LifecycleOperationResult,
+  LogStream,
   PluginActivity,
   PluginActivityReporter,
   PluginDeploymentStatus,
@@ -200,6 +203,7 @@ export type CommandRunner = {
   cancelAll(): void;
   run(command: string, args: string[], options?: RunOptions): Promise<CommandResult>;
   runCleanup(command: string, args: string[], options?: RunOptions): Promise<CommandResult>;
+  openStream?(command: string, args: string[], options?: RunOptions): Promise<CommandOutputStream>;
 };
 
 export type CLIContext = {
@@ -393,6 +397,80 @@ export class ProcessCommandRunner implements CommandRunner {
     return await this.#run(command, args, options, this.#cleanupChildren);
   }
 
+  async openStream(command: string, args: string[], options: RunOptions = {}): Promise<CommandOutputStream> {
+    return await new Promise<CommandOutputStream>((resolve) => {
+      const child = spawn(command, args, {
+        cwd: options.cwd,
+        detached: process.platform !== "win32",
+        env: options.env,
+        stdio: ["ignore", "pipe", "pipe"]
+      });
+      const state: ChildProcessState = { cancelled: false, exited: false, supervised: false };
+      this.#children.set(child, state);
+      let stderr = "";
+      let settled = false;
+      let finalResult: { cancelled?: true; status: number; stderr: string } | undefined;
+      const stdoutListeners = new Set<(chunk: string) => void>();
+      const stderrListeners = new Set<(chunk: string) => void>();
+      const closeListeners = new Set<(result: { cancelled?: true; status: number; stderr: string }) => void>();
+      let resolveClosed: (result: { cancelled?: true; status: number; stderr: string }) => void;
+      const closed = new Promise<{ cancelled?: true; status: number; stderr: string }>((resolveResult) => {
+        resolveClosed = resolveResult;
+      });
+      const removeAbortListener = (): void => options.signal?.removeEventListener("abort", cancel);
+      const cancel = (): void => this.#terminate(child, state);
+      const finish = (status: number): void => {
+        if (settled) return;
+        settled = true;
+        state.exited = true;
+        this.#children.delete(child);
+        removeAbortListener();
+        const result = { ...(state.cancelled ? { cancelled: true as const } : {}), status, stderr };
+        finalResult = result;
+        resolveClosed(result);
+        for (const listener of closeListeners) listener(result);
+        stdoutListeners.clear();
+        stderrListeners.clear();
+        closeListeners.clear();
+      };
+      child.stdout?.setEncoding("utf8");
+      child.stderr?.setEncoding("utf8");
+      child.stdout?.on("data", (chunk: string) => {
+        for (const listener of stdoutListeners) listener(chunk);
+      });
+      child.stderr?.on("data", (chunk: string) => {
+        stderr += chunk;
+        for (const listener of stderrListeners) listener(chunk);
+      });
+      child.once("error", (error) => {
+        if (!settled) {
+          stderr += error.message;
+          finish(1);
+        }
+      });
+      child.once("close", (status) => finish(status ?? 1));
+      options.signal?.addEventListener("abort", cancel, { once: true });
+      if (options.signal?.aborted) cancel();
+      resolve({
+        onStdout(listener) {
+          if (!settled) stdoutListeners.add(listener);
+          return () => stdoutListeners.delete(listener);
+        },
+        onStderr(listener) {
+          if (!settled) stderrListeners.add(listener);
+          return () => stderrListeners.delete(listener);
+        },
+        onClose(listener) {
+          if (finalResult) listener(finalResult);
+          else closeListeners.add(listener);
+          return () => closeListeners.delete(listener);
+        },
+        cancel,
+        closed
+      });
+    });
+  }
+
   async #run(
     command: string,
     args: string[],
@@ -583,6 +661,14 @@ class CancellableCommandRunner implements CommandRunner {
     } finally {
       this.#cleanupControllers.delete(controller);
     }
+  }
+
+  async openStream(command: string, args: string[], options?: RunOptions): Promise<CommandOutputStream> {
+    if (this.#cancelled || options?.signal?.aborted) throw new CommandCancelledError();
+    if (!this.#runner.openStream) {
+      return createBufferedCommandOutputStream(this.run(command, args, { ...options, inherit: true }));
+    }
+    return await this.#runner.openStream(command, args, options);
   }
 }
 
@@ -2507,8 +2593,28 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   }
 
   async logs(service: "api" | "minio" | "postgres" | "source-gateway" | undefined, follow: boolean): Promise<void> {
+    this.#requireInitialized();
+    await this.#runLogs(service, follow);
+  }
+
+  async openLogStream(
+    service: "api" | "minio" | "postgres" | "source-gateway" | undefined,
+    follow = true
+  ): Promise<LogStream> {
+    return await this.#openLogStream(service, follow);
+  }
+
+  async #openLogStream(service: string | undefined, follow: boolean): Promise<LogStream> {
     const state = this.#requireInitialized();
-    await this.#runLogs(state, service, follow);
+    const runtime = await this.#preflight();
+    return await this.#dockerRuntimeScope.run(runtime, async () => {
+      this.#assertStateMatchesEngine(state, runtime.engineId);
+      const args = ["logs", "--tail", "200"];
+      if (follow) args.push("--follow");
+      if (service) args.push(service);
+      const source = await this.#runComposeStream(args, state.enabledPlugins);
+      return createLogStream(service, source);
+    });
   }
 
   async pluginStatuses(pluginId?: string): Promise<PluginDeploymentStatus[]> {
@@ -2616,19 +2722,18 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     const state = this.#requireInitialized();
     if (!state.enabledPlugins.includes(pluginId)) throw new Error(`Plugin ${pluginId} is not enabled.`);
     const plugin = this.#pluginForRead(pluginId, state);
-    await this.#runLogs(state, plugin.service, follow);
+    await this.#runLogs(plugin.service, follow);
   }
 
-  async #runLogs(state: DeploymentState, service: string | undefined, follow: boolean): Promise<void> {
-    const runtime = await this.#preflight();
-    await this.#dockerRuntimeScope.run(runtime, async () => {
-      this.#assertStateMatchesEngine(state, runtime.engineId);
-      const args = ["logs", "--tail", "200"];
-      if (follow) args.push("--follow");
-      if (service) args.push(service);
-      const result = await this.#runCompose(args, true, state.enabledPlugins);
-      if (result.status !== 0) throw commandFailure("docker compose logs", result);
-    });
+  async #runLogs(service: string | undefined, follow: boolean): Promise<void> {
+    const stream = await this.#openLogStream(service, follow);
+    const removeLine = stream.onLine((line) => this.#stdout.write(`${line}\n`));
+    try {
+      await stream.wait();
+    } finally {
+      removeLine();
+      await stream.close();
+    }
   }
 
   async pluginEnable(pluginId: string, reportActivity?: PluginActivityReporter): Promise<PluginOperationOutcome> {
@@ -2899,7 +3004,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     report({ level: "success", message: "Plugin deployment files removed", stage: "operation" });
   }
 
-  async doctor(): Promise<boolean> {
+  async diagnostics(): Promise<{ healthy: boolean; checks: DiagnosticCheck[] }> {
     const checks: Array<{ label: string; check: () => Promise<string> }> = [
       {
         label: "platform",
@@ -2951,16 +3056,24 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       }
     ];
 
-    let healthy = true;
+    const results: DiagnosticCheck[] = [];
     for (const item of checks) {
       try {
-        this.#stdout.write(`[ok] ${item.label}: ${await item.check()}\n`);
+        results.push({ label: item.label, status: "ok", detail: await item.check() });
       } catch (error) {
-        healthy = false;
-        this.#stderr.write(`[fail] ${item.label}: ${errorMessage(error)}\n`);
+        results.push({ label: item.label, status: "failure", detail: errorMessage(error) });
       }
     }
-    return healthy;
+    return { healthy: results.every((result) => result.status === "ok"), checks: results };
+  }
+
+  async doctor(): Promise<boolean> {
+    const result = await this.diagnostics();
+    for (const check of result.checks) {
+      const output = `[${check.status === "ok" ? "ok" : "fail"}] ${check.label}: ${check.detail}\n`;
+      (check.status === "ok" ? this.#stdout : this.#stderr).write(output);
+    }
+    return result.healthy;
   }
 
   async #preflight(signal?: AbortSignal): Promise<DockerRuntime> {
@@ -4590,6 +4703,36 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       options,
       allowAfterCancellation
     );
+  }
+
+  async #runComposeStream(args: string[], pluginIds: readonly string[]): Promise<CommandOutputStream> {
+    const state = this.#readState();
+    const composeFile = state?.baseDeployment ? join(this.#configDir, "base", "docker-compose.yml") : this.#composeFile;
+    const imageReference = state?.baseDeployment?.coreImage ?? this.#imageReference ?? UNRELEASED_IMAGE;
+    const runtime = this.#dockerRuntimeScope.getStore();
+    if (!runtime) throw new Error("Atlas Core Docker runtime is unavailable while running Compose.");
+    const env = this.#dockerEnvironment();
+    for (const variable of COMPOSE_VARIABLES) delete env[variable];
+    for (const variable of Object.keys(env)) {
+      if (variable.startsWith("COMPOSE_") || variable.startsWith("ATLAS_")) delete env[variable];
+    }
+    env.COMPOSE_IGNORE_ORPHANS = "0";
+    env.COMPOSE_REMOVE_ORPHANS = "0";
+    env.ATLAS_CORE_IMAGE = imageReference;
+    env.ATLAS_CORE_ENGINE_ID = runtime.engineId;
+    env.ATLAS_CORE_PROJECT = runtime.deployment.projectName;
+    env.ATLAS_PLUGIN_CONFIG_ROOT = this.#pluginConfigRoot;
+    const candidateKey = this.#pluginCredentialScope.getStore();
+    if (candidateKey) env.ATLAS_PLUGIN_API_KEY = candidateKey;
+    if (!this.#runner.openStream) {
+      return createBufferedCommandOutputStream(
+        this.#runCompose(args, false, pluginIds, imageReference, undefined, false)
+      );
+    }
+    return await this.#runner.openStream("docker", this.#composeArgs(composeFile, args, pluginIds), {
+      cwd: this.#configDir,
+      env
+    });
   }
 
   async #runComposeChecked(

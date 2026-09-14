@@ -2,10 +2,12 @@ import type {
   AtlasCoreOperator,
   DeploymentService,
   DeploymentSnapshot,
+  DiagnosticsResult,
   LifecycleOperation,
   LifecycleOperationOptions,
   LifecycleOperationProgress,
   LifecycleOperationResult,
+  LogStream,
   PluginActivityReporter,
   PluginOperationOutcome
 } from "./operator.js";
@@ -296,11 +298,20 @@ export function createPreviewOperator(
         ...(deploymentState === "degraded" ? { performanceError: "MinIO did not return Docker statistics." } : {})
       };
     },
+    async diagnostics(): Promise<DiagnosticsResult> {
+      return {
+        healthy: true,
+        checks: [
+          { label: "Docker daemon", status: "ok", detail: "fixture healthy" },
+          { label: "Docker Compose", status: "ok", detail: "2.17+ fixture healthy" },
+          { label: "configuration", status: "ok", detail: "fixture ownership matched" }
+        ]
+      };
+    },
     async doctor() {
-      preview("Docker daemon: fixture healthy");
-      preview("Compose 2.17+: fixture healthy");
-      preview("Deployment ownership: fixture matched");
-      return true;
+      const result = await this.diagnostics();
+      for (const check of result.checks) preview(`${check.label}: ${check.detail}`);
+      return result.healthy;
     },
     async init() {
       if (deploymentState !== "not-initialized") {
@@ -309,17 +320,26 @@ export function createPreviewOperator(
       preview("Initialization simulated. No credentials, containers, or volumes were created.");
       setFreshPreviewDeployment();
     },
-    async logs(serviceId, _follow) {
-      const label = serviceId ?? "all services";
-      preview(`Showing fixture logs for ${label}.`);
+    async logs(serviceId, follow) {
+      const stream = await this.openLogStream(serviceId, follow);
+      const remove = stream.onLine((line) => output.write(`${line}\n`));
+      try {
+        await stream.wait();
+      } finally {
+        remove();
+        await stream.close();
+      }
+    },
+    async openLogStream(serviceId, follow = true) {
       const logsByService = {
-        api: "2026-08-30T14:12:03Z core-api ready on 127.0.0.1:8000\n",
-        "source-gateway": "2026-08-30T14:12:04Z source-gateway no connectors configured\n",
-        postgres: "2026-08-30T14:12:05Z postgres accepting connections\n",
-        minio: "2026-08-30T14:12:06Z minio bucket atlas ready\n"
-      };
-      const logs = serviceId === undefined ? Object.values(logsByService) : [logsByService[serviceId]];
-      for (const log of logs) output.write(log);
+        api: ["2026-08-30T14:12:03Z core-api ready on 127.0.0.1:8000"],
+        "source-gateway": ["2026-08-30T14:12:04Z source-gateway no connectors configured"],
+        postgres: ["2026-08-30T14:12:05Z postgres accepting connections"],
+        minio: ["2026-08-30T14:12:06Z minio bucket atlas ready"]
+      } satisfies Record<DeploymentService["id"], string[]>;
+      const lines = serviceId === undefined ? Object.values(logsByService).flat() : logsByService[serviceId];
+      preview(`Showing fixture logs for ${serviceId ?? "all services"}.`);
+      return createPreviewLogStream(serviceId, lines, follow);
     },
     async pluginDisable(pluginId, reportActivity) {
       return await mutatePlugin(false, pluginId, reportActivity);
@@ -340,15 +360,37 @@ export function createPreviewOperator(
       installedPlugins.set(pluginId, { previousVersion: null, selectedVersion });
       preview(`Installed ${plugin.displayName} ${selectedVersion}.`);
     },
-    async pluginLogs(pluginId, _follow) {
+    async pluginLogs(pluginId, follow) {
+      if (deploymentState === "not-initialized") {
+        throw new Error("Atlas Core is not initialized. Run atlas-core init first.");
+      }
+      if (!enabledPlugins.has(pluginId)) throw new Error(`Plugin ${pluginId} is not enabled.`);
+      requirePreviewPlugin(pluginId);
+      const stream = await this.openPluginLogStream?.(pluginId, follow);
+      if (!stream) return;
+      const remove = stream.onLine((line) => output.write(`${line}\n`));
+      try {
+        await stream.wait();
+      } finally {
+        remove();
+        await stream.close();
+      }
+    },
+    async openPluginLogStream(pluginId, follow = true) {
       if (deploymentState === "not-initialized") {
         throw new Error("Atlas Core is not initialized. Run atlas-core init first.");
       }
       if (!enabledPlugins.has(pluginId)) throw new Error(`Plugin ${pluginId} is not enabled.`);
       const plugin = requirePreviewPlugin(pluginId);
       preview(`Showing fixture logs for ${plugin.displayName}.`);
-      output.write(`2026-08-30T14:12:07Z ${plugin.service} fixture query ready\n`);
-      output.write(`2026-08-30T14:12:08Z ${plugin.service} fixture index healthy\n`);
+      return createPreviewLogStream(
+        plugin.service,
+        [
+          `2026-08-30T14:12:07Z ${plugin.service} fixture query ready`,
+          `2026-08-30T14:12:08Z ${plugin.service} fixture index healthy`
+        ],
+        follow
+      );
     },
     async pluginStatuses(pluginId) {
       const plugins = pluginId === undefined ? PREVIEW_CATALOG : [requirePreviewPlugin(pluginId)];
@@ -478,5 +520,55 @@ function service(
     uptime: "4d 2h",
     restarts: 0,
     image: "ghcr.io/the-drunken-coder/atlas-core@sha256:cfe582…"
+  };
+}
+
+function createPreviewLogStream(service: string | undefined, lines: string[], follow: boolean): LogStream {
+  const lineListeners = new Set<(line: string) => void>();
+  const pendingLines: string[] = [];
+  const closeListeners = new Set<(error?: Error) => void>();
+  let closed = false;
+  let resolveDone!: () => void;
+  const done = new Promise<void>((resolve) => {
+    resolveDone = resolve;
+  });
+  const finish = (): void => {
+    if (closed) return;
+    closed = true;
+    resolveDone();
+    for (const listener of closeListeners) listener();
+    lineListeners.clear();
+    closeListeners.clear();
+  };
+  setTimeout(() => {
+    for (const line of lines) {
+      if (closed) return;
+      if (lineListeners.size === 0) pendingLines.push(line);
+      else for (const listener of lineListeners) listener(line);
+    }
+    if (!follow) finish();
+  }, 0);
+  return {
+    service,
+    onLine(listener) {
+      lineListeners.add(listener);
+      for (const line of pendingLines.splice(0)) listener(line);
+      return () => lineListeners.delete(listener);
+    },
+    onError() {
+      return () => undefined;
+    },
+    onClose(listener) {
+      if (closed) listener();
+      else closeListeners.add(listener);
+      return () => closeListeners.delete(listener);
+    },
+    wait() {
+      return done;
+    },
+    async close() {
+      finish();
+      await done;
+    }
   };
 }

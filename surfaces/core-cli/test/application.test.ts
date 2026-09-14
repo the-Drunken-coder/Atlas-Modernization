@@ -20,7 +20,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { type CLIContext, type CommandRunner, ProcessCommandRunner, runCLI } from "../src/application.js";
 import { DeploymentTransactionStore } from "../src/deployment-transaction.js";
 import { OperationCleanupError } from "../src/operation-errors.js";
-import type { DeploymentDetails, LifecycleOperationProgress } from "../src/operator.js";
+import type { DeploymentDetails, DiagnosticsResult, LifecycleOperationProgress } from "../src/operator.js";
 import { PACKAGE_NAME, PACKAGE_PLUGIN_CONTRACTS, PACKAGE_VERSION } from "../src/package-metadata.js";
 import type { PluginCatalogEntry } from "../src/plugin-catalog.js";
 import * as supervision from "../src/supervision.js";
@@ -3986,6 +3986,24 @@ describe("atlas-core CLI", () => {
     expect(await runCLI(["logs", "source-gateway"], test.context)).toBe(0);
     const logs = test.runner.calls.find((call) => composeCommand(call)[0] === "logs");
     expect(logs && composeCommand(logs)).toEqual(["logs", "--tail", "200", "source-gateway"]);
+  });
+
+  it("returns structured diagnostics for interface formatting", async () => {
+    const test = runtime();
+    markInitialized(test);
+    test.runner.failComposeConfig = true;
+    let diagnostics: DiagnosticsResult | undefined;
+    test.context.interactive = {
+      configureAdmin: async () => undefined,
+      runMenu: async (operator) => {
+        diagnostics = await operator.diagnostics();
+      },
+      runUpdate: async () => undefined
+    };
+
+    expect(await runCLI([], test.context)).toBe(0);
+    expect(diagnostics).toMatchObject({ healthy: false });
+    expect(diagnostics?.checks).toContainEqual(expect.objectContaining({ label: "configuration", status: "failure" }));
   });
 
   it.each(["core", "plugin"])("reports nonzero Compose log results for %s logs", async (target) => {

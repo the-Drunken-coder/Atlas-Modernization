@@ -1,6 +1,7 @@
 import { Box, type Key, render, Text, useApp, useInput, usePaste, useWindowSize } from "ink";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import wrapAnsi from "wrap-ansi";
+import { LogBuffer } from "./log-stream.js";
 import { CommandCancelledError } from "./operation-errors.js";
 import type {
   AtlasCoreOperator,
@@ -8,10 +9,12 @@ import type {
   DeploymentService,
   DeploymentSnapshot,
   DevelopmentInteractiveCLI,
+  DiagnosticsResult,
   InteractiveCLI,
   LifecycleOperation,
   LifecycleOperationOptions,
   LifecycleOperationProgress,
+  LogStream,
   PluginActivity,
   PluginActivityReporter,
   PluginDeploymentStatus,
@@ -44,6 +47,8 @@ type Screen =
   | { kind: "configure" }
   | { kind: "development-message"; message: string }
   | { kind: "logs" }
+  | { kind: "log-viewer"; returnTo: "development" | "menu" | "status"; service: string | undefined; stream: LogStream }
+  | { kind: "diagnostics"; view: DiagnosticsResult | Error; returnTo: "development" | "status" }
   | { kind: "menu"; notice?: DevelopmentNotice; snapshot: DeploymentSnapshot }
   | { kind: "operation"; view: LifecycleOperationView }
   | { kind: "password" }
@@ -615,12 +620,35 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
     [loadMenu, loadStatus, operator, runVisibleOperation]
   );
 
-  const runStatusDoctor = useCallback(async () => {
-    await runVisibleOperation("Running diagnostics", async () => {
-      await operator.doctor();
-    });
-    await loadStatus();
-  }, [loadStatus, operator, runVisibleOperation]);
+  const openLogViewer = useCallback(
+    async (
+      service: "api" | "minio" | "postgres" | "source-gateway" | undefined,
+      returnTo: "development" | "menu" | "status"
+    ) => {
+      setScreen({ kind: "busy", label: "Opening live logs..." });
+      await waitUntilRenderFlush();
+      try {
+        const stream = await operator.openLogStream(service, true);
+        setScreen({ kind: "log-viewer", returnTo, service, stream });
+      } catch (error) {
+        setScreen({ kind: "development-message", message: `Unable to open logs: ${errorMessage(error)}` });
+      }
+    },
+    [operator, waitUntilRenderFlush]
+  );
+
+  const runStructuredDiagnostics = useCallback(
+    async (returnTo: "development" | "status") => {
+      setScreen({ kind: "busy", label: "Running diagnostics..." });
+      await waitUntilRenderFlush();
+      try {
+        setScreen({ kind: "diagnostics", returnTo, view: await operator.diagnostics() });
+      } catch (error) {
+        setScreen({ kind: "diagnostics", returnTo, view: new Error(errorMessage(error)) });
+      }
+    },
+    [operator, waitUntilRenderFlush]
+  );
 
   const configureAdmin = useCallback(
     async (password: string) => {
@@ -676,6 +704,7 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
         <DevelopmentMenu
           onSelect={(action) => {
             if (action === "status") void loadStatus();
+            else if (action === "logs") setScreen({ kind: "logs" });
             else if (action === "init" || action === "start" || action === "stop" || action === "restart")
               void runDevelopmentLifecycle(action);
             else if (action === "reset") setScreen({ kind: "reset-confirmation" });
@@ -725,7 +754,37 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
     );
   }
   if (screen.kind === "logs") {
-    return <LogsMenu onBack={() => void loadMenu()} onSelect={(service) => void showLogs(service, "menu")} />;
+    return (
+      <LogsMenu
+        includeDiagnostics={mode === "development"}
+        onBack={() => void loadMenu()}
+        {...(mode === "development" ? { onDiagnostics: () => void runStructuredDiagnostics("development") } : {})}
+        onSelect={(service) =>
+          void (mode === "development" ? openLogViewer(service, "development") : showLogs(service, "menu"))
+        }
+      />
+    );
+  }
+  if (screen.kind === "log-viewer") {
+    return (
+      <LogViewer
+        onBack={async () => {
+          await screen.stream.close();
+          await loadMenu();
+        }}
+        onServiceChange={(service) => void openLogViewer(service, screen.returnTo)}
+        service={screen.service}
+        stream={screen.stream}
+      />
+    );
+  }
+  if (screen.kind === "diagnostics") {
+    return (
+      <DiagnosticsScreen
+        onBack={() => (screen.returnTo === "status" ? void loadStatus() : void loadMenu())}
+        view={screen.view}
+      />
+    );
   }
   if (screen.kind === "plugins") {
     return (
@@ -749,7 +808,7 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
       <StatusScreen
         onBack={() => void loadMenu()}
         onDeactivate={invalidateStatus}
-        onDiagnostics={() => void runStatusDoctor()}
+        onDiagnostics={() => void runStructuredDiagnostics("status")}
         onLogs={(service) => void showLogs(service, "status")}
         onReload={refreshStatus}
         view={screen.view}
@@ -927,7 +986,7 @@ function MainMenu({ onSelect, snapshot }: { onSelect(action: Action): void; snap
   );
 }
 
-type DevelopmentAction = LifecycleOperation | "status" | "placeholder";
+type DevelopmentAction = LifecycleOperation | "logs" | "status" | "placeholder";
 
 type DevelopmentChoice = {
   action: DevelopmentAction;
@@ -1023,7 +1082,7 @@ function developmentChoices(snapshot: DeploymentSnapshot): DevelopmentChoice[] {
         : "Start Atlas Core";
   const choices: DevelopmentChoice[] = [
     { action: "status", label: "View service health" },
-    { action: "placeholder", label: "View logs and diagnostics" },
+    { action: "logs", label: "View logs and diagnostics" },
     { action: lifecycle, label: lifecycleLabel }
   ];
   if (snapshot.status !== "stopped" && snapshot.status !== "not-initialized") {
@@ -1555,10 +1614,14 @@ function ConfigureMenu({ onAdmin, onBack }: { onAdmin(): void; onBack(): void })
 }
 
 function LogsMenu({
+  includeDiagnostics,
   onBack,
+  onDiagnostics,
   onSelect
 }: {
+  includeDiagnostics?: boolean;
   onBack(): void;
+  onDiagnostics?: () => void;
   onSelect(service: DeploymentService["id"] | undefined): void;
 }): ReactNode {
   const choices: Array<{ label: string; service: DeploymentService["id"] | undefined }> = [
@@ -1568,17 +1631,189 @@ function LogsMenu({
     { label: "PostgreSQL", service: "postgres" },
     { label: "MinIO", service: "minio" }
   ];
+  const menuChoices = [
+    ...choices.map(({ label }) => label),
+    ...(includeDiagnostics ? ["Run diagnostics"] : []),
+    "Back"
+  ];
   return (
     <SimpleMenu
-      choices={[...choices.map(({ label }) => label), "Back"]}
+      choices={menuChoices}
       onBack={onBack}
       onSelect={(index) => {
         const choice = choices[index];
         if (choice) onSelect(choice.service);
+        else if (includeDiagnostics && index === choices.length) onDiagnostics?.();
         else onBack();
       }}
-      title="View logs"
+      title={includeDiagnostics ? "Logs and diagnostics" : "View logs"}
     />
+  );
+}
+
+const LOG_SERVICES: Array<{ id: DeploymentService["id"] | undefined; label: string }> = [
+  { id: undefined, label: "All services" },
+  { id: "api", label: "Core API" },
+  { id: "source-gateway", label: "Source Gateway" },
+  { id: "postgres", label: "PostgreSQL" },
+  { id: "minio", label: "MinIO" }
+];
+
+function LogViewer({
+  onBack,
+  onServiceChange,
+  service,
+  stream
+}: {
+  onBack(): Promise<void>;
+  onServiceChange(service: DeploymentService["id"] | undefined): void;
+  service: string | undefined;
+  stream: LogStream;
+}): ReactNode {
+  const { columns, rows } = useWindowSize();
+  const bufferRef = useRef(new LogBuffer());
+  const selectedRef = useRef(
+    Math.max(
+      0,
+      LOG_SERVICES.findIndex((candidate) => candidate.id === service)
+    )
+  );
+  const actionPending = useRef(false);
+  const [revision, setRevision] = useState(0);
+  const [streamError, setStreamError] = useState<Error>();
+  const selected = Math.min(selectedRef.current, LOG_SERVICES.length - 1);
+  const serviceLabel = LOG_SERVICES[selected]?.label ?? "All services";
+  const footer = `${bufferRef.current.following ? "following" : "paused"}   ←→ service   ↑↓ scroll   space pause/follow   End latest   Esc close`;
+  const headerRows = 2;
+  const footerRows = wrappedRows(footer, columns);
+  const viewportRows = Math.max(1, rows - headerRows - footerRows - 2);
+
+  useEffect(() => {
+    const buffer = bufferRef.current;
+    buffer.setViewport(viewportRows);
+    setRevision((value) => value + 1);
+  }, [viewportRows]);
+
+  useEffect(() => {
+    const buffer = bufferRef.current;
+    let active = true;
+    const removeLine = stream.onLine((line) => {
+      for (const wrapped of wrapAnsi(line, Math.max(1, columns), { hard: true, trim: false }).split("\n")) {
+        buffer.append(wrapped);
+      }
+      setRevision((value) => value + 1);
+    });
+    const removeError = stream.onError((error) => {
+      setStreamError(error);
+      setRevision((value) => value + 1);
+    });
+    void stream.wait().catch((error: unknown) => {
+      if (!active) return;
+      setStreamError(error instanceof Error ? error : new Error(errorMessage(error)));
+      setRevision((value) => value + 1);
+    });
+    return () => {
+      active = false;
+      removeLine();
+      removeError();
+      void stream.close();
+    };
+  }, [columns, stream]);
+
+  useInput((input, key) => {
+    if (actionPending.current) return;
+    if (key.escape || key.return || (key.ctrl && input === "c")) {
+      actionPending.current = true;
+      void onBack();
+      return;
+    }
+    if (key.leftArrow || key.rightArrow) {
+      const next = (selected + (key.rightArrow ? 1 : -1) + LOG_SERVICES.length) % LOG_SERVICES.length;
+      selectedRef.current = next;
+      actionPending.current = true;
+      onServiceChange(LOG_SERVICES[next]?.id);
+      return;
+    }
+    if (key.upArrow) {
+      bufferRef.current.scroll(-1);
+      setRevision((value) => value + 1);
+    } else if (key.downArrow) {
+      bufferRef.current.scroll(1);
+      setRevision((value) => value + 1);
+    } else if (key.end) {
+      bufferRef.current.followLatest();
+      setRevision((value) => value + 1);
+    } else if (input === " ") {
+      bufferRef.current.toggleFollowing();
+      setRevision((value) => value + 1);
+    }
+  });
+
+  const snapshot = bufferRef.current.snapshot();
+  if (columns < MINIMUM_TERMINAL_COLUMNS) {
+    return (
+      <Box flexDirection="column" width={columns}>
+        <Header title="ATLAS CORE > LIVE LOGS" />
+        <Text>Resize terminal to at least 40 columns.</Text>
+        <Text dimColor>Esc closes the stream. Buffered output is preserved.</Text>
+      </Box>
+    );
+  }
+
+  return (
+    <Box flexDirection="column" width={columns}>
+      <Header right={bufferRef.current.following ? "FOLLOWING" : "PAUSED"} title="ATLAS CORE > LIVE LOGS" />
+      <Text>
+        <Text dimColor>Service </Text>
+        <Text color="cyan">{serviceLabel}</Text>
+        {streamError ? <Text color="red"> ERROR: {streamError.message}</Text> : null}
+      </Text>
+      <Rule width={columns} />
+      <Box flexDirection="column" height={viewportRows} overflowY="hidden">
+        {snapshot.lines.length === 0 ? <Text dimColor>Waiting for log output...</Text> : null}
+        {snapshot.lines.map((line, index) => (
+          <Text key={`${snapshot.firstLine + index}-${revision}`}>{line || " "}</Text>
+        ))}
+      </Box>
+      <Rule width={columns} />
+      <Text dimColor>{footer}</Text>
+    </Box>
+  );
+}
+
+function DiagnosticsScreen({ onBack, view }: { onBack(): void; view: DiagnosticsResult | Error }): ReactNode {
+  const { columns } = useWindowSize();
+  useInput((input, key) => {
+    if (key.escape || key.return || (key.ctrl && input === "c") || input === "q") onBack();
+  });
+  if (columns < MINIMUM_TERMINAL_COLUMNS) {
+    return (
+      <Box flexDirection="column" width={columns}>
+        <Header title="ATLAS CORE > DIAGNOSTICS" />
+        <Text>Resize terminal to at least 40 columns.</Text>
+        <Text dimColor>Esc returns without changing the deployment.</Text>
+      </Box>
+    );
+  }
+  return (
+    <Box flexDirection="column" width={columns}>
+      <Header title="ATLAS CORE > DIAGNOSTICS" />
+      <Rule width={columns} />
+      {view instanceof Error ? (
+        <Text color="red">Diagnostics failed: {view.message}</Text>
+      ) : (
+        <>
+          <Text color={view.healthy ? "green" : "red"}>{view.healthy ? "All checks passed." : "Checks failed."}</Text>
+          {view.checks.map((check) => (
+            <Text color={check.status === "ok" ? "green" : "red"} key={check.label} wrap="wrap">
+              [{check.status === "ok" ? "ok" : "fail"}] {check.label}: {check.detail}
+            </Text>
+          ))}
+        </>
+      )}
+      <Rule width={columns} />
+      <Text dimColor>Enter or Esc back</Text>
+    </Box>
   );
 }
 

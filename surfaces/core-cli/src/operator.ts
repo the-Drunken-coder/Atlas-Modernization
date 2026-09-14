@@ -26,6 +26,28 @@ export type DeploymentService = {
   image?: string;
 };
 
+export type DeploymentServiceId = DeploymentService["id"];
+
+export type LogStream = {
+  readonly service: string | undefined;
+  onLine(listener: (line: string) => void): () => void;
+  onError(listener: (error: Error) => void): () => void;
+  onClose(listener: (error?: Error) => void): () => void;
+  wait(): Promise<void>;
+  close(): Promise<void>;
+};
+
+export type DiagnosticCheck = {
+  label: string;
+  status: "ok" | "failure";
+  detail: string;
+};
+
+export type DiagnosticsResult = {
+  healthy: boolean;
+  checks: DiagnosticCheck[];
+};
+
 export type DeploymentDetails = {
   snapshot: DeploymentSnapshot;
   cliVersion: string;
@@ -118,13 +140,16 @@ export type AtlasCoreOperator = {
   checkForUpdates(): Promise<UpdateInfo>;
   configureAdminPassword(password: string): Promise<void>;
   details(signal?: AbortSignal): Promise<DeploymentDetails>;
+  diagnostics(): Promise<DiagnosticsResult>;
   doctor(): Promise<boolean>;
   init(): Promise<void>;
   logs(service: "api" | "minio" | "postgres" | "source-gateway" | undefined, follow: boolean): Promise<void>;
+  openLogStream(service: DeploymentServiceId | undefined, follow?: boolean): Promise<LogStream>;
   pluginDisable(pluginId: string, reportActivity?: PluginActivityReporter): Promise<PluginOperationOutcome>;
   pluginEnable(pluginId: string, reportActivity?: PluginActivityReporter): Promise<PluginOperationOutcome>;
   pluginInstall?(pluginId: string, version?: string): Promise<void>;
   pluginLogs(pluginId: string, follow: boolean): Promise<void>;
+  openPluginLogStream?(pluginId: string, follow?: boolean): Promise<LogStream>;
   pluginUpdate?(pluginId: string): Promise<void>;
   pluginRollback?(pluginId: string): Promise<void>;
   pluginUninstall?(pluginId: string): Promise<void>;
