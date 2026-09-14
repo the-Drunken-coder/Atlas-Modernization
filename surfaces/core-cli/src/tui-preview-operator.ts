@@ -187,6 +187,8 @@ export function createPreviewOperator(
       }
       if (operation === "init" || operation === "reset") {
         setFreshPreviewDeployment();
+      } else if (operation === "configure") {
+        deploymentState = previousState;
       } else {
         deploymentState = operation === "stop" ? "stopped" : "ready";
       }

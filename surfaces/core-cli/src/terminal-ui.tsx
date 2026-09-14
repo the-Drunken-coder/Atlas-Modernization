@@ -376,10 +376,14 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
       const terminalExit = lifecycleCancellation.current === "exit";
       if (cancelled && !terminalExit && !terminalLost.current) {
         lifecycleCancellation.current = undefined;
-        await loadMenu({
-          message: lifecycleResult?.status === "cancelled" ? lifecycleResult.summary : "Lifecycle operation cancelled.",
-          tone: "yellow"
-        });
+        if (mode === "configure") setScreen({ kind: "password" });
+        else {
+          await loadMenu({
+            message:
+              lifecycleResult?.status === "cancelled" ? lifecycleResult.summary : "Lifecycle operation cancelled.",
+            tone: "yellow"
+          });
+        }
         return;
       }
       if (terminalExit) {
@@ -409,10 +413,13 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
           : current
       );
       if (lifecycleResult?.status === "success") {
-        await loadMenu({ message: lifecycleResult.summary, tone: "green" });
+        if (mode === "configure") {
+          await waitUntilRenderFlush();
+          exit();
+        } else await loadMenu({ message: lifecycleResult.summary, tone: "green" });
       }
     },
-    [exit, loadMenu, operator, waitUntilRenderFlush]
+    [exit, loadMenu, mode, operator, waitUntilRenderFlush]
   );
 
   const cancelDevelopmentLifecycle = useCallback(
@@ -652,25 +659,9 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
 
   const configureAdmin = useCallback(
     async (password: string) => {
-      if (mode === "development") {
-        await runDevelopmentLifecycle("configure", { password });
-        return;
-      }
-      const result = await runVisibleOperation("Changing admin password", async () => {
-        await operator.configureAdminPassword(password);
-      });
-      if (result.cancelled && !result.failure) {
-        setScreen({ kind: mode === "configure" ? "password" : "configure" });
-        return;
-      }
-      if (mode === "configure") {
-        if (result.failure) exit(result.failure);
-        else exit();
-        return;
-      }
-      await loadMenu();
+      await runDevelopmentLifecycle("configure", { password });
     },
-    [exit, loadMenu, mode, operator, runDevelopmentLifecycle, runVisibleOperation]
+    [runDevelopmentLifecycle]
   );
 
   const applyUpdate = useCallback(
@@ -726,7 +717,7 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
   if (screen.kind === "operation") {
     return (
       <LifecycleOperationScreen
-        onBack={() => void loadMenu()}
+        onBack={() => (mode === "configure" ? setScreen({ kind: "password" }) : void loadMenu())}
         onCancel={(disposition) => cancelDevelopmentLifecycle(disposition)}
         view={screen.view}
       />

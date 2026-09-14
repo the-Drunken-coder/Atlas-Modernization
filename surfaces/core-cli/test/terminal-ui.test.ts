@@ -1878,12 +1878,12 @@ describe("Atlas Core terminal UI", () => {
     terminal.write(password);
     await terminal.waitForRawChange(beforeConfirmation);
     terminal.write("\r");
-    await terminal.waitFor("Press Enter to return to Atlas Core.");
-    terminal.write("\r");
+    await terminal.waitFor("Atlas Core configure complete.");
     await configuration;
 
-    expect(deployment.configureAdminPassword).toHaveBeenCalledWith(password);
+    expect(deployment.runLifecycle).toHaveBeenCalledWith("configure", expect.any(Function), { password });
     expect(terminal.text).not.toContain(password);
+    expect(terminal.text).not.toContain("Press Enter to return to Atlas Core.");
   });
 
   it("captures password text submitted in the same input chunk", async () => {
@@ -1896,11 +1896,10 @@ describe("Atlas Core terminal UI", () => {
     terminal.write(`${password}\u001b[13u`);
     await terminal.waitFor("Confirm password");
     terminal.write(`${password}\u001b[13u`);
-    await terminal.waitFor("Press Enter to return to Atlas Core.");
-    terminal.write("\r");
+    await terminal.waitFor("Atlas Core configure complete.");
     await configuration;
 
-    expect(deployment.configureAdminPassword).toHaveBeenCalledWith(password);
+    expect(deployment.runLifecycle).toHaveBeenCalledWith("configure", expect.any(Function), { password });
   });
 
   it("submits the admin password once when confirmation Enter repeats", async () => {
@@ -1908,10 +1907,10 @@ describe("Atlas Core terminal UI", () => {
     const deployment = operator();
     const password = "correct-horse-battery-staple";
     let finishConfiguration: (() => void) | undefined;
-    const pendingConfiguration = new Promise<undefined>((resolve) => {
-      finishConfiguration = () => resolve(undefined);
+    const pendingConfiguration = new Promise<LifecycleOperationResult>((resolve) => {
+      finishConfiguration = () => resolve({ status: "success", summary: "Atlas Core configure complete." });
     });
-    deployment.configureAdminPassword.mockImplementation(() => pendingConfiguration);
+    deployment.runLifecycle.mockImplementation(async () => pendingConfiguration);
     const configuration = createInteractiveCLI(terminal.input, terminal.output).configureAdmin(deployment);
 
     await terminal.waitFor("New password");
@@ -1923,12 +1922,10 @@ describe("Atlas Core terminal UI", () => {
     terminal.write(password);
     await terminal.waitForRawChange(beforeConfirmation);
     terminal.write("\u001b[13u\u001b[13u");
-    await vi.waitFor(() => expect(deployment.configureAdminPassword).toHaveBeenCalled());
+    await vi.waitFor(() => expect(deployment.runLifecycle).toHaveBeenCalled());
     await nextInputTurn();
-    const configurationCallsAfterRepeatedEnter = deployment.configureAdminPassword.mock.calls.length;
+    const configurationCallsAfterRepeatedEnter = deployment.runLifecycle.mock.calls.length;
     finishConfiguration?.();
-    await terminal.waitFor("Press Enter to return to Atlas Core.");
-    terminal.write("\r");
     await configuration;
 
     expect(configurationCallsAfterRepeatedEnter).toBe(1);
@@ -1949,12 +1946,12 @@ describe("Atlas Core terminal UI", () => {
     terminal.write(`\u001b[200~${password}\u001b[201~`);
     await terminal.waitForRawChange(beforeConfirmation);
     terminal.write("\r");
-    await terminal.waitFor("Press Enter to return to Atlas Core.");
-    terminal.write("\r");
+    await terminal.waitFor("Atlas Core configure complete.");
     await configuration;
 
-    expect(deployment.configureAdminPassword).toHaveBeenCalledWith(password);
+    expect(deployment.runLifecycle).toHaveBeenCalledWith("configure", expect.any(Function), { password });
     expect(terminal.text).not.toContain(password);
+    expect(terminal.text).not.toContain("Press Enter to return to Atlas Core.");
   });
 
   it("keeps mismatched password confirmation inside the form", async () => {
@@ -1994,21 +1991,10 @@ describe("Atlas Core terminal UI", () => {
     terminal.write("x");
     await terminal.waitForRawChange(beforeConfirmation);
     terminal.write("\r");
-    await vi.waitFor(() =>
-      expect(
-        terminal.text.includes("Press Enter to return to Atlas Core.") ||
-          terminal.text.includes("Passwords did not match")
-      ).toBe(true)
-    );
-    const passwordWasSubmitted = deployment.configureAdminPassword.mock.calls.length > 0;
-    if (passwordWasSubmitted) {
-      terminal.write("\r");
-    } else {
-      terminal.write("\u001b");
-    }
+    await terminal.waitFor("Atlas Core configure complete.");
     await configuration;
 
-    expect(deployment.configureAdminPassword).toHaveBeenCalledWith("x");
+    expect(deployment.runLifecycle).toHaveBeenCalledWith("configure", expect.any(Function), { password: "x" });
   });
 
   it("does not treat Ctrl-D as the diagnostics shortcut", async () => {

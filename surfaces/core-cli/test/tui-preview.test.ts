@@ -188,6 +188,17 @@ describe("Atlas Core TUI preview operator", () => {
     expect(output.write.mock.calls.flat().join(" ")).not.toContain(password);
   });
 
+  it("preserves a stopped deployment while changing the admin password", async () => {
+    const { operator } = fixture("stopped");
+    const progress: LifecycleOperationProgress[] = [];
+
+    await expect(
+      operator.runLifecycle("configure", (event) => progress.push(event), { password: "new-password" })
+    ).resolves.toMatchObject({ status: "success" });
+    expect(progress.map((event) => event.stage)).toEqual(["operation", "operation", "operation"]);
+    await expect(operator.snapshot()).resolves.toMatchObject({ status: "stopped" });
+  });
+
   it("requires confirmation before resetting a fixture and resets after confirmation", async () => {
     const { operator } = fixture("ready");
 
