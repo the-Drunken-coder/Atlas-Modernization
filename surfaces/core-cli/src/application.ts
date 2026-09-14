@@ -37,6 +37,19 @@ import {
   parseManagedCoreState
 } from "./managed-core.js";
 import { CommandCancelledError, OperationCleanupError } from "./operation-errors.js";
+import type {
+  AtlasCoreOperator,
+  DeploymentDetails,
+  DeploymentService,
+  DeploymentSnapshot,
+  InteractiveCLI,
+  PluginActivity,
+  PluginActivityReporter,
+  PluginDeploymentStatus,
+  PluginOperationOutcome,
+  UpdateInfo,
+  UpdateScope
+} from "./operator.js";
 import { PACKAGE_IMAGE, PACKAGE_NAME, PACKAGE_PLUGIN_CONTRACTS, PACKAGE_VERSION } from "./package-metadata.js";
 import { PLUGIN_CATALOG, type PluginCatalogEntry } from "./plugin-catalog.js";
 import { PluginCatalogStore } from "./plugin-catalog-store.js";
@@ -64,20 +77,7 @@ import {
   type SupervisorInstallOptions,
   uninstallSupervisor
 } from "./supervision.js";
-import {
-  type AtlasCoreOperator,
-  createInteractiveCLI,
-  type DeploymentDetails,
-  type DeploymentService,
-  type DeploymentSnapshot,
-  type InteractiveCLI,
-  type PluginActivity,
-  type PluginActivityReporter,
-  type PluginDeploymentStatus,
-  type PluginOperationOutcome,
-  type UpdateInfo,
-  type UpdateScope
-} from "./terminal-ui.js";
+import { createInteractiveCLI } from "./terminal-ui.js";
 
 const PROJECT_NAME_PREFIX = "atlas_core_production";
 const MUTATION_RECOVERY_LOCK_PREFIX = ".mutation.lock.recovering.";

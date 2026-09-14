@@ -1,11 +1,11 @@
-import { PLUGIN_CATALOG, type PluginCatalogEntry } from "./plugin-catalog.js";
 import type {
   AtlasCoreOperator,
   DeploymentService,
   DeploymentSnapshot,
   PluginActivityReporter,
   PluginOperationOutcome
-} from "./terminal-ui.js";
+} from "./operator.js";
+import { PLUGIN_CATALOG, type PluginCatalogEntry } from "./plugin-catalog.js";
 
 type PreviewState = DeploymentSnapshot["status"];
 type PreviewOutput = { write(data: string): unknown };

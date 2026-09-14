@@ -1,14 +1,14 @@
 import { createInterface } from "node:readline/promises";
 import { PassThrough } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
-import {
-  type AtlasCoreOperator,
-  createInteractiveCLI,
-  type DeploymentSnapshot,
-  type PluginActivityReporter,
-  type PluginDeploymentStatus,
-  type PluginOperationOutcome
-} from "../src/terminal-ui.js";
+import type {
+  AtlasCoreOperator,
+  DeploymentSnapshot,
+  PluginActivityReporter,
+  PluginDeploymentStatus,
+  PluginOperationOutcome
+} from "../src/operator.js";
+import { createInteractiveCLI } from "../src/terminal-ui.js";
 
 class TestTerminal {
   readonly input = new PassThrough() as PassThrough & NodeJS.ReadStream;

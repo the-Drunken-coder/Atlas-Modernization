@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { PluginActivity } from "../src/terminal-ui.js";
+import type { PluginActivity } from "../src/operator.js";
 import { createPreviewOperator } from "../src/tui-preview-operator.js";
 
 function fixture(state: "degraded" | "not-initialized" | "ready" | "stopped" = "ready", pluginStepDelayMs = 0) {
