@@ -1,4 +1,4 @@
-import { parseRunEvent } from "../../../../simulations/src/client/run-state.ts";
+import { isResourceType } from "@the-drunken-coder/atlas-sdk";
 
 export function eventStreamResponseError(response) {
   const mediaType = response.headers
@@ -37,6 +37,92 @@ export function parseBrowserRunEventFrame(frame) {
     );
   }
   return data.length > 0
-    ? parseRunEvent(JSON.parse(data.join("\n")))
+    ? parseRunEventContract(JSON.parse(data.join("\n")))
     : undefined;
+}
+
+function parseRunEventContract(value) {
+  if (!isRecord(value) || !hasRunEventBase(value)) {
+    throw new Error("Invalid simulation run event");
+  }
+  const valid =
+    (value.type === "status" && isRunStatus(value.status)) ||
+    value.type === "log" ||
+    (value.type === "assertion" && isAssertionResult(value.assertion)) ||
+    (value.type === "resource" && isCreatedResource(value.resource)) ||
+    (value.type === "error" && value.level === "error") ||
+    (value.type === "cleanup" &&
+      (value.resource === undefined || isCreatedResource(value.resource)));
+  if (!valid) throw new Error("Invalid simulation run event");
+  return value;
+}
+
+function hasRunEventBase(value) {
+  return (
+    Number.isSafeInteger(value.sequence) &&
+    value.sequence >= 1 &&
+    typeof value.runId === "string" &&
+    isCanonicalTimestamp(value.timestamp) &&
+    typeof value.message === "string" &&
+    (value.level === undefined ||
+      ["info", "warn", "error"].includes(value.level)) &&
+    (value.data === undefined || isJSONValue(value.data))
+  );
+}
+
+function isAssertionResult(value) {
+  return (
+    isRecord(value) &&
+    typeof value.id === "string" &&
+    typeof value.name === "string" &&
+    typeof value.passed === "boolean" &&
+    isCanonicalTimestamp(value.timestamp) &&
+    (value.message === undefined || typeof value.message === "string")
+  );
+}
+
+function isCreatedResource(value) {
+  return (
+    isRecord(value) &&
+    isResourceType(value.type) &&
+    typeof value.id === "string"
+  );
+}
+
+function isRunStatus(value) {
+  return ["running", "completed", "failed", "cancelled", "abandoned"].includes(
+    value,
+  );
+}
+
+function isCanonicalTimestamp(value) {
+  if (typeof value !== "string") return false;
+  const milliseconds = Date.parse(value);
+  return (
+    !Number.isNaN(milliseconds) &&
+    new Date(milliseconds).toISOString() === value
+  );
+}
+
+function isJSONValue(value) {
+  const pending = [value];
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (
+      current === null ||
+      typeof current === "boolean" ||
+      typeof current === "string"
+    ) {
+      continue;
+    }
+    if (typeof current === "number" && Number.isFinite(current)) continue;
+    if (Array.isArray(current)) pending.push(...current);
+    else if (isRecord(current)) pending.push(...Object.values(current));
+    else return false;
+  }
+  return true;
+}
+
+function isRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

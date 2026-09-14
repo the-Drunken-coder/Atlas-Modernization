@@ -1,6 +1,5 @@
-import { createAtlasClientFactory } from "../../../../simulations/src/server/atlas.ts";
-import { loadConfig } from "../../../../simulations/src/server/config.ts";
-import { createSimulationServer } from "../../../../simulations/src/server/index.ts";
+import { AtlasClient } from "@the-drunken-coder/atlas-sdk";
+import { createSimulationServer, loadConfig } from "@the-drunken-coder/atlas-simulations/server";
 
 const packageRoot = process.env.ATLAS_ACCEPTANCE_SIMULATION_PACKAGE_ROOT;
 if (!packageRoot) {
@@ -14,7 +13,25 @@ const localTarget = config.atlasTargets.find((target) => target.id === "local");
 if (!localTarget)
   throw new Error("Late-assertion acceptance requires the local target");
 
-const realClientFactory = createAtlasClientFactory(localTarget);
+const realClientFactory = (options = {}) =>
+  new AtlasClient({
+    baseUrl: localTarget.baseUrl,
+    apiKey: localTarget.apiKey,
+    fetch: (input, init = {}) =>
+      fetch(input, {
+        ...init,
+        signal: AbortSignal.any(
+          [
+            options.signal,
+            input instanceof Request ? input.signal : undefined,
+            init.signal,
+          ].filter(Boolean),
+        ),
+      }),
+    sync: options.sync ?? false,
+    pollIntervalMs: options.pollIntervalMs ?? 2_000,
+    requestTimeoutMs: 10_000,
+  });
 let clientCount = 0;
 localTarget.clientFactory = (options) => {
   const client = realClientFactory(options);

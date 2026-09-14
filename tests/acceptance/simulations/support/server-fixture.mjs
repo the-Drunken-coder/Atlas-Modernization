@@ -316,12 +316,19 @@ function reserveLoopbackPort(signal) {
   return new Promise((resolve, reject) => {
     const server = createServer();
     let settled = false;
+    let closed = false;
+    const closeServer = () => {
+      if (closed) return;
+      closed = true;
+      server.close(() => undefined);
+    };
     const onAbort = () =>
       finish(signal.reason ?? new Error("Simulation port reservation aborted"));
     const finish = (error, value) => {
       if (settled) return;
       settled = true;
       signal.removeEventListener("abort", onAbort);
+      if (error) closeServer();
       if (error) reject(error);
       else resolve(value);
     };
@@ -332,6 +339,10 @@ function reserveLoopbackPort(signal) {
       return;
     }
     server.listen({ host: "127.0.0.1", port: 0, exclusive: true }, () => {
+      if (settled) {
+        closeServer();
+        return;
+      }
       const address = server.address();
       if (!address || typeof address === "string") {
         server.close();
@@ -350,6 +361,7 @@ function reserveLoopbackPort(signal) {
               return;
             }
             released = true;
+            closed = true;
             server.close((error) => (error ? releaseReject(error) : release()));
           }),
       });

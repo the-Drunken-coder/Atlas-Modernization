@@ -189,6 +189,7 @@ async function runMapWindowJourney({
       await zoomIn.click({ timeout: 2_000 });
       pointerClickCompleted = true;
       await waitUntil(() => maximumRoutedTileZoom > pointerMaximumTileZoomBefore, 10_000, signal);
+      await waitForStableValue(() => routedTileRequests, 500, 10_000, signal);
     } catch (error) {
       pointerClickError = errorMessage(error);
     }

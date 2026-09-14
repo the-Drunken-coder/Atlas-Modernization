@@ -171,7 +171,7 @@ export async function runAcceptance({
       metadata.fixture = cloneJSONValue(preparation.metadata, "fixture metadata");
       writeJSON(join(artifacts, "run.json"), { ...metadata, status: "prepared" });
     }
-    await preflight(commandLog);
+    await preflight(commandLog, interruption.signal);
     interruption.signal.throwIfAborted();
     initialPortReservation = await reserveLoopbackPort();
     environment.ATLAS_ACCEPTANCE_CORE_PORT = String(initialPortReservation.port);
@@ -179,7 +179,8 @@ export async function runAcceptance({
       cwd: repositoryRoot,
       env: environment,
       logPath: commandLog,
-      timeoutMs: 30_000
+      timeoutMs: 30_000,
+      signal: interruption.signal
     });
     const fixturePaths = Object.values(preparation?.environment ?? {}).filter(
       (value) => typeof value === "string" && isAbsolute(value)
@@ -199,13 +200,15 @@ export async function runAcceptance({
       cwd: repositoryRoot,
       env: environment,
       logPath: commandLog,
-      timeoutMs: commandTimeoutMs
+      timeoutMs: commandTimeoutMs,
+      signal: interruption.signal
     });
     await execute("docker", [...compose, "pull", "postgres", "minio", "minio-init"], {
       cwd: repositoryRoot,
       env: environment,
       logPath: commandLog,
-      timeoutMs: commandTimeoutMs
+      timeoutMs: commandTimeoutMs,
+      signal: interruption.signal
     });
     baseUrl = await startCore(compose, environment, commandLog, interruption.signal, record, initialPortReservation);
     interruption.signal.throwIfAborted();
@@ -232,17 +235,26 @@ export async function runAcceptance({
       restartCore: async () => {
         interruption.signal.throwIfAborted();
         const before = (
-          await capture("docker", [...compose, "ps", "--quiet", "api"], { cwd: repositoryRoot, env: environment })
+          await capture("docker", [...compose, "ps", "--quiet", "api"], {
+            cwd: repositoryRoot,
+            env: environment,
+            signal: interruption.signal
+          })
         ).trim();
         await execute("docker", [...compose, "restart", "--no-deps", "api"], {
           cwd: repositoryRoot,
           env: environment,
           logPath: commandLog,
-          timeoutMs: 120_000
+          timeoutMs: 120_000,
+          signal: interruption.signal
         });
         await waitForReadiness(baseUrl, interruption.signal, record);
         const after = (
-          await capture("docker", [...compose, "ps", "--quiet", "api"], { cwd: repositoryRoot, env: environment })
+          await capture("docker", [...compose, "ps", "--quiet", "api"], {
+            cwd: repositoryRoot,
+            env: environment,
+            signal: interruption.signal
+          })
         ).trim();
         record({
           check: "Core restart retained the acceptance container and project storage",
@@ -329,7 +341,8 @@ async function startCore(compose, environment, commandLog, signal, record, initi
         env: environment,
         logPath: commandLog,
         timeoutMs: 120_000,
-        capture: true
+        capture: true,
+        signal
       });
       return `http://127.0.0.1:${port}`;
     } catch (error) {
@@ -345,7 +358,8 @@ async function startCore(compose, environment, commandLog, signal, record, initi
         env: environment,
         logPath: commandLog,
         timeoutMs: 120_000,
-        echo: false
+        echo: false,
+        signal
       });
     }
   }
@@ -474,19 +488,21 @@ function errorMessage(error) {
   return error instanceof Error ? error.message : String(error);
 }
 
-async function preflight(commandLog) {
+async function preflight(commandLog, signal) {
   if (Number(process.versions.node.split(".")[0]) < 24) {
     throw new Error(`Node 24 or newer is required; found ${process.version}`);
   }
   await execute("docker", ["version", "--format", "{{.Server.Version}} {{.Server.Os}}/{{.Server.Arch}}"], {
     cwd: repositoryRoot,
     logPath: commandLog,
-    timeoutMs: 15_000
+    timeoutMs: 15_000,
+    signal
   });
   await execute("docker", ["compose", "version"], {
     cwd: repositoryRoot,
     logPath: commandLog,
-    timeoutMs: 15_000
+    timeoutMs: 15_000,
+    signal
   });
 }
 
@@ -540,7 +556,8 @@ async function capture(command, args, options = {}) {
 }
 
 function runProcess(command, args, options) {
-  const { cwd, env, logPath, timeoutMs = 30_000, echo = true, capture: shouldCapture = false } = options;
+  const { cwd, env, logPath, timeoutMs = 30_000, echo = true, capture: shouldCapture = false, signal } = options;
+  if (signal?.aborted) return Promise.reject(signal.reason ?? new Error(`aborted while running ${command}`));
   if (logPath) mkdirSync(dirname(logPath), { recursive: true });
   const rendered = [command, ...args].join(" ");
   if (logPath) appendFileSync(logPath, `$ ${rendered}\n`);
@@ -550,7 +567,9 @@ function runProcess(command, args, options) {
     let stdout = "";
     let stderr = "";
     let timedOut = false;
+    let aborted = false;
     let settled = false;
+    let forceKillTimeout;
     const append = (stream, chunk) => {
       const value = String(chunk);
       if (shouldCapture) {
@@ -565,18 +584,34 @@ function runProcess(command, args, options) {
     const timeout = setTimeout(() => {
       timedOut = true;
       child.kill("SIGTERM");
-      setTimeout(() => child.kill("SIGKILL"), 5_000).unref();
+      forceKillTimeout = setTimeout(() => child.kill("SIGKILL"), 5_000);
+      forceKillTimeout.unref();
     }, timeoutMs);
+    const abort = () => {
+      if (settled || aborted) return;
+      aborted = true;
+      child.kill("SIGTERM");
+      forceKillTimeout = setTimeout(() => child.kill("SIGKILL"), 5_000);
+      forceKillTimeout.unref();
+    };
+    signal?.addEventListener("abort", abort, { once: true });
+    if (signal?.aborted) abort();
     const finish = (error, value) => {
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
+      if (forceKillTimeout) clearTimeout(forceKillTimeout);
+      signal?.removeEventListener("abort", abort);
       if (activeChild === child) activeChild = undefined;
       if (error) rejectPromise(error);
       else resolvePromise(value);
     };
     child.on("error", (error) => finish(new Error(`failed to run ${rendered}: ${error.message}`)));
-    child.on("close", (code, signal) => {
+    child.on("close", (code, exitSignal) => {
+      if (aborted) {
+        finish(signal?.reason instanceof Error ? signal.reason : new Error(`aborted while running ${rendered}`));
+        return;
+      }
       if (timedOut) {
         finish(new Error(`${rendered} exceeded ${timeoutMs} ms`));
         return;
@@ -588,7 +623,7 @@ function runProcess(command, args, options) {
         ]
           .filter(Boolean)
           .join("\n");
-        finish(new Error(`${rendered} exited ${code ?? signal ?? "without a status"}${output ? `:\n${output}` : ""}`));
+        finish(new Error(`${rendered} exited ${code ?? exitSignal ?? "without a status"}${output ? `:\n${output}` : ""}`));
         return;
       }
       finish(undefined, { stdout, stderr });
