@@ -2,14 +2,18 @@ import type {
   AtlasCoreOperator,
   DeploymentService,
   DeploymentSnapshot,
+  LifecycleOperation,
+  LifecycleOperationProgress,
+  LifecycleOperationResult,
   PluginActivityReporter,
   PluginOperationOutcome
 } from "./operator.js";
+import { lifecycleOperationLabel, lifecycleOperationSummary } from "./operator.js";
 import { PLUGIN_CATALOG, type PluginCatalogEntry } from "./plugin-catalog.js";
 
 type PreviewState = DeploymentSnapshot["status"];
 type PreviewOutput = { write(data: string): unknown };
-type PreviewOptions = { pluginStepDelayMs?: number };
+type PreviewOptions = { lifecycleStepDelayMs?: number; pluginStepDelayMs?: number };
 type PreviewInstalledPlugin = { selectedVersion: string; previousVersion: string | null };
 
 const PREVIEW_PLUGIN_VERSIONS = ["0.2.0", "0.1.0"] as const;
@@ -51,8 +55,11 @@ export function createPreviewOperator(
   const enabledPlugins = new Set<string>();
   const installedPlugins = new Map<string, PreviewInstalledPlugin>();
   let cancellationRequested = false;
+  let lifecycleRunning = false;
   let cancelPendingPluginStep: (() => void) | undefined;
+  let cancelPendingLifecycleStep: (() => void) | undefined;
   const pluginStepDelayMs = options.pluginStepDelayMs ?? 1_500;
+  const lifecycleStepDelayMs = options.lifecycleStepDelayMs ?? 500;
   const startedAt = "2026-08-28T12:00:00.000Z";
   const preview = (message: string): unknown => output.write(`[preview only] ${message}\n`);
 
@@ -99,6 +106,69 @@ export function createPreviewOperator(
         resolve();
       };
     });
+  };
+
+  const waitForLifecycleStep = async (): Promise<void> => {
+    if (cancellationRequested || lifecycleStepDelayMs === 0) return;
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(() => {
+        cancelPendingLifecycleStep = undefined;
+        resolve();
+      }, lifecycleStepDelayMs);
+      cancelPendingLifecycleStep = () => {
+        clearTimeout(timer);
+        cancelPendingLifecycleStep = undefined;
+        resolve();
+      };
+    });
+  };
+
+  const runLifecycle = async (
+    operation: LifecycleOperation,
+    report?: (progress: LifecycleOperationProgress) => void
+  ): Promise<LifecycleOperationResult> => {
+    if (lifecycleRunning) {
+      return {
+        status: "failure",
+        error: "Another lifecycle operation is already running.",
+        snapshot: snapshot()
+      };
+    }
+    lifecycleRunning = true;
+    const label = lifecycleOperationLabel(operation);
+    const emit = (message: string, stage: LifecycleOperationProgress["stage"] = "operation"): void => {
+      report?.({ message, stage });
+    };
+    emit(`${label} requested`);
+    try {
+      if (deploymentState === "not-initialized") {
+        throw new Error("Atlas Core is not initialized. Run atlas-core init first.");
+      }
+      if (operation === "restart" && deploymentState === "stopped") {
+        throw new Error("Atlas Core is stopped; run atlas-core start instead of atlas-core restart.");
+      }
+      emit(`Running ${label.toLocaleLowerCase()}.`);
+      await waitForLifecycleStep();
+      if (cancellationRequested) {
+        emit("Cancellation requested. Waiting for safe cleanup.", "cleanup");
+        emit("Safe cleanup complete.", "cleanup");
+        return {
+          previousDeploymentPreserved: true,
+          status: "cancelled",
+          summary: `${label} cancelled. The existing deployment state was preserved.`
+        };
+      }
+      deploymentState = operation === "stop" ? "stopped" : "ready";
+      const summary = lifecycleOperationSummary(operation);
+      emit(summary);
+      return { status: "success", summary };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      emit(`${label} failed: ${message}`);
+      return { status: "failure", error: message, snapshot: snapshot() };
+    } finally {
+      lifecycleRunning = false;
+    }
   };
 
   const cancelPluginMutation = (
@@ -171,6 +241,7 @@ export function createPreviewOperator(
     cancelPending() {
       cancellationRequested = true;
       cancelPendingPluginStep?.();
+      cancelPendingLifecycleStep?.();
     },
     async checkForUpdates() {
       return {
@@ -278,6 +349,7 @@ export function createPreviewOperator(
         };
       });
     },
+    runLifecycle,
     async pluginUpdate(pluginId) {
       const plugin = requirePreviewPlugin(pluginId);
       const installed = installedPlugins.get(pluginId);

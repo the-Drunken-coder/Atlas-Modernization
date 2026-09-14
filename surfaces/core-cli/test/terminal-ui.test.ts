@@ -4,6 +4,9 @@ import { describe, expect, it, vi } from "vitest";
 import type {
   AtlasCoreOperator,
   DeploymentSnapshot,
+  LifecycleOperation,
+  LifecycleOperationProgress,
+  LifecycleOperationResult,
   PluginActivityReporter,
   PluginDeploymentStatus,
   PluginOperationOutcome
@@ -162,7 +165,16 @@ function operator(snapshot: DeploymentSnapshot = { status: "ready", detail: "Eve
     start: vi.fn(async () => undefined),
     status: vi.fn(async () => true),
     stop: vi.fn(async (): Promise<void> => {}),
-    update: vi.fn(async () => undefined)
+    update: vi.fn(async () => undefined),
+    runLifecycle: vi.fn(
+      async (
+        operation: LifecycleOperation,
+        report?: (progress: LifecycleOperationProgress) => void
+      ): Promise<LifecycleOperationResult> => {
+        report?.({ message: `${operation} requested`, stage: "operation" });
+        return { status: "success", summary: `Atlas Core ${operation} complete.` };
+      }
+    )
   } satisfies AtlasCoreOperator;
 }
 
@@ -237,6 +249,162 @@ describe("Atlas Core terminal UI", () => {
     await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
     terminal.write("q");
     await menu;
+  });
+
+  it.each([
+    ["stop", 2, "Stop Atlas Core"],
+    ["restart", 3, "Restart Atlas Core"]
+  ] as const)("runs the development %s operation inside an activity screen", async (operation, moves, label) => {
+    const terminal = new TestTerminal(80, true, 24);
+    const deployment = operator();
+    const menu = createDevelopmentInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor(label);
+    terminal.write("\u001b[B".repeat(moves));
+    terminal.write("\r");
+    await terminal.waitFor(`Atlas Core ${operation} complete.`);
+    expect(deployment.runLifecycle).toHaveBeenCalledWith(operation, expect.any(Function));
+    await terminal.waitFor("CHOOSE AN ACTION");
+    expect(terminal.text).toContain(`Atlas Core ${operation} complete.`);
+    terminal.write("q");
+    await menu;
+  });
+
+  it("keeps a lifecycle failure visible with its recovery state", async () => {
+    const terminal = new TestTerminal(80, true, 24);
+    const deployment = operator();
+    deployment.runLifecycle.mockResolvedValueOnce({
+      status: "failure",
+      error: "Docker Compose failed with exit code 1",
+      snapshot: { status: "degraded", detail: "Core API is running, but storage is unavailable." }
+    });
+    const menu = createDevelopmentInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("Stop Atlas Core");
+    terminal.write("\u001b[B".repeat(2));
+    terminal.write("\r");
+    await terminal.waitFor("Docker Compose failed with exit code 1");
+    expect(terminal.text).toContain("Degraded");
+    expect(terminal.text).toContain("Review service health");
+    expect(terminal.text).toContain("when it is safe.");
+    const beforeReturn = terminal.raw.length;
+    terminal.write("\r");
+    await terminal.waitForRawChange(beforeReturn);
+    await terminal.waitFor("CHOOSE AN ACTION");
+    terminal.write("q");
+    await menu;
+  });
+
+  it("returns to the development home after Escape cancellation cleanup", async () => {
+    const terminal = new TestTerminal(80, true, 24);
+    const deployment = operator();
+    let finish: (() => void) | undefined;
+    deployment.runLifecycle.mockImplementationOnce(
+      async (_operation, report) =>
+        await new Promise<LifecycleOperationResult>((resolve) => {
+          report?.({ message: "Stopping services", stage: "operation" });
+          finish = () => {
+            report?.({ message: "Safe cleanup complete.", stage: "cleanup" });
+            resolve({
+              previousDeploymentPreserved: true,
+              status: "cancelled",
+              summary: "Stop Atlas Core cancelled. The existing deployment state was preserved."
+            });
+          };
+        })
+    );
+    deployment.cancelPending.mockImplementation(() => finish?.());
+    const menu = createDevelopmentInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("Stop Atlas Core");
+    terminal.write("\u001b[B".repeat(2));
+    terminal.write("\r");
+    await terminal.waitFor("Stopping services");
+    terminal.write("\u001b");
+    await vi.waitFor(() => expect(deployment.cancelPending).toHaveBeenCalledOnce());
+    await terminal.waitFor("CHOOSE AN ACTION");
+    expect(deployment.resumeAfterCancellation).toHaveBeenCalledOnce();
+    terminal.write("q");
+    await menu;
+  });
+
+  it("keeps a lifecycle cleanup failure visible and resumes the operator", async () => {
+    const terminal = new TestTerminal(80, true, 24);
+    const deployment = operator();
+    let finish: (() => void) | undefined;
+    deployment.runLifecycle.mockImplementationOnce(
+      async (_operation, report) =>
+        await new Promise<LifecycleOperationResult>((resolve) => {
+          report?.({ message: "Stopping services", stage: "operation" });
+          finish = () => resolve({ status: "failure", error: "Cleanup could not stop the services." });
+        })
+    );
+    deployment.cancelPending.mockImplementation(() => finish?.());
+    const menu = createDevelopmentInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("Stop Atlas Core");
+    terminal.write("\u001b[B".repeat(2));
+    terminal.write("\r");
+    await terminal.waitFor("Stopping services");
+    terminal.write("\u001b");
+    await terminal.waitFor("Cleanup could not stop the services.");
+    expect(deployment.resumeAfterCancellation).toHaveBeenCalledOnce();
+    const beforeReturn = terminal.raw.length;
+    terminal.write("\r");
+    await terminal.waitForRawChange(beforeReturn);
+    await terminal.waitFor("CHOOSE AN ACTION");
+    terminal.write("q");
+    await menu;
+  });
+
+  it("cancels and exits after Ctrl-C cleanup", async () => {
+    const terminal = new TestTerminal(80, true, 24);
+    const deployment = operator();
+    let finish: (() => void) | undefined;
+    deployment.runLifecycle.mockImplementationOnce(
+      async (_operation, report) =>
+        await new Promise<LifecycleOperationResult>((resolve) => {
+          report?.({ message: "Stopping services", stage: "operation" });
+          finish = () =>
+            resolve({ previousDeploymentPreserved: true, status: "cancelled", summary: "Stop Atlas Core cancelled." });
+        })
+    );
+    deployment.cancelPending.mockImplementation(() => finish?.());
+    const menu = createDevelopmentInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("Stop Atlas Core");
+    terminal.write("\u001b[B".repeat(2));
+    terminal.write("\r");
+    await terminal.waitFor("Stopping services");
+    terminal.write("\u0003");
+    await expect(menu).resolves.toBeUndefined();
+    expect(deployment.cancelPending).toHaveBeenCalledOnce();
+    expect(deployment.resumeAfterCancellation).toHaveBeenCalledOnce();
+  });
+
+  it("does not abandon lifecycle cleanup when terminal input is lost", async () => {
+    const terminal = new TestTerminal(80, true, 24);
+    const deployment = operator();
+    let finish: (() => void) | undefined;
+    deployment.runLifecycle.mockImplementationOnce(
+      async (_operation, report) =>
+        await new Promise<LifecycleOperationResult>((resolve) => {
+          report?.({ message: "Stopping services", stage: "operation" });
+          finish = () =>
+            resolve({ previousDeploymentPreserved: true, status: "cancelled", summary: "Stop Atlas Core cancelled." });
+        })
+    );
+    deployment.cancelPending.mockImplementation(() => finish?.());
+    const menu = createDevelopmentInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("Stop Atlas Core");
+    terminal.write("\u001b[B".repeat(2));
+    terminal.write("\r");
+    await terminal.waitFor("Stopping services");
+    terminal.input.emit("end");
+    await expect(menu).rejects.toThrow("lost its terminal input");
+    expect(deployment.cancelPending).toHaveBeenCalledOnce();
+    expect(deployment.resumeAfterCancellation).toHaveBeenCalledOnce();
   });
 
   it("shows the selected split console and exits without changing anything", async () => {

@@ -43,6 +43,10 @@ import type {
   DeploymentService,
   DeploymentSnapshot,
   InteractiveCLI,
+  LifecycleOperation,
+  LifecycleOperationProgress,
+  LifecycleOperationReporter,
+  LifecycleOperationResult,
   PluginActivity,
   PluginActivityReporter,
   PluginDeploymentStatus,
@@ -50,6 +54,7 @@ import type {
   UpdateInfo,
   UpdateScope
 } from "./operator.js";
+import { lifecycleOperationLabel, lifecycleOperationSummary } from "./operator.js";
 import { PACKAGE_IMAGE, PACKAGE_NAME, PACKAGE_PLUGIN_CONTRACTS, PACKAGE_VERSION } from "./package-metadata.js";
 import { PLUGIN_CATALOG, type PluginCatalogEntry } from "./plugin-catalog.js";
 import { PluginCatalogStore } from "./plugin-catalog-store.js";
@@ -330,6 +335,20 @@ type ComposeServiceState = {
   Health: string;
 };
 
+type RunIntentSnapshot = {
+  contents?: string;
+  exists: boolean;
+  path: string;
+};
+
+type LifecycleOperationContext = {
+  operationStarted?: boolean;
+  operationCommitted?: boolean;
+  report: LifecycleOperationReporter;
+  restorationError?: unknown;
+  runIntent: RunIntentSnapshot;
+};
+
 type DockerStats = {
   Name: string;
   CPUPerc: string;
@@ -593,6 +612,8 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   readonly #recoveryCommandScope = new AsyncLocalStorage<boolean>();
   readonly #pluginCredentialScope = new AsyncLocalStorage<string>();
   readonly #mutationScope = new AsyncLocalStorage<string>();
+  readonly #lifecycleReporterScope = new AsyncLocalStorage<LifecycleOperationContext>();
+  #lifecycleCancellationRequested = false;
   #activeMutationLock: MutationLockOwner | undefined;
   #idleRecoverableMutationLock: MutationLockOwner | undefined;
   #activeMutationRecoveryPath: string | undefined;
@@ -631,11 +652,100 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   }
 
   cancelPending(): void {
+    this.#lifecycleCancellationRequested = true;
     this.#runner.cancelAll();
   }
 
   resumeAfterCancellation(): void {
+    this.#lifecycleCancellationRequested = false;
     this.#runner.resume();
+  }
+
+  async runLifecycle(
+    operation: LifecycleOperation,
+    report?: LifecycleOperationReporter
+  ): Promise<LifecycleOperationResult> {
+    const label = lifecycleOperationLabel(operation);
+    const emit =
+      report ??
+      ((progress: LifecycleOperationProgress) => this.#stdout.write(`[${progress.stage}] ${progress.message}\n`));
+    const lifecycleContext: LifecycleOperationContext = {
+      report: emit,
+      runIntent: { exists: false, path: join(this.#configDir, "run-intent.json") }
+    };
+    emit({ message: `${label} requested`, stage: "operation" });
+    try {
+      lifecycleContext.runIntent = this.#captureRunIntent();
+      await this.#lifecycleReporterScope.run(lifecycleContext, async () => {
+        emit({ message: `Checking deployment before ${label.toLocaleLowerCase()}.`, stage: "operation" });
+        switch (operation) {
+          case "start":
+            await this.start();
+            return;
+          case "stop":
+            await this.stop();
+            return;
+          case "restart":
+            await this.restart();
+            return;
+        }
+      });
+      const summary = lifecycleOperationSummary(operation);
+      emit({ message: summary, stage: "operation" });
+      return { status: "success", summary };
+    } catch (error) {
+      if (error instanceof CommandCancelledError) {
+        emit({ message: "Cancellation requested. Waiting for safe cleanup.", stage: "cleanup" });
+        try {
+          if (lifecycleContext.restorationError) throw lifecycleContext.restorationError;
+          this.#restoreRunIntent(lifecycleContext.runIntent);
+        } catch (restoreError) {
+          const message = `Cancellation cleanup could not restore run intent: ${errorMessage(restoreError)}`;
+          emit({ message, stage: "cleanup" });
+          return { status: "failure", error: message };
+        }
+        const summary = `${label} cancelled. The existing deployment state was preserved.`;
+        emit({ message: "Safe cleanup complete.", stage: "cleanup" });
+        return { previousDeploymentPreserved: true, status: "cancelled", summary };
+      }
+      const message = errorMessage(error);
+      emit({ message: `${label} failed: ${message}`, stage: "operation" });
+      let snapshot: DeploymentSnapshot | undefined;
+      try {
+        snapshot = lifecycleContext.operationStarted ? await this.snapshot() : this.#persistedLifecycleSnapshot();
+      } catch {
+        snapshot = this.#persistedLifecycleSnapshot();
+      }
+      return { status: "failure", error: message, ...(snapshot ? { snapshot } : {}) };
+    }
+  }
+
+  #persistedLifecycleSnapshot(): DeploymentSnapshot {
+    try {
+      const state = this.#readState();
+      if (!state) {
+        return { status: "not-initialized", detail: "Atlas Core is not initialized. Run atlas-core init first." };
+      }
+      if (state.phase !== "ready") {
+        return {
+          status: "degraded",
+          detail: "Atlas Core has an incomplete deployment state. Run atlas-core recover status before retrying."
+        };
+      }
+      if (!this.#desiredRunning()) {
+        return { status: "stopped", detail: "Atlas Core is stopped. Durable storage is preserved." };
+      }
+      return {
+        status: "ready",
+        detail:
+          "Atlas Core is configured to run, but service health is unavailable while the lifecycle operation is blocked."
+      };
+    } catch {
+      return {
+        status: "degraded",
+        detail: "Deployment state could not be read. Run atlas-core status before retrying."
+      };
+    }
   }
 
   #requireManaged(state: DeploymentState): ManagedCoreState {
@@ -654,6 +764,21 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       `${JSON.stringify({ schema: 1, desiredRunning })}\n`,
       this.#platform
     );
+  }
+
+  #captureRunIntent(): RunIntentSnapshot {
+    const path = join(this.#configDir, "run-intent.json");
+    if (!existsSync(path)) return { exists: false, path };
+    this.#assertPrivateFile(path);
+    return { contents: readFileSync(path, "utf8"), exists: true, path };
+  }
+
+  #restoreRunIntent(snapshot: RunIntentSnapshot): void {
+    if (!snapshot.exists) {
+      this.#deleteConfigurationFile(snapshot.path);
+      return;
+    }
+    writePrivateFile(snapshot.path, snapshot.contents ?? "", this.#platform);
   }
 
   #desiredRunning(): boolean {
@@ -719,6 +844,12 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       readState: () => this.#readState(),
       writeState: (state) => this.#writeDeploymentState(state),
       runCompose: async (args, pluginIds, options) => {
+        if (options.cleanup) {
+          this.#reportLifecycle(
+            "Cleaning up safely after the interrupted operation; waiting for services to stop.",
+            "cleanup"
+          );
+        }
         const result = await this.#runComposeFile(
           join(options.baseDirectory, "docker-compose.yml"),
           [...args],
@@ -727,6 +858,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
           pluginIds,
           options.coreImage
         );
+        if (result.cancelled && options.cleanup) throw new CommandCancelledError();
         if (result.status !== 0) throw commandFailure("managed Docker Compose", result);
         return result;
       },
@@ -1591,6 +1723,8 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   ): Promise<T> {
     this.#prepareConfigDirectory();
     const mutationLock = this.#acquireMutationLock();
+    const lifecycleContext = this.#lifecycleReporterScope.getStore();
+    if (lifecycleContext) lifecycleContext.operationStarted = true;
     this.#activeMutationLock = mutationLock.owner;
     this.#idleRecoverableMutationLock = undefined;
     let dockerLock: DockerMutationLock | undefined;
@@ -1672,6 +1806,14 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
           (dockerLock !== undefined && !dockerLockReleased && preserveRecoverableLocalLock) ||
           (dockerLock === undefined &&
             (mutationLock.recovered || (preserveRecoverableLocalLock && dockerLockAcquisitionNeedsRecovery)));
+        const lifecycleContext = this.#lifecycleReporterScope.getStore();
+        if (this.#lifecycleCancellationRequested && lifecycleContext && !lifecycleContext.operationCommitted) {
+          try {
+            this.#restoreRunIntent(lifecycleContext.runIntent);
+          } catch (error) {
+            lifecycleContext.restorationError = error;
+          }
+        }
         if (!shouldPreserveRecoverableLocalLock) {
           this.#releaseMutationLock(dockerLock?.owner ?? mutationLock.owner);
         } else if (preserveRecoverableLocalLock) {
@@ -1822,6 +1964,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       }
       if (options.repairImages) await this.#repairImages(managed);
       this.#writeRunIntent(true);
+      this.#reportLifecycle("Starting services and waiting for health checks.", "operation");
       await this.#start(managed, dockerEngineId);
     }, "start");
   }
@@ -1829,7 +1972,20 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   async #start(state: DeploymentState, dockerEngineId: string): Promise<void> {
     this.#assertStateMatchesEngine(state, dockerEngineId);
     await this.#managedCore(dockerEngineId).start(this.#requireManaged(state));
-    this.#stdout.write(`Atlas Core ${state.packageVersion} is ready.\nAPI: http://127.0.0.1:8000\n`);
+    this.#writeLifecycleOutput(`Atlas Core ${state.packageVersion} is ready.\nAPI: http://127.0.0.1:8000\n`);
+  }
+
+  #writeLifecycleOutput(message: string): void {
+    const lifecycleContext = this.#lifecycleReporterScope.getStore();
+    if (lifecycleContext) {
+      lifecycleContext.operationCommitted = true;
+      return;
+    }
+    this.#stdout.write(message);
+  }
+
+  #reportLifecycle(message: string, stage: LifecycleOperationProgress["stage"]): void {
+    this.#lifecycleReporterScope.getStore()?.report({ message, stage });
   }
 
   async reset(options: { manual?: boolean } = {}): Promise<void> {
@@ -1923,12 +2079,22 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
               ? join(this.#configDir, "base", "docker-compose.yml")
               : this.#composeFile;
             if (existsSync(composeFile)) {
-              await this.#runComposeChecked(["down", "--remove-orphans"], state.enabledPlugins);
+              this.#throwIfLifecycleCancellationRequested();
+              this.#reportLifecycle(
+                "Stopping services safely; waiting for Docker Compose to release containers.",
+                "cleanup"
+              );
+              await this.#runComposeChecked(["down", "--remove-orphans"], state.enabledPlugins, true);
+              this.#throwIfLifecycleCancellationRequested();
             } else {
-              await this.#removeContainers(await this.#projectContainerNames());
+              this.#throwIfLifecycleCancellationRequested();
+              this.#reportLifecycle("Stopping services safely; removing remaining containers.", "cleanup");
+              await this.#removeContainers(await this.#projectContainerNames(), true);
             }
+            this.#throwIfLifecycleCancellationRequested();
             this.#settlePluginDisableIntents(state);
-            this.#stdout.write("Atlas Core stopped. Durable volumes were preserved.\n");
+            this.#throwIfLifecycleCancellationRequested();
+            this.#writeLifecycleOutput("Atlas Core stopped. Durable volumes were preserved.\n");
           },
           "stop"
         )
@@ -3531,9 +3697,15 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     }
   }
 
-  async #removeContainers(containers: Iterable<string>): Promise<void> {
+  async #removeContainers(containers: Iterable<string>, allowAfterCancellation = false): Promise<void> {
     for (const name of [...containers].sort()) {
-      await this.#checkCommand("docker", ["container", "rm", "--force", name]);
+      const result = await this.#runDockerCommand(
+        ["container", "rm", "--force", name],
+        { env: this.#dockerEnvironment() },
+        allowAfterCancellation
+      );
+      if (result.cancelled && allowAfterCancellation) throw new CommandCancelledError();
+      if (result.status !== 0) throw commandFailure(`docker container rm --force ${name}`, result);
     }
   }
 
@@ -3616,9 +3788,16 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     for (const receipt of managed.baseDeployment?.images ?? []) await verifyLocalImage(this.#imageCommand, receipt);
     await this.#verifyEnabledPlugins(managed, false);
     this.#writeRunIntent(true);
-    await this.#runComposeChecked(["down", "--remove-orphans"], state.enabledPlugins);
+    this.#throwIfLifecycleCancellationRequested();
+    this.#reportLifecycle(
+      "Stopping services safely before restart; waiting for Docker Compose to release containers.",
+      "cleanup"
+    );
+    await this.#runComposeChecked(["down", "--remove-orphans"], state.enabledPlugins, true);
+    this.#throwIfLifecycleCancellationRequested();
+    this.#reportLifecycle("Starting services and waiting for health checks.", "operation");
     await this.#managedCore(dockerEngineId).start(managed);
-    this.#stdout.write("Atlas Core restarted.\n");
+    this.#writeLifecycleOutput("Atlas Core restarted.\n");
   }
 
   #requireCatalogPlugin(pluginId: string, requireImage: boolean): PluginCatalogEntry {
@@ -4287,14 +4466,15 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     inherit: boolean,
     pluginIds: readonly string[],
     imageReference = this.#imageReference ?? UNRELEASED_IMAGE,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    allowAfterCancellation = false
   ): Promise<CommandResult> {
     const state = this.#readState();
     return await this.#runComposeFile(
       state?.baseDeployment ? join(this.#configDir, "base", "docker-compose.yml") : this.#composeFile,
       args,
       inherit,
-      false,
+      allowAfterCancellation,
       pluginIds,
       state?.baseDeployment?.coreImage ?? imageReference,
       signal
@@ -4364,10 +4544,19 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     );
   }
 
-  async #runComposeChecked(args: string[], pluginIds: readonly string[]): Promise<void> {
-    const result = await this.#runCompose(args, false, pluginIds);
+  async #runComposeChecked(
+    args: string[],
+    pluginIds: readonly string[],
+    allowAfterCancellation = false
+  ): Promise<void> {
+    const result = await this.#runCompose(args, false, pluginIds, undefined, undefined, allowAfterCancellation);
+    if (result.cancelled && allowAfterCancellation) throw new CommandCancelledError();
     if (result.status !== 0)
       throw commandFailure(`docker ${this.#composeArgs(this.#composeFile, args, pluginIds).join(" ")}`, result);
+  }
+
+  #throwIfLifecycleCancellationRequested(): void {
+    if (this.#lifecycleCancellationRequested) throw new CommandCancelledError();
   }
 
   async #runInitComposeChecked(args: string[]): Promise<void> {
@@ -4489,15 +4678,21 @@ export async function runCLI(argv: string[], context: CLIContext = {}): Promise<
         await deployment.reset({ manual: command.manual ?? false });
         return 0;
       case "restart":
-        await deployment.restart({ manual: command.manual === true });
-        return 0;
+        if (command.manual === true) {
+          await deployment.restart({ manual: true });
+          return 0;
+        }
+        return await runDirectLifecycleMutation(deployment, "restart", runtime.stdout, runtime.stderr);
       case "start":
-        await deployment.start({
-          manual: command.manual,
-          repairBundle: command.repairBundle,
-          repairImages: command.repairImages
-        });
-        return 0;
+        if (command.manual || command.repairBundle || command.repairImages) {
+          await deployment.start({
+            manual: command.manual,
+            repairBundle: command.repairBundle,
+            repairImages: command.repairImages
+          });
+          return 0;
+        }
+        return await runDirectLifecycleMutation(deployment, "start", runtime.stdout, runtime.stderr);
       case "supervise":
         await deployment.supervise();
         return 0;
@@ -4513,8 +4708,7 @@ export async function runCLI(argv: string[], context: CLIContext = {}): Promise<
       case "status":
         return (await deployment.status()) ? 0 : 1;
       case "stop":
-        await deployment.stop();
-        return 0;
+        return await runDirectLifecycleMutation(deployment, "stop", runtime.stdout, runtime.stderr);
       case "update":
         if (command.scope) await deployment.update(command.scope);
         else await runtime.interactive.runUpdate(deployment);
@@ -4548,6 +4742,35 @@ async function runDirectPluginMutation(
     deployment.resumeAfterCancellation();
     stdout.write(`[cancel] ${action} cancelled. The previous deployment is preserved.\n`);
     return 130;
+  } finally {
+    process.off("SIGINT", cancel);
+  }
+}
+
+async function runDirectLifecycleMutation(
+  deployment: AtlasCoreDeployment,
+  operation: LifecycleOperation,
+  stdout: { write(data: string): void },
+  stderr: { write(data: string): void }
+): Promise<number> {
+  let cancellationRequested = false;
+  const cancel = (): void => {
+    if (cancellationRequested) return;
+    cancellationRequested = true;
+    deployment.cancelPending();
+  };
+  process.on("SIGINT", cancel);
+  try {
+    const result = await deployment.runLifecycle(operation);
+    if (cancellationRequested) deployment.resumeAfterCancellation();
+    if (result.status === "success") return 0;
+    if (result.status === "cancelled") {
+      stdout.write(`[cancel] ${result.summary}\n`);
+      return 130;
+    }
+    stderr.write(`${result.error}\n`);
+    if (result.snapshot) stderr.write(`Deployment state: ${result.snapshot.status}. ${result.snapshot.detail}\n`);
+    return 1;
   } finally {
     process.off("SIGINT", cancel);
   }

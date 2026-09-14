@@ -48,6 +48,34 @@ export type UpdateInfo = {
 
 export type UpdateScope = "all" | "cli";
 
+export type LifecycleOperation = "start" | "stop" | "restart";
+
+export type LifecycleOperationProgress = {
+  message: string;
+  stage: "operation" | "cleanup";
+};
+
+export type LifecycleOperationResult =
+  | { status: "success"; summary: string }
+  | { status: "failure"; error: string; snapshot?: DeploymentSnapshot }
+  | { previousDeploymentPreserved: true; status: "cancelled"; summary: string; snapshot?: DeploymentSnapshot };
+
+export type LifecycleOperationReporter = (progress: LifecycleOperationProgress) => void;
+
+const LIFECYCLE_OPERATION_DETAILS: Readonly<Record<LifecycleOperation, { label: string; summary: string }>> = {
+  restart: { label: "Restart Atlas Core", summary: "Atlas Core restarted and is healthy." },
+  start: { label: "Start Atlas Core", summary: "Atlas Core started and is healthy." },
+  stop: { label: "Stop Atlas Core", summary: "Atlas Core stopped. Durable volumes were preserved." }
+};
+
+export function lifecycleOperationLabel(operation: LifecycleOperation): string {
+  return LIFECYCLE_OPERATION_DETAILS[operation].label;
+}
+
+export function lifecycleOperationSummary(operation: LifecycleOperation): string {
+  return LIFECYCLE_OPERATION_DETAILS[operation].summary;
+}
+
 export type PluginDeploymentStatus = {
   pluginId: string;
   displayName: string;
@@ -95,6 +123,8 @@ export type AtlasCoreOperator = {
   pluginRefresh?(): Promise<void>;
   pluginRotateCoreKey?(): Promise<void>;
   pluginStatuses(pluginId?: string): Promise<PluginDeploymentStatus[]>;
+  /** Run one serialized lifecycle mutation while reporting typed progress. */
+  runLifecycle(operation: LifecycleOperation, report?: LifecycleOperationReporter): Promise<LifecycleOperationResult>;
   resumeAfterCancellation(): void;
   reset(options?: { manual?: boolean }): Promise<void>;
   restart(): Promise<void>;

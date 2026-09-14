@@ -20,7 +20,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { type CLIContext, type CommandRunner, ProcessCommandRunner, runCLI } from "../src/application.js";
 import { DeploymentTransactionStore } from "../src/deployment-transaction.js";
 import { OperationCleanupError } from "../src/operation-errors.js";
-import type { DeploymentDetails } from "../src/operator.js";
+import type { DeploymentDetails, LifecycleOperationProgress } from "../src/operator.js";
 import { PACKAGE_NAME, PACKAGE_PLUGIN_CONTRACTS, PACKAGE_VERSION } from "../src/package-metadata.js";
 import type { PluginCatalogEntry } from "../src/plugin-catalog.js";
 import * as supervision from "../src/supervision.js";
@@ -1210,6 +1210,69 @@ describe("atlas-core CLI", () => {
     );
     expect(test.runner.calls.map(composeCommand)).not.toContainEqual(["down", "--remove-orphans"]);
     expect(test.stdout.join("")).toContain("Atlas Core stopped. Durable volumes were preserved.");
+  });
+
+  it("reports a production lifecycle success through the typed manager", async () => {
+    const test = runtime();
+    await markManagedInitialized(test);
+    const progress: LifecycleOperationProgress[] = [];
+    test.context.interactive = {
+      configureAdmin: async () => undefined,
+      runUpdate: async () => undefined,
+      runMenu: async (operator) => {
+        await expect(operator.runLifecycle("stop", (event) => progress.push(event))).resolves.toEqual({
+          status: "success",
+          summary: "Atlas Core stopped. Durable volumes were preserved."
+        });
+        expect(progress.map((event) => event.stage)).toEqual(["operation", "operation", "cleanup", "operation"]);
+        await expect(operator.snapshot()).resolves.toMatchObject({ status: "ready" });
+      }
+    };
+
+    expect(await runCLI([], test.context), test.stderr.join("")).toBe(0);
+  });
+
+  it("restores the prior run intent after production lifecycle cancellation", async () => {
+    const test = runtime();
+    await markManagedInitialized(test);
+    const progress: LifecycleOperationProgress[] = [];
+    test.context.interactive = {
+      configureAdmin: async () => undefined,
+      runUpdate: async () => undefined,
+      runMenu: async (operator) => {
+        test.runner.onRun = (call) => {
+          if (composeCommand(call)[0] === "down") operator.cancelPending();
+        };
+        await expect(operator.runLifecycle("stop", (event) => progress.push(event))).resolves.toMatchObject({
+          previousDeploymentPreserved: true,
+          status: "cancelled"
+        });
+        expect(progress.some((event) => event.stage === "cleanup")).toBe(true);
+        const intent = JSON.parse(readFileSync(join(test.home, ".atlas", "core", "run-intent.json"), "utf8"));
+        expect(intent).toEqual({ schema: 1, desiredRunning: true });
+        expect(existsSync(join(test.home, ".atlas", "core", ".mutation.lock"))).toBe(false);
+      }
+    };
+
+    expect(await runCLI([], test.context), test.stderr.join("")).toBe(0);
+  });
+
+  it("returns the live deployment state with a production lifecycle failure", async () => {
+    const test = runtime();
+    await markManagedInitialized(test);
+    test.runner.failComposeDown = true;
+    test.context.interactive = {
+      configureAdmin: async () => undefined,
+      runUpdate: async () => undefined,
+      runMenu: async (operator) => {
+        await expect(operator.runLifecycle("stop")).resolves.toMatchObject({
+          status: "failure",
+          snapshot: { status: "ready" }
+        });
+      }
+    };
+
+    expect(await runCLI([], test.context), test.stderr.join("")).toBe(0);
   });
 
   it("propagates non-missing Docker network removal failures", async () => {

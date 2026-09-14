@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { PluginActivity } from "../src/operator.js";
+import type { LifecycleOperationProgress, PluginActivity } from "../src/operator.js";
 import { createPreviewOperator } from "../src/tui-preview-operator.js";
 
 function fixture(state: "degraded" | "not-initialized" | "ready" | "stopped" = "ready", pluginStepDelayMs = 0) {
@@ -147,5 +147,44 @@ describe("Atlas Core TUI preview operator", () => {
     await expect(operator.pluginStatuses()).resolves.toEqual([
       expect.objectContaining({ pluginId: "demo_plugin", enabled: true })
     ]);
+  });
+
+  it.each(["start", "stop", "restart"] as const)(
+    "runs the fixture %s lifecycle operation with typed progress",
+    async (operation) => {
+      const { operator } = fixture(operation === "start" ? "stopped" : "ready");
+      const progress: LifecycleOperationProgress[] = [];
+
+      await expect(operator.runLifecycle(operation, (event) => progress.push(event))).resolves.toMatchObject({
+        status: "success"
+      });
+      expect(progress.map((event) => event.stage)).toEqual(["operation", "operation", "operation"]);
+      await expect(operator.snapshot()).resolves.toMatchObject({ status: operation === "stop" ? "stopped" : "ready" });
+    }
+  );
+
+  it("preserves fixture state through lifecycle cancellation cleanup", async () => {
+    const { operator } = fixture("ready", 0);
+    const progress: LifecycleOperationProgress[] = [];
+    const pending = operator.runLifecycle("stop", (event) => progress.push(event));
+    operator.cancelPending();
+
+    await expect(pending).resolves.toMatchObject({ status: "cancelled" });
+    expect(progress.map((event) => event.stage)).toContain("cleanup");
+    await expect(operator.snapshot()).resolves.toMatchObject({ status: "ready" });
+    operator.resumeAfterCancellation();
+  });
+
+  it("rejects overlapping fixture lifecycle mutations", async () => {
+    const { operator } = fixture("ready");
+    const first = operator.runLifecycle("stop");
+
+    await expect(operator.runLifecycle("restart")).resolves.toMatchObject({
+      status: "failure",
+      error: "Another lifecycle operation is already running."
+    });
+    operator.cancelPending();
+    await expect(first).resolves.toMatchObject({ status: "cancelled" });
+    operator.resumeAfterCancellation();
   });
 });
