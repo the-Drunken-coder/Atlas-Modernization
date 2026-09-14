@@ -163,6 +163,9 @@ export function createPreviewOperator(
       if (operation === "restart" && deploymentState === "stopped") {
         throw new Error("Atlas Core is stopped; run atlas-core start instead of atlas-core restart.");
       }
+      if (operation === "configure" && options.password === undefined) {
+        throw new Error("An admin password is required.");
+      }
       const previousState = deploymentState;
       const previousEnabledPlugins = new Set(enabledPlugins);
       const previousInstalledPlugins = new Map(installedPlugins);
@@ -281,7 +284,7 @@ export function createPreviewOperator(
       };
     },
     async configureAdminPassword(_password) {
-      preview("Admin password accepted by the fixture. Nothing was stored.");
+      if (!lifecycleRunning) preview("Admin password accepted by the fixture. Nothing was stored.");
     },
     async details(_signal) {
       return {

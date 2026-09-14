@@ -175,6 +175,19 @@ describe("Atlas Core TUI preview operator", () => {
     await expect(operator.snapshot()).resolves.toMatchObject({ status: "ready" });
   });
 
+  it("changes the admin password through the shared operation flow without exposing private input", async () => {
+    const { operator, output } = fixture();
+    const progress: LifecycleOperationProgress[] = [];
+    const password = "correct-horse-battery-staple";
+
+    await expect(operator.runLifecycle("configure", (event) => progress.push(event), { password })).resolves.toEqual({
+      status: "success",
+      summary: "Atlas Core admin password updated for username admin."
+    });
+    expect(progress.map((event) => event.message).join(" ")).not.toContain(password);
+    expect(output.write.mock.calls.flat().join(" ")).not.toContain(password);
+  });
+
   it("requires confirmation before resetting a fixture and resets after confirmation", async () => {
     const { operator } = fixture("ready");
 

@@ -652,6 +652,10 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
 
   const configureAdmin = useCallback(
     async (password: string) => {
+      if (mode === "development") {
+        await runDevelopmentLifecycle("configure", { password });
+        return;
+      }
       const result = await runVisibleOperation("Changing admin password", async () => {
         await operator.configureAdminPassword(password);
       });
@@ -666,7 +670,7 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
       }
       await loadMenu();
     },
-    [exit, loadMenu, mode, operator, runVisibleOperation]
+    [exit, loadMenu, mode, operator, runDevelopmentLifecycle, runVisibleOperation]
   );
 
   const applyUpdate = useCallback(
@@ -707,6 +711,7 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
             else if (action === "logs") setScreen({ kind: "logs" });
             else if (action === "init" || action === "start" || action === "stop" || action === "restart")
               void runDevelopmentLifecycle(action);
+            else if (action === "configure") setScreen({ kind: "password" });
             else if (action === "reset") setScreen({ kind: "reset-confirmation" });
             else setScreen({ kind: "development-message", message: "This action is planned for a later TUI slice." });
           }}
@@ -747,6 +752,7 @@ function AtlasCoreApp({ input, mode, operator, output }: AtlasCoreAppProps): Rea
       <PasswordScreen
         onCancel={() => {
           if (mode === "configure") exit();
+          else if (mode === "development") void loadMenu();
           else setScreen({ kind: "configure" });
         }}
         onSubmit={(password) => void configureAdmin(password)}
@@ -1092,7 +1098,10 @@ function developmentChoices(snapshot: DeploymentSnapshot): DevelopmentChoice[] {
     { action: "placeholder", label: "Manage Plugins" },
     { action: "placeholder", label: "Update Atlas Core" }
   );
-  if (snapshot.status !== "not-initialized") choices.push({ action: "reset", label: "Reset Atlas Core" });
+  if (snapshot.status !== "not-initialized") {
+    choices.push({ action: "configure", label: "Change admin password" });
+    choices.push({ action: "reset", label: "Reset Atlas Core" });
+  }
   return choices;
 }
 

@@ -70,12 +70,14 @@ export type UpdateInfo = {
 
 export type UpdateScope = "all" | "cli";
 
-export type LifecycleOperation = "init" | "start" | "stop" | "restart" | "reset";
+export type LifecycleOperation = "init" | "start" | "stop" | "restart" | "reset" | "configure";
 
 export type LifecycleOperationOptions = {
   /** The TUI owns reset confirmation; direct callers keep the prompt by default. */
   resetConfirmed?: boolean;
   manual?: boolean;
+  /** Private input for the admin-password operation. Never include in progress output. */
+  password?: string;
 };
 
 export type LifecycleOperationProgress = {
@@ -91,6 +93,7 @@ export type LifecycleOperationResult =
 export type LifecycleOperationReporter = (progress: LifecycleOperationProgress) => void;
 
 const LIFECYCLE_OPERATION_DETAILS: Readonly<Record<LifecycleOperation, { label: string; summary: string }>> = {
+  configure: { label: "Change admin password", summary: "Atlas Core admin password updated for username admin." },
   init: { label: "Initialize Atlas Core", summary: "Atlas Core initialized. Choose Start Atlas Core when ready." },
   restart: { label: "Restart Atlas Core", summary: "Atlas Core restarted and is healthy." },
   reset: { label: "Reset Atlas Core", summary: "Atlas Core reset is complete. A new deployment is running." },

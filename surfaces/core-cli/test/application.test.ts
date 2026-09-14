@@ -1232,6 +1232,66 @@ describe("atlas-core CLI", () => {
     expect(await runCLI([], test.context), test.stderr.join("")).toBe(0);
   });
 
+  it("runs an admin password change through the typed lifecycle manager", async () => {
+    const test = runtime();
+    await markManagedInitialized(test);
+    const progress: LifecycleOperationProgress[] = [];
+    const password = "correct-horse-battery-staple";
+    test.context.interactive = {
+      configureAdmin: async () => undefined,
+      runUpdate: async () => undefined,
+      runMenu: async (operator) => {
+        await expect(
+          operator.runLifecycle("configure", (event) => progress.push(event), { password })
+        ).resolves.toEqual({
+          status: "success",
+          summary: "Atlas Core admin password updated for username admin."
+        });
+        expect(progress.map((event) => event.message).join(" ")).not.toContain(password);
+        expect(readFileSync(join(test.home, ".atlas", "core", ".env"), "utf8")).toContain(
+          'ATLAS_ADMIN_PASSWORD="correct-horse-battery-staple"'
+        );
+      }
+    };
+
+    expect(await runCLI([], test.context), test.stderr.join("")).toBe(0);
+    expect(test.stdout.join("")).toBe("");
+  });
+
+  it("recovers a cancelled admin password change before returning to the TUI", async () => {
+    const test = runtime();
+    await markManagedInitialized(test);
+    const envPath = join(test.home, ".atlas", "core", ".env");
+    const before = readFileSync(envPath, "utf8");
+    const progress: LifecycleOperationProgress[] = [];
+    let cancellationSent = false;
+    test.context.interactive = {
+      configureAdmin: async () => undefined,
+      runUpdate: async () => undefined,
+      runMenu: async (operator) => {
+        test.runner.onRun = (call) => {
+          if (!cancellationSent && composeCommand(call)[0] === "up") {
+            cancellationSent = true;
+            operator.cancelPending();
+          }
+        };
+        await expect(
+          operator.runLifecycle("configure", (event) => progress.push(event), {
+            password: "new-production-password"
+          })
+        ).resolves.toMatchObject({
+          previousDeploymentPreserved: true,
+          status: "cancelled"
+        });
+        expect(readFileSync(envPath, "utf8")).toBe(before);
+        expect(progress.some((event) => event.stage === "cleanup")).toBe(true);
+      }
+    };
+
+    expect(await runCLI([], test.context), test.stderr.join("")).toBe(0);
+    expect(test.stdout.join("")).toBe("");
+  });
+
   it("reports production initialization through the typed manager without terminal output leaks", async () => {
     const test = runtime();
     const progress: LifecycleOperationProgress[] = [];

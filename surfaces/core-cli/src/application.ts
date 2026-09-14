@@ -789,6 +789,10 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
               ...(options.resetConfirmed === undefined ? {} : { confirmed: options.resetConfirmed })
             });
             return;
+          case "configure":
+            if (options.password === undefined) throw new Error("An admin password is required.");
+            await this.configureAdminPassword(options.password);
+            return;
         }
       });
       const summary = lifecycleOperationSummary(operation);
@@ -2248,6 +2252,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     await this.#withInitializedMutation(async (raw, dockerEngineId) => {
       const state = this.#requireManaged(raw);
       this.#verifyBundle(state);
+      this.#reportLifecycle("Checking the current deployment before changing the admin password.", "operation");
       const running =
         (await this.#fullyHealthyMutationSnapshot(state, "Running admin password changes")).status !== "stopped";
       if (running) {
@@ -2255,6 +2260,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
         for (const receipt of state.baseDeployment?.images ?? []) await verifyLocalImage(this.#imageCommand, receipt);
         await this.#verifyEnabledPlugins(state, true);
       }
+      this.#reportLifecycle("Staging the new admin password privately.", "operation");
       const transaction = DeploymentTransactionStore.begin(this.#configDir, {
         operation: "config",
         dockerEngineId,
@@ -2271,21 +2277,34 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
         transaction.stage(".env", contents, { mode: 0o600 });
         if (running) {
           transaction.advance("runtime-changing");
+          this.#reportLifecycle(
+            "Stopping services safely before applying the new admin password; waiting for Docker Compose.",
+            "cleanup"
+          );
           await this.#runComposeChecked(["down", "--remove-orphans"], state.enabledPlugins);
         }
         transaction.applyStaged(".env");
-        if (running) await this.#managedCore(dockerEngineId).start(state);
+        if (running) {
+          this.#reportLifecycle("Starting services and waiting for health checks.", "operation");
+          await this.#managedCore(dockerEngineId).start(state);
+        }
         transaction.markCommitted();
         transaction.cleanup();
       } catch (error) {
+        const cancellationRequested = this.#lifecycleCancellationRequested || error instanceof CommandCancelledError;
+        // CancellableCommandRunner deliberately rejects new work after a
+        // cancellation. Recovery is the exception: the transaction must be
+        // allowed to finish rolling back before the TUI can return or exit.
+        if (cancellationRequested) this.#runner.resume();
         try {
           await this.#recoverPending(dockerEngineId);
         } catch {
           throw new Error("Admin password change failed and recovery remains pending. Run atlas-core recover retry.");
         }
+        if (cancellationRequested) throw new CommandCancelledError();
         throw error;
       }
-      this.#stdout.write("Atlas Core admin password updated for username admin.\n");
+      this.#writeLifecycleOutput("Atlas Core admin password updated for username admin.\n");
     });
   }
 

@@ -404,7 +404,7 @@ describe("Atlas Core terminal UI", () => {
     const menu = createDevelopmentInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
 
     await terminal.waitFor("Reset Atlas Core");
-    terminal.write("\u001b[B".repeat(6));
+    terminal.write("\u001b[B".repeat(7));
     terminal.write("\r");
     await terminal.waitFor("PostgreSQL and MinIO data");
     await nextInputTurn();
@@ -427,7 +427,7 @@ describe("Atlas Core terminal UI", () => {
     const menu = createDevelopmentInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
 
     await terminal.waitFor("Reset Atlas Core");
-    terminal.write("\u001b[B".repeat(6));
+    terminal.write("\u001b[B".repeat(7));
     terminal.write("\r");
     await terminal.waitFor("Type yes to continue");
     await nextInputTurn();
@@ -437,6 +437,81 @@ describe("Atlas Core terminal UI", () => {
     );
     await terminal.waitFor("Atlas Core reset is complete. A new deployment is running.");
     await terminal.waitFor("CHOOSE AN ACTION");
+    terminal.write("q");
+    await menu;
+  });
+
+  it("changes the admin password from the development home without an acknowledgement pause", async () => {
+    const terminal = new TestTerminal(80, true, 24);
+    const deployment = operator();
+    const password = "correct-horse-battery-staple";
+    const menu = createDevelopmentInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("Change admin password");
+    terminal.write("\u001b[B".repeat(6));
+    terminal.write("\r");
+    await terminal.waitFor("New password");
+    terminal.write(password);
+    await terminal.waitFor("*".repeat(password.length));
+    terminal.write("\r");
+    await terminal.waitFor("Confirm password");
+    const beforeConfirmation = terminal.raw.length;
+    terminal.write(password);
+    await terminal.waitForRawChange(beforeConfirmation);
+    terminal.write("\r");
+    await terminal.waitFor("Atlas Core configure complete.");
+    await terminal.waitFor("CHOOSE AN ACTION");
+
+    expect(deployment.runLifecycle).toHaveBeenCalledWith("configure", expect.any(Function), { password });
+    expect(terminal.text).not.toContain(password);
+    expect(terminal.text).not.toContain("Press Enter to return to Atlas Core.");
+    terminal.write("q");
+    await menu;
+  });
+
+  it("keeps admin password cancellation inside the development operation screen", async () => {
+    const terminal = new TestTerminal(80, true, 24);
+    const deployment = operator();
+    let finishConfiguration: (() => void) | undefined;
+    deployment.runLifecycle.mockImplementationOnce(
+      async (_operation, report) =>
+        await new Promise<LifecycleOperationResult>((resolve) => {
+          report?.({ message: "Applying the new admin password", stage: "operation" });
+          finishConfiguration = () =>
+            resolve({
+              previousDeploymentPreserved: true,
+              status: "cancelled",
+              summary: "Change admin password cancelled. The existing deployment state was preserved."
+            });
+        })
+    );
+    deployment.cancelPending.mockImplementation(() => finishConfiguration?.());
+    const menu = createDevelopmentInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("Change admin password");
+    terminal.write("\u001b[B".repeat(6));
+    terminal.write("\r");
+    await terminal.waitFor("New password");
+    terminal.write("correct-horse-battery-staple");
+    await terminal.waitFor("****************************");
+    terminal.write("\r");
+    await terminal.waitFor("Confirm password");
+    const beforeConfirmation = terminal.raw.length;
+    terminal.write("correct-horse-battery-staple");
+    await terminal.waitForRawChange(beforeConfirmation);
+    terminal.write("\r");
+    await terminal.waitFor("Applying the new admin password");
+    expect(deployment.runLifecycle).toHaveBeenCalledWith("configure", expect.any(Function), {
+      password: "correct-horse-battery-staple"
+    });
+    const beforeCancel = terminal.raw.length;
+    terminal.write("\u001b");
+    await terminal.waitForRawChange(beforeCancel);
+    await vi.waitFor(() => expect(deployment.cancelPending).toHaveBeenCalledOnce());
+    await terminal.waitFor("CHOOSE AN ACTION");
+
+    expect(deployment.cancelPending).toHaveBeenCalledOnce();
+    expect(deployment.resumeAfterCancellation).toHaveBeenCalledOnce();
     terminal.write("q");
     await menu;
   });

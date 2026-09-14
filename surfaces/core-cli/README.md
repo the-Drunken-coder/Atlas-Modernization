@@ -25,8 +25,8 @@ is stopped. It uses the same service-health and Docker resource details as the s
 
 ### Preview the terminal UI
 
-From a repository checkout, run the development action-list, service-health, initialization, lifecycle-operation, and
-reset preview with fixture data:
+From a repository checkout, run the development action-list, service-health, initialization, lifecycle-operation,
+admin-password, and reset preview with fixture data:
 
 ```bash
 python3 scripts/preview_atlas_core_tui.py
