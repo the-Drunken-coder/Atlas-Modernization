@@ -78,3 +78,13 @@ npm test --workspace @the-drunken-coder/atlas-simulations
 npm run typecheck --workspace @the-drunken-coder/atlas-simulations
 npm run build:simulations
 ```
+
+## Real moving-assets acceptance
+
+The acceptance journey starts this server through its real entrypoint, runs moving-assets against a disposable Core, reads persisted telemetry through a separate built SDK client, and exercises cancellation plus instance-safe cleanup:
+
+```bash
+npm run build:sdk && node tests/acceptance/simulations/moving-assets.mjs
+```
+
+See [`tests/acceptance/simulations/README.md`](../tests/acceptance/simulations/README.md) for prerequisites, evidence files, cleanup checks, and the Task coverage limit.

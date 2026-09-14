@@ -1,0 +1,6 @@
+services:
+  api:
+    environment:
+      GOFLAGS: "-overlay=/acceptance-task-fixture/overlay.json"
+    volumes:
+      - "${ATLAS_ACCEPTANCE_TASK_FIXTURE_DIR:?ATLAS_ACCEPTANCE_TASK_FIXTURE_DIR must be set}:/acceptance-task-fixture:ro"
