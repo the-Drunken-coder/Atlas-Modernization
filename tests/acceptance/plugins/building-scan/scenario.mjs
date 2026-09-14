@@ -21,8 +21,6 @@ const areas = {
 };
 
 const controlledFixture = await createControlledFixture();
-process.env.ATLAS_BUILDING_SCAN_SOURCE_CONNECTOR_FILE = controlledFixture.connectorPath;
-process.env.ATLAS_BUILDING_SCAN_FIXTURE_EVENTS_DIRECTORY = controlledFixture.directory;
 
 try {
 await runPluginAcceptance({
@@ -31,6 +29,12 @@ await runPluginAcceptance({
   composeFile: "tests/acceptance/plugins/building-scan/compose.yml",
   fixtureVariant: isNightly ? "controlled-building-scan-source-v1-nightly" : "controlled-building-scan-source-v1",
   pluginService: "building-scan-plugin",
+  prepare: async () => ({
+    environment: {
+      ATLAS_BUILDING_SCAN_SOURCE_CONNECTOR_FILE: controlledFixture.connectorPath,
+      ATLAS_BUILDING_SCAN_FIXTURE_EVENTS_DIRECTORY: controlledFixture.directory,
+    },
+  }),
   run: async ({ baseUrl, apiKey, artifacts, record, signal, pluginStack }) => {
     await copyFile(
       controlledFixture.connectorPath,
@@ -313,8 +317,6 @@ await runPluginAcceptance({
   },
 });
 } finally {
-  delete process.env.ATLAS_BUILDING_SCAN_SOURCE_CONNECTOR_FILE;
-  delete process.env.ATLAS_BUILDING_SCAN_FIXTURE_EVENTS_DIRECTORY;
   await rm(controlledFixture.directory, { force: true, recursive: true });
 }
 

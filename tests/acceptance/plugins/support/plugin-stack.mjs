@@ -13,6 +13,7 @@ export function runPluginAcceptance({
   composeFile,
   fixtureVariant,
   pluginService,
+  prepare,
   run,
 }) {
   return runAcceptance({
@@ -20,6 +21,7 @@ export function runPluginAcceptance({
     reproduction,
     additionalComposeFiles: [composeFile],
     fixtureVariant,
+    prepare,
     run: async (context) => {
       const stack = pluginStackControl({
         runID: context.runID,
