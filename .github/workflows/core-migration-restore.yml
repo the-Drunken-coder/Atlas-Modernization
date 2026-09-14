@@ -1,0 +1,85 @@
+name: Core migration and restore
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: "23 8 * * *"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Migration and restore scenario depth
+        required: true
+        default: required
+        type: choice
+        options:
+          - required
+          - nightly
+
+permissions:
+  contents: read
+
+concurrency:
+  group: core-migration-restore-${{ github.workflow }}-${{ github.ref }}-${{ (github.event_name == 'schedule' || inputs.mode == 'nightly') && 'nightly' || 'required' }}
+  cancel-in-progress: true
+
+jobs:
+  core-migration-restore:
+    name: core-migration-restore
+    if: ${{ github.event_name != 'schedule' && inputs.mode != 'nightly' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+
+      - name: Run required migration and paired restore acceptance
+        run: node tests/acceptance/migration-restore/run.mjs
+
+      - name: Upload migration and restore evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: core-migration-restore-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .atlas/acceptance/migration-restore/
+          if-no-files-found: error
+          retention-days: 14
+
+  core-migration-restore-nightly:
+    name: core-migration-restore-nightly
+    if: ${{ github.event_name == 'schedule' || inputs.mode == 'nightly' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+
+      - name: Run expanded migration and paired restore acceptance
+        run: node tests/acceptance/migration-restore/run.mjs --nightly
+
+      - name: Upload migration and restore evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: core-migration-restore-nightly-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .atlas/acceptance/migration-restore/
+          if-no-files-found: error
+          retention-days: 14

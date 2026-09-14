@@ -356,7 +356,7 @@ Restoring is destructive to state created after the selected backup.
 - The release that introduces migration v1 is the durable rollback floor. During that inaugural cutover, never boot an older image or its old production Compose file against retained/restored state; it enables destructive startup. Restore the paired backup if needed, then fix forward with the durable v1 release or a hotfix based on it.
 - For later upgrades, if a migration fails before commit, Atlas rolls back its DDL and version record in the same transaction and never modifies MinIO. Verify the previous migration version and representative data, then restart the previous **durable** image.
 - If a later migration committed, the new binary served traffic, or state is uncertain, stop Core and restore both PostgreSQL and MinIO from the paired pre-deploy backup before starting the previous compatible durable image.
-- Do not delete migration rows, edit checksums/fingerprints, or attempt ad hoc down-migration DDL.
+- Do not delete migration rows, edit checksums/fingerprints, or attempt ad hoc down-migration DDL in retained or production state. Test-owned migration/restore acceptance environments may deliberately mutate their disposable database to verify fail-closed behavior; those mutations must never target retained data (see [MIGRATION_RESTORE_TESTING.md](MIGRATION_RESTORE_TESTING.md)).
 
 ## Logs and shutdown
 

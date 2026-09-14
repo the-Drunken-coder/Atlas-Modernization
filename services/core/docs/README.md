@@ -16,6 +16,7 @@ This directory contains operational docs for the Go-based Atlas Core service.
 | Database Workflow | `DATABASE_WORKFLOW.md` | Durable production migrations, drift checks, v1 baseline adoption, and explicit developer scratch mode. |
 | Live Transaction Testing | `LIVE_TRANSACTION_TESTING.md` | Disposable PostgreSQL execution, Task and feed coverage, measured floors, and artifacts. |
 | Deployment Runbook | `DEPLOYMENT_RUNBOOK.md` | Single-host deployment, paired PostgreSQL/MinIO backup and restore, migration rollback, smoke tests, and shutdown/reset. |
+| Migration/Restore Testing | `MIGRATION_RESTORE_TESTING.md` | Isolated migration, restart, paired-restore, failure-proof, and concurrent-acceptance coverage. |
 | Source Gateway | `SOURCE_GATEWAY.md` | Private Source connector configuration, defaults, limits, credentials, and egress policy. |
 | Entities | `database-structure/entities.md` | Entity JSON blob structure and component guidance. |
 | Tasks | `database-structure/tasks.md` | Task blob schema and lifecycle endpoint notes. |
