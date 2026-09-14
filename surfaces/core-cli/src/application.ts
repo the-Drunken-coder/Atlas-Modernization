@@ -1451,7 +1451,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
         });
         mutationStarted = true;
         const result = await this.#plugins(state).install(selected);
-        this.#stdout.write(`${result.message}\n`);
+        if (!reportActivity) this.#stdout.write(`${result.message}\n`);
         report({ level: "success", message: result.message, stage: "operation" });
       });
       return { status: "success" };

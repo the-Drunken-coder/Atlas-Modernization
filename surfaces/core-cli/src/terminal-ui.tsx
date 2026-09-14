@@ -100,6 +100,7 @@ type PluginActivityView = {
   events: PluginActivityEvent[];
   operationId: number;
   plugin: PluginDeploymentStatus;
+  snapshot?: DeploymentSnapshot;
   startedAt: number;
   status: "running" | "cancelling" | "success" | "failure" | "cancelled";
 };
@@ -485,9 +486,17 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
         exit(result.failure);
         return;
       }
-      if (pluginCancellation.current === "return" && !result.failure) {
+      if (pluginCancellation.current === "return" && !result.failure && result.value?.status !== "success") {
         await loadPlugins();
         return;
+      }
+      let snapshot: DeploymentSnapshot | undefined;
+      if (result.failure) {
+        try {
+          snapshot = await operator.snapshot();
+        } catch {
+          snapshot = undefined;
+        }
       }
       setScreen((current) => {
         if (current.kind !== "plugin-activity" || current.view.operationId !== operationId) return current;
@@ -504,6 +513,7 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
             ...current.view,
             completedAt: Date.now(),
             ...(status === "failure" && result.failure ? { error: result.failure.message } : {}),
+            ...(snapshot ? { snapshot } : {}),
             status
           }
         };
@@ -1764,9 +1774,23 @@ function pluginActivitySummary(view: PluginActivityView): ActivityLine | undefin
     return { color: "yellow", text: `${view.action} cancelled. The previous deployment is preserved.` };
   }
   if (view.status === "failure") {
-    return { color: "red", text: view.error ? `${view.action} failed: ${view.error}` : `${view.action} failed.` };
+    const lines = [view.error ? `${view.action} failed: ${view.error}` : `${view.action} failed.`];
+    if (view.snapshot) {
+      lines.push(`Deployment state: ${lifecycleSnapshotStatus(view.snapshot.status)}. ${view.snapshot.detail}`);
+    }
+    lines.push(pluginRecoveryHint(view));
+    return { color: "red", text: lines.join(" ") };
   }
   return undefined;
+}
+
+function pluginRecoveryHint(view: PluginActivityView): string {
+  if (/recovery remains pending|Plugin recovery is pending|pending/i.test(view.error ?? "")) {
+    return "Run atlas-core recover status, finish the pending recovery, then retry the Plugin operation.";
+  }
+  if (view.snapshot?.status === "stopped") return "Choose Start Atlas Core before retrying the Plugin operation.";
+  if (view.snapshot?.status === "degraded") return "Review service health, then retry the Plugin operation when safe.";
+  return "Review Plugin status or run atlas-core recover status before retrying.";
 }
 
 function activityMessageLines(line: ActivityLine, width: number): ActivityLine[] {

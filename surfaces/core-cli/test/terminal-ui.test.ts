@@ -454,6 +454,49 @@ describe("Atlas Core terminal UI", () => {
     expect(deployment.resumeAfterCancellation).toHaveBeenCalledOnce();
   });
 
+  it("shows a committed Plugin change as success after a late cancellation request", async () => {
+    const terminal = new TestTerminal();
+    const deployment = operator();
+    const plugin = {
+      pluginId: "building_scan",
+      displayName: "Building Scan",
+      lifecycle: "query_only" as const,
+      enabled: false,
+      packaged: true
+    };
+    let finishEnable: (() => void) | undefined;
+    deployment.pluginStatuses.mockResolvedValue([plugin]);
+    deployment.pluginEnable.mockImplementation(
+      async (_pluginId, reportActivity) =>
+        await new Promise<PluginOperationOutcome>((resolve) => {
+          reportActivity?.({ level: "success", message: "Core API and Building Scan are healthy", stage: "operation" });
+          finishEnable = () => {
+            reportActivity?.({ level: "success", message: "Building Scan enabled and healthy", stage: "operation" });
+            resolve({ status: "success" });
+          };
+        })
+    );
+    deployment.cancelPending.mockImplementation(() => finishEnable?.());
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("Manage Plugins");
+    terminal.write("\u001b[B".repeat(4));
+    terminal.write("\r");
+    await terminal.waitFor("PLUGIN CATALOG");
+    terminal.write("\r");
+    await terminal.waitFor("Core API and Building Scan are healthy");
+    terminal.write("\u001b");
+    await terminal.waitFor("Building Scan enabled.");
+    expect(terminal.text).not.toContain("Enable cancelled. The previous deployment is preserved.");
+    expect(deployment.resumeAfterCancellation).toHaveBeenCalledOnce();
+    terminal.write("\r");
+    await vi.waitFor(() => expect(deployment.pluginStatuses).toHaveBeenCalledTimes(2));
+    terminal.write("q");
+    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
+    terminal.write("q");
+    await menu;
+  });
+
   it.each([
     ["ready", "Running"],
     ["stopped", "Stopped"],
@@ -1429,10 +1472,12 @@ describe("Atlas Core terminal UI", () => {
     terminal.write("\r");
     await terminal.waitFor("Previous deployment restored");
     await terminal.waitFor("Enable failed: health wait timed out");
+    await terminal.waitFor("Enter return to Plugins");
+    await nextInputTurn();
     terminal.write("\r");
     await vi.waitFor(() => expect(deployment.pluginStatuses).toHaveBeenCalledTimes(2));
     terminal.write("q");
-    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(3));
     terminal.write("q");
     await menu;
   });
@@ -1513,7 +1558,7 @@ describe("Atlas Core terminal UI", () => {
     await menu;
   });
 
-  it("shows the Plugin failure reason in a four-row terminal", async () => {
+  it("shows the Plugin failure reason and recovery state", async () => {
     const terminal = new TestTerminal(40, true, 24);
     const deployment = operator();
     const plugin = {
@@ -1539,14 +1584,19 @@ describe("Atlas Core terminal UI", () => {
     await terminal.waitFor("PLUGIN CATALOG");
     terminal.write("\r");
     await terminal.waitFor("ATLAS CORE > ACTIVITY");
-    terminal.resize(40, 4);
     failEnable?.();
     await terminal.waitFor("Enable failed: health wait timed out");
+    await terminal.waitFor("Deployment state: Running");
+    await terminal.waitFor("Review Plugin");
+    expect(terminal.text.replace(/\s+/gu, " ")).toContain(
+      "Review Plugin status or run atlas-core recover status before retrying."
+    );
     await terminal.waitFor("Enter return to Plugins");
+    await nextInputTurn();
     terminal.write("\r");
     await vi.waitFor(() => expect(deployment.pluginStatuses).toHaveBeenCalledTimes(2));
     terminal.write("q");
-    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(3));
     terminal.write("q");
     await menu;
   });
