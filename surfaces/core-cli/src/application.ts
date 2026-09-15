@@ -394,6 +394,11 @@ class UsageError extends Error {
 export class ProcessCommandRunner implements CommandRunner {
   readonly #children = new Map<ReturnType<typeof spawn>, ChildProcessState>();
   readonly #cleanupChildren = new Map<ReturnType<typeof spawn>, ChildProcessState>();
+  readonly #spawnProcess: typeof spawn;
+
+  constructor(spawnProcess: typeof spawn = spawn) {
+    this.#spawnProcess = spawnProcess;
+  }
 
   cancelAll(): void {
     for (const [child, state] of this.#children) {
@@ -411,7 +416,7 @@ export class ProcessCommandRunner implements CommandRunner {
 
   async openStream(command: string, args: string[], options: RunOptions = {}): Promise<CommandOutputStream> {
     return await new Promise<CommandOutputStream>((resolve) => {
-      const child = spawn(command, args, {
+      const child = this.#spawnProcess(command, args, {
         cwd: options.cwd,
         detached: process.platform !== "win32",
         env: options.env,
@@ -430,11 +435,18 @@ export class ProcessCommandRunner implements CommandRunner {
         resolveClosed = resolveResult;
       });
       const removeAbortListener = (): void => options.signal?.removeEventListener("abort", cancel);
-      const cancel = (): void => this.#terminate(child, state);
+      const cancel = (): void => {
+        if (settled) return;
+        this.#terminate(child, state);
+      };
       const finish = (status: number): void => {
         if (settled) return;
         settled = true;
         state.exited = true;
+        if (state.forceTimer) {
+          clearTimeout(state.forceTimer);
+          delete state.forceTimer;
+        }
         this.#children.delete(child);
         removeAbortListener();
         const result = { ...(state.cancelled ? { cancelled: true as const } : {}), status, stderr };
@@ -494,7 +506,7 @@ export class ProcessCommandRunner implements CommandRunner {
   ): Promise<CommandResult> {
     return await new Promise((resolve, reject) => {
       const supervised = process.platform !== "win32" && options.processGroup !== undefined;
-      const child = spawn(
+      const child = this.#spawnProcess(
         supervised ? process.execPath : command,
         supervised ? ["--input-type=commonjs", "-e", COMMAND_SUPERVISOR_SOURCE, command, ...args] : args,
         {
@@ -513,9 +525,7 @@ export class ProcessCommandRunner implements CommandRunner {
       const processGroupId = supervised ? child.pid : undefined;
       let processGroupRecorded = false;
       let setupError: unknown;
-      const cancel = (): void => {
-        this.#terminate(child, state);
-      };
+      const cancel = (): void => this.#terminate(child, state);
       const removeAbortListener = (): void => {
         options.signal?.removeEventListener("abort", cancel);
       };
@@ -2600,10 +2610,24 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     if (!existsSync(this.#configDir) || !existsSync(this.#envFile) || !existsSync(this.#stateFile)) {
       return { status: "not-initialized", detail: "Initialize Atlas Core to create its private configuration." };
     }
-    const state = this.#requireInitialized();
+    this.#assertPrivateConfiguration();
+    const state = this.#readState();
+    if (!state)
+      return {
+        status: "degraded",
+        detail: "Atlas Core state is invalid. Restore a valid state file before operating this deployment."
+      };
     const runtime = await this.#preflight();
     return await this.#dockerRuntimeScope.run(runtime, async () => {
       this.#assertStateMatchesEngine(state, runtime.engineId);
+      if (state.phase === "initializing") {
+        this.#assertPackageVersionMatches(state);
+        return {
+          status: "initializing",
+          coreVersion: state.packageVersion,
+          detail: "Atlas Core initialization is in progress or needs recovery."
+        };
+      }
       return await this.#deploymentSnapshot(state.enabledPlugins);
     });
   }
@@ -4761,7 +4785,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     }
     this.#assertPrivateConfiguration();
     const state = this.#readState();
-    if (!state || state.phase !== "ready") {
+    if (!state) {
       throw new Error("Atlas Core is not initialized. Run atlas-core init first.");
     }
     if (state.dockerEngineId !== dockerEngineId) {
@@ -4770,6 +4794,46 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
           "Restore the original Docker context before resetting this deployment."
       );
     }
+    if (state.phase === "ready") return;
+    if (!this.#hasValidatedPendingCoreTransaction(dockerEngineId, state)) {
+      throw new Error("Atlas Core is not initialized. Run atlas-core init first.");
+    }
+  }
+
+  #hasValidatedPendingCoreTransaction(dockerEngineId: string, state: DeploymentState): boolean {
+    if (state.phase !== "initializing" || !DeploymentTransactionStore.exists(this.#configDir)) return false;
+    const transaction = DeploymentTransactionStore.open(this.#configDir);
+    const journal = transaction.read();
+    if (journal.owner.dockerEngineId !== dockerEngineId) {
+      throw new Error(
+        `Atlas Core deployment recovery belongs to Docker engine ${journal.owner.dockerEngineId}, but the current engine is ${dockerEngineId}. ` +
+          "Restore the original Docker context before resetting this deployment."
+      );
+    }
+    if (
+      (journal.operation !== "core-update" && journal.operation !== "init") ||
+      (journal.phase !== "core-started" && journal.phase !== "credentials-durable")
+    ) {
+      return false;
+    }
+    if (!journal.staged["state.json"]) return false;
+    let stagedState: ManagedCoreState;
+    try {
+      stagedState = parseManagedCoreState(JSON.parse(transaction.readStaged("state.json").toString("utf8")));
+    } catch {
+      return false;
+    }
+    if (
+      stagedState.phase !== "initializing" ||
+      stagedState.dockerEngineId !== dockerEngineId ||
+      stagedState.dockerEngineId !== state.dockerEngineId ||
+      stagedState.packageVersion !== state.packageVersion ||
+      !stagedState.baseDeployment
+    ) {
+      return false;
+    }
+    const recordedImage = journal.recovery?.targetCoreImage;
+    return recordedImage === undefined || recordedImage === stagedState.baseDeployment.coreImage;
   }
 
   #deleteConfigurationFile(path: string): void {

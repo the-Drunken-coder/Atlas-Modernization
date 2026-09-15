@@ -484,7 +484,7 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
       if (cancellationRequested) operator.resumeAfterCancellation();
       if (result.cancelled && pluginCancellation.current === undefined) pluginCancellation.current = "exit";
       if (terminalLost.current) {
-        exit(terminalLossError.current);
+        exit(result.failure ?? terminalLossError.current);
         return;
       }
       if (pluginCancellation.current === "exit") {
@@ -1013,21 +1013,18 @@ function ActionListMenu({
 }
 
 function actionListChoices(snapshot: DeploymentSnapshot): ActionListChoice[] {
-  const lifecycle: ActionListAction =
-    snapshot.status === "not-initialized" ? "init" : snapshot.status === "ready" ? "stop" : "start";
-  const lifecycleLabel =
-    snapshot.status === "not-initialized"
-      ? "Initialize Atlas Core"
-      : lifecycle === "stop"
-        ? "Stop Atlas Core"
-        : "Start Atlas Core";
   const choices: ActionListChoice[] = [
     { action: "status", label: "View service health" },
-    { action: "logs", label: "View logs and diagnostics" },
-    { action: lifecycle, label: lifecycleLabel }
+    { action: "logs", label: "View logs and diagnostics" }
   ];
-  if (snapshot.status !== "stopped" && snapshot.status !== "not-initialized") {
-    choices.push({ action: "restart", label: "Restart Atlas Core" });
+  if (snapshot.status === "not-initialized") {
+    choices.push({ action: "init", label: "Initialize Atlas Core" });
+  } else if (snapshot.status === "initializing") {
+    choices.push({ action: "init", label: "Retry initialization" });
+  } else if (snapshot.status === "ready") {
+    choices.push({ action: "stop", label: "Stop Atlas Core" }, { action: "restart", label: "Restart Atlas Core" });
+  } else if (snapshot.status === "stopped") {
+    choices.push({ action: "start", label: "Start Atlas Core" });
   }
   choices.push({ action: "plugins", label: "Manage Plugins" }, { action: "update", label: "Update Atlas Core" });
   if (snapshot.status !== "not-initialized") {
@@ -1045,7 +1042,9 @@ function actionListSummary(snapshot: DeploymentSnapshot): KeyValue[] {
         ? "Stopped"
         : snapshot.status === "degraded"
           ? "Degraded"
-          : "Not initialized";
+          : snapshot.status === "initializing"
+            ? "Initializing"
+            : "Not initialized";
   return [
     ["Deployment", "local-engine"],
     [
@@ -1553,6 +1552,7 @@ function LogViewer({
   const actionPending = useRef(false);
   const [revision, setRevision] = useState(0);
   const [streamError, setStreamError] = useState<Error>();
+  const canInteract = columns >= MINIMUM_TERMINAL_COLUMNS;
   const selected = Math.min(selectedRef.current, Math.max(0, services.length - 1));
   const serviceLabel = services[selected]?.label ?? "Selected service";
   const footer = `${bufferRef.current.following ? "following" : "paused"}   ←→ service   ↑↓ scroll   space pause/follow   End latest   Esc close`;
@@ -1599,6 +1599,7 @@ function LogViewer({
       void onBack();
       return;
     }
+    if (!canInteract) return;
     if ((key.leftArrow || key.rightArrow) && services.length > 1) {
       const next = (selected + (key.rightArrow ? 1 : -1) + services.length) % Math.max(1, services.length);
       selectedRef.current = next;
@@ -2139,7 +2140,9 @@ function lifecycleSnapshotStatus(status: DeploymentSnapshot["status"]): string {
       ? "Stopped"
       : status === "degraded"
         ? "Degraded"
-        : "Not initialized";
+        : status === "initializing"
+          ? "Initializing"
+          : "Not initialized";
 }
 
 function PluginsMenu({

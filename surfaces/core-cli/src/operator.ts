@@ -5,7 +5,7 @@
  */
 
 export type DeploymentSnapshot = {
-  status: "degraded" | "not-initialized" | "ready" | "stopped";
+  status: "degraded" | "initializing" | "not-initialized" | "ready" | "stopped";
   detail: string;
   /** Version recorded by the deployed Core, when the deployment is initialized. */
   coreVersion?: string;

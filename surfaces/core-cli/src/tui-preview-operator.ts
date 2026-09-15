@@ -16,7 +16,7 @@ import type {
 import { lifecycleOperationLabel, lifecycleOperationSummary } from "./operator.js";
 import { PLUGIN_CATALOG, type PluginCatalogEntry } from "./plugin-catalog.js";
 
-type PreviewState = DeploymentSnapshot["status"];
+type PreviewState = Exclude<DeploymentSnapshot["status"], "initializing">;
 type PreviewOutput = { write(data: string): unknown };
 type PreviewOptions = { lifecycleStepDelayMs?: number; pluginStepDelayMs?: number };
 type PreviewInstalledPlugin = { selectedVersion: string; previousVersion: string | null };

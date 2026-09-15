@@ -204,11 +204,13 @@ inspect logs and retry. Updating the global CLI requires write access to the npm
 `stop` removes containers and the private Compose network. It preserves PostgreSQL and MinIO volumes. Removing the
 npm package also leaves those durable volumes untouched.
 
-`reset` is the explicit exception. It first requires a valid ready deployment state in the selected `ATLAS_CORE_HOME`
-that matches the current Docker engine. It then permanently deletes the known Atlas Core containers, both durable
-volumes, and the credentials and state in that home before creating new credentials and empty storage and starting the
-image pinned by the installed CLI package. Reset is for intentionally discarding an initialized deployment, not for
-updates. Use `atlas-core update all` to move an existing deployment to the newest release without deleting its data.
+`reset` is the explicit exception. It normally requires a valid ready deployment state in the selected
+`ATLAS_CORE_HOME` that matches the current Docker engine. A confirmed reset also accepts an initializing state only
+when an engine-matched pending initialization or Core-update transaction proves that target startup already began.
+This is the discard-and-reinitialize recovery path when an interrupted update has no usable backup. Reset then
+permanently deletes the known Atlas Core containers, both durable volumes, and the credentials and state in that home
+before creating new credentials and empty storage and starting the image pinned by the installed CLI package. Use
+`atlas-core update all` for normal upgrades that preserve existing data.
 
 Before deleting anything, reset requires active recovery supervision. Use `atlas-core reset --manual` to explicitly acknowledge running without automatic recovery, as with `start --manual`.
 

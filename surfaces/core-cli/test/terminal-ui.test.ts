@@ -609,6 +609,7 @@ describe("Atlas Core terminal UI", () => {
     ["ready", "Running"],
     ["stopped", "Stopped"],
     ["degraded", "Degraded"],
+    ["initializing", "Initializing"],
     ["not-initialized", "Not initialized"]
   ] as const)("renders the %s fixture state in the action-list home", async (status, label) => {
     const terminal = new TestTerminal(80, true, 24);
@@ -620,6 +621,29 @@ describe("Atlas Core terminal UI", () => {
     expect(terminal.text).toContain("Deployment");
     terminal.write("q");
     await menu;
+  });
+
+  it("offers Retry initialization for resumable initialization and blocks unsafe degraded starts", async () => {
+    const initializingTerminal = new TestTerminal(80, true, 24);
+    const initializingMenu = createInteractiveCLI(initializingTerminal.input, initializingTerminal.output).runMenu(
+      operator({ status: "initializing", detail: "Atlas Core initialization can be resumed." })
+    );
+
+    await initializingTerminal.waitFor("Retry initialization");
+    expect(initializingTerminal.text).not.toContain("Start Atlas Core");
+    initializingTerminal.write("q");
+    await initializingMenu;
+
+    const degradedTerminal = new TestTerminal(80, true, 24);
+    const degradedMenu = createInteractiveCLI(degradedTerminal.input, degradedTerminal.output).runMenu(
+      operator({ status: "degraded", detail: "The Docker engine does not match this deployment." })
+    );
+
+    await degradedTerminal.waitFor("Degraded");
+    expect(degradedTerminal.text).not.toContain("Start Atlas Core");
+    expect(degradedTerminal.text).not.toContain("Retry initialization");
+    degradedTerminal.write("q");
+    await degradedMenu;
   });
 
   it("renders the running Core version instead of the CLI package version", async () => {
@@ -726,6 +750,37 @@ describe("Atlas Core terminal UI", () => {
     await vi.waitFor(() =>
       expect(stripAnsi(terminal.raw.slice(-1200))).toContain(`newest\n${"y".repeat(40)}\n${"y".repeat(34)}`)
     );
+    terminal.write("\u001b");
+    await vi.waitFor(() => expect(stream.closed).toBe(true));
+    terminal.write("q");
+    await menu;
+  });
+
+  it("ignores log navigation and follow controls while the terminal is narrow", async () => {
+    const terminal = new TestTerminal(80, true, 24);
+    const deployment = operator();
+    const stream = liveLogStream();
+    deployment.openLogStream.mockResolvedValue(stream);
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("CHOOSE AN ACTION");
+    terminal.write("\u001b[B\r");
+    await terminal.waitFor("Logs and diagnostics");
+    terminal.write("\u001b[B\r");
+    await terminal.waitFor("LIVE LOGS");
+    stream.emit("retained log output");
+    await terminal.waitFor("retained log output");
+
+    terminal.resize(36, 24);
+    await terminal.waitFor("Resize terminal to at least 40");
+    terminal.write("\u001b[C\u001b[A\u001b[B\u001b[F ");
+    await nextInputTurn();
+
+    expect(deployment.openLogStream).toHaveBeenCalledOnce();
+    expect(stream.closed).toBe(false);
+    terminal.resize(80, 24);
+    await terminal.waitFor("retained log output");
+    expect(deployment.openLogStream).toHaveBeenCalledOnce();
     terminal.write("\u001b");
     await vi.waitFor(() => expect(stream.closed).toBe(true));
     terminal.write("q");
@@ -1290,6 +1345,40 @@ describe("Atlas Core terminal UI", () => {
     terminal.input.emit("end");
     await expect(menu).rejects.toThrow("lost its terminal input");
     expect(deployment.cancelPending).toHaveBeenCalledOnce();
+    expect(deployment.resumeAfterCancellation).toHaveBeenCalledOnce();
+  });
+
+  it("reports a Plugin rollback rejection instead of terminal loss after input ends", async () => {
+    const terminal = new TestTerminal();
+    const deployment = operator();
+    const plugin = {
+      pluginId: "building_scan",
+      displayName: "Building Scan",
+      lifecycle: "query_only" as const,
+      enabled: false,
+      packaged: true
+    };
+    let rejectEnable: ((error: Error) => void) | undefined;
+    deployment.pluginStatuses.mockResolvedValue([plugin]);
+    deployment.pluginEnable.mockImplementation(
+      async (_pluginId, reportActivity) =>
+        await new Promise<PluginOperationOutcome>((_resolve, reject) => {
+          reportActivity?.({ level: "working", message: "Preparing enable", stage: "operation" });
+          rejectEnable = reject;
+        })
+    );
+    deployment.cancelPending.mockImplementation(() => rejectEnable?.(new Error("Rollback cleanup rejected")));
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("Manage Plugins");
+    terminal.write("\u001b[B".repeat(4));
+    terminal.write("\r");
+    await terminal.waitFor("PLUGIN CATALOG");
+    terminal.write("\r");
+    await terminal.waitFor("Preparing enable");
+    terminal.input.emit("end");
+
+    await expect(menu).rejects.toThrow("Rollback cleanup rejected");
     expect(deployment.resumeAfterCancellation).toHaveBeenCalledOnce();
   });
 

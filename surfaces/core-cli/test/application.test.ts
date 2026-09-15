@@ -1,5 +1,6 @@
 import { execFileSync, spawn } from "node:child_process";
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
+import { EventEmitter } from "node:events";
 import {
   chmodSync,
   cpSync,
@@ -2053,6 +2054,38 @@ describe("atlas-core CLI", () => {
     expect(closed.stderr.endsWith("x".repeat(128))).toBe(true);
   });
 
+  it("does not escalate or re-signal a stream after graceful close", async () => {
+    vi.useFakeTimers();
+    const streamFor = (): EventEmitter & { setEncoding: () => void } =>
+      Object.assign(new EventEmitter(), { setEncoding: () => undefined });
+    const child = Object.assign(new EventEmitter(), {
+      pid: 12345,
+      stdout: streamFor(),
+      stderr: streamFor()
+    }) as unknown as ReturnType<typeof spawn>;
+    const signals: NodeJS.Signals[] = [];
+    const spawnMock = (() => child) as unknown as typeof spawn;
+    const killMock = vi.spyOn(process, "kill").mockImplementation((_pid, signal) => {
+      signals.push(typeof signal === "string" ? (signal as NodeJS.Signals) : "SIGTERM");
+      return true;
+    });
+    try {
+      const runner = new ProcessCommandRunner(spawnMock);
+      const stream = await runner.openStream("fake-command", []);
+      stream.cancel();
+      child.emit("close", 0);
+      await expect(stream.closed).resolves.toMatchObject({ status: 0, cancelled: true });
+
+      await vi.advanceTimersByTimeAsync(10_000);
+      stream.cancel();
+
+      expect(signals).toEqual(["SIGTERM"]);
+    } finally {
+      killMock.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
   it("does not start a supervised command until its process group is durably recorded", async () => {
     const runner = new ProcessCommandRunner();
     const directory = mkdtempSync(join(tmpdir(), "atlas-core-runner-test-"));
@@ -3927,6 +3960,88 @@ describe("atlas-core CLI", () => {
     expect(test.runner.calls.some((call) => call.args[0] === "stats")).toBe(false);
   });
 
+  it("reports a validated initializing deployment in the cheap snapshot", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const statePath = join(test.home, ".atlas", "core", "state.json");
+    const state = JSON.parse(readFileSync(statePath, "utf8"));
+    writeFileSync(statePath, `${JSON.stringify({ ...state, phase: "initializing" })}\n`, { mode: 0o600 });
+    let observed: DeploymentDetails["snapshot"] | undefined;
+    test.context.interactive = {
+      configureAdmin: async () => undefined,
+      runMenu: async (operator) => {
+        observed = await operator.snapshot();
+      },
+      runUpdate: async () => undefined
+    };
+
+    expect(await runCLI([], test.context), test.stderr.join("")).toBe(0);
+    expect(observed).toMatchObject({
+      status: "initializing",
+      coreVersion: PACKAGE_VERSION,
+      detail: expect.stringContaining("initialization")
+    });
+    expect(test.runner.calls.some((call) => call.args[0] === "info")).toBe(true);
+    expect(test.runner.calls.some((call) => composeCommand(call)[0] === "ps")).toBe(false);
+  });
+
+  it("rejects an initializing snapshot when Docker engine ownership mismatches", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const statePath = join(test.home, ".atlas", "core", "state.json");
+    const state = JSON.parse(readFileSync(statePath, "utf8"));
+    writeFileSync(
+      statePath,
+      `${JSON.stringify({ ...state, phase: "initializing", dockerEngineId: "another-engine" })}\n`,
+      { mode: 0o600 }
+    );
+    test.context.interactive = {
+      configureAdmin: async () => undefined,
+      runMenu: async (operator) => {
+        await expect(operator.snapshot()).rejects.toThrow("Restore the original Docker context");
+      },
+      runUpdate: async () => undefined
+    };
+
+    expect(await runCLI([], test.context), test.stderr.join("")).toBe(0);
+  });
+
+  it("keeps malformed persisted state blocked in the cheap snapshot", async () => {
+    const test = runtime();
+    markInitialized(test);
+    writeFileSync(join(test.home, ".atlas", "core", "state.json"), "{}\n", { mode: 0o600 });
+    let observed: DeploymentDetails["snapshot"] | undefined;
+    test.context.interactive = {
+      configureAdmin: async () => undefined,
+      runMenu: async (operator) => {
+        observed = await operator.snapshot();
+      },
+      runUpdate: async () => undefined
+    };
+
+    expect(await runCLI([], test.context), test.stderr.join("")).toBe(0);
+    expect(observed).toMatchObject({ status: "degraded", detail: expect.stringContaining("invalid") });
+  });
+
+  it("rejects retrying initialization from a different CLI package version", async () => {
+    const test = runtime();
+    markInitialized(test);
+    const statePath = join(test.home, ".atlas", "core", "state.json");
+    const state = JSON.parse(readFileSync(statePath, "utf8"));
+    writeFileSync(statePath, `${JSON.stringify({ ...state, phase: "initializing", packageVersion: "0.1.2" })}\n`, {
+      mode: 0o600
+    });
+    test.context.interactive = {
+      configureAdmin: async () => undefined,
+      runMenu: async (operator) => {
+        await expect(operator.snapshot()).rejects.toThrow("installed CLI");
+      },
+      runUpdate: async () => undefined
+    };
+
+    expect(await runCLI([], test.context), test.stderr.join("")).toBe(0);
+  });
+
   it("includes shared health and resource details in direct status output", async () => {
     const test = runtime();
     markInitialized(test);
@@ -4327,6 +4442,36 @@ describe("atlas-core CLI", () => {
     });
     expect(test.runner.existingVolumes).toContain(POSTGRES_VOLUME);
     expect(test.runner.existingVolumes).toContain(MINIO_VOLUME);
+  });
+
+  it("resets a failed no-receipt Core update through the confirmed reset command", async () => {
+    const test = runtime();
+    await markManagedInitialized(test);
+    setCoreVersion(test, "0.1.2");
+    if (!test.context.env) throw new Error("Test runtime has no environment.");
+    delete test.context.env.ATLAS_CORE_BACKUP_DIR;
+    test.runner.failComposeUp = true;
+
+    expect(await runCLI(["update", "all"], test.context)).toBe(1);
+    expect(JSON.parse(readFileSync(join(test.home, ".atlas", "core", "state.json"), "utf8"))).toMatchObject({
+      phase: "initializing"
+    });
+    expect(DeploymentTransactionStore.open(join(test.home, ".atlas", "core")).journal).toMatchObject({
+      operation: "core-update",
+      phase: "core-started",
+      owner: { dockerEngineId: TEST_ENGINE_ID },
+      recovery: { targetCoreImage: TEST_IMAGE }
+    });
+
+    test.runner.failComposeUp = false;
+    test.context.confirmReset = async () => true;
+    test.stderr.length = 0;
+    expect(await runCLI(["reset", "--manual"], test.context), test.stderr.join("")).toBe(0);
+
+    expect(existsSync(join(test.home, ".atlas", "core", "transaction"))).toBe(false);
+    expect(JSON.parse(readFileSync(join(test.home, ".atlas", "core", "state.json"), "utf8"))).toMatchObject({
+      phase: "ready"
+    });
   });
 
   it("reads paired restore state from the retained Core bundle before recovery", async () => {
