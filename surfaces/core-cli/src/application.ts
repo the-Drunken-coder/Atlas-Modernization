@@ -40,7 +40,8 @@ import {
   type ManagedCoreState,
   type MigrationLedgerOptions,
   parseBaseDeployment,
-  parseManagedCoreState
+  parseManagedCoreState,
+  readManagedCoreRecoveryStatus
 } from "./managed-core.js";
 import { CommandCancelledError, OperationCleanupError } from "./operation-errors.js";
 import type {
@@ -1819,11 +1820,14 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     options: { version?: string; confirmed?: boolean } = {}
   ): Promise<void> {
     if (action === "status") {
-      if (!DeploymentTransactionStore.exists(this.#configDir)) {
+      const status = readManagedCoreRecoveryStatus(this.#configDir);
+      if (!status.pending || !status.journal) {
         this.#stdout.write("No pending deployment transaction.\n");
         return;
       }
-      this.#stdout.write(`${JSON.stringify(DeploymentTransactionStore.open(this.#configDir).journal, null, 2)}\n`);
+      this.#stdout.write(
+        `${JSON.stringify({ ...status.journal, ...(status.action ? { action: status.action } : {}) }, null, 2)}\n`
+      );
       return;
     }
     if (action === "forward" && options.version && options.version !== PACKAGE_VERSION) {

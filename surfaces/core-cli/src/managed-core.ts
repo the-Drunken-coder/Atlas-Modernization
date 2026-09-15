@@ -152,6 +152,16 @@ export type RecoveryOptions = {
   confirmPairedRestore?: boolean;
 };
 
+/** Reads pending recovery metadata without probing Docker or changing state. */
+export function readManagedCoreRecoveryStatus(configDir: string): RecoveryStatus {
+  if (!DeploymentTransactionStore.exists(configDir)) return { pending: false };
+  const journal = DeploymentTransactionStore.open(configDir).read();
+  if (journal.operation !== "init" && journal.operation !== "core-update") {
+    return { pending: true, journal };
+  }
+  return { pending: true, journal, action: recoveryActionForPhase(journal) };
+}
+
 type Candidate = {
   root: string;
   manifest: RetainedBundleManifest;
@@ -350,19 +360,11 @@ export class ManagedCoreManager {
     options?: RecoveryOptions
   ): Promise<ManagedCoreState | RecoveryStatus>;
   async recover(action: RecoveryAction, options: RecoveryOptions = {}): Promise<ManagedCoreState | RecoveryStatus> {
-    if (!DeploymentTransactionStore.exists(this.#configDir)) {
-      if (action === "status") return { pending: false };
+    if (action === "status") return readManagedCoreRecoveryStatus(this.#configDir);
+    if (!DeploymentTransactionStore.exists(this.#configDir))
       throw new Error("Atlas Core has no pending deployment transaction.");
-    }
     const transaction = DeploymentTransactionStore.open(this.#configDir);
     const journal = transaction.read();
-    if (action === "status") {
-      return {
-        pending: true,
-        journal,
-        action: recoveryActionForPhase(journal)
-      };
-    }
     if (journal.phase === "committed") {
       transaction.cleanup();
       const state = this.#options.readState();

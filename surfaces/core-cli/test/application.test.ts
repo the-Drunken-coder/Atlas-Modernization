@@ -4668,6 +4668,51 @@ describe("atlas-core CLI", () => {
     });
   });
 
+  it("reports intentional reset guidance for a failed no-backup Core update", async () => {
+    const test = runtime();
+    await markManagedInitialized(test);
+    setCoreVersion(test, "0.1.2");
+    if (!test.context.env) throw new Error("Test runtime has no environment.");
+    delete test.context.env.ATLAS_CORE_BACKUP_DIR;
+    test.runner.failComposeUp = true;
+
+    expect(await runCLI(["update", "all"], test.context)).toBe(1);
+    test.stdout.length = 0;
+    test.stderr.length = 0;
+    test.runner.onRun = (call) => {
+      if (call.command === "docker" && call.args[0] === "info") throw new Error("injected Docker offline failure");
+    };
+
+    expect(await runCLI(["recover", "status"], test.context), test.stderr.join("")).toBe(0);
+    const status = JSON.parse(test.stdout.join(""));
+    expect(status).toMatchObject({
+      operation: "core-update",
+      phase: "core-started",
+      action: "retry, forward, or confirm intentional reset"
+    });
+  });
+
+  it("does not add Core recovery guidance to a Plugin key rotation status", async () => {
+    const test = runtime();
+    await markManagedInitialized(test);
+    const config = join(test.home, ".atlas", "core");
+    const transaction = DeploymentTransactionStore.begin(config, {
+      operation: "plugin-key-rotation",
+      dockerEngineId: TEST_ENGINE_ID,
+      previousRunning: true,
+      desiredRunning: true
+    });
+    transaction.advance("runtime-changing");
+    transaction.advance("core-started");
+    transaction.advance("credentials-durable");
+
+    expect(await runCLI(["recover", "status"], test.context), test.stderr.join("")).toBe(0);
+    const status = JSON.parse(test.stdout.join(""));
+    expect(status).toMatchObject({ operation: "plugin-key-rotation", phase: "credentials-durable" });
+    expect(status.action).toBeUndefined();
+    expect(JSON.stringify(status)).not.toMatch(/intentional reset|forward/u);
+  });
+
   it("reads paired restore state from the retained Core bundle before recovery", async () => {
     const test = runtime();
     await markManagedInitialized(test);
