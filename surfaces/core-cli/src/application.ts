@@ -546,7 +546,7 @@ export class ProcessCommandRunner implements CommandRunner {
       child.stdout?.setEncoding("utf8");
       child.stderr?.setEncoding("utf8");
       child.stdout?.on("data", (chunk: string) => {
-        stdout += chunk;
+        stdout = options.onOutput ? retainCommandOutputTail(stdout, chunk) : stdout + chunk;
         options.onOutput?.("stdout", chunk);
       });
       child.stderr?.on("data", (chunk: string) => {
@@ -4770,7 +4770,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     return {
       onOutput: (stream, chunk) => {
         const lines = `${pending[stream]}${chunk}`.split(/\r?\n/u);
-        pending[stream] = lines.pop() ?? "";
+        pending[stream] = retainCommandOutputTail("", lines.pop() ?? "");
         for (const line of lines) report(stream, line);
       },
       flush: () => {

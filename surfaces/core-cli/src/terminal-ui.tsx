@@ -2278,7 +2278,7 @@ function PluginsMenu({
   onToggle(plugin: PluginDeploymentStatus): void;
   view: PluginDeploymentStatus[] | Error;
 }): ReactNode {
-  const { columns } = useWindowSize();
+  const { columns, rows } = useWindowSize();
   const actionPending = useRef(false);
   const selectedRef = useRef(0);
   const [selected, setSelected] = useState(0);
@@ -2286,6 +2286,22 @@ function PluginsMenu({
   const index = Math.min(selected, Math.max(0, plugins.length - 1));
   const plugin = plugins[index];
   const canInteract = columns >= MINIMUM_TERMINAL_COLUMNS;
+  const footer =
+    plugins.length > 0
+      ? `↑/↓ ${index + 1}/${plugins.length}   Enter install/enable/disable   l logs   Esc back`
+      : "Esc back";
+  const revocationSummary = plugin?.revoked
+    ? firstTerminalLine(`REVOKED${plugin.revocationReason ? `: ${plugin.revocationReason}` : ""}`, columns)
+    : undefined;
+  const errorSummary = plugin?.error ? firstTerminalLine(`ERROR: ${plugin.error}`, columns) : undefined;
+  const fixedRows =
+    7 + wrappedRows(footer, columns) + Number(Boolean(revocationSummary)) + Number(Boolean(errorSummary));
+  const viewportRows = Math.max(1, rows - fixedRows);
+  const firstPlugin = Math.max(
+    0,
+    Math.min(index - Math.floor(viewportRows / 2), Math.max(0, plugins.length - viewportRows))
+  );
+  const visiblePlugins = plugins.slice(firstPlugin, firstPlugin + viewportRows);
   useInput((input, key) => {
     if (actionPending.current) return;
     const modified = hasCommandModifier(key);
@@ -2326,7 +2342,8 @@ function PluginsMenu({
       ) : (
         <>
           <Text bold>PLUGIN CATALOG</Text>
-          {plugins.map((candidate, candidateIndex) => {
+          {visiblePlugins.map((candidate, visibleIndex) => {
+            const candidateIndex = firstPlugin + visibleIndex;
             const runtime = candidate.state ? `  ${candidate.state}/${candidate.health || "unknown"}` : "";
             const availability =
               candidate.installed === false
@@ -2348,16 +2365,14 @@ function PluginsMenu({
             );
           })}
           <Text> </Text>
-          <Text>{plugin?.pluginId}</Text>
+          <Text>{firstTerminalLine(plugin?.pluginId ?? "", columns)}</Text>
           <Text dimColor>{plugin?.lifecycle === "query_only" ? "Query-only, stateless" : "Unsupported lifecycle"}</Text>
-          {plugin?.revoked ? (
-            <Text color="red">{`REVOKED${plugin.revocationReason ? `: ${plugin.revocationReason}` : ""}`}</Text>
-          ) : null}
-          {plugin?.error ? <Text color="red">{`ERROR: ${plugin.error}`}</Text> : null}
+          {revocationSummary ? <Text color="red">{revocationSummary}</Text> : null}
+          {errorSummary ? <Text color="red">{errorSummary}</Text> : null}
         </>
       )}
       <Rule width={columns} />
-      <Text dimColor>{"↑/↓ move   Enter install/enable/disable   l logs   Esc back"}</Text>
+      <Text dimColor>{footer}</Text>
     </Box>
   );
 }

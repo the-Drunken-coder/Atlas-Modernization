@@ -1596,6 +1596,36 @@ describe("Atlas Core terminal UI", () => {
     expect(terminal.setRawMode).toHaveBeenLastCalledWith(false);
   });
 
+  it("keeps the selected Plugin visible in a bounded catalog viewport", async () => {
+    const terminal = new TestTerminal(40, true, 24);
+    const deployment = operator();
+    const plugins = Array.from({ length: 30 }, (_, index) => ({
+      pluginId: `plugin_${index.toString().padStart(2, "0")}`,
+      displayName: `Plugin ${index + 1}`,
+      lifecycle: "query_only" as const,
+      enabled: false,
+      packaged: true
+    }));
+    deployment.pluginStatuses.mockResolvedValue(plugins);
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("Manage Plugins");
+    terminal.write("\u001b[B".repeat(4));
+    terminal.write("\r");
+    await terminal.waitFor("PLUGIN CATALOG");
+    for (let index = 0; index < 25; index += 1) {
+      terminal.write("\u001b[B");
+      await nextInputTurn();
+    }
+
+    await terminal.waitFor("↑/↓ 26/30");
+    expect(stripAnsi(terminal.raw.slice(-2_000))).toContain("Plugin 26");
+    terminal.write("q");
+    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
+    terminal.write("q");
+    await menu;
+  });
+
   it("updates only changed terminal lines when an arrow key moves selection", async () => {
     const terminal = new TestTerminal();
     const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(operator());

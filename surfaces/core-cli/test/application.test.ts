@@ -2054,6 +2054,21 @@ describe("atlas-core CLI", () => {
     expect(closed.stderr.endsWith("x".repeat(128))).toBe(true);
   });
 
+  it("bounds retained stdout while still streaming every chunk", async () => {
+    const runner = new ProcessCommandRunner();
+    let streamedCharacters = 0;
+
+    const command = await runner.run(process.execPath, ["-e", 'process.stdout.write("x".repeat(2 ** 20))'], {
+      onOutput: (stream, chunk) => {
+        if (stream === "stdout") streamedCharacters += chunk.length;
+      }
+    });
+
+    expect(streamedCharacters).toBe(2 ** 20);
+    expect(command.stdout.length).toBeLessThanOrEqual(64 * 1024);
+    expect(command.stdout.endsWith("x".repeat(128))).toBe(true);
+  });
+
   it("cancels a buffered log fallback without poisoning later commands", async () => {
     const test = runtime();
     markInitialized(test);
