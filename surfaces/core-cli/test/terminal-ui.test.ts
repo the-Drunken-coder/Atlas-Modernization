@@ -2861,8 +2861,14 @@ describe("Atlas Core terminal UI", () => {
     await nextInputTurn();
     expect(deployment.pluginUpdate).not.toHaveBeenCalled();
 
+    terminal.resize(100, 5);
+    await terminal.waitFor("Update review needs at least");
+    terminal.write("\r");
+    await nextInputTurn();
+    expect(deployment.pluginUpdate).not.toHaveBeenCalled();
+
     terminal.write("\u001b");
-    terminal.resize(100);
+    terminal.resize(100, 40);
     await vi.waitFor(() => expect(deployment.pluginStatuses).toHaveBeenCalledTimes(2));
     terminal.write("q");
     await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));

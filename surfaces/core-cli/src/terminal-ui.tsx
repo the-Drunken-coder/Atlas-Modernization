@@ -2506,22 +2506,7 @@ function PluginUpdateReview({
   onConfirm: (() => void) | undefined;
   plan: PluginUpdatePlan;
 }): ReactNode {
-  const { columns } = useWindowSize();
-  const canInteract = columns >= MINIMUM_TERMINAL_COLUMNS;
-  const actionPending = useRef(false);
-  useInput((input, key) => {
-    if (actionPending.current) return;
-    if (key.escape || (key.ctrl && input === "c") || input === "q") {
-      actionPending.current = true;
-      onBack();
-    } else if (!canInteract) {
-      return;
-    } else if (key.return && onConfirm) {
-      actionPending.current = true;
-      onConfirm();
-    }
-  });
-  if (!canInteract) return <NarrowTerminal />;
+  const { columns, rows } = useWindowSize();
   const title =
     "action" in plan && plan.action === "replacement"
       ? "ATLAS CORE > REVIEW PLUGIN REPLACEMENT"
@@ -2541,6 +2526,25 @@ function PluginUpdateReview({
         ? "The selected release is revoked. Atlas will install this permitted replacement."
         : "Atlas will update this Plugin without installing a new Atlas Core version."
       : plan.reason;
+  const footer = onConfirm ? "Enter confirm   Esc cancel" : "Esc return to Plugins";
+  const requiredRows = pluginUpdateReviewRows(title, values, message, footer, columns);
+  const hasEnoughRows = rows >= requiredRows;
+  const canInteract = columns >= MINIMUM_TERMINAL_COLUMNS && hasEnoughRows;
+  const actionPending = useRef(false);
+  useInput((input, key) => {
+    if (actionPending.current) return;
+    if (key.escape || (key.ctrl && input === "c") || input === "q") {
+      actionPending.current = true;
+      onBack();
+    } else if (!canInteract) {
+      return;
+    } else if (key.return && onConfirm) {
+      actionPending.current = true;
+      onConfirm();
+    }
+  });
+  if (columns < MINIMUM_TERMINAL_COLUMNS) return <NarrowTerminal />;
+  if (!hasEnoughRows) return <ShortUpdateReview requiredRows={requiredRows} />;
   return (
     <Box flexDirection="column" width={columns}>
       <Header title={title} />
@@ -2554,7 +2558,7 @@ function PluginUpdateReview({
         {message}
       </Text>
       <Rule width={columns} />
-      <Text dimColor>{onConfirm ? "Enter confirm   Esc cancel" : "Esc return to Plugins"}</Text>
+      <Text dimColor>{footer}</Text>
     </Box>
   );
 }
@@ -2969,6 +2973,24 @@ function updateReviewRows(info: UpdateInfo, scope: UpdateScope, width: number): 
     wrappedRows(`Atlas Core ${info.coreVersion} → ${info.latestVersion}`, width) +
     1 +
     wrappedRows(CORE_UPDATE_REVIEW_COPY, width)
+  );
+}
+
+function pluginUpdateReviewRows(
+  title: string,
+  values: KeyValue[],
+  message: string,
+  footer: string,
+  width: number
+): number {
+  return (
+    wrappedRows(title, width) +
+    1 +
+    keyValueRows(values, width) +
+    1 +
+    wrappedRows(message, width) +
+    1 +
+    wrappedRows(footer, width)
   );
 }
 
