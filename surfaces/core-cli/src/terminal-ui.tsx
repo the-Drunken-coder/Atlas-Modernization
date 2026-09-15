@@ -2507,18 +2507,21 @@ function PluginUpdateReview({
   plan: PluginUpdatePlan;
 }): ReactNode {
   const { columns } = useWindowSize();
+  const canInteract = columns >= MINIMUM_TERMINAL_COLUMNS;
   const actionPending = useRef(false);
   useInput((input, key) => {
     if (actionPending.current) return;
     if (key.escape || (key.ctrl && input === "c") || input === "q") {
       actionPending.current = true;
       onBack();
+    } else if (!canInteract) {
+      return;
     } else if (key.return && onConfirm) {
       actionPending.current = true;
       onConfirm();
     }
   });
-  if (columns < MINIMUM_TERMINAL_COLUMNS) return <NarrowTerminal />;
+  if (!canInteract) return <NarrowTerminal />;
   const title =
     "action" in plan && plan.action === "replacement"
       ? "ATLAS CORE > REVIEW PLUGIN REPLACEMENT"

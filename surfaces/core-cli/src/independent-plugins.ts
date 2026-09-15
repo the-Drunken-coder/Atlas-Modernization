@@ -1350,10 +1350,12 @@ export class IndependentPluginManager {
       previousRunning
     });
     this.#activeTransaction = transaction;
+    let committed = false;
     try {
       await transaction.advance("prepared", recovery);
       await action(transaction);
       await transaction.markCommitted();
+      committed = true;
       await transaction.cleanup();
     } catch (error) {
       try {
@@ -1361,6 +1363,7 @@ export class IndependentPluginManager {
       } catch (rollbackError) {
         throw new Error(`${errorMessage(error)} Recovery is required: ${errorMessage(rollbackError)}`);
       }
+      if (committed) return;
       throw error;
     } finally {
       this.#activeTransaction = undefined;

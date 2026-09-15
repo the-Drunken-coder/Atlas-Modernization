@@ -2823,6 +2823,53 @@ describe("Atlas Core terminal UI", () => {
     expect(updateCallsAfterHiddenEnter).toBe(0);
   });
 
+  it("blocks a hidden Plugin update confirmation after the terminal becomes narrow", async () => {
+    const terminal = new TestTerminal();
+    const plugin = {
+      pluginId: "building_scan",
+      displayName: "Building Scan",
+      lifecycle: "query_only" as const,
+      enabled: true,
+      packaged: false,
+      installed: true,
+      selectedVersion: "1.0.0"
+    };
+    const deployment = Object.assign(operator(), {
+      pluginUpdatePlan: vi.fn(async () => ({
+        status: "available" as const,
+        action: "update" as const,
+        pluginId: plugin.pluginId,
+        displayName: plugin.displayName,
+        currentVersion: "1.0.0",
+        targetVersion: "1.1.0",
+        enabled: true,
+        restartServices: [],
+        coreVersion: "0.2.1",
+        coreImage: "ghcr.io/the-drunken-coder/atlas-core@sha256:current-core"
+      })),
+      pluginUpdate: vi.fn(async () => ({ status: "success" as const }))
+    });
+    deployment.pluginStatuses.mockResolvedValue([plugin]);
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await openPluginManagement(terminal);
+    terminal.write("u");
+    await terminal.waitFor("REVIEW PLUGIN UPDATE");
+    terminal.resize(36);
+    await terminal.waitFor("Resize to at least 40 columns.");
+    terminal.write("\r");
+    await nextInputTurn();
+    expect(deployment.pluginUpdate).not.toHaveBeenCalled();
+
+    terminal.write("\u001b");
+    terminal.resize(100);
+    await vi.waitFor(() => expect(deployment.pluginStatuses).toHaveBeenCalledTimes(2));
+    terminal.write("q");
+    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
+    terminal.write("q");
+    await menu;
+  });
+
   it("blocks a Core update confirmation when the review is too tall", async () => {
     const terminal = new TestTerminal(40, true, 10);
     const deployment = operator();
