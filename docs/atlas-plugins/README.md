@@ -29,7 +29,7 @@ The replacement design has these settled requirements:
 - Each Plugin has its own version and release workflow. First-party Plugin source remains in this repository unless a
   later ownership need justifies moving it.
 - Updating a Plugin does not require publishing or installing a new Atlas Core version.
-- The host-side `atlas-core` terminal menu discovers, installs, updates, enables, disables, and uninstalls Plugins. Before
+- The host-side `atlas-core` CLI discovers, installs, updates, enables, disables, and uninstalls Plugins. Before
   an update, it explains which Atlas services will restart and requires explicit confirmation. Core and the Command
   Interface do not receive container-runtime or host-filesystem authority.
 - The first catalog is one signed, Atlas-published catalog of trusted first-party Plugins. Arbitrary catalogs, bundles,

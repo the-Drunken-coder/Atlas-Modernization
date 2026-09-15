@@ -1658,6 +1658,15 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
           reason: `${current.displayName} ${current.version} is revoked and has no compatible non-revoked replacement for Atlas Core ${state.packageVersion}.`
         };
       }
+      try {
+        assertPluginCompatible(current, state.pluginContracts ?? PACKAGE_PLUGIN_CONTRACTS);
+      } catch (error) {
+        return {
+          ...planBase,
+          status: "blocked",
+          reason: `${current.displayName} ${current.version} is incompatible with Atlas Core ${state.packageVersion}: ${errorMessage(error)}`
+        };
+      }
       const catalogPlugin = this.#catalogStore.inspect().catalog.plugins.find((plugin) => plugin.pluginId === pluginId);
       const newerReleaseExists =
         catalogPlugin?.releases.some(

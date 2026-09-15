@@ -257,12 +257,6 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
   const loadPlugins = useCallback(async () => {
     setScreen({ kind: "busy", label: "Loading Plugins..." });
     try {
-      let refreshFailure: Error | undefined;
-      try {
-        await operator.pluginRefresh?.();
-      } catch (error) {
-        refreshFailure = new Error(errorMessage(error));
-      }
       const statuses = await operator.pluginStatuses();
       const statusesWithPlans: PluginDeploymentStatus[] = [];
       for (const status of statuses) {
@@ -276,13 +270,7 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
           statusesWithPlans.push(status);
         }
       }
-      if (refreshFailure && statuses.length === 0) throw refreshFailure;
-      setScreen({
-        kind: "plugins",
-        view: refreshFailure
-          ? statusesWithPlans.map((status) => ({ ...status, error: status.error ?? refreshFailure.message }))
-          : statusesWithPlans
-      });
+      setScreen({ kind: "plugins", view: statusesWithPlans });
     } catch (error) {
       setScreen({ kind: "plugins", view: new Error(errorMessage(error)) });
     }

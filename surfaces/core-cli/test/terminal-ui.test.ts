@@ -305,7 +305,7 @@ describe("Atlas Core terminal UI", () => {
     }
     terminal.write("\r");
     await terminal.waitFor("PLUGIN CATALOG");
-    expect(deployment.pluginRefresh).toHaveBeenCalledOnce();
+    expect(deployment.pluginRefresh).not.toHaveBeenCalled();
     expect(deployment.pluginStatuses).toHaveBeenCalledOnce();
     terminal.write("q");
     await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
@@ -473,7 +473,7 @@ describe("Atlas Core terminal UI", () => {
     terminal.write("\u001b");
     await vi.waitFor(() => expect(deployment.resumeAfterCancellation).toHaveBeenCalledOnce());
     await terminal.waitFor("PLUGIN CATALOG");
-    expect(deployment.pluginRefresh).toHaveBeenCalledTimes(2);
+    expect(deployment.pluginRefresh).not.toHaveBeenCalled();
     terminal.write("q");
     await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
     terminal.write("q");
@@ -2470,22 +2470,6 @@ describe("Atlas Core terminal UI", () => {
     expect(deployment.resumeAfterCancellation).toHaveBeenCalledOnce();
     expect(await deployment.details()).toMatchObject({ coreVersion: coreBefore.coreVersion, image: coreBefore.image });
     await vi.waitFor(() => expect(deployment.pluginStatuses).toHaveBeenCalledTimes(2));
-    terminal.write("q");
-    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
-    terminal.write("q");
-    await menu;
-  });
-
-  it("shows the catalog refresh error when no verified cache is available", async () => {
-    const terminal = new TestTerminal();
-    const deployment = operator();
-    deployment.pluginRefresh.mockRejectedValueOnce(new Error("catalog network unavailable"));
-    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
-
-    await openPluginManagement(terminal);
-    await terminal.waitFor("catalog network unavailable");
-    expect(deployment.pluginRefresh).toHaveBeenCalledOnce();
-    expect(deployment.pluginStatuses).toHaveBeenCalledOnce();
     terminal.write("q");
     await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
     terminal.write("q");

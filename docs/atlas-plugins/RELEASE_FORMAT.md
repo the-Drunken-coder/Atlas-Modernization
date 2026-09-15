@@ -4,10 +4,9 @@ Status: the independent Plugin release workflow and lifecycle implementation are
 Candidate-image checks passed on linux/amd64 and linux/arm64. Already published Atlas Core packages may still contain bundled first-party Plugin images and
 deployment files. The first independent package supports only trusted query-only Plugins; general external-source
 credential configuration remains out of scope. Production signing trust and Pages configuration were bootstrapped on 2026-09-11;
-see [bootstrap provenance](CATALOG_BOOTSTRAP.md). The signed stable catalog is published. The current TUI keeps Plugin
-update, rollback, uninstall, catalog refresh, and shared-key rotation as direct-command-only operations. The agreed next
-TUI step adds ordinary Plugin updates with an impact review and explicit confirmation; recovery, signing, and unusual
-administrative operations remain direct-command-only. See
+see [bootstrap provenance](CATALOG_BOOTSTRAP.md). The signed stable catalog is published. The TUI supports ordinary
+one-at-a-time Plugin updates with an impact review and explicit confirmation. Plugin rollback, uninstall, catalog
+refresh, shared-key rotation, recovery, signing, and unusual administrative operations remain direct-command-only. See
 [GitHub issue #429](https://github.com/the-Drunken-coder/Atlas-Modernization/issues/429).
 
 This document defines the independently versioned first-party Plugin release, the signed Atlas Plugin catalog, and the
@@ -189,8 +188,8 @@ minimum checkpoint embedded in its CLI. A higher trusted epoch supersedes every 
 a cached catalog until `expires_at`. When accepting a newer pair, it also preserves every previously observed Plugin,
 release identity, display name, release-document URL and hash, and true revocation; a skipped sequence does not permit
 deletion, metadata mutation, or unrevocation. After expiry, installed Plugins continue to run and the operator may
-inspect, disable, or uninstall them. Install, enable, update, and manual rollback require a fresh catalog. The menu
-checks when opened and exposes a manual refresh; no background updater runs.
+inspect, disable, or uninstall them. Install, enable, update, and manual rollback require a fresh catalog. The menu reads
+the accepted local catalog. Catalog refresh remains an explicit direct command, and no background updater runs.
 
 ## Revocation and key rotation
 
