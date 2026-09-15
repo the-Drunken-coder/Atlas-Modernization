@@ -209,6 +209,7 @@ export function createLogStream(
     resolveDone = resolve;
     rejectDone = reject;
   });
+  void done.catch(() => undefined);
 
   const emitLine = (line: string): void => {
     onOutput?.(line);

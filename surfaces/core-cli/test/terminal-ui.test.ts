@@ -435,6 +435,64 @@ describe("Atlas Core terminal UI", () => {
     await menu;
   });
 
+  it("upgrades Plugin Escape cancellation to exit before cleanup completes", async () => {
+    const terminal = new TestTerminal(80, true, 24);
+    const deployment = operator();
+    const plugin = {
+      pluginId: "building_scan",
+      displayName: "Building Scan",
+      lifecycle: "query_only" as const,
+      enabled: false,
+      packaged: true
+    };
+    let finishEnable: (() => void) | undefined;
+    deployment.pluginStatuses.mockResolvedValue([plugin]);
+    deployment.pluginEnable.mockImplementation(
+      async (_pluginId, reportActivity) =>
+        await new Promise<PluginOperationOutcome>((resolve) => {
+          reportActivity?.({ level: "working", message: "Preparing enable", stage: "operation" });
+          finishEnable = () => resolve({ previousDeploymentPreserved: true, status: "cancelled" });
+        })
+    );
+    deployment.cancelPending.mockImplementation(() => undefined);
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+    let resolved = false;
+    const completion = menu.then(
+      () => {
+        resolved = true;
+        return "resolved" as const;
+      },
+      () => "rejected" as const
+    );
+
+    await terminal.waitFor("Manage Plugins");
+    for (let index = 0; index < 4; index += 1) {
+      terminal.write("\u001b[B");
+      await nextInputTurn();
+    }
+    terminal.write("\r");
+    await terminal.waitFor("PLUGIN CATALOG");
+    terminal.write("\r");
+    await terminal.waitFor("Preparing enable");
+    terminal.write("\u001b");
+    await vi.waitFor(() => expect(deployment.cancelPending).toHaveBeenCalledOnce());
+    terminal.write("\u0003");
+    await nextInputTurn();
+    terminal.write("\u001b");
+    await nextInputTurn();
+    finishEnable?.();
+    await vi.waitFor(() => expect(deployment.resumeAfterCancellation).toHaveBeenCalledOnce());
+    const outcome = await Promise.race([
+      completion,
+      new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 500))
+    ]);
+    if (outcome === "timeout") terminal.input.emit("end");
+    expect(await completion).toBe("resolved");
+
+    expect(resolved).toBe(true);
+    expect(deployment.cancelPending).toHaveBeenCalledOnce();
+  });
+
   it("cancels and exits after Plugin cleanup on Ctrl-C", async () => {
     const terminal = new TestTerminal();
     const deployment = operator();
@@ -1055,6 +1113,56 @@ describe("Atlas Core terminal UI", () => {
     expect(deployment.resumeAfterCancellation).toHaveBeenCalledOnce();
     terminal.write("q");
     await menu;
+  });
+
+  it("upgrades lifecycle Escape cancellation to exit before cleanup completes", async () => {
+    const terminal = new TestTerminal(80, true, 24);
+    const deployment = operator();
+    let finish: (() => void) | undefined;
+    deployment.runLifecycle.mockImplementationOnce(
+      async (_operation, report) =>
+        await new Promise<LifecycleOperationResult>((resolve) => {
+          report?.({ message: "Stopping services", stage: "operation" });
+          finish = () =>
+            resolve({
+              previousDeploymentPreserved: true,
+              status: "cancelled",
+              summary: "Stop Atlas Core cancelled."
+            });
+        })
+    );
+    deployment.cancelPending.mockImplementation(() => undefined);
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+    let resolved = false;
+    const completion = menu.then(
+      () => {
+        resolved = true;
+        return "resolved" as const;
+      },
+      () => "rejected" as const
+    );
+
+    await terminal.waitFor("Stop Atlas Core");
+    terminal.write("\u001b[B".repeat(2));
+    terminal.write("\r");
+    await terminal.waitFor("Stopping services");
+    terminal.write("\u001b");
+    await vi.waitFor(() => expect(deployment.cancelPending).toHaveBeenCalledOnce());
+    terminal.write("\u0003");
+    await nextInputTurn();
+    terminal.write("\u001b");
+    await nextInputTurn();
+    finish?.();
+    await vi.waitFor(() => expect(deployment.resumeAfterCancellation).toHaveBeenCalledOnce());
+    const outcome = await Promise.race([
+      completion,
+      new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 500))
+    ]);
+    if (outcome === "timeout") terminal.input.emit("end");
+    expect(await completion).toBe("resolved");
+
+    expect(resolved).toBe(true);
+    expect(deployment.cancelPending).toHaveBeenCalledOnce();
   });
 
   it("keeps a lifecycle cleanup failure visible and resumes the operator", async () => {

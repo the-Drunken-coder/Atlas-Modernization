@@ -114,6 +114,17 @@ describe("log stream primitives", () => {
     expect(errors).toHaveLength(1);
   });
 
+  it("does not leave an early source failure unhandled before wait is observed", async () => {
+    const fixture = source();
+    const stream = createLogStream("api", fixture.stream);
+    fixture.close({ status: 17, stderr: "unavailable" });
+
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const waitPromise = stream.wait();
+    expect(stream.wait()).toBe(waitPromise);
+    await expect(waitPromise).rejects.toThrow("exit code 17");
+  });
+
   it("keeps stdout and stderr partial lines independent", async () => {
     const fixture = source();
     const stream = createLogStream("api", fixture.stream);

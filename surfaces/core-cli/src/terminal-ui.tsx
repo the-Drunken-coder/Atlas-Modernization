@@ -422,8 +422,10 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
   const cancelLifecycleOperation = useCallback(
     (disposition: "return" | "exit") => {
       if (activeLifecycleOperation.current === undefined) return;
-      lifecycleCancellation.current ??= disposition;
-      operator.cancelPending();
+      const cancellationRequested = lifecycleCancellation.current !== undefined;
+      if (disposition === "exit") lifecycleCancellation.current = "exit";
+      else lifecycleCancellation.current ??= "return";
+      if (!cancellationRequested) operator.cancelPending();
       setScreen((current) => lifecycleCancellationScreen(current, "Cancellation requested. Waiting for safe cleanup."));
     },
     [operator]
@@ -540,9 +542,10 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
   const cancelPluginActivity = useCallback(
     (disposition: "return" | "exit") => {
       const operationId = activePluginOperation.current;
+      if (disposition === "exit") pluginCancellation.current = "exit";
+      else pluginCancellation.current ??= "return";
       if (operationId === undefined || pluginCancellationRequested.current) return;
       pluginCancellationRequested.current = true;
-      pluginCancellation.current = disposition;
       operator.cancelPending();
       setScreen((current) =>
         current.kind === "plugin-activity" &&
