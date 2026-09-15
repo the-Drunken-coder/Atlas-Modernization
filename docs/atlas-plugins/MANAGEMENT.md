@@ -1,6 +1,11 @@
 # Plugin management
 
-Status: the independent Plugin lifecycle and release workflow are released with Atlas Core 0.2.0 and Building Scan 0.1.0. Candidate-image checks passed on linux/amd64 and linux/arm64. The approved first TUI version keeps independent Plugin update, rollback, uninstall, catalog refresh, and shared-key rotation, plus recovery and supervision, as direct-command-only operations; see [GitHub issue #359](https://github.com/the-Drunken-coder/Atlas-Modernization/issues/359). Existing published Core
+Status: the independent Plugin lifecycle and release workflow are released with Atlas Core 0.2.0 and Building Scan 0.1.0.
+Candidate-image checks passed on linux/amd64 and linux/arm64. The current TUI keeps independent Plugin update, rollback,
+uninstall, catalog refresh, and shared-key rotation, plus recovery and supervision, as direct-command-only operations.
+The agreed next TUI step adds the ordinary Plugin update path with an impact review and explicit confirmation; recovery,
+signing, and unusual administrative operations remain direct-command-only. See
+[GitHub issue #429](https://github.com/the-Drunken-coder/Atlas-Modernization/issues/429). Existing published Core
 packages may still contain the bundled catalog; the source implementation uses independent catalog state for schema-4
 deployments. Production signing trust and Pages configuration are recorded in [bootstrap provenance](CATALOG_BOOTSTRAP.md).
 The repository contains only the public key; the signed stable catalog is published.
