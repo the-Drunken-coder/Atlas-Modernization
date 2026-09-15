@@ -115,7 +115,8 @@ An Atlas-managed extension that consumes External sources or Atlas data and may 
 _Avoid_: Asset, External source, standalone API
 
 **Plugin release**:
-An immutable version of one Plugin that Atlas can install independently of an Atlas Core release.
+An immutable version of one Plugin that Atlas can publish and install without publishing or installing a new Atlas Core
+version. A Plugin release may still require an Atlas Core version that supports its declared contracts.
 _Avoid_: Core release, running Plugin
 
 **Plugin catalog**:
