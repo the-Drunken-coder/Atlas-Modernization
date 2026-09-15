@@ -1659,9 +1659,38 @@ function LogViewer({
 }
 
 function DiagnosticsScreen({ onBack, view }: { onBack(): void; view: DiagnosticsResult | Error }): ReactNode {
-  const { columns } = useWindowSize();
+  const { columns, rows } = useWindowSize();
+  const scrollRef = useRef(0);
+  const [scroll, setScroll] = useState(0);
+  const lines = diagnosticsLines(view, columns);
+  const headerRows = wrappedRows("ATLAS CORE > DIAGNOSTICS", columns) + 1;
+  const footerTemplate = "↑/↓ scroll   Enter or Esc back";
+  const footerRows = 1 + wrappedRows(footerTemplate, columns);
+  const viewportRows = Math.max(1, rows - headerRows - footerRows);
+  const maxScroll = Math.max(0, lines.length - viewportRows);
+  const hasEnoughColumns = columns >= MINIMUM_TERMINAL_COLUMNS;
+  const hasEnoughRows = rows >= headerRows + footerRows + 1;
+  const canScroll = hasEnoughColumns && hasEnoughRows && maxScroll > 0;
+  const scrollOffset = Math.min(scroll, maxScroll);
+  scrollRef.current = scrollOffset;
+  const footer = maxScroll > 0 ? footerTemplate : "Enter or Esc back";
+
+  useEffect(() => {
+    setScroll((current) => Math.min(current, maxScroll));
+  }, [maxScroll]);
+
   useInput((input, key) => {
     if (key.escape || key.return || (key.ctrl && input === "c") || input === "q") onBack();
+    else if (hasCommandModifier(key)) return;
+    else if (key.upArrow && canScroll) {
+      const next = Math.max(0, scrollRef.current - 1);
+      scrollRef.current = next;
+      setScroll(next);
+    } else if (key.downArrow && canScroll) {
+      const next = Math.min(maxScroll, scrollRef.current + 1);
+      scrollRef.current = next;
+      setScroll(next);
+    }
   });
   if (columns < MINIMUM_TERMINAL_COLUMNS) {
     return (
@@ -1676,22 +1705,37 @@ function DiagnosticsScreen({ onBack, view }: { onBack(): void; view: Diagnostics
     <Box flexDirection="column" width={columns}>
       <Header title="ATLAS CORE > DIAGNOSTICS" />
       <Rule width={columns} />
-      {view instanceof Error ? (
-        <Text color="red">Diagnostics failed: {view.message}</Text>
-      ) : (
-        <>
-          <Text color={view.healthy ? "green" : "red"}>{view.healthy ? "All checks passed." : "Checks failed."}</Text>
-          {view.checks.map((check) => (
-            <Text color={check.status === "ok" ? "green" : "red"} key={check.label} wrap="wrap">
-              [{check.status === "ok" ? "ok" : "fail"}] {check.label}: {check.detail}
+      <Box height={viewportRows} overflowY="hidden">
+        <Box flexDirection="column" flexShrink={0} position="relative" top={-scrollOffset}>
+          {lines.map((line, index) => (
+            <Text {...(line.color ? { color: line.color } : {})} key={`${index}-${line.text}`}>
+              {line.text || " "}
             </Text>
           ))}
-        </>
-      )}
+        </Box>
+      </Box>
       <Rule width={columns} />
-      <Text dimColor>Enter or Esc back</Text>
+      <Text dimColor>{footer}</Text>
     </Box>
   );
+}
+
+function diagnosticsLines(view: DiagnosticsResult | Error, width: number): ActivityLine[] {
+  if (view instanceof Error) {
+    return activityMessageLines({ color: "red", text: `Diagnostics failed: ${view.message}` }, width);
+  }
+  return [
+    { color: view.healthy ? "green" : "red", text: view.healthy ? "All checks passed." : "Checks failed." },
+    ...view.checks.flatMap((check) =>
+      activityMessageLines(
+        {
+          color: check.status === "ok" ? "green" : "red",
+          text: `[${check.status === "ok" ? "ok" : "fail"}] ${check.label}: ${check.detail}`
+        },
+        width
+      )
+    )
+  ];
 }
 
 function PluginActivityScreen({

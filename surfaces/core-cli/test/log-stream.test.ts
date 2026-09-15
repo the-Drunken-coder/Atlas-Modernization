@@ -142,9 +142,36 @@ describe("log stream primitives", () => {
 
     buffer.toggleFollowing();
     buffer.setWidth(4);
-    expect(buffer.snapshot()).toMatchObject({ lines: ["efgh", "1234"], following: false });
+    expect(buffer.snapshot()).toMatchObject({ lines: ["1234", "newe"], following: false });
     buffer.scroll(-1);
-    expect(buffer.snapshot()).toMatchObject({ lines: ["abcd", "efgh"], following: false });
+    expect(buffer.snapshot()).toMatchObject({ lines: ["efgh", "1234"], following: false });
+  });
+
+  it("preserves the paused logical character offset when rewrapping from 80 to 40 columns", () => {
+    const buffer = new LogBuffer(10);
+    buffer.setWidth(80);
+    buffer.setViewport(2);
+    buffer.append(`${"a".repeat(80)}${"b".repeat(80)}${"c".repeat(20)}`);
+    buffer.append("newest");
+    buffer.scroll(-1);
+    expect(buffer.snapshot()).toMatchObject({ lines: ["b".repeat(80), "c".repeat(20)], following: false });
+
+    buffer.setWidth(40);
+    expect(buffer.snapshot()).toMatchObject({ lines: ["b".repeat(40), "b".repeat(40)], following: false });
+  });
+
+  it("bounds materialized display rows for large retained records", () => {
+    const buffer = new LogBuffer(200);
+    buffer.setViewport(1);
+    const record = "x".repeat(64 * 1024);
+
+    for (let index = 0; index < 200; index += 1) buffer.append(record);
+    buffer.setWidth(1);
+
+    const snapshot = buffer.snapshot();
+    expect(buffer.size).toBe(200);
+    expect(snapshot.lines).toEqual(["x"]);
+    expect(snapshot.lastLine).toBeLessThanOrEqual(100_000);
   });
 
   it("frames split output and reports a failed controlled stream", async () => {

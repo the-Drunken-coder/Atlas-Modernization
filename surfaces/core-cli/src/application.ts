@@ -5288,6 +5288,13 @@ async function runDirectLifecycleMutation(
   stdout: { write(data: string): void },
   stderr: { write(data: string): void }
 ): Promise<number> {
+  const progress: LifecycleOperationProgress[] = [];
+  const writeProgress = (stream: { write(data: string): void }, includeFailure = true): void => {
+    for (const event of progress) {
+      if (!includeFailure && event.message.startsWith(`${lifecycleOperationLabel(operation)} failed:`)) continue;
+      stream.write(`[${event.stage}] ${event.message}\n`);
+    }
+  };
   let cancellationRequested = false;
   const cancel = (): void => {
     if (cancellationRequested) return;
@@ -5296,13 +5303,18 @@ async function runDirectLifecycleMutation(
   };
   process.on("SIGINT", cancel);
   try {
-    const result = await deployment.runLifecycle(operation);
+    const result = await deployment.runLifecycle(operation, (event) => progress.push(event));
     if (cancellationRequested) deployment.resumeAfterCancellation();
-    if (result.status === "success") return 0;
+    if (result.status === "success") {
+      writeProgress(stdout);
+      return 0;
+    }
     if (result.status === "cancelled") {
+      writeProgress(stdout);
       stdout.write(`[cancel] ${result.summary}\n`);
       return 130;
     }
+    writeProgress(stderr, false);
     stderr.write(`${result.error}\n`);
     if (result.snapshot) stderr.write(`Deployment state: ${result.snapshot.status}. ${result.snapshot.detail}\n`);
     return 1;

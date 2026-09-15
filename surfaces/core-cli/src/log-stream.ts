@@ -91,6 +91,7 @@ type LogDisplayRow = {
 };
 
 const MAX_LOG_LINE_LENGTH = 64 * 1024;
+const MAX_DISPLAY_ROWS = 100_000;
 
 function boundedLogLineTail(line: string): string {
   return line.length > MAX_LOG_LINE_LENGTH ? line.slice(-MAX_LOG_LINE_LENGTH) : line;
@@ -179,24 +180,38 @@ export class LogBuffer {
     };
   }
 
-  #anchor(): { recordId: number; rowIndex: number } | undefined {
+  #anchor(): { recordId: number; offset: number } | undefined {
     const row = this.#rows[this.#topRowIndex];
-    return row ? { recordId: row.recordId, rowIndex: row.rowIndex } : undefined;
+    return row ? { recordId: row.recordId, offset: row.rowIndex * (this.#width ?? 1) } : undefined;
   }
 
-  #rebuild(anchor: { recordId: number; rowIndex: number } | undefined): void {
-    this.#rows = this.#records.flatMap((record) => {
+  #rebuild(anchor: { recordId: number; offset: number } | undefined): void {
+    const rows: LogDisplayRow[] = [];
+    for (
+      let recordIndex = this.#records.length - 1;
+      recordIndex >= 0 && rows.length < MAX_DISPLAY_ROWS;
+      recordIndex -= 1
+    ) {
+      const record = this.#records[recordIndex];
+      if (!record) continue;
       const wrapped = this.#width
         ? wrapAnsi(record.text, this.#width, { hard: true, trim: false }).split("\n")
         : [record.text];
-      return wrapped.map((text, rowIndex) => ({ recordId: record.id, rowIndex, text }));
-    });
+      const firstRow = Math.max(0, wrapped.length - (MAX_DISPLAY_ROWS - rows.length));
+      for (let rowIndex = wrapped.length - 1; rowIndex >= firstRow; rowIndex -= 1) {
+        const text = wrapped[rowIndex];
+        if (text === undefined) continue;
+        rows.push({ recordId: record.id, rowIndex, text });
+      }
+    }
+    this.#rows = rows.reverse();
     if (this.#following) {
       this.#moveToLatest();
       return;
     }
     const anchorRows = anchor ? this.#rows.filter(({ recordId }) => recordId === anchor.recordId) : [];
-    const translatedAnchor = anchorRows[Math.min(anchor?.rowIndex ?? 0, Math.max(0, anchorRows.length - 1))];
+    const targetRowIndex = anchor ? Math.floor(anchor.offset / (this.#width ?? 1)) : 0;
+    const translatedAnchor = anchorRows.find(({ rowIndex }) => rowIndex >= targetRowIndex) ?? anchorRows.at(-1);
     if (translatedAnchor) {
       this.#topRowIndex = this.#rows.indexOf(translatedAnchor);
     } else if (anchor) {

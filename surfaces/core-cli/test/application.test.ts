@@ -3175,6 +3175,27 @@ describe("atlas-core CLI", () => {
     ]);
   });
 
+  it.each(["start", "restart"] as const)("keeps direct %s supervision failures off stdout", async (operation) => {
+    const test = runtime();
+    await markManagedInitialized(test, false);
+
+    expect(await runCLI([operation], test.context)).toBe(1);
+    expect(test.stdout.join("")).toBe("");
+    expect(test.stderr.join("")).toContain(`atlas-core ${operation} --manual`);
+    expect(test.stderr.join("")).not.toContain(`${operation === "start" ? "Start" : "Restart"} Atlas Core failed:`);
+  });
+
+  it("keeps a direct stop failure off stdout without duplicating its error", async () => {
+    const test = runtime();
+    markInitialized(test);
+    test.runner.failComposeDown = true;
+
+    expect(await runCLI(["stop"], test.context)).toBe(1);
+    expect(test.stdout.join("")).toBe("");
+    expect(test.stderr.join("")).toContain("injected compose down failure");
+    expect(test.stderr.join("")).not.toContain("Stop Atlas Core failed:");
+  });
+
   it.each(["darwin", "linux"] as const)("rejects an installed but inactive %s supervisor", async (platform) => {
     const test = runtime();
     await markManagedInitialized(test, false);

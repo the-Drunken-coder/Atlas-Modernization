@@ -890,6 +890,90 @@ describe("Atlas Core terminal UI", () => {
     await menu;
   });
 
+  it("scrolls long diagnostic failures within a 40x24 viewport", async () => {
+    const terminal = new TestTerminal(40, true, 24);
+    const deployment = operator();
+    const laterCheck = "later runtime check";
+    deployment.diagnostics.mockResolvedValue({
+      healthy: false,
+      checks: [
+        {
+          label: "configuration",
+          status: "failure",
+          detail: Array.from({ length: 28 }, (_, index) => `failure detail line ${index + 1}`).join("\n")
+        },
+        { label: "runtime", status: "ok", detail: laterCheck }
+      ]
+    });
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("View logs and diagnostics");
+    terminal.write("\u001b[B\r");
+    await terminal.waitFor("Logs and diagnostics");
+    terminal.write("\u001b[B".repeat(5));
+    terminal.write("\r");
+    await terminal.waitFor("DIAGNOSTICS");
+    await terminal.waitFor("failure detail line 1");
+    const beforeScroll = terminal.raw.length;
+    terminal.write("\u001b[B".repeat(32));
+    await terminal.waitForRawChange(beforeScroll);
+    expect(stripAnsi(terminal.raw.slice(beforeScroll))).toContain(laterCheck);
+    expect(terminal.text).toContain("Enter or Esc back");
+    terminal.write("\u001b");
+    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
+    terminal.write("q");
+    await menu;
+  });
+
+  it("keeps diagnostics at the top while width or height is undersized", async () => {
+    const terminal = new TestTerminal(40, true, 24);
+    const deployment = operator();
+    const firstDetail = "FIRST_MARKER";
+    deployment.diagnostics.mockResolvedValue({
+      healthy: false,
+      checks: [
+        {
+          label: "configuration",
+          status: "failure",
+          detail: [firstDetail, ...Array.from({ length: 27 }, (_, index) => `failure detail line ${index + 2}`)].join(
+            "\n"
+          )
+        },
+        { label: "runtime", status: "ok", detail: "later runtime check" }
+      ]
+    });
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("View logs and diagnostics");
+    terminal.write("\u001b[B\r");
+    await terminal.waitFor("Logs and diagnostics");
+    terminal.write("\u001b[B".repeat(5));
+    terminal.write("\r");
+    await terminal.waitFor("DIAGNOSTICS");
+    await terminal.waitFor(firstDetail);
+
+    terminal.resize(36);
+    await terminal.waitFor("Resize terminal to at least 40");
+    terminal.write("\u001b[B".repeat(12));
+    const beforeWidthRestore = terminal.raw.length;
+    terminal.resize(40);
+    await terminal.waitForRawChange(beforeWidthRestore);
+    expect(stripAnsi(terminal.raw.slice(beforeWidthRestore))).toContain(firstDetail);
+
+    terminal.resize(40, 4);
+    await nextInputTurn();
+    terminal.write("\u001b[B".repeat(12));
+    const beforeHeightRestore = terminal.raw.length;
+    terminal.resize(40, 24);
+    await terminal.waitForRawChange(beforeHeightRestore);
+    expect(stripAnsi(terminal.raw.slice(beforeHeightRestore))).toContain(firstDetail);
+
+    terminal.write("q");
+    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
+    terminal.write("q");
+    await menu;
+  });
+
   it("runs initialization from the not-initialized action-list home", async () => {
     const terminal = new TestTerminal(80, true, 24);
     const deployment = operator({ status: "not-initialized", detail: "Initialize Atlas Core." });
