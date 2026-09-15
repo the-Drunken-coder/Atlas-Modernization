@@ -115,6 +115,7 @@ type AtlasCoreAppProps = {
 };
 
 const MINIMUM_TERMINAL_COLUMNS = 40;
+const MINIMUM_TERMINAL_ROWS = 24;
 const MAX_UPDATE_EVENTS = 200;
 const MAX_UPDATE_EVENT_MESSAGE_LENGTH = 2_048;
 const CORE_UPDATE_REVIEW_COPY =
@@ -2289,7 +2290,7 @@ function PluginsMenu({
   const plugins = view instanceof Error ? [] : view;
   const index = Math.min(selected, Math.max(0, plugins.length - 1));
   const plugin = plugins[index];
-  const canInteract = columns >= MINIMUM_TERMINAL_COLUMNS;
+  const canInteract = columns >= MINIMUM_TERMINAL_COLUMNS && rows >= MINIMUM_TERMINAL_ROWS;
   const footer =
     plugins.length > 0
       ? `↑/↓ ${index + 1}/${plugins.length}   Enter install/enable/disable   l logs   Esc back`
@@ -2332,6 +2333,15 @@ function PluginsMenu({
     }
   });
   if (columns < MINIMUM_TERMINAL_COLUMNS) return <NarrowTerminal />;
+  if (rows < MINIMUM_TERMINAL_ROWS) {
+    return (
+      <Box flexDirection="column" width={columns}>
+        <Header title="ATLAS CORE > PLUGINS" />
+        <Text>Resize terminal to at least 24 rows.</Text>
+        <Text dimColor>Esc returns without changing Plugins.</Text>
+      </Box>
+    );
+  }
   return (
     <Box flexDirection="column" width={columns}>
       <Header title="ATLAS CORE > PLUGINS" />

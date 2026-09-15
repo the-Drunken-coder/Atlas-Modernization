@@ -1675,6 +1675,42 @@ describe("Atlas Core terminal UI", () => {
     await menu;
   });
 
+  it("does not accept Plugin actions while the terminal is too short", async () => {
+    const terminal = new TestTerminal(80, true, 24);
+    const deployment = operator();
+    deployment.pluginStatuses.mockResolvedValue([
+      {
+        pluginId: "building_scan",
+        displayName: "Building Scan",
+        lifecycle: "query_only",
+        enabled: true,
+        packaged: true
+      }
+    ]);
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("Manage Plugins");
+    terminal.write("\u001b[B".repeat(4));
+    terminal.write("\r");
+    await terminal.waitFor("PLUGIN CATALOG");
+    terminal.resize(80, 23);
+    await terminal.waitFor("Resize terminal to at least 24 rows");
+    terminal.write("\r");
+    terminal.write("l");
+    await nextInputTurn();
+
+    expect(deployment.pluginDisable).not.toHaveBeenCalled();
+    expect(deployment.openPluginLogStream).not.toHaveBeenCalled();
+    const beforeRestore = terminal.raw.length;
+    terminal.resize(80, 24);
+    await terminal.waitForRawChange(beforeRestore);
+    expect(stripAnsi(terminal.raw.slice(beforeRestore))).toContain("Building Scan");
+    terminal.write("q");
+    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
+    terminal.write("q");
+    await menu;
+  });
+
   it("updates only changed terminal lines when an arrow key moves selection", async () => {
     const terminal = new TestTerminal();
     const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(operator());

@@ -4663,7 +4663,7 @@ describe("atlas-core CLI", () => {
     expect(observed).toMatchObject({ status: "degraded", canReset: false });
   });
 
-  it("reports a failed Core update as degraded recovery-required state in the cheap snapshot", async () => {
+  it("preserves failed Core update recovery state in snapshots and service details", async () => {
     const test = runtime();
     markInitialized(test);
     setCoreVersion(test, "0.1.2");
@@ -4671,10 +4671,12 @@ describe("atlas-core CLI", () => {
 
     expect(await runCLI(["update", "all"], test.context)).toBe(1);
     let observed: DeploymentDetails["snapshot"] | undefined;
+    let details: DeploymentDetails | undefined;
     test.context.interactive = {
       configureAdmin: async () => undefined,
       runMenu: async (operator) => {
         observed = await operator.snapshot();
+        details = await operator.details();
       },
       runUpdate: async () => undefined
     };
@@ -4685,6 +4687,15 @@ describe("atlas-core CLI", () => {
       canReset: true,
       coreVersion: PACKAGE_VERSION,
       detail: expect.stringContaining("recovery")
+    });
+    expect(details).toMatchObject({
+      snapshot: {
+        status: "degraded",
+        canReset: true,
+        coreVersion: PACKAGE_VERSION,
+        detail: expect.stringContaining("recovery")
+      },
+      services: expect.arrayContaining([expect.objectContaining({ id: "api" })])
     });
   });
 

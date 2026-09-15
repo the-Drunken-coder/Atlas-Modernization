@@ -2667,41 +2667,43 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     const runtime = await this.#preflight();
     return await this.#dockerRuntimeScope.run(runtime, async () => {
       this.#assertStateMatchesEngine(state, runtime.engineId);
-      if (state.phase === "initializing") {
-        this.#assertPackageVersionMatches(state);
-        const pendingTransaction = this.#pendingTransaction(runtime.engineId);
-        const canReset = this.#hasValidatedPendingCoreTransaction(runtime.engineId, state);
-        if (pendingTransaction?.operation === "core-update") {
-          return {
-            status: "degraded",
-            canReset,
-            coreVersion: state.packageVersion,
-            detail: "Atlas Core update recovery is pending. Run atlas-core recover status before retrying."
-          };
-        }
-        if (
-          pendingTransaction?.operation !== "init" ||
-          (pendingTransaction.phase !== "prepared" && pendingTransaction.phase !== "runtime-changing")
-        ) {
-          return {
-            status: "degraded",
-            canReset,
-            coreVersion: state.packageVersion,
-            detail:
-              pendingTransaction?.operation === "init"
-                ? "Atlas Core initialization recovery is pending. Run atlas-core recover status before retrying."
-                : "Atlas Core has an incomplete deployment state. Run atlas-core recover status before retrying."
-          };
-        }
-        return {
-          status: "initializing",
-          canReset,
-          coreVersion: state.packageVersion,
-          detail: "Atlas Core initialization can be resumed."
-        };
-      }
+      if (state.phase === "initializing") return this.#initializingSnapshot(state, runtime.engineId);
       return await this.#deploymentSnapshot(state.enabledPlugins);
     });
+  }
+
+  #initializingSnapshot(state: DeploymentState, dockerEngineId: string): DeploymentSnapshot {
+    this.#assertPackageVersionMatches(state);
+    const pendingTransaction = this.#pendingTransaction(dockerEngineId);
+    const canReset = this.#hasValidatedPendingCoreTransaction(dockerEngineId, state);
+    if (pendingTransaction?.operation === "core-update") {
+      return {
+        status: "degraded",
+        canReset,
+        coreVersion: state.packageVersion,
+        detail: "Atlas Core update recovery is pending. Run atlas-core recover status before retrying."
+      };
+    }
+    if (
+      pendingTransaction?.operation !== "init" ||
+      (pendingTransaction.phase !== "prepared" && pendingTransaction.phase !== "runtime-changing")
+    ) {
+      return {
+        status: "degraded",
+        canReset,
+        coreVersion: state.packageVersion,
+        detail:
+          pendingTransaction?.operation === "init"
+            ? "Atlas Core initialization recovery is pending. Run atlas-core recover status before retrying."
+            : "Atlas Core has an incomplete deployment state. Run atlas-core recover status before retrying."
+      };
+    }
+    return {
+      status: "initializing",
+      canReset,
+      coreVersion: state.packageVersion,
+      detail: "Atlas Core initialization can be resumed."
+    };
   }
 
   #pendingTransaction(dockerEngineId: string): Pick<TransactionJournal, "operation" | "phase"> | undefined {
@@ -2717,12 +2719,21 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   }
 
   async details(signal?: AbortSignal): Promise<DeploymentDetails> {
-    const state = this.#requireInitialized();
+    if (!existsSync(this.#configDir) || !existsSync(this.#envFile) || !existsSync(this.#stateFile)) {
+      throw new Error("Atlas Core is not initialized. Run atlas-core init first.");
+    }
+    this.#assertPrivateConfiguration();
+    const state = this.#readState();
+    if (!state) {
+      throw new Error("Atlas Core state is invalid. Restore a valid state file before operating this deployment.");
+    }
     const runtime = await this.#preflight(signal);
     return await this.#dockerRuntimeScope.run(runtime, async () => {
       this.#assertStateMatchesEngine(state, runtime.engineId);
+      const recoverySnapshot =
+        state.phase === "initializing" ? this.#initializingSnapshot(state, runtime.engineId) : undefined;
       const serviceStates = await this.#composeServiceStates(state.enabledPlugins, signal);
-      const snapshot = deploymentSnapshotFromServices(serviceStates, state.packageVersion);
+      const snapshot = recoverySnapshot ?? deploymentSnapshotFromServices(serviceStates, state.packageVersion);
       const { services, error } = await this.#deploymentServices(serviceStates, signal);
       const image = services.find((service) => service.id === "api")?.image;
       return {
