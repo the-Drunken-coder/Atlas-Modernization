@@ -4135,6 +4135,38 @@ describe("atlas-core CLI", () => {
     });
     expect(test.runner.calls.some((call) => call.args[0] === "info")).toBe(true);
     expect(test.runner.calls.some((call) => composeCommand(call)[0] === "ps")).toBe(false);
+
+    test.stdout.length = 0;
+    test.stderr.length = 0;
+    expect(await runCLI(["status"], test.context)).toBe(1);
+    expect(test.stdout.join("")).not.toContain("Atlas Core is running");
+    expect(test.stderr.join("")).toContain("initialization can be resumed");
+  });
+
+  it("keeps initialization retryable when MinIO provisioning fails before a transaction exists", async () => {
+    const test = runtime();
+    test.runner.failComposeUp = true;
+
+    expect(await runCLI(["init"], test.context)).toBe(1);
+    const config = join(test.home, ".atlas", "core");
+    expect(existsSync(join(config, "transaction"))).toBe(false);
+    expect(JSON.parse(readFileSync(join(config, "state.json"), "utf8"))).toMatchObject({ phase: "initializing" });
+    expect(test.runner.existingVolumes).toContain(MINIO_VOLUME);
+
+    let observed: DeploymentDetails["snapshot"] | undefined;
+    test.context.interactive = {
+      configureAdmin: async () => undefined,
+      runMenu: async (operator) => {
+        observed = await operator.snapshot();
+      },
+      runUpdate: async () => undefined
+    };
+    expect(await runCLI([], test.context), test.stderr.join("")).toBe(0);
+    expect(observed).toMatchObject({
+      status: "initializing",
+      canReset: false,
+      detail: expect.stringContaining("retried")
+    });
   });
 
   it.each(["core-started", "credentials-durable"] as const)(
@@ -4930,6 +4962,7 @@ describe("atlas-core CLI", () => {
 
     const args = target === "core" ? ["logs", "core"] : ["plugins", "logs", plugin.pluginId];
     expect(await runCLI(args, test.context)).toBe(1);
+    expect(test.stdout.join("")).not.toContain("log stream unavailable");
     expect(test.stderr.join("")).toContain("docker compose logs failed with exit code 17: log stream unavailable");
   });
 

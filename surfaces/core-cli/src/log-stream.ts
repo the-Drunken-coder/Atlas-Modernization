@@ -277,7 +277,7 @@ export class LogBuffer {
 export function createLogStream(
   service: LogStream["service"],
   source: CommandOutputStream,
-  onOutput?: (line: string) => void
+  onOutput?: (stream: "stdout" | "stderr", line: string) => void
 ): LogStream {
   const lineListeners = new Set<(line: string) => void>();
   const pendingLines: string[] = [];
@@ -296,18 +296,18 @@ export function createLogStream(
   });
   void done.catch(() => undefined);
 
-  const emitLine = (line: string): void => {
-    onOutput?.(line);
+  const emitLine = (stream: "stdout" | "stderr", line: string): void => {
+    onOutput?.(stream, line);
     if (lineListeners.size === 0) {
       pendingLines.push(line);
       if (pendingLines.length > 200) pendingLines.shift();
     }
     for (const listener of lineListeners) listener(line);
   };
-  const frameChunk = (pending: string, chunk: string): string => {
+  const frameChunk = (stream: "stdout" | "stderr", pending: string, chunk: string): string => {
     const lines = `${pending}${chunk}`.split(/\r?\n/u);
     const remainder = lines.pop() ?? "";
-    for (const line of lines) emitLine(boundedLogLineTail(line));
+    for (const line of lines) emitLine(stream, boundedLogLineTail(line));
     return boundedLogLineTail(remainder);
   };
   const emitError = (error: Error): void => {
@@ -315,8 +315,8 @@ export function createLogStream(
   };
   const finish = (error?: Error): void => {
     if (closed) return;
-    if (stdoutPending) emitLine(stdoutPending);
-    if (stderrPending) emitLine(stderrPending);
+    if (stdoutPending) emitLine("stdout", stdoutPending);
+    if (stderrPending) emitLine("stderr", stderrPending);
     stdoutPending = "";
     stderrPending = "";
     closed = true;
@@ -331,10 +331,10 @@ export function createLogStream(
     closeListeners.clear();
   };
   const removeStdout = source.onStdout((chunk) => {
-    stdoutPending = frameChunk(stdoutPending, chunk);
+    stdoutPending = frameChunk("stdout", stdoutPending, chunk);
   });
   const removeStderr = source.onStderr((chunk) => {
-    stderrPending = frameChunk(stderrPending, chunk);
+    stderrPending = frameChunk("stderr", stderrPending, chunk);
   });
   source.onClose((result) => {
     removeStdout();

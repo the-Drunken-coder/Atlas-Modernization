@@ -2638,6 +2638,11 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       printDeploymentDetails(this.#stderr, details);
       return false;
     }
+    if (snapshot.status === "initializing") {
+      this.#stderr.write(`Atlas Core initialization is incomplete: ${snapshot.detail}\n`);
+      printDeploymentDetails(this.#stderr, details);
+      return false;
+    }
     if (snapshot.status === "degraded") {
       this.#stderr.write(`Atlas Core is not ready: ${snapshot.detail}.\n`);
       printDeploymentDetails(this.#stderr, details);
@@ -2676,6 +2681,14 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     this.#assertPackageVersionMatches(state);
     const pendingTransaction = this.#pendingTransaction(dockerEngineId);
     const canReset = this.#hasValidatedPendingCoreTransaction(dockerEngineId, state);
+    if (!pendingTransaction) {
+      return {
+        status: "initializing",
+        canReset: false,
+        coreVersion: state.packageVersion,
+        detail: "Atlas Core initialization can be retried; existing storage will be revalidated first."
+      };
+    }
     if (pendingTransaction?.operation === "core-update") {
       return {
         status: "degraded",
@@ -2870,7 +2883,11 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     return await this.#openLogStream(service, follow);
   }
 
-  async #openLogStream(service: string | undefined, follow: boolean): Promise<LogStream> {
+  async #openLogStream(
+    service: string | undefined,
+    follow: boolean,
+    onOutput?: (stream: "stdout" | "stderr", line: string) => void
+  ): Promise<LogStream> {
     const state = this.#requireInitialized();
     const runtime = await this.#preflight();
     return await this.#dockerRuntimeScope.run(runtime, async () => {
@@ -2879,7 +2896,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       if (follow) args.push("--follow");
       if (service) args.push(service);
       const source = await this.#runComposeStream(args, state.enabledPlugins);
-      return createLogStream(service, source);
+      return createLogStream(service, source, onOutput);
     });
   }
 
@@ -3000,12 +3017,12 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   }
 
   async #runLogs(service: string | undefined, follow: boolean): Promise<void> {
-    const stream = await this.#openLogStream(service, follow);
-    const removeLine = stream.onLine((line) => this.#stdout.write(`${line}\n`));
+    const stream = await this.#openLogStream(service, follow, (source, line) => {
+      (source === "stdout" ? this.#stdout : this.#stderr).write(`${line}\n`);
+    });
     try {
       await stream.wait();
     } finally {
-      removeLine();
       await stream.close();
     }
   }

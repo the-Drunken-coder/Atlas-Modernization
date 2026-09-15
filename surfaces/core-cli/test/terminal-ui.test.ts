@@ -734,6 +734,24 @@ describe("Atlas Core terminal UI", () => {
     await menu;
   });
 
+  it("keeps home actions available when a degraded detail exceeds the terminal", async () => {
+    const terminal = new TestTerminal(40, true, 24);
+    const deployment = operator({
+      status: "degraded",
+      detail: `Docker preflight failed: ${"x".repeat(64 * 1024)}`
+    });
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("CHOOSE AN ACTION");
+    expect(terminal.text).not.toContain("Action list needs at least");
+    terminal.write("\r");
+    await vi.waitFor(() => expect(deployment.details).toHaveBeenCalledOnce());
+    terminal.write("\u001b");
+    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
+    terminal.write("q");
+    await menu;
+  });
+
   it("opens a controlled bounded log viewer and closes the stream on Escape", async () => {
     const terminal = new TestTerminal(80, true, 24);
     const deployment = operator();

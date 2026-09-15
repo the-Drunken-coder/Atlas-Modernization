@@ -980,7 +980,7 @@ function ActionListMenu({
   const [selected, setSelected] = useState(0);
   const choices = useMemo(() => actionListChoices(snapshot), [snapshot]);
   const index = Math.min(selected, Math.max(0, choices.length - 1));
-  const summary = actionListSummary(snapshot);
+  const summary = actionListSummary(snapshot, columns);
   const requiredRows = actionListMenuRows(summary, choices, columns, notice);
   const canInteract = columns >= MINIMUM_TERMINAL_COLUMNS && rows >= requiredRows;
 
@@ -1060,7 +1060,7 @@ function actionListChoices(snapshot: DeploymentSnapshot): ActionListChoice[] {
   return choices;
 }
 
-function actionListSummary(snapshot: DeploymentSnapshot): KeyValue[] {
+function actionListSummary(snapshot: DeploymentSnapshot, width: number): KeyValue[] {
   const status =
     snapshot.status === "ready"
       ? "Running"
@@ -1071,6 +1071,8 @@ function actionListSummary(snapshot: DeploymentSnapshot): KeyValue[] {
           : snapshot.status === "initializing"
             ? "Initializing"
             : "Not initialized";
+  const labelWidth = Math.min(18, width > 40 ? 18 : 12);
+  const detailWidth = Math.max(1, width - labelWidth);
   return [
     ["Deployment", "local-engine"],
     [
@@ -1082,7 +1084,7 @@ function actionListSummary(snapshot: DeploymentSnapshot): KeyValue[] {
           : "Version unavailable"
     ],
     ["Status", status],
-    ["Detail", snapshot.detail]
+    ["Detail", firstTerminalLine(snapshot.detail, detailWidth)]
   ];
 }
 
