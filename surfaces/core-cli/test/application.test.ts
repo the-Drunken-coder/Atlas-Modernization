@@ -3992,6 +3992,43 @@ describe("atlas-core CLI", () => {
     expect(test.runner.calls.some((call) => composeCommand(call)[0] === "ps")).toBe(false);
   });
 
+  it.each(["core-started", "credentials-durable"] as const)(
+    "reports a late-phase init transaction as degraded recovery state at %s",
+    async (phase) => {
+      const test = runtime();
+      markInitialized(test);
+      const config = join(test.home, ".atlas", "core");
+      const statePath = join(config, "state.json");
+      const state = JSON.parse(readFileSync(statePath, "utf8"));
+      writeFileSync(statePath, `${JSON.stringify({ ...state, phase: "initializing" })}\n`, { mode: 0o600 });
+      const transaction = DeploymentTransactionStore.begin(config, {
+        operation: "init",
+        dockerEngineId: TEST_ENGINE_ID,
+        previousRunning: false,
+        desiredRunning: false
+      });
+      transaction.stage("state.json", readFileSync(statePath));
+      transaction.advance("runtime-changing");
+      transaction.advance("core-started");
+      if (phase === "credentials-durable") transaction.advance(phase);
+      let observed: DeploymentDetails["snapshot"] | undefined;
+      test.context.interactive = {
+        configureAdmin: async () => undefined,
+        runMenu: async (operator) => {
+          observed = await operator.snapshot();
+        },
+        runUpdate: async () => undefined
+      };
+
+      expect(await runCLI([], test.context), test.stderr.join("")).toBe(0);
+      expect(observed).toMatchObject({
+        status: "degraded",
+        coreVersion: PACKAGE_VERSION,
+        detail: expect.stringContaining("recovery")
+      });
+    }
+  );
+
   it("rejects an initializing snapshot when Docker engine ownership mismatches", async () => {
     const test = runtime();
     markInitialized(test);

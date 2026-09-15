@@ -700,7 +700,7 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
         operator.resumeAfterCancellation();
       }
       if (result.cancelled && requestedCancellation === undefined) updateCancellation.current = "exit";
-      const cancelled = result.cancelled || requestedCancellation !== undefined;
+      const cancelled = result.cancelled;
       const status = result.failure ? "failure" : cancelled ? "cancelled" : "success";
       setScreen((current) =>
         current.kind === "update-operation"
@@ -721,7 +721,7 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
         exit();
         return;
       }
-      if (requestedCancellation === "return" && !terminalLost.current && !result.failure) {
+      if (cancelled && requestedCancellation === "return" && !terminalLost.current && !result.failure) {
         if (updateInvolvesCLI(info, scope)) {
           await waitUntilRenderFlush();
           exit();
@@ -2453,7 +2453,9 @@ function UpdateMenu({
           <Text>
             {choice?.scope === "cli"
               ? "CLI-only: install the latest CLI while leaving Atlas Core, credentials, and durable data unchanged."
-              : "Preserve credentials and durable data, install the latest CLI, then return Atlas Core to its prior running or stopped state on the reviewed image."}
+              : info.cliUpdateAvailable
+                ? "Preserve credentials and durable data, install the latest CLI, then return Atlas Core to its prior running or stopped state on the reviewed image."
+                : "Preserve credentials and durable data, update Atlas Core, then return Atlas Core to its prior running or stopped state."}
           </Text>
         </>
       )}

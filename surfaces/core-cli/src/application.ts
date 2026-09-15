@@ -24,7 +24,12 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import { readPairedBackupIdentity } from "./backup-receipt.js";
-import { createOwnerIdentity, DeploymentTransactionStore, ownerLiveness } from "./deployment-transaction.js";
+import {
+  createOwnerIdentity,
+  DeploymentTransactionStore,
+  ownerLiveness,
+  type TransactionJournal
+} from "./deployment-transaction.js";
 import { ManagedPluginCredentials, ManagedPluginKeyRejectedError } from "./host-credentials.js";
 import { type ImageReceipt, pullImageReceipt, verifyContainerImage, verifyLocalImage } from "./image-receipts.js";
 import { IndependentPluginManager, isPluginLifecycleOperation, pluginServiceName } from "./independent-plugins.js";
@@ -2622,19 +2627,25 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       this.#assertStateMatchesEngine(state, runtime.engineId);
       if (state.phase === "initializing") {
         this.#assertPackageVersionMatches(state);
-        const pendingOperation = this.#pendingTransactionOperation(runtime.engineId);
-        if (pendingOperation === "core-update") {
+        const pendingTransaction = this.#pendingTransaction(runtime.engineId);
+        if (pendingTransaction?.operation === "core-update") {
           return {
             status: "degraded",
             coreVersion: state.packageVersion,
             detail: "Atlas Core update recovery is pending. Run atlas-core recover status before retrying."
           };
         }
-        if (pendingOperation !== "init") {
+        if (
+          pendingTransaction?.operation !== "init" ||
+          (pendingTransaction.phase !== "prepared" && pendingTransaction.phase !== "runtime-changing")
+        ) {
           return {
             status: "degraded",
             coreVersion: state.packageVersion,
-            detail: "Atlas Core has an incomplete deployment state. Run atlas-core recover status before retrying."
+            detail:
+              pendingTransaction?.operation === "init"
+                ? "Atlas Core initialization recovery is pending. Run atlas-core recover status before retrying."
+                : "Atlas Core has an incomplete deployment state. Run atlas-core recover status before retrying."
           };
         }
         return {
@@ -2647,7 +2658,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     });
   }
 
-  #pendingTransactionOperation(dockerEngineId: string): string | undefined {
+  #pendingTransaction(dockerEngineId: string): Pick<TransactionJournal, "operation" | "phase"> | undefined {
     if (!DeploymentTransactionStore.exists(this.#configDir)) return undefined;
     const journal = DeploymentTransactionStore.open(this.#configDir).journal;
     if (journal.owner.dockerEngineId !== dockerEngineId) {
@@ -2656,7 +2667,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
           "Restore the original Docker context before operating this deployment."
       );
     }
-    return journal.operation;
+    return { operation: journal.operation, phase: journal.phase };
   }
 
   async details(signal?: AbortSignal): Promise<DeploymentDetails> {

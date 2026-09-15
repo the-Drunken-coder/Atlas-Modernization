@@ -1,5 +1,6 @@
 import { PassThrough } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
+import { CommandCancelledError } from "../src/operation-errors.js";
 import type {
   AtlasCoreOperator,
   DeploymentSnapshot,
@@ -2520,6 +2521,7 @@ describe("Atlas Core terminal UI", () => {
     const update = createInteractiveCLI(terminal.input, terminal.output).runUpdate(deployment);
 
     await terminal.waitFor("Update Atlas Core");
+    expect(terminal.text).not.toContain("install the latest CLI");
     terminal.write("\r");
     await terminal.waitFor("CLI stays at 0.1.5.");
     terminal.write("\r");
@@ -2750,14 +2752,14 @@ describe("Atlas Core terminal UI", () => {
         cliUpdateAvailable: false,
         coreUpdateAvailable: false
       });
-    let finishUpdate: (() => void) | undefined;
+    let cancelUpdate: (() => void) | undefined;
     deployment.update.mockImplementation(
       () =>
-        new Promise((resolve) => {
-          finishUpdate = () => resolve(undefined);
+        new Promise<undefined>((_resolve, reject) => {
+          cancelUpdate = () => reject(new CommandCancelledError());
         })
     );
-    deployment.cancelPending.mockImplementation(() => finishUpdate?.());
+    deployment.cancelPending.mockImplementation(() => cancelUpdate?.());
     const update = createInteractiveCLI(terminal.input, terminal.output).runUpdate(deployment);
 
     await terminal.waitFor("Update Atlas Core");
@@ -2770,6 +2772,39 @@ describe("Atlas Core terminal UI", () => {
     await terminal.waitFor("The CLI and Atlas Core are current.");
     expect(deployment.resumeAfterCancellation).toHaveBeenCalledOnce();
     terminal.write("q");
+    await update;
+  });
+
+  it("keeps a Core-only update successful when Escape arrives after the final step", async () => {
+    const terminal = new TestTerminal();
+    const deployment = operator();
+    deployment.checkForUpdates.mockResolvedValue({
+      cliVersion: "0.1.5",
+      coreVersion: "0.1.4",
+      latestVersion: "0.1.5",
+      cliUpdateAvailable: false,
+      coreUpdateAvailable: true
+    });
+    let finishUpdate: (() => void) | undefined;
+    deployment.updateWithProgress.mockImplementation(
+      async (_scope, _expectedVersion, report) =>
+        await new Promise<void>((resolve) => {
+          report?.({ message: "Core update applied", stage: "operation" });
+          finishUpdate = resolve;
+        })
+    );
+    deployment.cancelPending.mockImplementation(() => finishUpdate?.());
+    const update = createInteractiveCLI(terminal.input, terminal.output).runUpdate(deployment);
+
+    await terminal.waitFor("Update Atlas Core");
+    terminal.write("\r");
+    await terminal.waitFor("REVIEW UPDATE");
+    terminal.write("\r");
+    await terminal.waitFor("Core update applied");
+    terminal.write("\u001b");
+    await terminal.waitFor("Update complete");
+    expect(terminal.text).not.toContain("Core-only update cancelled");
+    terminal.write("\r");
     await update;
   });
 
