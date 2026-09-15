@@ -115,6 +115,8 @@ type AtlasCoreAppProps = {
 };
 
 const MINIMUM_TERMINAL_COLUMNS = 40;
+const MAX_UPDATE_EVENTS = 200;
+const MAX_UPDATE_EVENT_MESSAGE_LENGTH = 2_048;
 const CORE_UPDATE_REVIEW_COPY =
   "PostgreSQL, MinIO, credentials, and configuration are preserved. Atlas Core returns to its prior running or stopped state after the image pull.";
 const STATUS_REFRESH_INTERVAL_MS = 5_000;
@@ -693,7 +695,7 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
                 ...current,
                 view: {
                   ...current.view,
-                  events: [...current.view.events, { ...progress, elapsedMs: Date.now() - startedAt }]
+                  events: appendUpdateEvent(current.view.events, progress, Date.now() - startedAt)
                 }
               }
             : current
@@ -1574,11 +1576,19 @@ function LogViewer({
   );
   const actionPending = useRef(false);
   const [revision, setRevision] = useState(0);
+  const [streamEnded, setStreamEnded] = useState(false);
   const [streamError, setStreamError] = useState<Error>();
   const canInteract = columns >= MINIMUM_TERMINAL_COLUMNS;
   const selected = Math.min(selectedRef.current, Math.max(0, services.length - 1));
   const serviceLabel = services[selected]?.label ?? "Selected service";
-  const footer = `${bufferRef.current.following ? "following" : "paused"}   ←→ service   ↑↓ scroll   space pause/follow   End latest   Esc close`;
+  const streamStatus = streamError
+    ? "error"
+    : streamEnded
+      ? "ended"
+      : bufferRef.current.following
+        ? "following"
+        : "paused";
+  const footer = `${streamStatus}   ←→ service   ↑↓ scroll   space pause/follow   End latest   Esc close`;
   const headerRows = 2;
   const footerRows = wrappedRows(footer, columns);
   const viewportRows = Math.max(1, rows - headerRows - footerRows - 2);
@@ -1593,6 +1603,8 @@ function LogViewer({
   useEffect(() => {
     const buffer = bufferRef.current;
     let active = true;
+    setStreamEnded(false);
+    setStreamError(undefined);
     const removeLine = stream.onLine((line) => {
       buffer.setWidth(columnsRef.current);
       buffer.append(line);
@@ -1602,11 +1614,18 @@ function LogViewer({
       setStreamError(error);
       setRevision((value) => value + 1);
     });
-    void stream.wait().catch((error: unknown) => {
-      if (!active) return;
-      setStreamError(error instanceof Error ? error : new Error(errorMessage(error)));
-      setRevision((value) => value + 1);
-    });
+    void stream.wait().then(
+      () => {
+        if (!active) return;
+        setStreamEnded(true);
+        setRevision((value) => value + 1);
+      },
+      (error: unknown) => {
+        if (!active) return;
+        setStreamError(error instanceof Error ? error : new Error(errorMessage(error)));
+        setRevision((value) => value + 1);
+      }
+    );
     return () => {
       active = false;
       removeLine();
@@ -1658,7 +1677,7 @@ function LogViewer({
 
   return (
     <Box flexDirection="column" width={columns}>
-      <Header right={bufferRef.current.following ? "FOLLOWING" : "PAUSED"} title={title} />
+      <Header right={streamStatus.toUpperCase()} title={title} />
       <Text>
         <Text dimColor>Service </Text>
         <Text color="cyan">{serviceLabel}</Text>
@@ -1666,7 +1685,9 @@ function LogViewer({
       </Text>
       <Rule width={columns} />
       <Box flexDirection="column" height={viewportRows} overflowY="hidden">
-        {snapshot.lines.length === 0 ? <Text dimColor>Waiting for log output...</Text> : null}
+        {snapshot.lines.length === 0 ? (
+          <Text dimColor>{streamEnded ? "Log stream ended." : "Waiting for log output..."}</Text>
+        ) : null}
         {snapshot.lines.map((line, index) => (
           <Text key={`${snapshot.firstLine + index}-${revision}`}>{line || " "}</Text>
         ))}
@@ -2107,6 +2128,26 @@ function UpdateOperationScreen({
       <Text dimColor={view.status !== "failure"}>{footer}</Text>
     </Box>
   );
+}
+
+function appendUpdateEvent(
+  events: UpdateOperationEvent[],
+  progress: UpdateProgress,
+  elapsedMs: number
+): UpdateOperationEvent[] {
+  const truncatedSuffix = " [truncated]";
+  const message =
+    progress.message.length > MAX_UPDATE_EVENT_MESSAGE_LENGTH
+      ? `${progress.message.slice(0, MAX_UPDATE_EVENT_MESSAGE_LENGTH - truncatedSuffix.length)}${truncatedSuffix}`
+      : progress.message;
+  return [
+    ...events.slice(-(MAX_UPDATE_EVENTS - 1)),
+    {
+      ...progress,
+      elapsedMs,
+      message
+    }
+  ];
 }
 
 function updateOperationLines(view: UpdateOperationView, width: number): ActivityLine[] {

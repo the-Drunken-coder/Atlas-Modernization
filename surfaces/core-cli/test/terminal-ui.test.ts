@@ -213,7 +213,12 @@ function emptyLogStream(): LogStream {
   };
 }
 
-function liveLogStream(): LogStream & { emit(line: string): void; fail(error: Error): void; closed: boolean } {
+function liveLogStream(): LogStream & {
+  emit(line: string): void;
+  end(): void;
+  fail(error: Error): void;
+  closed: boolean;
+} {
   const listeners = new Set<(line: string) => void>();
   let resolveWait!: () => void;
   let rejectWait!: (error: Error) => void;
@@ -237,6 +242,9 @@ function liveLogStream(): LogStream & { emit(line: string): void; fail(error: Er
     },
     emit(line) {
       for (const listener of listeners) listener(line);
+    },
+    end() {
+      resolveWait();
     },
     fail(error) {
       rejectWait(error);
@@ -885,6 +893,29 @@ describe("Atlas Core terminal UI", () => {
     await terminal.waitFor("LIVE LOGS");
     stream.fail(new Error("fixture stream failed"));
     await terminal.waitFor("ERROR: fixture stream failed");
+    terminal.write("\u001b");
+    await vi.waitFor(() => expect(stream.closed).toBe(true));
+    terminal.write("q");
+    await menu;
+  });
+
+  it("marks a normally closed log stream as ended", async () => {
+    const terminal = new TestTerminal(80, true, 24);
+    const deployment = operator();
+    const stream = liveLogStream();
+    deployment.openLogStream.mockResolvedValue(stream);
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("CHOOSE AN ACTION");
+    terminal.write("\u001b[B\r");
+    await terminal.waitFor("Logs and diagnostics");
+    terminal.write("\u001b[B\r");
+    await terminal.waitFor("LIVE LOGS");
+    stream.emit("final log line");
+    await terminal.waitFor("final log line");
+    stream.end();
+    await terminal.waitFor("ENDED");
+    expect(terminal.text).not.toContain("ERROR: ");
     terminal.write("\u001b");
     await vi.waitFor(() => expect(stream.closed).toBe(true));
     terminal.write("q");
@@ -2732,6 +2763,36 @@ describe("Atlas Core terminal UI", () => {
     await terminal.waitFor("CHOOSE AN ACTION");
     terminal.write("q");
     await menu;
+  });
+
+  it("bounds captured update progress", async () => {
+    const terminal = new TestTerminal(500, true, 40);
+    const deployment = operator();
+    deployment.checkForUpdates.mockResolvedValue({
+      cliVersion: "0.1.5",
+      coreVersion: "0.1.4",
+      latestVersion: "0.1.5",
+      cliUpdateAvailable: false,
+      coreUpdateAvailable: true
+    });
+    deployment.updateWithProgress.mockImplementation(async (_scope, _version, report) => {
+      for (let index = 0; index < 250; index += 1) {
+        report?.({ message: `progress-${index.toString().padStart(3, "0")}`, stage: "operation" });
+      }
+      report?.({ message: `oversized ${"x".repeat(2_100)}`, stage: "operation" });
+    });
+    const update = createInteractiveCLI(terminal.input, terminal.output).runUpdate(deployment);
+
+    await terminal.waitFor("Update Atlas Core");
+    terminal.write("\r");
+    await terminal.waitFor("REVIEW UPDATE");
+    terminal.write("\r");
+    await terminal.waitFor("Update complete");
+    expect(terminal.text).toContain("progress-249");
+    expect(terminal.text).toContain("[truncated]");
+    expect(stripAnsi(terminal.raw.slice(-12_000))).not.toContain("progress-000");
+    terminal.write("\r");
+    await update;
   });
 
   it("propagates an update failure after showing the recovery message", async () => {
