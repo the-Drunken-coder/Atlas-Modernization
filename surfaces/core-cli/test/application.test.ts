@@ -2054,6 +2054,111 @@ describe("atlas-core CLI", () => {
     expect(closed.stderr.endsWith("x".repeat(128))).toBe(true);
   });
 
+  it("cancels a buffered log fallback without poisoning later commands", async () => {
+    const test = runtime();
+    markInitialized(test);
+    let resolveLogRun!: () => void;
+    let logRunReleased = false;
+    const logRunGate = new Promise<void>((resolve) => {
+      resolveLogRun = resolve;
+    });
+    const releaseLogRun = (): void => {
+      if (logRunReleased) return;
+      logRunReleased = true;
+      resolveLogRun();
+    };
+    let resolveUnrelatedRun!: () => void;
+    let unrelatedRunReleased = false;
+    const unrelatedRunGate = new Promise<void>((resolve) => {
+      resolveUnrelatedRun = resolve;
+    });
+    const releaseUnrelatedRun = (): void => {
+      if (unrelatedRunReleased) return;
+      unrelatedRunReleased = true;
+      resolveUnrelatedRun();
+    };
+    const isLogCall = (command: string, args: string[]): boolean =>
+      command === "docker" && args.slice(args.lastIndexOf("--file") + 2)[0] === "logs";
+    let logRunAborted = false;
+    let unrelatedRunAborted = false;
+    let resolveLogRunStarted!: () => void;
+    const logRunStarted = new Promise<void>((resolve) => {
+      resolveLogRunStarted = resolve;
+    });
+    let resolveUnrelatedRunStarted!: () => void;
+    const unrelatedRunStarted = new Promise<void>((resolve) => {
+      resolveUnrelatedRunStarted = resolve;
+    });
+    test.runner.onRun = async (call) => {
+      if (isLogCall(call.command, call.args)) {
+        call.signal?.addEventListener(
+          "abort",
+          () => {
+            logRunAborted = true;
+            releaseLogRun();
+          },
+          { once: true }
+        );
+        resolveLogRunStarted();
+        await logRunGate;
+        return;
+      }
+      if (call.command === "npm" && call.args[0] === "view") {
+        if (call.signal) call.signal.addEventListener("abort", () => (unrelatedRunAborted = true), { once: true });
+        resolveUnrelatedRunStarted();
+        await unrelatedRunGate;
+      }
+    };
+    const originalRun = test.runner.run.bind(test.runner);
+    test.runner.run = async (command, args, options = {}) => {
+      const result = await originalRun(command, args, options);
+      return isLogCall(command, args) && !options.inherit ? { ...result, stdout: "captured log\n" } : result;
+    };
+
+    let operator: Parameters<NonNullable<InteractiveCLI["runMenu"]>>[0] | undefined;
+    expect(
+      await runCLI([], {
+        ...test.context,
+        interactive: {
+          configureAdmin: async () => undefined,
+          runMenu: async (current) => {
+            operator = current;
+          },
+          runUpdate: async () => undefined
+        }
+      })
+    ).toBe(0);
+    if (!operator) throw new Error("Interactive operator was not captured.");
+
+    const streamPromise = operator.openLogStream("api", true);
+    await logRunStarted;
+    const stream = await streamPromise;
+    const lines: string[] = [];
+    stream.onLine((line) => lines.push(line));
+    const unrelated = operator.checkForUpdates();
+    await unrelatedRunStarted;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const closeResult = await Promise.race([
+      stream.close().then(() => "closed" as const),
+      new Promise<"timed-out">((resolve) => {
+        timeout = setTimeout(() => resolve("timed-out"), 100);
+      })
+    ]);
+    if (timeout) clearTimeout(timeout);
+    releaseLogRun();
+    await stream.close();
+    releaseUnrelatedRun();
+
+    expect(closeResult).toBe("closed");
+    expect(lines).toEqual(["captured log"]);
+    expect(logRunAborted).toBe(true);
+    expect(unrelatedRunAborted).toBe(false);
+    expect(test.runner.cancelAllCalls).toBe(0);
+    expect(test.runner.calls.find((call) => isLogCall(call.command, call.args))?.inherit).toBe(false);
+    await expect(unrelated).resolves.toMatchObject({ latestVersion: PACKAGE_VERSION });
+    await expect(operator.checkForUpdates()).resolves.toMatchObject({ latestVersion: PACKAGE_VERSION });
+  });
+
   it("does not escalate or re-signal a stream after graceful close", async () => {
     vi.useFakeTimers();
     const streamFor = (): EventEmitter & { setEncoding: () => void } =>
@@ -4654,7 +4759,7 @@ describe("atlas-core CLI", () => {
     expect(await runCLI(["logs", "core", "--follow"], test.context)).toBe(0);
     const logs = test.runner.calls.find((call) => composeCommand(call)[0] === "logs");
     expect(logs && composeCommand(logs)).toEqual(["logs", "--tail", "200", "--follow", "api"]);
-    expect(logs?.inherit).toBe(true);
+    expect(logs?.inherit).toBe(false);
   });
 
   it("targets Source Gateway logs directly", async () => {
@@ -6371,7 +6476,7 @@ describe("atlas-core CLI", () => {
         ...(follow ? ["--follow"] : []),
         plugin.service
       ]);
-      expect(logs?.inherit).toBe(true);
+      expect(logs?.inherit).toBe(false);
     }
   );
 

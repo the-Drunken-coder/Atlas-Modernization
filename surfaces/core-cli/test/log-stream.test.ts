@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { type CommandOutputStream, createLogStream, LogBuffer } from "../src/log-stream.js";
+import {
+  type CommandOutputStream,
+  createBufferedCommandOutputStream,
+  createLogStream,
+  LogBuffer
+} from "../src/log-stream.js";
 
 function source(): {
   stream: CommandOutputStream;
@@ -49,6 +54,50 @@ function source(): {
 }
 
 describe("log stream primitives", () => {
+  it("replays output when a buffered command finishes before the log stream subscribes", async () => {
+    const source = createBufferedCommandOutputStream(
+      Promise.resolve({ status: 0, stdout: "fast output\n", stderr: "" }),
+      () => undefined
+    );
+    await source.closed;
+    const stream = createLogStream("api", source);
+    const lines: string[] = [];
+    stream.onLine((line) => lines.push(line));
+
+    await stream.wait();
+
+    expect(lines).toEqual(["fast output"]);
+  });
+
+  it("reports a buffered runner rejection instead of leaving the stream pending", async () => {
+    const stream = createLogStream(
+      "api",
+      createBufferedCommandOutputStream(Promise.reject(new Error("runner failed")), () => undefined)
+    );
+
+    await expect(stream.wait()).rejects.toThrow("runner failed");
+    await stream.close();
+  });
+
+  it("treats a buffered runner rejection after close as cancellation", async () => {
+    let rejectRun!: (error: Error) => void;
+    const result = new Promise<never>((_resolve, reject) => {
+      rejectRun = reject;
+    });
+    let cancellations = 0;
+    const stream = createLogStream(
+      "api",
+      createBufferedCommandOutputStream(result, () => {
+        cancellations++;
+        rejectRun(new Error("aborted"));
+      })
+    );
+
+    await stream.close();
+    await expect(stream.wait()).resolves.toBeUndefined();
+    expect(cancellations).toBe(1);
+  });
+
   it("bounds output and preserves a paused anchor until eviction", () => {
     const buffer = new LogBuffer(3);
     buffer.setViewport(2);

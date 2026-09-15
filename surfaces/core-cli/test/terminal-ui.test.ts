@@ -631,6 +631,7 @@ describe("Atlas Core terminal UI", () => {
     );
 
     await initializingTerminal.waitFor("Retry initialization");
+    expect(initializingTerminal.text).not.toContain("Reset Atlas Core");
     expect(initializingTerminal.text).not.toContain("Start Atlas Core");
     initializingTerminal.write("q");
     await initializingMenu;

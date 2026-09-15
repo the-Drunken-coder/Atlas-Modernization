@@ -10,12 +10,19 @@ export type CommandOutputStream = {
 };
 
 export function createBufferedCommandOutputStream(
-  resultPromise: Promise<{ cancelled?: true; status: number; stdout: string; stderr: string }>
+  resultPromise: Promise<{ cancelled?: true; status: number; stdout: string; stderr: string }>,
+  cancel: () => void
 ): CommandOutputStream {
   const stdoutListeners = new Set<(chunk: string) => void>();
   const stderrListeners = new Set<(chunk: string) => void>();
   const closeListeners = new Set<(result: { cancelled?: true; status: number; stderr: string }) => void>();
-  const closed = resultPromise.then((result) => {
+  let cancellationRequested = false;
+  let finalResult: { cancelled?: true; status: number; stderr: string } | undefined;
+  let finalOutput: { stdout: string; stderr: string } | undefined;
+  let settled = false;
+  const settle = (result: { cancelled?: true; status: number; stdout: string; stderr: string }) => {
+    settled = true;
+    finalOutput = { stdout: result.stdout, stderr: result.stderr };
     for (const listener of stdoutListeners) listener(result.stdout);
     for (const listener of stderrListeners) listener(result.stderr);
     const compact = {
@@ -23,25 +30,50 @@ export function createBufferedCommandOutputStream(
       status: result.status,
       stderr: result.stderr
     };
+    finalResult = compact;
     for (const listener of closeListeners) listener(compact);
+    stdoutListeners.clear();
+    stderrListeners.clear();
+    closeListeners.clear();
     return compact;
-  });
+  };
+  const closed = resultPromise.then(settle, (error: unknown) =>
+    settle({
+      ...(cancellationRequested ? { cancelled: true as const } : {}),
+      status: 1,
+      stdout: "",
+      stderr: error instanceof Error ? error.message : String(error)
+    })
+  );
   return {
     onStdout(listener) {
+      if (finalOutput) {
+        listener(finalOutput.stdout);
+        return () => undefined;
+      }
       stdoutListeners.add(listener);
       return () => stdoutListeners.delete(listener);
     },
     onStderr(listener) {
+      if (finalOutput) {
+        listener(finalOutput.stderr);
+        return () => undefined;
+      }
       stderrListeners.add(listener);
       return () => stderrListeners.delete(listener);
     },
     onClose(listener) {
+      if (finalResult) {
+        listener(finalResult);
+        return () => undefined;
+      }
       closeListeners.add(listener);
-      void closed.then((result) => listener(result));
       return () => closeListeners.delete(listener);
     },
     cancel() {
-      // The wrapped runner remains responsible for cancellation.
+      if (settled || cancellationRequested) return;
+      cancellationRequested = true;
+      cancel();
     },
     closed
   };

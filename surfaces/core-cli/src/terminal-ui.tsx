@@ -1033,7 +1033,7 @@ function actionListChoices(snapshot: DeploymentSnapshot): ActionListChoice[] {
   choices.push({ action: "plugins", label: "Manage Plugins" }, { action: "update", label: "Update Atlas Core" });
   if (snapshot.status !== "not-initialized") {
     choices.push({ action: "configure", label: "Change admin password" });
-    choices.push({ action: "reset", label: "Reset Atlas Core" });
+    if (snapshot.status !== "initializing") choices.push({ action: "reset", label: "Reset Atlas Core" });
   }
   return choices;
 }

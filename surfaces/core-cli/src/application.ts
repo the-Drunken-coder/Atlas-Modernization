@@ -698,7 +698,11 @@ class CancellableCommandRunner implements CommandRunner {
   async openStream(command: string, args: string[], options?: RunOptions): Promise<CommandOutputStream> {
     if (this.#cancelled || options?.signal?.aborted) throw new CommandCancelledError();
     if (!this.#runner.openStream) {
-      return createBufferedCommandOutputStream(this.run(command, args, { ...options, inherit: true }));
+      const controller = new AbortController();
+      const signal = options?.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal;
+      return createBufferedCommandOutputStream(this.#runner.run(command, args, { ...options, signal }), () =>
+        controller.abort()
+      );
     }
     return await this.#runner.openStream(command, args, options);
   }
@@ -5070,11 +5074,6 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     env.ATLAS_PLUGIN_CONFIG_ROOT = this.#pluginConfigRoot;
     const candidateKey = this.#pluginCredentialScope.getStore();
     if (candidateKey) env.ATLAS_PLUGIN_API_KEY = candidateKey;
-    if (!this.#runner.openStream) {
-      return createBufferedCommandOutputStream(
-        this.#runCompose(args, false, pluginIds, imageReference, undefined, false)
-      );
-    }
     return await this.#runner.openStream("docker", this.#composeArgs(composeFile, args, pluginIds), {
       cwd: this.#configDir,
       env
