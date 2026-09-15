@@ -147,6 +147,7 @@ class FakeRunner implements CommandRunner {
   onCleanupStart: ((signal: AbortSignal | undefined) => void) | undefined;
   releaseHungCleanup: (() => void) | undefined;
   afterSuccessfulComposeDown: (() => void) | undefined;
+  downUpdatesServiceState = false;
   incompleteComposeDown = false;
   hangCleanup = false;
   serviceStates = [
@@ -585,6 +586,7 @@ class FakeRunner implements CommandRunner {
       return result(1, "", "injected failure after compose down");
     }
     if (compose[0] === "down") {
+      if (this.downUpdatesServiceState) this.serviceStates = [];
       const afterSuccessfulComposeDown = this.afterSuccessfulComposeDown;
       this.afterSuccessfulComposeDown = undefined;
       if (afterSuccessfulComposeDown) queueMicrotask(afterSuccessfulComposeDown);
@@ -1089,6 +1091,58 @@ describe("atlas-core CLI", () => {
     expect(await runCLI(["update"], test.context)).toBe(0);
     expect(test.runner.cancelAllCalls).toBe(1);
     expect(test.runner.calls).toHaveLength(0);
+  });
+
+  it("does not restore a stale run intent when cancellation precedes mutation lock acquisition", async () => {
+    const test = runtime();
+    await markManagedInitialized(test);
+    let preflightStarted = (): void => undefined;
+    let releasePreflight = (): void => undefined;
+    const preflight = new Promise<void>((resolve) => {
+      preflightStarted = resolve;
+    });
+    const preflightGate = new Promise<void>((resolve) => {
+      releasePreflight = resolve;
+    });
+    let blocked = false;
+    test.runner.onRun = async (call) => {
+      if (blocked || call.command !== "docker" || call.args[0] !== "--version") return;
+      blocked = true;
+      preflightStarted();
+      await preflightGate;
+    };
+
+    let operator: Parameters<NonNullable<InteractiveCLI["runMenu"]>>[0] | undefined;
+    let outcome: LifecycleOperationResult | undefined;
+    const first = runCLI([], {
+      ...test.context,
+      interactive: {
+        configureAdmin: async () => undefined,
+        runUpdate: async () => undefined,
+        runMenu: async (current) => {
+          operator = current;
+          outcome = await current.runLifecycle("restart", undefined, { manual: true });
+        }
+      }
+    });
+
+    await preflight;
+    expect(operator).toBeDefined();
+    const second = runCLI(["stop"], {
+      ...test.context,
+      stdout: { write: () => undefined },
+      stderr: { write: () => undefined }
+    });
+    await expect(second).resolves.toBe(0);
+    operator?.cancelPending();
+    releasePreflight();
+
+    await expect(first).resolves.toBe(0);
+    expect(outcome).toMatchObject({ status: "cancelled" });
+    expect(JSON.parse(readFileSync(join(test.home, ".atlas", "core", "run-intent.json"), "utf8"))).toEqual({
+      schema: 1,
+      desiredRunning: false
+    });
   });
 
   it("allows later commands after the interface finishes cancellation cleanup", async () => {
@@ -3230,6 +3284,33 @@ describe("atlas-core CLI", () => {
       "postgres",
       "minio"
     ]);
+  });
+
+  it("does not claim preservation when restart cancellation follows service release", async () => {
+    const test = runtime();
+    await markManagedInitialized(test);
+    test.runner.downUpdatesServiceState = true;
+    let outcome: LifecycleOperationResult | undefined;
+    test.context.interactive = {
+      configureAdmin: async () => undefined,
+      runUpdate: async () => undefined,
+      runMenu: async (operator) => {
+        test.runner.afterSuccessfulComposeDown = () => operator.cancelPending();
+        outcome = await operator.runLifecycle("restart", undefined, { manual: true });
+      }
+    };
+
+    expect(await runCLI([], test.context), test.stderr.join("")).toBe(0);
+    expect(outcome).toMatchObject({
+      status: "cancelled",
+      snapshot: { status: "stopped" }
+    });
+    expect(outcome).not.toHaveProperty("previousDeploymentPreserved");
+    expect(test.runner.serviceStates).toEqual([]);
+    expect(JSON.parse(readFileSync(join(test.home, ".atlas", "core", "run-intent.json"), "utf8"))).toEqual({
+      schema: 1,
+      desiredRunning: false
+    });
   });
 
   it("refuses to restart a stopped deployment", async () => {

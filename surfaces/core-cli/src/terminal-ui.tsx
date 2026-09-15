@@ -116,6 +116,8 @@ type AtlasCoreAppProps = {
 
 const MINIMUM_TERMINAL_COLUMNS = 40;
 const STATUS_REFRESH_INTERVAL_MS = 5_000;
+const RESET_CONFIRMATION_DESCRIPTION =
+  "Containers, PostgreSQL and MinIO data, credentials, and configuration will be deleted. A new deployment will be initialized afterward.";
 
 export function createInteractiveCLI(
   input: NodeJS.ReadStream = process.stdin,
@@ -1089,10 +1091,13 @@ function ResetConfirmationScreen({
   onConfirm(): void;
   onExit(): void;
 }): ReactNode {
-  const { columns } = useWindowSize();
+  const { columns, rows } = useWindowSize();
   const answerRef = useRef("");
   const pendingRef = useRef(false);
   const [answer, setAnswer] = useState("");
+  const hasEnoughColumns = columns >= MINIMUM_TERMINAL_COLUMNS;
+  const hasEnoughRows = rows >= resetConfirmationRows(columns);
+  const canInteract = hasEnoughColumns && hasEnoughRows;
 
   useInput((input, key) => {
     if (pendingRef.current) return;
@@ -1106,7 +1111,7 @@ function ResetConfirmationScreen({
       onCancel();
       return;
     }
-    if (columns < MINIMUM_TERMINAL_COLUMNS) return;
+    if (!canInteract) return;
     if (key.backspace || key.delete) {
       answerRef.current = Array.from(answerRef.current).slice(0, -1).join("");
       setAnswer(answerRef.current);
@@ -1124,11 +1129,13 @@ function ResetConfirmationScreen({
     }
   });
 
-  if (columns < MINIMUM_TERMINAL_COLUMNS) {
+  if (!hasEnoughColumns || !hasEnoughRows) {
     return (
       <Box flexDirection="column" width={columns}>
         <Header title="ATLAS CORE > RESET" />
-        <Text>Resize terminal to at least 40 columns.</Text>
+        <Text>
+          Resize terminal to at least {hasEnoughColumns ? `${resetConfirmationRows(columns)} rows` : "40 columns"}.
+        </Text>
         <Text dimColor>Esc cancels reset. State is unchanged until confirmation.</Text>
       </Box>
     );
@@ -1141,10 +1148,7 @@ function ResetConfirmationScreen({
       <Text color="yellow" bold>
         Reset permanently deletes this deployment.
       </Text>
-      <Text wrap="wrap">
-        Containers, PostgreSQL and MinIO data, credentials, and configuration will be deleted. A new deployment will be
-        initialized afterward.
-      </Text>
+      <Text wrap="wrap">{RESET_CONFIRMATION_DESCRIPTION}</Text>
       <Text> </Text>
       <Text>Type yes to continue, or no to cancel:</Text>
       <Text>{`> ${answer}`}</Text>
@@ -1152,6 +1156,10 @@ function ResetConfirmationScreen({
       <Text dimColor>Enter confirm Esc cancel Ctrl+C exit</Text>
     </Box>
   );
+}
+
+function resetConfirmationRows(width: number): number {
+  return 1 + 1 + 1 + wrappedRows(RESET_CONFIRMATION_DESCRIPTION, width) + 1 + 1 + 1 + 1 + 1;
 }
 
 function StatusScreen({
@@ -1551,17 +1559,17 @@ function LogViewer({
 
   useEffect(() => {
     const buffer = bufferRef.current;
+    buffer.setWidth(columns);
     buffer.setViewport(viewportRows);
     setRevision((value) => value + 1);
-  }, [viewportRows]);
+  }, [columns, viewportRows]);
 
   useEffect(() => {
     const buffer = bufferRef.current;
     let active = true;
     const removeLine = stream.onLine((line) => {
-      for (const wrapped of wrapAnsi(line, Math.max(1, columnsRef.current), { hard: true, trim: false }).split("\n")) {
-        buffer.append(wrapped);
-      }
+      buffer.setWidth(columnsRef.current);
+      buffer.append(line);
       setRevision((value) => value + 1);
     });
     const removeError = stream.onError((error) => {

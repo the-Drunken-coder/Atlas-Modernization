@@ -1,3 +1,4 @@
+import wrapAnsi from "wrap-ansi";
 import type { LogStream } from "./operator.js";
 
 export type CommandOutputStream = {
@@ -46,8 +47,14 @@ export function createBufferedCommandOutputStream(
   };
 }
 
-type LogLine = {
+type LogRecord = {
   id: number;
+  text: string;
+};
+
+type LogDisplayRow = {
+  recordId: number;
+  rowIndex: number;
   text: string;
 };
 
@@ -65,16 +72,18 @@ export type LogBufferSnapshot = {
 };
 
 /**
- * Keeps a bounded stream of complete log lines and a stable paused viewport.
- * Line ids make eviction independent from the display width and wrapping.
+ * Keeps bounded raw log records and a stable display-row viewport.
+ * Retaining raw records lets terminal clients rewrap history without reopening the stream.
  */
 export class LogBuffer {
   readonly #capacity: number;
-  #lines: LogLine[] = [];
-  #nextId = 0;
-  #viewportRows = 1;
-  #topLineId = 0;
   #following = true;
+  #nextRecordId = 0;
+  #records: LogRecord[] = [];
+  #rows: LogDisplayRow[] = [];
+  #topRowIndex = 0;
+  #viewportRows = 1;
+  #width: number | undefined;
 
   constructor(capacity = 200) {
     if (!Number.isInteger(capacity) || capacity < 1) throw new Error("Log buffer capacity must be a positive integer.");
@@ -86,7 +95,15 @@ export class LogBuffer {
   }
 
   get size(): number {
-    return this.#lines.length;
+    return this.#records.length;
+  }
+
+  setWidth(width: number): void {
+    const nextWidth = Math.max(1, Math.floor(width));
+    if (nextWidth === this.#width) return;
+    const anchor = this.#anchor();
+    this.#width = nextWidth;
+    this.#rebuild(anchor);
   }
 
   setViewport(rows: number): void {
@@ -95,22 +112,17 @@ export class LogBuffer {
     else this.#clampTop();
   }
 
-  append(line: string): void {
-    const wasFollowing = this.#following;
-    const pausedAnchor = this.#lines[this.#topIndex()]?.id;
-    this.#lines.push({ id: this.#nextId++, text: line });
-    if (this.#lines.length > this.#capacity) this.#lines.splice(0, this.#lines.length - this.#capacity);
-    if (wasFollowing) this.#moveToLatest();
-    else {
-      this.#topLineId = pausedAnchor ?? this.#lines[0]?.id ?? 0;
-      this.#clampTop();
-    }
+  append(text: string): void {
+    const anchor = this.#anchor();
+    this.#records.push({ id: this.#nextRecordId++, text });
+    if (this.#records.length > this.#capacity) this.#records.splice(0, this.#records.length - this.#capacity);
+    this.#rebuild(anchor);
   }
 
   scroll(delta: number): void {
     if (delta === 0) return;
     this.#following = false;
-    this.#topLineId += Math.trunc(delta);
+    this.#topRowIndex += Math.trunc(delta);
     this.#clampTop();
   }
 
@@ -126,31 +138,49 @@ export class LogBuffer {
   }
 
   snapshot(): LogBufferSnapshot {
-    const first = this.#lines[0]?.id ?? 0;
-    const topIndex = this.#topIndex();
-    const visible = this.#lines.slice(topIndex, topIndex + this.#viewportRows).map(({ text }) => text);
+    const firstLine = this.#rows.length === 0 ? 0 : this.#topRowIndex;
     return {
-      lines: visible,
-      firstLine: this.#lines[0]?.id ?? first,
-      lastLine: this.#lines.at(-1)?.id ?? first,
+      lines: this.#rows.slice(this.#topRowIndex, this.#topRowIndex + this.#viewportRows).map(({ text }) => text),
+      firstLine,
+      lastLine: this.#rows.length === 0 ? firstLine : this.#rows.length - 1,
       following: this.#following
     };
   }
 
-  #topIndex(): number {
-    const first = this.#lines[0]?.id;
-    if (first === undefined) return 0;
-    return Math.max(0, Math.min(this.#lines.length - 1, this.#topLineId - first));
+  #anchor(): { recordId: number; rowIndex: number } | undefined {
+    const row = this.#rows[this.#topRowIndex];
+    return row ? { recordId: row.recordId, rowIndex: row.rowIndex } : undefined;
+  }
+
+  #rebuild(anchor: { recordId: number; rowIndex: number } | undefined): void {
+    this.#rows = this.#records.flatMap((record) => {
+      const wrapped = this.#width
+        ? wrapAnsi(record.text, this.#width, { hard: true, trim: false }).split("\n")
+        : [record.text];
+      return wrapped.map((text, rowIndex) => ({ recordId: record.id, rowIndex, text }));
+    });
+    if (this.#following) {
+      this.#moveToLatest();
+      return;
+    }
+    const anchorRows = anchor ? this.#rows.filter(({ recordId }) => recordId === anchor.recordId) : [];
+    const translatedAnchor = anchorRows[Math.min(anchor?.rowIndex ?? 0, Math.max(0, anchorRows.length - 1))];
+    if (translatedAnchor) {
+      this.#topRowIndex = this.#rows.indexOf(translatedAnchor);
+    } else if (anchor) {
+      const nextRecordRow = this.#rows.findIndex(({ recordId }) => recordId > anchor.recordId);
+      this.#topRowIndex = nextRecordRow >= 0 ? nextRecordRow : Math.max(0, this.#rows.length - 1);
+    }
+    this.#clampTop();
   }
 
   #moveToLatest(): void {
-    this.#topLineId = Math.max(0, (this.#lines.at(-1)?.id ?? 0) - this.#viewportRows + 1);
+    this.#topRowIndex = Math.max(0, this.#rows.length - this.#viewportRows);
   }
 
   #clampTop(): void {
-    const first = this.#lines[0]?.id ?? 0;
-    const lastTop = Math.max(first, (this.#lines.at(-1)?.id ?? first) - this.#viewportRows + 1);
-    this.#topLineId = Math.max(first, Math.min(lastTop, this.#topLineId));
+    const lastTop = Math.max(0, this.#rows.length - this.#viewportRows);
+    this.#topRowIndex = Math.max(0, Math.min(lastTop, this.#topRowIndex));
   }
 }
 

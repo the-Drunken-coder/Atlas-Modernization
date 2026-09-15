@@ -645,6 +645,66 @@ describe("Atlas Core terminal UI", () => {
     await menu;
   });
 
+  it("keeps the newest log record visible after shrinking the terminal", async () => {
+    const terminal = new TestTerminal(80, true, 24);
+    const deployment = operator();
+    const stream = liveLogStream();
+    deployment.openLogStream.mockResolvedValue(stream);
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("CHOOSE AN ACTION");
+    terminal.write("\u001b[B\r");
+    await terminal.waitFor("Logs and diagnostics");
+    terminal.write("\u001b[B\r");
+    await terminal.waitFor("LIVE LOGS");
+    for (let index = 0; index < 18; index += 1) {
+      stream.emit(`${String(index).padStart(2, "0")} ${"x".repeat(76)}`);
+    }
+    stream.emit(`newest ${"y".repeat(74)}`);
+    await terminal.waitFor("newest");
+    const beforeResize = terminal.raw.length;
+    terminal.resize(40, 24);
+    await terminal.waitForRawChange(beforeResize);
+    await vi.waitFor(() =>
+      expect(stripAnsi(terminal.raw.slice(-1200))).toContain(`newest\n${"y".repeat(40)}\n${"y".repeat(34)}`)
+    );
+    terminal.write("\u001b");
+    await vi.waitFor(() => expect(stream.closed).toBe(true));
+    terminal.write("q");
+    await menu;
+  });
+
+  it("scrolls paused logs by one display row after shrinking the terminal", async () => {
+    const terminal = new TestTerminal(80, true, 24);
+    const deployment = operator();
+    const stream = liveLogStream();
+    deployment.openLogStream.mockResolvedValue(stream);
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("CHOOSE AN ACTION");
+    terminal.write("\u001b[B\r");
+    await terminal.waitFor("Logs and diagnostics");
+    terminal.write("\u001b[B\r");
+    await terminal.waitFor("LIVE LOGS");
+    const firstRow = `first-${"a".repeat(34)}`;
+    const secondRow = `second-${"b".repeat(33)}`;
+    stream.emit(`${firstRow}${secondRow}`);
+    await terminal.waitFor("first-");
+    terminal.resize(40, 5);
+    await vi.waitFor(() => expect(stripAnsi(terminal.raw.slice(-400))).toContain(`${secondRow}\n`));
+    terminal.write(" ");
+    await nextInputTurn();
+    const beforeArrow = terminal.raw.length;
+    terminal.write("\u001b[A");
+    await terminal.waitForRawChange(beforeArrow);
+    const rendered = stripAnsi(terminal.raw.slice(-400));
+    expect(rendered).toContain(`${firstRow}\n`);
+    terminal.write("\u001b");
+    await vi.waitFor(() => expect(stream.closed).toBe(true));
+    terminal.write("q");
+    await menu;
+  });
+
   it("keeps stream failures inside the controlled log viewer", async () => {
     const terminal = new TestTerminal(80, true, 24);
     const deployment = operator();
@@ -799,6 +859,30 @@ describe("Atlas Core terminal UI", () => {
     await menu;
 
     expect(resetCallsWhileNarrow).toBe(0);
+  });
+
+  it("does not accept reset input while the confirmation screen is too short", async () => {
+    const terminal = new TestTerminal(80, true, 24);
+    const deployment = operator();
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("Reset Atlas Core");
+    terminal.write("\u001b[B".repeat(7));
+    terminal.write("\r");
+    await terminal.waitFor("Type yes to continue");
+    terminal.write("y");
+    await terminal.waitFor("> y");
+    terminal.resize(80, 4);
+    await terminal.waitFor("Resize terminal to at least");
+    terminal.write("yes\r");
+    await nextInputTurn();
+    expect(deployment.runLifecycle).not.toHaveBeenCalled();
+    terminal.resize(80, 24);
+    await vi.waitFor(() => expect(stripAnsi(terminal.raw.slice(-500))).toContain("> y"));
+    terminal.write("\u001b");
+    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
+    terminal.write("q");
+    await menu;
   });
 
   it("changes the admin password from the action-list home without an acknowledgement pause", async () => {

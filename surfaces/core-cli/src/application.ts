@@ -361,7 +361,10 @@ type LifecycleOperationContext = {
   report: LifecycleOperationReporter;
   restorationError?: unknown;
   restoreRunIntentOnCancellation: boolean;
-  runIntent: RunIntentSnapshot;
+  runIntent?: RunIntentSnapshot;
+  runIntentChanged: boolean;
+  restartReleaseCommitted?: boolean;
+  restartReleaseStarted?: boolean;
   stopReleaseStarted?: boolean;
 };
 
@@ -775,11 +778,10 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     const lifecycleContext: LifecycleOperationContext = {
       report: emit,
       restoreRunIntentOnCancellation: true,
-      runIntent: { exists: false, path: join(this.#configDir, "run-intent.json") }
+      runIntentChanged: false
     };
     emit({ message: `${label} requested`, stage: "operation" });
     try {
-      lifecycleContext.runIntent = this.#captureRunIntent();
       await this.#lifecycleReporterScope.run(lifecycleContext, async () => {
         emit({ message: `Checking deployment before ${label.toLocaleLowerCase()}.`, stage: "operation" });
         switch (operation) {
@@ -850,11 +852,31 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
             }
           };
         }
-        try {
-          if (lifecycleContext.restorationError) throw lifecycleContext.restorationError;
-          this.#restoreRunIntent(lifecycleContext.runIntent);
-        } catch (restoreError) {
-          const message = `Cancellation cleanup could not restore run intent: ${errorMessage(restoreError)}`;
+        if (operation === "restart" && lifecycleContext.restartReleaseCommitted) {
+          const summary = `${label} cancelled after services were released.`;
+          emit({ message: "The deployment is stopped after the cancellation point.", stage: "cleanup" });
+          return {
+            status: "cancelled",
+            summary,
+            snapshot: { status: "stopped", detail: "Atlas Core is stopped after the cancellation point." }
+          };
+        }
+        if (operation === "restart" && lifecycleContext.restartReleaseStarted) {
+          const message =
+            "Restart cancellation arrived while services were being released; inspect recovery status before retrying.";
+          emit({ message, stage: "cleanup" });
+          return {
+            status: "failure",
+            error: message,
+            snapshot: {
+              status: "degraded",
+              detail:
+                "Atlas Core restart was interrupted while services were being released. Service state is indeterminate; inspect status before retrying."
+            }
+          };
+        }
+        if (lifecycleContext.restorationError) {
+          const message = `Cancellation cleanup could not restore run intent: ${errorMessage(lifecycleContext.restorationError)}`;
           emit({ message, stage: "cleanup" });
           return { status: "failure", error: message };
         }
@@ -930,11 +952,14 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
 
   #writeRunIntent(desiredRunning: boolean): void {
     this.#prepareConfigDirectory();
-    writePrivateFile(
-      join(this.#configDir, "run-intent.json"),
-      `${JSON.stringify({ schema: 1, desiredRunning })}\n`,
-      this.#platform
-    );
+    const path = join(this.#configDir, "run-intent.json");
+    const contents = `${JSON.stringify({ schema: 1, desiredRunning })}\n`;
+    const lifecycleContext = this.#lifecycleReporterScope.getStore();
+    if (lifecycleContext && lifecycleContext.runIntent && !lifecycleContext.runIntentChanged) {
+      const current = this.#captureRunIntent();
+      lifecycleContext.runIntentChanged = !current.exists || current.contents !== contents;
+    }
+    writePrivateFile(path, contents, this.#platform);
   }
 
   #captureRunIntent(): RunIntentSnapshot {
@@ -1984,12 +2009,29 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
         }
         this.#activeMutationLock = dockerLock.owner;
         try {
+          if (lifecycleContext) lifecycleContext.runIntent = this.#captureRunIntent();
           if (!keepRecoveredDisableFence) this.#completeRecoverableMutationLockHandoff();
           if (recoveryMode === "stop" || recoveryMode === "reset") this.#writeRunIntent(false);
           if (recoveryMode !== "recover" && recoveryMode !== "stop" && recoveryMode !== "reset")
             await this.#recoverPending(dockerEngineId);
           return await action();
         } finally {
+          if (
+            this.#lifecycleCancellationRequested &&
+            lifecycleContext &&
+            lifecycleContext.restoreRunIntentOnCancellation &&
+            lifecycleContext.runIntentChanged &&
+            lifecycleContext.runIntent &&
+            !lifecycleContext.stopReleaseStarted &&
+            !lifecycleContext.restartReleaseStarted &&
+            !lifecycleContext.operationCommitted
+          ) {
+            try {
+              this.#restoreRunIntent(lifecycleContext.runIntent);
+            } catch (error) {
+              lifecycleContext.restorationError = error;
+            }
+          }
           await this.#releaseDockerMutationLock(dockerLock);
           dockerLockReleased = true;
         }
@@ -2013,20 +2055,6 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
           (dockerLock !== undefined && !dockerLockReleased && preserveRecoverableLocalLock) ||
           (dockerLock === undefined &&
             (mutationLock.recovered || (preserveRecoverableLocalLock && dockerLockAcquisitionNeedsRecovery)));
-        const lifecycleContext = this.#lifecycleReporterScope.getStore();
-        if (
-          this.#lifecycleCancellationRequested &&
-          lifecycleContext &&
-          lifecycleContext.restoreRunIntentOnCancellation &&
-          !lifecycleContext.stopReleaseStarted &&
-          !lifecycleContext.operationCommitted
-        ) {
-          try {
-            this.#restoreRunIntent(lifecycleContext.runIntent);
-          } catch (error) {
-            lifecycleContext.restorationError = error;
-          }
-        }
         if (!shouldPreserveRecoverableLocalLock) {
           this.#releaseMutationLock(dockerLock?.owner ?? mutationLock.owner);
         } else if (preserveRecoverableLocalLock) {
@@ -4103,16 +4131,20 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     await this.#assertStartIsSafe(managed);
     for (const receipt of managed.baseDeployment?.images ?? []) await verifyLocalImage(this.#imageCommand, receipt);
     await this.#verifyEnabledPlugins(managed, false);
-    this.#writeRunIntent(true);
     this.#throwIfLifecycleCancellationRequested();
+    const lifecycleContext = this.#lifecycleReporterScope.getStore();
+    if (lifecycleContext) lifecycleContext.restartReleaseStarted = true;
+    this.#writeRunIntent(false);
     this.#reportLifecycle(
       "Stopping services safely before restart; waiting for Docker Compose to release containers.",
       "cleanup"
     );
     await this.#runComposeChecked(["down", "--remove-orphans"], state.enabledPlugins, true);
+    if (lifecycleContext) lifecycleContext.restartReleaseCommitted = true;
     this.#throwIfLifecycleCancellationRequested();
     this.#reportLifecycle("Starting services and waiting for health checks.", "operation");
     await this.#managedCore(dockerEngineId).start(managed);
+    this.#writeRunIntent(true);
     this.#writeLifecycleOutput("Atlas Core restarted.\n");
   }
 

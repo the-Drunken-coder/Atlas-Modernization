@@ -83,6 +83,21 @@ describe("log stream primitives", () => {
     expect(buffer.snapshot()).toMatchObject({ lines: ["line-10", "line-11"], following: true });
   });
 
+  it("rewraps retained records while preserving following and paused display-row navigation", () => {
+    const buffer = new LogBuffer(10);
+    buffer.setWidth(8);
+    buffer.setViewport(2);
+    buffer.append("abcdefgh1234");
+    buffer.append("newest");
+    expect(buffer.snapshot()).toMatchObject({ lines: ["1234", "newest"], following: true });
+
+    buffer.toggleFollowing();
+    buffer.setWidth(4);
+    expect(buffer.snapshot()).toMatchObject({ lines: ["efgh", "1234"], following: false });
+    buffer.scroll(-1);
+    expect(buffer.snapshot()).toMatchObject({ lines: ["abcd", "efgh"], following: false });
+  });
+
   it("frames split output and reports a failed controlled stream", async () => {
     const fixture = source();
     const stream = createLogStream("api", fixture.stream);
