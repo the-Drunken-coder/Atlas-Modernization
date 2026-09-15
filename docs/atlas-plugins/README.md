@@ -6,10 +6,10 @@ Release and installation details:
 - [`MANAGEMENT.md`](MANAGEMENT.md) defines local Installed Plugin state, compatibility, commands, and transactions.
 
 Status: Plugin platform v1 and the independent lifecycle and release workflow are released with Atlas Core 0.2.0 and Building Scan 0.1.0.
-Candidate-image checks passed on linux/amd64 and linux/arm64. The current TUI keeps independent Plugin update, rollback,
-uninstall, catalog refresh, and shared-key rotation, plus recovery and supervision, as direct-command-only operations.
-The agreed next TUI step adds the ordinary Plugin update path with an impact review and explicit confirmation; recovery,
-signing, and unusual administrative operations remain direct-command-only. See
+Candidate-image checks passed on linux/amd64 and linux/arm64. The TUI supports ordinary one-at-a-time Plugin updates
+with a target-version and restart-impact review, explicit confirmation, in-place progress, safe cancellation, and
+restoration results. Rollback, uninstall, catalog refresh, shared-key rotation, recovery, supervision, signing, and
+unusual administrative operations remain direct-command-only. See
 [GitHub issue #429](https://github.com/the-Drunken-coder/Atlas-Modernization/issues/429). Existing
 published Core packages may still contain the bundled catalog; schema-4 deployments use independent catalog state.
 Production signing trust and Pages configuration are recorded in [bootstrap provenance](CATALOG_BOOTSTRAP.md).
@@ -384,7 +384,8 @@ pins the image digest. The manager atomically stores its accepted catalog and an
 revoke an immutable release. The manager refuses new installation, enablement, update, or manual rollback to a revoked
 release. It warns about an already Installed revoked release but does not stop it without operator approval.
 If the selected release is revoked, an approved update may choose the greatest compatible non-revoked release even when
-that requires a version downgrade. It never reports a revoked selection as current.
+that requires a lower-version replacement. The TUI presents this as a replacement, not an upgrade, and never reports a
+revoked selection as current.
 
 Plugin versions are immutable Semantic Versions in one stable channel. A release workflow publishes and verifies the
 image and `.atlas-plugin` document before it appends the release to a newly signed catalog. The candidate image must pass

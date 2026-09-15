@@ -26,7 +26,8 @@ import type {
   DiagnosticsResult,
   InteractiveCLI,
   LifecycleOperationProgress,
-  LifecycleOperationResult
+  LifecycleOperationResult,
+  PluginUpdatePlan
 } from "../src/operator.js";
 import { PACKAGE_NAME, PACKAGE_PLUGIN_CONTRACTS, PACKAGE_VERSION } from "../src/package-metadata.js";
 import type { PluginCatalogEntry } from "../src/plugin-catalog.js";
@@ -6762,6 +6763,142 @@ describe("atlas-core CLI", () => {
     expect(await runCLI(["plugins", "status", "not_cataloged"], test.context)).toBe(1);
     expect(test.stderr.join("")).toContain("Unknown Plugin not_cataloged");
     expect(await runCLI(["plugins", "status", "alpha_fixture"], test.context)).toBe(0);
+  });
+
+  it("plans one disabled Plugin update without changing Core or the selected release", async () => {
+    const test = runtime();
+    const { catalogURL } = await installIndependentUpdateFixtures(test);
+    const fetchPluginArtifact = test.context.fetch;
+    if (!fetchPluginArtifact) throw new Error("Plugin fixture fetch is unavailable.");
+    let catalogRefreshRequests = 0;
+    test.context.fetch = async (input, init) => {
+      if (String(input) === catalogURL || String(input) === `${catalogURL}.sig`) catalogRefreshRequests += 1;
+      return await fetchPluginArtifact(input, init);
+    };
+    let plan: PluginUpdatePlan | undefined;
+    test.context.interactive = {
+      configureAdmin: async () => undefined,
+      runUpdate: async () => undefined,
+      runMenu: async (operator) => {
+        if (!operator.pluginUpdatePlan) throw new Error("Plugin update planning is unavailable.");
+        plan = await operator.pluginUpdatePlan("alpha_fixture");
+      }
+    };
+    const stateBefore = readFileSync(join(test.home, ".atlas", "core", "state.json"), "utf8");
+
+    expect(await runCLI([], test.context), test.stderr.join("")).toBe(0);
+
+    expect(plan!).toMatchObject({
+      status: "available",
+      action: "update",
+      pluginId: "alpha_fixture",
+      displayName: "Alpha Fixture",
+      currentVersion: "0.1.0",
+      targetVersion: "0.2.0",
+      enabled: false,
+      restartServices: [],
+      coreVersion: PACKAGE_VERSION,
+      coreImage: TEST_IMAGE
+    });
+    expect(installedPluginVersion(test, "alpha_fixture")).toBe("0.1.0");
+    expect(readFileSync(join(test.home, ".atlas", "core", "state.json"), "utf8")).toBe(stateBefore);
+    expect(catalogRefreshRequests).toBe(0);
+  });
+
+  it("rejects confirmation when the selected Plugin release changes after review", async () => {
+    const test = runtime();
+    await installIndependentUpdateFixtures(test);
+    let updateError: Error | undefined;
+    let pullsBeforeConfirmation = 0;
+    test.context.interactive = {
+      configureAdmin: async () => undefined,
+      runUpdate: async () => undefined,
+      runMenu: async (operator) => {
+        if (!operator.pluginUpdatePlan || !operator.pluginUpdate) {
+          throw new Error("Plugin update review is unavailable.");
+        }
+        const reviewedPlan = await operator.pluginUpdatePlan("alpha_fixture");
+        if (reviewedPlan.status !== "available") throw new Error("Expected an available Plugin update.");
+        await operator.pluginUpdate("alpha_fixture");
+        pullsBeforeConfirmation = test.runner.calls.filter(
+          (call) => call.command === "docker" && call.args[0] === "pull"
+        ).length;
+        try {
+          await operator.pluginUpdate("alpha_fixture", undefined, reviewedPlan);
+        } catch (error) {
+          updateError = error instanceof Error ? error : new Error(String(error));
+        }
+      }
+    };
+
+    expect(await runCLI([], test.context), test.stderr.join("")).toBe(0);
+
+    expect(updateError?.message).toContain("reviewed Plugin update details changed");
+    expect(installedPluginVersion(test, "alpha_fixture")).toBe("0.2.0");
+    expect(test.runner.calls.filter((call) => call.command === "docker" && call.args[0] === "pull").length).toBe(
+      pullsBeforeConfirmation
+    );
+  });
+
+  it("blocks a disabled Plugin update plan when an Atlas Core base service is unhealthy", async () => {
+    const test = runtime();
+    await installIndependentUpdateFixtures(test);
+    test.runner.serviceStates = test.runner.serviceStates.map((service) =>
+      service.Service === "api" ? { ...service, Health: "unhealthy" } : service
+    );
+    let plan: PluginUpdatePlan | undefined;
+    test.context.interactive = {
+      configureAdmin: async () => undefined,
+      runUpdate: async () => undefined,
+      runMenu: async (operator) => {
+        if (!operator.pluginUpdatePlan) throw new Error("Plugin update planning is unavailable.");
+        plan = await operator.pluginUpdatePlan("alpha_fixture");
+      }
+    };
+
+    expect(await runCLI([], test.context), test.stderr.join("")).toBe(0);
+
+    expect(plan!).toMatchObject({
+      status: "blocked",
+      action: "update",
+      targetVersion: "0.2.0",
+      enabled: false,
+      reason: expect.stringContaining("base services")
+    });
+    expect(installedPluginVersion(test, "alpha_fixture")).toBe("0.1.0");
+  });
+
+  it("blocks an enabled Plugin update plan while Atlas Core is stopped", async () => {
+    const test = runtime();
+    await installIndependentUpdateFixtures(test);
+    const plugin = INDEPENDENT_UPDATE_FIXTURES[0];
+    if (!plugin) throw new Error("Independent Plugin fixture is missing.");
+    const statePath = join(test.home, ".atlas", "core", "state.json");
+    const state = JSON.parse(readFileSync(statePath, "utf8"));
+    writeFileSync(statePath, `${JSON.stringify({ ...state, enabledPlugins: [plugin.pluginId] })}\n`, { mode: 0o600 });
+    installIndependentRuntimeFixture(test, plugin);
+    test.runner.serviceStates = [];
+    let plan: PluginUpdatePlan | undefined;
+    test.context.interactive = {
+      configureAdmin: async () => undefined,
+      runUpdate: async () => undefined,
+      runMenu: async (operator) => {
+        if (!operator.pluginUpdatePlan) throw new Error("Plugin update planning is unavailable.");
+        plan = await operator.pluginUpdatePlan(plugin.pluginId);
+      }
+    };
+
+    expect(await runCLI([], test.context), test.stderr.join("")).toBe(0);
+
+    expect(plan!).toMatchObject({
+      status: "blocked",
+      action: "update",
+      targetVersion: "0.2.0",
+      enabled: true,
+      restartServices: ["Core API", "Source Gateway", "Alpha Fixture"],
+      reason: expect.stringContaining("while Atlas Core is stopped")
+    });
+    expect(installedPluginVersion(test, plugin.pluginId)).toBe("0.1.0");
   });
 
   it("updates all installed independent Plugins in sorted order, including disabled Plugins", async () => {

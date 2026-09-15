@@ -133,6 +133,7 @@ export type PluginDeploymentStatus = {
   previousVersion?: string | null | undefined;
   availableVersions?: readonly string[];
   compatibility?: "compatible" | "incompatible" | "unknown";
+  updatePlan?: PluginUpdatePlan;
   revoked?: boolean;
   revocationReason?: string;
   error?: string;
@@ -149,6 +150,30 @@ export type PluginActivity = {
 export type PluginActivityReporter = (activity: PluginActivity) => void;
 
 export type PluginOperationOutcome = { status: "success" } | { previousDeploymentPreserved: true; status: "cancelled" };
+
+type PluginUpdatePlanBase = {
+  pluginId: string;
+  displayName: string;
+  currentVersion: string;
+  enabled: boolean;
+  restartServices: readonly string[];
+  coreVersion: string;
+  coreImage: string;
+};
+
+export type PluginUpdatePlan =
+  | (PluginUpdatePlanBase & {
+      status: "available";
+      action: "replacement" | "update";
+      targetVersion: string;
+    })
+  | (PluginUpdatePlanBase & {
+      status: "blocked";
+      reason: string;
+      action?: "replacement" | "update";
+      targetVersion?: string;
+    })
+  | (PluginUpdatePlanBase & { status: "current"; reason: string });
 
 export type AtlasCoreOperator = {
   cancelPending(): void;
@@ -169,7 +194,12 @@ export type AtlasCoreOperator = {
   ): Promise<PluginOperationOutcome>;
   pluginLogs(pluginId: string, follow: boolean): Promise<void>;
   openPluginLogStream?(pluginId: string, follow?: boolean): Promise<LogStream>;
-  pluginUpdate?(pluginId: string): Promise<void>;
+  pluginUpdate?(
+    pluginId: string,
+    reportActivity?: PluginActivityReporter,
+    reviewedPlan?: Extract<PluginUpdatePlan, { status: "available" }>
+  ): Promise<PluginOperationOutcome>;
+  pluginUpdatePlan?(pluginId: string): Promise<PluginUpdatePlan>;
   pluginRollback?(pluginId: string): Promise<void>;
   pluginUninstall?(pluginId: string): Promise<void>;
   pluginRefresh?(): Promise<void>;

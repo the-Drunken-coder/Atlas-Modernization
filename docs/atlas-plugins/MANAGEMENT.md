@@ -1,10 +1,10 @@
 # Plugin management
 
 Status: the independent Plugin lifecycle and release workflow are released with Atlas Core 0.2.0 and Building Scan 0.1.0.
-Candidate-image checks passed on linux/amd64 and linux/arm64. The current TUI keeps independent Plugin update, rollback,
-uninstall, catalog refresh, and shared-key rotation, plus recovery and supervision, as direct-command-only operations.
-The agreed next TUI step adds the ordinary Plugin update path with an impact review and explicit confirmation; recovery,
-signing, and unusual administrative operations remain direct-command-only. See
+Candidate-image checks passed on linux/amd64 and linux/arm64. The TUI supports ordinary one-at-a-time Plugin updates
+with a target-version and restart-impact review, explicit confirmation, in-place progress, safe cancellation, and
+restoration results. Rollback, uninstall, catalog refresh, shared-key rotation, recovery, supervision, signing, and
+unusual administrative operations remain direct-command-only. See
 [GitHub issue #429](https://github.com/the-Drunken-coder/Atlas-Modernization/issues/429). Existing published Core
 packages may still contain the bundled catalog; the source implementation uses independent catalog state for schema-4
 deployments. Production signing trust and Pages configuration are recorded in [bootstrap provenance](CATALOG_BOOTSTRAP.md).
@@ -397,10 +397,11 @@ checks instead of gating base startup on Plugin health.
 When the selected release is permitted, update selects the greatest compatible, non-revoked stable version newer than
 it and reports that the Plugin is current when none exists. When the selected release is revoked, update instead selects
 the greatest compatible, non-revoked stable release other than the selection, even when that replacement has a lower
-version. It labels that remediation as a downgrade. If no permitted replacement exists, it reports that condition rather
-than calling the revoked Plugin current. While disabled, update verifies, pulls, and stores the candidate, moves the prior
-selected release to `previous`, and does not restart Atlas. Updating an Enabled Plugin requires Atlas to be running; when
-Atlas is stopped, the command tells the operator to start Atlas or disable the Plugin first. While enabled, update stages
+version. The direct command describes that lower version as a downgrade; the TUI presents it as a replacement, not an
+upgrade. If no permitted replacement exists, it reports that condition rather than calling the revoked Plugin current.
+While disabled, update verifies, pulls, and stores the candidate, moves the prior selected release to `previous`, and does
+not restart Atlas. Updating an Enabled Plugin requires Atlas to be running; when Atlas is stopped, the command tells the
+operator to start Atlas or disable the Plugin first. While enabled, update stages
 candidate active files, validates Compose, pulls the candidate digest, recreates the affected services with pulling
 disabled, and waits for the same image, health, and discovery checks. Only then does it commit selected and previous
 release state, including both durable image receipts. Failure restores the old release, active files, deployment state,
