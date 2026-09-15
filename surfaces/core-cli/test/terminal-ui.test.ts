@@ -2074,8 +2074,14 @@ describe("Atlas Core terminal UI", () => {
     const update = createInteractiveCLI(terminal.input, terminal.output).runUpdate(deployment);
 
     await terminal.waitFor("Update CLI + Atlas Core");
-    terminal.write("\u001b[B\r");
-    await terminal.waitFor("PostgreSQL, MinIO, credentials, and configuration are preserved");
+    terminal.write("\u001b[B");
+    await terminal.waitFor("return Atlas Core to its prior");
+    expect(terminal.text).toContain("running or stopped state on the reviewed image.");
+    terminal.write("\r");
+    await terminal.waitFor(
+      "PostgreSQL, MinIO, credentials, and configuration are preserved. Atlas Core returns to its prior"
+    );
+    expect(terminal.text).toContain("running or stopped state after the image pull.");
     terminal.resize(36);
     await terminal.waitFor("Resize to at least 40 columns.");
     terminal.write("\r");
@@ -2112,6 +2118,33 @@ describe("Atlas Core terminal UI", () => {
     terminal.write("\r");
     terminal.resize(40, 5);
     await terminal.waitFor("Update review needs at least");
+    terminal.write("\r");
+    await nextInputTurn();
+    const updateCallsAfterHiddenEnter = deployment.update.mock.calls.length;
+    terminal.write("\u001b");
+    await nextInputTurn();
+    terminal.write("q");
+    await update;
+
+    expect(updateCallsAfterHiddenEnter).toBe(0);
+  });
+
+  it("counts the wrapped run-intent copy in the Core update review height", async () => {
+    const terminal = new TestTerminal(40, true, 10);
+    const deployment = operator();
+    deployment.checkForUpdates.mockResolvedValue({
+      cliVersion: "0.1.5",
+      coreVersion: "0.1.5",
+      latestVersion: "0.1.6",
+      cliUpdateAvailable: true,
+      coreUpdateAvailable: true
+    });
+    const update = createInteractiveCLI(terminal.input, terminal.output).runUpdate(deployment);
+
+    await terminal.waitFor("Update CLI + Atlas Core");
+    terminal.write("\u001b[B\r");
+    await terminal.waitFor("Update review needs at least 11 rows at");
+    expect(terminal.text).toContain("this width.");
     terminal.write("\r");
     await nextInputTurn();
     const updateCallsAfterHiddenEnter = deployment.update.mock.calls.length;

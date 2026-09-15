@@ -115,6 +115,8 @@ type AtlasCoreAppProps = {
 };
 
 const MINIMUM_TERMINAL_COLUMNS = 40;
+const CORE_UPDATE_REVIEW_COPY =
+  "PostgreSQL, MinIO, credentials, and configuration are preserved. Atlas Core returns to its prior running or stopped state after the image pull.";
 const STATUS_REFRESH_INTERVAL_MS = 5_000;
 const RESET_CONFIRMATION_DESCRIPTION =
   "Containers, PostgreSQL and MinIO data, credentials, and configuration will be deleted. A new deployment will be initialized afterward.";
@@ -2450,7 +2452,7 @@ function UpdateMenu({
           <Text>
             {choice?.scope === "cli"
               ? "CLI-only: install the latest CLI while leaving Atlas Core, credentials, and durable data unchanged."
-              : "Preserve credentials and durable data, install the latest CLI, then restart Atlas Core on its reviewed image."}
+              : "Preserve credentials and durable data, install the latest CLI, then return Atlas Core to its prior running or stopped state on the reviewed image."}
           </Text>
         </>
       )}
@@ -2518,9 +2520,7 @@ function UpdateReview({
             Atlas Core {info.coreVersion} → {info.latestVersion}
           </Text>
           <Text> </Text>
-          <Text>
-            PostgreSQL, MinIO, credentials, and configuration are preserved. Atlas Core restarts after the image pull.
-          </Text>
+          <Text>{CORE_UPDATE_REVIEW_COPY}</Text>
         </>
       )}
       <Rule width={columns} />
@@ -2642,10 +2642,7 @@ function updateReviewRows(info: UpdateInfo, scope: UpdateScope, width: number): 
     ) +
     wrappedRows(`Atlas Core ${info.coreVersion} → ${info.latestVersion}`, width) +
     1 +
-    wrappedRows(
-      "PostgreSQL, MinIO, credentials, and configuration are preserved. Atlas Core restarts after the image pull.",
-      width
-    )
+    wrappedRows(CORE_UPDATE_REVIEW_COPY, width)
   );
 }
 
