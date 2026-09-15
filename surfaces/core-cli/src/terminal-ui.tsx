@@ -1643,7 +1643,7 @@ function LogViewer({
 
   useInput((input, key) => {
     if (actionPending.current) return;
-    if (key.escape || key.return || (key.ctrl && input === "c")) {
+    if (key.escape || (key.ctrl && input === "c")) {
       actionPending.current = true;
       void onBack();
       return;
@@ -1707,6 +1707,7 @@ function LogViewer({
 
 function DiagnosticsScreen({ onBack, view }: { onBack(): void; view: DiagnosticsResult | Error }): ReactNode {
   const { columns, rows } = useWindowSize();
+  const actionPending = useRef(false);
   const scrollRef = useRef(0);
   const [scroll, setScroll] = useState(0);
   const lines = diagnosticsLines(view, columns);
@@ -1727,8 +1728,11 @@ function DiagnosticsScreen({ onBack, view }: { onBack(): void; view: Diagnostics
   }, [maxScroll]);
 
   useInput((input, key) => {
-    if (key.escape || key.return || (key.ctrl && input === "c") || input === "q") onBack();
-    else if (hasCommandModifier(key)) return;
+    if (actionPending.current) return;
+    if (key.escape || key.return || (key.ctrl && input === "c") || input === "q") {
+      actionPending.current = true;
+      onBack();
+    } else if (hasCommandModifier(key)) return;
     else if (key.upArrow && canScroll) {
       const next = Math.max(0, scrollRef.current - 1);
       scrollRef.current = next;
@@ -2294,9 +2298,8 @@ function PluginsMenu({
     ? firstTerminalLine(`REVOKED${plugin.revocationReason ? `: ${plugin.revocationReason}` : ""}`, columns)
     : undefined;
   const errorSummary = plugin?.error ? firstTerminalLine(`ERROR: ${plugin.error}`, columns) : undefined;
-  const fixedRows =
-    7 + wrappedRows(footer, columns) + Number(Boolean(revocationSummary)) + Number(Boolean(errorSummary));
-  const viewportRows = Math.max(1, rows - fixedRows);
+  const chromeRows = 7 + Number(Boolean(revocationSummary)) + Number(Boolean(errorSummary));
+  const viewportRows = Math.max(1, rows - chromeRows - wrappedRows(footer, columns));
   const firstPlugin = Math.max(
     0,
     Math.min(index - Math.floor(viewportRows / 2), Math.max(0, plugins.length - viewportRows))

@@ -751,6 +751,10 @@ describe("Atlas Core terminal UI", () => {
     await terminal.waitFor("pause/follow");
     await terminal.waitForRawChange(beforeLine);
     expect(terminal.text).toContain("a very long diagnostic line");
+    terminal.write("\r");
+    await nextInputTurn();
+    expect(stream.closed).toBe(false);
+    expect(deployment.openLogStream).toHaveBeenCalledOnce();
     terminal.write(" ");
     await terminal.waitFor("PAUSED");
     terminal.write("\u001b[A");
@@ -1026,6 +1030,51 @@ describe("Atlas Core terminal UI", () => {
     expect(terminal.text).toContain("Enter or Esc back");
     terminal.write("\u001b");
     await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
+    terminal.write("q");
+    await menu;
+  });
+
+  it("latches repeated diagnostics navigation before reloading the menu", async () => {
+    const terminal = new TestTerminal(80, true, 24);
+    const deployment = operator();
+    deployment.diagnostics.mockResolvedValue({
+      healthy: false,
+      checks: [
+        {
+          label: "runtime",
+          status: "failure",
+          detail: Array.from({ length: 30 }, (_, index) => `diagnostic line ${index + 1}`).join("\n")
+        }
+      ]
+    });
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("View logs and diagnostics");
+    terminal.write("\u001b[B\r");
+    await terminal.waitFor("Logs and diagnostics");
+    terminal.write("\u001b[B".repeat(5));
+    terminal.write("\r");
+    await terminal.waitFor("DIAGNOSTICS");
+    await terminal.waitFor("diagnostic line 1");
+    const beforeScroll = terminal.raw.length;
+    terminal.write("\u001b[B");
+    await terminal.waitForRawChange(beforeScroll);
+    let finishSnapshot: ((snapshot: DeploymentSnapshot) => void) | undefined;
+    const pendingSnapshot = new Promise<DeploymentSnapshot>((resolve) => {
+      finishSnapshot = resolve;
+    });
+    deployment.snapshot.mockImplementation(async () => await pendingSnapshot);
+
+    terminal.write("\u001b");
+    terminal.write("q");
+    terminal.write("q");
+    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
+    await nextInputTurn();
+    expect(deployment.snapshot).toHaveBeenCalledTimes(2);
+    const beforeMenu = terminal.raw.length;
+    finishSnapshot?.({ status: "ready", canReset: true, detail: "Everything is healthy." });
+    await terminal.waitForRawChange(beforeMenu);
+    await vi.waitFor(() => expect(stripAnsi(terminal.raw.slice(beforeMenu))).toContain("CHOOSE AN ACTION"));
     terminal.write("q");
     await menu;
   });
