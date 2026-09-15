@@ -3011,6 +3011,67 @@ describe("Atlas Core terminal UI", () => {
     await expect(update).rejects.toThrow("compose up failed");
   });
 
+  it("gives CLI recovery guidance when a combined update fails before Core handoff", async () => {
+    const terminal = new TestTerminal();
+    const deployment = operator();
+    deployment.checkForUpdates.mockResolvedValue({
+      cliVersion: "0.1.5",
+      coreVersion: "0.1.5",
+      latestVersion: "0.1.6",
+      cliUpdateAvailable: true,
+      coreUpdateAvailable: true
+    });
+    deployment.updateWithProgress.mockImplementation(async (_scope, _version, report) => {
+      report?.({ message: "Installing Atlas Core CLI 0.1.6...", stage: "operation" });
+      throw new Error("npm install failed");
+    });
+    const update = createInteractiveCLI(terminal.input, terminal.output).runUpdate(deployment);
+
+    await terminal.waitFor("Update CLI + Atlas Core");
+    terminal.write("\u001b[B");
+    await terminal.waitFor("Preserve credentials and durable data");
+    terminal.write("\r");
+    await terminal.waitFor("REVIEW UPDATE");
+    terminal.write("\r");
+    await terminal.waitFor("The update stopped without deleting Atlas Core data");
+    expect(terminal.text).toContain("Resolve the CLI");
+    expect(terminal.text).toContain("package or supervision error");
+    expect(terminal.text).not.toContain("inspect recovery status");
+    terminal.write("\r");
+
+    await expect(update).rejects.toThrow("npm install failed");
+  });
+
+  it("gives Core recovery guidance after a combined update starts Core handoff", async () => {
+    const terminal = new TestTerminal();
+    const deployment = operator();
+    deployment.checkForUpdates.mockResolvedValue({
+      cliVersion: "0.1.5",
+      coreVersion: "0.1.5",
+      latestVersion: "0.1.6",
+      cliUpdateAvailable: true,
+      coreUpdateAvailable: true
+    });
+    deployment.updateWithProgress.mockImplementation(async (_scope, _version, report) => {
+      report?.({ message: "Starting Atlas Core deployment update...", phase: "core", stage: "operation" });
+      throw new Error("compose up failed");
+    });
+    const update = createInteractiveCLI(terminal.input, terminal.output).runUpdate(deployment);
+
+    await terminal.waitFor("Update CLI + Atlas Core");
+    terminal.write("\u001b[B");
+    await terminal.waitFor("Preserve credentials and durable data");
+    terminal.write("\r");
+    await terminal.waitFor("REVIEW UPDATE");
+    terminal.write("\r");
+    await terminal.waitFor("The update stopped without deleting Atlas Core data");
+    expect(terminal.text).toContain("inspect recovery status");
+    expect(terminal.text).not.toContain("Resolve the CLI");
+    terminal.write("\r");
+
+    await expect(update).rejects.toThrow("compose up failed");
+  });
+
   it("exits with a CLI update failure instead of returning to the old menu", async () => {
     const terminal = new TestTerminal();
     const deployment = operator();

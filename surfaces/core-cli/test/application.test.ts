@@ -4352,17 +4352,20 @@ describe("atlas-core CLI", () => {
     test.runner.latestVersion = NEXT_PACKAGE_VERSION;
     test.runner.installedCoreUpdateOutput = "Core migration check completed\n";
     const progress: string[] = [];
+    let coreUpdateStarted = false;
     const interactive: InteractiveCLI = {
       configureAdmin: async () => undefined,
       runMenu: async () => undefined,
       runUpdate: async (deployment) => {
         await deployment.updateWithProgress("all", NEXT_PACKAGE_VERSION, (event) => {
           progress.push(event.message);
+          if (event.phase === "core") coreUpdateStarted = true;
         });
       }
     };
 
     expect(await runCLI(["update"], { ...test.context, interactive })).toBe(0);
+    expect(coreUpdateStarted).toBe(true);
     expect(progress).toContain("Core migration check completed");
     expect(test.stdout.join("")).not.toContain("Core migration check completed");
   });
@@ -4729,6 +4732,11 @@ describe("atlas-core CLI", () => {
       },
       services: expect.arrayContaining([expect.objectContaining({ id: "api" })])
     });
+
+    test.stdout.length = 0;
+    test.stderr.length = 0;
+    expect(await runCLI(["logs", "core"], test.context), test.stderr.join("")).toBe(0);
+    expect(test.runner.calls.map(composeCommand)).toContainEqual(["logs", "--tail", "200", "api"]);
   });
 
   it("resets a failed no-receipt Core update through the confirmed reset command", async () => {

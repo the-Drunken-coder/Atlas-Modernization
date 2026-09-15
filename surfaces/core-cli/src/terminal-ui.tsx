@@ -2191,12 +2191,15 @@ function updateOperationLines(view: UpdateOperationView, width: number): Activit
     return [...lines, { text: "" }, { color: "yellow", text: cancellationText }];
   }
   if (view.status === "failure") {
+    const coreUpdateStarted = view.events.some((event) => event.phase === "core");
     const recoveryText =
       view.scope === "cli"
         ? "Resolve the CLI package or supervision error before retrying the CLI update."
-        : !view.info.cliUpdateAvailable
-          ? "Inspect Core recovery status before retrying the Core update."
-          : "CLI installation may have completed; inspect recovery status before retrying.";
+        : view.info.cliUpdateAvailable && !coreUpdateStarted
+          ? "Resolve the CLI package or supervision error before retrying the combined update."
+          : !view.info.cliUpdateAvailable
+            ? "Inspect Core recovery status before retrying the Core update."
+            : "CLI installation may have completed; inspect recovery status before retrying.";
     return [
       ...lines,
       { text: "" },

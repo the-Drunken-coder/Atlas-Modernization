@@ -76,6 +76,7 @@ export type UpdateScope = "all" | "cli";
 
 export type UpdateProgress = {
   message: string;
+  phase?: "cli" | "core";
   stage: "operation" | "cleanup";
 };
 

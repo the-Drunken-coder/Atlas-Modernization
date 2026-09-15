@@ -2732,14 +2732,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   }
 
   async details(signal?: AbortSignal): Promise<DeploymentDetails> {
-    if (!existsSync(this.#configDir) || !existsSync(this.#envFile) || !existsSync(this.#stateFile)) {
-      throw new Error("Atlas Core is not initialized. Run atlas-core init first.");
-    }
-    this.#assertPrivateConfiguration();
-    const state = this.#readState();
-    if (!state) {
-      throw new Error("Atlas Core state is invalid. Restore a valid state file before operating this deployment.");
-    }
+    const state = this.#requireInspectableState();
     const runtime = await this.#preflight(signal);
     return await this.#dockerRuntimeScope.run(runtime, async () => {
       this.#assertStateMatchesEngine(state, runtime.engineId);
@@ -2761,6 +2754,18 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
         ...(error ? { performanceError: error } : {})
       };
     });
+  }
+
+  #requireInspectableState(): DeploymentState {
+    if (!existsSync(this.#configDir) || !existsSync(this.#envFile) || !existsSync(this.#stateFile)) {
+      throw new Error("Atlas Core is not initialized. Run atlas-core init first.");
+    }
+    this.#assertPrivateConfiguration();
+    const state = this.#readState();
+    if (!state) {
+      throw new Error("Atlas Core state is invalid. Restore a valid state file before operating this deployment.");
+    }
+    return state;
   }
 
   async #deploymentSnapshot(pluginIds: readonly string[]): Promise<DeploymentSnapshot> {
@@ -2872,7 +2877,6 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   }
 
   async logs(service: "api" | "minio" | "postgres" | "source-gateway" | undefined, follow: boolean): Promise<void> {
-    this.#requireInitialized();
     await this.#runLogs(service, follow);
   }
 
@@ -2888,7 +2892,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     follow: boolean,
     onOutput?: (stream: "stdout" | "stderr", line: string) => void
   ): Promise<LogStream> {
-    const state = this.#requireInitialized();
+    const state = this.#requireInspectableState();
     const runtime = await this.#preflight();
     return await this.#dockerRuntimeScope.run(runtime, async () => {
       this.#assertStateMatchesEngine(state, runtime.engineId);
@@ -3003,14 +3007,14 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   }
 
   async pluginLogs(pluginId: string, follow: boolean): Promise<void> {
-    const state = this.#requireInitialized();
+    const state = this.#requireInspectableState();
     if (!state.enabledPlugins.includes(pluginId)) throw new Error(`Plugin ${pluginId} is not enabled.`);
     const plugin = this.#pluginForRead(pluginId, state);
     await this.#runLogs(plugin.service, follow);
   }
 
   async openPluginLogStream(pluginId: string, follow = true): Promise<LogStream> {
-    const state = this.#requireInitialized();
+    const state = this.#requireInspectableState();
     if (!state.enabledPlugins.includes(pluginId)) throw new Error(`Plugin ${pluginId} is not enabled.`);
     const plugin = this.#pluginForRead(pluginId, state);
     return await this.#openLogStream(plugin.service, follow);
@@ -4774,9 +4778,9 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     if (result.status !== 0) throw commandFailure(`npm install --global ${PACKAGE_NAME}@${version}`, result);
   }
 
-  #reportUpdate(message: string, stage: UpdateProgress["stage"] = "operation"): void {
+  #reportUpdate(message: string, stage: UpdateProgress["stage"] = "operation", phase?: UpdateProgress["phase"]): void {
     const reporter = this.#updateReporterScope.getStore();
-    if (reporter) reporter({ message, stage });
+    if (reporter) reporter({ message, ...(phase ? { phase } : {}), stage });
     else this.#stdout.write(`${message}\n`);
   }
 
@@ -4844,6 +4848,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     if (oneLine(versionResult.stdout) !== `${PACKAGE_NAME} ${version}`) {
       throw new Error(`npm installed an unexpected Atlas Core CLI: ${oneLine(versionResult.stdout) || "no version"}.`);
     }
+    this.#reportUpdate("Starting Atlas Core deployment update...", "operation", "core");
     const output = this.#liveCommandOutputReporter();
     let updateResult: CommandResult;
     try {
