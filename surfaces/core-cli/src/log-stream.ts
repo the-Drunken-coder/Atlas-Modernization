@@ -58,10 +58,10 @@ type LogDisplayRow = {
   text: string;
 };
 
-const MAX_PENDING_FRAGMENT_LENGTH = 64 * 1024;
+const MAX_LOG_LINE_LENGTH = 64 * 1024;
 
-function boundedFragmentTail(fragment: string): string {
-  return fragment.length > MAX_PENDING_FRAGMENT_LENGTH ? fragment.slice(-MAX_PENDING_FRAGMENT_LENGTH) : fragment;
+function boundedLogLineTail(line: string): string {
+  return line.length > MAX_LOG_LINE_LENGTH ? line.slice(-MAX_LOG_LINE_LENGTH) : line;
 }
 
 export type LogBufferSnapshot = {
@@ -222,8 +222,8 @@ export function createLogStream(
   const frameChunk = (pending: string, chunk: string): string => {
     const lines = `${pending}${chunk}`.split(/\r?\n/u);
     const remainder = lines.pop() ?? "";
-    for (const line of lines) emitLine(line);
-    return boundedFragmentTail(remainder);
+    for (const line of lines) emitLine(boundedLogLineTail(line));
+    return boundedLogLineTail(remainder);
   };
   const emitError = (error: Error): void => {
     for (const listener of errorListeners) listener(error);

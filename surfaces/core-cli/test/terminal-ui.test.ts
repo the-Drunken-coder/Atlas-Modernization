@@ -2226,6 +2226,38 @@ describe("Atlas Core terminal UI", () => {
     await expect(configuration).rejects.toThrow("Password update failed.");
   });
 
+  it("does not tell a stopped deployment to start after an admin password failure", async () => {
+    const terminal = new TestTerminal();
+    const deployment = operator({ status: "stopped", detail: "Atlas Core is stopped." });
+    deployment.runLifecycle.mockResolvedValueOnce({
+      status: "failure",
+      error: "Password update failed.",
+      snapshot: { status: "stopped", detail: "Atlas Core is stopped. Durable storage is preserved." }
+    });
+    const configuration = createInteractiveCLI(terminal.input, terminal.output).configureAdmin(deployment);
+
+    await terminal.waitFor("New password");
+    terminal.write("x");
+    await terminal.waitFor("*");
+    terminal.write("\r");
+    await terminal.waitFor("Confirm password");
+    const beforeConfirmation = terminal.raw.length;
+    terminal.write("x");
+    await terminal.waitForRawChange(beforeConfirmation);
+    terminal.write("\r");
+    await terminal.waitFor("Password update failed.");
+    expect(terminal.text).toContain("admin password change");
+    expect(terminal.text).toContain("while Atlas Core is stopped");
+    expect(terminal.text).not.toContain("Choose Start Atlas Core");
+    const beforeReturn = terminal.raw.length;
+    terminal.write("\u001b");
+    await terminal.waitForRawChange(beforeReturn);
+    await nextInputTurn();
+    terminal.write("\u001b");
+
+    await expect(configuration).rejects.toThrow("Password update failed.");
+  });
+
   it("captures password text submitted in the same input chunk", async () => {
     const terminal = new TestTerminal();
     const deployment = operator();

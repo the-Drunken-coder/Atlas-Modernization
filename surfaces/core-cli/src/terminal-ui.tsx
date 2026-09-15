@@ -2124,6 +2124,7 @@ function lifecycleRecoveryHint(view: LifecycleOperationView): string {
     return "Install recovery supervision, or rerun this operation with its explicit manual command.";
   }
   if (view.snapshot?.status === "stopped") {
+    if (view.operation === "configure") return "Retry the admin password change while Atlas Core is stopped.";
     return view.operation === "restart"
       ? "Restart is unavailable while stopped. Choose Start Atlas Core."
       : "Choose Start Atlas Core to retry the operation.";

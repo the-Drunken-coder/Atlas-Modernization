@@ -155,4 +155,20 @@ describe("log stream primitives", () => {
     expect(lines[0]).toHaveLength(64 * 1024);
     expect(lines[0]).toBe(longLine.slice(-64 * 1024));
   });
+
+  it("bounds a newline-terminated record while retaining its tail", async () => {
+    const fixture = source();
+    const stream = createLogStream("api", fixture.stream);
+    const lines: string[] = [];
+    stream.onLine((line) => lines.push(line));
+    const longLine = `prefix-${"x".repeat(128 * 1024)}`;
+
+    fixture.stdout(`${longLine}\n`);
+    fixture.close();
+    await stream.wait();
+
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toHaveLength(64 * 1024);
+    expect(lines[0]).toBe(longLine.slice(-64 * 1024));
+  });
 });
