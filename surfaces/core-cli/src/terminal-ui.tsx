@@ -24,7 +24,6 @@ import type {
   UpdateScope
 } from "./operator.js";
 import { lifecycleOperationLabel, lifecycleOperationSummary } from "./operator.js";
-import { PACKAGE_VERSION } from "./package-metadata.js";
 
 type Screen =
   | { kind: "busy"; label: string }
@@ -41,7 +40,7 @@ type Screen =
   | { kind: "diagnostics"; view: DiagnosticsResult | Error; returnTo: "menu" | "status" }
   | { kind: "menu"; notice?: Notice; snapshot: DeploymentSnapshot }
   | { kind: "operation"; view: LifecycleOperationView }
-  | { kind: "password" }
+  | { error?: string; kind: "password" }
   | { kind: "plugin-activity"; view: PluginActivityView }
   | { kind: "plugins"; view: PluginDeploymentStatus[] | Error }
   | { kind: "reset-confirmation" }
@@ -382,15 +381,15 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
         }
         return;
       }
-      if (terminalExit) {
-        exit(terminalLossError.current);
-        return;
-      }
       const failure = result.failure
         ? { error: result.failure.message }
         : lifecycleResult?.status === "failure"
           ? { error: lifecycleResult.error, snapshot: lifecycleResult.snapshot }
           : undefined;
+      if (terminalExit) {
+        exit(result.failure ?? (failure ? new Error(failure.error) : terminalLossError.current));
+        return;
+      }
       const snapshot = failure && "snapshot" in failure ? failure.snapshot : undefined;
       setScreen((current) =>
         current.kind === "operation"
@@ -709,7 +708,18 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
             }
           : current
       );
+      const cliUpdateCompleted = status === "success" && updateInvolvesCLI(info, scope);
+      if (cliUpdateCompleted) {
+        await waitUntilRenderFlush();
+        exit();
+        return;
+      }
       if (requestedCancellation === "return" && !terminalLost.current && !result.failure) {
+        if (updateInvolvesCLI(info, scope)) {
+          await waitUntilRenderFlush();
+          exit();
+          return;
+        }
         updateCancellation.current = undefined;
         if (mode === "update") await loadUpdate();
         else await loadMenu({ message: "Update cancelled.", tone: "yellow" });
@@ -758,7 +768,11 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
   if (screen.kind === "operation") {
     return (
       <LifecycleOperationScreen
-        onBack={() => (mode === "configure" ? setScreen({ kind: "password" }) : void loadMenu())}
+        onBack={() =>
+          mode === "configure"
+            ? setScreen({ kind: "password", ...(screen.view.error ? { error: screen.view.error } : {}) })
+            : void loadMenu()
+        }
         onCancel={cancelLifecycleOperation}
         view={screen.view}
       />
@@ -768,8 +782,12 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
     return (
       <UpdateOperationScreen
         onBack={() => {
-          if (mode === "update") exit(screen.view.error ? new Error(screen.view.error) : undefined);
-          else void loadMenu();
+          const cliInvolved = updateInvolvesCLI(screen.view.info, screen.view.scope);
+          if (screen.view.error && cliInvolved) {
+            exit(new Error(screen.view.error));
+          } else if (mode === "update") {
+            exit(screen.view.error ? new Error(screen.view.error) : undefined);
+          } else void loadMenu();
         }}
         onCancel={cancelUpdateOperation}
         view={screen.view}
@@ -791,8 +809,9 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
   if (screen.kind === "password") {
     return (
       <PasswordScreen
+        {...(screen.error ? { error: screen.error } : {})}
         onCancel={() => {
-          if (mode === "configure") exit();
+          if (mode === "configure") exit(screen.error ? new Error(screen.error) : undefined);
           else void loadMenu();
         }}
         onSubmit={(password) => void configureAdmin(password)}
@@ -1024,7 +1043,14 @@ function actionListSummary(snapshot: DeploymentSnapshot): KeyValue[] {
           : "Not initialized";
   return [
     ["Deployment", "local-engine"],
-    ["Core", snapshot.status === "not-initialized" ? "Not initialized" : `v${PACKAGE_VERSION}`],
+    [
+      "Core",
+      snapshot.status === "not-initialized"
+        ? "Not initialized"
+        : snapshot.coreVersion
+          ? `v${snapshot.coreVersion}`
+          : "Version unavailable"
+    ],
     ["Status", status],
     ["Detail", snapshot.detail]
   ];
@@ -1080,6 +1106,7 @@ function ResetConfirmationScreen({
       onCancel();
       return;
     }
+    if (columns < MINIMUM_TERMINAL_COLUMNS) return;
     if (key.backspace || key.delete) {
       answerRef.current = Array.from(answerRef.current).slice(0, -1).join("");
       setAnswer(answerRef.current);
@@ -1503,6 +1530,8 @@ function LogViewer({
   title?: string;
 }): ReactNode {
   const { columns, rows } = useWindowSize();
+  const columnsRef = useRef(columns);
+  columnsRef.current = columns;
   const bufferRef = useRef(new LogBuffer());
   const selectedRef = useRef(
     Math.max(
@@ -1530,7 +1559,7 @@ function LogViewer({
     const buffer = bufferRef.current;
     let active = true;
     const removeLine = stream.onLine((line) => {
-      for (const wrapped of wrapAnsi(line, Math.max(1, columns), { hard: true, trim: false }).split("\n")) {
+      for (const wrapped of wrapAnsi(line, Math.max(1, columnsRef.current), { hard: true, trim: false }).split("\n")) {
         buffer.append(wrapped);
       }
       setRevision((value) => value + 1);
@@ -1550,7 +1579,7 @@ function LogViewer({
       removeError();
       void stream.close();
     };
-  }, [columns, stream]);
+  }, [stream]);
 
   useInput((input, key) => {
     if (actionPending.current) return;
@@ -2157,7 +2186,9 @@ function PluginsMenu({
       {view instanceof Error ? (
         <Text color="red">{view.message}</Text>
       ) : plugins.length === 0 ? (
-        <Text>No first-party Plugins are included in this package.</Text>
+        <Text>
+          No Plugins are installed or available from the verified catalog. Run atlas-core plugins refresh to load it.
+        </Text>
       ) : (
         <>
           <Text bold>PLUGIN CATALOG</Text>
@@ -2248,14 +2279,22 @@ function SimpleMenu({
   );
 }
 
-function PasswordScreen({ onCancel, onSubmit }: { onCancel(): void; onSubmit(password: string): void }): ReactNode {
+function PasswordScreen({
+  error: initialError,
+  onCancel,
+  onSubmit
+}: {
+  error?: string;
+  onCancel(): void;
+  onSubmit(password: string): void;
+}): ReactNode {
   const { columns } = useWindowSize();
   const actionPending = useRef(false);
   const confirmationRef = useRef(false);
   const passwordRef = useRef("");
   const valueRef = useRef("");
   const [confirmation, setConfirmation] = useState(false);
-  const [error, setError] = useState<string>();
+  const [error, setError] = useState<string | undefined>(initialError);
   const [value, setValue] = useState("");
   const canInteract = columns >= MINIMUM_TERMINAL_COLUMNS;
 
@@ -2606,6 +2645,10 @@ function updateChoices(info: UpdateInfo): Array<{ label: string; scope: UpdateSc
     });
   }
   return choices;
+}
+
+function updateInvolvesCLI(info: UpdateInfo, scope: UpdateScope): boolean {
+  return scope === "cli" || (scope === "all" && info.cliUpdateAvailable);
 }
 
 async function readSnapshot(operator: AtlasCoreOperator): Promise<DeploymentSnapshot> {

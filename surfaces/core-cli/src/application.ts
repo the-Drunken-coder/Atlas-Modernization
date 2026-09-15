@@ -124,6 +124,7 @@ const ENGINE_SCOPED_RESOURCE_LAYOUT = "engine-scoped-v1";
 const COMPOSE_WAIT_SECONDS = "120";
 const CLEANUP_CANCELLATION_GRACE_MS = (Number(COMPOSE_WAIT_SECONDS) + 10) * 1_000;
 const COMMAND_TERMINATION_GRACE_MS = 2_000;
+const MAX_RETAINED_COMMAND_OUTPUT_CHARS = 64 * 1024;
 const COMMAND_SUPERVISOR_SOURCE = `
 const { spawn } = require("node:child_process");
 const [command, ...args] = process.argv.slice(1);
@@ -195,10 +196,16 @@ type RunOptions = {
   env?: NodeJS.ProcessEnv;
   inherit?: boolean;
   signal?: AbortSignal;
+  onOutput?: (stream: "stdout" | "stderr", chunk: string) => void;
   processGroup?: {
     started(processGroupId: number): void;
     finished(processGroupId: number): void;
   };
+};
+
+type LiveCommandOutputReporter = {
+  onOutput: (stream: "stdout" | "stderr", chunk: string) => void;
+  flush(): void;
 };
 
 export type CommandRunner = {
@@ -355,6 +362,7 @@ type LifecycleOperationContext = {
   restorationError?: unknown;
   restoreRunIntentOnCancellation: boolean;
   runIntent: RunIntentSnapshot;
+  stopReleaseStarted?: boolean;
 };
 
 type DockerStats = {
@@ -437,15 +445,18 @@ export class ProcessCommandRunner implements CommandRunner {
       child.stdout?.setEncoding("utf8");
       child.stderr?.setEncoding("utf8");
       child.stdout?.on("data", (chunk: string) => {
+        options.onOutput?.("stdout", chunk);
         for (const listener of stdoutListeners) listener(chunk);
       });
       child.stderr?.on("data", (chunk: string) => {
-        stderr += chunk;
+        stderr = retainCommandOutputTail(stderr, chunk);
+        options.onOutput?.("stderr", chunk);
         for (const listener of stderrListeners) listener(chunk);
       });
       child.once("error", (error) => {
         if (!settled) {
-          stderr += error.message;
+          stderr = retainCommandOutputTail(stderr, error.message);
+          options.onOutput?.("stderr", error.message);
           finish(1);
         }
       });
@@ -517,9 +528,11 @@ export class ProcessCommandRunner implements CommandRunner {
       child.stderr?.setEncoding("utf8");
       child.stdout?.on("data", (chunk: string) => {
         stdout += chunk;
+        options.onOutput?.("stdout", chunk);
       });
       child.stderr?.on("data", (chunk: string) => {
-        stderr += chunk;
+        stderr = retainCommandOutputTail(stderr, chunk);
+        options.onOutput?.("stderr", chunk);
       });
       child.once("exit", () => {
         state.exited = true;
@@ -804,7 +817,38 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
         if (operation === "reset" && lifecycleContext.destructiveStarted) {
           const message = "Reset cancellation arrived after deletion began; inspect recovery status before retrying.";
           emit({ message, stage: "cleanup" });
-          return { status: "failure", error: message, snapshot: this.#persistedLifecycleSnapshot() };
+          return {
+            status: "failure",
+            error: message,
+            snapshot: {
+              status: "degraded",
+              detail:
+                "Reset was interrupted after destructive deletion began. Durable storage state is indeterminate; inspect recovery status before retrying."
+            }
+          };
+        }
+        if (operation === "stop" && lifecycleContext.operationCommitted) {
+          const summary = `${label} cancelled after the deployment state was committed.`;
+          emit({ message: "The stopped state was committed after services were released.", stage: "cleanup" });
+          return {
+            status: "cancelled",
+            summary,
+            snapshot: { status: "stopped", detail: "Atlas Core is stopped after the cancellation point." }
+          };
+        }
+        if (operation === "stop" && lifecycleContext.stopReleaseStarted) {
+          const message =
+            "Stop cancellation arrived while services were being released; inspect recovery status before retrying.";
+          emit({ message, stage: "cleanup" });
+          return {
+            status: "failure",
+            error: message,
+            snapshot: {
+              status: "degraded",
+              detail:
+                "Atlas Core stop was interrupted while services were being released. Service and durable storage state is indeterminate; inspect status before retrying."
+            }
+          };
         }
         try {
           if (lifecycleContext.restorationError) throw lifecycleContext.restorationError;
@@ -820,6 +864,17 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       }
       const message = errorMessage(error);
       emit({ message: `${label} failed: ${message}`, stage: "operation" });
+      if (operation === "reset" && lifecycleContext.destructiveStarted) {
+        return {
+          status: "failure",
+          error: message,
+          snapshot: {
+            status: "degraded",
+            detail:
+              "Reset failed after destructive deletion began. Durable storage state is indeterminate; inspect recovery status before retrying."
+          }
+        };
+      }
       let snapshot: DeploymentSnapshot | undefined;
       try {
         snapshot = lifecycleContext.operationStarted ? await this.snapshot() : this.#persistedLifecycleSnapshot();
@@ -839,16 +894,22 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       if (state.phase !== "ready") {
         return {
           status: "degraded",
-          detail: "Atlas Core has an incomplete deployment state. Run atlas-core recover status before retrying."
+          detail: "Atlas Core has an incomplete deployment state. Run atlas-core recover status before retrying.",
+          coreVersion: state.packageVersion
         };
       }
       if (!this.#desiredRunning()) {
-        return { status: "stopped", detail: "Atlas Core is stopped. Durable storage is preserved." };
+        return {
+          status: "stopped",
+          detail: "Atlas Core is stopped. Durable storage is preserved.",
+          coreVersion: state.packageVersion
+        };
       }
       return {
         status: "ready",
         detail:
-          "Atlas Core is configured to run, but service health is unavailable while the lifecycle operation is blocked."
+          "Atlas Core is configured to run, but service health is unavailable while the lifecycle operation is blocked.",
+        coreVersion: state.packageVersion
       };
     } catch {
       return {
@@ -1957,6 +2018,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
           this.#lifecycleCancellationRequested &&
           lifecycleContext &&
           lifecycleContext.restoreRunIntentOnCancellation &&
+          !lifecycleContext.stopReleaseStarted &&
           !lifecycleContext.operationCommitted
         ) {
           try {
@@ -2252,18 +2314,23 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
             const composeFile = state.baseDeployment
               ? join(this.#configDir, "base", "docker-compose.yml")
               : this.#composeFile;
+            const lifecycleContext = this.#lifecycleReporterScope.getStore();
             if (existsSync(composeFile)) {
               this.#throwIfLifecycleCancellationRequested();
               this.#reportLifecycle(
                 "Stopping services safely; waiting for Docker Compose to release containers.",
                 "cleanup"
               );
+              if (lifecycleContext) lifecycleContext.stopReleaseStarted = true;
               await this.#runComposeChecked(["down", "--remove-orphans"], state.enabledPlugins, true);
+              if (lifecycleContext) lifecycleContext.operationCommitted = true;
               this.#throwIfLifecycleCancellationRequested();
             } else {
               this.#throwIfLifecycleCancellationRequested();
               this.#reportLifecycle("Stopping services safely; removing remaining containers.", "cleanup");
+              if (lifecycleContext) lifecycleContext.stopReleaseStarted = true;
               await this.#removeContainers(await this.#projectContainerNames(), true);
+              if (lifecycleContext) lifecycleContext.operationCommitted = true;
             }
             this.#throwIfLifecycleCancellationRequested();
             this.#settlePluginDisableIntents(state);
@@ -2328,10 +2395,6 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
         transaction.cleanup();
       } catch (error) {
         const cancellationRequested = this.#lifecycleCancellationRequested || error instanceof CommandCancelledError;
-        // CancellableCommandRunner deliberately rejects new work after a
-        // cancellation. Recovery is the exception: the transaction must be
-        // allowed to finish rolling back before the TUI can return or exit.
-        if (cancellationRequested) this.#runner.resume();
         try {
           await this.#recoverPending(dockerEngineId);
         } catch {
@@ -2523,7 +2586,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     return await this.#dockerRuntimeScope.run(runtime, async () => {
       this.#assertStateMatchesEngine(state, runtime.engineId);
       const serviceStates = await this.#composeServiceStates(state.enabledPlugins, signal);
-      const snapshot = deploymentSnapshotFromServices(serviceStates);
+      const snapshot = deploymentSnapshotFromServices(serviceStates, state.packageVersion);
       const { services, error } = await this.#deploymentServices(serviceStates, signal);
       const image = services.find((service) => service.id === "api")?.image;
       return {
@@ -2541,12 +2604,15 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   }
 
   async #deploymentSnapshot(pluginIds: readonly string[]): Promise<DeploymentSnapshot> {
-    return deploymentSnapshotFromServices(await this.#composeServiceStates(pluginIds));
+    return deploymentSnapshotFromServices(
+      await this.#composeServiceStates(pluginIds),
+      this.#readState()?.packageVersion
+    );
   }
 
   async #fullyHealthyMutationSnapshot(state: DeploymentState, operation: string): Promise<DeploymentSnapshot> {
     const services = await this.#composeServiceStates(state.enabledPlugins);
-    if (services.length === 0) return deploymentSnapshotFromServices(services);
+    if (services.length === 0) return deploymentSnapshotFromServices(services, state.packageVersion);
     const expectedServices = [
       ...REQUIRED_SERVICES,
       ...state.enabledPlugins.map((pluginId) => this.#readableDeployedPlugin(pluginId).service)
@@ -2558,7 +2624,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
           "Restore every Core and enabled Plugin service, or stop the deployment completely, before retrying."
       );
     }
-    return deploymentSnapshotFromServices(services);
+    return deploymentSnapshotFromServices(services, state.packageVersion);
   }
 
   async #composeServiceStates(pluginIds: readonly string[], signal?: AbortSignal): Promise<ComposeServiceState[]> {
@@ -2696,6 +2762,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       ]
         .filter((id) => !pluginId || id === pluginId)
         .sort();
+      if (ids.length === 0 && catalogError) throw new Error(catalogError);
       if (pluginId && ids.length === 0) throw new Error(`Unknown Plugin ${pluginId}.`);
       const runtime = await this.#preflight();
       const serviceStates = await this.#dockerRuntimeScope.run(runtime, async () => {
@@ -4526,10 +4593,16 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
 
   async #installCLI(version: string): Promise<void> {
     this.#reportUpdate(`Installing Atlas Core CLI ${version}...`);
-    const result = await this.#runner.run("npm", ["install", "--global", `${PACKAGE_NAME}@${version}`], {
-      env: this.#env
-    });
-    this.#reportCommandOutput(result);
+    const output = this.#liveCommandOutputReporter();
+    let result: CommandResult;
+    try {
+      result = await this.#runner.run("npm", ["install", "--global", `${PACKAGE_NAME}@${version}`], {
+        env: this.#env,
+        onOutput: output.onOutput
+      });
+    } finally {
+      output.flush();
+    }
     if (result.status !== 0) throw commandFailure(`npm install --global ${PACKAGE_NAME}@${version}`, result);
   }
 
@@ -4552,6 +4625,31 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
         else if (writeDirect) stream.write(`${message}\n`);
       }
     }
+  }
+
+  #liveCommandOutputReporter(): LiveCommandOutputReporter {
+    const pending: Record<"stdout" | "stderr", string> = { stdout: "", stderr: "" };
+    const report = (stream: "stdout" | "stderr", line: string): void => {
+      const message = line.trimEnd();
+      if (!message.trim()) return;
+      const reporter = this.#updateReporterScope.getStore();
+      if (reporter) reporter({ message, stage: "operation" });
+      else (stream === "stdout" ? this.#stdout : this.#stderr).write(`${message}\n`);
+    };
+    return {
+      onOutput: (stream, chunk) => {
+        const lines = `${pending[stream]}${chunk}`.split(/\r?\n/u);
+        pending[stream] = lines.pop() ?? "";
+        for (const line of lines) report(stream, line);
+      },
+      flush: () => {
+        for (const stream of ["stdout", "stderr"] as const) {
+          if (!pending[stream]) continue;
+          report(stream, pending[stream]);
+          pending[stream] = "";
+        }
+      }
+    };
   }
 
   async #installedCLIPath(): Promise<string> {
@@ -4578,12 +4676,17 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     if (oneLine(versionResult.stdout) !== `${PACKAGE_NAME} ${version}`) {
       throw new Error(`npm installed an unexpected Atlas Core CLI: ${oneLine(versionResult.stdout) || "no version"}.`);
     }
-    const updateResult = await this.#runner.run(
-      process.execPath,
-      [installedCLI, "__apply-core-update", fromVersion, expectedImage],
-      { env: childEnvironment }
-    );
-    this.#reportCommandOutput(updateResult);
+    const output = this.#liveCommandOutputReporter();
+    let updateResult: CommandResult;
+    try {
+      updateResult = await this.#runner.run(
+        process.execPath,
+        [installedCLI, "__apply-core-update", fromVersion, expectedImage],
+        { env: childEnvironment, onOutput: output.onOutput }
+      );
+    } finally {
+      output.flush();
+    }
     if (updateResult.status !== 0) {
       throw commandFailure(`Atlas Core ${version} deployment update`, updateResult);
     }
@@ -5596,13 +5699,22 @@ function parseComposeServiceStates(stdout: string): ComposeServiceState[] {
   });
 }
 
-function deploymentSnapshotFromServices(services: ComposeServiceState[]): DeploymentSnapshot {
+function deploymentSnapshotFromServices(services: ComposeServiceState[], coreVersion?: string): DeploymentSnapshot {
+  const version = coreVersion ? { coreVersion } : {};
   if (services.length === 0) {
-    return { status: "stopped", detail: "Atlas Core is initialized and stopped. Durable storage is preserved." };
+    return {
+      ...version,
+      status: "stopped",
+      detail: "Atlas Core is initialized and stopped. Durable storage is preserved."
+    };
   }
   const failures = unhealthyServices(services, REQUIRED_SERVICES);
-  if (failures.length > 0) return { status: "degraded", detail: failures.join(", ") };
-  return { status: "ready", detail: "Core API, Source Gateway, PostgreSQL, and MinIO are running and healthy." };
+  if (failures.length > 0) return { ...version, status: "degraded", detail: failures.join(", ") };
+  return {
+    ...version,
+    status: "ready",
+    detail: "Core API, Source Gateway, PostgreSQL, and MinIO are running and healthy."
+  };
 }
 
 function unhealthyServices(services: ComposeServiceState[], expectedServices: Iterable<string>): string[] {
@@ -5804,6 +5916,12 @@ function quoteComposeValue(value: string): string {
     .replaceAll("\\", "\\\\")
     .replaceAll('"', '\\"')
     .replaceAll("$", () => "$$")}"`;
+}
+
+function retainCommandOutputTail(existing: string, chunk: string): string {
+  if (existing.length + chunk.length <= MAX_RETAINED_COMMAND_OUTPUT_CHARS) return existing + chunk;
+  if (chunk.length >= MAX_RETAINED_COMMAND_OUTPUT_CHARS) return chunk.slice(-MAX_RETAINED_COMMAND_OUTPUT_CHARS);
+  return `${existing.slice(-(MAX_RETAINED_COMMAND_OUTPUT_CHARS - chunk.length))}${chunk}`;
 }
 
 function commandFailure(command: string, result: CommandResult): Error {

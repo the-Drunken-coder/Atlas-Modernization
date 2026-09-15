@@ -7,6 +7,8 @@
 export type DeploymentSnapshot = {
   status: "degraded" | "not-initialized" | "ready" | "stopped";
   detail: string;
+  /** Version recorded by the deployed Core, when the deployment is initialized. */
+  coreVersion?: string;
 };
 
 export type DeploymentService = {
@@ -95,7 +97,7 @@ export type LifecycleOperationProgress = {
 export type LifecycleOperationResult =
   | { status: "success"; summary: string }
   | { status: "failure"; error: string; snapshot?: DeploymentSnapshot }
-  | { previousDeploymentPreserved: true; status: "cancelled"; summary: string; snapshot?: DeploymentSnapshot };
+  | { status: "cancelled"; summary: string; previousDeploymentPreserved?: true; snapshot?: DeploymentSnapshot };
 
 export type LifecycleOperationReporter = (progress: LifecycleOperationProgress) => void;
 

@@ -51,6 +51,12 @@ type LogLine = {
   text: string;
 };
 
+const MAX_PENDING_FRAGMENT_LENGTH = 64 * 1024;
+
+function boundedFragmentTail(fragment: string): string {
+  return fragment.length > MAX_PENDING_FRAGMENT_LENGTH ? fragment.slice(-MAX_PENDING_FRAGMENT_LENGTH) : fragment;
+}
+
 export type LogBufferSnapshot = {
   lines: string[];
   firstLine: number;
@@ -162,7 +168,8 @@ export function createLogStream(
   const pendingLines: string[] = [];
   const errorListeners = new Set<(error: Error) => void>();
   const closeListeners = new Set<(error?: Error) => void>();
-  let pending = "";
+  let stdoutPending = "";
+  let stderrPending = "";
   let closed = false;
   let terminalError: Error | undefined;
   let closePromise: Promise<void> | undefined;
@@ -181,15 +188,21 @@ export function createLogStream(
     }
     for (const listener of lineListeners) listener(line);
   };
+  const frameChunk = (pending: string, chunk: string): string => {
+    const lines = `${pending}${chunk}`.split(/\r?\n/u);
+    const remainder = lines.pop() ?? "";
+    for (const line of lines) emitLine(line);
+    return boundedFragmentTail(remainder);
+  };
   const emitError = (error: Error): void => {
     for (const listener of errorListeners) listener(error);
   };
   const finish = (error?: Error): void => {
     if (closed) return;
-    if (pending) {
-      emitLine(pending);
-      pending = "";
-    }
+    if (stdoutPending) emitLine(stdoutPending);
+    if (stderrPending) emitLine(stderrPending);
+    stdoutPending = "";
+    stderrPending = "";
     closed = true;
     terminalError = error;
     if (error) {
@@ -202,16 +215,10 @@ export function createLogStream(
     closeListeners.clear();
   };
   const removeStdout = source.onStdout((chunk) => {
-    pending += chunk;
-    const lines = pending.split(/\r?\n/u);
-    pending = lines.pop() ?? "";
-    for (const line of lines) emitLine(line);
+    stdoutPending = frameChunk(stdoutPending, chunk);
   });
   const removeStderr = source.onStderr((chunk) => {
-    pending += chunk;
-    const lines = pending.split(/\r?\n/u);
-    pending = lines.pop() ?? "";
-    for (const line of lines) emitLine(line);
+    stderrPending = frameChunk(stderrPending, chunk);
   });
   source.onClose((result) => {
     removeStdout();

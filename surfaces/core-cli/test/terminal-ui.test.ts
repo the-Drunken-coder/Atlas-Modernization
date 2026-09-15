@@ -15,6 +15,7 @@ import type {
   UpdateReporter,
   UpdateScope
 } from "../src/operator.js";
+import { PACKAGE_VERSION } from "../src/package-metadata.js";
 import { createInteractiveCLI } from "../src/terminal-ui.js";
 
 class TestTerminal {
@@ -297,6 +298,22 @@ describe("Atlas Core terminal UI", () => {
     await menu;
   });
 
+  it("explains how to populate an empty Plugin catalog", async () => {
+    const terminal = new TestTerminal();
+    const deployment = operator();
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("Manage Plugins");
+    terminal.write("\u001b[B".repeat(4));
+    terminal.write("\r");
+    await terminal.waitFor("No Plugins are installed or available from the verified catalog.");
+    expect(terminal.text).toContain("Run atlas-core plugins refresh");
+    terminal.write("q");
+    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
+    terminal.write("q");
+    await menu;
+  });
+
   it("runs Plugin installation in the activity screen", async () => {
     const terminal = new TestTerminal();
     const deployment = operator();
@@ -547,6 +564,18 @@ describe("Atlas Core terminal UI", () => {
     await menu;
   });
 
+  it("renders the running Core version instead of the CLI package version", async () => {
+    const terminal = new TestTerminal();
+    const deployment = operator({ status: "ready", detail: "Core is running.", coreVersion: "0.1.2" });
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("CHOOSE AN ACTION");
+    expect(terminal.text).toContain("v0.1.2");
+    expect(terminal.text).not.toContain(`v${PACKAGE_VERSION}`);
+    terminal.write("q");
+    await menu;
+  });
+
   it("fits the action list at the supported 40 by 24 size", async () => {
     const terminal = new TestTerminal(40, true, 24);
     const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(operator());
@@ -583,6 +612,33 @@ describe("Atlas Core terminal UI", () => {
     terminal.write("\u001b[B");
     terminal.write("\u001b[F");
     await terminal.waitFor("FOLLOWING");
+    terminal.write("\u001b");
+    await vi.waitFor(() => expect(stream.closed).toBe(true));
+    terminal.write("q");
+    await menu;
+  });
+
+  it("keeps the live log stream open while the terminal is resized", async () => {
+    const terminal = new TestTerminal(80, true, 24);
+    const deployment = operator();
+    const stream = liveLogStream();
+    deployment.openLogStream.mockResolvedValue(stream);
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("CHOOSE AN ACTION");
+    terminal.write("\u001b[B\r");
+    await terminal.waitFor("Logs and diagnostics");
+    terminal.write("\u001b[B\r");
+    await terminal.waitFor("LIVE LOGS");
+    stream.emit("before resize");
+    await terminal.waitFor("before resize");
+    const beforeResize = terminal.raw.length;
+    terminal.resize(60, 24);
+    await terminal.waitForRawChange(beforeResize);
+    expect(stream.closed).toBe(false);
+    expect(deployment.openLogStream).toHaveBeenCalledOnce();
+    stream.emit("after resize");
+    await terminal.waitFor("after resize");
     terminal.write("\u001b");
     await vi.waitFor(() => expect(stream.closed).toBe(true));
     terminal.write("q");
@@ -714,6 +770,35 @@ describe("Atlas Core terminal UI", () => {
     await terminal.waitFor("CHOOSE AN ACTION");
     terminal.write("q");
     await menu;
+  });
+
+  it("does not accept reset input while the confirmation screen is too narrow", async () => {
+    const terminal = new TestTerminal(80, true, 24);
+    const deployment = operator();
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("Reset Atlas Core");
+    terminal.write("\u001b[B".repeat(7));
+    terminal.write("\r");
+    await terminal.waitFor("Type yes to continue");
+    terminal.resize(36, 24);
+    await terminal.waitFor("Resize terminal to at least 40");
+    terminal.write("yes\r");
+    await nextInputTurn();
+    const resetCallsWhileNarrow = deployment.runLifecycle.mock.calls.length;
+
+    if (resetCallsWhileNarrow > 0) {
+      terminal.write("q");
+    } else {
+      terminal.write("\u001b");
+      await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
+      terminal.resize(80, 24);
+      await terminal.waitFor("CHOOSE AN ACTION");
+      terminal.write("q");
+    }
+    await menu;
+
+    expect(resetCallsWhileNarrow).toBe(0);
   });
 
   it("changes the admin password from the action-list home without an acknowledgement pause", async () => {
@@ -915,6 +1000,31 @@ describe("Atlas Core terminal UI", () => {
     await terminal.waitFor("CHOOSE AN ACTION");
     terminal.write("q");
     await menu;
+  });
+
+  it("rejects when Ctrl-C cleanup fails during a lifecycle operation", async () => {
+    const terminal = new TestTerminal();
+    const deployment = operator();
+    let finish: (() => void) | undefined;
+    deployment.runLifecycle.mockImplementationOnce(
+      async (_operation, report) =>
+        await new Promise<LifecycleOperationResult>((resolve) => {
+          report?.({ message: "Stopping services", stage: "operation" });
+          finish = () => resolve({ status: "failure", error: "Cleanup could not stop the services." });
+        })
+    );
+    deployment.cancelPending.mockImplementation(() => finish?.());
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("Stop Atlas Core");
+    terminal.write("\u001b[B".repeat(2));
+    terminal.write("\r");
+    await terminal.waitFor("Stopping services");
+    terminal.write("\u0003");
+
+    await expect(menu).rejects.toThrow("Cleanup could not stop the services.");
+    expect(deployment.cancelPending).toHaveBeenCalledOnce();
+    expect(deployment.resumeAfterCancellation).toHaveBeenCalledOnce();
   });
 
   it("cancels and exits after Ctrl-C cleanup", async () => {
@@ -1776,6 +1886,32 @@ describe("Atlas Core terminal UI", () => {
     expect(terminal.text).not.toContain("Press Enter to return to Atlas Core.");
   });
 
+  it("retains a direct configuration failure when the user retries then cancels", async () => {
+    const terminal = new TestTerminal();
+    const deployment = operator();
+    deployment.runLifecycle.mockResolvedValueOnce({ status: "failure", error: "Password update failed." });
+    const configuration = createInteractiveCLI(terminal.input, terminal.output).configureAdmin(deployment);
+
+    await terminal.waitFor("New password");
+    terminal.write("x");
+    await terminal.waitFor("*");
+    terminal.write("\r");
+    await terminal.waitFor("Confirm password");
+    const beforeConfirmation = terminal.raw.length;
+    terminal.write("x");
+    await terminal.waitForRawChange(beforeConfirmation);
+    terminal.write("\r");
+    await terminal.waitFor("Password update failed.");
+    await terminal.waitFor("Enter return to Atlas Core");
+    await nextInputTurn();
+    terminal.write("\r");
+    await terminal.waitFor("New password");
+    await nextInputTurn();
+    terminal.write("\u001b");
+
+    await expect(configuration).rejects.toThrow("Password update failed.");
+  });
+
   it("captures password text submitted in the same input chunk", async () => {
     const terminal = new TestTerminal();
     const deployment = operator();
@@ -1936,6 +2072,31 @@ describe("Atlas Core terminal UI", () => {
     expect(deployment.update).toHaveBeenCalledWith("all", "0.1.6");
   });
 
+  it("exits after a CLI update selected from the action-list home", async () => {
+    const terminal = new TestTerminal();
+    const deployment = operator();
+    deployment.checkForUpdates.mockResolvedValue({
+      cliVersion: "0.1.5",
+      coreVersion: "0.1.5",
+      latestVersion: "0.1.6",
+      cliUpdateAvailable: true,
+      coreUpdateAvailable: true
+    });
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("Update Atlas Core");
+    terminal.write("\u001b[B".repeat(5));
+    terminal.write("\r");
+    await terminal.waitFor("Update CLI only");
+    terminal.write("\r");
+    await terminal.waitFor("The current process exits after npm installs the CLI.");
+    terminal.write("\r");
+    await terminal.waitFor("Update complete");
+
+    await expect(menu).resolves.toBeUndefined();
+    expect(deployment.update).toHaveBeenCalledWith("cli", "0.1.6");
+  });
+
   it("keeps CLI-only subprocess output inside the mounted update screen", async () => {
     const terminal = new TestTerminal();
     const progressUpdate = vi.fn(
@@ -1994,8 +2155,6 @@ describe("Atlas Core terminal UI", () => {
     await nextInputTurn();
     const updateCallsAfterRepeatedEnter = deployment.update.mock.calls.length;
     finishUpdate?.();
-    await terminal.waitFor("Update complete");
-    terminal.write("\r");
     await update;
 
     expect(updateCallsAfterRepeatedEnter).toBe(1);
@@ -2045,6 +2204,53 @@ describe("Atlas Core terminal UI", () => {
     terminal.write("\r");
 
     await expect(update).rejects.toThrow("npm install failed");
+  });
+
+  it("exits with a CLI update failure instead of returning to the old menu", async () => {
+    const terminal = new TestTerminal();
+    const deployment = operator();
+    deployment.checkForUpdates.mockResolvedValue({
+      cliVersion: "0.1.5",
+      coreVersion: "0.1.5",
+      latestVersion: "0.1.6",
+      cliUpdateAvailable: true,
+      coreUpdateAvailable: true
+    });
+    deployment.update.mockRejectedValue(new Error("npm install failed"));
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+    let completion: "pending" | "resolved" | "rejected" = "pending";
+    let failure: unknown;
+    const completionPromise = menu.then(
+      () => {
+        completion = "resolved";
+      },
+      (error: unknown) => {
+        completion = "rejected";
+        failure = error;
+      }
+    );
+
+    await terminal.waitFor("Update Atlas Core");
+    terminal.write("\u001b[B".repeat(5));
+    terminal.write("\r");
+    await terminal.waitFor("Update CLI only");
+    terminal.write("\r");
+    await terminal.waitFor("REVIEW UPDATE");
+    terminal.write("\r");
+    await terminal.waitFor("The update stopped without deleting Atlas Core data");
+    await terminal.waitFor("Enter exit");
+    await nextInputTurn();
+    terminal.write("\r");
+
+    await vi.waitFor(() => expect(completion).not.toBe("pending"), { timeout: 1_000 }).catch(() => undefined);
+    if (completion === "pending") {
+      terminal.write("q");
+      await completionPromise;
+    }
+
+    expect(completion).toBe("rejected");
+    expect(failure).toEqual(expect.objectContaining({ message: "npm install failed" }));
+    expect(deployment.snapshot).toHaveBeenCalledOnce();
   });
 
   it("returns from an update-check error when Ctrl-C is pressed", async () => {
@@ -2153,9 +2359,9 @@ describe("Atlas Core terminal UI", () => {
     deployment.checkForUpdates
       .mockResolvedValueOnce({
         cliVersion: "0.1.5",
-        coreVersion: "0.1.5",
-        latestVersion: "0.1.6",
-        cliUpdateAvailable: true,
+        coreVersion: "0.1.4",
+        latestVersion: "0.1.5",
+        cliUpdateAvailable: false,
         coreUpdateAvailable: true
       })
       .mockResolvedValueOnce({
@@ -2175,7 +2381,7 @@ describe("Atlas Core terminal UI", () => {
     deployment.cancelPending.mockImplementation(() => finishUpdate?.());
     const update = createInteractiveCLI(terminal.input, terminal.output).runUpdate(deployment);
 
-    await terminal.waitFor("Update CLI only");
+    await terminal.waitFor("Update Atlas Core");
     terminal.write("\r");
     await terminal.waitFor("REVIEW UPDATE");
     terminal.write("\r");
@@ -2186,6 +2392,55 @@ describe("Atlas Core terminal UI", () => {
     expect(deployment.resumeAfterCancellation).toHaveBeenCalledOnce();
     terminal.write("q");
     await update;
+  });
+
+  it("exits after Escape cancels an update that can replace the CLI", async () => {
+    const terminal = new TestTerminal();
+    const deployment = operator();
+    deployment.checkForUpdates.mockResolvedValue({
+      cliVersion: "0.1.5",
+      coreVersion: "0.1.5",
+      latestVersion: "0.1.6",
+      cliUpdateAvailable: true,
+      coreUpdateAvailable: true
+    });
+    let finishUpdate: (() => void) | undefined;
+    deployment.update.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finishUpdate = () => resolve(undefined);
+        })
+    );
+    deployment.cancelPending.mockImplementation(() => finishUpdate?.());
+    const update = createInteractiveCLI(terminal.input, terminal.output).runUpdate(deployment);
+    let completion: "pending" | "resolved" | "rejected" = "pending";
+    const completionPromise = update.then(
+      () => {
+        completion = "resolved";
+      },
+      () => {
+        completion = "rejected";
+      }
+    );
+
+    await terminal.waitFor("Update CLI only");
+    terminal.write("\r");
+    await terminal.waitFor("REVIEW UPDATE");
+    terminal.write("\r");
+    await terminal.waitFor("Applying reviewed update...");
+    await vi.waitFor(() => expect(deployment.update).toHaveBeenCalledOnce());
+    terminal.write("\u001b");
+
+    await vi.waitFor(() => expect(completion).not.toBe("pending"), { timeout: 1_000 }).catch(() => undefined);
+    if (completion === "pending") {
+      terminal.write("q");
+      await completionPromise;
+    }
+    await update;
+
+    expect(completion).toBe("resolved");
+    expect(deployment.checkForUpdates).toHaveBeenCalledOnce();
+    expect(deployment.resumeAfterCancellation).toHaveBeenCalledOnce();
   });
 
   it("offers initialization instead of configuration before first setup", async () => {

@@ -24,7 +24,8 @@ import type {
   DeploymentDetails,
   DiagnosticsResult,
   InteractiveCLI,
-  LifecycleOperationProgress
+  LifecycleOperationProgress,
+  LifecycleOperationResult
 } from "../src/operator.js";
 import { PACKAGE_NAME, PACKAGE_PLUGIN_CONTRACTS, PACKAGE_VERSION } from "../src/package-metadata.js";
 import type { PluginCatalogEntry } from "../src/plugin-catalog.js";
@@ -103,6 +104,7 @@ class FakeRunner implements CommandRunner {
   readonly volumeUsers = new Map<string, Set<string>>();
   inspectionError: { kind: "container" | "volume"; name: string } | undefined;
   failComposeDown = false;
+  failVolumeRemovalName: string | undefined;
   failComposeConfig = false;
   failComposePull = false;
   failComposeUp = false;
@@ -126,6 +128,8 @@ class FakeRunner implements CommandRunner {
   latestImage = TEST_IMAGE;
   npmInstallOutput = "";
   installedCoreUpdateOutput = "";
+  npmInstallChunks: { stream: "stdout" | "stderr"; chunk: string }[] | undefined;
+  installedCoreUpdateChunks: { stream: "stdout" | "stderr"; chunk: string }[] | undefined;
   runningCoreImage = TEST_IMAGE;
   wrongPluginContainerImage = false;
   installedVersion = PACKAGE_VERSION;
@@ -141,6 +145,9 @@ class FakeRunner implements CommandRunner {
   afterSuccessfulComposeUp: (() => void) | undefined;
   cancelAfterNetworkCreate: (() => void) | undefined;
   onCleanupStart: ((signal: AbortSignal | undefined) => void) | undefined;
+  releaseHungCleanup: (() => void) | undefined;
+  afterSuccessfulComposeDown: (() => void) | undefined;
+  incompleteComposeDown = false;
   hangCleanup = false;
   serviceStates = [
     { Service: "api", State: "running", Health: "healthy" },
@@ -163,6 +170,7 @@ class FakeRunner implements CommandRunner {
       inherit?: boolean;
       processGroup?: Call["processGroup"];
       signal?: AbortSignal;
+      onOutput?: (stream: "stdout" | "stderr", chunk: string) => void;
     } = {}
   ): Promise<{ cancelled?: true; status: number; stdout: string; stderr: string }> {
     const call = {
@@ -183,6 +191,10 @@ class FakeRunner implements CommandRunner {
     }
     if (command === "npm" && args[0] === "install" && args[1] === "--global") {
       this.installedVersion = args[2]?.split("@").at(-1) ?? this.installedVersion;
+      for (const output of this.npmInstallChunks ??
+        (this.npmInstallOutput ? [{ stream: "stdout" as const, chunk: this.npmInstallOutput }] : [])) {
+        options.onOutput?.(output.stream, output.chunk);
+      }
       return result(0, this.npmInstallOutput);
     }
     if (command === "npm" && args[0] === "root" && args[1] === "--global") {
@@ -192,6 +204,12 @@ class FakeRunner implements CommandRunner {
       return result(0, `atlas-core ${this.installedVersion}\n`);
     }
     if (command === process.execPath && args.includes("__apply-core-update")) {
+      for (const output of this.installedCoreUpdateChunks ??
+        (this.installedCoreUpdateOutput
+          ? [{ stream: "stdout" as const, chunk: this.installedCoreUpdateOutput }]
+          : [])) {
+        options.onOutput?.(output.stream, output.chunk);
+      }
       return this.failInstalledCoreUpdate
         ? result(1, "", "injected installed update failure")
         : result(0, this.installedCoreUpdateOutput);
@@ -392,6 +410,10 @@ class FakeRunner implements CommandRunner {
     }
     if (args[0] === "volume" && args[1] === "rm") {
       const name = args.at(-1) ?? "";
+      if (name === this.failVolumeRemovalName) {
+        this.failVolumeRemovalName = undefined;
+        return result(1, "", "injected volume removal failure");
+      }
       if ((this.volumeUsers.get(name)?.size ?? 0) > 0) return result(1, "", `volume ${name} is in use`);
       this.existingVolumes.delete(name);
       return result(0, `${name}\n`);
@@ -562,6 +584,11 @@ class FakeRunner implements CommandRunner {
       this.serviceStates = [];
       return result(1, "", "injected failure after compose down");
     }
+    if (compose[0] === "down") {
+      const afterSuccessfulComposeDown = this.afterSuccessfulComposeDown;
+      this.afterSuccessfulComposeDown = undefined;
+      if (afterSuccessfulComposeDown) queueMicrotask(afterSuccessfulComposeDown);
+    }
     if (compose[0] === "rm") {
       const removedService = compose.at(-1);
       if (removedService)
@@ -606,10 +633,34 @@ class FakeRunner implements CommandRunner {
       signal?: AbortSignal;
     } = {}
   ): Promise<{ cancelled?: true; status: number; stdout: string; stderr: string }> {
+    if (this.incompleteComposeDown && command === "docker" && args.includes("down")) {
+      this.incompleteComposeDown = false;
+      this.serviceStates = this.serviceStates.filter((service) => service.Service !== "postgres");
+      this.onCleanupStart?.(options.signal);
+      return await new Promise((resolve) => {
+        let settled = false;
+        const finish = (value: { cancelled?: true; status: number; stdout: string; stderr: string }): void => {
+          if (settled) return;
+          settled = true;
+          resolve(value);
+        };
+        const cancel = (): void => finish({ ...result(1), cancelled: true });
+        options.signal?.addEventListener("abort", cancel, { once: true });
+        if (options.signal?.aborted) cancel();
+      });
+    }
     if (!this.hangCleanup) return await this.run(command, args, options);
     this.onCleanupStart?.(options.signal);
     return await new Promise((resolve) => {
-      const cancelled = (): void => resolve({ ...result(1), cancelled: true });
+      let settled = false;
+      const finish = (value: { cancelled?: true; status: number; stdout: string; stderr: string }): void => {
+        if (settled) return;
+        settled = true;
+        this.releaseHungCleanup = undefined;
+        resolve(value);
+      };
+      this.releaseHungCleanup = () => finish(result(0));
+      const cancelled = (): void => finish({ ...result(1), cancelled: true });
       options.signal?.addEventListener("abort", cancelled, { once: true });
       if (options.signal?.aborted) cancelled();
     });
@@ -1346,7 +1397,7 @@ describe("atlas-core CLI", () => {
     expect(test.stdout.join("")).toBe("");
   });
 
-  it("restores the prior run intent after production lifecycle cancellation", async () => {
+  it("does not claim preservation once stop service release has begun", async () => {
     const test = runtime();
     await markManagedInitialized(test);
     const progress: LifecycleOperationProgress[] = [];
@@ -1358,17 +1409,95 @@ describe("atlas-core CLI", () => {
           if (composeCommand(call)[0] === "down") operator.cancelPending();
         };
         await expect(operator.runLifecycle("stop", (event) => progress.push(event))).resolves.toMatchObject({
-          previousDeploymentPreserved: true,
-          status: "cancelled"
+          status: "failure",
+          snapshot: { status: "degraded", detail: expect.stringContaining("indeterminate") }
         });
         expect(progress.some((event) => event.stage === "cleanup")).toBe(true);
         const intent = JSON.parse(readFileSync(join(test.home, ".atlas", "core", "run-intent.json"), "utf8"));
-        expect(intent).toEqual({ schema: 1, desiredRunning: true });
+        expect(intent).toEqual({ schema: 1, desiredRunning: false });
         expect(existsSync(join(test.home, ".atlas", "core", ".mutation.lock"))).toBe(false);
       }
     };
 
     expect(await runCLI([], test.context), test.stderr.join("")).toBe(0);
+  });
+
+  it("commits the stopped state when cancellation arrives after services are released", async () => {
+    const test = runtime();
+    await markManagedInitialized(test);
+    const config = join(test.home, ".atlas", "core");
+    let outcome: LifecycleOperationResult | undefined;
+    test.context.interactive = {
+      configureAdmin: async () => undefined,
+      runUpdate: async () => undefined,
+      runMenu: async (operator) => {
+        test.runner.afterSuccessfulComposeDown = () => {
+          test.runner.serviceStates = [];
+          operator.cancelPending();
+        };
+        outcome = await operator.runLifecycle("stop");
+      }
+    };
+
+    expect(await runCLI([], test.context), test.stderr.join("")).toBe(0);
+    expect(outcome).toMatchObject({
+      status: "cancelled",
+      summary: "Stop Atlas Core cancelled after the deployment state was committed.",
+      snapshot: { status: "stopped" }
+    });
+    if (outcome?.status === "cancelled") {
+      expect(outcome).not.toHaveProperty("previousDeploymentPreserved");
+      expect(outcome.summary).not.toContain("preserved");
+    }
+    expect(test.runner.serviceStates).toEqual([]);
+    expect(JSON.parse(readFileSync(join(config, "run-intent.json"), "utf8"))).toEqual({
+      schema: 1,
+      desiredRunning: false
+    });
+  });
+
+  it("does not claim preservation when cancellation aborts an incomplete service release", async () => {
+    vi.useFakeTimers();
+    const test = runtime();
+    await markManagedInitialized(test);
+    test.runner.incompleteComposeDown = true;
+    let cleanupSignal: AbortSignal | undefined;
+    let downStarted: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => {
+      downStarted = resolve;
+    });
+    let outcome: LifecycleOperationResult | undefined;
+    test.runner.onCleanupStart = (signal) => {
+      cleanupSignal = signal;
+      downStarted?.();
+    };
+    test.context.interactive = {
+      configureAdmin: async () => undefined,
+      runUpdate: async () => undefined,
+      runMenu: async (operator) => {
+        const operation = operator.runLifecycle("stop");
+        await started;
+        operator.cancelPending();
+        await vi.advanceTimersByTimeAsync(130_001);
+        expect(cleanupSignal?.aborted).toBe(true);
+        outcome = await operation;
+      }
+    };
+
+    expect(await runCLI([], test.context), test.stderr.join("")).toBe(0);
+    expect(outcome).toMatchObject({
+      status: "failure",
+      snapshot: {
+        status: "degraded",
+        detail: expect.stringContaining("indeterminate")
+      }
+    });
+    expect(outcome).not.toHaveProperty("previousDeploymentPreserved");
+    expect(test.runner.serviceStates).not.toContainEqual({ Service: "postgres", State: "running", Health: "healthy" });
+    expect(JSON.parse(readFileSync(join(test.home, ".atlas", "core", "run-intent.json"), "utf8"))).toEqual({
+      schema: 1,
+      desiredRunning: false
+    });
   });
 
   it("returns the live deployment state with a production lifecycle failure", async () => {
@@ -1859,6 +1988,15 @@ describe("atlas-core CLI", () => {
     runner.cancelAll();
 
     await expect(operation).resolves.toEqual(result(0));
+  });
+
+  it("bounds retained stderr from an open command stream", async () => {
+    const runner = new ProcessCommandRunner();
+    const stream = await runner.openStream(process.execPath, ["-e", 'process.stderr.write("x".repeat(2 ** 20))']);
+
+    const closed = await stream.closed;
+    expect(closed.stderr.length).toBeLessThanOrEqual(64 * 1024);
+    expect(closed.stderr.endsWith("x".repeat(128))).toBe(true);
   });
 
   it("does not start a supervised command until its process group is durably recorded", async () => {
@@ -2568,6 +2706,67 @@ describe("atlas-core CLI", () => {
       desiredRunning: true
     });
     expect(test.stdout.join("")).toContain(`Atlas Core ${PACKAGE_VERSION} reset is complete`);
+  });
+
+  it("does not claim durable storage was preserved after an interrupted reset deletion", async () => {
+    const test = runtime();
+    markInitialized(test);
+    test.context.confirmReset = async () => true;
+    let outcome: LifecycleOperationResult | undefined;
+    let cancellationSent = false;
+    test.context.interactive = {
+      configureAdmin: async () => undefined,
+      runUpdate: async () => undefined,
+      runMenu: async (operator) => {
+        test.runner.onRun = (call) => {
+          if (cancellationSent || call.args[0] !== "volume" || call.args[1] !== "rm") return;
+          cancellationSent = true;
+          test.runner.existingVolumes.delete(POSTGRES_VOLUME);
+          operator.cancelPending();
+        };
+        outcome = await operator.runLifecycle("reset", undefined, { manual: true, resetConfirmed: true });
+      }
+    };
+
+    expect(await runCLI([], test.context), test.stderr.join("")).toBe(0);
+    expect(outcome).toMatchObject({
+      status: "failure",
+      snapshot: {
+        status: "degraded",
+        detail:
+          "Reset was interrupted after destructive deletion began. Durable storage state is indeterminate; inspect recovery status before retrying."
+      }
+    });
+    expect(test.stderr.join("")).not.toContain("Durable storage is preserved");
+    expect(test.runner.existingVolumes).not.toContain(POSTGRES_VOLUME);
+  });
+
+  it("does not claim durable storage was preserved after a later reset deletion fails", async () => {
+    const test = runtime();
+    markInitialized(test);
+    test.runner.failVolumeRemovalName = MINIO_VOLUME;
+    test.runner.afterSuccessfulComposeDown = () => {
+      test.runner.serviceStates = [];
+    };
+    let outcome: LifecycleOperationResult | undefined;
+    test.context.interactive = {
+      configureAdmin: async () => undefined,
+      runUpdate: async () => undefined,
+      runMenu: async (operator) => {
+        outcome = await operator.runLifecycle("reset", undefined, { manual: true, resetConfirmed: true });
+      }
+    };
+
+    expect(await runCLI([], test.context), test.stderr.join("")).toBe(0);
+    expect(outcome).toMatchObject({
+      status: "failure",
+      snapshot: {
+        status: "degraded",
+        detail: expect.stringContaining("indeterminate")
+      }
+    });
+    expect(outcome).not.toHaveProperty("previousDeploymentPreserved");
+    expect(test.runner.existingVolumes).toContain(MINIO_VOLUME);
   });
 
   it("allows an installed release to reset an older Core package in the current resource layout", async () => {
@@ -3441,6 +3640,48 @@ describe("atlas-core CLI", () => {
     expect(test.stdout.join("")).not.toContain("admin password updated");
   });
 
+  it("keeps the cancellation deadline active while recovering a password change", async () => {
+    vi.useFakeTimers();
+    const test = runtime();
+    await markManagedInitialized(test);
+    test.runner.hangCleanup = true;
+    let cleanupStarted: (() => void) | undefined;
+    const cleanup = new Promise<void>((resolve) => {
+      cleanupStarted = resolve;
+    });
+    let cleanupSignal: AbortSignal | undefined;
+    test.runner.onCleanupStart = (signal) => {
+      cleanupSignal = signal;
+      cleanupStarted?.();
+    };
+    test.context.interactive = {
+      configureAdmin: async (operator) => {
+        test.runner.onRun = (call) => {
+          if (composeCommand(call)[0] === "down") operator.cancelPending();
+        };
+        const operation = operator.configureAdminPassword("new-production-password").catch((error: unknown) => error);
+        let operationError: unknown;
+        try {
+          await cleanup;
+          expect(cleanupSignal?.aborted).toBe(false);
+          await vi.advanceTimersByTimeAsync(129_999);
+          expect(cleanupSignal?.aborted).toBe(false);
+          await vi.advanceTimersByTimeAsync(1);
+          expect(cleanupSignal?.aborted).toBe(true);
+        } finally {
+          test.runner.releaseHungCleanup?.();
+          operationError = await operation;
+        }
+        expect(operationError).toBeInstanceOf(Error);
+        expect((operationError as Error).message).toContain("could not verify Docker engine identity");
+      },
+      runMenu: async () => undefined,
+      runUpdate: async () => undefined
+    };
+
+    expect(await runCLI(["config"], test.context), test.stderr.join("")).toBe(0);
+  });
+
   it("preserves cancellation that arrives after a successful replacement command result", async () => {
     const test = runtime();
     await markManagedInitialized(test);
@@ -3587,6 +3828,24 @@ describe("atlas-core CLI", () => {
     expect(test.stdout.join("")).toContain("Atlas Core is running");
   });
 
+  it("includes the deployed Core version in the cheap snapshot", async () => {
+    const test = runtime();
+    markInitialized(test);
+    setCoreVersion(test, "0.1.2");
+    let observed: DeploymentDetails["snapshot"] | undefined;
+    test.context.interactive = {
+      configureAdmin: async () => undefined,
+      runMenu: async (operator) => {
+        observed = await operator.snapshot();
+      },
+      runUpdate: async () => undefined
+    };
+
+    expect(await runCLI([], test.context)).toBe(0);
+    expect(observed).toMatchObject({ status: "ready", coreVersion: "0.1.2" });
+    expect(test.runner.calls.some((call) => call.args[0] === "stats")).toBe(false);
+  });
+
   it("includes shared health and resource details in direct status output", async () => {
     const test = runtime();
     markInitialized(test);
@@ -3644,6 +3903,30 @@ describe("atlas-core CLI", () => {
     expect(progress).toContain(`Installing Atlas Core CLI ${NEXT_PACKAGE_VERSION}...`);
     expect(progress).toContain("npm install completed");
     expect(test.stdout.join("")).not.toContain("npm install completed");
+  });
+
+  it("reports update subprocess output as it arrives across stdout and stderr", async () => {
+    const test = runtime();
+    markInitialized(test);
+    test.runner.latestVersion = NEXT_PACKAGE_VERSION;
+    test.runner.npmInstallChunks = [
+      { stream: "stderr", chunk: "stderr-first\n" },
+      { stream: "stdout", chunk: "stdout-second\n" }
+    ];
+    const progress: string[] = [];
+
+    const interactive: InteractiveCLI = {
+      configureAdmin: async () => undefined,
+      runMenu: async () => undefined,
+      runUpdate: async (deployment) => {
+        await deployment.updateWithProgress("cli", NEXT_PACKAGE_VERSION, (event) => {
+          if (event.message === "stderr-first" || event.message === "stdout-second") progress.push(event.message);
+        });
+      }
+    };
+
+    expect(await runCLI(["update"], { ...test.context, interactive })).toBe(0);
+    expect(progress).toEqual(["stderr-first", "stdout-second"]);
   });
 
   it("reports the installed Core handoff output through the update reporter", async () => {
@@ -5751,6 +6034,14 @@ describe("atlas-core CLI", () => {
     expect(JSON.parse(readFileSync(join(test.home, ".atlas", "core", "state.json"), "utf8"))).toMatchObject({
       enabledPlugins: [plugin.pluginId]
     });
+  });
+
+  it("propagates a missing verified catalog when no Plugin statuses can be built", async () => {
+    const test = runtime();
+    await markManagedInitialized(test, false);
+
+    expect(await runCLI(["plugins", "status"], test.context)).toBe(1);
+    expect(test.stderr.join("")).toContain("No verified Plugin catalog is installed");
   });
 
   it.each([false, true])(

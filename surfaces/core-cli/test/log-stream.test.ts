@@ -91,11 +91,42 @@ describe("log stream primitives", () => {
     stream.onLine((line) => lines.push(line));
     stream.onError((error) => errors.push(error));
     fixture.stdout("first\nsecond");
-    fixture.stderr("\nthird");
+    fixture.stderr("third");
     fixture.close({ status: 17, stderr: "unavailable" });
 
     await expect(stream.wait()).rejects.toThrow("exit code 17");
     expect(lines).toEqual(["first", "second", "third"]);
     expect(errors).toHaveLength(1);
+  });
+
+  it("keeps stdout and stderr partial lines independent", async () => {
+    const fixture = source();
+    const stream = createLogStream("api", fixture.stream);
+    const lines: string[] = [];
+    stream.onLine((line) => lines.push(line));
+
+    fixture.stdout("partial");
+    fixture.stderr("warning\n");
+    fixture.stdout(" tail\n");
+
+    expect(lines).toEqual(["warning", "partial tail"]);
+    fixture.close();
+    await stream.wait();
+  });
+
+  it("bounds an unterminated partial line while retaining its tail", async () => {
+    const fixture = source();
+    const stream = createLogStream("api", fixture.stream);
+    const lines: string[] = [];
+    stream.onLine((line) => lines.push(line));
+    const longLine = `prefix-${"x".repeat(128 * 1024)}`;
+
+    fixture.stdout(longLine);
+    fixture.close();
+    await stream.wait();
+
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toHaveLength(64 * 1024);
+    expect(lines[0]).toBe(longLine.slice(-64 * 1024));
   });
 });
