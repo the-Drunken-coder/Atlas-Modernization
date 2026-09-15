@@ -85,10 +85,10 @@ atlas-core supervise
 ## Plugins
 
 Implementation status: the independent Plugin lifecycle and release workflow are released with Atlas Core 0.2.0 and
-Building Scan 0.1.0. Candidate-image checks passed on linux/amd64 and linux/arm64. The current terminal UI keeps Plugin
-update, rollback, uninstall, catalog refresh, and shared-key rotation as direct-command-only operations. The agreed next
-step adds ordinary Plugin updates with an impact review and explicit confirmation; recovery, signing, and unusual
-administrative operations remain direct-command-only. See
+Building Scan 0.1.0. Candidate-image checks passed on linux/amd64 and linux/arm64. The terminal UI supports ordinary
+one-at-a-time Plugin updates with a target-version and restart-impact review, explicit confirmation, in-place progress,
+safe cancellation, and restoration results. Rollback, uninstall, catalog refresh, shared-key rotation, recovery,
+signing, and unusual administrative operations remain direct-command-only. See
 [GitHub issue #429](https://github.com/the-Drunken-coder/Atlas-Modernization/issues/429). Existing
 published Core packages may still use the bundled Plugin catalog; schema-4 deployments use independent catalog state.
 Production signing trust and Pages configuration are recorded in
@@ -145,8 +145,8 @@ exceptions without an automatic recovery guarantee.
 Supervisor definitions pin the validated local Docker socket, clear inherited Docker context overrides, and record the
 CLI version. A CLI upgrade reinstalls active matching supervision with the newly installed CLI before updating Core.
 An active service whose definition does not match the selected deployment must be reinstalled explicitly first.
-The Plugins menu keeps the operation in an activity view with elapsed timestamps, reports rollback status, and returns
-to the Plugin catalog after safe cancellation.
+The Plugins menu keeps enable, disable, and update operations in an activity view with elapsed timestamps, reports
+restoration status, and returns to refreshed Plugin details after every terminal outcome.
 
 The menu's `Change admin password` action changes the password for the fixed `admin` username. The direct `config`
 command opens the same hidden password prompt. The password must contain at least 12 characters and is never accepted

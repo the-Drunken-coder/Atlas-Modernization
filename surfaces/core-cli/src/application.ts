@@ -32,7 +32,13 @@ import {
 } from "./deployment-transaction.js";
 import { ManagedPluginCredentials, ManagedPluginKeyRejectedError } from "./host-credentials.js";
 import { type ImageReceipt, pullImageReceipt, verifyContainerImage, verifyLocalImage } from "./image-receipts.js";
-import { IndependentPluginManager, isPluginLifecycleOperation, pluginServiceName } from "./independent-plugins.js";
+import {
+  IndependentPluginManager,
+  type IndependentPluginReleaseCandidate,
+  type IndependentPluginUpdatePlan,
+  isPluginLifecycleOperation,
+  pluginServiceName
+} from "./independent-plugins.js";
 import { prepareLegacyBase, prepareRepairPackage } from "./legacy-base-import.js";
 import { type CommandOutputStream, createBufferedCommandOutputStream, createLogStream } from "./log-stream.js";
 import {
@@ -61,6 +67,7 @@ import type {
   PluginActivityReporter,
   PluginDeploymentStatus,
   PluginOperationOutcome,
+  PluginUpdatePlan,
   UpdateInfo,
   UpdateProgress,
   UpdateReporter,
@@ -1608,7 +1615,102 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     }
   }
 
-  async pluginUpdate(pluginId: string): Promise<void> {
+  async pluginUpdatePlan(pluginId: string): Promise<PluginUpdatePlan> {
+    return await this.#withInitializedMutation(async (raw) => {
+      const state = this.#requireManaged(raw);
+      const manager = this.#plugins(state);
+      return await this.#planPluginUpdate(state, manager, pluginId);
+    });
+  }
+
+  async #planPluginUpdate(
+    state: ManagedCoreState,
+    manager: IndependentPluginManager,
+    pluginId: string,
+    resolvedSelection?: IndependentPluginUpdatePlan
+  ): Promise<PluginUpdatePlan> {
+    const current = manager.readSelected(pluginId);
+    const installed = (await manager.list()).find((plugin) => plugin.pluginId === pluginId && plugin.installed);
+    if (!installed) throw new Error(`Plugin ${pluginId} is not installed.`);
+    const coreImage = state.baseDeployment?.coreImage;
+    if (!coreImage) throw new Error("Atlas Core has no retained Core image for Plugin updates.");
+    const planBase = {
+      pluginId,
+      displayName: current.displayName,
+      currentVersion: current.version,
+      enabled: installed.enabled,
+      restartServices: installed.enabled ? ["Core API", "Source Gateway", current.displayName] : [],
+      coreVersion: state.packageVersion,
+      coreImage
+    };
+    let selection = resolvedSelection;
+    try {
+      selection ??= (await this.#resolvePluginUpdate(state, pluginId, manager)).selection;
+    } catch (error) {
+      return { ...planBase, status: "blocked", reason: errorMessage(error) };
+    }
+    const target = updateCandidateRelease(selection);
+    if (!target) {
+      if (selection.currentRevoked) {
+        return {
+          ...planBase,
+          status: "blocked",
+          reason: `${current.displayName} ${current.version} is revoked and has no compatible non-revoked replacement for Atlas Core ${state.packageVersion}.`
+        };
+      }
+      const catalogPlugin = this.#catalogStore.inspect().catalog.plugins.find((plugin) => plugin.pluginId === pluginId);
+      const newerReleaseExists =
+        catalogPlugin?.releases.some(
+          (release) => !release.revoked && comparePluginVersions(release.version, current.version) > 0
+        ) ?? false;
+      return newerReleaseExists
+        ? {
+            ...planBase,
+            status: "blocked",
+            reason: `A newer release exists, but it is incompatible with Atlas Core ${state.packageVersion}.`
+          }
+        : { ...planBase, status: "current", reason: `${current.displayName} ${current.version} is current.` };
+    }
+    const candidatePlan = {
+      action:
+        selection.currentRevoked && comparePluginVersions(target.version, current.version) < 0
+          ? ("replacement" as const)
+          : ("update" as const),
+      targetVersion: target.version
+    };
+    let deployment: DeploymentSnapshot;
+    try {
+      const services = await this.#composeServiceStates(state.enabledPlugins);
+      const baseFailures = services.length > 0 ? unhealthyServices(services, REQUIRED_SERVICES) : [];
+      if (baseFailures.length > 0) {
+        throw new Error(
+          `Plugin updates require the current Atlas Core base services to be fully healthy: ${baseFailures.join(", ")}.`
+        );
+      }
+      deployment = deploymentSnapshotFromServices(services);
+    } catch (error) {
+      return { ...planBase, ...candidatePlan, status: "blocked", reason: errorMessage(error) };
+    }
+    if (installed.enabled && deployment.status === "stopped") {
+      return {
+        ...planBase,
+        ...candidatePlan,
+        status: "blocked",
+        reason: `Cannot update enabled Plugin ${pluginId} while Atlas Core is stopped. Start Atlas Core or disable the Plugin first.`
+      };
+    }
+    return {
+      ...planBase,
+      ...candidatePlan,
+      status: "available"
+    };
+  }
+
+  async pluginUpdate(
+    pluginId: string,
+    reportActivity?: PluginActivityReporter,
+    reviewedPlan?: Extract<PluginUpdatePlan, { status: "available" }>
+  ): Promise<PluginOperationOutcome> {
     await this.#withInitializedMutation(async (raw) => {
       const state = this.#requireManaged(raw);
       const manager = this.#plugins(state);
@@ -1627,16 +1729,42 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       const updated: string[] = [];
       for (const id of pluginIds) {
         try {
-          const current = manager.readSelected(id);
-          const candidates = await this.#catalogStore.candidates(id, {
-            currentVersion: current.version,
-            currentRelease: current,
-            contracts: state.pluginContracts ?? PACKAGE_PLUGIN_CONTRACTS
-          });
-          const result = await manager.update(id, candidates);
+          reportActivity?.({ level: "working", message: "Checking the signed Plugin catalog", stage: "operation" });
+          const resolved = await this.#resolvePluginUpdate(state, id, manager);
+          const selection = resolved.selection;
+          const candidate = updateCandidateRelease(selection);
+          if (reviewedPlan) {
+            const currentPlan = await this.#planPluginUpdate(state, manager, id, selection);
+            if (!samePluginUpdatePlan(reviewedPlan, currentPlan)) {
+              throw new Error("The reviewed Plugin update details changed. Review the update again.");
+            }
+          }
+          if (candidate) {
+            reportActivity?.({
+              level: "working",
+              message: `Installing ${selection.current.displayName} ${candidate.version}`,
+              stage: "operation"
+            });
+          }
+          const result = await manager.update(id, resolved.candidates);
           if (result.changed) updated.push(id);
-          this.#stdout.write(`${result.message}\n`);
+          if (reportActivity) reportActivity({ level: "success", message: result.message, stage: "operation" });
+          else this.#stdout.write(`${result.message}\n`);
         } catch (error) {
+          reportActivity?.({ level: "failure", message: `Update stopped: ${errorMessage(error)}`, stage: "operation" });
+          reportActivity?.(
+            errorMessage(error).includes("Recovery is required:")
+              ? {
+                  level: "failure",
+                  message: "Recovery is required. Run atlas-core recover status for the valid next action",
+                  stage: "rollback"
+                }
+              : {
+                  level: "success",
+                  message: "The previous Plugin release is preserved",
+                  stage: "rollback"
+                }
+          );
           if (pluginId !== "all") throw error;
           throw new Error(
             `Plugin update stopped at ${id}. Already updated: ${updated.join(", ") || "none"}. ${errorMessage(error)}`
@@ -1644,6 +1772,24 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
         }
       }
     });
+    return { status: "success" };
+  }
+
+  async #resolvePluginUpdate(
+    state: ManagedCoreState,
+    pluginId: string,
+    manager: IndependentPluginManager
+  ): Promise<{
+    candidates: readonly IndependentPluginReleaseCandidate[];
+    selection: IndependentPluginUpdatePlan;
+  }> {
+    const current = manager.readSelected(pluginId);
+    const candidates = await this.#catalogStore.candidates(pluginId, {
+      currentVersion: current.version,
+      currentRelease: current,
+      contracts: state.pluginContracts ?? PACKAGE_PLUGIN_CONTRACTS
+    });
+    return { candidates, selection: manager.planUpdate(pluginId, candidates) };
   }
 
   async pluginRollback(pluginId: string): Promise<void> {
@@ -2916,10 +3062,10 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
         catalog = receipt.catalog.plugins;
         const catalogWarnings: string[] = [];
         if (receipt.expired)
-          catalogWarnings.push("Plugin catalog expired; refresh before installing or enabling Plugins.");
+          catalogWarnings.push("Plugin catalog expired; refresh before installing, enabling, or updating Plugins.");
         if (receipt.belowCheckpoint)
           catalogWarnings.push(
-            "Plugin catalog is below the CLI trust checkpoint; refresh before installing or enabling Plugins."
+            "Plugin catalog is below the CLI trust checkpoint; refresh before installing, enabling, or updating Plugins."
           );
         if (catalogWarnings.length > 0) catalogError = catalogWarnings.join(" ");
       } catch (error) {
@@ -6176,6 +6322,31 @@ async function attemptRollback(rollbackErrors: string[], action: () => void | Pr
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function updateCandidateRelease(plan: IndependentPluginUpdatePlan): PluginRelease | undefined {
+  const candidate = plan.candidate;
+  if (!candidate) return undefined;
+  return "release" in candidate ? candidate.release : candidate;
+}
+
+function samePluginUpdatePlan(
+  reviewed: Extract<PluginUpdatePlan, { status: "available" }>,
+  current: PluginUpdatePlan
+): boolean {
+  return (
+    current.status === "available" &&
+    reviewed.pluginId === current.pluginId &&
+    reviewed.displayName === current.displayName &&
+    reviewed.currentVersion === current.currentVersion &&
+    reviewed.targetVersion === current.targetVersion &&
+    reviewed.action === current.action &&
+    reviewed.enabled === current.enabled &&
+    reviewed.coreVersion === current.coreVersion &&
+    reviewed.coreImage === current.coreImage &&
+    reviewed.restartServices.length === current.restartServices.length &&
+    reviewed.restartServices.every((service, index) => service === current.restartServices[index])
+  );
 }
 
 function assertNever(value: never): never {

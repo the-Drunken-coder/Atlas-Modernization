@@ -18,6 +18,7 @@ import type {
   PluginActivityReporter,
   PluginDeploymentStatus,
   PluginOperationOutcome,
+  PluginUpdatePlan,
   UpdateInfo,
   UpdateProgress,
   UpdateReporter,
@@ -42,6 +43,7 @@ type Screen =
   | { kind: "operation"; view: LifecycleOperationView }
   | { error?: string; kind: "password" }
   | { kind: "plugin-activity"; view: PluginActivityView }
+  | { kind: "plugin-update-review"; plan: PluginUpdatePlan }
   | { kind: "plugins"; view: PluginDeploymentStatus[] | Error }
   | { kind: "reset-confirmation" }
   | { kind: "status"; view: DeploymentDetails | Error }
@@ -93,13 +95,14 @@ type LifecycleRunOptions = LifecycleOperationOptions;
 type PluginActivityEvent = PluginActivity & { elapsedMs: number };
 
 type PluginActivityView = {
-  action: "Enable" | "Disable" | "Install";
+  action: "Enable" | "Disable" | "Install" | "Replace" | "Update";
   completedAt?: number;
   error?: string;
   events: PluginActivityEvent[];
   operationId: number;
   plugin: PluginDeploymentStatus;
   snapshot?: DeploymentSnapshot;
+  targetVersion?: string;
   startedAt: number;
   status: "running" | "cancelling" | "success" | "failure" | "cancelled";
 };
@@ -254,8 +257,32 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
   const loadPlugins = useCallback(async () => {
     setScreen({ kind: "busy", label: "Loading Plugins..." });
     try {
+      let refreshFailure: Error | undefined;
+      try {
+        await operator.pluginRefresh?.();
+      } catch (error) {
+        refreshFailure = new Error(errorMessage(error));
+      }
       const statuses = await operator.pluginStatuses();
-      setScreen({ kind: "plugins", view: statuses });
+      const statusesWithPlans: PluginDeploymentStatus[] = [];
+      for (const status of statuses) {
+        if (status.installed === true && operator.pluginUpdatePlan) {
+          try {
+            statusesWithPlans.push({ ...status, updatePlan: await operator.pluginUpdatePlan(status.pluginId) });
+          } catch (error) {
+            statusesWithPlans.push({ ...status, error: status.error ?? errorMessage(error) });
+          }
+        } else {
+          statusesWithPlans.push(status);
+        }
+      }
+      if (refreshFailure && statuses.length === 0) throw refreshFailure;
+      setScreen({
+        kind: "plugins",
+        view: refreshFailure
+          ? statusesWithPlans.map((status) => ({ ...status, error: status.error ?? refreshFailure.message }))
+          : statusesWithPlans
+      });
     } catch (error) {
       setScreen({ kind: "plugins", view: new Error(errorMessage(error)) });
     }
@@ -437,11 +464,17 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
   );
 
   const runPluginActivity = useCallback(
-    async (
-      action: PluginActivityView["action"],
-      plugin: PluginDeploymentStatus,
-      operation: (reportActivity: PluginActivityReporter) => Promise<PluginOperationOutcome>
-    ): Promise<void> => {
+    async ({
+      action,
+      operation,
+      plugin,
+      targetVersion
+    }: {
+      action: PluginActivityView["action"];
+      operation(reportActivity: PluginActivityReporter): Promise<PluginOperationOutcome>;
+      plugin: PluginDeploymentStatus;
+      targetVersion?: string;
+    }) => {
       const operationId = pluginOperationGeneration.current + 1;
       pluginOperationGeneration.current = operationId;
       activePluginOperation.current = operationId;
@@ -463,7 +496,8 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
           operationId,
           plugin,
           startedAt,
-          status: "running"
+          status: "running",
+          ...(targetVersion ? { targetVersion } : {})
         }
       });
       await waitUntilRenderFlush();
@@ -481,9 +515,7 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
             : current
         );
       };
-      const result = await runCancelableOperation(operator, async () => {
-        return await operation(reportActivity);
-      });
+      const result = await runCancelableOperation(operator, async () => await operation(reportActivity));
       if (activePluginOperation.current === operationId) activePluginOperation.current = undefined;
       const cancellationRequested = pluginCancellationRequested.current || result.cancelled;
       if (cancellationRequested) operator.resumeAfterCancellation();
@@ -512,11 +544,9 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
         if (current.kind !== "plugin-activity" || current.view.operationId !== operationId) return current;
         const status = result.failure
           ? "failure"
-          : result.value?.status === "success"
-            ? "success"
-            : result.value?.status === "cancelled" || result.cancelled
-              ? "cancelled"
-              : "success";
+          : result.value?.status === "cancelled" || result.cancelled
+            ? "cancelled"
+            : "success";
         return {
           ...current,
           view: {
@@ -534,12 +564,14 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
 
   const togglePlugin = useCallback(
     async (plugin: PluginDeploymentStatus) => {
-      const action = plugin.enabled ? "Disable" : "Enable";
-      await runPluginActivity(action, plugin, async (reportActivity) =>
-        plugin.enabled
-          ? await operator.pluginDisable(plugin.pluginId, reportActivity)
-          : await operator.pluginEnable(plugin.pluginId, reportActivity)
-      );
+      await runPluginActivity({
+        action: plugin.enabled ? "Disable" : "Enable",
+        plugin,
+        operation: async (reportActivity) =>
+          plugin.enabled
+            ? await operator.pluginDisable(plugin.pluginId, reportActivity)
+            : await operator.pluginEnable(plugin.pluginId, reportActivity)
+      });
     },
     [operator, runPluginActivity]
   );
@@ -615,8 +647,49 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
   const installPlugin = useCallback(
     async (plugin: PluginDeploymentStatus) => {
       if (!operator.pluginInstall) return;
-      await runPluginActivity("Install", plugin, async (reportActivity) => {
-        return await operator.pluginInstall!(plugin.pluginId, undefined, reportActivity);
+      await runPluginActivity({
+        action: "Install",
+        plugin,
+        operation: async (reportActivity) => await operator.pluginInstall!(plugin.pluginId, undefined, reportActivity)
+      });
+    },
+    [operator, runPluginActivity]
+  );
+
+  const reviewPluginUpdate = useCallback(
+    async (plugin: PluginDeploymentStatus) => {
+      if (!operator.pluginUpdatePlan) return;
+      if (plugin.updatePlan) {
+        setScreen({ kind: "plugin-update-review", plan: plugin.updatePlan });
+        return;
+      }
+      setScreen({ kind: "busy", label: `Checking updates for ${plugin.displayName}...` });
+      try {
+        setScreen({ kind: "plugin-update-review", plan: await operator.pluginUpdatePlan(plugin.pluginId) });
+      } catch (error) {
+        setScreen({ kind: "plugins", view: new Error(errorMessage(error)) });
+      }
+    },
+    [operator]
+  );
+
+  const updatePlugin = useCallback(
+    async (plan: Extract<PluginUpdatePlan, { status: "available" }>) => {
+      const pluginUpdate = operator.pluginUpdate;
+      if (!pluginUpdate) return;
+      await runPluginActivity({
+        action: plan.action === "replacement" ? "Replace" : "Update",
+        plugin: {
+          pluginId: plan.pluginId,
+          displayName: plan.displayName,
+          lifecycle: "query_only",
+          enabled: plan.enabled,
+          packaged: false,
+          installed: true,
+          selectedVersion: plan.currentVersion
+        },
+        targetVersion: plan.targetVersion,
+        operation: async (reportActivity) => await pluginUpdate.call(operator, plan.pluginId, reportActivity, plan)
       });
     },
     [operator, runPluginActivity]
@@ -899,7 +972,20 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
         onInstall={operator.pluginInstall ? (plugin) => void installPlugin(plugin) : undefined}
         onLogs={(plugin) => void openPluginLogViewer(plugin)}
         onToggle={(plugin) => void togglePlugin(plugin)}
+        onUpdate={
+          operator.pluginUpdate && operator.pluginUpdatePlan ? (plugin) => void reviewPluginUpdate(plugin) : undefined
+        }
         view={screen.view}
+      />
+    );
+  }
+  if (screen.kind === "plugin-update-review") {
+    const plan = screen.plan;
+    return (
+      <PluginUpdateReview
+        onBack={() => void loadPlugins()}
+        onConfirm={plan.status === "available" ? () => void updatePlugin(plan) : undefined}
+        plan={plan}
       />
     );
   }
@@ -1909,14 +1995,30 @@ function pluginActivityLines(view: PluginActivityView, width: number): ActivityL
 
 function pluginActivitySummary(view: PluginActivityView): ActivityLine | undefined {
   if (view.status === "success") {
-    const verb = view.action === "Install" ? "installed" : view.action === "Enable" ? "enabled" : "disabled";
+    if ((view.action === "Update" || view.action === "Replace") && view.targetVersion) {
+      return {
+        color: "green",
+        text: `${view.plugin.displayName} ${view.action === "Replace" ? "replaced with" : "updated to"} ${view.targetVersion}.`
+      };
+    }
+    const verb =
+      view.action === "Install"
+        ? "installed"
+        : view.action === "Enable"
+          ? "enabled"
+          : view.action === "Update"
+            ? "updated"
+            : view.action === "Replace"
+              ? "replaced"
+              : "disabled";
     return {
       color: "green",
       text: `${view.plugin.displayName} ${verb}.`
     };
   }
   if (view.status === "cancelled") {
-    return { color: "yellow", text: `${view.action} cancelled. The previous deployment is preserved.` };
+    const preserved = view.action === "Update" || view.action === "Replace" ? "Plugin release" : "deployment";
+    return { color: "yellow", text: `${view.action} cancelled. The previous ${preserved} is preserved.` };
   }
   if (view.status === "failure") {
     const lines = [view.error ? `${view.action} failed: ${view.error}` : `${view.action} failed.`];
@@ -2280,12 +2382,14 @@ function PluginsMenu({
   onInstall,
   onLogs,
   onToggle,
+  onUpdate,
   view
 }: {
   onBack(): void;
   onInstall: ((plugin: PluginDeploymentStatus) => void) | undefined;
   onLogs(plugin: PluginDeploymentStatus): void;
   onToggle(plugin: PluginDeploymentStatus): void;
+  onUpdate: ((plugin: PluginDeploymentStatus) => void) | undefined;
   view: PluginDeploymentStatus[] | Error;
 }): ReactNode {
   const { columns, rows } = useWindowSize();
@@ -2298,13 +2402,18 @@ function PluginsMenu({
   const canInteract = columns >= MINIMUM_TERMINAL_COLUMNS && rows >= MINIMUM_TERMINAL_ROWS;
   const footer =
     plugins.length > 0
-      ? `↑/↓ ${index + 1}/${plugins.length}   Enter install/enable/disable   l logs   Esc back`
+      ? `↑/↓ ${index + 1}/${plugins.length}   Enter install/enable/disable${plugin?.installed === true && onUpdate ? "   u update" : ""}   l logs   Esc back`
       : "Esc back";
   const revocationSummary = plugin?.revoked
     ? firstTerminalLine(`REVOKED${plugin.revocationReason ? `: ${plugin.revocationReason}` : ""}`, columns)
     : undefined;
   const errorSummary = plugin?.error ? firstTerminalLine(`ERROR: ${plugin.error}`, columns) : undefined;
-  const chromeRows = 7 + Number(Boolean(revocationSummary)) + Number(Boolean(errorSummary));
+  const chromeRows =
+    7 +
+    Number(plugin?.installed === true) +
+    Number(Boolean(plugin?.updatePlan)) +
+    Number(Boolean(revocationSummary)) +
+    Number(Boolean(errorSummary));
   const viewportRows = Math.max(1, rows - chromeRows - wrappedRows(footer, columns));
   const firstPlugin = Math.max(
     0,
@@ -2332,6 +2441,9 @@ function PluginsMenu({
     } else if (key.return && plugin && (plugin.packaged || plugin.installed === true)) {
       actionPending.current = true;
       onToggle(plugin);
+    } else if (input === "u" && plugin?.installed === true && onUpdate) {
+      actionPending.current = true;
+      onUpdate(plugin);
     } else if (input === "l" && plugin?.enabled) {
       actionPending.current = true;
       onLogs(plugin);
@@ -2385,6 +2497,8 @@ function PluginsMenu({
           <Text> </Text>
           <Text>{firstTerminalLine(plugin?.pluginId ?? "", columns)}</Text>
           <Text dimColor>{plugin?.lifecycle === "query_only" ? "Query-only, stateless" : "Unsupported lifecycle"}</Text>
+          {plugin?.installed === true ? <Text>{`Selected  ${plugin.selectedVersion ?? "Unknown"}`}</Text> : null}
+          {plugin?.updatePlan ? <Text>{`Catalog   ${pluginCatalogAvailability(plugin.updatePlan)}`}</Text> : null}
           {revocationSummary ? <Text color="red">{revocationSummary}</Text> : null}
           {errorSummary ? <Text color="red">{errorSummary}</Text> : null}
         </>
@@ -2393,6 +2507,74 @@ function PluginsMenu({
       <Text dimColor>{footer}</Text>
     </Box>
   );
+}
+
+function PluginUpdateReview({
+  onBack,
+  onConfirm,
+  plan
+}: {
+  onBack(): void;
+  onConfirm: (() => void) | undefined;
+  plan: PluginUpdatePlan;
+}): ReactNode {
+  const { columns } = useWindowSize();
+  const actionPending = useRef(false);
+  useInput((input, key) => {
+    if (actionPending.current) return;
+    if (key.escape || (key.ctrl && input === "c") || input === "q") {
+      actionPending.current = true;
+      onBack();
+    } else if (key.return && onConfirm) {
+      actionPending.current = true;
+      onConfirm();
+    }
+  });
+  if (columns < MINIMUM_TERMINAL_COLUMNS) return <NarrowTerminal />;
+  const title =
+    "action" in plan && plan.action === "replacement"
+      ? "ATLAS CORE > REVIEW PLUGIN REPLACEMENT"
+      : "ATLAS CORE > REVIEW PLUGIN UPDATE";
+  const values: KeyValue[] = [
+    ["Plugin", `${plan.displayName} (${plan.pluginId})`],
+    ["Current", plan.currentVersion],
+    ...("targetVersion" in plan && plan.targetVersion ? ([["Target", plan.targetVersion]] as const) : []),
+    ["State", plan.enabled ? "Enabled" : "Disabled"],
+    ["Core", `${plan.coreVersion} remains installed`],
+    ["Core image", `${plan.coreImage} remains unchanged`],
+    ["May restart", plan.restartServices.length > 0 ? plan.restartServices.join(", ") : "No running Atlas services"]
+  ];
+  const message =
+    plan.status === "available"
+      ? plan.action === "replacement"
+        ? "The selected release is revoked. Atlas will install this permitted replacement."
+        : "Atlas will update this Plugin without installing a new Atlas Core version."
+      : plan.reason;
+  return (
+    <Box flexDirection="column" width={columns}>
+      <Header title={title} />
+      <Text> </Text>
+      <KeyValues values={values} width={columns} />
+      <Text> </Text>
+      <Text
+        {...(plan.status === "blocked" ? { color: "red" as const } : {})}
+        {...(plan.status === "current" ? { color: "green" as const } : {})}
+      >
+        {message}
+      </Text>
+      <Rule width={columns} />
+      <Text dimColor>{onConfirm ? "Enter confirm   Esc cancel" : "Esc return to Plugins"}</Text>
+    </Box>
+  );
+}
+
+function pluginCatalogAvailability(plan: PluginUpdatePlan): string {
+  if (plan.status === "available" || (plan.status === "blocked" && plan.targetVersion)) {
+    return `${plan.targetVersion} compatible ${plan.action === "replacement" ? "replacement" : "update"}`;
+  }
+  if (plan.status === "current") return "Current; no compatible replacement";
+  if (/incompatible|no compatible/iu.test(plan.reason)) return "No compatible replacement";
+  return "Availability unavailable";
 }
 
 function SimpleMenu({
