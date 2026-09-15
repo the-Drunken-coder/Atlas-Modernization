@@ -172,7 +172,7 @@ describe("Atlas Core TUI preview operator", () => {
       summary: "Atlas Core initialized. Choose Start Atlas Core when ready."
     });
     expect(progress.map((event) => event.stage)).toEqual(["operation", "operation", "operation"]);
-    await expect(operator.snapshot()).resolves.toMatchObject({ status: "ready" });
+    await expect(operator.snapshot()).resolves.toMatchObject({ status: "stopped" });
   });
 
   it("changes the admin password through the shared operation flow without exposing private input", async () => {

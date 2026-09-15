@@ -2622,14 +2622,41 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       this.#assertStateMatchesEngine(state, runtime.engineId);
       if (state.phase === "initializing") {
         this.#assertPackageVersionMatches(state);
+        const pendingOperation = this.#pendingTransactionOperation(runtime.engineId);
+        if (pendingOperation === "core-update") {
+          return {
+            status: "degraded",
+            coreVersion: state.packageVersion,
+            detail: "Atlas Core update recovery is pending. Run atlas-core recover status before retrying."
+          };
+        }
+        if (pendingOperation !== "init") {
+          return {
+            status: "degraded",
+            coreVersion: state.packageVersion,
+            detail: "Atlas Core has an incomplete deployment state. Run atlas-core recover status before retrying."
+          };
+        }
         return {
           status: "initializing",
           coreVersion: state.packageVersion,
-          detail: "Atlas Core initialization is in progress or needs recovery."
+          detail: "Atlas Core initialization can be resumed."
         };
       }
       return await this.#deploymentSnapshot(state.enabledPlugins);
     });
+  }
+
+  #pendingTransactionOperation(dockerEngineId: string): string | undefined {
+    if (!DeploymentTransactionStore.exists(this.#configDir)) return undefined;
+    const journal = DeploymentTransactionStore.open(this.#configDir).journal;
+    if (journal.owner.dockerEngineId !== dockerEngineId) {
+      throw new Error(
+        `Atlas Core deployment recovery belongs to Docker engine ${journal.owner.dockerEngineId}, but the current engine is ${dockerEngineId}. ` +
+          "Restore the original Docker context before operating this deployment."
+      );
+    }
+    return journal.operation;
   }
 
   async details(signal?: AbortSignal): Promise<DeploymentDetails> {

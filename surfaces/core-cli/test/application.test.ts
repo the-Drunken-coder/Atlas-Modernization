@@ -3966,6 +3966,13 @@ describe("atlas-core CLI", () => {
     const statePath = join(test.home, ".atlas", "core", "state.json");
     const state = JSON.parse(readFileSync(statePath, "utf8"));
     writeFileSync(statePath, `${JSON.stringify({ ...state, phase: "initializing" })}\n`, { mode: 0o600 });
+    const transaction = DeploymentTransactionStore.begin(join(test.home, ".atlas", "core"), {
+      operation: "init",
+      dockerEngineId: TEST_ENGINE_ID,
+      previousRunning: false,
+      desiredRunning: false
+    });
+    transaction.stage("state.json", readFileSync(statePath));
     let observed: DeploymentDetails["snapshot"] | undefined;
     test.context.interactive = {
       configureAdmin: async () => undefined,
@@ -3979,7 +3986,7 @@ describe("atlas-core CLI", () => {
     expect(observed).toMatchObject({
       status: "initializing",
       coreVersion: PACKAGE_VERSION,
-      detail: expect.stringContaining("initialization")
+      detail: expect.stringContaining("resumed")
     });
     expect(test.runner.calls.some((call) => call.args[0] === "info")).toBe(true);
     expect(test.runner.calls.some((call) => composeCommand(call)[0] === "ps")).toBe(false);
@@ -4442,6 +4449,30 @@ describe("atlas-core CLI", () => {
     });
     expect(test.runner.existingVolumes).toContain(POSTGRES_VOLUME);
     expect(test.runner.existingVolumes).toContain(MINIO_VOLUME);
+  });
+
+  it("reports a failed Core update as degraded recovery-required state in the cheap snapshot", async () => {
+    const test = runtime();
+    markInitialized(test);
+    setCoreVersion(test, "0.1.2");
+    test.runner.failComposeUp = true;
+
+    expect(await runCLI(["update", "all"], test.context)).toBe(1);
+    let observed: DeploymentDetails["snapshot"] | undefined;
+    test.context.interactive = {
+      configureAdmin: async () => undefined,
+      runMenu: async (operator) => {
+        observed = await operator.snapshot();
+      },
+      runUpdate: async () => undefined
+    };
+
+    expect(await runCLI([], test.context), test.stderr.join("")).toBe(0);
+    expect(observed).toMatchObject({
+      status: "degraded",
+      coreVersion: PACKAGE_VERSION,
+      detail: expect.stringContaining("recovery")
+    });
   });
 
   it("resets a failed no-receipt Core update through the confirmed reset command", async () => {

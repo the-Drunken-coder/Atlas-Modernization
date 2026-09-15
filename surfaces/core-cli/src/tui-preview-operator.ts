@@ -79,8 +79,8 @@ export function createPreviewOperator(
     return { status: "degraded", detail: "Core API is running, but MinIO health is unavailable." };
   };
 
-  const setFreshPreviewDeployment = (): void => {
-    deploymentState = "ready";
+  const setFreshPreviewDeployment = (state: "ready" | "stopped"): void => {
+    deploymentState = state;
     enabledPlugins.clear();
     installedPlugins.clear();
   };
@@ -187,8 +187,10 @@ export function createPreviewOperator(
           summary: `${label} cancelled. The existing deployment state was preserved.`
         };
       }
-      if (operation === "init" || operation === "reset") {
-        setFreshPreviewDeployment();
+      if (operation === "init") {
+        setFreshPreviewDeployment("stopped");
+      } else if (operation === "reset") {
+        setFreshPreviewDeployment("ready");
       } else if (operation === "configure") {
         deploymentState = previousState;
       } else {
@@ -329,7 +331,7 @@ export function createPreviewOperator(
         throw new Error("Atlas Core is already initialized. Choose Reset Atlas Core to start from scratch.");
       }
       preview("Initialization simulated. No credentials, containers, or volumes were created.");
-      setFreshPreviewDeployment();
+      setFreshPreviewDeployment("stopped");
     },
     async logs(serviceId, follow) {
       const stream = await this.openLogStream(serviceId, follow);
@@ -497,7 +499,7 @@ export function createPreviewOperator(
         throw new Error("Atlas Core is not initialized. Run atlas-core init first.");
       }
       preview("Reset simulated. No credentials, containers, or volumes were deleted.");
-      setFreshPreviewDeployment();
+      setFreshPreviewDeployment("ready");
     },
     async restart() {
       preview("Restart simulated. No images were pulled and no containers changed.");

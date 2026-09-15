@@ -666,7 +666,7 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
             { elapsedMs: 0, message: "Applying reviewed update...", stage: "operation" },
             {
               elapsedMs: 0,
-              message: scope === "cli" ? "CLI-only update requested" : "CLI and Core update requested",
+              message: `${updateScopeLabel(info, scope)} update requested`,
               stage: "operation"
             }
           ],
@@ -1025,6 +1025,8 @@ function actionListChoices(snapshot: DeploymentSnapshot): ActionListChoice[] {
     choices.push({ action: "init", label: "Retry initialization" });
   } else if (snapshot.status === "ready") {
     choices.push({ action: "stop", label: "Stop Atlas Core" }, { action: "restart", label: "Restart Atlas Core" });
+  } else if (snapshot.status === "degraded") {
+    choices.push({ action: "stop", label: "Stop Atlas Core" });
   } else if (snapshot.status === "stopped") {
     choices.push({ action: "start", label: "Start Atlas Core" });
   }
@@ -1976,7 +1978,7 @@ function UpdateOperationScreen({
   });
 
   const elapsed = (view.completedAt ?? now) - view.startedAt;
-  const detail = `${view.scope === "all" ? "CLI + Core" : "CLI-only"} update  ${formatActivityTime(elapsed)}`;
+  const detail = `${updateScopeLabel(view.info, view.scope)} update  ${formatActivityTime(elapsed)}`;
   const footer = finished
     ? "Enter exit"
     : view.status === "cancelling"
@@ -2047,38 +2049,36 @@ function updateOperationLines(view: UpdateOperationView, width: number): Activit
       .map((text) => ({ dim: event.stage === "operation", text }));
   });
   if (view.status === "success") {
-    return [
-      ...lines,
-      { text: "" },
-      {
-        color: "green",
-        text:
-          view.scope === "all"
-            ? `Update complete. Atlas Core CLI ${view.info.latestVersion} and the Core deployment are current.`
-            : `Update complete. Atlas Core CLI ${view.info.latestVersion} installed. Running Core and durable data were not changed.`
-      }
-    ];
+    const successText =
+      view.scope === "cli"
+        ? `Update complete. Atlas Core CLI ${view.info.latestVersion} installed. Running Core and durable data were not changed.`
+        : !view.info.cliUpdateAvailable
+          ? `Update complete. Atlas Core deployment ${view.info.latestVersion} is current.`
+          : `Update complete. Atlas Core CLI ${view.info.latestVersion} and the Core deployment are current.`;
+    return [...lines, { text: "" }, { color: "green", text: successText }];
   }
   if (view.status === "cancelled") {
-    return [
-      ...lines,
-      { text: "" },
-      {
-        color: "yellow",
-        text:
-          view.scope === "all"
-            ? "Update cancelled. Running Core and durable data were not deleted; the package may have updated."
-            : "CLI update cancelled. Running Core and durable data were not changed; the package may have updated."
-      }
-    ];
+    const cancellationText =
+      view.scope === "cli"
+        ? "CLI update cancelled. Running Core and durable data were not changed; the package may have updated."
+        : !view.info.cliUpdateAvailable
+          ? "Core-only update cancelled. Running Core and durable data were not deleted."
+          : "Update cancelled. Running Core and durable data were not deleted; the package may have updated.";
+    return [...lines, { text: "" }, { color: "yellow", text: cancellationText }];
   }
   if (view.status === "failure") {
+    const recoveryText =
+      view.scope === "cli"
+        ? "Resolve the CLI package or supervision error before retrying the CLI update."
+        : !view.info.cliUpdateAvailable
+          ? "Inspect Core recovery status before retrying the Core update."
+          : "CLI installation may have completed; inspect recovery status before retrying.";
     return [
       ...lines,
       { text: "" },
       {
         color: "red",
-        text: `ERROR: ${view.error ?? "Update failed."} The update stopped without deleting Atlas Core data. CLI installation may have completed; inspect recovery status before retrying.`
+        text: `ERROR: ${view.error ?? "Update failed."} The update stopped without deleting Atlas Core data. ${recoveryText}`
       }
     ];
   }
@@ -2661,6 +2661,11 @@ function updateChoices(info: UpdateInfo): Array<{ label: string; scope: UpdateSc
 
 function updateInvolvesCLI(info: UpdateInfo, scope: UpdateScope): boolean {
   return scope === "cli" || (scope === "all" && info.cliUpdateAvailable);
+}
+
+function updateScopeLabel(info: UpdateInfo, scope: UpdateScope): "CLI-only" | "Core-only" | "CLI + Core" {
+  if (scope === "cli") return "CLI-only";
+  return info.cliUpdateAvailable ? "CLI + Core" : "Core-only";
 }
 
 async function readSnapshot(operator: AtlasCoreOperator): Promise<DeploymentSnapshot> {
