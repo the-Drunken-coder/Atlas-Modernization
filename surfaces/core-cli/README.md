@@ -14,26 +14,27 @@ npm install --global atlas-core
 atlas-core
 ```
 
-Running `atlas-core` without arguments opens an interactive action menu. It provides initialization, start and stop,
-service health and performance, configuration, updates, logs, diagnostics, and the confirmed reset flow. The status
+Running `atlas-core` without arguments opens the full-screen action-list TUI. It provides initialization, start and stop,
+service health and performance, admin-password changes, updates, logs, diagnostics, Plugin management, and the confirmed reset flow. The status
 view reports CPU, memory, network and block I/O, process count, uptime, restart count, health, and image details from
 Docker. It refreshes every five seconds without overlapping Docker reads. Up and down scroll the status body, left and
-right select a service, and `r` refreshes immediately. Arrow keys move through other menus, typing filters the main
-menu, Enter selects an action, and Escape or `q` goes back.
+right select a service, and `r` refreshes immediately. Arrow keys move through lists, Enter selects an action, and
+Escape exits or returns to the previous screen. The home action list is intentionally unfiltered.
 The direct `atlas-core status` command exits 1 and writes `Atlas Core is stopped.` to stderr when an initialized deployment
-is stopped.
+is stopped. It uses the same service-health and Docker resource details as the status view for direct output.
 
 ### Preview the terminal UI
 
-From a repository checkout, run the visual preview with fixture data:
+From a repository checkout, run the shipped action-list, service-health, initialization, lifecycle-operation,
+admin-password, and reset preview with fixture data:
 
 ```bash
 python3 scripts/preview_atlas_core_tui.py
 ```
 
 Use `--state stopped`, `--state degraded`, or `--state not-initialized` to open another deployment state. The preview
-builds and runs the real terminal UI, but its operator is entirely in memory. It never contacts Docker, reads Atlas Core
-configuration, uses credentials, accesses the network, or changes containers and durable storage. Pass `--no-build` to
+builds and runs the same TUI entrypoint used by `atlas-core`, but its operator is entirely in memory. The preview never
+contacts Docker, reads Atlas Core configuration, uses credentials, accesses the network, or changes containers and durable storage. Pass `--no-build` to
 reuse the current `surfaces/core-cli/dist` output while iterating on visual changes.
 
 Initialization generates strong local credentials and provisions the MinIO bucket only when it can prove the deployment
@@ -84,7 +85,7 @@ atlas-core supervise
 ## Plugins
 
 Implementation status: the independent Plugin lifecycle and release workflow are implemented in this worktree, and
-local validation passes. The candidate-image Docker acceptance test still awaits CI. The approved terminal UI redesign is specified in [GitHub issue #359](https://github.com/the-Drunken-coder/Atlas-Modernization/issues/359); the current runtime is unchanged. Existing
+local validation passes. The candidate-image Docker acceptance test still awaits CI. The terminal UI redesign specified in [GitHub issue #359](https://github.com/the-Drunken-coder/Atlas-Modernization/issues/359) is now the shipped default. Existing
 published Core packages may still use the bundled Plugin catalog; schema-4 deployments use independent catalog state.
 Production catalog signing, trust bootstrap, and Pages rollout remain external setup. The accepted independent release
 design is documented in [`../../docs/design-decisions/2026-09-01-plugins-release-independently-from-atlas-core.md`](../../docs/design-decisions/2026-09-01-plugins-release-independently-from-atlas-core.md).
@@ -141,10 +142,10 @@ An active service whose definition does not match the selected deployment must b
 The Plugins menu keeps the operation in an activity view with elapsed timestamps, reports rollback status, and returns
 to the Plugin catalog after safe cancellation.
 
-The menu's `Configure` action opens a configuration menu. `Admin account` changes the password for the fixed `admin`
-username. The direct `config` command opens the same hidden password prompt. The password must contain at least 12
-characters and is never accepted as a command argument, which keeps it out of shell history and process listings. No
-other deployment settings are exposed yet.
+The menu's `Change admin password` action changes the password for the fixed `admin` username. The direct `config`
+command opens the same hidden password prompt. The password must contain at least 12 characters and is never accepted
+as a command argument, which keeps it out of shell history and process listings. No other deployment settings are
+exposed yet.
 
 When Core is running, `config` restarts it so the new password applies to subsequent logins. When Core is stopped, the
 new password applies on the next start. Existing browser sessions expire normally. The initial random password remains
@@ -165,19 +166,23 @@ and available release before changing anything. Choose one of two update scopes:
   A stopped deployment stays stopped. A schema-3 deployment still follows its bundled-catalog transition rules and
   refuses a target catalog that no longer contains an enabled Plugin.
 
-Core releases may carry schema migrations. Before a Core update, create and validate the paired PostgreSQL and MinIO
-backup described in the [deployment runbook](https://github.com/the-Drunken-coder/Atlas-Modernization/blob/main/services/core/docs/DEPLOYMENT_RUNBOOK.md#pre-deploy-backup).
-The released menu review screen and `atlas-core update all` both require confirmation that a current paired backup exists.
-Set `ATLAS_CORE_BACKUP_DIR` to that backup directory’s absolute path before updating. The CLI records a content hash of
-the dump, bucket mirror, and runbook metadata. Preserve the pair and select it again with the same environment variable
-when running `recover restored --confirm-paired-restore`; recovery requires the recorded hash to match. This identifies
-the backup artifacts and does not prove that the operator restored them.
-The approved future update policy in [issue #368](https://github.com/the-Drunken-coder/Atlas-Modernization/issues/368) removes this prerequisite while retaining restored recovery only for receipt-bearing journals.
+Core releases may carry schema migrations. The update flow preserves PostgreSQL and MinIO volumes and does not require a
+backup prompt or `ATLAS_CORE_BACKUP_DIR`. Operators should still create and validate the paired backup described in the
+[deployment runbook](https://github.com/the-Drunken-coder/Atlas-Modernization/blob/main/services/core/docs/DEPLOYMENT_RUNBOOK.md#pre-deploy-backup).
+When `ATLAS_CORE_BACKUP_DIR` points to that validated pair, the CLI records a content hash of the dump, bucket mirror,
+and runbook metadata. Only a journal with that receipt can later accept `recover restored --confirm-paired-restore`;
+without a receipt, recovery never claims that a backup exists and offers exact retry, compatible forward recovery, or
+the normal confirmed reset path instead. The receipt identifies backup artifacts and does not prove that the operator
+restored them.
 CLI-only updates do not require a deployment backup because they do not change the running Core or its stores.
 
 CLI-only updates may leave the CLI newer than the running Core. Status, logs, diagnostics, stop, reset, and the explicit
 update flow remain available in that state. Start and restart refuse to change Core implicitly and direct the operator
 to `atlas-core update all`. This applies only when both releases use the current engine-scoped resource layout.
+Any interactive update that can replace the CLI keeps its operation screen mounted while npm runs, shows captured
+subprocess output as progress, and exits after success. Failures remain visible until acknowledgment and then exit because
+CLI installation may already have completed. Completed Escape cancellation also exits rather than returning to old
+in-memory code. Core-only updates can return to the originating screen after success or safe cancellation.
 
 State schemas 1 and 2 belong to the retired fixed-name experimental layout. Schema 3 is the current bundled deployment
 state with the `engine-scoped-v1` layout. Independent Plugin management uses schema 4. The first independent Core
@@ -199,11 +204,13 @@ inspect logs and retry. Updating the global CLI requires write access to the npm
 `stop` removes containers and the private Compose network. It preserves PostgreSQL and MinIO volumes. Removing the
 npm package also leaves those durable volumes untouched.
 
-`reset` is the explicit exception. It first requires a valid ready deployment state in the selected `ATLAS_CORE_HOME`
-that matches the current Docker engine. It then permanently deletes the known Atlas Core containers, both durable
-volumes, and the credentials and state in that home before creating new credentials and empty storage and starting the
-image pinned by the installed CLI package. Reset is for intentionally discarding an initialized deployment, not for
-updates. Use `atlas-core update all` to move an existing deployment to the newest release without deleting its data.
+`reset` is the explicit exception. It normally requires a valid ready deployment state in the selected
+`ATLAS_CORE_HOME` that matches the current Docker engine. A confirmed reset also accepts an initializing state only
+when an engine-matched pending initialization or Core-update transaction proves that target startup already began.
+This is the discard-and-reinitialize recovery path when an interrupted update has no usable backup. Reset then
+permanently deletes the known Atlas Core containers, both durable volumes, and the credentials and state in that home
+before creating new credentials and empty storage and starting the image pinned by the installed CLI package. Use
+`atlas-core update all` for normal upgrades that preserve existing data.
 
 Before deleting anything, reset requires active recovery supervision. Use `atlas-core reset --manual` to explicitly acknowledge running without automatic recovery, as with `start --manual`.
 

@@ -215,6 +215,54 @@ describe("ManagedCoreManager", () => {
     expect(calls.some((call) => call.coreImage === NEXT_IMAGE && call.args[0] === "up")).toBe(true);
   });
 
+  it("does not require or claim a backup receipt when the update has none", async () => {
+    const configDir = temporaryDirectory();
+    writeFileSync(join(configDir, ".env"), "POSTGRES_PASSWORD=secret\n", { mode: 0o600 });
+    const stateRef = { current: undefined as ManagedCoreState | undefined };
+    const calls: Call[] = [];
+    const initial = new ManagedCoreManager(
+      makeOptions(configDir, packageDirectory(IMAGE, "optional-backup-old"), IMAGE, stateRef, calls, RECEIPT, {
+        desiredRunning: false
+      })
+    );
+    stateRef.current = await initial.initialize();
+
+    const next = new ManagedCoreManager(
+      makeOptions(
+        configDir,
+        packageDirectory(NEXT_IMAGE, "optional-backup-next"),
+        NEXT_IMAGE,
+        stateRef,
+        calls,
+        NEXT_RECEIPT,
+        {
+          previousRunning: false,
+          desiredRunning: true,
+          readBackupIdentity: async () => undefined,
+          runCompose: async (args, pluginIds, options) => {
+            calls.push({
+              args,
+              pluginIds,
+              coreImage: options.coreImage,
+              ...(options.cleanup ? { cleanup: true } : {})
+            });
+            if (args[0] === "up" && options.coreImage === NEXT_IMAGE)
+              return { status: 1, stdout: "", stderr: "target failed" };
+            return { status: 0, stdout: "", stderr: "" };
+          }
+        }
+      )
+    );
+
+    await expect(next.update(stateRef.current)).rejects.toThrow("target failed");
+    const journal = DeploymentTransactionStore.open(configDir).journal;
+    expect(journal.recovery?.priorBackupIdentity).toBeUndefined();
+    expect((await next.recover("status")).action).toContain("intentional reset");
+    await expect(next.recover("restored", { confirmPairedRestore: true })).rejects.toThrow(
+      /prior paired backup identity/
+    );
+  });
+
   it("keeps a stopped update recoverable when migration-ledger setup starts storage", async () => {
     const configDir = temporaryDirectory();
     writeFileSync(join(configDir, ".env"), "POSTGRES_PASSWORD=secret\n", { mode: 0o600 });

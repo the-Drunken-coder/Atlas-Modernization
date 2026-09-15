@@ -1,15 +1,24 @@
-import { PLUGIN_CATALOG, type PluginCatalogEntry } from "./plugin-catalog.js";
 import type {
   AtlasCoreOperator,
   DeploymentService,
   DeploymentSnapshot,
+  DiagnosticsResult,
+  LifecycleOperation,
+  LifecycleOperationOptions,
+  LifecycleOperationProgress,
+  LifecycleOperationResult,
+  LogStream,
   PluginActivityReporter,
-  PluginOperationOutcome
-} from "./terminal-ui.js";
+  PluginOperationOutcome,
+  UpdateReporter,
+  UpdateScope
+} from "./operator.js";
+import { lifecycleOperationLabel, lifecycleOperationSummary } from "./operator.js";
+import { PLUGIN_CATALOG, type PluginCatalogEntry } from "./plugin-catalog.js";
 
-type PreviewState = DeploymentSnapshot["status"];
+type PreviewState = Exclude<DeploymentSnapshot["status"], "initializing">;
 type PreviewOutput = { write(data: string): unknown };
-type PreviewOptions = { pluginStepDelayMs?: number };
+type PreviewOptions = { lifecycleStepDelayMs?: number; pluginStepDelayMs?: number };
 type PreviewInstalledPlugin = { selectedVersion: string; previousVersion: string | null };
 
 const PREVIEW_PLUGIN_VERSIONS = ["0.2.0", "0.1.0"] as const;
@@ -51,20 +60,41 @@ export function createPreviewOperator(
   const enabledPlugins = new Set<string>();
   const installedPlugins = new Map<string, PreviewInstalledPlugin>();
   let cancellationRequested = false;
+  let lifecycleRunning = false;
   let cancelPendingPluginStep: (() => void) | undefined;
+  let cancelPendingLifecycleStep: (() => void) | undefined;
   const pluginStepDelayMs = options.pluginStepDelayMs ?? 1_500;
+  const lifecycleStepDelayMs = options.lifecycleStepDelayMs ?? 500;
   const startedAt = "2026-08-28T12:00:00.000Z";
   const preview = (message: string): unknown => output.write(`[preview only] ${message}\n`);
 
   const snapshot = (): DeploymentSnapshot => {
-    if (deploymentState === "ready") return { status: "ready", detail: "Everything is healthy." };
+    if (deploymentState === "ready") {
+      return { status: "ready", canReset: true, coreVersion: "0.1.5", detail: "Everything is healthy." };
+    }
     if (deploymentState === "stopped") {
-      return { status: "stopped", detail: "Atlas Core is stopped. Durable storage is preserved." };
+      return {
+        status: "stopped",
+        canReset: true,
+        coreVersion: "0.1.5",
+        detail: "Atlas Core is stopped. Durable storage is preserved."
+      };
     }
     if (deploymentState === "not-initialized") {
-      return { status: "not-initialized", detail: "Initialize Atlas Core on this host." };
+      return { status: "not-initialized", canReset: false, detail: "Initialize Atlas Core on this host." };
     }
-    return { status: "degraded", detail: "Core API is running, but MinIO health is unavailable." };
+    return {
+      status: "degraded",
+      canReset: true,
+      coreVersion: "0.1.5",
+      detail: "Core API is running, but MinIO health is unavailable."
+    };
+  };
+
+  const setFreshPreviewDeployment = (state: "ready" | "stopped"): void => {
+    deploymentState = state;
+    enabledPlugins.clear();
+    installedPlugins.clear();
   };
 
   const services = (): DeploymentService[] => {
@@ -99,6 +129,95 @@ export function createPreviewOperator(
         resolve();
       };
     });
+  };
+
+  const waitForLifecycleStep = async (): Promise<void> => {
+    if (cancellationRequested || lifecycleStepDelayMs === 0) return;
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(() => {
+        cancelPendingLifecycleStep = undefined;
+        resolve();
+      }, lifecycleStepDelayMs);
+      cancelPendingLifecycleStep = () => {
+        clearTimeout(timer);
+        cancelPendingLifecycleStep = undefined;
+        resolve();
+      };
+    });
+  };
+
+  const runLifecycle = async (
+    operation: LifecycleOperation,
+    report?: (progress: LifecycleOperationProgress) => void,
+    options: LifecycleOperationOptions = {}
+  ): Promise<LifecycleOperationResult> => {
+    if (lifecycleRunning) {
+      return {
+        status: "failure",
+        error: "Another lifecycle operation is already running.",
+        snapshot: snapshot()
+      };
+    }
+    if (operation === "reset" && !options.resetConfirmed) {
+      return { status: "failure", error: "Reset requires explicit confirmation.", snapshot: snapshot() };
+    }
+    lifecycleRunning = true;
+    const label = lifecycleOperationLabel(operation);
+    const emit = (message: string, stage: LifecycleOperationProgress["stage"] = "operation"): void => {
+      report?.({ message, stage });
+    };
+    emit(`${label} requested`);
+    try {
+      if (operation !== "init" && deploymentState === "not-initialized") {
+        throw new Error("Atlas Core is not initialized. Run atlas-core init first.");
+      }
+      if (operation === "init" && deploymentState !== "not-initialized") {
+        throw new Error("Atlas Core is already initialized. Choose Reset Atlas Core to start from scratch.");
+      }
+      if (operation === "restart" && deploymentState === "stopped") {
+        throw new Error("Atlas Core is stopped; run atlas-core start instead of atlas-core restart.");
+      }
+      if (operation === "configure" && options.password === undefined) {
+        throw new Error("An admin password is required.");
+      }
+      const previousState = deploymentState;
+      const previousEnabledPlugins = new Set(enabledPlugins);
+      const previousInstalledPlugins = new Map(installedPlugins);
+      emit(`Running ${label.toLocaleLowerCase()}.`);
+      await waitForLifecycleStep();
+      if (cancellationRequested) {
+        deploymentState = previousState;
+        enabledPlugins.clear();
+        for (const pluginId of previousEnabledPlugins) enabledPlugins.add(pluginId);
+        installedPlugins.clear();
+        for (const [pluginId, installed] of previousInstalledPlugins) installedPlugins.set(pluginId, installed);
+        emit("Cancellation requested. Waiting for safe cleanup.", "cleanup");
+        emit("Safe cleanup complete.", "cleanup");
+        return {
+          previousDeploymentPreserved: true,
+          status: "cancelled",
+          summary: `${label} cancelled. The existing deployment state was preserved.`
+        };
+      }
+      if (operation === "init") {
+        setFreshPreviewDeployment("stopped");
+      } else if (operation === "reset") {
+        setFreshPreviewDeployment("ready");
+      } else if (operation === "configure") {
+        deploymentState = previousState;
+      } else {
+        deploymentState = operation === "stop" ? "stopped" : "ready";
+      }
+      const summary = lifecycleOperationSummary(operation);
+      emit(summary);
+      return { status: "success", summary };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      emit(`${label} failed: ${message}`);
+      return { status: "failure", error: message, snapshot: snapshot() };
+    } finally {
+      lifecycleRunning = false;
+    }
   };
 
   const cancelPluginMutation = (
@@ -167,10 +286,15 @@ export function createPreviewOperator(
     return { status: "success" };
   };
 
+  const update = async (scope: UpdateScope, _expectedVersion?: string): Promise<void> => {
+    preview(`${scope === "all" ? "CLI and Core" : "CLI-only"} update simulated. Nothing was installed.`);
+  };
+
   return {
     cancelPending() {
       cancellationRequested = true;
       cancelPendingPluginStep?.();
+      cancelPendingLifecycleStep?.();
     },
     async checkForUpdates() {
       return {
@@ -182,7 +306,7 @@ export function createPreviewOperator(
       };
     },
     async configureAdminPassword(_password) {
-      preview("Admin password accepted by the fixture. Nothing was stored.");
+      if (!lifecycleRunning) preview("Admin password accepted by the fixture. Nothing was stored.");
     },
     async details(_signal) {
       return {
@@ -199,29 +323,48 @@ export function createPreviewOperator(
         ...(deploymentState === "degraded" ? { performanceError: "MinIO did not return Docker statistics." } : {})
       };
     },
+    async diagnostics(): Promise<DiagnosticsResult> {
+      return {
+        healthy: true,
+        checks: [
+          { label: "Docker daemon", status: "ok", detail: "fixture healthy" },
+          { label: "Docker Compose", status: "ok", detail: "2.17+ fixture healthy" },
+          { label: "configuration", status: "ok", detail: "fixture ownership matched" }
+        ]
+      };
+    },
     async doctor() {
-      preview("Docker daemon: fixture healthy");
-      preview("Compose 2.17+: fixture healthy");
-      preview("Deployment ownership: fixture matched");
-      return true;
+      const result = await this.diagnostics();
+      for (const check of result.checks) preview(`${check.label}: ${check.detail}`);
+      return result.healthy;
     },
     async init() {
+      if (deploymentState !== "not-initialized") {
+        throw new Error("Atlas Core is already initialized. Choose Reset Atlas Core to start from scratch.");
+      }
       preview("Initialization simulated. No credentials, containers, or volumes were created.");
-      deploymentState = "ready";
-      enabledPlugins.clear();
-      installedPlugins.clear();
+      setFreshPreviewDeployment("stopped");
     },
-    async logs(serviceId, _follow) {
-      const label = serviceId ?? "all services";
-      preview(`Showing fixture logs for ${label}.`);
+    async logs(serviceId, follow) {
+      const stream = await this.openLogStream(serviceId, follow);
+      const remove = stream.onLine((line) => output.write(`${line}\n`));
+      try {
+        await stream.wait();
+      } finally {
+        remove();
+        await stream.close();
+      }
+    },
+    async openLogStream(serviceId, follow = true) {
       const logsByService = {
-        api: "2026-08-30T14:12:03Z core-api ready on 127.0.0.1:8000\n",
-        "source-gateway": "2026-08-30T14:12:04Z source-gateway no connectors configured\n",
-        postgres: "2026-08-30T14:12:05Z postgres accepting connections\n",
-        minio: "2026-08-30T14:12:06Z minio bucket atlas ready\n"
-      };
-      const logs = serviceId === undefined ? Object.values(logsByService) : [logsByService[serviceId]];
-      for (const log of logs) output.write(log);
+        api: ["2026-08-30T14:12:03Z core-api ready on 127.0.0.1:8000"],
+        "source-gateway": ["2026-08-30T14:12:04Z source-gateway no connectors configured"],
+        postgres: ["2026-08-30T14:12:05Z postgres accepting connections"],
+        minio: ["2026-08-30T14:12:06Z minio bucket atlas ready"]
+      } satisfies Record<DeploymentService["id"], string[]>;
+      const lines = serviceId === undefined ? Object.values(logsByService).flat() : logsByService[serviceId];
+      preview(`Showing fixture logs for ${serviceId ?? "all services"}.`);
+      return createPreviewLogStream(serviceId, lines, follow);
     },
     async pluginDisable(pluginId, reportActivity) {
       return await mutatePlugin(false, pluginId, reportActivity);
@@ -229,7 +372,7 @@ export function createPreviewOperator(
     async pluginEnable(pluginId, reportActivity) {
       return await mutatePlugin(true, pluginId, reportActivity);
     },
-    async pluginInstall(pluginId, version) {
+    async pluginInstall(pluginId, version, reportActivity): Promise<PluginOperationOutcome> {
       const plugin = requirePreviewPlugin(pluginId);
       if (deploymentState === "not-initialized") {
         throw new Error("Atlas Core is not initialized. Run atlas-core init first.");
@@ -239,18 +382,64 @@ export function createPreviewOperator(
       if (!PREVIEW_PLUGIN_VERSIONS.includes(selectedVersion as (typeof PREVIEW_PLUGIN_VERSIONS)[number])) {
         throw new Error(`Unknown fixture Plugin release ${pluginId} ${selectedVersion}.`);
       }
+      reportActivity?.({ level: "working", message: "Checking fixture Plugin catalog", stage: "operation" });
+      await waitForPluginStep();
+      if (cancellationRequested) {
+        reportActivity?.({ level: "failure", message: "Install cancelled in the fixture", stage: "operation" });
+        reportActivity?.({ level: "success", message: "Previous fixture Plugin state restored", stage: "rollback" });
+        return { previousDeploymentPreserved: true, status: "cancelled" };
+      }
+      reportActivity?.({
+        level: "working",
+        message: `Installing ${plugin.displayName} ${selectedVersion}`,
+        stage: "operation"
+      });
+      await waitForPluginStep();
+      if (cancellationRequested) {
+        reportActivity?.({ level: "failure", message: "Install cancelled in the fixture", stage: "operation" });
+        reportActivity?.({ level: "success", message: "Previous fixture Plugin state restored", stage: "rollback" });
+        return { previousDeploymentPreserved: true, status: "cancelled" };
+      }
       installedPlugins.set(pluginId, { previousVersion: null, selectedVersion });
       preview(`Installed ${plugin.displayName} ${selectedVersion}.`);
+      reportActivity?.({
+        level: "success",
+        message: `Installed ${plugin.displayName} ${selectedVersion}.`,
+        stage: "operation"
+      });
+      return { status: "success" };
     },
-    async pluginLogs(pluginId, _follow) {
+    async pluginLogs(pluginId, follow) {
+      if (deploymentState === "not-initialized") {
+        throw new Error("Atlas Core is not initialized. Run atlas-core init first.");
+      }
+      if (!enabledPlugins.has(pluginId)) throw new Error(`Plugin ${pluginId} is not enabled.`);
+      requirePreviewPlugin(pluginId);
+      const stream = await this.openPluginLogStream?.(pluginId, follow);
+      if (!stream) return;
+      const remove = stream.onLine((line) => output.write(`${line}\n`));
+      try {
+        await stream.wait();
+      } finally {
+        remove();
+        await stream.close();
+      }
+    },
+    async openPluginLogStream(pluginId, follow = true) {
       if (deploymentState === "not-initialized") {
         throw new Error("Atlas Core is not initialized. Run atlas-core init first.");
       }
       if (!enabledPlugins.has(pluginId)) throw new Error(`Plugin ${pluginId} is not enabled.`);
       const plugin = requirePreviewPlugin(pluginId);
       preview(`Showing fixture logs for ${plugin.displayName}.`);
-      output.write(`2026-08-30T14:12:07Z ${plugin.service} fixture query ready\n`);
-      output.write(`2026-08-30T14:12:08Z ${plugin.service} fixture index healthy\n`);
+      return createPreviewLogStream(
+        plugin.service,
+        [
+          `2026-08-30T14:12:07Z ${plugin.service} fixture query ready`,
+          `2026-08-30T14:12:08Z ${plugin.service} fixture index healthy`
+        ],
+        follow
+      );
     },
     async pluginStatuses(pluginId) {
       const plugins = pluginId === undefined ? PREVIEW_CATALOG : [requirePreviewPlugin(pluginId)];
@@ -278,6 +467,7 @@ export function createPreviewOperator(
         };
       });
     },
+    runLifecycle,
     async pluginUpdate(pluginId) {
       const plugin = requirePreviewPlugin(pluginId);
       const installed = installedPlugins.get(pluginId);
@@ -317,10 +507,11 @@ export function createPreviewOperator(
       cancellationRequested = false;
     },
     async reset() {
+      if (deploymentState === "not-initialized") {
+        throw new Error("Atlas Core is not initialized. Run atlas-core init first.");
+      }
       preview("Reset simulated. No credentials, containers, or volumes were deleted.");
-      deploymentState = "ready";
-      enabledPlugins.clear();
-      installedPlugins.clear();
+      setFreshPreviewDeployment("ready");
     },
     async restart() {
       preview("Restart simulated. No images were pulled and no containers changed.");
@@ -341,8 +532,10 @@ export function createPreviewOperator(
       preview("Stop simulated. No containers changed.");
       deploymentState = "stopped";
     },
-    async update(scope, _expectedVersion, _coreBackupConfirmed) {
-      preview(`${scope === "all" ? "CLI and Core" : "CLI-only"} update simulated. Nothing was installed.`);
+    update,
+    async updateWithProgress(scope, _expectedVersion, report?: UpdateReporter) {
+      report?.({ message: "Running the fixture update", stage: "operation" });
+      await update(scope, _expectedVersion);
     }
   };
 }
@@ -378,5 +571,55 @@ function service(
     uptime: "4d 2h",
     restarts: 0,
     image: "ghcr.io/the-drunken-coder/atlas-core@sha256:cfe582…"
+  };
+}
+
+function createPreviewLogStream(service: string | undefined, lines: string[], follow: boolean): LogStream {
+  const lineListeners = new Set<(line: string) => void>();
+  const pendingLines: string[] = [];
+  const closeListeners = new Set<(error?: Error) => void>();
+  let closed = false;
+  let resolveDone!: () => void;
+  const done = new Promise<void>((resolve) => {
+    resolveDone = resolve;
+  });
+  const finish = (): void => {
+    if (closed) return;
+    closed = true;
+    resolveDone();
+    for (const listener of closeListeners) listener();
+    lineListeners.clear();
+    closeListeners.clear();
+  };
+  setTimeout(() => {
+    for (const line of lines) {
+      if (closed) return;
+      if (lineListeners.size === 0) pendingLines.push(line);
+      else for (const listener of lineListeners) listener(line);
+    }
+    if (!follow) finish();
+  }, 0);
+  return {
+    service,
+    onLine(listener) {
+      lineListeners.add(listener);
+      for (const line of pendingLines.splice(0)) listener(line);
+      return () => lineListeners.delete(listener);
+    },
+    onError() {
+      return () => undefined;
+    },
+    onClose(listener) {
+      if (closed) listener();
+      else closeListeners.add(listener);
+      return () => closeListeners.delete(listener);
+    },
+    wait() {
+      return done;
+    },
+    async close() {
+      finish();
+      await done;
+    }
   };
 }

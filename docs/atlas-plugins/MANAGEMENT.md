@@ -427,12 +427,10 @@ When an SDK-using Plugin blocks a Core revision change, the operator disables it
 Plugin to a release declaring the new revision, then enables it. Atlas does not pretend that one SDK build can use two
 exact generated Protocol revisions.
 
-Before `atlas-core update`, export `ATLAS_CORE_BACKUP_DIR` as the absolute path to the validated paired backup directory from the [deployment runbook](../../services/core/docs/DEPLOYMENT_RUNBOOK.md#pre-deploy-backup). The CLI validates its layout and hashes the PostgreSQL dump, MinIO mirror, and companion metadata before starting the update. Keep the pair unchanged. For `recover restored --confirm-paired-restore`, set the variable to that same pair (its directory may have moved). Recovery compares its content hash with the pre-update journal. This check identifies the selected backup; the operator's confirmation still attests that both stores were restored. The CLI does not create or restore backups.
+Before `atlas-core update`, operators should create the validated paired backup described in the [deployment runbook](../../services/core/docs/DEPLOYMENT_RUNBOOK.md#pre-deploy-backup). The update itself does not require `ATLAS_CORE_BACKUP_DIR` or a backup acknowledgement. When the variable is set, the CLI validates its layout and hashes the PostgreSQL dump, MinIO mirror, and companion metadata before starting the update. Keep the pair unchanged. For `recover restored --confirm-paired-restore`, set the variable to that same pair (its directory may have moved). Recovery compares its content hash with the pre-update journal. A journal without a recorded receipt rejects restored recovery and never claims that a backup exists; use exact retry, compatible forward recovery, or the normal confirmed reset path. The CLI does not create or restore backups.
 
-This paragraph describes the released runtime. [Issue #368](https://github.com/the-Drunken-coder/Atlas-Modernization/issues/368) owns the approved future backup-optional flow. That flow preserves restored recovery only when the journal contains a validated paired-backup receipt.
-
-The Core update uses the same durable root transaction and the existing paired-backup confirmation from the deployment
-runbook. Before changing containers, its journal records the prior migration version and checksums as well as the prior
+The Core update uses the same durable root transaction. Before changing containers, its journal records the prior
+migration version and checksums as well as the prior
 image and complete state. It stages the target Core image and base Compose bundle, starts the target with pulling
 disabled, and verifies the exact Core container image, base health, every Enabled Plugin container image, runtime
 manifest, and health. It commits the Core package version, base bundle hash, image records, supported-major sets, and

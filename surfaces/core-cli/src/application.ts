@@ -24,19 +24,49 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import { readPairedBackupIdentity } from "./backup-receipt.js";
-import { createOwnerIdentity, DeploymentTransactionStore, ownerLiveness } from "./deployment-transaction.js";
+import {
+  createOwnerIdentity,
+  DeploymentTransactionStore,
+  ownerLiveness,
+  type TransactionJournal
+} from "./deployment-transaction.js";
 import { ManagedPluginCredentials, ManagedPluginKeyRejectedError } from "./host-credentials.js";
 import { type ImageReceipt, pullImageReceipt, verifyContainerImage, verifyLocalImage } from "./image-receipts.js";
 import { IndependentPluginManager, isPluginLifecycleOperation, pluginServiceName } from "./independent-plugins.js";
 import { prepareLegacyBase, prepareRepairPackage } from "./legacy-base-import.js";
+import { type CommandOutputStream, createBufferedCommandOutputStream, createLogStream } from "./log-stream.js";
 import {
   ManagedCoreManager,
   type ManagedCoreState,
   type MigrationLedgerOptions,
   parseBaseDeployment,
-  parseManagedCoreState
+  parseManagedCoreState,
+  readManagedCoreRecoveryStatus
 } from "./managed-core.js";
 import { CommandCancelledError, OperationCleanupError } from "./operation-errors.js";
+import type {
+  AtlasCoreOperator,
+  DeploymentDetails,
+  DeploymentService,
+  DeploymentSnapshot,
+  DiagnosticCheck,
+  InteractiveCLI,
+  LifecycleOperation,
+  LifecycleOperationOptions,
+  LifecycleOperationProgress,
+  LifecycleOperationReporter,
+  LifecycleOperationResult,
+  LogStream,
+  PluginActivity,
+  PluginActivityReporter,
+  PluginDeploymentStatus,
+  PluginOperationOutcome,
+  UpdateInfo,
+  UpdateProgress,
+  UpdateReporter,
+  UpdateScope
+} from "./operator.js";
+import { lifecycleOperationLabel, lifecycleOperationSummary } from "./operator.js";
 import { PACKAGE_IMAGE, PACKAGE_NAME, PACKAGE_PLUGIN_CONTRACTS, PACKAGE_VERSION } from "./package-metadata.js";
 import { PLUGIN_CATALOG, type PluginCatalogEntry } from "./plugin-catalog.js";
 import { PluginCatalogStore } from "./plugin-catalog-store.js";
@@ -64,20 +94,7 @@ import {
   type SupervisorInstallOptions,
   uninstallSupervisor
 } from "./supervision.js";
-import {
-  type AtlasCoreOperator,
-  createInteractiveCLI,
-  type DeploymentDetails,
-  type DeploymentService,
-  type DeploymentSnapshot,
-  type InteractiveCLI,
-  type PluginActivity,
-  type PluginActivityReporter,
-  type PluginDeploymentStatus,
-  type PluginOperationOutcome,
-  type UpdateInfo,
-  type UpdateScope
-} from "./terminal-ui.js";
+import { createInteractiveCLI } from "./terminal-ui.js";
 
 const PROJECT_NAME_PREFIX = "atlas_core_production";
 const MUTATION_RECOVERY_LOCK_PREFIX = ".mutation.lock.recovering.";
@@ -113,6 +130,7 @@ const ENGINE_SCOPED_RESOURCE_LAYOUT = "engine-scoped-v1";
 const COMPOSE_WAIT_SECONDS = "120";
 const CLEANUP_CANCELLATION_GRACE_MS = (Number(COMPOSE_WAIT_SECONDS) + 10) * 1_000;
 const COMMAND_TERMINATION_GRACE_MS = 2_000;
+const MAX_RETAINED_COMMAND_OUTPUT_CHARS = 64 * 1024;
 const COMMAND_SUPERVISOR_SOURCE = `
 const { spawn } = require("node:child_process");
 const [command, ...args] = process.argv.slice(1);
@@ -184,16 +202,23 @@ type RunOptions = {
   env?: NodeJS.ProcessEnv;
   inherit?: boolean;
   signal?: AbortSignal;
+  onOutput?: (stream: "stdout" | "stderr", chunk: string) => void;
   processGroup?: {
     started(processGroupId: number): void;
     finished(processGroupId: number): void;
   };
 };
 
+type LiveCommandOutputReporter = {
+  onOutput: (stream: "stdout" | "stderr", chunk: string) => void;
+  flush(): void;
+};
+
 export type CommandRunner = {
   cancelAll(): void;
   run(command: string, args: string[], options?: RunOptions): Promise<CommandResult>;
   runCleanup(command: string, args: string[], options?: RunOptions): Promise<CommandResult>;
+  openStream?(command: string, args: string[], options?: RunOptions): Promise<CommandOutputStream>;
 };
 
 export type CLIContext = {
@@ -208,7 +233,6 @@ export type CLIContext = {
   nodeVersion?: string;
   now?: () => Date;
   createSecret?: () => string;
-  confirmCoreUpdate?: (question: string) => Promise<boolean>;
   confirmReset?: (question: string) => Promise<boolean>;
   imageReference?: string;
   interactive?: InteractiveCLI;
@@ -330,6 +354,26 @@ type ComposeServiceState = {
   Health: string;
 };
 
+type RunIntentSnapshot = {
+  contents?: string;
+  exists: boolean;
+  path: string;
+};
+
+type LifecycleOperationContext = {
+  destructiveStarted?: boolean;
+  operationStarted?: boolean;
+  operationCommitted?: boolean;
+  report: LifecycleOperationReporter;
+  restorationError?: unknown;
+  restoreRunIntentOnCancellation: boolean;
+  runIntent?: RunIntentSnapshot;
+  runIntentChanged: boolean;
+  restartReleaseCommitted?: boolean;
+  restartReleaseStarted?: boolean;
+  stopReleaseStarted?: boolean;
+};
+
 type DockerStats = {
   Name: string;
   CPUPerc: string;
@@ -356,6 +400,11 @@ class UsageError extends Error {
 export class ProcessCommandRunner implements CommandRunner {
   readonly #children = new Map<ReturnType<typeof spawn>, ChildProcessState>();
   readonly #cleanupChildren = new Map<ReturnType<typeof spawn>, ChildProcessState>();
+  readonly #spawnProcess: typeof spawn;
+
+  constructor(spawnProcess: typeof spawn = spawn) {
+    this.#spawnProcess = spawnProcess;
+  }
 
   cancelAll(): void {
     for (const [child, state] of this.#children) {
@@ -371,6 +420,90 @@ export class ProcessCommandRunner implements CommandRunner {
     return await this.#run(command, args, options, this.#cleanupChildren);
   }
 
+  async openStream(command: string, args: string[], options: RunOptions = {}): Promise<CommandOutputStream> {
+    return await new Promise<CommandOutputStream>((resolve) => {
+      const child = this.#spawnProcess(command, args, {
+        cwd: options.cwd,
+        detached: process.platform !== "win32",
+        env: options.env,
+        stdio: ["ignore", "pipe", "pipe"]
+      });
+      const state: ChildProcessState = { cancelled: false, exited: false, supervised: false };
+      this.#children.set(child, state);
+      let stderr = "";
+      let settled = false;
+      let finalResult: { cancelled?: true; status: number; stderr: string } | undefined;
+      const stdoutListeners = new Set<(chunk: string) => void>();
+      const stderrListeners = new Set<(chunk: string) => void>();
+      const closeListeners = new Set<(result: { cancelled?: true; status: number; stderr: string }) => void>();
+      let resolveClosed: (result: { cancelled?: true; status: number; stderr: string }) => void;
+      const closed = new Promise<{ cancelled?: true; status: number; stderr: string }>((resolveResult) => {
+        resolveClosed = resolveResult;
+      });
+      const removeAbortListener = (): void => options.signal?.removeEventListener("abort", cancel);
+      const cancel = (): void => {
+        if (settled) return;
+        this.#terminate(child, state);
+      };
+      const finish = (status: number): void => {
+        if (settled) return;
+        settled = true;
+        state.exited = true;
+        if (state.forceTimer) {
+          clearTimeout(state.forceTimer);
+          delete state.forceTimer;
+        }
+        this.#children.delete(child);
+        removeAbortListener();
+        const result = { ...(state.cancelled ? { cancelled: true as const } : {}), status, stderr };
+        finalResult = result;
+        resolveClosed(result);
+        for (const listener of closeListeners) listener(result);
+        stdoutListeners.clear();
+        stderrListeners.clear();
+        closeListeners.clear();
+      };
+      child.stdout?.setEncoding("utf8");
+      child.stderr?.setEncoding("utf8");
+      child.stdout?.on("data", (chunk: string) => {
+        options.onOutput?.("stdout", chunk);
+        for (const listener of stdoutListeners) listener(chunk);
+      });
+      child.stderr?.on("data", (chunk: string) => {
+        stderr = retainCommandOutputTail(stderr, chunk);
+        options.onOutput?.("stderr", chunk);
+        for (const listener of stderrListeners) listener(chunk);
+      });
+      child.once("error", (error) => {
+        if (!settled) {
+          stderr = retainCommandOutputTail(stderr, error.message);
+          options.onOutput?.("stderr", error.message);
+          finish(1);
+        }
+      });
+      child.once("close", (status) => finish(status ?? 1));
+      options.signal?.addEventListener("abort", cancel, { once: true });
+      if (options.signal?.aborted) cancel();
+      resolve({
+        onStdout(listener) {
+          if (!settled) stdoutListeners.add(listener);
+          return () => stdoutListeners.delete(listener);
+        },
+        onStderr(listener) {
+          if (!settled) stderrListeners.add(listener);
+          return () => stderrListeners.delete(listener);
+        },
+        onClose(listener) {
+          if (finalResult) listener(finalResult);
+          else closeListeners.add(listener);
+          return () => closeListeners.delete(listener);
+        },
+        cancel,
+        closed
+      });
+    });
+  }
+
   async #run(
     command: string,
     args: string[],
@@ -379,7 +512,7 @@ export class ProcessCommandRunner implements CommandRunner {
   ): Promise<CommandResult> {
     return await new Promise((resolve, reject) => {
       const supervised = process.platform !== "win32" && options.processGroup !== undefined;
-      const child = spawn(
+      const child = this.#spawnProcess(
         supervised ? process.execPath : command,
         supervised ? ["--input-type=commonjs", "-e", COMMAND_SUPERVISOR_SOURCE, command, ...args] : args,
         {
@@ -398,9 +531,7 @@ export class ProcessCommandRunner implements CommandRunner {
       const processGroupId = supervised ? child.pid : undefined;
       let processGroupRecorded = false;
       let setupError: unknown;
-      const cancel = (): void => {
-        this.#terminate(child, state);
-      };
+      const cancel = (): void => this.#terminate(child, state);
       const removeAbortListener = (): void => {
         options.signal?.removeEventListener("abort", cancel);
       };
@@ -415,10 +546,12 @@ export class ProcessCommandRunner implements CommandRunner {
       child.stdout?.setEncoding("utf8");
       child.stderr?.setEncoding("utf8");
       child.stdout?.on("data", (chunk: string) => {
-        stdout += chunk;
+        stdout = options.onOutput ? retainCommandOutputTail(stdout, chunk) : stdout + chunk;
+        options.onOutput?.("stdout", chunk);
       });
       child.stderr?.on("data", (chunk: string) => {
-        stderr += chunk;
+        stderr = retainCommandOutputTail(stderr, chunk);
+        options.onOutput?.("stderr", chunk);
       });
       child.once("exit", () => {
         state.exited = true;
@@ -562,6 +695,27 @@ class CancellableCommandRunner implements CommandRunner {
       this.#cleanupControllers.delete(controller);
     }
   }
+
+  async openStream(command: string, args: string[], options?: RunOptions): Promise<CommandOutputStream> {
+    if (this.#cancelled || options?.signal?.aborted) throw new CommandCancelledError();
+    if (!this.#runner.openStream) {
+      const controller = new AbortController();
+      const signal = options?.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal;
+      return createBufferedCommandOutputStream(
+        (onOutput) =>
+          this.#runner.run(command, args, {
+            ...options,
+            signal,
+            onOutput: (stream, chunk) => {
+              onOutput(stream, chunk);
+              options?.onOutput?.(stream, chunk);
+            }
+          }),
+        () => controller.abort()
+      );
+    }
+    return await this.#runner.openStream(command, args, options);
+  }
 }
 
 class AtlasCoreDeployment implements AtlasCoreOperator {
@@ -586,13 +740,15 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   readonly #nodeVersion: string;
   readonly #now: () => Date;
   readonly #createSecret: () => string;
-  readonly #confirmCoreUpdate: (question: string) => Promise<boolean>;
   readonly #confirmReset: (question: string) => Promise<boolean>;
   readonly #imageReference: string | undefined;
   readonly #dockerRuntimeScope = new AsyncLocalStorage<DockerRuntime>();
   readonly #recoveryCommandScope = new AsyncLocalStorage<boolean>();
   readonly #pluginCredentialScope = new AsyncLocalStorage<string>();
   readonly #mutationScope = new AsyncLocalStorage<string>();
+  readonly #lifecycleReporterScope = new AsyncLocalStorage<LifecycleOperationContext>();
+  readonly #updateReporterScope = new AsyncLocalStorage<UpdateReporter>();
+  #lifecycleCancellationRequested = false;
   #activeMutationLock: MutationLockOwner | undefined;
   #idleRecoverableMutationLock: MutationLockOwner | undefined;
   #activeMutationRecoveryPath: string | undefined;
@@ -616,7 +772,6 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     this.#nodeVersion = context.nodeVersion;
     this.#now = context.now;
     this.#createSecret = context.createSecret;
-    this.#confirmCoreUpdate = context.confirmCoreUpdate;
     this.#confirmReset = context.confirmReset;
     this.#imageReference = context.imageReference;
     this.#homeDir = context.homeDir;
@@ -631,11 +786,208 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   }
 
   cancelPending(): void {
+    this.#lifecycleCancellationRequested = true;
     this.#runner.cancelAll();
   }
 
   resumeAfterCancellation(): void {
+    this.#lifecycleCancellationRequested = false;
     this.#runner.resume();
+  }
+
+  async runLifecycle(
+    operation: LifecycleOperation,
+    report?: LifecycleOperationReporter,
+    options: LifecycleOperationOptions = {}
+  ): Promise<LifecycleOperationResult> {
+    const label = lifecycleOperationLabel(operation);
+    const emit =
+      report ??
+      ((progress: LifecycleOperationProgress) => this.#stdout.write(`[${progress.stage}] ${progress.message}\n`));
+    const lifecycleContext: LifecycleOperationContext = {
+      report: emit,
+      restoreRunIntentOnCancellation: true,
+      runIntentChanged: false
+    };
+    emit({ message: `${label} requested`, stage: "operation" });
+    try {
+      await this.#lifecycleReporterScope.run(lifecycleContext, async () => {
+        emit({ message: `Checking deployment before ${label.toLocaleLowerCase()}.`, stage: "operation" });
+        switch (operation) {
+          case "init":
+            await this.init();
+            return;
+          case "start":
+            await this.start();
+            return;
+          case "stop":
+            await this.stop();
+            return;
+          case "restart":
+            await this.restart(options.manual === undefined ? {} : { manual: options.manual });
+            return;
+          case "reset":
+            if (options.resetConfirmed !== true) throw new Error("Reset requires explicit confirmation.");
+            await this.reset({
+              ...(options.manual === undefined ? {} : { manual: options.manual }),
+              ...(options.resetConfirmed === undefined ? {} : { confirmed: options.resetConfirmed })
+            });
+            return;
+          case "configure":
+            if (options.password === undefined) throw new Error("An admin password is required.");
+            await this.configureAdminPassword(options.password);
+            return;
+        }
+      });
+      const summary = lifecycleOperationSummary(operation);
+      emit({ message: summary, stage: "operation" });
+      return { status: "success", summary };
+    } catch (error) {
+      if (error instanceof CommandCancelledError) {
+        emit({ message: "Cancellation requested. Waiting for safe cleanup.", stage: "cleanup" });
+        if (operation === "reset" && lifecycleContext.destructiveStarted) {
+          const message = "Reset cancellation arrived after deletion began; inspect recovery status before retrying.";
+          emit({ message, stage: "cleanup" });
+          return {
+            status: "failure",
+            error: message,
+            snapshot: {
+              status: "degraded",
+              canReset: false,
+              detail:
+                "Reset was interrupted after destructive deletion began. Durable storage state is indeterminate; inspect recovery status before retrying."
+            }
+          };
+        }
+        if (operation === "stop" && lifecycleContext.operationCommitted) {
+          const summary = `${label} cancelled after the deployment state was committed.`;
+          emit({ message: "The stopped state was committed after services were released.", stage: "cleanup" });
+          return {
+            status: "cancelled",
+            summary,
+            snapshot: {
+              status: "stopped",
+              canReset: true,
+              detail: "Atlas Core is stopped after the cancellation point."
+            }
+          };
+        }
+        if (operation === "stop" && lifecycleContext.stopReleaseStarted) {
+          const message =
+            "Stop cancellation arrived while services were being released; inspect recovery status before retrying.";
+          emit({ message, stage: "cleanup" });
+          return {
+            status: "failure",
+            error: message,
+            snapshot: {
+              status: "degraded",
+              canReset: true,
+              detail:
+                "Atlas Core stop was interrupted while services were being released. Service and durable storage state is indeterminate; inspect status before retrying."
+            }
+          };
+        }
+        if (operation === "restart" && lifecycleContext.restartReleaseCommitted) {
+          const summary = `${label} cancelled after services were released.`;
+          emit({ message: "The deployment is stopped after the cancellation point.", stage: "cleanup" });
+          return {
+            status: "cancelled",
+            summary,
+            snapshot: {
+              status: "stopped",
+              canReset: true,
+              detail: "Atlas Core is stopped after the cancellation point."
+            }
+          };
+        }
+        if (operation === "restart" && lifecycleContext.restartReleaseStarted) {
+          const message =
+            "Restart cancellation arrived while services were being released; inspect recovery status before retrying.";
+          emit({ message, stage: "cleanup" });
+          return {
+            status: "failure",
+            error: message,
+            snapshot: {
+              status: "degraded",
+              canReset: true,
+              detail:
+                "Atlas Core restart was interrupted while services were being released. Service state is indeterminate; inspect status before retrying."
+            }
+          };
+        }
+        if (lifecycleContext.restorationError) {
+          const message = `Cancellation cleanup could not restore run intent: ${errorMessage(lifecycleContext.restorationError)}`;
+          emit({ message, stage: "cleanup" });
+          return { status: "failure", error: message };
+        }
+        const summary = `${label} cancelled. The existing deployment state was preserved.`;
+        emit({ message: "Safe cleanup complete.", stage: "cleanup" });
+        return { previousDeploymentPreserved: true, status: "cancelled", summary };
+      }
+      const message = errorMessage(error);
+      emit({ message: `${label} failed: ${message}`, stage: "operation" });
+      if (operation === "reset" && lifecycleContext.destructiveStarted) {
+        return {
+          status: "failure",
+          error: message,
+          snapshot: {
+            status: "degraded",
+            canReset: false,
+            detail:
+              "Reset failed after destructive deletion began. Durable storage state is indeterminate; inspect recovery status before retrying."
+          }
+        };
+      }
+      let snapshot: DeploymentSnapshot | undefined;
+      try {
+        snapshot = lifecycleContext.operationStarted ? await this.snapshot() : this.#persistedLifecycleSnapshot();
+      } catch {
+        snapshot = this.#persistedLifecycleSnapshot();
+      }
+      return { status: "failure", error: message, ...(snapshot ? { snapshot } : {}) };
+    }
+  }
+
+  #persistedLifecycleSnapshot(): DeploymentSnapshot {
+    try {
+      const state = this.#readState();
+      if (!state) {
+        return {
+          status: "not-initialized",
+          canReset: false,
+          detail: "Atlas Core is not initialized. Run atlas-core init first."
+        };
+      }
+      if (state.phase !== "ready") {
+        return {
+          status: "degraded",
+          canReset: false,
+          detail: "Atlas Core has an incomplete deployment state. Run atlas-core recover status before retrying.",
+          coreVersion: state.packageVersion
+        };
+      }
+      if (!this.#desiredRunning()) {
+        return {
+          status: "stopped",
+          canReset: true,
+          detail: "Atlas Core is stopped. Durable storage is preserved.",
+          coreVersion: state.packageVersion
+        };
+      }
+      return {
+        status: "ready",
+        canReset: true,
+        detail:
+          "Atlas Core is configured to run, but service health is unavailable while the lifecycle operation is blocked.",
+        coreVersion: state.packageVersion
+      };
+    } catch {
+      return {
+        status: "degraded",
+        canReset: false,
+        detail: "Deployment state could not be read. Run atlas-core status before retrying."
+      };
+    }
   }
 
   #requireManaged(state: DeploymentState): ManagedCoreState {
@@ -649,11 +1001,29 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
 
   #writeRunIntent(desiredRunning: boolean): void {
     this.#prepareConfigDirectory();
-    writePrivateFile(
-      join(this.#configDir, "run-intent.json"),
-      `${JSON.stringify({ schema: 1, desiredRunning })}\n`,
-      this.#platform
-    );
+    const path = join(this.#configDir, "run-intent.json");
+    const contents = `${JSON.stringify({ schema: 1, desiredRunning })}\n`;
+    const lifecycleContext = this.#lifecycleReporterScope.getStore();
+    if (lifecycleContext && lifecycleContext.runIntent && !lifecycleContext.runIntentChanged) {
+      const current = this.#captureRunIntent();
+      lifecycleContext.runIntentChanged = !current.exists || current.contents !== contents;
+    }
+    writePrivateFile(path, contents, this.#platform);
+  }
+
+  #captureRunIntent(): RunIntentSnapshot {
+    const path = join(this.#configDir, "run-intent.json");
+    if (!existsSync(path)) return { exists: false, path };
+    this.#assertPrivateFile(path);
+    return { contents: readFileSync(path, "utf8"), exists: true, path };
+  }
+
+  #restoreRunIntent(snapshot: RunIntentSnapshot): void {
+    if (!snapshot.exists) {
+      this.#deleteConfigurationFile(snapshot.path);
+      return;
+    }
+    writePrivateFile(snapshot.path, snapshot.contents ?? "", this.#platform);
   }
 
   #desiredRunning(): boolean {
@@ -712,13 +1082,19 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       readRunIntent: () => this.#desiredRunning(),
       readBackupIdentity: async () => {
         const directory = this.#env.ATLAS_CORE_BACKUP_DIR;
-        if (!directory) throw new Error("Set ATLAS_CORE_BACKUP_DIR to the validated paired backup directory.");
+        if (!directory) return undefined;
         return await readPairedBackupIdentity(directory);
       },
       architecture: this.#imageArchitecture(),
       readState: () => this.#readState(),
       writeState: (state) => this.#writeDeploymentState(state),
       runCompose: async (args, pluginIds, options) => {
+        if (options.cleanup) {
+          this.#reportLifecycle(
+            "Cleaning up safely after the interrupted operation; waiting for services to stop.",
+            "cleanup"
+          );
+        }
         const result = await this.#runComposeFile(
           join(options.baseDirectory, "docker-compose.yml"),
           [...args],
@@ -727,6 +1103,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
           pluginIds,
           options.coreImage
         );
+        if (result.cancelled && options.cleanup) throw new CommandCancelledError();
         if (result.status !== 0) throw commandFailure("managed Docker Compose", result);
         return result;
       },
@@ -1171,31 +1548,64 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     this.#stdout.write("Plugin catalog refreshed.\n");
   }
 
-  async pluginInstall(pluginId: string, version?: string): Promise<void> {
-    await this.#withInitializedMutation(async (raw) => {
-      const state = this.#requireManaged(raw);
-      await this.#catalogStore.refresh({ allowCachedOnFailure: true });
-      const candidates = (
-        await this.#catalogStore.candidates(pluginId, {
-          ...(version ? { version } : {}),
-          contracts: state.pluginContracts ?? PACKAGE_PLUGIN_CONTRACTS
-        })
-      ).filter((candidate) => {
-        if (version && candidate.release.version !== version) return false;
-        try {
-          assertPluginCompatible(candidate.release, state.pluginContracts ?? PACKAGE_PLUGIN_CONTRACTS);
-          return true;
-        } catch {
-          return false;
-        }
+  async pluginInstall(
+    pluginId: string,
+    version?: string,
+    reportActivity?: PluginActivityReporter
+  ): Promise<PluginOperationOutcome> {
+    const report = reportActivity ?? (() => undefined);
+    let mutationStarted = false;
+    report({ level: "working", message: "Checking Plugin catalog and compatibility", stage: "operation" });
+    try {
+      await this.#withInitializedMutation(async (raw) => {
+        const state = this.#requireManaged(raw);
+        await this.#catalogStore.refresh({ allowCachedOnFailure: true });
+        const candidates = (
+          await this.#catalogStore.candidates(pluginId, {
+            ...(version ? { version } : {}),
+            contracts: state.pluginContracts ?? PACKAGE_PLUGIN_CONTRACTS
+          })
+        ).filter((candidate) => {
+          if (version && candidate.release.version !== version) return false;
+          try {
+            assertPluginCompatible(candidate.release, state.pluginContracts ?? PACKAGE_PLUGIN_CONTRACTS);
+            return true;
+          } catch {
+            return false;
+          }
+        });
+        const selected = selectPluginRelease(candidates);
+        if (!selected)
+          throw new Error(
+            `No compatible non-revoked release is available for ${pluginId}${version ? ` ${version}` : ""}.`
+          );
+        report({
+          level: "working",
+          message: `Installing ${selected.release.displayName} ${selected.release.version}`,
+          stage: "operation"
+        });
+        mutationStarted = true;
+        const result = await this.#plugins(state).install(selected);
+        if (!reportActivity) this.#stdout.write(`${result.message}\n`);
+        report({ level: "success", message: result.message, stage: "operation" });
       });
-      const selected = selectPluginRelease(candidates);
-      if (!selected)
-        throw new Error(
-          `No compatible non-revoked release is available for ${pluginId}${version ? ` ${version}` : ""}.`
-        );
-      this.#stdout.write(`${(await this.#plugins(state).install(selected)).message}\n`);
-    });
+      return { status: "success" };
+    } catch (error) {
+      if (error instanceof CommandCancelledError) {
+        if (!reportActivity) throw error;
+        report({ level: "failure", message: "Install cancelled", stage: "operation" });
+        if (mutationStarted) report({ level: "success", message: "Previous deployment restored", stage: "rollback" });
+        return { previousDeploymentPreserved: true, status: "cancelled" };
+      }
+      const message = errorMessage(error);
+      report({ level: "failure", message: `Install failed: ${message}`, stage: "operation" });
+      if (/Recovery is required:/u.test(message)) {
+        report({ level: "failure", message: "Recovery is required before retrying", stage: "rollback" });
+      } else if (mutationStarted) {
+        report({ level: "success", message: "Previous deployment restored", stage: "rollback" });
+      }
+      throw error;
+    }
   }
 
   async pluginUpdate(pluginId: string): Promise<void> {
@@ -1268,8 +1678,11 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       dockerHost,
       cliVersion,
       userId: String(process.getuid?.() ?? 0),
-      runner: async (command: string, args: readonly string[]) =>
-        await this.#runner.run(command, [...args], { env: this.#env }),
+      runner: async (command: string, args: readonly string[]) => {
+        const result = await this.#runner.run(command, [...args], { env: this.#env });
+        this.#reportCommandOutput(result, false);
+        return result;
+      },
       filesystem: {
         mkdir: async (path: string, options?: { recursive?: boolean; mode?: number }) => {
           mkdirSync(path, options);
@@ -1436,11 +1849,14 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     options: { version?: string; confirmed?: boolean } = {}
   ): Promise<void> {
     if (action === "status") {
-      if (!DeploymentTransactionStore.exists(this.#configDir)) {
+      const status = readManagedCoreRecoveryStatus(this.#configDir);
+      if (!status.pending || !status.journal) {
         this.#stdout.write("No pending deployment transaction.\n");
         return;
       }
-      this.#stdout.write(`${JSON.stringify(DeploymentTransactionStore.open(this.#configDir).journal, null, 2)}\n`);
+      this.#stdout.write(
+        `${JSON.stringify({ ...status.journal, ...(status.action ? { action: status.action } : {}) }, null, 2)}\n`
+      );
       return;
     }
     if (action === "forward" && options.version && options.version !== PACKAGE_VERSION) {
@@ -1591,6 +2007,8 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   ): Promise<T> {
     this.#prepareConfigDirectory();
     const mutationLock = this.#acquireMutationLock();
+    const lifecycleContext = this.#lifecycleReporterScope.getStore();
+    if (lifecycleContext) lifecycleContext.operationStarted = true;
     this.#activeMutationLock = mutationLock.owner;
     this.#idleRecoverableMutationLock = undefined;
     let dockerLock: DockerMutationLock | undefined;
@@ -1643,12 +2061,29 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
         }
         this.#activeMutationLock = dockerLock.owner;
         try {
+          if (lifecycleContext) lifecycleContext.runIntent = this.#captureRunIntent();
           if (!keepRecoveredDisableFence) this.#completeRecoverableMutationLockHandoff();
           if (recoveryMode === "stop" || recoveryMode === "reset") this.#writeRunIntent(false);
           if (recoveryMode !== "recover" && recoveryMode !== "stop" && recoveryMode !== "reset")
             await this.#recoverPending(dockerEngineId);
           return await action();
         } finally {
+          if (
+            this.#lifecycleCancellationRequested &&
+            lifecycleContext &&
+            lifecycleContext.restoreRunIntentOnCancellation &&
+            lifecycleContext.runIntentChanged &&
+            lifecycleContext.runIntent &&
+            !lifecycleContext.stopReleaseStarted &&
+            !lifecycleContext.restartReleaseStarted &&
+            !lifecycleContext.operationCommitted
+          ) {
+            try {
+              this.#restoreRunIntent(lifecycleContext.runIntent);
+            } catch (error) {
+              lifecycleContext.restorationError = error;
+            }
+          }
           await this.#releaseDockerMutationLock(dockerLock);
           dockerLockReleased = true;
         }
@@ -1703,7 +2138,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       if (!hasEnv)
         throw new Error(`Atlas Core state exists without ${this.#envFile}. Restore the matching credentials.`);
       this.#assertStateMatchesEngine(existingState, dockerEngineId);
-      this.#stdout.write(`Atlas Core is already initialized at ${this.#configDir}.\n`);
+      this.#writeLifecycleOutput(`Atlas Core is already initialized at ${this.#configDir}.\n`);
       return;
     }
     if (existingState) this.#assertStateMatchesRuntime(existingState, dockerEngineId);
@@ -1744,7 +2179,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
 
     let startedMinio = false;
     try {
-      this.#stdout.write("Provisioning the new durable MinIO store...\n");
+      this.#reportLifecycleOrWrite("Provisioning the new durable MinIO store...", "operation");
       startedMinio = true;
       await this.#runInitComposeChecked(["up", "-d", "--wait", "--wait-timeout", COMPOSE_WAIT_SECONDS, "minio"]);
       await this.#runInitComposeChecked([
@@ -1763,6 +2198,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       await this.#managedCore(dockerEngineId).initialize(initializingState);
     } catch (error) {
       if (startedMinio) {
+        this.#reportLifecycleOrWrite("Cleaning up the interrupted initialization safely...", "cleanup");
         const cleanup = await this.#runInitComposeCleanup(["down"]);
         if (cleanup.status !== 0) {
           throw new Error(
@@ -1773,9 +2209,11 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       throw error;
     }
 
-    this.#stdout.write(`Atlas Core initialized at ${this.#configDir}.\n`);
-    this.#stdout.write(`Credentials are stored in ${this.#envFile} with owner-only permissions.\n`);
-    this.#stdout.write("Run atlas-core start to start the deployment.\n");
+    this.#writeLifecycleOutput(
+      `Atlas Core initialized at ${this.#configDir}.\n` +
+        `Credentials are stored in ${this.#envFile} with owner-only permissions.\n` +
+        "Run atlas-core start to start the deployment.\n"
+    );
   }
 
   async #requireSupervision(command: "start" | "restart" | "reset"): Promise<void> {
@@ -1822,6 +2260,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       }
       if (options.repairImages) await this.#repairImages(managed);
       this.#writeRunIntent(true);
+      this.#reportLifecycle("Starting services and waiting for health checks.", "operation");
       await this.#start(managed, dockerEngineId);
     }, "start");
   }
@@ -1829,14 +2268,34 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   async #start(state: DeploymentState, dockerEngineId: string): Promise<void> {
     this.#assertStateMatchesEngine(state, dockerEngineId);
     await this.#managedCore(dockerEngineId).start(this.#requireManaged(state));
-    this.#stdout.write(`Atlas Core ${state.packageVersion} is ready.\nAPI: http://127.0.0.1:8000\n`);
+    this.#writeLifecycleOutput(`Atlas Core ${state.packageVersion} is ready.\nAPI: http://127.0.0.1:8000\n`);
   }
 
-  async reset(options: { manual?: boolean } = {}): Promise<void> {
-    this.#stdout.write(
-      `Reset permanently deletes Atlas Core containers, PostgreSQL and MinIO data, and configuration at ${this.#configDir}.\n`
-    );
-    if (!(await this.#confirmReset("Continue? [y/N] "))) {
+  #writeLifecycleOutput(message: string): void {
+    const lifecycleContext = this.#lifecycleReporterScope.getStore();
+    if (lifecycleContext) {
+      lifecycleContext.operationCommitted = true;
+      return;
+    }
+    this.#stdout.write(message);
+  }
+
+  #reportLifecycle(message: string, stage: LifecycleOperationProgress["stage"]): void {
+    this.#lifecycleReporterScope.getStore()?.report({ message, stage });
+  }
+
+  #reportLifecycleOrWrite(message: string, stage: LifecycleOperationProgress["stage"]): void {
+    if (this.#lifecycleReporterScope.getStore()) this.#reportLifecycle(message, stage);
+    else this.#stdout.write(`${message}\n`);
+  }
+
+  async reset(options: { confirmed?: boolean; manual?: boolean } = {}): Promise<void> {
+    if (!options.confirmed) {
+      this.#stdout.write(
+        `Reset permanently deletes Atlas Core containers, PostgreSQL and MinIO data, credentials, and configuration at ${this.#configDir}.\n`
+      );
+    }
+    if (!options.confirmed && !(await this.#confirmReset("Continue? [y/N] "))) {
       this.#stdout.write("Atlas Core reset cancelled.\n");
       return;
     }
@@ -1859,6 +2318,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
 
   async #reset(dockerEngineId: string): Promise<void> {
     const deployment = this.#deploymentIdentity();
+    this.#reportLifecycleOrWrite("Preparing reset and verifying owned deployment resources...", "operation");
     const resetContainers = [
       deployment.apiContainer,
       deployment.sourceGatewayContainer,
@@ -1886,6 +2346,15 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     const composeFile = previousState?.baseDeployment
       ? join(this.#configDir, "base", "docker-compose.yml")
       : this.#composeFile;
+    const lifecycleContext = this.#lifecycleReporterScope.getStore();
+    lifecycleContext?.report({
+      message: "Deleting Atlas Core containers, PostgreSQL and MinIO data, credentials, and configuration.",
+      stage: "operation"
+    });
+    if (lifecycleContext) {
+      lifecycleContext.destructiveStarted = true;
+      lifecycleContext.restoreRunIntentOnCancellation = false;
+    }
     if (existsSync(this.#envFile) && existsSync(composeFile)) {
       await this.#runComposeChecked(["down", "--remove-orphans"], resetPluginIds);
     }
@@ -1901,11 +2370,14 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     }
     if (existsSync(this.#pluginConfigRoot)) rmSync(this.#pluginConfigRoot, { recursive: true, force: true });
 
-    this.#stdout.write(`Reinitializing Atlas Core ${PACKAGE_VERSION} with new credentials and empty storage.\n`);
+    this.#reportLifecycleOrWrite(
+      `Reinitializing Atlas Core ${PACKAGE_VERSION} with new credentials and empty storage.`,
+      "operation"
+    );
     await this.#initialize(dockerEngineId);
     this.#writeRunIntent(true);
     await this.#start(this.#requireInitialized(), dockerEngineId);
-    this.#stdout.write(`Atlas Core ${PACKAGE_VERSION} reset is complete.\n`);
+    this.#writeLifecycleOutput(`Atlas Core ${PACKAGE_VERSION} reset is complete.\n`);
   }
 
   async stop(): Promise<void> {
@@ -1922,13 +2394,28 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
             const composeFile = state.baseDeployment
               ? join(this.#configDir, "base", "docker-compose.yml")
               : this.#composeFile;
+            const lifecycleContext = this.#lifecycleReporterScope.getStore();
             if (existsSync(composeFile)) {
-              await this.#runComposeChecked(["down", "--remove-orphans"], state.enabledPlugins);
+              this.#throwIfLifecycleCancellationRequested();
+              this.#reportLifecycle(
+                "Stopping services safely; waiting for Docker Compose to release containers.",
+                "cleanup"
+              );
+              if (lifecycleContext) lifecycleContext.stopReleaseStarted = true;
+              await this.#runComposeChecked(["down", "--remove-orphans"], state.enabledPlugins, true);
+              if (lifecycleContext) lifecycleContext.operationCommitted = true;
+              this.#throwIfLifecycleCancellationRequested();
             } else {
-              await this.#removeContainers(await this.#projectContainerNames());
+              this.#throwIfLifecycleCancellationRequested();
+              this.#reportLifecycle("Stopping services safely; removing remaining containers.", "cleanup");
+              if (lifecycleContext) lifecycleContext.stopReleaseStarted = true;
+              await this.#removeContainers(await this.#projectContainerNames(), true);
+              if (lifecycleContext) lifecycleContext.operationCommitted = true;
             }
+            this.#throwIfLifecycleCancellationRequested();
             this.#settlePluginDisableIntents(state);
-            this.#stdout.write("Atlas Core stopped. Durable volumes were preserved.\n");
+            this.#throwIfLifecycleCancellationRequested();
+            this.#writeLifecycleOutput("Atlas Core stopped. Durable volumes were preserved.\n");
           },
           "stop"
         )
@@ -1948,6 +2435,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     await this.#withInitializedMutation(async (raw, dockerEngineId) => {
       const state = this.#requireManaged(raw);
       this.#verifyBundle(state);
+      this.#reportLifecycle("Checking the current deployment before changing the admin password.", "operation");
       const running =
         (await this.#fullyHealthyMutationSnapshot(state, "Running admin password changes")).status !== "stopped";
       if (running) {
@@ -1955,6 +2443,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
         for (const receipt of state.baseDeployment?.images ?? []) await verifyLocalImage(this.#imageCommand, receipt);
         await this.#verifyEnabledPlugins(state, true);
       }
+      this.#reportLifecycle("Staging the new admin password privately.", "operation");
       const transaction = DeploymentTransactionStore.begin(this.#configDir, {
         operation: "config",
         dockerEngineId,
@@ -1971,21 +2460,30 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
         transaction.stage(".env", contents, { mode: 0o600 });
         if (running) {
           transaction.advance("runtime-changing");
+          this.#reportLifecycle(
+            "Stopping services safely before applying the new admin password; waiting for Docker Compose.",
+            "cleanup"
+          );
           await this.#runComposeChecked(["down", "--remove-orphans"], state.enabledPlugins);
         }
         transaction.applyStaged(".env");
-        if (running) await this.#managedCore(dockerEngineId).start(state);
+        if (running) {
+          this.#reportLifecycle("Starting services and waiting for health checks.", "operation");
+          await this.#managedCore(dockerEngineId).start(state);
+        }
         transaction.markCommitted();
         transaction.cleanup();
       } catch (error) {
+        const cancellationRequested = this.#lifecycleCancellationRequested || error instanceof CommandCancelledError;
         try {
           await this.#recoverPending(dockerEngineId);
         } catch {
           throw new Error("Admin password change failed and recovery remains pending. Run atlas-core recover retry.");
         }
+        if (cancellationRequested) throw new CommandCancelledError();
         throw error;
       }
-      this.#stdout.write("Atlas Core admin password updated for username admin.\n");
+      this.#writeLifecycleOutput("Atlas Core admin password updated for username admin.\n");
     });
   }
 
@@ -2008,7 +2506,14 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     };
   }
 
-  async update(scope: UpdateScope, expectedVersion?: string, coreBackupConfirmed = false): Promise<void> {
+  async updateWithProgress(scope: UpdateScope, expectedVersion?: string, report?: UpdateReporter): Promise<void> {
+    if (!report) return await this.update(scope, expectedVersion);
+    await this.#updateReporterScope.run(report, async () => {
+      await this.update(scope, expectedVersion);
+    });
+  }
+
+  async update(scope: UpdateScope, expectedVersion?: string): Promise<void> {
     const release = await this.#latestRelease();
     if (expectedVersion && release.version !== expectedVersion) {
       throw new Error(
@@ -2022,13 +2527,13 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     const updateCLI = compareVersions(PACKAGE_VERSION, release.version, "installed CLI", "npm") < 0;
     if (scope === "cli") {
       if (!updateCLI) {
-        this.#stdout.write(`Atlas Core CLI ${PACKAGE_VERSION} is already current.\n`);
+        this.#reportUpdate(`Atlas Core CLI ${PACKAGE_VERSION} is already current.`);
         return;
       }
       const supervision = await this.#supervisionBeforeCLIUpdate(false);
       await this.#installCLI(release.version);
       await this.#restartActiveSupervision(supervision.active, release.version);
-      this.#stdout.write(`Atlas Core CLI ${release.version} installed. The running Core was not changed.\n`);
+      this.#reportUpdate(`Atlas Core CLI ${release.version} installed. The running Core was not changed.`);
       return;
     }
 
@@ -2046,25 +2551,16 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
         await this.#installCLI(release.version);
         await this.#restartActiveSupervision(supervision.active, release.version);
       }
-      this.#stdout.write(
-        "Atlas Core is not initialized. The CLI is current and there is no Core deployment to update.\n"
+      this.#reportUpdate(
+        "Atlas Core is not initialized. The CLI is current and there is no Core deployment to update."
       );
       return;
     }
     if (!updateCLI && !updateCore) {
-      this.#stdout.write(`Atlas Core CLI and deployment ${PACKAGE_VERSION} are already current.\n`);
+      this.#reportUpdate(`Atlas Core CLI and deployment ${PACKAGE_VERSION} are already current.`);
       return;
     }
     if (updateCore) this.#assertLegacyPluginsDisabled(state);
-    if (updateCore && !coreBackupConfirmed) {
-      this.#stdout.write(
-        "Atlas Core updates may apply schema migrations. Create and validate a paired PostgreSQL and MinIO backup before continuing.\n"
-      );
-      if (!(await this.#confirmCoreUpdate("Confirm a current paired backup exists. Continue? [y/N] "))) {
-        this.#stdout.write("Atlas Core update cancelled.\n");
-        return;
-      }
-    }
     const supervision = updateCLI ? await this.#supervisionBeforeCLIUpdate(updateCore) : undefined;
     if (updateCLI) {
       await this.#installCLI(release.version);
@@ -2112,7 +2608,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     const comparison = compareVersions(fromVersion, PACKAGE_VERSION, "running Atlas Core", "installed CLI");
     if (comparison > 0) throw new Error(`Atlas Core refuses to downgrade from ${fromVersion} to ${PACKAGE_VERSION}.`);
     if (comparison === 0) {
-      this.#stdout.write(`Atlas Core ${PACKAGE_VERSION} is already current.\n`);
+      this.#reportUpdate(`Atlas Core ${PACKAGE_VERSION} is already current.`);
       return;
     }
 
@@ -2129,44 +2625,121 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       previousRunning: snapshot.status !== "stopped",
       desiredRunning: this.#desiredRunning()
     }).update(state);
-    this.#stdout.write(`Atlas Core ${PACKAGE_VERSION} update completed.\n`);
+    this.#reportUpdate(`Atlas Core ${PACKAGE_VERSION} update completed.`);
   }
 
   async status(): Promise<boolean> {
-    const snapshot = await this.snapshot();
+    const details = await this.details();
+    const snapshot = details.snapshot;
     if (snapshot.status === "not-initialized")
       throw new Error("Atlas Core is not initialized. Run atlas-core init first.");
     if (snapshot.status === "stopped") {
       this.#stderr.write("Atlas Core is stopped.\n");
+      printDeploymentDetails(this.#stderr, details);
+      return false;
+    }
+    if (snapshot.status === "initializing") {
+      this.#stderr.write(`Atlas Core initialization is incomplete: ${snapshot.detail}\n`);
+      printDeploymentDetails(this.#stderr, details);
       return false;
     }
     if (snapshot.status === "degraded") {
       this.#stderr.write(`Atlas Core is not ready: ${snapshot.detail}.\n`);
+      printDeploymentDetails(this.#stderr, details);
       return false;
     }
     this.#stdout.write("Atlas Core is running.\n");
+    printDeploymentDetails(this.#stdout, details);
     return true;
   }
 
   async snapshot(): Promise<DeploymentSnapshot> {
     if (!existsSync(this.#configDir) || !existsSync(this.#envFile) || !existsSync(this.#stateFile)) {
-      return { status: "not-initialized", detail: "Initialize Atlas Core to create its private configuration." };
+      return {
+        status: "not-initialized",
+        canReset: false,
+        detail: "Initialize Atlas Core to create its private configuration."
+      };
     }
-    const state = this.#requireInitialized();
+    this.#assertPrivateConfiguration();
+    const state = this.#readState();
+    if (!state)
+      return {
+        status: "degraded",
+        canReset: false,
+        detail: "Atlas Core state is invalid. Restore a valid state file before operating this deployment."
+      };
     const runtime = await this.#preflight();
     return await this.#dockerRuntimeScope.run(runtime, async () => {
       this.#assertStateMatchesEngine(state, runtime.engineId);
+      if (state.phase === "initializing") return this.#initializingSnapshot(state, runtime.engineId);
       return await this.#deploymentSnapshot(state.enabledPlugins);
     });
   }
 
+  #initializingSnapshot(state: DeploymentState, dockerEngineId: string): DeploymentSnapshot {
+    this.#assertPackageVersionMatches(state);
+    const pendingTransaction = this.#pendingTransaction(dockerEngineId);
+    const canReset = this.#hasValidatedPendingCoreTransaction(dockerEngineId, state);
+    if (!pendingTransaction) {
+      return {
+        status: "initializing",
+        canReset: false,
+        coreVersion: state.packageVersion,
+        detail: "Atlas Core initialization can be retried; existing storage will be revalidated first."
+      };
+    }
+    if (pendingTransaction?.operation === "core-update") {
+      return {
+        status: "degraded",
+        canReset,
+        coreVersion: state.packageVersion,
+        detail: "Atlas Core update recovery is pending. Run atlas-core recover status before retrying."
+      };
+    }
+    if (
+      pendingTransaction?.operation !== "init" ||
+      (pendingTransaction.phase !== "prepared" && pendingTransaction.phase !== "runtime-changing")
+    ) {
+      return {
+        status: "degraded",
+        canReset,
+        coreVersion: state.packageVersion,
+        detail:
+          pendingTransaction?.operation === "init"
+            ? "Atlas Core initialization recovery is pending. Run atlas-core recover status before retrying."
+            : "Atlas Core has an incomplete deployment state. Run atlas-core recover status before retrying."
+      };
+    }
+    return {
+      status: "initializing",
+      canReset,
+      coreVersion: state.packageVersion,
+      detail: "Atlas Core initialization can be resumed."
+    };
+  }
+
+  #pendingTransaction(dockerEngineId: string): Pick<TransactionJournal, "operation" | "phase"> | undefined {
+    if (!DeploymentTransactionStore.exists(this.#configDir)) return undefined;
+    const journal = DeploymentTransactionStore.open(this.#configDir).journal;
+    if (journal.owner.dockerEngineId !== dockerEngineId) {
+      throw new Error(
+        `Atlas Core deployment recovery belongs to Docker engine ${journal.owner.dockerEngineId}, but the current engine is ${dockerEngineId}. ` +
+          "Restore the original Docker context before operating this deployment."
+      );
+    }
+    return { operation: journal.operation, phase: journal.phase };
+  }
+
   async details(signal?: AbortSignal): Promise<DeploymentDetails> {
-    const state = this.#requireInitialized();
+    const state = this.#requireInspectableState();
     const runtime = await this.#preflight(signal);
     return await this.#dockerRuntimeScope.run(runtime, async () => {
       this.#assertStateMatchesEngine(state, runtime.engineId);
+      const recoverySnapshot =
+        state.phase === "initializing" ? this.#initializingSnapshot(state, runtime.engineId) : undefined;
       const serviceStates = await this.#composeServiceStates(state.enabledPlugins, signal);
-      const snapshot = deploymentSnapshotFromServices(serviceStates);
+      const snapshot = recoverySnapshot ?? deploymentSnapshotFromServices(serviceStates, state.packageVersion);
       const { services, error } = await this.#deploymentServices(serviceStates, signal);
       const image = services.find((service) => service.id === "api")?.image;
       return {
@@ -2183,13 +2756,28 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     });
   }
 
+  #requireInspectableState(): DeploymentState {
+    if (!existsSync(this.#configDir) || !existsSync(this.#envFile) || !existsSync(this.#stateFile)) {
+      throw new Error("Atlas Core is not initialized. Run atlas-core init first.");
+    }
+    this.#assertPrivateConfiguration();
+    const state = this.#readState();
+    if (!state) {
+      throw new Error("Atlas Core state is invalid. Restore a valid state file before operating this deployment.");
+    }
+    return state;
+  }
+
   async #deploymentSnapshot(pluginIds: readonly string[]): Promise<DeploymentSnapshot> {
-    return deploymentSnapshotFromServices(await this.#composeServiceStates(pluginIds));
+    return deploymentSnapshotFromServices(
+      await this.#composeServiceStates(pluginIds),
+      this.#readState()?.packageVersion
+    );
   }
 
   async #fullyHealthyMutationSnapshot(state: DeploymentState, operation: string): Promise<DeploymentSnapshot> {
     const services = await this.#composeServiceStates(state.enabledPlugins);
-    if (services.length === 0) return deploymentSnapshotFromServices(services);
+    if (services.length === 0) return deploymentSnapshotFromServices(services, state.packageVersion);
     const expectedServices = [
       ...REQUIRED_SERVICES,
       ...state.enabledPlugins.map((pluginId) => this.#readableDeployedPlugin(pluginId).service)
@@ -2201,7 +2789,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
           "Restore every Core and enabled Plugin service, or stop the deployment completely, before retrying."
       );
     }
-    return deploymentSnapshotFromServices(services);
+    return deploymentSnapshotFromServices(services, state.packageVersion);
   }
 
   async #composeServiceStates(pluginIds: readonly string[], signal?: AbortSignal): Promise<ComposeServiceState[]> {
@@ -2289,8 +2877,31 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   }
 
   async logs(service: "api" | "minio" | "postgres" | "source-gateway" | undefined, follow: boolean): Promise<void> {
-    const state = this.#requireInitialized();
-    await this.#runLogs(state, service, follow);
+    await this.#runLogs(service, follow);
+  }
+
+  async openLogStream(
+    service: "api" | "minio" | "postgres" | "source-gateway" | undefined,
+    follow = true
+  ): Promise<LogStream> {
+    return await this.#openLogStream(service, follow);
+  }
+
+  async #openLogStream(
+    service: string | undefined,
+    follow: boolean,
+    onOutput?: (stream: "stdout" | "stderr", line: string) => void
+  ): Promise<LogStream> {
+    const state = this.#requireInspectableState();
+    const runtime = await this.#preflight();
+    return await this.#dockerRuntimeScope.run(runtime, async () => {
+      this.#assertStateMatchesEngine(state, runtime.engineId);
+      const args = ["logs", "--tail", "200"];
+      if (follow) args.push("--follow");
+      if (service) args.push(service);
+      const source = await this.#runComposeStream(args, state.enabledPlugins);
+      return createLogStream(service, source, onOutput);
+    });
   }
 
   async pluginStatuses(pluginId?: string): Promise<PluginDeploymentStatus[]> {
@@ -2319,6 +2930,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       ]
         .filter((id) => !pluginId || id === pluginId)
         .sort();
+      if (ids.length === 0 && catalogError) throw new Error(catalogError);
       if (pluginId && ids.length === 0) throw new Error(`Unknown Plugin ${pluginId}.`);
       const runtime = await this.#preflight();
       const serviceStates = await this.#dockerRuntimeScope.run(runtime, async () => {
@@ -2395,35 +3007,55 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   }
 
   async pluginLogs(pluginId: string, follow: boolean): Promise<void> {
-    const state = this.#requireInitialized();
+    const state = this.#requireInspectableState();
     if (!state.enabledPlugins.includes(pluginId)) throw new Error(`Plugin ${pluginId} is not enabled.`);
     const plugin = this.#pluginForRead(pluginId, state);
-    await this.#runLogs(state, plugin.service, follow);
+    await this.#runLogs(plugin.service, follow);
   }
 
-  async #runLogs(state: DeploymentState, service: string | undefined, follow: boolean): Promise<void> {
-    const runtime = await this.#preflight();
-    await this.#dockerRuntimeScope.run(runtime, async () => {
-      this.#assertStateMatchesEngine(state, runtime.engineId);
-      const args = ["logs", "--tail", "200"];
-      if (follow) args.push("--follow");
-      if (service) args.push(service);
-      const result = await this.#runCompose(args, true, state.enabledPlugins);
-      if (result.status !== 0) throw commandFailure("docker compose logs", result);
+  async openPluginLogStream(pluginId: string, follow = true): Promise<LogStream> {
+    const state = this.#requireInspectableState();
+    if (!state.enabledPlugins.includes(pluginId)) throw new Error(`Plugin ${pluginId} is not enabled.`);
+    const plugin = this.#pluginForRead(pluginId, state);
+    return await this.#openLogStream(plugin.service, follow);
+  }
+
+  async #runLogs(service: string | undefined, follow: boolean): Promise<void> {
+    const stream = await this.#openLogStream(service, follow, (source, line) => {
+      (source === "stdout" ? this.#stdout : this.#stderr).write(`${line}\n`);
     });
+    try {
+      await stream.wait();
+    } finally {
+      await stream.close();
+    }
   }
 
   async pluginEnable(pluginId: string, reportActivity?: PluginActivityReporter): Promise<PluginOperationOutcome> {
     if (this.#readState()?.schema === 4) {
+      const report = reportActivity ?? (() => undefined);
+      let mutationStarted = false;
+      report({ level: "working", message: "Checking installed Plugin and retained Core", stage: "operation" });
       try {
         await this.#withInitializedMutation(async (raw) => {
+          mutationStarted = true;
           const result = await this.#plugins(this.#requireManaged(raw)).enable(pluginId);
-          this.#stdout.write(`${result.message}\n`);
+          if (!reportActivity) this.#stdout.write(`${result.message}\n`);
+          report({ level: "success", message: result.message, stage: "operation" });
         });
         return { status: "success" };
       } catch (error) {
         if (error instanceof CommandCancelledError) {
+          report({ level: "failure", message: "Enable cancelled", stage: "operation" });
+          if (mutationStarted) report({ level: "success", message: "Previous deployment restored", stage: "rollback" });
           return { previousDeploymentPreserved: true, status: "cancelled" };
+        }
+        const message = errorMessage(error);
+        report({ level: "failure", message: `Enable failed: ${message}`, stage: "operation" });
+        if (/Recovery is required:/u.test(message)) {
+          report({ level: "failure", message: "Recovery is required before retrying", stage: "rollback" });
+        } else if (mutationStarted) {
+          report({ level: "success", message: "Previous deployment restored", stage: "rollback" });
         }
         throw error;
       }
@@ -2559,15 +3191,29 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
 
   async pluginDisable(pluginId: string, reportActivity?: PluginActivityReporter): Promise<PluginOperationOutcome> {
     if (this.#readState()?.schema === 4) {
+      const report = reportActivity ?? (() => undefined);
+      let mutationStarted = false;
+      report({ level: "working", message: "Checking installed Plugin and retained Core", stage: "operation" });
       try {
         await this.#withInitializedMutation(async (raw) => {
+          mutationStarted = true;
           const result = await this.#plugins(this.#requireManaged(raw)).disable(pluginId);
-          this.#stdout.write(`${result.message}\n`);
+          if (!reportActivity) this.#stdout.write(`${result.message}\n`);
+          report({ level: "success", message: result.message, stage: "operation" });
         });
         return { status: "success" };
       } catch (error) {
         if (error instanceof CommandCancelledError) {
+          report({ level: "failure", message: "Disable cancelled", stage: "operation" });
+          if (mutationStarted) report({ level: "success", message: "Previous deployment restored", stage: "rollback" });
           return { previousDeploymentPreserved: true, status: "cancelled" };
+        }
+        const message = errorMessage(error);
+        report({ level: "failure", message: `Disable failed: ${message}`, stage: "operation" });
+        if (/Recovery is required:/u.test(message)) {
+          report({ level: "failure", message: "Recovery is required before retrying", stage: "rollback" });
+        } else if (mutationStarted) {
+          report({ level: "success", message: "Previous deployment restored", stage: "rollback" });
         }
         throw error;
       }
@@ -2681,7 +3327,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     report({ level: "success", message: "Plugin deployment files removed", stage: "operation" });
   }
 
-  async doctor(): Promise<boolean> {
+  async diagnostics(): Promise<{ healthy: boolean; checks: DiagnosticCheck[] }> {
     const checks: Array<{ label: string; check: () => Promise<string> }> = [
       {
         label: "platform",
@@ -2733,16 +3379,24 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       }
     ];
 
-    let healthy = true;
+    const results: DiagnosticCheck[] = [];
     for (const item of checks) {
       try {
-        this.#stdout.write(`[ok] ${item.label}: ${await item.check()}\n`);
+        results.push({ label: item.label, status: "ok", detail: await item.check() });
       } catch (error) {
-        healthy = false;
-        this.#stderr.write(`[fail] ${item.label}: ${errorMessage(error)}\n`);
+        results.push({ label: item.label, status: "failure", detail: errorMessage(error) });
       }
     }
-    return healthy;
+    return { healthy: results.every((result) => result.status === "ok"), checks: results };
+  }
+
+  async doctor(): Promise<boolean> {
+    const result = await this.diagnostics();
+    for (const check of result.checks) {
+      const output = `[${check.status === "ok" ? "ok" : "fail"}] ${check.label}: ${check.detail}\n`;
+      (check.status === "ok" ? this.#stdout : this.#stderr).write(output);
+    }
+    return result.healthy;
   }
 
   async #preflight(signal?: AbortSignal): Promise<DockerRuntime> {
@@ -3527,9 +4181,15 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     }
   }
 
-  async #removeContainers(containers: Iterable<string>): Promise<void> {
+  async #removeContainers(containers: Iterable<string>, allowAfterCancellation = false): Promise<void> {
     for (const name of [...containers].sort()) {
-      await this.#checkCommand("docker", ["container", "rm", "--force", name]);
+      const result = await this.#runDockerCommand(
+        ["container", "rm", "--force", name],
+        { env: this.#dockerEnvironment() },
+        allowAfterCancellation
+      );
+      if (result.cancelled && allowAfterCancellation) throw new CommandCancelledError();
+      if (result.status !== 0) throw commandFailure(`docker container rm --force ${name}`, result);
     }
   }
 
@@ -3611,10 +4271,21 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     await this.#assertStartIsSafe(managed);
     for (const receipt of managed.baseDeployment?.images ?? []) await verifyLocalImage(this.#imageCommand, receipt);
     await this.#verifyEnabledPlugins(managed, false);
-    this.#writeRunIntent(true);
-    await this.#runComposeChecked(["down", "--remove-orphans"], state.enabledPlugins);
+    this.#throwIfLifecycleCancellationRequested();
+    const lifecycleContext = this.#lifecycleReporterScope.getStore();
+    if (lifecycleContext) lifecycleContext.restartReleaseStarted = true;
+    this.#writeRunIntent(false);
+    this.#reportLifecycle(
+      "Stopping services safely before restart; waiting for Docker Compose to release containers.",
+      "cleanup"
+    );
+    await this.#runComposeChecked(["down", "--remove-orphans"], state.enabledPlugins, true);
+    if (lifecycleContext) lifecycleContext.restartReleaseCommitted = true;
+    this.#throwIfLifecycleCancellationRequested();
+    this.#reportLifecycle("Starting services and waiting for health checks.", "operation");
     await this.#managedCore(dockerEngineId).start(managed);
-    this.#stdout.write("Atlas Core restarted.\n");
+    this.#writeRunIntent(true);
+    this.#writeLifecycleOutput("Atlas Core restarted.\n");
   }
 
   #requireCatalogPlugin(pluginId: string, requireImage: boolean): PluginCatalogEntry {
@@ -4087,21 +4758,75 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       ["view", `${PACKAGE_NAME}@latest`, "version", "atlasCoreImage", "--json"],
       { env: this.#env }
     );
+    this.#reportCommandOutput(result, false);
     if (result.status !== 0) throw commandFailure(`npm view ${PACKAGE_NAME}@latest`, result);
     return parseNpmRelease(result.stdout);
   }
 
   async #installCLI(version: string): Promise<void> {
-    this.#stdout.write(`Installing Atlas Core CLI ${version}...\n`);
-    const result = await this.#runner.run("npm", ["install", "--global", `${PACKAGE_NAME}@${version}`], {
-      env: this.#env,
-      inherit: true
-    });
+    this.#reportUpdate(`Installing Atlas Core CLI ${version}...`);
+    const output = this.#liveCommandOutputReporter();
+    let result: CommandResult;
+    try {
+      result = await this.#runner.run("npm", ["install", "--global", `${PACKAGE_NAME}@${version}`], {
+        env: this.#env,
+        onOutput: output.onOutput
+      });
+    } finally {
+      output.flush();
+    }
     if (result.status !== 0) throw commandFailure(`npm install --global ${PACKAGE_NAME}@${version}`, result);
+  }
+
+  #reportUpdate(message: string, stage: UpdateProgress["stage"] = "operation", phase?: UpdateProgress["phase"]): void {
+    const reporter = this.#updateReporterScope.getStore();
+    if (reporter) reporter({ message, ...(phase ? { phase } : {}), stage });
+    else this.#stdout.write(`${message}\n`);
+  }
+
+  #reportCommandOutput(result: { stdout?: string; stderr?: string }, writeDirect = true): void {
+    const reporter = this.#updateReporterScope.getStore();
+    for (const [output, stream] of [
+      [result.stdout ?? "", this.#stdout] as const,
+      [result.stderr ?? "", this.#stderr] as const
+    ]) {
+      for (const line of output.split(/\r?\n/u)) {
+        const message = line.trimEnd();
+        if (!message.trim()) continue;
+        if (reporter) reporter({ message, stage: "operation" });
+        else if (writeDirect) stream.write(`${message}\n`);
+      }
+    }
+  }
+
+  #liveCommandOutputReporter(): LiveCommandOutputReporter {
+    const pending: Record<"stdout" | "stderr", string> = { stdout: "", stderr: "" };
+    const report = (stream: "stdout" | "stderr", line: string): void => {
+      const message = line.trimEnd();
+      if (!message.trim()) return;
+      const reporter = this.#updateReporterScope.getStore();
+      if (reporter) reporter({ message, stage: "operation" });
+      else (stream === "stdout" ? this.#stdout : this.#stderr).write(`${message}\n`);
+    };
+    return {
+      onOutput: (stream, chunk) => {
+        const lines = `${pending[stream]}${chunk}`.split(/\r?\n/u);
+        pending[stream] = retainCommandOutputTail("", lines.pop() ?? "");
+        for (const line of lines) report(stream, line);
+      },
+      flush: () => {
+        for (const stream of ["stdout", "stderr"] as const) {
+          if (!pending[stream]) continue;
+          report(stream, pending[stream]);
+          pending[stream] = "";
+        }
+      }
+    };
   }
 
   async #installedCLIPath(): Promise<string> {
     const rootResult = await this.#runner.run("npm", ["root", "--global"], { env: this.#env });
+    this.#reportCommandOutput(rootResult, false);
     if (rootResult.status !== 0) throw commandFailure("npm root --global", rootResult);
     const globalRoot = oneLine(rootResult.stdout);
     if (!globalRoot) throw new Error("npm did not report its global package directory after the CLI update.");
@@ -4123,14 +4848,18 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     if (oneLine(versionResult.stdout) !== `${PACKAGE_NAME} ${version}`) {
       throw new Error(`npm installed an unexpected Atlas Core CLI: ${oneLine(versionResult.stdout) || "no version"}.`);
     }
-    const updateResult = await this.#runner.run(
-      process.execPath,
-      [installedCLI, "__apply-core-update", fromVersion, expectedImage],
-      {
-        env: childEnvironment,
-        inherit: true
-      }
-    );
+    this.#reportUpdate("Starting Atlas Core deployment update...", "operation", "core");
+    const output = this.#liveCommandOutputReporter();
+    let updateResult: CommandResult;
+    try {
+      updateResult = await this.#runner.run(
+        process.execPath,
+        [installedCLI, "__apply-core-update", fromVersion, expectedImage],
+        { env: childEnvironment, onOutput: output.onOutput }
+      );
+    } finally {
+      output.flush();
+    }
     if (updateResult.status !== 0) {
       throw commandFailure(`Atlas Core ${version} deployment update`, updateResult);
     }
@@ -4173,7 +4902,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     }
     this.#assertPrivateConfiguration();
     const state = this.#readState();
-    if (!state || state.phase !== "ready") {
+    if (!state) {
       throw new Error("Atlas Core is not initialized. Run atlas-core init first.");
     }
     if (state.dockerEngineId !== dockerEngineId) {
@@ -4182,6 +4911,46 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
           "Restore the original Docker context before resetting this deployment."
       );
     }
+    if (state.phase === "ready") return;
+    if (!this.#hasValidatedPendingCoreTransaction(dockerEngineId, state)) {
+      throw new Error("Atlas Core is not initialized. Run atlas-core init first.");
+    }
+  }
+
+  #hasValidatedPendingCoreTransaction(dockerEngineId: string, state: DeploymentState): boolean {
+    if (state.phase !== "initializing" || !DeploymentTransactionStore.exists(this.#configDir)) return false;
+    const transaction = DeploymentTransactionStore.open(this.#configDir);
+    const journal = transaction.read();
+    if (journal.owner.dockerEngineId !== dockerEngineId) {
+      throw new Error(
+        `Atlas Core deployment recovery belongs to Docker engine ${journal.owner.dockerEngineId}, but the current engine is ${dockerEngineId}. ` +
+          "Restore the original Docker context before resetting this deployment."
+      );
+    }
+    if (
+      (journal.operation !== "core-update" && journal.operation !== "init") ||
+      (journal.phase !== "core-started" && journal.phase !== "credentials-durable")
+    ) {
+      return false;
+    }
+    if (!journal.staged["state.json"]) return false;
+    let stagedState: ManagedCoreState;
+    try {
+      stagedState = parseManagedCoreState(JSON.parse(transaction.readStaged("state.json").toString("utf8")));
+    } catch {
+      return false;
+    }
+    if (
+      stagedState.phase !== "initializing" ||
+      stagedState.dockerEngineId !== dockerEngineId ||
+      stagedState.dockerEngineId !== state.dockerEngineId ||
+      stagedState.packageVersion !== state.packageVersion ||
+      !stagedState.baseDeployment
+    ) {
+      return false;
+    }
+    const recordedImage = journal.recovery?.targetCoreImage;
+    return recordedImage === undefined || recordedImage === stagedState.baseDeployment.coreImage;
   }
 
   #deleteConfigurationFile(path: string): void {
@@ -4283,14 +5052,15 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     inherit: boolean,
     pluginIds: readonly string[],
     imageReference = this.#imageReference ?? UNRELEASED_IMAGE,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    allowAfterCancellation = false
   ): Promise<CommandResult> {
     const state = this.#readState();
     return await this.#runComposeFile(
       state?.baseDeployment ? join(this.#configDir, "base", "docker-compose.yml") : this.#composeFile,
       args,
       inherit,
-      false,
+      allowAfterCancellation,
       pluginIds,
       state?.baseDeployment?.coreImage ?? imageReference,
       signal
@@ -4360,10 +5130,44 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     );
   }
 
-  async #runComposeChecked(args: string[], pluginIds: readonly string[]): Promise<void> {
-    const result = await this.#runCompose(args, false, pluginIds);
+  async #runComposeStream(args: string[], pluginIds: readonly string[]): Promise<CommandOutputStream> {
+    const state = this.#readState();
+    const composeFile = state?.baseDeployment ? join(this.#configDir, "base", "docker-compose.yml") : this.#composeFile;
+    const imageReference = state?.baseDeployment?.coreImage ?? this.#imageReference ?? UNRELEASED_IMAGE;
+    const runtime = this.#dockerRuntimeScope.getStore();
+    if (!runtime) throw new Error("Atlas Core Docker runtime is unavailable while running Compose.");
+    const env = this.#dockerEnvironment();
+    for (const variable of COMPOSE_VARIABLES) delete env[variable];
+    for (const variable of Object.keys(env)) {
+      if (variable.startsWith("COMPOSE_") || variable.startsWith("ATLAS_")) delete env[variable];
+    }
+    env.COMPOSE_IGNORE_ORPHANS = "0";
+    env.COMPOSE_REMOVE_ORPHANS = "0";
+    env.ATLAS_CORE_IMAGE = imageReference;
+    env.ATLAS_CORE_ENGINE_ID = runtime.engineId;
+    env.ATLAS_CORE_PROJECT = runtime.deployment.projectName;
+    env.ATLAS_PLUGIN_CONFIG_ROOT = this.#pluginConfigRoot;
+    const candidateKey = this.#pluginCredentialScope.getStore();
+    if (candidateKey) env.ATLAS_PLUGIN_API_KEY = candidateKey;
+    return await this.#runner.openStream("docker", this.#composeArgs(composeFile, args, pluginIds), {
+      cwd: this.#configDir,
+      env
+    });
+  }
+
+  async #runComposeChecked(
+    args: string[],
+    pluginIds: readonly string[],
+    allowAfterCancellation = false
+  ): Promise<void> {
+    const result = await this.#runCompose(args, false, pluginIds, undefined, undefined, allowAfterCancellation);
+    if (result.cancelled && allowAfterCancellation) throw new CommandCancelledError();
     if (result.status !== 0)
       throw commandFailure(`docker ${this.#composeArgs(this.#composeFile, args, pluginIds).join(" ")}`, result);
+  }
+
+  #throwIfLifecycleCancellationRequested(): void {
+    if (this.#lifecycleCancellationRequested) throw new CommandCancelledError();
   }
 
   async #runInitComposeChecked(args: string[]): Promise<void> {
@@ -4409,7 +5213,6 @@ type RequiredRuntimeContext = {
   nodeVersion: string;
   now: () => Date;
   createSecret: () => string;
-  confirmCoreUpdate: (question: string) => Promise<boolean>;
   confirmReset: (question: string) => Promise<boolean>;
   imageReference: string | undefined;
   interactive: InteractiveCLI;
@@ -4485,15 +5288,21 @@ export async function runCLI(argv: string[], context: CLIContext = {}): Promise<
         await deployment.reset({ manual: command.manual ?? false });
         return 0;
       case "restart":
-        await deployment.restart({ manual: command.manual === true });
-        return 0;
+        if (command.manual === true) {
+          await deployment.restart({ manual: true });
+          return 0;
+        }
+        return await runDirectLifecycleMutation(deployment, "restart", runtime.stdout, runtime.stderr);
       case "start":
-        await deployment.start({
-          manual: command.manual,
-          repairBundle: command.repairBundle,
-          repairImages: command.repairImages
-        });
-        return 0;
+        if (command.manual || command.repairBundle || command.repairImages) {
+          await deployment.start({
+            manual: command.manual,
+            repairBundle: command.repairBundle,
+            repairImages: command.repairImages
+          });
+          return 0;
+        }
+        return await runDirectLifecycleMutation(deployment, "start", runtime.stdout, runtime.stderr);
       case "supervise":
         await deployment.supervise();
         return 0;
@@ -4509,8 +5318,7 @@ export async function runCLI(argv: string[], context: CLIContext = {}): Promise<
       case "status":
         return (await deployment.status()) ? 0 : 1;
       case "stop":
-        await deployment.stop();
-        return 0;
+        return await runDirectLifecycleMutation(deployment, "stop", runtime.stdout, runtime.stderr);
       case "update":
         if (command.scope) await deployment.update(command.scope);
         else await runtime.interactive.runUpdate(deployment);
@@ -4544,6 +5352,47 @@ async function runDirectPluginMutation(
     deployment.resumeAfterCancellation();
     stdout.write(`[cancel] ${action} cancelled. The previous deployment is preserved.\n`);
     return 130;
+  } finally {
+    process.off("SIGINT", cancel);
+  }
+}
+
+async function runDirectLifecycleMutation(
+  deployment: AtlasCoreDeployment,
+  operation: LifecycleOperation,
+  stdout: { write(data: string): void },
+  stderr: { write(data: string): void }
+): Promise<number> {
+  const progress: LifecycleOperationProgress[] = [];
+  const writeProgress = (stream: { write(data: string): void }, includeFailure = true): void => {
+    for (const event of progress) {
+      if (!includeFailure && event.message.startsWith(`${lifecycleOperationLabel(operation)} failed:`)) continue;
+      stream.write(`[${event.stage}] ${event.message}\n`);
+    }
+  };
+  let cancellationRequested = false;
+  const cancel = (): void => {
+    if (cancellationRequested) return;
+    cancellationRequested = true;
+    deployment.cancelPending();
+  };
+  process.on("SIGINT", cancel);
+  try {
+    const result = await deployment.runLifecycle(operation, (event) => progress.push(event));
+    if (cancellationRequested) deployment.resumeAfterCancellation();
+    if (result.status === "success") {
+      writeProgress(stdout);
+      return 0;
+    }
+    if (result.status === "cancelled") {
+      writeProgress(stdout);
+      stdout.write(`[cancel] ${result.summary}\n`);
+      return 130;
+    }
+    writeProgress(stderr, false);
+    stderr.write(`${result.error}\n`);
+    if (result.snapshot) stderr.write(`Deployment state: ${result.snapshot.status}. ${result.snapshot.detail}\n`);
+    return 1;
   } finally {
     process.off("SIGINT", cancel);
   }
@@ -4716,6 +5565,24 @@ function printPluginStatuses(output: { write(data: string): void }, statuses: re
   }
 }
 
+function printDeploymentDetails(output: { write(data: string): void }, details: DeploymentDetails): void {
+  for (const service of details.services) {
+    const resources = [
+      service.cpuPercent ? `CPU ${service.cpuPercent}` : undefined,
+      service.memoryUsage ? `memory ${service.memoryUsage}` : undefined,
+      service.networkIO ? `network ${service.networkIO}` : undefined,
+      service.blockIO ? `block ${service.blockIO}` : undefined,
+      service.processes ? `processes ${service.processes}` : undefined,
+      service.uptime ? `uptime ${service.uptime}` : undefined,
+      service.restarts === undefined ? undefined : `restarts ${service.restarts}`,
+      service.image ? `image ${service.image}` : undefined
+    ].filter((value): value is string => value !== undefined);
+    const suffix = resources.length > 0 ? `; ${resources.join("; ")}` : "";
+    output.write(`${service.label}: ${service.state}/${service.health}${suffix}\n`);
+  }
+  if (details.performanceError) output.write(`Performance statistics unavailable: ${details.performanceError}\n`);
+}
+
 function defaultContext(context: CLIContext): RequiredRuntimeContext {
   const currentDirectory = dirname(fileURLToPath(import.meta.url));
   const packageRoot = context.packageRoot ?? dirname(currentDirectory);
@@ -4737,7 +5604,6 @@ function defaultContext(context: CLIContext): RequiredRuntimeContext {
     nodeVersion: context.nodeVersion ?? process.versions.node,
     now: context.now ?? (() => new Date()),
     createSecret: context.createSecret ?? (() => randomBytes(32).toString("base64url")),
-    confirmCoreUpdate: context.confirmCoreUpdate ?? askForConfirmation,
     confirmReset: context.confirmReset ?? askForConfirmation,
     imageReference: context.imageReference ?? PACKAGE_IMAGE,
     interactive: context.interactive ?? createInteractiveCLI(),
@@ -5053,13 +5919,24 @@ function parseComposeServiceStates(stdout: string): ComposeServiceState[] {
   });
 }
 
-function deploymentSnapshotFromServices(services: ComposeServiceState[]): DeploymentSnapshot {
+function deploymentSnapshotFromServices(services: ComposeServiceState[], coreVersion?: string): DeploymentSnapshot {
+  const version = coreVersion ? { coreVersion } : {};
   if (services.length === 0) {
-    return { status: "stopped", detail: "Atlas Core is initialized and stopped. Durable storage is preserved." };
+    return {
+      ...version,
+      status: "stopped",
+      canReset: true,
+      detail: "Atlas Core is initialized and stopped. Durable storage is preserved."
+    };
   }
   const failures = unhealthyServices(services, REQUIRED_SERVICES);
-  if (failures.length > 0) return { status: "degraded", detail: failures.join(", ") };
-  return { status: "ready", detail: "Core API, Source Gateway, PostgreSQL, and MinIO are running and healthy." };
+  if (failures.length > 0) return { ...version, status: "degraded", canReset: true, detail: failures.join(", ") };
+  return {
+    ...version,
+    status: "ready",
+    canReset: true,
+    detail: "Core API, Source Gateway, PostgreSQL, and MinIO are running and healthy."
+  };
 }
 
 function unhealthyServices(services: ComposeServiceState[], expectedServices: Iterable<string>): string[] {
@@ -5261,6 +6138,12 @@ function quoteComposeValue(value: string): string {
     .replaceAll("\\", "\\\\")
     .replaceAll('"', '\\"')
     .replaceAll("$", () => "$$")}"`;
+}
+
+function retainCommandOutputTail(existing: string, chunk: string): string {
+  if (existing.length + chunk.length <= MAX_RETAINED_COMMAND_OUTPUT_CHARS) return existing + chunk;
+  if (chunk.length >= MAX_RETAINED_COMMAND_OUTPUT_CHARS) return chunk.slice(-MAX_RETAINED_COMMAND_OUTPUT_CHARS);
+  return `${existing.slice(-(MAX_RETAINED_COMMAND_OUTPUT_CHARS - chunk.length))}${chunk}`;
 }
 
 function commandFailure(command: string, result: CommandResult): Error {

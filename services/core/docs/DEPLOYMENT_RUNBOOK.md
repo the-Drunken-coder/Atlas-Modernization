@@ -159,7 +159,11 @@ Do not route production traffic while readiness is `503`. Inspect the API and Mi
 
 Back up before every binary/image change that may carry a migration. Run the examples from the repository root. They assume a host-installed MinIO client (`mc`) and an operator-owned backup root outside Docker volumes.
 
-The released `atlas-core update all` command requires this validated pair through `ATLAS_CORE_BACKUP_DIR`. [Issue #368](https://github.com/the-Drunken-coder/Atlas-Modernization/issues/368) will make the future update flow backup-optional without removing this operator procedure. Only a transaction journal that recorded a validated pair can later accept `recover restored`; a journal without that receipt must retry, move forward to a verified compatible target, or use an explicitly confirmed reset according to its recorded phase.
+The released `atlas-core update all` command is backup-optional. Set `ATLAS_CORE_BACKUP_DIR` when you want the CLI to
+record the validated pair's content identity in the transaction journal. Only a journal that recorded that receipt can
+later accept `recover restored`; a journal without it must retry, move forward to a verified compatible target, or use an
+explicitly confirmed reset according to its recorded phase. This procedure remains the recommended operator practice
+before every binary or image change that may carry a migration.
 
 1. Create one backup-set identifier and record the application/schema versions:
 

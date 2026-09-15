@@ -404,7 +404,13 @@ ATLAS_CORE_HOME="$core_home" "$cli" stop 2>&1 | redact_stream "$artifact_dir/sto
 status_stopped_stdout="$test_root/status-stopped.stdout"
 status_stopped_stderr="$test_root/status-stopped.stderr"
 status_stopped_expected_stderr="$test_root/status-stopped.expected.stderr"
-printf 'Atlas Core is stopped.\n' > "$status_stopped_expected_stderr"
+printf '%s\n' \
+  'Atlas Core is stopped.' \
+  'Core API: missing/not reporting health' \
+  'Source Gateway: missing/not reporting health' \
+  'PostgreSQL: missing/not reporting health' \
+  'MinIO: missing/not reporting health' \
+  > "$status_stopped_expected_stderr"
 if ATLAS_CORE_HOME="$core_home" "$cli" status \
   >"$status_stopped_stdout" 2>"$status_stopped_stderr"; then
   status_stopped_exit=0
@@ -429,8 +435,8 @@ if [ -s "$status_stopped_stdout" ]; then
   fail "atlas-core status after stop emitted unexpected stdout."
 fi
 record_check "packed CLI reports an initialized stopped deployment" \
-  "exit 1; empty stdout; stderr Atlas Core is stopped." \
-  "exit $status_stopped_exit; empty stdout; stderr Atlas Core is stopped."
+  "exit 1; empty stdout; stderr stopped headline plus four service details." \
+  "exit $status_stopped_exit; empty stdout; stderr stopped headline plus four service details."
 for resource in \
   "${project_name}_api" \
   "${project_name}_source_gateway" \

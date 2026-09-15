@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { PluginActivity } from "../src/terminal-ui.js";
+import type { LifecycleOperationProgress, PluginActivity } from "../src/operator.js";
 import { createPreviewOperator } from "../src/tui-preview-operator.js";
 
 function fixture(state: "degraded" | "not-initialized" | "ready" | "stopped" = "ready", pluginStepDelayMs = 0) {
@@ -28,7 +28,11 @@ describe("Atlas Core TUI preview operator", () => {
         resumeAfterCancellation: expect.any(Function)
       })
     );
-    await expect(operator.snapshot()).resolves.toMatchObject({ status: expectedStatus });
+    await expect(operator.snapshot()).resolves.toMatchObject({
+      status: expectedStatus,
+      ...(state === "not-initialized" ? {} : { coreVersion: "0.1.5" })
+    });
+    await expect(operator.details()).resolves.toMatchObject({ snapshot: { status: expectedStatus } });
     await expect(operator.pluginStatuses()).resolves.toEqual([
       {
         pluginId: "demo_plugin",
@@ -146,5 +150,104 @@ describe("Atlas Core TUI preview operator", () => {
     await expect(operator.pluginStatuses()).resolves.toEqual([
       expect.objectContaining({ pluginId: "demo_plugin", enabled: true })
     ]);
+  });
+
+  it.each(["start", "stop", "restart"] as const)(
+    "runs the fixture %s lifecycle operation with typed progress",
+    async (operation) => {
+      const { operator } = fixture(operation === "start" ? "stopped" : "ready");
+      const progress: LifecycleOperationProgress[] = [];
+
+      await expect(operator.runLifecycle(operation, (event) => progress.push(event))).resolves.toMatchObject({
+        status: "success"
+      });
+      expect(progress.map((event) => event.stage)).toEqual(["operation", "operation", "operation"]);
+      await expect(operator.snapshot()).resolves.toMatchObject({ status: operation === "stop" ? "stopped" : "ready" });
+    }
+  );
+
+  it("initializes a not-initialized fixture through the shared operation flow", async () => {
+    const { operator } = fixture("not-initialized");
+    const progress: LifecycleOperationProgress[] = [];
+
+    await expect(operator.runLifecycle("init", (event) => progress.push(event))).resolves.toEqual({
+      status: "success",
+      summary: "Atlas Core initialized. Choose Start Atlas Core when ready."
+    });
+    expect(progress.map((event) => event.stage)).toEqual(["operation", "operation", "operation"]);
+    await expect(operator.snapshot()).resolves.toMatchObject({ status: "stopped" });
+  });
+
+  it("changes the admin password through the shared operation flow without exposing private input", async () => {
+    const { operator, output } = fixture();
+    const progress: LifecycleOperationProgress[] = [];
+    const password = "correct-horse-battery-staple";
+
+    await expect(operator.runLifecycle("configure", (event) => progress.push(event), { password })).resolves.toEqual({
+      status: "success",
+      summary: "Atlas Core admin password updated for username admin."
+    });
+    expect(progress.map((event) => event.message).join(" ")).not.toContain(password);
+    expect(output.write.mock.calls.flat().join(" ")).not.toContain(password);
+  });
+
+  it("preserves a stopped deployment while changing the admin password", async () => {
+    const { operator } = fixture("stopped");
+    const progress: LifecycleOperationProgress[] = [];
+
+    await expect(
+      operator.runLifecycle("configure", (event) => progress.push(event), { password: "new-password" })
+    ).resolves.toMatchObject({ status: "success" });
+    expect(progress.map((event) => event.stage)).toEqual(["operation", "operation", "operation"]);
+    await expect(operator.snapshot()).resolves.toMatchObject({ status: "stopped" });
+  });
+
+  it("requires confirmation before resetting a fixture and resets after confirmation", async () => {
+    const { operator } = fixture("ready");
+
+    await expect(operator.runLifecycle("reset")).resolves.toMatchObject({
+      status: "failure",
+      error: "Reset requires explicit confirmation."
+    });
+    await expect(operator.runLifecycle("reset", undefined, { resetConfirmed: true })).resolves.toEqual({
+      status: "success",
+      summary: "Atlas Core reset is complete. A new deployment is running."
+    });
+    await expect(operator.snapshot()).resolves.toMatchObject({ status: "ready" });
+  });
+
+  it("preserves fixture state when initialization is cancelled", async () => {
+    const { operator } = fixture("not-initialized", 25);
+    const pending = operator.runLifecycle("init");
+    operator.cancelPending();
+
+    await expect(pending).resolves.toMatchObject({ status: "cancelled" });
+    await expect(operator.snapshot()).resolves.toMatchObject({ status: "not-initialized" });
+    operator.resumeAfterCancellation();
+  });
+
+  it("preserves fixture state through lifecycle cancellation cleanup", async () => {
+    const { operator } = fixture("ready", 0);
+    const progress: LifecycleOperationProgress[] = [];
+    const pending = operator.runLifecycle("stop", (event) => progress.push(event));
+    operator.cancelPending();
+
+    await expect(pending).resolves.toMatchObject({ status: "cancelled" });
+    expect(progress.map((event) => event.stage)).toContain("cleanup");
+    await expect(operator.snapshot()).resolves.toMatchObject({ status: "ready" });
+    operator.resumeAfterCancellation();
+  });
+
+  it("rejects overlapping fixture lifecycle mutations", async () => {
+    const { operator } = fixture("ready");
+    const first = operator.runLifecycle("stop");
+
+    await expect(operator.runLifecycle("restart")).resolves.toMatchObject({
+      status: "failure",
+      error: "Another lifecycle operation is already running."
+    });
+    operator.cancelPending();
+    await expect(first).resolves.toMatchObject({ status: "cancelled" });
+    operator.resumeAfterCancellation();
   });
 });
