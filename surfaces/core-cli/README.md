@@ -142,10 +142,10 @@ An active service whose definition does not match the selected deployment must b
 The Plugins menu keeps the operation in an activity view with elapsed timestamps, reports rollback status, and returns
 to the Plugin catalog after safe cancellation.
 
-The menu's `Configure` action opens a configuration menu. `Admin account` changes the password for the fixed `admin`
-username. The direct `config` command opens the same hidden password prompt. The password must contain at least 12
-characters and is never accepted as a command argument, which keeps it out of shell history and process listings. No
-other deployment settings are exposed yet.
+The menu's `Change admin password` action changes the password for the fixed `admin` username. The direct `config`
+command opens the same hidden password prompt. The password must contain at least 12 characters and is never accepted
+as a command argument, which keeps it out of shell history and process listings. No other deployment settings are
+exposed yet.
 
 When Core is running, `config` restarts it so the new password applies to subsequent logins. When Core is stopped, the
 new password applies on the next start. Existing browser sessions expire normally. The initial random password remains

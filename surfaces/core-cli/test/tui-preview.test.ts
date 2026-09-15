@@ -28,7 +28,10 @@ describe("Atlas Core TUI preview operator", () => {
         resumeAfterCancellation: expect.any(Function)
       })
     );
-    await expect(operator.snapshot()).resolves.toMatchObject({ status: expectedStatus });
+    await expect(operator.snapshot()).resolves.toMatchObject({
+      status: expectedStatus,
+      ...(state === "not-initialized" ? {} : { coreVersion: "0.1.5" })
+    });
     await expect(operator.details()).resolves.toMatchObject({ snapshot: { status: expectedStatus } });
     await expect(operator.pluginStatuses()).resolves.toEqual([
       {

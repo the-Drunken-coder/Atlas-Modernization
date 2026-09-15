@@ -69,14 +69,24 @@ export function createPreviewOperator(
   const preview = (message: string): unknown => output.write(`[preview only] ${message}\n`);
 
   const snapshot = (): DeploymentSnapshot => {
-    if (deploymentState === "ready") return { status: "ready", detail: "Everything is healthy." };
+    if (deploymentState === "ready") {
+      return { status: "ready", coreVersion: "0.1.5", detail: "Everything is healthy." };
+    }
     if (deploymentState === "stopped") {
-      return { status: "stopped", detail: "Atlas Core is stopped. Durable storage is preserved." };
+      return {
+        status: "stopped",
+        coreVersion: "0.1.5",
+        detail: "Atlas Core is stopped. Durable storage is preserved."
+      };
     }
     if (deploymentState === "not-initialized") {
       return { status: "not-initialized", detail: "Initialize Atlas Core on this host." };
     }
-    return { status: "degraded", detail: "Core API is running, but MinIO health is unavailable." };
+    return {
+      status: "degraded",
+      coreVersion: "0.1.5",
+      detail: "Core API is running, but MinIO health is unavailable."
+    };
   };
 
   const setFreshPreviewDeployment = (state: "ready" | "stopped"): void => {

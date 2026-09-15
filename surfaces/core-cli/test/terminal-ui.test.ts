@@ -391,6 +391,36 @@ describe("Atlas Core terminal UI", () => {
     await menu;
   });
 
+  it("returns to Plugin management when opening Plugin logs fails", async () => {
+    const terminal = new TestTerminal();
+    const deployment = operator();
+    const plugin = {
+      pluginId: "building_scan",
+      displayName: "Building Scan",
+      lifecycle: "query_only" as const,
+      enabled: true,
+      packaged: true,
+      installed: true
+    };
+    deployment.pluginStatuses.mockResolvedValue([plugin]);
+    deployment.openPluginLogStream.mockRejectedValue(new Error("fixture Plugin stream failed"));
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("Manage Plugins");
+    terminal.write("\u001b[B".repeat(4));
+    terminal.write("\r");
+    await terminal.waitFor("PLUGIN CATALOG");
+    terminal.write("l");
+    await terminal.waitFor("Unable to open Plugin logs: fixture Plugin stream failed");
+    terminal.write("\r");
+    await vi.waitFor(() => expect(deployment.pluginStatuses).toHaveBeenCalledTimes(2));
+    await terminal.waitFor("PLUGIN CATALOG");
+    terminal.write("q");
+    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
+    terminal.write("q");
+    await menu;
+  });
+
   it("returns to Plugin management after safe Escape cancellation", async () => {
     const terminal = new TestTerminal();
     const deployment = operator();
@@ -699,6 +729,26 @@ describe("Atlas Core terminal UI", () => {
     await terminal.waitFor("FOLLOWING");
     terminal.write("\u001b");
     await vi.waitFor(() => expect(stream.closed).toBe(true));
+    terminal.write("q");
+    await menu;
+  });
+
+  it("returns to service health when opening logs fails", async () => {
+    const terminal = new TestTerminal(80, true, 24);
+    const deployment = operator();
+    deployment.openLogStream.mockRejectedValue(new Error("fixture log stream failed"));
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("CHOOSE AN ACTION");
+    terminal.write("\r");
+    await terminal.waitFor("ATLAS CORE > STATUS");
+    terminal.write("l");
+    await terminal.waitFor("Unable to open logs: fixture log stream failed");
+    terminal.write("\r");
+    await vi.waitFor(() => expect(deployment.details).toHaveBeenCalledTimes(2));
+    await terminal.waitFor("ATLAS CORE > STATUS");
+    terminal.write("\u001b");
+    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
     terminal.write("q");
     await menu;
   });
@@ -2136,6 +2186,38 @@ describe("Atlas Core terminal UI", () => {
     await menu;
   });
 
+  it("keeps a stopped deployment stopped after a Plugin failure", async () => {
+    const terminal = new TestTerminal(40, true, 24);
+    const deployment = operator({ status: "stopped", detail: "Atlas Core is stopped." });
+    const plugin = {
+      pluginId: "building_scan",
+      displayName: "Building Scan",
+      lifecycle: "query_only" as const,
+      enabled: false,
+      packaged: true
+    };
+    deployment.pluginStatuses.mockResolvedValue([plugin]);
+    deployment.pluginEnable.mockRejectedValue(new Error("fixture Plugin failure"));
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("Manage Plugins");
+    terminal.write("\u001b[B".repeat(3));
+    await nextInputTurn();
+    terminal.write("\r");
+    await terminal.waitFor("PLUGIN CATALOG");
+    terminal.write("\r");
+    await terminal.waitFor("Enable failed: fixture Plugin failure");
+    expect(terminal.text).toContain("while Atlas Core remains stopped");
+    expect(terminal.text).not.toContain("Choose Start Atlas Core");
+    terminal.write("\r");
+    await vi.waitFor(() => expect(deployment.pluginStatuses).toHaveBeenCalledTimes(2));
+    await terminal.waitFor("PLUGIN CATALOG");
+    terminal.write("q");
+    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(3));
+    terminal.write("q");
+    await menu;
+  });
+
   it("renders an intentional narrow-terminal state", async () => {
     const terminal = new TestTerminal(36);
     const deployment = operator();
@@ -2615,10 +2697,41 @@ describe("Atlas Core terminal UI", () => {
     expect(terminal.text).not.toContain("CLI and Core update requested");
     await terminal.waitFor("Update complete");
     expect(terminal.text).not.toContain("Atlas Core CLI 0.1.5 and the Core deployment");
+    expect(terminal.text).toContain("Enter exit");
     terminal.write("\r");
     await update;
 
     expect(deployment.update).toHaveBeenCalledWith("all", "0.1.5");
+  });
+
+  it("returns to the main menu after a Core-only update", async () => {
+    const terminal = new TestTerminal();
+    const deployment = operator();
+    deployment.checkForUpdates.mockResolvedValue({
+      cliVersion: "0.1.5",
+      coreVersion: "0.1.4",
+      latestVersion: "0.1.5",
+      cliUpdateAvailable: false,
+      coreUpdateAvailable: true
+    });
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("CHOOSE AN ACTION");
+    terminal.write("\u001b[B".repeat(5));
+    await nextInputTurn();
+    terminal.write("\r");
+    await terminal.waitFor("CHOOSE UPDATE");
+    terminal.write("\r");
+    await terminal.waitFor("REVIEW UPDATE");
+    terminal.write("\r");
+    await terminal.waitFor("Update complete");
+    expect(terminal.text).toContain("Enter return to Atlas Core");
+    expect(terminal.text).not.toContain("Enter exit");
+    terminal.write("\r");
+    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
+    await terminal.waitFor("CHOOSE AN ACTION");
+    terminal.write("q");
+    await menu;
   });
 
   it("propagates an update failure after showing the recovery message", async () => {

@@ -27,7 +27,7 @@ import { lifecycleOperationLabel, lifecycleOperationSummary } from "./operator.j
 
 type Screen =
   | { kind: "busy"; label: string }
-  | { kind: "message"; message: string }
+  | { kind: "message"; message: string; returnTo?: "menu" | "plugins" | "status" }
   | { kind: "logs" }
   | {
       kind: "log-viewer";
@@ -578,7 +578,11 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
   const openPluginLogViewer = useCallback(
     async (plugin: PluginDeploymentStatus) => {
       if (!operator.openPluginLogStream) {
-        setScreen({ kind: "message", message: "Plugin log streaming is unavailable in this operator." });
+        setScreen({
+          kind: "message",
+          message: "Plugin log streaming is unavailable in this operator.",
+          returnTo: "plugins"
+        });
         return;
       }
       setScreen({ kind: "busy", label: "Opening Plugin logs..." });
@@ -595,7 +599,11 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
           title: "ATLAS CORE > PLUGIN LOGS"
         });
       } catch (error) {
-        setScreen({ kind: "message", message: `Unable to open Plugin logs: ${errorMessage(error)}` });
+        setScreen({
+          kind: "message",
+          message: `Unable to open Plugin logs: ${errorMessage(error)}`,
+          returnTo: "plugins"
+        });
       }
     },
     [operator, waitUntilRenderFlush]
@@ -626,7 +634,7 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
           title: "ATLAS CORE > LIVE LOGS"
         });
       } catch (error) {
-        setScreen({ kind: "message", message: `Unable to open logs: ${errorMessage(error)}` });
+        setScreen({ kind: "message", message: `Unable to open logs: ${errorMessage(error)}`, returnTo });
       }
     },
     [operator, waitUntilRenderFlush]
@@ -797,12 +805,23 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
           } else void loadMenu();
         }}
         onCancel={cancelUpdateOperation}
+        returnToMenu={mode !== "update" && !updateInvolvesCLI(screen.view.info, screen.view.scope)}
         view={screen.view}
       />
     );
   }
   if (screen.kind === "message") {
-    return <MessageScreen message={screen.message} onBack={() => void loadMenu()} title="Atlas Core" />;
+    return (
+      <MessageScreen
+        message={screen.message}
+        onBack={() => {
+          if (screen.returnTo === "status") void loadStatus();
+          else if (screen.returnTo === "plugins") void loadPlugins();
+          else void loadMenu();
+        }}
+        title="Atlas Core"
+      />
+    );
   }
   if (screen.kind === "reset-confirmation") {
     return (
@@ -1879,7 +1898,9 @@ function pluginRecoveryHint(view: PluginActivityView): string {
   if (/recovery remains pending|Plugin recovery is pending|pending/i.test(view.error ?? "")) {
     return "Run atlas-core recover status, finish the pending recovery, then retry the Plugin operation.";
   }
-  if (view.snapshot?.status === "stopped") return "Choose Start Atlas Core before retrying the Plugin operation.";
+  if (view.snapshot?.status === "stopped") {
+    return "Resolve the reported Plugin error, then retry the Plugin operation while Atlas Core remains stopped.";
+  }
   if (view.snapshot?.status === "degraded") return "Review service health, then retry the Plugin operation when safe.";
   return "Review Plugin status or run atlas-core recover status before retrying.";
 }
@@ -1993,10 +2014,12 @@ function LifecycleOperationScreen({
 function UpdateOperationScreen({
   onBack,
   onCancel,
+  returnToMenu,
   view
 }: {
   onBack(): void;
   onCancel(disposition: "return" | "exit"): void;
+  returnToMenu: boolean;
   view: UpdateOperationView;
 }): ReactNode {
   const { columns, rows } = useWindowSize();
@@ -2024,7 +2047,9 @@ function UpdateOperationScreen({
   const elapsed = (view.completedAt ?? now) - view.startedAt;
   const detail = `${updateScopeLabel(view.info, view.scope)} update  ${formatActivityTime(elapsed)}`;
   const footer = finished
-    ? "Enter exit"
+    ? returnToMenu
+      ? "Enter return to Atlas Core"
+      : "Enter exit"
     : view.status === "cancelling"
       ? "Cancelling safely. Waiting for cleanup..."
       : "Esc cancel and return   Ctrl+C cancel and exit";
