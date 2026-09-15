@@ -56,7 +56,7 @@ function source(): {
 describe("log stream primitives", () => {
   it("replays output when a buffered command finishes before the log stream subscribes", async () => {
     const source = createBufferedCommandOutputStream(
-      Promise.resolve({ status: 0, stdout: "fast output\n", stderr: "" }),
+      () => Promise.resolve({ status: 0, stdout: "fast output\n", stderr: "" }),
       () => undefined
     );
     await source.closed;
@@ -72,7 +72,10 @@ describe("log stream primitives", () => {
   it("reports a buffered runner rejection instead of leaving the stream pending", async () => {
     const stream = createLogStream(
       "api",
-      createBufferedCommandOutputStream(Promise.reject(new Error("runner failed")), () => undefined)
+      createBufferedCommandOutputStream(
+        () => Promise.reject(new Error("runner failed")),
+        () => undefined
+      )
     );
 
     await expect(stream.wait()).rejects.toThrow("runner failed");
@@ -87,10 +90,13 @@ describe("log stream primitives", () => {
     let cancellations = 0;
     const stream = createLogStream(
       "api",
-      createBufferedCommandOutputStream(result, () => {
-        cancellations++;
-        rejectRun(new Error("aborted"));
-      })
+      createBufferedCommandOutputStream(
+        () => result,
+        () => {
+          cancellations++;
+          rejectRun(new Error("aborted"));
+        }
+      )
     );
 
     await stream.close();

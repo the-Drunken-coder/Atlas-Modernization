@@ -701,8 +701,17 @@ class CancellableCommandRunner implements CommandRunner {
     if (!this.#runner.openStream) {
       const controller = new AbortController();
       const signal = options?.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal;
-      return createBufferedCommandOutputStream(this.#runner.run(command, args, { ...options, signal }), () =>
-        controller.abort()
+      return createBufferedCommandOutputStream(
+        (onOutput) =>
+          this.#runner.run(command, args, {
+            ...options,
+            signal,
+            onOutput: (stream, chunk) => {
+              onOutput(stream, chunk);
+              options?.onOutput?.(stream, chunk);
+            }
+          }),
+        () => controller.abort()
       );
     }
     return await this.#runner.openStream(command, args, options);

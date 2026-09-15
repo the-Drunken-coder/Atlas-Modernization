@@ -9,8 +9,20 @@ export type CommandOutputStream = {
   closed: Promise<{ cancelled?: true; status: number; stderr: string }>;
 };
 
+type CommandOutputReporter = (stream: "stdout" | "stderr", chunk: string) => void;
+const MAX_BUFFERED_COMMAND_OUTPUT_LENGTH = 64 * 1024;
+
+function retainBufferedCommandOutputTail(output: string, chunk: string): string {
+  const combined = output + chunk;
+  return combined.length > MAX_BUFFERED_COMMAND_OUTPUT_LENGTH
+    ? combined.slice(-MAX_BUFFERED_COMMAND_OUTPUT_LENGTH)
+    : combined;
+}
+
 export function createBufferedCommandOutputStream(
-  resultPromise: Promise<{ cancelled?: true; status: number; stdout: string; stderr: string }>,
+  run: (
+    onOutput: CommandOutputReporter
+  ) => Promise<{ cancelled?: true; status: number; stdout: string; stderr: string }>,
   cancel: () => void
 ): CommandOutputStream {
   const stdoutListeners = new Set<(chunk: string) => void>();
@@ -19,12 +31,30 @@ export function createBufferedCommandOutputStream(
   let cancellationRequested = false;
   let finalResult: { cancelled?: true; status: number; stderr: string } | undefined;
   let finalOutput: { stdout: string; stderr: string } | undefined;
+  let streamedStdout = "";
+  let streamedStderr = "";
+  let stdoutReported = false;
+  let stderrReported = false;
   let settled = false;
+  const onOutput: CommandOutputReporter = (stream, chunk) => {
+    if (stream === "stdout") {
+      stdoutReported = true;
+      streamedStdout = retainBufferedCommandOutputTail(streamedStdout, chunk);
+      for (const listener of stdoutListeners) listener(chunk);
+      return;
+    }
+    stderrReported = true;
+    streamedStderr = retainBufferedCommandOutputTail(streamedStderr, chunk);
+    for (const listener of stderrListeners) listener(chunk);
+  };
   const settle = (result: { cancelled?: true; status: number; stdout: string; stderr: string }) => {
     settled = true;
-    finalOutput = { stdout: result.stdout, stderr: result.stderr };
-    for (const listener of stdoutListeners) listener(result.stdout);
-    for (const listener of stderrListeners) listener(result.stderr);
+    finalOutput = {
+      stdout: stdoutReported ? streamedStdout : result.stdout,
+      stderr: stderrReported ? streamedStderr : result.stderr
+    };
+    if (!stdoutReported) for (const listener of stdoutListeners) listener(result.stdout);
+    if (!stderrReported) for (const listener of stderrListeners) listener(result.stderr);
     const compact = {
       ...(result.cancelled ? { cancelled: true as const } : {}),
       status: result.status,
@@ -37,6 +67,12 @@ export function createBufferedCommandOutputStream(
     closeListeners.clear();
     return compact;
   };
+  let resultPromise: Promise<{ cancelled?: true; status: number; stdout: string; stderr: string }>;
+  try {
+    resultPromise = run(onOutput);
+  } catch (error) {
+    resultPromise = Promise.reject(error);
+  }
   const closed = resultPromise.then(settle, (error: unknown) =>
     settle({
       ...(cancellationRequested ? { cancelled: true as const } : {}),
@@ -52,6 +88,7 @@ export function createBufferedCommandOutputStream(
         return () => undefined;
       }
       stdoutListeners.add(listener);
+      if (streamedStdout) listener(streamedStdout);
       return () => stdoutListeners.delete(listener);
     },
     onStderr(listener) {
@@ -60,6 +97,7 @@ export function createBufferedCommandOutputStream(
         return () => undefined;
       }
       stderrListeners.add(listener);
+      if (streamedStderr) listener(streamedStderr);
       return () => stderrListeners.delete(listener);
     },
     onClose(listener) {

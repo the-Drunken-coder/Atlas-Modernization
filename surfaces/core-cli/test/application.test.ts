@@ -2069,7 +2069,7 @@ describe("atlas-core CLI", () => {
     expect(command.stdout.endsWith("x".repeat(128))).toBe(true);
   });
 
-  it("cancels a buffered log fallback without poisoning later commands", async () => {
+  it("streams and cancels a buffered log fallback without poisoning later commands", async () => {
     const test = runtime();
     markInitialized(test);
     let resolveLogRun!: () => void;
@@ -2126,8 +2126,11 @@ describe("atlas-core CLI", () => {
     };
     const originalRun = test.runner.run.bind(test.runner);
     test.runner.run = async (command, args, options = {}) => {
-      const result = await originalRun(command, args, options);
-      return isLogCall(command, args) && !options.inherit ? { ...result, stdout: "captured log\n" } : result;
+      const bufferedLog = isLogCall(command, args) && !options.inherit;
+      const commandResult = originalRun(command, args, options);
+      if (bufferedLog) options.onOutput?.("stdout", "captured log\n");
+      const result = await commandResult;
+      return bufferedLog ? { ...result, stdout: "captured log\n" } : result;
     };
 
     let operator: Parameters<NonNullable<InteractiveCLI["runMenu"]>>[0] | undefined;
@@ -2150,6 +2153,7 @@ describe("atlas-core CLI", () => {
     const stream = await streamPromise;
     const lines: string[] = [];
     stream.onLine((line) => lines.push(line));
+    await vi.waitFor(() => expect(lines).toEqual(["captured log"]));
     const unrelated = operator.checkForUpdates();
     await unrelatedRunStarted;
     let timeout: ReturnType<typeof setTimeout> | undefined;
