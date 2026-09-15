@@ -81,7 +81,13 @@ class TestTerminal {
   }
 }
 
-function operator(snapshot: DeploymentSnapshot = { status: "ready", detail: "Everything is healthy." }) {
+type TestDeploymentSnapshot = Omit<DeploymentSnapshot, "canReset"> & { canReset?: boolean };
+
+function operator(snapshot: TestDeploymentSnapshot = { status: "ready", detail: "Everything is healthy." }) {
+  const normalizedSnapshot = {
+    canReset: snapshot.status !== "initializing" && snapshot.status !== "not-initialized",
+    ...snapshot
+  } satisfies DeploymentSnapshot;
   const update = vi.fn(async (_scope: UpdateScope, _expectedVersion?: string) => undefined);
   return {
     cancelPending: vi.fn(),
@@ -95,7 +101,7 @@ function operator(snapshot: DeploymentSnapshot = { status: "ready", detail: "Eve
     configureAdminPassword: vi.fn(async () => undefined),
     diagnostics: vi.fn(async (): Promise<DiagnosticsResult> => ({ healthy: true, checks: [] })),
     details: vi.fn(async (_signal?: AbortSignal) => ({
-      snapshot,
+      snapshot: normalizedSnapshot,
       cliVersion: "0.1.5",
       coreVersion: "0.1.5",
       initializedAt: "2026-08-28T12:00:00.000Z",
@@ -177,7 +183,7 @@ function operator(snapshot: DeploymentSnapshot = { status: "ready", detail: "Eve
     resumeAfterCancellation: vi.fn(),
     reset: vi.fn(async () => undefined),
     restart: vi.fn(async () => undefined),
-    snapshot: vi.fn(async () => snapshot),
+    snapshot: vi.fn(async () => normalizedSnapshot),
     start: vi.fn(async () => undefined),
     status: vi.fn(async () => true),
     stop: vi.fn(async (): Promise<void> => {}),
@@ -687,6 +693,22 @@ describe("Atlas Core terminal UI", () => {
     await degradedMenu;
   });
 
+  it("hides reset when the deployment snapshot does not satisfy reset preconditions", async () => {
+    const terminal = new TestTerminal(80, true, 24);
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(
+      operator({
+        status: "degraded",
+        canReset: false,
+        detail: "Atlas Core update recovery is pending."
+      })
+    );
+
+    await terminal.waitFor("Degraded");
+    expect(terminal.text).not.toContain("Reset Atlas Core");
+    terminal.write("q");
+    await menu;
+  });
+
   it("renders the running Core version instead of the CLI package version", async () => {
     const terminal = new TestTerminal();
     const deployment = operator({ status: "ready", detail: "Core is running.", coreVersion: "0.1.2" });
@@ -880,7 +902,7 @@ describe("Atlas Core terminal UI", () => {
   });
 
   it("keeps stream failures inside the controlled log viewer", async () => {
-    const terminal = new TestTerminal(80, true, 24);
+    const terminal = new TestTerminal(40, true, 24);
     const deployment = operator();
     const stream = liveLogStream();
     deployment.openLogStream.mockResolvedValue(stream);
@@ -891,8 +913,10 @@ describe("Atlas Core terminal UI", () => {
     await terminal.waitFor("Logs and diagnostics");
     terminal.write("\u001b[B\r");
     await terminal.waitFor("LIVE LOGS");
-    stream.fail(new Error("fixture stream failed"));
+    stream.fail(new Error(`fixture stream failed ${"x".repeat(65_536)}`));
     await terminal.waitFor("ERROR: fixture stream failed");
+    expect(terminal.text).toContain("Esc close");
+    expect(terminal.text).not.toContain("x".repeat(100));
     terminal.write("\u001b");
     await vi.waitFor(() => expect(stream.closed).toBe(true));
     terminal.write("q");
@@ -1286,7 +1310,11 @@ describe("Atlas Core terminal UI", () => {
     deployment.runLifecycle.mockResolvedValueOnce({
       status: "failure",
       error: "Docker Compose failed with exit code 1",
-      snapshot: { status: "degraded", detail: "Core API is running, but storage is unavailable." }
+      snapshot: {
+        status: "degraded",
+        canReset: true,
+        detail: "Core API is running, but storage is unavailable."
+      }
     });
     const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
 
@@ -2432,7 +2460,11 @@ describe("Atlas Core terminal UI", () => {
     deployment.runLifecycle.mockResolvedValueOnce({
       status: "failure",
       error: "Password update failed.",
-      snapshot: { status: "stopped", detail: "Atlas Core is stopped. Durable storage is preserved." }
+      snapshot: {
+        status: "stopped",
+        canReset: true,
+        detail: "Atlas Core is stopped. Durable storage is preserved."
+      }
     });
     const configuration = createInteractiveCLI(terminal.input, terminal.output).configureAdmin(deployment);
 

@@ -1054,7 +1054,7 @@ function actionListChoices(snapshot: DeploymentSnapshot): ActionListChoice[] {
   choices.push({ action: "plugins", label: "Manage Plugins" }, { action: "update", label: "Update Atlas Core" });
   if (snapshot.status !== "not-initialized") {
     choices.push({ action: "configure", label: "Change admin password" });
-    if (snapshot.status !== "initializing") choices.push({ action: "reset", label: "Reset Atlas Core" });
+    if (snapshot.canReset) choices.push({ action: "reset", label: "Reset Atlas Core" });
   }
   return choices;
 }
@@ -1509,6 +1509,12 @@ function wrappedRows(value: string, width: number): number {
   return wrapAnsi(value, lineWidth, { hard: true, trim: false }).split("\n").length;
 }
 
+function firstTerminalLine(value: string, width: number): string {
+  return (
+    wrapAnsi(value.replace(/\s+/gu, " ").trim(), Math.max(1, width), { hard: true, trim: false }).split("\n")[0] ?? ""
+  );
+}
+
 function LogsMenu({
   onBack,
   onDiagnostics,
@@ -1588,8 +1594,9 @@ function LogViewer({
       : bufferRef.current.following
         ? "following"
         : "paused";
+  const streamErrorSummary = streamError ? firstTerminalLine(`ERROR: ${streamError.message}`, columns) : undefined;
   const footer = `${streamStatus}   ←→ service   ↑↓ scroll   space pause/follow   End latest   Esc close`;
-  const headerRows = 2;
+  const headerRows = streamErrorSummary ? 3 : 2;
   const footerRows = wrappedRows(footer, columns);
   const viewportRows = Math.max(1, rows - headerRows - footerRows - 2);
 
@@ -1681,8 +1688,8 @@ function LogViewer({
       <Text>
         <Text dimColor>Service </Text>
         <Text color="cyan">{serviceLabel}</Text>
-        {streamError ? <Text color="red"> ERROR: {streamError.message}</Text> : null}
       </Text>
+      {streamErrorSummary ? <Text color="red">{streamErrorSummary}</Text> : null}
       <Rule width={columns} />
       <Box flexDirection="column" height={viewportRows} overflowY="hidden">
         {snapshot.lines.length === 0 ? (
@@ -2784,7 +2791,7 @@ async function readSnapshot(operator: AtlasCoreOperator): Promise<DeploymentSnap
   try {
     return await operator.snapshot();
   } catch (error) {
-    return { status: "degraded", detail: errorMessage(error) };
+    return { status: "degraded", canReset: false, detail: errorMessage(error) };
   }
 }
 

@@ -9,6 +9,8 @@ export type DeploymentSnapshot = {
   detail: string;
   /** Version recorded by the deployed Core, when the deployment is initialized. */
   coreVersion?: string;
+  /** Whether this exact persisted state satisfies the reset preconditions. */
+  canReset: boolean;
 };
 
 export type DeploymentService = {

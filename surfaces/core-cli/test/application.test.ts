@@ -4614,6 +4614,36 @@ describe("atlas-core CLI", () => {
     expect(test.runner.existingVolumes).toContain(MINIO_VOLUME);
   });
 
+  it("marks an early Core update recovery as ineligible for reset", async () => {
+    const test = runtime();
+    await markManagedInitialized(test);
+    const config = join(test.home, ".atlas", "core");
+    const statePath = join(config, "state.json");
+    const state = JSON.parse(readFileSync(statePath, "utf8"));
+    const initializingState = { ...state, phase: "initializing" };
+    const transaction = DeploymentTransactionStore.begin(config, {
+      operation: "core-update",
+      dockerEngineId: TEST_ENGINE_ID,
+      previousRunning: true,
+      desiredRunning: true,
+      recovery: { targetCoreImage: TEST_IMAGE }
+    });
+    transaction.stage("state.json", `${JSON.stringify(initializingState, null, 2)}\n`);
+    transaction.applyStaged("state.json");
+    transaction.advance("runtime-changing");
+    let observed: DeploymentDetails["snapshot"] | undefined;
+    test.context.interactive = {
+      configureAdmin: async () => undefined,
+      runMenu: async (operator) => {
+        observed = await operator.snapshot();
+      },
+      runUpdate: async () => undefined
+    };
+
+    expect(await runCLI([], test.context), test.stderr.join("")).toBe(0);
+    expect(observed).toMatchObject({ status: "degraded", canReset: false });
+  });
+
   it("reports a failed Core update as degraded recovery-required state in the cheap snapshot", async () => {
     const test = runtime();
     markInitialized(test);
@@ -4633,6 +4663,7 @@ describe("atlas-core CLI", () => {
     expect(await runCLI([], test.context), test.stderr.join("")).toBe(0);
     expect(observed).toMatchObject({
       status: "degraded",
+      canReset: true,
       coreVersion: PACKAGE_VERSION,
       detail: expect.stringContaining("recovery")
     });

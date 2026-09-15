@@ -844,6 +844,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
             error: message,
             snapshot: {
               status: "degraded",
+              canReset: false,
               detail:
                 "Reset was interrupted after destructive deletion began. Durable storage state is indeterminate; inspect recovery status before retrying."
             }
@@ -855,7 +856,11 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
           return {
             status: "cancelled",
             summary,
-            snapshot: { status: "stopped", detail: "Atlas Core is stopped after the cancellation point." }
+            snapshot: {
+              status: "stopped",
+              canReset: true,
+              detail: "Atlas Core is stopped after the cancellation point."
+            }
           };
         }
         if (operation === "stop" && lifecycleContext.stopReleaseStarted) {
@@ -867,6 +872,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
             error: message,
             snapshot: {
               status: "degraded",
+              canReset: true,
               detail:
                 "Atlas Core stop was interrupted while services were being released. Service and durable storage state is indeterminate; inspect status before retrying."
             }
@@ -878,7 +884,11 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
           return {
             status: "cancelled",
             summary,
-            snapshot: { status: "stopped", detail: "Atlas Core is stopped after the cancellation point." }
+            snapshot: {
+              status: "stopped",
+              canReset: true,
+              detail: "Atlas Core is stopped after the cancellation point."
+            }
           };
         }
         if (operation === "restart" && lifecycleContext.restartReleaseStarted) {
@@ -890,6 +900,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
             error: message,
             snapshot: {
               status: "degraded",
+              canReset: true,
               detail:
                 "Atlas Core restart was interrupted while services were being released. Service state is indeterminate; inspect status before retrying."
             }
@@ -912,6 +923,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
           error: message,
           snapshot: {
             status: "degraded",
+            canReset: false,
             detail:
               "Reset failed after destructive deletion began. Durable storage state is indeterminate; inspect recovery status before retrying."
           }
@@ -931,11 +943,16 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     try {
       const state = this.#readState();
       if (!state) {
-        return { status: "not-initialized", detail: "Atlas Core is not initialized. Run atlas-core init first." };
+        return {
+          status: "not-initialized",
+          canReset: false,
+          detail: "Atlas Core is not initialized. Run atlas-core init first."
+        };
       }
       if (state.phase !== "ready") {
         return {
           status: "degraded",
+          canReset: false,
           detail: "Atlas Core has an incomplete deployment state. Run atlas-core recover status before retrying.",
           coreVersion: state.packageVersion
         };
@@ -943,12 +960,14 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       if (!this.#desiredRunning()) {
         return {
           status: "stopped",
+          canReset: true,
           detail: "Atlas Core is stopped. Durable storage is preserved.",
           coreVersion: state.packageVersion
         };
       }
       return {
         status: "ready",
+        canReset: true,
         detail:
           "Atlas Core is configured to run, but service health is unavailable while the lifecycle operation is blocked.",
         coreVersion: state.packageVersion
@@ -956,6 +975,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     } catch {
       return {
         status: "degraded",
+        canReset: false,
         detail: "Deployment state could not be read. Run atlas-core status before retrying."
       };
     }
@@ -2621,13 +2641,18 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
 
   async snapshot(): Promise<DeploymentSnapshot> {
     if (!existsSync(this.#configDir) || !existsSync(this.#envFile) || !existsSync(this.#stateFile)) {
-      return { status: "not-initialized", detail: "Initialize Atlas Core to create its private configuration." };
+      return {
+        status: "not-initialized",
+        canReset: false,
+        detail: "Initialize Atlas Core to create its private configuration."
+      };
     }
     this.#assertPrivateConfiguration();
     const state = this.#readState();
     if (!state)
       return {
         status: "degraded",
+        canReset: false,
         detail: "Atlas Core state is invalid. Restore a valid state file before operating this deployment."
       };
     const runtime = await this.#preflight();
@@ -2636,9 +2661,11 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       if (state.phase === "initializing") {
         this.#assertPackageVersionMatches(state);
         const pendingTransaction = this.#pendingTransaction(runtime.engineId);
+        const canReset = this.#hasValidatedPendingCoreTransaction(runtime.engineId, state);
         if (pendingTransaction?.operation === "core-update") {
           return {
             status: "degraded",
+            canReset,
             coreVersion: state.packageVersion,
             detail: "Atlas Core update recovery is pending. Run atlas-core recover status before retrying."
           };
@@ -2649,6 +2676,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
         ) {
           return {
             status: "degraded",
+            canReset,
             coreVersion: state.packageVersion,
             detail:
               pendingTransaction?.operation === "init"
@@ -2658,6 +2686,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
         }
         return {
           status: "initializing",
+          canReset,
           coreVersion: state.packageVersion,
           detail: "Atlas Core initialization can be resumed."
         };
@@ -5854,14 +5883,16 @@ function deploymentSnapshotFromServices(services: ComposeServiceState[], coreVer
     return {
       ...version,
       status: "stopped",
+      canReset: true,
       detail: "Atlas Core is initialized and stopped. Durable storage is preserved."
     };
   }
   const failures = unhealthyServices(services, REQUIRED_SERVICES);
-  if (failures.length > 0) return { ...version, status: "degraded", detail: failures.join(", ") };
+  if (failures.length > 0) return { ...version, status: "degraded", canReset: true, detail: failures.join(", ") };
   return {
     ...version,
     status: "ready",
+    canReset: true,
     detail: "Core API, Source Gateway, PostgreSQL, and MinIO are running and healthy."
   };
 }
