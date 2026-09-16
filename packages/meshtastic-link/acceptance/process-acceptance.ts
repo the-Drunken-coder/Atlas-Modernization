@@ -1021,6 +1021,11 @@ function assertCleanLifecycleShutdown(summary: SummaryMessage): void {
   assert.ok(summary.lifecycle_cleanup.configuration_writes > 0, `${summary.mode} exercised configuration writes`);
   assert.ok(summary.lifecycle_cleanup.radio_packets_sent > 0, `${summary.mode} sent application packets`);
   assert.ok(summary.lifecycle_cleanup.radio_packets_received > 0, `${summary.mode} received application packets`);
+  assert.equal(
+    summary.active_resources.after_ipc_disconnect.includes("Timeout"),
+    false,
+    `${summary.mode} referenced timeout resource`
+  );
   assert.equal(summary.active_resources.after_ipc_disconnect.includes("TCPServerWrap"), false);
   assert.equal(summary.active_resources.after_ipc_disconnect.includes("TCPSocketWrap"), false);
 }
