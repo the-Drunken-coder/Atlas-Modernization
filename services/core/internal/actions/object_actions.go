@@ -138,6 +138,15 @@ func persistedObjectBucket(object *models.MediaObject) (string, error) {
 	return "", &storage.StorageError{Message: "stored object is missing bucket metadata"}
 }
 
+func persistedObjectContentType(object *models.MediaObject) (string, error) {
+	if object != nil && object.ContentType != nil {
+		if contentType := strings.TrimSpace(*object.ContentType); contentType != "" {
+			return contentType, nil
+		}
+	}
+	return "", &storage.StorageError{Message: "stored object is missing content type metadata"}
+}
+
 // Get retrieves an object by ID.
 func (a *ObjectActions) Get(ctx context.Context, objectID string) (*models.MediaObject, error) {
 	if err := ValidateObjectID(objectID); err != nil {
@@ -443,13 +452,14 @@ func (a *ObjectActions) Download(ctx context.Context, objectID string) (io.ReadC
 	if err != nil {
 		return nil, "", 0, err
 	}
-	if obj.ContentType == nil || strings.TrimSpace(*obj.ContentType) == "" {
-		return nil, "", 0, &storage.StorageError{Message: "stored object is missing content type metadata"}
+	contentType, err := persistedObjectContentType(obj)
+	if err != nil {
+		return nil, "", 0, err
 	}
 	reader, info, err := a.storage.StreamObjectPath(ctx, objectID, bucket, *obj.Path)
 	if err != nil {
 		return nil, "", 0, err
 	}
 
-	return reader, *obj.ContentType, info.SizeBytes, nil
+	return reader, contentType, info.SizeBytes, nil
 }

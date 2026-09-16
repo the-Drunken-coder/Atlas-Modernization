@@ -87,6 +87,39 @@ func TestPersistedObjectBucketRequiresMetadata(t *testing.T) {
 	}
 }
 
+func TestPersistedObjectContentTypeRequiresMetadata(t *testing.T) {
+	tests := []struct {
+		name    string
+		object  *models.MediaObject
+		want    string
+		wantErr bool
+	}{
+		{
+			name:   "persisted content type",
+			object: &models.MediaObject{ContentType: ptrString(" application/json ")},
+			want:   "application/json",
+		},
+		{name: "nil object", wantErr: true},
+		{name: "missing content type", object: &models.MediaObject{}, wantErr: true},
+		{name: "blank content type", object: &models.MediaObject{ContentType: ptrString("  ")}, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := persistedObjectContentType(tt.object)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("persistedObjectContentType() = %q, want error", got)
+				}
+				return
+			}
+			if err != nil || got != tt.want {
+				t.Fatalf("persistedObjectContentType() = (%q, %v), want (%q, nil)", got, err, tt.want)
+			}
+		})
+	}
+}
+
 func TestDecodeObjectJSONForPatchPreservesLargeIntegers(t *testing.T) {
 	data, err := decodeJSONBlobForPatch(json.RawMessage(`{"size_bytes":9007199254740993,"extra":"patched"}`))
 	if err != nil {
