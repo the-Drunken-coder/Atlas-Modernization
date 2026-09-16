@@ -1,14 +1,44 @@
 package handlers
 
 import (
+	"context"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/the-drunken-coder/atlas/services/core/internal/actions"
 	"github.com/the-drunken-coder/atlas/services/core/internal/storage"
+	"github.com/the-drunken-coder/atlas/services/core/internal/testenv"
 )
+
+type restoredObjectStorage struct{}
+
+func (*restoredObjectStorage) Bucket() string { return "atlas-media" }
+
+func (*restoredObjectStorage) DeleteObjectPath(context.Context, string, string) error { return nil }
+
+func (*restoredObjectStorage) NewObjectPath(objectID string) string {
+	return "objects/" + objectID + "/blob"
+}
+
+func (*restoredObjectStorage) StreamObjectPath(_ context.Context, objectID, bucket, path string) (io.ReadCloser, *storage.ObjectInfo, error) {
+	const body = "restored object body"
+	return io.NopCloser(strings.NewReader(body)), &storage.ObjectInfo{
+		ObjectID:    objectID,
+		Bucket:      bucket,
+		Path:        path,
+		SizeBytes:   int64(len(body)),
+		ContentType: "application/octet-stream",
+	}, nil
+}
+
+func (*restoredObjectStorage) UploadObjectFromReaderToPath(context.Context, string, string, io.Reader, int64, string) (*storage.ObjectInfo, error) {
+	return nil, nil
+}
 
 func TestViewObjectRequiresConfiguredStorage(t *testing.T) {
 	handler := newTestHandler()
@@ -98,6 +128,53 @@ func TestUploadObjectMapsOversizedTypeTo400(t *testing.T) {
 	}
 	if body := decodeBody(t, recorder); body["error_code"] != "VALIDATION_ERROR" {
 		t.Fatalf("error_code = %v, want VALIDATION_ERROR", body["error_code"])
+	}
+}
+
+func TestDownloadObjectUsesPersistedContentTypeAfterStorageMetadataLoss(t *testing.T) {
+	pool := testenv.OpenDatabasePool(t, "ATLAS_ACTIONS_DATABASE_URL", "set ATLAS_ACTIONS_DATABASE_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed object download test")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	objectID := fmt.Sprintf("restored-download-%d", time.Now().UTC().UnixNano())
+	path := "objects/" + objectID + "/blob"
+	objectActions := actions.NewObjectActions(pool, nil)
+	if _, err := objectActions.Create(ctx, actions.CreateObjectParams{ObjectID: objectID}); err != nil {
+		t.Fatalf("create object fixture: %v", err)
+	}
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cleanupCancel()
+		if _, err := pool.Exec(cleanupCtx, `DELETE FROM objects WHERE object_id = $1`, objectID); err != nil {
+			t.Errorf("delete object fixture: %v", err)
+		}
+	})
+
+	const persistedContentType = "application/vnd.atlas.migration-restore"
+	if _, err := pool.Exec(ctx, `
+		UPDATE objects
+		SET path = $2, content_type = $3, json = '{"bucket":"atlas-media","size_bytes":20}'::jsonb
+		WHERE object_id = $1
+	`, objectID, path, persistedContentType); err != nil {
+		t.Fatalf("attach persisted object metadata: %v", err)
+	}
+
+	handler := newTestHandler()
+	handler.storage = &storage.Client{}
+	handler.objectActions = actions.NewObjectActions(pool, &restoredObjectStorage{})
+	recorder := httptest.NewRecorder()
+	request := withURLParam(httptest.NewRequest(http.MethodGet, "/objects/"+objectID+"/download", nil), "object_id", objectID)
+
+	handler.DownloadObject(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.Code)
+	}
+	if got := recorder.Header().Get("Content-Type"); got != persistedContentType {
+		t.Fatalf("Content-Type = %q, want persisted %q", got, persistedContentType)
+	}
+	if got := recorder.Body.String(); got != "restored object body" {
+		t.Fatalf("body = %q, want restored object body", got)
 	}
 }
 
