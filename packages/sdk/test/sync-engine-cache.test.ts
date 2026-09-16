@@ -254,7 +254,8 @@ describe("AtlasClient sync: cache projection and reads", () => {
     core.version = deleteEvent.version;
     await client.changedSince();
 
-    expect(watch).not.toHaveBeenCalled();
+    expect(watch).toHaveBeenCalledTimes(1);
+    expect(watch).toHaveBeenCalledWith(undefined, deleteEvent);
     await expect(client.entities.get(live.entity_id)).rejects.toMatchObject({
       status: 404,
       errorCode: "ENTITY_NOT_FOUND"
@@ -689,6 +690,41 @@ describe("AtlasClient sync: cache projection and reads", () => {
 
     expect(cache.applyPointNotFound(read)).toBe(false);
     expect(cache.value("entity", original.entity_id)).toEqual(recreated);
+  });
+
+  it("keeps an authoritative not-found ahead of delayed same-instance updates", () => {
+    const cache = new ResourceCache();
+    const original = entity("asset-authoritative-not-found");
+    cache.applyPointRead(cache.beginPointRead("entity", original.entity_id), original);
+    const read = cache.beginPointRead("entity", original.entity_id);
+
+    expect(cache.applyPointNotFound(read)).toBe(true);
+    expect(
+      cache.applyFeedEvent({
+        event: "update",
+        resource_type: "entity",
+        id: original.entity_id,
+        version: 2,
+        resource: { ...original, alias: "stale update", metadata: metadata(2) }
+      })
+    ).toBeUndefined();
+    expect(cache.value("entity", original.entity_id)).toBeUndefined();
+
+    const replacement = {
+      ...original,
+      alias: "replacement",
+      metadata: { ...metadata(3), created_at: "2026-09-16T21:00:00Z" }
+    };
+    expect(
+      cache.applyFeedEvent({
+        event: "create",
+        resource_type: "entity",
+        id: original.entity_id,
+        version: 3,
+        resource: replacement
+      })
+    ).toEqual(expect.objectContaining({ resource: replacement }));
+    expect(cache.value("entity", original.entity_id)).toEqual(replacement);
   });
 
   it("keeps an overlapping successful delete when the older request fails", async () => {

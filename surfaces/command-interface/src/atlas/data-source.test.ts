@@ -508,7 +508,9 @@ describe("sdk data source", () => {
       alias: "North boundary",
       components: { geometry }
     };
-    const fetchMock = vi.fn(async () => Response.json(created, { status: 201 }));
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      Response.json(created, { status: 201 })
+    );
     vi.stubGlobal("fetch", fetchMock);
     const dataSource = createSdkDataSource(config);
     const snapshots = vi.fn();
@@ -527,19 +529,26 @@ describe("sdk data source", () => {
         })
       })
     );
+    expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get("Atlas-Resource-Instance-Token")).toBe("geo-new");
     expect(snapshots).toHaveBeenLastCalledWith({ entities: { "geo-new": created }, tasks: {} });
   });
 
   it("deletes Geo Features through the SDK entity API", async () => {
-    const fetchMock = vi.fn(async () => new Response(null, { status: 204 }));
+    const fetchMock = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(null, { status: 204 })
+    );
     vi.stubGlobal("fetch", fetchMock);
     const dataSource = createSdkDataSource(config);
 
     await expect(dataSource.deleteGeofeature?.("geo-1")).resolves.toBeUndefined();
     expect(fetchMock).toHaveBeenCalledWith(
       "https://core.test/entities/geo-1",
-      expect.objectContaining({ method: "DELETE", credentials: "include" })
+      expect.objectContaining({
+        method: "DELETE",
+        credentials: "include"
+      })
     );
+    expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get("Atlas-Resource-Instance-Token")).toBe("geo-1");
   });
 
   it.each(["already absent", "lost response"])(

@@ -5,13 +5,18 @@ import type { AtlasDataSource } from "../../atlas/data-source.js";
 type DeleteState = { entityId?: string; instanceId?: string; error?: string };
 
 export function useGeofeatureDelete(
-  deleteGeofeature: NonNullable<AtlasDataSource["deleteGeofeature"]>,
+  deleteGeofeature: AtlasDataSource["deleteGeofeature"],
   onDeleted: (entityId: string, instanceId: string) => void
 ) {
   const [state, setState] = useState<DeleteState>({});
 
   const remove = async (entityId: string, instanceId: string, displayName: string) => {
-    if ((state.entityId && !state.error) || !window.confirm(`Delete "${displayName}"? This cannot be undone.`)) return;
+    if (
+      !deleteGeofeature ||
+      (state.entityId && !state.error) ||
+      !window.confirm(`Delete "${displayName}"? This cannot be undone.`)
+    )
+      return;
     setState({ entityId, instanceId });
     try {
       await deleteGeofeature(entityId);
@@ -23,6 +28,7 @@ export function useGeofeatureDelete(
   };
 
   return {
+    available: Boolean(deleteGeofeature),
     deleting: (_entityId: string) => Boolean(state.entityId && !state.error),
     error: (entityId: string, instanceId: string) =>
       state.entityId === entityId && state.instanceId === instanceId ? state.error : undefined,

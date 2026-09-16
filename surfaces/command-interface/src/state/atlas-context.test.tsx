@@ -62,9 +62,14 @@ function GeometryActionProbe() {
 function DeleteActionProbe() {
   const atlas = useAtlas();
   return (
-    <button type="button" onClick={() => void atlas.deleteGeofeature?.("geo-1")}>
-      delete
-    </button>
+    <div>
+      <span data-testid="delete-capability">{atlas.deleteGeofeature ? "available" : "unavailable"}</span>
+      {atlas.deleteGeofeature ? (
+        <button type="button" onClick={() => void atlas.deleteGeofeature?.("geo-1")}>
+          delete
+        </button>
+      ) : null}
+    </div>
   );
 }
 
@@ -620,8 +625,21 @@ describe("AtlasProvider", () => {
       </AtlasProvider>
     );
 
-    await screen.findByRole("button", { name: "delete" });
+    expect(await screen.findByTestId("delete-capability")).toHaveTextContent("available");
     fireEvent.click(screen.getByRole("button", { name: "delete" }));
     await waitFor(() => expect(deleteGeofeature).toHaveBeenCalledWith("geo-1"));
+  });
+
+  it("preserves an omitted Geo Feature deletion capability", async () => {
+    const fake = catalogDataSource(async () => []).dataSource;
+
+    render(
+      <AtlasProvider loadConfig={async () => config} createDataSource={() => fake}>
+        <DeleteActionProbe />
+      </AtlasProvider>
+    );
+
+    expect(await screen.findByTestId("delete-capability")).toHaveTextContent("unavailable");
+    expect(screen.queryByRole("button", { name: "delete" })).not.toBeInTheDocument();
   });
 });

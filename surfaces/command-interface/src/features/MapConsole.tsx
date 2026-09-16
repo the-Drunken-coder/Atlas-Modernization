@@ -72,10 +72,6 @@ const SpatialResultsInspector = lazy(() =>
 
 const EMPTY_ENTITY_QUERIES = Object.fromEntries(ENTITY_KINDS.map((kind) => [kind, ""])) as Record<EntityKind, string>;
 const MAX_STALE_DETAIL_REFRESHES = 1;
-const deleteGeofeatureUnavailable = async () => {
-  throw new Error("Geo Feature deletion is unavailable");
-};
-
 type EntityDetailsRequest = {
   entityId: string;
   runtimeManifestVersion?: number;
@@ -309,23 +305,20 @@ export function MapConsole() {
   const creation = useGeofeatureCreate(atlas.createGeofeature, (entity) => {
     dispatch({ type: "selectEntity", kind: "geofeature", id: entity.entity_id, origin: "sidebar" });
   });
-  const deletion = useGeofeatureDelete(
-    atlas.deleteGeofeature ?? deleteGeofeatureUnavailable,
-    (entityId, instanceId) => {
-      const currentSidebar = sidebarRef.current;
-      if (
-        currentSidebar.view.mode !== "inspector" ||
-        currentSidebar.selection?.id !== entityId ||
-        (selectedEntityRef.current && selectedEntityRef.current.metadata.created_at !== instanceId)
-      )
-        return;
-      dispatch({ type: "clearSelection" });
-      dispatch({ type: "openList", list: "geofeatures" });
-      requestAnimationFrame(() =>
-        document.querySelector<HTMLButtonElement>('button[aria-label="Add Geo Feature"]')?.focus()
-      );
-    }
-  );
+  const deletion = useGeofeatureDelete(atlas.deleteGeofeature, (entityId, instanceId) => {
+    const currentSidebar = sidebarRef.current;
+    if (
+      currentSidebar.view.mode !== "inspector" ||
+      currentSidebar.selection?.id !== entityId ||
+      (selectedEntityRef.current && selectedEntityRef.current.metadata.created_at !== instanceId)
+    )
+      return;
+    dispatch({ type: "clearSelection" });
+    dispatch({ type: "openList", list: "geofeatures" });
+    requestAnimationFrame(() =>
+      document.querySelector<HTMLButtonElement>('button[aria-label="Add Geo Feature"]')?.focus()
+    );
+  });
   const { edit, saving, saveError } = geometryEdit;
   const creationGeometry = creation.draft?.geometry;
   const creationReadOnly = Boolean(creation.draft?.drawing || creation.saving);
@@ -843,12 +836,15 @@ function PanelBody(props: PanelBodyProps) {
         onChangeDraft={props.onChangeDraft}
         onSave={props.onSaveEdit}
         onCancel={props.onCancelEdit}
-        onDelete={() =>
-          void props.deletion.remove(
-            selectedEntity.entity_id,
-            selectedEntity.metadata.created_at,
-            entityDisplayName(selectedEntity)
-          )
+        onDelete={
+          props.deletion.available
+            ? () =>
+                void props.deletion.remove(
+                  selectedEntity.entity_id,
+                  selectedEntity.metadata.created_at,
+                  entityDisplayName(selectedEntity)
+                )
+            : undefined
         }
       />
     );

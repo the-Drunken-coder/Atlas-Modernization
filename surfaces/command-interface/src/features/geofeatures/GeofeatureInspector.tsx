@@ -113,16 +113,18 @@ export function GeofeatureInspector(props: GeofeatureInspectorProps) {
 
       <JsonDrawer title="Raw entity JSON" value={entity} />
 
-      <div style={{ marginTop: 20 }}>
-        {deleteError ? (
-          <Callout className="banner banner--error" intent="danger" icon={null} compact style={{ marginBottom: 8 }}>
-            {deleteError}
-          </Callout>
-        ) : null}
-        <Button intent="danger" onClick={onDelete} disabled={deleting || saving || editing}>
-          {deleting ? "Deleting..." : "Delete Geofeature"}
-        </Button>
-      </div>
+      {onDelete ? (
+        <div style={{ marginTop: 20 }}>
+          {deleteError ? (
+            <Callout className="banner banner--error" intent="danger" icon={null} compact style={{ marginBottom: 8 }}>
+              {deleteError}
+            </Callout>
+          ) : null}
+          <Button intent="danger" onClick={onDelete} disabled={deleting || saving || editing}>
+            {deleting ? "Deleting..." : "Delete Geofeature"}
+          </Button>
+        </div>
+      ) : null}
     </div>
   );
 }

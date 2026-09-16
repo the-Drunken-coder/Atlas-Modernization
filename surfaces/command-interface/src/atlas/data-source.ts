@@ -159,12 +159,15 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
 
     async createGeofeature(entityId, name, geometry) {
       try {
-        return await client.entities.create({
-          entity_id: entityId,
-          entity_type: "geofeature",
-          alias: name,
-          components: { geometry }
-        });
+        return await client.entities.create(
+          {
+            entity_id: entityId,
+            entity_type: "geofeature",
+            alias: name,
+            components: { geometry }
+          },
+          { instanceToken: entityId }
+        );
       } catch (cause) {
         if (!isAtlasTransportError(cause) && !(isAtlasAPIError(cause) && (cause.status === 409 || cause.status >= 500)))
           throw cause;
@@ -184,7 +187,7 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
 
     async deleteGeofeature(entityId) {
       try {
-        await client.entities.delete(entityId);
+        await client.entities.delete(entityId, { instanceToken: entityId });
       } catch (cause) {
         if (!isAtlasTransportError(cause) && !(isAtlasAPIError(cause) && cause.status >= 500)) throw cause;
 

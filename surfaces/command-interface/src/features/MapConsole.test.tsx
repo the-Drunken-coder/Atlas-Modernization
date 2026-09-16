@@ -2069,6 +2069,19 @@ describe("MapConsole", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Add Geo Feature" })).toHaveFocus());
   });
 
+  it("hides deletion when the data source omits the capability", async () => {
+    const user = userEvent.setup();
+    const { fake } = makeFakeDataSource();
+    delete fake.deleteGeofeature;
+    renderConsole(fake);
+
+    await screen.findByText("Rover");
+    await user.click(screen.getByRole("button", { name: "Geo Features" }));
+    await user.click(await screen.findByText("Area Alpha"));
+
+    expect(screen.queryByRole("button", { name: "Delete Geofeature" })).not.toBeInTheDocument();
+  });
+
   it("keeps the failed deletion selected and shows a sanitized error", async () => {
     const user = userEvent.setup();
     vi.spyOn(window, "confirm").mockReturnValue(true);

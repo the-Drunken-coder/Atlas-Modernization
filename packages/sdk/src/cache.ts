@@ -185,6 +185,7 @@ export class ResourceCache {
     if (currentEntry !== operation.observedEntry || !currentEntry || currentEntry.deleted) return false;
     this.bumpGeneration(operation.type, operation.id);
     this.markRemoteDelete(operation.type, operation.id, currentEntry.version);
+    this.pendingDeletes.add(resourceCacheKey(operation.type, operation.id));
     return true;
   }
 
@@ -313,7 +314,6 @@ export class ResourceCache {
     this.markRemoteDelete(type, id, previousVersion);
     const key = resourceCacheKey(type, id);
     this.pendingDeletes.add(key);
-    this.locallyNotifiedDeletes.add(key);
     return previousVersion;
   }
 
@@ -337,6 +337,7 @@ export class ResourceCache {
     }
     const previousVersion = this.markLocalDelete(operation.type, operation.id);
     if (!operation.observedEntry) return undefined;
+    this.locallyNotifiedDeletes.add(resourceCacheKey(operation.type, operation.id));
     return {
       event: localDeleteEvent(operation.type, operation.id, previousVersion),
       resource: undefined
