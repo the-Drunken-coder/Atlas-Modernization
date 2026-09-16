@@ -453,12 +453,17 @@ func TestObjectDownloadUsesPersistedBucket(t *testing.T) {
 	path := fmt.Sprintf("objects/%s/blob", objectID)
 	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
 	createStoredObjectFixture(ctx, t, pool, objectID, path)
-	if _, err := pool.Exec(ctx, `UPDATE objects SET json = '{"bucket":"atlas-old"}'::jsonb WHERE object_id = $1`, objectID); err != nil {
-		t.Fatalf("set persisted object bucket: %v", err)
+	const persistedContentType = "application/vnd.atlas.migration-restore"
+	if _, err := pool.Exec(ctx, `
+		UPDATE objects
+		SET content_type = $2, json = '{"bucket":"atlas-old"}'::jsonb
+		WHERE object_id = $1
+	`, objectID, persistedContentType); err != nil {
+		t.Fatalf("set persisted object storage metadata: %v", err)
 	}
 
 	storageClient := &recordingObjectStorage{bucket: "atlas-current"}
-	reader, _, _, err := NewObjectActions(pool, storageClient).Download(ctx, objectID)
+	reader, contentType, _, err := NewObjectActions(pool, storageClient).Download(ctx, objectID)
 	if err != nil {
 		t.Fatalf("Download: %v", err)
 	}
@@ -467,6 +472,9 @@ func TestObjectDownloadUsesPersistedBucket(t *testing.T) {
 	}
 	if len(storageClient.streamedObjects) != 1 || storageClient.streamedObjects[0] != (recordedStorageDelete{bucket: "atlas-old", path: path}) {
 		t.Fatalf("streamed objects = %#v, want atlas-old/%q", storageClient.streamedObjects, path)
+	}
+	if contentType != persistedContentType {
+		t.Fatalf("content type = %q, want persisted %q instead of storage metadata", contentType, persistedContentType)
 	}
 }
 
@@ -705,7 +713,7 @@ func (s *recordingObjectStorage) StreamObjectPath(_ context.Context, objectID, b
 		Bucket:      bucket,
 		Path:        path,
 		SizeBytes:   int64(len("object body")),
-		ContentType: "text/plain",
+		ContentType: "application/octet-stream",
 	}, nil
 }
 

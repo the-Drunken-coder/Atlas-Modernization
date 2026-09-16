@@ -443,10 +443,13 @@ func (a *ObjectActions) Download(ctx context.Context, objectID string) (io.ReadC
 	if err != nil {
 		return nil, "", 0, err
 	}
+	if obj.ContentType == nil || strings.TrimSpace(*obj.ContentType) == "" {
+		return nil, "", 0, &storage.StorageError{Message: "stored object is missing content type metadata"}
+	}
 	reader, info, err := a.storage.StreamObjectPath(ctx, objectID, bucket, *obj.Path)
 	if err != nil {
 		return nil, "", 0, err
 	}
 
-	return reader, info.ContentType, info.SizeBytes, nil
+	return reader, *obj.ContentType, info.SizeBytes, nil
 }
