@@ -81,9 +81,12 @@ export function isAtlasTransportError(
   );
 }
 
-export function isAtlasAPIError(
-  error: unknown
-): error is { readonly code: "ATLAS_API_ERROR"; readonly message: string; readonly status: number } {
+export function isAtlasAPIError(error: unknown): error is {
+  readonly code: "ATLAS_API_ERROR";
+  readonly message: string;
+  readonly status: number;
+  readonly errorCode?: string;
+} {
   return (
     typeof error === "object" &&
     error !== null &&

@@ -291,6 +291,8 @@ export function MapConsole() {
           : selectedSnapshotEntity,
     [selectedSnapshotEntity, selectedDetails, commandDetailsRequired]
   );
+  const selectedEntityRef = useRef(selectedEntity);
+  selectedEntityRef.current = selectedEntity;
   const selectedId = selection?.id;
   const commandFlow = useCommandFlow({
     catalog,
@@ -307,12 +309,20 @@ export function MapConsole() {
   const creation = useGeofeatureCreate(atlas.createGeofeature, (entity) => {
     dispatch({ type: "selectEntity", kind: "geofeature", id: entity.entity_id, origin: "sidebar" });
   });
-  const deletion = useGeofeatureDelete(atlas.deleteGeofeature ?? deleteGeofeatureUnavailable, (entityId) => {
-    const currentSidebar = sidebarRef.current;
-    if (currentSidebar.view.mode !== "inspector" || currentSidebar.selection?.id !== entityId) return;
-    dispatch({ type: "clearSelection" });
-    dispatch({ type: "openList", list: "geofeatures" });
-  });
+  const deletion = useGeofeatureDelete(
+    atlas.deleteGeofeature ?? deleteGeofeatureUnavailable,
+    (entityId, instanceId) => {
+      const currentSidebar = sidebarRef.current;
+      if (
+        currentSidebar.view.mode !== "inspector" ||
+        currentSidebar.selection?.id !== entityId ||
+        (selectedEntityRef.current && selectedEntityRef.current.metadata.created_at !== instanceId)
+      )
+        return;
+      dispatch({ type: "clearSelection" });
+      dispatch({ type: "openList", list: "geofeatures" });
+    }
+  );
   const { edit, saving, saveError } = geometryEdit;
   const creationGeometry = creation.draft?.geometry;
   const creationReadOnly = Boolean(creation.draft?.drawing || creation.saving);
@@ -825,12 +835,18 @@ function PanelBody(props: PanelBodyProps) {
         saving={props.saving}
         saveError={props.saveError}
         deleting={props.deletion.deleting(selectedEntity.entity_id)}
-        deleteError={props.deletion.error(selectedEntity.entity_id)}
+        deleteError={props.deletion.error(selectedEntity.entity_id, selectedEntity.metadata.created_at)}
         onStartEdit={props.onStartEdit}
         onChangeDraft={props.onChangeDraft}
         onSave={props.onSaveEdit}
         onCancel={props.onCancelEdit}
-        onDelete={() => void props.deletion.remove(selectedEntity.entity_id, entityDisplayName(selectedEntity))}
+        onDelete={() =>
+          void props.deletion.remove(
+            selectedEntity.entity_id,
+            selectedEntity.metadata.created_at,
+            entityDisplayName(selectedEntity)
+          )
+        }
       />
     );
   }

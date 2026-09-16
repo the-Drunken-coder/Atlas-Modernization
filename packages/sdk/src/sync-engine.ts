@@ -411,8 +411,7 @@ export class SyncEngine {
         options?.signal
       );
     } catch (error) {
-      if (error instanceof AtlasAPIError && error.status === 404)
-        this.deliverChange(this.cache.applyPointNotFound(pointRead));
+      if (isResourceNotFound(error, "entity") && this.cache.applyPointNotFound(pointRead)) this.notifySnapshot();
       throw error;
     }
     assertExpectedResourceID("entity", id, entity);
@@ -553,7 +552,7 @@ export class SyncEngine {
         resourceInstanceTokenHeaders(options?.instanceToken)
       );
     } catch (error) {
-      if (error instanceof AtlasAPIError && error.status === 404) {
+      if (isResourceNotFound(error, type)) {
         this.deliverChange(this.cache.finishLocalDelete(localDelete));
         return;
       }
@@ -891,6 +890,14 @@ export class SyncEngine {
       }
     }
   }
+}
+
+function isResourceNotFound(error: unknown, type: DeletableResourceType): error is AtlasAPIError {
+  return (
+    error instanceof AtlasAPIError &&
+    error.status === 404 &&
+    error.errorCode === (type === "entity" ? "ENTITY_NOT_FOUND" : "OBJECT_NOT_FOUND")
+  );
 }
 
 function fullDatasetPath(cursors: FullDatasetCursors): string {

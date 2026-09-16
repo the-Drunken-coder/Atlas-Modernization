@@ -201,12 +201,15 @@ describe("AtlasClient sync: cache projection and reads", () => {
     const core = new FakeCore();
     const original = core.upsertEntity(entity("asset-missing-on-read"));
     const client = createAtlasClient(core);
+    const watch = vi.fn();
+    client.entities.watch(original.entity_id, watch);
 
     await expect(client.entities.get(original.entity_id)).resolves.toEqual(original);
     core.deleteEntity(original.entity_id);
 
     await expect(client.entities.get(original.entity_id, { fresh: true })).rejects.toMatchObject({ status: 404 });
     expect(client.sync.snapshot().entities[original.entity_id]).toBeUndefined();
+    expect(watch).not.toHaveBeenCalled();
   });
 
   it("does not publish another deletion when an absent cached resource is deleted", async () => {
@@ -668,6 +671,24 @@ describe("AtlasClient sync: cache projection and reads", () => {
     cache.replaceHydratedResources({ entities: [recreated], tasks: [], objects: [] });
 
     expect(cache.finishLocalDelete(deletion)).toBeUndefined();
+    expect(cache.value("entity", original.entity_id)).toEqual(recreated);
+  });
+
+  it("does not let a delayed not-found result evict a newer cache entry", () => {
+    const cache = new ResourceCache();
+    const original = entity("asset-read-recreated");
+    cache.applyPointRead(cache.beginPointRead("entity", original.entity_id), original);
+    const read = cache.beginPointRead("entity", original.entity_id);
+    const recreated = { ...original, alias: "replacement", metadata: metadata(2) };
+    cache.applyWrite({
+      event: "update",
+      resource_type: "entity",
+      id: recreated.entity_id,
+      version: recreated.metadata.version,
+      resource: recreated
+    });
+
+    expect(cache.applyPointNotFound(read)).toBe(false);
     expect(cache.value("entity", original.entity_id)).toEqual(recreated);
   });
 

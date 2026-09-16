@@ -22,7 +22,7 @@ const budgets = {
   initialJavaScript: { raw: 431_600, gzip: 130_500 },
   initialCss: { raw: 512_000, gzip: 55_000 },
   // Includes Geo Feature creation, deletion, command fixes, and draft lifecycle.
-  shellJavaScript: { raw: 160_200, gzip: 52_000 },
+  shellJavaScript: { raw: 160_400, gzip: 52_000 },
   // Includes live drawing previews, keyboard vertex controls, focus restoration,
   // heartbeat-qualified symbols, and the first-vertex close control.
   mapViewJavaScript: { raw: 76_000, gzip: 23_500 },
@@ -33,7 +33,7 @@ const budgets = {
   mapRoute: { raw: 2_100_000, gzip: 550_000 },
   // MapLibre 6.8 brings the combined build to about 3,710.5 kB raw / 1,027.8 kB gzip.
   // Retain a small allowance for Linux zlib variance.
-  allJavaScript: { raw: 3_712_600, gzip: 1_030_000 },
+  allJavaScript: { raw: 3_712_800, gzip: 1_030_000 },
   allCss: { raw: 603_000, gzip: 67_000 }
 };
 

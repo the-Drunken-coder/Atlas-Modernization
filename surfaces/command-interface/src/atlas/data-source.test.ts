@@ -549,7 +549,7 @@ describe("sdk data source", () => {
         if (failure === "lost response" && fetchMock.mock.calls.length === 1) {
           throw new TypeError("Connection lost after commit");
         }
-        return Response.json({ error: "Not found" }, { status: 404 });
+        return Response.json({ success: false, message: "Not found", error_code: "ENTITY_NOT_FOUND" }, { status: 404 });
       });
       vi.stubGlobal("fetch", fetchMock);
       const dataSource = createSdkDataSource(config);
@@ -558,6 +558,16 @@ describe("sdk data source", () => {
       expect(fetchMock).toHaveBeenCalledTimes(failure === "lost response" ? 2 : 1);
     }
   );
+
+  it("does not treat an unrelated route 404 as successful deletion", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({ error: "wrong route" }, { status: 404 }))
+    );
+    const dataSource = createSdkDataSource(config);
+
+    await expect(dataSource.deleteGeofeature?.("geo-1")).rejects.toMatchObject({ status: 404 });
+  });
 
   it.each(["lost response", "conflict", "server error"])("recovers a committed create after %s", async (failure) => {
     const geometry: UiGeometry = { type: "Point", coordinates: [-71, 42] };

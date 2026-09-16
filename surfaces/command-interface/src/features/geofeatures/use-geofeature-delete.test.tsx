@@ -17,7 +17,7 @@ describe("useGeofeatureDelete", () => {
 
     let request!: Promise<void>;
     act(() => {
-      request = result.current.remove("geo-1", "Zone Alpha");
+      request = result.current.remove("geo-1", "created-1", "Zone Alpha");
     });
     expect(confirm).toHaveBeenCalledWith('Delete "Zone Alpha"? This cannot be undone.');
     expect(result.current.deleting("geo-1")).toBe(true);
@@ -26,10 +26,10 @@ describe("useGeofeatureDelete", () => {
 
     await act(async () => finish());
     await request;
-    expect(onDeleted).toHaveBeenCalledWith("geo-1");
+    expect(onDeleted).toHaveBeenCalledWith("geo-1", "created-1");
     expect(result.current.deleting("geo-1")).toBe(false);
 
-    await act(() => result.current.remove("geo-2", "Zone Bravo"));
+    await act(() => result.current.remove("geo-2", "created-2", "Zone Bravo"));
     expect(removeEntity).toHaveBeenLastCalledWith("geo-2");
   });
 
@@ -45,9 +45,10 @@ describe("useGeofeatureDelete", () => {
       )
     );
 
-    await act(() => result.current.remove("geo-1", "Zone Alpha"));
+    await act(() => result.current.remove("geo-1", "created-1", "Zone Alpha"));
     expect(result.current.deleting("geo-1")).toBe(false);
-    expect(result.current.error("geo-1")).toBe("request failed: Bearer [redacted]");
+    expect(result.current.error("geo-1", "created-1")).toBe("request failed: Bearer [redacted]");
+    expect(result.current.error("geo-1", "created-2")).toBeUndefined();
     expect(onDeleted).not.toHaveBeenCalled();
   });
 });

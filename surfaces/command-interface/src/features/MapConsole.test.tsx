@@ -2123,4 +2123,29 @@ describe("MapConsole", () => {
     act(() => deletion.resolve());
     await waitFor(() => expect(document.querySelector(".panel__title")).toHaveTextContent("Assets"));
   });
+
+  it("preserves a same-ID replacement when deletion finishes", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const deletion = deferred<void>();
+    const { fake, emit } = makeFakeDataSource();
+    fake.deleteGeofeature = () => deletion.promise;
+    renderConsole(fake);
+
+    await screen.findByText("Rover");
+    await user.click(screen.getByRole("button", { name: "Geo Features" }));
+    await user.click(await screen.findByText("Area Alpha"));
+    await user.click(screen.getByRole("button", { name: "Delete Geofeature" }));
+    const replacement = {
+      ...area,
+      alias: "Replacement Area",
+      metadata: { ...area.metadata, created_at: "2026-09-16T21:00:00Z", version: 2 }
+    };
+    act(() => emit({ entities: { [rover.entity_id]: rover, [replacement.entity_id]: replacement }, tasks: {} }));
+    expect(await screen.findByText("Replacement Area")).toBeInTheDocument();
+
+    act(() => deletion.resolve());
+    expect(screen.getByText("Replacement Area")).toBeInTheDocument();
+    expect(screen.getByText("Geo Feature")).toBeInTheDocument();
+  });
 });
