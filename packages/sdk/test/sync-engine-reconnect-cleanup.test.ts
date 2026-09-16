@@ -396,17 +396,18 @@ describe("AtlasClient sync: polling, reconnect timers, and cleanup", () => {
 
   it("emits a local delete notification without fabricating a feed version", async () => {
     const core = new FakeCore();
-    core.upsertEntity(entity("asset-delete-uncached"));
+    core.upsertEntity(entity("asset-delete-notification"));
     const client = createAtlasClient(core, {
       WebSocket: core.attachWebSocketGlobal(),
       sync: "all",
       pollIntervalMs: 0
     });
     await client.connectFeed();
+    await client.entities.get("asset-delete-notification");
     const watch = vi.fn();
-    client.watch({ filter: "id", resource_type: "entity", id: "asset-delete-uncached" }, watch);
+    client.watch({ filter: "id", resource_type: "entity", id: "asset-delete-notification" }, watch);
 
-    await client.entities.delete("asset-delete-uncached");
+    await client.entities.delete("asset-delete-notification");
     const deleteEvent = core.deleteEvents.at(-1);
     if (!deleteEvent) throw new Error("fake core did not record delete event");
     core.emit(deleteEvent, { record: false });
@@ -416,7 +417,8 @@ describe("AtlasClient sync: polling, reconnect timers, and cleanup", () => {
     expect(watch.mock.calls[0][1]).toEqual({
       event: "local_delete",
       resource_type: "entity",
-      id: "asset-delete-uncached"
+      id: "asset-delete-notification",
+      previous_version: 1
     });
     expect(watch.mock.calls[0][1]).not.toHaveProperty("version");
   });

@@ -400,14 +400,20 @@ export class SyncEngine {
       return cached;
     }
     const pointRead = this.cache.beginPointRead("entity", id);
-    const entity = await this.transport.json(
-      "GET",
-      `/entities/${encodeURIComponent(id)}`,
-      isEntityResource,
-      undefined,
-      undefined,
-      options?.signal
-    );
+    let entity: EntityResource;
+    try {
+      entity = await this.transport.json(
+        "GET",
+        `/entities/${encodeURIComponent(id)}`,
+        isEntityResource,
+        undefined,
+        undefined,
+        options?.signal
+      );
+    } catch (error) {
+      if (isResourceNotFound(error, "entity") && this.cache.applyPointNotFound(pointRead)) this.notifySnapshot();
+      throw error;
+    }
     assertExpectedResourceID("entity", id, entity);
     if (this.cache.applyPointRead(pointRead, entity)) this.notifySnapshot();
     return entity;
@@ -546,10 +552,14 @@ export class SyncEngine {
         resourceInstanceTokenHeaders(options?.instanceToken)
       );
     } catch (error) {
+      if (isResourceNotFound(error, type)) {
+        this.deliverChange(this.cache.finishLocalDelete(localDelete, "not_found"));
+        return;
+      }
       this.cache.cancelLocalDelete(localDelete);
       throw error;
     }
-    this.deliverChange(this.cache.finishLocalDelete(localDelete));
+    this.deliverChange(this.cache.finishLocalDelete(localDelete, "deleted"));
   }
 
   private async startSyncFromStopped(generation: number): Promise<void> {
@@ -880,6 +890,14 @@ export class SyncEngine {
       }
     }
   }
+}
+
+function isResourceNotFound(error: unknown, type: DeletableResourceType): error is AtlasAPIError {
+  return (
+    error instanceof AtlasAPIError &&
+    error.status === 404 &&
+    error.errorCode === (type === "entity" ? "ENTITY_NOT_FOUND" : "OBJECT_NOT_FOUND")
+  );
 }
 
 function fullDatasetPath(cursors: FullDatasetCursors): string {

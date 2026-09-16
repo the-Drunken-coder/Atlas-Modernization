@@ -182,6 +182,52 @@ describe("AtlasClient sync: cache projection and reads", () => {
     await expect(client.entities.get("asset-recreated")).resolves.toEqual(recreated);
   });
 
+  it("evicts a cached resource when deletion confirms it is already absent", async () => {
+    const core = new FakeCore();
+    const original = core.upsertEntity(entity("asset-already-deleted"));
+    const client = createAtlasClient(core);
+    const snapshots = vi.fn();
+    client.sync.watchSnapshot(snapshots);
+
+    await expect(client.entities.get(original.entity_id)).resolves.toEqual(original);
+    core.deleteEntity(original.entity_id);
+
+    await expect(client.entities.delete(original.entity_id)).resolves.toBeUndefined();
+    expect(client.sync.snapshot().entities[original.entity_id]).toBeUndefined();
+    expect(snapshots).toHaveBeenLastCalledWith(expect.objectContaining({ entities: {} }));
+  });
+
+  it("evicts a cached resource when a fresh read confirms it is absent", async () => {
+    const core = new FakeCore();
+    const original = core.upsertEntity(entity("asset-missing-on-read"));
+    const client = createAtlasClient(core);
+    const watch = vi.fn();
+    client.entities.watch(original.entity_id, watch);
+
+    await expect(client.entities.get(original.entity_id)).resolves.toEqual(original);
+    core.deleteEntity(original.entity_id);
+
+    await expect(client.entities.get(original.entity_id, { fresh: true })).rejects.toMatchObject({ status: 404 });
+    expect(client.sync.snapshot().entities[original.entity_id]).toBeUndefined();
+    expect(watch).not.toHaveBeenCalled();
+  });
+
+  it("does not publish another deletion when an absent cached resource is deleted", async () => {
+    const core = new FakeCore();
+    const original = core.upsertEntity(entity("asset-delete-already-observed"));
+    const client = createAtlasClient(core, { sync: "all", pollIntervalMs: 0 });
+    await client.sync.start();
+    const snapshots = vi.fn();
+    client.sync.watchSnapshot(snapshots);
+
+    core.deleteEntity(original.entity_id);
+    await client.changedSince();
+    snapshots.mockClear();
+
+    await expect(client.entities.delete(original.entity_id)).resolves.toBeUndefined();
+    expect(snapshots).not.toHaveBeenCalled();
+  });
+
   it("does not let stale changed-since recovery resurrect an uncached local delete", async () => {
     const core = new FakeCore();
     const client = createAtlasClient(core, { sync: "all", pollIntervalMs: 0 });
@@ -198,8 +244,7 @@ describe("AtlasClient sync: cache projection and reads", () => {
 
     await client.changedSince();
 
-    expect(watch).toHaveBeenCalledTimes(1);
-    expect(watch.mock.calls[0][1]).toEqual({ event: "local_delete", resource_type: "entity", id: live.entity_id });
+    expect(watch).not.toHaveBeenCalled();
     await expect(client.entities.get(live.entity_id)).rejects.toMatchObject({
       status: 404,
       errorCode: "ENTITY_NOT_FOUND"
@@ -210,6 +255,7 @@ describe("AtlasClient sync: cache projection and reads", () => {
     await client.changedSince();
 
     expect(watch).toHaveBeenCalledTimes(1);
+    expect(watch).toHaveBeenCalledWith(undefined, deleteEvent);
     await expect(client.entities.get(live.entity_id)).rejects.toMatchObject({
       status: 404,
       errorCode: "ENTITY_NOT_FOUND"
@@ -624,8 +670,103 @@ describe("AtlasClient sync: cache projection and reads", () => {
 
     cache.replaceHydratedResources({ entities: [recreated], tasks: [], objects: [] });
 
-    expect(cache.finishLocalDelete(deletion)).toBeUndefined();
+    expect(cache.finishLocalDelete(deletion, "deleted")).toBeUndefined();
     expect(cache.value("entity", original.entity_id)).toEqual(recreated);
+  });
+
+  it("evicts a resource cached during a successful delete that began from a tombstone", () => {
+    const cache = new ResourceCache();
+    const original = entity("asset-tombstone-delete");
+    cache.applyPointRead(cache.beginPointRead("entity", original.entity_id), original);
+    cache.applyPointNotFound(cache.beginPointRead("entity", original.entity_id));
+    const deletion = cache.beginLocalDelete("entity", original.entity_id);
+    const replacement = {
+      ...original,
+      alias: "replacement",
+      metadata: { ...metadata(2), created_at: "2026-09-16T21:00:00Z" }
+    };
+    cache.applyPointRead(cache.beginPointRead("entity", replacement.entity_id), replacement);
+
+    expect(cache.finishLocalDelete(deletion, "deleted")).toEqual({
+      event: {
+        event: "local_delete",
+        resource_type: "entity",
+        id: original.entity_id,
+        previous_version: 2
+      },
+      resource: undefined
+    });
+    expect(cache.value("entity", original.entity_id)).toBeUndefined();
+  });
+
+  it("keeps a resource cached during a not-found delete that began from a tombstone", () => {
+    const cache = new ResourceCache();
+    const original = entity("asset-tombstone-not-found");
+    cache.applyPointRead(cache.beginPointRead("entity", original.entity_id), original);
+    cache.applyPointNotFound(cache.beginPointRead("entity", original.entity_id));
+    const deletion = cache.beginLocalDelete("entity", original.entity_id);
+    const replacement = {
+      ...original,
+      alias: "replacement",
+      metadata: { ...metadata(2), created_at: "2026-09-16T21:00:00Z" }
+    };
+    cache.applyPointRead(cache.beginPointRead("entity", replacement.entity_id), replacement);
+
+    expect(cache.finishLocalDelete(deletion, "not_found")).toBeUndefined();
+    expect(cache.value("entity", original.entity_id)).toEqual(replacement);
+  });
+
+  it("does not let a delayed not-found result evict a newer cache entry", () => {
+    const cache = new ResourceCache();
+    const original = entity("asset-read-recreated");
+    cache.applyPointRead(cache.beginPointRead("entity", original.entity_id), original);
+    const read = cache.beginPointRead("entity", original.entity_id);
+    const recreated = { ...original, alias: "replacement", metadata: metadata(2) };
+    cache.applyWrite({
+      event: "update",
+      resource_type: "entity",
+      id: recreated.entity_id,
+      version: recreated.metadata.version,
+      resource: recreated
+    });
+
+    expect(cache.applyPointNotFound(read)).toBe(false);
+    expect(cache.value("entity", original.entity_id)).toEqual(recreated);
+  });
+
+  it("keeps an authoritative not-found ahead of delayed same-instance updates", () => {
+    const cache = new ResourceCache();
+    const original = entity("asset-authoritative-not-found");
+    cache.applyPointRead(cache.beginPointRead("entity", original.entity_id), original);
+    const read = cache.beginPointRead("entity", original.entity_id);
+
+    expect(cache.applyPointNotFound(read)).toBe(true);
+    expect(
+      cache.applyFeedEvent({
+        event: "update",
+        resource_type: "entity",
+        id: original.entity_id,
+        version: 2,
+        resource: { ...original, alias: "stale update", metadata: metadata(2) }
+      })
+    ).toBeUndefined();
+    expect(cache.value("entity", original.entity_id)).toBeUndefined();
+
+    const replacement = {
+      ...original,
+      alias: "replacement",
+      metadata: { ...metadata(3), created_at: "2026-09-16T21:00:00Z" }
+    };
+    expect(
+      cache.applyFeedEvent({
+        event: "create",
+        resource_type: "entity",
+        id: original.entity_id,
+        version: 3,
+        resource: replacement
+      })
+    ).toEqual(expect.objectContaining({ resource: replacement }));
+    expect(cache.value("entity", original.entity_id)).toEqual(replacement);
   });
 
   it("keeps an overlapping successful delete when the older request fails", async () => {

@@ -238,6 +238,7 @@ function makeFakeDataSource(geofeature: EntityResource = area, health: Connectio
   let notify: ((snapshot: AtlasSnapshot) => void) | undefined;
   const submissions: CommandSubmission[] = [];
   const geometryUpdates: Array<{ entityId: string; geometry: UiGeometry; ifMatchVersion?: number }> = [];
+  const deletions: string[] = [];
   const fake: AtlasDataSource = {
     snapshot() {
       return current;
@@ -276,6 +277,12 @@ function makeFakeDataSource(geofeature: EntityResource = area, health: Connectio
       notify?.(current);
       return created;
     },
+    async deleteGeofeature(entityId) {
+      deletions.push(entityId);
+      const { [entityId]: _deleted, ...entities } = current.entities;
+      current = { ...current, entities };
+      notify?.(current);
+    },
     async updateGeometry(entityId, geometry, ifMatchVersion) {
       geometryUpdates.push({ entityId, geometry, ifMatchVersion });
       const updated = {
@@ -293,6 +300,7 @@ function makeFakeDataSource(geofeature: EntityResource = area, health: Connectio
     fake,
     submissions,
     geometryUpdates,
+    deletions,
     emit: (snapshot: AtlasSnapshot) => {
       current = snapshot;
       notify?.(snapshot);
@@ -2040,5 +2048,118 @@ describe("MapConsole", () => {
     expect(await screen.findByText("This item is no longer available.")).toBeInTheDocument();
     await waitFor(() => expect(screen.getByTestId("map")).toHaveAttribute("data-editing", "false"));
     expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
+  });
+
+  it("deletes the selected Geo Feature and returns to its updated list", async () => {
+    const user = userEvent.setup();
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const { fake, deletions } = makeFakeDataSource();
+    renderConsole(fake);
+
+    await screen.findByText("Rover");
+    await user.click(screen.getByRole("button", { name: "Geo Features" }));
+    await user.click(await screen.findByText("Area Alpha"));
+    await user.click(screen.getByRole("button", { name: "Delete Geofeature" }));
+
+    expect(confirm).toHaveBeenCalledWith('Delete "Area Alpha"? This cannot be undone.');
+    await waitFor(() => expect(deletions).toEqual(["geo-1"]));
+    expect(document.querySelector(".panel__title")).toHaveTextContent("Geo Features");
+    expect(screen.queryByText("Area Alpha")).not.toBeInTheDocument();
+    expect(screen.getByText("No geo features yet")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Add Geo Feature" })).toHaveFocus());
+  });
+
+  it("hides deletion when the data source omits the capability", async () => {
+    const user = userEvent.setup();
+    const { fake } = makeFakeDataSource();
+    delete fake.deleteGeofeature;
+    renderConsole(fake);
+
+    await screen.findByText("Rover");
+    await user.click(screen.getByRole("button", { name: "Geo Features" }));
+    await user.click(await screen.findByText("Area Alpha"));
+
+    expect(screen.queryByRole("button", { name: "Delete Geofeature" })).not.toBeInTheDocument();
+  });
+
+  it("keeps the failed deletion selected and shows a sanitized error", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const { fake } = makeFakeDataSource();
+    fake.deleteGeofeature = async () => {
+      throw new Error("delete failed: Bearer private-token");
+    };
+    renderConsole(fake);
+
+    await screen.findByText("Rover");
+    await user.click(screen.getByRole("button", { name: "Geo Features" }));
+    await user.click(await screen.findByText("Area Alpha"));
+    await user.click(screen.getByRole("button", { name: "Delete Geofeature" }));
+
+    expect(await screen.findByText("delete failed: Bearer [redacted]")).toBeInTheDocument();
+    expect(screen.getByText("Geo Feature")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Delete Geofeature" })).toBeEnabled();
+  });
+
+  it("preserves a newer selection when deletion finishes", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const deletion = deferred<void>();
+    const { fake } = makeFakeDataSource();
+    fake.deleteGeofeature = () => deletion.promise;
+    renderConsole(fake);
+
+    await screen.findByText("Rover");
+    await user.click(screen.getByRole("button", { name: "Geo Features" }));
+    await user.click(await screen.findByText("Area Alpha"));
+    await user.click(screen.getByRole("button", { name: "Delete Geofeature" }));
+    await user.click(screen.getByTestId("map-marker-select"));
+
+    act(() => deletion.resolve());
+    expect(await screen.findByText("Asset")).toBeInTheDocument();
+    expect(screen.queryByText("No geo features yet")).not.toBeInTheDocument();
+  });
+
+  it("preserves newer list navigation when deletion finishes", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const deletion = deferred<void>();
+    const { fake } = makeFakeDataSource();
+    fake.deleteGeofeature = () => deletion.promise;
+    renderConsole(fake);
+
+    await screen.findByText("Rover");
+    await user.click(screen.getByRole("button", { name: "Geo Features" }));
+    await user.click(await screen.findByText("Area Alpha"));
+    await user.click(screen.getByRole("button", { name: "Delete Geofeature" }));
+    await user.click(screen.getByRole("button", { name: "Assets" }));
+
+    act(() => deletion.resolve());
+    await waitFor(() => expect(document.querySelector(".panel__title")).toHaveTextContent("Assets"));
+  });
+
+  it("preserves a same-ID replacement when deletion finishes", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const deletion = deferred<void>();
+    const { fake, emit } = makeFakeDataSource();
+    fake.deleteGeofeature = () => deletion.promise;
+    renderConsole(fake);
+
+    await screen.findByText("Rover");
+    await user.click(screen.getByRole("button", { name: "Geo Features" }));
+    await user.click(await screen.findByText("Area Alpha"));
+    await user.click(screen.getByRole("button", { name: "Delete Geofeature" }));
+    const replacement = {
+      ...area,
+      alias: "Replacement Area",
+      metadata: { ...area.metadata, created_at: "2026-09-16T21:00:00Z", version: 2 }
+    };
+    act(() => emit({ entities: { [rover.entity_id]: rover, [replacement.entity_id]: replacement }, tasks: {} }));
+    expect(await screen.findByText("Replacement Area")).toBeInTheDocument();
+
+    act(() => deletion.resolve());
+    expect(screen.getByText("Replacement Area")).toBeInTheDocument();
+    expect(screen.getByText("Geo Feature")).toBeInTheDocument();
   });
 });

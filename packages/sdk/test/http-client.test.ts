@@ -1520,6 +1520,7 @@ describe("AtlasClient HTTP", () => {
     expect(failure).toBeInstanceOf(AtlasAPIError);
     expect(failure).toMatchObject({ code: "ATLAS_API_ERROR" });
     expect(isAtlasAPIError(failure)).toBe(true);
+    expect(isAtlasAPIError({ code: "ATLAS_API_ERROR", message: "bad", status: 404, errorCode: 7 })).toBe(false);
   });
 
   it("surfaces successful invalid JSON responses as JSON parse failures", async () => {

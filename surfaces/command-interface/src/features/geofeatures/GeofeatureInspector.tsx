@@ -30,14 +30,30 @@ export type GeofeatureInspectorProps = {
   draft?: UiGeometry;
   saving: boolean;
   saveError?: string;
+  deleting?: boolean;
+  deleteError?: string;
   onStartEdit: () => void;
   onChangeDraft: (geometry: UiGeometry) => void;
   onSave: () => void;
   onCancel: () => void;
+  onDelete?: () => void;
 };
 
 export function GeofeatureInspector(props: GeofeatureInspectorProps) {
-  const { entity, editing, draft, saving, saveError, onStartEdit, onChangeDraft, onSave, onCancel } = props;
+  const {
+    entity,
+    editing,
+    draft,
+    saving,
+    saveError,
+    deleting,
+    deleteError,
+    onStartEdit,
+    onChangeDraft,
+    onSave,
+    onCancel,
+    onDelete
+  } = props;
   const classification = entityClassification(entity);
   const geometry = editing ? draft : entityGeometry(entity);
   const validity = geometry ? validateGeometry(geometry) : undefined;
@@ -50,7 +66,7 @@ export function GeofeatureInspector(props: GeofeatureInspectorProps) {
         title="Geometry"
         actions={
           editing ? null : (
-            <Button variant="ghost" onClick={onStartEdit} disabled={!geometry}>
+            <Button variant="ghost" onClick={onStartEdit} disabled={!geometry || deleting}>
               Edit
             </Button>
           )
@@ -96,6 +112,19 @@ export function GeofeatureInspector(props: GeofeatureInspectorProps) {
       </Section>
 
       <JsonDrawer title="Raw entity JSON" value={entity} />
+
+      {onDelete ? (
+        <div style={{ marginTop: 20 }}>
+          {deleteError ? (
+            <Callout className="banner banner--error" intent="danger" icon={null} compact style={{ marginBottom: 8 }}>
+              {deleteError}
+            </Callout>
+          ) : null}
+          <Button intent="danger" onClick={onDelete} disabled={deleting || saving || editing}>
+            {deleting ? "Deleting..." : "Delete Geofeature"}
+          </Button>
+        </div>
+      ) : null}
     </div>
   );
 }
