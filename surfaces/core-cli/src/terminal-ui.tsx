@@ -2553,10 +2553,13 @@ function PluginUpdateReview({
 }
 
 function pluginCatalogAvailability(plan: PluginUpdatePlan): string {
-  if (plan.status === "available" || (plan.status === "blocked" && plan.targetVersion)) {
+  if (plan.status === "available") {
     return `${plan.targetVersion} compatible ${plan.action === "replacement" ? "replacement" : "update"}`;
   }
   if (plan.status === "current") return "Current; no compatible replacement";
+  if (plan.status === "blocked" && plan.targetVersion) {
+    return `${plan.targetVersion} ${plan.action === "replacement" ? "replacement" : "update"} blocked`;
+  }
   if (/incompatible|no compatible/iu.test(plan.reason)) return "No compatible replacement";
   return "Availability unavailable";
 }

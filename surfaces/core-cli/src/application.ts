@@ -1762,8 +1762,16 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
           }
           const result = await manager.update(id, resolved.candidates);
           if (result.changed) updated.push(id);
-          if (reportActivity) reportActivity({ level: "success", message: result.message, stage: "operation" });
-          else this.#stdout.write(`${result.message}\n`);
+          if (reportActivity) {
+            reportActivity({
+              level: "success",
+              message:
+                reviewedPlan?.action === "replacement" && candidate
+                  ? `${selection.current.displayName} replaced with ${candidate.version}.`
+                  : result.message,
+              stage: "operation"
+            });
+          } else this.#stdout.write(`${result.message}\n`);
         } catch (error) {
           reportActivity?.({ level: "failure", message: `Update stopped: ${errorMessage(error)}`, stage: "operation" });
           reportActivity?.(

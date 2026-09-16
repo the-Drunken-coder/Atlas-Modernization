@@ -516,7 +516,6 @@ export function createPreviewOperator(
         throw new Error(`The reviewed Plugin target changed from ${reviewedPlan.targetVersion} to ${nextVersion}.`);
       }
       if (installed.selectedVersion === nextVersion) return { status: "success" };
-      cancellationRequested = false;
       reportActivity?.({
         level: "working",
         message: `Installing ${plugin.displayName} ${nextVersion}`,

@@ -2245,7 +2245,7 @@ describe("Atlas Core terminal UI", () => {
       expect.any(Function),
       expect.objectContaining({ currentVersion: "1.0.0", targetVersion: "1.1.0" })
     );
-    expect(await deployment.details()).toMatchObject({ coreVersion: coreBefore.coreVersion, image: coreBefore.image });
+    expectNoCoreMutation(deployment);
     terminal.write("\r");
     await vi.waitFor(() => expect(deployment.pluginStatuses).toHaveBeenCalledTimes(3));
     terminal.write("q");
@@ -2299,7 +2299,7 @@ describe("Atlas Core terminal UI", () => {
     terminal.write("\r");
     await nextInputTurn();
     expect(deployment.pluginUpdate).not.toHaveBeenCalled();
-    expect(await deployment.details()).toMatchObject({ coreVersion: coreBefore.coreVersion, image: coreBefore.image });
+    expectNoCoreMutation(deployment);
     terminal.write("\u001b");
     await vi.waitFor(() => expect(deployment.pluginStatuses).toHaveBeenCalledTimes(2));
     terminal.write("q");
@@ -2358,7 +2358,7 @@ describe("Atlas Core terminal UI", () => {
       expect.any(Function),
       expect.objectContaining({ action: "replacement", currentVersion: "2.0.0", targetVersion: "1.9.0" })
     );
-    expect(await deployment.details()).toMatchObject({ coreVersion: coreBefore.coreVersion, image: coreBefore.image });
+    expectNoCoreMutation(deployment);
     terminal.write("\r");
     await vi.waitFor(() => expect(deployment.pluginStatuses).toHaveBeenCalledTimes(2));
     terminal.write("q");
@@ -2429,7 +2429,7 @@ describe("Atlas Core terminal UI", () => {
       await terminal.waitFor("REVIEW PLUGIN UPDATE");
       terminal.write("\r");
       await terminal.waitFor(expected);
-      expect(await deployment.details()).toMatchObject({ coreVersion: before.coreVersion, image: before.image });
+      expectNoCoreMutation(deployment);
       terminal.write("\r");
       await vi.waitFor(() => expect(deployment.pluginStatuses).toHaveBeenCalledTimes(2));
       terminal.write("q");
@@ -2496,7 +2496,7 @@ describe("Atlas Core terminal UI", () => {
     await terminal.waitFor("Previous Plugin release restored");
     await terminal.waitFor("PLUGIN CATALOG");
     expect(deployment.resumeAfterCancellation).toHaveBeenCalledOnce();
-    expect(await deployment.details()).toMatchObject({ coreVersion: coreBefore.coreVersion, image: coreBefore.image });
+    expectNoCoreMutation(deployment);
     await vi.waitFor(() => expect(deployment.pluginStatuses).toHaveBeenCalledTimes(2));
     terminal.write("q");
     await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
@@ -3906,6 +3906,12 @@ describe("Atlas Core terminal UI", () => {
 
 function stripAnsi(value: string): string {
   return value.replace(/\u001b(?:\][^\u0007]*(?:\u0007|\u001b\\)|\[[0-?]*[ -/]*[@-~]|[@-_])/gu, "");
+}
+
+function expectNoCoreMutation(deployment: ReturnType<typeof operator>): void {
+  expect(deployment.update).not.toHaveBeenCalled();
+  expect(deployment.updateWithProgress).not.toHaveBeenCalled();
+  expect(deployment.runLifecycle).not.toHaveBeenCalled();
 }
 
 async function nextInputTurn(): Promise<void> {

@@ -152,6 +152,21 @@ describe("Atlas Core TUI preview operator", () => {
     ]);
   });
 
+  it("preserves a cancellation requested before a fixture Plugin update starts", async () => {
+    const { operator } = fixture("ready", 25);
+    await expect(operator.pluginInstall?.("demo_plugin", "0.1.0")).resolves.toEqual({ status: "success" });
+
+    operator.cancelPending();
+    await expect(operator.pluginUpdate?.("demo_plugin")).resolves.toEqual({
+      previousDeploymentPreserved: true,
+      status: "cancelled"
+    });
+    await expect(operator.pluginStatuses()).resolves.toEqual([
+      expect.objectContaining({ pluginId: "demo_plugin", selectedVersion: "0.1.0" })
+    ]);
+    operator.resumeAfterCancellation();
+  });
+
   it.each(["start", "stop", "restart"] as const)(
     "runs the fixture %s lifecycle operation with typed progress",
     async (operation) => {
