@@ -294,6 +294,69 @@ func TestArgon2VerificationHasProcessWideConcurrencyBound(t *testing.T) {
 	}
 }
 
+func TestVerifyPasswordRejectsInvalidRecordsBeforeAcquiringArgon2Slot(t *testing.T) {
+	valid, err := HashPassword("password")
+	if err != nil {
+		t.Fatalf("hash password: %v", err)
+	}
+
+	tests := map[string]PasswordHash{
+		"wrong algorithm":       withPasswordHashField(valid, func(hash *PasswordHash) { hash.Algorithm = "argon2i" }),
+		"zero memory":           withPasswordHashField(valid, func(hash *PasswordHash) { hash.MemoryKiB = 0 }),
+		"oversized memory":      withPasswordHashField(valid, func(hash *PasswordHash) { hash.MemoryKiB++ }),
+		"zero time":             withPasswordHashField(valid, func(hash *PasswordHash) { hash.Time = 0 }),
+		"oversized time":        withPasswordHashField(valid, func(hash *PasswordHash) { hash.Time++ }),
+		"zero parallelism":      withPasswordHashField(valid, func(hash *PasswordHash) { hash.Parallelism = 0 }),
+		"oversized parallelism": withPasswordHashField(valid, func(hash *PasswordHash) { hash.Parallelism++ }),
+		"malformed salt":        withPasswordHashField(valid, func(hash *PasswordHash) { hash.Salt = "!" }),
+		"wrong salt length":     withPasswordHashField(valid, func(hash *PasswordHash) { hash.Salt = "AA" }),
+		"malformed hash":        withPasswordHashField(valid, func(hash *PasswordHash) { hash.Hash = "!" }),
+		"wrong hash length":     withPasswordHashField(valid, func(hash *PasswordHash) { hash.Hash = "AA" }),
+	}
+
+	for i := 0; i < cap(loginArgon2Slots); i++ {
+		loginArgon2Slots <- struct{}{}
+	}
+	defer func() {
+		for i := 0; i < cap(loginArgon2Slots); i++ {
+			<-loginArgon2Slots
+		}
+	}()
+
+	for name, stored := range tests {
+		t.Run(name, func(t *testing.T) {
+			result := make(chan bool, 1)
+			go func() { result <- VerifyPassword("password", stored) }()
+			select {
+			case verified := <-result:
+				if verified {
+					t.Fatal("invalid password record was accepted")
+				}
+			case <-time.After(100 * time.Millisecond):
+				t.Fatal("invalid password record waited for an Argon2 slot")
+			}
+		})
+	}
+}
+
+func TestVerifyPasswordAcceptsValidRecordAndRejectsWrongPassword(t *testing.T) {
+	stored, err := HashPassword("password")
+	if err != nil {
+		t.Fatalf("hash password: %v", err)
+	}
+	if !VerifyPassword("password", stored) {
+		t.Fatal("valid password was rejected")
+	}
+	if VerifyPassword("wrong", stored) {
+		t.Fatal("wrong password was accepted")
+	}
+}
+
+func withPasswordHashField(hash PasswordHash, change func(*PasswordHash)) PasswordHash {
+	change(&hash)
+	return hash
+}
+
 func TestLoginSlotWaitHonorsContextCancellation(t *testing.T) {
 	slots := make(chan struct{}, 1)
 	slots <- struct{}{}
@@ -369,20 +432,51 @@ func TestLoginWaitsForSlotWithoutHoldingDatabaseAdmission(t *testing.T) {
 	}
 }
 
+func TestLoginRejectsInvalidPasswordRecordBeforeAcquiringArgon2Slot(t *testing.T) {
+	pool := openAdminTestPool(t)
+	ctx := context.Background()
+	cleanupAdminRows(ctx, t, pool)
+	invalidPassword := dummyPasswordHash
+	invalidPassword.MemoryKiB++
+	insertAdminRecord(ctx, t, pool, "account:admin", "account", AccountRecord{
+		Username: "admin",
+		Password: invalidPassword,
+	})
+
+	for i := 0; i < cap(loginArgon2Slots); i++ {
+		loginArgon2Slots <- struct{}{}
+	}
+	defer func() {
+		for i := 0; i < cap(loginArgon2Slots); i++ {
+			<-loginArgon2Slots
+		}
+	}()
+
+	loginCtx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	service := NewService(pool, &config.Config{AdminCookieSameSite: "lax"})
+	_, _, err := service.Login(loginCtx, "admin", "password", "198.51.100.10", time.Now().UTC())
+	if !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("Login error = %v, want ErrInvalidCredentials", err)
+	}
+}
+
 func TestLoginUsesSamePasswordVerifierForMissingAndExistingAccounts(t *testing.T) {
 	pool := openAdminTestPool(t)
 	ctx := context.Background()
 	cleanupAdminRows(ctx, t, pool)
 
+	enabledPassword := dummyPasswordHash
+	enabledPassword.Salt = "BAAAAAAAAAAAAAAAAAAAAA"
 	insertAdminRecord(ctx, t, pool, "account:enabled", "account", AccountRecord{
 		Username: "enabled",
-		Password: PasswordHash{Hash: "enabled-hash"},
+		Password: enabledPassword,
 	})
 
 	service := NewService(pool, &config.Config{AdminCookieSameSite: "lax"})
-	var hashes []string
+	var salts []string
 	service.verifyPassword = func(_ string, stored PasswordHash) bool {
-		hashes = append(hashes, stored.Hash)
+		salts = append(salts, stored.Salt)
 		return false
 	}
 	for i, username := range []string{"missing", "enabled"} {
@@ -391,9 +485,9 @@ func TestLoginUsesSamePasswordVerifierForMissingAndExistingAccounts(t *testing.T
 			t.Fatalf("Login(%q) error = %v, want ErrInvalidCredentials", username, err)
 		}
 	}
-	want := []string{dummyPasswordHash.Hash, "enabled-hash"}
-	if !slices.Equal(hashes, want) {
-		t.Fatalf("verified hashes = %v, want %v", hashes, want)
+	want := []string{dummyPasswordHash.Salt, enabledPassword.Salt}
+	if !slices.Equal(salts, want) {
+		t.Fatalf("verified salts = %v, want %v", salts, want)
 	}
 }
 

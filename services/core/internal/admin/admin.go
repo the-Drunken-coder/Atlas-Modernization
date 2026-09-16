@@ -34,11 +34,14 @@ const (
 	sessionTTL                       = 7 * 24 * time.Hour
 	loginWindow                      = 15 * time.Minute
 	loginMaxFails                    = 8
+	argon2MemoryKiB                  = 19 * 1024
+	argon2Time                       = 2
+	argon2Parallelism                = 1
+	argon2SaltLength                 = 16
+	argon2HashLength                 = 32
 	// Four concurrent Argon2 verifications cap the login path at roughly 76 MiB
 	// with hashes created by HashPassword.
 	loginArgon2Concurrency = 4
-
-	maxArgon2HashLength = 1<<32 - 1
 )
 
 var (
@@ -185,14 +188,17 @@ func (s *Service) Login(ctx context.Context, username, password, ip string, now 
 	if accountErr == nil {
 		passwordHash = account.Password
 	}
-	releaseSlot, err := acquireLoginSlot(ctx, loginArgon2Slots)
-	if err != nil {
-		return "", SessionRecord{}, err
+	passwordMatches := false
+	if validPasswordHash(passwordHash) {
+		releaseSlot, err := acquireLoginSlot(ctx, loginArgon2Slots)
+		if err != nil {
+			return "", SessionRecord{}, err
+		}
+		passwordMatches = func() bool {
+			defer releaseSlot()
+			return s.verifyPassword(password, passwordHash)
+		}()
 	}
-	passwordMatches := func() bool {
-		defer releaseSlot()
-		return s.verifyPassword(password, passwordHash)
-	}()
 	if accountErr != nil && !errors.Is(accountErr, pgx.ErrNoRows) {
 		return "", SessionRecord{}, accountErr
 	}
@@ -416,25 +422,25 @@ func upsertLoginFailure(ctx context.Context, store adminStore, key string, now t
 }
 
 func HashPassword(password string) (PasswordHash, error) {
-	salt := make([]byte, 16)
+	salt := make([]byte, argon2SaltLength)
 	if _, err := rand.Read(salt); err != nil {
 		return PasswordHash{}, err
 	}
-	const memoryKiB = 19 * 1024
-	const iterations = 2
-	const parallelism = 1
-	hash := argon2.IDKey([]byte(password), salt, iterations, memoryKiB, parallelism, 32)
+	hash := argon2.IDKey([]byte(password), salt, argon2Time, argon2MemoryKiB, argon2Parallelism, argon2HashLength)
 	return PasswordHash{
 		Algorithm:   "argon2id",
-		MemoryKiB:   memoryKiB,
-		Time:        iterations,
-		Parallelism: parallelism,
+		MemoryKiB:   argon2MemoryKiB,
+		Time:        argon2Time,
+		Parallelism: argon2Parallelism,
 		Salt:        base64.RawStdEncoding.EncodeToString(salt),
 		Hash:        base64.RawStdEncoding.EncodeToString(hash),
 	}, nil
 }
 
 func VerifyPassword(password string, stored PasswordHash) bool {
+	if !validPasswordHash(stored) {
+		return false
+	}
 	release, err := acquireLoginSlot(context.Background(), loginArgon2Slots)
 	if err != nil {
 		return false
@@ -444,7 +450,7 @@ func VerifyPassword(password string, stored PasswordHash) bool {
 }
 
 func verifyPassword(password string, stored PasswordHash) bool {
-	if stored.Algorithm != "argon2id" {
+	if !validPasswordHash(stored) {
 		return false
 	}
 	salt, err := base64.RawStdEncoding.DecodeString(stored.Salt)
@@ -455,13 +461,23 @@ func verifyPassword(password string, stored PasswordHash) bool {
 	if err != nil {
 		return false
 	}
-	if len(expected) > maxArgon2HashLength {
+	actual := argon2.IDKey([]byte(password), salt, stored.Time, stored.MemoryKiB, stored.Parallelism, argon2HashLength)
+	return subtle.ConstantTimeCompare(actual, expected) == 1
+}
+
+func validPasswordHash(stored PasswordHash) bool {
+	if stored.Algorithm != "argon2id" ||
+		stored.MemoryKiB == 0 || stored.MemoryKiB > argon2MemoryKiB ||
+		stored.Time == 0 || stored.Time > argon2Time ||
+		stored.Parallelism == 0 || stored.Parallelism > argon2Parallelism {
 		return false
 	}
-	//nolint:gosec // bounded by maxArgon2HashLength immediately above.
-	keyLength := uint32(len(expected))
-	actual := argon2.IDKey([]byte(password), salt, stored.Time, stored.MemoryKiB, stored.Parallelism, keyLength)
-	return subtle.ConstantTimeCompare(actual, expected) == 1
+	salt, err := base64.RawStdEncoding.DecodeString(stored.Salt)
+	if err != nil || len(salt) != argon2SaltLength {
+		return false
+	}
+	expected, err := base64.RawStdEncoding.DecodeString(stored.Hash)
+	return err == nil && len(expected) == argon2HashLength
 }
 
 func acquireLoginSlot(ctx context.Context, slots chan struct{}) (func(), error) {
