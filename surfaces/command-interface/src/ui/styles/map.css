@@ -25,6 +25,9 @@
   min-height: 0;
   overflow: hidden;
   background: var(--map-background);
+  --map-source-control-top: 10px;
+  --map-source-control-height: 62px;
+  --map-control-gap: 6px;
 }
 
 .map-window-workspace {
@@ -738,9 +741,10 @@ button.connection-badge:hover:not([disabled]) {
 
 .map-overlay-tr {
   position: absolute;
-  top: 10px;
+  top: var(--map-source-control-top);
   right: 10px;
   z-index: 30;
+  height: var(--map-source-control-height);
   min-width: 190px;
   padding: 6px 8px;
   background: color-mix(in srgb, var(--surface-1) 94%, transparent);
@@ -880,6 +884,10 @@ button.connection-badge:hover:not([disabled]) {
   inset: 0;
   width: 100%;
   height: 100%;
+}
+
+.map-canvas > .maplibre-host .maplibregl-ctrl-top-right {
+  top: calc(var(--map-source-control-height) + var(--map-control-gap));
 }
 
 .map-canvas--custom-cursor,
