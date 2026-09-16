@@ -2,28 +2,28 @@ import { useState } from "react";
 import { sanitizeConnectionError } from "../../atlas/connection-error.js";
 import type { AtlasDataSource } from "../../atlas/data-source.js";
 
-type DeleteState = { entityId?: string; deleting: boolean; error?: string };
+type DeleteState = { entityId?: string; error?: string };
 
 export function useGeofeatureDelete(
   deleteGeofeature: NonNullable<AtlasDataSource["deleteGeofeature"]>,
   onDeleted: (entityId: string) => void
 ) {
-  const [state, setState] = useState<DeleteState>({ deleting: false });
+  const [state, setState] = useState<DeleteState>({});
 
   const remove = async (entityId: string, displayName: string) => {
-    if (state.deleting || !window.confirm(`Delete "${displayName}"? This cannot be undone.`)) return;
-    setState({ entityId, deleting: true });
+    if ((state.entityId && !state.error) || !window.confirm(`Delete "${displayName}"? This cannot be undone.`)) return;
+    setState({ entityId });
     try {
       await deleteGeofeature(entityId);
-      setState({ deleting: false });
+      setState({});
       onDeleted(entityId);
     } catch (cause) {
-      setState({ entityId, deleting: false, error: sanitizeConnectionError(cause) });
+      setState({ entityId, error: sanitizeConnectionError(cause) });
     }
   };
 
   return {
-    deleting: (entityId: string) => state.entityId === entityId && state.deleting,
+    deleting: (entityId: string) => state.entityId === entityId && !state.error,
     error: (entityId: string) => (state.entityId === entityId ? state.error : undefined),
     remove
   };

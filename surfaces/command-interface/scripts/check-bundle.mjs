@@ -18,10 +18,10 @@ const budgets = {
   // Movement history adds SDK response validators, sidebar controls and trail
   // layers. With explicit quantity unions: initial 430.57 kB, shell 159.13 kB, map 75.75 kB raw.
   // Linux initial gzip measures 130.06 kB; allow a small margin for zlib variance.
-  initialJavaScript: { raw: 431_000, gzip: 130_500 },
+  initialJavaScript: { raw: 431_100, gzip: 130_500 },
   initialCss: { raw: 512_000, gzip: 55_000 },
-  // Includes the Geo Feature creation editor, command fixes, and draft lifecycle.
-  shellJavaScript: { raw: 160_000, gzip: 52_000 },
+  // Includes Geo Feature creation, deletion, command fixes, and draft lifecycle.
+  shellJavaScript: { raw: 160_200, gzip: 52_000 },
   // Includes live drawing previews, keyboard vertex controls, focus restoration,
   // heartbeat-qualified symbols, and the first-vertex close control.
   mapViewJavaScript: { raw: 76_000, gzip: 23_500 },
