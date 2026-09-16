@@ -8,8 +8,8 @@ Release and installation details:
 Status: Plugin platform v1 and the independent lifecycle and release workflow are released with Atlas Core 0.2.0 and Building Scan 0.1.0.
 Candidate-image checks passed on linux/amd64 and linux/arm64. The TUI supports ordinary one-at-a-time Plugin updates
 with a target-version and restart-impact review, explicit confirmation, in-place progress, safe cancellation, and
-restoration results. Rollback, uninstall, catalog refresh, shared-key rotation, recovery, supervision, signing, and
-unusual administrative operations remain direct-command-only. See
+restoration results. Rollback, uninstall, catalog refresh, shared-key rotation, recovery, supervision, and unusual
+administrative operations remain direct-command-only. Catalog signing remains workflow-only. See
 [GitHub issue #429](https://github.com/the-Drunken-coder/Atlas-Modernization/issues/429). Existing
 published Core packages may still contain the bundled catalog; schema-4 deployments use independent catalog state.
 Production signing trust and Pages configuration are recorded in [bootstrap provenance](CATALOG_BOOTSTRAP.md).
