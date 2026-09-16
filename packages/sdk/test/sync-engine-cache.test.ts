@@ -670,8 +670,50 @@ describe("AtlasClient sync: cache projection and reads", () => {
 
     cache.replaceHydratedResources({ entities: [recreated], tasks: [], objects: [] });
 
-    expect(cache.finishLocalDelete(deletion)).toBeUndefined();
+    expect(cache.finishLocalDelete(deletion, "deleted")).toBeUndefined();
     expect(cache.value("entity", original.entity_id)).toEqual(recreated);
+  });
+
+  it("evicts a resource cached during a successful delete that began from a tombstone", () => {
+    const cache = new ResourceCache();
+    const original = entity("asset-tombstone-delete");
+    cache.applyPointRead(cache.beginPointRead("entity", original.entity_id), original);
+    cache.applyPointNotFound(cache.beginPointRead("entity", original.entity_id));
+    const deletion = cache.beginLocalDelete("entity", original.entity_id);
+    const replacement = {
+      ...original,
+      alias: "replacement",
+      metadata: { ...metadata(2), created_at: "2026-09-16T21:00:00Z" }
+    };
+    cache.applyPointRead(cache.beginPointRead("entity", replacement.entity_id), replacement);
+
+    expect(cache.finishLocalDelete(deletion, "deleted")).toEqual({
+      event: {
+        event: "local_delete",
+        resource_type: "entity",
+        id: original.entity_id,
+        previous_version: 2
+      },
+      resource: undefined
+    });
+    expect(cache.value("entity", original.entity_id)).toBeUndefined();
+  });
+
+  it("keeps a resource cached during a not-found delete that began from a tombstone", () => {
+    const cache = new ResourceCache();
+    const original = entity("asset-tombstone-not-found");
+    cache.applyPointRead(cache.beginPointRead("entity", original.entity_id), original);
+    cache.applyPointNotFound(cache.beginPointRead("entity", original.entity_id));
+    const deletion = cache.beginLocalDelete("entity", original.entity_id);
+    const replacement = {
+      ...original,
+      alias: "replacement",
+      metadata: { ...metadata(2), created_at: "2026-09-16T21:00:00Z" }
+    };
+    cache.applyPointRead(cache.beginPointRead("entity", replacement.entity_id), replacement);
+
+    expect(cache.finishLocalDelete(deletion, "not_found")).toBeUndefined();
+    expect(cache.value("entity", original.entity_id)).toEqual(replacement);
   });
 
   it("does not let a delayed not-found result evict a newer cache entry", () => {

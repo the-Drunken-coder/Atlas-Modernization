@@ -34,6 +34,7 @@ const holdPositionCommand: CommandDefinition = {
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 function entity(id: string, version = 1): EntityResource {
@@ -491,6 +492,7 @@ describe("sdk data source", () => {
   });
 
   it("creates Geo Features through Core and publishes them to the SDK snapshot", async () => {
+    vi.spyOn(crypto, "randomUUID").mockReturnValue("00000000-0000-4000-8000-000000000001");
     const geometry: UiGeometry = {
       type: "Polygon",
       coordinates: [
@@ -529,18 +531,33 @@ describe("sdk data source", () => {
         })
       })
     );
-    expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get("Atlas-Resource-Instance-Token")).toBe("geo-new");
+    expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get("Atlas-Resource-Instance-Token")).toBe(
+      "00000000-0000-4000-8000-000000000001"
+    );
     expect(snapshots).toHaveBeenLastCalledWith({ entities: { "geo-new": created }, tasks: {} });
   });
 
   it("deletes Geo Features through the SDK entity API", async () => {
-    const fetchMock = vi.fn(
-      async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(null, { status: 204 })
+    vi.spyOn(crypto, "randomUUID").mockReturnValue("00000000-0000-4000-8000-000000000002");
+    const storage = new Map<string, string>();
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
+      removeItem: (key: string) => storage.delete(key)
+    });
+    const geometry: UiGeometry = { type: "Point", coordinates: [-71, 42] };
+    const created = { ...entity("geo-1"), entity_type: "geofeature", components: { geometry } };
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) =>
+      init?.method === "POST" ? Response.json(created, { status: 201 }) : new Response(null, { status: 204 })
     );
     vi.stubGlobal("fetch", fetchMock);
     const dataSource = createSdkDataSource(config);
+    await dataSource.createGeofeature("geo-1", "geo-1", geometry);
+    fetchMock.mockClear();
+    const reloadedDataSource = createSdkDataSource(config);
 
-    await expect(dataSource.deleteGeofeature?.("geo-1")).resolves.toBeUndefined();
+    expect(reloadedDataSource.canDeleteGeofeature?.("geo-1", created.metadata.created_at)).toBe(true);
+    await expect(reloadedDataSource.deleteGeofeature?.("geo-1", created.metadata.created_at)).resolves.toBeUndefined();
     expect(fetchMock).toHaveBeenCalledWith(
       "https://core.test/entities/geo-1",
       expect.objectContaining({
@@ -548,34 +565,53 @@ describe("sdk data source", () => {
         credentials: "include"
       })
     );
-    expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get("Atlas-Resource-Instance-Token")).toBe("geo-1");
+    expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get("Atlas-Resource-Instance-Token")).toBe(
+      "00000000-0000-4000-8000-000000000002"
+    );
+    expect(reloadedDataSource.canDeleteGeofeature?.("geo-1", created.metadata.created_at)).toBe(false);
   });
 
   it.each(["already absent", "lost response"])(
     "treats a confirmed absent Geo Feature as deleted after %s",
     async (failure) => {
-      const fetchMock = vi.fn(async () => {
-        if (failure === "lost response" && fetchMock.mock.calls.length === 1) {
+      const geometry: UiGeometry = { type: "Point", coordinates: [-71, 42] };
+      const created = { ...entity("geo-1"), entity_type: "geofeature", components: { geometry } };
+      let deleteAttempts = 0;
+      const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        if (init?.method === "POST") return Response.json(created, { status: 201 });
+        if (init?.method === "DELETE") deleteAttempts++;
+        if (failure === "lost response" && init?.method === "DELETE" && deleteAttempts === 1) {
           throw new TypeError("Connection lost after commit");
         }
         return Response.json({ success: false, message: "Not found", error_code: "ENTITY_NOT_FOUND" }, { status: 404 });
       });
       vi.stubGlobal("fetch", fetchMock);
       const dataSource = createSdkDataSource(config);
+      await dataSource.createGeofeature("geo-1", "geo-1", geometry);
+      fetchMock.mockClear();
 
-      await expect(dataSource.deleteGeofeature?.("geo-1")).resolves.toBeUndefined();
+      await expect(dataSource.deleteGeofeature?.("geo-1", created.metadata.created_at)).resolves.toBeUndefined();
       expect(fetchMock).toHaveBeenCalledTimes(failure === "lost response" ? 2 : 1);
     }
   );
 
   it("does not treat an unrelated route 404 as successful deletion", async () => {
+    const geometry: UiGeometry = { type: "Point", coordinates: [-71, 42] };
+    const created = { ...entity("geo-1"), entity_type: "geofeature", components: { geometry } };
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => Response.json({ error: "wrong route" }, { status: 404 }))
+      vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) =>
+        init?.method === "POST"
+          ? Response.json(created, { status: 201 })
+          : Response.json({ error: "wrong route" }, { status: 404 })
+      )
     );
     const dataSource = createSdkDataSource(config);
+    await dataSource.createGeofeature("geo-1", "geo-1", geometry);
 
-    await expect(dataSource.deleteGeofeature?.("geo-1")).rejects.toMatchObject({ status: 404 });
+    await expect(dataSource.deleteGeofeature?.("geo-1", created.metadata.created_at)).rejects.toMatchObject({
+      status: 404
+    });
   });
 
   it.each(["lost response", "conflict", "server error"])("recovers a committed create after %s", async (failure) => {

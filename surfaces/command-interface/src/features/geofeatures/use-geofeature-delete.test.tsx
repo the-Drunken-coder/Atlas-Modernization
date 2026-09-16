@@ -13,7 +13,7 @@ describe("useGeofeatureDelete", () => {
     });
     const removeEntity = vi.fn(() => deletion);
     const onDeleted = vi.fn();
-    const { result } = renderHook(() => useGeofeatureDelete(removeEntity, onDeleted));
+    const { result } = renderHook(() => useGeofeatureDelete(removeEntity, undefined, onDeleted));
 
     let request!: Promise<void>;
     act(() => {
@@ -30,7 +30,7 @@ describe("useGeofeatureDelete", () => {
     expect(result.current.deleting("geo-1")).toBe(false);
 
     await act(() => result.current.remove("geo-2", "created-2", "Zone Bravo"));
-    expect(removeEntity).toHaveBeenLastCalledWith("geo-2");
+    expect(removeEntity).toHaveBeenLastCalledWith("geo-2", "created-2");
   });
 
   it("retains the target and sanitizes a failed deletion", async () => {
@@ -41,6 +41,7 @@ describe("useGeofeatureDelete", () => {
         vi.fn(async () => {
           throw new Error("request failed: Bearer secret-token");
         }),
+        undefined,
         onDeleted
       )
     );

@@ -37,7 +37,8 @@ export interface AtlasDataSource {
   start(): Promise<void>;
   submitCommand(submission: CommandSubmission): Promise<TaskResource>;
   createGeofeature(entityId: string, name: string, geometry: UiGeometry): Promise<EntityResource>;
-  deleteGeofeature?(entityId: string): Promise<void>;
+  canDeleteGeofeature?(entityId: string, instanceId: string): boolean;
+  deleteGeofeature?(entityId: string, instanceId: string): Promise<void>;
   updateGeometry(entityId: string, geometry: UiGeometry, ifMatchVersion?: number): Promise<EntityResource>;
   health?(): ConnectionHealth;
   dispose(): void;
@@ -61,6 +62,14 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
   };
   let startupGeneration = 0;
   let startupError: ConnectionError | undefined;
+  const geofeatureTokens = new Map<string, GeofeatureInstanceToken>();
+  const tokenFor = (entityId: string): GeofeatureInstanceToken | undefined => {
+    const cached = geofeatureTokens.get(entityId);
+    if (cached) return cached;
+    const stored = readGeofeatureToken(config.atlasBaseUrl, entityId);
+    if (stored) geofeatureTokens.set(entityId, stored);
+    return stored;
+  };
 
   return {
     snapshot,
@@ -158,16 +167,23 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
     },
 
     async createGeofeature(entityId, name, geometry) {
+      const instanceToken = crypto.randomUUID();
       try {
-        return await client.entities.create(
+        const created = await client.entities.create(
           {
             entity_id: entityId,
             entity_type: "geofeature",
             alias: name,
             components: { geometry }
           },
-          { instanceToken: entityId }
+          { instanceToken }
         );
+        retainGeofeatureToken(config.atlasBaseUrl, created.entity_id, {
+          instanceId: created.metadata.created_at,
+          token: instanceToken
+        });
+        geofeatureTokens.set(created.entity_id, { instanceId: created.metadata.created_at, token: instanceToken });
+        return created;
       } catch (cause) {
         if (!isAtlasTransportError(cause) && !(isAtlasAPIError(cause) && (cause.status === 409 || cause.status >= 500)))
           throw cause;
@@ -179,15 +195,25 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
           existing.entity_type === "geofeature" &&
           existing.alias === name &&
           sameGeometry(existing.components.geometry, geometry)
-        )
+        ) {
+          const retained = { instanceId: existing.metadata.created_at, token: instanceToken };
+          retainGeofeatureToken(config.atlasBaseUrl, entityId, retained);
+          geofeatureTokens.set(entityId, retained);
           return existing;
+        }
         throw cause;
       }
     },
 
-    async deleteGeofeature(entityId) {
+    canDeleteGeofeature(entityId, instanceId) {
+      return tokenFor(entityId)?.instanceId === instanceId;
+    },
+
+    async deleteGeofeature(entityId, instanceId) {
+      const retained = tokenFor(entityId);
+      if (!retained || retained.instanceId !== instanceId) throw new Error("Geo Feature deletion is unavailable");
       try {
-        await client.entities.delete(entityId, { instanceToken: entityId });
+        await client.entities.delete(entityId, { instanceToken: retained.token });
       } catch (cause) {
         if (!isAtlasTransportError(cause) && !(isAtlasAPIError(cause) && cause.status >= 500)) throw cause;
 
@@ -198,11 +224,16 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
             isAtlasAPIError(recoveryCause) &&
             recoveryCause.status === 404 &&
             recoveryCause.errorCode === "ENTITY_NOT_FOUND"
-          )
+          ) {
+            forgetGeofeatureToken(config.atlasBaseUrl, entityId);
+            geofeatureTokens.delete(entityId);
             return;
+          }
         }
         throw cause;
       }
+      forgetGeofeatureToken(config.atlasBaseUrl, entityId);
+      geofeatureTokens.delete(entityId);
     },
 
     async updateGeometry(entityId, geometry, ifMatchVersion) {
@@ -221,6 +252,48 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
       startupError = undefined;
     }
   };
+}
+
+type GeofeatureInstanceToken = { instanceId: string; token: string };
+
+function geofeatureTokenKey(baseUrl: string, entityId: string): string {
+  return `atlas:geofeature-instance:${baseUrl}:${entityId}`;
+}
+
+function readGeofeatureToken(baseUrl: string, entityId: string): GeofeatureInstanceToken | undefined {
+  try {
+    const stored = globalThis.localStorage?.getItem(geofeatureTokenKey(baseUrl, entityId));
+    if (!stored) return undefined;
+    const value: unknown = JSON.parse(stored);
+    if (
+      !value ||
+      typeof value !== "object" ||
+      !("instanceId" in value) ||
+      typeof value.instanceId !== "string" ||
+      !("token" in value) ||
+      typeof value.token !== "string"
+    )
+      return undefined;
+    return { instanceId: value.instanceId, token: value.token };
+  } catch {
+    return undefined;
+  }
+}
+
+function retainGeofeatureToken(baseUrl: string, entityId: string, value: GeofeatureInstanceToken): void {
+  try {
+    globalThis.localStorage?.setItem(geofeatureTokenKey(baseUrl, entityId), JSON.stringify(value));
+  } catch {
+    // In-memory retention still protects deletes for this data-source lifetime.
+  }
+}
+
+function forgetGeofeatureToken(baseUrl: string, entityId: string): void {
+  try {
+    globalThis.localStorage?.removeItem(geofeatureTokenKey(baseUrl, entityId));
+  } catch {
+    // Storage can be unavailable in privacy-restricted browser contexts.
+  }
 }
 function runtimeManifestChangeVersion(event: AtlasWatchEvent): { id: string; version: number } | undefined {
   if (event.event !== "update" || event.resource_type !== "entity") return undefined;

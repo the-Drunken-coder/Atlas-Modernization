@@ -324,19 +324,22 @@ export class ResourceCache {
     return operation;
   }
 
-  finishLocalDelete(operation: LocalDeleteOperation): ResourceChange | undefined {
+  finishLocalDelete(operation: LocalDeleteOperation, outcome: "deleted" | "not_found"): ResourceChange | undefined {
     if (!this.localDeleteOperations.delete(operation)) return undefined;
     const currentEntry = this.entries[operation.type].get(operation.id);
     this.bumpGeneration(operation.type, operation.id);
-    if (operation.observedEntry?.deleted) return undefined;
+    const deletesCurrentEntry = operation.observedEntry?.deleted === true && outcome === "deleted";
+    if (operation.observedEntry?.deleted && !deletesCurrentEntry) return undefined;
     if (
+      !deletesCurrentEntry &&
       currentEntry !== operation.observedEntry &&
       (operation.remoteDeleteSeen || !sameResourceInstance(operation.observedEntry?.value, currentEntry?.value))
     ) {
       return undefined;
     }
     const previousVersion = this.markLocalDelete(operation.type, operation.id);
-    if (!operation.observedEntry) return undefined;
+    const removedEntry = currentEntry && !currentEntry.deleted ? currentEntry : operation.observedEntry;
+    if (!removedEntry || removedEntry.deleted) return undefined;
     this.locallyNotifiedDeletes.add(resourceCacheKey(operation.type, operation.id));
     return {
       event: localDeleteEvent(operation.type, operation.id, previousVersion),

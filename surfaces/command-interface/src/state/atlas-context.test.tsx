@@ -65,7 +65,7 @@ function DeleteActionProbe() {
     <div>
       <span data-testid="delete-capability">{atlas.deleteGeofeature ? "available" : "unavailable"}</span>
       {atlas.deleteGeofeature ? (
-        <button type="button" onClick={() => void atlas.deleteGeofeature?.("geo-1")}>
+        <button type="button" onClick={() => void atlas.deleteGeofeature?.("geo-1", "instance-1")}>
           delete
         </button>
       ) : null}
@@ -627,7 +627,7 @@ describe("AtlasProvider", () => {
 
     expect(await screen.findByTestId("delete-capability")).toHaveTextContent("available");
     fireEvent.click(screen.getByRole("button", { name: "delete" }));
-    await waitFor(() => expect(deleteGeofeature).toHaveBeenCalledWith("geo-1"));
+    await waitFor(() => expect(deleteGeofeature).toHaveBeenCalledWith("geo-1", "instance-1"));
   });
 
   it("preserves an omitted Geo Feature deletion capability", async () => {

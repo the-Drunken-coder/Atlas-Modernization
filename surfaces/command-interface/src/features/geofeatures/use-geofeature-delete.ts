@@ -6,6 +6,7 @@ type DeleteState = { entityId?: string; instanceId?: string; error?: string };
 
 export function useGeofeatureDelete(
   deleteGeofeature: AtlasDataSource["deleteGeofeature"],
+  canDeleteGeofeature: AtlasDataSource["canDeleteGeofeature"],
   onDeleted: (entityId: string, instanceId: string) => void
 ) {
   const [state, setState] = useState<DeleteState>({});
@@ -19,7 +20,7 @@ export function useGeofeatureDelete(
       return;
     setState({ entityId, instanceId });
     try {
-      await deleteGeofeature(entityId);
+      await deleteGeofeature(entityId, instanceId);
       setState({});
       onDeleted(entityId, instanceId);
     } catch (cause) {
@@ -28,7 +29,8 @@ export function useGeofeatureDelete(
   };
 
   return {
-    available: Boolean(deleteGeofeature),
+    available: (entityId: string, instanceId: string) =>
+      Boolean(deleteGeofeature && (!canDeleteGeofeature || canDeleteGeofeature(entityId, instanceId))),
     deleting: (_entityId: string) => Boolean(state.entityId && !state.error),
     error: (entityId: string, instanceId: string) =>
       state.entityId === entityId && state.instanceId === instanceId ? state.error : undefined,

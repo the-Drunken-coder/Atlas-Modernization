@@ -19,9 +19,9 @@ const budgets = {
   // layers. With explicit quantity unions: initial 430.57 kB, shell 159.13 kB, map 75.75 kB raw.
   // The SDK also reconciles authoritative 404 reads into its local cache.
   // Linux initial gzip measures below 130.5 kB; allow a small margin for zlib variance.
-  initialJavaScript: { raw: 431_800, gzip: 130_500 },
+  initialJavaScript: { raw: 432_200, gzip: 130_500 },
   initialCss: { raw: 512_000, gzip: 55_000 },
-  // Includes Geo Feature creation, deletion, command fixes, and draft lifecycle.
+  // Includes Geo Feature creation, token-fenced deletion, command fixes, and draft lifecycle.
   shellJavaScript: { raw: 160_600, gzip: 52_000 },
   // Includes live drawing previews, keyboard vertex controls, focus restoration,
   // heartbeat-qualified symbols, and the first-vertex close control.
@@ -33,7 +33,7 @@ const budgets = {
   mapRoute: { raw: 2_100_000, gzip: 550_000 },
   // MapLibre 6.8 brings the combined build to about 3,710.5 kB raw / 1,027.8 kB gzip.
   // Retain a small allowance for Linux zlib variance.
-  allJavaScript: { raw: 3_713_200, gzip: 1_031_000 },
+  allJavaScript: { raw: 3_714_600, gzip: 1_031_000 },
   allCss: { raw: 603_000, gzip: 67_000 }
 };
 

@@ -305,7 +305,7 @@ export function MapConsole() {
   const creation = useGeofeatureCreate(atlas.createGeofeature, (entity) => {
     dispatch({ type: "selectEntity", kind: "geofeature", id: entity.entity_id, origin: "sidebar" });
   });
-  const deletion = useGeofeatureDelete(atlas.deleteGeofeature, (entityId, instanceId) => {
+  const deletion = useGeofeatureDelete(atlas.deleteGeofeature, atlas.canDeleteGeofeature, (entityId, instanceId) => {
     const currentSidebar = sidebarRef.current;
     if (
       currentSidebar.view.mode !== "inspector" ||
@@ -837,7 +837,7 @@ function PanelBody(props: PanelBodyProps) {
         onSave={props.onSaveEdit}
         onCancel={props.onCancelEdit}
         onDelete={
-          props.deletion.available
+          props.deletion.available(selectedEntity.entity_id, selectedEntity.metadata.created_at)
             ? () =>
                 void props.deletion.remove(
                   selectedEntity.entity_id,

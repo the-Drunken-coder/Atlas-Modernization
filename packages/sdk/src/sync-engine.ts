@@ -553,13 +553,13 @@ export class SyncEngine {
       );
     } catch (error) {
       if (isResourceNotFound(error, type)) {
-        this.deliverChange(this.cache.finishLocalDelete(localDelete));
+        this.deliverChange(this.cache.finishLocalDelete(localDelete, "not_found"));
         return;
       }
       this.cache.cancelLocalDelete(localDelete);
       throw error;
     }
-    this.deliverChange(this.cache.finishLocalDelete(localDelete));
+    this.deliverChange(this.cache.finishLocalDelete(localDelete, "deleted"));
   }
 
   private async startSyncFromStopped(generation: number): Promise<void> {
