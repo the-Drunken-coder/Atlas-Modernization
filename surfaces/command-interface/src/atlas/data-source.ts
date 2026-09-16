@@ -192,7 +192,11 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
         try {
           await client.entities.get(entityId, { fresh: true });
         } catch (recoveryCause) {
-          if (isAtlasAPIError(recoveryCause) && recoveryCause.status === 404) return;
+          if (isAtlasAPIError(recoveryCause) && recoveryCause.status === 404) {
+            // Repeating the idempotent delete lets the SDK evict its cached row.
+            await client.entities.delete(entityId);
+            return;
+          }
         }
         throw cause;
       }

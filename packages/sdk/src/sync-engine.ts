@@ -546,6 +546,10 @@ export class SyncEngine {
         resourceInstanceTokenHeaders(options?.instanceToken)
       );
     } catch (error) {
+      if (error instanceof AtlasAPIError && error.status === 404) {
+        this.deliverChange(this.cache.finishLocalDelete(localDelete));
+        return;
+      }
       this.cache.cancelLocalDelete(localDelete);
       throw error;
     }

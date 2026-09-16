@@ -66,7 +66,7 @@ export function GeofeatureInspector(props: GeofeatureInspectorProps) {
         title="Geometry"
         actions={
           editing ? null : (
-            <Button variant="ghost" onClick={onStartEdit} disabled={!geometry}>
+            <Button variant="ghost" onClick={onStartEdit} disabled={!geometry || deleting}>
               Edit
             </Button>
           )

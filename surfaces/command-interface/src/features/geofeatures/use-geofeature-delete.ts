@@ -15,6 +15,7 @@ export function useGeofeatureDelete(
     setState({ entityId, deleting: true });
     try {
       await deleteGeofeature(entityId);
+      setState({ deleting: false });
       onDeleted(entityId);
     } catch (cause) {
       setState({ entityId, deleting: false, error: sanitizeConnectionError(cause) });

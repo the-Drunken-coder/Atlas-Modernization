@@ -555,7 +555,7 @@ describe("sdk data source", () => {
       const dataSource = createSdkDataSource(config);
 
       await expect(dataSource.deleteGeofeature?.("geo-1")).resolves.toBeUndefined();
-      expect(fetchMock).toHaveBeenCalledTimes(failure === "lost response" ? 2 : 1);
+      expect(fetchMock).toHaveBeenCalledTimes(failure === "lost response" ? 3 : 1);
     }
   );
 

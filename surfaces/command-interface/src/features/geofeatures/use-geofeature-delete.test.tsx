@@ -26,6 +26,10 @@ describe("useGeofeatureDelete", () => {
     await act(async () => finish());
     await request;
     expect(onDeleted).toHaveBeenCalledWith("geo-1");
+    expect(result.current.deleting("geo-1")).toBe(false);
+
+    await act(() => result.current.remove("geo-2", "Zone Bravo"));
+    expect(removeEntity).toHaveBeenLastCalledWith("geo-2");
   });
 
   it("retains the target and sanitizes a failed deletion", async () => {

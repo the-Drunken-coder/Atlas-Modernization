@@ -182,6 +182,21 @@ describe("AtlasClient sync: cache projection and reads", () => {
     await expect(client.entities.get("asset-recreated")).resolves.toEqual(recreated);
   });
 
+  it("evicts a cached resource when deletion confirms it is already absent", async () => {
+    const core = new FakeCore();
+    const original = core.upsertEntity(entity("asset-already-deleted"));
+    const client = createAtlasClient(core);
+    const snapshots = vi.fn();
+    client.sync.watchSnapshot(snapshots);
+
+    await expect(client.entities.get(original.entity_id)).resolves.toEqual(original);
+    core.deleteEntity(original.entity_id);
+
+    await expect(client.entities.delete(original.entity_id)).resolves.toBeUndefined();
+    expect(client.sync.snapshot().entities[original.entity_id]).toBeUndefined();
+    expect(snapshots).toHaveBeenLastCalledWith(expect.objectContaining({ entities: {} }));
+  });
+
   it("does not let stale changed-since recovery resurrect an uncached local delete", async () => {
     const core = new FakeCore();
     const client = createAtlasClient(core, { sync: "all", pollIntervalMs: 0 });

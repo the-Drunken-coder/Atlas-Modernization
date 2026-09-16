@@ -77,6 +77,7 @@ describe("GeofeatureInspector", () => {
       />
     );
     expect(screen.getByRole("button", { name: "Deleting..." })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Edit" })).toBeDisabled();
     expect(screen.getByText("Deletion failed safely.")).toBeInTheDocument();
   });
 
