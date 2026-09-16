@@ -197,6 +197,34 @@ describe("AtlasClient sync: cache projection and reads", () => {
     expect(snapshots).toHaveBeenLastCalledWith(expect.objectContaining({ entities: {} }));
   });
 
+  it("evicts a cached resource when a fresh read confirms it is absent", async () => {
+    const core = new FakeCore();
+    const original = core.upsertEntity(entity("asset-missing-on-read"));
+    const client = createAtlasClient(core);
+
+    await expect(client.entities.get(original.entity_id)).resolves.toEqual(original);
+    core.deleteEntity(original.entity_id);
+
+    await expect(client.entities.get(original.entity_id, { fresh: true })).rejects.toMatchObject({ status: 404 });
+    expect(client.sync.snapshot().entities[original.entity_id]).toBeUndefined();
+  });
+
+  it("does not publish another deletion when an absent cached resource is deleted", async () => {
+    const core = new FakeCore();
+    const original = core.upsertEntity(entity("asset-delete-already-observed"));
+    const client = createAtlasClient(core, { sync: "all", pollIntervalMs: 0 });
+    await client.sync.start();
+    const snapshots = vi.fn();
+    client.sync.watchSnapshot(snapshots);
+
+    core.deleteEntity(original.entity_id);
+    await client.changedSince();
+    snapshots.mockClear();
+
+    await expect(client.entities.delete(original.entity_id)).resolves.toBeUndefined();
+    expect(snapshots).not.toHaveBeenCalled();
+  });
+
   it("does not let stale changed-since recovery resurrect an uncached local delete", async () => {
     const core = new FakeCore();
     const client = createAtlasClient(core, { sync: "all", pollIntervalMs: 0 });

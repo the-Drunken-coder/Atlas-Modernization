@@ -400,14 +400,21 @@ export class SyncEngine {
       return cached;
     }
     const pointRead = this.cache.beginPointRead("entity", id);
-    const entity = await this.transport.json(
-      "GET",
-      `/entities/${encodeURIComponent(id)}`,
-      isEntityResource,
-      undefined,
-      undefined,
-      options?.signal
-    );
+    let entity: EntityResource;
+    try {
+      entity = await this.transport.json(
+        "GET",
+        `/entities/${encodeURIComponent(id)}`,
+        isEntityResource,
+        undefined,
+        undefined,
+        options?.signal
+      );
+    } catch (error) {
+      if (error instanceof AtlasAPIError && error.status === 404)
+        this.deliverChange(this.cache.applyPointNotFound(pointRead));
+      throw error;
+    }
     assertExpectedResourceID("entity", id, entity);
     if (this.cache.applyPointRead(pointRead, entity)) this.notifySnapshot();
     return entity;

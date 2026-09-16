@@ -23,7 +23,7 @@ export function useGeofeatureDelete(
   };
 
   return {
-    deleting: (entityId: string) => state.entityId === entityId && !state.error,
+    deleting: (_entityId: string) => Boolean(state.entityId && !state.error),
     error: (entityId: string) => (state.entityId === entityId ? state.error : undefined),
     remove
   };

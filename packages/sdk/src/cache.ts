@@ -172,6 +172,25 @@ export class ResourceCache {
     });
   }
 
+  applyPointNotFound<TType extends DeletableResourceType>(
+    operation: PointReadOperation<TType>
+  ): ResourceChange | undefined {
+    if (
+      operation.hydrationEpoch !== this.hydrationEpoch ||
+      operation.generation !== this.generation(operation.type, operation.id)
+    )
+      return undefined;
+    const currentEntry = this.entries[operation.type].get(operation.id);
+    if (!currentEntry || currentEntry.deleted) return undefined;
+    this.bumpGeneration(operation.type, operation.id);
+    this.markRemoteDelete(operation.type, operation.id, currentEntry.version);
+    this.locallyNotifiedDeletes.add(resourceCacheKey(operation.type, operation.id));
+    return {
+      event: localDeleteEvent(operation.type, operation.id, currentEntry.version),
+      resource: undefined
+    };
+  }
+
   applyWrite(event: ResourceUpsertEvent, options?: Pick<ResourceReadOptions, "detail">): ResourceChange | undefined {
     if (this.isSuppressedByPendingDelete(event)) return undefined;
     if (
@@ -312,6 +331,7 @@ export class ResourceCache {
     if (!this.localDeleteOperations.delete(operation)) return undefined;
     const currentEntry = this.entries[operation.type].get(operation.id);
     this.bumpGeneration(operation.type, operation.id);
+    if (operation.observedEntry?.deleted) return undefined;
     if (
       currentEntry !== operation.observedEntry &&
       (operation.remoteDeleteSeen || !sameResourceInstance(operation.observedEntry?.value, currentEntry?.value))

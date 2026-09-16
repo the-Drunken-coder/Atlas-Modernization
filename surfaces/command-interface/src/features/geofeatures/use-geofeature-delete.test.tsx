@@ -21,6 +21,7 @@ describe("useGeofeatureDelete", () => {
     });
     expect(confirm).toHaveBeenCalledWith('Delete "Zone Alpha"? This cannot be undone.');
     expect(result.current.deleting("geo-1")).toBe(true);
+    expect(result.current.deleting("geo-2")).toBe(true);
     expect(onDeleted).not.toHaveBeenCalled();
 
     await act(async () => finish());
