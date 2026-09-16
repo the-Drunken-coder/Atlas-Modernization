@@ -14,7 +14,7 @@
     "simulations"
   ],
   "scripts": {
-    "postinstall": "npm run build:sdk",
+    "postinstall": "node scripts/apply-dependency-patches.mjs && npm run build:sdk",
     "build": "npm run build:sdk && npm run build:meshtastic-link && npm run build:plugin-runtime && npm run build:plugins && npm run build:core-cli && npm run build --workspace @the-drunken-coder/atlas-command-interface && npm run build --workspace @the-drunken-coder/atlas-simulations",
     "preview:core-cli": "python3 scripts/preview_atlas_core_tui.py",
     "build:sdk": "npm run build --workspace @the-drunken-coder/atlas-sdk",

@@ -1,0 +1,54 @@
+diff --git a/node_modules/@meshtastic/core/dist/mod.d.ts b/node_modules/@meshtastic/core/dist/mod.d.ts
+index 1a810f0..f2d09a9 100644
+--- a/node_modules/@meshtastic/core/dist/mod.d.ts
++++ b/node_modules/@meshtastic/core/dist/mod.d.ts
+@@ -34,6 +34,7 @@ interface QueueItem {
+   sent: boolean;
+   added: Date;
+   promise: Promise<number>;
++  timeout: ReturnType<typeof setTimeout>;
+ }
+ interface HttpRetryConfig {
+   maxRetries: number;
+diff --git a/node_modules/@meshtastic/core/dist/mod.js b/node_modules/@meshtastic/core/dist/mod.js
+index 7c9e51b..a5587e8 100644
+--- a/node_modules/@meshtastic/core/dist/mod.js
++++ b/node_modules/@meshtastic/core/dist/mod.js
+@@ -12552,9 +12552,11 @@ var Queue = class {
+     return this.queue;
+   }
+   clear() {
++    for (const item of this.queue) clearTimeout(item.timeout);
+     this.queue = [];
+   }
+   push(item) {
++    let timeout;
+     const queueItem = {
+       ...item,
+       sent: false,
+@@ -12572,7 +12574,7 @@ var Queue = class {
+             reject(e);
+           }
+         });
+-        setTimeout(() => {
++        timeout = setTimeout(() => {
+           if (this.queue.findIndex((qi) => qi.id === item.id) !== -1) {
+             this.remove(item.id);
+             const decoded = fromBinary(mesh_pb_exports.ToRadioSchema, item.data);
+@@ -12587,11 +12589,15 @@ var Queue = class {
+             });
+           }
+         }, this.timeout);
+-      })
++      }),
++      timeout
+     };
+     this.queue.push(queueItem);
+   }
+   remove(id) {
++    for (const item of this.queue) {
++      if (item.id === id) clearTimeout(item.timeout);
++    }
+     if (this.lock) {
+       setTimeout(() => this.remove(id), 100);
+       return;
