@@ -13,6 +13,7 @@ import type {
   PluginActivityReporter,
   PluginDeploymentStatus,
   PluginOperationOutcome,
+  PluginUpdatePlan,
   UpdateReporter,
   UpdateScope
 } from "../src/operator.js";
@@ -1663,6 +1664,33 @@ describe("Atlas Core terminal UI", () => {
     expect(terminal.setRawMode).toHaveBeenLastCalledWith(false);
   });
 
+  it("opens Plugin management without waiting for update planning", async () => {
+    const terminal = new TestTerminal();
+    const deployment = Object.assign(operator(), {
+      pluginUpdatePlan: vi.fn(async () => await new Promise<PluginUpdatePlan>(() => undefined))
+    });
+    deployment.pluginStatuses.mockResolvedValue([
+      {
+        pluginId: "building_scan",
+        displayName: "Building Scan",
+        lifecycle: "query_only",
+        enabled: false,
+        packaged: false,
+        installed: true,
+        selectedVersion: "1.0.0"
+      }
+    ]);
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await openPluginManagement(terminal);
+    expect(terminal.text).toContain("Selected  1.0.0");
+    expect(deployment.pluginUpdatePlan).not.toHaveBeenCalled();
+    terminal.write("q");
+    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
+    terminal.write("q");
+    await menu;
+  });
+
   it("keeps the selected Plugin visible in a bounded catalog viewport", async () => {
     const terminal = new TestTerminal(40, true, 24);
     const deployment = operator();
@@ -2189,8 +2217,8 @@ describe("Atlas Core terminal UI", () => {
     const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
 
     await openPluginManagement(terminal);
-    await terminal.waitFor("Catalog   1.1.0 compatible update");
     expect(terminal.text).toContain("Selected  1.0.0");
+    expect(deployment.pluginUpdatePlan).not.toHaveBeenCalled();
     terminal.write("u");
     await terminal.waitFor("REVIEW PLUGIN UPDATE");
     expect(terminal.text).toContain("Current      1.0.0");
@@ -2469,6 +2497,65 @@ describe("Atlas Core terminal UI", () => {
     await terminal.waitFor("PLUGIN CATALOG");
     expect(deployment.resumeAfterCancellation).toHaveBeenCalledOnce();
     expect(await deployment.details()).toMatchObject({ coreVersion: coreBefore.coreVersion, image: coreBefore.image });
+    await vi.waitFor(() => expect(deployment.pluginStatuses).toHaveBeenCalledTimes(2));
+    terminal.write("q");
+    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));
+    terminal.write("q");
+    await menu;
+  });
+
+  it("keeps a committed Plugin update successful after a late Escape", async () => {
+    const terminal = new TestTerminal();
+    const plugin = {
+      pluginId: "building_scan",
+      displayName: "Building Scan",
+      lifecycle: "query_only" as const,
+      enabled: true,
+      packaged: false,
+      installed: true,
+      selectedVersion: "1.0.0"
+    };
+    let finishUpdate: (() => void) | undefined;
+    const deployment = Object.assign(operator(), {
+      pluginUpdatePlan: vi.fn(async () => ({
+        status: "available" as const,
+        action: "update" as const,
+        pluginId: plugin.pluginId,
+        displayName: plugin.displayName,
+        currentVersion: "1.0.0",
+        targetVersion: "1.1.0",
+        enabled: true,
+        restartServices: ["Core API", "Source Gateway", "Building Scan"],
+        coreVersion: "0.2.1",
+        coreImage: "ghcr.io/the-drunken-coder/atlas-core@sha256:current-core"
+      })),
+      pluginUpdate: vi.fn(
+        async (_pluginId: string, reportActivity?: PluginActivityReporter) =>
+          await new Promise<PluginOperationOutcome>((resolve) => {
+            reportActivity?.({ level: "working", message: "Installing Building Scan 1.1.0", stage: "operation" });
+            finishUpdate = () => {
+              reportActivity?.({ level: "success", message: "Building Scan updated to 1.1.0", stage: "operation" });
+              resolve({ status: "success" });
+            };
+          })
+      )
+    });
+    deployment.cancelPending.mockImplementation(() => finishUpdate?.());
+    deployment.pluginStatuses
+      .mockResolvedValueOnce([plugin])
+      .mockResolvedValueOnce([{ ...plugin, selectedVersion: "1.1.0" }]);
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await openPluginManagement(terminal);
+    terminal.write("u");
+    await terminal.waitFor("REVIEW PLUGIN UPDATE");
+    terminal.write("\r");
+    await terminal.waitFor("Installing Building Scan 1.1.0");
+    terminal.write("\u001b");
+    await terminal.waitFor("Building Scan updated to 1.1.0.");
+    await terminal.waitFor("Enter return to Plugins");
+    expect(deployment.resumeAfterCancellation).toHaveBeenCalledOnce();
+    terminal.write("\r");
     await vi.waitFor(() => expect(deployment.pluginStatuses).toHaveBeenCalledTimes(2));
     terminal.write("q");
     await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(2));

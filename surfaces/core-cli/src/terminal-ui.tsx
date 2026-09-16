@@ -257,20 +257,7 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
   const loadPlugins = useCallback(async () => {
     setScreen({ kind: "busy", label: "Loading Plugins..." });
     try {
-      const statuses = await operator.pluginStatuses();
-      const statusesWithPlans: PluginDeploymentStatus[] = [];
-      for (const status of statuses) {
-        if (status.installed === true && operator.pluginUpdatePlan) {
-          try {
-            statusesWithPlans.push({ ...status, updatePlan: await operator.pluginUpdatePlan(status.pluginId) });
-          } catch (error) {
-            statusesWithPlans.push({ ...status, error: status.error ?? errorMessage(error) });
-          }
-        } else {
-          statusesWithPlans.push(status);
-        }
-      }
-      setScreen({ kind: "plugins", view: statusesWithPlans });
+      setScreen({ kind: "plugins", view: await operator.pluginStatuses() });
     } catch (error) {
       setScreen({ kind: "plugins", view: new Error(errorMessage(error)) });
     }
@@ -532,9 +519,11 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
         if (current.kind !== "plugin-activity" || current.view.operationId !== operationId) return current;
         const status = result.failure
           ? "failure"
-          : result.value?.status === "cancelled" || result.cancelled
-            ? "cancelled"
-            : "success";
+          : result.value?.status === "success"
+            ? "success"
+            : result.value?.status === "cancelled" || result.cancelled
+              ? "cancelled"
+              : "success";
         return {
           ...current,
           view: {

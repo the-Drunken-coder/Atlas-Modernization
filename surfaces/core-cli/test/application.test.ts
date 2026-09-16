@@ -6805,6 +6805,28 @@ describe("atlas-core CLI", () => {
     expect(catalogRefreshRequests).toBe(0);
   });
 
+  it("reports no restart impact when an enabled Plugin is current", async () => {
+    const test = runtime();
+    await installIndependentUpdateFixtures(test);
+    expect(await runCLI(["plugins", "update", "alpha_fixture"], test.context), test.stderr.join("")).toBe(0);
+    const statePath = join(test.home, ".atlas", "core", "state.json");
+    const state = JSON.parse(readFileSync(statePath, "utf8"));
+    writeFileSync(statePath, `${JSON.stringify({ ...state, enabledPlugins: ["alpha_fixture"] })}\n`, { mode: 0o600 });
+    let plan: PluginUpdatePlan | undefined;
+    test.context.interactive = {
+      configureAdmin: async () => undefined,
+      runUpdate: async () => undefined,
+      runMenu: async (operator) => {
+        if (!operator.pluginUpdatePlan) throw new Error("Plugin update planning is unavailable.");
+        plan = await operator.pluginUpdatePlan("alpha_fixture");
+      }
+    };
+
+    expect(await runCLI([], test.context), test.stderr.join("")).toBe(0);
+
+    expect(plan!).toMatchObject({ status: "current", enabled: true, restartServices: [] });
+  });
+
   it("rejects confirmation when the selected Plugin release changes after review", async () => {
     const test = runtime();
     await installIndependentUpdateFixtures(test);

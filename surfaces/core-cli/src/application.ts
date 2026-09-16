@@ -1678,7 +1678,12 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
             status: "blocked",
             reason: `A newer release exists, but it is incompatible with Atlas Core ${state.packageVersion}.`
           }
-        : { ...planBase, status: "current", reason: `${current.displayName} ${current.version} is current.` };
+        : {
+            ...planBase,
+            restartServices: [],
+            status: "current",
+            reason: `${current.displayName} ${current.version} is current.`
+          };
     }
     const candidatePlan = {
       action:
