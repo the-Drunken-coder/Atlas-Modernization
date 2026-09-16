@@ -10,6 +10,7 @@ import type {
   LogStream,
   PluginActivityReporter,
   PluginOperationOutcome,
+  PluginUpdatePlan,
   UpdateReporter,
   UpdateScope
 } from "./operator.js";
@@ -512,8 +513,11 @@ export function createPreviewOperator(
       const installed = installedPlugins.get(pluginId);
       if (!installed) throw new Error(`Plugin ${pluginId} is not installed.`);
       const nextVersion = PREVIEW_PLUGIN_VERSIONS[0];
-      if (reviewedPlan && reviewedPlan.targetVersion !== nextVersion) {
-        throw new Error(`The reviewed Plugin target changed from ${reviewedPlan.targetVersion} to ${nextVersion}.`);
+      if (reviewedPlan) {
+        const currentPlan = await this.pluginUpdatePlan?.(pluginId);
+        if (!currentPlan || !samePluginUpdatePlan(reviewedPlan, currentPlan)) {
+          throw new Error("The reviewed Plugin update details changed. Review the update again.");
+        }
       }
       if (installed.selectedVersion === nextVersion) return { status: "success" };
       reportActivity?.({
@@ -595,6 +599,25 @@ export function createPreviewOperator(
       await update(scope, _expectedVersion);
     }
   };
+}
+
+function samePluginUpdatePlan(
+  reviewed: Extract<PluginUpdatePlan, { status: "available" }>,
+  current: PluginUpdatePlan
+): boolean {
+  return (
+    current.status === "available" &&
+    reviewed.pluginId === current.pluginId &&
+    reviewed.displayName === current.displayName &&
+    reviewed.currentVersion === current.currentVersion &&
+    reviewed.targetVersion === current.targetVersion &&
+    reviewed.action === current.action &&
+    reviewed.enabled === current.enabled &&
+    reviewed.coreVersion === current.coreVersion &&
+    reviewed.coreImage === current.coreImage &&
+    reviewed.restartServices.length === current.restartServices.length &&
+    reviewed.restartServices.every((service, index) => service === current.restartServices[index])
+  );
 }
 
 function requirePreviewPlugin(pluginId: string): PluginCatalogEntry {

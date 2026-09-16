@@ -576,6 +576,46 @@ describe("PluginCatalogStore", () => {
     expect(calls.at(-1)).toBe(releaseURL("0.1.0"));
   });
 
+  it("forwards cancellation to a revoked current release download", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "atlas-catalog-store-"));
+    directories.push(directory);
+    const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+    const current = releaseBytes("0.2.0");
+    const first = catalogBytes(1, null, [{ version: "0.2.0", documentSha256: realDigest(current), revoked: true }]);
+    const controller = new AbortController();
+    let downloadStarted: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => {
+      downloadStarted = resolve;
+    });
+    const store = new PluginCatalogStore({
+      configDir: directory,
+      catalogURL: "https://catalog.example/catalog.json",
+      trust: trust(publicKey),
+      fetchImpl: async (url, init) => {
+        const text = String(url);
+        if (text.endsWith(".sig")) return new Response(signatureBytes(first, privateKey));
+        if (text === releaseURL("0.2.0")) {
+          downloadStarted?.();
+          return await new Promise<Response>((_resolve, reject) => {
+            const signal = init?.signal;
+            if (!signal) throw new Error("Revoked release download must be cancellable.");
+            const abort = () => reject(signal.reason);
+            if (signal.aborted) abort();
+            else signal.addEventListener("abort", abort, { once: true });
+          });
+        }
+        return new Response(first);
+      },
+      now: () => new Date("2026-09-02T12:00:00Z")
+    });
+    await store.refresh();
+
+    const candidates = store.candidates(pluginId, { currentVersion: "0.2.0", signal: controller.signal });
+    await started;
+    controller.abort();
+    await expect(candidates).rejects.toMatchObject({ name: "AbortError" });
+  });
+
   it("uses the highest observed clock value after a rollback", async () => {
     const directory = mkdtempSync(join(tmpdir(), "atlas-catalog-store-"));
     directories.push(directory);

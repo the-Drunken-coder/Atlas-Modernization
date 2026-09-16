@@ -27,6 +27,7 @@ import type {
   InteractiveCLI,
   LifecycleOperationProgress,
   LifecycleOperationResult,
+  PluginOperationOutcome,
   PluginUpdatePlan
 } from "../src/operator.js";
 import { PACKAGE_NAME, PACKAGE_PLUGIN_CONTRACTS, PACKAGE_VERSION } from "../src/package-metadata.js";
@@ -6897,6 +6898,49 @@ describe("atlas-core CLI", () => {
     expect(await runCLI([], test.context), test.stderr.join("")).toBe(0);
 
     expect(planningError).toBeInstanceOf(CommandCancelledError);
+    expect(existsSync(join(test.home, ".atlas", "core", ".mutation.lock"))).toBe(false);
+  });
+
+  it("cancels confirmed Plugin update resolution with a preserved-deployment outcome", async () => {
+    const test = runtime();
+    const plugin = INDEPENDENT_UPDATE_FIXTURES[0];
+    if (!plugin) throw new Error("Independent Plugin fixture is missing.");
+    await installIndependentUpdateFixtures(test, [plugin]);
+    const previousFetch = test.context.fetch;
+    if (!previousFetch) throw new Error("Plugin fixture fetch is unavailable.");
+    const releaseURL = `https://github.com/the-Drunken-coder/Atlas-Modernization/releases/download/atlas-plugin-${plugin.pluginId}-v0.2.0/${plugin.pluginId}-0.2.0.atlas-plugin`;
+    let resolutionStarted: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => {
+      resolutionStarted = resolve;
+    });
+    let outcome: PluginOperationOutcome | undefined;
+    test.context.fetch = async (input, init) => {
+      if (String(input) !== releaseURL) return await previousFetch(input, init);
+      resolutionStarted?.();
+      return await new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal;
+        if (!signal) throw new Error("Confirmed Plugin update resolution must be cancellable.");
+        const abort = () => reject(signal.reason);
+        if (signal.aborted) abort();
+        else signal.addEventListener("abort", abort, { once: true });
+      });
+    };
+    test.context.interactive = {
+      configureAdmin: async () => undefined,
+      runUpdate: async () => undefined,
+      runMenu: async (operator) => {
+        if (!operator.pluginUpdate) throw new Error("Plugin update is unavailable.");
+        const update = operator.pluginUpdate(plugin.pluginId, () => undefined);
+        await started;
+        operator.cancelPending();
+        outcome = await update;
+      }
+    };
+
+    expect(await runCLI([], test.context), test.stderr.join("")).toBe(0);
+
+    expect(outcome).toEqual({ previousDeploymentPreserved: true, status: "cancelled" });
+    expect(installedPluginVersion(test, plugin.pluginId)).toBe("0.1.0");
     expect(existsSync(join(test.home, ".atlas", "core", ".mutation.lock"))).toBe(false);
   });
 

@@ -212,7 +212,7 @@ export class PluginCatalogStore {
       candidates.push(
         options.currentRelease
           ? this.#candidateFromRelease(pluginId, currentRevoked, options.currentRelease)
-          : await this.#downloadCandidate(pluginId, currentRevoked)
+          : await this.#downloadCandidate(pluginId, currentRevoked, options.signal)
       );
     }
     for (const catalogRelease of releases) {

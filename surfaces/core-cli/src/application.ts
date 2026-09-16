@@ -1733,76 +1733,98 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     reportActivity?: PluginActivityReporter,
     reviewedPlan?: Extract<PluginUpdatePlan, { status: "available" }>
   ): Promise<PluginOperationOutcome> {
-    await this.#withInitializedMutation(async (raw) => {
-      const state = this.#requireManaged(raw);
-      const manager = this.#plugins(state);
-      const pluginIds =
-        pluginId === "all"
-          ? (await manager.list())
-              .filter((plugin) => plugin.installed)
-              .map((plugin) => plugin.pluginId)
-              .sort()
-          : [pluginId];
-      if (pluginIds.length === 0) {
-        this.#stdout.write("No installed Plugins to update.\n");
-        return;
-      }
-      await this.#catalogStore.refresh({ allowCachedOnFailure: true });
-      const updated: string[] = [];
-      for (const id of pluginIds) {
-        try {
-          reportActivity?.({ level: "working", message: "Checking the signed Plugin catalog", stage: "operation" });
-          const resolved = await this.#resolvePluginUpdate(state, id, manager);
-          const selection = resolved.selection;
-          const candidate = updateCandidateRelease(selection);
-          if (reviewedPlan) {
-            const currentPlan = await this.#planPluginUpdate(state, manager, id, selection);
-            if (!samePluginUpdatePlan(reviewedPlan, currentPlan)) {
-              throw new Error("The reviewed Plugin update details changed. Review the update again.");
+    return await this.#withCancellationSignal(async (signal) => {
+      try {
+        await this.#withInitializedMutation(async (raw) => {
+          const state = this.#requireManaged(raw);
+          const manager = this.#plugins(state);
+          const pluginIds =
+            pluginId === "all"
+              ? (await manager.list())
+                  .filter((plugin) => plugin.installed)
+                  .map((plugin) => plugin.pluginId)
+                  .sort()
+              : [pluginId];
+          if (pluginIds.length === 0) {
+            this.#stdout.write("No installed Plugins to update.\n");
+            return;
+          }
+          await this.#catalogStore.refresh({ allowCachedOnFailure: true, signal });
+          const updated: string[] = [];
+          for (const id of pluginIds) {
+            try {
+              reportActivity?.({
+                level: "working",
+                message: "Checking the signed Plugin catalog",
+                stage: "operation"
+              });
+              const resolved = await this.#resolvePluginUpdate(state, id, manager, signal);
+              const selection = resolved.selection;
+              const candidate = updateCandidateRelease(selection);
+              if (reviewedPlan) {
+                const currentPlan = await this.#planPluginUpdate(state, manager, id, selection, signal);
+                if (!samePluginUpdatePlan(reviewedPlan, currentPlan)) {
+                  throw new Error("The reviewed Plugin update details changed. Review the update again.");
+                }
+              }
+              if (candidate) {
+                reportActivity?.({
+                  level: "working",
+                  message: `Installing ${selection.current.displayName} ${candidate.version}`,
+                  stage: "operation"
+                });
+              }
+              const result = await manager.update(id, resolved.candidates);
+              if (result.changed) updated.push(id);
+              if (reportActivity) {
+                reportActivity({
+                  level: "success",
+                  message:
+                    reviewedPlan?.action === "replacement" && candidate
+                      ? `${selection.current.displayName} replaced with ${candidate.version}.`
+                      : result.message,
+                  stage: "operation"
+                });
+              } else this.#stdout.write(`${result.message}\n`);
+            } catch (error) {
+              if (error instanceof CommandCancelledError) throw error;
+              reportActivity?.({
+                level: "failure",
+                message: `Update stopped: ${errorMessage(error)}`,
+                stage: "operation"
+              });
+              reportActivity?.(
+                errorMessage(error).includes("Recovery is required:")
+                  ? {
+                      level: "failure",
+                      message: "Recovery is required. Run atlas-core recover status for the valid next action",
+                      stage: "rollback"
+                    }
+                  : {
+                      level: "success",
+                      message: "The previous Plugin release is preserved",
+                      stage: "rollback"
+                    }
+              );
+              if (pluginId !== "all") throw error;
+              throw new Error(
+                `Plugin update stopped at ${id}. Already updated: ${updated.join(", ") || "none"}. ${errorMessage(error)}`
+              );
             }
           }
-          if (candidate) {
-            reportActivity?.({
-              level: "working",
-              message: `Installing ${selection.current.displayName} ${candidate.version}`,
-              stage: "operation"
-            });
-          }
-          const result = await manager.update(id, resolved.candidates);
-          if (result.changed) updated.push(id);
-          if (reportActivity) {
-            reportActivity({
-              level: "success",
-              message:
-                reviewedPlan?.action === "replacement" && candidate
-                  ? `${selection.current.displayName} replaced with ${candidate.version}.`
-                  : result.message,
-              stage: "operation"
-            });
-          } else this.#stdout.write(`${result.message}\n`);
-        } catch (error) {
-          reportActivity?.({ level: "failure", message: `Update stopped: ${errorMessage(error)}`, stage: "operation" });
-          reportActivity?.(
-            errorMessage(error).includes("Recovery is required:")
-              ? {
-                  level: "failure",
-                  message: "Recovery is required. Run atlas-core recover status for the valid next action",
-                  stage: "rollback"
-                }
-              : {
-                  level: "success",
-                  message: "The previous Plugin release is preserved",
-                  stage: "rollback"
-                }
-          );
-          if (pluginId !== "all") throw error;
-          throw new Error(
-            `Plugin update stopped at ${id}. Already updated: ${updated.join(", ") || "none"}. ${errorMessage(error)}`
-          );
-        }
+        });
+        return { status: "success" };
+      } catch (error) {
+        if (!(error instanceof CommandCancelledError)) throw error;
+        reportActivity?.({ level: "failure", message: "Update cancelled", stage: "operation" });
+        reportActivity?.({
+          level: "success",
+          message: "The previous Plugin release is preserved",
+          stage: "rollback"
+        });
+        return { previousDeploymentPreserved: true, status: "cancelled" };
       }
     });
-    return { status: "success" };
   }
 
   async #resolvePluginUpdate(
