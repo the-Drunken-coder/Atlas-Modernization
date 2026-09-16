@@ -246,9 +246,10 @@ describe("RunStore", () => {
     expect(store.get(started.id)?.finishedAt).toBeDefined();
   });
 
-  it("preserves stop event ordering and ignores callbacks after settlement", async () => {
+  it("makes cancellation an immediate write barrier while execution unwinds", async () => {
     const { store } = runStoreFixture();
     let lateCallback!: () => void;
+    let release!: () => void;
     let lateAssertion: { id: string; name: string } | undefined;
     const scenario = scenarioFixture({
       id: "late-callbacks",
@@ -258,9 +259,11 @@ describe("RunStore", () => {
         lateCallback = () => {
           ctx.log("late log");
           lateAssertion = ctx.assert("late assertion", true);
-          ctx.track({ type: "entity", id: ctx.id("late") });
+          ctx.track({ type: "task", id: ctx.id("late") });
         };
-        await ctx.wait(60_000);
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
       }
     });
 
@@ -269,15 +272,19 @@ describe("RunStore", () => {
     store.subscribe(started.id, (event) =>
       eventOrder.push(event.type === "status" ? `${event.type}:${event.status}` : `${event.type}:${event.message}`)
     );
+    await vi.waitFor(() => expect(release).toBeTypeOf("function"));
     store.stop(started.id);
-    await store.cleanup(started.id);
+    lateCallback();
 
     expect(eventOrder).toEqual(["status:running", "log:Stop requested", "status:cancelled"]);
-    lateCallback();
     expect(lateAssertion).toMatchObject({ id: "assert-late", name: "late assertion" });
     expect(store.get(started.id)?.assertions).toEqual([]);
     expect(store.get(started.id)?.createdResources).toEqual([]);
     expect(store.events(started.id).some((event) => event.message === "late log")).toBe(false);
+
+    const cleanup = store.cleanup(started.id);
+    release();
+    await expect(cleanup).resolves.toMatchObject({ status: "cancelled", cleaned: true });
   });
 
   it("marks the run failed when a scenario records a failed assertion", async () => {

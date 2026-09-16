@@ -31,18 +31,26 @@ export async function executeRun(
       clientFactory: run.clientFactory,
       registerClient,
       log: (message, data) => {
-        if (!run.settled) operations.emit(run, { type: "log", message, data });
+        if (!run.controller.signal.aborted) operations.emit(run, { type: "log", message, data });
       },
       assert: (name, passed, message) =>
-        run.settled ? lateAssertion(name, passed, message) : operations.assert(run, name, passed, message),
+        run.controller.signal.aborted
+          ? lateAssertion(name, passed, message)
+          : operations.assert(run, name, passed, message),
       track: (resource, instanceToken) => {
-        if (!run.settled && !run.cleanupStarted && !run.cleaned) operations.track(run, resource, instanceToken);
+        if (!run.controller.signal.aborted && !run.cleanupStarted && !run.cleaned) {
+          operations.track(run, resource, instanceToken);
+        }
       },
       trackCleanupCandidate: (resource) => {
-        if (!run.settled && !run.cleanupStarted && !run.cleaned) operations.trackCleanupCandidate(run, resource);
+        if (!run.controller.signal.aborted && !run.cleanupStarted && !run.cleaned) {
+          operations.trackCleanupCandidate(run, resource);
+        }
       },
       untrackCleanupCandidate: (resource) => {
-        if (!run.settled && !run.cleanupStarted && !run.cleaned) operations.untrackCleanupCandidate(run, resource);
+        if (!run.controller.signal.aborted && !run.cleanupStarted && !run.cleaned) {
+          operations.untrackCleanupCandidate(run, resource);
+        }
       }
     });
     await scenario.run(context, input);
