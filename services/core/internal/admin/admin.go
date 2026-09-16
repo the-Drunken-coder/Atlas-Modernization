@@ -469,7 +469,9 @@ func validPasswordHash(stored PasswordHash) bool {
 	if stored.Algorithm != "argon2id" ||
 		stored.MemoryKiB == 0 || stored.MemoryKiB > argon2MemoryKiB ||
 		stored.Time == 0 || stored.Time > argon2Time ||
-		stored.Parallelism == 0 || stored.Parallelism > argon2Parallelism {
+		stored.Parallelism == 0 || stored.Parallelism > argon2Parallelism ||
+		len(stored.Salt) != base64.RawStdEncoding.EncodedLen(argon2SaltLength) ||
+		len(stored.Hash) != base64.RawStdEncoding.EncodedLen(argon2HashLength) {
 		return false
 	}
 	salt, err := base64.RawStdEncoding.DecodeString(stored.Salt)

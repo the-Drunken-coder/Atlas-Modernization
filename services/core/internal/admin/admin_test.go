@@ -308,10 +308,12 @@ func TestVerifyPasswordRejectsInvalidRecordsBeforeAcquiringArgon2Slot(t *testing
 		"oversized time":        withPasswordHashField(valid, func(hash *PasswordHash) { hash.Time++ }),
 		"zero parallelism":      withPasswordHashField(valid, func(hash *PasswordHash) { hash.Parallelism = 0 }),
 		"oversized parallelism": withPasswordHashField(valid, func(hash *PasswordHash) { hash.Parallelism++ }),
-		"malformed salt":        withPasswordHashField(valid, func(hash *PasswordHash) { hash.Salt = "!" }),
+		"malformed salt":        withPasswordHashField(valid, func(hash *PasswordHash) { hash.Salt = strings.Repeat("!", 22) }),
 		"wrong salt length":     withPasswordHashField(valid, func(hash *PasswordHash) { hash.Salt = "AA" }),
-		"malformed hash":        withPasswordHashField(valid, func(hash *PasswordHash) { hash.Hash = "!" }),
+		"oversized salt":        withPasswordHashField(valid, func(hash *PasswordHash) { hash.Salt = strings.Repeat("A", 1<<20) }),
+		"malformed hash":        withPasswordHashField(valid, func(hash *PasswordHash) { hash.Hash = strings.Repeat("!", 43) }),
 		"wrong hash length":     withPasswordHashField(valid, func(hash *PasswordHash) { hash.Hash = "AA" }),
+		"oversized hash":        withPasswordHashField(valid, func(hash *PasswordHash) { hash.Hash = strings.Repeat("A", 1<<20) }),
 	}
 
 	for i := 0; i < cap(loginArgon2Slots); i++ {
