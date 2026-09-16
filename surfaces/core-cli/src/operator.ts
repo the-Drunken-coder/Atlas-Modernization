@@ -149,7 +149,10 @@ export type PluginActivity = {
 
 export type PluginActivityReporter = (activity: PluginActivity) => void;
 
-export type PluginOperationOutcome = { status: "success" } | { previousDeploymentPreserved: true; status: "cancelled" };
+export type PluginOperationOutcome =
+  | { status: "success" }
+  | { previousDeploymentPreserved: true; status: "cancelled" }
+  | { previousDeploymentPreserved: false; status: "cancelled"; updatedPluginIds: readonly string[] };
 
 type PluginUpdatePlanBase = {
   pluginId: string;

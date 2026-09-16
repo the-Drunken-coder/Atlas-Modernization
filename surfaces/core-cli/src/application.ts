@@ -1734,6 +1734,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     reviewedPlan?: Extract<PluginUpdatePlan, { status: "available" }>
   ): Promise<PluginOperationOutcome> {
     return await this.#withCancellationSignal(async (signal) => {
+      const updated: string[] = [];
       try {
         await this.#withInitializedMutation(async (raw) => {
           const state = this.#requireManaged(raw);
@@ -1750,7 +1751,6 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
             return;
           }
           await this.#catalogStore.refresh({ allowCachedOnFailure: true, signal });
-          const updated: string[] = [];
           for (const id of pluginIds) {
             try {
               reportActivity?.({
@@ -1817,6 +1817,14 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       } catch (error) {
         if (!(error instanceof CommandCancelledError)) throw error;
         reportActivity?.({ level: "failure", message: "Update cancelled", stage: "operation" });
+        if (updated.length > 0) {
+          reportActivity?.({
+            level: "failure",
+            message: `Already updated: ${updated.join(", ")}`,
+            stage: "rollback"
+          });
+          return { previousDeploymentPreserved: false, status: "cancelled", updatedPluginIds: updated };
+        }
         reportActivity?.({
           level: "success",
           message: "The previous Plugin release is preserved",

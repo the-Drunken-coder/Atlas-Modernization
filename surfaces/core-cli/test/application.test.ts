@@ -6914,8 +6914,9 @@ describe("atlas-core CLI", () => {
       resolutionStarted = resolve;
     });
     let outcome: PluginOperationOutcome | undefined;
+    let blockResolution = false;
     test.context.fetch = async (input, init) => {
-      if (String(input) !== releaseURL) return await previousFetch(input, init);
+      if (!blockResolution || String(input) !== releaseURL) return await previousFetch(input, init);
       resolutionStarted?.();
       return await new Promise<Response>((_resolve, reject) => {
         const signal = init?.signal;
@@ -6929,8 +6930,11 @@ describe("atlas-core CLI", () => {
       configureAdmin: async () => undefined,
       runUpdate: async () => undefined,
       runMenu: async (operator) => {
-        if (!operator.pluginUpdate) throw new Error("Plugin update is unavailable.");
-        const update = operator.pluginUpdate(plugin.pluginId, () => undefined);
+        if (!operator.pluginUpdate || !operator.pluginUpdatePlan) throw new Error("Plugin update is unavailable.");
+        const reviewedPlan = await operator.pluginUpdatePlan(plugin.pluginId);
+        if (reviewedPlan.status !== "available") throw new Error("Expected an available Plugin update.");
+        blockResolution = true;
+        const update = operator.pluginUpdate(plugin.pluginId, () => undefined, reviewedPlan);
         await started;
         operator.cancelPending();
         outcome = await update;
@@ -7110,6 +7114,52 @@ describe("atlas-core CLI", () => {
     expect(JSON.parse(readFileSync(join(test.home, ".atlas", "core", "state.json"), "utf8"))).toMatchObject({
       enabledPlugins: []
     });
+  });
+
+  it("reports committed Plugins when update-all is cancelled partway through", async () => {
+    const test = runtime();
+    await installIndependentUpdateFixtures(test);
+    const previousFetch = test.context.fetch;
+    if (!previousFetch) throw new Error("Plugin fixture fetch is unavailable.");
+    const zetaReleaseURL =
+      "https://github.com/the-Drunken-coder/Atlas-Modernization/releases/download/atlas-plugin-zeta_fixture-v0.2.0/zeta_fixture-0.2.0.atlas-plugin";
+    let resolutionStarted: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => {
+      resolutionStarted = resolve;
+    });
+    let outcome: PluginOperationOutcome | undefined;
+    test.context.fetch = async (input, init) => {
+      if (String(input) !== zetaReleaseURL) return await previousFetch(input, init);
+      resolutionStarted?.();
+      return await new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal;
+        if (!signal) throw new Error("Update-all release resolution must be cancellable.");
+        const abort = () => reject(signal.reason);
+        if (signal.aborted) abort();
+        else signal.addEventListener("abort", abort, { once: true });
+      });
+    };
+    test.context.interactive = {
+      configureAdmin: async () => undefined,
+      runUpdate: async () => undefined,
+      runMenu: async (operator) => {
+        if (!operator.pluginUpdate) throw new Error("Plugin update is unavailable.");
+        const update = operator.pluginUpdate("all", () => undefined);
+        await started;
+        operator.cancelPending();
+        outcome = await update;
+      }
+    };
+
+    expect(await runCLI([], test.context), test.stderr.join("")).toBe(0);
+
+    expect(outcome).toEqual({
+      previousDeploymentPreserved: false,
+      status: "cancelled",
+      updatedPluginIds: ["alpha_fixture"]
+    });
+    expect(installedPluginVersion(test, "alpha_fixture")).toBe("0.2.0");
+    expect(installedPluginVersion(test, "zeta_fixture")).toBe("0.1.0");
   });
 
   it("stops update-all after the first failed Plugin and retains prior updates", async () => {
