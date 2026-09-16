@@ -37,6 +37,7 @@ export interface AtlasDataSource {
   start(): Promise<void>;
   submitCommand(submission: CommandSubmission): Promise<TaskResource>;
   createGeofeature(entityId: string, name: string, geometry: UiGeometry): Promise<EntityResource>;
+  deleteGeofeature?(entityId: string): Promise<void>;
   updateGeometry(entityId: string, geometry: UiGeometry, ifMatchVersion?: number): Promise<EntityResource>;
   health?(): ConnectionHealth;
   dispose(): void;
@@ -180,6 +181,8 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
         throw cause;
       }
     },
+
+    deleteGeofeature: (entityId) => client.entities.delete(entityId),
 
     async updateGeometry(entityId, geometry, ifMatchVersion) {
       return client.entities.update(

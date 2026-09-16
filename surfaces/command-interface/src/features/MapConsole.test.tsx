@@ -238,6 +238,7 @@ function makeFakeDataSource(geofeature: EntityResource = area, health: Connectio
   let notify: ((snapshot: AtlasSnapshot) => void) | undefined;
   const submissions: CommandSubmission[] = [];
   const geometryUpdates: Array<{ entityId: string; geometry: UiGeometry; ifMatchVersion?: number }> = [];
+  const deletions: string[] = [];
   const fake: AtlasDataSource = {
     snapshot() {
       return current;
@@ -276,6 +277,12 @@ function makeFakeDataSource(geofeature: EntityResource = area, health: Connectio
       notify?.(current);
       return created;
     },
+    async deleteGeofeature(entityId) {
+      deletions.push(entityId);
+      const { [entityId]: _deleted, ...entities } = current.entities;
+      current = { ...current, entities };
+      notify?.(current);
+    },
     async updateGeometry(entityId, geometry, ifMatchVersion) {
       geometryUpdates.push({ entityId, geometry, ifMatchVersion });
       const updated = {
@@ -293,6 +300,7 @@ function makeFakeDataSource(geofeature: EntityResource = area, health: Connectio
     fake,
     submissions,
     geometryUpdates,
+    deletions,
     emit: (snapshot: AtlasSnapshot) => {
       current = snapshot;
       notify?.(snapshot);
@@ -2040,5 +2048,42 @@ describe("MapConsole", () => {
     expect(await screen.findByText("This item is no longer available.")).toBeInTheDocument();
     await waitFor(() => expect(screen.getByTestId("map")).toHaveAttribute("data-editing", "false"));
     expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
+  });
+
+  it("deletes the selected Geo Feature and returns to its updated list", async () => {
+    const user = userEvent.setup();
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const { fake, deletions } = makeFakeDataSource();
+    renderConsole(fake);
+
+    await screen.findByText("Rover");
+    await user.click(screen.getByRole("button", { name: "Geo Features" }));
+    await user.click(await screen.findByText("Area Alpha"));
+    await user.click(screen.getByRole("button", { name: "Delete Geofeature" }));
+
+    expect(confirm).toHaveBeenCalledWith('Delete "Area Alpha"? This cannot be undone.');
+    await waitFor(() => expect(deletions).toEqual(["geo-1"]));
+    expect(document.querySelector(".panel__title")).toHaveTextContent("Geo Features");
+    expect(screen.queryByText("Area Alpha")).not.toBeInTheDocument();
+    expect(screen.getByText("No geo features yet")).toBeInTheDocument();
+  });
+
+  it("keeps the failed deletion selected and shows a sanitized error", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const { fake } = makeFakeDataSource();
+    fake.deleteGeofeature = async () => {
+      throw new Error("delete failed: Bearer private-token");
+    };
+    renderConsole(fake);
+
+    await screen.findByText("Rover");
+    await user.click(screen.getByRole("button", { name: "Geo Features" }));
+    await user.click(await screen.findByText("Area Alpha"));
+    await user.click(screen.getByRole("button", { name: "Delete Geofeature" }));
+
+    expect(await screen.findByText("delete failed: Bearer [redacted]")).toBeInTheDocument();
+    expect(screen.getByText("Geo Feature")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Delete Geofeature" })).toBeEnabled();
   });
 });

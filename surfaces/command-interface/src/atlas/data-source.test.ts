@@ -530,6 +530,18 @@ describe("sdk data source", () => {
     expect(snapshots).toHaveBeenLastCalledWith({ entities: { "geo-new": created }, tasks: {} });
   });
 
+  it("deletes Geo Features through the SDK entity API", async () => {
+    const fetchMock = vi.fn(async () => new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const dataSource = createSdkDataSource(config);
+
+    await expect(dataSource.deleteGeofeature?.("geo-1")).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://core.test/entities/geo-1",
+      expect.objectContaining({ method: "DELETE", credentials: "include" })
+    );
+  });
+
   it.each(["lost response", "conflict", "server error"])("recovers a committed create after %s", async (failure) => {
     const geometry: UiGeometry = { type: "Point", coordinates: [-71, 42] };
     const created = { ...entity("geo-new"), entity_type: "geofeature", alias: "Rally", components: { geometry } };

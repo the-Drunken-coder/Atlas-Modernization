@@ -8,6 +8,7 @@ import {
   ENTITY_KIND_BY_LIST,
   ENTITY_KINDS,
   type EntityKind,
+  entityDisplayName,
   entityKind
 } from "../atlas/entities.js";
 import type { UiGeometry } from "../atlas/geometry.js";
@@ -43,6 +44,7 @@ import { EntityList } from "./EntityList.js";
 import { GeofeatureCreatePanel } from "./geofeatures/GeofeatureCreatePanel.js";
 import { GeofeatureInspector } from "./geofeatures/GeofeatureInspector.js";
 import { useGeofeatureCreate } from "./geofeatures/use-geofeature-create.js";
+import { useGeofeatureDelete } from "./geofeatures/use-geofeature-delete.js";
 import { type GeometryEditState, useGeometryEdit } from "./geofeatures/use-geometry-edit.js";
 import { type MovementHistoryState, useMovementHistory } from "./history/use-movement-history.js";
 import { PlacesPanel } from "./places/PlacesPanel.js";
@@ -70,6 +72,9 @@ const SpatialResultsInspector = lazy(() =>
 
 const EMPTY_ENTITY_QUERIES = Object.fromEntries(ENTITY_KINDS.map((kind) => [kind, ""])) as Record<EntityKind, string>;
 const MAX_STALE_DETAIL_REFRESHES = 1;
+const deleteGeofeatureUnavailable = async () => {
+  throw new Error("Geo Feature deletion is unavailable");
+};
 
 type EntityDetailsRequest = {
   entityId: string;
@@ -299,6 +304,10 @@ export function MapConsole() {
   const geometryEdit = useGeometryEdit({ selectedEntity, selectedId, updateGeometry: atlas.updateGeometry });
   const creation = useGeofeatureCreate(atlas.createGeofeature, (entity) => {
     dispatch({ type: "selectEntity", kind: "geofeature", id: entity.entity_id, origin: "sidebar" });
+  });
+  const deletion = useGeofeatureDelete(atlas.deleteGeofeature ?? deleteGeofeatureUnavailable, () => {
+    dispatch({ type: "clearSelection" });
+    dispatch({ type: "openList", list: "geofeatures" });
   });
   const { edit, saving, saveError } = geometryEdit;
   const creationGeometry = creation.draft?.geometry;
@@ -537,6 +546,7 @@ export function MapConsole() {
                 edit={edit}
                 saving={saving}
                 saveError={saveError}
+                deletion={deletion}
                 onSelectEntity={(entity) => {
                   const kind = entityKind(entity);
                   if (kind === "other") return;
@@ -759,6 +769,7 @@ type PanelBodyProps = {
   edit: GeometryEditState | null;
   saving: boolean;
   saveError?: string;
+  deletion: ReturnType<typeof useGeofeatureDelete>;
   onSelectEntity: (entity: EntityResource) => void;
   onEntityQueryChange: (kind: EntityKind, query: string) => void;
   onPlaceQueryChange: (query: string) => void;
@@ -809,10 +820,13 @@ function PanelBody(props: PanelBodyProps) {
         draft={props.edit?.draft}
         saving={props.saving}
         saveError={props.saveError}
+        deleting={props.deletion.deleting(selectedEntity.entity_id)}
+        deleteError={props.deletion.error(selectedEntity.entity_id)}
         onStartEdit={props.onStartEdit}
         onChangeDraft={props.onChangeDraft}
         onSave={props.onSaveEdit}
         onCancel={props.onCancelEdit}
+        onDelete={() => void props.deletion.remove(selectedEntity.entity_id, entityDisplayName(selectedEntity))}
       />
     );
   }

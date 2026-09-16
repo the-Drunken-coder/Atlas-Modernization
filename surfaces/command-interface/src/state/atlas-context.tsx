@@ -27,6 +27,7 @@ export type AtlasContextValue = {
   loadEntityDetails?: (entityId: string, signal?: AbortSignal) => Promise<EntityResource>;
   submitCommand: (submission: CommandSubmission) => Promise<TaskResource>;
   createGeofeature: AtlasDataSource["createGeofeature"];
+  deleteGeofeature?: AtlasDataSource["deleteGeofeature"];
   updateGeometry: (entityId: string, geometry: UiGeometry, ifMatchVersion?: number) => Promise<EntityResource>;
 };
 
@@ -224,13 +225,18 @@ export function AtlasProvider({
       loadEntityDetails: entityDetailsAvailable ? loadEntityDetails : undefined,
       submitCommand: async (submission) => {
         const dataSource = dataSourceRef.current;
-        if (!dataSource) throw new Error("Atlas data source is not ready");
+        if (!dataSource?.deleteGeofeature) throw new Error("Atlas data source is not ready");
         return dataSource.submitCommand(submission);
       },
       createGeofeature: async (entityId, name, geometry) => {
         const dataSource = dataSourceRef.current;
         if (!dataSource) throw new Error("Atlas data source is not ready");
         return dataSource.createGeofeature(entityId, name, geometry);
+      },
+      deleteGeofeature: async (entityId) => {
+        const dataSource = dataSourceRef.current;
+        if (!dataSource?.deleteGeofeature) throw new Error("Atlas data source is not ready");
+        return dataSource.deleteGeofeature(entityId);
       },
       updateGeometry: async (entityId, geometry, ifMatchVersion) => {
         const dataSource = dataSourceRef.current;

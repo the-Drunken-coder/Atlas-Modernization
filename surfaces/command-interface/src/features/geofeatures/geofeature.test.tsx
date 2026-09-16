@@ -40,6 +40,46 @@ function geofeature(geometry: UiGeometry): EntityResource {
 const noop = () => {};
 
 describe("GeofeatureInspector", () => {
+  it("renders the destructive action after the raw entity JSON and reports deletion state", async () => {
+    const onDelete = vi.fn();
+    const { rerender } = render(
+      <GeofeatureInspector
+        entity={geofeature(polygon)}
+        editing={false}
+        saving={false}
+        deleting={false}
+        onStartEdit={noop}
+        onChangeDraft={noop}
+        onSave={noop}
+        onCancel={noop}
+        onDelete={onDelete}
+      />
+    );
+
+    const rawJson = screen.getByText("Raw entity JSON");
+    const deleteButton = screen.getByRole("button", { name: "Delete Geofeature" });
+    expect(rawJson.compareDocumentPosition(deleteButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    await userEvent.click(deleteButton);
+    expect(onDelete).toHaveBeenCalledOnce();
+
+    rerender(
+      <GeofeatureInspector
+        entity={geofeature(polygon)}
+        editing={false}
+        saving={false}
+        deleting
+        deleteError="Deletion failed safely."
+        onStartEdit={noop}
+        onChangeDraft={noop}
+        onSave={noop}
+        onCancel={noop}
+        onDelete={onDelete}
+      />
+    );
+    expect(screen.getByRole("button", { name: "Deleting..." })).toBeDisabled();
+    expect(screen.getByText("Deletion failed safely.")).toBeInTheDocument();
+  });
+
   it("starts an edit session from the inspector", async () => {
     const user = userEvent.setup();
     const onStartEdit = vi.fn();

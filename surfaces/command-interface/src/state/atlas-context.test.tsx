@@ -59,6 +59,15 @@ function GeometryActionProbe() {
   );
 }
 
+function DeleteActionProbe() {
+  const atlas = useAtlas();
+  return (
+    <button type="button" onClick={() => void atlas.deleteGeofeature?.("geo-1")}>
+      delete
+    </button>
+  );
+}
+
 function EntityDetailsProbe({ signal }: { signal: AbortSignal }) {
   const atlas = useAtlas();
   return (
@@ -598,5 +607,21 @@ describe("AtlasProvider", () => {
     fireEvent.click(screen.getByRole("button", { name: "save" }));
     await waitFor(() => expect(updateGeometry).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(screen.getByTestId("entity-names")).toHaveTextContent("Fresh Watch"));
+  });
+
+  it("forwards Geo Feature deletion through the context", async () => {
+    const deleteGeofeature = vi.fn(async () => {});
+    const fake = catalogDataSource(async () => []).dataSource;
+    fake.deleteGeofeature = deleteGeofeature;
+
+    render(
+      <AtlasProvider loadConfig={async () => config} createDataSource={() => fake}>
+        <DeleteActionProbe />
+      </AtlasProvider>
+    );
+
+    await screen.findByRole("button", { name: "delete" });
+    fireEvent.click(screen.getByRole("button", { name: "delete" }));
+    await waitFor(() => expect(deleteGeofeature).toHaveBeenCalledWith("geo-1"));
   });
 });
