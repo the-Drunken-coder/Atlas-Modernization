@@ -489,6 +489,41 @@
   border-bottom: 1px solid var(--border);
 }
 
+.task-row-shell {
+  border-bottom: 1px solid var(--border);
+}
+
+.task-row-shell > .task-row {
+  border-bottom: 0;
+}
+
+.task-history-item {
+  border-bottom: 1px solid var(--border);
+}
+
+.task-history-item .task-row-shell {
+  border-bottom: 0;
+}
+
+.bp6-button.task-row__actions {
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  min-height: 32px;
+  font-size: 10px;
+  letter-spacing: 1px;
+}
+
+.task-row__notice {
+  padding: 0 var(--space-3) var(--space-2);
+  color: var(--text-3);
+  font-size: 11px;
+}
+
+.task-row__notice--error {
+  color: var(--error-text);
+}
+
 .task-row__main,
 .command-row__main {
   display: flex;

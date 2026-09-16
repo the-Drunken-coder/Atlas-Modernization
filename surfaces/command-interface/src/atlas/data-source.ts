@@ -23,6 +23,11 @@ export type CommandSubmission = {
   signal?: AbortSignal;
 };
 
+export type TaskCancellation = {
+  taskId: string;
+  signal?: AbortSignal;
+};
+
 export type ConnectionError = { source: "startup" | "live-sync"; message: string };
 export type ConnectionHealth = { running: boolean; healthy: boolean; degraded: boolean; error?: ConnectionError };
 
@@ -36,6 +41,7 @@ export interface AtlasDataSource {
   watch(onSnapshot: (snapshot: AtlasSnapshot) => void): () => void;
   start(): Promise<void>;
   submitCommand(submission: CommandSubmission): Promise<TaskResource>;
+  cancelTask?(cancellation: TaskCancellation): Promise<TaskResource>;
   createGeofeature(entityId: string, name: string, geometry: UiGeometry): Promise<EntityResource>;
   updateGeometry(entityId: string, geometry: UiGeometry, ifMatchVersion?: number): Promise<EntityResource>;
   health?(): ConnectionHealth;
@@ -155,6 +161,12 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
         }
       );
     },
+
+    cancelTask: (cancellation) =>
+      client.tasks.cancel(cancellation.taskId, {
+        cancellation: { code: "requested", message: "Operator cancelled the Task." },
+        signal: cancellation.signal
+      }),
 
     async createGeofeature(entityId, name, geometry) {
       try {

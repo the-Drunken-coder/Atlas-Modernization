@@ -68,6 +68,15 @@ function EntityDetailsProbe({ signal }: { signal: AbortSignal }) {
   );
 }
 
+function CancelTaskProbe() {
+  const cancelTask = useAtlas().cancelTask;
+  return (
+    <button type="button" onClick={() => void cancelTask?.({ taskId: "task-1" })}>
+      cancel task
+    </button>
+  );
+}
+
 const config: AppConfig = {
   atlasBaseUrl: "/atlas",
   protocolRevision: "rev",
@@ -129,6 +138,20 @@ function catalogDataSource(loadCommandCatalog: () => Promise<CommandCatalog>) {
 }
 
 describe("AtlasProvider", () => {
+  it("exposes Task cancellation from the active data source", async () => {
+    const cancelTask = vi.fn().mockResolvedValue(undefined);
+    const dataSource: AtlasDataSource = { ...catalogDataSource(async () => []).dataSource, cancelTask };
+    render(
+      <AtlasProvider config={config} createDataSource={() => dataSource}>
+        <CancelTaskProbe />
+      </AtlasProvider>
+    );
+
+    await screen.findByText("cancel task");
+    fireEvent.click(screen.getByRole("button", { name: "cancel task" }));
+    await waitFor(() => expect(cancelTask).toHaveBeenCalledWith({ taskId: "task-1" }));
+  });
+
   it.each<ConnectionHealth>([
     { running: true, healthy: true, degraded: false },
     { running: true, healthy: false, degraded: true },

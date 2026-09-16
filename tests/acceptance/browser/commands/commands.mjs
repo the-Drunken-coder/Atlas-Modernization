@@ -742,7 +742,14 @@ async function verifyVisibleCompletedTask(page, authoritative, output, record, b
 
 async function cancelIssuedTaskThroughUI(page, client, task, record, browserName, signal) {
   const pendingRow = page.locator(".task-row").filter({ hasText: queuedCommand }).filter({ hasText: "Pending" }).first();
-  const cancelControl = pendingRow.getByRole("button", { name: /cancel/iu });
+  const actionsControl = pendingRow.getByRole("button", { name: new RegExp(`^Task actions for ${queuedCommand} task `) });
+  await requireVisible(record, actionsControl, {
+    check: `${browserName} exposed row actions for the issued pending Task`,
+    expected: { task_id: task.task_id, status: "pending", task_actions: "visible button within Task row" },
+    page
+  });
+  await actionsControl.click();
+  const cancelControl = page.getByRole("menuitem", { name: "Cancel task" });
   await requireVisible(record, cancelControl, {
     check: `${browserName} exposed an operator cancellation control for the issued pending Task`,
     expected: { task_id: task.task_id, status: "pending", cancellation_control: "visible button within Task row" },

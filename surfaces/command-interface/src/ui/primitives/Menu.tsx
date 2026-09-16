@@ -16,11 +16,20 @@ type ContextMenuProps = {
   header?: ReactNode;
   items: MenuItemDef[];
   emptyLabel?: string;
+  ariaLabel?: string;
   onClose: () => void;
 };
 
 /** A docked, position-fixed context menu. Closes on outside click or Escape. */
-export function ContextMenu({ x, y, header, items, emptyLabel, onClose }: ContextMenuProps) {
+export function ContextMenu({
+  x,
+  y,
+  header,
+  items,
+  emptyLabel,
+  ariaLabel = "Position commands",
+  onClose
+}: ContextMenuProps) {
   const menuRef = useRef<HTMLUListElement>(null);
   const returnFocusRef = useRef<HTMLElement | null>(
     document.activeElement instanceof HTMLElement ? document.activeElement : null
@@ -75,7 +84,7 @@ export function ContextMenu({ x, y, header, items, emptyLabel, onClose }: Contex
         ulRef={menuRef}
         className="context-menu"
         style={{ left: position.x, top: position.y }}
-        aria-label="Position commands"
+        aria-label={ariaLabel}
         tabIndex={items.some((item) => !item.disabled) ? -1 : 0}
         onKeyDown={(event) => {
           if (event.key === "Escape") {
