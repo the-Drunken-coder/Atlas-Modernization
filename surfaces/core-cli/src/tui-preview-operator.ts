@@ -22,6 +22,7 @@ type PreviewOptions = { lifecycleStepDelayMs?: number; pluginStepDelayMs?: numbe
 type PreviewInstalledPlugin = { selectedVersion: string; previousVersion: string | null };
 
 const PREVIEW_PLUGIN_VERSIONS = ["0.2.0", "0.1.0"] as const;
+const PREVIEW_CORE_IMAGE = "ghcr.io/the-drunken-coder/atlas-core@sha256:cfe582…";
 const PREVIEW_CATALOG: readonly PluginCatalogEntry[] =
   PLUGIN_CATALOG.length > 0
     ? PLUGIN_CATALOG
@@ -317,9 +318,7 @@ export function createPreviewOperator(
         apiEndpoint: "http://127.0.0.1:8000",
         minioEndpoint: "http://127.0.0.1:9001",
         services: services(),
-        ...(deploymentState === "not-initialized"
-          ? {}
-          : { image: "ghcr.io/the-drunken-coder/atlas-core@sha256:cfe582…" }),
+        ...(deploymentState === "not-initialized" ? {} : { image: PREVIEW_CORE_IMAGE }),
         ...(deploymentState === "degraded" ? { performanceError: "MinIO did not return Docker statistics." } : {})
       };
     },
@@ -468,17 +467,75 @@ export function createPreviewOperator(
       });
     },
     runLifecycle,
-    async pluginUpdate(pluginId) {
+    async pluginUpdatePlan(pluginId) {
       const plugin = requirePreviewPlugin(pluginId);
       const installed = installedPlugins.get(pluginId);
       if (!installed) throw new Error(`Plugin ${pluginId} is not installed.`);
       const nextVersion = PREVIEW_PLUGIN_VERSIONS[0];
+      const enabled = enabledPlugins.has(pluginId);
+      const planBase = {
+        pluginId,
+        displayName: plugin.displayName,
+        currentVersion: installed.selectedVersion,
+        enabled,
+        restartServices: enabled ? ["Core API", "Source Gateway", plugin.displayName] : [],
+        coreVersion: "0.1.5",
+        coreImage: PREVIEW_CORE_IMAGE
+      };
       if (installed.selectedVersion === nextVersion) {
-        preview(`${plugin.displayName} ${installed.selectedVersion} is current.`);
-        return;
+        return {
+          ...planBase,
+          status: "current",
+          reason: `${plugin.displayName} ${installed.selectedVersion} is current.`,
+          restartServices: []
+        };
+      }
+      if (enabled && deploymentState !== "ready") {
+        return {
+          ...planBase,
+          status: "blocked",
+          reason:
+            deploymentState === "stopped"
+              ? `Cannot update enabled Plugin ${pluginId} while Atlas Core is stopped.`
+              : "Plugin updates require the current deployment to be fully healthy."
+        };
+      }
+      return {
+        ...planBase,
+        status: "available",
+        action: "update",
+        targetVersion: nextVersion
+      };
+    },
+    async pluginUpdate(pluginId, reportActivity, reviewedPlan) {
+      const plugin = requirePreviewPlugin(pluginId);
+      const installed = installedPlugins.get(pluginId);
+      if (!installed) throw new Error(`Plugin ${pluginId} is not installed.`);
+      const nextVersion = PREVIEW_PLUGIN_VERSIONS[0];
+      if (reviewedPlan && reviewedPlan.targetVersion !== nextVersion) {
+        throw new Error(`The reviewed Plugin target changed from ${reviewedPlan.targetVersion} to ${nextVersion}.`);
+      }
+      if (installed.selectedVersion === nextVersion) return { status: "success" };
+      reportActivity?.({
+        level: "working",
+        message: `Installing ${plugin.displayName} ${nextVersion}`,
+        stage: "operation"
+      });
+      await waitForPluginStep();
+      if (cancellationRequested) {
+        reportActivity?.({ level: "failure", message: "Update cancelled in the fixture", stage: "operation" });
+        reportActivity?.({ level: "working", message: "Restoring previous fixture Plugin release", stage: "rollback" });
+        reportActivity?.({ level: "success", message: "Previous fixture Plugin release restored", stage: "rollback" });
+        return { previousDeploymentPreserved: true, status: "cancelled" };
       }
       installedPlugins.set(pluginId, { previousVersion: installed.selectedVersion, selectedVersion: nextVersion });
-      preview(`Updated ${plugin.displayName} to ${nextVersion}.`);
+      reportActivity?.({
+        level: "success",
+        message: `${plugin.displayName} updated to ${nextVersion}`,
+        stage: "operation"
+      });
+      if (!reportActivity) preview(`Updated ${plugin.displayName} to ${nextVersion}.`);
+      return { status: "success" };
     },
     async pluginRollback(pluginId) {
       const plugin = requirePreviewPlugin(pluginId);
@@ -570,7 +627,7 @@ function service(
     processes,
     uptime: "4d 2h",
     restarts: 0,
-    image: "ghcr.io/the-drunken-coder/atlas-core@sha256:cfe582…"
+    image: PREVIEW_CORE_IMAGE
   };
 }
 

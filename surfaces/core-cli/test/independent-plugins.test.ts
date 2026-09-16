@@ -43,6 +43,7 @@ class FakeTransaction {
   readonly phases: TransactionPhase[] = [];
   committed = false;
   cleaned = false;
+  failNextCleanup = false;
   recovery: { priorPluginHealthy?: boolean } | undefined;
   options!: Parameters<TransactionFactory>[0];
   read() {
@@ -73,6 +74,7 @@ class FakeTransaction {
 
   markCommitted(): void {
     this.committed = true;
+    this.phases.push("committed");
   }
 
   rollback(): void {
@@ -85,6 +87,10 @@ class FakeTransaction {
   }
 
   cleanup(): void {
+    if (this.failNextCleanup) {
+      this.failNextCleanup = false;
+      throw new Error("injected cleanup failure");
+    }
     this.cleaned = true;
   }
 }
@@ -426,6 +432,21 @@ describe("IndependentPluginManager", () => {
       ]
     ]);
     expect(host.compose.some(([command]) => command === "down")).toBe(false);
+  });
+
+  it("keeps a committed Plugin update successful when transaction cleanup needs recovery", async () => {
+    const { manager, transaction } = setup();
+    await manager.install(release("0.1.0"));
+    transaction.failNextCleanup = true;
+
+    await expect(manager.update("building_scan", release("0.2.0"))).resolves.toMatchObject({
+      changed: true,
+      version: "0.2.0"
+    });
+
+    expect(manager.readInstalled("building_scan").selected.version).toBe("0.2.0");
+    expect(transaction.committed).toBe(true);
+    expect(transaction.cleaned).toBe(true);
   });
 
   it("restores selected release and enabled state when runtime verification fails", async () => {

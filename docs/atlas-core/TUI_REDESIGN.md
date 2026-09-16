@@ -6,7 +6,7 @@ The redesign is approved. [GitHub issue #359](https://github.com/the-Drunken-cod
 
 The TUI owns the terminal until exit. Its home screen is a compact deployment summary and an unfiltered vertical action list. Operations keep the interface mounted and show chronological progress, current phase, errors, safe cancellation, and cleanup. Success returns to the originating screen unless the operation may have replaced the running CLI, in which case the process exits. Failure remains visible with valid next steps.
 
-The first version includes initialization, lifecycle, status, diagnostics, reset, admin password changes, CLI/Core updates, and current Plugin installation, status, enable, disable, and logs. Recovery, supervision, and independent Plugin update, rollback, uninstall, catalog refresh, and shared-key rotation remain direct-command-only.
+The TUI includes initialization, lifecycle, status, diagnostics, reset, admin password changes, CLI/Core updates, and Plugin installation, status, enable, disable, logs, and ordinary one-at-a-time updates. Plugin rollback, uninstall, catalog refresh, shared-key rotation, recovery, and supervision remain direct-command-only.
 
 The approved visual references are intentionally static:
 
