@@ -52,6 +52,29 @@ function task(id: string, assetId: string, version = 1): TaskResource {
 }
 
 describe("sdk data source", () => {
+  it("cancels Tasks through the SDK with the operator cancellation reason", async () => {
+    const cancelled = {
+      ...task("task-cancel", "asset-1"),
+      status: "cancelled" as const,
+      cancellation: { code: "requested", message: "Operator cancelled the Task." },
+      finished_at: "2026-06-20T00:00:02Z",
+      updated_at: "2026-06-20T00:00:02Z"
+    } satisfies TaskResource;
+    const fetchMock = vi.fn(async () => Response.json(cancelled, { headers: { ETag: '"v1"' } }));
+    vi.stubGlobal("fetch", fetchMock);
+    const dataSource = createSdkDataSource(config);
+
+    await expect(dataSource.cancelTask?.({ taskId: cancelled.task_id })).resolves.toEqual(cancelled);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://core.test/tasks/task-cancel/cancel",
+      expect.objectContaining({
+        method: "POST",
+        credentials: "include",
+        body: JSON.stringify({ cancellation: { code: "requested", message: "Operator cancelled the Task." } })
+      })
+    );
+  });
+
   it("hydrates every page once and exposes the final SDK cache snapshot", async () => {
     const firstEntity = entity("asset-1", 1);
     const secondEntity = entity("asset-2", 2);

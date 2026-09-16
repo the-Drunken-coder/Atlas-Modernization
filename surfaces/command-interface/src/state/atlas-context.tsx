@@ -26,6 +26,7 @@ export type AtlasContextValue = {
   reconnect: () => void;
   loadEntityDetails?: (entityId: string, signal?: AbortSignal) => Promise<EntityResource>;
   submitCommand: (submission: CommandSubmission) => Promise<TaskResource>;
+  cancelTask?: AtlasDataSource["cancelTask"];
   createGeofeature: AtlasDataSource["createGeofeature"];
   updateGeometry: (entityId: string, geometry: UiGeometry, ifMatchVersion?: number) => Promise<EntityResource>;
 };
@@ -227,6 +228,13 @@ export function AtlasProvider({
         if (!dataSource) throw new Error("Atlas data source is not ready");
         return dataSource.submitCommand(submission);
       },
+      cancelTask: dataSourceRef.current?.cancelTask
+        ? async (cancellation) => {
+            const dataSource = dataSourceRef.current;
+            if (!dataSource?.cancelTask) throw new Error("Atlas Task cancellation is unavailable");
+            return dataSource.cancelTask(cancellation);
+          }
+        : undefined,
       createGeofeature: async (entityId, name, geometry) => {
         const dataSource = dataSourceRef.current;
         if (!dataSource) throw new Error("Atlas data source is not ready");

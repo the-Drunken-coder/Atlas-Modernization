@@ -85,6 +85,7 @@ type EntityDetailsRequest = {
 export function MapConsole() {
   const atlas = useAtlas();
   const { snapshot, catalog } = atlas;
+  const cancelTask = atlas.cancelTask;
   const now = useHeartbeatClock();
   const [sidebar, dispatch] = useReducer(sidebarReducer, initialSidebarState);
   const [entityQueries, setEntityQueries] = useState(EMPTY_ENTITY_QUERIES);
@@ -549,6 +550,7 @@ export function MapConsole() {
                 onPreviewPlace={previewPlace}
                 onFocusPlace={focusPlace}
                 onPickCommand={commandFlow.pickSidebarCommand}
+                onCancelTask={cancelTask ? (taskId) => cancelTask({ taskId }) : undefined}
                 onStartEdit={geometryEdit.startEdit}
                 onChangeDraft={geometryEdit.changeDraft}
                 onSaveEdit={() => void geometryEdit.saveEdit()}
@@ -765,6 +767,7 @@ type PanelBodyProps = {
   onPreviewPlace: (target: MapTarget | null) => void;
   onFocusPlace: (target: MapTarget) => void;
   onPickCommand: (availability: CommandAvailability) => void;
+  onCancelTask?: (taskId: string) => Promise<unknown>;
   onStartEdit: () => void;
   onChangeDraft: (geometry: UiGeometry) => void;
   onSaveEdit: () => void;
@@ -795,6 +798,7 @@ function PanelBody(props: PanelBodyProps) {
         catalog={catalog}
         commandManifestStatus={props.commandManifestStatus}
         onPickCommand={props.onPickCommand}
+        onCancelTask={props.onCancelTask}
       />
     );
   }

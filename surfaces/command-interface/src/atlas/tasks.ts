@@ -1,4 +1,4 @@
-import type { TaskResource, TaskStatus } from "@the-drunken-coder/atlas-sdk";
+import type { EntityResource, TaskResource, TaskStatus } from "@the-drunken-coder/atlas-sdk";
 
 const TASK_STATUS_LABELS: Record<TaskStatus, string> = {
   pending: "Pending",
@@ -19,6 +19,12 @@ export function taskStatusMessage(task: TaskResource): string | undefined {
   if (task.output !== undefined) return "Output available";
   if (task.progress !== undefined) return `${Math.round(task.progress * 100)}%`;
   return undefined;
+}
+
+export function taskIsCancellable(task: TaskResource, asset: EntityResource): boolean {
+  if (task.status === "pending" || task.status === "acknowledged") return true;
+  if (task.status !== "in_progress") return false;
+  return asset.command_manifest?.find((entry) => entry.command === task.command)?.supports_cancel === true;
 }
 
 export function sortTasksByRecency(tasks: TaskResource[]): TaskResource[] {

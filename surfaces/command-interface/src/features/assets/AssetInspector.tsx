@@ -16,6 +16,7 @@ import {
 import { formatNumber, formatPercent, formatRelativeTime } from "../../atlas/format.js";
 import { activeTasks, queuedTasks, tasksForAsset } from "../../atlas/selectors.js";
 import type { AtlasSnapshot } from "../../atlas/store.js";
+import { taskIsCancellable } from "../../atlas/tasks.js";
 import { JsonDrawer } from "../../ui/primitives/JsonDrawer.js";
 import { ConnectionStatusPill, heartbeatColor, StatusPill } from "../../ui/primitives/StatusPill.js";
 import { CommandList } from "../commands/CommandList.js";
@@ -37,6 +38,7 @@ type AssetInspectorProps = {
   catalog?: CommandCatalog;
   commandManifestStatus?: CommandManifestStatus;
   onPickCommand: (availability: CommandAvailability) => void;
+  onCancelTask?: (taskId: string) => Promise<unknown>;
 };
 
 export function AssetInspector({
@@ -45,7 +47,8 @@ export function AssetInspector({
   snapshot,
   catalog,
   commandManifestStatus = "ready",
-  onPickCommand
+  onPickCommand,
+  onCancelTask
 }: AssetInspectorProps) {
   const now = useHeartbeatClock();
   const position = entityPosition(entity);
@@ -109,11 +112,37 @@ export function AssetInspector({
 
       <Section title="Active & Queued Tasks">
         {active.length > 0 ? (
-          active.map((task) => <TaskRow key={task.task_id} task={task} />)
+          active.map((task) => (
+            <TaskRow
+              key={task.task_id}
+              task={task}
+              onCancel={
+                onCancelTask &&
+                taskIsCancellable(task, entity) &&
+                (task.status !== "in_progress" || commandManifestStatus === "ready")
+                  ? onCancelTask
+                  : undefined
+              }
+            />
+          ))
         ) : (
           <div style={{ color: "var(--text-3)" }}>No active task</div>
         )}
-        {queued.length > 0 ? queued.map((task) => <TaskRow key={task.task_id} task={task} />) : null}
+        {queued.length > 0
+          ? queued.map((task) => (
+              <TaskRow
+                key={task.task_id}
+                task={task}
+                onCancel={
+                  onCancelTask &&
+                  taskIsCancellable(task, entity) &&
+                  (task.status !== "in_progress" || commandManifestStatus === "ready")
+                    ? onCancelTask
+                    : undefined
+                }
+              />
+            ))
+          : null}
       </Section>
 
       <Section title="Commands">
