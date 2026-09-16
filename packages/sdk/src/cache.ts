@@ -336,6 +336,7 @@ export class ResourceCache {
       return undefined;
     }
     const previousVersion = this.markLocalDelete(operation.type, operation.id);
+    if (!operation.observedEntry) return undefined;
     return {
       event: localDeleteEvent(operation.type, operation.id, previousVersion),
       resource: undefined

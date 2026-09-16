@@ -2066,6 +2066,7 @@ describe("MapConsole", () => {
     expect(document.querySelector(".panel__title")).toHaveTextContent("Geo Features");
     expect(screen.queryByText("Area Alpha")).not.toBeInTheDocument();
     expect(screen.getByText("No geo features yet")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Add Geo Feature" })).toHaveFocus());
   });
 
   it("keeps the failed deletion selected and shows a sanitized error", async () => {

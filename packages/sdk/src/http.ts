@@ -95,7 +95,8 @@ export function isAtlasAPIError(error: unknown): error is {
     "status" in error &&
     typeof error.status === "number" &&
     "code" in error &&
-    error.code === ATLAS_API_ERROR_CODE
+    error.code === ATLAS_API_ERROR_CODE &&
+    (!("errorCode" in error) || error.errorCode === undefined || typeof error.errorCode === "string")
   );
 }
 

@@ -244,8 +244,7 @@ describe("AtlasClient sync: cache projection and reads", () => {
 
     await client.changedSince();
 
-    expect(watch).toHaveBeenCalledTimes(1);
-    expect(watch.mock.calls[0][1]).toEqual({ event: "local_delete", resource_type: "entity", id: live.entity_id });
+    expect(watch).not.toHaveBeenCalled();
     await expect(client.entities.get(live.entity_id)).rejects.toMatchObject({
       status: 404,
       errorCode: "ENTITY_NOT_FOUND"
@@ -255,7 +254,7 @@ describe("AtlasClient sync: cache projection and reads", () => {
     core.version = deleteEvent.version;
     await client.changedSince();
 
-    expect(watch).toHaveBeenCalledTimes(1);
+    expect(watch).not.toHaveBeenCalled();
     await expect(client.entities.get(live.entity_id)).rejects.toMatchObject({
       status: 404,
       errorCode: "ENTITY_NOT_FOUND"

@@ -321,6 +321,9 @@ export function MapConsole() {
         return;
       dispatch({ type: "clearSelection" });
       dispatch({ type: "openList", list: "geofeatures" });
+      requestAnimationFrame(() =>
+        document.querySelector<HTMLButtonElement>('button[aria-label="Add Geo Feature"]')?.focus()
+      );
     }
   );
   const { edit, saving, saveError } = geometryEdit;
