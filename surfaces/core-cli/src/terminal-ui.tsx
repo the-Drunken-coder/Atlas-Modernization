@@ -172,6 +172,7 @@ async function runInkApp(
 function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
   const { exit, waitUntilRenderFlush } = useApp();
   const activePluginOperation = useRef<number | undefined>(undefined);
+  const activePluginPlan = useRef<number | undefined>(undefined);
   const activeLifecycleOperation = useRef<number | undefined>(undefined);
   const activeUpdateOperation = useRef<number | undefined>(undefined);
   const lifecycleOperationGeneration = useRef(0);
@@ -181,6 +182,8 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
   const pluginCancellationRequested = useRef(false);
   const pluginCancellation = useRef<"return" | "exit" | undefined>(undefined);
   const pluginOperationGeneration = useRef(0);
+  const pluginPlanCancellation = useRef(false);
+  const pluginPlanGeneration = useRef(0);
   const statusAbortController = useRef<AbortController | undefined>(undefined);
   const statusGeneration = useRef(0);
   const statusReadPending = useRef<Promise<StatusView> | undefined>(undefined);
@@ -278,6 +281,7 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
       if (
         activeLifecycleOperation.current === undefined &&
         activeUpdateOperation.current === undefined &&
+        activePluginPlan.current === undefined &&
         activePluginOperation.current === undefined
       )
         exit(error);
@@ -290,13 +294,13 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
         } else if (activeUpdateOperation.current !== undefined) {
           updateCancellation.current = "exit";
           setScreen((current) => updateCancellationScreen(current, "Terminal input lost. Waiting for safe cleanup."));
-        } else {
+        } else if (activePluginOperation.current !== undefined) {
           pluginCancellationRequested.current = true;
           pluginCancellation.current = "exit";
           setScreen((current) =>
             pluginActivityCancellationScreen(current, "Terminal input lost. Waiting for safe cleanup.")
           );
-        }
+        } else pluginPlanCancellation.current = true;
       }
     };
     const onError = (error: Error): void => {
@@ -307,6 +311,7 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
       if (
         activeLifecycleOperation.current === undefined &&
         activeUpdateOperation.current === undefined &&
+        activePluginPlan.current === undefined &&
         activePluginOperation.current === undefined
       )
         exit(terminalError);
@@ -319,13 +324,13 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
         } else if (activeUpdateOperation.current !== undefined) {
           updateCancellation.current = "exit";
           setScreen((current) => updateCancellationScreen(current, "Terminal input lost. Waiting for safe cleanup."));
-        } else {
+        } else if (activePluginOperation.current !== undefined) {
           pluginCancellationRequested.current = true;
           pluginCancellation.current = "exit";
           setScreen((current) =>
             pluginActivityCancellationScreen(current, "Terminal input lost. Waiting for safe cleanup.")
           );
-        }
+        } else pluginPlanCancellation.current = true;
       }
     };
     input.once("end", onEnd);
@@ -640,14 +645,27 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
         setScreen({ kind: "plugin-update-review", plan: plugin.updatePlan });
         return;
       }
+      const operationId = pluginPlanGeneration.current + 1;
+      pluginPlanGeneration.current = operationId;
+      activePluginPlan.current = operationId;
+      pluginPlanCancellation.current = false;
       setScreen({ kind: "busy", label: `Checking updates for ${plugin.displayName}...` });
-      try {
-        setScreen({ kind: "plugin-update-review", plan: await operator.pluginUpdatePlan(plugin.pluginId) });
-      } catch (error) {
-        setScreen({ kind: "plugins", view: new Error(errorMessage(error)) });
+      await waitUntilRenderFlush();
+      const result = await runCancelableOperation(
+        operator,
+        async () => await operator.pluginUpdatePlan!(plugin.pluginId)
+      );
+      if (activePluginPlan.current !== operationId) return;
+      activePluginPlan.current = undefined;
+      if (pluginPlanCancellation.current || result.cancelled || terminalLost.current) {
+        await waitUntilRenderFlush();
+        exit(result.failure ?? terminalLossError.current);
+        return;
       }
+      if (result.failure) setScreen({ kind: "plugins", view: result.failure });
+      else if (result.value) setScreen({ kind: "plugin-update-review", plan: result.value });
     },
-    [operator]
+    [exit, operator, waitUntilRenderFlush]
   );
 
   const updatePlugin = useCallback(
@@ -812,7 +830,17 @@ function AtlasCoreApp({ input, mode, operator }: AtlasCoreAppProps): ReactNode {
   );
 
   if (screen.kind === "busy") {
-    return <BusyScreen label={screen.label} onCancel={() => operator.cancelPending()} />;
+    return (
+      <BusyScreen
+        label={screen.label}
+        onCancel={() => {
+          operator.cancelPending();
+          if (activePluginPlan.current === undefined) return true;
+          pluginPlanCancellation.current = true;
+          return false;
+        }}
+      />
+    );
   }
   if (screen.kind === "menu") {
     return (
@@ -2873,13 +2901,12 @@ function MessageScreen({ message, onBack, title }: { message: string; onBack(): 
   );
 }
 
-function BusyScreen({ label, onCancel }: { label: string; onCancel(): void }): ReactNode {
+function BusyScreen({ label, onCancel }: { label: string; onCancel(): boolean }): ReactNode {
   const { exit } = useApp();
   const { columns } = useWindowSize();
   useInput((input, key) => {
     if (key.ctrl && input === "c") {
-      onCancel();
-      exit();
+      if (onCancel()) exit();
     }
   });
   if (columns < MINIMUM_TERMINAL_COLUMNS) return <NarrowTerminal />;

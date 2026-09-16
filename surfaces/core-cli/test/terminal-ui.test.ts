@@ -2254,6 +2254,60 @@ describe("Atlas Core terminal UI", () => {
     await menu;
   });
 
+  it("waits for Plugin update planning to cancel before exiting", async () => {
+    const terminal = new TestTerminal();
+    const plugin = {
+      pluginId: "building_scan",
+      displayName: "Building Scan",
+      lifecycle: "query_only" as const,
+      enabled: false,
+      packaged: false,
+      installed: true,
+      selectedVersion: "1.0.0"
+    };
+    let finishPlanning: (() => void) | undefined;
+    const deployment = Object.assign(operator(), {
+      pluginUpdatePlan: vi.fn(
+        async () =>
+          await new Promise<PluginUpdatePlan>((resolve) => {
+            finishPlanning = () =>
+              resolve({
+                status: "current",
+                reason: "Building Scan 1.0.0 is current.",
+                pluginId: plugin.pluginId,
+                displayName: plugin.displayName,
+                currentVersion: "1.0.0",
+                enabled: false,
+                restartServices: [],
+                coreVersion: "0.2.1",
+                coreImage: "ghcr.io/the-drunken-coder/atlas-core@sha256:current-core"
+              });
+          })
+      ),
+      pluginUpdate: vi.fn(async () => ({ status: "success" as const }))
+    });
+    deployment.pluginStatuses.mockResolvedValue([plugin]);
+    let exited = false;
+    const menu = createInteractiveCLI(terminal.input, terminal.output)
+      .runMenu(deployment)
+      .finally(() => {
+        exited = true;
+      });
+
+    await openPluginManagement(terminal);
+    await nextInputTurn();
+    terminal.write("u");
+    await terminal.waitFor("Checking updates for Building Scan...");
+    terminal.write("\u0003");
+    await vi.waitFor(() => expect(deployment.cancelPending).toHaveBeenCalledOnce());
+    expect(exited).toBe(false);
+
+    finishPlanning?.();
+    await menu;
+    expect(exited).toBe(true);
+    expect(deployment.pluginUpdate).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["current", "Building Scan 1.0.0 is current."],
     ["blocked", "A newer release exists, but it is incompatible with Atlas Core 0.2.1."],

@@ -60,6 +60,7 @@ export type PluginCatalogCandidatesOptions = {
   currentVersion?: string;
   /** Exact locally retained release bytes for a revoked current version. */
   currentRelease?: PluginRelease;
+  signal?: AbortSignal;
 };
 
 type PersistedCatalogState = {
@@ -122,7 +123,7 @@ export class PluginCatalogStore {
   }
 
   /** Refresh mutates the monotonic receipt and must run under the deployment coordinator lock. */
-  async refresh(options: { allowCachedOnFailure?: boolean } = {}): Promise<SignedCatalogReceipt> {
+  async refresh(options: { allowCachedOnFailure?: boolean; signal?: AbortSignal } = {}): Promise<SignedCatalogReceipt> {
     // A cached receipt below a newly embedded checkpoint is still needed as
     // authenticated history for the next refresh. Fresh network acceptance
     // below the checkpoint remains fail-closed in verifyCatalog.
@@ -143,18 +144,21 @@ export class PluginCatalogStore {
       const catalogBytes = await fetchBounded(this.#catalogURL, {
         maxBytes: CATALOG_LIMIT,
         allowedHosts: this.#allowedHosts,
-        fetchImpl: this.#fetchImpl
+        fetchImpl: this.#fetchImpl,
+        ...(options.signal ? { signal: options.signal } : {})
       });
       const signatureBytes = await fetchBounded(`${this.#catalogURL}.sig`, {
         maxBytes: SIGNATURE_LIMIT,
         allowedHosts: this.#allowedHosts,
-        fetchImpl: this.#fetchImpl
+        fetchImpl: this.#fetchImpl,
+        ...(options.signal ? { signal: options.signal } : {})
       });
       receipt = verifyCatalog(catalogBytes, signatureBytes, this.#trust, previous?.receipt, current);
       if (retiredKeyEpoch !== undefined && receipt.keyEpoch <= retiredKeyEpoch) {
         throw new Error("The refreshed Plugin catalog must use a newer signing-key epoch than the retired receipt");
       }
     } catch (error) {
+      if (options.signal?.aborted) throw options.signal.reason;
       if (options.allowCachedOnFailure) {
         try {
           return this.read();
@@ -222,7 +226,7 @@ export class PluginCatalogStore {
         (options.contracts !== undefined || options.version !== undefined || options.currentVersion !== undefined)
       )
         continue;
-      const candidate = await this.#downloadCandidate(pluginId, catalogRelease);
+      const candidate = await this.#downloadCandidate(pluginId, catalogRelease, options.signal);
       if (options.contracts !== undefined) {
         try {
           assertPluginCompatible(candidate.release, options.contracts);
@@ -242,11 +246,16 @@ export class PluginCatalogStore {
     return candidates;
   }
 
-  async #downloadCandidate(pluginId: string, catalogRelease: PluginCatalogRelease): Promise<PluginReleaseCandidate> {
+  async #downloadCandidate(
+    pluginId: string,
+    catalogRelease: PluginCatalogRelease,
+    signal?: AbortSignal
+  ): Promise<PluginReleaseCandidate> {
     const bytes = await fetchBounded(catalogRelease.documentUrl, {
       maxBytes: RELEASE_LIMIT,
       allowedHosts: this.#allowedHosts,
-      fetchImpl: this.#fetchImpl
+      fetchImpl: this.#fetchImpl,
+      ...(signal ? { signal } : {})
     });
     if (sha256(bytes) !== catalogRelease.documentSha256) {
       throw new Error(`Plugin ${pluginId} ${catalogRelease.version} release document hash does not match the catalog`);

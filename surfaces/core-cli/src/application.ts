@@ -755,6 +755,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   readonly #mutationScope = new AsyncLocalStorage<string>();
   readonly #lifecycleReporterScope = new AsyncLocalStorage<LifecycleOperationContext>();
   readonly #updateReporterScope = new AsyncLocalStorage<UpdateReporter>();
+  readonly #pendingOperationControllers = new Set<AbortController>();
   #lifecycleCancellationRequested = false;
   #activeMutationLock: MutationLockOwner | undefined;
   #idleRecoverableMutationLock: MutationLockOwner | undefined;
@@ -794,6 +795,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
 
   cancelPending(): void {
     this.#lifecycleCancellationRequested = true;
+    for (const controller of this.#pendingOperationControllers) controller.abort(new CommandCancelledError());
     this.#runner.cancelAll();
   }
 
@@ -1616,18 +1618,23 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   }
 
   async pluginUpdatePlan(pluginId: string): Promise<PluginUpdatePlan> {
-    return await this.#withInitializedMutation(async (raw) => {
-      const state = this.#requireManaged(raw);
-      const manager = this.#plugins(state);
-      return await this.#planPluginUpdate(state, manager, pluginId);
-    });
+    return await this.#withCancellationSignal(
+      async (signal) =>
+        await this.#withInitializedMutation(async (raw) => {
+          const state = this.#requireManaged(raw);
+          const manager = this.#plugins(state);
+          await this.#catalogStore.refresh({ allowCachedOnFailure: true, signal });
+          return await this.#planPluginUpdate(state, manager, pluginId, undefined, signal);
+        })
+    );
   }
 
   async #planPluginUpdate(
     state: ManagedCoreState,
     manager: IndependentPluginManager,
     pluginId: string,
-    resolvedSelection?: IndependentPluginUpdatePlan
+    resolvedSelection?: IndependentPluginUpdatePlan,
+    signal?: AbortSignal
   ): Promise<PluginUpdatePlan> {
     const current = manager.readSelected(pluginId);
     const installed = (await manager.list()).find((plugin) => plugin.pluginId === pluginId && plugin.installed);
@@ -1645,8 +1652,9 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     };
     let selection = resolvedSelection;
     try {
-      selection ??= (await this.#resolvePluginUpdate(state, pluginId, manager)).selection;
+      selection ??= (await this.#resolvePluginUpdate(state, pluginId, manager, signal)).selection;
     } catch (error) {
+      if (error instanceof CommandCancelledError) throw error;
       return { ...planBase, status: "blocked", reason: errorMessage(error) };
     }
     const target = updateCandidateRelease(selection);
@@ -1800,7 +1808,8 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   async #resolvePluginUpdate(
     state: ManagedCoreState,
     pluginId: string,
-    manager: IndependentPluginManager
+    manager: IndependentPluginManager,
+    signal?: AbortSignal
   ): Promise<{
     candidates: readonly IndependentPluginReleaseCandidate[];
     selection: IndependentPluginUpdatePlan;
@@ -1809,9 +1818,20 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     const candidates = await this.#catalogStore.candidates(pluginId, {
       currentVersion: current.version,
       currentRelease: current,
-      contracts: state.pluginContracts ?? PACKAGE_PLUGIN_CONTRACTS
+      contracts: state.pluginContracts ?? PACKAGE_PLUGIN_CONTRACTS,
+      ...(signal ? { signal } : {})
     });
     return { candidates, selection: manager.planUpdate(pluginId, candidates) };
+  }
+
+  async #withCancellationSignal<T>(operation: (signal: AbortSignal) => Promise<T>): Promise<T> {
+    const controller = new AbortController();
+    this.#pendingOperationControllers.add(controller);
+    try {
+      return await operation(controller.signal);
+    } finally {
+      this.#pendingOperationControllers.delete(controller);
+    }
   }
 
   async pluginRollback(pluginId: string): Promise<void> {

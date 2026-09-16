@@ -20,7 +20,7 @@ import { gzipSync } from "node:zlib";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type CLIContext, type CommandRunner, ProcessCommandRunner, runCLI } from "../src/application.js";
 import { DeploymentTransactionStore } from "../src/deployment-transaction.js";
-import { OperationCleanupError } from "../src/operation-errors.js";
+import { CommandCancelledError, OperationCleanupError } from "../src/operation-errors.js";
 import type {
   DeploymentDetails,
   DiagnosticsResult,
@@ -6802,7 +6802,102 @@ describe("atlas-core CLI", () => {
     });
     expect(installedPluginVersion(test, "alpha_fixture")).toBe("0.1.0");
     expect(readFileSync(join(test.home, ".atlas", "core", "state.json"), "utf8")).toBe(stateBefore);
-    expect(catalogRefreshRequests).toBe(0);
+    expect(catalogRefreshRequests).toBe(2);
+  });
+
+  it("refreshes the catalog before resolving a Plugin update plan", async () => {
+    const test = runtime();
+    const plugin = INDEPENDENT_UPDATE_FIXTURES[0];
+    if (!plugin) throw new Error("Independent Plugin fixture is missing.");
+    const { catalogBytes, privateKey, catalogURL } = await installIndependentUpdateFixtures(test, [plugin]);
+    const releaseBytes = independentReleaseBytes(plugin, "0.3.0");
+    const documentURL = `https://github.com/the-Drunken-coder/Atlas-Modernization/releases/download/atlas-plugin-${plugin.pluginId}-v0.3.0/${plugin.pluginId}-0.3.0.atlas-plugin`;
+    const catalog = JSON.parse(new TextDecoder().decode(catalogBytes));
+    catalog.sequence = 2;
+    catalog.previous_catalog_sha256 = `sha256:${createHash("sha256").update(catalogBytes).digest("hex")}`;
+    catalog.issued_at = "2026-08-28T01:00:00Z";
+    catalog.plugins[0].releases.push({
+      version: "0.3.0",
+      display_name: plugin.displayName,
+      document_url: documentURL,
+      document_sha256: `sha256:${createHash("sha256").update(releaseBytes).digest("hex")}`,
+      revoked: false,
+      revocation_reason: null
+    });
+    const refreshedCatalogBytes = Buffer.from(JSON.stringify(catalog));
+    const refreshedSignature = JSON.stringify({
+      algorithm: "ed25519",
+      key_id: "test-key",
+      signature: sign(null, refreshedCatalogBytes, privateKey).toString("base64")
+    });
+    const previousFetch = test.context.fetch;
+    if (!previousFetch) throw new Error("Plugin fixture fetch is unavailable.");
+    test.context.fetch = async (input, init) => {
+      const url = String(input);
+      if (url === catalogURL) return new Response(refreshedCatalogBytes);
+      if (url === `${catalogURL}.sig`) return new Response(refreshedSignature);
+      if (url === documentURL) return new Response(releaseBytes);
+      return await previousFetch(input, init);
+    };
+    let plan: PluginUpdatePlan | undefined;
+    test.context.interactive = {
+      configureAdmin: async () => undefined,
+      runUpdate: async () => undefined,
+      runMenu: async (operator) => {
+        if (!operator.pluginUpdatePlan) throw new Error("Plugin update planning is unavailable.");
+        plan = await operator.pluginUpdatePlan(plugin.pluginId);
+      }
+    };
+
+    expect(await runCLI([], test.context), test.stderr.join("")).toBe(0);
+
+    expect(plan).toMatchObject({ status: "available", targetVersion: "0.3.0" });
+    expect(installedPluginVersion(test, plugin.pluginId)).toBe("0.1.0");
+  });
+
+  it("cancels Plugin update planning and releases its mutation lock", async () => {
+    const test = runtime();
+    const plugin = INDEPENDENT_UPDATE_FIXTURES[0];
+    if (!plugin) throw new Error("Independent Plugin fixture is missing.");
+    const { catalogURL } = await installIndependentUpdateFixtures(test, [plugin]);
+    const previousFetch = test.context.fetch;
+    if (!previousFetch) throw new Error("Plugin fixture fetch is unavailable.");
+    let planningStarted: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => {
+      planningStarted = resolve;
+    });
+    test.context.fetch = async (input, init) => {
+      if (String(input) !== catalogURL) return await previousFetch(input, init);
+      planningStarted?.();
+      return await new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal;
+        if (!signal) throw new Error("Plugin catalog planning fetch must be cancellable.");
+        const abort = () => reject(signal.reason);
+        if (signal.aborted) abort();
+        else signal.addEventListener("abort", abort, { once: true });
+      });
+    };
+    let planningError: unknown;
+    test.context.interactive = {
+      configureAdmin: async () => undefined,
+      runUpdate: async () => undefined,
+      runMenu: async (operator) => {
+        if (!operator.pluginUpdatePlan) throw new Error("Plugin update planning is unavailable.");
+        const planning = operator.pluginUpdatePlan(plugin.pluginId);
+        await started;
+        operator.cancelPending();
+        try {
+          await planning;
+        } catch (error) {
+          planningError = error;
+        }
+      }
+    };
+
+    expect(await runCLI([], test.context), test.stderr.join("")).toBe(0);
+
+    expect(planningError).toBeInstanceOf(CommandCancelledError);
+    expect(existsSync(join(test.home, ".atlas", "core", ".mutation.lock"))).toBe(false);
   });
 
   it("reports no restart impact when an enabled Plugin is current", async () => {
