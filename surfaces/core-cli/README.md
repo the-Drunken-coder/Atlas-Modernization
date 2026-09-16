@@ -84,11 +84,17 @@ atlas-core supervise
 
 ## Plugins
 
-Implementation status: the independent Plugin lifecycle and release workflow are implemented in this worktree, and
-local validation passes. The candidate-image Docker acceptance test still awaits CI. The terminal UI redesign specified in [GitHub issue #359](https://github.com/the-Drunken-coder/Atlas-Modernization/issues/359) is now the shipped default. Existing
+Implementation status: the independent Plugin lifecycle and release workflow are released with Atlas Core 0.2.0 and
+Building Scan 0.1.0. Candidate-image checks passed on linux/amd64 and linux/arm64. The terminal UI supports ordinary
+one-at-a-time Plugin updates with a target-version and restart-impact review, explicit confirmation, in-place progress,
+safe cancellation, and restoration results. Rollback, uninstall, catalog refresh, shared-key rotation, recovery, and
+unusual administrative operations remain direct-command-only. Catalog signing remains workflow-only. See
+[GitHub issue #429](https://github.com/the-Drunken-coder/Atlas-Modernization/issues/429). Existing
 published Core packages may still use the bundled Plugin catalog; schema-4 deployments use independent catalog state.
-Production catalog signing, trust bootstrap, and Pages rollout remain external setup. The accepted independent release
-design is documented in [`../../docs/design-decisions/2026-09-01-plugins-release-independently-from-atlas-core.md`](../../docs/design-decisions/2026-09-01-plugins-release-independently-from-atlas-core.md).
+Production signing trust and Pages configuration are recorded in
+[`../../docs/atlas-plugins/CATALOG_BOOTSTRAP.md`](../../docs/atlas-plugins/CATALOG_BOOTSTRAP.md), and the signed stable
+catalog is published. The accepted independent release design is documented in
+[`../../docs/design-decisions/2026-09-01-plugins-release-independently-from-atlas-core.md`](../../docs/design-decisions/2026-09-01-plugins-release-independently-from-atlas-core.md).
 The independent command behavior is specified in [`../../docs/atlas-plugins/MANAGEMENT.md`](../../docs/atlas-plugins/MANAGEMENT.md).
 
 The `Plugins` menu and matching commands manage trusted, query-only Plugins. Schema-4 deployments read the signed catalog
@@ -139,8 +145,8 @@ exceptions without an automatic recovery guarantee.
 Supervisor definitions pin the validated local Docker socket, clear inherited Docker context overrides, and record the
 CLI version. A CLI upgrade reinstalls active matching supervision with the newly installed CLI before updating Core.
 An active service whose definition does not match the selected deployment must be reinstalled explicitly first.
-The Plugins menu keeps the operation in an activity view with elapsed timestamps, reports rollback status, and returns
-to the Plugin catalog after safe cancellation.
+The Plugins menu keeps enable, disable, and update operations in an activity view with elapsed timestamps, reports
+restoration status, and returns to refreshed Plugin details after every terminal outcome.
 
 The menu's `Change admin password` action changes the password for the fixed `admin` username. The direct `config`
 command opens the same hidden password prompt. The password must contain at least 12 characters and is never accepted

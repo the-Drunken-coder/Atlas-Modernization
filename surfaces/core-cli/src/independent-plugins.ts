@@ -128,6 +128,12 @@ export type PluginLifecycleOutcome = {
   message: string;
 };
 
+export type IndependentPluginUpdatePlan = {
+  current: IndependentPluginRelease;
+  currentRevoked: boolean;
+  candidate: IndependentPluginRelease | IndependentPluginReleaseCandidate | undefined;
+};
+
 const MAX_TEMPLATE_BYTES = 1_048_576;
 const MAX_INSTALLED_BYTES = 64 * 1024;
 const PLUGIN_ID = /^[a-z][a-z0-9_]{0,49}$/;
@@ -637,16 +643,7 @@ export class IndependentPluginManager {
   ): Promise<PluginLifecycleOutcome> {
     await this.#requireFreshCatalog();
     const installed = this.#readInstalled(pluginId);
-    const current = this.#readSelectedRelease(installed);
-    const currentRevoked =
-      Array.isArray(candidateOrCandidates) &&
-      candidateOrCandidates.some(
-        (candidate) =>
-          candidate.release.pluginId === pluginId &&
-          candidate.release.version === current.version &&
-          candidate.catalog.revoked
-      );
-    const candidate = this.#pickUpdate(current, candidateOrCandidates, currentRevoked);
+    const { candidate, current, currentRevoked } = this.planUpdate(pluginId, candidateOrCandidates);
     if (!candidate) {
       return {
         pluginId,
@@ -713,6 +710,30 @@ export class IndependentPluginManager {
       message: remediationDowngrade
         ? `${current.displayName} remediated from revoked ${current.version} to ${release.version} (downgrade).`
         : `${current.displayName} updated from ${current.version} to ${release.version}.`
+    };
+  }
+
+  planUpdate(
+    pluginId: string,
+    candidateOrCandidates?:
+      | IndependentPluginRelease
+      | IndependentPluginReleaseCandidate
+      | readonly IndependentPluginReleaseCandidate[]
+  ): IndependentPluginUpdatePlan {
+    const current = this.#readSelectedRelease(this.#readInstalled(pluginId));
+    const currentRevoked =
+      Array.isArray(candidateOrCandidates) &&
+      candidateOrCandidates.some(
+        (candidate) =>
+          candidate.release.pluginId === pluginId &&
+          candidate.release.version === current.version &&
+          candidate.catalog.revoked
+      );
+    const selected = this.#pickUpdate(current, candidateOrCandidates, currentRevoked);
+    return {
+      current,
+      currentRevoked,
+      candidate: selected
     };
   }
 
@@ -1329,10 +1350,12 @@ export class IndependentPluginManager {
       previousRunning
     });
     this.#activeTransaction = transaction;
+    let committed = false;
     try {
       await transaction.advance("prepared", recovery);
       await action(transaction);
       await transaction.markCommitted();
+      committed = true;
       await transaction.cleanup();
     } catch (error) {
       try {
@@ -1340,6 +1363,7 @@ export class IndependentPluginManager {
       } catch (rollbackError) {
         throw new Error(`${errorMessage(error)} Recovery is required: ${errorMessage(rollbackError)}`);
       }
+      if (committed) return;
       throw error;
     } finally {
       this.#activeTransaction = undefined;

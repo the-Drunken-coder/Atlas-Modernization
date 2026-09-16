@@ -6,7 +6,11 @@ Release and installation details:
 - [`MANAGEMENT.md`](MANAGEMENT.md) defines local Installed Plugin state, compatibility, commands, and transactions.
 
 Status: Plugin platform v1 and the independent lifecycle and release workflow are released with Atlas Core 0.2.0 and Building Scan 0.1.0.
-Candidate-image checks passed on linux/amd64 and linux/arm64. The approved first TUI version keeps independent Plugin update, rollback, uninstall, catalog refresh, and shared-key rotation, plus recovery and supervision, as direct-command-only operations; see [GitHub issue #359](https://github.com/the-Drunken-coder/Atlas-Modernization/issues/359). Existing
+Candidate-image checks passed on linux/amd64 and linux/arm64. The TUI supports ordinary one-at-a-time Plugin updates
+with a target-version and restart-impact review, explicit confirmation, in-place progress, safe cancellation, and
+restoration results. Rollback, uninstall, catalog refresh, shared-key rotation, recovery, supervision, and unusual
+administrative operations remain direct-command-only. Catalog signing remains workflow-only. See
+[GitHub issue #429](https://github.com/the-Drunken-coder/Atlas-Modernization/issues/429). Existing
 published Core packages may still contain the bundled catalog; schema-4 deployments use independent catalog state.
 Production signing trust and Pages configuration are recorded in [bootstrap provenance](CATALOG_BOOTSTRAP.md).
 The signed stable catalog is published. Datastream delivery, executable UI Plugins, third-party installation, hot upgrades, untrusted
@@ -25,8 +29,10 @@ The replacement design has these settled requirements:
 - Each Plugin has its own version and release workflow. First-party Plugin source remains in this repository unless a
   later ownership need justifies moving it.
 - Updating a Plugin does not require publishing or installing a new Atlas Core version.
-- The host-side `atlas-core` terminal menu discovers, installs, updates, enables, disables, and uninstalls Plugins. Core
-  and the Command Interface do not receive container-runtime or host-filesystem authority.
+- The host-side `atlas-core` CLI discovers, installs, updates, enables, disables, and uninstalls Plugins. Before a TUI
+  update, it explains which Atlas services will restart and requires explicit confirmation. Direct update commands are
+  explicit operator actions but do not add a second prompt. Core and the Command Interface do not receive
+  container-runtime or host-filesystem authority.
 - The first catalog is one signed, Atlas-published catalog of trusted first-party Plugins. Arbitrary catalogs, bundles,
   and image URLs remain unsupported.
 - One Plugin release consists of one strict UTF-8 JSON `.atlas-plugin` document and the immutable multi-architecture
@@ -379,7 +385,8 @@ pins the image digest. The manager atomically stores its accepted catalog and an
 revoke an immutable release. The manager refuses new installation, enablement, update, or manual rollback to a revoked
 release. It warns about an already Installed revoked release but does not stop it without operator approval.
 If the selected release is revoked, an approved update may choose the greatest compatible non-revoked release even when
-that requires a version downgrade. It never reports a revoked selection as current.
+that requires a lower-version replacement. The TUI presents this as a replacement, not an upgrade, and never reports a
+revoked selection as current.
 
 Plugin versions are immutable Semantic Versions in one stable channel. A release workflow publishes and verifies the
 image and `.atlas-plugin` document before it appends the release to a newly signed catalog. The candidate image must pass

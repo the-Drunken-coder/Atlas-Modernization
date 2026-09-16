@@ -1,6 +1,11 @@
 # Plugin management
 
-Status: the independent Plugin lifecycle and release workflow are released with Atlas Core 0.2.0 and Building Scan 0.1.0. Candidate-image checks passed on linux/amd64 and linux/arm64. The approved first TUI version keeps independent Plugin update, rollback, uninstall, catalog refresh, and shared-key rotation, plus recovery and supervision, as direct-command-only operations; see [GitHub issue #359](https://github.com/the-Drunken-coder/Atlas-Modernization/issues/359). Existing published Core
+Status: the independent Plugin lifecycle and release workflow are released with Atlas Core 0.2.0 and Building Scan 0.1.0.
+Candidate-image checks passed on linux/amd64 and linux/arm64. The TUI supports ordinary one-at-a-time Plugin updates
+with a target-version and restart-impact review, explicit confirmation, in-place progress, safe cancellation, and
+restoration results. Rollback, uninstall, catalog refresh, shared-key rotation, recovery, supervision, and unusual
+administrative operations remain direct-command-only. Catalog signing remains workflow-only. See
+[GitHub issue #429](https://github.com/the-Drunken-coder/Atlas-Modernization/issues/429). Existing published Core
 packages may still contain the bundled catalog; the source implementation uses independent catalog state for schema-4
 deployments. Production signing trust and Pages configuration are recorded in [bootstrap provenance](CATALOG_BOOTSTRAP.md).
 The repository contains only the public key; the signed stable catalog is published.
@@ -392,10 +397,11 @@ checks instead of gating base startup on Plugin health.
 When the selected release is permitted, update selects the greatest compatible, non-revoked stable version newer than
 it and reports that the Plugin is current when none exists. When the selected release is revoked, update instead selects
 the greatest compatible, non-revoked stable release other than the selection, even when that replacement has a lower
-version. It labels that remediation as a downgrade. If no permitted replacement exists, it reports that condition rather
-than calling the revoked Plugin current. While disabled, update verifies, pulls, and stores the candidate, moves the prior
-selected release to `previous`, and does not restart Atlas. Updating an Enabled Plugin requires Atlas to be running; when
-Atlas is stopped, the command tells the operator to start Atlas or disable the Plugin first. While enabled, update stages
+version. The direct command describes that lower version as a downgrade; the TUI presents it as a replacement, not an
+upgrade. If no permitted replacement exists, it reports that condition rather than calling the revoked Plugin current.
+While disabled, update verifies, pulls, and stores the candidate, moves the prior selected release to `previous`, and does
+not restart Atlas. Updating an Enabled Plugin requires Atlas to be running; when Atlas is stopped, the command tells the
+operator to start Atlas or disable the Plugin first. While enabled, update stages
 candidate active files, validates Compose, pulls the candidate digest, recreates the affected services with pulling
 disabled, and waits for the same image, health, and discovery checks. Only then does it commit selected and previous
 release state, including both durable image receipts. Failure restores the old release, active files, deployment state,
@@ -491,10 +497,10 @@ compatibility bridge.
 
 ## Catalog and offline behavior
 
-Opening the Plugins menu checks the catalog once; `refresh` checks again. There is no background updater. A valid cached
-catalog may be used until its expiry. Install and update attempt a refresh first, then may use that verified unexpired
-receipt if fetching or verification fails. Explicit refresh still reports the failure; a failed receipt write aborts the
-operation. Catalog network or signature failure never stops Installed Plugins.
+Opening the Plugins menu reads the accepted local catalog without refreshing it. There is no background updater. A valid
+cached catalog may be used until its expiry. Install and update attempt a refresh first, then may use that verified
+unexpired receipt if fetching or verification fails. Explicit refresh remains a direct command and reports failures; a
+failed receipt write aborts the operation. Catalog network or signature failure never stops Installed Plugins.
 
 Catalog refresh verifies the new catalog completely, then atomically replaces `catalog-state.json`. The
 `(key_epoch, sequence)` pair and catalog hash advance with the cached bytes in that one write, so a crash cannot separate
