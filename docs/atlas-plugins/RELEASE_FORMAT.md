@@ -6,7 +6,8 @@ deployment files. The first independent package supports only trusted query-only
 credential configuration remains out of scope. Production signing trust and Pages configuration were bootstrapped on 2026-09-11;
 see [bootstrap provenance](CATALOG_BOOTSTRAP.md). The signed stable catalog is published. The TUI supports ordinary
 one-at-a-time Plugin updates with an impact review and explicit confirmation. Plugin rollback, uninstall, catalog
-refresh, shared-key rotation, recovery, signing, and unusual administrative operations remain direct-command-only. See
+refresh, shared-key rotation, recovery, and unusual administrative operations remain direct-command-only. Catalog
+signing remains workflow-only. See
 [GitHub issue #429](https://github.com/the-Drunken-coder/Atlas-Modernization/issues/429).
 
 This document defines the independently versioned first-party Plugin release, the signed Atlas Plugin catalog, and the

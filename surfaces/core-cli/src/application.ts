@@ -1711,6 +1711,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       }
       deployment = deploymentSnapshotFromServices(services);
     } catch (error) {
+      if (error instanceof CommandCancelledError) throw error;
       return { ...planBase, ...candidatePlan, status: "blocked", reason: errorMessage(error) };
     }
     if (installed.enabled && deployment.status === "stopped") {

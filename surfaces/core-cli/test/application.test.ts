@@ -6948,6 +6948,33 @@ describe("atlas-core CLI", () => {
     expect(existsSync(join(test.home, ".atlas", "core", ".mutation.lock"))).toBe(false);
   });
 
+  it("preserves cancellation while revalidating a reviewed Plugin update plan", async () => {
+    const test = runtime();
+    const plugin = INDEPENDENT_UPDATE_FIXTURES[0];
+    if (!plugin) throw new Error("Independent Plugin fixture is missing.");
+    await installIndependentUpdateFixtures(test, [plugin]);
+    let outcome: PluginOperationOutcome | undefined;
+    test.context.interactive = {
+      configureAdmin: async () => undefined,
+      runUpdate: async () => undefined,
+      runMenu: async (operator) => {
+        if (!operator.pluginUpdate || !operator.pluginUpdatePlan) throw new Error("Plugin update is unavailable.");
+        const reviewedPlan = await operator.pluginUpdatePlan(plugin.pluginId);
+        if (reviewedPlan.status !== "available") throw new Error("Expected an available Plugin update.");
+        test.runner.onRun = (call) => {
+          if (composeCommand(call)[0] === "ps") operator.cancelPending();
+        };
+        outcome = await operator.pluginUpdate(plugin.pluginId, () => undefined, reviewedPlan);
+      }
+    };
+
+    expect(await runCLI([], test.context), test.stderr.join("")).toBe(0);
+
+    expect(outcome).toEqual({ previousDeploymentPreserved: true, status: "cancelled" });
+    expect(installedPluginVersion(test, plugin.pluginId)).toBe("0.1.0");
+    expect(existsSync(join(test.home, ".atlas", "core", ".mutation.lock"))).toBe(false);
+  });
+
   it("reports no restart impact when an enabled Plugin is current", async () => {
     const test = runtime();
     await installIndependentUpdateFixtures(test);

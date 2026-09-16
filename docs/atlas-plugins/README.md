@@ -29,9 +29,10 @@ The replacement design has these settled requirements:
 - Each Plugin has its own version and release workflow. First-party Plugin source remains in this repository unless a
   later ownership need justifies moving it.
 - Updating a Plugin does not require publishing or installing a new Atlas Core version.
-- The host-side `atlas-core` CLI discovers, installs, updates, enables, disables, and uninstalls Plugins. Before
-  an update, it explains which Atlas services will restart and requires explicit confirmation. Core and the Command
-  Interface do not receive container-runtime or host-filesystem authority.
+- The host-side `atlas-core` CLI discovers, installs, updates, enables, disables, and uninstalls Plugins. Before a TUI
+  update, it explains which Atlas services will restart and requires explicit confirmation. Direct update commands are
+  explicit operator actions but do not add a second prompt. Core and the Command Interface do not receive
+  container-runtime or host-filesystem authority.
 - The first catalog is one signed, Atlas-published catalog of trusted first-party Plugins. Arbitrary catalogs, bundles,
   and image URLs remain unsupported.
 - One Plugin release consists of one strict UTF-8 JSON `.atlas-plugin` document and the immutable multi-architecture
