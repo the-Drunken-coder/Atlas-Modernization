@@ -542,6 +542,23 @@ describe("sdk data source", () => {
     );
   });
 
+  it.each(["already absent", "lost response"])(
+    "treats a confirmed absent Geo Feature as deleted after %s",
+    async (failure) => {
+      const fetchMock = vi.fn(async () => {
+        if (failure === "lost response" && fetchMock.mock.calls.length === 1) {
+          throw new TypeError("Connection lost after commit");
+        }
+        return Response.json({ error: "Not found" }, { status: 404 });
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      const dataSource = createSdkDataSource(config);
+
+      await expect(dataSource.deleteGeofeature?.("geo-1")).resolves.toBeUndefined();
+      expect(fetchMock).toHaveBeenCalledTimes(failure === "lost response" ? 2 : 1);
+    }
+  );
+
   it.each(["lost response", "conflict", "server error"])("recovers a committed create after %s", async (failure) => {
     const geometry: UiGeometry = { type: "Point", coordinates: [-71, 42] };
     const created = { ...entity("geo-new"), entity_type: "geofeature", alias: "Rally", components: { geometry } };

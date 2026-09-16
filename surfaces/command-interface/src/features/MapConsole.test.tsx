@@ -2086,4 +2086,23 @@ describe("MapConsole", () => {
     expect(screen.getByText("Geo Feature")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Delete Geofeature" })).toBeEnabled();
   });
+
+  it("preserves a newer selection when deletion finishes", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const deletion = deferred<void>();
+    const { fake } = makeFakeDataSource();
+    fake.deleteGeofeature = () => deletion.promise;
+    renderConsole(fake);
+
+    await screen.findByText("Rover");
+    await user.click(screen.getByRole("button", { name: "Geo Features" }));
+    await user.click(await screen.findByText("Area Alpha"));
+    await user.click(screen.getByRole("button", { name: "Delete Geofeature" }));
+    await user.click(screen.getByTestId("map-marker-select"));
+
+    act(() => deletion.resolve());
+    expect(await screen.findByText("Asset")).toBeInTheDocument();
+    expect(screen.queryByText("No geo features yet")).not.toBeInTheDocument();
+  });
 });

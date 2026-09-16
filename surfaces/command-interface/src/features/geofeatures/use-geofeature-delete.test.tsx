@@ -25,7 +25,7 @@ describe("useGeofeatureDelete", () => {
 
     await act(async () => finish());
     await request;
-    expect(onDeleted).toHaveBeenCalledOnce();
+    expect(onDeleted).toHaveBeenCalledWith("geo-1");
   });
 
   it("retains the target and sanitizes a failed deletion", async () => {

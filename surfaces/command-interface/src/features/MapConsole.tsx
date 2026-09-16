@@ -131,6 +131,8 @@ export function MapConsole() {
   }, []);
 
   const selection = sidebar.selection;
+  const selectionRef = useRef(selection);
+  selectionRef.current = selection;
   const historyEntity =
     sidebar.view.mode === "inspector" && selection && (selection.kind === "asset" || selection.kind === "track")
       ? getEntity(snapshot, selection.id)
@@ -305,7 +307,8 @@ export function MapConsole() {
   const creation = useGeofeatureCreate(atlas.createGeofeature, (entity) => {
     dispatch({ type: "selectEntity", kind: "geofeature", id: entity.entity_id, origin: "sidebar" });
   });
-  const deletion = useGeofeatureDelete(atlas.deleteGeofeature ?? deleteGeofeatureUnavailable, () => {
+  const deletion = useGeofeatureDelete(atlas.deleteGeofeature ?? deleteGeofeatureUnavailable, (entityId) => {
+    if (selectionRef.current?.id !== entityId) return;
     dispatch({ type: "clearSelection" });
     dispatch({ type: "openList", list: "geofeatures" });
   });

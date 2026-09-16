@@ -6,7 +6,7 @@ type DeleteState = { entityId?: string; deleting: boolean; error?: string };
 
 export function useGeofeatureDelete(
   deleteGeofeature: NonNullable<AtlasDataSource["deleteGeofeature"]>,
-  onDeleted: () => void
+  onDeleted: (entityId: string) => void
 ) {
   const [state, setState] = useState<DeleteState>({ deleting: false });
 
@@ -15,7 +15,7 @@ export function useGeofeatureDelete(
     setState({ entityId, deleting: true });
     try {
       await deleteGeofeature(entityId);
-      onDeleted();
+      onDeleted(entityId);
     } catch (cause) {
       setState({ entityId, deleting: false, error: sanitizeConnectionError(cause) });
     }

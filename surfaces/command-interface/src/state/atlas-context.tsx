@@ -225,7 +225,7 @@ export function AtlasProvider({
       loadEntityDetails: entityDetailsAvailable ? loadEntityDetails : undefined,
       submitCommand: async (submission) => {
         const dataSource = dataSourceRef.current;
-        if (!dataSource?.deleteGeofeature) throw new Error("Atlas data source is not ready");
+        if (!dataSource) throw new Error("Atlas data source is not ready");
         return dataSource.submitCommand(submission);
       },
       createGeofeature: async (entityId, name, geometry) => {

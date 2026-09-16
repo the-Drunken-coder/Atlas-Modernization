@@ -182,7 +182,21 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
       }
     },
 
-    deleteGeofeature: (entityId) => client.entities.delete(entityId),
+    async deleteGeofeature(entityId) {
+      try {
+        await client.entities.delete(entityId);
+      } catch (cause) {
+        if (isAtlasAPIError(cause) && cause.status === 404) return;
+        if (!isAtlasTransportError(cause) && !(isAtlasAPIError(cause) && cause.status >= 500)) throw cause;
+
+        try {
+          await client.entities.get(entityId, { fresh: true });
+        } catch (recoveryCause) {
+          if (isAtlasAPIError(recoveryCause) && recoveryCause.status === 404) return;
+        }
+        throw cause;
+      }
+    },
 
     async updateGeometry(entityId, geometry, ifMatchVersion) {
       return client.entities.update(
