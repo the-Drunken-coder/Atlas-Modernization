@@ -679,6 +679,11 @@ describe("sdk data source", () => {
       code: "ATLAS_TRANSPORT_ERROR"
     });
     await expect(source.createGeofeature("geo-new", "Rally", geometry)).resolves.toEqual(created);
+    const createTokens = fetchMock.mock.calls
+      .filter(([, init]) => init?.method === "POST")
+      .map(([, init]) => new Headers(init?.headers).get("Atlas-Resource-Instance-Token"));
+    expect(createTokens).toHaveLength(2);
+    expect(createTokens[0]).toBe(createTokens[1]);
     expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 

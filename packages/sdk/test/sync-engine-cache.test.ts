@@ -237,6 +237,12 @@ describe("AtlasClient sync: cache projection and reads", () => {
     client.entities.watch(live.entity_id, watch);
 
     await client.entities.delete(live.entity_id);
+    expect(watch).toHaveBeenCalledWith(undefined, {
+      event: "local_delete",
+      resource_type: "entity",
+      id: live.entity_id
+    });
+    watch.mockClear();
     const deleteEvent = core.deleteEvents.at(-1);
     if (!deleteEvent) throw new Error("fake core did not record delete event");
     core.events = core.events.filter((event) => event.version < deleteEvent.version);
@@ -254,8 +260,7 @@ describe("AtlasClient sync: cache projection and reads", () => {
     core.version = deleteEvent.version;
     await client.changedSince();
 
-    expect(watch).toHaveBeenCalledTimes(1);
-    expect(watch).toHaveBeenCalledWith(undefined, deleteEvent);
+    expect(watch).not.toHaveBeenCalled();
     await expect(client.entities.get(live.entity_id)).rejects.toMatchObject({
       status: 404,
       errorCode: "ENTITY_NOT_FOUND"
@@ -697,6 +702,21 @@ describe("AtlasClient sync: cache projection and reads", () => {
       resource: undefined
     });
     expect(cache.value("entity", original.entity_id)).toBeUndefined();
+  });
+
+  it("notifies a successful delete for an uncached resource", () => {
+    const cache = new ResourceCache();
+    const deletion = cache.beginLocalDelete("entity", "asset-uncached-delete");
+
+    expect(cache.finishLocalDelete(deletion, "deleted")).toEqual({
+      event: {
+        event: "local_delete",
+        resource_type: "entity",
+        id: "asset-uncached-delete"
+      },
+      resource: undefined
+    });
+    expect(cache.value("entity", "asset-uncached-delete")).toBeUndefined();
   });
 
   it("keeps a resource cached during a not-found delete that began from a tombstone", () => {

@@ -339,8 +339,13 @@ export class ResourceCache {
     }
     const previousVersion = this.markLocalDelete(operation.type, operation.id);
     const removedEntry = currentEntry && !currentEntry.deleted ? currentEntry : operation.observedEntry;
-    if (!removedEntry || removedEntry.deleted) return undefined;
-    this.locallyNotifiedDeletes.add(resourceCacheKey(operation.type, operation.id));
+    const key = resourceCacheKey(operation.type, operation.id);
+    if (!removedEntry || removedEntry.deleted) {
+      if (outcome !== "deleted" || operation.observedEntry || currentEntry) return undefined;
+      this.locallyNotifiedDeletes.add(key);
+      return { event: localDeleteEvent(operation.type, operation.id, previousVersion), resource: undefined };
+    }
+    this.locallyNotifiedDeletes.add(key);
     return {
       event: localDeleteEvent(operation.type, operation.id, previousVersion),
       resource: undefined

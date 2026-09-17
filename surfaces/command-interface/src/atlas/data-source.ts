@@ -69,6 +69,7 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
   let startupGeneration = 0;
   let startupError: ConnectionError | undefined;
   const geofeatureTokens = new Map<string, GeofeatureInstanceToken>();
+  const pendingGeofeatureCreations = new Map<string, PendingGeofeatureCreation>();
   const tokenFor = (entityId: string): GeofeatureInstanceToken | undefined => {
     const cached = geofeatureTokens.get(entityId);
     if (cached) return cached;
@@ -179,7 +180,12 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
       }),
 
     async createGeofeature(entityId, name, geometry) {
-      const instanceToken = crypto.randomUUID();
+      const pending = pendingGeofeatureCreations.get(entityId);
+      const instanceToken =
+        pending && pending.name === name && sameGeometry(pending.geometry, geometry)
+          ? pending.token
+          : crypto.randomUUID();
+      pendingGeofeatureCreations.set(entityId, { name, geometry, token: instanceToken });
       try {
         const created = await client.entities.create(
           {
@@ -190,6 +196,7 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
           },
           { instanceToken }
         );
+        pendingGeofeatureCreations.delete(entityId);
         retainGeofeatureToken(config.atlasBaseUrl, created.entity_id, {
           instanceId: created.metadata.created_at,
           token: instanceToken
@@ -197,8 +204,13 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
         geofeatureTokens.set(created.entity_id, { instanceId: created.metadata.created_at, token: instanceToken });
         return created;
       } catch (cause) {
-        if (!isAtlasTransportError(cause) && !(isAtlasAPIError(cause) && (cause.status === 409 || cause.status >= 500)))
+        if (
+          !isAtlasTransportError(cause) &&
+          !(isAtlasAPIError(cause) && (cause.status === 409 || cause.status >= 500))
+        ) {
+          pendingGeofeatureCreations.delete(entityId);
           throw cause;
+        }
         // A committed POST can lose its response. Recover only the exact draft,
         // including on a same-ID retry; a different entity remains a conflict.
         const existing = await client.entities.get(entityId, { fresh: true }).catch(() => undefined);
@@ -209,10 +221,12 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
           sameGeometry(existing.components.geometry, geometry)
         ) {
           const retained = { instanceId: existing.metadata.created_at, token: instanceToken };
+          pendingGeofeatureCreations.delete(entityId);
           retainGeofeatureToken(config.atlasBaseUrl, entityId, retained);
           geofeatureTokens.set(entityId, retained);
           return existing;
         }
+        if (existing) pendingGeofeatureCreations.delete(entityId);
         throw cause;
       }
     },
@@ -267,6 +281,7 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
 }
 
 type GeofeatureInstanceToken = { instanceId: string; token: string };
+type PendingGeofeatureCreation = { name: string; geometry: UiGeometry; token: string };
 
 function geofeatureTokenKey(baseUrl: string, entityId: string): string {
   return `atlas:geofeature-instance:${baseUrl}:${entityId}`;
