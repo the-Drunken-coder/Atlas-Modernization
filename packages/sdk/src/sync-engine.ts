@@ -399,18 +399,7 @@ export class SyncEngine {
     if (!options?.fresh && this.canServeFromCache({ filter: "id", resource_type: "entity", id }) && cached) {
       return cached;
     }
-    const pointRead = this.cache.beginPointRead("entity", id);
-    const entity = await this.transport.json(
-      "GET",
-      `/entities/${encodeURIComponent(id)}`,
-      isEntityResource,
-      undefined,
-      undefined,
-      options?.signal
-    );
-    assertExpectedResourceID("entity", id, entity);
-    if (this.cache.applyPointRead(pointRead, entity)) this.notifySnapshot();
-    return entity;
+    return this.readPoint("entity", id, isEntityResource, options?.signal);
   }
 
   async readTask(id: string, options?: ReadOptions): Promise<TaskResource> {
@@ -460,18 +449,37 @@ export class SyncEngine {
     if (!options?.fresh && this.canServeFromCache({ filter: "id", resource_type: "object", id }) && cached) {
       return cached;
     }
-    const pointRead = this.cache.beginPointRead("object", id);
-    const object = await this.transport.json(
-      "GET",
-      `/objects/${encodeURIComponent(id)}`,
-      isObjectDetailResource,
-      undefined,
-      undefined,
-      options?.signal
-    );
-    assertExpectedResourceID("object", id, object);
-    if (this.cache.applyPointRead(pointRead, object, { detail: true })) this.notifySnapshot();
-    return object;
+    return this.readPoint("object", id, isObjectDetailResource, options?.signal, {
+      detail: true
+    });
+  }
+
+  private async readPoint<TType extends DeletableResourceType, TResource extends ResourceOf<TType>>(
+    type: TType,
+    id: string,
+    validate: ResponseValidator<TResource>,
+    signal?: AbortSignal,
+    cacheOptions?: { detail?: boolean }
+  ): Promise<TResource> {
+    const pointRead = this.cache.beginPointRead(type, id);
+    let resource: TResource;
+    try {
+      resource = await this.transport.json(
+        "GET",
+        `/${type === "entity" ? "entities" : "objects"}/${encodeURIComponent(id)}`,
+        validate,
+        undefined,
+        undefined,
+        signal
+      );
+    } catch (error) {
+      if (isResourceNotFound(error, type) && this.cache.applyPointNotFound(pointRead)) this.notifySnapshot();
+      else if (this.cache.completePointRead(pointRead)) this.notifySnapshot();
+      throw error;
+    }
+    assertExpectedResourceID(type, id, resource);
+    if (this.cache.applyPointRead(pointRead, resource, cacheOptions)) this.notifySnapshot();
+    return resource;
   }
 
   async writeResource<TType extends ResourceType, TResource extends ResourceOf<TType> = ResourceOf<TType>>(
@@ -546,10 +554,33 @@ export class SyncEngine {
         resourceInstanceTokenHeaders(options?.instanceToken)
       );
     } catch (error) {
+      if (isResourceNotFound(error, type)) {
+        this.deliverChange(this.cache.finishLocalDelete(localDelete, "not_found"));
+        await this.reconcileLocalDelete(type, id, localDelete);
+        return;
+      }
       this.cache.cancelLocalDelete(localDelete);
       throw error;
     }
-    this.deliverChange(this.cache.finishLocalDelete(localDelete));
+    this.deliverChange(this.cache.finishLocalDelete(localDelete, "deleted"));
+    await this.reconcileLocalDelete(type, id, localDelete);
+  }
+
+  private async reconcileLocalDelete(
+    type: DeletableResourceType,
+    id: string,
+    operation: ReturnType<ResourceCache["beginLocalDelete"]>
+  ): Promise<void> {
+    if (!this.cache.needsLocalDeleteReconcile(operation)) return;
+    try {
+      if (type === "entity") {
+        await this.readPoint("entity", id, isEntityResource);
+      } else {
+        await this.readPoint("object", id, isObjectDetailResource, undefined, { detail: true });
+      }
+    } catch {
+      // A post-delete reconciliation is best effort; the delete result remains authoritative.
+    }
   }
 
   private async startSyncFromStopped(generation: number): Promise<void> {
@@ -880,6 +911,14 @@ export class SyncEngine {
       }
     }
   }
+}
+
+function isResourceNotFound(error: unknown, type: DeletableResourceType): error is AtlasAPIError {
+  return (
+    error instanceof AtlasAPIError &&
+    error.status === 404 &&
+    error.errorCode === (type === "entity" ? "ENTITY_NOT_FOUND" : "OBJECT_NOT_FOUND")
+  );
 }
 
 function fullDatasetPath(cursors: FullDatasetCursors): string {

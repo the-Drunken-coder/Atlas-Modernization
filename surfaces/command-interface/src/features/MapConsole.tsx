@@ -8,6 +8,7 @@ import {
   ENTITY_KIND_BY_LIST,
   ENTITY_KINDS,
   type EntityKind,
+  entityDisplayName,
   entityKind
 } from "../atlas/entities.js";
 import type { UiGeometry } from "../atlas/geometry.js";
@@ -43,6 +44,7 @@ import { EntityList } from "./EntityList.js";
 import { GeofeatureCreatePanel } from "./geofeatures/GeofeatureCreatePanel.js";
 import { GeofeatureInspector } from "./geofeatures/GeofeatureInspector.js";
 import { useGeofeatureCreate } from "./geofeatures/use-geofeature-create.js";
+import { useGeofeatureDelete } from "./geofeatures/use-geofeature-delete.js";
 import { type GeometryEditState, useGeometryEdit } from "./geofeatures/use-geometry-edit.js";
 import { type MovementHistoryState, useMovementHistory } from "./history/use-movement-history.js";
 import { PlacesPanel } from "./places/PlacesPanel.js";
@@ -70,7 +72,6 @@ const SpatialResultsInspector = lazy(() =>
 
 const EMPTY_ENTITY_QUERIES = Object.fromEntries(ENTITY_KINDS.map((kind) => [kind, ""])) as Record<EntityKind, string>;
 const MAX_STALE_DETAIL_REFRESHES = 1;
-
 type EntityDetailsRequest = {
   entityId: string;
   runtimeManifestVersion?: number;
@@ -85,6 +86,7 @@ type EntityDetailsRequest = {
 export function MapConsole() {
   const atlas = useAtlas();
   const { snapshot, catalog } = atlas;
+  const cancelTask = atlas.cancelTask;
   const now = useHeartbeatClock();
   const [sidebar, dispatch] = useReducer(sidebarReducer, initialSidebarState);
   const [entityQueries, setEntityQueries] = useState(EMPTY_ENTITY_QUERIES);
@@ -126,6 +128,8 @@ export function MapConsole() {
   }, []);
 
   const selection = sidebar.selection;
+  const sidebarRef = useRef(sidebar);
+  sidebarRef.current = sidebar;
   const historyEntity =
     sidebar.view.mode === "inspector" && selection && (selection.kind === "asset" || selection.kind === "track")
       ? getEntity(snapshot, selection.id)
@@ -284,6 +288,8 @@ export function MapConsole() {
           : selectedSnapshotEntity,
     [selectedSnapshotEntity, selectedDetails, commandDetailsRequired]
   );
+  const selectedEntityRef = useRef(selectedEntity);
+  selectedEntityRef.current = selectedEntity;
   const selectedId = selection?.id;
   const commandFlow = useCommandFlow({
     catalog,
@@ -299,6 +305,20 @@ export function MapConsole() {
   const geometryEdit = useGeometryEdit({ selectedEntity, selectedId, updateGeometry: atlas.updateGeometry });
   const creation = useGeofeatureCreate(atlas.createGeofeature, (entity) => {
     dispatch({ type: "selectEntity", kind: "geofeature", id: entity.entity_id, origin: "sidebar" });
+  });
+  const deletion = useGeofeatureDelete(atlas.deleteGeofeature, atlas.canDeleteGeofeature, (entityId, instanceId) => {
+    const currentSidebar = sidebarRef.current;
+    if (
+      currentSidebar.view.mode !== "inspector" ||
+      currentSidebar.selection?.id !== entityId ||
+      (selectedEntityRef.current && selectedEntityRef.current.metadata.created_at !== instanceId)
+    )
+      return;
+    dispatch({ type: "clearSelection" });
+    dispatch({ type: "openList", list: "geofeatures" });
+    requestAnimationFrame(() =>
+      document.querySelector<HTMLButtonElement>('button[aria-label="Add Geo Feature"]')?.focus()
+    );
   });
   const { edit, saving, saveError } = geometryEdit;
   const creationGeometry = creation.draft?.geometry;
@@ -537,6 +557,7 @@ export function MapConsole() {
                 edit={edit}
                 saving={saving}
                 saveError={saveError}
+                deletion={deletion}
                 onSelectEntity={(entity) => {
                   const kind = entityKind(entity);
                   if (kind === "other") return;
@@ -549,6 +570,7 @@ export function MapConsole() {
                 onPreviewPlace={previewPlace}
                 onFocusPlace={focusPlace}
                 onPickCommand={commandFlow.pickSidebarCommand}
+                onCancelTask={cancelTask ? (taskId) => cancelTask({ taskId }) : undefined}
                 onStartEdit={geometryEdit.startEdit}
                 onChangeDraft={geometryEdit.changeDraft}
                 onSaveEdit={() => void geometryEdit.saveEdit()}
@@ -759,12 +781,14 @@ type PanelBodyProps = {
   edit: GeometryEditState | null;
   saving: boolean;
   saveError?: string;
+  deletion: ReturnType<typeof useGeofeatureDelete>;
   onSelectEntity: (entity: EntityResource) => void;
   onEntityQueryChange: (kind: EntityKind, query: string) => void;
   onPlaceQueryChange: (query: string) => void;
   onPreviewPlace: (target: MapTarget | null) => void;
   onFocusPlace: (target: MapTarget) => void;
   onPickCommand: (availability: CommandAvailability) => void;
+  onCancelTask?: (taskId: string) => Promise<unknown>;
   onStartEdit: () => void;
   onChangeDraft: (geometry: UiGeometry) => void;
   onSaveEdit: () => void;
@@ -795,6 +819,7 @@ function PanelBody(props: PanelBodyProps) {
         catalog={catalog}
         commandManifestStatus={props.commandManifestStatus}
         onPickCommand={props.onPickCommand}
+        onCancelTask={props.onCancelTask}
       />
     );
   }
@@ -809,10 +834,22 @@ function PanelBody(props: PanelBodyProps) {
         draft={props.edit?.draft}
         saving={props.saving}
         saveError={props.saveError}
+        deleting={props.deletion.deleting(selectedEntity.entity_id)}
+        deleteError={props.deletion.error(selectedEntity.entity_id, selectedEntity.metadata.created_at)}
         onStartEdit={props.onStartEdit}
         onChangeDraft={props.onChangeDraft}
         onSave={props.onSaveEdit}
         onCancel={props.onCancelEdit}
+        onDelete={
+          props.deletion.available(selectedEntity.entity_id, selectedEntity.metadata.created_at)
+            ? () =>
+                void props.deletion.remove(
+                  selectedEntity.entity_id,
+                  selectedEntity.metadata.created_at,
+                  entityDisplayName(selectedEntity)
+                )
+            : undefined
+        }
       />
     );
   }

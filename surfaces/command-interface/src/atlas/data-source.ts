@@ -23,6 +23,11 @@ export type CommandSubmission = {
   signal?: AbortSignal;
 };
 
+export type TaskCancellation = {
+  taskId: string;
+  signal?: AbortSignal;
+};
+
 export type ConnectionError = { source: "startup" | "live-sync"; message: string };
 export type ConnectionHealth = { running: boolean; healthy: boolean; degraded: boolean; error?: ConnectionError };
 
@@ -36,7 +41,10 @@ export interface AtlasDataSource {
   watch(onSnapshot: (snapshot: AtlasSnapshot) => void): () => void;
   start(): Promise<void>;
   submitCommand(submission: CommandSubmission): Promise<TaskResource>;
+  cancelTask?(cancellation: TaskCancellation): Promise<TaskResource>;
   createGeofeature(entityId: string, name: string, geometry: UiGeometry): Promise<EntityResource>;
+  canDeleteGeofeature?(entityId: string, instanceId: string): boolean;
+  deleteGeofeature?(entityId: string, instanceId: string): Promise<void>;
   updateGeometry(entityId: string, geometry: UiGeometry, ifMatchVersion?: number): Promise<EntityResource>;
   health?(): ConnectionHealth;
   dispose(): void;
@@ -60,6 +68,15 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
   };
   let startupGeneration = 0;
   let startupError: ConnectionError | undefined;
+  const geofeatureTokens = new Map<string, GeofeatureInstanceToken>();
+  const pendingGeofeatureTokens = new Map<string, string>();
+  const tokenFor = (entityId: string): GeofeatureInstanceToken | undefined => {
+    const cached = geofeatureTokens.get(entityId);
+    if (cached) return cached;
+    const stored = readGeofeatureToken(config.atlasBaseUrl, entityId);
+    if (stored) geofeatureTokens.set(entityId, stored);
+    return stored;
+  };
 
   return {
     snapshot,
@@ -156,29 +173,110 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
       );
     },
 
+    cancelTask: (cancellation) =>
+      client.tasks.cancel(cancellation.taskId, {
+        cancellation: { code: "requested", message: "Operator cancelled the Task." },
+        signal: cancellation.signal
+      }),
+
     async createGeofeature(entityId, name, geometry) {
+      const draftKey = JSON.stringify([entityId, name, geometry]);
+      const pendingToken =
+        pendingGeofeatureTokens.get(draftKey) ?? readPendingGeofeatureToken(config.atlasBaseUrl, draftKey);
+      const instanceToken = pendingToken || crypto.randomUUID();
+      pendingGeofeatureTokens.set(draftKey, instanceToken);
+      retainPendingGeofeatureToken(config.atlasBaseUrl, draftKey, instanceToken);
       try {
-        return await client.entities.create({
-          entity_id: entityId,
-          entity_type: "geofeature",
-          alias: name,
-          components: { geometry }
+        const created = await client.entities.create(
+          {
+            entity_id: entityId,
+            entity_type: "geofeature",
+            alias: name,
+            components: { geometry }
+          },
+          { instanceToken }
+        );
+        pendingGeofeatureTokens.delete(draftKey);
+        forgetPendingGeofeatureToken(config.atlasBaseUrl, draftKey);
+        retainGeofeatureToken(config.atlasBaseUrl, created.entity_id, {
+          instanceId: created.metadata.created_at,
+          token: instanceToken
         });
+        geofeatureTokens.set(created.entity_id, { instanceId: created.metadata.created_at, token: instanceToken });
+        return created;
       } catch (cause) {
-        if (!isAtlasTransportError(cause) && !(isAtlasAPIError(cause) && (cause.status === 409 || cause.status >= 500)))
+        const provenTokenReuse = isAtlasAPIError(cause) && isResourceInstanceTokenReuse(cause);
+        if (!isAtlasTransportError(cause) && !(isAtlasAPIError(cause) && (cause.status >= 500 || provenTokenReuse))) {
+          pendingGeofeatureTokens.delete(draftKey);
+          forgetPendingGeofeatureToken(config.atlasBaseUrl, draftKey);
           throw cause;
+        }
+        if (!pendingToken) throw cause;
         // A committed POST can lose its response. Recover only the exact draft,
         // including on a same-ID retry; a different entity remains a conflict.
-        const existing = await client.entities.get(entityId, { fresh: true }).catch(() => undefined);
+        let existing: EntityResource | undefined;
+        try {
+          existing = await client.entities.get(entityId, { fresh: true });
+        } catch (recoveryCause) {
+          if (
+            isAtlasAPIError(recoveryCause) &&
+            recoveryCause.status === 404 &&
+            recoveryCause.errorCode === "ENTITY_NOT_FOUND"
+          ) {
+            pendingGeofeatureTokens.delete(draftKey);
+            forgetPendingGeofeatureToken(config.atlasBaseUrl, draftKey);
+          }
+          throw cause;
+        }
         if (
           existing?.entity_id === entityId &&
           existing.entity_type === "geofeature" &&
-          existing.alias === name &&
-          sameGeometry(existing.components.geometry, geometry)
-        )
+          (provenTokenReuse || (existing.alias === name && sameGeometry(existing.components.geometry, geometry)))
+        ) {
+          const retained = { instanceId: existing.metadata.created_at, token: instanceToken };
+          pendingGeofeatureTokens.delete(draftKey);
+          forgetPendingGeofeatureToken(config.atlasBaseUrl, draftKey);
+          retainGeofeatureToken(config.atlasBaseUrl, entityId, retained);
+          geofeatureTokens.set(entityId, retained);
           return existing;
+        }
+        if (existing) {
+          pendingGeofeatureTokens.delete(draftKey);
+          forgetPendingGeofeatureToken(config.atlasBaseUrl, draftKey);
+        }
         throw cause;
       }
+    },
+
+    canDeleteGeofeature(entityId, instanceId) {
+      return tokenFor(entityId)?.instanceId === instanceId;
+    },
+
+    async deleteGeofeature(entityId, instanceId) {
+      const retained = tokenFor(entityId);
+      if (!retained || retained.instanceId !== instanceId) throw new Error("Geo Feature deletion is unavailable");
+      try {
+        await client.entities.delete(entityId, { instanceToken: retained.token });
+      } catch (cause) {
+        if (!isAtlasTransportError(cause) && !(isAtlasAPIError(cause) && cause.status >= 500)) throw cause;
+
+        try {
+          await client.entities.get(entityId, { fresh: true });
+        } catch (recoveryCause) {
+          if (
+            isAtlasAPIError(recoveryCause) &&
+            recoveryCause.status === 404 &&
+            recoveryCause.errorCode === "ENTITY_NOT_FOUND"
+          ) {
+            forgetGeofeatureToken(config.atlasBaseUrl, entityId);
+            geofeatureTokens.delete(entityId);
+            return;
+          }
+        }
+        throw cause;
+      }
+      forgetGeofeatureToken(config.atlasBaseUrl, entityId);
+      geofeatureTokens.delete(entityId);
     },
 
     async updateGeometry(entityId, geometry, ifMatchVersion) {
@@ -197,6 +295,77 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
       startupError = undefined;
     }
   };
+}
+
+type GeofeatureInstanceToken = { instanceId: string; token: string };
+
+function geofeatureTokenKey(baseUrl: string, entityId: string): string {
+  return `atlas:geofeature-instance:${baseUrl}:${entityId}`;
+}
+
+function pendingGeofeatureTokenKey(baseUrl: string, draftKey: string): string {
+  return `atlas:geofeature-pending:${baseUrl}:${draftKey}`;
+}
+
+function readPendingGeofeatureToken(baseUrl: string, draftKey: string): string | undefined {
+  try {
+    const stored = globalThis.localStorage?.getItem(pendingGeofeatureTokenKey(baseUrl, draftKey));
+    return stored && stored.length > 0 ? stored : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function retainPendingGeofeatureToken(baseUrl: string, draftKey: string, token: string): void {
+  try {
+    globalThis.localStorage?.setItem(pendingGeofeatureTokenKey(baseUrl, draftKey), token);
+  } catch {
+    // In-memory retention still protects retries for this data-source lifetime.
+  }
+}
+
+function forgetPendingGeofeatureToken(baseUrl: string, draftKey: string): void {
+  try {
+    globalThis.localStorage?.removeItem(pendingGeofeatureTokenKey(baseUrl, draftKey));
+  } catch {
+    // Storage can be unavailable in privacy-restricted browser contexts.
+  }
+}
+
+function readGeofeatureToken(baseUrl: string, entityId: string): GeofeatureInstanceToken | undefined {
+  try {
+    const stored = globalThis.localStorage?.getItem(geofeatureTokenKey(baseUrl, entityId));
+    if (!stored) return undefined;
+    const value: unknown = JSON.parse(stored);
+    if (
+      !value ||
+      typeof value !== "object" ||
+      !("instanceId" in value) ||
+      typeof value.instanceId !== "string" ||
+      !("token" in value) ||
+      typeof value.token !== "string"
+    )
+      return undefined;
+    return { instanceId: value.instanceId, token: value.token };
+  } catch {
+    return undefined;
+  }
+}
+
+function retainGeofeatureToken(baseUrl: string, entityId: string, value: GeofeatureInstanceToken): void {
+  try {
+    globalThis.localStorage?.setItem(geofeatureTokenKey(baseUrl, entityId), JSON.stringify(value));
+  } catch {
+    // In-memory retention still protects deletes for this data-source lifetime.
+  }
+}
+
+function forgetGeofeatureToken(baseUrl: string, entityId: string): void {
+  try {
+    globalThis.localStorage?.removeItem(geofeatureTokenKey(baseUrl, entityId));
+  } catch {
+    // Storage can be unavailable in privacy-restricted browser contexts.
+  }
 }
 function runtimeManifestChangeVersion(event: AtlasWatchEvent): { id: string; version: number } | undefined {
   if (event.event !== "update" || event.resource_type !== "entity") return undefined;
@@ -225,6 +394,14 @@ function runtimeManifestVersionsAfterHydration(
     ...current,
     ...Object.fromEntries(changedEntities.map(([id, entity]) => [id, entity.metadata.version]))
   };
+}
+
+function isResourceInstanceTokenReuse(error: { status: number; errorCode?: string; message: string }): boolean {
+  return (
+    error.status === 400 &&
+    error.errorCode === "VALIDATION_ERROR" &&
+    error.message.includes("resource instance token has already been used for this entity instance")
+  );
 }
 
 function sameGeometry(actual: UiGeometry | undefined, expected: UiGeometry): boolean {

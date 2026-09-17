@@ -59,11 +59,34 @@ function GeometryActionProbe() {
   );
 }
 
+function DeleteActionProbe() {
+  const atlas = useAtlas();
+  return (
+    <div>
+      <span data-testid="delete-capability">{atlas.deleteGeofeature ? "available" : "unavailable"}</span>
+      {atlas.deleteGeofeature ? (
+        <button type="button" onClick={() => void atlas.deleteGeofeature?.("geo-1", "instance-1")}>
+          delete
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 function EntityDetailsProbe({ signal }: { signal: AbortSignal }) {
   const atlas = useAtlas();
   return (
     <button type="button" onClick={() => void atlas.loadEntityDetails?.("asset-1", signal)}>
       load details
+    </button>
+  );
+}
+
+function CancelTaskProbe() {
+  const cancelTask = useAtlas().cancelTask;
+  return (
+    <button type="button" onClick={() => void cancelTask?.({ taskId: "task-1" })}>
+      cancel task
     </button>
   );
 }
@@ -129,6 +152,20 @@ function catalogDataSource(loadCommandCatalog: () => Promise<CommandCatalog>) {
 }
 
 describe("AtlasProvider", () => {
+  it("exposes Task cancellation from the active data source", async () => {
+    const cancelTask = vi.fn().mockResolvedValue(undefined);
+    const dataSource: AtlasDataSource = { ...catalogDataSource(async () => []).dataSource, cancelTask };
+    render(
+      <AtlasProvider config={config} createDataSource={() => dataSource}>
+        <CancelTaskProbe />
+      </AtlasProvider>
+    );
+
+    await screen.findByText("cancel task");
+    fireEvent.click(screen.getByRole("button", { name: "cancel task" }));
+    await waitFor(() => expect(cancelTask).toHaveBeenCalledWith({ taskId: "task-1" }));
+  });
+
   it.each<ConnectionHealth>([
     { running: true, healthy: true, degraded: false },
     { running: true, healthy: false, degraded: true },
@@ -598,5 +635,34 @@ describe("AtlasProvider", () => {
     fireEvent.click(screen.getByRole("button", { name: "save" }));
     await waitFor(() => expect(updateGeometry).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(screen.getByTestId("entity-names")).toHaveTextContent("Fresh Watch"));
+  });
+
+  it("forwards Geo Feature deletion through the context", async () => {
+    const deleteGeofeature = vi.fn(async () => {});
+    const fake = catalogDataSource(async () => []).dataSource;
+    fake.deleteGeofeature = deleteGeofeature;
+
+    render(
+      <AtlasProvider loadConfig={async () => config} createDataSource={() => fake}>
+        <DeleteActionProbe />
+      </AtlasProvider>
+    );
+
+    expect(await screen.findByTestId("delete-capability")).toHaveTextContent("available");
+    fireEvent.click(screen.getByRole("button", { name: "delete" }));
+    await waitFor(() => expect(deleteGeofeature).toHaveBeenCalledWith("geo-1", "instance-1"));
+  });
+
+  it("preserves an omitted Geo Feature deletion capability", async () => {
+    const fake = catalogDataSource(async () => []).dataSource;
+
+    render(
+      <AtlasProvider loadConfig={async () => config} createDataSource={() => fake}>
+        <DeleteActionProbe />
+      </AtlasProvider>
+    );
+
+    expect(await screen.findByTestId("delete-capability")).toHaveTextContent("unavailable");
+    expect(screen.queryByRole("button", { name: "delete" })).not.toBeInTheDocument();
   });
 });

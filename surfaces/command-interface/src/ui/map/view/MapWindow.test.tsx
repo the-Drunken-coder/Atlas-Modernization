@@ -47,7 +47,7 @@ describe("MapWindow", () => {
 
     const handle = screen.getByRole("button", { name: /^Expand Fixture results window, 3 results/ });
     await waitFor(() => expect(handle).toHaveFocus());
-    await user.click(handle);
+    await user.keyboard("{Enter}");
     expect(screen.getByText("Window body")).toBeVisible();
     expect(screen.getByText("Fixture source · 12:34:56 PM")).toBeVisible();
     expect(screen.getByRole("link", { name: "Attribution" })).toBeVisible();

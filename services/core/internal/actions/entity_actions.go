@@ -172,6 +172,9 @@ func (a *EntityActions) Create(ctx context.Context, params CreateEntityParams) (
 			return nil, NewValidationError(err.Error())
 		}
 		if err := reserveResourceInstanceToken(ctx, tx, hash); err != nil {
+			if isResourceInstanceTokenReuse(err) && entityUsesInstanceToken(ctx, tx, entityID, hash) {
+				return nil, NewValidationError("resource instance token has already been used for this entity instance")
+			}
 			return nil, err
 		}
 		instanceTokenHash = &hash
@@ -208,6 +211,21 @@ func (a *EntityActions) Create(ctx context.Context, params CreateEntityParams) (
 	}
 
 	return entity, nil
+}
+
+func isResourceInstanceTokenReuse(err error) bool {
+	var validationErr *ValidationError
+	return errors.As(err, &validationErr) && validationErr.Message == "resource instance token has already been used"
+}
+
+func entityUsesInstanceToken(ctx context.Context, tx pgx.Tx, entityID, tokenHash string) bool {
+	var storedHash *string
+	if err := tx.QueryRow(ctx, `
+		SELECT instance_token_hash FROM entities WHERE entity_id = $1
+	`, entityID).Scan(&storedHash); err != nil {
+		return false
+	}
+	return storedHash != nil && *storedHash == tokenHash
 }
 
 // Get retrieves an entity by ID.

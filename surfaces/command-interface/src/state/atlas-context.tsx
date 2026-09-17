@@ -26,7 +26,10 @@ export type AtlasContextValue = {
   reconnect: () => void;
   loadEntityDetails?: (entityId: string, signal?: AbortSignal) => Promise<EntityResource>;
   submitCommand: (submission: CommandSubmission) => Promise<TaskResource>;
+  cancelTask?: AtlasDataSource["cancelTask"];
   createGeofeature: AtlasDataSource["createGeofeature"];
+  canDeleteGeofeature?: AtlasDataSource["canDeleteGeofeature"];
+  deleteGeofeature?: AtlasDataSource["deleteGeofeature"];
   updateGeometry: (entityId: string, geometry: UiGeometry, ifMatchVersion?: number) => Promise<EntityResource>;
 };
 
@@ -59,6 +62,7 @@ export function AtlasProvider({
   const [snapshot, setSnapshot] = useState<AtlasSnapshot>(emptySnapshot);
   const [health, setHealth] = useState<ConnectionHealth>(DEFAULT_HEALTH);
   const [entityDetailsAvailable, setEntityDetailsAvailable] = useState(false);
+  const [geofeatureDeletionAvailable, setGeofeatureDeletionAvailable] = useState(false);
   const [connectionAttempt, setConnectionAttempt] = useState(0);
   const dataSourceRef = useRef<AtlasDataSource | undefined>(undefined);
 
@@ -76,6 +80,7 @@ export function AtlasProvider({
       dataSourceRef.current?.dispose();
       dataSourceRef.current = undefined;
       if (!cancelled) setEntityDetailsAvailable(false);
+      if (!cancelled) setGeofeatureDeletionAvailable(false);
     };
 
     setStatus((current) => (current === "ready" ? "ready" : "loading"));
@@ -85,6 +90,7 @@ export function AtlasProvider({
     setCatalog(undefined);
     setHealth(DEFAULT_HEALTH);
     setEntityDetailsAvailable(false);
+    setGeofeatureDeletionAvailable(false);
 
     const publishHealth = (next: ConnectionHealth) => {
       if (cancelled) return;
@@ -122,6 +128,7 @@ export function AtlasProvider({
         const dataSource = resolvedCreateDataSource(resolvedConfig);
         dataSourceRef.current = dataSource;
         setEntityDetailsAvailable(Boolean(dataSource.loadEntityDetails));
+        setGeofeatureDeletionAvailable(Boolean(dataSource.deleteGeofeature));
 
         unsubscribe = dataSource.watch((nextSnapshot) => {
           if (cancelled) return;
@@ -227,11 +234,28 @@ export function AtlasProvider({
         if (!dataSource) throw new Error("Atlas data source is not ready");
         return dataSource.submitCommand(submission);
       },
+      cancelTask: dataSourceRef.current?.cancelTask
+        ? async (cancellation) => {
+            const dataSource = dataSourceRef.current;
+            if (!dataSource?.cancelTask) throw new Error("Atlas Task cancellation is unavailable");
+            return dataSource.cancelTask(cancellation);
+          }
+        : undefined,
       createGeofeature: async (entityId, name, geometry) => {
         const dataSource = dataSourceRef.current;
         if (!dataSource) throw new Error("Atlas data source is not ready");
         return dataSource.createGeofeature(entityId, name, geometry);
       },
+      canDeleteGeofeature: geofeatureDeletionAvailable
+        ? (entityId, instanceId) => dataSourceRef.current?.canDeleteGeofeature?.(entityId, instanceId) ?? true
+        : undefined,
+      deleteGeofeature: geofeatureDeletionAvailable
+        ? async (entityId, instanceId) => {
+            const dataSource = dataSourceRef.current;
+            if (!dataSource?.deleteGeofeature) throw new Error("Atlas data source is not ready");
+            return dataSource.deleteGeofeature(entityId, instanceId);
+          }
+        : undefined,
       updateGeometry: async (entityId, geometry, ifMatchVersion) => {
         const dataSource = dataSourceRef.current;
         if (!dataSource) throw new Error("Atlas data source is not ready");
@@ -247,6 +271,7 @@ export function AtlasProvider({
       catalog,
       health,
       reconnect,
+      geofeatureDeletionAvailable,
       entityDetailsAvailable,
       loadEntityDetails,
       movement

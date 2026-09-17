@@ -34,6 +34,7 @@ const holdPositionCommand: CommandDefinition = {
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 function entity(id: string, version = 1): EntityResource {
@@ -52,6 +53,29 @@ function task(id: string, assetId: string, version = 1): TaskResource {
 }
 
 describe("sdk data source", () => {
+  it("cancels Tasks through the SDK with the operator cancellation reason", async () => {
+    const cancelled = {
+      ...task("task-cancel", "asset-1"),
+      status: "cancelled" as const,
+      cancellation: { code: "requested", message: "Operator cancelled the Task." },
+      finished_at: "2026-06-20T00:00:02Z",
+      updated_at: "2026-06-20T00:00:02Z"
+    } satisfies TaskResource;
+    const fetchMock = vi.fn(async () => Response.json(cancelled, { headers: { ETag: '"v1"' } }));
+    vi.stubGlobal("fetch", fetchMock);
+    const dataSource = createSdkDataSource(config);
+
+    await expect(dataSource.cancelTask?.({ taskId: cancelled.task_id })).resolves.toEqual(cancelled);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://core.test/tasks/task-cancel/cancel",
+      expect.objectContaining({
+        method: "POST",
+        credentials: "include",
+        body: JSON.stringify({ cancellation: { code: "requested", message: "Operator cancelled the Task." } })
+      })
+    );
+  });
+
   it("hydrates every page once and exposes the final SDK cache snapshot", async () => {
     const firstEntity = entity("asset-1", 1);
     const secondEntity = entity("asset-2", 2);
@@ -491,6 +515,7 @@ describe("sdk data source", () => {
   });
 
   it("creates Geo Features through Core and publishes them to the SDK snapshot", async () => {
+    vi.spyOn(crypto, "randomUUID").mockReturnValue("00000000-0000-4000-8000-000000000001");
     const geometry: UiGeometry = {
       type: "Polygon",
       coordinates: [
@@ -508,7 +533,9 @@ describe("sdk data source", () => {
       alias: "North boundary",
       components: { geometry }
     };
-    const fetchMock = vi.fn(async () => Response.json(created, { status: 201 }));
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      Response.json(created, { status: 201 })
+    );
     vi.stubGlobal("fetch", fetchMock);
     const dataSource = createSdkDataSource(config);
     const snapshots = vi.fn();
@@ -527,16 +554,107 @@ describe("sdk data source", () => {
         })
       })
     );
+    expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get("Atlas-Resource-Instance-Token")).toBe(
+      "00000000-0000-4000-8000-000000000001"
+    );
     expect(snapshots).toHaveBeenLastCalledWith({ entities: { "geo-new": created }, tasks: {} });
   });
 
-  it.each(["lost response", "conflict", "server error"])("recovers a committed create after %s", async (failure) => {
+  it("deletes Geo Features through the SDK entity API", async () => {
+    vi.spyOn(crypto, "randomUUID").mockReturnValue("00000000-0000-4000-8000-000000000002");
+    const storage = new Map<string, string>();
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
+      removeItem: (key: string) => storage.delete(key)
+    });
+    const geometry: UiGeometry = { type: "Point", coordinates: [-71, 42] };
+    const created = { ...entity("geo-1"), entity_type: "geofeature", components: { geometry } };
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) =>
+      init?.method === "POST" ? Response.json(created, { status: 201 }) : new Response(null, { status: 204 })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const dataSource = createSdkDataSource(config);
+    await dataSource.createGeofeature("geo-1", "geo-1", geometry);
+    fetchMock.mockClear();
+    const reloadedDataSource = createSdkDataSource(config);
+
+    expect(reloadedDataSource.canDeleteGeofeature?.("geo-1", created.metadata.created_at)).toBe(true);
+    await expect(reloadedDataSource.deleteGeofeature?.("geo-1", created.metadata.created_at)).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://core.test/entities/geo-1",
+      expect.objectContaining({
+        method: "DELETE",
+        credentials: "include"
+      })
+    );
+    expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get("Atlas-Resource-Instance-Token")).toBe(
+      "00000000-0000-4000-8000-000000000002"
+    );
+    expect(reloadedDataSource.canDeleteGeofeature?.("geo-1", created.metadata.created_at)).toBe(false);
+  });
+
+  it.each(["already absent", "lost response"])(
+    "treats a confirmed absent Geo Feature as deleted after %s",
+    async (failure) => {
+      const geometry: UiGeometry = { type: "Point", coordinates: [-71, 42] };
+      const created = { ...entity("geo-1"), entity_type: "geofeature", components: { geometry } };
+      let deleteAttempts = 0;
+      const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        if (init?.method === "POST") return Response.json(created, { status: 201 });
+        if (init?.method === "DELETE") deleteAttempts++;
+        if (failure === "lost response" && init?.method === "DELETE" && deleteAttempts === 1) {
+          throw new TypeError("Connection lost after commit");
+        }
+        return Response.json({ success: false, message: "Not found", error_code: "ENTITY_NOT_FOUND" }, { status: 404 });
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      const dataSource = createSdkDataSource(config);
+      await dataSource.createGeofeature("geo-1", "geo-1", geometry);
+      fetchMock.mockClear();
+
+      await expect(dataSource.deleteGeofeature?.("geo-1", created.metadata.created_at)).resolves.toBeUndefined();
+      expect(fetchMock).toHaveBeenCalledTimes(failure === "lost response" ? 2 : 1);
+    }
+  );
+
+  it("does not treat an unrelated route 404 as successful deletion", async () => {
+    const geometry: UiGeometry = { type: "Point", coordinates: [-71, 42] };
+    const created = { ...entity("geo-1"), entity_type: "geofeature", components: { geometry } };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) =>
+        init?.method === "POST"
+          ? Response.json(created, { status: 201 })
+          : Response.json({ error: "wrong route" }, { status: 404 })
+      )
+    );
+    const dataSource = createSdkDataSource(config);
+    await dataSource.createGeofeature("geo-1", "geo-1", geometry);
+
+    await expect(dataSource.deleteGeofeature?.("geo-1", created.metadata.created_at)).rejects.toMatchObject({
+      status: 404
+    });
+  });
+
+  it.each(["lost response", "server error"])("recovers a committed create after %s", async (failure) => {
     const geometry: UiGeometry = { type: "Point", coordinates: [-71, 42] };
     const created = { ...entity("geo-new"), entity_type: "geofeature", alias: "Rally", components: { geometry } };
+    let postAttempts = 0;
     const fetchMock = vi.fn(async (_input: unknown, init?: RequestInit) => {
       if (init?.method === "POST") {
-        if (failure === "lost response") throw new TypeError("Connection lost after commit");
-        return Response.json({ error: "Create failed" }, { status: failure === "conflict" ? 409 : 502 });
+        postAttempts++;
+        if (postAttempts === 1) {
+          if (failure === "lost response") throw new TypeError("Connection lost after commit");
+          return Response.json({ error: "Create failed" }, { status: 502 });
+        }
+        return Response.json(
+          {
+            error_code: "VALIDATION_ERROR",
+            message: "resource instance token has already been used for this entity instance"
+          },
+          { status: 400 }
+        );
       }
       return Response.json(created);
     });
@@ -544,6 +662,10 @@ describe("sdk data source", () => {
     const source = createSdkDataSource(config);
     const snapshots = vi.fn();
     source.watch(snapshots);
+    await expect(source.createGeofeature("geo-new", "Rally", geometry)).rejects.toMatchObject(
+      failure === "lost response" ? { code: "ATLAS_TRANSPORT_ERROR" } : { status: 502 }
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     await expect(source.createGeofeature("geo-new", "Rally", geometry)).resolves.toEqual(created);
     expect(fetchMock).toHaveBeenLastCalledWith(
       "https://core.test/entities/geo-new",
@@ -551,6 +673,87 @@ describe("sdk data source", () => {
     );
     expect(source.snapshot().entities["geo-new"]).toEqual(created);
     expect(snapshots).toHaveBeenCalled();
+  });
+
+  it("does not claim an existing matching row after a first-attempt transport failure", async () => {
+    const geometry: UiGeometry = { type: "Point", coordinates: [-71, 42] };
+    const existing = { ...entity("geo-new"), entity_type: "geofeature", alias: "Rally", components: { geometry } };
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError("Connection lost before commit"))
+      .mockResolvedValueOnce(Response.json(existing));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(createSdkDataSource(config).createGeofeature("geo-new", "Rally", geometry)).rejects.toMatchObject({
+      code: "ATLAS_TRANSPORT_ERROR"
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("persists an ambiguous create token across data-source recreation", async () => {
+    const storage = new Map<string, string>();
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
+      removeItem: (key: string) => storage.delete(key)
+    });
+    vi.spyOn(crypto, "randomUUID").mockReturnValue("00000000-0000-4000-8000-000000000009");
+    const geometry: UiGeometry = { type: "Point", coordinates: [-71, 42] };
+    const created = { ...entity("geo-new"), entity_type: "geofeature", alias: "Rally", components: { geometry } };
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError("Connection lost after commit"))
+      .mockResolvedValueOnce(
+        Response.json(
+          {
+            error_code: "VALIDATION_ERROR",
+            message: "resource instance token has already been used for this entity instance"
+          },
+          { status: 400 }
+        )
+      )
+      .mockResolvedValueOnce(Response.json(created));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(createSdkDataSource(config).createGeofeature("geo-new", "Rally", geometry)).rejects.toMatchObject({
+      code: "ATLAS_TRANSPORT_ERROR"
+    });
+    const firstToken = new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get("Atlas-Resource-Instance-Token");
+    await expect(createSdkDataSource(config).createGeofeature("geo-new", "Rally", geometry)).resolves.toEqual(created);
+    const retryToken = new Headers(fetchMock.mock.calls[1]?.[1]?.headers).get("Atlas-Resource-Instance-Token");
+    expect(retryToken).toBe(firstToken);
+  });
+
+  it("does not recover a first-attempt create conflict", async () => {
+    const geometry: UiGeometry = { type: "Point", coordinates: [-71, 42] };
+    const fetchMock = vi.fn(async (_input: unknown, init?: RequestInit) =>
+      init?.method === "POST"
+        ? Response.json({ error: "Already exists" }, { status: 409 })
+        : Response.json({ error: "unexpected recovery" }, { status: 500 })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(createSdkDataSource(config).createGeofeature("geo-new", "Rally", geometry)).rejects.toMatchObject({
+      status: 409
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not recover a pending-token conflict without an explicit token-reuse error", async () => {
+    const geometry: UiGeometry = { type: "Point", coordinates: [-71, 42] };
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError("Connection lost after commit"))
+      .mockResolvedValueOnce(Response.json({ error: "Already exists" }, { status: 409 }))
+      .mockResolvedValueOnce(Response.json({ error: "unexpected recovery" }, { status: 500 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const source = createSdkDataSource(config);
+
+    await expect(source.createGeofeature("geo-new", "Rally", geometry)).rejects.toMatchObject({
+      code: "ATLAS_TRANSPORT_ERROR"
+    });
+    await expect(source.createGeofeature("geo-new", "Rally", geometry)).rejects.toMatchObject({ status: 409 });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("recovers the same draft on retry after both the POST response and recovery read fail", async () => {
@@ -563,16 +766,199 @@ describe("sdk data source", () => {
     const fetchMock = vi
       .fn()
       .mockRejectedValueOnce(new TypeError("Lost response"))
+      .mockResolvedValueOnce(
+        Response.json(
+          {
+            error_code: "VALIDATION_ERROR",
+            message: "resource instance token has already been used for this entity instance"
+          },
+          { status: 400 }
+        )
+      )
       .mockRejectedValueOnce(new TypeError("Offline"))
-      .mockResolvedValueOnce(Response.json({ error: "Already exists" }, { status: 409 }))
+      .mockResolvedValueOnce(
+        Response.json(
+          {
+            error_code: "VALIDATION_ERROR",
+            message: "resource instance token has already been used for this entity instance"
+          },
+          { status: 400 }
+        )
+      )
       .mockResolvedValueOnce(Response.json(created));
     vi.stubGlobal("fetch", fetchMock);
     const source = createSdkDataSource(config);
     await expect(source.createGeofeature("geo-new", "Rally", geometry)).rejects.toMatchObject({
       code: "ATLAS_TRANSPORT_ERROR"
     });
+    await expect(source.createGeofeature("geo-new", "Rally", geometry)).rejects.toMatchObject({ status: 400 });
     await expect(source.createGeofeature("geo-new", "Rally", geometry)).resolves.toEqual(created);
-    expect(fetchMock).toHaveBeenCalledTimes(4);
+    const createTokens = fetchMock.mock.calls
+      .filter(([, init]) => init?.method === "POST")
+      .map(([, init]) => new Headers(init?.headers).get("Atlas-Resource-Instance-Token"));
+    expect(createTokens).toHaveLength(3);
+    expect(createTokens[0]).toBe(createTokens[1]);
+    expect(createTokens[1]).toBe(createTokens[2]);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
+  });
+
+  it("retires a pending token when token-reuse recovery confirms the entity is gone", async () => {
+    vi.spyOn(crypto, "randomUUID")
+      .mockReturnValueOnce("00000000-0000-4000-8000-000000000010")
+      .mockReturnValueOnce("00000000-0000-4000-8000-000000000011");
+    const geometry: UiGeometry = { type: "Point", coordinates: [-71, 42] };
+    const created = { ...entity("geo-new"), entity_type: "geofeature", alias: "Rally", components: { geometry } };
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError("Lost response"))
+      .mockResolvedValueOnce(
+        Response.json(
+          {
+            error_code: "VALIDATION_ERROR",
+            message: "resource instance token has already been used for this entity instance"
+          },
+          { status: 400 }
+        )
+      )
+      .mockResolvedValueOnce(Response.json({ error_code: "ENTITY_NOT_FOUND", message: "Not found" }, { status: 404 }))
+      .mockResolvedValueOnce(Response.json(created, { status: 201 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const source = createSdkDataSource(config);
+
+    await expect(source.createGeofeature("geo-new", "Rally", geometry)).rejects.toMatchObject({
+      code: "ATLAS_TRANSPORT_ERROR"
+    });
+    await expect(source.createGeofeature("geo-new", "Rally", geometry)).rejects.toMatchObject({ status: 400 });
+    await expect(source.createGeofeature("geo-new", "Rally", geometry)).resolves.toEqual(created);
+
+    const createTokens = fetchMock.mock.calls
+      .filter(([, init]) => init?.method === "POST")
+      .map(([, init]) => new Headers(init?.headers).get("Atlas-Resource-Instance-Token"));
+    expect(createTokens).toEqual([
+      "00000000-0000-4000-8000-000000000010",
+      "00000000-0000-4000-8000-000000000010",
+      "00000000-0000-4000-8000-000000000011"
+    ]);
+  });
+
+  it("retains a proven token when recovery observes intervening edits", async () => {
+    vi.spyOn(crypto, "randomUUID").mockReturnValue("00000000-0000-4000-8000-000000000014");
+    const requestedGeometry: UiGeometry = { type: "Point", coordinates: [-71, 42] };
+    const changedGeometry: UiGeometry = { type: "Point", coordinates: [-70, 42] };
+    const changed = {
+      ...entity("geo-new"),
+      entity_type: "geofeature",
+      alias: "Edited in Core",
+      components: { geometry: changedGeometry },
+      metadata: { ...entity("geo-new").metadata, created_at: "2026-06-12T12:00:02Z" }
+    };
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError("Lost response"))
+      .mockResolvedValueOnce(
+        Response.json(
+          {
+            error_code: "VALIDATION_ERROR",
+            message: "resource instance token has already been used for this entity instance"
+          },
+          { status: 400 }
+        )
+      )
+      .mockResolvedValueOnce(Response.json(changed));
+    vi.stubGlobal("fetch", fetchMock);
+    const source = createSdkDataSource(config);
+
+    await expect(source.createGeofeature("geo-new", "Rally", requestedGeometry)).rejects.toMatchObject({
+      code: "ATLAS_TRANSPORT_ERROR"
+    });
+    await expect(source.createGeofeature("geo-new", "Rally", requestedGeometry)).resolves.toEqual(changed);
+    expect(source.canDeleteGeofeature?.("geo-new", changed.metadata.created_at)).toBe(true);
+  });
+
+  it("does not attach a spent token to a recreated matching entity", async () => {
+    vi.spyOn(crypto, "randomUUID")
+      .mockReturnValueOnce("00000000-0000-4000-8000-000000000012")
+      .mockReturnValueOnce("00000000-0000-4000-8000-000000000013");
+    const geometry: UiGeometry = { type: "Point", coordinates: [-71, 42] };
+    const recreated = { ...entity("geo-new"), entity_type: "geofeature", alias: "Rally", components: { geometry } };
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError("Lost response"))
+      .mockResolvedValueOnce(
+        Response.json(
+          { error_code: "VALIDATION_ERROR", message: "resource instance token has already been used" },
+          { status: 400 }
+        )
+      )
+      .mockResolvedValueOnce(Response.json(recreated, { status: 201 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const source = createSdkDataSource(config);
+
+    await expect(source.createGeofeature("geo-new", "Rally", geometry)).rejects.toMatchObject({
+      code: "ATLAS_TRANSPORT_ERROR"
+    });
+    await expect(source.createGeofeature("geo-new", "Rally", geometry)).rejects.toMatchObject({ status: 400 });
+    await expect(source.createGeofeature("geo-new", "Rally", geometry)).resolves.toEqual(recreated);
+
+    const createCalls = fetchMock.mock.calls.filter(([, init]) => init?.method === "POST");
+    expect(createCalls).toHaveLength(3);
+    expect(new Headers(createCalls[0]?.[1]?.headers).get("Atlas-Resource-Instance-Token")).toBe(
+      "00000000-0000-4000-8000-000000000012"
+    );
+    expect(new Headers(createCalls[1]?.[1]?.headers).get("Atlas-Resource-Instance-Token")).toBe(
+      "00000000-0000-4000-8000-000000000012"
+    );
+    expect(new Headers(createCalls[2]?.[1]?.headers).get("Atlas-Resource-Instance-Token")).toBe(
+      "00000000-0000-4000-8000-000000000013"
+    );
+  });
+
+  it("retains each pending token when a failed draft is edited and reverted", async () => {
+    const geometry: UiGeometry = { type: "Point", coordinates: [-71, 42] };
+    const changedGeometry: UiGeometry = { type: "Point", coordinates: [-70, 42] };
+    const created = { ...entity("geo-new"), entity_type: "geofeature", alias: "Rally", components: { geometry } };
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError("Lost response"))
+      .mockResolvedValueOnce(Response.json({ error: "Already exists" }, { status: 409 }))
+      .mockResolvedValueOnce(
+        Response.json(
+          {
+            error_code: "VALIDATION_ERROR",
+            message: "resource instance token has already been used for this entity instance"
+          },
+          { status: 400 }
+        )
+      )
+      .mockResolvedValueOnce(Response.json(created))
+      .mockResolvedValueOnce(
+        Response.json(
+          { ...created, metadata: { ...created.metadata, created_at: "2026-06-12T12:00:01Z" } },
+          { status: 201 }
+        )
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    const source = createSdkDataSource(config);
+
+    await expect(source.createGeofeature("geo-new", "Rally", geometry)).rejects.toMatchObject({
+      code: "ATLAS_TRANSPORT_ERROR"
+    });
+    await expect(source.createGeofeature("geo-new", "Rally", changedGeometry)).rejects.toMatchObject({ status: 409 });
+    await expect(source.createGeofeature("geo-new", "Rally", geometry)).resolves.toEqual(created);
+
+    await expect(source.createGeofeature("geo-new", "Rally", geometry)).resolves.toMatchObject({
+      entity_id: "geo-new"
+    });
+
+    const createTokens = fetchMock.mock.calls
+      .filter(([, init]) => init?.method === "POST")
+      .map(([, init]) => new Headers(init?.headers).get("Atlas-Resource-Instance-Token"));
+    expect(createTokens).toHaveLength(4);
+    expect(createTokens[0]).toBe(createTokens[2]);
+    expect(createTokens[1]).not.toBe(createTokens[0]);
+    expect(createTokens[3]).not.toBe(createTokens[0]);
+    const recreatedToken = new Headers(fetchMock.mock.calls[5]?.[1]?.headers).get("Atlas-Resource-Instance-Token");
+    expect(recreatedToken).not.toBe(createTokens[0]);
   });
 
   it("does not recover a circle with a different radius", async () => {

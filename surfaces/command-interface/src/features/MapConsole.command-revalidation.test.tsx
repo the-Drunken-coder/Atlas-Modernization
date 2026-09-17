@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { EntityResource } from "@the-drunken-coder/atlas-sdk";
+import type { EntityResource, TaskResource } from "@the-drunken-coder/atlas-sdk";
 import { describe, expect, it, vi } from "vitest";
-import { entityFixture, styleFixture } from "../../test/fixtures.js";
+import { entityFixture, styleFixture, taskFixture } from "../../test/fixtures.js";
 import { type AtlasContextValue, AtlasStaticProvider } from "../state/atlas-context.js";
 import type { CommandInputFormProps } from "./commands/command-input-registry.js";
 import { MapConsole } from "./MapConsole.js";
@@ -49,6 +49,77 @@ function deferred<T>() {
 }
 
 describe("MapConsole command revalidation", () => {
+  it("hides in-progress cancellation while stale manifest capability is revalidated and after support is removed", async () => {
+    const refreshedDetails = deferred<EntityResource>();
+    const activeTask = {
+      ...taskFixture({ task_id: "task-1", asset_id: rover.entity_id, command: manifest.command }),
+      status: "in_progress" as const,
+      acknowledged_at: "2026-06-20T00:00:01Z",
+      started_at: "2026-06-20T00:00:02Z"
+    } satisfies TaskResource;
+    const loadEntityDetails = vi
+      .fn()
+      .mockResolvedValueOnce({ ...rover, command_manifest: [manifest] })
+      .mockReturnValueOnce(refreshedDetails.promise);
+    const value: AtlasContextValue = {
+      status: "ready",
+      config: {
+        atlasBaseUrl: "/atlas",
+        protocolRevision: "fixture",
+        defaultMapSourceId: "fixture",
+        mapSources: [{ id: "fixture", label: "Fixture", style: styleFixture("fixture") }],
+        placeSearch: { provider: "maptiler", unavailableReason: "fixture" }
+      },
+      snapshot: { entities: { [rover.entity_id]: rover }, tasks: { [activeTask.task_id]: activeTask } },
+      catalog: [
+        {
+          command: manifest.command,
+          name: "Fixture queued",
+          description: "Exercise tasking.",
+          input_schema: "atlas.protocol.JSONValue"
+        }
+      ],
+      health: { running: true, healthy: true, degraded: false },
+      reconnect: vi.fn(),
+      submitCommand: vi.fn(),
+      cancelTask: vi.fn(),
+      loadEntityDetails,
+      createGeofeature: vi.fn(),
+      updateGeometry: vi.fn()
+    };
+    const view = render(
+      <AtlasStaticProvider value={value}>
+        <MapConsole />
+      </AtlasStaticProvider>
+    );
+    fireEvent.click(await screen.findByText("Rover"));
+    expect(await screen.findByRole("button", { name: "Task actions for fixture.queued task task-1" })).toBeVisible();
+
+    view.rerender(
+      <AtlasStaticProvider
+        value={{
+          ...value,
+          snapshot: {
+            ...value.snapshot,
+            runtimeManifestVersions: { [rover.entity_id]: 1 }
+          }
+        }}
+      >
+        <MapConsole />
+      </AtlasStaticProvider>
+    );
+    await waitFor(() => expect(loadEntityDetails).toHaveBeenCalledTimes(2));
+    expect(screen.queryByRole("button", { name: /Task actions/ })).not.toBeInTheDocument();
+
+    await act(async () =>
+      refreshedDetails.resolve({
+        ...rover,
+        command_manifest: [{ ...manifest, supports_cancel: false }]
+      })
+    );
+    await waitFor(() => expect(screen.queryByRole("button", { name: /Task actions/ })).not.toBeInTheDocument());
+  });
+
   it.each(["telemetry", "runtime", "reordered", "changed"])(
     "retains entered data and an uncertain attempt through a %s detail refresh",
     async (refresh) => {

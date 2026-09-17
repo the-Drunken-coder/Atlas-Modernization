@@ -29,12 +29,8 @@ Every run records revision, working-tree state, duration, exact reproduction, fi
 
 Open a trace with `node node_modules/playwright/cli.js show-trace <trace.zip>`. The test does not retry. Preserve the first artifact directory and stop if a new user-facing assertion fails.
 
-## Known cancellation contract gap
+## Task cancellation contract
 
-The shipped Command Interface has no Task cancellation action or control at the fixture base revision. `AtlasContextValue` and `AtlasDataSource` expose only Command submission, `AssetInspector` renders active and queued Tasks as read-only `TaskRow` values, and `TaskRow` renders status and payload only. The `Cancel` action in a Command form dismisses an unsubmitted form. The SDK does expose `client.tasks.cancel`, but calling it from this fixture would not test operator cancellation through the application.
-
-The journey issues a final real pending Task after every independent recovery case and requires a visible cancellation button within that Task's row. If the control exists, the test clicks it and checks fresh authoritative Core state plus the visible cancelled state. The missing-control assertion remains active so the test stays red until a separate product repair adds operator cancellation.
-
-The implementation-SHA reproduction and retained evidence are recorded in [`docs/problems/2026-09-12-command-task-cancellation-control-missing.md`](../../../../docs/problems/2026-09-12-command-task-cancellation-control-missing.md).
+The journey issues a final real pending Task after every independent recovery case, opens that Task row's actions menu, selects `Cancel task`, and verifies both fresh authoritative Core state and the visible cancelled state. This exercises operator cancellation through the shipped Command Interface and the browser SDK. The former missing-control defect was retired with the product fix; its pre-fix failures remain available in the CI acceptance artifacts for the revisions that recorded them.
 
 The pull request job runs Chromium. The scheduled and manually dispatched nightly job requests Chromium and WebKit. WebKit does not establish Safari or physical-device coverage. Firefox was removed from the supported matrix after the initial hosted browser smoke run failed before MapLibre could create a real WebGL context; this workflow does not claim Firefox coverage or treat that failure as a pass.

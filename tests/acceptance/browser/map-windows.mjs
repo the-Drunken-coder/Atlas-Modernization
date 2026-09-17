@@ -181,6 +181,23 @@ async function runMapWindowJourney({
       expected: "visible zoom-in control",
       page
     });
+    const sourceControlBox = await requiredBox(page.locator(".map-source-control"), "map source control");
+    const zoomInBox = await requiredBox(zoomIn, "zoom-in control");
+    const hitRegionsOverlap =
+      sourceControlBox.x < zoomInBox.x + zoomInBox.width &&
+      sourceControlBox.x + sourceControlBox.width > zoomInBox.x &&
+      sourceControlBox.y < zoomInBox.y + zoomInBox.height &&
+      sourceControlBox.y + sourceControlBox.height > zoomInBox.y;
+    record({
+      check: `${browserName} kept the map source and zoom-in hit regions separate`,
+      expected: { overlap: false },
+      actual: {
+        overlap: hitRegionsOverlap,
+        map_source: sourceControlBox,
+        zoom_in: zoomInBox
+      },
+      passed: !hitRegionsOverlap
+    });
     const pointerTilesBefore = browserFixture.mapTileRequestCount();
     const pointerMaximumTileZoomBefore = maximumRoutedTileZoom;
     let pointerClickCompleted = false;

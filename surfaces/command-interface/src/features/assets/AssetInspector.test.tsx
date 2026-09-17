@@ -1,4 +1,5 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { CommandCatalog, EntityResource, TaskResource } from "@the-drunken-coder/atlas-sdk";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { entityFixture, taskFixture } from "../../../test/fixtures.js";
@@ -30,7 +31,12 @@ function asset(commandManifest?: EntityResource["command_manifest"]): EntityReso
 
 function renderInspector(
   entity: EntityResource,
-  options: { catalog?: CommandCatalog; commandManifestStatus?: CommandManifestStatus; tasks?: TaskResource[] } = {}
+  options: {
+    catalog?: CommandCatalog;
+    commandManifestStatus?: CommandManifestStatus;
+    tasks?: TaskResource[];
+    onCancelTask?: (taskId: string) => Promise<unknown>;
+  } = {}
 ) {
   return render(
     <AssetInspector
@@ -42,6 +48,7 @@ function renderInspector(
       catalog={options.catalog}
       commandManifestStatus={options.commandManifestStatus}
       onPickCommand={() => {}}
+      onCancelTask={options.onCancelTask}
     />
   );
 }
@@ -173,5 +180,98 @@ describe("AssetInspector", () => {
     expect(historySection).toHaveTextContent("completed.command");
     expect(historySection).not.toHaveTextContent("active.command");
     expect(historySection).not.toHaveTextContent("queued.command");
+  });
+
+  it("offers cancellation for pending and acknowledged Tasks, plus capable in-progress Tasks only", async () => {
+    const user = userEvent.setup();
+    const onCancelTask = vi.fn().mockResolvedValue(undefined);
+    const pending = taskFixture({ task_id: "pending", asset_id: "asset-1", command: "fixture.queued" });
+    const acknowledged = {
+      ...pending,
+      task_id: "acknowledged",
+      command: "fixture.acknowledged",
+      status: "acknowledged" as const,
+      acknowledged_at: "2026-06-20T00:00:01Z"
+    } satisfies TaskResource;
+    const capable = {
+      ...acknowledged,
+      task_id: "capable",
+      command: "fixture.queued",
+      status: "in_progress" as const,
+      started_at: "2026-06-20T00:00:02Z"
+    } satisfies TaskResource;
+    const unsupported = { ...capable, task_id: "unsupported", command: "fixture.unsupported" } satisfies TaskResource;
+
+    renderInspector(asset(manifest), { tasks: [pending, acknowledged, capable, unsupported], onCancelTask });
+
+    expect(screen.getByRole("button", { name: "Task actions for fixture.queued task pending" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Task actions for fixture.acknowledged task acknowledged" })
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Task actions for fixture.queued task capable" })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Task actions for fixture.unsupported task unsupported" })
+    ).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Task actions for fixture.queued task pending" }));
+    await user.click(screen.getByRole("menuitem", { name: "Cancel task" }));
+    expect(onCancelTask).toHaveBeenCalledWith("pending");
+  });
+
+  it("prevents duplicate cancellation and keeps a sanitized failure beside the authoritative Task", async () => {
+    const user = userEvent.setup();
+    let reject!: (cause: Error) => void;
+    const onCancelTask = vi.fn(
+      () =>
+        new Promise((_, nextReject) => {
+          reject = nextReject;
+        })
+    );
+    renderInspector(asset(manifest), {
+      tasks: [taskFixture({ task_id: "pending", asset_id: "asset-1", command: "fixture.queued" })],
+      onCancelTask
+    });
+
+    const actions = screen.getByRole("button", { name: "Task actions for fixture.queued task pending" });
+    await user.click(actions);
+    await user.click(screen.getByRole("menuitem", { name: "Cancel task" }));
+    expect(screen.getByRole("status")).toHaveTextContent("Cancelling...");
+    expect(actions).toHaveAttribute("aria-disabled", "true");
+    expect(actions).toHaveFocus();
+    await user.click(actions);
+    expect(onCancelTask).toHaveBeenCalledTimes(1);
+
+    reject(new Error("request failed: Bearer secret-token"));
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Bearer [redacted]"));
+    expect(screen.getByText("Pending")).toBeInTheDocument();
+    expect(actions).toHaveAttribute("aria-disabled", "false");
+  });
+
+  it("hides in-progress cancellation until current manifest capability is established", () => {
+    const inProgress = {
+      ...taskFixture({ task_id: "active", asset_id: "asset-1", command: "fixture.queued" }),
+      status: "in_progress" as const,
+      acknowledged_at: "2026-06-20T00:00:01Z",
+      started_at: "2026-06-20T00:00:02Z"
+    } satisfies TaskResource;
+    const onCancelTask = vi.fn().mockResolvedValue(undefined);
+
+    const { rerender } = renderInspector(asset(manifest), {
+      tasks: [inProgress],
+      commandManifestStatus: "loading",
+      onCancelTask
+    });
+    expect(screen.queryByRole("button", { name: /Task actions/ })).not.toBeInTheDocument();
+
+    rerender(
+      <AssetInspector
+        entity={asset(manifest)}
+        snapshot={{ entities: {}, tasks: { [inProgress.task_id]: inProgress } }}
+        commandManifestStatus="ready"
+        onPickCommand={() => {}}
+        onCancelTask={onCancelTask}
+      />
+    );
+    expect(screen.getByRole("button", { name: "Task actions for fixture.queued task active" })).toBeInTheDocument();
   });
 });

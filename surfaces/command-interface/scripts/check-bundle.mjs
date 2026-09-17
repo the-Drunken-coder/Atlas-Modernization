@@ -16,12 +16,14 @@ const budgets = {
   // Blueprint Core is a deliberate shell dependency. These limits include its
   // shared component styles and icon-path chunks. Map budgets remain scoped separately.
   // Movement history adds SDK response validators, sidebar controls and trail
-  // layers. With explicit quantity unions: initial 430.57 kB, shell 159.13 kB, map 75.75 kB raw.
-  // Linux initial gzip measures 130.06 kB; allow a small margin for zlib variance.
-  initialJavaScript: { raw: 431_000, gzip: 130_500 },
-  initialCss: { raw: 512_000, gzip: 55_000 },
-  // Includes the Geo Feature creation editor, command fixes, and draft lifecycle.
-  shellJavaScript: { raw: 160_000, gzip: 52_000 },
+  // layers. With explicit quantity unions: initial 432.07 kB, shell 159.13 kB, map 75.75 kB raw.
+  // The SDK also reconciles authoritative 404 reads into its local cache.
+  // Linux initial gzip measures below 130.5 kB; allow a small margin for zlib variance.
+  initialJavaScript: { raw: 435_000, gzip: 131_500 },
+  initialCss: { raw: 513_000, gzip: 55_000 },
+  // Includes Geo Feature creation and token-fenced deletion, Task cancellation,
+  // command fixes, and draft lifecycle.
+  shellJavaScript: { raw: 162_000, gzip: 52_000 },
   // Includes live drawing previews, keyboard vertex controls, focus restoration,
   // heartbeat-qualified symbols, and the first-vertex close control.
   mapViewJavaScript: { raw: 76_000, gzip: 23_500 },
@@ -32,7 +34,7 @@ const budgets = {
   mapRoute: { raw: 2_100_000, gzip: 550_000 },
   // MapLibre 6.8 brings the combined build to about 3,710.5 kB raw / 1,027.8 kB gzip.
   // Retain a small allowance for Linux zlib variance.
-  allJavaScript: { raw: 3_712_000, gzip: 1_030_000 },
+  allJavaScript: { raw: 3_720_000, gzip: 1_032_000 },
   allCss: { raw: 603_000, gzip: 67_000 }
 };
 

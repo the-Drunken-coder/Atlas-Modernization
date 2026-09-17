@@ -23,6 +23,19 @@ function ruleFor(selector: string) {
 }
 
 describe("map window source provenance", () => {
+  it("places top-right map controls below the complete source selector", () => {
+    const stage = ruleFor(".map-stage");
+    const sourceControl = ruleFor(".map-overlay-tr");
+    const navigation = ruleFor(".map-canvas > .maplibre-host .maplibregl-ctrl-top-right");
+
+    expect(stage).toMatch(/--map-source-control-top:\s*10px/);
+    expect(stage).toMatch(/--map-source-control-height:\s*62px/);
+    expect(stage).toMatch(/--map-control-gap:\s*6px/);
+    expect(sourceControl).toMatch(/top:\s*var\(--map-source-control-top\)/);
+    expect(sourceControl).toMatch(/height:\s*var\(--map-source-control-height\)/);
+    expect(navigation).toMatch(/top:\s*calc\(var\(--map-source-control-height\)\s*\+\s*var\(--map-control-gap\)\)/);
+  });
+
   it("keeps the expanded footer on one line", () => {
     const footer = ruleFor(".map-window__footer");
     const source = ruleFor(".spatial-map-window__source");

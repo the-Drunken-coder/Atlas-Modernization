@@ -240,6 +240,7 @@ export function MapWindow({
   };
 
   const moveWithKeyboard = (event: KeyboardEvent<HTMLButtonElement>) => {
+    if (layout.collapsed && event.key === "Enter") return event.preventDefault(), event.currentTarget.click();
     const requestedEdge = edgeForArrow(event.key);
     if (event.altKey && requestedEdge) {
       event.preventDefault();

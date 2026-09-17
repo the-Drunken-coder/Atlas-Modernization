@@ -32,6 +32,15 @@ type PointReadOperation<TType extends ResourceType> = {
   readonly id: string;
   readonly generation: number;
   readonly hydrationEpoch: number;
+  readonly sequence: number;
+  readonly observedEntry: CacheEntry<ResourceOf<TType>> | undefined;
+};
+
+type PointReadStatus = "pending" | "succeeded" | "failed" | "not_found";
+
+type PointReadState = {
+  readonly sequence: number;
+  status: PointReadStatus;
 };
 
 type ResourceUpsertEvent = Exclude<FeedEvent, { event: "delete" }>;
@@ -49,7 +58,10 @@ type LocalDeleteOperation = {
   readonly type: DeletableResourceType;
   readonly id: string;
   readonly observedEntry: CacheEntry<ResourceOf<DeletableResourceType>> | undefined;
-  remoteDeleteSeen: boolean;
+  learnedEntry: CacheEntry<ResourceOf<DeletableResourceType>> | undefined;
+  recreated: boolean;
+  reconcile: boolean;
+  remote: boolean;
 };
 
 class SnapshotRecord<T> {
@@ -123,10 +135,14 @@ export class ResourceCache {
     object: new Map<string, CacheEntry<ObjectResource>>()
   };
   private readonly pendingDeletes = new Set<string>();
+  private readonly localDeleteKeys = new Set<string>();
+  private readonly localDeleteInstances = new Map<string, string>();
   private readonly locallyNotifiedDeletes = new Set<string>();
   private readonly localDeleteOperations = new Set<LocalDeleteOperation>();
   // Point reads capture this generation before the request and only project the response if it is still current.
   private readonly generations = new Map<string, number>();
+  private readonly pointReadStates = new Map<string, PointReadState>();
+  private readonly deferredPointNotFound = new Map<string, PointReadOperation<DeletableResourceType>>();
   private hydrationEpoch = 0;
   private readonly snapshotRecords: SnapshotRecords = {
     entity: new SnapshotRecord<EntityResource>(),
@@ -157,7 +173,17 @@ export class ResourceCache {
   }
 
   beginPointRead<TType extends ResourceType>(type: TType, id: string): PointReadOperation<TType> {
-    return { type, id, generation: this.generation(type, id), hydrationEpoch: this.hydrationEpoch };
+    const key = resourceCacheKey(type, id);
+    const sequence = (this.pointReadStates.get(key)?.sequence ?? 0) + 1;
+    this.pointReadStates.set(key, { sequence, status: "pending" });
+    return {
+      type,
+      id,
+      generation: this.generation(type, id),
+      hydrationEpoch: this.hydrationEpoch,
+      sequence,
+      observedEntry: this.entries[type].get(id)
+    };
   }
 
   applyPointRead<TType extends ResourceType>(
@@ -166,14 +192,48 @@ export class ResourceCache {
     options?: ResourceReadOptions
   ): boolean {
     if (operation.hydrationEpoch !== this.hydrationEpoch) return false;
+    this.settlePointRead(operation, "succeeded");
     return this.acceptResource(operation.type, operation.id, value, {
       ...options,
       generation: operation.generation
     });
   }
 
+  applyPointNotFound<TType extends DeletableResourceType>(operation: PointReadOperation<TType>): boolean {
+    if (operation.hydrationEpoch !== this.hydrationEpoch) return false;
+    const key = resourceCacheKey(operation.type, operation.id);
+    const latest = this.pointReadStates.get(key);
+    if (latest && operation.sequence < latest.sequence) {
+      if (latest.status === "pending") this.deferredPointNotFound.set(key, operation);
+      return latest.status === "failed" ? this.applyPointNotFoundNow(operation) : false;
+    }
+    this.settlePointRead(operation, "not_found");
+    return this.applyPointNotFoundNow(operation);
+  }
+
+  completePointRead<TType extends DeletableResourceType>(operation: PointReadOperation<TType>): boolean {
+    if (operation.hydrationEpoch !== this.hydrationEpoch) return false;
+    const key = resourceCacheKey(operation.type, operation.id);
+    const latest = this.pointReadStates.get(key);
+    if (!latest || latest.sequence !== operation.sequence || latest.status !== "pending") return false;
+    latest.status = "failed";
+    const deferred = this.deferredPointNotFound.get(key);
+    if (!deferred) return false;
+    this.deferredPointNotFound.delete(key);
+    return this.applyPointNotFoundNow(deferred);
+  }
+
+  private applyPointNotFoundNow<TType extends DeletableResourceType>(operation: PointReadOperation<TType>): boolean {
+    const currentEntry = this.entries[operation.type].get(operation.id);
+    if (currentEntry !== operation.observedEntry || currentEntry?.deleted) return false;
+    this.bumpGeneration(operation.type, operation.id);
+    this.markRemoteDelete(operation.type, operation.id, currentEntry?.version || 0, false);
+    this.pendingDeletes.add(resourceCacheKey(operation.type, operation.id));
+    return true;
+  }
+
   applyWrite(event: ResourceUpsertEvent, options?: Pick<ResourceReadOptions, "detail">): ResourceChange | undefined {
-    if (this.isSuppressedByPendingDelete(event)) return undefined;
+    if (this.isSuppressedByLocalDelete(event)) return undefined;
     if (
       !this.acceptResource(event.resource_type, event.id, event.resource, {
         ...options,
@@ -181,6 +241,12 @@ export class ResourceCache {
       })
     ) {
       return undefined;
+    }
+    if (event.event === "create" || this.isReplacementAfterLocalDelete(event)) {
+      this.clearLocalDeleteMarker(event.resource_type, event.id);
+    }
+    if (event.resource_type !== "task") {
+      this.noteLocalDeleteUpsert(event.resource_type, event.id, event.event);
     }
     return this.changeForUpsert(event);
   }
@@ -194,7 +260,13 @@ export class ResourceCache {
       return this.locallyNotifiedDeletes.delete(key) ? undefined : { event, resource: undefined };
     }
     if (this.isSuppressedByPendingDelete(event)) return undefined;
-    this.acceptResource(event.resource_type, event.id, event.resource, { version: event.version });
+    const accepted = this.acceptResource(event.resource_type, event.id, event.resource, { version: event.version });
+    if (accepted && event.resource_type !== "task") {
+      if (event.event === "create" || this.isReplacementAfterLocalDelete(event)) {
+        this.clearLocalDeleteMarker(event.resource_type, event.id);
+      }
+      this.noteLocalDeleteUpsert(event.resource_type, event.id, event.event);
+    }
     return this.changeForUpsert(event);
   }
 
@@ -212,8 +284,12 @@ export class ResourceCache {
     this.snapshotRecords.object.clear();
     this.snapshotDirty = true;
     this.pendingDeletes.clear();
+    this.localDeleteKeys.clear();
+    this.localDeleteInstances.clear();
     this.locallyNotifiedDeletes.clear();
     this.localDeleteOperations.clear();
+    this.pointReadStates.clear();
+    this.deferredPointNotFound.clear();
     for (const entity of resources.entities) this.acceptResource("entity", entity.entity_id, entity);
     for (const task of resources.tasks) this.acceptResource("task", task.task_id, task);
     for (const object of resources.objects) this.acceptResource("object", object.object_id, object, { detail: true });
@@ -243,6 +319,11 @@ export class ResourceCache {
             (operation.observedEntry === undefined || sameResourceInstance(operation.observedEntry.value, value))
         )
       ) {
+        for (const operation of this.localDeleteOperations) {
+          if (operation.type === type && operation.id === id && operation.observedEntry === undefined) {
+            operation.reconcile = true;
+          }
+        }
         return false;
       }
     }
@@ -282,10 +363,10 @@ export class ResourceCache {
     return this.generations.get(resourceCacheKey(type, id)) ?? 0;
   }
 
-  private markRemoteDelete(type: DeletableResourceType, id: string, version: number): void {
+  private markRemoteDelete(type: DeletableResourceType, id: string, version: number, notify = true): void {
     this.bumpGeneration(type, id);
     for (const operation of this.localDeleteOperations) {
-      if (operation.type === type && operation.id === id) operation.remoteDeleteSeen = true;
+      if (notify && operation.type === type && operation.id === id) operation.remote = true;
     }
     this.entries[type].set(id, { version, deleted: true });
     this.removeFromSnapshot(type, id);
@@ -294,31 +375,53 @@ export class ResourceCache {
   private markLocalDelete(type: DeletableResourceType, id: string): number {
     const previousEntry = this.entries[type].get(id);
     const previousVersion = previousEntry?.version ?? 0;
-    this.markRemoteDelete(type, id, previousVersion);
     const key = resourceCacheKey(type, id);
+    const previousInstance = !previousEntry?.deleted ? previousEntry?.value?.metadata.created_at : undefined;
+    if (previousInstance) this.localDeleteInstances.set(key, previousInstance);
+    else this.localDeleteInstances.delete(key);
+    this.markRemoteDelete(type, id, previousVersion);
     this.pendingDeletes.add(key);
-    this.locallyNotifiedDeletes.add(key);
+    this.localDeleteKeys.add(key);
     return previousVersion;
   }
 
   beginLocalDelete(type: DeletableResourceType, id: string): LocalDeleteOperation {
     this.bumpGeneration(type, id);
-    const operation = { type, id, observedEntry: this.entries[type].get(id), remoteDeleteSeen: false };
+    const operation = {
+      type,
+      id,
+      observedEntry: this.entries[type].get(id),
+      learnedEntry: undefined,
+      recreated: false,
+      reconcile: false,
+      remote: false
+    };
     this.localDeleteOperations.add(operation);
     return operation;
   }
 
-  finishLocalDelete(operation: LocalDeleteOperation): ResourceChange | undefined {
+  finishLocalDelete(operation: LocalDeleteOperation, outcome: "deleted" | "not_found"): ResourceChange | undefined {
     if (!this.localDeleteOperations.delete(operation)) return undefined;
     const currentEntry = this.entries[operation.type].get(operation.id);
     this.bumpGeneration(operation.type, operation.id);
+    const deletesCurrentEntry = operation.observedEntry?.deleted === true && outcome === "deleted";
+    if (operation.observedEntry?.deleted && !deletesCurrentEntry) return undefined;
     if (
-      currentEntry !== operation.observedEntry &&
-      (operation.remoteDeleteSeen || !sameResourceInstance(operation.observedEntry?.value, currentEntry?.value))
+      operation.remote ||
+      operation.recreated ||
+      (!deletesCurrentEntry &&
+        currentEntry !== operation.observedEntry &&
+        !currentEntry?.deleted &&
+        !sameResourceInstance(operation.observedEntry?.value, currentEntry?.value) &&
+        !sameResourceInstance(operation.learnedEntry?.value, currentEntry?.value))
     ) {
       return undefined;
     }
     const previousVersion = this.markLocalDelete(operation.type, operation.id);
+    const removedEntry = currentEntry && !currentEntry.deleted ? currentEntry : operation.observedEntry;
+    const key = resourceCacheKey(operation.type, operation.id);
+    if ((!removedEntry || removedEntry.deleted) && outcome !== "deleted") return undefined;
+    this.locallyNotifiedDeletes.add(key);
     return {
       event: localDeleteEvent(operation.type, operation.id, previousVersion),
       resource: undefined
@@ -329,8 +432,60 @@ export class ResourceCache {
     this.localDeleteOperations.delete(operation);
   }
 
+  needsLocalDeleteReconcile(operation: LocalDeleteOperation): boolean {
+    return operation.reconcile;
+  }
+
+  private noteLocalDeleteUpsert(type: DeletableResourceType, id: string, event: ResourceUpsertEvent["event"]): void {
+    const currentEntry = this.entries[type].get(id);
+    for (const operation of this.localDeleteOperations) {
+      if (operation.type !== type || operation.id !== id) continue;
+      if (event === "create") {
+        operation.recreated = true;
+      } else if (operation.observedEntry === undefined && currentEntry !== undefined) {
+        operation.learnedEntry = currentEntry;
+      }
+    }
+  }
+
   private isSuppressedByPendingDelete(event: ResourceUpsertEvent): boolean {
     return event.event === "update" && this.pendingDeletes.has(resourceCacheKey(event.resource_type, event.id));
+  }
+
+  private isSuppressedByLocalDelete(event: ResourceUpsertEvent): boolean {
+    return (
+      event.event === "update" &&
+      this.localDeleteKeys.has(resourceCacheKey(event.resource_type, event.id)) &&
+      !this.isReplacementAfterLocalDelete(event)
+    );
+  }
+
+  private isReplacementAfterLocalDelete(event: ResourceUpsertEvent): boolean {
+    if (event.event !== "update") return false;
+    const key = resourceCacheKey(event.resource_type, event.id);
+    const deletedInstance = this.localDeleteInstances.get(key);
+    return (
+      deletedInstance !== undefined &&
+      "metadata" in event.resource &&
+      event.resource.metadata.created_at !== deletedInstance
+    );
+  }
+
+  private clearLocalDeleteMarker(type: ResourceType, id: string): void {
+    const key = resourceCacheKey(type, id);
+    this.localDeleteKeys.delete(key);
+    this.localDeleteInstances.delete(key);
+  }
+
+  private settlePointRead<TType extends ResourceType>(
+    operation: PointReadOperation<TType>,
+    status: PointReadStatus
+  ): void {
+    const key = resourceCacheKey(operation.type, operation.id);
+    const latest = this.pointReadStates.get(key);
+    if (!latest || latest.sequence !== operation.sequence) return;
+    latest.status = status;
+    this.deferredPointNotFound.delete(key);
   }
 
   private changeForUpsert(event: ResourceUpsertEvent): ResourceChange {
