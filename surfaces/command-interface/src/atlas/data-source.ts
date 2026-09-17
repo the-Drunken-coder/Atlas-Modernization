@@ -205,10 +205,8 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
         geofeatureTokens.set(created.entity_id, { instanceId: created.metadata.created_at, token: instanceToken });
         return created;
       } catch (cause) {
-        if (
-          !isAtlasTransportError(cause) &&
-          !(isAtlasAPIError(cause) && (cause.status >= 500 || isResourceInstanceTokenReuse(cause)))
-        ) {
+        const provenTokenReuse = isAtlasAPIError(cause) && isResourceInstanceTokenReuse(cause);
+        if (!isAtlasTransportError(cause) && !(isAtlasAPIError(cause) && (cause.status >= 500 || provenTokenReuse))) {
           pendingGeofeatureTokens.delete(draftKey);
           forgetPendingGeofeatureToken(config.atlasBaseUrl, draftKey);
           throw cause;
@@ -233,8 +231,7 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
         if (
           existing?.entity_id === entityId &&
           existing.entity_type === "geofeature" &&
-          existing.alias === name &&
-          sameGeometry(existing.components.geometry, geometry)
+          (provenTokenReuse || (existing.alias === name && sameGeometry(existing.components.geometry, geometry)))
         ) {
           const retained = { instanceId: existing.metadata.created_at, token: instanceToken };
           pendingGeofeatureTokens.delete(draftKey);

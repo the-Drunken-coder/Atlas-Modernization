@@ -841,6 +841,40 @@ describe("sdk data source", () => {
     ]);
   });
 
+  it("retains a proven token when recovery observes intervening edits", async () => {
+    vi.spyOn(crypto, "randomUUID").mockReturnValue("00000000-0000-4000-8000-000000000014");
+    const requestedGeometry: UiGeometry = { type: "Point", coordinates: [-71, 42] };
+    const changedGeometry: UiGeometry = { type: "Point", coordinates: [-70, 42] };
+    const changed = {
+      ...entity("geo-new"),
+      entity_type: "geofeature",
+      alias: "Edited in Core",
+      components: { geometry: changedGeometry },
+      metadata: { ...entity("geo-new").metadata, created_at: "2026-06-12T12:00:02Z" }
+    };
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError("Lost response"))
+      .mockResolvedValueOnce(
+        Response.json(
+          {
+            error_code: "VALIDATION_ERROR",
+            message: "resource instance token has already been used for this entity instance"
+          },
+          { status: 400 }
+        )
+      )
+      .mockResolvedValueOnce(Response.json(changed));
+    vi.stubGlobal("fetch", fetchMock);
+    const source = createSdkDataSource(config);
+
+    await expect(source.createGeofeature("geo-new", "Rally", requestedGeometry)).rejects.toMatchObject({
+      code: "ATLAS_TRANSPORT_ERROR"
+    });
+    await expect(source.createGeofeature("geo-new", "Rally", requestedGeometry)).resolves.toEqual(changed);
+    expect(source.canDeleteGeofeature?.("geo-new", changed.metadata.created_at)).toBe(true);
+  });
+
   it("does not attach a spent token to a recreated matching entity", async () => {
     vi.spyOn(crypto, "randomUUID")
       .mockReturnValueOnce("00000000-0000-4000-8000-000000000012")

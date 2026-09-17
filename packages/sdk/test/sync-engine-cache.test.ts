@@ -907,6 +907,41 @@ describe("AtlasClient sync: cache projection and reads", () => {
     expect(cache.value("entity", original.entity_id)).toEqual(recreated);
   });
 
+  it("applies an older not-found result when the newer point read fails", () => {
+    const cache = new ResourceCache();
+    const original = entity("asset-read-failed-ordering");
+    cache.applyPointRead(cache.beginPointRead("entity", original.entity_id), original);
+    const olderRead = cache.beginPointRead("entity", original.entity_id);
+    const newerRead = cache.beginPointRead("entity", original.entity_id);
+
+    expect(cache.applyPointNotFound(olderRead)).toBe(false);
+    expect(cache.completePointRead(newerRead)).toBe(true);
+    expect(cache.value("entity", original.entity_id)).toBeUndefined();
+  });
+
+  it("accepts a successful write after a point-read tombstone", () => {
+    const cache = new ResourceCache();
+    const original = entity("asset-read-write-replacement");
+    cache.applyPointRead(cache.beginPointRead("entity", original.entity_id), original);
+    cache.applyPointNotFound(cache.beginPointRead("entity", original.entity_id));
+    const replacement = {
+      ...original,
+      alias: "replacement",
+      metadata: { ...metadata(2), created_at: "2026-09-17T01:00:00Z" }
+    };
+
+    expect(
+      cache.applyWrite({
+        event: "update",
+        resource_type: "entity",
+        id: replacement.entity_id,
+        version: replacement.metadata.version,
+        resource: replacement
+      })
+    ).toEqual(expect.objectContaining({ resource: replacement }));
+    expect(cache.value("entity", replacement.entity_id)).toEqual(replacement);
+  });
+
   it("fences a delayed uncached point read after an authoritative not-found", () => {
     const cache = new ResourceCache();
     const olderRead = cache.beginPointRead("entity", "asset-uncached-not-found");
