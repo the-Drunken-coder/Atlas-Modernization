@@ -466,7 +466,7 @@ export class SyncEngine {
     try {
       resource = await this.transport.json(
         "GET",
-        `/${type}s/${encodeURIComponent(id)}`,
+        `/${type.replace("y", "ie")}s/${encodeURIComponent(id)}`,
         validate,
         undefined,
         undefined,
