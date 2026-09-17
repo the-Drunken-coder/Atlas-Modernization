@@ -790,6 +790,42 @@ describe("sdk data source", () => {
     expect(fetchMock).toHaveBeenCalledTimes(5);
   });
 
+  it("retires a pending token when token-reuse recovery confirms the entity is gone", async () => {
+    vi.spyOn(crypto, "randomUUID")
+      .mockReturnValueOnce("00000000-0000-4000-8000-000000000010")
+      .mockReturnValueOnce("00000000-0000-4000-8000-000000000011");
+    const geometry: UiGeometry = { type: "Point", coordinates: [-71, 42] };
+    const created = { ...entity("geo-new"), entity_type: "geofeature", alias: "Rally", components: { geometry } };
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError("Lost response"))
+      .mockResolvedValueOnce(
+        Response.json(
+          { error_code: "VALIDATION_ERROR", message: "resource instance token has already been used" },
+          { status: 400 }
+        )
+      )
+      .mockResolvedValueOnce(Response.json({ error_code: "ENTITY_NOT_FOUND", message: "Not found" }, { status: 404 }))
+      .mockResolvedValueOnce(Response.json(created, { status: 201 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const source = createSdkDataSource(config);
+
+    await expect(source.createGeofeature("geo-new", "Rally", geometry)).rejects.toMatchObject({
+      code: "ATLAS_TRANSPORT_ERROR"
+    });
+    await expect(source.createGeofeature("geo-new", "Rally", geometry)).rejects.toMatchObject({ status: 400 });
+    await expect(source.createGeofeature("geo-new", "Rally", geometry)).resolves.toEqual(created);
+
+    const createTokens = fetchMock.mock.calls
+      .filter(([, init]) => init?.method === "POST")
+      .map(([, init]) => new Headers(init?.headers).get("Atlas-Resource-Instance-Token"));
+    expect(createTokens).toEqual([
+      "00000000-0000-4000-8000-000000000010",
+      "00000000-0000-4000-8000-000000000010",
+      "00000000-0000-4000-8000-000000000011"
+    ]);
+  });
+
   it("retains each pending token when a failed draft is edited and reverted", async () => {
     const geometry: UiGeometry = { type: "Point", coordinates: [-71, 42] };
     const changedGeometry: UiGeometry = { type: "Point", coordinates: [-70, 42] };
