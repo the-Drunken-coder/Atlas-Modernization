@@ -687,6 +687,37 @@ describe("sdk data source", () => {
     expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 
+  it("retains each pending token when a failed draft is edited and reverted", async () => {
+    const geometry: UiGeometry = { type: "Point", coordinates: [-71, 42] };
+    const changedGeometry: UiGeometry = { type: "Point", coordinates: [-70, 42] };
+    const created = { ...entity("geo-new"), entity_type: "geofeature", alias: "Rally", components: { geometry } };
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError("Lost response"))
+      .mockRejectedValueOnce(new TypeError("Offline"))
+      .mockResolvedValueOnce(Response.json({ error: "Already exists" }, { status: 409 }))
+      .mockResolvedValueOnce(Response.json(created))
+      .mockResolvedValueOnce(Response.json({ error: "Already exists" }, { status: 409 }))
+      .mockResolvedValueOnce(Response.json(created));
+    vi.stubGlobal("fetch", fetchMock);
+    const source = createSdkDataSource(config);
+
+    await expect(source.createGeofeature("geo-new", "Rally", geometry)).rejects.toMatchObject({
+      code: "ATLAS_TRANSPORT_ERROR"
+    });
+    await expect(source.createGeofeature("geo-new", "Rally", changedGeometry)).rejects.toMatchObject({
+      status: 409
+    });
+    await expect(source.createGeofeature("geo-new", "Rally", geometry)).resolves.toEqual(created);
+
+    const createTokens = fetchMock.mock.calls
+      .filter(([, init]) => init?.method === "POST")
+      .map(([, init]) => new Headers(init?.headers).get("Atlas-Resource-Instance-Token"));
+    expect(createTokens).toHaveLength(3);
+    expect(createTokens[0]).toBe(createTokens[2]);
+    expect(createTokens[1]).not.toBe(createTokens[0]);
+  });
+
   it("does not recover a circle with a different radius", async () => {
     const geometry: UiGeometry = {
       type: "Feature",

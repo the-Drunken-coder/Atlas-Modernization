@@ -180,8 +180,9 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
       }),
 
     async createGeofeature(entityId, name, geometry) {
-      const instanceToken = pendingGeofeatureTokens.get(entityId) || crypto.randomUUID();
-      pendingGeofeatureTokens.set(entityId, instanceToken);
+      const draftKey = JSON.stringify([entityId, name, geometry]);
+      const instanceToken = pendingGeofeatureTokens.get(draftKey) || crypto.randomUUID();
+      pendingGeofeatureTokens.set(draftKey, instanceToken);
       try {
         const created = await client.entities.create(
           {
@@ -192,7 +193,7 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
           },
           { instanceToken }
         );
-        pendingGeofeatureTokens.delete(entityId);
+        pendingGeofeatureTokens.delete(draftKey);
         retainGeofeatureToken(config.atlasBaseUrl, created.entity_id, {
           instanceId: created.metadata.created_at,
           token: instanceToken
@@ -204,7 +205,7 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
           !isAtlasTransportError(cause) &&
           !(isAtlasAPIError(cause) && (cause.status === 409 || cause.status >= 500))
         ) {
-          pendingGeofeatureTokens.delete(entityId);
+          pendingGeofeatureTokens.delete(draftKey);
           throw cause;
         }
         // A committed POST can lose its response. Recover only the exact draft,
@@ -222,7 +223,7 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
           geofeatureTokens.set(entityId, retained);
           return existing;
         }
-        if (existing) pendingGeofeatureTokens.delete(entityId);
+        if (existing) pendingGeofeatureTokens.delete(draftKey);
         throw cause;
       }
     },
