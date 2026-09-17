@@ -648,7 +648,10 @@ describe("sdk data source", () => {
           if (failure === "lost response") throw new TypeError("Connection lost after commit");
           return Response.json({ error: "Create failed" }, { status: 502 });
         }
-        return Response.json({ error: "Already exists" }, { status: 409 });
+        return Response.json(
+          { error_code: "VALIDATION_ERROR", message: "resource instance token has already been used" },
+          { status: 400 }
+        );
       }
       return Response.json(created);
     });
@@ -697,7 +700,12 @@ describe("sdk data source", () => {
     const fetchMock = vi
       .fn()
       .mockRejectedValueOnce(new TypeError("Connection lost after commit"))
-      .mockResolvedValueOnce(Response.json({ error: "Already exists" }, { status: 409 }))
+      .mockResolvedValueOnce(
+        Response.json(
+          { error_code: "VALIDATION_ERROR", message: "resource instance token has already been used" },
+          { status: 400 }
+        )
+      )
       .mockResolvedValueOnce(Response.json(created));
     vi.stubGlobal("fetch", fetchMock);
 
@@ -725,6 +733,23 @@ describe("sdk data source", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("does not recover a pending-token conflict without an explicit token-reuse error", async () => {
+    const geometry: UiGeometry = { type: "Point", coordinates: [-71, 42] };
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError("Connection lost after commit"))
+      .mockResolvedValueOnce(Response.json({ error: "Already exists" }, { status: 409 }))
+      .mockResolvedValueOnce(Response.json({ error: "unexpected recovery" }, { status: 500 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const source = createSdkDataSource(config);
+
+    await expect(source.createGeofeature("geo-new", "Rally", geometry)).rejects.toMatchObject({
+      code: "ATLAS_TRANSPORT_ERROR"
+    });
+    await expect(source.createGeofeature("geo-new", "Rally", geometry)).rejects.toMatchObject({ status: 409 });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("recovers the same draft on retry after both the POST response and recovery read fail", async () => {
     const geometry: UiGeometry = {
       type: "Feature",
@@ -735,16 +760,26 @@ describe("sdk data source", () => {
     const fetchMock = vi
       .fn()
       .mockRejectedValueOnce(new TypeError("Lost response"))
-      .mockResolvedValueOnce(Response.json({ error: "Already exists" }, { status: 409 }))
+      .mockResolvedValueOnce(
+        Response.json(
+          { error_code: "VALIDATION_ERROR", message: "resource instance token has already been used" },
+          { status: 400 }
+        )
+      )
       .mockRejectedValueOnce(new TypeError("Offline"))
-      .mockResolvedValueOnce(Response.json({ error: "Already exists" }, { status: 409 }))
+      .mockResolvedValueOnce(
+        Response.json(
+          { error_code: "VALIDATION_ERROR", message: "resource instance token has already been used" },
+          { status: 400 }
+        )
+      )
       .mockResolvedValueOnce(Response.json(created));
     vi.stubGlobal("fetch", fetchMock);
     const source = createSdkDataSource(config);
     await expect(source.createGeofeature("geo-new", "Rally", geometry)).rejects.toMatchObject({
       code: "ATLAS_TRANSPORT_ERROR"
     });
-    await expect(source.createGeofeature("geo-new", "Rally", geometry)).rejects.toMatchObject({ status: 409 });
+    await expect(source.createGeofeature("geo-new", "Rally", geometry)).rejects.toMatchObject({ status: 400 });
     await expect(source.createGeofeature("geo-new", "Rally", geometry)).resolves.toEqual(created);
     const createTokens = fetchMock.mock.calls
       .filter(([, init]) => init?.method === "POST")
@@ -763,7 +798,12 @@ describe("sdk data source", () => {
       .fn()
       .mockRejectedValueOnce(new TypeError("Lost response"))
       .mockResolvedValueOnce(Response.json({ error: "Already exists" }, { status: 409 }))
-      .mockResolvedValueOnce(Response.json({ error: "Already exists" }, { status: 409 }))
+      .mockResolvedValueOnce(
+        Response.json(
+          { error_code: "VALIDATION_ERROR", message: "resource instance token has already been used" },
+          { status: 400 }
+        )
+      )
       .mockResolvedValueOnce(Response.json(created))
       .mockResolvedValueOnce(
         Response.json(

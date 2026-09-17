@@ -207,7 +207,7 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
       } catch (cause) {
         if (
           !isAtlasTransportError(cause) &&
-          !(isAtlasAPIError(cause) && (cause.status >= 500 || (cause.status === 409 && pendingToken)))
+          !(isAtlasAPIError(cause) && (cause.status >= 500 || isResourceInstanceTokenReuse(cause)))
         ) {
           pendingGeofeatureTokens.delete(draftKey);
           forgetPendingGeofeatureToken(config.atlasBaseUrl, draftKey);
@@ -384,6 +384,14 @@ function runtimeManifestVersionsAfterHydration(
     ...current,
     ...Object.fromEntries(changedEntities.map(([id, entity]) => [id, entity.metadata.version]))
   };
+}
+
+function isResourceInstanceTokenReuse(error: { status: number; errorCode?: string; message: string }): boolean {
+  return (
+    error.status === 400 &&
+    error.errorCode === "VALIDATION_ERROR" &&
+    error.message.includes("resource instance token has already been used")
+  );
 }
 
 function sameGeometry(actual: UiGeometry | undefined, expected: UiGeometry): boolean {
