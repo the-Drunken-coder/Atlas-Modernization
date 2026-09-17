@@ -1,0 +1,15 @@
+# Problem: Cross-type cache guard has no direct regression test
+
+1. **Time & Date:** 2026-09-17T11:38:13-04:00
+2. **Name:** Restore direct coverage for the cache resource-type invariant
+3. **Issue:** The SDK still rejects a resource whose runtime shape does not match the cache bucket, but the only direct test for that invariant was deleted during the cache API refactor and no equivalent direct test replaced it.
+4. **Severity:** S5 (Note)
+5. **Location:** Guard in `packages/sdk/src/subscriptions.ts:168-175`, reached by `packages/sdk/src/cache.ts:298-307`; missing direct coverage under `packages/sdk/test/`
+6. **Expected:** A focused cache test should pass a runtime Task-shaped value to an Entity cache operation and assert the `cannot be used as entity` error plus the absence of an Entity entry. The test should exercise `ResourceCache.acceptResource` through a public cache method without relying on an obsolete private method or an unsafe cast to a removed API.
+7. **Actual:** `ResourceCache.acceptResource` still calls `resourceID(type, value)`, which invokes `assertResourceMatchesType` and throws before changing the cache. The former direct test (`cache.cacheResource("entity", ..., taskPayload)`) was removed in commit `6889c051`; current cache tests use correctly typed values. The nearest apparent replacement, `sync-engine-reconnect-cleanup.test.ts:780-826`, injects a Task-shaped payload into an Entity feed event, but `isInboundFeedEvent` rejects that payload at `packages/sdk/src/validation.ts:122-132` before `SyncEngine.applyFeedEvent` or the cache guard runs. `subscriptions.test.ts` covers ID mismatch and canonical IDs, not cross-type shape rejection.
+8. **Reproduction:**
+   1. Construct `new ResourceCache()` and begin an Entity point read for a canonical ID.
+   2. Pass a Task-shaped runtime object to `applyPointRead` (the prior test used the same runtime mismatch through the old cache API).
+   3. The current implementation throws `TypeError: Atlas task resource cannot be used as entity` from `assertResourceMatchesType` before committing the value, but no current test directly asserts this behavior or the unchanged Entity bucket.
+   4. Send the analogous malformed feed event through the existing reconnect test. Its generated/inbound validation fails first, so that test proves feed rejection and recovery rather than cache-bucket protection.
+9. **Notes:** This is a test-maintenance gap, not a confirmed user-facing SDK defect: HTTP, hydration, and feed validators normally enforce resource shape before cache mutation. The guard remains reachable from the public methods of the internal `ResourceCache` class when a future internal caller or refactor supplies a runtime value inconsistent with its TypeScript type. A focused `ResourceCache.applyPointRead` mismatch test would preserve the invariant without restoring the deleted cast. The SDK test command could not be run because this checkout has no installed `vitest` binary; static call-path/history inspection and `git diff --check` are the available checks.
