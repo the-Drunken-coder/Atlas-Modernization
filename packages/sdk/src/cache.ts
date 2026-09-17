@@ -52,6 +52,7 @@ type LocalDeleteOperation = {
   readonly observedEntry: CacheEntry<ResourceOf<DeletableResourceType>> | undefined;
   learnedEntry: CacheEntry<ResourceOf<DeletableResourceType>> | undefined;
   recreated: boolean;
+  reconcile: boolean;
   remote: boolean;
 };
 
@@ -268,6 +269,11 @@ export class ResourceCache {
             (operation.observedEntry === undefined || sameResourceInstance(operation.observedEntry.value, value))
         )
       ) {
+        for (const operation of this.localDeleteOperations) {
+          if (operation.type === type && operation.id === id && operation.observedEntry === undefined) {
+            operation.reconcile = true;
+          }
+        }
         return false;
       }
     }
@@ -333,6 +339,7 @@ export class ResourceCache {
       observedEntry: this.entries[type].get(id),
       learnedEntry: undefined,
       recreated: false,
+      reconcile: false,
       remote: false
     };
     this.localDeleteOperations.add(operation);
@@ -369,6 +376,10 @@ export class ResourceCache {
 
   cancelLocalDelete(operation: LocalDeleteOperation): void {
     this.localDeleteOperations.delete(operation);
+  }
+
+  needsLocalDeleteReconcile(operation: LocalDeleteOperation): boolean {
+    return operation.reconcile;
   }
 
   private noteLocalDeleteUpsert(type: DeletableResourceType, id: string, event: ResourceUpsertEvent["event"]): void {

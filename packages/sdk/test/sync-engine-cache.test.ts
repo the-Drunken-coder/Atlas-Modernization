@@ -506,6 +506,47 @@ describe("AtlasClient sync: cache projection and reads", () => {
     expect(client.sync.snapshot().entities[original.entity_id]).toEqual(recreated);
   });
 
+  it("reconciles an uncached point read after delete to retain a recreation", async () => {
+    const core = new FakeCore();
+    const original = core.upsertEntity(entity("asset-uncached-point-read-recreated"));
+    let releaseRead!: () => void;
+    const readGate = new Promise<void>((resolve) => {
+      releaseRead = resolve;
+    });
+    let readResponse: Response | undefined;
+    let releaseDelete!: () => void;
+    const deleteGate = new Promise<void>((resolve) => {
+      releaseDelete = resolve;
+    });
+    const fetchImpl: typeof fetch = async (url, init) => {
+      const parsed = new URL(String(url));
+      if (parsed.pathname === `/entities/${original.entity_id}` && init?.method === "GET") {
+        readResponse = await core.fetch(String(url), init);
+        await readGate;
+        return readResponse;
+      }
+      if (parsed.pathname === `/entities/${original.entity_id}` && init?.method === "DELETE") {
+        const response = await core.fetch(String(url), init);
+        await deleteGate;
+        return response;
+      }
+      return core.fetch(String(url), init);
+    };
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: false });
+
+    const deletion = client.entities.delete(original.entity_id);
+    await vi.waitFor(() => expect(core.deleteEvents).toHaveLength(1));
+    const recreated = core.createEntity({ entity_id: original.entity_id, entity_type: "asset" });
+    const read = client.entities.get(original.entity_id, { fresh: true });
+    await vi.waitFor(() => expect(readResponse).toBeDefined());
+    releaseRead();
+
+    await expect(read).resolves.toEqual(recreated);
+    releaseDelete();
+    await expect(deletion).resolves.toBeUndefined();
+    expect(client.sync.snapshot().entities[original.entity_id]).toEqual(recreated);
+  });
+
   it.each([
     ["entity", "read-before-delete-response"],
     ["entity", "delete-before-read-response"],

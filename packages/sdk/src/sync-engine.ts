@@ -555,12 +555,31 @@ export class SyncEngine {
     } catch (error) {
       if (isResourceNotFound(error, type)) {
         this.deliverChange(this.cache.finishLocalDelete(localDelete, "not_found"));
+        await this.reconcileLocalDelete(type, id, localDelete);
         return;
       }
       this.cache.cancelLocalDelete(localDelete);
       throw error;
     }
     this.deliverChange(this.cache.finishLocalDelete(localDelete, "deleted"));
+    await this.reconcileLocalDelete(type, id, localDelete);
+  }
+
+  private async reconcileLocalDelete(
+    type: DeletableResourceType,
+    id: string,
+    operation: ReturnType<ResourceCache["beginLocalDelete"]>
+  ): Promise<void> {
+    if (!this.cache.needsLocalDeleteReconcile(operation)) return;
+    try {
+      if (type === "entity") {
+        await this.readPoint("entity", id, isEntityResource);
+      } else {
+        await this.readPoint("object", id, isObjectDetailResource, undefined, { detail: true });
+      }
+    } catch {
+      // A post-delete reconciliation is best effort; the delete result remains authoritative.
+    }
   }
 
   private async startSyncFromStopped(generation: number): Promise<void> {
