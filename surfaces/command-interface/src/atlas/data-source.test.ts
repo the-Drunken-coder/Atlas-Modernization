@@ -684,6 +684,32 @@ describe("sdk data source", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("persists an ambiguous create token across data-source recreation", async () => {
+    const storage = new Map<string, string>();
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
+      removeItem: (key: string) => storage.delete(key)
+    });
+    vi.spyOn(crypto, "randomUUID").mockReturnValue("00000000-0000-4000-8000-000000000009");
+    const geometry: UiGeometry = { type: "Point", coordinates: [-71, 42] };
+    const created = { ...entity("geo-new"), entity_type: "geofeature", alias: "Rally", components: { geometry } };
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError("Connection lost after commit"))
+      .mockResolvedValueOnce(Response.json({ error: "Already exists" }, { status: 409 }))
+      .mockResolvedValueOnce(Response.json(created));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(createSdkDataSource(config).createGeofeature("geo-new", "Rally", geometry)).rejects.toMatchObject({
+      code: "ATLAS_TRANSPORT_ERROR"
+    });
+    const firstToken = new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get("Atlas-Resource-Instance-Token");
+    await expect(createSdkDataSource(config).createGeofeature("geo-new", "Rally", geometry)).resolves.toEqual(created);
+    const retryToken = new Headers(fetchMock.mock.calls[1]?.[1]?.headers).get("Atlas-Resource-Instance-Token");
+    expect(retryToken).toBe(firstToken);
+  });
+
   it("does not recover a first-attempt create conflict", async () => {
     const geometry: UiGeometry = { type: "Point", coordinates: [-71, 42] };
     const fetchMock = vi.fn(async (_input: unknown, init?: RequestInit) =>

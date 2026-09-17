@@ -181,9 +181,11 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
 
     async createGeofeature(entityId, name, geometry) {
       const draftKey = JSON.stringify([entityId, name, geometry]);
-      const pendingToken = pendingGeofeatureTokens.get(draftKey);
+      const pendingToken =
+        pendingGeofeatureTokens.get(draftKey) ?? readPendingGeofeatureToken(config.atlasBaseUrl, draftKey);
       const instanceToken = pendingToken || crypto.randomUUID();
       pendingGeofeatureTokens.set(draftKey, instanceToken);
+      retainPendingGeofeatureToken(config.atlasBaseUrl, draftKey, instanceToken);
       try {
         const created = await client.entities.create(
           {
@@ -195,6 +197,7 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
           { instanceToken }
         );
         pendingGeofeatureTokens.delete(draftKey);
+        forgetPendingGeofeatureToken(config.atlasBaseUrl, draftKey);
         retainGeofeatureToken(config.atlasBaseUrl, created.entity_id, {
           instanceId: created.metadata.created_at,
           token: instanceToken
@@ -207,6 +210,7 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
           !(isAtlasAPIError(cause) && (cause.status >= 500 || (cause.status === 409 && pendingToken)))
         ) {
           pendingGeofeatureTokens.delete(draftKey);
+          forgetPendingGeofeatureToken(config.atlasBaseUrl, draftKey);
           throw cause;
         }
         if (!pendingToken) throw cause;
@@ -221,11 +225,15 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
         ) {
           const retained = { instanceId: existing.metadata.created_at, token: instanceToken };
           pendingGeofeatureTokens.delete(draftKey);
+          forgetPendingGeofeatureToken(config.atlasBaseUrl, draftKey);
           retainGeofeatureToken(config.atlasBaseUrl, entityId, retained);
           geofeatureTokens.set(entityId, retained);
           return existing;
         }
-        if (existing) pendingGeofeatureTokens.delete(draftKey);
+        if (existing) {
+          pendingGeofeatureTokens.delete(draftKey);
+          forgetPendingGeofeatureToken(config.atlasBaseUrl, draftKey);
+        }
         throw cause;
       }
     },
@@ -283,6 +291,35 @@ type GeofeatureInstanceToken = { instanceId: string; token: string };
 
 function geofeatureTokenKey(baseUrl: string, entityId: string): string {
   return `atlas:geofeature-instance:${baseUrl}:${entityId}`;
+}
+
+function pendingGeofeatureTokenKey(baseUrl: string, draftKey: string): string {
+  return `atlas:geofeature-pending:${baseUrl}:${draftKey}`;
+}
+
+function readPendingGeofeatureToken(baseUrl: string, draftKey: string): string | undefined {
+  try {
+    const stored = globalThis.localStorage?.getItem(pendingGeofeatureTokenKey(baseUrl, draftKey));
+    return stored && stored.length > 0 ? stored : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function retainPendingGeofeatureToken(baseUrl: string, draftKey: string, token: string): void {
+  try {
+    globalThis.localStorage?.setItem(pendingGeofeatureTokenKey(baseUrl, draftKey), token);
+  } catch {
+    // In-memory retention still protects retries for this data-source lifetime.
+  }
+}
+
+function forgetPendingGeofeatureToken(baseUrl: string, draftKey: string): void {
+  try {
+    globalThis.localStorage?.removeItem(pendingGeofeatureTokenKey(baseUrl, draftKey));
+  } catch {
+    // Storage can be unavailable in privacy-restricted browser contexts.
+  }
 }
 
 function readGeofeatureToken(baseUrl: string, entityId: string): GeofeatureInstanceToken | undefined {
