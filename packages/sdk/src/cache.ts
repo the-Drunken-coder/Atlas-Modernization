@@ -184,7 +184,7 @@ export class ResourceCache {
     const currentEntry = this.entries[operation.type].get(operation.id);
     if (currentEntry !== operation.observedEntry || !currentEntry || currentEntry.deleted) return false;
     this.bumpGeneration(operation.type, operation.id);
-    this.markRemoteDelete(operation.type, operation.id, currentEntry.version);
+    this.markRemoteDelete(operation.type, operation.id, currentEntry.version, false);
     this.pendingDeletes.add(resourceCacheKey(operation.type, operation.id));
     return true;
   }
@@ -299,10 +299,12 @@ export class ResourceCache {
     return this.generations.get(resourceCacheKey(type, id)) ?? 0;
   }
 
-  private markRemoteDelete(type: DeletableResourceType, id: string, version: number): void {
+  private markRemoteDelete(type: DeletableResourceType, id: string, version: number, notifyLocalDeletes = true): void {
     this.bumpGeneration(type, id);
-    for (const operation of this.localDeleteOperations) {
-      if (operation.type === type && operation.id === id) operation.remoteDeleteSeen = true;
+    if (notifyLocalDeletes) {
+      for (const operation of this.localDeleteOperations) {
+        if (operation.type === type && operation.id === id) operation.remoteDeleteSeen = true;
+      }
     }
     this.entries[type].set(id, { version, deleted: true });
     this.removeFromSnapshot(type, id);
@@ -333,7 +335,8 @@ export class ResourceCache {
     if (
       !deletesCurrentEntry &&
       currentEntry !== operation.observedEntry &&
-      (operation.remoteDeleteSeen || !sameResourceInstance(operation.observedEntry?.value, currentEntry?.value))
+      (operation.remoteDeleteSeen ||
+        (!currentEntry?.deleted && !sameResourceInstance(operation.observedEntry?.value, currentEntry?.value)))
     ) {
       return undefined;
     }

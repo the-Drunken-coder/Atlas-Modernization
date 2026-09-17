@@ -719,6 +719,24 @@ describe("AtlasClient sync: cache projection and reads", () => {
     expect(cache.value("entity", "asset-uncached-delete")).toBeUndefined();
   });
 
+  it("notifies a successful delete after an overlapping point read confirms absence", () => {
+    const cache = new ResourceCache();
+    const original = entity("asset-point-read-delete");
+    cache.applyPointRead(cache.beginPointRead("entity", original.entity_id), original);
+    const deletion = cache.beginLocalDelete("entity", original.entity_id);
+    const read = cache.beginPointRead("entity", original.entity_id);
+
+    expect(cache.applyPointNotFound(read)).toBe(true);
+    expect(cache.finishLocalDelete(deletion, "deleted")).toEqual({
+      event: {
+        event: "local_delete",
+        resource_type: "entity",
+        id: original.entity_id
+      },
+      resource: undefined
+    });
+  });
+
   it("keeps a resource cached during a not-found delete that began from a tombstone", () => {
     const cache = new ResourceCache();
     const original = entity("asset-tombstone-not-found");
