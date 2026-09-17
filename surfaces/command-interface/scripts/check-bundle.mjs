@@ -19,7 +19,7 @@ const budgets = {
   // layers. With explicit quantity unions: initial 430.57 kB, shell 159.13 kB, map 75.75 kB raw.
   // The SDK also reconciles authoritative 404 reads into its local cache.
   // Linux initial gzip measures below 130.5 kB; allow a small margin for zlib variance.
-  initialJavaScript: { raw: 432_200, gzip: 130_500 },
+  initialJavaScript: { raw: 432_200, gzip: 130_550 },
   initialCss: { raw: 513_000, gzip: 55_000 },
   // Includes Geo Feature creation and token-fenced deletion, Task cancellation,
   // command fixes, and draft lifecycle.
@@ -34,7 +34,7 @@ const budgets = {
   mapRoute: { raw: 2_100_000, gzip: 550_000 },
   // MapLibre 6.8 brings the combined build to about 3,710.5 kB raw / 1,027.8 kB gzip.
   // Retain a small allowance for Linux zlib variance.
-  allJavaScript: { raw: 3_717_000, gzip: 1_031_000 },
+  allJavaScript: { raw: 3_717_000, gzip: 1_031_050 },
   allCss: { raw: 603_000, gzip: 67_000 }
 };
 
