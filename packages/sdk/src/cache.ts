@@ -50,7 +50,7 @@ type LocalDeleteOperation = {
   readonly type: DeletableResourceType;
   readonly id: string;
   readonly observedEntry: CacheEntry<ResourceOf<DeletableResourceType>> | undefined;
-  remoteDeleteSeen: boolean;
+  remote: boolean;
 };
 
 class SnapshotRecord<T> {
@@ -184,7 +184,7 @@ export class ResourceCache {
     const currentEntry = this.entries[operation.type].get(operation.id);
     if (currentEntry !== operation.observedEntry || !currentEntry || currentEntry.deleted) return false;
     this.bumpGeneration(operation.type, operation.id);
-    this.markRemoteDelete(operation.type, operation.id, currentEntry.version);
+    this.markRemoteDelete(operation.type, operation.id, currentEntry.version, false);
     this.pendingDeletes.add(resourceCacheKey(operation.type, operation.id));
     return true;
   }
@@ -208,9 +208,6 @@ export class ResourceCache {
     if (event.event === "delete") {
       this.pendingDeletes.delete(key);
       this.markRemoteDelete(event.resource_type, event.id, event.version);
-      for (const operation of this.localDeleteOperations) {
-        if (operation.type === event.resource_type && operation.id === event.id) operation.remoteDeleteSeen = true;
-      }
       return this.locallyNotifiedDeletes.delete(key) ? undefined : { event, resource: undefined };
     }
     if (this.isSuppressedByPendingDelete(event)) return undefined;
@@ -302,8 +299,11 @@ export class ResourceCache {
     return this.generations.get(resourceCacheKey(type, id)) ?? 0;
   }
 
-  private markRemoteDelete(type: DeletableResourceType, id: string, version: number): void {
+  private markRemoteDelete(type: DeletableResourceType, id: string, version: number, notify = true): void {
     this.bumpGeneration(type, id);
+    for (const operation of this.localDeleteOperations) {
+      if (notify && operation.type === type && operation.id === id) operation.remote = true;
+    }
     this.entries[type].set(id, { version, deleted: true });
     this.removeFromSnapshot(type, id);
   }
@@ -319,7 +319,7 @@ export class ResourceCache {
 
   beginLocalDelete(type: DeletableResourceType, id: string): LocalDeleteOperation {
     this.bumpGeneration(type, id);
-    const operation = { type, id, observedEntry: this.entries[type].get(id), remoteDeleteSeen: false };
+    const operation = { type, id, observedEntry: this.entries[type].get(id), remote: false };
     this.localDeleteOperations.add(operation);
     return operation;
   }
@@ -331,7 +331,7 @@ export class ResourceCache {
     const deletesCurrentEntry = operation.observedEntry?.deleted === true && outcome === "deleted";
     if (operation.observedEntry?.deleted && !deletesCurrentEntry) return undefined;
     if (
-      operation.remoteDeleteSeen ||
+      operation.remote ||
       (!deletesCurrentEntry &&
         currentEntry !== operation.observedEntry &&
         !currentEntry?.deleted &&
