@@ -50,6 +50,8 @@ type LocalDeleteOperation = {
   readonly type: DeletableResourceType;
   readonly id: string;
   readonly observedEntry: CacheEntry<ResourceOf<DeletableResourceType>> | undefined;
+  learnedEntry: CacheEntry<ResourceOf<DeletableResourceType>> | undefined;
+  recreated: boolean;
   remote: boolean;
 };
 
@@ -199,6 +201,9 @@ export class ResourceCache {
     ) {
       return undefined;
     }
+    if (event.resource_type !== "task") {
+      this.noteLocalDeleteUpsert(event.resource_type, event.id, event.event);
+    }
     return this.changeForUpsert(event);
   }
 
@@ -211,7 +216,10 @@ export class ResourceCache {
       return this.locallyNotifiedDeletes.delete(key) ? undefined : { event, resource: undefined };
     }
     if (this.isSuppressedByPendingDelete(event)) return undefined;
-    this.acceptResource(event.resource_type, event.id, event.resource, { version: event.version });
+    const accepted = this.acceptResource(event.resource_type, event.id, event.resource, { version: event.version });
+    if (accepted && event.resource_type !== "task") {
+      this.noteLocalDeleteUpsert(event.resource_type, event.id, event.event);
+    }
     return this.changeForUpsert(event);
   }
 
@@ -319,7 +327,14 @@ export class ResourceCache {
 
   beginLocalDelete(type: DeletableResourceType, id: string): LocalDeleteOperation {
     this.bumpGeneration(type, id);
-    const operation = { type, id, observedEntry: this.entries[type].get(id), remote: false };
+    const operation = {
+      type,
+      id,
+      observedEntry: this.entries[type].get(id),
+      learnedEntry: undefined,
+      recreated: false,
+      remote: false
+    };
     this.localDeleteOperations.add(operation);
     return operation;
   }
@@ -332,10 +347,12 @@ export class ResourceCache {
     if (operation.observedEntry?.deleted && !deletesCurrentEntry) return undefined;
     if (
       operation.remote ||
+      operation.recreated ||
       (!deletesCurrentEntry &&
         currentEntry !== operation.observedEntry &&
         !currentEntry?.deleted &&
-        !sameResourceInstance(operation.observedEntry?.value, currentEntry?.value))
+        !sameResourceInstance(operation.observedEntry?.value, currentEntry?.value) &&
+        !sameResourceInstance(operation.learnedEntry?.value, currentEntry?.value))
     ) {
       return undefined;
     }
@@ -352,6 +369,22 @@ export class ResourceCache {
 
   cancelLocalDelete(operation: LocalDeleteOperation): void {
     this.localDeleteOperations.delete(operation);
+  }
+
+  private noteLocalDeleteUpsert(
+    type: DeletableResourceType,
+    id: string,
+    event: ResourceUpsertEvent["event"]
+  ): void {
+    const currentEntry = this.entries[type].get(id);
+    for (const operation of this.localDeleteOperations) {
+      if (operation.type !== type || operation.id !== id) continue;
+      if (event === "create") {
+        operation.recreated = true;
+      } else if (operation.observedEntry === undefined && currentEntry !== undefined) {
+        operation.learnedEntry = currentEntry;
+      }
+    }
   }
 
   private isSuppressedByPendingDelete(event: ResourceUpsertEvent): boolean {

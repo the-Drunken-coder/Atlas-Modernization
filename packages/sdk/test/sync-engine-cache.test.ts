@@ -731,6 +731,55 @@ describe("AtlasClient sync: cache projection and reads", () => {
     expect(cache.value("entity", "asset-uncached-delete")).toBeUndefined();
   });
 
+  it("evicts a same-instance upsert learned during an uncached delete", () => {
+    const cache = new ResourceCache();
+    const deletion = cache.beginLocalDelete("entity", "asset-uncached-upsert-delete");
+    const updated = { ...entity("asset-uncached-upsert-delete"), alias: "updated", metadata: metadata(2) };
+
+    expect(
+      cache.applyWrite({
+        event: "update",
+        resource_type: "entity",
+        id: updated.entity_id,
+        version: updated.metadata.version,
+        resource: updated
+      })
+    ).toEqual(expect.objectContaining({ resource: updated }));
+
+    expect(cache.finishLocalDelete(deletion, "deleted")).toEqual({
+      event: {
+        event: "local_delete",
+        resource_type: "entity",
+        id: updated.entity_id,
+        previous_version: updated.metadata.version
+      },
+      resource: undefined
+    });
+    expect(cache.value("entity", updated.entity_id)).toBeUndefined();
+  });
+
+  it("keeps a recreation learned during an uncached delete", () => {
+    const cache = new ResourceCache();
+    const deletion = cache.beginLocalDelete("entity", "asset-uncached-recreated-delete");
+    const recreated = {
+      ...entity("asset-uncached-recreated-delete"),
+      metadata: { ...metadata(1), created_at: "2026-09-16T21:00:00Z" }
+    };
+
+    expect(
+      cache.applyFeedEvent({
+        event: "create",
+        resource_type: "entity",
+        id: recreated.entity_id,
+        version: recreated.metadata.version,
+        resource: recreated
+      })
+    ).toEqual(expect.objectContaining({ resource: recreated }));
+
+    expect(cache.finishLocalDelete(deletion, "deleted")).toBeUndefined();
+    expect(cache.value("entity", recreated.entity_id)).toEqual(recreated);
+  });
+
   it("notifies a successful delete after an overlapping point read confirms absence", () => {
     const cache = new ResourceCache();
     const original = entity("asset-point-read-delete");
