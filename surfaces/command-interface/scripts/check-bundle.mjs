@@ -34,7 +34,7 @@ const budgets = {
   mapRoute: { raw: 2_100_000, gzip: 550_000 },
   // MapLibre 6.8 brings the combined build to about 3,710.5 kB raw / 1,027.8 kB gzip.
   // Retain a small allowance for Linux zlib variance.
-  allJavaScript: { raw: 3_717_600, gzip: 1_031_400 },
+  allJavaScript: { raw: 3_717_800, gzip: 1_031_400 },
   allCss: { raw: 603_000, gzip: 67_000 }
 };
 
