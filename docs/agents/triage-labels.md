@@ -19,4 +19,12 @@ Every triaged GitHub Issue has one category label and one state label.
 | `ready-for-human` | `ready-for-human` |
 | `wontfix` | `wontfix` |
 
+## Planning artifacts
+
+| Artifact | GitHub label |
+| --- | --- |
+| Specification | `spec` |
+
+Apply `spec` to the parent issue created by `$matt-to-spec`. Do not carry it onto implementation tickets created from that specification.
+
 `docs/problems/` reports use the S1-S5 severity rubric instead of GitHub labels.

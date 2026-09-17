@@ -17,7 +17,7 @@ Pull requests are not a request surface for triage. A named pull request may sti
 
 ### When a skill says "publish to the issue tracker"
 
-Create a GitHub Issue. `$matt-to-spec` publishes the active specification there, `$matt-to-tickets` creates dependency-aware child work items there, and `$matt-wayfinder` creates a map issue with child decision tickets.
+Create a GitHub Issue. `$matt-to-spec` publishes the active specification with the `spec` and `ready-for-agent` labels. `$matt-to-tickets` creates dependency-aware child work items with `ready-for-agent` but not `spec`, so specifications remain distinct from implementation tickets. `$matt-wayfinder` creates a map issue with child decision tickets.
 
 ### Wayfinding operations
 
