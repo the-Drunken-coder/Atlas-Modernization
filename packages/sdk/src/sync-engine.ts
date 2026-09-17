@@ -399,24 +399,7 @@ export class SyncEngine {
     if (!options?.fresh && this.canServeFromCache({ filter: "id", resource_type: "entity", id }) && cached) {
       return cached;
     }
-    const pointRead = this.cache.beginPointRead("entity", id);
-    let entity: EntityResource;
-    try {
-      entity = await this.transport.json(
-        "GET",
-        `/entities/${encodeURIComponent(id)}`,
-        isEntityResource,
-        undefined,
-        undefined,
-        options?.signal
-      );
-    } catch (error) {
-      if (isResourceNotFound(error, "entity") && this.cache.applyPointNotFound(pointRead)) this.notifySnapshot();
-      throw error;
-    }
-    assertExpectedResourceID("entity", id, entity);
-    if (this.cache.applyPointRead(pointRead, entity)) this.notifySnapshot();
-    return entity;
+    return this.readPoint("entity", id, `/entities/${encodeURIComponent(id)}`, isEntityResource, options?.signal);
   }
 
   async readTask(id: string, options?: ReadOptions): Promise<TaskResource> {
@@ -466,24 +449,35 @@ export class SyncEngine {
     if (!options?.fresh && this.canServeFromCache({ filter: "id", resource_type: "object", id }) && cached) {
       return cached;
     }
-    const pointRead = this.cache.beginPointRead("object", id);
-    let object: ObjectDetailResource;
+    return this.readPoint(
+      "object",
+      id,
+      `/objects/${encodeURIComponent(id)}`,
+      isObjectDetailResource,
+      options?.signal,
+      { detail: true }
+    );
+  }
+
+  private async readPoint<TType extends DeletableResourceType, TResource extends ResourceOf<TType>>(
+    type: TType,
+    id: string,
+    path: string,
+    validate: ResponseValidator<TResource>,
+    signal?: AbortSignal,
+    cacheOptions?: { detail?: boolean }
+  ): Promise<TResource> {
+    const pointRead = this.cache.beginPointRead(type, id);
+    let resource: TResource;
     try {
-      object = await this.transport.json(
-        "GET",
-        `/objects/${encodeURIComponent(id)}`,
-        isObjectDetailResource,
-        undefined,
-        undefined,
-        options?.signal
-      );
+      resource = await this.transport.json("GET", path, validate, undefined, undefined, signal);
     } catch (error) {
-      if (isResourceNotFound(error, "object") && this.cache.applyPointNotFound(pointRead)) this.notifySnapshot();
+      if (isResourceNotFound(error, type) && this.cache.applyPointNotFound(pointRead)) this.notifySnapshot();
       throw error;
     }
-    assertExpectedResourceID("object", id, object);
-    if (this.cache.applyPointRead(pointRead, object, { detail: true })) this.notifySnapshot();
-    return object;
+    assertExpectedResourceID(type, id, resource);
+    if (this.cache.applyPointRead(pointRead, resource, cacheOptions)) this.notifySnapshot();
+    return resource;
   }
 
   async writeResource<TType extends ResourceType, TResource extends ResourceOf<TType> = ResourceOf<TType>>(
