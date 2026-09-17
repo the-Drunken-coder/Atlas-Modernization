@@ -449,14 +449,9 @@ export class SyncEngine {
     if (!options?.fresh && this.canServeFromCache({ filter: "id", resource_type: "object", id }) && cached) {
       return cached;
     }
-    return this.readPoint(
-      "object",
-      id,
-      `/objects/${encodeURIComponent(id)}`,
-      isObjectDetailResource,
-      options?.signal,
-      { detail: true }
-    );
+    return this.readPoint("object", id, `/objects/${encodeURIComponent(id)}`, isObjectDetailResource, options?.signal, {
+      detail: true
+    });
   }
 
   private async readPoint<TType extends DeletableResourceType, TResource extends ResourceOf<TType>>(
