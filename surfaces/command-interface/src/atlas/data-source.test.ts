@@ -640,10 +640,15 @@ describe("sdk data source", () => {
   it.each(["lost response", "server error"])("recovers a committed create after %s", async (failure) => {
     const geometry: UiGeometry = { type: "Point", coordinates: [-71, 42] };
     const created = { ...entity("geo-new"), entity_type: "geofeature", alias: "Rally", components: { geometry } };
+    let postAttempts = 0;
     const fetchMock = vi.fn(async (_input: unknown, init?: RequestInit) => {
       if (init?.method === "POST") {
-        if (failure === "lost response") throw new TypeError("Connection lost after commit");
-        return Response.json({ error: "Create failed" }, { status: 502 });
+        postAttempts++;
+        if (postAttempts === 1) {
+          if (failure === "lost response") throw new TypeError("Connection lost after commit");
+          return Response.json({ error: "Create failed" }, { status: 502 });
+        }
+        return Response.json({ error: "Already exists" }, { status: 409 });
       }
       return Response.json(created);
     });
@@ -651,6 +656,10 @@ describe("sdk data source", () => {
     const source = createSdkDataSource(config);
     const snapshots = vi.fn();
     source.watch(snapshots);
+    await expect(source.createGeofeature("geo-new", "Rally", geometry)).rejects.toMatchObject(
+      failure === "lost response" ? { code: "ATLAS_TRANSPORT_ERROR" } : { status: 502 }
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     await expect(source.createGeofeature("geo-new", "Rally", geometry)).resolves.toEqual(created);
     expect(fetchMock).toHaveBeenLastCalledWith(
       "https://core.test/entities/geo-new",
@@ -658,6 +667,21 @@ describe("sdk data source", () => {
     );
     expect(source.snapshot().entities["geo-new"]).toEqual(created);
     expect(snapshots).toHaveBeenCalled();
+  });
+
+  it("does not claim an existing matching row after a first-attempt transport failure", async () => {
+    const geometry: UiGeometry = { type: "Point", coordinates: [-71, 42] };
+    const existing = { ...entity("geo-new"), entity_type: "geofeature", alias: "Rally", components: { geometry } };
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError("Connection lost before commit"))
+      .mockResolvedValueOnce(Response.json(existing));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(createSdkDataSource(config).createGeofeature("geo-new", "Rally", geometry)).rejects.toMatchObject({
+      code: "ATLAS_TRANSPORT_ERROR"
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("does not recover a first-attempt create conflict", async () => {
@@ -685,6 +709,7 @@ describe("sdk data source", () => {
     const fetchMock = vi
       .fn()
       .mockRejectedValueOnce(new TypeError("Lost response"))
+      .mockResolvedValueOnce(Response.json({ error: "Already exists" }, { status: 409 }))
       .mockRejectedValueOnce(new TypeError("Offline"))
       .mockResolvedValueOnce(Response.json({ error: "Already exists" }, { status: 409 }))
       .mockResolvedValueOnce(Response.json(created));
@@ -693,13 +718,15 @@ describe("sdk data source", () => {
     await expect(source.createGeofeature("geo-new", "Rally", geometry)).rejects.toMatchObject({
       code: "ATLAS_TRANSPORT_ERROR"
     });
+    await expect(source.createGeofeature("geo-new", "Rally", geometry)).rejects.toMatchObject({ status: 409 });
     await expect(source.createGeofeature("geo-new", "Rally", geometry)).resolves.toEqual(created);
     const createTokens = fetchMock.mock.calls
       .filter(([, init]) => init?.method === "POST")
       .map(([, init]) => new Headers(init?.headers).get("Atlas-Resource-Instance-Token"));
-    expect(createTokens).toHaveLength(2);
+    expect(createTokens).toHaveLength(3);
     expect(createTokens[0]).toBe(createTokens[1]);
-    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(createTokens[1]).toBe(createTokens[2]);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
   });
 
   it("retains each pending token when a failed draft is edited and reverted", async () => {
@@ -709,7 +736,6 @@ describe("sdk data source", () => {
     const fetchMock = vi
       .fn()
       .mockRejectedValueOnce(new TypeError("Lost response"))
-      .mockRejectedValueOnce(new TypeError("Offline"))
       .mockResolvedValueOnce(Response.json({ error: "Already exists" }, { status: 409 }))
       .mockResolvedValueOnce(Response.json({ error: "Already exists" }, { status: 409 }))
       .mockResolvedValueOnce(Response.json(created))

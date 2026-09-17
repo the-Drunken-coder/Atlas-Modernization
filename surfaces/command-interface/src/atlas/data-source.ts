@@ -209,6 +209,7 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
           pendingGeofeatureTokens.delete(draftKey);
           throw cause;
         }
+        if (!pendingToken) throw cause;
         // A committed POST can lose its response. Recover only the exact draft,
         // including on a same-ID retry; a different entity remains a conflict.
         const existing = await client.entities.get(entityId, { fresh: true }).catch(() => undefined);
