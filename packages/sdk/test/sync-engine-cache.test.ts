@@ -1593,6 +1593,30 @@ describe("AtlasClient sync: cache projection and reads", () => {
     expect(watch.mock.calls[1]).toEqual([recreated, expect.objectContaining({ event: "create" })]);
   });
 
+  it("accepts a write for a same-ID replacement after local delete", () => {
+    const cache = new ResourceCache();
+    const original = entity("asset-write-replacement-after-delete");
+    cache.applyPointRead(cache.beginPointRead("entity", original.entity_id), original);
+    const deletion = cache.beginLocalDelete("entity", original.entity_id);
+    expect(cache.finishLocalDelete(deletion, "deleted")).toEqual(expect.objectContaining({ resource: undefined }));
+    const replacement = {
+      ...original,
+      alias: "replacement",
+      metadata: { ...metadata(1), created_at: "2026-09-17T05:20:00Z" }
+    };
+
+    expect(
+      cache.applyWrite({
+        event: "update",
+        resource_type: "entity",
+        id: replacement.entity_id,
+        version: replacement.metadata.version,
+        resource: replacement
+      })
+    ).toEqual(expect.objectContaining({ resource: replacement }));
+    expect(cache.value("entity", replacement.entity_id)).toEqual(replacement);
+  });
+
   it.each([false, true])("merges delayed Object details only while live (deleted: %s)", async (deleted) => {
     const core = new FakeCore();
     const objectID = "object-create-after-delete";

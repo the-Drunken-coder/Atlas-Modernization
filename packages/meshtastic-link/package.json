@@ -19,6 +19,7 @@
   "scripts": {
     "baseline:update": "tsx scripts/update-baselines.ts",
     "prebuild": "node ../../scripts/apply-dependency-patches.mjs",
+    "prelink": "node ../../scripts/apply-dependency-patches.mjs",
     "build": "npm run generate:check && tsc -p tsconfig.build.json",
     "pretest": "node ../../scripts/apply-dependency-patches.mjs",
     "check": "npm run generate:check && npm run format:check && npm run lint && npm run typecheck && npm test && npm run build",
