@@ -637,13 +637,13 @@ describe("sdk data source", () => {
     });
   });
 
-  it.each(["lost response", "conflict", "server error"])("recovers a committed create after %s", async (failure) => {
+  it.each(["lost response", "server error"])("recovers a committed create after %s", async (failure) => {
     const geometry: UiGeometry = { type: "Point", coordinates: [-71, 42] };
     const created = { ...entity("geo-new"), entity_type: "geofeature", alias: "Rally", components: { geometry } };
     const fetchMock = vi.fn(async (_input: unknown, init?: RequestInit) => {
       if (init?.method === "POST") {
         if (failure === "lost response") throw new TypeError("Connection lost after commit");
-        return Response.json({ error: "Create failed" }, { status: failure === "conflict" ? 409 : 502 });
+        return Response.json({ error: "Create failed" }, { status: 502 });
       }
       return Response.json(created);
     });
@@ -658,6 +658,21 @@ describe("sdk data source", () => {
     );
     expect(source.snapshot().entities["geo-new"]).toEqual(created);
     expect(snapshots).toHaveBeenCalled();
+  });
+
+  it("does not recover a first-attempt create conflict", async () => {
+    const geometry: UiGeometry = { type: "Point", coordinates: [-71, 42] };
+    const fetchMock = vi.fn(async (_input: unknown, init?: RequestInit) =>
+      init?.method === "POST"
+        ? Response.json({ error: "Already exists" }, { status: 409 })
+        : Response.json({ error: "unexpected recovery" }, { status: 500 })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(createSdkDataSource(config).createGeofeature("geo-new", "Rally", geometry)).rejects.toMatchObject({
+      status: 409
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("recovers the same draft on retry after both the POST response and recovery read fail", async () => {
@@ -696,26 +711,36 @@ describe("sdk data source", () => {
       .mockRejectedValueOnce(new TypeError("Lost response"))
       .mockRejectedValueOnce(new TypeError("Offline"))
       .mockResolvedValueOnce(Response.json({ error: "Already exists" }, { status: 409 }))
-      .mockResolvedValueOnce(Response.json(created))
       .mockResolvedValueOnce(Response.json({ error: "Already exists" }, { status: 409 }))
-      .mockResolvedValueOnce(Response.json(created));
+      .mockResolvedValueOnce(Response.json(created))
+      .mockResolvedValueOnce(
+        Response.json(
+          { ...created, metadata: { ...created.metadata, created_at: "2026-06-12T12:00:01Z" } },
+          { status: 201 }
+        )
+      );
     vi.stubGlobal("fetch", fetchMock);
     const source = createSdkDataSource(config);
 
     await expect(source.createGeofeature("geo-new", "Rally", geometry)).rejects.toMatchObject({
       code: "ATLAS_TRANSPORT_ERROR"
     });
-    await expect(source.createGeofeature("geo-new", "Rally", changedGeometry)).rejects.toMatchObject({
-      status: 409
-    });
+    await expect(source.createGeofeature("geo-new", "Rally", changedGeometry)).rejects.toMatchObject({ status: 409 });
     await expect(source.createGeofeature("geo-new", "Rally", geometry)).resolves.toEqual(created);
+
+    await expect(source.createGeofeature("geo-new", "Rally", geometry)).resolves.toMatchObject({
+      entity_id: "geo-new"
+    });
 
     const createTokens = fetchMock.mock.calls
       .filter(([, init]) => init?.method === "POST")
       .map(([, init]) => new Headers(init?.headers).get("Atlas-Resource-Instance-Token"));
-    expect(createTokens).toHaveLength(3);
+    expect(createTokens).toHaveLength(4);
     expect(createTokens[0]).toBe(createTokens[2]);
     expect(createTokens[1]).not.toBe(createTokens[0]);
+    expect(createTokens[3]).not.toBe(createTokens[0]);
+    const recreatedToken = new Headers(fetchMock.mock.calls[5]?.[1]?.headers).get("Atlas-Resource-Instance-Token");
+    expect(recreatedToken).not.toBe(createTokens[0]);
   });
 
   it("does not recover a circle with a different radius", async () => {

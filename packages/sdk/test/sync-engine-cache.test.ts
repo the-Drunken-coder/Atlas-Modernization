@@ -212,6 +212,18 @@ describe("AtlasClient sync: cache projection and reads", () => {
     expect(watch).not.toHaveBeenCalled();
   });
 
+  it("evicts a cached Object when a fresh read confirms it is absent", async () => {
+    const core = new FakeCore();
+    const original = core.upsertObject(object("object-missing-on-read"));
+    const client = createAtlasClient(core);
+
+    await expect(client.objects.get(original.object_id)).resolves.toMatchObject({ object_id: original.object_id });
+    core.deleteObject(original.object_id);
+
+    await expect(client.objects.get(original.object_id, { fresh: true })).rejects.toMatchObject({ status: 404 });
+    expect(client.sync.snapshot().objects[original.object_id]).toBeUndefined();
+  });
+
   it("does not publish another deletion when an absent cached resource is deleted", async () => {
     const core = new FakeCore();
     const original = core.upsertEntity(entity("asset-delete-already-observed"));
@@ -770,6 +782,17 @@ describe("AtlasClient sync: cache projection and reads", () => {
 
     expect(cache.applyPointNotFound(read)).toBe(false);
     expect(cache.value("entity", original.entity_id)).toEqual(recreated);
+  });
+
+  it("fences a delayed uncached point read after an authoritative not-found", () => {
+    const cache = new ResourceCache();
+    const olderRead = cache.beginPointRead("entity", "asset-uncached-not-found");
+    const newerRead = cache.beginPointRead("entity", "asset-uncached-not-found");
+    const original = entity("asset-uncached-not-found");
+
+    expect(cache.applyPointNotFound(newerRead)).toBe(true);
+    expect(cache.applyPointRead(olderRead, original)).toBe(false);
+    expect(cache.value("entity", original.entity_id)).toBeUndefined();
   });
 
   it("keeps an authoritative not-found ahead of delayed same-instance updates", () => {

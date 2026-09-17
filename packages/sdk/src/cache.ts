@@ -182,9 +182,9 @@ export class ResourceCache {
   applyPointNotFound<TType extends DeletableResourceType>(operation: PointReadOperation<TType>): boolean {
     if (operation.hydrationEpoch !== this.hydrationEpoch) return false;
     const currentEntry = this.entries[operation.type].get(operation.id);
-    if (currentEntry !== operation.observedEntry || !currentEntry || currentEntry.deleted) return false;
+    if (currentEntry !== operation.observedEntry || currentEntry?.deleted) return false;
     this.bumpGeneration(operation.type, operation.id);
-    this.markRemoteDelete(operation.type, operation.id, currentEntry.version, false);
+    this.markRemoteDelete(operation.type, operation.id, currentEntry?.version ?? 0, false);
     this.pendingDeletes.add(resourceCacheKey(operation.type, operation.id));
     return true;
   }

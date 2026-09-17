@@ -181,7 +181,8 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
 
     async createGeofeature(entityId, name, geometry) {
       const draftKey = JSON.stringify([entityId, name, geometry]);
-      const instanceToken = pendingGeofeatureTokens.get(draftKey) || crypto.randomUUID();
+      const pendingToken = pendingGeofeatureTokens.get(draftKey);
+      const instanceToken = pendingToken || crypto.randomUUID();
       pendingGeofeatureTokens.set(draftKey, instanceToken);
       try {
         const created = await client.entities.create(
@@ -203,7 +204,7 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
       } catch (cause) {
         if (
           !isAtlasTransportError(cause) &&
-          !(isAtlasAPIError(cause) && (cause.status === 409 || cause.status >= 500))
+          !(isAtlasAPIError(cause) && (cause.status >= 500 || (cause.status === 409 && pendingToken)))
         ) {
           pendingGeofeatureTokens.delete(draftKey);
           throw cause;
@@ -218,7 +219,7 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
           sameGeometry(existing.components.geometry, geometry)
         ) {
           const retained = { instanceId: existing.metadata.created_at, token: instanceToken };
-          pendingGeofeatureTokens.delete(entityId);
+          pendingGeofeatureTokens.delete(draftKey);
           retainGeofeatureToken(config.atlasBaseUrl, entityId, retained);
           geofeatureTokens.set(entityId, retained);
           return existing;

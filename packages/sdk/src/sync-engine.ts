@@ -467,14 +467,20 @@ export class SyncEngine {
       return cached;
     }
     const pointRead = this.cache.beginPointRead("object", id);
-    const object = await this.transport.json(
-      "GET",
-      `/objects/${encodeURIComponent(id)}`,
-      isObjectDetailResource,
-      undefined,
-      undefined,
-      options?.signal
-    );
+    let object: ObjectDetailResource;
+    try {
+      object = await this.transport.json(
+        "GET",
+        `/objects/${encodeURIComponent(id)}`,
+        isObjectDetailResource,
+        undefined,
+        undefined,
+        options?.signal
+      );
+    } catch (error) {
+      if (isResourceNotFound(error, "object") && this.cache.applyPointNotFound(pointRead)) this.notifySnapshot();
+      throw error;
+    }
     assertExpectedResourceID("object", id, object);
     if (this.cache.applyPointRead(pointRead, object, { detail: true })) this.notifySnapshot();
     return object;
