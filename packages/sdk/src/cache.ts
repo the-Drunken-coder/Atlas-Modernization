@@ -184,7 +184,7 @@ export class ResourceCache {
     const currentEntry = this.entries[operation.type].get(operation.id);
     if (currentEntry !== operation.observedEntry || !currentEntry || currentEntry.deleted) return false;
     this.bumpGeneration(operation.type, operation.id);
-    this.markRemoteDelete(operation.type, operation.id, currentEntry.version, false);
+    this.markRemoteDelete(operation.type, operation.id, currentEntry.version);
     this.pendingDeletes.add(resourceCacheKey(operation.type, operation.id));
     return true;
   }
@@ -208,6 +208,9 @@ export class ResourceCache {
     if (event.event === "delete") {
       this.pendingDeletes.delete(key);
       this.markRemoteDelete(event.resource_type, event.id, event.version);
+      for (const operation of this.localDeleteOperations) {
+        if (operation.type === event.resource_type && operation.id === event.id) operation.remoteDeleteSeen = true;
+      }
       return this.locallyNotifiedDeletes.delete(key) ? undefined : { event, resource: undefined };
     }
     if (this.isSuppressedByPendingDelete(event)) return undefined;
@@ -299,13 +302,8 @@ export class ResourceCache {
     return this.generations.get(resourceCacheKey(type, id)) ?? 0;
   }
 
-  private markRemoteDelete(type: DeletableResourceType, id: string, version: number, notifyLocalDeletes = true): void {
+  private markRemoteDelete(type: DeletableResourceType, id: string, version: number): void {
     this.bumpGeneration(type, id);
-    if (notifyLocalDeletes) {
-      for (const operation of this.localDeleteOperations) {
-        if (operation.type === type && operation.id === id) operation.remoteDeleteSeen = true;
-      }
-    }
     this.entries[type].set(id, { version, deleted: true });
     this.removeFromSnapshot(type, id);
   }
@@ -333,10 +331,11 @@ export class ResourceCache {
     const deletesCurrentEntry = operation.observedEntry?.deleted === true && outcome === "deleted";
     if (operation.observedEntry?.deleted && !deletesCurrentEntry) return undefined;
     if (
-      !deletesCurrentEntry &&
-      currentEntry !== operation.observedEntry &&
-      (operation.remoteDeleteSeen ||
-        (!currentEntry?.deleted && !sameResourceInstance(operation.observedEntry?.value, currentEntry?.value)))
+      operation.remoteDeleteSeen ||
+      (!deletesCurrentEntry &&
+        currentEntry !== operation.observedEntry &&
+        !currentEntry?.deleted &&
+        !sameResourceInstance(operation.observedEntry?.value, currentEntry?.value))
     ) {
       return undefined;
     }
