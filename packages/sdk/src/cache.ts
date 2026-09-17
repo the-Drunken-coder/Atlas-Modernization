@@ -371,11 +371,7 @@ export class ResourceCache {
     this.localDeleteOperations.delete(operation);
   }
 
-  private noteLocalDeleteUpsert(
-    type: DeletableResourceType,
-    id: string,
-    event: ResourceUpsertEvent["event"]
-  ): void {
+  private noteLocalDeleteUpsert(type: DeletableResourceType, id: string, event: ResourceUpsertEvent["event"]): void {
     const currentEntry = this.entries[type].get(id);
     for (const operation of this.localDeleteOperations) {
       if (operation.type !== type || operation.id !== id) continue;
