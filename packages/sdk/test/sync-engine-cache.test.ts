@@ -890,6 +890,23 @@ describe("AtlasClient sync: cache projection and reads", () => {
     expect(cache.value("entity", original.entity_id)).toEqual(recreated);
   });
 
+  it("does not let an older not-found result fence a later point-read recreation", () => {
+    const cache = new ResourceCache();
+    const original = entity("asset-read-ordering");
+    cache.applyPointRead(cache.beginPointRead("entity", original.entity_id), original);
+    const olderRead = cache.beginPointRead("entity", original.entity_id);
+    const newerRead = cache.beginPointRead("entity", original.entity_id);
+    const recreated = {
+      ...original,
+      alias: "replacement",
+      metadata: { ...metadata(2), created_at: "2026-09-16T21:00:00Z" }
+    };
+
+    expect(cache.applyPointNotFound(olderRead)).toBe(false);
+    expect(cache.applyPointRead(newerRead, recreated)).toBe(true);
+    expect(cache.value("entity", original.entity_id)).toEqual(recreated);
+  });
+
   it("fences a delayed uncached point read after an authoritative not-found", () => {
     const cache = new ResourceCache();
     const olderRead = cache.beginPointRead("entity", "asset-uncached-not-found");

@@ -403,7 +403,7 @@ function isResourceInstanceTokenReuse(error: { status: number; errorCode?: strin
   return (
     error.status === 400 &&
     error.errorCode === "VALIDATION_ERROR" &&
-    error.message.includes("resource instance token has already been used")
+    error.message.includes("resource instance token has already been used for this entity instance")
   );
 }
 

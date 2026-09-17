@@ -32,6 +32,7 @@ type PointReadOperation<TType extends ResourceType> = {
   readonly id: string;
   readonly generation: number;
   readonly hydrationEpoch: number;
+  readonly sequence: number;
   readonly observedEntry: CacheEntry<ResourceOf<TType>> | undefined;
 };
 
@@ -131,6 +132,7 @@ export class ResourceCache {
   private readonly localDeleteOperations = new Set<LocalDeleteOperation>();
   // Point reads capture this generation before the request and only project the response if it is still current.
   private readonly generations = new Map<string, number>();
+  private readonly pointReadSequences = new Map<string, number>();
   private hydrationEpoch = 0;
   private readonly snapshotRecords: SnapshotRecords = {
     entity: new SnapshotRecord<EntityResource>(),
@@ -161,11 +163,15 @@ export class ResourceCache {
   }
 
   beginPointRead<TType extends ResourceType>(type: TType, id: string): PointReadOperation<TType> {
+    const key = resourceCacheKey(type, id);
+    const sequence = (this.pointReadSequences.get(key) ?? 0) + 1;
+    this.pointReadSequences.set(key, sequence);
     return {
       type,
       id,
       generation: this.generation(type, id),
       hydrationEpoch: this.hydrationEpoch,
+      sequence,
       observedEntry: this.entries[type].get(id)
     };
   }
@@ -184,6 +190,8 @@ export class ResourceCache {
 
   applyPointNotFound<TType extends DeletableResourceType>(operation: PointReadOperation<TType>): boolean {
     if (operation.hydrationEpoch !== this.hydrationEpoch) return false;
+    const latestSequence = this.pointReadSequences.get(resourceCacheKey(operation.type, operation.id)) ?? 0;
+    if (operation.sequence < latestSequence) return false;
     const currentEntry = this.entries[operation.type].get(operation.id);
     if (currentEntry !== operation.observedEntry || currentEntry?.deleted) return false;
     this.bumpGeneration(operation.type, operation.id);

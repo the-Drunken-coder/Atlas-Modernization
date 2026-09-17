@@ -162,6 +162,26 @@ func TestResourceInstanceTokenPreconditionsForEntityAndObject(t *testing.T) {
 			if strings.Contains(string(createdBody), token) || strings.Contains(string(createdBody), "instance_token") {
 				t.Fatalf("token-bound %s response exposed the instance token: %s", resource.name, createdBody)
 			}
+			if resource.name == "entity" {
+				resp, err = requestJSONWithHeaders(ctx, client, http.MethodPost, resource.createPath, resource.body, map[string]string{
+					"Atlas-Resource-Instance-Token": token,
+				})
+				if err != nil {
+					t.Fatalf("retry current token-bound entity create: %v", err)
+				}
+				requireHTTPStatus(t, resp, http.StatusBadRequest, "retry current token-bound entity create")
+				var retryError struct {
+					Message string `json:"message"`
+				}
+				if err := json.NewDecoder(resp.Body).Decode(&retryError); err != nil {
+					resp.Body.Close()
+					t.Fatalf("decode current token-bound entity retry: %v", err)
+				}
+				resp.Body.Close()
+				if retryError.Message != "resource instance token has already been used for this entity instance" {
+					t.Fatalf("current token-bound entity retry message = %q", retryError.Message)
+				}
+			}
 
 			resp, err = requestJSONWithHeaders(ctx, client, http.MethodDelete, resource.resourcePath, nil, map[string]string{
 				"Atlas-Resource-Instance-Token": token,

@@ -649,7 +649,10 @@ describe("sdk data source", () => {
           return Response.json({ error: "Create failed" }, { status: 502 });
         }
         return Response.json(
-          { error_code: "VALIDATION_ERROR", message: "resource instance token has already been used" },
+          {
+            error_code: "VALIDATION_ERROR",
+            message: "resource instance token has already been used for this entity instance"
+          },
           { status: 400 }
         );
       }
@@ -702,7 +705,10 @@ describe("sdk data source", () => {
       .mockRejectedValueOnce(new TypeError("Connection lost after commit"))
       .mockResolvedValueOnce(
         Response.json(
-          { error_code: "VALIDATION_ERROR", message: "resource instance token has already been used" },
+          {
+            error_code: "VALIDATION_ERROR",
+            message: "resource instance token has already been used for this entity instance"
+          },
           { status: 400 }
         )
       )
@@ -762,14 +768,20 @@ describe("sdk data source", () => {
       .mockRejectedValueOnce(new TypeError("Lost response"))
       .mockResolvedValueOnce(
         Response.json(
-          { error_code: "VALIDATION_ERROR", message: "resource instance token has already been used" },
+          {
+            error_code: "VALIDATION_ERROR",
+            message: "resource instance token has already been used for this entity instance"
+          },
           { status: 400 }
         )
       )
       .mockRejectedValueOnce(new TypeError("Offline"))
       .mockResolvedValueOnce(
         Response.json(
-          { error_code: "VALIDATION_ERROR", message: "resource instance token has already been used" },
+          {
+            error_code: "VALIDATION_ERROR",
+            message: "resource instance token has already been used for this entity instance"
+          },
           { status: 400 }
         )
       )
@@ -801,7 +813,10 @@ describe("sdk data source", () => {
       .mockRejectedValueOnce(new TypeError("Lost response"))
       .mockResolvedValueOnce(
         Response.json(
-          { error_code: "VALIDATION_ERROR", message: "resource instance token has already been used" },
+          {
+            error_code: "VALIDATION_ERROR",
+            message: "resource instance token has already been used for this entity instance"
+          },
           { status: 400 }
         )
       )
@@ -826,6 +841,44 @@ describe("sdk data source", () => {
     ]);
   });
 
+  it("does not attach a spent token to a recreated matching entity", async () => {
+    vi.spyOn(crypto, "randomUUID")
+      .mockReturnValueOnce("00000000-0000-4000-8000-000000000012")
+      .mockReturnValueOnce("00000000-0000-4000-8000-000000000013");
+    const geometry: UiGeometry = { type: "Point", coordinates: [-71, 42] };
+    const recreated = { ...entity("geo-new"), entity_type: "geofeature", alias: "Rally", components: { geometry } };
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError("Lost response"))
+      .mockResolvedValueOnce(
+        Response.json(
+          { error_code: "VALIDATION_ERROR", message: "resource instance token has already been used" },
+          { status: 400 }
+        )
+      )
+      .mockResolvedValueOnce(Response.json(recreated, { status: 201 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const source = createSdkDataSource(config);
+
+    await expect(source.createGeofeature("geo-new", "Rally", geometry)).rejects.toMatchObject({
+      code: "ATLAS_TRANSPORT_ERROR"
+    });
+    await expect(source.createGeofeature("geo-new", "Rally", geometry)).rejects.toMatchObject({ status: 400 });
+    await expect(source.createGeofeature("geo-new", "Rally", geometry)).resolves.toEqual(recreated);
+
+    const createCalls = fetchMock.mock.calls.filter(([, init]) => init?.method === "POST");
+    expect(createCalls).toHaveLength(3);
+    expect(new Headers(createCalls[0]?.[1]?.headers).get("Atlas-Resource-Instance-Token")).toBe(
+      "00000000-0000-4000-8000-000000000012"
+    );
+    expect(new Headers(createCalls[1]?.[1]?.headers).get("Atlas-Resource-Instance-Token")).toBe(
+      "00000000-0000-4000-8000-000000000012"
+    );
+    expect(new Headers(createCalls[2]?.[1]?.headers).get("Atlas-Resource-Instance-Token")).toBe(
+      "00000000-0000-4000-8000-000000000013"
+    );
+  });
+
   it("retains each pending token when a failed draft is edited and reverted", async () => {
     const geometry: UiGeometry = { type: "Point", coordinates: [-71, 42] };
     const changedGeometry: UiGeometry = { type: "Point", coordinates: [-70, 42] };
@@ -836,7 +889,10 @@ describe("sdk data source", () => {
       .mockResolvedValueOnce(Response.json({ error: "Already exists" }, { status: 409 }))
       .mockResolvedValueOnce(
         Response.json(
-          { error_code: "VALIDATION_ERROR", message: "resource instance token has already been used" },
+          {
+            error_code: "VALIDATION_ERROR",
+            message: "resource instance token has already been used for this entity instance"
+          },
           { status: 400 }
         )
       )
