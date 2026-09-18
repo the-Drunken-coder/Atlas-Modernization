@@ -8,6 +8,9 @@ interface GitHubClientDependencies {
 }
 
 class TransientGitHubError extends Error {}
+class GitHubResponseLimitError extends Error {}
+
+export const MAX_GITHUB_RESPONSE_BYTES = 5 * 1024 * 1024;
 
 const defaultDependencies: GitHubClientDependencies = {
   fetch: async (input, init) => fetch(input, init),
@@ -114,8 +117,17 @@ export class GitHubClient {
         `GitHub API transport failure for ${path}: ${error instanceof Error ? error.message : String(error)}`
       );
     }
+    let body: string;
+    try {
+      body = await readBoundedResponse(response);
+    } catch (error) {
+      if (error instanceof GitHubResponseLimitError) throw error;
+      throw new TransientGitHubError(
+        `GitHub API response failure for ${path}: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
     if (!response.ok) {
-      const detail = await response.text();
+      const detail = body;
       const message = `GitHub API ${response.status} for ${path}: ${detail}`;
       if (
         [408, 429, 500, 502, 503, 504].includes(response.status) ||
@@ -126,8 +138,41 @@ export class GitHubClient {
       }
       throw new Error(message);
     }
-    return await response.json();
+    try {
+      const value: unknown = JSON.parse(body);
+      return value;
+    } catch {
+      throw new Error(`GitHub API returned invalid JSON for ${path}`);
+    }
   }
+}
+
+async function readBoundedResponse(response: Response): Promise<string> {
+  const declaredLength = response.headers.get("content-length");
+  if (declaredLength !== null) {
+    const bytes = Number(declaredLength);
+    if (!Number.isSafeInteger(bytes) || bytes < 0) {
+      throw new GitHubResponseLimitError("GitHub API response has an invalid Content-Length");
+    }
+    if (bytes > MAX_GITHUB_RESPONSE_BYTES) {
+      throw new GitHubResponseLimitError("GitHub API response exceeds the size limit");
+    }
+  }
+  const reader = response.body?.getReader();
+  if (!reader) return "";
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  for (;;) {
+    const chunk = await reader.read();
+    if (chunk.done) break;
+    totalBytes += chunk.value.byteLength;
+    if (totalBytes > MAX_GITHUB_RESPONSE_BYTES) {
+      await reader.cancel().catch(() => undefined);
+      throw new GitHubResponseLimitError("GitHub API response exceeds the size limit");
+    }
+    chunks.push(chunk.value);
+  }
+  return Buffer.concat(chunks, totalBytes).toString("utf8");
 }
 
 function parseWorkflowRuns(value: unknown): WorkflowRun[] {
