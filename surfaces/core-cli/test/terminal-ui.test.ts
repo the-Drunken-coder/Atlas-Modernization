@@ -1,6 +1,6 @@
 import { PassThrough } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
-import { CommandCancelledError } from "../src/operation-errors.js";
+import { CommandCancelledError, PluginOperationFailure } from "../src/operation-errors.js";
 import type {
   AtlasCoreOperator,
   DeploymentSnapshot,
@@ -3089,7 +3089,11 @@ describe("Atlas Core terminal UI", () => {
       });
       reportActivity?.({ level: "working", message: "Restoring previous deployment", stage: "rollback" });
       reportActivity?.({ level: "success", message: "Previous deployment restored", stage: "rollback" });
-      throw new Error("health wait timed out");
+      throw new PluginOperationFailure({
+        outcome: "restored",
+        operationError: new Error("health wait timed out"),
+        pluginId: plugin.pluginId
+      });
     });
     const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
 
@@ -3100,8 +3104,149 @@ describe("Atlas Core terminal UI", () => {
     terminal.write("\r");
     await terminal.waitFor("Previous deployment restored");
     await terminal.waitFor("Enable failed: health wait timed out");
+    await terminal.waitFor("The previous Plugin state was restored.");
+    expect(terminal.text.replace(/\s+/gu, " ")).toContain("does not assert that the Plugin is healthy or running");
     await terminal.waitFor("Enter return to Plugins");
     await nextInputTurn();
+    terminal.write("\r");
+    await vi.waitFor(() => expect(deployment.pluginStatuses).toHaveBeenCalledTimes(2));
+    terminal.write("q");
+    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(3));
+    terminal.write("q");
+    await menu;
+  });
+
+  it("passes a typed Plugin failure through the cancellation handler with every diagnostic", async () => {
+    const terminal = new TestTerminal(100, true, 30);
+    const deployment = operator();
+    const plugin = {
+      pluginId: "building_scan",
+      displayName: "Building Scan",
+      lifecycle: "query_only" as const,
+      enabled: false,
+      packaged: true
+    };
+    let finishEnable: (() => void) | undefined;
+    deployment.pluginStatuses.mockResolvedValue([plugin]);
+    deployment.pluginEnable.mockImplementation(
+      async () =>
+        await new Promise<PluginOperationOutcome>((_resolve, reject) => {
+          finishEnable = () =>
+            reject(
+              new PluginOperationFailure({
+                outcome: "recovery-incomplete",
+                operationError: new Error("enable was interrupted during the health check"),
+                recoveryError: new Error("the previous runtime could not be verified"),
+                cleanupErrors: [new Error("the local mutation claim remains retained")],
+                pluginId: plugin.pluginId,
+                cancelled: true
+              })
+            );
+        })
+    );
+    deployment.cancelPending.mockImplementation(() => finishEnable?.());
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("Manage Plugins");
+    terminal.write("\u001b[B".repeat(4));
+    terminal.write("\r");
+    await terminal.waitFor("PLUGIN CATALOG");
+    terminal.write("\r");
+    await terminal.waitFor("Enable requested");
+    terminal.write("\u001b");
+
+    await terminal.waitFor("Enable failed: enable was interrupted during the health check");
+    await terminal.waitFor("Recovery failed:");
+    await terminal.waitFor("Plugin recovery is incomplete.");
+    await terminal.waitFor("Run atlas-core recover status");
+    expect(terminal.text.replace(/\s+/gu, " ")).toContain(
+      "Recovery failed: the previous runtime could not be verified"
+    );
+    expect(terminal.text.replace(/\s+/gu, " ")).toContain("Cleanup failed: the local mutation claim remains retained");
+    expect(terminal.text).not.toContain("Enable cancelled. The previous deployment is preserved.");
+    expect(deployment.resumeAfterCancellation).toHaveBeenCalledOnce();
+    terminal.write("\r");
+    await vi.waitFor(() => expect(deployment.pluginStatuses).toHaveBeenCalledTimes(2));
+    terminal.write("q");
+    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(3));
+    terminal.write("q");
+    await menu;
+  });
+
+  it("uses the structured outcome instead of diagnostic wording for Plugin guidance", async () => {
+    const terminal = new TestTerminal(100, true, 30);
+    const deployment = operator();
+    const plugin = {
+      pluginId: "building_scan",
+      displayName: "Building Scan",
+      lifecycle: "query_only" as const,
+      enabled: false,
+      packaged: true
+    };
+    deployment.pluginStatuses.mockResolvedValue([plugin]);
+    deployment.pluginEnable.mockRejectedValue(
+      new PluginOperationFailure({
+        outcome: "rejected",
+        operationError: new Error("recovery remains pending in a catalog description"),
+        pluginId: plugin.pluginId
+      })
+    );
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("Manage Plugins");
+    terminal.write("\u001b[B".repeat(4));
+    terminal.write("\r");
+    await terminal.waitFor("PLUGIN CATALOG");
+    terminal.write("\r");
+
+    await terminal.waitFor("The requested Plugin change did not");
+    await terminal.waitFor("Correct the rejected request");
+    const normalizedText = terminal.text.replace(/\s+/gu, " ");
+    expect(normalizedText).toContain("The requested Plugin change did not occur.");
+    expect(normalizedText).toContain("Correct the rejected request, then retry the Plugin operation.");
+    expect(terminal.text).not.toContain("resolve the reported recovery or cleanup problem");
+    terminal.write("\r");
+    await vi.waitFor(() => expect(deployment.pluginStatuses).toHaveBeenCalledTimes(2));
+    terminal.write("q");
+    await vi.waitFor(() => expect(deployment.snapshot).toHaveBeenCalledTimes(3));
+    terminal.write("q");
+    await menu;
+  });
+
+  it("keeps committed Plugin cleanup failure visible with cleanup diagnostics", async () => {
+    const terminal = new TestTerminal(100, true, 30);
+    const deployment = operator();
+    const plugin = {
+      pluginId: "building_scan",
+      displayName: "Building Scan",
+      lifecycle: "query_only" as const,
+      enabled: false,
+      packaged: true
+    };
+    deployment.pluginStatuses.mockResolvedValue([plugin]);
+    deployment.pluginEnable.mockRejectedValue(
+      new PluginOperationFailure({
+        outcome: "committed-cleanup-incomplete",
+        operationError: new Error("Building Scan was selected before lock release"),
+        cleanupErrors: [new Error("Docker mutation lock could not be released")],
+        pluginId: plugin.pluginId
+      })
+    );
+    const menu = createInteractiveCLI(terminal.input, terminal.output).runMenu(deployment);
+
+    await terminal.waitFor("Manage Plugins");
+    terminal.write("\u001b[B".repeat(4));
+    terminal.write("\r");
+    await terminal.waitFor("PLUGIN CATALOG");
+    terminal.write("\r");
+
+    await terminal.waitFor("The Plugin change committed, but");
+    await terminal.waitFor("Cleanup failed:");
+    await terminal.waitFor("Run atlas-core recover status");
+    expect(terminal.text.replace(/\s+/gu, " ")).toContain(
+      "The Plugin change committed, but cleanup is incomplete. Cleanup failed: Docker mutation lock could not be released"
+    );
+    expect(terminal.text).not.toContain("previous Plugin state was restored");
     terminal.write("\r");
     await vi.waitFor(() => expect(deployment.pluginStatuses).toHaveBeenCalledTimes(2));
     terminal.write("q");

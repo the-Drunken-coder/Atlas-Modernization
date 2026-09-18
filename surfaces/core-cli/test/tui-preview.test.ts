@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { PluginOperationFailure } from "../src/operation-errors.js";
 import type { LifecycleOperationProgress, PluginActivity } from "../src/operator.js";
 import { createPreviewOperator } from "../src/tui-preview-operator.js";
 
@@ -104,9 +105,13 @@ describe("Atlas Core TUI preview operator", () => {
 
   it("reports invalid fixture Plugin operations", async () => {
     const uninitialized = fixture("not-initialized").operator;
-    await expect(uninitialized.pluginEnable("demo_plugin")).rejects.toThrow(
-      "Atlas Core is not initialized. Run atlas-core init first."
-    );
+    const enableFailure = await uninitialized.pluginEnable("demo_plugin").catch((error: unknown) => error);
+    expect(enableFailure).toBeInstanceOf(PluginOperationFailure);
+    expect(enableFailure).toMatchObject({
+      outcome: "rejected",
+      operationError: { message: "Atlas Core is not initialized. Run atlas-core init first." },
+      pluginId: "demo_plugin"
+    });
     await expect(uninitialized.pluginLogs("demo_plugin", false)).rejects.toThrow(
       "Atlas Core is not initialized. Run atlas-core init first."
     );
