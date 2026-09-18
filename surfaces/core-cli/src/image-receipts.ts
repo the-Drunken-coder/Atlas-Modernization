@@ -141,13 +141,10 @@ export async function verifyContainerImage(
   }
 }
 
-/** Docker manifest can reserialize OCI JSON before checking its digest. Verify raw bytes instead when that fails. */
+/** Docker manifest can reserialize OCI JSON or fail against a daemon-local registry. Verify raw bytes as fallback. */
 async function readDistributionManifest(run: DockerImageCommand, image: string): Promise<Record<string, unknown>> {
   const result = await run(["manifest", "inspect", image]);
   if (result.status === 0) return parseObject(result.stdout);
-  if (!result.stderr.includes("manifest verification failed for digest")) {
-    throw new Error(`Docker manifest failed: ${result.stderr.trim() || "no diagnostic"}`);
-  }
   const raw = await checked(run, ["buildx", "imagetools", "inspect", "--raw", image]);
   const digest = `sha256:${createHash("sha256").update(raw).digest("hex")}`;
   if (digest !== imageDigest(image)) throw new Error(`Raw distribution manifest does not match ${image}.`);

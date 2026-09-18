@@ -49,15 +49,19 @@ describe("Docker image receipts", () => {
     ]);
   });
 
-  it.each([false, true])(
-    "verifies raw OCI bytes after Docker manifest rejects their serialization, tampered=%s",
-    async (tampered) => {
+  it.each([
+    { stderr: "manifest verification failed for digest", tampered: false },
+    { stderr: "no such manifest", tampered: false },
+    { stderr: "manifest verification failed for digest", tampered: true }
+  ])(
+    "verifies raw OCI bytes after Docker manifest inspection fails, stderr=$stderr, tampered=$tampered",
+    async ({ stderr, tampered }) => {
       const raw = JSON.stringify({ schemaVersion: 2, config: { digest: localImageID } });
       const reference = `postgres@sha256:${createHash("sha256").update(raw).digest("hex")}`;
       const calls: string[][] = [];
       const run: DockerImageCommand = async (args) => {
         calls.push(args);
-        if (args[0] === "manifest") return { status: 1, stdout: "", stderr: "manifest verification failed for digest" };
+        if (args[0] === "manifest") return { status: 1, stdout: "", stderr };
         if (args[0] === "buildx") return { status: 0, stdout: tampered ? `${raw} ` : raw, stderr: "" };
         if (args[0] === "image")
           return {
