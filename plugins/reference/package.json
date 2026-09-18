@@ -13,8 +13,8 @@
     "@the-drunken-coder/atlas-plugin-runtime": "0.1.0"
   },
   "devDependencies": {
-    "@types/node": "26.5.0",
+    "@types/node": "26.5.1",
     "typescript": "^7.0.2",
-    "vitest": "^5.0.0"
+    "vitest": "^5.0.1"
   }
 }

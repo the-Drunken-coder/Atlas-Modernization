@@ -23,26 +23,26 @@
     "@blueprintjs/core": "^6.18.0",
     "@blueprintjs/icons": "^6.13.0",
     "@the-drunken-coder/atlas-sdk": "0.1.0",
-    "maplibre-gl": "^6.8.0",
+    "maplibre-gl": "^6.9.1",
     "milsymbol": "3.0.4",
-    "react": "^19.2.8",
-    "react-dom": "^19.2.8",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
     "react-router": "^8.3.1",
     "sidc-kit": "^0.3.1"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.12",
+    "@biomejs/biome": "2.5.13",
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.3",
     "@testing-library/user-event": "^14.6.7",
-    "@types/node": "^26.5.0",
-    "@types/react": "^19.2.18",
-    "@types/react-dom": "^19.2.7",
+    "@types/node": "^26.5.1",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.1",
     "jsdom": "^30.0.1",
     "typescript": "^7.0.2",
-    "vite": "^8.2.2",
-    "vitest": "^5.0.0",
-    "wrangler": "^4.131.0"
+    "vite": "^8.3.0",
+    "vitest": "^5.0.1",
+    "wrangler": "^4.131.2"
   }
 }
