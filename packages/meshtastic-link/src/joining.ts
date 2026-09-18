@@ -1,4 +1,5 @@
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { BinaryReader, concatBytes, encodeUnsignedVarint } from "./binary-io.js";
 import { decodeJSON, encodeCanonicalJSON } from "./canonical-json.js";
 import type { Clock, TimerHandle } from "./clock.js";
 import { LINK_PROTOCOL_REVISION, RADIO_CONTRACT_REVISION } from "./contract.js";
@@ -671,16 +672,16 @@ function encodeCompactJoinAcceptance(message: JoinAcceptance): Uint8Array {
     Uint8Array.of(COMPACT_ACCEPTANCE_MARKER, COMPACT_ACCEPTANCE_VERSION, COMPACT_ACCEPTANCE_TYPE),
     lengthPrefixedUTF8(message.join_attempt_id),
     lengthPrefixedUTF8(message.gateway_node_id),
-    encodeUnsignedVarint(message.source_generation),
+    encodeUnsignedVarint(message.source_generation, "compact join value must be a safe nonnegative integer"),
     revision,
-    encodeUnsignedVarint(message.channel_index),
+    encodeUnsignedVarint(message.channel_index, "compact join value must be a safe nonnegative integer"),
     lengthPrefixedUTF8(message.channel_name),
     lengthPrefixedBytes(channelKey)
   ]);
 }
 
 function decodeCompactJoinAcceptance(payload: Uint8Array): JoinAcceptance | undefined {
-  const reader = new CompactAcceptanceReader(payload);
+  const reader = new BinaryReader(payload);
   if (
     reader.readByte() !== COMPACT_ACCEPTANCE_MARKER ||
     reader.readByte() !== COMPACT_ACCEPTANCE_VERSION ||
@@ -753,82 +754,10 @@ function lengthPrefixedUTF8(value: string): Uint8Array {
 }
 
 function lengthPrefixedBytes(value: Uint8Array): Uint8Array {
-  return concatBytes([encodeUnsignedVarint(value.byteLength), value]);
-}
-
-function encodeUnsignedVarint(value: number): Uint8Array {
-  if (!Number.isSafeInteger(value) || value < 0)
-    throw new RangeError("compact join value must be a safe nonnegative integer");
-  const bytes: number[] = [];
-  let remaining = BigInt(value);
-  do {
-    let byte = Number(remaining & 0x7fn);
-    remaining >>= 7n;
-    if (remaining !== 0n) byte |= 0x80;
-    bytes.push(byte);
-  } while (remaining !== 0n);
-  return Uint8Array.from(bytes);
-}
-
-function concatBytes(parts: readonly Uint8Array[]): Uint8Array {
-  const total = parts.reduce((sum, part) => sum + part.byteLength, 0);
-  const result = new Uint8Array(total);
-  let offset = 0;
-  for (const part of parts) {
-    result.set(part, offset);
-    offset += part.byteLength;
-  }
-  return result;
-}
-
-class CompactAcceptanceReader {
-  private offset = 0;
-
-  constructor(private readonly payload: Uint8Array) {}
-
-  readByte(): number | undefined {
-    if (this.offset >= this.payload.byteLength) return undefined;
-    return this.payload[this.offset++];
-  }
-
-  readUnsignedVarint(): number | undefined {
-    let value = 0n;
-    for (let index = 0; index < 8; index++) {
-      const byte = this.readByte();
-      if (byte === undefined) return undefined;
-      value |= BigInt(byte & 0x7f) << BigInt(index * 7);
-      if ((byte & 0x80) === 0) {
-        return value <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(value) : undefined;
-      }
-    }
-    return undefined;
-  }
-
-  readBytes(length: number): Uint8Array | undefined {
-    if (!Number.isSafeInteger(length) || length < 0 || length > this.payload.byteLength - this.offset) return undefined;
-    const result = this.payload.slice(this.offset, this.offset + length);
-    this.offset += length;
-    return result;
-  }
-
-  readLengthPrefixedBytes(): Uint8Array | undefined {
-    const length = this.readUnsignedVarint();
-    return length === undefined ? undefined : this.readBytes(length);
-  }
-
-  readUTF8(): string | undefined {
-    const bytes = this.readLengthPrefixedBytes();
-    if (bytes === undefined) return undefined;
-    try {
-      return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-    } catch {
-      return undefined;
-    }
-  }
-
-  done(): boolean {
-    return this.offset === this.payload.byteLength;
-  }
+  return concatBytes([
+    encodeUnsignedVarint(value.byteLength, "compact join value must be a safe nonnegative integer"),
+    value
+  ]);
 }
 
 function compactJoinMessage(message: DiscoveryBeacon | JoinChallenge | JoinResponse): Record<string, string | number> {

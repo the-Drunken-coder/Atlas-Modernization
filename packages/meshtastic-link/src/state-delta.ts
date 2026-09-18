@@ -1,3 +1,4 @@
+import { BinaryReader, concatBytes, encodeUnsignedVarint } from "./binary-io.js";
 import { decodeJSON, encodeCanonicalJSON } from "./canonical-json.js";
 import { deserializeLinkMessage, isLinkMessage, resourceID, serializeLinkMessage } from "./contract.js";
 import { MAX_LINK_MESSAGE_BYTES } from "./frame.js";
@@ -226,10 +227,10 @@ function encodeDelta(
   baselineSourceSequence: number,
   patch: StateDeltaPatch
 ): Uint8Array {
-  return concat([
+  return concatBytes([
     Uint8Array.of(STATE_DELTA_MARKER, VERSION, DELTA_KIND, resourceCode(resourceType)),
     lengthPrefixedUTF8(resourceIDValue),
-    encodeUnsignedVarint(baselineSourceSequence),
+    encodeUnsignedVarint(baselineSourceSequence, "state delta integer is invalid"),
     encodeCanonicalJSON(patch)
   ]);
 }
@@ -298,75 +299,7 @@ function scopeKey(
 function lengthPrefixedUTF8(value: string): Uint8Array {
   const bytes = new TextEncoder().encode(value);
   if (new TextDecoder("utf-8", { fatal: true }).decode(bytes) !== value) throw new TypeError("invalid UTF-8 string");
-  return concat([encodeUnsignedVarint(bytes.byteLength), bytes]);
-}
-
-function encodeUnsignedVarint(value: number): Uint8Array {
-  if (!Number.isSafeInteger(value) || value < 0) throw new RangeError("state delta integer is invalid");
-  const bytes: number[] = [];
-  let remaining = BigInt(value);
-  do {
-    let byte = Number(remaining & 0x7fn);
-    remaining >>= 7n;
-    if (remaining !== 0n) byte |= 0x80;
-    bytes.push(byte);
-  } while (remaining !== 0n);
-  return Uint8Array.from(bytes);
-}
-
-function concat(parts: readonly Uint8Array[]): Uint8Array {
-  const total = parts.reduce((sum, part) => sum + part.byteLength, 0);
-  const result = new Uint8Array(total);
-  let offset = 0;
-  for (const part of parts) {
-    result.set(part, offset);
-    offset += part.byteLength;
-  }
-  return result;
-}
-
-class BinaryReader {
-  private offset = 0;
-
-  constructor(private readonly payload: Uint8Array) {}
-
-  readByte(): number | undefined {
-    if (this.offset >= this.payload.byteLength) return undefined;
-    return this.payload[this.offset++];
-  }
-
-  readUnsignedVarint(): number | undefined {
-    let value = 0n;
-    for (let index = 0; index < 8; index++) {
-      const byte = this.readByte();
-      if (byte === undefined) return undefined;
-      value |= BigInt(byte & 0x7f) << BigInt(index * 7);
-      if ((byte & 0x80) === 0) return value <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(value) : undefined;
-    }
-    return undefined;
-  }
-
-  readBytes(length: number): Uint8Array | undefined {
-    if (!Number.isSafeInteger(length) || length < 0 || length > this.payload.byteLength - this.offset) return undefined;
-    const result = this.payload.slice(this.offset, this.offset + length);
-    this.offset += length;
-    return result;
-  }
-
-  readUTF8(): string | undefined {
-    const length = this.readUnsignedVarint();
-    const bytes = length === undefined ? undefined : this.readBytes(length);
-    if (bytes === undefined) return undefined;
-    try {
-      return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-    } catch {
-      return undefined;
-    }
-  }
-
-  readRemaining(): Uint8Array {
-    return this.payload.slice(this.offset);
-  }
+  return concatBytes([encodeUnsignedVarint(bytes.byteLength, "state delta integer is invalid"), bytes]);
 }
 
 function asJSONData(value: unknown): JSONData {

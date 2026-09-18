@@ -46,6 +46,13 @@ class StorageRecoveryCoverageTests(unittest.TestCase):
         with self.assertRaisesRegex(coverage.ProfileError, "malformed coverage line"):
             coverage.read_profile(path)
 
+    def test_zero_statement_groups_are_reported_but_fail_the_gate(self) -> None:
+        path = self.write_profile(
+            [f"example{fragment}sample.go:1.1,2.1 0 0" for fragment in coverage.GROUP_PATHS.values()]
+        )
+        self.assertEqual(coverage.read_profile(path), {name: (0, 0) for name in {"total", *coverage.GROUP_PATHS}})
+        self.assertFalse(coverage.check(path))
+
 
 if __name__ == "__main__":
     unittest.main()

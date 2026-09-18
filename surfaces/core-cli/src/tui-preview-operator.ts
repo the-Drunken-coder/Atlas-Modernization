@@ -11,11 +11,10 @@ import type {
   LogStream,
   PluginActivityReporter,
   PluginOperationOutcome,
-  PluginUpdatePlan,
   UpdateReporter,
   UpdateScope
 } from "./operator.js";
-import { lifecycleOperationLabel, lifecycleOperationSummary } from "./operator.js";
+import { lifecycleOperationLabel, lifecycleOperationSummary, samePluginUpdatePlan } from "./operator.js";
 import { PLUGIN_CATALOG, type PluginCatalogEntry } from "./plugin-catalog.js";
 
 type PreviewState = Exclude<DeploymentSnapshot["status"], "initializing">;
@@ -627,25 +626,6 @@ export function createPreviewOperator(
       await update(scope, _expectedVersion);
     }
   };
-}
-
-function samePluginUpdatePlan(
-  reviewed: Extract<PluginUpdatePlan, { status: "available" }>,
-  current: PluginUpdatePlan
-): boolean {
-  return (
-    current.status === "available" &&
-    reviewed.pluginId === current.pluginId &&
-    reviewed.displayName === current.displayName &&
-    reviewed.currentVersion === current.currentVersion &&
-    reviewed.targetVersion === current.targetVersion &&
-    reviewed.action === current.action &&
-    reviewed.enabled === current.enabled &&
-    reviewed.coreVersion === current.coreVersion &&
-    reviewed.coreImage === current.coreImage &&
-    reviewed.restartServices.length === current.restartServices.length &&
-    reviewed.restartServices.every((service, index) => service === current.restartServices[index])
-  );
 }
 
 function requirePreviewPlugin(pluginId: string): PluginCatalogEntry {

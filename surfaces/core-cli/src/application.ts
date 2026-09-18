@@ -78,7 +78,7 @@ import type {
   UpdateReporter,
   UpdateScope
 } from "./operator.js";
-import { lifecycleOperationLabel, lifecycleOperationSummary } from "./operator.js";
+import { lifecycleOperationLabel, lifecycleOperationSummary, samePluginUpdatePlan } from "./operator.js";
 import { PACKAGE_IMAGE, PACKAGE_NAME, PACKAGE_PLUGIN_CONTRACTS, PACKAGE_VERSION } from "./package-metadata.js";
 import { PLUGIN_CATALOG, type PluginCatalogEntry } from "./plugin-catalog.js";
 import { PluginCatalogStore } from "./plugin-catalog-store.js";
@@ -6717,25 +6717,6 @@ function updateCandidateRelease(plan: IndependentPluginUpdatePlan): PluginReleas
   const candidate = plan.candidate;
   if (!candidate) return undefined;
   return "release" in candidate ? candidate.release : candidate;
-}
-
-function samePluginUpdatePlan(
-  reviewed: Extract<PluginUpdatePlan, { status: "available" }>,
-  current: PluginUpdatePlan
-): boolean {
-  return (
-    current.status === "available" &&
-    reviewed.pluginId === current.pluginId &&
-    reviewed.displayName === current.displayName &&
-    reviewed.currentVersion === current.currentVersion &&
-    reviewed.targetVersion === current.targetVersion &&
-    reviewed.action === current.action &&
-    reviewed.enabled === current.enabled &&
-    reviewed.coreVersion === current.coreVersion &&
-    reviewed.coreImage === current.coreImage &&
-    reviewed.restartServices.length === current.restartServices.length &&
-    reviewed.restartServices.every((service, index) => service === current.restartServices[index])
-  );
 }
 
 function assertNever(value: never): never {

@@ -29,6 +29,13 @@ def block(group: str, statements: int, count: int, line: int = 1) -> str:
 
 
 class LiveTransactionCoverageTest(unittest.TestCase):
+    def test_zero_statement_profile_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "coverage.out"
+            path.write_text(profile([block("actions", 0, 0)]), encoding="utf-8")
+            with self.assertRaisesRegex(ProfileError, "no statements"):
+                read_profile(path, {"actions"})
+
     def test_profile_counts_required_modules(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "coverage.out"

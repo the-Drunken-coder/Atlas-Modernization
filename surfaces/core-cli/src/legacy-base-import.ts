@@ -14,7 +14,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
-import { type ImageReceipt, parseImageReceipt } from "./image-receipts.js";
+import { type ImageReceipt, isImageReference, parseImageReceipt } from "./image-receipts.js";
 import { copyRetainedBundle, type RetainedBundleManifest } from "./retained-bundle.js";
 
 const PACKAGE_NAME = "atlas-core";
@@ -23,8 +23,6 @@ const MAX_UNPACKED_BYTES = 64 * 1024 * 1024;
 const MAX_ENTRY_BYTES = 8 * 1024 * 1024;
 const MAX_ARCHIVE_ENTRIES = 1024;
 const VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u;
-const REPOSITORY_PATTERN = /^[a-z0-9][a-z0-9./:_-]*$/u;
-const TAG_PATTERN = /^[A-Za-z0-9_][A-Za-z0-9_.-]*$/u;
 const REQUIRED_FILES = ["docker-compose.init.yml", "docker-compose.yml", "source_gateway.production.json"] as const;
 const REQUIRED_ARCHIVE_FILES = new Set([
   "package/package.json",
@@ -445,21 +443,6 @@ function assertVersion(version: string): void {
 
 function assertImage(image: string, source: string): void {
   if (!isImageReference(image)) throw new Error(`${source} must be an immutable digest-pinned image.`);
-}
-
-function isImageReference(image: string): boolean {
-  const at = image.lastIndexOf("@");
-  if (at <= 0 || image.indexOf("@") !== at) return false;
-  const reference = image.slice(0, at);
-  const lastSlash = reference.lastIndexOf("/");
-  const lastColon = reference.lastIndexOf(":");
-  const repository = lastColon > lastSlash ? reference.slice(0, lastColon) : reference;
-  const tag = lastColon > lastSlash ? reference.slice(lastColon + 1) : undefined;
-  return (
-    REPOSITORY_PATTERN.test(repository) &&
-    (tag === undefined || TAG_PATTERN.test(tag)) &&
-    /^sha256:[a-f0-9]{64}$/u.test(image.slice(at + 1))
-  );
 }
 
 function assertRegularFile(path: string, description: string): void {

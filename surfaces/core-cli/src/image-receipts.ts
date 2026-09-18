@@ -183,7 +183,7 @@ function imageDigest(image: string): string {
   return image.slice(image.lastIndexOf("@") + 1);
 }
 
-function isImageReference(image: string): boolean {
+export function isImageReference(image: string): boolean {
   const at = image.lastIndexOf("@");
   if (at <= 0 || image.indexOf("@") !== at) return false;
   const reference = image.slice(0, at);
