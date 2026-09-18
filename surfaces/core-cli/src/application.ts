@@ -49,7 +49,12 @@ import {
   parseManagedCoreState,
   readManagedCoreRecoveryStatus
 } from "./managed-core.js";
-import { CommandCancelledError, OperationCleanupError, PluginOperationFailure } from "./operation-errors.js";
+import {
+  CommandCancelledError,
+  OperationCleanupError,
+  PluginOperationFailure,
+  pluginFailureRequiresRecoveryStatus
+} from "./operation-errors.js";
 import type {
   AtlasCoreOperator,
   DeploymentDetails,
@@ -1568,7 +1573,8 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
         cleanupErrors: error.cleanupErrors,
         pluginId: error.pluginId ?? pluginId,
         updatedPluginIds: [...new Set([...updatedPluginIds, ...error.updatedPluginIds])],
-        cancelled: error.cancelled
+        cancelled: error.cancelled,
+        ...(error.requestedChangeBegan !== undefined ? { requestedChangeBegan: error.requestedChangeBegan } : {})
       });
     }
     if (options.outcome === "committed-cleanup-incomplete") {
@@ -1577,7 +1583,8 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
         operationError: new Error(`Plugin ${pluginId} change committed before cleanup failed.`),
         cleanupErrors: [error],
         pluginId,
-        updatedPluginIds
+        updatedPluginIds,
+        requestedChangeBegan: true
       });
     }
     if (options.cleanupAfterNoChange) {
@@ -1586,7 +1593,18 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
         operationError: new Error(`Plugin ${pluginId} request completed without changing Plugin state.`),
         cleanupErrors: [error],
         pluginId,
-        updatedPluginIds
+        updatedPluginIds,
+        requestedChangeBegan: true
+      });
+    }
+    const pendingOutcome = this.#readPendingPluginFailureOutcome();
+    if (pendingOutcome) {
+      return new PluginOperationFailure({
+        outcome: pendingOutcome,
+        operationError: error,
+        pluginId,
+        updatedPluginIds,
+        requestedChangeBegan: false
       });
     }
     return new PluginOperationFailure({
@@ -1594,8 +1612,20 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       operationError: error,
       pluginId,
       updatedPluginIds,
-      cancelled: error instanceof CommandCancelledError
+      cancelled: error instanceof CommandCancelledError,
+      requestedChangeBegan: false
     });
+  }
+
+  #readPendingPluginFailureOutcome(): "recovery-incomplete" | "committed-cleanup-incomplete" | undefined {
+    if (!DeploymentTransactionStore.exists(this.#configDir)) return undefined;
+    try {
+      const journal = DeploymentTransactionStore.open(this.#configDir).read();
+      if (!isPluginLifecycleOperation(journal.operation)) return undefined;
+      return journal.phase === "committed" ? "committed-cleanup-incomplete" : "recovery-incomplete";
+    } catch {
+      return undefined;
+    }
   }
 
   #assertReadablePendingPluginTransaction(pluginId: string): void {
@@ -1603,7 +1633,12 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     try {
       DeploymentTransactionStore.open(this.#configDir);
     } catch (error) {
-      throw new PluginOperationFailure({ outcome: "unknown", operationError: error, pluginId });
+      throw new PluginOperationFailure({
+        outcome: "unknown",
+        operationError: error,
+        pluginId,
+        requestedChangeBegan: false
+      });
     }
   }
 
@@ -1627,7 +1662,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       case "recovery-incomplete":
         report({
           level: "failure",
-          message: "Recovery is incomplete. Run atlas-core recover status before retrying",
+          message: "Recovery is incomplete",
           stage: "rollback"
         });
         break;
@@ -1641,12 +1676,15 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       case "unknown":
         report({
           level: "failure",
-          message:
-            "The requested Plugin change did not begin. The earlier transaction outcome could not be established. " +
-            "Run atlas-core recover status",
+          message: `${
+            failure.requestedChangeBegan === false ? "The requested Plugin change did not begin. " : ""
+          }The earlier transaction outcome could not be established`,
           stage: "rollback"
         });
         break;
+    }
+    if (pluginFailureRequiresRecoveryStatus(failure)) {
+      report({ level: "failure", message: "Run atlas-core recover status before retrying", stage: "rollback" });
     }
     for (const cleanupError of failure.cleanupErrors) {
       report({ level: "failure", message: `Cleanup failed: ${cleanupError.message}`, stage: "rollback" });
@@ -2215,6 +2253,24 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     if (action === "status") {
       const status = readManagedCoreRecoveryStatus(this.#configDir);
       if (!status.pending || !status.journal) {
+        if (existsSync(this.#mutationLockFile)) {
+          const owner = this.#readMutationLockOwner(this.#mutationLockFile);
+          this.#stdout.write(
+            `${JSON.stringify(
+              {
+                pending: true,
+                cleanup: {
+                  kind: "deployment-mutation-lock",
+                  owner,
+                  action: "wait for the owner to exit, then run atlas-core recover retry"
+                }
+              },
+              null,
+              2
+            )}\n`
+          );
+          return;
+        }
         this.#stdout.write("No pending deployment transaction.\n");
         return;
       }
@@ -2244,6 +2300,9 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       if (result.status !== 0) throw new Error("Forward Core recovery did not complete.");
       return;
     }
+    if (!DeploymentTransactionStore.exists(this.#configDir) && !existsSync(this.#mutationLockFile)) {
+      throw new Error("Atlas Core has no pending deployment recovery.");
+    }
     const runtime = await this.#preflight();
     await this.#dockerRuntimeScope.run(
       runtime,
@@ -2251,6 +2310,7 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
         await this.#withMutationLock(
           runtime.engineId,
           async () => {
+            if (!DeploymentTransactionStore.exists(this.#configDir)) return;
             const tx = DeploymentTransactionStore.open(this.#configDir);
             if (tx.journal.owner.dockerEngineId !== runtime.engineId)
               throw new Error("Pending transaction belongs to another Docker engine.");
@@ -5669,21 +5729,15 @@ export async function runCLI(argv: string[], context: CLIContext = {}): Promise<
             deployment.pluginDisable(command.pluginId)
           );
         } else if (command.action === "install") {
-          return await runDirectPluginMutation(deployment, "install", runtime.stdout, async () =>
-            deployment.pluginInstall(command.pluginId, command.version)
-          );
+          await deployment.pluginInstall(command.pluginId, command.version);
         } else if (command.action === "update") {
           return await runDirectPluginMutation(deployment, "update", runtime.stdout, async () =>
             deployment.pluginUpdate(command.pluginId)
           );
         } else if (command.action === "rollback") {
-          return await runDirectPluginMutation(deployment, "rollback", runtime.stdout, async () =>
-            deployment.pluginRollback(command.pluginId)
-          );
+          await deployment.pluginRollback(command.pluginId);
         } else if (command.action === "uninstall") {
-          return await runDirectPluginMutation(deployment, "uninstall", runtime.stdout, async () =>
-            deployment.pluginUninstall(command.pluginId)
-          );
+          await deployment.pluginUninstall(command.pluginId);
         } else if (command.action === "refresh") {
           await deployment.pluginRefresh();
         } else if (command.action === "rotate-core-key") {
@@ -5748,9 +5802,9 @@ export async function runCLI(argv: string[], context: CLIContext = {}): Promise<
 
 async function runDirectPluginMutation(
   deployment: AtlasCoreDeployment,
-  action: "disable" | "enable" | "install" | "rollback" | "uninstall" | "update",
+  action: "disable" | "enable" | "update",
   stdout: { write(data: string): void },
-  operation: () => Promise<PluginOperationOutcome | void>
+  operation: () => Promise<PluginOperationOutcome>
 ): Promise<number> {
   let cancellationRequested = false;
   const cancel = (): void => {
@@ -5761,7 +5815,7 @@ async function runDirectPluginMutation(
   process.on("SIGINT", cancel);
   try {
     const outcome = await operation();
-    if (!outcome || outcome.status !== "cancelled") return 0;
+    if (outcome.status !== "cancelled") return 0;
     deployment.resumeAfterCancellation();
     if (outcome.previousDeploymentPreserved) {
       stdout.write(`[cancel] ${capitalize(action)} cancelled. The previous deployment is preserved.\n`);
@@ -6624,7 +6678,8 @@ function appendPluginCleanupError(failure: PluginOperationFailure, cleanupError:
     cleanupErrors: [...failure.cleanupErrors, cleanupError],
     ...(failure.pluginId ? { pluginId: failure.pluginId } : {}),
     updatedPluginIds: failure.updatedPluginIds,
-    cancelled: failure.cancelled
+    cancelled: failure.cancelled,
+    ...(failure.requestedChangeBegan !== undefined ? { requestedChangeBegan: failure.requestedChangeBegan } : {})
   });
 }
 
@@ -6640,15 +6695,18 @@ function pluginFailureMessage(failure: PluginOperationFailure): string {
       lines.push("The previous Plugin state was restored. This does not assert that the Plugin is healthy or running.");
       break;
     case "recovery-incomplete":
-      lines.push("Plugin recovery is incomplete. Run atlas-core recover status before retrying.");
+      lines.push("Plugin recovery is incomplete.");
       break;
     case "committed-cleanup-incomplete":
-      lines.push("The Plugin change committed, but cleanup is incomplete. Run atlas-core recover status.");
+      lines.push("The Plugin change committed, but cleanup is incomplete.");
       break;
     case "unknown":
-      lines.push("The requested Plugin change did not begin.");
-      lines.push("The earlier Plugin transaction outcome could not be established. Run atlas-core recover status.");
+      if (failure.requestedChangeBegan === false) lines.push("The requested Plugin change did not begin.");
+      lines.push("The earlier Plugin transaction outcome could not be established.");
       break;
+  }
+  if (pluginFailureRequiresRecoveryStatus(failure)) {
+    lines.push("Run atlas-core recover status and resolve the reported recovery or cleanup problem before retrying.");
   }
   if (failure.updatedPluginIds.length > 0) lines.push(`Already updated: ${failure.updatedPluginIds.join(", ")}.`);
   for (const cleanupError of failure.cleanupErrors) lines.push(`Cleanup failed: ${cleanupError.message}`);

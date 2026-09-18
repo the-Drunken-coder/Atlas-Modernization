@@ -622,7 +622,8 @@ describe("IndependentPluginManager", () => {
     expect(failure).toMatchObject({
       outcome: "unknown",
       operationError: { message: "enable action failed" },
-      recoveryError: { message: "injected unreadable transaction" }
+      recoveryError: { message: "injected unreadable transaction" },
+      requestedChangeBegan: true
     });
     expect(transaction.cleaned).toBe(false);
   });

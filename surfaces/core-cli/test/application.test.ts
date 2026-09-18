@@ -16,6 +16,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
+import { PassThrough } from "node:stream";
 import { gzipSync } from "node:zlib";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type CLIContext, type CommandRunner, ProcessCommandRunner, runCLI } from "../src/application.js";
@@ -34,6 +35,7 @@ import { PluginOperationFailure } from "../src/operator.js";
 import { PACKAGE_NAME, PACKAGE_PLUGIN_CONTRACTS, PACKAGE_VERSION } from "../src/package-metadata.js";
 import type { PluginCatalogEntry } from "../src/plugin-catalog.js";
 import * as supervision from "../src/supervision.js";
+import { createInteractiveCLI } from "../src/terminal-ui.js";
 
 const TEST_IMAGE = `ghcr.io/the-drunken-coder/atlas-core@sha256:${"a".repeat(64)}`;
 const TEST_PLUGIN_IMAGE = `ghcr.io/the-drunken-coder/atlas-spatial-fixture@sha256:${"b".repeat(64)}`;
@@ -61,6 +63,41 @@ const POSTGRES_VOLUME = `${PROJECT_NAME}_postgres_data`;
 const MINIO_VOLUME = `${PROJECT_NAME}_minio_data`;
 const mutationLockNetwork = (engineId: string): string => `${projectName(engineId)}_mutation_lock`;
 const MUTATION_LOCK_NETWORK = mutationLockNetwork(TEST_ENGINE_ID);
+
+class IntegrationTerminal {
+  readonly input = new PassThrough() as PassThrough & NodeJS.ReadStream;
+  readonly output = new PassThrough() as PassThrough & NodeJS.WriteStream;
+  #output = "";
+
+  constructor() {
+    Object.assign(this.input, {
+      isRaw: false,
+      isTTY: true,
+      ref: () => this.input,
+      setRawMode: (enabled: boolean) => {
+        Object.assign(this.input, { isRaw: enabled });
+        return this.input;
+      },
+      unref: () => this.input
+    });
+    Object.assign(this.output, { columns: 100, isTTY: true, rows: 30 });
+    this.output.on("data", (data: Buffer) => {
+      this.#output += data.toString();
+    });
+  }
+
+  get text(): string {
+    return this.#output.replace(/\u001b(?:\][^\u0007]*(?:\u0007|\u001b\\)|\[[0-?]*[ -/]*[@-~]|[@-_])/gu, "");
+  }
+
+  write(value: string): void {
+    this.input.write(value);
+  }
+
+  async waitFor(value: string): Promise<void> {
+    await vi.waitFor(() => expect(this.text).toContain(value), { timeout: 2_000 });
+  }
+}
 
 function fakeImageIdentity(image: string): { platformDigest: string; localId: string } {
   if (image.startsWith("ghcr.io/the-drunken-coder/atlas-spatial-fixture@")) {
@@ -112,6 +149,7 @@ class FakeRunner implements CommandRunner {
   failComposeConfig = false;
   failComposePull = false;
   failComposeUp = false;
+  readonly composeUpErrors: string[] = [];
   failAfterComposeDown = false;
   failDockerPullImage: string | undefined;
   failComposeUpImage: string | undefined;
@@ -575,11 +613,12 @@ class FakeRunner implements CommandRunner {
       return result(1, "", "injected compose pull failure");
     }
     if (
-      (this.failComposeUp ||
+      (this.composeUpErrors.length > 0 ||
+        this.failComposeUp ||
         (this.failComposeUpImage !== undefined && this.failComposeUpImage === call.env.ATLAS_CORE_IMAGE)) &&
       compose[0] === "up"
     ) {
-      return result(1, "", "injected compose up failure");
+      return result(1, "", this.composeUpErrors.shift() ?? "injected compose up failure");
     }
     if (this.failComposeDown && compose[0] === "down") {
       return result(1, "", "injected compose down failure");
@@ -5436,6 +5475,27 @@ describe("atlas-core CLI", () => {
     expect(existsSync(join(test.home, ".atlas", "core", "plugins", plugin.pluginId))).toBe(false);
   });
 
+  it("does not install direct SIGINT handlers for install, rollback, or uninstall", async () => {
+    const test = runtime();
+    await markManagedInitialized(test);
+    installSignedIndependentCatalog(test, [INDEPENDENT_UPDATE_FIXTURES[0]!]);
+    const signalRegistrations = vi.spyOn(process, "on");
+
+    expect(await runCLI(["plugins", "install", "alpha_fixture", "0.1.0"], test.context)).toBe(0);
+    expect(signalRegistrations).not.toHaveBeenCalledWith("SIGINT", expect.any(Function));
+
+    signalRegistrations.mockClear();
+    expect(await runCLI(["plugins", "update", "alpha_fixture"], test.context)).toBe(0);
+    signalRegistrations.mockClear();
+    expect(await runCLI(["plugins", "rollback", "alpha_fixture"], test.context)).toBe(0);
+    expect(signalRegistrations).not.toHaveBeenCalledWith("SIGINT", expect.any(Function));
+
+    signalRegistrations.mockClear();
+    expect(await runCLI(["plugins", "uninstall", "alpha_fixture"], test.context)).toBe(0);
+    expect(signalRegistrations).not.toHaveBeenCalledWith("SIGINT", expect.any(Function));
+    signalRegistrations.mockRestore();
+  });
+
   it("serializes Plugin mutations with the deployment lock", async () => {
     const test = runtime();
     markInitialized(test);
@@ -7213,6 +7273,93 @@ describe("atlas-core CLI", () => {
     });
   });
 
+  it("does not say a current Plugin change never began when its journal becomes unreadable", async () => {
+    const test = runtime();
+    const plugin = INDEPENDENT_UPDATE_FIXTURES[0]!;
+    await installIndependentUpdateFixtures(test, [plugin]);
+    test.runner.failComposeUp = true;
+    test.runner.onRun = (call) => {
+      if (
+        composeCommand(call)[0] !== "up" ||
+        !composeCommand(call).includes(`atlas-plugin-${plugin.pluginId.replaceAll("_", "-")}`)
+      ) {
+        return;
+      }
+      writeFileSync(join(test.home, ".atlas", "core", "transaction", "journal.json"), "{", { mode: 0o600 });
+    };
+
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context)).toBe(1);
+
+    const stderr = test.stderr.join("");
+    expect(stderr).toContain("earlier Plugin transaction outcome could not be established");
+    expect(stderr).not.toContain("The requested Plugin change did not begin");
+  });
+
+  it.each([
+    ["runtime-changing", "Plugin recovery is incomplete"],
+    ["committed", "The Plugin change committed, but cleanup is incomplete"]
+  ] as const)("classifies a %s pending Plugin journal before rejecting its Docker owner", async (phase, summary) => {
+    const test = runtime();
+    await installIndependentUpdateFixtures(test);
+    const config = join(test.home, ".atlas", "core");
+    const transaction = DeploymentTransactionStore.begin(config, {
+      operation: "plugin-update",
+      dockerEngineId: "different-engine-id",
+      previousRunning: true,
+      desiredRunning: true
+    });
+    transaction.advance(phase);
+
+    expect(await runCLI(["plugins", "enable", "alpha_fixture"], test.context)).toBe(1);
+
+    const stderr = test.stderr.join("");
+    expect(stderr).toContain("Pending transaction belongs to another Docker engine");
+    expect(stderr).toContain(summary);
+    expect(stderr).not.toContain("The requested Plugin change did not occur");
+    expect(DeploymentTransactionStore.open(config).journal.phase).toBe(phase);
+  });
+
+  it("keeps manager recovery facts intact through the operator and actual TUI handler", async () => {
+    const test = runtime();
+    const plugin = INDEPENDENT_UPDATE_FIXTURES[0]!;
+    await installIndependentUpdateFixtures(test, [plugin]);
+    const terminal = new IntegrationTerminal();
+    test.runner.composeUpErrors.push(
+      "operation diagnostic says the previous state was restored",
+      "recovery diagnostic says the requested change did not begin"
+    );
+    test.runner.retainNetworkOnRemovalError = true;
+    test.runner.nextNetworkRemovalError = () => "cleanup diagnostic says recovery completed";
+
+    const menu = runCLI([], {
+      ...test.context,
+      interactive: createInteractiveCLI(terminal.input, terminal.output)
+    });
+    await terminal.waitFor("Manage Plugins");
+    terminal.write("\u001b[B".repeat(4));
+    terminal.write("\r");
+    await terminal.waitFor("PLUGIN CATALOG");
+    terminal.write("\r");
+    await terminal.waitFor("Enable requested");
+
+    await terminal.waitFor("operation diagnostic says the previous state was");
+    await terminal.waitFor("recovery diagnostic");
+    await terminal.waitFor("cleanup diagnostic says recovery completed");
+    await terminal.waitFor("Plugin recovery is incomplete.");
+    await terminal.waitFor("Run atlas-core recover status");
+    const output = terminal.text.replace(/\s+/gu, " ");
+    expect(output).toContain("recovery diagnostic says the requested change did not begin");
+    expect(output).not.toContain("The previous Plugin state was restored.");
+    expect(output).not.toContain("The requested Plugin change did not occur.");
+
+    terminal.write("\r");
+    await new Promise<void>((resolve) => setTimeout(resolve, 25));
+    terminal.write("q");
+    await new Promise<void>((resolve) => setTimeout(resolve, 25));
+    terminal.write("q");
+    expect(await menu).toBe(0);
+  });
+
   it("handles direct update-all SIGINT after an earlier Plugin commits", async () => {
     const test = runtime();
     await installIndependentUpdateFixtures(test);
@@ -7293,6 +7440,26 @@ describe("atlas-core CLI", () => {
     expect(test.stderr.join("")).toContain("The Plugin change committed, but cleanup is incomplete");
     expect(test.stderr.join("")).toContain("Cleanup failed: docker network rm");
     expect(test.stderr.join("")).toContain("injected outer lock cleanup failure");
+    expect(test.stderr.join("")).toContain(
+      "Run atlas-core recover status and resolve the reported recovery or cleanup problem before retrying"
+    );
+    expect(existsSync(join(test.home, ".atlas", "core", "transaction"))).toBe(false);
+
+    test.stdout.length = 0;
+    test.stderr.length = 0;
+    expect(await runCLI(["recover", "status"], test.context)).toBe(0);
+    expect(test.stdout.join("")).toContain('"kind": "deployment-mutation-lock"');
+    expect(test.stdout.join("")).toContain("atlas-core recover retry");
+
+    const lockPath = join(test.home, ".atlas", "core", ".mutation.lock");
+    const retainedOwner = JSON.parse(readFileSync(lockPath, "utf8"));
+    writeFileSync(lockPath, `${JSON.stringify({ ...retainedOwner, pid: 2_147_483_647 }, null, 2)}\n`, {
+      mode: 0o600
+    });
+    test.stdout.length = 0;
+    expect(await runCLI(["recover", "retry"], test.context), test.stderr.join("")).toBe(0);
+    expect(existsSync(lockPath)).toBe(false);
+    expect(test.runner.existingNetworks.has(MUTATION_LOCK_NETWORK)).toBe(false);
   });
 
   it("does not relabel a committed direct update when SIGINT arrives during cleanup", async () => {

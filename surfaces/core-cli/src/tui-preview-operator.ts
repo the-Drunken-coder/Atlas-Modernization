@@ -152,7 +152,12 @@ export function createPreviewOperator(
   const rejectedPluginFailure = (pluginId: string, error: unknown): PluginOperationFailure =>
     error instanceof PluginOperationFailure
       ? error
-      : new PluginOperationFailure({ outcome: "rejected", operationError: error, pluginId });
+      : new PluginOperationFailure({
+          outcome: "rejected",
+          operationError: error,
+          pluginId,
+          requestedChangeBegan: false
+        });
 
   const runLifecycle = async (
     operation: LifecycleOperation,

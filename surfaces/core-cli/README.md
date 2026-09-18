@@ -132,7 +132,8 @@ Plugin mutation failures have five evidence-based outcomes in both direct comman
 - Incomplete recovery leaves transaction evidence for `atlas-core recover status`. Inspect it before retrying the
   mutation.
 - A committed change with incomplete cleanup remains committed. Inspect `atlas-core recover status` before another
-  mutation instead of repeating the command blindly.
+  mutation instead of repeating the command blindly. If only the outer deployment lock remains, status reports its
+  owner and directs `atlas-core recover retry` after that owner exits.
 - An unknown outcome means the retained evidence cannot establish whether an earlier transaction committed or restored.
   The CLI reports what it can establish, retains the evidence, and does not claim that the deployment is unchanged.
 

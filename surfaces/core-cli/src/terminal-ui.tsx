@@ -2,7 +2,11 @@ import { Box, type Key, render, Text, useApp, useInput, usePaste, useWindowSize 
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import wrapAnsi from "wrap-ansi";
 import { LogBuffer } from "./log-stream.js";
-import { CommandCancelledError, PluginOperationFailure } from "./operation-errors.js";
+import {
+  CommandCancelledError,
+  PluginOperationFailure,
+  pluginFailureRequiresRecoveryStatus
+} from "./operation-errors.js";
 import type {
   AtlasCoreOperator,
   DeploymentDetails,
@@ -2005,7 +2009,8 @@ function pluginFailureSummary(view: PluginActivityView): string[] {
       lines.push("The Plugin change committed, but cleanup is incomplete.");
       break;
     case "unknown":
-      lines.push("The requested Plugin change did not begin. The earlier Plugin transaction outcome is unknown.");
+      if (failure.requestedChangeBegan === false) lines.push("The requested Plugin change did not begin.");
+      lines.push("The earlier Plugin transaction outcome is unknown.");
       break;
   }
   if (failure.updatedPluginIds.length > 0) lines.push(`Already updated: ${failure.updatedPluginIds.join(", ")}.`);
@@ -2015,12 +2020,7 @@ function pluginFailureSummary(view: PluginActivityView): string[] {
 
 function pluginFailureGuidance(view: PluginActivityView): string {
   if (view.failure instanceof PluginOperationFailure) {
-    if (
-      view.failure.outcome === "recovery-incomplete" ||
-      view.failure.outcome === "committed-cleanup-incomplete" ||
-      view.failure.outcome === "unknown" ||
-      view.failure.cleanupErrors.length > 0
-    ) {
+    if (pluginFailureRequiresRecoveryStatus(view.failure)) {
       return "Run atlas-core recover status and resolve the reported recovery or cleanup problem before retrying.";
     }
     if (view.failure.outcome === "restored") {

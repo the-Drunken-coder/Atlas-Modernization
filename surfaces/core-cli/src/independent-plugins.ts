@@ -1343,7 +1343,8 @@ export class IndependentPluginManager {
       throw new PluginOperationFailure({
         outcome: establishedOutcome ?? this.#readRecoveryFailureOutcome(transaction),
         operationError: error,
-        cancelled: error instanceof CommandCancelledError
+        cancelled: error instanceof CommandCancelledError,
+        requestedChangeBegan: false
       });
     }
   }
@@ -1383,14 +1384,16 @@ export class IndependentPluginManager {
           outcome,
           operationError: error,
           ...(outcome === "committed-cleanup-incomplete" ? { cleanupErrors: [recoveryError] } : { recoveryError }),
-          cancelled: error instanceof CommandCancelledError
+          cancelled: error instanceof CommandCancelledError,
+          requestedChangeBegan: true
         });
       }
       if (committed) return;
       throw new PluginOperationFailure({
         outcome: "restored",
         operationError: error,
-        cancelled: error instanceof CommandCancelledError
+        cancelled: error instanceof CommandCancelledError,
+        requestedChangeBegan: true
       });
     } finally {
       this.#activeTransaction = undefined;

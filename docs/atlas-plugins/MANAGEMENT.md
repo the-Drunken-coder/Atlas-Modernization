@@ -386,13 +386,14 @@ rollback, and uninstall failures use these outcomes:
 | Rejected | The requested mutation did not begin changing Plugin state. Correct the reported validation or precondition failure; no restoration is claimed. |
 | Restored | The operation failed or was cancelled, and the manager completed the recovery required for the recorded previous state. This does not claim current Plugin health or that Atlas is running. |
 | Recovery incomplete | The operation failed and required recovery has not completed. The journal remains; run `atlas-core recover status` before retrying a mutation. |
-| Change committed, cleanup incomplete | The requested change committed, but transaction or lock cleanup did not complete. The command fails; run `atlas-core recover status` before another mutation instead of assuming the previous state remains selected. |
+| Change committed, cleanup incomplete | The requested change committed, but transaction or lock cleanup did not complete. The command fails; run `atlas-core recover status` before another mutation instead of assuming the previous state remains selected. A retained transaction is reported by journal phase. If the manager transaction finished but the outer deployment lock did not, status reports that lock and directs recovery through `atlas-core recover retry` after its owner exits. |
 | Unknown | Available evidence cannot establish whether an earlier transaction committed or restored. Inspect `atlas-core recover status` and the reported journal error. The CLI retains the evidence and makes no state claim. |
 
 A failure while recovering an earlier pending transaction is not a rejection of that earlier transaction, even when the
 new request did not begin. Readable validated journal evidence and facts established by the manager take precedence over
-the unknown fallback. If a pending journal cannot be parsed and no fact survives, the CLI may say that the new request
-did not begin, but it reports the earlier outcome as unknown.
+the unknown fallback. If a pending journal cannot be parsed before a new request begins and no fact survives, the CLI
+may say that the new request did not begin, but it reports the earlier outcome as unknown. It does not make that claim
+when evidence becomes unreadable after the current request begins.
 
 Cancellation remains a separate fact and cannot replace an established recovery outcome. Cancellation before mutation
 or after completed recovery may finish safely. Incomplete recovery or cleanup remains a failure, and a cancellation

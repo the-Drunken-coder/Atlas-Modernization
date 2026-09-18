@@ -27,6 +27,7 @@ export type PluginOperationFailureOptions = {
   pluginId?: string;
   updatedPluginIds?: readonly string[];
   cancelled?: boolean;
+  requestedChangeBegan?: boolean;
 };
 
 /** A failed Plugin request with the outcome facts established by its transaction owner. */
@@ -38,6 +39,7 @@ export class PluginOperationFailure extends Error {
   readonly pluginId: string | undefined;
   readonly updatedPluginIds: readonly string[];
   readonly cancelled: boolean;
+  readonly requestedChangeBegan: boolean | undefined;
 
   constructor(options: PluginOperationFailureOptions) {
     const operationError = asError(options.operationError);
@@ -51,7 +53,18 @@ export class PluginOperationFailure extends Error {
     this.pluginId = options.pluginId;
     this.updatedPluginIds = [...(options.updatedPluginIds ?? [])];
     this.cancelled = options.cancelled ?? false;
+    this.requestedChangeBegan = options.requestedChangeBegan;
   }
+}
+
+/** Whether the retained facts require the operator to inspect recovery before retrying. */
+export function pluginFailureRequiresRecoveryStatus(failure: PluginOperationFailure): boolean {
+  return (
+    failure.outcome === "recovery-incomplete" ||
+    failure.outcome === "committed-cleanup-incomplete" ||
+    failure.outcome === "unknown" ||
+    failure.cleanupErrors.length > 0
+  );
 }
 
 function asError(error: unknown): Error {
