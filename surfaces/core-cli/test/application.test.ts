@@ -30,6 +30,7 @@ import type {
   PluginOperationOutcome,
   PluginUpdatePlan
 } from "../src/operator.js";
+import { PluginOperationFailure } from "../src/operator.js";
 import { PACKAGE_NAME, PACKAGE_PLUGIN_CONTRACTS, PACKAGE_VERSION } from "../src/package-metadata.js";
 import type { PluginCatalogEntry } from "../src/plugin-catalog.js";
 import * as supervision from "../src/supervision.js";
@@ -7168,6 +7169,172 @@ describe("atlas-core CLI", () => {
     });
   });
 
+  it("reports preflight Plugin rejection without claiming restoration", async () => {
+    const test = runtime();
+    await installIndependentUpdateFixtures(test);
+    const activity: string[] = [];
+    let failure: unknown;
+    test.context.interactive = {
+      configureAdmin: async () => undefined,
+      runUpdate: async () => undefined,
+      runMenu: async (operator) => {
+        try {
+          await operator.pluginEnable("not_cataloged", (event) => activity.push(event.message));
+        } catch (error) {
+          failure = error;
+        }
+      }
+    };
+
+    expect(await runCLI([], test.context), test.stderr.join("")).toBe(0);
+
+    expect(failure).toBeInstanceOf(PluginOperationFailure);
+    expect(failure).toMatchObject({ outcome: "rejected", pluginId: "not_cataloged" });
+    expect(activity).toContain("The requested change did not occur");
+    expect(activity.join(" ")).not.toMatch(/restored|preserved/iu);
+  });
+
+  it("reports an unknown earlier outcome when a pending journal cannot be parsed", async () => {
+    const test = runtime();
+    await installIndependentUpdateFixtures(test);
+    const transactionDirectory = join(test.home, ".atlas", "core", "transaction");
+    mkdirSync(transactionDirectory, { mode: 0o700 });
+    writeFileSync(join(transactionDirectory, "journal.json"), "{", { mode: 0o600 });
+
+    expect(await runCLI(["plugins", "enable", "alpha_fixture"], test.context)).toBe(1);
+
+    const stderr = test.stderr.join("");
+    expect(stderr).toContain("The requested Plugin change did not begin");
+    expect(stderr).toContain("earlier Plugin transaction outcome could not be established");
+    expect(stderr).toContain("recover status");
+    expect(existsSync(join(transactionDirectory, "journal.json"))).toBe(true);
+    expect(JSON.parse(readFileSync(join(test.home, ".atlas", "core", "state.json"), "utf8"))).toMatchObject({
+      enabledPlugins: []
+    });
+  });
+
+  it("handles direct update-all SIGINT after an earlier Plugin commits", async () => {
+    const test = runtime();
+    await installIndependentUpdateFixtures(test);
+    const previousFetch = test.context.fetch;
+    if (!previousFetch) throw new Error("Plugin fixture fetch is unavailable.");
+    const zetaReleaseURL =
+      "https://github.com/the-Drunken-coder/Atlas-Modernization/releases/download/atlas-plugin-zeta_fixture-v0.2.0/zeta_fixture-0.2.0.atlas-plugin";
+    let resolutionStarted: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => {
+      resolutionStarted = resolve;
+    });
+    test.context.fetch = async (input, init) => {
+      if (String(input) !== zetaReleaseURL) return await previousFetch(input, init);
+      resolutionStarted?.();
+      return await new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal;
+        if (!signal) throw new Error("Direct update-all release resolution must be cancellable.");
+        const abort = () => reject(signal.reason);
+        if (signal.aborted) abort();
+        else signal.addEventListener("abort", abort, { once: true });
+      });
+    };
+    const initialSignalListeners = process.listenerCount("SIGINT");
+    const command = runCLI(["plugins", "update", "all"], test.context);
+    await started;
+    process.emit("SIGINT");
+
+    expect(await command).toBe(130);
+    expect(process.listenerCount("SIGINT")).toBe(initialSignalListeners);
+    expect(test.stdout.join("")).toContain("Earlier updates remain committed: alpha_fixture");
+    expect(installedPluginVersion(test, "alpha_fixture")).toBe("0.2.0");
+    expect(installedPluginVersion(test, "zeta_fixture")).toBe("0.1.0");
+    expect(existsSync(join(test.home, ".atlas", "core", ".mutation.lock"))).toBe(false);
+  });
+
+  it("exits one when direct update SIGINT is followed by failed recovery", async () => {
+    const test = runtime();
+    await installIndependentUpdateFixtures(test);
+    const plugin = INDEPENDENT_UPDATE_FIXTURES[0];
+    if (!plugin) throw new Error("Independent Plugin fixture is missing.");
+    installIndependentRuntimeFixture(test, plugin);
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context), test.stderr.join("")).toBe(0);
+    test.stdout.length = 0;
+    test.stderr.length = 0;
+    test.runner.failComposeUp = true;
+    let interrupted = false;
+    test.runner.onRun = (call) => {
+      if (
+        interrupted ||
+        composeCommand(call)[0] !== "up" ||
+        !composeCommand(call).includes(`atlas-plugin-${plugin.pluginId.replaceAll("_", "-")}`)
+      )
+        return;
+      interrupted = true;
+      process.emit("SIGINT");
+    };
+    const initialSignalListeners = process.listenerCount("SIGINT");
+
+    expect(await runCLI(["plugins", "update", plugin.pluginId], test.context)).toBe(1);
+
+    expect(process.listenerCount("SIGINT")).toBe(initialSignalListeners);
+    expect(test.stdout.join("")).not.toContain("[cancel]");
+    expect(test.stderr.join("")).toContain("Plugin recovery is incomplete");
+    expect(test.stderr.join("")).toContain("Recovery failed");
+    expect(installedPluginVersion(test, plugin.pluginId)).toBe("0.1.0");
+    expect(existsSync(join(test.home, ".atlas", "core", "transaction", "journal.json"))).toBe(true);
+  });
+
+  it("reports a committed Plugin update when outer lock cleanup fails", async () => {
+    const test = runtime();
+    await installIndependentUpdateFixtures(test);
+    test.runner.retainNetworkOnRemovalError = true;
+    test.runner.nextNetworkRemovalError = () => "injected outer lock cleanup failure";
+
+    expect(await runCLI(["plugins", "update", "alpha_fixture"], test.context)).toBe(1);
+
+    expect(installedPluginVersion(test, "alpha_fixture")).toBe("0.2.0");
+    expect(test.stderr.join("")).toContain("The Plugin change committed, but cleanup is incomplete");
+    expect(test.stderr.join("")).toContain("Cleanup failed: docker network rm");
+    expect(test.stderr.join("")).toContain("injected outer lock cleanup failure");
+  });
+
+  it("does not relabel a committed direct update when SIGINT arrives during cleanup", async () => {
+    const test = runtime();
+    await installIndependentUpdateFixtures(test);
+    let interrupted = false;
+    test.runner.onRun = (call) => {
+      if (interrupted || call.args[0] !== "network" || call.args[1] !== "rm") return;
+      interrupted = true;
+      process.emit("SIGINT");
+    };
+    const initialSignalListeners = process.listenerCount("SIGINT");
+
+    expect(await runCLI(["plugins", "update", "alpha_fixture"], test.context)).toBe(1);
+
+    expect(process.listenerCount("SIGINT")).toBe(initialSignalListeners);
+    expect(installedPluginVersion(test, "alpha_fixture")).toBe("0.2.0");
+    expect(test.stdout.join("")).not.toContain("previous deployment is preserved");
+    expect(test.stderr.join("")).toContain("The Plugin change committed, but cleanup is incomplete");
+  });
+
+  it("retains the Plugin failure and outer lock cleanup failure together", async () => {
+    const test = runtime();
+    await installIndependentUpdateFixtures(test);
+    const plugin = INDEPENDENT_UPDATE_FIXTURES[0];
+    if (!plugin) throw new Error("Independent Plugin fixture is missing.");
+    installIndependentRuntimeFixture(test, plugin);
+    expect(await runCLI(["plugins", "enable", plugin.pluginId], test.context), test.stderr.join("")).toBe(0);
+    test.stderr.length = 0;
+    test.runner.failComposeConfig = true;
+    test.runner.retainNetworkOnRemovalError = true;
+    test.runner.nextNetworkRemovalError = () => "injected outer lock cleanup failure";
+
+    expect(await runCLI(["plugins", "update", "alpha_fixture"], test.context)).toBe(1);
+
+    expect(installedPluginVersion(test, "alpha_fixture")).toBe("0.1.0");
+    expect(test.stderr.join("")).toContain("injected compose config failure");
+    expect(test.stderr.join("")).toContain("The previous Plugin state was restored");
+    expect(test.stderr.join("")).toContain("Cleanup failed: docker network rm");
+    expect(test.stderr.join("")).toContain("injected outer lock cleanup failure");
+  });
+
   it("reports committed Plugins when update-all is cancelled partway through", async () => {
     const test = runtime();
     await installIndependentUpdateFixtures(test);
@@ -7218,12 +7385,14 @@ describe("atlas-core CLI", () => {
     const test = runtime();
     await installIndependentUpdateFixtures(test);
     test.runner.failDockerPullImage = TEST_ZETA_PLUGIN_IMAGE;
+    const initialSignalListeners = process.listenerCount("SIGINT");
 
     expect(await runCLI(["plugins", "update", "all"], test.context)).toBe(1);
 
+    expect(process.listenerCount("SIGINT")).toBe(initialSignalListeners);
     expect(test.stdout.join("")).toContain("Alpha Fixture updated from 0.1.0 to 0.2.0.");
     expect(test.stdout.join("")).not.toContain("Zeta Fixture updated");
-    expect(test.stderr.join("")).toContain("Plugin update stopped at zeta_fixture");
+    expect(test.stderr.join("")).toContain("Plugin operation failed");
     expect(test.stderr.join("")).toContain("Already updated: alpha_fixture");
     expect(installedPluginVersion(test, "alpha_fixture")).toBe("0.2.0");
     expect(installedPluginVersion(test, "zeta_fixture")).toBe("0.1.0");

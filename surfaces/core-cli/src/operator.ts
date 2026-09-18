@@ -4,6 +4,9 @@
  * dependencies so each interface can consume the same typed deployment data.
  */
 
+export type { PluginFailureOutcome } from "./operation-errors.js";
+export { PluginOperationFailure } from "./operation-errors.js";
+
 export type DeploymentSnapshot = {
   status: "degraded" | "initializing" | "not-initialized" | "ready" | "stopped";
   detail: string;

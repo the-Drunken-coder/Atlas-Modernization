@@ -49,7 +49,7 @@ import {
   parseManagedCoreState,
   readManagedCoreRecoveryStatus
 } from "./managed-core.js";
-import { CommandCancelledError, OperationCleanupError } from "./operation-errors.js";
+import { CommandCancelledError, OperationCleanupError, PluginOperationFailure } from "./operation-errors.js";
 import type {
   AtlasCoreOperator,
   DeploymentDetails,
@@ -1550,6 +1550,109 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     }
   }
 
+  #pluginFailure(
+    error: unknown,
+    pluginId: string,
+    options: {
+      cleanupAfterNoChange?: boolean;
+      updatedPluginIds?: readonly string[];
+      outcome?: "rejected" | "committed-cleanup-incomplete";
+    } = {}
+  ): PluginOperationFailure {
+    const updatedPluginIds = options.updatedPluginIds ?? [];
+    if (error instanceof PluginOperationFailure) {
+      return new PluginOperationFailure({
+        outcome: error.outcome,
+        operationError: error.operationError,
+        ...(error.recoveryError ? { recoveryError: error.recoveryError } : {}),
+        cleanupErrors: error.cleanupErrors,
+        pluginId: error.pluginId ?? pluginId,
+        updatedPluginIds: [...new Set([...updatedPluginIds, ...error.updatedPluginIds])],
+        cancelled: error.cancelled
+      });
+    }
+    if (options.outcome === "committed-cleanup-incomplete") {
+      return new PluginOperationFailure({
+        outcome: options.outcome,
+        operationError: new Error(`Plugin ${pluginId} change committed before cleanup failed.`),
+        cleanupErrors: [error],
+        pluginId,
+        updatedPluginIds
+      });
+    }
+    if (options.cleanupAfterNoChange) {
+      return new PluginOperationFailure({
+        outcome: "rejected",
+        operationError: new Error(`Plugin ${pluginId} request completed without changing Plugin state.`),
+        cleanupErrors: [error],
+        pluginId,
+        updatedPluginIds
+      });
+    }
+    return new PluginOperationFailure({
+      outcome: options.outcome ?? "rejected",
+      operationError: error,
+      pluginId,
+      updatedPluginIds,
+      cancelled: error instanceof CommandCancelledError
+    });
+  }
+
+  #assertReadablePendingPluginTransaction(pluginId: string): void {
+    if (!DeploymentTransactionStore.exists(this.#configDir)) return;
+    try {
+      DeploymentTransactionStore.open(this.#configDir);
+    } catch (error) {
+      throw new PluginOperationFailure({ outcome: "unknown", operationError: error, pluginId });
+    }
+  }
+
+  #reportPluginFailure(action: string, failure: PluginOperationFailure, report: PluginActivityReporter): void {
+    const target = failure.pluginId ? ` for ${failure.pluginId}` : "";
+    report({
+      level: "failure",
+      message: `${action} failed${target}: ${failure.operationError.message}`,
+      stage: "operation"
+    });
+    if (failure.recoveryError) {
+      report({ level: "failure", message: `Recovery failed: ${failure.recoveryError.message}`, stage: "rollback" });
+    }
+    switch (failure.outcome) {
+      case "rejected":
+        report({ level: "failure", message: "The requested change did not occur", stage: "rollback" });
+        break;
+      case "restored":
+        report({ level: "success", message: "Previous Plugin state restored", stage: "rollback" });
+        break;
+      case "recovery-incomplete":
+        report({
+          level: "failure",
+          message: "Recovery is incomplete. Run atlas-core recover status before retrying",
+          stage: "rollback"
+        });
+        break;
+      case "committed-cleanup-incomplete":
+        report({
+          level: "failure",
+          message: "The Plugin change committed, but cleanup is incomplete",
+          stage: "rollback"
+        });
+        break;
+      case "unknown":
+        report({
+          level: "failure",
+          message:
+            "The requested Plugin change did not begin. The earlier transaction outcome could not be established. " +
+            "Run atlas-core recover status",
+          stage: "rollback"
+        });
+        break;
+    }
+    for (const cleanupError of failure.cleanupErrors) {
+      report({ level: "failure", message: `Cleanup failed: ${cleanupError.message}`, stage: "rollback" });
+    }
+  }
+
   async pluginRefresh(): Promise<void> {
     await this.#withInitializedMutation(async () => {
       await this.#catalogStore.refresh();
@@ -1563,57 +1666,64 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     reportActivity?: PluginActivityReporter
   ): Promise<PluginOperationOutcome> {
     const report = reportActivity ?? (() => undefined);
-    let mutationStarted = false;
+    let committed: boolean | undefined;
     report({ level: "working", message: "Checking Plugin catalog and compatibility", stage: "operation" });
     try {
+      this.#assertReadablePendingPluginTransaction(pluginId);
       await this.#withInitializedMutation(async (raw) => {
-        const state = this.#requireManaged(raw);
-        await this.#catalogStore.refresh({ allowCachedOnFailure: true });
-        const candidates = (
-          await this.#catalogStore.candidates(pluginId, {
-            ...(version ? { version } : {}),
-            contracts: state.pluginContracts ?? PACKAGE_PLUGIN_CONTRACTS
-          })
-        ).filter((candidate) => {
-          if (version && candidate.release.version !== version) return false;
-          try {
-            assertPluginCompatible(candidate.release, state.pluginContracts ?? PACKAGE_PLUGIN_CONTRACTS);
-            return true;
-          } catch {
-            return false;
-          }
-        });
-        const selected = selectPluginRelease(candidates);
-        if (!selected)
-          throw new Error(
-            `No compatible non-revoked release is available for ${pluginId}${version ? ` ${version}` : ""}.`
-          );
-        report({
-          level: "working",
-          message: `Installing ${selected.release.displayName} ${selected.release.version}`,
-          stage: "operation"
-        });
-        mutationStarted = true;
-        const result = await this.#plugins(state).install(selected);
-        if (!reportActivity) this.#stdout.write(`${result.message}\n`);
-        report({ level: "success", message: result.message, stage: "operation" });
+        try {
+          const state = this.#requireManaged(raw);
+          await this.#catalogStore.refresh({ allowCachedOnFailure: true });
+          const candidates = (
+            await this.#catalogStore.candidates(pluginId, {
+              ...(version ? { version } : {}),
+              contracts: state.pluginContracts ?? PACKAGE_PLUGIN_CONTRACTS
+            })
+          ).filter((candidate) => {
+            if (version && candidate.release.version !== version) return false;
+            try {
+              assertPluginCompatible(candidate.release, state.pluginContracts ?? PACKAGE_PLUGIN_CONTRACTS);
+              return true;
+            } catch {
+              return false;
+            }
+          });
+          const selected = selectPluginRelease(candidates);
+          if (!selected)
+            throw new Error(
+              `No compatible non-revoked release is available for ${pluginId}${version ? ` ${version}` : ""}.`
+            );
+          report({
+            level: "working",
+            message: `Installing ${selected.release.displayName} ${selected.release.version}`,
+            stage: "operation"
+          });
+          const result = await this.#plugins(state).install(selected);
+          committed = result.changed;
+          if (!reportActivity) this.#stdout.write(`${result.message}\n`);
+          report({ level: "success", message: result.message, stage: "operation" });
+        } catch (error) {
+          throw this.#pluginFailure(error, pluginId);
+        }
       });
       return { status: "success" };
     } catch (error) {
-      if (error instanceof CommandCancelledError) {
-        if (!reportActivity) throw error;
+      const failure = this.#pluginFailure(error, pluginId, {
+        ...(committed ? { outcome: "committed-cleanup-incomplete" } : {}),
+        ...(committed === false ? { cleanupAfterNoChange: true } : {})
+      });
+      if (
+        failure.cancelled &&
+        failure.cleanupErrors.length === 0 &&
+        ["rejected", "restored"].includes(failure.outcome)
+      ) {
         report({ level: "failure", message: "Install cancelled", stage: "operation" });
-        if (mutationStarted) report({ level: "success", message: "Previous deployment restored", stage: "rollback" });
+        if (failure.outcome === "restored")
+          report({ level: "success", message: "Previous Plugin state restored", stage: "rollback" });
         return { previousDeploymentPreserved: true, status: "cancelled" };
       }
-      const message = errorMessage(error);
-      report({ level: "failure", message: `Install failed: ${message}`, stage: "operation" });
-      if (/Recovery is required:/u.test(message)) {
-        report({ level: "failure", message: "Recovery is required before retrying", stage: "rollback" });
-      } else if (mutationStarted) {
-        report({ level: "success", message: "Previous deployment restored", stage: "rollback" });
-      }
-      throw error;
+      this.#reportPluginFailure("Install", failure, report);
+      throw failure;
     }
   }
 
@@ -1736,24 +1846,30 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   ): Promise<PluginOperationOutcome> {
     return await this.#withCancellationSignal(async (signal) => {
       const updated: string[] = [];
+      let currentPluginId = pluginId;
+      let lastCommittedPluginId: string | undefined;
+      let operationCompleted = false;
       try {
+        this.#assertReadablePendingPluginTransaction(pluginId);
         await this.#withInitializedMutation(async (raw) => {
-          const state = this.#requireManaged(raw);
-          const manager = this.#plugins(state);
-          const pluginIds =
-            pluginId === "all"
-              ? (await manager.list())
-                  .filter((plugin) => plugin.installed)
-                  .map((plugin) => plugin.pluginId)
-                  .sort()
-              : [pluginId];
-          if (pluginIds.length === 0) {
-            this.#stdout.write("No installed Plugins to update.\n");
-            return;
-          }
-          await this.#catalogStore.refresh({ allowCachedOnFailure: true, signal });
-          for (const id of pluginIds) {
-            try {
+          try {
+            const state = this.#requireManaged(raw);
+            const manager = this.#plugins(state);
+            const pluginIds =
+              pluginId === "all"
+                ? (await manager.list())
+                    .filter((plugin) => plugin.installed)
+                    .map((plugin) => plugin.pluginId)
+                    .sort()
+                : [pluginId];
+            if (pluginIds.length === 0) {
+              this.#stdout.write("No installed Plugins to update.\n");
+              operationCompleted = true;
+              return;
+            }
+            await this.#catalogStore.refresh({ allowCachedOnFailure: true, signal });
+            for (const id of pluginIds) {
+              currentPluginId = id;
               reportActivity?.({
                 level: "working",
                 message: "Checking the signed Plugin catalog",
@@ -1776,7 +1892,10 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
                 });
               }
               const result = await manager.update(id, resolved.candidates);
-              if (result.changed) updated.push(id);
+              if (result.changed) {
+                updated.push(id);
+                lastCommittedPluginId = id;
+              }
               if (reportActivity) {
                 reportActivity({
                   level: "success",
@@ -1787,36 +1906,29 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
                   stage: "operation"
                 });
               } else this.#stdout.write(`${result.message}\n`);
-            } catch (error) {
-              if (error instanceof CommandCancelledError) throw error;
-              reportActivity?.({
-                level: "failure",
-                message: `Update stopped: ${errorMessage(error)}`,
-                stage: "operation"
-              });
-              reportActivity?.(
-                errorMessage(error).includes("Recovery is required:")
-                  ? {
-                      level: "failure",
-                      message: "Recovery is required. Run atlas-core recover status for the valid next action",
-                      stage: "rollback"
-                    }
-                  : {
-                      level: "success",
-                      message: "The previous Plugin release is preserved",
-                      stage: "rollback"
-                    }
-              );
-              if (pluginId !== "all") throw error;
-              throw new Error(
-                `Plugin update stopped at ${id}. Already updated: ${updated.join(", ") || "none"}. ${errorMessage(error)}`
-              );
             }
+            operationCompleted = true;
+          } catch (error) {
+            throw this.#pluginFailure(error, currentPluginId, { updatedPluginIds: updated });
           }
         });
         return { status: "success" };
       } catch (error) {
-        if (!(error instanceof CommandCancelledError)) throw error;
+        const outerCleanupFailure = operationCompleted && !(error instanceof PluginOperationFailure);
+        const cleanupAfterCommit = outerCleanupFailure && updated.length > 0;
+        const failure = this.#pluginFailure(error, cleanupAfterCommit ? lastCommittedPluginId! : currentPluginId, {
+          updatedPluginIds: cleanupAfterCommit ? updated.slice(0, -1) : updated,
+          ...(!cleanupAfterCommit && outerCleanupFailure ? { cleanupAfterNoChange: true } : {}),
+          ...(cleanupAfterCommit ? { outcome: "committed-cleanup-incomplete" } : {})
+        });
+        if (
+          !failure.cancelled ||
+          failure.cleanupErrors.length > 0 ||
+          !["rejected", "restored"].includes(failure.outcome)
+        ) {
+          if (reportActivity) this.#reportPluginFailure("Update", failure, reportActivity);
+          throw failure;
+        }
         reportActivity?.({ level: "failure", message: "Update cancelled", stage: "operation" });
         if (updated.length > 0) {
           reportActivity?.({
@@ -1828,7 +1940,10 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
         }
         reportActivity?.({
           level: "success",
-          message: "The previous Plugin release is preserved",
+          message:
+            failure.outcome === "restored"
+              ? "Previous Plugin state restored"
+              : "The requested Plugin update did not begin",
           stage: "rollback"
         });
         return { previousDeploymentPreserved: true, status: "cancelled" };
@@ -1866,15 +1981,45 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   }
 
   async pluginRollback(pluginId: string): Promise<void> {
-    await this.#withInitializedMutation(async (raw) => {
-      this.#stdout.write(`${(await this.#plugins(this.#requireManaged(raw)).rollback(pluginId)).message}\n`);
-    });
+    let committed: boolean | undefined;
+    try {
+      this.#assertReadablePendingPluginTransaction(pluginId);
+      await this.#withInitializedMutation(async (raw) => {
+        try {
+          const result = await this.#plugins(this.#requireManaged(raw)).rollback(pluginId);
+          committed = result.changed;
+          this.#stdout.write(`${result.message}\n`);
+        } catch (error) {
+          throw this.#pluginFailure(error, pluginId);
+        }
+      });
+    } catch (error) {
+      throw this.#pluginFailure(error, pluginId, {
+        ...(committed ? { outcome: "committed-cleanup-incomplete" } : {}),
+        ...(committed === false ? { cleanupAfterNoChange: true } : {})
+      });
+    }
   }
 
   async pluginUninstall(pluginId: string): Promise<void> {
-    await this.#withInitializedMutation(async (raw) => {
-      this.#stdout.write(`${(await this.#plugins(this.#requireManaged(raw)).uninstall(pluginId)).message}\n`);
-    });
+    let committed: boolean | undefined;
+    try {
+      this.#assertReadablePendingPluginTransaction(pluginId);
+      await this.#withInitializedMutation(async (raw) => {
+        try {
+          const result = await this.#plugins(this.#requireManaged(raw)).uninstall(pluginId);
+          committed = result.changed;
+          this.#stdout.write(`${result.message}\n`);
+        } catch (error) {
+          throw this.#pluginFailure(error, pluginId);
+        }
+      });
+    } catch (error) {
+      throw this.#pluginFailure(error, pluginId, {
+        ...(committed ? { outcome: "committed-cleanup-incomplete" } : {}),
+        ...(committed === false ? { cleanupAfterNoChange: true } : {})
+      });
+    }
   }
 
   async pluginRotateCoreKey(): Promise<void> {
@@ -2234,6 +2379,8 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
     let dockerLockReleased = false;
     let dockerLockAcquisitionNeedsRecovery = false;
     let idleRecoverableMutationLock: MutationLockOwner | undefined;
+    let outerResult: T | undefined;
+    let outerOperationError: unknown;
     try {
       this.#removeRetiredPluginAssets();
       this.#assertRecoveredMutationEngine(dockerEngineId, mutationLock);
@@ -2279,14 +2426,19 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
           throw error;
         }
         this.#activeMutationLock = dockerLock.owner;
+        let result: T | undefined;
+        let operationError: unknown;
         try {
           if (lifecycleContext) lifecycleContext.runIntent = this.#captureRunIntent();
           if (!keepRecoveredDisableFence) this.#completeRecoverableMutationLockHandoff();
           if (recoveryMode === "stop" || recoveryMode === "reset") this.#writeRunIntent(false);
           if (recoveryMode !== "recover" && recoveryMode !== "stop" && recoveryMode !== "reset")
             await this.#recoverPending(dockerEngineId);
-          return await action();
-        } finally {
+          result = await action();
+        } catch (error) {
+          operationError = error;
+        }
+        try {
           if (
             this.#lifecycleCancellationRequested &&
             lifecycleContext &&
@@ -2305,41 +2457,57 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
           }
           await this.#releaseDockerMutationLock(dockerLock);
           dockerLockReleased = true;
-        }
-      };
-      return await this.#mutationScope.run(mutationLock.owner.id, runDockerMutation);
-    } finally {
-      try {
-        let localOwner = this.#activeMutationLock ?? mutationLock.owner;
-        if (existsSync(this.#mutationLockFile)) {
-          const canonicalOwner = this.#readMutationLockOwner(this.#mutationLockFile);
-          if (
-            sameMutationLockIdentity(canonicalOwner, localOwner) &&
-            this.#isRecoverableMutationOwner(canonicalOwner)
-          ) {
-            localOwner = canonicalOwner;
-            this.#activeMutationLock = canonicalOwner;
+        } catch (cleanupError) {
+          if (operationError instanceof PluginOperationFailure) {
+            throw appendPluginCleanupError(operationError, cleanupError);
           }
+          throw cleanupError;
         }
-        const preserveRecoverableLocalLock = this.#isRecoverableMutationOwner(localOwner);
-        const shouldPreserveRecoverableLocalLock =
-          (dockerLock !== undefined && !dockerLockReleased && preserveRecoverableLocalLock) ||
-          (dockerLock === undefined &&
-            (mutationLock.recovered || (preserveRecoverableLocalLock && dockerLockAcquisitionNeedsRecovery)));
-        if (!shouldPreserveRecoverableLocalLock) {
-          this.#releaseMutationLock(dockerLock?.owner ?? mutationLock.owner);
-        } else if (preserveRecoverableLocalLock) {
-          idleRecoverableMutationLock = this.#canonicalRecoverableMutationOwner(localOwner);
-        }
-      } finally {
-        try {
-          this.#restoreMutationRecoveryLock();
-        } finally {
-          this.#idleRecoverableMutationLock = idleRecoverableMutationLock;
-          this.#activeMutationLock = undefined;
+        if (operationError !== undefined) throw operationError;
+        return result as T;
+      };
+      outerResult = await this.#mutationScope.run(mutationLock.owner.id, runDockerMutation);
+    } catch (error) {
+      outerOperationError = error;
+    }
+    const cleanupErrors: unknown[] = [];
+    try {
+      let localOwner = this.#activeMutationLock ?? mutationLock.owner;
+      if (existsSync(this.#mutationLockFile)) {
+        const canonicalOwner = this.#readMutationLockOwner(this.#mutationLockFile);
+        if (sameMutationLockIdentity(canonicalOwner, localOwner) && this.#isRecoverableMutationOwner(canonicalOwner)) {
+          localOwner = canonicalOwner;
+          this.#activeMutationLock = canonicalOwner;
         }
       }
+      const preserveRecoverableLocalLock = this.#isRecoverableMutationOwner(localOwner);
+      const shouldPreserveRecoverableLocalLock =
+        (dockerLock !== undefined && !dockerLockReleased && preserveRecoverableLocalLock) ||
+        (dockerLock === undefined &&
+          (mutationLock.recovered || (preserveRecoverableLocalLock && dockerLockAcquisitionNeedsRecovery)));
+      if (!shouldPreserveRecoverableLocalLock) {
+        this.#releaseMutationLock(dockerLock?.owner ?? mutationLock.owner);
+      } else if (preserveRecoverableLocalLock) {
+        idleRecoverableMutationLock = this.#canonicalRecoverableMutationOwner(localOwner);
+      }
+    } catch (error) {
+      cleanupErrors.push(error);
     }
+    try {
+      this.#restoreMutationRecoveryLock();
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+    this.#idleRecoverableMutationLock = idleRecoverableMutationLock;
+    this.#activeMutationLock = undefined;
+    if (cleanupErrors.length > 0) {
+      if (outerOperationError instanceof PluginOperationFailure) {
+        throw cleanupErrors.reduce(appendPluginCleanupError, outerOperationError);
+      }
+      throw cleanupErrors[0];
+    }
+    if (outerOperationError !== undefined) throw outerOperationError;
+    return outerResult as T;
   }
 
   async #initialize(dockerEngineId: string): Promise<void> {
@@ -3253,30 +3421,38 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   async pluginEnable(pluginId: string, reportActivity?: PluginActivityReporter): Promise<PluginOperationOutcome> {
     if (this.#readState()?.schema === 4) {
       const report = reportActivity ?? (() => undefined);
-      let mutationStarted = false;
+      let committed: boolean | undefined;
       report({ level: "working", message: "Checking installed Plugin and retained Core", stage: "operation" });
       try {
+        this.#assertReadablePendingPluginTransaction(pluginId);
         await this.#withInitializedMutation(async (raw) => {
-          mutationStarted = true;
-          const result = await this.#plugins(this.#requireManaged(raw)).enable(pluginId);
-          if (!reportActivity) this.#stdout.write(`${result.message}\n`);
-          report({ level: "success", message: result.message, stage: "operation" });
+          try {
+            const result = await this.#plugins(this.#requireManaged(raw)).enable(pluginId);
+            committed = result.changed;
+            if (!reportActivity) this.#stdout.write(`${result.message}\n`);
+            report({ level: "success", message: result.message, stage: "operation" });
+          } catch (error) {
+            throw this.#pluginFailure(error, pluginId);
+          }
         });
         return { status: "success" };
       } catch (error) {
-        if (error instanceof CommandCancelledError) {
+        const failure = this.#pluginFailure(error, pluginId, {
+          ...(committed ? { outcome: "committed-cleanup-incomplete" } : {}),
+          ...(committed === false ? { cleanupAfterNoChange: true } : {})
+        });
+        if (
+          failure.cancelled &&
+          failure.cleanupErrors.length === 0 &&
+          ["rejected", "restored"].includes(failure.outcome)
+        ) {
           report({ level: "failure", message: "Enable cancelled", stage: "operation" });
-          if (mutationStarted) report({ level: "success", message: "Previous deployment restored", stage: "rollback" });
+          if (failure.outcome === "restored")
+            report({ level: "success", message: "Previous Plugin state restored", stage: "rollback" });
           return { previousDeploymentPreserved: true, status: "cancelled" };
         }
-        const message = errorMessage(error);
-        report({ level: "failure", message: `Enable failed: ${message}`, stage: "operation" });
-        if (/Recovery is required:/u.test(message)) {
-          report({ level: "failure", message: "Recovery is required before retrying", stage: "rollback" });
-        } else if (mutationStarted) {
-          report({ level: "success", message: "Previous deployment restored", stage: "rollback" });
-        }
-        throw error;
+        this.#reportPluginFailure("Enable", failure, report);
+        throw failure;
       }
     }
     const plugin = this.#requireCatalogPlugin(pluginId, true);
@@ -3411,30 +3587,38 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   async pluginDisable(pluginId: string, reportActivity?: PluginActivityReporter): Promise<PluginOperationOutcome> {
     if (this.#readState()?.schema === 4) {
       const report = reportActivity ?? (() => undefined);
-      let mutationStarted = false;
+      let committed: boolean | undefined;
       report({ level: "working", message: "Checking installed Plugin and retained Core", stage: "operation" });
       try {
+        this.#assertReadablePendingPluginTransaction(pluginId);
         await this.#withInitializedMutation(async (raw) => {
-          mutationStarted = true;
-          const result = await this.#plugins(this.#requireManaged(raw)).disable(pluginId);
-          if (!reportActivity) this.#stdout.write(`${result.message}\n`);
-          report({ level: "success", message: result.message, stage: "operation" });
+          try {
+            const result = await this.#plugins(this.#requireManaged(raw)).disable(pluginId);
+            committed = result.changed;
+            if (!reportActivity) this.#stdout.write(`${result.message}\n`);
+            report({ level: "success", message: result.message, stage: "operation" });
+          } catch (error) {
+            throw this.#pluginFailure(error, pluginId);
+          }
         });
         return { status: "success" };
       } catch (error) {
-        if (error instanceof CommandCancelledError) {
+        const failure = this.#pluginFailure(error, pluginId, {
+          ...(committed ? { outcome: "committed-cleanup-incomplete" } : {}),
+          ...(committed === false ? { cleanupAfterNoChange: true } : {})
+        });
+        if (
+          failure.cancelled &&
+          failure.cleanupErrors.length === 0 &&
+          ["rejected", "restored"].includes(failure.outcome)
+        ) {
           report({ level: "failure", message: "Disable cancelled", stage: "operation" });
-          if (mutationStarted) report({ level: "success", message: "Previous deployment restored", stage: "rollback" });
+          if (failure.outcome === "restored")
+            report({ level: "success", message: "Previous Plugin state restored", stage: "rollback" });
           return { previousDeploymentPreserved: true, status: "cancelled" };
         }
-        const message = errorMessage(error);
-        report({ level: "failure", message: `Disable failed: ${message}`, stage: "operation" });
-        if (/Recovery is required:/u.test(message)) {
-          report({ level: "failure", message: "Recovery is required before retrying", stage: "rollback" });
-        } else if (mutationStarted) {
-          report({ level: "success", message: "Previous deployment restored", stage: "rollback" });
-        }
-        throw error;
+        this.#reportPluginFailure("Disable", failure, report);
+        throw failure;
       }
     }
     const report = this.#pluginReporter(reportActivity);
@@ -5477,21 +5661,29 @@ export async function runCLI(argv: string[], context: CLIContext = {}): Promise<
         return 0;
       case "plugins":
         if (command.action === "enable") {
-          return await runDirectPluginMutation(deployment, "Enable", runtime.stdout, async () =>
+          return await runDirectPluginMutation(deployment, "enable", runtime.stdout, async () =>
             deployment.pluginEnable(command.pluginId)
           );
         } else if (command.action === "disable") {
-          return await runDirectPluginMutation(deployment, "Disable", runtime.stdout, async () =>
+          return await runDirectPluginMutation(deployment, "disable", runtime.stdout, async () =>
             deployment.pluginDisable(command.pluginId)
           );
         } else if (command.action === "install") {
-          await deployment.pluginInstall(command.pluginId, command.version);
+          return await runDirectPluginMutation(deployment, "install", runtime.stdout, async () =>
+            deployment.pluginInstall(command.pluginId, command.version)
+          );
         } else if (command.action === "update") {
-          await deployment.pluginUpdate(command.pluginId);
+          return await runDirectPluginMutation(deployment, "update", runtime.stdout, async () =>
+            deployment.pluginUpdate(command.pluginId)
+          );
         } else if (command.action === "rollback") {
-          await deployment.pluginRollback(command.pluginId);
+          return await runDirectPluginMutation(deployment, "rollback", runtime.stdout, async () =>
+            deployment.pluginRollback(command.pluginId)
+          );
         } else if (command.action === "uninstall") {
-          await deployment.pluginUninstall(command.pluginId);
+          return await runDirectPluginMutation(deployment, "uninstall", runtime.stdout, async () =>
+            deployment.pluginUninstall(command.pluginId)
+          );
         } else if (command.action === "refresh") {
           await deployment.pluginRefresh();
         } else if (command.action === "rotate-core-key") {
@@ -5546,7 +5738,9 @@ export async function runCLI(argv: string[], context: CLIContext = {}): Promise<
         return assertNever(command);
     }
   } catch (error) {
-    runtime.stderr.write(`${errorMessage(error)}\n`);
+    runtime.stderr.write(
+      `${error instanceof PluginOperationFailure ? pluginFailureMessage(error) : errorMessage(error)}\n`
+    );
     if (error instanceof UsageError) runtime.stderr.write(usage);
     return error instanceof UsageError ? 2 : 1;
   }
@@ -5554,9 +5748,9 @@ export async function runCLI(argv: string[], context: CLIContext = {}): Promise<
 
 async function runDirectPluginMutation(
   deployment: AtlasCoreDeployment,
-  action: "Enable" | "Disable",
+  action: "disable" | "enable" | "install" | "rollback" | "uninstall" | "update",
   stdout: { write(data: string): void },
-  operation: () => Promise<PluginOperationOutcome>
+  operation: () => Promise<PluginOperationOutcome | void>
 ): Promise<number> {
   let cancellationRequested = false;
   const cancel = (): void => {
@@ -5567,10 +5761,29 @@ async function runDirectPluginMutation(
   process.on("SIGINT", cancel);
   try {
     const outcome = await operation();
-    if (outcome.status !== "cancelled") return 0;
+    if (!outcome || outcome.status !== "cancelled") return 0;
     deployment.resumeAfterCancellation();
-    stdout.write(`[cancel] ${action} cancelled. The previous deployment is preserved.\n`);
+    if (outcome.previousDeploymentPreserved) {
+      stdout.write(`[cancel] ${capitalize(action)} cancelled. The previous deployment is preserved.\n`);
+    } else {
+      stdout.write(
+        `[cancel] ${capitalize(action)} cancelled after safe cleanup. ` +
+          `Earlier updates remain committed: ${outcome.updatedPluginIds.join(", ")}.\n`
+      );
+    }
     return 130;
+  } catch (error) {
+    if (
+      error instanceof PluginOperationFailure &&
+      error.cancelled &&
+      error.cleanupErrors.length === 0 &&
+      (error.outcome === "rejected" || error.outcome === "restored")
+    ) {
+      deployment.resumeAfterCancellation();
+      stdout.write(`[cancel] ${capitalize(action)} cancelled. The previous deployment is preserved.\n`);
+      return 130;
+    }
+    throw error;
   } finally {
     process.off("SIGINT", cancel);
   }
@@ -6397,6 +6610,49 @@ async function attemptRollback(rollbackErrors: string[], action: () => void | Pr
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function capitalize(value: string): string {
+  return `${value.slice(0, 1).toUpperCase()}${value.slice(1)}`;
+}
+
+function appendPluginCleanupError(failure: PluginOperationFailure, cleanupError: unknown): PluginOperationFailure {
+  return new PluginOperationFailure({
+    outcome: failure.outcome,
+    operationError: failure.operationError,
+    ...(failure.recoveryError ? { recoveryError: failure.recoveryError } : {}),
+    cleanupErrors: [...failure.cleanupErrors, cleanupError],
+    ...(failure.pluginId ? { pluginId: failure.pluginId } : {}),
+    updatedPluginIds: failure.updatedPluginIds,
+    cancelled: failure.cancelled
+  });
+}
+
+function pluginFailureMessage(failure: PluginOperationFailure): string {
+  const target = failure.pluginId ? ` for ${failure.pluginId}` : "";
+  const lines = [`Plugin operation failed${target}: ${failure.operationError.message}`];
+  if (failure.recoveryError) lines.push(`Recovery failed: ${failure.recoveryError.message}`);
+  switch (failure.outcome) {
+    case "rejected":
+      lines.push("The requested Plugin change did not occur.");
+      break;
+    case "restored":
+      lines.push("The previous Plugin state was restored. This does not assert that the Plugin is healthy or running.");
+      break;
+    case "recovery-incomplete":
+      lines.push("Plugin recovery is incomplete. Run atlas-core recover status before retrying.");
+      break;
+    case "committed-cleanup-incomplete":
+      lines.push("The Plugin change committed, but cleanup is incomplete. Run atlas-core recover status.");
+      break;
+    case "unknown":
+      lines.push("The requested Plugin change did not begin.");
+      lines.push("The earlier Plugin transaction outcome could not be established. Run atlas-core recover status.");
+      break;
+  }
+  if (failure.updatedPluginIds.length > 0) lines.push(`Already updated: ${failure.updatedPluginIds.join(", ")}.`);
+  for (const cleanupError of failure.cleanupErrors) lines.push(`Cleanup failed: ${cleanupError.message}`);
+  return lines.join("\n");
 }
 
 function updateCandidateRelease(plan: IndependentPluginUpdatePlan): PluginRelease | undefined {
