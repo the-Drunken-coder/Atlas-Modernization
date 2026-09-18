@@ -147,6 +147,12 @@ CLI version. A CLI upgrade reinstalls active matching supervision with the newly
 An active service whose definition does not match the selected deployment must be reinstalled explicitly first.
 The Plugins menu keeps enable, disable, and update operations in an activity view with elapsed timestamps, reports
 restoration status, and returns to refreshed Plugin details after every terminal outcome.
+During Plugin and lifecycle mutations, Escape requests a return after manager-owned cleanup. Keyboard Ctrl-C and process
+SIGINT request exit after the same cleanup, even if Escape was pressed first. Repeated interruption sends one
+cancellation request. Losing terminal input also waits for active work to settle; an operation or cleanup failure takes
+precedence over the terminal-input error. Successful Plugin changes remain visible until acknowledged because a late
+cancellation request does not undo a committed change. Plugin update planning keeps Escape disabled while Ctrl-C,
+SIGINT, and terminal loss wait for planning to settle before exit.
 
 The menu's `Change admin password` action changes the password for the fixed `admin` username. The direct `config`
 command opens the same hidden password prompt. The password must contain at least 12 characters and is never accepted
@@ -188,7 +194,8 @@ to `atlas-core update all`. This applies only when both releases use the current
 Any interactive update that can replace the CLI keeps its operation screen mounted while npm runs, shows captured
 subprocess output as progress, and exits after success. Failures remain visible until acknowledgment and then exit because
 CLI installation may already have completed. Completed Escape cancellation also exits rather than returning to old
-in-memory code. Core-only updates can return to the originating screen after success or safe cancellation.
+in-memory code. Core-only update success remains visible until acknowledgment, then returns to the originating screen;
+safe Escape cancellation can return as soon as cleanup settles.
 
 State schemas 1 and 2 belong to the retired fixed-name experimental layout. Schema 3 is the current bundled deployment
 state with the `engine-scoped-v1` layout. Independent Plugin management uses schema 4. The first independent Core
