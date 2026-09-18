@@ -664,7 +664,11 @@ export function inspectImage(runner: CommandRunner, reference: string): string |
     if (!/^sha256:[0-9a-f]{64}$/u.test(digest)) throw new Error(`Image ${reference} returned an invalid digest`);
     return digest;
   }
-  if (/manifest unknown|no such manifest|MANIFEST_UNKNOWN|unexpected status[^\n]*404 Not Found/iu.test(result.stderr)) {
+  if (
+    /manifest unknown|no such manifest|MANIFEST_UNKNOWN|unexpected status[^\n]*404 Not Found|(?:^|\n)ERROR: [^\n]+: not found(?:\n|$)/iu.test(
+      result.stderr
+    )
+  ) {
     return undefined;
   }
   throw commandError(`inspect image ${reference}`, result);

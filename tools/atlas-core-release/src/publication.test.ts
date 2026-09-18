@@ -51,6 +51,7 @@ function verifyCompletedLivePublication(
 
 test("image inspection distinguishes absence from registry and response failures", () => {
   assert.equal(inspectImage(new ImageRunner("missing"), "registry.test/core:1.2.3"), undefined);
+  assert.equal(inspectImage(new ImageRunner("buildx-missing"), "registry.test/core:1.2.3"), undefined);
   assert.throws(() => inspectImage(new ImageRunner("transport"), "registry.test/core:1.2.3"), /transport/);
   assert.throws(() => inspectImage(new ImageRunner("malformed"), "registry.test/core:1.2.3"), /invalid JSON/);
   assert.equal(inspectImage(new ImageRunner("present"), "registry.test/core:1.2.3"), imageDigest);
@@ -276,10 +277,11 @@ type WriteName =
   | "github-final";
 
 class ImageRunner implements CommandRunner {
-  constructor(readonly mode: "missing" | "transport" | "malformed" | "present") {}
+  constructor(readonly mode: "missing" | "buildx-missing" | "transport" | "malformed" | "present") {}
 
   run(): CommandResult {
     if (this.mode === "missing") return failure("manifest unknown");
+    if (this.mode === "buildx-missing") return failure("ERROR: registry.test/core:1.2.3: not found");
     if (this.mode === "transport") return failure("registry transport connection reset");
     if (this.mode === "malformed") return success("not-json");
     return success(JSON.stringify({ digest: imageDigest }));
