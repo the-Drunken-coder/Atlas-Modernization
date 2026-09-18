@@ -7319,6 +7319,40 @@ describe("atlas-core CLI", () => {
     expect(DeploymentTransactionStore.open(config).journal.phase).toBe(phase);
   });
 
+  it("does not attribute an earlier pending recovery to the newly requested Plugin", async () => {
+    const test = runtime();
+    await installIndependentUpdateFixtures(test);
+    const config = join(test.home, ".atlas", "core");
+    const transaction = DeploymentTransactionStore.begin(config, {
+      operation: "plugin-update",
+      dockerEngineId: "different-engine-id",
+      previousRunning: true,
+      desiredRunning: true
+    });
+    transaction.advance("runtime-changing");
+    let failure: unknown;
+    test.context.interactive = {
+      configureAdmin: async () => undefined,
+      runUpdate: async () => undefined,
+      runMenu: async (operator) => {
+        try {
+          await operator.pluginEnable("alpha_fixture");
+        } catch (error) {
+          failure = error;
+        }
+      }
+    };
+
+    expect(await runCLI([], test.context), test.stderr.join("")).toBe(0);
+
+    expect(failure).toBeInstanceOf(PluginOperationFailure);
+    expect(failure).toMatchObject({ outcome: "recovery-incomplete", requestedChangeBegan: false });
+    expect((failure as PluginOperationFailure).pluginId).toBeUndefined();
+    expect((failure as PluginOperationFailure).operationError.message).toContain(
+      "Pending transaction belongs to another Docker engine"
+    );
+  });
+
   it("keeps manager recovery facts intact through the operator and actual TUI handler", async () => {
     const test = runtime();
     const plugin = INDEPENDENT_UPDATE_FIXTURES[0]!;

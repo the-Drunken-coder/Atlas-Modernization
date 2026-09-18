@@ -1566,12 +1566,13 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
   ): PluginOperationFailure {
     const updatedPluginIds = options.updatedPluginIds ?? [];
     if (error instanceof PluginOperationFailure) {
+      const failurePluginId = error.pluginId ?? (error.requestedChangeBegan === false ? undefined : pluginId);
       return new PluginOperationFailure({
         outcome: error.outcome,
         operationError: error.operationError,
         ...(error.recoveryError ? { recoveryError: error.recoveryError } : {}),
         cleanupErrors: error.cleanupErrors,
-        pluginId: error.pluginId ?? pluginId,
+        ...(failurePluginId !== undefined ? { pluginId: failurePluginId } : {}),
         updatedPluginIds: [...new Set([...updatedPluginIds, ...error.updatedPluginIds])],
         cancelled: error.cancelled,
         ...(error.requestedChangeBegan !== undefined ? { requestedChangeBegan: error.requestedChangeBegan } : {})
@@ -1602,7 +1603,6 @@ class AtlasCoreDeployment implements AtlasCoreOperator {
       return new PluginOperationFailure({
         outcome: pendingOutcome,
         operationError: error,
-        pluginId,
         updatedPluginIds,
         requestedChangeBegan: false
       });
