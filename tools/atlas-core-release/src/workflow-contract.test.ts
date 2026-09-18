@@ -17,7 +17,9 @@ const completedVerifier = jobBlock(publication, "verify-completed");
 const reservation = jobBlock(request, "reserve-tag");
 const requestValidation = jobBlock(request, "validate");
 const trustedCheckout = stepBlock(reservation, "Checkout trusted release control");
+const prepareTag = stepBlock(reservation, "Prepare the annotated tag without release credentials");
 const inspectionCredential = stepBlock(reservation, "Mint read-only release inspection credential");
+const recheckProtections = stepBlock(reservation, "Recheck release protections with the release App");
 const tagCredential = stepBlock(reservation, "Mint tag-only release credential");
 const createTag = stepBlock(reservation, "Create or verify annotated release tag");
 
@@ -67,14 +69,8 @@ test("the request workflow isolates the release App in the tag job", () => {
     reservation.indexOf("Checkout trusted release control") <
       reservation.indexOf("Mint read-only release inspection credential")
   );
-  assert.ok(
-    reservation.indexOf("Prepare the annotated tag without release credentials") <
-      reservation.indexOf("Mint read-only release inspection credential")
-  );
-  assert.ok(
-    reservation.indexOf("Recheck release protections with the release App") <
-      reservation.indexOf("Mint tag-only release credential")
-  );
+  assert.ok(reservation.indexOf(prepareTag) < reservation.indexOf(inspectionCredential));
+  assert.ok(reservation.indexOf(recheckProtections) < reservation.indexOf(tagCredential));
   assert.doesNotMatch(reservation, /npm (?:ci|run|test|publish)/u);
   assert.doesNotMatch(request, /git push[^\n]*main/u);
 });
