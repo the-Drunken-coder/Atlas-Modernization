@@ -56,7 +56,9 @@ test("tag ruleset checks pin the intended App and can use the isolated CLI", () 
   assert.match(tagRulesetGuard, /if \[ "\$#" -ne 2 \]/u);
   assert.match(tagRulesetGuard, /--release-app-id "\$release_app_id"/u);
   assert.match(tagRulesetGuard, /ATLAS_CORE_RELEASE_CLI:-/u);
-  assert.equal(publication.match(/ATLAS_CORE_RELEASE_APP_ID/gu)?.length, 2);
+  const appIdBinding = /RELEASE_APP_ID:\s*\$\{\{\s*vars\.ATLAS_CORE_RELEASE_APP_ID\s*\}\}/u;
+  assert.match(jobBlock(publication, "inspect"), appIdBinding);
+  assert.match(publisher, appIdBinding);
 });
 
 test("checked-in package metadata is explicitly unreleased", () => {
